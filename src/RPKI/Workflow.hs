@@ -161,7 +161,7 @@ runWorkflow appContext@AppContext {..} tals = do
             },        
             Scheduling {                 
                 initialDelay = 900_000_000,
-                interval =  config ^. #cacheCleanupInterval, 
+                interval =  config ^. #oldPayloadsDeleteInterval, 
                 taskDef = (DeleteOldPayloadsTask, cleanOldPayloads workflowShared),
                 persistent = True
             },
@@ -282,7 +282,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     rwTxT database $ \tx db -> do
                         saveValidations tx db worldVersion (workerVS ^. typed)
                         saveMetrics tx db worldVersion (workerVS ^. typed)
-                        completeWorldVersion tx db worldVersion                            
+                        completeValidationWorldVersion tx db worldVersion                            
                     updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
                     pure (mempty, mempty)            
                 Right wr@WorkerResult {..} -> do                              
@@ -316,10 +316,10 @@ runWorkflow appContext@AppContext {..} tals = do
                 case z of 
                     Left message -> logError logger message
                     Right CleanUpResult {..} -> do 
-                        when (deletedObjects > 0) $ 
+                        when (deletedObjects > 0) $ do
                             atomically $ writeTVar deletedAnythingFromDb True
                         logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
-                                        [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms.|])
+                                         [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms.|])
         where
         cleanupUntochedObjects = do                 
             ((z, _), workerId) <- runCleapUpWorker worldVersion      
@@ -331,16 +331,21 @@ runWorkflow appContext@AppContext {..} tals = do
                     pure $ Right payload                                       
 
     -- Delete oldest payloads, e.g. VRPs, ASPAs, validation results, etc.
+    -- 
+    -- Paylaods take a lot of disk space and keeping a log ot old versions 
+    -- of them is expensive. So we delete payloads for all versions except 
+    -- for the latest N versions.
     cleanOldPayloads WorkflowShared {..} _ _ = do
         db <- readTVarIO database
         executeOrDie
             (deleteOldPayloads db (config ^. #versionNumberToKeep))
-            (\deleted elapsed -> do 
+            (\(deleted, total) elapsed -> do 
                 when (deleted > 0) $ do
                     atomically $ writeTVar deletedAnythingFromDb True
-                    logInfo logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])
+                    logInfo logger $ [i|Done with deleting older payloads, deleted #{deleted} |] <> 
+                                     [i|versions out of #{total}, took #{elapsed}ms.|])
 
-    -- Do the LMDB compaction
+    -- Do LMDB compaction
     compact WorkflowShared {..} worldVersion _ = do
         -- Some heuristics first to see if it's obvisouly too early to run compaction:
         -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
@@ -363,7 +368,7 @@ runWorkflow appContext@AppContext {..} tals = do
         -- dead processes, unfinished/killed transaction, etc.
         -- All these stale transactions are essentially bugs, but it's 
         -- easier to just clean them up rather then prevent all 
-        -- possible leakages (even if it is possible).
+        -- possible leakages (even if it were possible).
         cleaned <- cleanUpStaleTx appContext
         when (cleaned > 0) $ 
             logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]      
@@ -415,11 +420,12 @@ runWorkflow appContext@AppContext {..} tals = do
     createWorldVersion = do
         newVersion      <- newWorldVersion        
         existingVersion <- getWorldVerionIO appState
-        logDebug logger $ case existingVersion of
-            Nothing ->
-                [i|Generated new world version #{newVersion}.|]
-            Just oldWorldVersion ->
-                [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]
+        logDebug logger $ 
+            case existingVersion of
+                Nothing ->
+                    [i|Generated new world version #{newVersion}.|]
+                Just oldWorldVersion ->
+                    [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]
         pure newVersion
 
     runRtrIfConfigured = 
@@ -503,7 +509,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                         pure (vs, Just slurm)        
 
     -- Save all the results into LMDB
-    let !updatedValidation = slurmValidations <> topDownValidations ^. typed
+    let updatedValidation = slurmValidations <> topDownValidations ^. typed
 
     (_, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
         saveMetrics tx db worldVersion (topDownValidations ^. typed)
@@ -513,7 +519,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         saveGbrs tx db (payloads ^. typed) worldVersion
         saveBgps tx db (payloads ^. typed) worldVersion        
         for_ maybeSlurm $ saveSlurm tx db worldVersion
-        completeWorldVersion tx db worldVersion            
+        completeValidationWorldVersion tx db worldVersion            
 
     logDebug logger [i|Saved payloads for the version #{worldVersion} in #{elapsed}ms.|]        
 

@@ -661,8 +661,8 @@ deleteVersion :: (MonadIO m, Storage s) =>
         Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteVersion tx DB { versionStore = VersionStore s } wv = liftIO $ M.delete tx s wv
 
-completeWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
-completeWorldVersion tx database worldVersion =    
+completeValidationWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
+completeValidationWorldVersion tx database worldVersion =    
     saveVersion tx database worldVersion validationKind
 
 generalWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
@@ -778,14 +778,14 @@ data CleanUpResult = CleanUpResult {
 -- Clean up older version payloads, e.g. VRPs, ASPAs, validation results, etc.
 -- 
 deleteOldPayloads :: (MonadIO m, Storage s) => 
-                    DB s -> Int -> m Int
+                    DB s -> Int -> m (Int, Int)
 deleteOldPayloads db numberToKeep = 
     mapException (AppException . storageError) <$> liftIO $ do
         rwTx db $ \tx -> do 
             versions <- validationVersions tx db                                        
             let toDelete = drop numberToKeep $ List.sortOn Down versions
             forM_ toDelete $ deletePayloads tx db        
-            pure $! List.length toDelete
+            pure (List.length toDelete, List.length versions)
 
 
 deleteStaleContent :: (MonadIO m, Storage s) => 
