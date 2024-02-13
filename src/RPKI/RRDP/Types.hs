@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE StrictData         #-}
+{-# LANGUAGE RecordWildCards    #-}
 
 module RPKI.RRDP.Types where
 
@@ -38,6 +39,7 @@ data Snapshot = Snapshot Version SessionId RrdpSerial [SnapshotPublish]
 
 data DeltaInfo = DeltaInfo URI Hash RrdpSerial
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
 
 data DeltaItem = DP DeltaPublish | DW DeltaWithdraw
     deriving stock (Show, Eq, Ord, Generic)
@@ -55,3 +57,22 @@ newtype ETag = ETag BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass TheBinary        
 
+data RrdpMeta = RrdpMeta {
+        sessionId :: SessionId,
+        serial    :: RrdpSerial,
+        integrity :: RrdpIntegrity
+    }    
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass TheBinary            
+
+data RrdpIntegrity = RrdpIntegrity {
+        deltas :: [DeltaInfo]    
+    }
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass TheBinary            
+
+newRrdpIntegrity :: Notification -> RrdpIntegrity
+newRrdpIntegrity Notification {..} = RrdpIntegrity deltas
+
+fromNotification :: Notification -> RrdpMeta
+fromNotification Notification {..} = RrdpMeta { integrity = RrdpIntegrity {..}, .. }
