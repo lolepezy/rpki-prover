@@ -25,7 +25,7 @@ default-extensions: BangPatterns, ViewPatterns, LambdaCase, ConstraintKinds, Dat
                     KindSignatures, MultiParamTypeClasses, MultiWayIf, NoMonomorphismRestriction, 
                     NumericUnderscores, PatternSynonyms, PolyKinds, RankNTypes, QuantifiedConstraints,
                     StandaloneDeriving, ScopedTypeVariables, TupleSections, TypeApplications, 
-                    TypeFamilies, TypeOperators, NoFieldSelectors
+                    TypeFamilies, TypeOperators
 
 dependencies:
 - base
