@@ -442,6 +442,9 @@ instance ToJSON RrdpURL
 instance ToJSON FetchStatus
 instance ToJSON ETag
 instance ToJSON FetchType
+instance ToJSON DeltaInfo
+instance ToJSON RrdpIntegrity
+instance ToJSON RrdpMeta
 instance ToJSON RrdpRepository
 instance ToJSON RepositoryMeta
 instance ToJSON PublicationPointDto
@@ -453,6 +456,9 @@ instance ToSchema ETag where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema FetchType where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToSchema DeltaInfo
+instance ToSchema RrdpIntegrity
+instance ToSchema RrdpMeta
 instance ToSchema RrdpRepository
 instance ToSchema RepositoryMeta
 instance ToSchema PublicationPointDto

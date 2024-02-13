@@ -18,10 +18,13 @@ import           Data.Generics.Product.Typed
 import           Data.Foldable
 import           Data.Bifunctor                   (first)
 import           Data.Text                        (Text)
+import qualified Data.Text                        as Text
 import qualified Data.ByteString                  as BS
 import qualified Data.List                        as List
 import           Data.String.Interpolate.IsString
 import           Data.Proxy
+import qualified Data.Map.Strict          as Map
+import           Data.Maybe
 
 import           GHC.Generics
 
@@ -217,7 +220,9 @@ downloadAndUpdateRRDP
             pure $ repo { rrdpMeta = rrdpMeta' }
 
         where
-            rrdpMeta' = Just (notification ^. #sessionId, notification ^. #serial)                    
+            rrdpMeta' = let 
+                Notification {..} = notification 
+                in Just $ RrdpMeta sessionId serial (RrdpIntegrity deltas)
     
 
     useDeltas sortedDeltas notification = do
@@ -264,8 +269,10 @@ downloadAndUpdateRRDP
         serials = map (^. typed @RrdpSerial) sortedDeltas
         maxDeltaSerial = List.maximum serials
         minDeltaSerial = List.minimum serials
-
-        rrdpMeta' = Just (notification ^. typed @SessionId, maxDeltaSerial)            
+        
+        rrdpMeta' = let 
+            Notification {..} = notification 
+            in Just $ RrdpMeta sessionId maxDeltaSerial (RrdpIntegrity sortedDeltas)
 
 
 data NextStep
@@ -287,50 +294,86 @@ rrdpNextStep :: RrdpRepository -> Notification -> PureValidatorT NextStep
 rrdpNextStep RrdpRepository { rrdpMeta = Nothing } Notification{..} = 
     pure $ UseSnapshot snapshotInfo "Unknown repository"
 
-rrdpNextStep RrdpRepository { rrdpMeta = Just (repoSessionId, repoSerial) } Notification{..} =
+rrdpNextStep RrdpRepository { rrdpMeta = Just rrdpMeta } Notification {..} = 
 
-    if  | sessionId /= repoSessionId -> 
-            pure $ UseSnapshot snapshotInfo [i|Resetting RRDP session from #{repoSessionId} to #{sessionId}|]
+    if  | sessionId /= localSessionId -> 
+            pure $ UseSnapshot snapshotInfo [i|Resetting RRDP session from #{localSessionId} to #{sessionId}|]
 
-        | repoSerial > serial -> do 
-            appWarn $ RrdpE $ LocalSerialBiggerThanRemote repoSerial serial
-            pure $ NothingToDo [i|#{repoSessionId}, local serial #{repoSerial} is higher than the remote serial #{serial}.|]
+        | localSerial > serial -> do 
+            appWarn $ RrdpE $ LocalSerialBiggerThanRemote localSerial serial
+            pure $ NothingToDo [i|#{localSessionId}, local serial #{localSerial} is higher than the remote serial #{serial}.|]
 
-        | repoSerial == serial -> 
-            pure $ NothingToDo [i|up-to-date, #{repoSessionId}, serial #{repoSerial}|]
+        | localSerial == serial -> 
+            pure $ NothingToDo [i|up-to-date, #{localSessionId}, serial #{localSerial}|]
     
         | otherwise ->
             case (deltas, nonConsecutiveDeltas) of
                 ([], _) -> pure $ UseSnapshot snapshotInfo 
-                                [i|#{repoSessionId}, there is no deltas to use.|]
+                                [i|#{localSessionId}, there is no deltas to use.|]
 
-                (_, []) | nextSerial repoSerial < deltaSerial (head sortedDeltas) ->
+                (_, []) | nextSerial localSerial < deltaSerial (head sortedDeltas) ->
                             -- we are too far behind
                             pure $ UseSnapshot snapshotInfo 
-                                    [i|#{repoSessionId}, local serial #{repoSerial} is too far behind remote #{serial}.|]
+                                    [i|#{localSessionId}, local serial #{localSerial} is too far behind remote #{serial}.|]
 
                         -- too many deltas means huge overhead -- just use snapshot, 
                         -- it's more data but less chances of getting killed by timeout
                         | length chosenDeltas > 100 ->
                             pure $ UseSnapshot snapshotInfo 
-                                    [i|#{repoSessionId}, there are too many deltas: #{length chosenDeltas}.|]
+                                    [i|#{localSessionId}, there are too many deltas: #{length chosenDeltas}.|]
+
+                        | not (null deltaIntegrityIssues) -> 
+                            pure $ UseSnapshot snapshotInfo formattedIntegrityIssues
 
                         | otherwise ->
                             pure $ UseDeltas chosenDeltas snapshotInfo 
-                                    [i|#{repoSessionId}, deltas look good.|]
+                                    [i|#{localSessionId}, deltas look good.|]
 
                 (_, nc) -> do 
                     appWarn $ RrdpE $ NonConsecutiveDeltaSerials nc
                     pure $ UseSnapshot snapshotInfo 
-                            [i|#{repoSessionId}, there are non-consecutive delta serials: #{nc}.|]                        
+                            [i|#{localSessionId}, there are non-consecutive delta serials: #{nc}.|]                        
                 
     where
+        localSessionId = rrdpMeta ^. #sessionId
+        localSerial    = rrdpMeta ^. #serial
+
         sortedSerials = map deltaSerial sortedDeltas
         sortedDeltas = List.sortOn deltaSerial deltas
-        chosenDeltas = filter ((> repoSerial) . deltaSerial) sortedDeltas
+        chosenDeltas = filter ((> localSerial) . deltaSerial) sortedDeltas
 
         nonConsecutiveDeltas = List.filter (\(s, s') -> nextSerial s /= s') $
             List.zip sortedSerials (tail sortedSerials)
+
+        deltaIntegrityIssues = let 
+                previousDeltasBySerial = 
+                    Map.fromList 
+                        $ map (\d -> (d ^. typed @RrdpSerial, d)) 
+                        $ rrdpMeta ^. #integrity . #deltas
+
+            in [ (serial_, url, hash, previousUrl, previousHash) | 
+                    DeltaInfo url hash serial_           <- deltas,
+                    DeltaInfo previousUrl previousHash _ <- maybeToList $ Map.lookup serial_ previousDeltasBySerial,
+                    previousHash /= hash || previousUrl /= url
+                ]       
+
+        formattedIntegrityIssues = [i|These deltas have integrity issues: #{issues}.|]            
+          where
+            issues :: Text = 
+                mconcat 
+                $ List.intersperse "; "
+                $ flip map deltaIntegrityIssues                    
+                $ \(serial_, url, hash, previousUrl, previousHash) -> 
+                    [i|serial #{serial_}|] <>
+                    (if previousUrl /= url 
+                        then [i|, used to have url #{previousUrl} and now #{url}|] 
+                        else "") <>
+                    (if previousHash /= hash 
+                        then [i|, used to have hash #{previousHash} and now #{hash}|] 
+                        else "") 
+        
+                                
+
 
 
 deltaSerial :: DeltaInfo -> RrdpSerial
@@ -388,7 +431,7 @@ saveSnapshot
             (rwAppTx db)
             (saveStorable db)           
 
-    rwAppTx db $ \tx -> DB.updateRrdpMeta tx db (sessionId, serial) repoUri      
+    rwAppTx db $ \tx -> DB.updateRrdpMeta tx db (fromNotification notification) repoUri      
 
   where        
 
@@ -515,7 +558,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
     
     let savingTx f = 
             rwAppTx db $ \tx -> 
-                f tx >> DB.updateRrdpMeta tx db (sessionId, serial) repoUri 
+                f tx >> DB.updateRrdpMeta tx db (fromNotification notification) repoUri 
 
     -- Propagate exceptions from here, anything that can happen here 
     -- (storage failure, file read failure) should stop the validation and 

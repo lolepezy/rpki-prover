@@ -511,6 +511,14 @@ instance Arbitrary RsyncPublicationPoint where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary RrdpIntegrity where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary RrdpMeta where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary RrdpRepository where
     arbitrary = genericArbitrary
     shrink = genericShrink
