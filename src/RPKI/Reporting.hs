@@ -21,10 +21,7 @@ import           Data.Int                    (Int64)
 import           Data.Hourglass
 import           Data.Maybe                  (fromMaybe)
 import           Data.Monoid
-
 import           Data.Text                   as Text
-import           Data.Tuple.Strict
-
 import qualified Data.List                   as List
 import           Data.List.NonEmpty          (NonEmpty (..))
 import qualified Data.List.NonEmpty          as NonEmpty
@@ -43,7 +40,6 @@ import           RPKI.Domain
 import           RPKI.RRDP.Types
 import           RPKI.Resources.Types
 import           RPKI.Time
-
 import           RPKI.Store.Base.Serialisation
 
 newtype ParseError s = ParseError s

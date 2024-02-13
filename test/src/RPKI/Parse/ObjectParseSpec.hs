@@ -4,7 +4,6 @@
 module RPKI.Parse.ObjectParseSpec where
 
 import qualified Data.ByteString        as BS
-import qualified Data.ByteString.Lazy   as LBS
 import           Data.Maybe (isJust)
 import qualified Data.Set               as Set
 
