@@ -511,7 +511,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     -- Save all the results into LMDB
     let updatedValidation = slurmValidations <> topDownValidations ^. typed
 
-    (_, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
+    (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
         saveMetrics tx db worldVersion (topDownValidations ^. typed)
         saveValidations tx db worldVersion (updatedValidation ^. typed)
         saveRoas tx db roas worldVersion
@@ -525,7 +525,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         -- so after adding one, check if the oldest one(s) should be deleted.
         deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
 
-    logDebug logger [i|Saved payloads for the version #{worldVersion} in #{elapsed}ms.|]        
+    logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted oldest versions(s) #{deleted} in #{elapsed}ms.|]        
 
     pure (updatedValidation, maybeSlurm)
 
