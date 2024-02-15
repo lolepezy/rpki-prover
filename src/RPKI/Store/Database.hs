@@ -787,6 +787,36 @@ deleteOldPayloads db numberToKeep =
             forM_ toDelete $ deletePayloads tx db        
             pure (List.length toDelete, List.length versions)
 
+deleteOldNonValidationVersions :: (MonadIO m, Storage s) =>                                     
+                                   DB s 
+                                -> (WorldVersion -> Bool) 
+                                -> m Int
+deleteOldNonValidationVersions db tooOld = 
+    mapException (AppException . storageError) <$> liftIO $ do
+        rwTx db $ \tx -> do 
+            versions <- allVersions tx db
+            let toDelete = [ version | (version, vk) <- versions, vk /= validationKind, tooOld version ]
+            forM_ toDelete $ deletePayloads tx db
+            pure $! List.length toDelete
+
+
+deleteOldestVersionsIfNeeded :: (MonadIO m, Storage s) => 
+                               Tx s 'RW 
+                            -> DB s 
+                            -> Int 
+                            -> m [WorldVersion]
+deleteOldestVersionsIfNeeded tx db versionNumberToKeep =  
+    mapException (AppException . storageError) <$> liftIO $ do
+        versions <- validationVersions tx db        
+        if length versions > versionNumberToKeep 
+            then do     
+                let toDelete = drop versionNumberToKeep $ List.sortOn Down versions
+                forM_ toDelete $ \v -> do 
+                    deletePayloads tx db v
+                    deleteVersion tx db v
+                pure toDelete
+            else pure []        
+
 
 deleteStaleContent :: (MonadIO m, Storage s) => 
                     DB s -> 

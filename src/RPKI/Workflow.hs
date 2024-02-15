@@ -519,7 +519,11 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         saveGbrs tx db (payloads ^. typed) worldVersion
         saveBgps tx db (payloads ^. typed) worldVersion        
         for_ maybeSlurm $ saveSlurm tx db worldVersion
-        completeValidationWorldVersion tx db worldVersion            
+        completeValidationWorldVersion tx db worldVersion
+
+        -- We want to keep not more than certain number of latest versions in the DB,
+        -- so after adding one, check if the oldest one(s) should be deleted.
+        deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
 
     logDebug logger [i|Saved payloads for the version #{worldVersion} in #{elapsed}ms.|]        
 
