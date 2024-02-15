@@ -250,17 +250,17 @@ runWorkflow appContext@AppContext {..} tals = do
                         pure $ pure ()
           where 
             asyncFetchTask = Task AsyncFetchTask $ do 
-                atomically (writeTVar asyncFetchIsRunning True)
-                logInfo logger [i|Running asynchronous fetch.|]            
+                atomically (writeTVar asyncFetchIsRunning True)                
                 fetchVersion <- createWorldVersion     
+                logInfo logger [i|Running asynchronous fetch #{fetchVersion}.|]            
                 (_, TimeMs elapsed) <- timedMS $ do 
-                    validations <- runAsyncFetches appContext
+                    validations <- runAsyncFetches appContext fetchVersion
                     db <- readTVarIO database
                     rwTx db $ \tx -> do
                         saveValidations tx db fetchVersion (validations ^. typed)
                         saveMetrics tx db fetchVersion (validations ^. typed)
                         asyncFetchWorldVersion tx db fetchVersion                  
-                logInfo logger [i|Finished asynchronous fetch in #{elapsed `div` 1000}s.|]
+                logInfo logger [i|Finished asynchronous fetch #{fetchVersion} in #{elapsed `div` 1000}s.|]
 
 
     doValidateTAs WorkflowShared {..} worldVersion= do
@@ -580,13 +580,12 @@ loadStoredAppState AppContext {..} = do
     - Try to refetch these repositories
     - Repositories that were successful and fast enought get back `ForSyncFetch` fetch type.
 -}
-runAsyncFetches :: Storage s => AppContext s -> IO ValidationState
-runAsyncFetches appContext@AppContext {..} = do         
-    worldVersion <- newWorldVersion
+runAsyncFetches :: Storage s => AppContext s -> WorldVersion -> IO ValidationState
+runAsyncFetches appContext@AppContext {..} worldVersion = do             
     withRepositoriesProcessing appContext $ \repositoryProcessing -> do
 
         pps <- readPublicationPoints repositoryProcessing      
-        -- We only care about the repositories that are slow 
+        -- We only care about the repositories that are maarked for asynchronous fetch 
         let asyncRepos = Map.fromList $ findRepositoriesForAsyncFetch pps        
 
         -- And mentioned on some certificates during the last validation.        
