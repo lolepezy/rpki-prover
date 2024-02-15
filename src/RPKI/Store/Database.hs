@@ -33,6 +33,7 @@ import           Data.Ord
 import           Data.Text.Encoding       (encodeUtf8)
 import           Data.Tuple.Strict
 import           GHC.Generics
+import           GHC.Natural
 import           Text.Read
 
 import           RPKI.Domain
@@ -769,48 +770,38 @@ saveCurrentDatabaseVersion tx DB { metadataStore = MetadataStore s } =
 data CleanUpResult = CleanUpResult {
         deletedObjects :: Int,
         keptObjects :: Int,
-        deletedURLs :: Int
+        deletedURLs :: Int,
+        deletedVersions :: Int
     }
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-
--- Clean up older version payloads, e.g. VRPs, ASPAs, validation results, etc.
--- 
-deleteOldPayloads :: (MonadIO m, Storage s) => 
-                    DB s -> Int -> m (Int, Int)
-deleteOldPayloads db numberToKeep = 
-    mapException (AppException . storageError) <$> liftIO $ do
-        rwTx db $ \tx -> do 
-            versions <- validationVersions tx db                                        
-            let toDelete = drop numberToKeep $ List.sortOn Down versions
-            forM_ toDelete $ deletePayloads tx db        
-            pure (List.length toDelete, List.length versions)
-
 deleteOldNonValidationVersions :: (MonadIO m, Storage s) =>                                     
-                                   DB s 
+                                   Tx s 'RW 
+                                -> DB s 
                                 -> (WorldVersion -> Bool) 
                                 -> m Int
-deleteOldNonValidationVersions db tooOld = 
-    mapException (AppException . storageError) <$> liftIO $ do
-        rwTx db $ \tx -> do 
-            versions <- allVersions tx db
-            let toDelete = [ version | (version, vk) <- versions, vk /= validationKind, tooOld version ]
-            forM_ toDelete $ deletePayloads tx db
-            pure $! List.length toDelete
+deleteOldNonValidationVersions tx db tooOld = do    
+    versions <- allVersions tx db
+    let toDelete = [ version | (version, vk) <- versions, vk /= validationKind, tooOld version ]
+    forM_ toDelete $ \v -> do 
+        deletePayloads tx db v
+        deleteVersion tx db v
+    pure $! List.length toDelete
 
 
 deleteOldestVersionsIfNeeded :: (MonadIO m, Storage s) => 
                                Tx s 'RW 
                             -> DB s 
-                            -> Int 
+                            -> Natural 
                             -> m [WorldVersion]
 deleteOldestVersionsIfNeeded tx db versionNumberToKeep =  
     mapException (AppException . storageError) <$> liftIO $ do
-        versions <- validationVersions tx db        
-        if length versions > versionNumberToKeep 
-            then do     
-                let toDelete = drop versionNumberToKeep $ List.sortOn Down versions
+        versions <- validationVersions tx db
+        -- Keep at least 2 versions (current and previous)
+        if fromIntegral (length versions) > versionNumberToKeep && length versions > 2
+            then do                     
+                let toDelete = drop (fromIntegral versionNumberToKeep) $ List.sortOn Down versions
                 forM_ toDelete $ \v -> do 
                     deletePayloads tx db v
                     deleteVersion tx db v
@@ -824,13 +815,18 @@ deleteStaleContent :: (MonadIO m, Storage s) =>
                     m CleanUpResult
 deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld = 
     mapException (AppException . storageError) <$> liftIO $ do                
+        
+        -- Delete old versions associated with async fetches and 
+        -- other non-validation related stuff
+        deletedVersions <- rwTx db $ \tx -> 
+            deleteOldNonValidationVersions tx db tooOld
 
         versions <- roTx db (`validationVersions` db)
         let (toDelete, toKeep) = List.partition tooOld versions
-        
+
         if null toDelete then do 
             kept <- roTx db $ \tx -> M.fold tx hashToKey (\n _ _ -> pure $! n + 1) 0
-            pure $ CleanUpResult 0 kept 0
+            pure $ CleanUpResult 0 kept 0 deletedVersions
         else do
             rwTx db $ \tx -> do
                 -- delete versions and payloads associated with them, 
@@ -840,15 +836,15 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
                     deletePayloads tx db version
                     M.delete tx validatedByVersion version
                         
-                (deleted, kept) <- deleteStaleObjects tx toKeep
+                (deletedObjects, keptObjects) <- deleteStaleObjects tx toKeep
                                                         
                 -- Clean up the association between AKI and last valid manifest hash            
                 cleanupLatestValidMfts tx
 
                 -- Delete URLs that are now not referred by any object
-                deletedUrs <- deleteDanglingUrls db tx
+                deletedURLs <- deleteDanglingUrls db tx
 
-                pure $! CleanUpResult deleted kept deletedUrs
+                pure $! CleanUpResult {..}
   where
 
     cleanupLatestValidMfts tx = liftIO $ do

@@ -96,9 +96,6 @@ data TaskType =
         -- delete old objects and old versions
         | CacheCleanupTask    
 
-        -- delete old payloads (VRPs, ASPAs, etc.)    
-        | DeleteOldPayloadsTask            
-
         | LmdbCompactTask
 
         -- cleanup files in tmp and stale LMDB reader transactions
@@ -159,12 +156,6 @@ runWorkflow appContext@AppContext {..} tals = do
                 taskDef = (CacheCleanupTask, cacheGC workflowShared),
                 persistent = True
             },        
-            Scheduling {                 
-                initialDelay = 900_000_000,
-                interval =  config ^. #oldPayloadsDeleteInterval, 
-                taskDef = (DeleteOldPayloadsTask, cleanOldPayloads workflowShared),
-                persistent = True
-            },
             Scheduling {                 
                 initialDelay = 1200_000_000,
                 interval = config ^. #storageCompactionInterval,
@@ -319,7 +310,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         when (deletedObjects > 0) $ do
                             atomically $ writeTVar deletedAnythingFromDb True
                         logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
-                                         [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms.|])
+                                         [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|])
         where
         cleanupUntochedObjects = do                 
             ((z, _), workerId) <- runCleapUpWorker worldVersion      
@@ -329,21 +320,6 @@ runWorkflow appContext@AppContext {..} tals = do
                     logWorkerDone logger workerId wr
                     pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxMemory
                     pure $ Right payload                                       
-
-    -- Delete oldest payloads, e.g. VRPs, ASPAs, validation results, etc.
-    -- 
-    -- Paylaods take a lot of disk space and keeping a log ot old versions 
-    -- of them is expensive. So we delete payloads for all versions except 
-    -- for the latest N versions.
-    cleanOldPayloads WorkflowShared {..} _ _ = do
-        db <- readTVarIO database
-        executeOrDie
-            (deleteOldPayloads db (config ^. #versionNumberToKeep))
-            (\(deleted, total) elapsed -> do 
-                when (deleted > 0) $ do
-                    atomically $ writeTVar deletedAnythingFromDb True
-                    logInfo logger $ [i|Done with deleting older payloads, deleted #{deleted} |] <> 
-                                     [i|versions out of #{total}, took #{elapsed}ms.|])
 
     -- Do LMDB compaction
     compact WorkflowShared {..} worldVersion _ = do
@@ -646,7 +622,6 @@ canRunInParallel' t1 t2 =
     t2 `elem` canRunWith t1 || t1 `elem` canRunWith t2
   where    
     canRunWith ValidationTask        = [AsyncFetchTask]    
-    canRunWith DeleteOldPayloadsTask = allExcept [LmdbCompactTask]    
     canRunWith AsyncFetchTask        = [ValidationTask]
     canRunWith RsyncCleanupTask      = allExcept [ValidationTask, AsyncFetchTask]
     canRunWith _                     = []
