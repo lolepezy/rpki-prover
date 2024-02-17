@@ -22,7 +22,6 @@ import           Servant hiding (contentType, URI)
 import           Servant.Swagger.UI
 
 import           Data.Ord
-import           Data.List                        (sortBy)
 import           Data.Maybe                       (maybeToList, fromMaybe)
 import qualified Data.Set                         as Set
 import qualified Data.List                        as List
@@ -536,7 +535,7 @@ getVersions :: (MonadIO m, Storage s, MonadError ServerError m) =>
 getVersions AppContext {..} = liftIO $ do
     db <- readTVarIO database
     -- Sort versions from latest to earliest
-    sortBy (flip compare) <$> roTx db (`allVersions` db)
+    List.sortOn (Down . fst) <$> roTx db (`allVersions` db)
 
 
 resolveVDto :: (MonadIO m, Storage s) => 
