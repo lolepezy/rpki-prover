@@ -501,7 +501,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         -- so after adding one, check if the oldest one(s) should be deleted.
         deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
 
-    logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deleted} oldest versions(s) in #{elapsed}ms.|]        
+    logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deleted} oldest versions(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, maybeSlurm)
 
