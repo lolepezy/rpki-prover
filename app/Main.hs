@@ -30,10 +30,7 @@ import           Data.Int                         (Int16, Int64)
 import qualified Data.List                        as List
 import           Data.Maybe
 import           Data.Word                        (Word16)
-
 import           Data.String.Interpolate.IsString
-import           Numeric.Natural                  (Natural)
-
 import           GHC.TypeLits
 
 import qualified Network.Wai.Handler.Warp         as Warp
@@ -576,7 +573,7 @@ data CLIOptions wrapped = CLIOptions {
     cacheLifetimeHours :: wrapped ::: Maybe Int64 <?>
         "Lifetime of objects in the local cache, in hours (default is 72 hours)",
 
-    versionNumberToKeep :: wrapped ::: Maybe Int <?>
+    versionNumberToKeep :: wrapped ::: Maybe Natural <?>
         ("Number of versions to keep in the local cache (default is 100). " +++
          "Every re-validation creates a new version and associates resulting data " +++
          "(validation results, metrics, VRPs, etc.) with it."),

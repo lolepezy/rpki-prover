@@ -68,7 +68,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 29
+currentDatabaseVersion = 31
 
 -- Some constant keys
 databaseVersionKey, lastValidMftKey, forAsyncFetchKey :: Text
@@ -799,9 +799,10 @@ deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
     mapException (AppException . storageError) <$> liftIO $ do
         versions <- validationVersions tx db
         -- Keep at least 2 versions (current and previous)
-        if fromIntegral (length versions) > versionNumberToKeep && length versions > 2
+        let reallyToKeep = max 2 (fromIntegral versionNumberToKeep)
+        if length versions > reallyToKeep
             then do                     
-                let toDelete = drop (fromIntegral versionNumberToKeep) $ List.sortOn Down versions
+                let toDelete = drop reallyToKeep $ List.sortOn Down versions
                 forM_ toDelete $ \v -> do 
                     deletePayloads tx db v
                     deleteVersion tx db v
