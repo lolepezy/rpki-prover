@@ -344,10 +344,10 @@ rrdpNextStep RrdpRepository { rrdpMeta = Just rrdpMeta } Notification {..} =
                         $ map (\d -> (d ^. typed @RrdpSerial, d)) 
                         $ rrdpMeta ^. #integrity . #deltas
 
-            in [ (serial_, url, hash, previousUrl, previousHash) | 
-                    DeltaInfo url hash serial_           <- deltas,
-                    DeltaInfo previousUrl previousHash _ <- maybeToList $ Map.lookup serial_ previousDeltasBySerial,
-                    previousHash /= hash || previousUrl /= url
+            in [ (serial_, hash, previousHash) | 
+                    DeltaInfo _ hash serial_   <- deltas,
+                    DeltaInfo _ previousHash _ <- maybeToList $ Map.lookup serial_ previousDeltasBySerial,
+                    previousHash /= hash
                 ]       
 
         formattedIntegrityIssues = [i|These deltas have integrity issues: #{issues}.|]            
@@ -356,19 +356,13 @@ rrdpNextStep RrdpRepository { rrdpMeta = Just rrdpMeta } Notification {..} =
                 mconcat 
                 $ List.intersperse "; "
                 $ flip map deltaIntegrityIssues                    
-                $ \(serial_, url, hash, previousUrl, previousHash) -> 
-                    [i|serial #{serial_}|] <>
-                    (if previousUrl /= url 
-                        then [i|, used to have url #{previousUrl} and now #{url}|] 
-                        else "") <>
+                $ \(serial_, hash, previousHash) -> 
+                    [i|serial #{serial_}|] <>                    
                     (if previousHash /= hash 
                         then [i|, used to have hash #{previousHash} and now #{hash}|] 
                         else "") 
         
                                 
-
-
-
 deltaSerial :: DeltaInfo -> RrdpSerial
 deltaSerial (DeltaInfo _ _ s) = s
 
