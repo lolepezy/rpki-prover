@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE StrictData         #-}
+{-# LANGUAGE RecordWildCards    #-}
 
 module RPKI.RRDP.Types where
 
@@ -75,3 +76,23 @@ data RrdpAction
   | NothingToFetch Text
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass TheBinary     
+
+data RrdpMeta = RrdpMeta {
+        sessionId :: SessionId,
+        serial    :: RrdpSerial,
+        integrity :: RrdpIntegrity
+    }    
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass TheBinary            
+
+data RrdpIntegrity = RrdpIntegrity {
+        deltas :: [DeltaInfo]    
+    }
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass TheBinary            
+
+newRrdpIntegrity :: Notification -> RrdpIntegrity
+newRrdpIntegrity Notification {..} = RrdpIntegrity deltas
+
+fromNotification :: Notification -> RrdpMeta
+fromNotification Notification {..} = RrdpMeta { integrity = RrdpIntegrity {..}, .. }

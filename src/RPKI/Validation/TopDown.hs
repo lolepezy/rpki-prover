@@ -788,9 +788,9 @@ validateCaNoFetch
 
     -- Utility for repeated peace of code
     makeEntriesWithMap childrenList entryMap = 
-        [ (key, entry) 
-            | (key, Just entry) <- [ (key, Map.lookup key entryMap) 
-            | (T3 _ _ key) <- childrenList ]]
+        [ (key, entry) | 
+            T3 _ _ key <- childrenList,
+            entry      <- maybeToList $ Map.lookup key entryMap ]
 
 
     -- Check if shortcut children are revoked
@@ -1360,22 +1360,21 @@ getParsedObject tx db key ifNotFound = do
 
 
 getFullCa :: Storage s => AppContext s -> TopDownContext -> Ca -> ValidatorT IO (Located CaCerObject)
-getFullCa appContext@AppContext {..} topDownContext ca = 
-    case ca of     
-        CaFull c -> pure c            
-        CaShort CaShortcut {..} -> do   
-            db <- liftIO $ readTVarIO database
-            roAppTx db $ \tx -> do 
-                increment $ topDownContext ^. #allTas . #topDownCounters . #readParsed
-                z <- getParsedObject tx db key $ do
-                        increment $ topDownContext ^. #allTas . #topDownCounters . #readOriginal
-                        getLocatedOriginal tx db key CER $ 
-                            internalError appContext 
-                                [i|Internal error, can't find a CA by its key #{key}.|]            
-                case z of 
-                    Keyed (Located locations (CerRO ca_)) _ -> pure $! Located locations ca_
-                    _ -> internalError appContext 
-                            [i|Internal error, wrong type of the CA found by its key #{key}.|]            
+getFullCa appContext@AppContext {..} topDownContext = \case    
+    CaFull c -> pure c            
+    CaShort CaShortcut {..} -> do   
+        db <- liftIO $ readTVarIO database
+        roAppTx db $ \tx -> do 
+            increment $ topDownContext ^. #allTas . #topDownCounters . #readParsed
+            z <- getParsedObject tx db key $ do
+                    increment $ topDownContext ^. #allTas . #topDownCounters . #readOriginal
+                    getLocatedOriginal tx db key CER $ 
+                        internalError appContext 
+                            [i|Internal error, can't find a CA by its key #{key}.|]            
+            case z of 
+                Keyed (Located locations (CerRO ca_)) _ -> pure $! Located locations ca_
+                _ -> internalError appContext 
+                        [i|Internal error, wrong type of the CA found by its key #{key}.|]            
     
 
 getCrlByKey :: Storage s => AppContext s -> ObjectKey -> ValidatorT IO (Keyed (Validated CrlObject))

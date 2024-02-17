@@ -62,7 +62,7 @@ newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL }
 
 data RrdpRepository = RrdpRepository {
         uri       :: RrdpURL,
-        rrdpMeta  :: Maybe (SessionId, RrdpSerial),
+        rrdpMeta  :: Maybe RrdpMeta,
         eTag      :: Maybe ETag,
         meta      :: RepositoryMeta        
     } 
