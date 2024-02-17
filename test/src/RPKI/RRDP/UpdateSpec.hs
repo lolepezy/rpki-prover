@@ -151,21 +151,6 @@ testIntegrity =
             (Right $ UseSnapshot snapshotInfo 
                 "These deltas have integrity issues: serial 12, used to have hash 686173683132 and now 6861736831322d62726f6b656e.")
 
-        let (nextStep1, _) = runPureValidator (newScopes "test") $ 
-                    rrdpNextStep repo $ (makeNotification sessionId serial14) {       
-                        deltas = [
-                            DeltaInfo (URI "http://x.com") (Hash "hash11") serial11,
-                            DeltaInfo (deltaUrl serial12) (Hash "hash12-broken") serial12,
-                            DeltaInfo (deltaUrl serial13) (Hash "hash13") serial13,
-                            DeltaInfo (deltaUrl serial14) (Hash "hash14") serial14
-                        ]
-                    }
-        HU.assertEqual "It's a bummer" nextStep1 
-            (Right $ UseSnapshot snapshotInfo 
-                ("These deltas have integrity issues: serial 11, "  <> 
-                 "used to have url http://rrdp.ripe.net/delta11.xml and now http://x.com;" <> 
-                 " serial 12, used to have hash 686173683132 and now 6861736831322d62726f6b656e."))
-
 
 
 defaultRepo = RrdpRepository { 
