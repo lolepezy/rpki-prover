@@ -345,13 +345,16 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
         -- 
         -- For rsync keep refresh interval the same.
         --   
+        vConfig = config ^. #validationConfig
+
         defaultRefreshInterval = 
             case repo of
-                RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
-                RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
+                RrdpR _  -> vConfig ^. #rrdpRepositoryRefreshInterval
+                RsyncR _ -> vConfig ^. #rsyncRepositoryRefreshInterval
 
         trimInterval interval = 
-            max (Seconds 60) (min (Seconds 600) interval)            
+            max (vConfig ^. #minFetchInterval) 
+                (min (vConfig ^. #maxFetchInterval) interval)            
 
         -- Extra seconds are to increase or decrese even very small values
         -- Increase by ~10% each time, decrease by ~30%
@@ -364,18 +367,21 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
             _      -> True
 
         in Just $ 
-            case (getMeta repo) ^. #refreshInterval of 
-                Nothing -> defaultRefreshInterval
-                Just ri -> 
-                    case rrdpStats of 
-                        Nothing                 -> defaultRefreshInterval
-                        Just RrdpFetchStat {..} -> 
-                            case action of 
-                                NothingToFetch _ -> trimInterval $ increaseInterval ri 
-                                FetchDeltas {..} 
-                                    | moreThanOne sortedDeltas -> trimInterval $ decreateInterval ri 
-                                    | otherwise                -> ri                                    
-                                FetchSnapshot _ _ -> ri                    
+            case vConfig ^. #fetchIntervalCalculation of 
+                Constant -> defaultRefreshInterval
+                Adaptive -> 
+                    case (getMeta repo) ^. #refreshInterval of 
+                        Nothing -> defaultRefreshInterval
+                        Just ri -> 
+                            case rrdpStats of 
+                                Nothing                 -> defaultRefreshInterval
+                                Just RrdpFetchStat {..} -> 
+                                    case action of 
+                                        NothingToFetch _ -> trimInterval $ increaseInterval ri 
+                                        FetchDeltas {..} 
+                                            | moreThanOne sortedDeltas -> trimInterval $ decreateInterval ri 
+                                            | otherwise                -> ri                                    
+                                        FetchSnapshot _ _ -> ri                    
 
     fetchType =
         -- If the fetch timed out then it's definitely for async fetch

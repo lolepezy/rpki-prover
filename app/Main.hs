@@ -241,6 +241,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
                 & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
                 & maybeSet (#validationConfig . #minObjectSize) minObjectSize
+                & #validationConfig . #fetchIntervalCalculation .~ 
+                    (if noAdaptiveFetchIntervals then Constant else Adaptive)
                 & maybeSet (#httpApiConf . #port) httpApiPort
                 & #rtrConfig .~ rtrConfig
                 & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
@@ -680,7 +682,11 @@ data CLIOptions wrapped = CLIOptions {
 
     noIncrementalValidation :: wrapped ::: Bool <?>
         ("Do not use incremental validation algorithm (incremental validation is the default " +++ 
-         "so default for this option is false).")    
+         "so default for this option is false)."),
+
+    noAdaptiveFetchIntervals :: wrapped ::: Bool <?>
+        ("Do not use adaptive fetch intervals for repositories (adaptive fetch intervals is the default " +++ 
+         "so default for this option is false).") 
 
 } deriving (Generic)
 
