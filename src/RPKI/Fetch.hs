@@ -128,8 +128,7 @@ fetchSync appContext@AppContext {..}
 {- 
   Fetch repositories in the async mode (i.e. concurrently to top-down validation).
 
-  For a given list of publication points try to fetch them one-by-one.
-  Return if one of them succeeds.
+  Fetch with fallback going through all (both RRDP and rsync) options.
 -}
 fetchAsync :: (MonadIO m, Storage s) => 
                     AppContext s       
@@ -356,7 +355,7 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
         -- Extra seconds are to increase or decrese even very small values
         -- Increase by ~10% each time, decrease by ~30%
         increaseInterval (Seconds s) = Seconds $ s + 1 + s `div` 10        
-        decreateInterval (Seconds s) = Seconds $ s - s `div` 3 - 1
+        decreaseInterval (Seconds s) = Seconds $ s - s `div` 3 - 1
 
         moreThanOne = \case 
             []  -> False
@@ -376,7 +375,7 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
                                     case action of 
                                         NothingToFetch _ -> trimInterval $ increaseInterval ri 
                                         FetchDeltas {..} 
-                                            | moreThanOne sortedDeltas -> trimInterval $ decreateInterval ri 
+                                            | moreThanOne sortedDeltas -> trimInterval $ decreaseInterval ri 
                                             | otherwise                -> ri                                    
                                         FetchSnapshot _ _ -> ri                    
 
