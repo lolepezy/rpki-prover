@@ -153,7 +153,7 @@ runWorkflow appContext@AppContext {..} tals = do
             Scheduling { 
                 initialDelay = 600_000_000,
                 interval = config ^. #cacheCleanupInterval,
-                taskDef = (CacheCleanupTask, cacheGC workflowShared),
+                taskDef = (CacheCleanupTask, cacheCleanup workflowShared),
                 persistent = True
             },        
             Scheduling {                 
@@ -300,7 +300,7 @@ runWorkflow appContext@AppContext {..} tals = do
                           
     -- Delete objects in the store that were read by top-down validation 
     -- longer than `cacheLifeTime` hours ago.
-    cacheGC WorkflowShared {..} worldVersion _ = do            
+    cacheCleanup WorkflowShared {..} worldVersion _ = do            
         executeOrDie
             cleanupUntochedObjects
             (\z elapsed -> 
@@ -311,7 +311,7 @@ runWorkflow appContext@AppContext {..} tals = do
                             atomically $ writeTVar deletedAnythingFromDb True
                         logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
                                          [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|])
-        where
+      where
         cleanupUntochedObjects = do                 
             ((z, _), workerId) <- runCleapUpWorker worldVersion      
             case z of 
