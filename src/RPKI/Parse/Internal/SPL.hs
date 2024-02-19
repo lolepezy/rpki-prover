@@ -27,7 +27,7 @@ import qualified RPKI.Util                  as U
 -- 
 parseSpl :: BS.ByteString -> PureValidatorT SplObject
 parseSpl bs = do    
-    asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs  
+    asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs      
     signedSpl <- fromEither $ first (parseErr . U.convert) 
                     $ runParseASN1 (parseSignedObject $ parseSignedContent parseSpls') asns
     hash' <- getMetaFromSigned signedSpl bs
@@ -35,25 +35,25 @@ parseSpl bs = do
   where     
     parseSpls' = onNextContainer Sequence $ do      
         -- TODO Fix it so that it would work with present attestation version
-        asId <- getInteger (pure . fromInteger) "Wrong ASid"
-        mconcat <$> onNextContainer Sequence (getMany $
-            onNextContainer Sequence $ 
-                getAddressFamily "Expected an address family here" >>= \case 
-                    Right Ipv4F -> getSpl asId Ipv4F
-                    Right Ipv6F -> getSpl asId Ipv6F
-                    Left af     -> throwParseError $ "Unsupported address family: " ++ show af)
+        asId <- getInteger (pure . fromInteger) "Wrong ASid"        
+        prefixes <- 
+            fmap mconcat $ onNextContainer Sequence $ 
+                getMany $ onNextContainer Sequence $ do
+                    afi <- getAddressFamily "Expected an address family here"                
+                    case afi of 
+                        Right Ipv4F -> parsePrefixes asId Ipv4F
+                        Right Ipv6F -> parsePrefixes asId Ipv6F
+                        Left af     -> throwParseError $ "Unsupported address family: " ++ show af
+        pure $ SplPayload (ASN $ fromIntegral asId) prefixes
 
-    getSpl :: Int -> AddrFamily -> ParseASN1 [SplVrp]
-    getSpl asId addressFamily = onNextContainer Sequence $ getMany $
-        getNextContainerMaybe Sequence >>= \case       
-            Just [BitString (BitArray nzBits bs')] ->
-                makeVrp asId bs' nzBits nzBits addressFamily
-            Just [BitString (BitArray nzBits bs'), IntVal maxLength] ->
-                makeVrp asId bs' nzBits maxLength addressFamily
-            Just a  -> throwParseError [i|Unexpected ROA content: #{a}|]
-            Nothing -> throwParseError "Unexpected ROA content"
+    parsePrefixes :: Int -> AddrFamily -> ParseASN1 [IpPrefix]
+    parsePrefixes asId addressFamily = onNextContainer Sequence $ getMany $
+        getNext >>= \case       
+            BitString (BitArray nzBits bs') -> 
+                makePrefix asId bs' nzBits nzBits addressFamily
+            a -> throwParseError [i|Unexpected prefix list content: #{a}|]            
 
-    makeVrp asId bs' nonZeroBitCount prefixMaxLength addressFamily = do
+    makePrefix asId bs' nonZeroBitCount prefixMaxLength addressFamily = do
         when (nonZeroBitCount > fromIntegral prefixMaxLength) $
             throwParseError [i|Actual prefix length #{nonZeroBitCount} is bigger than the maximum length #{prefixMaxLength}.|]
 
@@ -64,17 +64,14 @@ parseSpl bs = do
                 | prefixMaxLength > 32 -> 
                     throwParseError [i|Too big value for IPv4 prefix max length: #{prefixMaxLength}|]
                 | otherwise ->
-                    pure $ mkVrp nonZeroBitCount prefixMaxLength Ipv4P
+                    pure $ mkPrefix nonZeroBitCount prefixMaxLength Ipv4P
             Ipv6F 
                 | prefixMaxLength <= 0  -> 
                     throwParseError [i|Negative or zero value for IPv6 prefix max length: #{prefixMaxLength}|]
                 | prefixMaxLength > 128 -> 
                     throwParseError [i|Too big value for IPv6 prefix max length: #{prefixMaxLength}|]
                 | otherwise ->
-                    pure $ mkVrp nonZeroBitCount prefixMaxLength Ipv6P
+                    pure $ mkPrefix nonZeroBitCount prefixMaxLength Ipv6P
       where 
-        mkVrp :: (Integral a, Integral c, Prefix b) => a -> c -> (b -> IpPrefix) -> SplVrp
-        mkVrp nz len mkIp = SplVrp $ Vrp 
-                    (ASN $ fromIntegral asId)
-                    (mkIp $ make bs' (fromIntegral nz)) 
-                    (PrefixLength $ fromIntegral len)
+        mkPrefix :: (Integral a, Integral c, Prefix b) => a -> c -> (b -> IpPrefix) -> IpPrefix
+        mkPrefix nz len mkIp = mkIp $ make bs' (fromIntegral nz)

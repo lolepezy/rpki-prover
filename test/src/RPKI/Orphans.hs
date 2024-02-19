@@ -271,7 +271,7 @@ instance Arbitrary Aspa where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary SplVrp where
+instance Arbitrary SplPayload where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

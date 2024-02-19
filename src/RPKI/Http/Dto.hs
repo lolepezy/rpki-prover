@@ -219,12 +219,8 @@ objectToDto = \case
                 prefixes = map (\(Vrp _ p l) -> RoaPrefixDto p l) vrps
             in RoaDto {..}
 
-    splDto r = let
-                vrps = getCMSContent $ r ^. #cmsPayload
-                -- TODO Fix ROA somehow, make it NonEmpty?
-                asn = head $ map (\(SplVrp (Vrp a _ _)) -> a) vrps
-                prefixes = map (\(SplVrp (Vrp _ p l)) -> RoaPrefixDto p l) vrps
-            in SplDto $ RoaDto {..}
+    splDto r = let SplPayload asn prefixes = getCMSContent $ r ^. #cmsPayload 
+                in SplDto {..}
 
     crlDto CrlObject {..} = let
             SignCRL {..} = signCrl

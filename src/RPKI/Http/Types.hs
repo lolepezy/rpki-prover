@@ -229,7 +229,10 @@ data RoaDto = RoaDto {
     }  
     deriving stock (Eq, Show, Generic)
 
-newtype SplDto = SplDto RoaDto
+data SplDto = SplDto {
+        asn      :: ASN,
+        prefixes :: [IpPrefix]
+    }  
     deriving stock (Eq, Show, Generic)
 
 data RoaPrefixDto = RoaPrefixDto {
@@ -336,6 +339,7 @@ instance ToJSON ObjectDto where
         CRLD v         -> object ["type" .= ("CRL" :: Text), "value" .= toJSON v]
         BGPSecD v      -> object ["type" .= ("BGPSec" :: Text), "value" .= toJSON v]
         ROAD v  -> object ["type" .= ("ROA" :: Text), "value" .= toJSON v]
+        SPLD v  -> object ["type" .= ("PrefixList" :: Text), "value" .= toJSON v]
         ASPAD v -> object ["type" .= ("ASPA" :: Text), "value" .= toJSON v]
         GBRD v  -> object ["type" .= ("GBR" :: Text), "value" .= toJSON v]
         RSCD v  -> object ["type" .= ("RSC" :: Text), "value" .= toJSON v]
@@ -356,6 +360,7 @@ instance ToJSON OIDDto where
 instance ToJSON ManifestDto
 instance ToJSON CrlDto
 instance ToJSON RoaDto
+instance ToJSON SplDto
 instance ToJSON RoaPrefixDto
 instance ToJSON GbrDto
 instance ToJSON RscDto
