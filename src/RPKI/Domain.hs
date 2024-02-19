@@ -512,10 +512,6 @@ data Vrp = Vrp ASN IpPrefix PrefixLength
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
-newtype SplVrp = SplVrp Vrp 
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
-
 data SplPayload = SplPayload ASN [IpPrefix]     
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
