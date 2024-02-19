@@ -128,6 +128,7 @@ data TopDownCounters = TopDownCounters {
         originalSpl  :: IORef Int,
         originalAspa :: IORef Int,        
         shortcutRoa  :: IORef Int,
+        shortcutSpl  :: IORef Int,
         shortcutAspa :: IORef Int,        
         shortcutTroubled    :: IORef Int,
         newChildren         :: IORef Int,
@@ -196,6 +197,7 @@ newTopDownCounters = do
     updateMftChildren <- newIORef 0    
 
     shortcutRoa  <- newIORef 0        
+    shortcutSpl  <- newIORef 0        
     shortcutAspa <- newIORef 0            
     shortcutTroubled <- newIORef 0        
 
@@ -1259,6 +1261,14 @@ validateCaNoFetch
                         moreVrps $ Count $ fromIntegral $ length vrps
                         increment $ topDownCounters ^. #shortcutRoa
                         rememberPayloads typed (T2 vrps childKey :)
+
+                SplChild s@SplShortcut {..} _ -> 
+                    vFocusOn ObjectFocus childKey $ do                    
+                        vHoist $ validateObjectValidityPeriod s now
+                        validateLocationForShortcut key
+                        oneMoreSpl                        
+                        increment $ topDownCounters ^. #shortcutSpl
+                        rememberPayloads typed (splPayload :)
                 
                 AspaChild a@AspaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do 

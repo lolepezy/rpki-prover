@@ -125,7 +125,8 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BGPCertIPv4Present |
                         BGPCertIPv6Present | 
                         BGPCertBrokenASNs  | 
-                        SplAsnNotInResourceSet ASN 
+                        SplAsnNotInResourceSet ASN [AsResource] | 
+                        SplNotIpResources [IpPrefix]
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
     

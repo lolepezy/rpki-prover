@@ -137,6 +137,9 @@ instance {-# OVERLAPPING #-}  WithValidityPeriod CrlShortcut where
 instance {-# OVERLAPPING #-}  WithValidityPeriod RoaShortcut where
     getValidityPeriod RoaShortcut {..} = (notValidBefore, notValidAfter)
 
+instance {-# OVERLAPPING #-}  WithValidityPeriod SplShortcut where
+    getValidityPeriod SplShortcut {..} = (notValidBefore, notValidAfter)
+
 instance {-# OVERLAPPING #-}  WithValidityPeriod AspaShortcut where
     getValidityPeriod AspaShortcut {..} = (notValidBefore, notValidAfter)
 
@@ -151,6 +154,7 @@ getMftChildSerial :: MftChild -> Maybe Serial
 getMftChildSerial = \case 
     CaChild _ serial     -> Just serial 
     RoaChild _ serial    -> Just serial 
+    SplChild _ serial    -> Just serial 
     AspaChild _ serial   -> Just serial 
     BgpSecChild _ serial -> Just serial 
     GbrChild _ serial    -> Just serial 
