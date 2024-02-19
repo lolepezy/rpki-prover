@@ -125,22 +125,22 @@ data GbrShortcut = GbrShortcut {
     deriving anyclass TheBinary
 
 
-instance {-# OVERLAPPING #-}  WithValidityPeriod CaShortcut where
+instance {-# OVERLAPPING #-} WithValidityPeriod CaShortcut where
     getValidityPeriod CaShortcut {..} = (notValidBefore, notValidAfter)
 
-instance {-# OVERLAPPING #-}  WithValidityPeriod MftShortcut where
+instance {-# OVERLAPPING #-} WithValidityPeriod MftShortcut where
     getValidityPeriod MftShortcut {..} = (notValidBefore, notValidAfter)
 
-instance {-# OVERLAPPING #-}  WithValidityPeriod CrlShortcut where
+instance {-# OVERLAPPING #-} WithValidityPeriod CrlShortcut where
     getValidityPeriod CrlShortcut {..} = (notValidBefore, notValidAfter)
 
-instance {-# OVERLAPPING #-}  WithValidityPeriod RoaShortcut where
+instance {-# OVERLAPPING #-} WithValidityPeriod RoaShortcut where
     getValidityPeriod RoaShortcut {..} = (notValidBefore, notValidAfter)
 
-instance {-# OVERLAPPING #-}  WithValidityPeriod SplShortcut where
+instance {-# OVERLAPPING #-} WithValidityPeriod SplShortcut where
     getValidityPeriod SplShortcut {..} = (notValidBefore, notValidAfter)
 
-instance {-# OVERLAPPING #-}  WithValidityPeriod AspaShortcut where
+instance {-# OVERLAPPING #-} WithValidityPeriod AspaShortcut where
     getValidityPeriod AspaShortcut {..} = (notValidBefore, notValidAfter)
 
 instance {-# OVERLAPPING #-} WithValidityPeriod BgpSecShortcut where
