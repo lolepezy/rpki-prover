@@ -41,19 +41,19 @@ parseSpl bs = do
                 getMany $ onNextContainer Sequence $ do
                     afi <- getAddressFamily "Expected an address family here"                
                     case afi of 
-                        Right Ipv4F -> parsePrefixes asId Ipv4F
-                        Right Ipv6F -> parsePrefixes asId Ipv6F
+                        Right Ipv4F -> parsePrefixes Ipv4F
+                        Right Ipv6F -> parsePrefixes Ipv6F
                         Left af     -> throwParseError $ "Unsupported address family: " ++ show af
-        pure $ SplPayload (ASN $ fromIntegral asId) prefixes
+        pure $ SplPayload (ASN asId) prefixes
 
-    parsePrefixes :: Int -> AddrFamily -> ParseASN1 [IpPrefix]
-    parsePrefixes asId addressFamily = onNextContainer Sequence $ getMany $
+    parsePrefixes :: AddrFamily -> ParseASN1 [IpPrefix]
+    parsePrefixes addressFamily = onNextContainer Sequence $ getMany $
         getNext >>= \case       
             BitString (BitArray nzBits bs') -> 
-                makePrefix asId bs' nzBits nzBits addressFamily
+                makePrefix bs' nzBits nzBits addressFamily
             a -> throwParseError [i|Unexpected prefix list content: #{a}|]            
 
-    makePrefix asId bs' nonZeroBitCount prefixMaxLength addressFamily = do
+    makePrefix bs' nonZeroBitCount prefixMaxLength addressFamily = do
         when (nonZeroBitCount > fromIntegral prefixMaxLength) $
             throwParseError [i|Actual prefix length #{nonZeroBitCount} is bigger than the maximum length #{prefixMaxLength}.|]
 
@@ -74,4 +74,4 @@ parseSpl bs = do
                     pure $ mkPrefix nonZeroBitCount prefixMaxLength Ipv6P
       where 
         mkPrefix :: (Integral a, Integral c, Prefix b) => a -> c -> (b -> IpPrefix) -> IpPrefix
-        mkPrefix nz len mkIp = mkIp $ make bs' (fromIntegral nz)
+        mkPrefix nz _ mkIp = mkIp $ make bs' (fromIntegral nz)

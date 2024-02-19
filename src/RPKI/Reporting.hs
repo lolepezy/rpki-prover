@@ -124,7 +124,8 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BGPCertSIAPresent BS.ByteString | 
                         BGPCertIPv4Present |
                         BGPCertIPv6Present | 
-                        BGPCertBrokenASNs                         
+                        BGPCertBrokenASNs  | 
+                        SplAsnNotInResourceSet ASN 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
     
@@ -407,6 +408,7 @@ data ValidationMetric = ValidationMetric {
         uniqueVrpNumber :: Count,        
         validCertNumber :: Count,
         validRoaNumber  :: Count,        
+        validSplNumber  :: Count,        
         validMftNumber  :: Count,
         validCrlNumber  :: Count,
         validGbrNumber  :: Count,

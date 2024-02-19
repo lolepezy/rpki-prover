@@ -25,6 +25,7 @@ import           RPKI.Store.Base.Serialisation
 
 data MftChild = CaChild CaShortcut Serial
               | RoaChild RoaShortcut Serial
+              | SplChild SplShortcut Serial
               | AspaChild AspaShortcut Serial
               | BgpSecChild BgpSecShortcut Serial
               | GbrChild GbrShortcut Serial
@@ -81,6 +82,15 @@ data Ca = CaShort CaShortcut
 data RoaShortcut = RoaShortcut {
         key            :: ObjectKey,        
         vrps           :: [Vrp],
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
+data SplShortcut = SplShortcut {
+        key            :: ObjectKey,        
+        splPayload     :: SplPayload,
         notValidBefore :: Instant,
         notValidAfter  :: Instant
     }
