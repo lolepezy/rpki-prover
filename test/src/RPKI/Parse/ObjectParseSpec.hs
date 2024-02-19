@@ -58,5 +58,6 @@ shouldParseSpl = HU.testCase "Should parse an SPL object" $ do
     bs <- BS.readFile "test/data/9X0AhXWTJDl8lJhfOwvnac-42CA.spl"
     let (Right splObject, _) = runPureValidator (newScopes "parse") $ parseSpl bs
 
-    let spl = getCMSContent $ cmsPayload splObject
-    putStrLn $ "spl = " <> show spl
+    let SplPayload asn prefixes = getCMSContent $ cmsPayload splObject
+    HU.assertEqual "Wrong ASN" asn (ASN 15562)
+    HU.assertEqual "Wrong prefix list length" (length prefixes) 23    
