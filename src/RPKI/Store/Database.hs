@@ -825,27 +825,23 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
         versions <- roTx db (`validationVersions` db)
         let (toDelete, toKeep) = List.partition tooOld versions
 
-        if null toDelete then do 
-            kept <- roTx db $ \tx -> M.fold tx hashToKey (\n _ _ -> pure $! n + 1) 0
-            pure $ CleanUpResult 0 kept 0 deletedVersions
-        else do
-            rwTx db $ \tx -> do
-                -- delete versions and payloads associated with them, 
-                -- e.g. VRPs, ASPAs, BGPSec certificatees, etc.
-                forM_ toDelete $ \version -> do 
-                    deleteVersion tx db version                    
-                    deletePayloads tx db version
-                    M.delete tx validatedByVersion version
-                        
-                (deletedObjects, keptObjects) <- deleteStaleObjects tx toKeep
-                                                        
-                -- Clean up the association between AKI and last valid manifest hash            
-                cleanupLatestValidMfts tx
+        rwTx db $ \tx -> do
+            -- delete versions and payloads associated with them, 
+            -- e.g. VRPs, ASPAs, BGPSec certificatees, etc.
+            forM_ toDelete $ \version -> do 
+                deleteVersion tx db version                    
+                deletePayloads tx db version
+                M.delete tx validatedByVersion version
+                    
+            (deletedObjects, keptObjects) <- deleteStaleObjects tx toKeep
+                                                    
+            -- Clean up the association between AKI and last valid manifest hash            
+            cleanupLatestValidMfts tx
 
-                -- Delete URLs that are now not referred by any object
-                deletedURLs <- deleteDanglingUrls db tx
+            -- Delete URLs that are now not referred by any object
+            deletedURLs <- deleteDanglingUrls db tx
 
-                pure $! CleanUpResult {..}
+            pure $! CleanUpResult {..}
   where
 
     cleanupLatestValidMfts tx = liftIO $ do
