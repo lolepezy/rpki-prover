@@ -173,6 +173,7 @@ objectToDto = \case
     -- CMS-based stuff
     MftRO m  -> ManifestD $ cmsDto m $ manifestDto m
     RoaRO r  -> ROAD $ cmsDto r $ roaDto r
+    SplRO r  -> SPLD $ cmsDto r $ splDto r
     GbrRO g  -> GBRD $ cmsDto g $ gbrObjectToDto g
     RscRO r  -> RSCD $ cmsDto r $ rscDto r
     AspaRO a -> ASPAD $ cmsDto a $ aspaDto a
@@ -217,6 +218,13 @@ objectToDto = \case
                 asn = head $ map (\(Vrp a _ _) -> a) vrps
                 prefixes = map (\(Vrp _ p l) -> RoaPrefixDto p l) vrps
             in RoaDto {..}
+
+    splDto r = let
+                vrps = getCMSContent $ r ^. #cmsPayload
+                -- TODO Fix ROA somehow, make it NonEmpty?
+                asn = head $ map (\(SplVrp (Vrp a _ _)) -> a) vrps
+                prefixes = map (\(SplVrp (Vrp _ p l)) -> RoaPrefixDto p l) vrps
+            in SplDto $ RoaDto {..}
 
     crlDto CrlObject {..} = let
             SignCRL {..} = signCrl

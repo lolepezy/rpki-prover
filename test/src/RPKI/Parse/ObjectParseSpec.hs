@@ -13,6 +13,7 @@ import           RPKI.Resources.Types
 import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Parse.Internal.Aspa
+import           RPKI.Parse.Internal.SPL
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit        as HU
@@ -26,7 +27,8 @@ import qualified Test.Tasty.HUnit        as HU
 objectParseSpec :: TestTree
 objectParseSpec = testGroup "Unit tests for object parsing" [
     shoudlParseBGPSec,
-    shouldParseAspa
+    shouldParseAspa,
+    shouldParseSpl
   ]
 
 
@@ -51,3 +53,10 @@ shouldParseAspa = HU.testCase "Should parse an ASPA object" $ do
     let Aspa {..} = getCMSContent $ cmsPayload aspaObject
     HU.assertEqual "Wrong customer" customer (ASN 204325)
     HU.assertEqual "Wrong providers" providers (Set.fromList [ASN 65000, ASN 65002, ASN 65003])    
+
+shouldParseSpl = HU.testCase "Should parse an SPL object" $ do        
+    bs <- BS.readFile "test/data/9X0AhXWTJDl8lJhfOwvnac-42CA.spl"
+    let (Right splObject, _) = runPureValidator (newScopes "parse") $ parseSpl bs
+
+    let spl = getCMSContent $ cmsPayload splObject
+    putStrLn $ "spl = " <> show spl

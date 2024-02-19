@@ -34,6 +34,7 @@ import           RPKI.Parse.Internal.Common
 import           RPKI.Parse.Internal.CRL
 import           RPKI.Parse.Internal.MFT
 import           RPKI.Parse.Internal.ROA
+import           RPKI.Parse.Internal.SPL
 import           RPKI.Parse.Internal.GBR
 import           RPKI.Parse.Internal.RSC
 import           RPKI.Parse.Internal.Aspa
@@ -52,6 +53,7 @@ rpkiObjectType s =
         "gbr" -> Just GBR
         "sig" -> Just RSC 
         "asa" -> Just ASPA
+        "spl" -> Just SPL
         _      -> Nothing
 
 -- | 
@@ -96,6 +98,7 @@ readObjectOfType objectType content =
 
         MFT  -> parse_ parseMft MftRO content
         ROA  -> parse_ parseRoa RoaRO content
+        SPL  -> parse_ parseSpl SplRO content
         CRL  -> parse_ parseCrl CrlRO content            
         GBR  -> parse_ parseGbr GbrRO content            
         RSC  -> parse_ parseRsc RscRO content            

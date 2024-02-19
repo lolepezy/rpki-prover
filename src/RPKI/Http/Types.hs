@@ -135,6 +135,7 @@ data ObjectDto = CertificateD (ObjectContentDto CertificateDto)
                 | CRLD (ObjectContentDto CrlDto)
                 | BGPSecD (ObjectContentDto BgpCertDto)                
                 | ROAD (ObjectContentDto (CMSObjectDto RoaDto))
+                | SPLD (ObjectContentDto (CMSObjectDto SplDto))
                 | ASPAD (ObjectContentDto (CMSObjectDto AspaDto))
                 | GBRD (ObjectContentDto (CMSObjectDto GbrDto))
                 | RSCD (ObjectContentDto (CMSObjectDto RscDto))
@@ -226,6 +227,9 @@ data RoaDto = RoaDto {
         asn      :: ASN,
         prefixes :: [RoaPrefixDto]
     }  
+    deriving stock (Eq, Show, Generic)
+
+newtype SplDto = SplDto RoaDto
     deriving stock (Eq, Show, Generic)
 
 data RoaPrefixDto = RoaPrefixDto {
@@ -381,6 +385,7 @@ instance ToSchema ExtensionsDto
 instance ToSchema OIDDto
 instance ToSchema ManifestDto
 instance ToSchema CrlDto
+instance ToSchema SplDto
 instance ToSchema RoaDto
 instance ToSchema RoaPrefixDto
 instance ToSchema GbrDto
