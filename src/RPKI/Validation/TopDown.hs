@@ -1529,6 +1529,7 @@ reportCounters AppContext {..} TopDownCounters {..} = do
     updateMftChildrenN <- readIORef updateMftChildren
 
     shortcutRoaN <- readIORef shortcutRoa
+    shortcutSplN <- readIORef shortcutSpl
     shortcutAspaN <- readIORef shortcutAspa
     shortcutTroubledN <- readIORef shortcutTroubled
                             
@@ -1545,6 +1546,7 @@ reportCounters AppContext {..} TopDownCounters {..} = do
                       [i|newChildrenN = #{newChildrenN}, overlappingChildrenN = #{overlappingChildrenN}, |] <>
                       [i|updateMftMetaN = #{updateMftMetaN}, updateMftChildrenN = #{updateMftChildrenN}, |] <>
                       [i|shortcutRoaN = #{shortcutRoaN}, originalRoaN = #{originalRoaN}, |] <>
+                      [i|shortcutSplN = #{shortcutSplN}, originalSplN = #{originalSplN}, |] <>
                       [i|shortcutAspaN = #{shortcutAspaN}, originalAspaN = #{originalAspaN}, |] <>
                       [i|shortcutTroubledN = #{shortcutTroubledN}, |] <>
                       [i|readOriginalN = #{readOriginalN}, readParsedN = #{readParsedN}.|]
