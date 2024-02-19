@@ -211,46 +211,51 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     rsyncPrefetchUrls <- rsyncPrefetches cliOptions            
 
     let config = defaults
-                & #programBinaryPath .~ programPath
-                & #rootDirectory .~ root
-                & #talDirectory .~ tald
-                & #tmpDirectory .~ tmpd
-                & #cacheDirectory .~ cached
-                & #parallelism .~ parallelism
-                & #rsyncConf . #rsyncRoot .~ rsyncd
-                & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
-                & #rsyncConf . #enabled .~ not noRsync
-                & #rsyncConf . #rsyncPrefetchUrls .~ rsyncPrefetchUrls
-                & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
-                & maybeSet (#rsyncConf . #asyncRsyncTimeout) (Seconds <$> asyncRsyncTimeout)
-                & #rrdpConf . #tmpRoot .~ tmpd
-                & #rrdpConf . #enabled .~ not noRrdp
-                & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
-                & maybeSet (#rrdpConf . #asyncRrdpTimeout) (Seconds <$> asyncRrdpTimeout)
-                & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
-                & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
-                & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
-                & #validationConfig . #manifestProcessing .~
-                        (if strictManifestValidation then RFC6486_Strict else RFC9286)
-                & #validationConfig . #validationAlgorithm .~
-                        (if noIncrementalValidation then FullEveryIteration else Incremental)
-                & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
-                & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
-                & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
-                & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
-                & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
-                & maybeSet (#validationConfig . #minObjectSize) minObjectSize
-                & maybeSet (#httpApiConf . #port) httpApiPort
-                & #rtrConfig .~ rtrConfig
-                & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
-                & maybeSet #versionNumberToKeep versionNumberToKeep
-                & #lmdbSizeMb .~ lmdbRealSize
-                & #localExceptions .~ localExceptions
-                & #logLevel .~ derivedLogLevel
-                & maybeSet #metricsPrefix (convert <$> metricsPrefix)
-                & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
-                & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
-                & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
+            & #programBinaryPath .~ programPath
+            & #rootDirectory .~ root
+            & #talDirectory .~ tald
+            & #tmpDirectory .~ tmpd
+            & #cacheDirectory .~ cached
+            & #parallelism .~ parallelism
+            & #rsyncConf . #rsyncRoot .~ rsyncd
+            & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
+            & #rsyncConf . #enabled .~ not noRsync
+            & #rsyncConf . #rsyncPrefetchUrls .~ rsyncPrefetchUrls
+            & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
+            & maybeSet (#rsyncConf . #asyncRsyncTimeout) (Seconds <$> asyncRsyncTimeout)
+            & #rrdpConf . #tmpRoot .~ tmpd
+            & #rrdpConf . #enabled .~ not noRrdp
+            & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
+            & maybeSet (#rrdpConf . #asyncRrdpTimeout) (Seconds <$> asyncRrdpTimeout)
+            & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
+            & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
+            & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
+            & #validationConfig . #manifestProcessing .~
+                    (if strictManifestValidation then RFC6486_Strict else RFC9286)
+            & #validationConfig . #validationAlgorithm .~
+                    (if noIncrementalValidation then FullEveryIteration else Incremental)
+            & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
+            & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
+            & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
+            & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
+            & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
+            & maybeSet (#validationConfig . #minObjectSize) minObjectSize
+            & maybeSet (#httpApiConf . #port) httpApiPort
+            & #rtrConfig .~ rtrConfig
+            & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
+            & maybeSet #versionNumberToKeep versionNumberToKeep
+            & #lmdbSizeMb .~ lmdbRealSize
+            & #localExceptions .~ localExceptions
+            & #logLevel .~ derivedLogLevel
+            & maybeSet #metricsPrefix (convert <$> metricsPrefix)
+            & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
+            & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
+            & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory            
+        
+    let adjustedConfig = config 
+            -- Cache must be cleaned up at least as often as the 
+            -- lifetime of the objects in it    
+            & #cacheCleanupInterval %~ (`min` (config ^. #cacheLifeTime))
 
     let readSlurms files = do
             logDebug logger [i|Reading SLURM files: #{files}.|]
@@ -266,7 +271,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                     (if resetCache then Reset else UseExisting)
                     logger
                     cached
-                    config
+                    adjustedConfig
 
     (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
     database <- liftIO $ newTVarIO db    
@@ -293,7 +298,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
         Lmdb.WasCompatible    -> pure ()
 
     logInfo logger [i|Created application context with configuration: 
-#{shower (appContext ^. typed @Config)}|]
+#{shower (adjustedConfig)}|]
     pure appContext
 
 
