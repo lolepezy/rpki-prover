@@ -296,13 +296,13 @@ data CMSBasedObject a = CMSBasedObject {
 -- https://datatracker.ietf.org/doc/rfc9286/
 type MftObject = CMSBasedObject Manifest
 
--- https://datatracker.ietf.org/doc/html/rfc6482
+-- https://datatracker.ietf.org/doc/rfc6482
 type RoaObject = CMSBasedObject [Vrp]
 
--- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-rpki-prefixlist
+-- https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-prefixlist
 type SplObject = CMSBasedObject SplPayload
 
--- https://datatracker.ietf.org/doc/html/rfc6493
+-- https://datatracker.ietf.org/doc/rfc6493
 type GbrObject = CMSBasedObject Gbr
 
 -- https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-rsc/
@@ -509,6 +509,11 @@ newtype ResourceCertificate = ResourceCertificate (SomeRFC RawResourceCertificat
     deriving newtype (WithRFC)
 
 data Vrp = Vrp ASN IpPrefix PrefixLength
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
+-- Signed Prefix List normalised payload
+data SplN = SplN ASN IpPrefix
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
@@ -747,6 +752,7 @@ data TA = TA {
 
 data Payloads a = Payloads {
         vrps     :: a,
+        spls     :: Set.Set SplN,
         aspas    :: Set.Set Aspa,
         gbrs     :: Set.Set (T2 Hash Gbr),
         bgpCerts :: Set.Set BGPSecPayload  

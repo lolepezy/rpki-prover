@@ -53,10 +53,13 @@ data API api = API {
         vrpsJsonUnique :: api :- "vrps-unique" :> QueryParam "version" Text 
                                                 :> Get '[JSON] [VrpMinimalDto],
 
+        -- splJson :: api :- "spls" :> QueryParam "version" Text 
+        --                           :> Get '[JSON] [SplDto],
+
         aspas    :: api :- "aspa" :> Get '[JSON] [AspaDto],
         gbrs     :: api :- "gbrs" :> Get '[JSON] [Located GbrDto],
 
-        bgpCerts :: api :- "bgpsec" :> Get '[JSON] [BgpCertDto],
+        bgpCerts         :: api :- "bgpsec" :> Get '[JSON] [BgpCertDto],
         bgpCertsFiltered :: api :- "bgpsec-filtered" :> Get '[JSON] [BgpCertDto],
 
         slurm :: api :- "slurm" :> Get '[JSON] Slurm,

@@ -317,6 +317,10 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
             gbrs     <- fmap Set.fromList $ readIORef $ builder ^. #gbrs 
             bgpCerts <- fmap Set.fromList $ readIORef $ builder ^. #bgpCerts    
 
+            splPayloads <- readIORef $ builder ^. #spls            
+            let spls = Set.fromList [ SplN asn prefix | 
+                                      SplPayload asn prefixes <- splPayloads, prefix <- prefixes ]
+
             let payloads = Payloads {..}        
             let payloads' = payloads & #vrps .~ 
                                 newVrps taName (Set.fromList [ v | T2 vrp _ <- vrps, v <- vrp ])

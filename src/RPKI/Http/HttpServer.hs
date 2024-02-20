@@ -79,6 +79,7 @@ httpServer appContext = genericServe HttpApi {
         vrpsJsonUnique = getVRPsUnique appContext,
 
         gbrs  = liftIO $ getGBRs appContext,
+        -- splJson = liftIO $ getSpls appContext,
         aspas = liftIO $ getASPAs appContext,
         bgpCerts = liftIO $ getBGPCerts appContext,
         bgpCertsFiltered = liftIO $ getBGPCertsFiltered appContext,
@@ -225,6 +226,11 @@ getASPAs :: Storage s => AppContext s -> IO [AspaDto]
 getASPAs AppContext {..} = do
     aspas <- getLatestAspas =<< readTVarIO database
     pure $ map aspaToDto $ Set.toList aspas
+
+-- getSpls :: Storage s => AppContext s -> IO [SplDto]
+-- getSpls AppContext {..} = do
+--     aspas <- getLatestAspas =<< readTVarIO database
+--     pure $ map aspaToDto $ Set.toList aspas
 
 getBGPCerts :: Storage s => AppContext s -> IO [BgpCertDto]
 getBGPCerts AppContext {..} =
