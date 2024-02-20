@@ -84,6 +84,7 @@ data DB s = DB {
     objectStore      :: RpkiObjectStore s,    
     validationsStore :: ValidationsStore s,    
     vrpStore         :: VRPStore s,
+    splStore         :: SplStore s,
     aspaStore        :: AspaStore s,
     gbrStore         :: GbrStore s,
     bgpStore         :: BgpStore s,
@@ -168,6 +169,11 @@ instance Storage s => WithStorage s (MetricStore s) where
 -- | VRP store
 newtype VRPStore s = VRPStore {    
         roas :: SMap "roas" s WorldVersion (Compressed Roas)
+    }
+    deriving stock (Generic)
+
+newtype SplStore s = SplStore {    
+        spls :: SMap "spls" s WorldVersion (Compressed (Set.Set SplN))
     }
     deriving stock (Generic)
 
@@ -591,7 +597,6 @@ getRoas :: (MonadIO m, Storage s) =>
             Tx s mode -> DB s -> WorldVersion -> m (Maybe Roas)
 getRoas tx DB { vrpStore = VRPStore m } wv = liftIO $ fmap unCompressed <$> M.get tx m wv
 
-
 deleteRoas :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteRoas tx DB { vrpStore = VRPStore r } wv = liftIO $ M.delete tx r wv
@@ -642,6 +647,21 @@ getBgps :: (MonadIO m, Storage s) =>
             Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set BGPSecPayload))
 getBgps tx DB { bgpStore = BgpStore m } wv = 
     liftIO $ fmap unCompressed <$> M.get tx m wv    
+
+getSpls :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set SplN))
+getSpls tx DB { splStore = SplStore m } wv = 
+    liftIO $ fmap unCompressed <$> M.get tx m wv  
+
+deleteSpls :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteSpls tx DB { splStore = SplStore m } wv = liftIO $ M.delete tx m wv    
+
+saveSpls :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> Set.Set SplN -> WorldVersion -> m ()
+saveSpls tx DB { splStore = SplStore m } spls worldVersion = 
+    liftIO $ M.put tx m worldVersion (Compressed spls)
+
 
 saveVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> VersionKind -> m ()
@@ -898,6 +918,7 @@ deletePayloads tx db worldVersion = do
     deleteGbrs tx db worldVersion            
     deleteBgps tx db worldVersion                
     deleteRoas tx db worldVersion            
+    deleteSpls tx db worldVersion            
     deleteMetrics tx db worldVersion
     deleteSlurms tx db worldVersion
 

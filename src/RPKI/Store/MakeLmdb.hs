@@ -76,6 +76,7 @@ createDatabase env logger checkAction = do
         taStore          <- TAStore <$> createMap        
         validationsStore <- ValidationsStore <$> createMap
         vrpStore         <- VRPStore <$> createMap
+        splStore         <- SplStore <$> createMap
         aspaStore        <- AspaStore <$> createMap    
         gbrStore         <- GbrStore <$> createMap 
         bgpStore         <- BgpStore <$> createMap
