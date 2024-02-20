@@ -53,14 +53,20 @@ data API api = API {
         vrpsJsonUnique :: api :- "vrps-unique" :> QueryParam "version" Text 
                                                 :> Get '[JSON] [VrpMinimalDto],
 
-        -- splJson :: api :- "spls" :> QueryParam "version" Text 
-        --                           :> Get '[JSON] [SplDto],
+        splJson :: api :- "spls" :> QueryParam "version" Text 
+                                 :> Get '[JSON] [SplDto],
 
-        aspas    :: api :- "aspa" :> Get '[JSON] [AspaDto],
-        gbrs     :: api :- "gbrs" :> Get '[JSON] [Located GbrDto],
+        aspas    :: api :- "aspa" :> QueryParam "version" Text 
+                                  :> Get '[JSON] [AspaDto],
 
-        bgpCerts         :: api :- "bgpsec" :> Get '[JSON] [BgpCertDto],
-        bgpCertsFiltered :: api :- "bgpsec-filtered" :> Get '[JSON] [BgpCertDto],
+        gbrs     :: api :- "gbrs" :> QueryParam "version" Text 
+                                  :> Get '[JSON] [Located GbrDto],
+
+        bgpCerts :: api :- "bgpsec" :> QueryParam "version" Text 
+                                    :> Get '[JSON] [BgpCertDto],
+
+        bgpCertsFiltered :: api :- "bgpsec-filtered" :> QueryParam "version" Text 
+                                                     :> Get '[JSON] [BgpCertDto],
 
         slurm :: api :- "slurm" :> Get '[JSON] Slurm,
         slurms :: api :- "slurms" :> Get '[JSON] [(WorldVersion, Slurm)],
@@ -134,6 +140,7 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
                 "List of of unique VRPs with SLURM filtering applied to it"),
 
             ("/gbrs", mempty & get ?~ jsonOn200 "List of all valid GBR objects found in repositories"),
+            ("/spls", mempty & get ?~ jsonOn200 "List of all valid Prefix List objects found in repositories"),
             ("/aspa", mempty & get ?~ jsonOn200 "List of all valid ASPA objects found in repositories"),
             ("/bgpsec", mempty & get ?~ jsonOn200 "List of all valid BGPSec certificates found in repositories"),
             ("/bgpsec-filtered", mempty & get ?~ jsonOn200 

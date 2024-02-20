@@ -220,7 +220,7 @@ objectToDto = \case
             in RoaDto {..}
 
     splDto r = let SplPayload asn prefixes = getCMSContent $ r ^. #cmsPayload 
-                in SplDto {..}
+                in SplPayloadDto {..}
 
     crlDto CrlObject {..} = let
             SignCRL {..} = signCrl

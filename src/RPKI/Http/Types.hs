@@ -135,7 +135,7 @@ data ObjectDto = CertificateD (ObjectContentDto CertificateDto)
                 | CRLD (ObjectContentDto CrlDto)
                 | BGPSecD (ObjectContentDto BgpCertDto)                
                 | ROAD (ObjectContentDto (CMSObjectDto RoaDto))
-                | SPLD (ObjectContentDto (CMSObjectDto SplDto))
+                | SPLD (ObjectContentDto (CMSObjectDto SplPayloadDto))
                 | ASPAD (ObjectContentDto (CMSObjectDto AspaDto))
                 | GBRD (ObjectContentDto (CMSObjectDto GbrDto))
                 | RSCD (ObjectContentDto (CMSObjectDto RscDto))
@@ -230,6 +230,12 @@ data RoaDto = RoaDto {
     deriving stock (Eq, Show, Generic)
 
 data SplDto = SplDto {
+        asn    :: ASN,
+        prefix :: IpPrefix
+    }  
+    deriving stock (Eq, Show, Generic)
+
+data SplPayloadDto = SplPayloadDto {
         asn      :: ASN,
         prefixes :: [IpPrefix]
     }  
@@ -361,6 +367,7 @@ instance ToJSON ManifestDto
 instance ToJSON CrlDto
 instance ToJSON RoaDto
 instance ToJSON SplDto
+instance ToJSON SplPayloadDto
 instance ToJSON RoaPrefixDto
 instance ToJSON GbrDto
 instance ToJSON RscDto
@@ -390,6 +397,7 @@ instance ToSchema ExtensionsDto
 instance ToSchema OIDDto
 instance ToSchema ManifestDto
 instance ToSchema CrlDto
+instance ToSchema SplPayloadDto
 instance ToSchema SplDto
 instance ToSchema RoaDto
 instance ToSchema RoaPrefixDto

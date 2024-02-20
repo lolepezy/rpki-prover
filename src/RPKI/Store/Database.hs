@@ -934,36 +934,13 @@ getLastVersionOfKind database tx versionKind = do
         pure $ case [ v | (v, k) <- versions, k == versionKind ] of         
                 []  -> Nothing
                 vs' -> Just $ maximum vs'
-
-getLatestVRPs :: Storage s => DB s -> IO (Maybe Vrps)
-getLatestVRPs db = 
-    roTx db $ \tx ->        
-        runMaybeT $ do 
-            version <- MaybeT $ getLastValidationVersion db tx
-            MaybeT $ getVrps tx db version
-
-getLatestAspas :: Storage s => DB s -> IO (Set.Set Aspa)
-getLatestAspas db = roTx db $ \tx -> getLatestX tx db getAspas
-
-getLatestGbrs :: Storage s => DB s -> IO [Located RpkiObject]
-getLatestGbrs db = 
-    roTx db $ \tx -> do 
-        gbrs <- Set.toList <$> getLatestX tx db getGbrs 
-        fmap catMaybes $ forM gbrs $ \(T2 hash _) -> getByHash tx db hash                       
-
-getLatestBgps :: Storage s => DB s -> IO (Set.Set BGPSecPayload)
-getLatestBgps db = roTx db $ \tx -> getLatestX tx db getBgps    
+                    
+getGbrObjects :: (MonadIO m, Storage s) => 
+                Tx s mode -> DB s -> WorldVersion -> m [Located RpkiObject]
+getGbrObjects tx db version = do    
+    gbrs <- maybe [] Set.toList <$> getGbrs tx db version
+    fmap catMaybes $ forM gbrs $ \(T2 hash _) -> getByHash tx db hash
     
-getLatestX :: (Storage s, Monoid b) =>
-            Tx s 'RO
-            -> DB s
-            -> (Tx s 'RO -> DB s -> WorldVersion -> IO (Maybe b))
-            -> IO b
-getLatestX tx db f =      
-    getLastValidationVersion db tx >>= \case         
-        Nothing      -> pure mempty
-        Just version -> fromMaybe mempty <$> f tx db version    
-
 
 getRtrPayloads :: (MonadIO m, Storage s) => Tx s 'RO -> DB s -> WorldVersion -> m (Maybe RtrPayloads)
 getRtrPayloads tx db worldVersion = 
