@@ -96,9 +96,6 @@ data TaskType =
         -- delete old objects and old versions
         | CacheCleanupTask    
 
-        -- delete old payloads (VRPs, ASPAs, etc.)    
-        | DeleteOldPayloadsTask            
-
         | LmdbCompactTask
 
         -- cleanup files in tmp and stale LMDB reader transactions
@@ -156,15 +153,9 @@ runWorkflow appContext@AppContext {..} tals = do
             Scheduling { 
                 initialDelay = 600_000_000,
                 interval = config ^. #cacheCleanupInterval,
-                taskDef = (CacheCleanupTask, cacheGC workflowShared),
+                taskDef = (CacheCleanupTask, cacheCleanup workflowShared),
                 persistent = True
             },        
-            Scheduling {                 
-                initialDelay = 900_000_000,
-                interval =  config ^. #cacheCleanupInterval, 
-                taskDef = (DeleteOldPayloadsTask, cleanOldPayloads workflowShared),
-                persistent = True
-            },
             Scheduling {                 
                 initialDelay = 1200_000_000,
                 interval = config ^. #storageCompactionInterval,
@@ -250,17 +241,17 @@ runWorkflow appContext@AppContext {..} tals = do
                         pure $ pure ()
           where 
             asyncFetchTask = Task AsyncFetchTask $ do 
-                atomically (writeTVar asyncFetchIsRunning True)
-                logInfo logger [i|Running asynchronous fetch.|]            
+                atomically (writeTVar asyncFetchIsRunning True)                
                 fetchVersion <- createWorldVersion     
+                logInfo logger [i|Running asynchronous fetch #{fetchVersion}.|]            
                 (_, TimeMs elapsed) <- timedMS $ do 
-                    validations <- runAsyncFetches appContext
+                    validations <- runAsyncFetches appContext fetchVersion
                     db <- readTVarIO database
                     rwTx db $ \tx -> do
                         saveValidations tx db fetchVersion (validations ^. typed)
                         saveMetrics tx db fetchVersion (validations ^. typed)
                         asyncFetchWorldVersion tx db fetchVersion                  
-                logInfo logger [i|Finished asynchronous fetch in #{elapsed `div` 1000}s.|]
+                logInfo logger [i|Finished asynchronous fetch #{fetchVersion} in #{elapsed `div` 1000}s.|]
 
 
     doValidateTAs WorkflowShared {..} worldVersion= do
@@ -282,7 +273,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     rwTxT database $ \tx db -> do
                         saveValidations tx db worldVersion (workerVS ^. typed)
                         saveMetrics tx db worldVersion (workerVS ^. typed)
-                        completeWorldVersion tx db worldVersion                            
+                        completeValidationWorldVersion tx db worldVersion                            
                     updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
                     pure (mempty, mempty)            
                 Right wr@WorkerResult {..} -> do                              
@@ -309,18 +300,18 @@ runWorkflow appContext@AppContext {..} tals = do
                           
     -- Delete objects in the store that were read by top-down validation 
     -- longer than `cacheLifeTime` hours ago.
-    cacheGC WorkflowShared {..} worldVersion _ = do            
+    cacheCleanup WorkflowShared {..} worldVersion _ = do            
         executeOrDie
             cleanupUntochedObjects
             (\z elapsed -> 
                 case z of 
                     Left message -> logError logger message
                     Right CleanUpResult {..} -> do 
-                        when (deletedObjects > 0) $ 
+                        when (deletedObjects > 0) $ do
                             atomically $ writeTVar deletedAnythingFromDb True
                         logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
-                                        [i|deleted #{deletedURLs} dangling URLs, took #{elapsed}ms.|])
-        where
+                                         [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|])
+      where
         cleanupUntochedObjects = do                 
             ((z, _), workerId) <- runCleapUpWorker worldVersion      
             case z of 
@@ -330,18 +321,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxMemory
                     pure $ Right payload                                       
 
-    -- Delete oldest payloads, e.g. VRPs, ASPAs, validation results, etc.
-    cleanOldPayloads WorkflowShared {..} worldVersion _ = do
-        let now = versionToMoment worldVersion
-        db <- readTVarIO database
-        executeOrDie
-            (deleteOldPayloads db $ versionIsOld now (config ^. #oldVersionsLifetime))
-            (\deleted elapsed -> do 
-                when (deleted > 0) $ do
-                    atomically $ writeTVar deletedAnythingFromDb True
-                    logInfo logger [i|Done with deleting older versions, deleted #{deleted} versions, took #{elapsed}ms.|])
-
-    -- Do the LMDB compaction
+    -- Do LMDB compaction
     compact WorkflowShared {..} worldVersion _ = do
         -- Some heuristics first to see if it's obvisouly too early to run compaction:
         -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
@@ -364,7 +344,7 @@ runWorkflow appContext@AppContext {..} tals = do
         -- dead processes, unfinished/killed transaction, etc.
         -- All these stale transactions are essentially bugs, but it's 
         -- easier to just clean them up rather then prevent all 
-        -- possible leakages (even if it is possible).
+        -- possible leakages (even if it were possible).
         cleaned <- cleanUpStaleTx appContext
         when (cleaned > 0) $ 
             logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]      
@@ -416,11 +396,12 @@ runWorkflow appContext@AppContext {..} tals = do
     createWorldVersion = do
         newVersion      <- newWorldVersion        
         existingVersion <- getWorldVerionIO appState
-        logDebug logger $ case existingVersion of
-            Nothing ->
-                [i|Generated new world version #{newVersion}.|]
-            Just oldWorldVersion ->
-                [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]
+        logDebug logger $ 
+            case existingVersion of
+                Nothing ->
+                    [i|Generated new world version #{newVersion}.|]
+                Just oldWorldVersion ->
+                    [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]
         pure newVersion
 
     runRtrIfConfigured = 
@@ -504,9 +485,9 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                         pure (vs, Just slurm)        
 
     -- Save all the results into LMDB
-    let !updatedValidation = slurmValidations <> topDownValidations ^. typed
+    let updatedValidation = slurmValidations <> topDownValidations ^. typed
 
-    (_, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
+    (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
         saveMetrics tx db worldVersion (topDownValidations ^. typed)
         saveValidations tx db worldVersion (updatedValidation ^. typed)
         saveRoas tx db roas worldVersion
@@ -514,9 +495,13 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         saveGbrs tx db (payloads ^. typed) worldVersion
         saveBgps tx db (payloads ^. typed) worldVersion        
         for_ maybeSlurm $ saveSlurm tx db worldVersion
-        completeWorldVersion tx db worldVersion            
+        completeValidationWorldVersion tx db worldVersion
 
-    logDebug logger [i|Saved payloads for the version #{worldVersion} in #{elapsed}ms.|]        
+        -- We want to keep not more than certain number of latest versions in the DB,
+        -- so after adding one, check if the oldest one(s) should be deleted.
+        deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
+
+    logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deleted} oldest versions(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, maybeSlurm)
 
@@ -575,13 +560,12 @@ loadStoredAppState AppContext {..} = do
     - Try to refetch these repositories
     - Repositories that were successful and fast enought get back `ForSyncFetch` fetch type.
 -}
-runAsyncFetches :: Storage s => AppContext s -> IO ValidationState
-runAsyncFetches appContext@AppContext {..} = do         
-    worldVersion <- newWorldVersion
+runAsyncFetches :: Storage s => AppContext s -> WorldVersion -> IO ValidationState
+runAsyncFetches appContext@AppContext {..} worldVersion = do             
     withRepositoriesProcessing appContext $ \repositoryProcessing -> do
 
         pps <- readPublicationPoints repositoryProcessing      
-        -- We only care about the repositories that are slow 
+        -- We only care about the repositories that are maarked for asynchronous fetch 
         let asyncRepos = Map.fromList $ findRepositoriesForAsyncFetch pps        
 
         -- And mentioned on some certificates during the last validation.        
@@ -635,7 +619,6 @@ canRunInParallel t1 t2 =
     t2 `elem` canRunWith t1 || t1 `elem` canRunWith t2
   where    
     canRunWith ValidationTask        = [AsyncFetchTask]    
-    canRunWith DeleteOldPayloadsTask = allExcept [LmdbCompactTask]    
     canRunWith AsyncFetchTask        = [ValidationTask]
     canRunWith RsyncCleanupTask      = allExcept [ValidationTask, AsyncFetchTask]
     canRunWith _                     = []

@@ -625,7 +625,8 @@ validateCaNoFetch
                                                 `catchError`
                                                 (\e -> do 
                                                     vFocusOn ObjectFocus mftKey $ vWarn $ MftFallback e
-                                                    logWarn logger [i|Falling back to the previous manifest, error: #{toMessage e}|]
+                                                    let mftLocation = pickLocation $ getLocations $ mft ^. #object
+                                                    logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, error: #{toMessage e}|]
                                                     useShortcutOnly)                                            
                     pure $! do 
                         markAsRead topDownContext mftShortKey
