@@ -413,9 +413,9 @@ deriveNextTimeout config absoluteMaxDuration RepositoryMeta {..} =
                     previousSeconds = Seconds 1 + Seconds (unTimeMs duration `div` 1000)
                     heuristicalNextTimeout = 
                         if | previousSeconds < Seconds 3  -> Seconds 10
-                            | previousSeconds < Seconds 10 -> Seconds 20
-                            | previousSeconds < Seconds 30 -> previousSeconds + Seconds 30
-                            | otherwise                    -> previousSeconds + Seconds 60             
+                           | previousSeconds < Seconds 10 -> Seconds 20
+                           | previousSeconds < Seconds 30 -> previousSeconds + Seconds 30
+                           | otherwise                    -> previousSeconds + Seconds 60             
                     in min absoluteMaxDuration heuristicalNextTimeout
 
 
