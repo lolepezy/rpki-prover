@@ -404,7 +404,7 @@ instance ToJSON LogLevel
 instance ToJSON Parallelism
 instance ToJSON ManifestProcessing
 instance ToJSON ValidationAlgorithm
-instance ToJSON RefreshIntervalType
+instance ToJSON FetchTimingCalculation
 instance ToJSON TAL
 -- $(deriveToJSON defaultOptions ''TAL)
 instance ToJSON HttpApiConfig

@@ -102,7 +102,7 @@ data ValidationAlgorithm = FullEveryIteration | Incremental
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-data RefreshIntervalType = Constant | Adaptive
+data FetchTimingCalculation = Constant | Adaptive
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -141,7 +141,8 @@ data ValidationConfig = ValidationConfig {
 
         validationAlgorithm            :: ValidationAlgorithm,
 
-        fetchIntervalCalculation          :: RefreshIntervalType,
+        fetchIntervalCalculation       :: FetchTimingCalculation,
+        fetchTimeoutCalculation        :: FetchTimingCalculation,
 
         minFetchInterval               :: Seconds,
         maxFetchInterval               :: Seconds
@@ -237,7 +238,8 @@ defaultConfig = Config {
         minObjectSize                  = 300,
         maxTaRepositories              = 3000,
         validationAlgorithm            = FullEveryIteration,
-        fetchIntervalCalculation          = Adaptive,
+        fetchIntervalCalculation       = Adaptive,
+        fetchTimeoutCalculation        = Adaptive,
         minFetchInterval               = Seconds 60,
         maxFetchInterval               = Seconds 600
     },

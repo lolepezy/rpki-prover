@@ -243,6 +243,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 & maybeSet (#validationConfig . #minObjectSize) minObjectSize
                 & #validationConfig . #fetchIntervalCalculation .~ 
                     (if noAdaptiveFetchIntervals then Constant else Adaptive)
+                & #validationConfig . #fetchTimeoutCalculation .~ 
+                    (if noAdaptiveFetchTimeouts then Constant else Adaptive)
                 & maybeSet (#httpApiConf . #port) httpApiPort
                 & #rtrConfig .~ rtrConfig
                 & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
@@ -686,6 +688,10 @@ data CLIOptions wrapped = CLIOptions {
 
     noAdaptiveFetchIntervals :: wrapped ::: Bool <?>
         ("Do not use adaptive fetch intervals for repositories (adaptive fetch intervals is the default " +++ 
+         "so default for this option is false)."),
+
+    noAdaptiveFetchTimeouts :: wrapped ::: Bool <?>
+        ("Do not use adaptive fetch timeouts for repositories (adaptive fetch timeouts is the default " +++ 
          "so default for this option is false).") 
 
 } deriving (Generic)

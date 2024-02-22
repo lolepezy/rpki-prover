@@ -1,4 +1,3 @@
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia        #-}
 {-# LANGUAGE FlexibleContexts   #-}
 {-# LANGUAGE OverloadedLabels   #-}
@@ -27,7 +26,7 @@ import           Data.String.Interpolate.IsString
 import           Data.Maybe                  
 import qualified Data.Set                    as Set
 import qualified StmContainers.Map           as StmMap
-import qualified ListT                       as ListT
+import qualified ListT
 
 import           Time.Types
 
@@ -95,8 +94,7 @@ fetchSync appContext@AppContext {..}
                     FetchFailure _ _ -> do 
                         -- In case of failure mark ell repositories ForAsyncFetch
                         ppsAfter <- readPublicationPoints repositoryProcessing
-                        let toMarkAsync = catMaybes 
-                                            $ map (repositoryFromPP ppsAfter) 
+                        let toMarkAsync = mapMaybe (repositoryFromPP ppsAfter) 
                                             $ NonEmpty.toList $ unPublicationPointAccess ppa
                         markForAsyncFetch repositoryProcessing toMarkAsync
             
@@ -165,7 +163,7 @@ fetchAsync
                                 now' <- thisInstant
                                 -- CHeck this only for more meaningful logging    
                                 let nextOneNeedAFetch = needsFetching pp 
-                                        ((getMeta repo) ^. #refreshInterval) 
+                                        (getMeta repo ^. #refreshInterval) 
                                         (getFetchStatus repo) 
                                         (config ^. #validationConfig) 
                                         now'
@@ -260,14 +258,14 @@ fetchOnePp
                 updateTime t = if t == mempty then elapsed else t
             in case repoUrl of 
                 RrdpU _ -> let 
-                        updatedFreshness = rrdpMetricUpdate validations (& #fetchFreshness .~ realFreshness)                            
+                        updatedFreshness = rrdpMetricUpdate validations (#fetchFreshness .~ realFreshness)                            
                     in case r of 
-                        Left _  -> rrdpMetricUpdate updatedFreshness (& #totalTimeMs %~ updateTime)
+                        Left _  -> rrdpMetricUpdate updatedFreshness (#totalTimeMs %~ updateTime)
                         Right _ -> updatedFreshness
                 RsyncU _ -> let 
-                        updatedFreshness = rsyncMetricUpdate validations (& #fetchFreshness .~ realFreshness)                            
+                        updatedFreshness = rsyncMetricUpdate validations (#fetchFreshness .~ realFreshness)                            
                     in case r of 
-                        Left _  -> rsyncMetricUpdate updatedFreshness (& #totalTimeMs %~ updateTime)
+                        Left _  -> rsyncMetricUpdate updatedFreshness (#totalTimeMs %~ updateTime)
                         Right _ -> updatedFreshness           
       
     -- Do fetch the publication point and update the #publicationPoints
@@ -322,12 +320,11 @@ fetchOnePp
         pps <- readTVar publicationPoints        
         let Just repo = repositoryFromPP pps pp
         let needsFetching' = needsFetching pp 
-                ((getMeta repo) ^. #refreshInterval) 
+                (getMeta repo ^. #refreshInterval) 
                 (getFetchStatus repo) 
                 (config ^. #validationConfig) 
                 now'
         pure (needsFetching', repo)
-
 
 
 deriveNewMeta config fetchConfig repo validations rrdpStats 
@@ -362,15 +359,15 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
         decreateInterval (Seconds s) = Seconds $ s - s `div` 3 - 1
 
         moreThanOne = \case 
-            []     -> False
-            _ : [] -> False
-            _      -> True
+            []  -> False
+            [_] -> False
+            _   -> True
 
         in Just $ 
             case vConfig ^. #fetchIntervalCalculation of 
                 Constant -> defaultRefreshInterval
                 Adaptive -> 
-                    case (getMeta repo) ^. #refreshInterval of 
+                    case getMeta repo ^. #refreshInterval of 
                         Nothing -> defaultRefreshInterval
                         Just ri -> 
                             case rrdpStats of 
@@ -406,18 +403,21 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
                 else ForSyncFetch fetchMoment       
 
 
-deriveNextTimeout :: Seconds -> RepositoryMeta -> Seconds
-deriveNextTimeout absoluteMaxDuration RepositoryMeta {..} = 
-    case lastFetchDuration of
-        Nothing       -> absoluteMaxDuration
-        Just duration -> let
-                previousSeconds = Seconds 1 + Seconds (unTimeMs duration `div` 1000)
-                heuristicalNextTimeout = 
-                    if | previousSeconds < Seconds 3  -> Seconds 10
-                       | previousSeconds < Seconds 10 -> Seconds 20
-                       | previousSeconds < Seconds 30 -> previousSeconds + Seconds 30
-                       | otherwise                    -> previousSeconds + Seconds 60             
-            in min absoluteMaxDuration heuristicalNextTimeout
+deriveNextTimeout :: Config -> Seconds -> RepositoryMeta -> Seconds
+deriveNextTimeout config absoluteMaxDuration RepositoryMeta {..} = 
+    case config ^. #validationConfig . #fetchTimeoutCalculation of 
+        Constant -> absoluteMaxDuration
+        Adaptive -> 
+            case lastFetchDuration of
+                Nothing       -> absoluteMaxDuration
+                Just duration -> let
+                        previousSeconds = Seconds 1 + Seconds (unTimeMs duration `div` 1000)
+                        heuristicalNextTimeout = 
+                            if | previousSeconds < Seconds 3  -> Seconds 10
+                               | previousSeconds < Seconds 10 -> Seconds 20
+                               | previousSeconds < Seconds 30 -> previousSeconds + Seconds 30
+                               | otherwise                    -> previousSeconds + Seconds 60             
+                    in min absoluteMaxDuration heuristicalNextTimeout
 
 
 -- Fetch one individual repository. 
@@ -451,7 +451,7 @@ fetchRepository
     timeToKillItself = Seconds 5
     
     fetchRrdpRepository r = do 
-        let fetcherTimeout = deriveNextTimeout (fetchConfig ^. #rrdpTimeout) (r ^. #meta)        
+        let fetcherTimeout = deriveNextTimeout config (fetchConfig ^. #rrdpTimeout) (r ^. #meta)        
         let totalTimeout = fetcherTimeout + timeToKillItself
         timeoutVT totalTimeout
             (do
@@ -467,7 +467,7 @@ fetchRepository
                 appError $ RrdpE $ RrdpDownloadTimeout totalTimeout)
 
     fetchRsyncRepository r = do 
-        let fetcherTimeout = deriveNextTimeout (fetchConfig ^. #rsyncTimeout) (r ^. #meta)        
+        let fetcherTimeout = deriveNextTimeout config (fetchConfig ^. #rsyncTimeout) (r ^. #meta)        
         let totalTimeout = fetcherTimeout + timeToKillItself
         timeoutVT 
             totalTimeout
@@ -589,13 +589,13 @@ onlyForSyncFetch pps ppAccess = let
 
 resetForAsyncFetch ::  MonadIO m => RepositoryProcessing -> m ()
 resetForAsyncFetch RepositoryProcessing {..} = liftIO $ atomically $ do 
-    modifyTVar' publicationPoints (& #usedForAsync .~ mempty)
+    modifyTVar' publicationPoints (#usedForAsync .~ mempty)
 
 markForAsyncFetch ::  MonadIO m => RepositoryProcessing -> [Repository] -> m ()
 markForAsyncFetch RepositoryProcessing {..} repos = liftIO $ atomically $ 
     unless (null repos) $
         modifyTVar' publicationPoints
-            (& #usedForAsync %~ (Set.insert (map getRpkiURL repos)))
+            (#usedForAsync %~ Set.insert (map getRpkiURL repos))
 
 
 syncFetchConfig :: Config -> FetchConfig
