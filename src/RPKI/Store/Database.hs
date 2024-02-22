@@ -841,7 +841,7 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
             -- Delete URLs that are now not referred by any object
             deletedURLs <- deleteDanglingUrls db tx
 
-            pure $! CleanUpResult {..}
+            pure CleanUpResult {..}
   where
 
     cleanupLatestValidMfts tx = liftIO $ do
@@ -883,6 +883,7 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
         
         forM_ hashesToDelete $ deleteObject tx db        
         pure (Set.size hashesToDelete, Set.size keysToKeep)
+
 
 deleteDanglingUrls :: DB s -> Tx s 'RW -> IO Int
 deleteDanglingUrls DB { objectStore = RpkiObjectStore {..} } tx = do 
