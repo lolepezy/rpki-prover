@@ -6,6 +6,7 @@
 module RPKI.RRDP.Types where
 
 import qualified Data.ByteString as BS
+import           Data.Text                        (Text)
 import           GHC.Generics
 import           RPKI.Domain
 import           RPKI.Store.Base.Serialisation
@@ -30,6 +31,7 @@ data Notification = Notification {
 
 data SnapshotInfo = SnapshotInfo URI Hash
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary     
 
 data SnapshotPublish = SnapshotPublish URI EncodedBase64
     deriving stock (Show, Eq, Ord, Generic)
@@ -56,6 +58,24 @@ data Delta = Delta Version SessionId RrdpSerial [DeltaItem]
 newtype ETag = ETag BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass TheBinary        
+
+
+data RrdpFetchStat = RrdpFetchStat {
+        action :: RrdpAction
+    } 
+    deriving stock (Show, Eq, Ord, Generic)   
+    deriving anyclass TheBinary     
+
+data RrdpAction
+  = FetchSnapshot SnapshotInfo Text
+  | FetchDeltas
+      { sortedDeltas :: [DeltaInfo]
+      , snapshotInfo :: SnapshotInfo
+      , message :: Text
+      }
+  | NothingToFetch Text
+  deriving (Show, Eq, Ord, Generic)
+  deriving anyclass TheBinary     
 
 data RrdpMeta = RrdpMeta {
         sessionId :: SessionId,

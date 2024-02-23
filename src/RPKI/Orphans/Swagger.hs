@@ -132,6 +132,7 @@ instance ToSchema RtrConfig
 instance ToSchema LogLevel
 instance ToSchema ManifestProcessing
 instance ToSchema ValidationAlgorithm
+instance ToSchema FetchTimingCalculation
 
 instance ToSchema a => ToSchema (Located a)
 

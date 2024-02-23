@@ -614,11 +614,8 @@ runAsyncFetches appContext@AppContext {..} worldVersion = do
         RrdpR r  -> RrdpPP r
 
 
-canRunInParallel :: Task  -> Task -> Bool
-canRunInParallel (Task t1 _) (Task t2 _) = canRunInParallel' t1 t2    
-
-canRunInParallel' :: TaskType -> TaskType -> Bool
-canRunInParallel' t1 t2 = 
+canRunInParallel :: TaskType -> TaskType -> Bool
+canRunInParallel t1 t2 = 
     t2 `elem` canRunWith t1 || t1 `elem` canRunWith t2
   where    
     canRunWith ValidationTask        = [AsyncFetchTask]    
@@ -640,7 +637,7 @@ runConcurrentlyIfPossible :: AppLogger -> Task -> RunningTasks -> IO ()
 runConcurrentlyIfPossible logger (Task taskType action) RunningTasks {..} = do 
     (runningTasks, canRun) <- atomically $ do 
                 runningTasks <- readTVar running
-                let canRun = Set.null $ Set.filter (not . canRunInParallel' taskType) runningTasks
+                let canRun = Set.null $ Set.filter (not . canRunInParallel taskType) runningTasks
                 pure (Set.toList runningTasks, canRun)
 
     unless canRun $ 
@@ -648,7 +645,7 @@ runConcurrentlyIfPossible logger (Task taskType action) RunningTasks {..} = do
 
     join $ atomically $ do 
         r <- readTVar running
-        if Set.null $ Set.filter (not . canRunInParallel' taskType) r
+        if Set.null $ Set.filter (not . canRunInParallel taskType) r
             then do 
                 writeTVar running $ Set.insert taskType r
                 pure $ action

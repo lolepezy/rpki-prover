@@ -351,7 +351,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     case taByName of
         Nothing -> fetchValidateAndStore db now Nothing
         Just StorableTA { taCert, initialRepositories, fetchStatus = fs }
-            | needsFetching (getTaCertURL tal) fs validationConfig now ->
+            | needsFetching (getTaCertURL tal) Nothing fs validationConfig now ->
                 fetchValidateAndStore db now (Just taCert)
             | otherwise -> do
                 logInfo logger [i|Not re-fetching TA certificate #{getURL $ getTaCertURL tal}, it's up-to-date.|]

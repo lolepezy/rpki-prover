@@ -102,6 +102,9 @@ data ValidationAlgorithm = FullEveryIteration | Incremental
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
+data FetchTimingCalculation = Constant | Adaptive
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
 
 
 data ValidationConfig = ValidationConfig {    
@@ -136,7 +139,13 @@ data ValidationConfig = ValidationConfig {
         -- Manimal allowed size of an individual object 
         minObjectSize                  :: Integer,
 
-        validationAlgorithm            :: ValidationAlgorithm
+        validationAlgorithm            :: ValidationAlgorithm,
+
+        fetchIntervalCalculation       :: FetchTimingCalculation,
+        fetchTimeoutCalculation        :: FetchTimingCalculation,
+
+        minFetchInterval               :: Seconds,
+        maxFetchInterval               :: Seconds
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -228,7 +237,11 @@ defaultConfig = Config {
         -- couple of dates and a few extensions
         minObjectSize                  = 300,
         maxTaRepositories              = 3000,
-        validationAlgorithm            = FullEveryIteration
+        validationAlgorithm            = FullEveryIteration,
+        fetchIntervalCalculation       = Adaptive,
+        fetchTimeoutCalculation        = Adaptive,
+        minFetchInterval               = Seconds 60,
+        maxFetchInterval               = Seconds 600
     },
     httpApiConf = HttpApiConfig {
         port = 9999
