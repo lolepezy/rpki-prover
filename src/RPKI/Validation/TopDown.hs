@@ -76,6 +76,7 @@ import           RPKI.Validation.Common
 
 data PayloadBuilder = PayloadBuilder {
         vrps     :: IORef [T2 [Vrp] ObjectKey],        
+        spls     :: IORef [SplPayload],        
         aspas    :: IORef [Aspa],
         gbrs     :: IORef [T2 Hash Gbr],
         bgpCerts :: IORef [BGPSecPayload]
@@ -84,6 +85,7 @@ data PayloadBuilder = PayloadBuilder {
 
 newPayloadBuilder :: IO PayloadBuilder 
 newPayloadBuilder = PayloadBuilder <$> 
+            newIORef mempty <*>
             newIORef mempty <*>
             newIORef mempty <*>
             newIORef mempty <*>
@@ -123,8 +125,10 @@ data TopDownCounters = TopDownCounters {
         originalCrl  :: IORef Int,
         shortcutCrl  :: IORef Int,        
         originalRoa  :: IORef Int,
+        originalSpl  :: IORef Int,
         originalAspa :: IORef Int,        
         shortcutRoa  :: IORef Int,
+        shortcutSpl  :: IORef Int,
         shortcutAspa :: IORef Int,        
         shortcutTroubled    :: IORef Int,
         newChildren         :: IORef Int,
@@ -193,10 +197,12 @@ newTopDownCounters = do
     updateMftChildren <- newIORef 0    
 
     shortcutRoa  <- newIORef 0        
+    shortcutSpl  <- newIORef 0        
     shortcutAspa <- newIORef 0            
     shortcutTroubled <- newIORef 0        
 
     originalRoa  <- newIORef 0        
+    originalSpl  <- newIORef 0        
     originalAspa <- newIORef 0        
 
     readOriginal <- newIORef 0   
@@ -310,6 +316,10 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
             aspas    <- fmap Set.fromList $ readIORef $ builder ^. #aspas 
             gbrs     <- fmap Set.fromList $ readIORef $ builder ^. #gbrs 
             bgpCerts <- fmap Set.fromList $ readIORef $ builder ^. #bgpCerts    
+
+            splPayloads <- readIORef $ builder ^. #spls            
+            let spls = Set.fromList [ SplN asn prefix | 
+                                      SplPayload asn prefixes <- splPayloads, prefix <- prefixes ]
 
             let payloads = Payloads {..}        
             let payloads' = payloads & #vrps .~ 
@@ -1076,6 +1086,19 @@ validateCaNoFetch
                         shortcut <- vHoist $ shortcutIfNoIssues childKey fileName 
                                             (makeRoaShortcut childKey validRoa vrpList)                        
                         rememberPayloads typed (T2 vrpList childKey :)
+                        pure $! newShortcut shortcut                  
+
+            SplRO spl -> 
+                focusOnChild $ do
+                    validateObjectLocations child                    
+                    allowRevoked $ do
+                        validSpl <- vHoist $ validateSpl now spl fullCa validCrl verifiedResources
+                        let spls = getCMSContent $ cmsPayload spl
+                        oneMoreSpl                        
+                        increment $ topDownCounters ^. #originalSpl
+                        shortcut <- vHoist $ shortcutIfNoIssues childKey fileName 
+                                            (makeSplShortcut childKey validSpl spls)
+                        rememberPayloads typed (spls :)
                         pure $! newShortcut shortcut                        
 
             AspaRO aspa -> 
@@ -1242,6 +1265,14 @@ validateCaNoFetch
                         moreVrps $ Count $ fromIntegral $ length vrps
                         increment $ topDownCounters ^. #shortcutRoa
                         rememberPayloads typed (T2 vrps childKey :)
+
+                SplChild s@SplShortcut {..} _ -> 
+                    vFocusOn ObjectFocus childKey $ do                    
+                        vHoist $ validateObjectValidityPeriod s now
+                        validateLocationForShortcut key
+                        oneMoreSpl                        
+                        increment $ topDownCounters ^. #shortcutSpl
+                        rememberPayloads typed (splPayload :)
                 
                 AspaChild a@AspaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do 
@@ -1406,6 +1437,13 @@ makeRoaShortcut key (Validated roa) vrps fileName = let
         child = RoaChild (RoaShortcut {..}) serial
     in MftEntry {..}    
 
+makeSplShortcut :: ObjectKey -> Validated SplObject -> SplPayload -> Text -> MftEntry
+makeSplShortcut key (Validated spl) splPayload fileName = let 
+        (notValidBefore, notValidAfter) = getValidityPeriod spl
+        serial = getSerial spl
+        child = SplChild (SplShortcut {..}) serial
+    in MftEntry {..}    
+
 makeAspaShortcut :: ObjectKey -> Validated AspaObject -> Aspa -> Text -> MftEntry
 makeAspaShortcut key (Validated aspaObject) aspa fileName = let 
         (notValidBefore, notValidAfter) = getValidityPeriod aspaObject            
@@ -1495,10 +1533,12 @@ reportCounters AppContext {..} TopDownCounters {..} = do
     updateMftChildrenN <- readIORef updateMftChildren
 
     shortcutRoaN <- readIORef shortcutRoa
+    shortcutSplN <- readIORef shortcutSpl
     shortcutAspaN <- readIORef shortcutAspa
     shortcutTroubledN <- readIORef shortcutTroubled
                             
     originalRoaN <- readIORef originalRoa
+    originalSplN <- readIORef originalSpl
     originalAspaN <- readIORef originalAspa    
 
     readOriginalN <- readIORef readOriginal
@@ -1510,6 +1550,7 @@ reportCounters AppContext {..} TopDownCounters {..} = do
                       [i|newChildrenN = #{newChildrenN}, overlappingChildrenN = #{overlappingChildrenN}, |] <>
                       [i|updateMftMetaN = #{updateMftMetaN}, updateMftChildrenN = #{updateMftChildrenN}, |] <>
                       [i|shortcutRoaN = #{shortcutRoaN}, originalRoaN = #{originalRoaN}, |] <>
+                      [i|shortcutSplN = #{shortcutSplN}, originalSplN = #{originalSplN}, |] <>
                       [i|shortcutAspaN = #{shortcutAspaN}, originalAspaN = #{originalAspaN}, |] <>
                       [i|shortcutTroubledN = #{shortcutTroubledN}, |] <>
                       [i|readOriginalN = #{readOriginalN}, readParsedN = #{readParsedN}.|]
@@ -1558,10 +1599,11 @@ markAsReadByHash AppContext {..} topDownContext hash = do
     for_ key $ markAsRead topDownContext              
 
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()
-oneMoreGbr, oneMoreAspa, oneMoreBgp :: Monad m => ValidatorT m ()
+oneMoreGbr, oneMoreAspa, oneMoreBgp, oneMoreSpl :: Monad m => ValidatorT m ()
 oneMoreMftShort :: Monad m => ValidatorT m ()
 oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
 oneMoreRoa  = updateMetric @ValidationMetric @_ (& #validRoaNumber %~ (+1))
+oneMoreSpl  = updateMetric @ValidationMetric @_ (& #validSplNumber %~ (+1))
 oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
 oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
 oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))

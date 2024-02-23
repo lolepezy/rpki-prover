@@ -25,6 +25,7 @@ import           RPKI.Store.Base.Serialisation
 
 data MftChild = CaChild CaShortcut Serial
               | RoaChild RoaShortcut Serial
+              | SplChild SplShortcut Serial
               | AspaChild AspaShortcut Serial
               | BgpSecChild BgpSecShortcut Serial
               | GbrChild GbrShortcut Serial
@@ -87,6 +88,15 @@ data RoaShortcut = RoaShortcut {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
+data SplShortcut = SplShortcut {
+        key            :: ObjectKey,        
+        splPayload     :: SplPayload,
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
 data AspaShortcut = AspaShortcut {
         key            :: ObjectKey,
         aspa           :: Aspa,
@@ -115,19 +125,22 @@ data GbrShortcut = GbrShortcut {
     deriving anyclass TheBinary
 
 
-instance {-# OVERLAPPING #-}  WithValidityPeriod CaShortcut where
+instance {-# OVERLAPPING #-} WithValidityPeriod CaShortcut where
     getValidityPeriod CaShortcut {..} = (notValidBefore, notValidAfter)
 
-instance {-# OVERLAPPING #-}  WithValidityPeriod MftShortcut where
+instance {-# OVERLAPPING #-} WithValidityPeriod MftShortcut where
     getValidityPeriod MftShortcut {..} = (notValidBefore, notValidAfter)
 
-instance {-# OVERLAPPING #-}  WithValidityPeriod CrlShortcut where
+instance {-# OVERLAPPING #-} WithValidityPeriod CrlShortcut where
     getValidityPeriod CrlShortcut {..} = (notValidBefore, notValidAfter)
 
-instance {-# OVERLAPPING #-}  WithValidityPeriod RoaShortcut where
+instance {-# OVERLAPPING #-} WithValidityPeriod RoaShortcut where
     getValidityPeriod RoaShortcut {..} = (notValidBefore, notValidAfter)
 
-instance {-# OVERLAPPING #-}  WithValidityPeriod AspaShortcut where
+instance {-# OVERLAPPING #-} WithValidityPeriod SplShortcut where
+    getValidityPeriod SplShortcut {..} = (notValidBefore, notValidAfter)
+
+instance {-# OVERLAPPING #-} WithValidityPeriod AspaShortcut where
     getValidityPeriod AspaShortcut {..} = (notValidBefore, notValidAfter)
 
 instance {-# OVERLAPPING #-} WithValidityPeriod BgpSecShortcut where
@@ -141,6 +154,7 @@ getMftChildSerial :: MftChild -> Maybe Serial
 getMftChildSerial = \case 
     CaChild _ serial     -> Just serial 
     RoaChild _ serial    -> Just serial 
+    SplChild _ serial    -> Just serial 
     AspaChild _ serial   -> Just serial 
     BgpSecChild _ serial -> Just serial 
     GbrChild _ serial    -> Just serial 

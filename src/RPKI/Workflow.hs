@@ -491,6 +491,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         saveMetrics tx db worldVersion (topDownValidations ^. typed)
         saveValidations tx db worldVersion (updatedValidation ^. typed)
         saveRoas tx db roas worldVersion
+        saveSpls tx db (payloads ^. typed) worldVersion
         saveAspas tx db (payloads ^. typed) worldVersion
         saveGbrs tx db (payloads ^. typed) worldVersion
         saveBgps tx db (payloads ^. typed) worldVersion        

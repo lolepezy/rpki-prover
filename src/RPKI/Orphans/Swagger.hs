@@ -153,6 +153,7 @@ instance ToSchema a => ToSchema (SignedData a)
 instance ToSchema a => ToSchema (EncapsulatedContentInfo a)
 
 instance ToSchema Vrp
+instance ToSchema SplPayload
 instance ToSchema Gbr where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema Rsc

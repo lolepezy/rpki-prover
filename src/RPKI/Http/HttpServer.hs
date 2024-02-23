@@ -78,10 +78,11 @@ httpServer appContext = genericServe HttpApi {
         vrpsCsvUnique = getVRPsUniqueRaw appContext,
         vrpsJsonUnique = getVRPsUnique appContext,
 
-        gbrs  = liftIO $ getGBRs appContext,
-        aspas = liftIO $ getASPAs appContext,
-        bgpCerts = liftIO $ getBGPCerts appContext,
-        bgpCertsFiltered = liftIO $ getBGPCertsFiltered appContext,
+        gbrs  = getGbrs_ appContext,
+        splJson = getSpls_ appContext,
+        aspas = getAspas_ appContext,
+        bgpCerts = getBgps_ appContext,
+        bgpCertsFiltered = getBGPCertsFiltered_ appContext,
 
         slurm = getSlurm appContext,
         slurms = getAllSlurms appContext,
@@ -221,32 +222,58 @@ getValuesByVersion AppContext {..} version readFromState readForVersion convertT
                     readForVersion tx db worldVersion
 
 
-getASPAs :: Storage s => AppContext s -> IO [AspaDto]
-getASPAs AppContext {..} = do
-    aspas <- getLatestAspas =<< readTVarIO database
-    pure $ map aspaToDto $ Set.toList aspas
+getAspas_ :: (MonadIO m, Storage s, MonadError ServerError m) => 
+             AppContext s -> Maybe Text -> m [AspaDto]
+getAspas_ appContext version = 
+    getValuesByVersion appContext version  
+        (\_ -> pure Nothing) getAspas toDtos
+  where
+    toDtos = map aspaToDto . maybe [] Set.toList
 
-getBGPCerts :: Storage s => AppContext s -> IO [BgpCertDto]
-getBGPCerts AppContext {..} =
-    fmap (map bgpSecToDto . Set.toList) 
-        $ getLatestBgps =<< readTVarIO database    
 
-getBGPCertsFiltered :: Storage s => AppContext s -> IO [BgpCertDto]
-getBGPCertsFiltered AppContext {..} = do
-    db <- readTVarIO database
-    fmap (fromMaybe mempty) $ roTx db $ \tx ->
-        getLastValidationVersion db tx >>= \case      
-            Nothing      -> pure mempty   
-            Just version -> runMaybeT $ do 
-                bgps  <- MaybeT $ getBgps tx db version
-                slurm <- MaybeT $ slurmForVersion tx db version                        
-                pure $ map bgpSecToDto $ Set.toList $ applySlurmBgpSec slurm bgps    
-  
-getGBRs :: Storage s => AppContext s -> IO [Located GbrDto]
-getGBRs AppContext {..} = do
-    gbrs <- getLatestGbrs =<< readTVarIO database
-    pure [ Located { payload = gbrObjectToDto g, .. }
-         | Located { payload = GbrRO g, .. } <- gbrs ]    
+getSpls_ :: (MonadIO m, Storage s, MonadError ServerError m) => 
+           AppContext s -> Maybe Text -> m [SplDto]
+getSpls_ appContext version =
+    getValuesByVersion appContext version  
+        (\_ -> pure Nothing) getSpls toDtos
+  where
+    toDtos spls = 
+        map (\(SplN asn prefix) -> SplDto {..}) $ 
+            maybe [] Set.toList spls
+
+getBgps_ :: (MonadIO m, Storage s, MonadError ServerError m) => 
+           AppContext s -> Maybe Text -> m [BgpCertDto]
+getBgps_ appContext version =
+    getValuesByVersion appContext version  
+        (\_ -> pure Nothing) getBgps toDtos
+  where
+    toDtos = map bgpSecToDto . maybe [] Set.toList
+
+
+getBGPCertsFiltered_ :: (MonadIO m, Storage s, MonadError ServerError m) => 
+                        AppContext s -> Maybe Text -> m [BgpCertDto]
+getBGPCertsFiltered_ appContext version =
+    getValuesByVersion appContext version  
+        (\_ -> pure Nothing) getSlurmedBgps toDtos
+  where
+    toDtos = map bgpSecToDto . maybe [] Set.toList
+
+    getSlurmedBgps tx db v = runMaybeT $ do 
+        bgps  <- MaybeT $ getBgps tx db v
+        slurm <- MaybeT $ slurmForVersion tx db v                        
+        pure $ applySlurmBgpSec slurm bgps    
+
+
+getGbrs_ :: (MonadIO m, Storage s, MonadError ServerError m) => 
+            AppContext s -> Maybe Text -> m [Located GbrDto]
+getGbrs_ appContext version = 
+    getValuesByVersion appContext version  
+        (\_ -> pure Nothing) 
+        (\tx db v -> Just <$> getGbrObjects tx db v) toDtos
+  where
+    toDtos gbrs = 
+        [ Located { payload = gbrObjectToDto g, .. }
+        | Located { payload = GbrRO g, .. } <- fromMaybe [] gbrs ]    
  
 
 getValidationsForVersion :: Storage s => 

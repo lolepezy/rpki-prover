@@ -293,16 +293,29 @@ data CMSBasedObject a = CMSBasedObject {
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
+-- https://datatracker.ietf.org/doc/rfc9286/
 type MftObject = CMSBasedObject Manifest
+
+-- https://datatracker.ietf.org/doc/rfc6482
 type RoaObject = CMSBasedObject [Vrp]
+
+-- https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-prefixlist
+type SplObject = CMSBasedObject SplPayload
+
+-- https://datatracker.ietf.org/doc/rfc6493
 type GbrObject = CMSBasedObject Gbr
+
+-- https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-rsc/
 type RscObject = CMSBasedObject Rsc
+
+-- https://datatracker.ietf.org/doc/draft-ietf-sidrops-aspa-profile/
 type AspaObject = CMSBasedObject Aspa
 
     
 data RpkiObject = CerRO CaCerObject 
                 | MftRO MftObject
                 | RoaRO RoaObject
+                | SplRO SplObject
                 | GbrRO GbrObject
                 | RscRO RscObject
                 | AspaRO AspaObject
@@ -311,7 +324,7 @@ data RpkiObject = CerRO CaCerObject
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
-data RpkiObjectType = CER | MFT | CRL | ROA | ASPA | GBR | BGPSec | RSC
+data RpkiObjectType = CER | MFT | CRL | ROA | ASPA | GBR | SPL | BGPSec | RSC
     deriving (Show, Eq, Ord, Generic)    
     deriving anyclass TheBinary
 
@@ -414,6 +427,7 @@ instance WithAKI RpkiObject where
     getAKI (CerRO c) = getAKI c
     getAKI (MftRO c) = getAKI c
     getAKI (RoaRO c) = getAKI c
+    getAKI (SplRO c) = getAKI c
     getAKI (GbrRO c) = getAKI c
     getAKI (CrlRO c) = getAKI c
     getAKI (RscRO c) = getAKI c
@@ -424,6 +438,7 @@ instance WithHash RpkiObject where
     getHash (CerRO c) = getHash c
     getHash (MftRO c) = getHash c
     getHash (RoaRO c) = getHash c
+    getHash (SplRO c) = getHash c
     getHash (GbrRO c) = getHash c
     getHash (CrlRO c) = getHash c
     getHash (RscRO c) = getHash c
@@ -435,6 +450,7 @@ instance WithRpkiObjectType RpkiObject where
         CerRO _ -> CER
         MftRO _ -> MFT
         RoaRO _ -> ROA
+        SplRO _ -> SPL
         GbrRO _ -> GBR
         CrlRO _ -> CRL
         RscRO _ -> RSC
@@ -492,10 +508,16 @@ newtype ResourceCertificate = ResourceCertificate (SomeRFC RawResourceCertificat
     deriving anyclass TheBinary
     deriving newtype (WithRFC)
 
-data Vrp = Vrp 
-        {-# UNPACK #-} !ASN 
-        !IpPrefix 
-        {-# UNPACK #-} !PrefixLength
+data Vrp = Vrp ASN IpPrefix PrefixLength
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
+-- Signed Prefix List normalised payload
+data SplN = SplN ASN IpPrefix
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
+data SplPayload = SplPayload ASN [IpPrefix]     
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
@@ -730,6 +752,7 @@ data TA = TA {
 
 data Payloads a = Payloads {
         vrps     :: a,
+        spls     :: Set.Set SplN,
         aspas    :: Set.Set Aspa,
         gbrs     :: Set.Set (T2 Hash Gbr),
         bgpCerts :: Set.Set BGPSecPayload  

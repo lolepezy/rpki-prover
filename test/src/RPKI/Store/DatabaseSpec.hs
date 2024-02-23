@@ -450,6 +450,7 @@ replaceAKI a = \case
     CrlRO c  -> CrlRO $ c & #aki .~ a
     MftRO c  -> MftRO $ c & #cmsPayload %~ mapCms
     RoaRO c  -> RoaRO $ c & #cmsPayload %~ mapCms
+    SplRO c  -> SplRO $ c & #cmsPayload %~ mapCms
     GbrRO c  -> GbrRO $ c & #cmsPayload %~ mapCms
     RscRO c  -> RscRO $ c & #cmsPayload %~ mapCms
     AspaRO c -> AspaRO $ c & #cmsPayload %~ mapCms

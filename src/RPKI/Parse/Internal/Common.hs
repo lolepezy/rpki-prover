@@ -67,15 +67,16 @@ id_authorityKeyId = [2, 5, 29, 35]
 id_crlNumber      = [2, 5, 29, 20]
 
 id_pkcs9, id_contentType, id_messageDigest, id_signingTime, id_binarySigningTime :: OID
-id_sha256, id_sha512, id_ct_signedChecklist, id_ct_aspa :: OID
+id_sha256, id_sha512, id_ct_signedChecklist, id_ct_aspa, id_ct_rpkiSignedPrefixList :: OID
 
-id_pkcs9              = [1, 2, 840, 113549, 1, 9]
-id_contentType        = id_pkcs9 <> [3]
-id_messageDigest      = id_pkcs9 <> [4]
-id_signingTime        = id_pkcs9 <> [5]
-id_binarySigningTime  = id_pkcs9 <> [16, 2, 46]
-id_ct_signedChecklist = id_pkcs9 <> [16, 1, 48]
-id_ct_aspa            = id_pkcs9 <> [16, 1, 49]
+id_pkcs9                   = [1, 2, 840, 113549, 1, 9]
+id_contentType             = id_pkcs9 <> [3]
+id_messageDigest           = id_pkcs9 <> [4]
+id_signingTime             = id_pkcs9 <> [5]
+id_binarySigningTime       = id_pkcs9 <> [16, 2, 46]
+id_ct_signedChecklist      = id_pkcs9 <> [16, 1, 48]
+id_ct_aspa                 = id_pkcs9 <> [16, 1, 49]
+id_ct_rpkiSignedPrefixList = id_pkcs9 <> [16, 1, 51]
                        
                         
 id_sha256            = [2, 16, 840, 1, 101, 3, 4, 2, 1]

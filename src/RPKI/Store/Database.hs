@@ -86,6 +86,7 @@ data DB s = DB {
     objectStore      :: RpkiObjectStore s,    
     validationsStore :: ValidationsStore s,    
     vrpStore         :: VRPStore s,
+    splStore         :: SplStore s,
     aspaStore        :: AspaStore s,
     gbrStore         :: GbrStore s,
     bgpStore         :: BgpStore s,
@@ -170,6 +171,11 @@ instance Storage s => WithStorage s (MetricStore s) where
 -- | VRP store
 newtype VRPStore s = VRPStore {    
         roas :: SMap "roas" s WorldVersion (Compressed Roas)
+    }
+    deriving stock (Generic)
+
+newtype SplStore s = SplStore {    
+        spls :: SMap "spls" s WorldVersion (Compressed (Set.Set SplN))
     }
     deriving stock (Generic)
 
@@ -593,7 +599,6 @@ getRoas :: (MonadIO m, Storage s) =>
             Tx s mode -> DB s -> WorldVersion -> m (Maybe Roas)
 getRoas tx DB { vrpStore = VRPStore m } wv = liftIO $ fmap unCompressed <$> M.get tx m wv
 
-
 deleteRoas :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteRoas tx DB { vrpStore = VRPStore r } wv = liftIO $ M.delete tx r wv
@@ -644,6 +649,21 @@ getBgps :: (MonadIO m, Storage s) =>
             Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set BGPSecPayload))
 getBgps tx DB { bgpStore = BgpStore m } wv = 
     liftIO $ fmap unCompressed <$> M.get tx m wv    
+
+getSpls :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set SplN))
+getSpls tx DB { splStore = SplStore m } wv = 
+    liftIO $ fmap unCompressed <$> M.get tx m wv  
+
+deleteSpls :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteSpls tx DB { splStore = SplStore m } wv = liftIO $ M.delete tx m wv    
+
+saveSpls :: (MonadIO m, Storage s) => 
+            Tx s 'RW -> DB s -> Set.Set SplN -> WorldVersion -> m ()
+saveSpls tx DB { splStore = SplStore m } spls worldVersion = 
+    liftIO $ M.put tx m worldVersion (Compressed spls)
+
 
 saveVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> VersionKind -> m ()
@@ -915,6 +935,7 @@ deletePayloads tx db worldVersion = do
     deleteGbrs tx db worldVersion            
     deleteBgps tx db worldVersion                
     deleteRoas tx db worldVersion            
+    deleteSpls tx db worldVersion            
     deleteMetrics tx db worldVersion
     deleteSlurms tx db worldVersion
 
@@ -930,36 +951,13 @@ getLastVersionOfKind database tx versionKind = do
         pure $ case [ v | (v, k) <- versions, k == versionKind ] of         
                 []  -> Nothing
                 vs' -> Just $ maximum vs'
-
-getLatestVRPs :: Storage s => DB s -> IO (Maybe Vrps)
-getLatestVRPs db = 
-    roTx db $ \tx ->        
-        runMaybeT $ do 
-            version <- MaybeT $ getLastValidationVersion db tx
-            MaybeT $ getVrps tx db version
-
-getLatestAspas :: Storage s => DB s -> IO (Set.Set Aspa)
-getLatestAspas db = roTx db $ \tx -> getLatestX tx db getAspas
-
-getLatestGbrs :: Storage s => DB s -> IO [Located RpkiObject]
-getLatestGbrs db = 
-    roTx db $ \tx -> do 
-        gbrs <- Set.toList <$> getLatestX tx db getGbrs 
-        fmap catMaybes $ forM gbrs $ \(T2 hash _) -> getByHash tx db hash                       
-
-getLatestBgps :: Storage s => DB s -> IO (Set.Set BGPSecPayload)
-getLatestBgps db = roTx db $ \tx -> getLatestX tx db getBgps    
+                    
+getGbrObjects :: (MonadIO m, Storage s) => 
+                Tx s mode -> DB s -> WorldVersion -> m [Located RpkiObject]
+getGbrObjects tx db version = do    
+    gbrs <- maybe [] Set.toList <$> getGbrs tx db version
+    fmap catMaybes $ forM gbrs $ \(T2 hash _) -> getByHash tx db hash
     
-getLatestX :: (Storage s, Monoid b) =>
-            Tx s 'RO
-            -> DB s
-            -> (Tx s 'RO -> DB s -> WorldVersion -> IO (Maybe b))
-            -> IO b
-getLatestX tx db f =      
-    getLastValidationVersion db tx >>= \case         
-        Nothing      -> pure mempty
-        Just version -> fromMaybe mempty <$> f tx db version    
-
 
 getRtrPayloads :: (MonadIO m, Storage s) => Tx s 'RO -> DB s -> WorldVersion -> m (Maybe RtrPayloads)
 getRtrPayloads tx db worldVersion = 

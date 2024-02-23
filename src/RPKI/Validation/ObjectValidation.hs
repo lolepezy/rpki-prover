@@ -364,6 +364,33 @@ validateRoa now roa parentCert crl verifiedResources = do
                 unless (isInside i' (vrs ^. typed)) $
                     vPureError $ errorReport vrs
 
+validateSpl ::
+    (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
+    Now ->
+    SplObject ->
+    c ->
+    Validated CrlObject ->
+    Maybe (VerifiedRS PrefixesAndAsns) ->
+    PureValidatorT (Validated SplObject)
+validateSpl now spl parentCert crl verifiedResources = do
+    void $
+        validateCms now (cmsPayload spl) parentCert crl verifiedResources $ \splCMS -> do            
+            let SplPayload asn _ = getCMSContent splCMS
+            for_ verifiedResources $ \(VerifiedRS vrs) -> do 
+                let asns = vrs ^. typed
+                unless (isInside (AS asn) asns) $
+                    vPureError $ SplAsnNotInResourceSet asn (IS.toList asns)
+
+            let AllResources ipv4 ipv6 _ = getRawCert (getEEResourceCert $ unCMS splCMS) ^. #resources
+            ipMustBeEmpty ipv4 (SplNotIpResources (ipToList Ipv4P ipv4))
+            ipMustBeEmpty ipv6 (SplNotIpResources (ipToList Ipv6P ipv6))
+
+    pure $ Validated spl    
+  where
+    ipToList f = \case 
+        Inherit -> []
+        RS s    -> map f $ IS.toList s
+
 validateGbr ::
     (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
     Now ->

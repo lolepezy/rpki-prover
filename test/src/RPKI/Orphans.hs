@@ -271,6 +271,10 @@ instance Arbitrary Aspa where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary SplPayload where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary ASN where
     arbitrary = genericArbitrary
     shrink = genericShrink

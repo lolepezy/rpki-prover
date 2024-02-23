@@ -329,6 +329,12 @@ toValidationMessage = \case
       AspaIPv6Present -> [i|IPv6 extension is present on the ASPA EE certificate.|]      
       AspaAsNotOnEECert customer eeAsns -> 
         [i|Customer ASN (#{customer}) is not in the EE certificate AS set (#{eeAsns}).|]      
+    
+      SplAsnNotInResourceSet asn asns ->
+        [i|#{asn} is not in the EE certificate AS set (#{asns}).|]      
+
+      SplNotIpResources prefixes -> 
+        [i|Prefix list must not have IP resources on its EE certificate, but has #{prefixes}.|]
 
   where
     fmtUrlList = mconcat . 

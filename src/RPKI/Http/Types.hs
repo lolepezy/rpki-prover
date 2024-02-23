@@ -135,6 +135,7 @@ data ObjectDto = CertificateD (ObjectContentDto CertificateDto)
                 | CRLD (ObjectContentDto CrlDto)
                 | BGPSecD (ObjectContentDto BgpCertDto)                
                 | ROAD (ObjectContentDto (CMSObjectDto RoaDto))
+                | SPLD (ObjectContentDto (CMSObjectDto SplPayloadDto))
                 | ASPAD (ObjectContentDto (CMSObjectDto AspaDto))
                 | GBRD (ObjectContentDto (CMSObjectDto GbrDto))
                 | RSCD (ObjectContentDto (CMSObjectDto RscDto))
@@ -225,6 +226,18 @@ data CrlDto = CrlDto {
 data RoaDto = RoaDto {
         asn      :: ASN,
         prefixes :: [RoaPrefixDto]
+    }  
+    deriving stock (Eq, Show, Generic)
+
+data SplDto = SplDto {
+        asn    :: ASN,
+        prefix :: IpPrefix
+    }  
+    deriving stock (Eq, Show, Generic)
+
+data SplPayloadDto = SplPayloadDto {
+        asn      :: ASN,
+        prefixes :: [IpPrefix]
     }  
     deriving stock (Eq, Show, Generic)
 
@@ -332,6 +345,7 @@ instance ToJSON ObjectDto where
         CRLD v         -> object ["type" .= ("CRL" :: Text), "value" .= toJSON v]
         BGPSecD v      -> object ["type" .= ("BGPSec" :: Text), "value" .= toJSON v]
         ROAD v  -> object ["type" .= ("ROA" :: Text), "value" .= toJSON v]
+        SPLD v  -> object ["type" .= ("PrefixList" :: Text), "value" .= toJSON v]
         ASPAD v -> object ["type" .= ("ASPA" :: Text), "value" .= toJSON v]
         GBRD v  -> object ["type" .= ("GBR" :: Text), "value" .= toJSON v]
         RSCD v  -> object ["type" .= ("RSC" :: Text), "value" .= toJSON v]
@@ -352,6 +366,8 @@ instance ToJSON OIDDto where
 instance ToJSON ManifestDto
 instance ToJSON CrlDto
 instance ToJSON RoaDto
+instance ToJSON SplDto
+instance ToJSON SplPayloadDto
 instance ToJSON RoaPrefixDto
 instance ToJSON GbrDto
 instance ToJSON RscDto
@@ -381,6 +397,8 @@ instance ToSchema ExtensionsDto
 instance ToSchema OIDDto
 instance ToSchema ManifestDto
 instance ToSchema CrlDto
+instance ToSchema SplPayloadDto
+instance ToSchema SplDto
 instance ToSchema RoaDto
 instance ToSchema RoaPrefixDto
 instance ToSchema GbrDto

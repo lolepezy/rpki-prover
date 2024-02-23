@@ -60,9 +60,6 @@ createDatabase env logger checkAction = do
                     if version /= currentDatabaseVersion then do
                         -- We are seeing incompatible storage. The only option 
                         -- now is to erase all the maps and start from scratch.
-                        --
-                        -- This is obviously far from optimal, so it would make
-                        -- sense to automate that part.
                         logInfo logger [i|Persisted cache version is #{version} and expected version is #{currentDatabaseVersion}, dropping the cache.|]    
                         (_, ms) <- timedMS $ emptyDBMaps tx db
                         logDebug logger [i|Erasing cache took #{ms}ms.|]                        
@@ -76,6 +73,7 @@ createDatabase env logger checkAction = do
         taStore          <- TAStore <$> createMap        
         validationsStore <- ValidationsStore <$> createMap
         vrpStore         <- VRPStore <$> createMap
+        splStore         <- SplStore <$> createMap
         aspaStore        <- AspaStore <$> createMap    
         gbrStore         <- GbrStore <$> createMap 
         bgpStore         <- BgpStore <$> createMap
