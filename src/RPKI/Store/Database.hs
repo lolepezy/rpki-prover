@@ -6,7 +6,6 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE OverloadedLabels      #-}
 {-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE QuasiQuotes           #-}
 
 module RPKI.Store.Database where
 
@@ -21,7 +20,7 @@ import           Data.Foldable            (for_)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as C8
 import qualified Data.List                as List
-import           Data.Maybe               (catMaybes, fromMaybe)
+import           Data.Maybe               (catMaybes)
 import qualified Data.Set                 as Set
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
@@ -68,7 +67,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 31
+currentDatabaseVersion = 32
 
 -- Some constant keys
 databaseVersionKey, lastValidMftKey, forAsyncFetchKey :: Text
@@ -281,7 +280,7 @@ getByUri :: (MonadIO m, Storage s) =>
             Tx s mode -> DB s -> RpkiURL -> m [Located RpkiObject]
 getByUri tx db uri = liftIO $ do
     keys' <- getKeysByUri tx db uri
-    fmap catMaybes $ mapM (getLocatedByKey tx db) keys'
+    catMaybes <$> mapM (getLocatedByKey tx db) keys'
 
 getKeysByUri :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> RpkiURL -> m [ObjectKey]
@@ -755,7 +754,7 @@ getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m Publica
 getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
     rrdps <- M.all tx rrdpS
     rsyns <- M.all tx rsyncS    
-    forAsyncS' <- fromMaybe mempty . fmap unCompressed <$> M.get tx forAsyncS forAsyncFetchKey
+    forAsyncS' <- maybe mempty unCompressed <$> M.get tx forAsyncS forAsyncFetchKey
     pure $ PublicationPoints
             (RrdpMap $ Map.fromList rrdps)
             (RsyncTree $ Map.fromList rsyns)           

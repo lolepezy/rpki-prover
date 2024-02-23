@@ -574,7 +574,7 @@ resolveVDto tx db vs = liftIO $
     #validations (mapM resolveOrigDto) vs
   where
     resolveOrigDto (OriginalVDto fd) = 
-        fmap ResolvedVDto $ #path (mapM (resolveLocations tx db)) fd
+        ResolvedVDto <$> #path (mapM (resolveLocations tx db)) fd
     
 
 resolveLocations :: Storage s => 

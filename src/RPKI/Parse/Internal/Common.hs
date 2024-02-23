@@ -17,6 +17,7 @@ import qualified Data.List as List
 import Data.Word
 import Data.Char (chr)
 import Data.Maybe
+import Data.Either
 
 import Data.ASN1.OID
 import Data.ASN1.Types
@@ -303,8 +304,8 @@ parseIpExt' :: ParseASN1 IpResources
 parseIpExt' = do
     afs <- getMany addrFamily    
     pure $ IpResources $ IpResourceSet
-      (rs [ af | Left  af <- afs ]) 
-      (rs [ af | Right af <- afs ])
+      (rs (lefts afs)) 
+      (rs (rights afs))
   where
     rs []       = R.emptyRS
     rs (af : _) = af

@@ -295,7 +295,7 @@ instance ToJSON Attribute where
             ]            
         SigningTime dt _ -> Json.object [
                 "type" .= ("SigningTime" :: Text),
-                "value" .= (instantDateFormat $ Instant dt)                
+                "value" .= instantDateFormat (Instant dt)                
             ]
         BinarySigningTime bst -> Json.object [
                 "type" .= ("BinarySigningTime" :: Text),

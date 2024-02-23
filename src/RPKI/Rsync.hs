@@ -264,7 +264,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                 SuccessParsed rpkiUrl so@StorableObject {..} -> do 
                     saveObject tx db so worldVersion                    
                     linkObjectToUrl tx db rpkiUrl (getHash object)
-                    updateMetric @RsyncMetric @_ (& #processed %~ (+1))
+                    updateMetric @RsyncMetric @_ (#processed %~ (+1))
                 other -> 
                     logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                    
 
@@ -291,7 +291,7 @@ rsyncDestination :: RsyncMode -> FilePath -> RsyncURL -> IO FilePath
 rsyncDestination rsyncMode root (RsyncURL (RsyncHost (RsyncHostName host) port) path) = do 
     let portPath = maybe "" (\p -> "_" <> show p) port
     let fullPath = ((U.convert host :: String) <> portPath) :| map (U.convert . unRsyncPathChunk) path
-    let mkPath p = foldl (</>) root p
+    let mkPath = foldl (</>) root
     let pathWithoutLast = NonEmpty.init fullPath
     let target = mkPath $ NonEmpty.toList fullPath
     case rsyncMode of 

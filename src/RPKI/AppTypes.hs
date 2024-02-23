@@ -1,5 +1,4 @@
 {-# LANGUAGE DeriveAnyClass     #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia        #-}
 {-# LANGUAGE StrictData         #-}
 {-# LANGUAGE OverloadedStrings  #-}
@@ -25,7 +24,7 @@ instance Show WorldVersion where
 
 -- Keep it just text for now since we don't
 -- know what may be needed there in the future.
-data VersionKind = VersionKind Text
+newtype VersionKind = VersionKind Text
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 

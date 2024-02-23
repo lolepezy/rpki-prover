@@ -1,4 +1,3 @@
-{-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE OverloadedLabels           #-}
@@ -276,7 +275,8 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
             allTas <- newAllTasTopDownContext worldVersion repositoryProcessing queue
             resetForAsyncFetch repositoryProcessing
             validateThem allTas
-                `finally` (applyValidationSideEffects appContext allTas)                    
+                `finally` 
+                applyValidationSideEffects appContext allTas
 
     
     validateThem allTas = do
@@ -381,7 +381,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                     saveTA tx db (StorableTA tal actualCert (FetchedAt moment) ppAccess)
                     pure (locatedTaCert uri' actualCert, ppAccess, Updated)
 
-    locatedTaCert url cert = Located (toLocations url) cert
+    locatedTaCert url = Located (toLocations url)
 
 
 -- | Do the validation starting from the TA certificate.
@@ -540,8 +540,8 @@ validateCaNoFetch
     newShortcut = 
         case validationAlgorithm of 
             -- Do not create shortctus when validation algorithm is not incremental
-            FullEveryIteration -> \_        -> Nothing
-            Incremental        -> \shortcut -> Just $! shortcut
+            FullEveryIteration -> const Nothing
+            Incremental        -> (Just $!)
 
     makeNextFullValidationAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextFullValidationAction childrenAki = do 
@@ -593,7 +593,7 @@ validateCaNoFetch
                                     -- getCrlByKey is the best we can have
                                     (getCrlByKey appContext crlKey)
                                     `andThen` 
-                                        (markAsRead topDownContext crlKey)
+                                        markAsRead topDownContext crlKey
 
                             Just mftKey 
                                 | mftShortKey == mftKey -> do
@@ -604,7 +604,7 @@ validateCaNoFetch
                                                 (getFullCa appContext topDownContext ca)
                                                 (getCrlByKey appContext crlKey)
                                                 `andThen` 
-                                                    (markAsRead topDownContext crlKey)
+                                                    markAsRead topDownContext crlKey
 
                                 | otherwise -> do 
                                     -- logDebug logger [i|Option 2|]            
@@ -684,8 +684,8 @@ validateCaNoFetch
                         Nothing       -> (nonCrlChildren, [], False)
                         Just mftShort -> manifestDiff mftShort nonCrlChildren
 
-            bumpCounterBy topDownCounters (#newChildren) (length newChildren)
-            bumpCounterBy topDownCounters (#overlappingChildren) (length overlappingChildren)
+            bumpCounterBy topDownCounters #newChildren (length newChildren)
+            bumpCounterBy topDownCounters #overlappingChildren (length overlappingChildren)
             
             forM_ mftShortcut $ \mftShort -> do          
                 -- If CRL has changed, we have to recheck if children are not revoked. 
@@ -723,8 +723,8 @@ validateCaNoFetch
                     -- Here we have the payloads for the fully validated MFT children
                     -- and the shortcut objects for these children                        
                     maybeChildrenShortcuts <- 
-                            (gatherMftEntryResults =<< 
-                                gatherMftEntryValidations fullCa newChildren validCrl)
+                            gatherMftEntryResults =<< 
+                                gatherMftEntryValidations fullCa newChildren validCrl
                                             
                     let childrenShortcuts = [ (k, s) | T2 k (Just s) <- maybeChildrenShortcuts ]
 
@@ -908,16 +908,16 @@ validateCaNoFetch
                     appError e
                 InvalidChild _ vs key fileName -> do
                     embedState vs
-                    pure $! (T2 key (Just $! makeTroubledChild key fileName)) : childrenShortcuts
+                    pure $! T2 key (Just $! makeTroubledChild key fileName) : childrenShortcuts
                 Valid vs childShortcut key fileName -> do 
                     embedState vs
                     -- Don't create shortcuts for objects having either errors or warnings,
                     -- otherwise warnings will disappear after the first validation 
                     if emptyValidations (vs ^. typed)
                         then do                            
-                            pure $! (T2 key childShortcut) : childrenShortcuts
+                            pure $! T2 key childShortcut : childrenShortcuts
                         else do 
-                            pure $! (T2 key (Just $! makeTroubledChild key fileName)) : childrenShortcuts
+                            pure $! T2 key (Just $! makeTroubledChild key fileName) : childrenShortcuts
             ) mempty
 
         
@@ -1304,7 +1304,6 @@ validateCaNoFetch
     -- TODO This is pretty bad, it's easy to forget to do it
     rememberPayloads :: forall m a . MonadIO m => Getting (IORef a) PayloadBuilder (IORef a) -> (a -> a) -> m ()
     rememberPayloads lens_ f = do
-        pure ()
         let builder = topDownContext ^. #payloadBuilder . lens_        
         liftIO $! atomicModifyIORef' builder $ \b -> let !z = f b in (z, ())
 
@@ -1475,7 +1474,7 @@ makeMftShortcut key
   let 
     (notValidBefore, notValidAfter) = getValidityPeriod mftObject        
     serial = getSerial mftObject
-    manifestNumber = (getCMSContent $ cmsPayload mftObject) ^. #mftNumber
+    manifestNumber = getCMSContent (cmsPayload mftObject) ^. #mftNumber
     crlShortcut = let 
         SignCRL {..} = validCrl ^. #signCrl
         -- That must always match, since it's a validated CRL
@@ -1494,7 +1493,7 @@ vUniqueFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m
 vUniqueFocusOn c a f nonUniqueError = do
     Scopes { validationScope = Scope vs } <- vHoist $ withCurrentScope $ \scopes _ -> scopes
     let focus = c a
-    unless (null (NonEmpty.filter (==focus) vs)) nonUniqueError
+    when (focus `elem` vs) nonUniqueError
     vFocusOn c a f 
         
 
@@ -1509,7 +1508,7 @@ applyValidationSideEffects
     appContext@AppContext {..}
     AllTasTopDownContext {..} = liftIO $ do        
     (visitedSize, elapsed) <- timedMS $ do
-        vks <- atomically $ readTVar visitedKeys            
+        vks <- readTVarIO visitedKeys            
         rwTxT database $ \tx db -> markAsValidated tx db vks worldVersion        
         pure $! Set.size vks
     
@@ -1601,18 +1600,18 @@ markAsReadByHash AppContext {..} topDownContext hash = do
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()
 oneMoreGbr, oneMoreAspa, oneMoreBgp, oneMoreSpl :: Monad m => ValidatorT m ()
 oneMoreMftShort :: Monad m => ValidatorT m ()
-oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
-oneMoreRoa  = updateMetric @ValidationMetric @_ (& #validRoaNumber %~ (+1))
-oneMoreSpl  = updateMetric @ValidationMetric @_ (& #validSplNumber %~ (+1))
-oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
-oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
-oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
-oneMoreAspa = updateMetric @ValidationMetric @_ (& #validAspaNumber %~ (+1))
-oneMoreBgp  = updateMetric @ValidationMetric @_ (& #validBgpNumber %~ (+1))
-oneMoreMftShort = updateMetric @ValidationMetric @_ (& #mftShortcutNumber %~ (+1))
+oneMoreCert = updateMetric @ValidationMetric @_ (#validCertNumber %~ (+1))
+oneMoreRoa  = updateMetric @ValidationMetric @_ (#validRoaNumber %~ (+1))
+oneMoreSpl  = updateMetric @ValidationMetric @_ (#validSplNumber %~ (+1))
+oneMoreMft  = updateMetric @ValidationMetric @_ (#validMftNumber %~ (+1))
+oneMoreCrl  = updateMetric @ValidationMetric @_ (#validCrlNumber %~ (+1))
+oneMoreGbr  = updateMetric @ValidationMetric @_ (#validGbrNumber %~ (+1))
+oneMoreAspa = updateMetric @ValidationMetric @_ (#validAspaNumber %~ (+1))
+oneMoreBgp  = updateMetric @ValidationMetric @_ (#validBgpNumber %~ (+1))
+oneMoreMftShort = updateMetric @ValidationMetric @_ (#mftShortcutNumber %~ (+1))
 
 moreVrps :: Monad m => Count -> ValidatorT m ()
-moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
+moreVrps n = updateMetric @ValidationMetric @_ (#vrpCounter %~ (+n))
 
 
 -- Number of unique VRPs requires explicit counting of the VRP set sizes, 
@@ -1620,7 +1619,7 @@ moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
 addUniqueVRPCount :: (HasType ValidationState s, HasField' "payloads" s (Payloads Vrps)) => s -> s
 addUniqueVRPCount !s = let
         vrpCountLens = typed @ValidationState . typed @RawMetric . #vrpCounts
-        totalUnique = Count (fromIntegral $ uniqueVrpCount $ (s ^. #payloads) ^. #vrps)
+        totalUnique = Count $ fromIntegral $ uniqueVrpCount $ (s ^. #payloads) ^. #vrps
         perTaUnique = MonoidalMap.map (Count . fromIntegral . Set.size) (unVrps $ (s ^. #payloads) ^. #vrps)   
     in s & vrpCountLens . #totalUnique .~ totalUnique                
          & vrpCountLens . #perTaUnique .~ perTaUnique

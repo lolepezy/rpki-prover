@@ -133,7 +133,7 @@ downloadAndUpdateRRDP
 
     (notificationXml, _, httpStatus, newETag) <- 
             timedMetric' (Proxy :: Proxy RrdpMetric) 
-                (\t -> (& #downloadTimeMs %~ (<> t))) $
+                (\t -> #downloadTimeMs %~ (<> t)) $
                 fromTry (RrdpE . CantDownloadNotification . U.fmtEx)
                     $ downloadToBS (appContext ^. typed) (getURL repoUri) eTag
     
@@ -165,24 +165,23 @@ downloadAndUpdateRRDP
                         logDebug logger [i|Going to use snapshot for #{repoUri}: #{message}|]
                         useSnapshot snapshotInfo notification                        
 
-                    FetchDeltas sortedDeltas snapshotInfo message -> 
-                        (do 
+                    FetchDeltas sortedDeltas snapshotInfo message -> do 
                             usedSource RrdpDelta
                             logDebug logger [i|Going to use deltas for #{repoUri}: #{message}|]
                             useDeltas sortedDeltas notification                            
-                            `catchError` 
-                        \e -> do         
-                            -- NOTE At the moment we ignore the fact that some objects are wrongfully added by 
-                            -- some of the deltas
-                            usedSource RrdpSnapshot
-                            logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
-                            useSnapshot snapshotInfo notification)
+                        `catchError` 
+                            \e -> do         
+                                -- NOTE At the moment we ignore the fact that some objects are wrongfully added by 
+                                -- some of the deltas
+                                usedSource RrdpSnapshot
+                                logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
+                                useSnapshot snapshotInfo notification
 
             pure (repo', RrdpFetchStat nextStep)                            
   where
     bumpETag newETag f = (\r -> r { eTag = newETag }) <$> f        
 
-    usedSource z = updateMetric @RrdpMetric @_ (& #rrdpSource .~ z)        
+    usedSource z = updateMetric @RrdpMetric @_ (#rrdpSource .~ z)        
     hoistHere    = vHoist . fromEither . first RrdpE
 
     validatedNotification notification = do    
@@ -208,7 +207,7 @@ downloadAndUpdateRRDP
             
             (rawContent, _, httpStatus', _) <- 
                 timedMetric' (Proxy :: Proxy RrdpMetric) 
-                    (\t -> (& #downloadTimeMs %~ (<> t))) $ do     
+                    (\t -> #downloadTimeMs %~ (<> t)) $ do     
                     fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
                         downloadHashedBS (appContext ^. typed @Config) uri Nothing expectedHash                                    
                             (\actualHash -> 
@@ -216,10 +215,10 @@ downloadAndUpdateRRDP
                                     expectedHash = expectedHash,
                                     actualHash = actualHash                                            
                                 })                                            
-            updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
+            updateMetric @RrdpMetric @_ (#lastHttpStatus .~ httpStatus') 
 
             void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
-                    (\t -> (& #saveTimeMs %~ (<> t)))
+                    (\t -> #saveTimeMs %~ (<> t))
                     (handleSnapshotBS repoUri notification rawContent)
 
             pure $ repo { rrdpMeta = rrdpMeta' }
@@ -243,7 +242,7 @@ downloadAndUpdateRRDP
         let maxDeltaDownloadSimultaneously = 8                        
 
         void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
-                (\t -> (& #saveTimeMs %~ (<> t))) $ 
+                (\t -> #saveTimeMs %~ (<> t)) $ 
                 foldPipeline
                         maxDeltaDownloadSimultaneously
                         (S.each sortedDeltas)
@@ -268,7 +267,7 @@ downloadAndUpdateRRDP
                                     expectedHash = hash,
                                     serial = serial
                                 })            
-            updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
+            updateMetric @RrdpMetric @_ (#lastHttpStatus .~ httpStatus') 
             pure (rawContent, serial, deltaUri)
 
         serials = map (^. typed @RrdpSerial) sortedDeltas
@@ -692,8 +691,8 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
 
 
 addedObject, deletedObject :: Monad m => ValidatorT m ()
-addedObject   = updateMetric @RrdpMetric @_ (& #added %~ (+1))
-deletedObject = updateMetric @RrdpMetric @_ (& #deleted %~ (+1))
+addedObject   = updateMetric @RrdpMetric @_ (#added %~ (+1))
+deletedObject = updateMetric @RrdpMetric @_ (#deleted %~ (+1))
 
 
 data RrdpObjectProcessingResult =           

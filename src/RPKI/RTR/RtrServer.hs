@@ -434,7 +434,7 @@ respondToPdu
                                         Nothing -> 
                                             -- we don't have the data, you are too far behind
                                             Right (
-                                                pure [TruePdu $ CacheResetPdu], 
+                                                pure [TruePdu CacheResetPdu], 
                                                 Just [i|No data for serial #{clientSerial}.|])
                                         Just diffs' -> let                                            
                                             pdus = [TruePdu $ CacheResponsePdu sessionId] 

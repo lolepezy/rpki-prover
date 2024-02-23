@@ -5,7 +5,6 @@
 {-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE OverloadedLabels   #-}
 {-# LANGUAGE QuasiQuotes        #-}
-{-# LANGUAGE RecordWildCards    #-}
 
 module RPKI.SLURM.SlurmProcessing where
 

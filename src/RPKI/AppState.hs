@@ -1,4 +1,3 @@
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE OverloadedLabels   #-}
 {-# LANGUAGE DerivingVia        #-}

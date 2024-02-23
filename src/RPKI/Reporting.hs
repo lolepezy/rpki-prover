@@ -476,7 +476,7 @@ data ValidationState = ValidationState {
     deriving Monoid    via GenericMonoid ValidationState
 
 mTrace :: Trace -> Set Trace
-mTrace t = Set.singleton t
+mTrace = Set.singleton
     
 vState :: Validations -> ValidationState
 vState vs = ValidationState vs mempty mempty

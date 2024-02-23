@@ -128,9 +128,7 @@ parseTAL bs taName =
                     case NonEmpty.nonEmpty uris of
                         Nothing    -> Left $ TALError "Empty list of URIs"
                         Just uris' -> do 
-                            locations <- first TALError 
-                                            $ mapM parseRpkiURL 
-                                            $ NonEmpty.map Text.strip uris'
+                            locations <- first TALError $ mapM (parseRpkiURL . Text.strip) uris'
                             pure $ RFC_TAL {
                                 certificateLocations = Locations $ NESet.fromList locations,
                                 publicKeyInfo = EncodedBase64 $ convert $ 

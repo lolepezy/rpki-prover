@@ -874,7 +874,7 @@ sortRrdpFirstNE :: NonEmpty.NonEmpty RpkiURL -> NonEmpty.NonEmpty RpkiURL
 sortRrdpFirstNE = NonEmpty.fromList . sortRrdpFirst . NonEmpty.toList
 
 oneOfLocations :: Locations -> RpkiURL -> Bool
-oneOfLocations (Locations urls) url = not $ null $ filter (==url) $ neSetToList urls
+oneOfLocations (Locations urls) url = elem url $ neSetToList urls
 
 {- 
 https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.2

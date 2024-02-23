@@ -450,7 +450,7 @@ validateAspa now aspa parentCert crl verifiedResources = do
 
             let Aspa {..} = getCMSContent aspaCms         
 
-            unless ((AS customer) `IS.isInside` asnSet) $ 
+            unless (AS customer `IS.isInside` asnSet) $ 
                 vError $ AspaAsNotOnEECert customer (IS.toList asnSet)
 
             when (customer `Set.member` providers) $

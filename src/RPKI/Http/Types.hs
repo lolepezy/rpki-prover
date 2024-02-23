@@ -492,7 +492,7 @@ instance ToSchema (DtoScope 'Metric)
 toMinimalValidations :: Coercible dto (FullVDto f) => 
                         ValidationsDto dto 
                      -> ValidationsDto (MinimalVDto f)
-toMinimalValidations = (& #validations %~ coerce)
+toMinimalValidations = #validations %~ coerce
 
 toMetricsDto :: RawMetric -> MetricsDto
 toMetricsDto rawMetrics = MetricsDto {

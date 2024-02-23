@@ -1,4 +1,3 @@
-{-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DerivingVia          #-}
 {-# LANGUAGE OverloadedLabels     #-}

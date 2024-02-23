@@ -68,7 +68,7 @@ instance Store C25519.PublicKey where
     peek = peekPK C25519.publicKey
 
 instance Store E25519.PublicKey where
-    size = ConstSize $ E25519.publicKeySize
+    size = ConstSize E25519.publicKeySize
     poke pk = let bs = convert pk :: BS.ByteString in poke bs    
     peek = peekPK E25519.publicKey
 
@@ -79,7 +79,7 @@ instance Store C448.PublicKey where
     peek = peekPK C448.publicKey
 
 instance Store E448.PublicKey where
-    size = ConstSize $ E448.publicKeySize
+    size = ConstSize E448.publicKeySize
     poke pk = let bs = convert pk :: BS.ByteString in poke bs    
     peek = peekPK E448.publicKey
 

@@ -64,12 +64,12 @@ timed action = do
     !z <- action
     Now (Instant end) <- thisInstant
     let (Seconds s, NanoSeconds ns) = timeDiffP end begin
-    pure $! (z, s * nanosPerSecond + ns)
+    pure (z, s * nanosPerSecond + ns)
 
 timedMS :: MonadIO m => m a -> m (a, TimeMs)
 timedMS action = do 
     (!z, ns) <- timed action   
-    pure $! (z, fromIntegral $! ns `div` microsecondsPerSecond)
+    pure (z, fromIntegral $! ns `div` microsecondsPerSecond)
 
 -- cpuTime :: 
 

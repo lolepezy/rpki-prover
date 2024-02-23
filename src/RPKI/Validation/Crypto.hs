@@ -1,5 +1,3 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
-
 module RPKI.Validation.Crypto where
 
 import           Data.X509            (certPubKey)

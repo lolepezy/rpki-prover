@@ -1,7 +1,5 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE UndecidableInstances  #-}
-{-# LANGUAGE DeriveDataTypeable    #-}
-{-# LANGUAGE InstanceSigs          #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 module RPKI.Store.Base.Map where

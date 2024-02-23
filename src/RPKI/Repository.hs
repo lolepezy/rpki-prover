@@ -371,14 +371,14 @@ changeSet
     where
         rrdps' = map (\(u, new) -> (new, Map.lookup u rrdpDb)) $ Map.toList rrdpNew
 
-        newRrdp  = map Put [ new | (new, Nothing) <- rrdps' ]
+        newRrdp  = [ Put new | (new, Nothing) <- rrdps' ]
 
         -- We trust RRDP meta from the DB more -- it has been updated by the 
         -- delta/snapshot fetchers in the same transactions as the data
-        mergedRrdp = map Put [ new { rrdpMeta = dbRrdpMeta } | 
-                                (new, Just (RrdpRepository { rrdpMeta = dbRrdpMeta })) <- rrdps' ]
+        mergedRrdp = [ Put new { rrdpMeta = dbRrdpMeta } | 
+                        (new, Just (RrdpRepository { rrdpMeta = dbRrdpMeta })) <- rrdps' ]
 
-        rrdpToDelete = map Remove [ r | (u, r) <- Map.toList rrdpDb, not (u `Map.member` rrdpNew) ]
+        rrdpToDelete = [ Remove r | (u, r) <- Map.toList rrdpDb, not (u `Map.member` rrdpNew) ]
 
         rsyncOldList = Map.toList rsyncDb
         rsyncNewList = Map.toList rsyncNew

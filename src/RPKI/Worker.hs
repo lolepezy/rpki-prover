@@ -129,7 +129,7 @@ data ValidationResult = ValidationResult ValidationState (Maybe Slurm)
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-data CacheCleanupResult = CacheCleanupResult CleanUpResult
+newtype CacheCleanupResult = CacheCleanupResult CleanUpResult
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
