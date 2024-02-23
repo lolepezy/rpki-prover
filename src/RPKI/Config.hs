@@ -249,7 +249,8 @@ defaultConfig = Config {
     systemConfig = SystemConfig {
         rsyncWorkerMemoryMb      = 1024,
         rrdpWorkerMemoryMb       = 1024,        
-        validationWorkerMemoryMb = 2048,
+        -- validationWorkerMemoryMb = 2048,
+        validationWorkerMemoryMb = 8048,
         cleanupWorkerMemoryMb    = 512
     },
     rtrConfig                 = Nothing,

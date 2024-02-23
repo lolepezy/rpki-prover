@@ -45,7 +45,7 @@ import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
 
-import           UnliftIO.Async                   (pooledForConcurrentlyN)
+-- import           UnliftIO.Async                   (pooledForConcurrentlyN)
 
 import           RPKI.AppContext
 import           RPKI.AppState
@@ -894,7 +894,8 @@ validateCaNoFetch
         let forAllChidlren = 
                 if threads <= 1
                     then forM 
-                    else pooledForConcurrentlyN threads        
+                    -- else pooledForConcurrentlyN threads        
+                    else forConcurrently        
 
         forAllChidlren nonCrlChildren f 
 
@@ -1232,7 +1233,8 @@ validateCaNoFetch
             let forAllChidlren = 
                     if threads <= 1
                         then forM 
-                        else pooledForConcurrentlyN threads
+                        -- else pooledForConcurrentlyN threads
+                        else forConcurrently
 
             scopes <- askScopes
             z <- liftIO $ forAllChidlren children $ runValidatorT scopes . f
