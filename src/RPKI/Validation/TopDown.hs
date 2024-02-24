@@ -72,7 +72,7 @@ import           RPKI.Store.Database
 import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
-import           RPKI.Util                        (fmtEx, fmtLocations, increment)
+import           RPKI.Util                        
 import           RPKI.Validation.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Validation.Common
@@ -747,7 +747,11 @@ validateCaNoFetch
 
                     case (validationAlgorithm, getRFC fullCa) of 
                         -- Only create shortcuts for case of incremental validation and 
-                        -- if CA prescribes to use standard validation instead of reconsidered.                        
+                        -- if CA prescribes to use standard validation instead of reconsidered.      
+                        -- 
+                        -- NOTE: That means that in case of full validation falling back to 
+                        -- the prevous valid manifest will not work, since there are no
+                        -- shortcuts of previous manifests to fall back to.                  
                         (Incremental, StrictRFC) -> do  
                             issues <- vHoist thisScopeIssues
                             -- Do no create shortcuts for manifests with warnings 
@@ -1535,7 +1539,7 @@ instance Show a => Show (IdenticalShow a) where
 reportCounters :: AppContext s -> TopDownCounters IORef -> IO ()
 reportCounters AppContext {..} counters = do
     c <- btraverse (fmap IdenticalShow . readIORef) counters
-    logDebug logger $ [i|Counters: #{c}|]
+    logDebug logger $ fmtGen c
                        
 
 updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
