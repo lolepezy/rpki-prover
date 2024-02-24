@@ -14,11 +14,14 @@ import           GHC.Generics
 
 import           RPKI.Store.Base.Serialisation
 
--- It's a sequence of versions that is equal to some monotonic  
+-- Ssequence of versions that is equal to some monotonic  
 -- clock timestamp in nanoseconds.
 newtype WorldVersion = WorldVersion Int64
-    deriving stock (Eq, Ord, Show, Generic)
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary)
+
+instance Show WorldVersion where 
+    show (WorldVersion v) = show v
 
 -- Keep it just text for now since we don't
 -- know what may be needed there in the future.

@@ -21,6 +21,7 @@ import           Data.Hourglass
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Config
+import           RPKI.Domain
 import           RPKI.Logging
 import           RPKI.Worker
 import           RPKI.Reporting
@@ -202,10 +203,14 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
 
             closeNativeLmdb oldNativeEnv
             removePathForcibly currentLinkTarget
+
+            Size lmdbFileSize <- cacheFsSize appContext 
+            let fileSizeMb :: Integer = fromIntegral $ lmdbFileSize `div` (1024 * 1024)
+            logInfo logger [i|New LMDB file size is #{fileSizeMb}mb, will perform compaction.|]            
         
     Size lmdbFileSize <- cacheFsSize appContext 
     
-    dbStats <- fmap DB.totalStats $ DB.getDbStats =<< readTVarIO database
+    dbStats <- fmap DB.totalStats $ lmdbGetStats appContext
     let Size dataSize = dbStats ^. #statKeyBytes + dbStats ^. #statValueBytes    
 
     let fileSizeMb :: Integer = fromIntegral $ lmdbFileSize `div` (1024 * 1024)
@@ -218,7 +223,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
                     logError logger [i|ERROR: #{e}.|]        
                     cleanUpAfterException)
         else 
-            logInfo logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, compaction is not needed yet.|]
+            logInfo logger [i|The total data size is #{dataSizeMb}mb, LMDB file size #{fileSizeMb}mb, compaction is not needed yet.|]          
         
 
 cacheFsSize :: AppContext s -> IO Size 
@@ -297,7 +302,7 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
             throwIO $ AppException $ InternalE $ InternalError message
         Right wr@WorkerResult { payload = CompactionResult _, .. } -> do
             logWorkerDone logger workerId wr
-            pushSystem logger $ cpuMemMetric "compaction" cpuTime maxMemory                     
+            pushSystem logger $ cpuMemMetric "compaction" cpuTime clockTime maxMemory                     
             
 -- 
 cleanupReaders :: AppContext LmdbStorage -> IO Int
@@ -307,3 +312,10 @@ cleanupReaders AppContext {..} = do
     env <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
     native <- atomically $ getNativeEnv env
     cleanReadersTable native
+
+
+lmdbGetStats :: AppContext LmdbStorage -> IO StorageStats
+lmdbGetStats AppContext {..} = do 
+    lmdbEnv   <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database    
+    nativeEnv <- atomically $ getNativeEnv lmdbEnv
+    getEnvStats nativeEnv

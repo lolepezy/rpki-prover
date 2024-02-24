@@ -1,10 +1,12 @@
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE StrictData         #-}
+{-# LANGUAGE RecordWildCards    #-}
 
 module RPKI.RRDP.Types where
 
 import qualified Data.ByteString as BS
+import           Data.Text                        (Text)
 import           GHC.Generics
 import           RPKI.Domain
 import           RPKI.Store.Base.Serialisation
@@ -29,6 +31,7 @@ data Notification = Notification {
 
 data SnapshotInfo = SnapshotInfo URI Hash
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary     
 
 data SnapshotPublish = SnapshotPublish URI EncodedBase64
     deriving stock (Show, Eq, Ord, Generic)
@@ -38,6 +41,7 @@ data Snapshot = Snapshot Version SessionId RrdpSerial [SnapshotPublish]
 
 data DeltaInfo = DeltaInfo URI Hash RrdpSerial
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
 
 data DeltaItem = DP DeltaPublish | DW DeltaWithdraw
     deriving stock (Show, Eq, Ord, Generic)
@@ -55,3 +59,40 @@ newtype ETag = ETag BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass TheBinary        
 
+
+data RrdpFetchStat = RrdpFetchStat {
+        action :: RrdpAction
+    } 
+    deriving stock (Show, Eq, Ord, Generic)   
+    deriving anyclass TheBinary     
+
+data RrdpAction
+  = FetchSnapshot SnapshotInfo Text
+  | FetchDeltas
+      { sortedDeltas :: [DeltaInfo]
+      , snapshotInfo :: SnapshotInfo
+      , message :: Text
+      }
+  | NothingToFetch Text
+  deriving (Show, Eq, Ord, Generic)
+  deriving anyclass TheBinary     
+
+data RrdpMeta = RrdpMeta {
+        sessionId :: SessionId,
+        serial    :: RrdpSerial,
+        integrity :: RrdpIntegrity
+    }    
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass TheBinary            
+
+data RrdpIntegrity = RrdpIntegrity {
+        deltas :: [DeltaInfo]    
+    }
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass TheBinary            
+
+newRrdpIntegrity :: Notification -> RrdpIntegrity
+newRrdpIntegrity Notification {..} = RrdpIntegrity deltas
+
+fromNotification :: Notification -> RrdpMeta
+fromNotification Notification {..} = RrdpMeta { integrity = RrdpIntegrity {..}, .. }

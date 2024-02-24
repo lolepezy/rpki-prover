@@ -11,7 +11,6 @@ import           Control.Monad
 
 import qualified Data.ByteString                      as BS
 import qualified Data.ByteString.Base64               as B64
-import qualified Data.ByteString.Short                as BSS
 import qualified Data.List                            as List
 import qualified Data.Text                            as Text
 
@@ -20,11 +19,9 @@ import qualified Data.Set.NonEmpty                    as NESet
 
 import           Test.QuickCheck hiding ((.&.))
 import           Test.QuickCheck.Arbitrary.Generic
-import           Test.QuickCheck.Gen
 import           Test.QuickCheck.Instances.ByteString
 import           Test.QuickCheck.Instances.Text
 import           Test.QuickCheck.Instances.Vector
-import           Test.QuickCheck.Monadic
 
 import           Data.ASN1.BitArray
 import           Data.ASN1.Types
@@ -32,10 +29,6 @@ import           Data.Bits
 import           Data.Word
 import           Data.X509                            as X509
 import           Data.Tuple.Strict
-
-import           HaskellWorks.Data.Network.Ip.Ipv4    as V4
-import           HaskellWorks.Data.Network.Ip.Ipv6    as V6
-import           HaskellWorks.Data.Network.Ip.Range
 
 import           RPKI.Orphans.Generics
 import           RPKI.Domain
@@ -45,7 +38,6 @@ import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RRDP.Types
 import           RPKI.Reporting
-import           RPKI.RTR.RtrState
 
 import           Time.Types
 
@@ -271,11 +263,15 @@ instance Arbitrary Gbr where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RSC where
+instance Arbitrary Rsc where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
 instance Arbitrary Aspa where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary SplPayload where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -519,6 +515,14 @@ instance Arbitrary RsyncPublicationPoint where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary RrdpIntegrity where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary RrdpMeta where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary RrdpRepository where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -531,19 +535,11 @@ instance Arbitrary ETag where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary Speed where
+instance Arbitrary FetchType where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
 instance Arbitrary FetchStatus where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-instance Arbitrary EverSucceededMap where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-instance Arbitrary FetchEverSucceeded  where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -554,12 +550,12 @@ instance Arbitrary RsyncTree where
 instance Arbitrary RsyncNodeNormal where
     arbitrary = genericArbitrary
     shrink = genericShrink
-    
-instance Arbitrary Trace where
+
+instance Arbitrary RepositoryMeta where
     arbitrary = genericArbitrary
     shrink = genericShrink
-
-instance Arbitrary RsyncNodeInfo where
+    
+instance Arbitrary Trace where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -573,6 +569,22 @@ instance Arbitrary RrdpMap where
         pure $ RrdpMap $ Map.fromList [ (uri, r) | r@RrdpRepository{..} <- rrdps ]
 
 -- errors and warnings
+
+instance Arbitrary ArtificialKey where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary ObjectKey where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary ObjectIdentity where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary MftPair where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary (ParseError Text.Text) where
     arbitrary = genericArbitrary
@@ -665,6 +677,10 @@ instance Arbitrary TaName where
     arbitrary = TaName <$> arbitrary
     shrink = genericShrink
 
+instance Arbitrary RpkiObjectType where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary a => Arbitrary (MetricMap a) where
     arbitrary = generateMap $ MetricMap . MonoidalMap    
 
@@ -674,8 +690,8 @@ instance (Ord k, Arbitrary k, Arbitrary v) => Arbitrary (MonoidalMap k v) where
 
 generateMap :: (Arbitrary k, Arbitrary a, Ord k) => (Map k a -> b) -> Gen b
 generateMap constructor = do 
-    size :: Int <- choose (0, 10)
-    validations <- replicateM size arbitrary
+    size_ <- choose (0, 10)
+    validations <- replicateM size_ arbitrary
     pure $ constructor $ Map.fromList validations
 
 instance Arbitrary TimeMs where
@@ -969,8 +985,8 @@ instance Arbitrary RevokedCertificate where
                                     <*> arbitrary
                                     <*> pure (Extensions Nothing)
 
-instance Arbitrary CRL where
-    arbitrary = CRL 1 <$> arbitrary
+instance Arbitrary X509.CRL where
+    arbitrary = X509.CRL 1 <$> arbitrary
                     <*> arbitrary
                     <*> arbitrary
                     <*> arbitrary

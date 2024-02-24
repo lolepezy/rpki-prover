@@ -24,17 +24,18 @@ import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 import           Text.Read                   (readEither)
 import           Data.Text.Encoding          (decodeUtf8)
+import           Data.Bifunctor
+
 import           Data.Word
 import           RPKI.Domain
 import           RPKI.AppTypes
-import           RPKI.Reporting
+-- import           RPKI.Reporting
 
 import           Control.Monad.IO.Class
 import           Data.IORef.Lifted
 
 import qualified Text.URI as MURI
 import           Text.URI.Lens
-import Data.Bifunctor
 
 
 sha256 :: LBS.ByteString -> Hash
@@ -106,22 +107,20 @@ toNatural i | i > 0     = Just (fromIntegral i :: Natural)
 isRsyncURI, isRrdpURI, isHttpsURI, isHttpURI :: URI -> Bool
 isRsyncURI (URI u) = "rsync://" `Text.isPrefixOf` u
 isHttpsURI (URI u) = "https://" `Text.isPrefixOf` u 
-isHttpURI (URI u) = "http://" `Text.isPrefixOf` u
+isHttpURI (URI u)  = "http://" `Text.isPrefixOf` u
 isRrdpURI u = isHttpURI u || isHttpsURI u
 
 isParentOf :: WithURL u => u -> u -> Bool
-isParentOf p c = pt `Text.isPrefixOf` ct
-    where
-        URI pt = getURL p
-        URI ct = getURL c
+isParentOf (getURL -> URI parent) (getURL -> URI child) = 
+    parent `Text.isPrefixOf` child
 
 parseRpkiURL :: Text -> Either Text RpkiURL
 parseRpkiURL t
     | isRrdpURI u  = Right $ RrdpU $ RrdpURL u
     | isRsyncURI u = RsyncU <$> parseRsyncURL t            
     | otherwise = Left $ "Unknown URL type: " <> t
-    where
-        u = URI t
+  where
+    u = URI t
 
 parseRsyncURL :: Text -> Either Text RsyncURL
 parseRsyncURL t = 
@@ -155,10 +154,10 @@ decrement counter = liftIO $ atomicModifyIORef' counter $ \c -> (c - 1, ())
 ifJustM :: Monad m => m (Maybe a) -> (a -> m ()) -> m ()
 ifJustM a f = maybe (pure ()) f =<< a
 
-decodeBase64 :: Show c => EncodedBase64 -> c -> Either RrdpError DecodedBase64
+decodeBase64 :: Show c => EncodedBase64 -> c -> Either Text DecodedBase64
 decodeBase64 (EncodedBase64 bs) context = 
     bimap 
-        (\e -> BadBase64 (e <> " for " <> Text.pack (show context)) $ convert bs)
+        (\e -> e <> " for " <> Text.pack (show context) <> convert bs)
         DecodedBase64
         $ B64.decodeBase64 bs 
 

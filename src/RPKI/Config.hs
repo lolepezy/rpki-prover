@@ -14,7 +14,6 @@ import Data.Word ( Word16 )
 
 import Data.Hourglass
 import Data.Maybe (fromMaybe)
-import Data.Monoid
 
 import RPKI.Domain
 import RPKI.Logging
@@ -42,7 +41,7 @@ data FetchConfig = FetchConfig {
         rsyncSlowThreshold :: Seconds,
         rrdpTimeout        :: Seconds,
         rrdpSlowThreshold  :: Seconds,
-        fetchLaunchWaitDuration  :: Seconds
+        fetchLaunchWaitDuration :: Seconds
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -62,7 +61,7 @@ data Config = Config {
         rtrConfig                 :: Maybe RtrConfig,
         cacheCleanupInterval      :: Seconds,
         cacheLifeTime             :: Seconds,
-        oldVersionsLifetime       :: Seconds,
+        versionNumberToKeep       :: Natural,
         storageCompactionInterval :: Seconds,
         rsyncCleanupInterval      :: Seconds,
         lmdbSizeMb                :: Size,
@@ -84,13 +83,6 @@ data RsyncConf = RsyncConf {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-newtype Size = Size { unSize :: Int64 }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving newtype (Num)
-    deriving anyclass (TheBinary)
-    deriving Semigroup via Sum Size
-    deriving Monoid via Sum Size
-
 data RrdpConf = RrdpConf {
         tmpRoot          :: FilePath,
         maxSize          :: Size,
@@ -105,10 +97,24 @@ data ManifestProcessing = RFC6486_Strict | RFC9286
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
+
+data ValidationAlgorithm = FullEveryIteration | Incremental
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+data FetchTimingCalculation = Constant | Adaptive
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+
 data ValidationConfig = ValidationConfig {    
         revalidationInterval           :: Seconds,
         rrdpRepositoryRefreshInterval  :: Seconds,
         rsyncRepositoryRefreshInterval :: Seconds,
+
+        -- Do not retry to fetch a repository that failed 
+        -- less than this many seconds ago
+        minimalRepositoryRetryInterval :: Seconds,
 
         -- Maximum time for top-down validation for one TA
         topDownTimeout                 :: Seconds,
@@ -131,7 +137,15 @@ data ValidationConfig = ValidationConfig {
         maxObjectSize                  :: Integer,
 
         -- Manimal allowed size of an individual object 
-        minObjectSize                  :: Integer
+        minObjectSize                  :: Integer,
+
+        validationAlgorithm            :: ValidationAlgorithm,
+
+        fetchIntervalCalculation       :: FetchTimingCalculation,
+        fetchTimeoutCalculation        :: FetchTimingCalculation,
+
+        minFetchInterval               :: Seconds,
+        maxFetchInterval               :: Seconds
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -213,6 +227,7 @@ defaultConfig = Config {
         revalidationInterval           = Seconds $ 13 * 60,
         rrdpRepositoryRefreshInterval  = Seconds 120,
         rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
+        minimalRepositoryRetryInterval = Seconds $ 10,    
         topDownTimeout                 = Seconds $ 60 * 60,    
         manifestProcessing             = RFC9286,
         maxCertificatePathDepth        = 32,
@@ -221,7 +236,12 @@ defaultConfig = Config {
         -- every object contains at least 256 bytes of RSA key, 
         -- couple of dates and a few extensions
         minObjectSize                  = 300,
-        maxTaRepositories              = 3000
+        maxTaRepositories              = 3000,
+        validationAlgorithm            = FullEveryIteration,
+        fetchIntervalCalculation       = Adaptive,
+        fetchTimeoutCalculation        = Adaptive,
+        minFetchInterval               = Seconds 60,
+        maxFetchInterval               = Seconds 600
     },
     httpApiConf = HttpApiConfig {
         port = 9999
@@ -235,7 +255,7 @@ defaultConfig = Config {
     rtrConfig                 = Nothing,
     cacheCleanupInterval      = Seconds $ 60 * 60 * 6,
     cacheLifeTime             = Seconds $ 60 * 60 * 24,
-    oldVersionsLifetime       = Seconds $ 60 * 60 * 24,
+    versionNumberToKeep       = 100,
     storageCompactionInterval = Seconds $ 60 * 60 * 120,
     rsyncCleanupInterval      = Seconds $ 60 * 60 * 24 * 30,
     lmdbSizeMb                = Size $ 32 * 1024,
@@ -265,6 +285,7 @@ defaulPrefetchURLs = [
         "rsync://rpki-rps.arin.net/repository/",
         "rsync://rpki-repository.nic.ad.jp/ap/",
         "rsync://rsync.paas.rpki.ripe.net/repository/",
-        "rsync://rpki.sub.apnic.net/repository/"
+        "rsync://rpki.sub.apnic.net/repository/",
+        "rsync://rpki.cnnic.cn/rpki/A9162E3D0000/"
     ]    
     

@@ -21,6 +21,7 @@ import           Lmdb.Types hiding (Size)
 
 import           RPKI.Store.Base.LMDB
 import           RPKI.Config
+import           RPKI.Domain
 import           RPKI.Parallel
 import           RPKI.Logging
 import           RPKI.Time
@@ -59,9 +60,6 @@ createDatabase env logger checkAction = do
                     if version /= currentDatabaseVersion then do
                         -- We are seeing incompatible storage. The only option 
                         -- now is to erase all the maps and start from scratch.
-                        --
-                        -- This is obviously far from optimal, so it would make
-                        -- sense to automate that part.
                         logInfo logger [i|Persisted cache version is #{version} and expected version is #{currentDatabaseVersion}, dropping the cache.|]    
                         (_, ms) <- timedMS $ emptyDBMaps tx db
                         logDebug logger [i|Erasing cache took #{ms}ms.|]                        
@@ -74,7 +72,8 @@ createDatabase env logger checkAction = do
         sequences        <- createMap
         taStore          <- TAStore <$> createMap        
         validationsStore <- ValidationsStore <$> createMap
-        vrpStore         <- VRPStore <$> createMap    
+        vrpStore         <- VRPStore <$> createMap
+        splStore         <- SplStore <$> createMap
         aspaStore        <- AspaStore <$> createMap    
         gbrStore         <- GbrStore <$> createMap 
         bgpStore         <- BgpStore <$> createMap
@@ -95,7 +94,7 @@ createDatabase env logger checkAction = do
             let keys = Sequence "object-key" seqMap
             objects          <- createMap
             mftByAKI         <- createMultiMap
-            objectInsertedBy <- createMap        
+            objectMetas      <- createMap        
             hashToKey        <- createMap
             lastValidMfts    <- createMap
             uriToUriKey      <- createMap
@@ -103,8 +102,9 @@ createDatabase env logger checkAction = do
             urlKeyToObjectKey  <- createMultiMap
             objectKeyToUrlKeys <- createMap
             certBySKI          <- createMap
-            objectBriefs       <- createMap
-            validatedByVersion <- createMap        
+            validatedByVersion <- createMap                    
+            mftShortcuts       <- MftShortcutStore <$> createMap <*> createMap
+            originals          <- createMap
             pure RpkiObjectStore {..}
             
         createRepositoryStore = 
@@ -131,7 +131,7 @@ mkLmdb fileName config = do
                     maxReaders maxDatabases fileName
     LmdbEnv <$> 
         newTVarIO (RWEnv nativeEnv) <*>
-        createSemaphoreIO maxBottleNeck
+        newSemaphoreIO maxBottleNeck
   where    
     mapSize = unSize (config ^. #lmdbSizeMb) * 1024 * 1024
     maxDatabases = 120    

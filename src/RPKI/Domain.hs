@@ -12,6 +12,7 @@
 
 module RPKI.Domain where
 
+import           Data.Int                 (Int64)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
@@ -29,8 +30,10 @@ import qualified Data.List                as List
 import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
+import           Data.Hashable hiding (hash)
 
 import           Data.Bifunctor
+import           Data.Monoid
 import           Data.Monoid.Generic
 import           Data.Tuple.Strict
 
@@ -85,36 +88,44 @@ newtype Hash = Hash BSS.ShortByteString
 newtype URI = URI { unURI :: Text } 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
+    deriving anyclass Hashable
 
 data RsyncHost = RsyncHost RsyncHostName (Maybe RsyncPort)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
+    deriving anyclass Hashable
 
 newtype RsyncHostName = RsyncHostName { unRsyncHostName :: Text }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
+    deriving anyclass Hashable
 
 newtype RsyncPort = RsyncPort { unRsyncPort :: Int }
     deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
+    deriving anyclass Hashable
 
 newtype RsyncPathChunk = RsyncPathChunk { unRsyncPathChunk :: Text }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
     deriving newtype Monoid    
     deriving newtype Semigroup
+    deriving anyclass Hashable
 
 data RsyncURL = RsyncURL RsyncHost [RsyncPathChunk]
     deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
+    deriving anyclass Hashable
 
 newtype RrdpURL = RrdpURL URI
     deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
+    deriving anyclass Hashable
 
 data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
     deriving  (Eq, Ord, Generic)
     deriving anyclass TheBinary
+    deriving anyclass Hashable
 
 class WithValidityPeriod a where
     getValidityPeriod :: a -> (Instant, Instant)
@@ -146,7 +157,10 @@ class WithRFC a where
 class WithSerial a where
     getSerial :: a -> Serial
 
-instance WithURL URI where
+class WithRpkiObjectType a where
+    getRpkiObjectType :: a -> RpkiObjectType
+
+instance {-# OVERLAPPING #-} WithURL URI where
     getURL = id
 
 instance Show RpkiURL where
@@ -159,22 +173,25 @@ instance Show RsyncURL where
 instance Show RsyncPort where
     show = show . unRsyncPort
   
-instance WithURL RsyncURL where
+instance {-# OVERLAPPING #-} WithURL RsyncURL where
     getURL (RsyncURL (RsyncHost (RsyncHostName host) port) path) = 
         URI $ "rsync://" <> 
                 host <>          
                 maybe "" (\p -> ":" <> Text.pack (show p)) port <>
                 mconcat (map (\(RsyncPathChunk p) -> "/" <> p) path)
 
-instance WithURL RrdpURL where
+instance {-# OVERLAPPING #-} WithURL RrdpURL where
     getURL (RrdpURL u) = u
 
-instance WithURL RpkiURL where
+instance {-# OVERLAPPING #-} WithURL RpkiURL where
     getURL (RsyncU u) = getURL u
     getURL (RrdpU u) = getURL u    
 
-instance WithRpkiURL RpkiURL where
+instance {-# OVERLAPPING #-} WithRpkiURL RpkiURL where
     getRpkiURL = id
+
+instance {-# OVERLAPPING #-} WithRpkiURL u => WithURL u where
+    getURL = getURL . getRpkiURL 
 
 toText :: RpkiURL -> Text
 toText = unURI . getURL 
@@ -195,8 +212,8 @@ newtype SessionId = SessionId Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
-newtype Serial = Serial Integer 
-    deriving stock (Show, Eq, Ord, Generic)
+newtype Serial = Serial Integer     
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass TheBinary
 
 newtype Version = Version Integer 
@@ -207,6 +224,9 @@ newtype Locations = Locations { unLocations :: NESet RpkiURL }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
     deriving newtype (Semigroup)
+
+instance Show Serial where
+    show (Serial u) = show u
 
 instance Show URI where
     show (URI u) = show u
@@ -219,6 +239,9 @@ instance Show Hash where
 
 instance Show KI where
     show (KI b) = hexShow b
+
+instance {-# OVERLAPPING #-} WithSerial Serial where
+    getSerial = id
 
 hexShow :: BSS.ShortByteString -> String
 hexShow = SC.cs . Hex.encode . BSS.fromShort
@@ -270,16 +293,29 @@ data CMSBasedObject a = CMSBasedObject {
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
+-- https://datatracker.ietf.org/doc/rfc9286/
 type MftObject = CMSBasedObject Manifest
+
+-- https://datatracker.ietf.org/doc/rfc6482
 type RoaObject = CMSBasedObject [Vrp]
+
+-- https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-prefixlist
+type SplObject = CMSBasedObject SplPayload
+
+-- https://datatracker.ietf.org/doc/rfc6493
 type GbrObject = CMSBasedObject Gbr
-type RscObject = CMSBasedObject RSC
+
+-- https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-rsc/
+type RscObject = CMSBasedObject Rsc
+
+-- https://datatracker.ietf.org/doc/draft-ietf-sidrops-aspa-profile/
 type AspaObject = CMSBasedObject Aspa
 
     
 data RpkiObject = CerRO CaCerObject 
                 | MftRO MftObject
                 | RoaRO RoaObject
+                | SplRO SplObject
                 | GbrRO GbrObject
                 | RscRO RscObject
                 | AspaRO AspaObject
@@ -288,6 +324,9 @@ data RpkiObject = CerRO CaCerObject
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
 
+data RpkiObjectType = CER | MFT | CRL | ROA | ASPA | GBR | SPL | BGPSec | RSC
+    deriving (Show, Eq, Ord, Generic)    
+    deriving anyclass TheBinary
 
 instance WithAKI CrlObject where
     getAKI CrlObject {..} = Just aki
@@ -388,6 +427,7 @@ instance WithAKI RpkiObject where
     getAKI (CerRO c) = getAKI c
     getAKI (MftRO c) = getAKI c
     getAKI (RoaRO c) = getAKI c
+    getAKI (SplRO c) = getAKI c
     getAKI (GbrRO c) = getAKI c
     getAKI (CrlRO c) = getAKI c
     getAKI (RscRO c) = getAKI c
@@ -398,11 +438,25 @@ instance WithHash RpkiObject where
     getHash (CerRO c) = getHash c
     getHash (MftRO c) = getHash c
     getHash (RoaRO c) = getHash c
+    getHash (SplRO c) = getHash c
     getHash (GbrRO c) = getHash c
     getHash (CrlRO c) = getHash c
     getHash (RscRO c) = getHash c
     getHash (AspaRO c) = getHash c
     getHash (BgpRO c) = getHash c
+
+instance WithRpkiObjectType RpkiObject where
+    getRpkiObjectType = \case 
+        CerRO _ -> CER
+        MftRO _ -> MFT
+        RoaRO _ -> ROA
+        SplRO _ -> SPL
+        GbrRO _ -> GBR
+        CrlRO _ -> CRL
+        RscRO _ -> RSC
+        AspaRO _ -> ASPA
+        BgpRO _ -> BGPSec
+        
 
 data Located a = Located { 
         locations :: Locations,        
@@ -414,6 +468,9 @@ data Located a = Located {
 
 instance WithLocations (Located a) where
     getLocations Located {..} = locations
+
+instance WithLocations Locations where
+    getLocations = id
 
 instance WithAKI a => WithAKI (Located a) where
     getAKI (Located _ o) = getAKI o    
@@ -430,7 +487,11 @@ instance WithRawResourceCertificate a => WithRawResourceCertificate (Located a) 
 instance WithRFC a => WithRFC (Located a) where    
     getRFC (Located _ o) = getRFC o
 
+instance WithRpkiObjectType a => WithRpkiObjectType (Located a) where    
+    getRpkiObjectType (Located _ o) = getRpkiObjectType o
+
 instance OfCertType c t => OfCertType (Located c) t
+
 
 -- More concrete data structures for resource certificates, CRLs, MFTs, ROAs
 
@@ -447,19 +508,32 @@ newtype ResourceCertificate = ResourceCertificate (SomeRFC RawResourceCertificat
     deriving anyclass TheBinary
     deriving newtype (WithRFC)
 
-data Vrp = Vrp 
-        {-# UNPACK #-} !ASN 
-        !IpPrefix 
-        {-# UNPACK #-} !PrefixLength
+data Vrp = Vrp ASN IpPrefix PrefixLength
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
+-- Signed Prefix List normalised payload
+data SplN = SplN ASN IpPrefix
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
+data SplPayload = SplPayload ASN [IpPrefix]     
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
+data MftPair = MftPair {
+        fileName :: Text,
+        hash     :: Hash
+    } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
 data Manifest = Manifest {
         mftNumber   :: Serial, 
         fileHashAlg :: X509.HashALG, 
-        thisTime    :: Instant, 
-        nextTime    :: Instant, 
-        mftEntries  :: [T2 Text Hash]
+        thisTime    :: {-# UNPACK #-} Instant, 
+        nextTime    :: {-# UNPACK #-} Instant, 
+        mftEntries  :: [MftPair]
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass TheBinary
@@ -482,7 +556,7 @@ data Gbr = Gbr BSS.ShortByteString
     deriving anyclass TheBinary
 
 
-data RSC = RSC {        
+data Rsc = Rsc {        
         rscResources    :: PrefixesAndAsns,        
         checkList       :: [T2 (Maybe Text) Hash],
         digestAlgorithm :: DigestAlgorithmIdentifier
@@ -660,6 +734,12 @@ newtype Vrps = Vrps { unVrps :: MonoidalMap TaName (Set Vrp) }
     deriving Semigroup via GenericSemigroup Vrps
     deriving Monoid    via GenericMonoid Vrps
 
+newtype Roas = Roas { unRoas :: MonoidalMap TaName (MonoidalMap ObjectKey (Set Vrp)) }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+    deriving Semigroup via GenericSemigroup Roas
+    deriving Monoid    via GenericMonoid Roas
+
 data TA = TA {
         taName        :: TaName, 
         taCertificate :: Maybe ResourceCertificate,
@@ -670,46 +750,43 @@ data TA = TA {
     deriving anyclass TheBinary
   
 
-data BriefType = RoaBrief 
-           | AspaBrief
-           | BgpBrief
-           | GbrBrief
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass TheBinary        
-
-{- 
-This is a short version of an object that is used as an optimisation 
-for leafs of the RPKI trae, i.e. ROAs, ASPAs and such. Once validated
-they can only expire or be revoked. If none of that happened, we can 
-safely assume that it can be used for extracting it's payload.
--} 
-data EEBrief = EEBrief {
-        briefType      :: BriefType,
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant,
-        parentHash     :: Hash,
-        serial         :: Serial,
-        payload        :: Payloads (Set.Set Vrp)
-    }
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass TheBinary        
-
-instance {-# OVERLAPPING #-} WithValidityPeriod EEBrief where
-    getValidityPeriod EEBrief {.. } = (notValidBefore, notValidAfter)
-        
-instance {-# OVERLAPPING #-} WithSerial EEBrief where
-    getSerial EEBrief {..} = serial
-
 data Payloads a = Payloads {
         vrps     :: a,
+        spls     :: Set.Set SplN,
         aspas    :: Set.Set Aspa,
-        gbrs     :: Set.Set (Hash, Gbr),
+        gbrs     :: Set.Set (T2 Hash Gbr),
         bgpCerts :: Set.Set BGPSecPayload  
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
     deriving Semigroup via GenericSemigroup (Payloads a)
     deriving Monoid    via GenericMonoid (Payloads a)
+
+-- Some auxiliary types
+newtype Size = Size { unSize :: Int64 }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving newtype (Num)
+    deriving anyclass (TheBinary)
+    deriving Semigroup via Sum Size
+    deriving Monoid via Sum Size
+
+newtype UrlKey = UrlKey ArtificialKey
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+newtype ObjectKey = ObjectKey ArtificialKey
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
+newtype ArtificialKey = ArtificialKey Int64
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
+
+
+data ObjectIdentity = KeyIdentity ObjectKey
+                    | HashIdentity Hash
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass TheBinary
 
 
 -- Small utility functions that don't have anywhere else to go
@@ -796,6 +873,9 @@ sortRrdpFirst = List.sortBy $ \u1 u2 ->
 sortRrdpFirstNE :: NonEmpty.NonEmpty RpkiURL -> NonEmpty.NonEmpty RpkiURL
 sortRrdpFirstNE = NonEmpty.fromList . sortRrdpFirst . NonEmpty.toList
 
+oneOfLocations :: Locations -> RpkiURL -> Bool
+oneOfLocations (Locations urls) url = not $ null $ filter (==url) $ neSetToList urls
+
 {- 
 https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.2
 https://datatracker.ietf.org/doc/html/rfc6486#section-4.2.1
@@ -823,6 +903,9 @@ uniqueVrpCount (Vrps vrps) = Set.size $ mconcat $ MonoidalMap.elems vrps
 
 newVrps :: TaName -> Set Vrp -> Vrps
 newVrps taName vrpSet = Vrps $ MonoidalMap.singleton taName vrpSet
+
+newRoas :: TaName -> MonoidalMap ObjectKey (Set.Set Vrp) -> Roas
+newRoas taName vrps = Roas $ MonoidalMap.singleton taName vrps
 
 allVrps :: Vrps -> [Set Vrp] 
 allVrps (Vrps vrps) = MonoidalMap.elems vrps          

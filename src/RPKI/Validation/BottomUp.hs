@@ -12,13 +12,11 @@ module RPKI.Validation.BottomUp where
 import           Control.Concurrent.STM
 import           Control.Monad
 import           Control.Monad.IO.Class
-import           Control.Monad.Except
 import           Control.Lens
 
 import qualified Data.Map.Strict                  as Map
 
 import           Data.String.Interpolate.IsString
-import           Data.Tuple.Strict
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -42,9 +40,9 @@ validateBottomUp :: Storage s =>
                 AppContext s 
                 -> RpkiObject
                 -> Now
-                -> ValidatorT IO (Validated RpkiObject)
+                -> ValidatorT IO (Validated RpkiObject, [Located CaCerObject])
 validateBottomUp 
-    appContext@AppContext{..}
+    AppContext{..}
     object 
     now = do 
     db <- liftIO $ readTVarIO database    
@@ -55,28 +53,27 @@ validateBottomUp
             case parentCert of 
                 Nothing -> appError $ ValidationE ParentCertificateNotFound
                 Just pc  -> do                                        
-                    certPath <- reverse . (pc :) <$> findPathToRoot db pc                    
-                    vaildManifests <- liftIO $ newTVarIO makeValidManifests
-                    validateTopDownAlongPath db certPath vaildManifests         
-                    pure $ Validated object    
+                    certPath <- reverse . (pc :) <$> findPathToRoot db pc                                        
+                    validateTopDownAlongPath db certPath 
+                    pure (Validated object, certPath)
   where
     {- Given a chain of certificatees from a TA to the object, 
        proceed with top-down validation along this chain only.
     -}
-    validateTopDownAlongPath db certPath vaildManifests = do
+    validateTopDownAlongPath db certPath = do
         -- TODO Make it NonEmpty?
         let taCert = head certPath        
-        let locations = getLocations taCert
-        vHoist $ inSubObjectVScope (locationsToText $ getLocations taCert) 
-               $ validateTaCertAKI taCert (pickLocation locations)
+        let location = pickLocation $ getLocations taCert
+        vHoist $ vFocusOn LocationFocus (getURL location) 
+               $ validateTaCertAKI taCert location
         let verifiedResources = createVerifiedResources $ taCert ^. #payload
         go verifiedResources certPath
       where        
         go _ [] = pure ()
 
         go verifiedResources [bottomCert] = do            
-            inSubObjectVScope (locationsToText $ getLocations bottomCert) $ do
-                (mft, crl) <- validateManifest db bottomCert vaildManifests
+            vFocusOn LocationFocus (getURL $ pickLocation $ getLocations bottomCert) $ do
+                (mft, crl) <- validateManifest db bottomCert
 
                 -- RSC objects are not supposed to be on a manifest
                 case object of
@@ -86,8 +83,8 @@ validateBottomUp
                 validateObjectItself bottomCert crl verifiedResources
 
         go verifiedResources (cert : certs) = do            
-            inSubObjectVScope (locationsToText $ getLocations cert) $ do
-                (mft, crl) <- validateManifest db cert vaildManifests            
+            vFocusOn LocationFocus (getURL $ pickLocation $ getLocations cert) $ do
+                (mft, crl) <- validateManifest db cert
                 let childCert = head certs                
                 validateOnMft mft childCert                            
                 Validated validCert    <- vHoist $ validateResourceCert @_ @_ @'CACert 
@@ -97,13 +94,13 @@ validateBottomUp
         
         validateOnMft mft o = do             
             let mftChildren = mftEntries $ getCMSContent $ mft ^. #cmsPayload
-            case filter (\(T2 _ h) -> h == getHash o) mftChildren of 
+            case filter (\(MftPair _ h) -> h == getHash o) mftChildren of 
                 [] -> appError $ ValidationE ObjectNotOnManifest
                 _  -> pure ()            
 
 
     validateObjectItself bottomCert crl verifiedResources =         
-        inSubObjectVScope "rpki-object" $ 
+        vFocusOn TextFocus "rpki-object" $ 
             case object of 
                 CerRO child ->
                     void $ vHoist $ validateResourceCert @_ @_ @'CACert 
@@ -120,11 +117,13 @@ validateBottomUp
                     logWarn logger [i|Unsupported type of object: #{_somethingElse}.|]        
 
 
+    -- Given a certificate, find a chain of certificates leading to a TA, 
+    -- the chain is build based on the SKI - AKI relations
     findPathToRoot db certificate = do                  
         tas <- roAppTx db $ \tx -> getTAs tx db         
-        let taCerts = Map.fromList $ 
-                        map (\(_, StorableTA {..}) ->                             
-                        (getSKI taCert, Located (talCertLocations tal) taCert)) tas 
+        let taCerts = Map.fromList [ 
+                        (getSKI taCert, Located (talCertLocations tal) taCert) | 
+                        (_, StorableTA {..}) <- tas ]
         go taCerts certificate
       where        
         go taCerts cert = do             
@@ -145,46 +144,42 @@ validateBottomUp
                             (pc :) <$> go taCerts pc
 
 
-    validateManifest db certificate validManifests = do
+    validateManifest db certificate = do
         {- This resembles `validateThisCertAndGoDown` from TopDown.hs 
            but the difference is that we don't do any descent down the tree
            and don't track visited object or metrics.
          -}
-        let childrenAki   = toAKI $ getSKI certificate
-        let certLocations = getLocations certificate                
-        maybeMft <- liftIO $ roTx db $ \tx -> findLatestMftByAKI tx db childrenAki
-        let tryLatestValid = tryLatestValidCachedManifest appContext useManifest 
-                                ((^. #object) <$> maybeMft) validManifests childrenAki certLocations
+        let childrenAki = toAKI $ getSKI certificate
+        maybeMft <- liftIO $ roTx db $ \tx -> findLatestMftByAKI tx db childrenAki        
         case maybeMft of 
             Nothing -> 
-                vError (NoMFT childrenAki certLocations) `catchError` tryLatestValid                
-            Just mft -> 
-                useManifest mft childrenAki certLocations `catchError` tryLatestValid
-      where 
-        -- TODO Decide what to do with nested scopes (we go bottom up, 
-        -- so nesting doesn't work the same way).
-        useManifest keyedMft childrenAki certLocations = do 
-            let locatedMft = keyedMft ^. #object
-            let mft = locatedMft ^. #payload            
-            validateObjectLocations locatedMft
-            validateMftLocation locatedMft certificate
-            T2 _ crlHash <- case findCrlOnMft mft of 
-                        []    -> vError $ NoCRLOnMFT childrenAki certLocations
-                        [crl] -> pure crl
-                        crls  -> vError $ MoreThanOneCRLOnMFT childrenAki certLocations crls
-            
-            crlObject <- liftIO $ roTx db $ \tx -> getByHash tx db crlHash
-            case crlObject of 
-                Nothing -> 
-                    vError $ NoCRLExists childrenAki certLocations    
+                vError $ NoMFT childrenAki
+            Just keyedMft -> do
+                -- TODO Decide what to do with nested scopes (we go bottom up, 
+                -- so nesting doesn't work the same way).                            
+                let locatedMft@(Located mftLocation mft) = keyedMft ^. #object    
+                vFocusOn LocationFocus (getURL $ pickLocation mftLocation) $ do                
+                    validateObjectLocations locatedMft
+                    validateMftLocation locatedMft certificate
+                    MftPair _ crlHash <- 
+                            case findCrlOnMft mft of 
+                                []    -> vError $ NoCRLOnMFT childrenAki
+                                [crl] -> pure crl
+                                crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls
+                    
+                    crlObject <- liftIO $ roTx db $ \tx -> getByHash tx db crlHash
+                    case crlObject of 
+                        Nothing -> 
+                            vError $ NoCRLExists childrenAki crlHash
 
-                Just foundCrl@(Located _ (CrlRO crl)) -> do      
-                    validateObjectLocations foundCrl           
-                    let mftEECert = getEECert $ unCMS $ cmsPayload mft
-                    checkCrlLocation foundCrl mftEECert
-                    validCrl <- vHoist $ validateCrl now crl certificate
-                    pure (mft, validCrl)
+                        Just foundCrl@(Located crlLocations (CrlRO crl)) -> do      
+                            vFocusOn LocationFocus (getURL $ pickLocation crlLocations) $ do 
+                                validateObjectLocations foundCrl
+                                let mftEECert = getEECert $ unCMS $ cmsPayload mft
+                                checkCrlLocation foundCrl mftEECert
+                                validCrl <- vHoist $ validateCrl now crl certificate
+                                pure (mft, validCrl)
 
-                Just _ -> 
-                    vError $ CRLHashPointsToAnotherObject crlHash certLocations   
+                        Just _ -> 
+                            vError $ CRLHashPointsToAnotherObject crlHash   
 

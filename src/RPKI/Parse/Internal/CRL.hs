@@ -26,7 +26,7 @@ parseCrl :: BS.ByteString -> PureValidatorT CrlObject
 parseCrl bs = do
     -- pureError $ parseErr $ "Couldn't parse IP address extension: " <> Text.pack (show e)
     asns                   <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs
-    (extensions, signCrlF) <- fromEither $ first (parseErr . U.fmtGen) $ runParseASN1 getCrl asns      
+    (extensions, signCrlF) <- fromEither $ first (parseErr . U.convert) $ runParseASN1 getCrl asns      
     akiBS <- case extVal extensions id_authorityKeyId of
                 Nothing -> pureError $ parseErr "No AKI in CRL"
                 Just a  -> pure a
@@ -41,7 +41,7 @@ parseCrl bs = do
                 Just n  -> pure n
 
     numberAsns <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER crlNumberBS
-    crlNumber' <- fromEither $ first (parseErr . U.fmtGen) $ 
+    crlNumber' <- fromEither $ first (parseErr . U.convert) $ 
                     runParseASN1 (getInteger pure "Wrong CRL number") numberAsns
 
     case makeSerial crlNumber' of 

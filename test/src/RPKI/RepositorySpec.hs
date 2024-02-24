@@ -1,20 +1,17 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module RPKI.RepositorySpec where
 
 import Control.Monad (replicateM)
 
-import Data.ByteString.Short (toShort)
-import Data.Maybe (maybeToList, catMaybes)
+import Data.Maybe (catMaybes)
 import Data.List (sort, isPrefixOf, sortOn)
-
-import           GHC.Generics
 
 import           Test.Tasty
 import           Test.QuickCheck.Arbitrary.Generic
-import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
 
 import           Test.QuickCheck.Gen
@@ -37,7 +34,8 @@ repositoryGroup = testGroup "PublicationPoints" [
     
         QC.testProperty "FetchStatus is a semigroup" $ isASemigroup @FetchStatus,
         QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RrdpRepository,
-        QC.testProperty "RrdpMap is a semigroup" $ isASemigroup @RrdpMap
+        QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RepositoryMeta,
+        QC.testProperty "RrdpMap is a semigroup" $ isASemigroup @RrdpMap        
     ]
 
 isASemigroup :: Eq s => Semigroup s => (s, s, s) -> Bool
@@ -71,7 +69,7 @@ prop_rsync_tree_commutative =
 
 prop_rsync_tree_update :: QC.Property
 prop_rsync_tree_update =
-    QC.forAll arbitrary $ \(newStatus :: FetchStatus, newSpeed :: Speed) ->
+    QC.forAll arbitrary $ \(newStatus :: FetchStatus, newSpeed :: FetchType) ->
         QC.forAll (replicateM 100 generateRsyncUrl) $ \urls ->
             QC.forAll (QC.sublistOf urls) $ \toUpdate -> let
                 tree = convertToRepos urls Pending
@@ -86,18 +84,18 @@ prop_rsync_tree_update =
                                 []   -> original
                                 s :_ -> s)) 
                         toUpdate allShorter
-                updatedTree = foldr (\u t -> toRsyncTree u newStatus newSpeed t) tree sameOrShorter
+                updatedTree = foldr (\u t -> toRsyncTree u (newMeta newStatus newSpeed) t) tree sameOrShorter
                 sameOrLonger = filter (\(RsyncURL h p) -> 
                                     any (\(RsyncURL h' p') -> 
                                         h == h' && (p == p' || p' `isPrefixOf` p)) toUpdate) urls
                 in all (\url -> 
-                    fmap snd (infoInRsyncTree url updatedTree) == 
-                        Just (RsyncNodeInfo newStatus newSpeed)) sameOrLonger
-
+                    fmap snd (lookupRsyncTree url updatedTree) == 
+                        Just (newMeta newStatus newSpeed)) sameOrLonger
+    
 
 convertToRepos :: [RsyncURL] -> FetchStatus -> RsyncTree
 convertToRepos urls status = 
-    foldr (\u t -> toRsyncTree u status Unknown t) newRsyncTree urls  
+    foldr (\u t -> toRsyncTree u (newMeta status Unknown) t) newRsyncTree urls  
 
 
 generateRsyncUrl :: Gen RsyncURL
@@ -112,3 +110,10 @@ generateRsyncUrl = do
     let rsyncHost = RsyncHost (RsyncHostName host) Nothing
     let path = map (RsyncPathChunk . convert) pathLevels
     pure $ RsyncURL rsyncHost path
+
+
+newMeta :: FetchStatus -> FetchType -> RepositoryMeta
+newMeta status fetchType = let  
+    lastFetchDuration = Nothing
+    refreshInterval = Nothing
+    in RepositoryMeta {..}

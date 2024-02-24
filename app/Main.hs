@@ -30,10 +30,7 @@ import           Data.Int                         (Int16, Int64)
 import qualified Data.List                        as List
 import           Data.Maybe
 import           Data.Word                        (Word16)
-
 import           Data.String.Interpolate.IsString
-import           Numeric.Natural                  (Natural)
-
 import           GHC.TypeLits
 
 import qualified Network.Wai.Handler.Warp         as Warp
@@ -41,7 +38,7 @@ import qualified Network.Wai.Handler.Warp         as Warp
 import           System.Directory
 import           System.Environment
 import           System.FilePath                  ((</>))
-import           System.IO (hPutStrLn, stderr)
+import           System.IO                        (hPutStrLn, stderr)
 
 import           Options.Generic
 
@@ -155,7 +152,7 @@ runValidatorServer appContext@AppContext {..} = do
     let validationContext = newScopes "validation-root"
     (tals, vs) <- runValidatorT validationContext $
         forM talNames $ \(talFilePath, taName) ->
-            inSubVScope' TAFocus (convert taName) $
+            vFocusOn TAFocus (convert taName) $
                 parseTALFromFile talFilePath (Text.pack taName)    
 
     db <- readTVarIO database
@@ -181,7 +178,7 @@ runValidatorServer appContext@AppContext {..} = do
 runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runHttpApi appContext = let
     httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
-    in Warp.run httpPort $ httpApi appContext
+    in Warp.run httpPort $ httpServer appContext
 
 
 createAppContext :: CLIOptions Unwrapped -> AppLogger -> LogLevel -> ValidatorT IO AppLmdbEnv
@@ -214,44 +211,55 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     rsyncPrefetchUrls <- rsyncPrefetches cliOptions            
 
     let config = defaults
-                & #programBinaryPath .~ programPath
-                & #rootDirectory .~ root
-                & #talDirectory .~ tald
-                & #tmpDirectory .~ tmpd
-                & #cacheDirectory .~ cached
-                & #parallelism .~ parallelism
-                & #rsyncConf . #rsyncRoot .~ rsyncd
-                & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
-                & #rsyncConf . #enabled .~ not noRsync
-                & #rsyncConf . #rsyncPrefetchUrls .~ rsyncPrefetchUrls
-                & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
-                & maybeSet (#rsyncConf . #asyncRsyncTimeout) (Seconds <$> asyncRsyncTimeout)
-                & #rrdpConf . #tmpRoot .~ tmpd
-                & #rrdpConf . #enabled .~ not noRrdp
-                & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
-                & maybeSet (#rrdpConf . #asyncRrdpTimeout) (Seconds <$> asyncRrdpTimeout)
-                & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
-                & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
-                & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
-                & #validationConfig . #manifestProcessing .~
-                        (if strictManifestValidation then RFC6486_Strict else RFC9286)
-                & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
-                & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
-                & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
-                & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
-                & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
-                & maybeSet (#validationConfig . #minObjectSize) minObjectSize
-                & maybeSet (#httpApiConf . #port) httpApiPort
-                & #rtrConfig .~ rtrConfig
-                & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
-                & maybeSet #oldVersionsLifetime ((\hours -> Seconds (hours * 60 * 60)) <$> oldVersionsLifeTimeHours)
-                & #lmdbSizeMb .~ lmdbRealSize
-                & #localExceptions .~ localExceptions
-                & #logLevel .~ derivedLogLevel
-                & maybeSet #metricsPrefix (convert <$> metricsPrefix)
-                & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
-                & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
-                & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
+            & #programBinaryPath .~ programPath
+            & #rootDirectory .~ root
+            & #talDirectory .~ tald
+            & #tmpDirectory .~ tmpd
+            & #cacheDirectory .~ cached
+            & #parallelism .~ parallelism
+            & #rsyncConf . #rsyncRoot .~ rsyncd
+            & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
+            & #rsyncConf . #enabled .~ not noRsync
+            & #rsyncConf . #rsyncPrefetchUrls .~ rsyncPrefetchUrls
+            & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
+            & maybeSet (#rsyncConf . #asyncRsyncTimeout) (Seconds <$> asyncRsyncTimeout)
+            & #rrdpConf . #tmpRoot .~ tmpd
+            & #rrdpConf . #enabled .~ not noRrdp
+            & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
+            & maybeSet (#rrdpConf . #asyncRrdpTimeout) (Seconds <$> asyncRrdpTimeout)
+            & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
+            & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
+            & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
+            & #validationConfig . #manifestProcessing .~
+                    (if strictManifestValidation then RFC6486_Strict else RFC9286)
+            & #validationConfig . #validationAlgorithm .~
+                    (if noIncrementalValidation then FullEveryIteration else Incremental)
+            & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
+            & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
+            & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
+            & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
+            & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
+            & maybeSet (#validationConfig . #minObjectSize) minObjectSize
+            & #validationConfig . #fetchIntervalCalculation .~ 
+                (if noAdaptiveFetchIntervals then Constant else Adaptive)
+            & #validationConfig . #fetchTimeoutCalculation .~ 
+                (if noAdaptiveFetchTimeouts then Constant else Adaptive)        
+            & maybeSet (#httpApiConf . #port) httpApiPort
+            & #rtrConfig .~ rtrConfig
+            & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
+            & maybeSet #versionNumberToKeep versionNumberToKeep
+            & #lmdbSizeMb .~ lmdbRealSize
+            & #localExceptions .~ localExceptions
+            & #logLevel .~ derivedLogLevel
+            & maybeSet #metricsPrefix (convert <$> metricsPrefix)
+            & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
+            & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
+            & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory            
+        
+    let adjustedConfig = config 
+            -- Cache must be cleaned up at least as often as the 
+            -- lifetime of the objects in it    
+            & #cacheCleanupInterval %~ (`min` (config ^. #cacheLifeTime))
 
     let readSlurms files = do
             logDebug logger [i|Reading SLURM files: #{files}.|]
@@ -267,7 +275,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                     (if resetCache then Reset else UseExisting)
                     logger
                     cached
-                    config
+                    adjustedConfig
 
     (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
     database <- liftIO $ newTVarIO db    
@@ -294,7 +302,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
         Lmdb.WasCompatible    -> pure ()
 
     logInfo logger [i|Created application context with configuration: 
-#{shower (appContext ^. typed @Config)}|]
+#{shower (adjustedConfig)}|]
     pure appContext
 
 
@@ -546,8 +554,8 @@ data CLIOptions wrapped = CLIOptions {
          +++ "the last one will be used, it is done for convenience of overriding this option with dockerised version."),
 
     verifySignature :: wrapped ::: Bool <?>
-        ("Work as a one-off RSC signature file executeVerifier, not as a server. To work as a executeVerifier it needs the cache " +++
-        "of validated RPKI objects and VRPs to exist and be poulateds. So executeVerifier can (and should) run next to " +++
+        ("Work as a one-off RSC signature file verifier, not as a server. To work as a verifier it needs the cache " +++
+        "of validated RPKI objects and VRPs to exist and be populateds. So verifier can (and should) run next to " +++
         "the running daemon instance of rpki-prover"),
 
     signatureFile :: wrapped ::: Maybe FilePath <?> ("Path to the RSC signature file."),
@@ -559,7 +567,9 @@ data CLIOptions wrapped = CLIOptions {
         ("Files to be verified using and RSC signaure file, may be multiple files."),
 
     cpuCount :: wrapped ::: Maybe Natural <?>
-        "CPU number available to the program (default is 2). Note that higher CPU counts result in bigger memory allocations.",
+        ("CPU number available to the program (default is 2). Note that higher CPU counts result in bigger " +++ 
+        "memory allocations. It is also recommended to set real CPU core number rather than the (hyper-)thread " +++ 
+        "number, since using the latter does not give much benefit and actually may cause performance degradation."),
 
     resetCache :: wrapped ::: Bool <?>
         "Reset the LMDB cache i.e. remove ~/.rpki/cache/*.mdb files.",
@@ -572,45 +582,45 @@ data CLIOptions wrapped = CLIOptions {
     cacheLifetimeHours :: wrapped ::: Maybe Int64 <?>
         "Lifetime of objects in the local cache, in hours (default is 72 hours)",
 
-    oldVersionsLifeTimeHours :: wrapped ::: Maybe Int64 <?>
-        ("Lifetime of versions in the local cache, in hours (default is 24 hours). " +++
+    versionNumberToKeep :: wrapped ::: Maybe Natural <?>
+        ("Number of versions to keep in the local cache (default is 100). " +++
          "Every re-validation creates a new version and associates resulting data " +++
          "(validation results, metrics, VRPs, etc.) with it."),
 
     rrdpRefreshInterval :: wrapped ::: Maybe Int64 <?>
-        ("Period of time after which an RRDP repository must be updated, "
-       +++ "in seconds (default is 120 seconds)"),
+        ("Period of time after which an RRDP repository must be updated, " +++ 
+         "in seconds (default is 120 seconds)"),
 
     rsyncRefreshInterval :: wrapped ::: Maybe Int64 <?>
-        ("Period of time after which an rsync repository must be updated, "
-       +++ "in seconds (default is 11 minutes, i.e. 660 seconds)"),
+        ("Period of time after which an rsync repository must be updated, " +++ 
+         "in seconds (default is 11 minutes, i.e. 660 seconds)"),
 
     rrdpTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timebox for RRDP repositories, in seconds. If fetching of a repository does not "
-       +++ "finish within this timeout, the repository is considered unavailable"),
+        ("Timebox for RRDP repositories, in seconds. If fetching of a repository does not " +++ 
+         "finish within this timeout, the repository is considered unavailable and fetching process is interrupted"),
 
     asyncRrdpTimeout :: wrapped ::: Maybe Int64 <?>
         ("Timebox for RRDP repositories when fetched asynchronously, in seconds. If fetching of a repository does not "
-       +++ "finish within this timeout, the repository is considered unavailable"),
+       +++ "finish within this timeout, the repository is considered unavailable and fetching process is interrupted"),
 
     rsyncTimeout :: wrapped ::: Maybe Int64 <?>
         ("Timebox for rsync repositories, in seconds. If fetching of a repository does not "
-       +++ "finish within this timeout, the repository is considered unavailable"),
+       +++ "finish within this timeout, the repository is considered unavailable and fetching process is interrupted."),
 
     asyncRsyncTimeout :: wrapped ::: Maybe Int64 <?>
         ("Timebox for rsync repositories when fetched asynchronously, in seconds. If fetching of a repository does not "
-       +++ "finish within this timeout, the repository is considered unavailable"),
+       +++ "finish within this timeout, the repository is considered unavailable and fetching process is interrupted"),
 
     rsyncClientPath :: wrapped ::: Maybe String <?>
-        ("Scope to rsync client. By default rsync client is expected to be in the $PATH."),
+        ("Path to rsync client executable. By default rsync client is expected to be in the $PATH."),
 
     httpApiPort :: wrapped ::: Maybe Word16 <?>
         "Port to listen to for http API (default is 9999)",
 
     lmdbSize :: wrapped ::: Maybe Int64 <?>
-        ("Maximal LMDB cache size in MBs (default is 32768, i.e. 32GB). Note that "
-       +++ "(a) It is the maximal size of LMDB, i.e. it will not claim that much space from the beginning. "
-       +++ "(b) About 1Gb of cache is required for every extra 24 hours of cache life time."),
+        ("Maximal LMDB cache size in MBs (default is 32768, i.e. 32GB). Note that " +++ 
+         "(a) It is the maximal size of LMDB, i.e. it will not claim that much space from the beginning. " +++ 
+         "(b) About 1Gb of cache is required for every extra 24 hours of cache life time."),
 
     withRtr :: wrapped ::: Bool <?>
         "Start RTR server (default is false)",
@@ -625,7 +635,7 @@ data CLIOptions wrapped = CLIOptions {
         "Path to a file used for RTR log (default is stdout, together with general output).",
 
     logLevel :: wrapped ::: Maybe String <?>
-        "Log level, may be 'error', 'warn', 'info', 'debug' (case-insensitive). Default is 'info'.",
+        "Log level, may be 'error', 'warn', 'info' or 'debug' (case-insensitive). Default is 'info'.",
 
     strictManifestValidation :: wrapped ::: Bool <?>
         ("Use the strict version of RFC 6486 (https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/" +++ 
@@ -674,7 +684,19 @@ data CLIOptions wrapped = CLIOptions {
         "Maximal allowed memory allocation (in megabytes) for rsync fetcher process (default is 1024).",
 
     maxValidationMemory :: wrapped ::: Maybe Int <?>
-        "Maximal allowed memory allocation (in megabytes) for validation process (default is 2048)."    
+        "Maximal allowed memory allocation (in megabytes) for validation process (default is 2048).",
+
+    noIncrementalValidation :: wrapped ::: Bool <?>
+        ("Do not use incremental validation algorithm (incremental validation is the default " +++ 
+         "so default for this option is false)."),
+
+    noAdaptiveFetchIntervals :: wrapped ::: Bool <?>
+        ("Do not use adaptive fetch intervals for repositories (adaptive fetch intervals is the default " +++ 
+         "so default for this option is false)."),
+
+    noAdaptiveFetchTimeouts :: wrapped ::: Bool <?>
+        ("Do not use adaptive fetch timeouts for repositories (adaptive fetch timeouts is the default " +++ 
+         "so default for this option is false).") 
 
 } deriving (Generic)
 

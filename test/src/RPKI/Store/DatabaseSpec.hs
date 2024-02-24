@@ -14,16 +14,13 @@ import           Control.Exception.Lifted
 
 import           Control.Lens                     ((.~), (%~), (&), (^.))
 import           Control.Monad
-import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Data.Generics.Product.Typed
 
-import           Control.Monad.IO.Class
 import qualified Data.ByteString                   as BS
 import           Data.Foldable
 import qualified Data.List                         as List
 import qualified Data.Map.Strict                   as Map
-import qualified Data.Set.NonEmpty                 as NESet
 import           Data.Maybe
 import           Data.Ord
 import           Data.Proxy
@@ -48,7 +45,6 @@ import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Map               as M
-import qualified RPKI.Store.Base.MultiMap          as MM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
@@ -106,7 +102,7 @@ txGroup = testGroup "App transaction test"
 shouldMergeObjectLocations :: Storage s => IO (DB s) -> HU.Assertion
 shouldMergeObjectLocations io = do 
     
-    db@DB {..} <- io
+    db <- io
     Now now <- thisInstant 
 
     [url1, url2, url3] :: [RpkiURL] <- take 3 . List.nub <$> replicateM 10 (QC.generate arbitrary)
@@ -115,11 +111,11 @@ shouldMergeObjectLocations io = do
     ro2 :: RpkiObject <- QC.generate arbitrary        
     extraLocations :: Locations <- QC.generate arbitrary    
 
-    let storeIt obj url = rwTx objectStore $ \tx -> do        
-            putObject tx objectStore (toStorableObject obj) (instantToVersion now)
-            linkObjectToUrl tx objectStore url (getHash obj)
+    let storeIt obj url = rwTx db $ \tx -> do        
+            saveObject tx db (toStorableObject obj) (instantToVersion now)
+            linkObjectToUrl tx db url (getHash obj)
 
-    let getIt hash = roTx objectStore $ \tx -> getByHash tx db hash    
+    let getIt hash = roTx db $ \tx -> getByHash tx db hash    
 
     storeIt ro1 url1
     storeIt ro1 url2
@@ -133,24 +129,24 @@ shouldMergeObjectLocations io = do
     Just (Located loc2 _) <- getIt (getHash ro2)
     HU.assertEqual "Wrong locations 2" loc2 (toLocations url3)    
 
-    verifyUrlCount objectStore "case 1" 3    
+    verifyUrlCount db "case 1" 3    
 
-    rwTx objectStore $ \tx -> deleteObject tx db (getHash ro1)    
+    rwTx db $ \tx -> deleteObject tx db (getHash ro1)    
 
-    verifyUrlCount objectStore "case 2" 3
+    verifyUrlCount db "case 2" 3
 
     -- should only clean up URLs
     deletedUrls <- rwTx db $ deleteDanglingUrls db
     HU.assertEqual "Should have deleted 2 URLs" 2 deletedUrls
 
-    verifyUrlCount objectStore "case 3" 1
+    verifyUrlCount db "case 3" 1
 
     Just (Located loc2 _) <- getIt (getHash ro2)
     HU.assertEqual "Wrong locations 3" loc2 (toLocations url3)
     where 
-        verifyUrlCount objectStore s count = do 
-            uriToUriKey <- roTx objectStore $ \tx -> M.all tx (uriToUriKey objectStore)
-            uriKeyToUri <- roTx objectStore $ \tx -> M.all tx (uriKeyToUri objectStore)
+        verifyUrlCount db@DB {..} s count = do 
+            uriToUriKey <- roTx db $ \tx -> M.all tx (uriToUriKey objectStore)
+            uriKeyToUri <- roTx db $ \tx -> M.all tx (uriKeyToUri objectStore)
             HU.assertEqual ("Not all URLs one way " <> s) count (length uriToUriKey)
             HU.assertEqual ("Not all URLs backwards " <> s) count (length uriKeyToUri)        
 
@@ -158,15 +154,15 @@ shouldMergeObjectLocations io = do
 shouldCreateAndDeleteAllTheMaps :: Storage s => IO (DB s) -> HU.Assertion
 shouldCreateAndDeleteAllTheMaps io = do 
     
-    DB {..} <- io
+    db <- io
     Now now <- thisInstant 
 
     url :: RpkiURL <- QC.generate arbitrary    
     ros :: [RpkiObject] <- generateSome
 
-    rwTx objectStore $ \tx -> 
+    rwTx db $ \tx -> 
         for_ ros $ \ro -> 
-            putObject tx objectStore (toStorableObject ro) (instantToVersion now)
+            saveObject tx db (toStorableObject ro) (instantToVersion now)
 
     -- roTx objectStore $ \tx -> 
     --     forM ros $ \ro -> do 
@@ -179,7 +175,7 @@ shouldCreateAndDeleteAllTheMaps io = do
 
 shouldInsertAndGetAllBackFromObjectStore :: Storage s => IO (DB s) -> HU.Assertion
 shouldInsertAndGetAllBackFromObjectStore io = do  
-    db@DB {..} <- io
+    db <- io
     aki1 :: AKI <- QC.generate arbitrary
     aki2 :: AKI <- QC.generate arbitrary
     ros :: [Located RpkiObject] <- removeMftNumberDuplicates <$> generateSome    
@@ -192,13 +188,13 @@ shouldInsertAndGetAllBackFromObjectStore io = do
 
     Now now <- thisInstant     
 
-    rwTx objectStore $ \tx -> 
+    rwTx db $ \tx -> 
         for_ ros' $ \(Located (Locations locations) ro) -> do             
-            putObject tx objectStore (toStorableObject ro) (instantToVersion now)
+            saveObject tx db (toStorableObject ro) (instantToVersion now)
             forM_ locations $ \url -> 
-                linkObjectToUrl tx objectStore url (getHash ro)
+                linkObjectToUrl tx db url (getHash ro)
 
-    allObjects <- roTx objectStore $ \tx -> getAll tx db
+    allObjects <- roTx db $ \tx -> getAll tx db
     HU.assertEqual 
         "Not the same objects" 
         (List.sortOn (getHash . (^. #payload)) allObjects) 
@@ -223,9 +219,8 @@ shouldInsertAndGetAllBackFromObjectStore io = do
                     getMftTimingMark mft1 == getMftTimingMark mft2
                 _ -> False
 
-    compareLatestMfts objectStore ros a = do
-        mftLatest <- roTx objectStore $ \tx -> 
-                        findLatestMftByAKI tx objectStore a         
+    compareLatestMfts db ros a = do
+        mftLatest <- roTx db $ \tx -> findLatestMftByAKI tx db a         
         
         let mftLatest' = listToMaybe $ List.sortOn (Down . getMftTimingMark)
                 [ mft | Located _ (MftRO mft) <- ros, getAKI mft == Just a ]                                    
@@ -243,10 +238,10 @@ shouldOrderManifests io = do
     let worldVersion = instantToVersion now
 
     rwTx objectStore $ \tx -> do        
-            putObject tx objectStore (toStorableObject mft1) worldVersion
-            putObject tx objectStore (toStorableObject mft2) worldVersion
-            linkObjectToUrl tx objectStore url1 (getHash mft1)
-            linkObjectToUrl tx objectStore url2 (getHash mft2)
+            saveObject tx db (toStorableObject mft1) worldVersion
+            saveObject tx db (toStorableObject mft2) worldVersion
+            linkObjectToUrl tx db url1 (getHash mft1)
+            linkObjectToUrl tx db url2 (getHash mft2)
 
     -- they have the same AKIs
     let Just aki1 = getAKI mft1
@@ -327,13 +322,13 @@ generateRepositories = do
 rrdpSubMap :: PublicationPoints -> IO RrdpMap
 rrdpSubMap pps = do 
     let RrdpMap rrdpsM = rrdps pps
-    keys <- QC.generate (QC.sublistOf $ Map.keys rrdpsM)
-    pure $ RrdpMap $ Map.filterWithKey (\u _ -> u `elem` keys) rrdpsM
+    keys_ <- QC.generate (QC.sublistOf $ Map.keys rrdpsM)
+    pure $ RrdpMap $ Map.filterWithKey (\u _ -> u `elem` keys_) rrdpsM
 
 
 shouldRollbackAppTx :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
 shouldRollbackAppTx io = do  
-    ((_, env), DB {..}) <- io
+    ((_, env), _) <- io
 
     let storage' = LmdbStorage env
     z :: SMap "test" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
@@ -377,7 +372,7 @@ shouldPreserveStateInAppTx io = do
         <- runValidatorT (newScopes "root") $ 
             timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                 appWarn $ UnspecifiedE "Error0" "text 0"
-                rwAppTx storage' $ \tx -> do                             
+                void $ rwAppTx storage' $ \tx -> do                             
                     addedObject        
                     appWarn $ UnspecifiedE "Error1" "text 1"
                     inSubVScope "nested-1" $ 
@@ -455,6 +450,7 @@ replaceAKI a = \case
     CrlRO c  -> CrlRO $ c & #aki .~ a
     MftRO c  -> MftRO $ c & #cmsPayload %~ mapCms
     RoaRO c  -> RoaRO $ c & #cmsPayload %~ mapCms
+    SplRO c  -> SplRO $ c & #cmsPayload %~ mapCms
     GbrRO c  -> GbrRO $ c & #cmsPayload %~ mapCms
     RscRO c  -> RscRO $ c & #cmsPayload %~ mapCms
     AspaRO c -> AspaRO $ c & #cmsPayload %~ mapCms

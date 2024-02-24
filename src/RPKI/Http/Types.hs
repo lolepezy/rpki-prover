@@ -21,6 +21,7 @@ import           Data.Text.Encoding          (encodeUtf8)
 
 import           Data.Aeson.Types
 import           Data.Proxy
+import           Data.Coerce
 
 import           GHC.Generics                (Generic)
 import qualified Data.Vector                 as V
@@ -49,6 +50,7 @@ import           RPKI.Reporting
 
 import           RPKI.RRDP.Types
 import           RPKI.Resources.Types
+import           RPKI.Store.Types hiding (object)
 import           RPKI.RTR.Types
 import           RPKI.Time
 import           RPKI.Util (mkHash)
@@ -65,14 +67,28 @@ data IssueDto = ErrorDto Text | WarningDto Text
     deriving stock (Eq, Show, Generic)
     deriving anyclass (ToJSON, ToSchema)
 
-data FullVDto = FullVDto {
+data FocusResolvedDto = TextDto Text 
+                    | ObjectLink Text
+                    | DirectLink Text
+                    | TA_UI Text
+    deriving stock (Show, Eq, Ord, Generic)      
+
+data FullVDto focus = FullVDto {
         issues  :: [IssueDto],
-        path    :: [Focus],
+        path    :: [focus],
         url     :: Focus
     } 
     deriving stock (Eq, Show, Generic)
 
-newtype MinimalVDto = MinimalVDto FullVDto
+newtype OriginalVDto = OriginalVDto (FullVDto Focus)
+    deriving stock (Eq, Show, Generic)
+
+newtype ResolvedVDto = ResolvedVDto  { 
+        unResolvedVDto :: FullVDto FocusResolvedDto
+    }
+    deriving stock (Eq, Show, Generic)
+
+newtype MinimalVDto focus = MinimalVDto (FullVDto focus)
     deriving stock (Eq, Show, Generic)
 
 data VrpDto = VrpDto {
@@ -87,6 +103,12 @@ data VrpMinimalDto = VrpMinimalDto {
         asn       :: ASN,
         prefix    :: IpPrefix,
         maxLength :: PrefixLength        
+    } 
+    deriving stock (Eq, Show, Generic)
+
+data VrpExtDto = VrpExtDto {
+        uri :: Text,
+        vrp :: VrpDto        
     } 
     deriving stock (Eq, Show, Generic)
 
@@ -113,6 +135,7 @@ data ObjectDto = CertificateD (ObjectContentDto CertificateDto)
                 | CRLD (ObjectContentDto CrlDto)
                 | BGPSecD (ObjectContentDto BgpCertDto)                
                 | ROAD (ObjectContentDto (CMSObjectDto RoaDto))
+                | SPLD (ObjectContentDto (CMSObjectDto SplPayloadDto))
                 | ASPAD (ObjectContentDto (CMSObjectDto AspaDto))
                 | GBRD (ObjectContentDto (CMSObjectDto GbrDto))
                 | RSCD (ObjectContentDto (CMSObjectDto RscDto))
@@ -206,6 +229,18 @@ data RoaDto = RoaDto {
     }  
     deriving stock (Eq, Show, Generic)
 
+data SplDto = SplDto {
+        asn    :: ASN,
+        prefix :: IpPrefix
+    }  
+    deriving stock (Eq, Show, Generic)
+
+data SplPayloadDto = SplPayloadDto {
+        asn      :: ASN,
+        prefixes :: [IpPrefix]
+    }  
+    deriving stock (Eq, Show, Generic)
+
 data RoaPrefixDto = RoaPrefixDto {
         prefix    :: IpPrefix,
         maxLength :: PrefixLength        
@@ -241,7 +276,7 @@ data MetricsDto = MetricsDto {
 
 data PublicationPointDto = PublicationPointDto {
         rrdp  :: [(RrdpURL, RrdpRepository)],
-        rsync :: [(RsyncURL, RsyncNodeInfo)]        
+        rsync :: [(RsyncURL, RepositoryMeta)]        
     } 
     deriving stock (Eq, Show, Generic)
 
@@ -253,6 +288,7 @@ newtype JobsDto = JobsDto {
 data ResourcesDto = ResourcesDto {
         tag                 :: Text,
         aggregatedCpuTime   :: CPUTime,
+        aggregatedClockTime :: TimeMs,
         maxMemory           :: MaxMemory,        
         avgCpuTimeMsPerSecond :: Double
     }
@@ -278,6 +314,7 @@ data TalDto = TalDto {
     deriving stock (Eq, Show, Generic)
 
 data ManualCVS = ManualCVS
+data ObjectBlob = ObjectBlob
 
 newtype RawCSV = RawCSV { unRawCSV :: LBS.ByteString }
     deriving stock (Eq, Show, Generic)
@@ -285,10 +322,19 @@ newtype RawCSV = RawCSV { unRawCSV :: LBS.ByteString }
 instance Accept ManualCVS where
     contentType _ = "text" // "csv"
 
+instance Accept ObjectBlob where
+    contentType _ = "application" // "octet-stream"
+
 instance MimeRender ManualCVS RawCSV where
     mimeRender _ = unRawCSV    
 
+instance MimeRender ObjectBlob ObjectOriginal where
+    mimeRender _ (ObjectOriginal b) = LBS.fromStrict b
+
 instance ToSchema RawCSV where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
+instance ToSchema ObjectOriginal where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToJSON RObject
@@ -299,6 +345,7 @@ instance ToJSON ObjectDto where
         CRLD v         -> object ["type" .= ("CRL" :: Text), "value" .= toJSON v]
         BGPSecD v      -> object ["type" .= ("BGPSec" :: Text), "value" .= toJSON v]
         ROAD v  -> object ["type" .= ("ROA" :: Text), "value" .= toJSON v]
+        SPLD v  -> object ["type" .= ("PrefixList" :: Text), "value" .= toJSON v]
         ASPAD v -> object ["type" .= ("ASPA" :: Text), "value" .= toJSON v]
         GBRD v  -> object ["type" .= ("GBR" :: Text), "value" .= toJSON v]
         RSCD v  -> object ["type" .= ("RSC" :: Text), "value" .= toJSON v]
@@ -319,6 +366,8 @@ instance ToJSON OIDDto where
 instance ToJSON ManifestDto
 instance ToJSON CrlDto
 instance ToJSON RoaDto
+instance ToJSON SplDto
+instance ToJSON SplPayloadDto
 instance ToJSON RoaPrefixDto
 instance ToJSON GbrDto
 instance ToJSON RscDto
@@ -348,6 +397,8 @@ instance ToSchema ExtensionsDto
 instance ToSchema OIDDto
 instance ToSchema ManifestDto
 instance ToSchema CrlDto
+instance ToSchema SplPayloadDto
+instance ToSchema SplDto
 instance ToSchema RoaDto
 instance ToSchema RoaPrefixDto
 instance ToSchema GbrDto
@@ -371,20 +422,29 @@ instance ToSchema ResourcesDto
 instance ToJSON a => ToJSON (ValidationsDto a)
 instance ToSchema a => ToSchema (ValidationsDto a)
 
-instance ToSchema FullVDto
-instance ToJSON FullVDto where
+instance ToSchema OriginalVDto
+instance ToSchema t => ToSchema (FullVDto t)
+instance ToJSON f => ToJSON (FullVDto f) where
     toJSON FullVDto {..} = object [         
             "url"       .= url,
             "full-path" .= path,
             "issues"    .= Array (V.fromList $ issuesJson issues)
         ]      
 
-instance ToSchema MinimalVDto
-instance ToJSON MinimalVDto where
+instance ToSchema FocusResolvedDto where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
+instance ToSchema ResolvedVDto
+instance ToJSON FocusResolvedDto
+instance ToJSON ResolvedVDto
+instance ToSchema f => ToSchema (MinimalVDto f)
+instance ToJSON (MinimalVDto t) where
     toJSON (MinimalVDto FullVDto {..}) = object [         
             "url"       .= url,
             "issues"    .= Array (V.fromList $ issuesJson issues)
         ]      
+
+instance ToJSON OriginalVDto
 
 issuesJson :: [IssueDto] -> [Value]
 issuesJson issues = flip map issues $ \case
@@ -399,9 +459,12 @@ instance ToJSON MetricsDto
 instance ToJSON RrdpURL
 instance ToJSON FetchStatus
 instance ToJSON ETag
-instance ToJSON Speed
+instance ToJSON FetchType
+instance ToJSON DeltaInfo
+instance ToJSON RrdpIntegrity
+instance ToJSON RrdpMeta
 instance ToJSON RrdpRepository
-instance ToJSON RsyncNodeInfo
+instance ToJSON RepositoryMeta
 instance ToJSON PublicationPointDto
 
 instance ToSchema MetricsDto
@@ -409,10 +472,13 @@ instance ToSchema FetchStatus where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ETag where     
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema Speed where
+instance ToSchema FetchType where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToSchema DeltaInfo
+instance ToSchema RrdpIntegrity
+instance ToSchema RrdpMeta
 instance ToSchema RrdpRepository
-instance ToSchema RsyncNodeInfo
+instance ToSchema RepositoryMeta
 instance ToSchema PublicationPointDto
 
 instance ToJSONKey (DtoScope s) where 
@@ -423,8 +489,10 @@ instance ToJSON (DtoScope s) where
 
 instance ToSchema (DtoScope 'Metric)
 
-toMinimalValidations :: ValidationsDto FullVDto -> ValidationsDto MinimalVDto
-toMinimalValidations = (& #validations %~ map MinimalVDto)
+toMinimalValidations :: Coercible dto (FullVDto f) => 
+                        ValidationsDto dto 
+                     -> ValidationsDto (MinimalVDto f)
+toMinimalValidations = (& #validations %~ coerce)
 
 toMetricsDto :: RawMetric -> MetricsDto
 toMetricsDto rawMetrics = MetricsDto {
@@ -444,3 +512,12 @@ parseHash hashText = bimap
     (Text.pack . ("Broken hex: " <>) . show)
     mkHash
     $ Hex.decode $ encodeUtf8 hashText
+
+
+resolvedFocusToText :: FocusResolvedDto -> Text
+resolvedFocusToText = \case  
+    TextDto t    -> t 
+    ObjectLink t -> t
+    DirectLink t -> t
+    TA_UI t      -> t
+ 

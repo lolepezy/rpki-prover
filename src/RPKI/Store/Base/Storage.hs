@@ -4,6 +4,8 @@
 
 module RPKI.Store.Base.Storage where
 
+import Control.Concurrent.STM
+import Control.Monad.IO.Class
 import Data.Kind
 import GHC.TypeLits
 import RPKI.Store.Base.Storable
@@ -49,6 +51,19 @@ rwTx = readWriteTx . storage
 
 storageError :: SomeException -> AppError
 storageError = StorageE . StorageError . fmtEx    
+
+roTxT :: (MonadIO m, WithStorage s ws) 
+        => TVar ws -> (Tx s 'RO -> ws -> IO a) -> m a
+roTxT tdb f = liftIO $ do 
+    db <- readTVarIO tdb
+    roTx db $ \tx -> f tx db
+
+rwTxT :: (MonadIO m, WithStorage s ws)  
+        => TVar ws -> (Tx s 'RW -> ws -> IO a) -> m a
+rwTxT tdb f = liftIO $ do 
+    db <- readTVarIO tdb
+    rwTx db $ \tx -> f tx db
+
 
 class WithTx s => CanErase s a where
     erase :: Tx s 'RW -> a -> IO ()

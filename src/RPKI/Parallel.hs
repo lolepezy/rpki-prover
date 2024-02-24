@@ -1,7 +1,8 @@
 -- {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE StrictData                 #-}
-{-# LANGUAGE AllowAmbiguousTypes        #-}
+{-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE StrictData          #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE RecordWildCards     #-}
 
 module RPKI.Parallel where
 
@@ -92,6 +93,42 @@ txFoldPipeline parallelism stream withTx consume =
             for_ a $ \a' -> consume tx a' >> go tx
 
 
+txFoldPipelineBatch :: forall m q tx . (MonadBaseControl IO m, MonadIO m) =>
+                    Natural ->
+                    Natural ->
+                    Stream (Of q) (ValidatorTCurried m) () ->                    
+                    (forall z . (tx -> ValidatorT m z) -> ValidatorT m z) -> -- ^ transaction in which all consumerers are wrapped
+                    (tx -> q -> ValidatorT m ()) ->           -- ^ consumer, called for every item of the traversed argument            
+                    ValidatorT m ()
+txFoldPipelineBatch parallelism batchSize stream withTx consume =
+    snd <$> bracketChanClosable
+                (atLeastOne parallelism)
+                writeAll 
+                readAll 
+                (\_ -> pure ())
+  where
+    writeAll queue = 
+        S.mapM_ 
+            (liftIO . atomically . writeCQueue queue) 
+            stream
+        
+    readAll queue = spinTx 
+      where
+        spinTx = do 
+            reachedBatchSize <- withTx $ go 0
+            when reachedBatchSize spinTx
+
+        go n tx
+            | n >= batchSize = pure True
+            | otherwise = do                
+                a <- liftIO $ atomically $ readCQueue queue
+                case a of                   
+                    Nothing -> pure False    
+                    Just a' -> do 
+                        consume tx a'
+                        go (n + 1) tx
+                
+
 -- 
 -- | Create two threads and queue between then. Calls
 -- 'produce' in one thread and 'consume' in the other thread,
@@ -99,11 +136,11 @@ txFoldPipeline parallelism stream withTx consume =
 -- the whole thing is interrupted with an exception.
 --    
 bracketChanClosable :: (MonadBaseControl IO m, MonadIO m) =>
-                Natural ->
-                (ClosableQueue t -> m b) ->
-                (ClosableQueue t -> m c) ->
-                (t -> m w) ->
-                m (b, c)
+                        Natural ->
+                        (ClosableQueue t -> m b) ->
+                        (ClosableQueue t -> m c) ->
+                        (t -> m w) ->
+                        m (b, c)
 bracketChanClosable size produce consume kill = do     
     queue <- liftIO $ atomically $ newCQueue size
     let closeQ = liftIO $ atomically $ closeCQueue queue
@@ -176,36 +213,47 @@ killAll queue kill = do
     for_ a $ \as -> kill as >> killAll queue kill
 
 -- Auxialliary stuff for limiting the amount of parallel reading LMDB transactions    
-data Semaphore = Semaphore Int (TVar Int)
+data Semaphore = Semaphore { 
+        capacity :: Int,
+        current  :: TVar Int, 
+        highest  :: TVar Int
+    }
     deriving (Eq)
 
-createSemaphoreIO :: Int -> IO Semaphore
-createSemaphoreIO = atomically . createSemaphore
+newSemaphoreIO :: Int -> IO Semaphore
+newSemaphoreIO = atomically . newSemaphore
 
-createSemaphore :: Int -> STM Semaphore
-createSemaphore n = Semaphore n <$> newTVar 0
+newSemaphore :: Int -> STM Semaphore
+newSemaphore n = Semaphore n <$> newTVar 0 <*> newTVar 0
 
 -- Execute using a semaphore as a barrier
 withSemaphore :: Semaphore -> IO a -> IO a
-withSemaphore (Semaphore maxCounter current) f = 
+withSemaphore Semaphore {..} f = 
     bracket incr decr (const f)
     where 
         incr = atomically $ do 
             c <- readTVar current
-            if c >= maxCounter 
+            if c >= capacity 
                 then retry
-                else writeTVar current (c + 1)
+                else do 
+                    let c' = c + 1
+                    writeTVar current c'
+                    h <- readTVar highest 
+                    when (c' > h) $ writeTVar highest c'
         decr _ = atomically $ modifyTVar' current $ \c -> c - 1
 
--- Execute using a semaphore as a barrier, but if sempahore 
+getSemaphoreState :: Semaphore -> STM (Int, Int)
+getSemaphoreState Semaphore {..} = (,) <$> readTVar current <*> readTVar highest
+
+-- Execute using a semaphore as a barrier, but if the sempahore 
 -- is not allowing execution, execute after a timeout anyway
 withSemaphoreAndTimeout :: Semaphore -> Int -> IO a -> IO a
-withSemaphoreAndTimeout (Semaphore maxCounter current) intervalMicroSeconds f =     
+withSemaphoreAndTimeout Semaphore {..} intervalMicroSeconds f =     
     bracket aquireSlot releaseSlot (const f)
   where  
     thereIsSpaceToRun = do 
         c <- readTVar current
-        if c >= maxCounter 
+        if c >= capacity 
             then retry
             else writeTVar current (c + 1)                                        
 

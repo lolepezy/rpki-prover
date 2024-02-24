@@ -1,5 +1,5 @@
 name:                rpki-prover
-version:             0.8.0
+version:             0.9.0
 github:              "lolepezy/rpki-prover"
 license:             BSD3
 author:              "Mikhail Puzanov"
@@ -34,6 +34,7 @@ dependencies:
 - asn1-parse
 - asn1-types
 - async
+- barbies
 - base16-bytestring
 - base64
 - binary
@@ -67,6 +68,7 @@ dependencies:
 - lmdb-high-level
 - lifted-async
 - lifted-base
+- list-t
 - lz4
 - memory
 - mmorph
@@ -90,6 +92,7 @@ dependencies:
 - shower
 - split
 - stm
+- stm-containers
 - store
 - streaming
 - strict-tuple
@@ -134,7 +137,7 @@ executables:
     - -Wall    
     - -rtsopts
     - -funbox-strict-fields
-    - '"-with-rtsopts=-A16m -AL64m -N2 -qg -T --disable-delayed-os-memory-return"'
+    - '"-with-rtsopts=-A16m -AL64m -N2 -qg -T -I0 --disable-delayed-os-memory-return"'
     dependencies:
     - rpki-prover  
 
@@ -171,6 +174,7 @@ tests:
     ghc-options:
     - -threaded
     - -rtsopts
+    - -Wall        
     - -with-rtsopts=-N
     - -O2  
     dependencies:

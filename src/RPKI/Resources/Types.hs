@@ -11,12 +11,10 @@ module RPKI.Resources.Types where
 
 import Prelude hiding (subtract)
 
-import           Data.Store
-import           Control.DeepSeq
-
 import qualified Data.ByteString                       as BS
 
 import           Data.Kind
+import           Data.Store
 import           Data.Vector                           (Vector)
 import           Data.Word                             (Word8, Word32)
 import           GHC.Generics
@@ -48,7 +46,7 @@ data IpPrefix = Ipv4P Ipv4Prefix | Ipv6P Ipv6Prefix
 
 newtype ASN = ASN Word32
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (NFData, TheBinary)  
+    deriving anyclass TheBinary
     deriving newtype Enum
 
 newtype PrefixLength = PrefixLength Word8

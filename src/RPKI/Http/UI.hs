@@ -46,8 +46,8 @@ import           RPKI.Time
 
 
 mainPage :: SystemInfo 
-        -> Maybe (WorldVersion, ValidationsDto FullVDto, RawMetric) 
-        -> Maybe (WorldVersion, ValidationsDto FullVDto, RawMetric) -> Html
+        -> Maybe (WorldVersion, ValidationsDto ResolvedVDto, RawMetric) 
+        -> Maybe (WorldVersion, ValidationsDto ResolvedVDto, RawMetric) -> Html
 mainPage systemInfo validation asyncFecth =     
     H.docTypeHtml $ do
         H.head $ 
@@ -151,6 +151,7 @@ validationMetricsHtml grouped = do
             genTh $ H.text "GBRs"
             genTh $ H.text "ASPAs"
             genTh $ H.text "BGP Certificates"
+            genTh $ H.text "Prefix Lists"
         
         H.tbody $ do 
             forM_ (zip taMetrics [1 :: Int ..]) $ \((TaName ta, vm), index) ->                
@@ -182,6 +183,7 @@ validationMetricsHtml grouped = do
             genTh $ H.text "GBRs"                
             genTh $ H.text "ASPAs"                
             genTh $ H.text "BGP Certificates"
+            genTh $ H.text "Prefix Lists"
 
         H.tbody $ do 
             let sortedRepos = List.sortOn fst $ 
@@ -198,7 +200,8 @@ validationMetricsHtml grouped = do
                          vm ^. #validCrlNumber +
                          vm ^. #validGbrNumber +
                          vm ^. #validAspaNumber +
-                         vm ^. #validBgpNumber
+                         vm ^. #validBgpNumber + 
+                         vm ^. #validSplNumber 
         htmlRow index $ do 
             genTd $ toHtml ta                                    
             void $ validationTime vm
@@ -212,6 +215,7 @@ validationMetricsHtml grouped = do
             genTd $ toHtml $ show $ vm ^. #validGbrNumber
             genTd $ toHtml $ show $ vm ^. #validAspaNumber
             genTd $ toHtml $ show $ vm ^. #validBgpNumber
+            genTd $ toHtml $ show $ vm ^. #validSplNumber
 
 rrdpMetricsHtml :: MetricMap RrdpMetric -> Html
 rrdpMetricsHtml rrdpMetricMap =
@@ -278,7 +282,7 @@ rsyncMetricsHtml rsyncMetricMap =
                     genTd $ toHtml $ rm ^. #totalTimeMs            
 
 
-validaionDetailsHtml :: [FullVDto] -> Html
+validaionDetailsHtml :: [ResolvedVDto] -> Html
 validaionDetailsHtml result = 
     H.table ! A.class_ "gen-t" $ do 
         H.thead $ tr $ do 
@@ -301,7 +305,7 @@ validaionDetailsHtml result =
                         H.tbody $ forM_ (zip vrs [1 :: Int ..]) vrHtml
             
   where      
-    vrHtml (FullVDto{..}, index) = do 
+    vrHtml (ResolvedVDto (FullVDto{..}), index) = do 
         let objectUrl = Prelude.head path         
         forM_ (zip issues [1 :: Int ..]) $ \(pr, jndex) ->                     
             htmlRow (index + jndex) $ do 
@@ -314,15 +318,15 @@ validaionDetailsHtml result =
                     space 
                     mapM_ (\z -> H.text z >> H.br) $ Text.lines problem
                 td ! A.class_ "sub-t" $ H.details $ do 
-                    H.summary $ focusLink objectUrl
-                    forM_ (Prelude.tail path) $ \p -> 
-                        focusLink p >> H.br
+                    H.summary $ focusLink1 objectUrl
+                    forM_ (Prelude.tail path) $ \f -> 
+                        focusLink1 f >> H.br
     countProblems = 
         List.foldl' countP (0 :: Int, 0 :: Int)
-        where
-            countP z FullVDto {..} = List.foldl' countEW z issues
-            countEW (!e, !w) (ErrorDto _)   = (e + 1, w)
-            countEW (!e, !w) (WarningDto _) = (e, w + 1)
+      where
+        countP z (ResolvedVDto FullVDto {..}) = List.foldl' countEW z issues
+        countEW (!e, !w) (ErrorDto _)   = (e + 1, w)
+        countEW (!e, !w) (WarningDto _) = (e, w + 1)
 
 
 primaryRepoTooltip :: Html
@@ -360,11 +364,11 @@ validationPathTootip = do
     space >> space
         
 
-groupByTa :: [FullVDto] -> Map Text [FullVDto]
+groupByTa :: [ResolvedVDto] -> Map Text [ResolvedVDto]
 groupByTa vrs = 
     Map.fromListWith (<>) 
-    $ [ (focusToText ta, [vr]) 
-            | vr@FullVDto {..} <- vrs, 
+    $ [ (resolvedFocusToText ta, [vr]) 
+            | vr@(ResolvedVDto FullVDto {..}) <- vrs, 
               ta <- lastOne path ]    
   where
     lastOne [] = []
@@ -376,16 +380,17 @@ objectLink :: Text -> Html
 objectLink url = 
     H.a ! A.href (textValue ("/api/object?uri=" <> url)) $ toHtml url
 
-focusLink :: Focus -> Html
-focusLink = \case 
-    TAFocus txt         -> toHtml txt
-    ObjectFocus txt     -> objectLink txt
-    PPFocus uri         -> directLink $ unURI $ getURL uri
-    RepositoryFocus uri -> directLink $ unURI $ getURL uri
-    TextFocus txt       -> toHtml txt
-  where
-    directLink url = 
-        H.a ! A.href (textValue url) $ toHtml url
+
+-- focusLink :: Focus -> Html
+-- focusLink = \case 
+--     TAFocus txt         -> toHtml txt
+--     ObjectFocus txt     -> objectLink txt
+--     PPFocus uri         -> directLink $ unURI $ getURL uri
+--     RepositoryFocus uri -> directLink $ unURI $ getURL uri
+--     TextFocus txt       -> toHtml txt
+--   where
+--     directLink url = 
+--         H.a ! A.href (textValue url) $ toHtml url
 
 htmlRow :: Int -> Html -> Html
 htmlRow index = 
@@ -423,3 +428,14 @@ instance ToMarkup RrdpSource where
     toMarkup RrdpNoUpdate = toMarkup ("-" :: Text)
     toMarkup RrdpDelta    = toMarkup ("Deltas" :: Text)
     toMarkup RrdpSnapshot = toMarkup ("Snapshot" :: Text)
+
+        
+focusLink1 :: FocusResolvedDto -> Html
+focusLink1 = \case 
+    TextDto txt     -> toHtml txt
+    TA_UI txt       -> toHtml txt
+    ObjectLink txt  -> objectLink txt
+    DirectLink uri  -> directLink uri        
+  where
+    directLink url = 
+        H.a ! A.href (textValue url) $ toHtml url

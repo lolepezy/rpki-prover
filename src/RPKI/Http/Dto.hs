@@ -46,6 +46,9 @@ toVrpDtos = \case
                     (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
                     Vrp a p len  <- Set.toList vrpSet ]
 
+toVrpDto :: Vrp -> TaName -> VrpDto
+toVrpDto (Vrp a p len) (TaName ta) = VrpDto a p len ta
+
 toVrpSet :: Maybe Vrps -> Set.Set AscOrderedVrp
 toVrpSet = maybe mempty uniqVrps
 
@@ -88,8 +91,8 @@ gbrToDto (Gbr vcardBS) = let
     in GbrDto {..}
 
 
-toVR :: (Scope a, Set.Set VIssue) -> FullVDto
-toVR (Scope scope, issues) = FullVDto {
+toVDto :: (Scope a, Set.Set VIssue) -> OriginalVDto
+toVDto (Scope scope, issues) = OriginalVDto $ FullVDto {
         issues = map toDto $ Set.toList issues,
         path   = NonEmpty.toList scope,
         url    = NonEmpty.head scope
@@ -115,6 +118,26 @@ vrpDtosToCSV vrpDtos =
             str (show ml) <> ch ',' <>
             str (convert ta) <> ch '\n'
 
+vrpExtDtosToCSV :: [VrpExtDto] -> RawCSV
+vrpExtDtosToCSV vrpDtos =
+    rawCSV
+        (str "URI,ASN,IP Prefix,Max Length,Trust Anchor\n")
+        (mconcat $ map toBS vrpDtos)
+  where
+    toBS VrpExtDto {        
+            vrp = VrpDto {
+                asn = ASN as,
+                maxLength = PrefixLength ml,
+                ..
+            },
+            ..
+        } = str (Text.unpack uri) <> ch ',' <>
+            str "AS" <> str (show as) <> ch ',' <>
+            str (prefixStr prefix) <> ch ',' <>
+            str (show ml) <> ch ',' <>
+            str (convert ta) <> ch '\n'
+
+
 vrpSetToCSV :: Set.Set AscOrderedVrp -> RawCSV
 vrpSetToCSV vrpDtos =
     rawCSV
@@ -125,7 +148,7 @@ vrpSetToCSV vrpDtos =
         str "AS" <> str (show asn) <> ch ',' <>
         str (prefixStr prefix) <> ch ',' <>
         str (show maxLength) <> ch '\n'
-
+ 
 
 rawCSV :: BB.Builder -> BB.Builder -> RawCSV
 rawCSV header body = RawCSV $ BB.toLazyByteString $ header <> body
@@ -150,6 +173,7 @@ objectToDto = \case
     -- CMS-based stuff
     MftRO m  -> ManifestD $ cmsDto m $ manifestDto m
     RoaRO r  -> ROAD $ cmsDto r $ roaDto r
+    SplRO r  -> SPLD $ cmsDto r $ splDto r
     GbrRO g  -> GBRD $ cmsDto g $ gbrObjectToDto g
     RscRO r  -> RSCD $ cmsDto r $ rscDto r
     AspaRO a -> ASPAD $ cmsDto a $ aspaDto a
@@ -181,7 +205,7 @@ objectToDto = \case
 
     manifestDto m = let
             mft@Manifest {..} = getCMSContent $ m ^. #cmsPayload
-            entries = map (\(T2 f h) -> (f, h)) mftEntries
+            entries = map (\(MftPair f h) -> (f, h)) mftEntries
         in
             ManifestDto {
                 fileHashAlg = Text.pack $ show $ mft ^. #fileHashAlg,
@@ -194,6 +218,9 @@ objectToDto = \case
                 asn = head $ map (\(Vrp a _ _) -> a) vrps
                 prefixes = map (\(Vrp _ p l) -> RoaPrefixDto p l) vrps
             in RoaDto {..}
+
+    splDto r = let SplPayload asn prefixes = getCMSContent $ r ^. #cmsPayload 
+                in SplPayloadDto {..}
 
     crlDto CrlObject {..} = let
             SignCRL {..} = signCrl
@@ -288,7 +315,7 @@ objectToDto = \case
     aspaDto = aspaToDto . getCMSContent . (^. #cmsPayload)
 
     rscDto r = let 
-            rsc@RSC {..} = getCMSContent $ r ^. #cmsPayload
+            rsc@Rsc {..} = getCMSContent $ r ^. #cmsPayload
         in RscDto { checkList = map (\(T2 f h) -> CheckListDto f h) $ rsc ^. #checkList, ..}
 
     bgpSecDto :: BgpCerObject -> BgpCertDto

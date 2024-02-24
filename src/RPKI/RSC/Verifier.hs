@@ -68,7 +68,7 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
     -- First check that there's some validated data
     lastVersion <- liftIO $ roTx db $ getLastValidationVersion db    
     when (isNothing lastVersion) $ appError $ ValidationE NoValidatedVersion    
-    
+
     bs        <- fromTry (ParseE . ParseError . fmtEx) $ BS.readFile rscFile
     parsedRsc <- vHoist $ parseRsc bs    
 
@@ -81,7 +81,7 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
         let rsc = getCMSContent $ parsedRsc ^. #cmsPayload
         let digest = rsc ^. #digestAlgorithm
         case findHashFunc digest of 
-            Nothing       -> appError $ ValidationE $ UnsupportedHashAlgorithm digest
+            Nothing       -> appError $ ValidationE $ UnsupportedHashAlgorithm $ fmtGen digest
             Just hashFunc -> do 
                 actualFiles <- fileMap hashFunc
                 let checkList = Map.fromList $ map (\(T2 t h) -> (h, t)) $ rsc ^. #checkList
@@ -115,8 +115,6 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
                             pure [(f, hash)] 
                         else 
                             pure []
-
-                    
 
     findHashFunc (DigestAlgorithmIdentifier oid) = 
         case () of 

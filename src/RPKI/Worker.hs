@@ -39,6 +39,7 @@ import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Reporting
 import           RPKI.Repository
+import           RPKI.RRDP.Types
 import           RPKI.TAL
 import           RPKI.Logging
 import           RPKI.Time
@@ -96,7 +97,7 @@ data WorkerParams = RrdpFetchParams {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-newtype Timebox = Timebox Seconds
+newtype Timebox = Timebox { unTimebox :: Seconds }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -104,14 +105,14 @@ data WorkerInput = WorkerInput {
         params          :: WorkerParams,
         config          :: Config,
         initialParentId :: ProcessID,
-        workerTimeout    :: Timebox
+        workerTimeout   :: Timebox
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
 
 newtype RrdpFetchResult = RrdpFetchResult 
-                            (Either AppError RrdpRepository, ValidationState)    
+                            (Either AppError (RrdpRepository, RrdpFetchStat), ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -198,7 +199,7 @@ writeWorkerOutput :: TheBinary a => a -> IO ()
 writeWorkerOutput = LBS.hPut stdout . LBS.fromStrict . serialise_
 
 rtsArguments :: [String] -> [String]
-rtsArguments args = [ "+RTS" ] <> args <> [ "-RTS" ]
+rtsArguments args = [ "+RTS" ] <> defaultRts <> args <> [ "-RTS" ]
 
 rtsMaxMemory, rtsA, rtsAL :: String -> String
 rtsMaxMemory m = "-M" <> m
@@ -210,6 +211,10 @@ rtsN n = "-N" <> show n
 
 rtsMemValue :: Int -> String
 rtsMemValue mb = show mb <> "m"
+
+-- Don't do idle GC, it only spins the CPU without any purpose
+defaultRts :: [String]
+defaultRts = [ "-I0" ]
 
 exitParentDied, exitTimeout, exitOutOfMemory, exitKillByTypedProcess :: ExitCode
 exitParentDied  = ExitFailure 11
@@ -242,7 +247,7 @@ runWorker logger config workerId params timeout extraCli = do
             setStdout byteStringOutput $
                 proc executableToRun $ [ "--worker" ] <> extraCli
 
-    logDebug logger [i|Running worker: #{trimmed worker}|]        
+    logDebug logger [i|Running worker: #{trimmed worker} with timeout #{unTimebox timeout}.|]        
 
     runIt worker `catches` [                    
             Handler $ \e@(SomeAsyncException _) -> throwIO e,
@@ -305,5 +310,5 @@ runWorker logger config workerId params timeout extraCli = do
 
 logWorkerDone :: (Logger logger, MonadIO m) =>
                 logger -> WorkerId -> WorkerResult r -> m ()
-logWorkerDone logger workerId WorkerResult {..} =     
-    logDebug logger [i|Worker '#{workerId}' finished, cpuTime: #{cpuTime}ms, clockTime: #{clockTime}ms, maxMemory: #{maxMemory}.|]
+logWorkerDone logger workerId WorkerResult {..} = do    
+    logDebug logger [i|Worker #{workerId} completed, cpuTime: #{cpuTime}ms, clockTime: #{clockTime}ms, maxMemory: #{maxMemory}.|]

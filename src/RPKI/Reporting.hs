@@ -18,18 +18,17 @@ import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString             as BS
 import           Data.Int                    (Int64)
-import           Data.Maybe                  (fromMaybe, listToMaybe)
+import           Data.Hourglass
+import           Data.Maybe                  (fromMaybe)
 import           Data.Monoid
-
 import           Data.Text                   as Text
-import           Data.Tuple.Strict
-
 import qualified Data.List                   as List
 import           Data.List.NonEmpty          (NonEmpty (..))
 import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 import           Data.Monoid.Generic
+import           Data.Map.Monoidal.Strict (MonoidalMap(MonoidalMap))
 import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 
@@ -37,19 +36,15 @@ import           Data.ASN1.Types (OID)
 
 import           GHC.Generics
 
-import           Data.Map.Monoidal.Strict (MonoidalMap(MonoidalMap))
-
 import           RPKI.Domain
 import           RPKI.RRDP.Types
 import           RPKI.Resources.Types
 import           RPKI.Time
-
 import           RPKI.Store.Base.Serialisation
-
 
 newtype ParseError s = ParseError s
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 data ValidationError =  SPKIMismatch SPKI SPKI |
                         UnknownObjectAsTACert |
@@ -62,7 +57,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         NoValidatedVersion |
                         ParentCertificateNotFound |
                         ObjectNotOnManifest |
-                        UnsupportedHashAlgorithm DigestAlgorithmIdentifier |
+                        UnsupportedHashAlgorithm Text |
                         NotFoundOnChecklist Hash Text |
                         ChecklistFileNameMismatch Hash Text Text |
                         TACertAKIIsNotEmpty URI |
@@ -78,26 +73,33 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         MissingCriticalExtension OID |
                         BrokenKeyUsage Text |
                         ObjectHasMultipleLocations [RpkiURL] |
-                        NoMFT AKI Locations |
-                        NoCRLOnMFT AKI Locations |
-                        MoreThanOneCRLOnMFT AKI Locations [T2 Text Hash] |
-                        NoMFTSIA Locations |
+                        NoMFT AKI |
+                        NoMFTButCachedMft AKI |
+                        NoCRLOnMFT AKI |
+                        MoreThanOneCRLOnMFT AKI [MftPair] |
+                        NoMFTSIA |
                         MFTOnDifferentLocation URI Locations |
                         BadFileNameOnMFT Text Text |
                         ZeroManifestEntries |
                         NonUniqueManifestEntries [(Hash, [Text])] |
-                        NoCRLExists AKI Locations |
+                        NoCRLExists AKI Hash |
+                        ManifestEntryDoesn'tExist Hash Text |
+                        ManifestEntryHasWrongFileType Hash Text RpkiObjectType |                        
+                        ManifestNumberDecreased { oldMftNumber :: Serial, newMftNumber :: Serial } |
+                        -- This is a bit of a special error to indicate that the 
+                        -- "fallback to the last valid MFT" happened
+                        MftFallback AppError |
                         CRLOnDifferentLocation URI Locations |
-                        CRLHashPointsToAnotherObject Hash Locations |
+                        CRLHashPointsToAnotherObject Hash |
+                        CRL_AKI_DifferentFromCertSKI SKI AKI |
                         NextUpdateTimeNotSet |                        
                         NextUpdateTimeIsInThePast   { nextUpdateTime :: Instant, now :: Instant } |
                         ThisUpdateTimeIsInTheFuture { thisUpdateTime :: Instant, now :: Instant } |
                         NextUpdateTimeBeforeThisUpdateTime  { nextUpdateTime :: Instant, thisUpdateTime :: Instant } |
                         RevokedResourceCertificate |
-                        CertificateIsInTheFuture { before :: Instant, after :: Instant } |
-                        CertificateIsExpired { before :: Instant, after :: Instant } |
-                        AKIIsNotEqualsToParentSKI (Maybe AKI) SKI |
-                        ManifestEntryDoesn'tExist Hash Text |
+                        ObjectValidityIsInTheFuture { before :: Instant, after :: Instant } |
+                        ObjectIsExpired { before :: Instant, after :: Instant } |
+                        AKIIsNotEqualsToParentSKI (Maybe AKI) SKI |                        
                         OverclaimedResources PrefixesAndAsns |
                         InheritWithoutParentResources |
                         ResourceSetMustBeInherit |
@@ -105,11 +107,11 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BrokenUri Text Text | 
                         CertificateDoesntHaveSIA | 
                         AIANotSameAsParentLocation Text Locations | 
-                        CircularReference Hash Locations |
-                        CertificatePathTooDeep Locations Int |
-                        TreeIsTooBig Locations Int |
-                        TooManyRepositories Locations Int |
-                        ValidationTimeout Int |
+                        CircularReference ObjectIdentity |
+                        CertificatePathTooDeep Int |
+                        TreeIsTooBig Int |
+                        TooManyRepositories Int |
+                        ValidationTimeout Seconds |
                         ManifestLocationMismatch Text Locations | 
                         InvalidVCardFormatInGbr Text | 
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |
@@ -122,9 +124,11 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BGPCertSIAPresent BS.ByteString | 
                         BGPCertIPv4Present |
                         BGPCertIPv6Present | 
-                        BGPCertBrokenASNs
+                        BGPCertBrokenASNs  | 
+                        SplAsnNotInResourceSet ASN [AsResource] | 
+                        SplNotIpResources [IpPrefix]
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
     
 data RrdpError = BrokenXml Text | 
                 BrokenSerial Text |
@@ -165,44 +169,45 @@ data RrdpError = BrokenXml Text |
                 NoObjectToReplace URI Hash |
                 NoObjectToWithdraw URI Hash |
                 ObjectExistsWhenReplacing URI Hash |
-                UnsupportedObjectType Text | 
-                RrdpDownloadTimeout Int64 | 
+                RrdpUnsupportedObjectType Text | 
+                RrdpDownloadTimeout Seconds | 
                 UnknownRrdpProblem Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 data RsyncError = RsyncProcessError Int Text |
                     FileReadError Text |
                     RsyncRunningError Text |         
-                    RsyncDownloadTimeout Int64 | 
+                    RsyncDownloadTimeout Seconds | 
+                    RsyncUnsupportedObjectType Text | 
                     UnknownRsyncProblem Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 data StorageError = StorageError Text |
                     DeserialisationError Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 newtype TALError = TALError Text 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 newtype InitError = InitError Text 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 data InternalError = WorkerTimeout Text 
                    | WorkerOutOfMemory Text 
                    | InternalError Text 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 data SlurmError = SlurmFileError Text Text |
                   SlurmParseError Text Text |
                   SlurmValidationError Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 data AppError = ParseE (ParseError Text) | 
                 TAL_E TALError | 
@@ -213,17 +218,17 @@ data AppError = ParseE (ParseError Text) |
                 InitE InitError |
                 SlurmE SlurmError |
                 InternalE InternalError |
-                UnspecifiedE Text Text
+                UnspecifiedE Text Text                
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 newtype VWarning = VWarning AppError
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 data VIssue = VErr AppError | VWarn VWarning
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 newtype AppException = AppException AppError
     deriving stock (Show, Eq, Ord, Generic)
@@ -232,7 +237,7 @@ instance Exception AppException
 
 newtype Validations = Validations (Map VScope (Set VIssue))
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
     deriving newtype Monoid
 
 instance Semigroup Validations where
@@ -240,20 +245,23 @@ instance Semigroup Validations where
 
 
 data Focus = TAFocus Text 
-            | ObjectFocus Text 
+            | LocationFocus URI
+            | LinkFocus URI
+            | ObjectFocus ObjectKey
+            | HashFocus Hash
             | PPFocus RpkiURL
             | RepositoryFocus RpkiURL
             | TextFocus Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)    
+    deriving anyclass TheBinary
 
-newtype Scope t = Scope (NonEmpty Focus)
+newtype Scope (t :: ScopeKind) = Scope (NonEmpty Focus)
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
 
 data ScopeKind = Validation | Metric
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)    
+    
 
 type VScope      = Scope 'Validation    
 type MetricScope = Scope 'Metric
@@ -308,10 +316,6 @@ mProblem vc p = Validations $ Map.singleton vc $ Set.singleton p
 emptyValidations :: Validations -> Bool 
 emptyValidations (Validations m) = List.all Set.null $ Map.elems m  
 
-findError :: Validations -> Maybe AppError
-findError (Validations m) = 
-    listToMaybe [ e | s <- Map.elems m, VErr e <- Set.toList s ]
-
 removeValidation :: VScope -> (AppError -> Bool) -> Validations -> Validations
 removeValidation vScope predicate (Validations vs) =
     Validations $ Map.adjust removeFromSet vScope vs    
@@ -319,6 +323,9 @@ removeValidation vScope predicate (Validations vs) =
         removeFromSet = Set.filter $ \case 
             VErr e             -> not $ predicate e
             VWarn (VWarning e) -> not $ predicate e
+
+getIssues :: VScope -> Validations -> Set VIssue
+getIssues s (Validations vs) = fromMaybe mempty $ Map.lookup s vs
 
 
 ------------------------------------------------
@@ -331,7 +338,7 @@ class Monoid metric => MetricC metric where
 
 newtype Count = Count { unCount :: Int64 }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary)   
+    deriving anyclass TheBinary
     deriving newtype (Num)
     deriving Semigroup via Sum Count
     deriving Monoid via Sum Count
@@ -341,7 +348,7 @@ instance Show Count where
 
 newtype HttpStatus = HttpStatus { unHttpStatus :: Int }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)    
+    deriving anyclass TheBinary        
 
 instance Monoid HttpStatus where
     mempty = HttpStatus 200
@@ -351,7 +358,7 @@ instance Semigroup HttpStatus where
 
 data RrdpSource = RrdpNoUpdate | RrdpDelta | RrdpSnapshot
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)        
+    deriving anyclass TheBinary        
 
 instance Monoid RrdpSource where
     mempty = RrdpNoUpdate
@@ -364,7 +371,7 @@ instance Semigroup RrdpSource where
 
 data FetchFreshness = UpToDate | AttemptedFetch | FailedToFetch
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)        
+    deriving anyclass TheBinary        
 
 instance Monoid FetchFreshness where
     mempty = UpToDate
@@ -383,7 +390,7 @@ data RrdpMetric = RrdpMetric {
         fetchFreshness  :: FetchFreshness
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
     deriving Semigroup via GenericSemigroup RrdpMetric   
     deriving Monoid    via GenericMonoid RrdpMetric
 
@@ -393,7 +400,7 @@ data RsyncMetric = RsyncMetric {
         fetchFreshness :: FetchFreshness
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
     deriving Semigroup via GenericSemigroup RsyncMetric   
     deriving Monoid    via GenericMonoid RsyncMetric
 
@@ -401,17 +408,18 @@ data ValidationMetric = ValidationMetric {
         vrpCounter      :: Count,        
         uniqueVrpNumber :: Count,        
         validCertNumber :: Count,
-        validRoaNumber  :: Count,
+        validRoaNumber  :: Count,        
+        validSplNumber  :: Count,        
         validMftNumber  :: Count,
         validCrlNumber  :: Count,
         validGbrNumber  :: Count,
         validAspaNumber :: Count,
         validBgpNumber  :: Count,
-        validBriefNumber :: Count,
+        mftShortcutNumber :: Count,                
         totalTimeMs     :: TimeMs
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
     deriving Semigroup via GenericSemigroup ValidationMetric   
     deriving Monoid    via GenericMonoid ValidationMetric
 
@@ -426,7 +434,7 @@ instance MetricC ValidationMetric where
 
 newtype MetricMap a = MetricMap { unMetricMap :: MonoidalMap MetricScope a }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)    
+    deriving anyclass TheBinary
     deriving newtype Monoid    
     deriving newtype Semigroup
 
@@ -435,7 +443,7 @@ data VrpCounts = VrpCounts {
         perTaUnique :: MonoidalMap TaName Count
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
     deriving Semigroup via GenericSemigroup VrpCounts   
     deriving Monoid    via GenericMonoid VrpCounts
 
@@ -446,7 +454,7 @@ data RawMetric = RawMetric {
         vrpCounts         :: VrpCounts
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
     deriving Semigroup via GenericSemigroup RawMetric   
     deriving Monoid    via GenericMonoid RawMetric
 
@@ -455,7 +463,7 @@ data RawMetric = RawMetric {
 
 data Trace = WorkerTimeoutTrace                   
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)    
+    deriving anyclass TheBinary
 
 data ValidationState = ValidationState {
         validations   :: Validations,
@@ -463,19 +471,15 @@ data ValidationState = ValidationState {
         traces        :: Set Trace
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass TheBinary
     deriving Semigroup via GenericSemigroup ValidationState
     deriving Monoid    via GenericMonoid ValidationState
 
 mTrace :: Trace -> Set Trace
 mTrace t = Set.singleton t
     
-
 vState :: Validations -> ValidationState
 vState vs = ValidationState vs mempty mempty
-
-validationsToList :: Validations -> [(VScope, Set VIssue)]
-validationsToList (Validations vMap) = Map.toList vMap 
 
 updateMetricInMap :: Monoid a => 
                     MetricScope -> (a -> a) -> MetricMap a -> MetricMap a
@@ -485,20 +489,21 @@ updateMetricInMap ms f (MetricMap (MonoidalMap mm)) =
 lookupMetric :: MetricScope -> MetricMap a -> Maybe a
 lookupMetric ms (MetricMap (MonoidalMap mm)) = Map.lookup ms mm
 
-
 isHttpSuccess :: HttpStatus -> Bool
 isHttpSuccess (HttpStatus s) = s >= 200 && s < 300
 
 focusToText :: Focus -> Text
-focusToText = \case
-    TAFocus txt         -> txt
-    ObjectFocus txt     -> txt
-    PPFocus uri         -> unURI $ getURL uri
-    RepositoryFocus uri -> unURI $ getURL uri
-    TextFocus txt       -> txt
+focusToText = \case    
+    LocationFocus   (getURL -> URI u) -> u
+    PPFocus         (getURL -> URI u) -> u
+    RepositoryFocus (getURL -> URI u) -> u
+    LinkFocus (URI u) -> u
+    TAFocus txt       -> txt
+    ObjectFocus key   -> fmt key
+    HashFocus hash_   -> fmt hash_    
+    TextFocus txt     -> txt    
+  where
+    fmt = Text.pack . show 
 
 scopeList :: Scope a -> [Focus]
 scopeList (Scope s) = NonEmpty.toList s
-
-scopeText :: Scope a -> Text
-scopeText s = Text.intercalate "/" $ Prelude.map focusToText $ scopeList s

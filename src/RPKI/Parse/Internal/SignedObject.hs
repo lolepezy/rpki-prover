@@ -99,12 +99,12 @@ parseSignedObject contentBinaryParse =
                     --   [Start Sequence] <> [End Sequence]                                
 
     parseSignerInfo = SignerInfos <$>
-      parseVersion <*>
-      parseSid <*>
-      parseDigestAlgorithms <*>
-      parseSignedAttributes <*>
-      parseSignatureAlgorithm <*>
-      parseSignature
+        parseVersion <*>
+        parseSid <*>
+        parseDigestAlgorithms <*>
+        parseSignedAttributes <*>
+        parseSignatureAlgorithm <*>
+        parseSignature
       where 
         parseSid = getNext >>= \case 
           Other Context 0 si -> pure $ SignerIdentifier $ toShortBS si

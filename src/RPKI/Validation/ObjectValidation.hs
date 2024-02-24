@@ -8,6 +8,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module RPKI.Validation.ObjectValidation where
     
@@ -45,7 +46,7 @@ import           RPKI.Resources.Resources
 
 newtype Validated a = Validated a
     deriving stock (Show, Eq, Generic)
-
+    deriving newtype (WithSKI, WithAKI, WithHash)
 
 class ExtensionValidator (t :: CertType) where
     validateResourceCertExtensions_ :: Proxy t -> [ExtensionRaw] -> PureValidatorT ()
@@ -191,7 +192,7 @@ validateResourceCert now cert parentCert vcrl = do
     when (isRevoked cert vcrl) $ 
         vPureError RevokedResourceCertificate
 
-    validateCertValidityPeriod cert now    
+    validateObjectValidityPeriod cert now    
 
     unless (correctSkiAki cert parentCert) $
         vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
@@ -202,13 +203,13 @@ validateResourceCert now cert parentCert vcrl = do
         maybe False (\(AKI a) -> a == s) $ getAKI c
 
 
-validateCertValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT ()
-validateCertValidityPeriod c (Now now) = do 
+validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT ()
+validateObjectValidityPeriod c (Now now) = do 
     let (before, after) = getValidityPeriod c
     when (now < before) $ 
-        vPureError $ CertificateIsInTheFuture before after
+        vPureError $ ObjectValidityIsInTheFuture before after
     when (now > after) $ 
-        vPureError $ CertificateIsExpired before after
+        vPureError $ ObjectIsExpired before after
 
 
 validateResources ::
@@ -244,7 +245,7 @@ validateBgpCert ::
     c ->
     parent ->
     Validated CrlObject ->
-    PureValidatorT BGPSecPayload
+    PureValidatorT (Validated c, BGPSecPayload)
 validateBgpCert now bgpCert parentCert validCrl = do
     -- Validate BGP certificate according to 
     -- https://www.rfc-editor.org/rfc/rfc8209.html#section-3.3    
@@ -274,7 +275,7 @@ validateBgpCert now bgpCert parentCert validCrl = do
 
     -- https://www.rfc-editor.org/rfc/rfc8208#section-3.1    
     let bgpSecSpki = getSubjectPublicKeyInfo cwsX509
-    pure BGPSecPayload {..}
+    pure (Validated bgpCert, BGPSecPayload {..})
 
 
 ipMustBeEmpty :: RSet (IntervalSet a) -> ValidationError -> PureValidatorT ()
@@ -286,14 +287,16 @@ ipMustBeEmpty ips errConstructor =
 
 -- | Validate CRL object with the parent certificate
 validateCrl ::    
-    WithRawResourceCertificate c =>
+    (WithRawResourceCertificate c, WithSKI c) =>
     Now ->
     CrlObject ->
     c ->
     PureValidatorT (Validated CrlObject)
-validateCrl now crlObject parentCert = do
-    let SignCRL {..} = signCrl crlObject
+validateCrl now crlObject@CrlObject {..} parentCert = do
+    let SignCRL {..} = signCrl
     signatureCheck $ validateCRLSignature crlObject parentCert
+    when (toAKI (getSKI parentCert) /= aki) $ 
+        vPureError $ CRL_AKI_DifferentFromCertSKI (getSKI parentCert) aki
     case nextUpdateTime of 
         Nothing   -> vPureError NextUpdateTimeNotSet
         Just next -> validateUpdateTimes now thisUpdateTime next
@@ -360,6 +363,33 @@ validateRoa now roa parentCert crl verifiedResources = do
             Just (VerifiedRS vrs) -> \i' errorReport ->
                 unless (isInside i' (vrs ^. typed)) $
                     vPureError $ errorReport vrs
+
+validateSpl ::
+    (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
+    Now ->
+    SplObject ->
+    c ->
+    Validated CrlObject ->
+    Maybe (VerifiedRS PrefixesAndAsns) ->
+    PureValidatorT (Validated SplObject)
+validateSpl now spl parentCert crl verifiedResources = do
+    void $
+        validateCms now (cmsPayload spl) parentCert crl verifiedResources $ \splCMS -> do            
+            let SplPayload asn _ = getCMSContent splCMS
+            for_ verifiedResources $ \(VerifiedRS vrs) -> do 
+                let asns = vrs ^. typed
+                unless (isInside (AS asn) asns) $
+                    vPureError $ SplAsnNotInResourceSet asn (IS.toList asns)
+
+            let AllResources ipv4 ipv6 _ = getRawCert (getEEResourceCert $ unCMS splCMS) ^. #resources
+            ipMustBeEmpty ipv4 (SplNotIpResources (ipToList Ipv4P ipv4))
+            ipMustBeEmpty ipv6 (SplNotIpResources (ipToList Ipv6P ipv6))
+
+    pure $ Validated spl    
+  where
+    ipToList f = \case 
+        Inherit -> []
+        RS s    -> map f $ IS.toList s
 
 validateGbr ::
     (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>

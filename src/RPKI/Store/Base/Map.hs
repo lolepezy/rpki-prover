@@ -58,8 +58,4 @@ keys tx (SMap _ s) = S.foldS tx s f []
   where
     f z (SKey sk) _ = pure $! fromStorable sk : z
 
-stats :: Tx s m -> SMap name s k v -> IO SStats
-stats tx (SMap _ s) = S.foldS tx s f mempty
-  where
-    f stat skey svalue = pure $! incrementStats stat skey svalue
 

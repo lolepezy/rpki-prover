@@ -4,6 +4,7 @@
 {-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StrictData                 #-}
+{-# LANGUAGE MultiWayIf                 #-}
 
 module RPKI.Repository where
 
@@ -17,14 +18,15 @@ import           Data.Semigroup
 
 import           Data.X509                   (Certificate)
 
+import           Data.Hourglass
 import qualified Data.List                   as List
 import           Data.List.NonEmpty          (NonEmpty (..), nonEmpty)
 import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
-import           Data.Maybe                  (fromMaybe)
 import qualified Data.Set                    as Set
-import           Data.Monoid.Generic
+
+import qualified StmContainers.Map           as StmMap
 
 import           GHC.Generics
 
@@ -39,30 +41,17 @@ import           RPKI.Parallel
 import           RPKI.Util
 import           RPKI.Store.Base.Serialisation
 
-
-data FetchEverSucceeded = Never | AtLeastOnce
-    deriving stock (Show, Eq, Ord, Generic)    
-    deriving anyclass TheBinary        
-
-instance Monoid FetchEverSucceeded where
-    mempty = Never
-
-instance Semigroup FetchEverSucceeded where
-    Never       <> Never       = Never
-    _           <> _           = AtLeastOnce    
-
    
-data Speed = Unknown 
-            | Quick Instant 
-            | Slow Instant
+data FetchType = Unknown 
+               | ForSyncFetch Instant 
+               | ForAsyncFetch Instant
     deriving stock (Show, Eq, Generic)    
     deriving anyclass TheBinary
-    deriving Semigroup via Max Speed
+    deriving Semigroup via Max FetchType
 
-data FetchStatus
-  = Pending
-  | FetchedAt Instant
-  | FailedAt Instant  
+data FetchStatus = Pending
+                 | FetchedAt Instant
+                 | FailedAt Instant  
     deriving stock (Show, Eq, Generic)    
     deriving anyclass TheBinary
     deriving Semigroup via Max FetchStatus
@@ -72,11 +61,10 @@ newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL }
     deriving anyclass TheBinary
 
 data RrdpRepository = RrdpRepository {
-        uri         :: RrdpURL,
-        rrdpMeta    :: Maybe (SessionId, RrdpSerial),
-        eTag        :: Maybe ETag,
-        status      :: FetchStatus,
-        speed       :: Speed
+        uri       :: RrdpURL,
+        rrdpMeta  :: Maybe RrdpMeta,
+        eTag      :: Maybe ETag,
+        meta      :: RepositoryMeta        
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -86,11 +74,20 @@ data PublicationPoint = RrdpPP  RrdpRepository |
     deriving (Show, Eq, Ord, Generic) 
     deriving anyclass TheBinary
    
+{-   
+    NOTE: This is an over-generalised version of publication point list, since the current
+    RFC prescribes to only fallback from RRDP to rsync publication point, i.e. real instances 
+    of this type will always consist of 1 or 2 elements.
+    
+    However, generic implementation is just simpler to implement (See Fetch.hs module). 
+    Whether this generic fetching procedure will be ever useful for fetching from more 
+    than one RRDP links -- no idea.
+-}   
 newtype PublicationPointAccess = PublicationPointAccess {
         unPublicationPointAccess :: NonEmpty PublicationPoint
     }
     deriving (Show, Eq, Ord, Generic) 
-    deriving anyclass TheBinary        
+    deriving anyclass TheBinary       
 
 data Repository = RrdpR RrdpRepository | 
                   RsyncR RsyncRepository
@@ -98,9 +95,8 @@ data Repository = RrdpR RrdpRepository |
     deriving anyclass TheBinary
 
 data RsyncRepository = RsyncRepository {
-        repoPP      :: RsyncPublicationPoint,
-        status      :: FetchStatus,
-        speed       :: Speed
+        repoPP :: RsyncPublicationPoint,
+        meta   :: RepositoryMeta
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -108,20 +104,45 @@ data RsyncRepository = RsyncRepository {
 data PublicationPoints = PublicationPoints {
         rrdps  :: RrdpMap,
         rsyncs :: RsyncTree,        
-        -- Set of _slow_ URL that were requested to fetch as a result of fetching 
-        -- publication points on certificats during the last validation.
-        -- In other words, slow and timing out repository URLs we care about 
-        -- and want to keep up-to-date in the local cache.
-        slowRequested :: Set.Set [RpkiURL]
+        -- Set of for-async-fetch URLs that were requested to fetch as a 
+        -- result of finding publication points on certificats during the 
+        -- last validation.
+        -- 
+        -- In other words, failed and timing out repository URLs we care about
+        -- and will fetch asynchronously
+        usedForAsync :: Set.Set [RpkiURL]
     } 
     deriving stock (Show, Eq, Ord, Generic)   
 
-newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository } 
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
-    deriving newtype (Monoid)
 
-newtype EverSucceededMap = EverSucceededMap (Map RpkiURL FetchEverSucceeded)
+data RepositoryMeta = RepositoryMeta {
+        status            :: FetchStatus,
+        fetchType         :: FetchType,
+        lastFetchDuration :: Maybe TimeMs,
+        refreshInterval   :: Maybe Seconds
+    } 
+    deriving stock (Show, Eq, Ord, Generic)   
+    deriving anyclass TheBinary    
+
+
+instance Semigroup RepositoryMeta where
+    rm1 <> rm2 = RepositoryMeta { 
+        status    = rm1 ^. #status <> rm2 ^. #status,
+        fetchType = rm1 ^. #fetchType <> rm2 ^. #fetchType,
+        lastFetchDuration = rm2 ^. #lastFetchDuration,
+        refreshInterval = rm2 ^. #refreshInterval
+    }
+
+instance Monoid RepositoryMeta where
+    mempty = RepositoryMeta { 
+        status = mempty,
+        fetchType = mempty,
+        lastFetchDuration = Nothing,
+        refreshInterval = Nothing
+    }
+
+
+newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
     deriving newtype (Monoid)
@@ -135,15 +156,13 @@ data FetchTask a = Stub
                 | Fetching (Async a)                 
     deriving stock (Eq, Ord, Generic)                    
 
-
 data RepositoryProcessing = RepositoryProcessing {
-        individualFetchRuns    :: TVar (Map RpkiURL (FetchTask (Either AppError Repository, ValidationState))),
-        indivudualFetchResults :: TVar (Map RpkiURL ValidationState),
-        ppSeqFetchRuns         :: TVar (Map [RpkiURL] (FetchTask [FetchResult])),
+        fetchRuns              :: StmMap.Map RpkiURL (FetchTask FetchResult),
+        indivudualFetchResults :: StmMap.Map RpkiURL ValidationState,
         publicationPoints      :: TVar PublicationPoints,
         fetchSemaphore         :: Semaphore
     }
-    deriving stock (Eq, Generic)
+    deriving stock (Generic)
 
 instance WithRpkiURL PublicationPoint where
     getRpkiURL (RrdpPP RrdpRepository {..})          = RrdpU uri
@@ -153,15 +172,16 @@ instance WithRpkiURL Repository where
     getRpkiURL (RrdpR RrdpRepository {..}) = RrdpU uri
     getRpkiURL (RsyncR RsyncRepository { repoPP = RsyncPublicationPoint {..} }) = RsyncU uri
 
-instance WithURL RrdpRepository where
+instance {-# OVERLAPPING #-} WithURL RrdpRepository where
     getURL RrdpRepository { uri = RrdpURL u } = u
-instance WithURL RsyncRepository where
+
+instance {-# OVERLAPPING #-} WithURL RsyncRepository where
     getURL RsyncRepository { repoPP = RsyncPublicationPoint {..} } = getURL uri
     
-
+-- TODO This is shady and I don't remember why is it like this
 instance Semigroup RrdpRepository where
     r1 <> r2 = 
-        if r1 ^. #status >= r2 ^. #status
+        if r1 ^. #meta . #status >= r2 ^. #meta . #status
             then r1 
             else r2 & #uri .~ r1 ^. #uri
 
@@ -169,52 +189,51 @@ instance Semigroup RrdpRepository where
 instance Ord FetchStatus where
     compare = comparing timeAndStatus
       where             
-        timeAndStatus Pending       = (Nothing, 0 :: Int)
-        timeAndStatus (FailedAt t)  = (Just t,  0)
-        timeAndStatus (FetchedAt t) = (Just t,  1) 
+        timeAndStatus = \case 
+            Pending     -> (Nothing, 0 :: Int)
+            FailedAt t  -> (Just t,  0)
+            FetchedAt t -> (Just t,  1) 
 
 instance Monoid FetchStatus where    
     mempty = Pending
     
-instance Monoid Speed where    
+instance Monoid FetchType where    
     mempty = Unknown
 
-instance Ord Speed where
+instance Ord FetchType where
     compare = comparing time
       where             
         time Unknown   = Nothing
-        time (Quick t) = Just t
-        time (Slow t)  = Just t
-
-instance Semigroup EverSucceededMap where
-    EverSucceededMap ls1 <> EverSucceededMap ls2 = EverSucceededMap $ Map.unionWith (<>) ls1 ls2        
+        time (ForSyncFetch t) = Just t
+        time (ForAsyncFetch t)  = Just t  
 
 instance Semigroup RrdpMap where
     RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2        
-    
+
 getFetchStatus :: Repository -> FetchStatus
-getFetchStatus (RrdpR r)  = r ^. #status
-getFetchStatus (RsyncR r) = r ^. #status
+getFetchStatus r = getMeta r ^. #status
 
-getSpeed :: Repository -> Speed
-getSpeed (RrdpR r)  = r ^. #speed
-getSpeed (RsyncR r) = r ^. #speed
+getFetchType :: Repository -> FetchType
+getFetchType r = getMeta r ^. #fetchType
 
-isSlow :: Speed -> Bool
-isSlow = \case    
-    Slow _ -> True
-    _      -> False
+getMeta :: Repository -> RepositoryMeta
+getMeta (RrdpR r)   = r ^. #meta
+getMeta (RsyncR r)  = r ^. #meta
+
+isForAsync :: FetchType -> Bool
+isForAsync = \case    
+    ForAsyncFetch _ -> True
+    _               -> False
 
 newPPs :: PublicationPoints
 newPPs = PublicationPoints mempty newRsyncTree mempty
 
 newRepositoryProcessing :: Config -> STM RepositoryProcessing
 newRepositoryProcessing Config {..} = RepositoryProcessing <$> 
-        newTVar mempty <*> 
-        newTVar mempty <*>          
-        newTVar mempty <*>          
+        StmMap.new <*>               
+        StmMap.new <*>
         newTVar newPPs <*>
-        createSemaphore (fromIntegral $ parallelism ^. #fetchParallelism)  
+        newSemaphore (fromIntegral $ parallelism ^. #fetchParallelism)  
 
 addRsyncPrefetchUrls :: Config -> PublicationPoints -> PublicationPoints
 addRsyncPrefetchUrls Config {..} pps =     
@@ -236,27 +255,29 @@ mkRrdp u = RrdpRepository {
         uri      = u,
         rrdpMeta = Nothing,
         eTag     = Nothing,
-        status   = Pending,
-        speed    = Unknown 
+        meta     = mempty        
     }
 
 rrdpRepository :: PublicationPoints -> RrdpURL -> Maybe RrdpRepository
 rrdpRepository PublicationPoints { rrdps = RrdpMap rrdps } u = Map.lookup u rrdps        
 
 rsyncRepository :: PublicationPoints -> RsyncURL -> Maybe RsyncRepository
-rsyncRepository PublicationPoints {..} u = 
-    (\(u', info) -> RsyncRepository (RsyncPublicationPoint u') (info ^. typed) (info ^. typed)) 
-                    <$> infoInRsyncTree u rsyncs    
+rsyncRepository PublicationPoints {..} rsyncUrl = 
+    (\(u, meta) -> RsyncRepository (RsyncPublicationPoint u) meta)
+                    <$> lookupRsyncTree rsyncUrl rsyncs    
 
-repositoryFromPP :: PublicationPoints -> RpkiURL -> Maybe Repository                    
-repositoryFromPP pps rpkiUrl = 
-    case rpkiUrl of
-        RrdpU u  -> RrdpR <$> rrdpRepository pps u
-        RsyncU u -> RsyncR <$> rsyncRepository pps u      
+repositoryFromPP :: PublicationPoints -> PublicationPoint -> Maybe Repository                    
+repositoryFromPP pps pp = 
+    case getRpkiURL pp of
+        RrdpU u  -> RrdpR <$> rrdpRepository merged u
+        RsyncU u -> RsyncR <$> rsyncRepository merged u
+  where 
+    merged = mergePP pp pps        
+    
 
 mergeRsyncPP :: RsyncPublicationPoint -> PublicationPoints -> PublicationPoints
 mergeRsyncPP (RsyncPublicationPoint u) pps = 
-    pps & typed %~ toRsyncTree u mempty mempty
+    pps & typed %~ toRsyncTree u mempty
 
 mergeRrdp :: RrdpRepository -> PublicationPoints -> PublicationPoints
 mergeRrdp r@RrdpRepository {..} pps =
@@ -268,13 +289,6 @@ mergeRrdp r@RrdpRepository {..} pps =
             Just existing 
                 | r == existing -> rrdps 
                 | otherwise     -> Map.insert uri (r <> existing) rrdps                        
-
-
-succeededFromStatus :: RpkiURL -> FetchStatus -> EverSucceededMap -> EverSucceededMap
-succeededFromStatus u (FetchedAt _) lastSucceded = 
-    lastSucceded <> EverSucceededMap (Map.singleton u AtLeastOnce)
-succeededFromStatus _ _ lastSucceded = lastSucceded
-
 
 mergePP :: PublicationPoint -> PublicationPoints -> PublicationPoints
 mergePP (RrdpPP r) = mergeRrdp r
@@ -348,45 +362,51 @@ data ChangeSet = ChangeSet
 -- | Derive a diff between two states of publication points
 changeSet :: PublicationPoints -> PublicationPoints -> ChangeSet
 changeSet 
-    (PublicationPoints (RrdpMap rrdpOld) (RsyncTree rsyncOld)  _ ) 
+    (PublicationPoints (RrdpMap rrdpDb) (RsyncTree rsyncDb)  _ ) 
     (PublicationPoints (RrdpMap rrdpNew) (RsyncTree rsyncNew) requestNew) = 
     ChangeSet 
-        (putNewRrdps <> removeOldRrdps) 
+        (mergedRrdp <> newRrdp <> rrdpToDelete) 
         (putNewRsyncs <> removeOldRsyncs)        
         (Put requestNew)
     where
-        -- TODO Don't generate removes if there's a PUT for the same URL
-        rrdpOldSet = Set.fromList $ Map.elems rrdpOld
-        rrdpNewSet = Set.fromList $ Map.elems rrdpNew
-        putNewRrdps    = map Put    $ filter (not . (`Set.member` rrdpOldSet)) $ Map.elems rrdpNew        
-        removeOldRrdps = map Remove $ filter (not . (`Set.member` rrdpNewSet)) $ Map.elems rrdpOld
+        rrdps' = map (\(u, new) -> (new, Map.lookup u rrdpDb)) $ Map.toList rrdpNew
 
-        rsyncOldList = Map.toList rsyncOld
+        newRrdp  = map Put [ new | (new, Nothing) <- rrdps' ]
+
+        -- We trust RRDP meta from the DB more -- it has been updated by the 
+        -- delta/snapshot fetchers in the same transactions as the data
+        mergedRrdp = map Put [ new { rrdpMeta = dbRrdpMeta } | 
+                                (new, Just (RrdpRepository { rrdpMeta = dbRrdpMeta })) <- rrdps' ]
+
+        rrdpToDelete = map Remove [ r | (u, r) <- Map.toList rrdpDb, not (u `Map.member` rrdpNew) ]
+
+        rsyncOldList = Map.toList rsyncDb
         rsyncNewList = Map.toList rsyncNew
-        putNewRsyncs    = map Put    $ filter (not . (\(u, p) -> Map.lookup u rsyncOld == Just p)) rsyncNewList        
+        putNewRsyncs    = map Put    $ filter (not . (\(u, p) -> Map.lookup u rsyncDb == Just p)) rsyncNewList        
         removeOldRsyncs = map Remove $ filter (not . (\(u, p) -> Map.lookup u rsyncNew == Just p)) rsyncOldList                
 
 
 -- Update statuses of the repositories and last successful fetch times for them
-updateStatuses :: Foldable t => PublicationPoints -> t (Repository, FetchStatus, Speed) -> PublicationPoints
-updateStatuses 
-    (PublicationPoints rrdps rsyncs slowRequested) newStatuses = 
+updateMeta :: Foldable t => PublicationPoints -> t (Repository, RepositoryMeta) -> PublicationPoints
+updateMeta 
+    (PublicationPoints rrdps rsyncs usedForAsync) newMetas = 
         PublicationPoints 
-            (rrdps <> RrdpMap (Map.fromList rrdpUpdates))
-            rsyncsUpdates slowRequested
+            (rrdps <> RrdpMap (Map.fromList rrdps_))
+            rsyncs_ 
+            usedForAsync
     where
-        (rrdpUpdates, rsyncsUpdates) = 
-            foldr foldRepos ([], rsyncs) newStatuses
+        (rrdps_, rsyncs_) = 
+            foldr foldRepos ([], rsyncs) newMetas
 
         foldRepos 
-            (RrdpR r@RrdpRepository {..}, newStatus, newSpeed) 
+            (RrdpR r@RrdpRepository {..}, newMeta) 
             (rrdps', rsyncs') = 
-                ((uri, r & #status .~ newStatus & #speed .~ newSpeed) : rrdps', rsyncs')
+                ((uri, r & #meta .~ newMeta) : rrdps', rsyncs')
 
         foldRepos 
-            (RsyncR (RsyncRepository (RsyncPublicationPoint uri) _ _), newStatus, newSpeed) 
+            (RsyncR (RsyncRepository (RsyncPublicationPoint uri) _), newMeta) 
             (rrdps', rsyncs') = 
-                (rrdps', toRsyncTree uri newStatus newSpeed rsyncs')            
+                (rrdps', toRsyncTree uri newMeta rsyncs')            
 
 -- Number of repositories
 repositoryCount :: PublicationPoints -> Int
@@ -404,39 +424,29 @@ filterPPAccess Config {..} ppAccess =
             NonEmpty.filter filter_ $ 
             unPublicationPointAccess ppAccess
   where
-    filter_ pp = 
-        case (pp, rrdpConf ^. #enabled, rsyncConf ^. #enabled) of
-            (RrdpPP _,  True, _   ) -> True
-            (RsyncPP _, _,    True) -> True
-            _                       -> False
+    filter_ = \case
+        RrdpPP _  -> rrdpConf ^. #enabled
+        RsyncPP _ -> rsyncConf ^. #enabled        
 
 
-findSpeedProblems :: PublicationPoints -> [(RpkiURL, Repository)]
-findSpeedProblems (PublicationPoints (RrdpMap rrdps) rsyncTree _) = 
+findRepositoriesForAsyncFetch :: PublicationPoints -> [(RpkiURL, Repository)]
+findRepositoriesForAsyncFetch (PublicationPoints (RrdpMap rrdps) rsyncTree _) = 
     rrdpSpeedProblem <> rsyncSpeedProblem
   where
     rrdpSpeedProblem  = [ (RrdpU u, RrdpR r) 
-        | (u, r) <- Map.toList rrdps, isSlow $ r ^. #speed ]
+        | (u, r) <- Map.toList rrdps, isForAsync $ r ^. #meta . #fetchType ]
 
-    rsyncSpeedProblem = [ (RsyncU u, rsyncRepo u info)
-        | (u, info) <- flattenRsyncTree rsyncTree, isSlow $ info ^. #speed ]
-        where 
-            rsyncRepo u info = RsyncR $ RsyncRepository { 
-                repoPP = RsyncPublicationPoint u,
-                status = info ^. #fetchStatus,
-                speed  = info ^. #speed
-            }    
+    rsyncSpeedProblem = [ (RsyncU u, rsyncRepo u meta)
+        | (u, meta@RepositoryMeta {..}) 
+            <- flattenRsyncTree rsyncTree, isForAsync fetchType ]
+      where 
+        rsyncRepo (RsyncPublicationPoint -> repoPP) meta = RsyncR $ RsyncRepository {..}
 
-data RsyncNodeInfo = RsyncNodeInfo {
-        fetchStatus :: FetchStatus,
-        speed       :: Speed
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
-    deriving Semigroup via GenericSemigroup RsyncNodeInfo   
-    deriving Monoid    via GenericMonoid RsyncNodeInfo
 
-type RsyncNodeNormal = RsyncNode RsyncNodeInfo
+type RsyncNodeNormal = RsyncNode RepositoryMeta
+
+-- Simple tree for representing rsync repositories grouped by host.
+-- Every RsyncNode corresponds to a path chunk in the rsync URL. 
 
 newtype RsyncTree = RsyncTree (Map RsyncHost RsyncNodeNormal)
     deriving stock (Show, Eq, Ord, Generic)
@@ -452,47 +462,44 @@ data RsyncNode a = Leaf a
 newRsyncTree :: RsyncTree
 newRsyncTree = RsyncTree Map.empty
 
-toRsyncTree :: RsyncURL -> FetchStatus -> Speed -> RsyncTree -> RsyncTree 
-toRsyncTree (RsyncURL host path) fetchStatus speed (RsyncTree byHost) = 
+toRsyncTree :: RsyncURL -> RepositoryMeta -> RsyncTree -> RsyncTree 
+toRsyncTree (RsyncURL host path) meta (RsyncTree byHost) = 
     RsyncTree $ Map.alter (Just . maybe 
-        (buildRsyncTree path nodeInfo) 
-        (pathToRsyncTree path nodeInfo)) host byHost    
-  where
-    nodeInfo = RsyncNodeInfo fetchStatus speed
+        (buildRsyncTree path meta) 
+        (pathToRsyncTree path meta)) host byHost      
 
-pathToRsyncTree :: [RsyncPathChunk] -> RsyncNodeInfo -> RsyncNodeNormal -> RsyncNodeNormal
+pathToRsyncTree :: [RsyncPathChunk] -> RepositoryMeta -> RsyncNodeNormal -> RsyncNodeNormal
 
-pathToRsyncTree [] ni (Leaf ni') = Leaf $ ni' <> ni 
-pathToRsyncTree [] ni SubTree {} = Leaf ni
+pathToRsyncTree [] meta (Leaf existingMeta) = Leaf $ existingMeta <> meta
+pathToRsyncTree [] meta SubTree {} = Leaf meta
 
 -- Strange case when we by some reason decide to merge
 -- a deeper nested PP while there's a dowloaded  one some
 -- higher level. Not supported, don't change the tree.
-pathToRsyncTree _ _ (Leaf ni') = Leaf ni'
+pathToRsyncTree _ _ (Leaf meta) = Leaf meta
 
-pathToRsyncTree (u : us) ni (SubTree ch) = 
+pathToRsyncTree (u : us) meta (SubTree ch) = 
     case Map.lookup u ch of
-        Nothing    -> SubTree $ Map.insert u (buildRsyncTree us ni) ch            
-        Just child -> SubTree $ Map.insert u (pathToRsyncTree us ni child) ch             
+        Nothing    -> SubTree $ Map.insert u (buildRsyncTree us meta) ch            
+        Just child -> SubTree $ Map.insert u (pathToRsyncTree us meta child) ch             
 
-buildRsyncTree :: [RsyncPathChunk] -> RsyncNodeInfo -> RsyncNodeNormal
+buildRsyncTree :: [RsyncPathChunk] -> RepositoryMeta -> RsyncNodeNormal
 buildRsyncTree [] fs      = Leaf fs
 buildRsyncTree (u: us) fs = SubTree $ Map.singleton u $ buildRsyncTree us fs    
 
-infoInRsyncTree :: RsyncURL -> RsyncTree -> Maybe (RsyncURL, RsyncNodeInfo)
-infoInRsyncTree (RsyncURL host path) (RsyncTree t) = 
-    fetchStatus' path [] =<< Map.lookup host t
+lookupRsyncTree :: RsyncURL -> RsyncTree -> Maybe (RsyncURL, RepositoryMeta)
+lookupRsyncTree (RsyncURL host path) (RsyncTree t) = 
+    meta' path [] =<< Map.lookup host t
   where    
-    fetchStatus' _ realPath (Leaf fs) = Just (RsyncURL host realPath, fs)
-    fetchStatus' [] _  SubTree {} = Nothing
-    fetchStatus' (u: us) realPath SubTree {..} = 
-        Map.lookup u rsyncChildren >>= fetchStatus' us (realPath <> [u])
+    meta' _ realPath (Leaf fs) = Just (RsyncURL host realPath, fs)
+    meta' [] _  SubTree {} = Nothing
+    meta' (u: us) realPath SubTree {..} = 
+        Map.lookup u rsyncChildren >>= meta' us (realPath <> [u])
 
-flattenRsyncTree :: RsyncTree -> [(RsyncURL, RsyncNodeInfo)]
+flattenRsyncTree :: RsyncTree -> [(RsyncURL, RepositoryMeta)]
 flattenRsyncTree (RsyncTree t) = 
     mconcat $ map (\(host, tree) -> flattenTree host tree []) $ Map.toList t    
   where    
-    flattenTree host (Leaf info) realPath  = [(RsyncURL host realPath, info)]
+    flattenTree host (Leaf info) realPath  = [(RsyncURL host (reverse realPath), info)]
     flattenTree host SubTree {..} realPath = 
-        mconcat $ map (\(p, n) -> flattenTree host n (realPath <> [p])) $ Map.toList rsyncChildren        
-  
+        mconcat $ map (\(p, n) -> flattenTree host n (p : realPath)) $ Map.toList rsyncChildren        

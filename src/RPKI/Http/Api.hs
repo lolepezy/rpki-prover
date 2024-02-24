@@ -36,6 +36,9 @@ data API api = API {
         vrpsCsv  :: api :- "vrps.csv"  :> QueryParam "version" Text 
                                        :> Get '[ManualCVS] RawCSV,
 
+        vrpsCsvExt :: api :- "vrps.csvext"  :> QueryParam "version" Text 
+                                           :> Get '[ManualCVS] RawCSV,
+
         vrpsJson :: api :- "vrps" :> QueryParam "version" Text 
                                   :> Get '[JSON] [VrpDto],
 
@@ -50,19 +53,32 @@ data API api = API {
         vrpsJsonUnique :: api :- "vrps-unique" :> QueryParam "version" Text 
                                                 :> Get '[JSON] [VrpMinimalDto],
 
-        aspas    :: api :- "aspa" :> Get '[JSON] [AspaDto],
-        gbrs     :: api :- "gbrs" :> Get '[JSON] [Located GbrDto],
+        splJson :: api :- "spls" :> QueryParam "version" Text 
+                                 :> Get '[JSON] [SplDto],
 
-        bgpCerts :: api :- "bgpsec" :> Get '[JSON] [BgpCertDto],
-        bgpCertsFiltered :: api :- "bgpsec-filtered" :> Get '[JSON] [BgpCertDto],
+        aspas    :: api :- "aspa" :> QueryParam "version" Text 
+                                  :> Get '[JSON] [AspaDto],
+
+        gbrs     :: api :- "gbrs" :> QueryParam "version" Text 
+                                  :> Get '[JSON] [Located GbrDto],
+
+        bgpCerts :: api :- "bgpsec" :> QueryParam "version" Text 
+                                    :> Get '[JSON] [BgpCertDto],
+
+        bgpCertsFiltered :: api :- "bgpsec-filtered" :> QueryParam "version" Text 
+                                                     :> Get '[JSON] [BgpCertDto],
 
         slurm :: api :- "slurm" :> Get '[JSON] Slurm,
         slurms :: api :- "slurms" :> Get '[JSON] [(WorldVersion, Slurm)],
 
         tals :: api :- "tals" :> Get '[JSON] [TalDto],
                 
-        validationResultsMinimal :: api :- "validations"      :> Get '[JSON] (ValidationsDto MinimalVDto),
-        fullValidationResults    :: api :- "validations-full" :> Get '[JSON] (ValidationsDto FullVDto),
+        minimalValidationResults  :: api :- "validations"      
+                                    :> Get '[JSON] (ValidationsDto (MinimalVDto FocusResolvedDto)),
+        fullValidationResults     :: api :- "validations-full" 
+                                    :> Get '[JSON] (ValidationsDto ResolvedVDto),
+        originalValidationResults :: api :- "validations-original" 
+                                    :> Get '[JSON] (ValidationsDto OriginalVDto),
 
         metrics :: api   :- "metrics" :> Get '[JSON] MetricsDto,                
 
@@ -73,8 +89,12 @@ data API api = API {
         repositories :: api :- "repositories" :> Get '[JSON] PublicationPointDto,        
 
         objectView :: api :- "object" :> QueryParam "uri" Text 
-                                    :> QueryParam "hash" Text 
-                                    :> Get '[JSON] [RObject],
+                                      :> QueryParam "hash" Text 
+                                      :> QueryParam "key" Text 
+                                      :> Get '[JSON] [RObject],
+
+        originals :: api :- "original" :> QueryParam "hash" Text 
+                                       :> Get '[ObjectBlob] ObjectOriginal,
 
         rtr :: api :- "rtr" :> Get '[JSON] RtrDto,
 
@@ -120,6 +140,7 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
                 "List of of unique VRPs with SLURM filtering applied to it"),
 
             ("/gbrs", mempty & get ?~ jsonOn200 "List of all valid GBR objects found in repositories"),
+            ("/spls", mempty & get ?~ jsonOn200 "List of all valid Prefix List objects found in repositories"),
             ("/aspa", mempty & get ?~ jsonOn200 "List of all valid ASPA objects found in repositories"),
             ("/bgpsec", mempty & get ?~ jsonOn200 "List of all valid BGPSec certificates found in repositories"),
             ("/bgpsec-filtered", mempty & get ?~ jsonOn200 
@@ -129,6 +150,10 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
                 "Validation results for the latest validation run"),
 
             ("/validations-full", mempty & get ?~ jsonOn200 
+                [i|Returns validation results for the last validation run, but every 
+                object represented with full URL path in the RPKI tree, starting from TA.|]),
+
+            ("/validations-original", mempty & get ?~ jsonOn200 
                 [i|Returns validation results for the last validation run, but every 
                 object represented with full URL path in the RPKI tree, starting from TA.|]),
 

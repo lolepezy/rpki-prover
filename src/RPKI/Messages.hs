@@ -15,11 +15,10 @@ import qualified Data.Text                   as Text
 import qualified Data.List                   as List
 import qualified Data.List.NonEmpty          as NonEmpty
 
+import           Data.Hourglass
 import qualified Data.Map.Strict             as Map
 import qualified Data.Set                    as Set
-
 import           Data.String.Interpolate.IsString
-import           Data.Tuple.Strict
 
 import           Data.ASN1.Types (OID)
 
@@ -53,18 +52,11 @@ toRsyncMessage = \case
     RsyncProcessError errorCode e ->
         [i|Rsync client returned code #{errorCode}, error = #{e}.|]
 
-    FileReadError e ->
-        [i|Can't read local file created by rsync client #{e}.|]
-
-    RsyncRunningError e ->
-        [i|Error running rsync client #{e}.|]
-
-    RsyncDownloadTimeout t ->
-        [i|Could not update repository in #{t}s.|]
-
-    UnknownRsyncProblem e ->
-        [i|Unknown problem with rsync #{e}.|]
-
+    FileReadError e                -> [i|Can't read local file created by rsync client #{e}.|]
+    RsyncRunningError e            -> [i|Error running rsync client #{e}.|]
+    RsyncDownloadTimeout t         -> [i|Could not update repository in #{t}.|]
+    RsyncUnsupportedObjectType url -> [i|Unsupported object type #{url}.|]             
+    UnknownRsyncProblem e          -> [i|Unknown problem with rsync #{e}.|]
 
 toRrdpMessage :: RrdpError -> Text
 toRrdpMessage = \case
@@ -150,11 +142,11 @@ toRrdpMessage = \case
     ObjectExistsWhenReplacing url hash -> 
         [i|Cannot replace object with url #{url}: object with hash #{hash} already exists.|]        
 
-    UnsupportedObjectType url -> 
+    RrdpUnsupportedObjectType url -> 
         [i|Unsupported object type #{url}.|]        
         
     RrdpDownloadTimeout t -> 
-        [i|Could not update repository in #{t}s.|]        
+        [i|Could not update repository in #{t}.|]        
 
     UnknownRrdpProblem e -> 
         [i|Unknown problem with RRDP: #{e}.|]  
@@ -203,17 +195,20 @@ toValidationMessage = \case
       ObjectHasMultipleLocations locs -> 
           [i|The same object has multiple locations #{fmtUrlList locs}, this is suspicious.|]
 
-      NoMFT (AKI aki) _ -> 
+      NoMFT (AKI aki) -> 
           [i|No manifest found for AKI #{aki}.|]
 
-      NoCRLOnMFT (AKI aki) _ -> 
+      NoMFTButCachedMft (AKI aki) -> 
+          [i|No manifest found for AKI #{aki}, but there's a cached version of it.|]
+
+      NoCRLOnMFT (AKI aki) -> 
           [i|No CRL found on the manifest manifest found for AKI #{aki}.|]
 
-      MoreThanOneCRLOnMFT aki locations entries ->
-          [i|Multiple CRLs #{fmtMftEntries entries} found on the manifest manifest found for AKI #{aki} for CA #{fmtLocations locations}.|]
+      MoreThanOneCRLOnMFT aki entries ->
+          [i|Multiple CRLs #{fmtMftEntries entries} found on the manifest manifest found for AKI #{aki} for the CA.|]
 
-      NoMFTSIA locations -> 
-          [i|No SIA pointing to the manifest on the certificate #{fmtLocations locations}.|]
+      NoMFTSIA -> 
+          [i|No SIA pointing to the manifest on the certificate.|]
 
       MFTOnDifferentLocation url locations -> 
           [i|Manifest location #{url} is not the same as SIA on the certificate #{fmtLocations locations}.|]
@@ -227,14 +222,30 @@ toValidationMessage = \case
       NonUniqueManifestEntries nonUniqueEntries -> 
             [i|File #{fmtBrokenMftEntries nonUniqueEntries}.|]
 
-      NoCRLExists aki locations -> 
-            [i|No CRL exists with AKI #{aki} for CA #{fmtLocations locations}.|]
+      NoCRLExists aki hash -> 
+            [i|No CRL exists with AKI #{aki} and hash #{hash} for CA.|]
+
+      ManifestEntryDoesn'tExist hash filename -> 
+          [i|Manifest entry #{filename} with hash #{hash} not found.|]
+
+      ManifestEntryHasWrongFileType hash filename type_ ->         
+        [i|Manifest entry #{filename} with hash #{hash} points to an object that has type #{type_}.|]
+
+      ManifestNumberDecreased {..} ->
+        [i|Manifest number #{newMftNumber} is smaller than the previous #{oldMftNumber}, |] <> 
+        [i|will use previous manifest if it exists and is valid.|]
+
+      MftFallback e -> 
+        [i|Fallback to the last valid manifest happened, with the error: #{toMessage e}|]
 
       CRLOnDifferentLocation crlDP locations -> 
           [i|CRL distribution point #{crlDP} is not the same as CRL location #{fmtLocations locations}.|]
 
-      CRLHashPointsToAnotherObject hash locations -> 
-          [i|CRL hash #{hash} points to different object for CA #{fmtLocations locations}.|]
+      CRL_AKI_DifferentFromCertSKI parentSki crlAki -> 
+          [i|The AKI of the CRL #{crlAki} is different from SKI of the parent certificate #{parentSki}.|]
+
+      CRLHashPointsToAnotherObject hash -> 
+          [i|CRL hash #{hash} points to different object for CA.|]
 
       NextUpdateTimeNotSet -> 
           [i|Next update time is not set.|]
@@ -251,17 +262,14 @@ toValidationMessage = \case
       RevokedResourceCertificate -> 
           [i|Object's EE certificate is revoked.|]
 
-      CertificateIsInTheFuture {..} -> 
-          [i|Certificate's 'not valid before' time #{before} is in the future.|]
+      ObjectValidityIsInTheFuture {..} -> 
+          [i|Object's 'not valid before' time #{before} is in the future.|]
 
-      CertificateIsExpired {..} ->
-          [i|Certificate is expired, its 'not valid after' time #{after} is in the past.|]
+      ObjectIsExpired {..} ->
+          [i|Object is expired, its 'not valid after' time #{after} is in the past.|]
 
       AKIIsNotEqualsToParentSKI childAKI parentSKI ->
           [i|Certificate's AKI #{childAKI} is not the same as its parent's SKI #{parentSKI}.|]
-
-      ManifestEntryDoesn'tExist hash filename -> 
-          [i|Manifest entry #{filename} with hash #{hash} not found.|]
 
       OverclaimedResources resources -> 
           [i|Certificate (or EE) claims resources #{resources} not present on parent certificate.|]
@@ -280,19 +288,19 @@ toValidationMessage = \case
       AIANotSameAsParentLocation aiaUrl locations -> 
           [i|AIA of the child #{aiaUrl} does not point to the real parent location #{fmtLocations locations}.|]          
 
-      CircularReference hash locations ->
-          [i|Object with hash #{hash} and location #{fmtLocations locations} creates reference cycle.|]
+      CircularReference hash ->
+          [i|Object with hash #{hash} creates reference cycle.|]
 
-      CertificatePathTooDeep locations maxDepth ->
-          [i|The CA tree reached maximum depth of #{maxDepth} at #{locations}.|]
+      CertificatePathTooDeep maxDepth ->
+          [i|The CA tree reached maximum depth of #{maxDepth}.|]
 
-      TreeIsTooBig locations maxTreeSize ->          
-          [i|The number of object in CA tree reached maximum of #{maxTreeSize} at #{locations}.|]
+      TreeIsTooBig maxTreeSize ->          
+          [i|The number of object in CA tree reached maximum of #{maxTreeSize}.|]
 
-      TooManyRepositories locations maxTaRepositories ->          
-          [i|The number of new repositories added by one TA reached maximum of #{maxTaRepositories} at #{locations}.|]
+      TooManyRepositories maxTaRepositories ->          
+          [i|The number of new repositories added by one TA reached maximum of #{maxTaRepositories}.|]
 
-      ValidationTimeout maxDuration -> 
+      ValidationTimeout (Seconds maxDuration) -> 
           [i|Validation did not finish within #{maxDuration}s and was interrupted.|]
 
       ManifestLocationMismatch filename locations -> 
@@ -321,6 +329,12 @@ toValidationMessage = \case
       AspaIPv6Present -> [i|IPv6 extension is present on the ASPA EE certificate.|]      
       AspaAsNotOnEECert customer eeAsns -> 
         [i|Customer ASN (#{customer}) is not in the EE certificate AS set (#{eeAsns}).|]      
+    
+      SplAsnNotInResourceSet asn asns ->
+        [i|#{asn} is not in the EE certificate AS set (#{asns}).|]      
+
+      SplNotIpResources prefixes -> 
+        [i|Prefix list must not have IP resources on its EE certificate, but has #{prefixes}.|]
 
   where
     fmtUrlList = mconcat . 
@@ -328,7 +342,7 @@ toValidationMessage = \case
 
     fmtMftEntries = mconcat . 
                     List.intersperse "," . 
-                    map (\(T2 t h) -> t <> Text.pack (":" <> show h))
+                    map (\(MftPair t h) -> t <> Text.pack (":" <> show h))
 
     fmtBrokenMftEntries = mconcat . 
                     List.intersperse "," . 

@@ -10,7 +10,6 @@ import           Data.Bifunctor (first)
 import           Data.ASN1.BinaryEncoding
 import           Data.ASN1.Encoding
 import           Data.ASN1.Parse
-import           Data.Tuple.Strict
 
 import           RPKI.AppMonad
 import           RPKI.Domain
@@ -57,15 +56,12 @@ parseMft bs = do
 
                     s -> throwParseError $ "Unexpected manifest content: " ++ show s
 
-        makeMftNumber n = 
-            case makeSerial n of 
-                Left e  -> throwParseError e
-                Right s -> pure s
+        makeMftNumber n = either throwParseError pure $ makeSerial n
 
         getEntries _ = onNextContainer Sequence $
             getMany $ onNextContainer Sequence $
-                T2 <$> getIA5String (pure . Text.pack) "Wrong file name"
-                   <*> getBitString (pure . U.mkHash) "Wrong hash"
+                MftPair <$> getIA5String (pure . Text.pack) "Wrong file name"
+                        <*> getBitString (pure . U.mkHash) "Wrong hash"
 
         getTime message = getNext >>= \case
             ASN1Time TimeGeneralized dt _ -> pure dt

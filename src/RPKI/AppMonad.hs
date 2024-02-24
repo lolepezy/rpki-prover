@@ -9,7 +9,6 @@ module RPKI.AppMonad where
 import           Control.Lens
 
 import           Control.Exception.Lifted
-import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.Morph
 import           Control.Monad.Reader
@@ -20,11 +19,11 @@ import           Data.Generics.Product       (HasField)
 import           Data.Generics.Product.Typed
 import           Data.Hourglass
 import           Data.Proxy
-import           Data.Set                    (Set)
 import           Data.Text                   (Text)
 
 import           System.Timeout
 
+import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Time
 
@@ -113,11 +112,6 @@ runPureValidator vc v = (runState $ runExceptT $ runReaderT v vc) mempty
 runValidatorT :: Scopes -> ValidatorT m r -> m (Either AppError r, ValidationState)
 runValidatorT vc v = (runStateT $ runExceptT $ runReaderT v vc) mempty
 
--- | Shorthand version for cases when we need to actually 
--- run IO or something similar like that
-voidRun :: Functor m => Text -> ValidatorT m r -> m ()
-voidRun t = void <$> runValidatorT (newScopes t)
-
 validatorWarning :: Monad m => VWarning -> ValidatorT m ()
 validatorWarning = vHoist . pureWarning
 
@@ -159,6 +153,12 @@ catchAndEraseError f predicate errorHandler = do
             else throwError e
 
 
+withCurrentScope :: (Scopes -> ValidationState -> a) -> PureValidatorT a
+withCurrentScope f = do 
+    scopes <- askScopes
+    s <- get
+    pure $ f scopes s
+
 vWarn :: Monad m => ValidationError -> ValidatorT m ()
 vWarn = validatorWarning . VWarning . ValidationE
 
@@ -172,22 +172,25 @@ askScopes :: MonadReader r m => m r
 askScopes = ask
 
 inSubVScope :: Monad m => Text -> ValidatorT m r -> ValidatorT m r
-inSubVScope = inSubVScope' TextFocus
+inSubVScope = vFocusOn TextFocus
 
-inSubObjectVScope :: Monad m =>  Text -> ValidatorT m r -> ValidatorT m r
-inSubObjectVScope = inSubVScope' ObjectFocus
+inSubObjectVScope :: Monad m =>  ObjectKey -> ValidatorT m r -> ValidatorT m r
+inSubObjectVScope = vFocusOn ObjectFocus
 
-inSubVScope' :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
-inSubVScope' c t = local (& typed @VScope %~ subScope' c t)
+inSubLocationScope :: Monad m => URI -> ValidatorT m r -> ValidatorT m r
+inSubLocationScope = vFocusOn LocationFocus
 
-inSubMetricScope' :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
-inSubMetricScope' c t = local (& typed @MetricScope %~ subScope' c t)
+vFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
+vFocusOn c f = local (& typed @VScope %~ subScope' c f)
+
+metricFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
+metricFocusOn c t = local (& typed @MetricScope %~ subScope' c t)
 
 updateMetric :: forall metric m . 
                 (Monad m, MetricC metric) => 
                 (metric -> metric) -> ValidatorT m ()
 updateMetric f = vHoist $ do 
-    mp <- asks (^. typed)
+    mp <- asks (^. typed)    
     modify' (& typed . metricLens %~ updateMetricInMap mp f)    
 
 timedMetric :: forall m metric r . 
@@ -211,19 +214,6 @@ timedMetric' _ f v = do
     embedState vs
     updateMetric (f elapsed)
     vHoist $ fromValue r
-
-
-getMetric :: forall metric m . 
-            (Monad m, MetricC metric) => 
-            ValidatorT m (Maybe metric)
-getMetric = vHoist getPureMetric
-
-getPureMetric :: forall metric . MetricC metric => 
-                 PureValidatorT (Maybe metric)
-getPureMetric = do 
-    metricScope <- asks (^. typed)
-    metricMap   <- gets (^. typed . metricLens)
-    pure $ lookupMetric metricScope metricMap
             
 
 recover :: Monad m => ValidatorT m a -> ValidatorT m () -> ValidatorT m a
@@ -246,3 +236,9 @@ timeoutVT s toDo timedOut = do
     z <- liftIO $ timeout (1_000_000 * fromIntegral t) (runValidatorT scopes toDo)
     maybe timedOut (embedValidatorT . pure) z    
 
+
+andThen :: ValidatorT IO a -> ValidatorT IO () -> ValidatorT IO a
+andThen f action = do
+    !z <- f
+    action
+    pure $! z
