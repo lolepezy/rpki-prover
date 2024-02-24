@@ -490,16 +490,26 @@ fetchTACertificate :: AppContext s -> FetchConfig -> TAL -> ValidatorT IO (RpkiU
 fetchTACertificate appContext@AppContext {..} fetchConfig tal = 
     go $ sortRrdpFirst $ neSetToList $ unLocations $ talCertLocations tal
   where
-    go []         = appError $ TAL_E $ TALError "No certificate location could be fetched."
-    go (u : uris) = fetchTaCert `catchError` goToNext 
+    go []         = appError $ TAL_E $ TALError "No of certificate location could be fetched."
+    go (u : uris) = tryFetch `catchError` goToNext 
       where 
+        tryFetch = 
+            timeoutVT timeout fetchTaCert (goToNext timeoutError)
+        
+        (timeout, timeoutError) = let 
+            rsyncT = fetchConfig ^. #rsyncTimeout
+            rrdpT  = fetchConfig ^. #rrdpTimeout
+            in case u of 
+                RsyncU _ -> (rsyncT, RsyncE $ RsyncDownloadTimeout rsyncT)
+                RrdpU _  -> (rrdpT, RrdpE $ RrdpDownloadTimeout rrdpT)
+
         fetchTaCert = do                     
-            logInfo logger [i|Fetching TA certicate from #{getURL u}.|]
+            logInfo logger [i|Fetching TA certificate from #{getURL u}.|]
             ro <- case u of 
                 RsyncU rsyncU -> rsyncRpkiObject appContext fetchConfig rsyncU
-                RrdpU rrdpU   -> fetchRpkiObject appContext fetchConfig rrdpU
+                RrdpU rrdpU   -> downloadRpkiObject appContext fetchConfig rrdpU
             pure (u, ro)
-
+            
         goToNext e = do            
             let message = [i|Failed to fetch #{getURL u}: #{e}|]
             logError logger message

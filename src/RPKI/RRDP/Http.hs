@@ -118,11 +118,11 @@ downloadHashedBS config uri@(URI u) eTag expectedHash hashMishmatch = liftIO $ d
 
 -- | Fetch arbitrary file using the streaming implementation
 -- 
-fetchRpkiObject :: AppContext s ->
-                FetchConfig ->             
-                RrdpURL ->             
-                ValidatorT IO RpkiObject
-fetchRpkiObject appContext _ uri = do
+downloadRpkiObject :: AppContext s ->
+                    FetchConfig ->             
+                    RrdpURL ->             
+                    ValidatorT IO RpkiObject
+downloadRpkiObject appContext _ uri = do
     (content, _, _, _) <- fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
                             downloadToBS 
                             (appContext ^. typed @Config) 
