@@ -504,7 +504,7 @@ fetchTACertificate appContext@AppContext {..} fetchConfig tal =
                 RrdpU _  -> (rrdpT, RrdpE $ RrdpDownloadTimeout rrdpT)
 
         fetchTaCert = do                     
-            logInfo logger [i|Fetching TA certicate from #{getURL u}.|]
+            logInfo logger [i|Fetching TA certificate from #{getURL u}.|]
             ro <- case u of 
                 RsyncU rsyncU -> rsyncRpkiObject appContext fetchConfig rsyncU
                 RrdpU rrdpU   -> downloadRpkiObject appContext fetchConfig rrdpU
