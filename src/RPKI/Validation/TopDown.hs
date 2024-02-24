@@ -7,6 +7,8 @@
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 module RPKI.Validation.TopDown (
     TopDownResult(..),
@@ -24,6 +26,8 @@ import           Control.Monad
 import           Control.Monad.Reader
 
 import           Control.Lens hiding (children)
+
+import           Barbies
 
 import           Data.Generics.Product.Typed
 import           Data.Generics.Product.Fields
@@ -112,33 +116,36 @@ data AllTasTopDownContext = AllTasTopDownContext {
         repositoryProcessing :: RepositoryProcessing,
         shortcutQueue        :: ClosableQueue MftShortcutOp,
         shortcutsCreated     :: TVar [MftShortcutOp],
-        topDownCounters      :: TopDownCounters        
+        topDownCounters      :: TopDownCounters IORef 
     }
     deriving stock (Generic)
 
 
-data TopDownCounters = TopDownCounters {
-        originalCa   :: IORef Int,
-        shortcutCa   :: IORef Int,
-        originalMft  :: IORef Int,
-        shortcutMft  :: IORef Int,
-        originalCrl  :: IORef Int,
-        shortcutCrl  :: IORef Int,        
-        originalRoa  :: IORef Int,
-        originalSpl  :: IORef Int,
-        originalAspa :: IORef Int,        
-        shortcutRoa  :: IORef Int,
-        shortcutSpl  :: IORef Int,
-        shortcutAspa :: IORef Int,        
-        shortcutTroubled    :: IORef Int,
-        newChildren         :: IORef Int,
-        overlappingChildren :: IORef Int,
-        updateMftMeta       :: IORef Int,
-        updateMftChildren   :: IORef Int,
-        readOriginal :: IORef Int,
-        readParsed   :: IORef Int
+data TopDownCounters f = TopDownCounters {
+        originalCa   :: f Int,
+        shortcutCa   :: f Int,
+        originalMft  :: f Int,
+        shortcutMft  :: f Int,
+        originalCrl  :: f Int,
+        shortcutCrl  :: f Int,        
+        originalRoa  :: f Int,
+        originalSpl  :: f Int,
+        originalAspa :: f Int,        
+        shortcutRoa  :: f Int,
+        shortcutSpl  :: f Int,
+        shortcutAspa :: f Int,        
+        shortcutTroubled    :: f Int,
+        newChildren         :: f Int,
+        overlappingChildren :: f Int,
+        updateMftMeta       :: f Int,
+        updateMftChildren   :: f Int,
+        readOriginal :: f Int,
+        readParsed   :: f Int
     }
     deriving stock (Generic)
+    deriving (FunctorB, TraversableB, ApplicativeB, ConstraintsB)
+
+deriving instance AllBF Show f TopDownCounters => Show (TopDownCounters f)
 
 data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
     deriving stock (Show, Eq, Ord, Generic)
@@ -183,7 +190,7 @@ newAllTasTopDownContext worldVersion repositoryProcessing shortcutQueue = liftIO
         shortcutsCreated <- newTVar []        
         pure $! AllTasTopDownContext {..}
 
-newTopDownCounters :: IO TopDownCounters
+newTopDownCounters :: IO (TopDownCounters IORef)
 newTopDownCounters = do 
     originalCa <- newIORef 0
     shortcutCa <- newIORef 0
@@ -1517,44 +1524,19 @@ applyValidationSideEffects
     logDebug logger $ [i|Marked #{visitedSize} objects as used, took #{elapsed}ms.|]
 
 
-reportCounters :: AppContext s -> TopDownCounters -> IO ()
-reportCounters AppContext {..} TopDownCounters {..} = do
-    originalCaN <- readIORef originalCa
-    shortcutCaN <- readIORef shortcutCa
-    originalMftN <- readIORef originalMft
-    shortcutMftN <- readIORef shortcutMft    
-    originalCrlN <- readIORef originalCrl
-    shortcutCrlN <- readIORef shortcutCrl
+-- This is to be able to print all counters as Int, not Identity Int
+newtype IdenticalShow a = IdenticalShow a
+    deriving stock (Generic)
+    deriving (Functor)
 
-    newChildrenN         <- readIORef newChildren
-    overlappingChildrenN <- readIORef overlappingChildren
+instance Show a => Show (IdenticalShow a) where
+    show (IdenticalShow a) = show a
 
-    updateMftMetaN <- readIORef updateMftMeta
-    updateMftChildrenN <- readIORef updateMftChildren
-
-    shortcutRoaN <- readIORef shortcutRoa
-    shortcutSplN <- readIORef shortcutSpl
-    shortcutAspaN <- readIORef shortcutAspa
-    shortcutTroubledN <- readIORef shortcutTroubled
-                            
-    originalRoaN <- readIORef originalRoa
-    originalSplN <- readIORef originalSpl
-    originalAspaN <- readIORef originalAspa    
-
-    readOriginalN <- readIORef readOriginal
-    readParsedN <- readIORef readParsed    
-
-    logDebug logger $ [i|Counters: originalCaN = #{originalCaN}, shortcutCaN = #{shortcutCaN}, |] <> 
-                      [i|originalMftN = #{originalMftN}, shortcutMftN = #{shortcutMftN}, |] <>
-                      [i|originalCrlN = #{originalCrlN}, shortcutCrlN = #{shortcutCrlN}, |] <>
-                      [i|newChildrenN = #{newChildrenN}, overlappingChildrenN = #{overlappingChildrenN}, |] <>
-                      [i|updateMftMetaN = #{updateMftMetaN}, updateMftChildrenN = #{updateMftChildrenN}, |] <>
-                      [i|shortcutRoaN = #{shortcutRoaN}, originalRoaN = #{originalRoaN}, |] <>
-                      [i|shortcutSplN = #{shortcutSplN}, originalSplN = #{originalSplN}, |] <>
-                      [i|shortcutAspaN = #{shortcutAspaN}, originalAspaN = #{originalAspaN}, |] <>
-                      [i|shortcutTroubledN = #{shortcutTroubledN}, |] <>
-                      [i|readOriginalN = #{readOriginalN}, readParsedN = #{readParsedN}.|]
-                      
+reportCounters :: AppContext s -> TopDownCounters IORef -> IO ()
+reportCounters AppContext {..} counters = do
+    c <- btraverse (fmap IdenticalShow . readIORef) counters
+    logDebug logger $ [i|Counters: #{c}|]
+                       
 
 updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
