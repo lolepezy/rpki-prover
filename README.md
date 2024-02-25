@@ -3,7 +3,7 @@
 * [Introduction](#introduction)
 * [Features](#features)    
 * [Usage](#usage)    
-  - [Static Liinux binary](#static-linux-binary)
+  - [Static Linux binary](#static-linux-binary)
   - [Docker image](#docker-image)
   - [Building from sources](#building-from-sources)
 * [HTTP API](#http-api)
@@ -34,6 +34,7 @@ This implementation seeks to address potential security vulnerabilites by utilis
 - Support of ASPA object validation and output
 - Support of BGPSec certificates validation and RTR
 - Support of RPKI Signed Checklists
+- Support of RPKI Prefix Lists
 - Static binaries for Linux
 - Docker image
 
