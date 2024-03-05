@@ -169,10 +169,10 @@ runValidatorServer appContext@AppContext {..} = do
             runWorkflow appContext tals'
                 `finally`
                 closeStorage appContext
-    where
-        parseTALFromFile talFileName taName = do
-            talContent <- fromTry (TAL_E . TALError . fmtEx) $ LBS.readFile talFileName
-            vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName
+  where
+    parseTALFromFile talFileName taName = do
+        talContent <- fromTry (TAL_E . TALError . fmtEx) $ LBS.readFile talFileName
+        vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName
 
 
 runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
@@ -575,9 +575,8 @@ data CLIOptions wrapped = CLIOptions {
         "Reset the LMDB cache i.e. remove ~/.rpki/cache/*.mdb files.",
 
     revalidationInterval :: wrapped ::: Maybe Int64 <?>
-        ("Re-validation interval in seconds, i.e. how often to re-download repositories are "
-       +++ "updated and certificate tree is re-validated. "
-       +++ "Default is 13 minutes, i.e. 780 seconds."),
+        ("Interval between validation cycles, each consisting of traversing RPKI tree for each TA " +++ 
+        "and fetching repositories on the way, in seconds. Default is 7 minutes, i.e. 560 seconds."),
 
     cacheLifetimeHours :: wrapped ::: Maybe Int64 <?>
         "Lifetime of objects in the local cache, in hours (default is 72 hours)",

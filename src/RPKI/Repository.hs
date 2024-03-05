@@ -489,12 +489,12 @@ buildRsyncTree (u: us) fs = SubTree $ Map.singleton u $ buildRsyncTree us fs
 
 lookupRsyncTree :: RsyncURL -> RsyncTree -> Maybe (RsyncURL, RepositoryMeta)
 lookupRsyncTree (RsyncURL host path) (RsyncTree t) = 
-    meta' path [] =<< Map.lookup host t
+    meta_ path [] =<< Map.lookup host t
   where    
-    meta' _ realPath (Leaf fs) = Just (RsyncURL host realPath, fs)
-    meta' [] _  SubTree {} = Nothing
-    meta' (u: us) realPath SubTree {..} = 
-        Map.lookup u rsyncChildren >>= meta' us (realPath <> [u])
+    meta_ _ realPath (Leaf fs) = Just (RsyncURL host realPath, fs)
+    meta_ [] _  SubTree {} = Nothing
+    meta_ (u: us) realPath SubTree {..} = 
+        Map.lookup u rsyncChildren >>= meta_ us (realPath <> [u])
 
 flattenRsyncTree :: RsyncTree -> [(RsyncURL, RepositoryMeta)]
 flattenRsyncTree (RsyncTree t) = 
@@ -502,4 +502,21 @@ flattenRsyncTree (RsyncTree t) =
   where    
     flattenTree host (Leaf info) realPath  = [(RsyncURL host (reverse realPath), info)]
     flattenTree host SubTree {..} realPath = 
-        mconcat $ map (\(p, n) -> flattenTree host n (p : realPath)) $ Map.toList rsyncChildren        
+        mconcat $ map (\(p, n) -> flattenTree host n (p : realPath)) $ Map.toList rsyncChildren  
+
+
+-- pruneRsyncTree :: RsyncTree -> RsyncTree
+-- pruneRsyncTree (RsyncTree m) = RsyncTree $ Map.map f m
+--   where
+--     f = \case 
+--         leaf@(Leaf _)  -> leaf
+--         s@SubTree {..} -> let 
+--             let childrenList = Map.toList rsyncChildren 
+--             unsucsessful = 
+--                 [ case c of 
+--                     (FetchedAt _) -> Nothing  
+
+--                    | (p, c) <- childrenList
+--                 ]
+--                 [] -> s
+--             in s

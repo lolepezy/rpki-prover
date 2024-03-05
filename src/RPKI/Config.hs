@@ -224,10 +224,10 @@ defaultConfig = Config {
         enabled = True
     },
     validationConfig = ValidationConfig {
-        revalidationInterval           = Seconds $ 13 * 60,
+        revalidationInterval           = Seconds $ 7 * 60,
         rrdpRepositoryRefreshInterval  = Seconds 120,
         rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
-        minimalRepositoryRetryInterval = Seconds $ 10,    
+        minimalRepositoryRetryInterval = Seconds 10,    
         topDownTimeout                 = Seconds $ 60 * 60,    
         manifestProcessing             = RFC9286,
         maxCertificatePathDepth        = 32,

@@ -172,8 +172,6 @@ downloadAndUpdateRRDP
                             useDeltas sortedDeltas notification                            
                             `catchError` 
                         \e -> do         
-                            -- NOTE At the moment we ignore the fact that some objects are wrongfully added by 
-                            -- some of the deltas
                             usedSource RrdpSnapshot
                             logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
                             useSnapshot snapshotInfo notification)
