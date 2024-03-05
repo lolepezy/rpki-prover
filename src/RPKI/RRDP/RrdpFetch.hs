@@ -189,17 +189,17 @@ downloadAndUpdateRRDP
         let repoU = unURI $ getURL repoUri             
         for_ (U.getHostname repoU) $ \baseHostname -> do             
             case U.getHostname $ unURI $ notification ^. #snapshotInfo . typed of 
-                Nothing               -> appWarn $ RrdpE $ BrokenSnapshotUri repoU
+                Nothing               -> appError $ RrdpE $ BrokenSnapshotUri repoU
                 Just snapshotHostname -> do 
                     when (snapshotHostname /= baseHostname) $ 
-                        appWarn $ RrdpE $ SnapshotUriHostname repoU snapshotHostname
+                        appError $ RrdpE $ SnapshotUriHostname repoU snapshotHostname
 
             for_ (notification ^. #deltas) $ \delta -> do 
                 case U.getHostname $ unURI $ delta ^. typed of 
-                    Nothing -> appWarn $ RrdpE $ BrokenDeltaUri $ unURI $ delta ^. typed
+                    Nothing -> appError $ RrdpE $ BrokenDeltaUri $ unURI $ delta ^. typed
                     Just deltaHostname -> do 
                         when (deltaHostname /= baseHostname) $ 
-                            appWarn $ RrdpE $ DeltaUriHostname repoU deltaHostname
+                            appError $ RrdpE $ DeltaUriHostname repoU deltaHostname
         pure notification
 
     useSnapshot (SnapshotInfo uri expectedHash) notification = do         
