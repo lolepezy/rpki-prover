@@ -79,6 +79,7 @@ dependencies:
 - network
 - nonempty-containers
 - optparse-generic
+- optparse-applicative
 - pipes
 - primitive
 - prometheus-client
