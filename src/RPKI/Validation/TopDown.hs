@@ -547,8 +547,8 @@ validateCaNoFetch
     newShortcut = 
         case validationAlgorithm of 
             -- Do not create shortctus when validation algorithm is not incremental
-            FullEveryIteration -> \_        -> Nothing
-            Incremental        -> \shortcut -> Just $! shortcut
+            FullEveryIteration -> const Nothing
+            Incremental        -> (Just $!)
 
     makeNextFullValidationAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextFullValidationAction childrenAki = do 
@@ -600,7 +600,7 @@ validateCaNoFetch
                                     -- getCrlByKey is the best we can have
                                     (getCrlByKey appContext crlKey)
                                     `andThen` 
-                                        (markAsRead topDownContext crlKey)
+                                        markAsRead topDownContext crlKey
 
                             Just mftKey 
                                 | mftShortKey == mftKey -> do
@@ -611,7 +611,7 @@ validateCaNoFetch
                                                 (getFullCa appContext topDownContext ca)
                                                 (getCrlByKey appContext crlKey)
                                                 `andThen` 
-                                                    (markAsRead topDownContext crlKey)
+                                                    markAsRead topDownContext crlKey
 
                                 | otherwise -> do 
                                     -- logDebug logger [i|Option 2|]            
@@ -691,8 +691,8 @@ validateCaNoFetch
                         Nothing       -> (nonCrlChildren, [], False)
                         Just mftShort -> manifestDiff mftShort nonCrlChildren
 
-            bumpCounterBy topDownCounters (#newChildren) (length newChildren)
-            bumpCounterBy topDownCounters (#overlappingChildren) (length overlappingChildren)
+            bumpCounterBy topDownCounters #newChildren (length newChildren)
+            bumpCounterBy topDownCounters #overlappingChildren (length overlappingChildren)
             
             forM_ mftShortcut $ \mftShort -> do          
                 -- If CRL has changed, we have to recheck if children are not revoked. 
@@ -730,8 +730,8 @@ validateCaNoFetch
                     -- Here we have the payloads for the fully validated MFT children
                     -- and the shortcut objects for these children                        
                     maybeChildrenShortcuts <- 
-                            (gatherMftEntryResults =<< 
-                                gatherMftEntryValidations fullCa newChildren validCrl)
+                            gatherMftEntryResults =<< 
+                                gatherMftEntryValidations fullCa newChildren validCrl
                                             
                     let childrenShortcuts = [ (k, s) | T2 k (Just s) <- maybeChildrenShortcuts ]
 
@@ -919,16 +919,16 @@ validateCaNoFetch
                     appError e
                 InvalidChild _ vs key fileName -> do
                     embedState vs
-                    pure $! (T2 key (Just $! makeTroubledChild key fileName)) : childrenShortcuts
+                    pure $! T2 key (Just $! makeTroubledChild key fileName) : childrenShortcuts
                 Valid vs childShortcut key fileName -> do 
                     embedState vs
                     -- Don't create shortcuts for objects having either errors or warnings,
                     -- otherwise warnings will disappear after the first validation 
                     if emptyValidations (vs ^. typed)
                         then do                            
-                            pure $! (T2 key childShortcut) : childrenShortcuts
+                            pure $! T2 key childShortcut : childrenShortcuts
                         else do 
-                            pure $! (T2 key (Just $! makeTroubledChild key fileName)) : childrenShortcuts
+                            pure $! T2 key (Just $! makeTroubledChild key fileName) : childrenShortcuts
             ) mempty
 
         
@@ -995,8 +995,11 @@ validateCaNoFetch
         -- The type of the object that is deserialised doesn't correspond 
         -- to the file extension on the manifest
         let realObjectType = getRpkiObjectType $ ro ^. #object
-        when (Just realObjectType /= objectType) $ 
-            vWarn $ ManifestEntryHasWrongFileType hash' filename realObjectType
+
+        let complain = vWarn $ ManifestEntryHasWrongFileType hash' filename realObjectType
+        case objectType of 
+            Nothing -> complain
+            Just ot -> unless (realObjectType `isOfType` ot) complain
 
         pure ro                        
 
