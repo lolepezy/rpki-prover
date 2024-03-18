@@ -50,7 +50,7 @@ data Config = Config {
         programBinaryPath         :: FilePath,
         rootDirectory             :: FilePath,
         talDirectory              :: FilePath,
-        extraTalsDirectories        :: [FilePath],
+        extraTalsDirectories      :: [FilePath],
         tmpDirectory              :: FilePath,
         cacheDirectory            :: FilePath,
         parallelism               :: Parallelism, 

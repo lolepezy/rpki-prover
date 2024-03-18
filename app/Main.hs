@@ -147,12 +147,11 @@ executeWorkerProcess = do
 runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorServer appContext@AppContext {..} = do
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
-    worldVersion <- newWorldVersion
-    talNames <- listTALFiles $ config ^. #talDirectory
+    worldVersion  <- newWorldVersion
+    talNames      <- listTALFiles $ config ^. #talDirectory
     extraTalNames <- fmap mconcat $ mapM listTALFiles $ config ^. #extraTalsDirectories
     let totalTalsNames = talNames <> extraTalNames
-    let validationContext = newScopes "validation-root"
-    (tals, vs) <- runValidatorT validationContext $
+    (tals, vs) <- runValidatorT (newScopes "validation-root") $
         forM totalTalsNames $ \(talFilePath, taName) ->
             vFocusOn TAFocus (convert taName) $
                 parseTALFromFile talFilePath (Text.pack taName)    
