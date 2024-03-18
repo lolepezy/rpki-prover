@@ -50,6 +50,7 @@ data Config = Config {
         programBinaryPath         :: FilePath,
         rootDirectory             :: FilePath,
         talDirectory              :: FilePath,
+        extraTalsDirectories      :: [FilePath],
         tmpDirectory              :: FilePath,
         cacheDirectory            :: FilePath,
         parallelism               :: Parallelism, 
@@ -205,6 +206,7 @@ defaultConfig = Config {
     programBinaryPath = "rpki-prover",
     rootDirectory = "",
     talDirectory = "",
+    extraTalsDirectories = [],
     tmpDirectory = "",
     cacheDirectory = "",
     parallelism = makeParallelism 2,
@@ -224,10 +226,10 @@ defaultConfig = Config {
         enabled = True
     },
     validationConfig = ValidationConfig {
-        revalidationInterval           = Seconds $ 13 * 60,
+        revalidationInterval           = Seconds $ 7 * 60,
         rrdpRepositoryRefreshInterval  = Seconds 120,
         rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
-        minimalRepositoryRetryInterval = Seconds $ 10,    
+        minimalRepositoryRetryInterval = Seconds 10,    
         topDownTimeout                 = Seconds $ 60 * 60,    
         manifestProcessing             = RFC9286,
         maxCertificatePathDepth        = 32,

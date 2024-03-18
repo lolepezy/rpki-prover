@@ -16,7 +16,8 @@ module RPKI.Parse.Parse (
     isSupportedExtension,
     rpkiObjectType,
     urlObjectType,
-    textObjectType
+    textObjectType,
+    isOfType
 )
 where
 
@@ -44,17 +45,16 @@ import           RPKI.Util (fmtGen)
 
 
 rpkiObjectType :: (Eq s, IsString s) => s -> Maybe RpkiObjectType
-rpkiObjectType s = 
-    case s of 
-        "cer" -> Just CER
-        "mft" -> Just MFT 
-        "crl" -> Just CRL 
-        "roa" -> Just ROA 
-        "gbr" -> Just GBR
-        "sig" -> Just RSC 
-        "asa" -> Just ASPA
-        "spl" -> Just SPL
-        _      -> Nothing
+rpkiObjectType = \case
+    "cer" -> Just CER
+    "mft" -> Just MFT 
+    "crl" -> Just CRL 
+    "roa" -> Just ROA 
+    "gbr" -> Just GBR
+    "sig" -> Just RSC 
+    "asa" -> Just ASPA
+    "spl" -> Just SPL
+    _      -> Nothing
 
 -- | 
 supportedExtension :: String -> Bool
@@ -71,6 +71,10 @@ urlObjectType (getURL -> URI u) = textObjectType u
 
 textObjectType :: Text.Text -> Maybe RpkiObjectType
 textObjectType t = rpkiObjectType $ Text.takeEnd 3 t
+
+
+isOfType :: RpkiObjectType -> RpkiObjectType -> Bool
+isOfType t1 t2 = t1 == t2 || t1 == BGPSec && t2 == CER
 
 -- | Parse object from a bytesting containing ASN1 representaton
 -- | Decide which parser to use based on the object's filename

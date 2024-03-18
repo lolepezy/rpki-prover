@@ -147,11 +147,12 @@ executeWorkerProcess = do
 runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorServer appContext@AppContext {..} = do
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
-    worldVersion <- newWorldVersion
-    talNames <- listTALFiles $ talDirectory config
-    let validationContext = newScopes "validation-root"
-    (tals, vs) <- runValidatorT validationContext $
-        forM talNames $ \(talFilePath, taName) ->
+    worldVersion  <- newWorldVersion
+    talNames      <- listTALFiles $ config ^. #talDirectory
+    extraTalNames <- fmap mconcat $ mapM listTALFiles $ config ^. #extraTalsDirectories
+    let totalTalsNames = talNames <> extraTalNames
+    (tals, vs) <- runValidatorT (newScopes "validation-root") $
+        forM totalTalsNames $ \(talFilePath, taName) ->
             vFocusOn TAFocus (convert taName) $
                 parseTALFromFile talFilePath (Text.pack taName)    
 
@@ -164,15 +165,15 @@ runValidatorServer appContext@AppContext {..} = do
             logError logger [i|Error reading some of the TALs, e = #{e}.|]
             throwIO $ AppException e
         Right tals' -> do
-            logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
+            logInfo logger [i|Successfully loaded #{length totalTalsNames} TALs: #{map snd totalTalsNames}|]
             -- this is where it blocks and loops in never-ending re-validation
             runWorkflow appContext tals'
                 `finally`
                 closeStorage appContext
-    where
-        parseTALFromFile talFileName taName = do
-            talContent <- fromTry (TAL_E . TALError . fmtEx) $ LBS.readFile talFileName
-            vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName
+  where
+    parseTALFromFile talFileName taName = do
+        talContent <- fromTry (TAL_E . TALError . fmtEx) $ LBS.readFile talFileName
+        vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName
 
 
 runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
@@ -216,6 +217,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & #talDirectory .~ tald
             & #tmpDirectory .~ tmpd
             & #cacheDirectory .~ cached
+            & #extraTalsDirectories .~ extraTalsDirectory
             & #parallelism .~ parallelism
             & #rsyncConf . #rsyncRoot .~ rsyncd
             & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
@@ -379,11 +381,11 @@ maybeSet lenz newValue big = maybe big (\val -> big & lenz .~ val) newValue
 listTALFiles :: FilePath -> IO [(FilePath, FilePath)]
 listTALFiles talDirectory = do
     names <- getDirectoryContents talDirectory
-    pure $ map (\f -> (talDirectory </> f, cutOfTalExtension f)) $
+    pure $ map (\f -> (talDirectory </> f, cutOffTalExtension f)) $
             filter (".tal" `List.isSuffixOf`) $
             filter (`notElem` [".", ".."]) names
   where
-    cutOfTalExtension s = List.take (List.length s - 4) s
+    cutOffTalExtension s = List.take (List.length s - 4) s
 
 
 cacheDirN, rsyncDirN, talsDirN, tmpDirN :: FilePath
@@ -553,6 +555,10 @@ data CLIOptions wrapped = CLIOptions {
         ("Root directory (default is ${HOME}/.rpki/). This option can be passed multiple times and "
          +++ "the last one will be used, it is done for convenience of overriding this option with dockerised version."),
 
+    extraTalsDirectory :: wrapped ::: [FilePath] <?>
+        ("And extra directories where to look for TAL files. By default there is none, " +++ 
+         "TALs are picked up only from the $rpkiRootDirectory/tals directory"),
+
     verifySignature :: wrapped ::: Bool <?>
         ("Work as a one-off RSC signature file verifier, not as a server. To work as a verifier it needs the cache " +++
         "of validated RPKI objects and VRPs to exist and be populateds. So verifier can (and should) run next to " +++
@@ -575,9 +581,8 @@ data CLIOptions wrapped = CLIOptions {
         "Reset the LMDB cache i.e. remove ~/.rpki/cache/*.mdb files.",
 
     revalidationInterval :: wrapped ::: Maybe Int64 <?>
-        ("Re-validation interval in seconds, i.e. how often to re-download repositories are "
-       +++ "updated and certificate tree is re-validated. "
-       +++ "Default is 13 minutes, i.e. 780 seconds."),
+        ("Interval between validation cycles, each consisting of traversing RPKI tree for each TA " +++ 
+        "and fetching repositories on the way, in seconds. Default is 7 minutes, i.e. 560 seconds."),
 
     cacheLifetimeHours :: wrapped ::: Maybe Int64 <?>
         "Lifetime of objects in the local cache, in hours (default is 72 hours)",
