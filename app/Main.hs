@@ -148,10 +148,11 @@ runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> IO (
 runValidatorServer appContext@AppContext {..} = do
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion <- newWorldVersion
-    talNames <- listTALFiles $ talDirectory config
+    talNames <- listTALFiles $ config ^. #talDirectory
+    extraTalNames <- maybe (pure []) listTALFiles $ config ^. #extraTalsDirectory
     let validationContext = newScopes "validation-root"
     (tals, vs) <- runValidatorT validationContext $
-        forM talNames $ \(talFilePath, taName) ->
+        forM (talNames <> extraTalNames) $ \(talFilePath, taName) ->
             vFocusOn TAFocus (convert taName) $
                 parseTALFromFile talFilePath (Text.pack taName)    
 
@@ -552,6 +553,10 @@ data CLIOptions wrapped = CLIOptions {
     rpkiRootDirectory :: wrapped ::: [FilePath] <?>
         ("Root directory (default is ${HOME}/.rpki/). This option can be passed multiple times and "
          +++ "the last one will be used, it is done for convenience of overriding this option with dockerised version."),
+
+    extraTalsDir :: wrapped ::: Maybe FilePath <?>
+        ("And extra directory where to look for TAL files. By default there is none, " +++ 
+         "TALs are picked up only from the $rpkiRootDirectory/tals directory"),
 
     verifySignature :: wrapped ::: Bool <?>
         ("Work as a one-off RSC signature file verifier, not as a server. To work as a verifier it needs the cache " +++
