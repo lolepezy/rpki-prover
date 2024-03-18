@@ -149,10 +149,11 @@ runValidatorServer appContext@AppContext {..} = do
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion <- newWorldVersion
     talNames <- listTALFiles $ config ^. #talDirectory
-    extraTalNames <- maybe (pure []) listTALFiles $ config ^. #extraTalsDirectory
+    extraTalNames <- fmap mconcat $ mapM listTALFiles $ config ^. #extraTalsDirectories
+    let totalTalsNames = talNames <> extraTalNames
     let validationContext = newScopes "validation-root"
     (tals, vs) <- runValidatorT validationContext $
-        forM (talNames <> extraTalNames) $ \(talFilePath, taName) ->
+        forM totalTalsNames $ \(talFilePath, taName) ->
             vFocusOn TAFocus (convert taName) $
                 parseTALFromFile talFilePath (Text.pack taName)    
 
@@ -165,7 +166,7 @@ runValidatorServer appContext@AppContext {..} = do
             logError logger [i|Error reading some of the TALs, e = #{e}.|]
             throwIO $ AppException e
         Right tals' -> do
-            logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
+            logInfo logger [i|Successfully loaded #{length totalTalsNames} TALs: #{map snd totalTalsNames}|]
             -- this is where it blocks and loops in never-ending re-validation
             runWorkflow appContext tals'
                 `finally`
@@ -217,6 +218,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & #talDirectory .~ tald
             & #tmpDirectory .~ tmpd
             & #cacheDirectory .~ cached
+            & #extraTalsDirectories .~ extraTalsDirectory
             & #parallelism .~ parallelism
             & #rsyncConf . #rsyncRoot .~ rsyncd
             & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
@@ -380,11 +382,11 @@ maybeSet lenz newValue big = maybe big (\val -> big & lenz .~ val) newValue
 listTALFiles :: FilePath -> IO [(FilePath, FilePath)]
 listTALFiles talDirectory = do
     names <- getDirectoryContents talDirectory
-    pure $ map (\f -> (talDirectory </> f, cutOfTalExtension f)) $
+    pure $ map (\f -> (talDirectory </> f, cutOffTalExtension f)) $
             filter (".tal" `List.isSuffixOf`) $
             filter (`notElem` [".", ".."]) names
   where
-    cutOfTalExtension s = List.take (List.length s - 4) s
+    cutOffTalExtension s = List.take (List.length s - 4) s
 
 
 cacheDirN, rsyncDirN, talsDirN, tmpDirN :: FilePath
@@ -554,8 +556,8 @@ data CLIOptions wrapped = CLIOptions {
         ("Root directory (default is ${HOME}/.rpki/). This option can be passed multiple times and "
          +++ "the last one will be used, it is done for convenience of overriding this option with dockerised version."),
 
-    extraTalsDir :: wrapped ::: Maybe FilePath <?>
-        ("And extra directory where to look for TAL files. By default there is none, " +++ 
+    extraTalsDirectory :: wrapped ::: [FilePath] <?>
+        ("And extra directories where to look for TAL files. By default there is none, " +++ 
          "TALs are picked up only from the $rpkiRootDirectory/tals directory"),
 
     verifySignature :: wrapped ::: Bool <?>
