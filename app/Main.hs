@@ -551,7 +551,7 @@ data CLIOptions wrapped = CLIOptions {
         "If set, the FS layout will be created and TAL files will be downloaded.",
 
     noRirTals :: wrapped ::: Bool <?> 
-        "If set RIR TAL files will not be downloaded.",
+        "If set, RIR TAL files will not be downloaded.",
 
     version :: wrapped ::: Bool <?> "Program version.",
 
