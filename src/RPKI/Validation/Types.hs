@@ -12,6 +12,7 @@
 
 module RPKI.Validation.Types where
 
+import           Control.DeepSeq
 import qualified Data.Map.Strict             as Map
 import qualified Data.Text                   as Text
 import           Data.Tuple.Strict
@@ -32,7 +33,7 @@ data MftChild = CaChild CaShortcut Serial
               -- Invalid, revoked or an object of unknown type
               | TroubledChild ObjectKey
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass (TheBinary, NFData)
 
 
 data MftEntry = MftEntry {        
@@ -40,7 +41,7 @@ data MftEntry = MftEntry {
         child    :: MftChild
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass (TheBinary, NFData)
 
 
 data CrlShortcut = CrlShortcut {
@@ -49,7 +50,7 @@ data CrlShortcut = CrlShortcut {
         notValidAfter  :: Instant        
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass (TheBinary, NFData)
 
 data MftShortcut = MftShortcut { 
         key            :: ObjectKey,
@@ -61,7 +62,7 @@ data MftShortcut = MftShortcut {
         crlShortcut    :: CrlShortcut
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass (TheBinary, NFData)
 
 data CaShortcut = CaShortcut { 
         key            :: ObjectKey,        
@@ -71,12 +72,12 @@ data CaShortcut = CaShortcut {
         notValidAfter  :: Instant
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass (TheBinary, NFData)
 
 data Ca = CaShort CaShortcut
         | CaFull (Located CaCerObject)
     deriving stock (Show, Eq, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass (TheBinary, NFData)
 
 
 data RoaShortcut = RoaShortcut {
@@ -86,7 +87,7 @@ data RoaShortcut = RoaShortcut {
         notValidAfter  :: Instant
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass (TheBinary, NFData)
 
 data SplShortcut = SplShortcut {
         key            :: ObjectKey,        
@@ -95,7 +96,7 @@ data SplShortcut = SplShortcut {
         notValidAfter  :: Instant
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass (TheBinary, NFData)
 
 data AspaShortcut = AspaShortcut {
         key            :: ObjectKey,
@@ -104,7 +105,7 @@ data AspaShortcut = AspaShortcut {
         notValidAfter  :: Instant
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass (TheBinary, NFData)
 
 data BgpSecShortcut = BgpSecShortcut {
         key            :: ObjectKey,
@@ -113,7 +114,7 @@ data BgpSecShortcut = BgpSecShortcut {
         notValidAfter  :: Instant
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass (TheBinary, NFData)
 
 data GbrShortcut = GbrShortcut {
         key            :: ObjectKey,    
@@ -122,7 +123,7 @@ data GbrShortcut = GbrShortcut {
         notValidAfter  :: Instant
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass (TheBinary, NFData)
 
 
 instance {-# OVERLAPPING #-} WithValidityPeriod CaShortcut where

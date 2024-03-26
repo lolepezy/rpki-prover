@@ -11,7 +11,9 @@ module RPKI.RRDP.RrdpFetch where
 
 import           Control.Concurrent.STM
 import           Control.Concurrent.Async
+import           Control.DeepSeq
 import           Control.Lens
+import           Control.Exception.Lifted
 import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.IO.Class           (liftIO)
@@ -446,66 +448,81 @@ saveSnapshot
                                     Just type_ -> do 
                                         let hash = U.sha256s blob  
                                         exists <- roTx db $ \tx -> DB.hashExists tx db hash
-                                        pure $! if exists                                  
+                                        if exists                                  
                                             -- The object is already in cache. Do not parse-serialise
                                             -- anything, just skip it. We are not afraid of possible 
                                             -- race-conditions here, it's not a problem to double-insert
                                             -- an object and delete-insert race will never happen in practice
                                             -- since deletion is never concurrent with insertion.
-                                            then HashExists rpkiURL hash
+                                            then pure $! HashExists rpkiURL hash
                                             else 
                                                 tryToParse rpkiURL hash blob type_                                                 
                                     Nothing -> 
                                         pure $! UknownObjectType rpkiURL
           where
-            tryToParse rpkiURL hash blob type_ = 
-                case runPureValidator (newScopes $ unURI uri) (readObject rpkiURL blob) of 
-                    (Left e, _) -> 
-                        ObjectParsingProblem rpkiURL (VErr e) 
+            tryToParse rpkiURL hash blob type_ = do 
+                logDebug logger [i|uri = #{uri}|]
+                z <- try $! fmap force $ runValidatorT (newScopes $ unURI uri) $ vHoist $ readObject rpkiURL blob
+                logDebug logger [i|uri1 = #{uri}|]                
+                case z of 
+                    Left e -> do
+                        logDebug logger [i|z1|]                
+                        pure $! ObjectParsingProblem rpkiURL (VErr $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e) 
+                                (ObjectOriginal blob) hash
+                                (ObjectMeta worldVersion type_)
+                    Right (Left e, _) -> do
+                        logDebug logger [i|z2 = #{e}|]
+                        pure $! ObjectParsingProblem rpkiURL (VErr e) 
                                     (ObjectOriginal blob) hash
-                                    (ObjectMeta worldVersion type_)
-                    (Right ro, _) -> 
-                        SuccessParsed rpkiURL (toStorableObject ro)                                            
+                                    (ObjectMeta worldVersion type_)                        
+                    Right (Right ro, _) -> do
+                        logDebug logger [i|z3|]
+                        pure $! SuccessParsed rpkiURL (toStorableObject ro)                                          
 
     saveStorable _ _ (Left (e, uri)) = 
         inSubLocationScope uri $ appWarn e             
     
     saveStorable db tx (Right (uri, a)) = do 
-        r <- fromTry (RrdpE . FailedToParseSnapshotItem . U.fmtEx) $ wait a
-        case r of 
-            HashExists rpkiURL hash ->
-                DB.linkObjectToUrl tx db rpkiURL hash
+        z <- liftIO $ waitCatch a        
+        case z of 
+            Left e  -> do 
+                logError logger [i|Couldn't parse object #{uri}, error #{e}, will NOTs cache the original object.|]   
+                inSubLocationScope uri $ 
+                    appWarn $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e
+            Right r -> 
+                case r of 
+                    HashExists rpkiURL hash ->
+                        DB.linkObjectToUrl tx db rpkiURL hash
 
-            UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do                    
-                logError logger [i|Skipped object #{rpkiUrl}, error #{e} |]
-                inSubLocationScope uri $ appWarn e 
+                    UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do                    
+                        logError logger [i|Skipped object #{rpkiUrl}: #{e}|]
+                        inSubLocationScope uri $ appWarn e 
 
-            DecodingTrouble rpkiUrl (VErr e) -> do
-                logError logger [i|Couldn't decode base64 for object #{uri}, error #{e} |]
-                inSubLocationScope (getURL rpkiUrl) $ appWarn e                            
+                    DecodingTrouble _ (VErr e) -> do
+                        logError logger [i|Couldn't decode base64 for object #{uri}: #{e}|]
+                        inSubLocationScope uri $ appWarn e                            
 
-            UknownObjectType rpkiUrl -> do
-                logError logger [i|Unknown object type: url = #{rpkiUrl}.|]
-                inSubLocationScope (getURL rpkiUrl) $ 
-                    appWarn $ RrdpE $ RrdpUnsupportedObjectType $ U.convert rpkiUrl                   
+                    UknownObjectType rpkiUrl -> do
+                        logError logger [i|Unknown object type: #{rpkiUrl}.|]
+                        inSubLocationScope uri $ 
+                            appWarn $ RrdpE $ RrdpUnsupportedObjectType $ U.convert rpkiUrl                   
 
-            ObjectParsingProblem rpkiUrl (VErr e) original hash objectMeta -> do                    
-                logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
-                inSubLocationScope (getURL rpkiUrl) $ appWarn e                 
-                DB.saveOriginal tx db original hash objectMeta
-                DB.linkObjectToUrl tx db rpkiUrl hash                
-                addedObject
+                    ObjectParsingProblem rpkiUrl (VErr e) original hash objectMeta -> do                    
+                        logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
+                        inSubLocationScope uri $ appWarn e                 
+                        DB.saveOriginal tx db original hash objectMeta
+                        DB.linkObjectToUrl tx db rpkiUrl hash                
+                        addedObject
 
-            SuccessParsed rpkiUrl so@StorableObject {..} -> do 
-                DB.saveObject tx db so worldVersion                    
-                DB.linkObjectToUrl tx db rpkiUrl (getHash object)
-                addedObject
+                    SuccessParsed rpkiUrl so@StorableObject {..} -> do 
+                        DB.saveObject tx db so worldVersion                    
+                        DB.linkObjectToUrl tx db rpkiUrl (getHash object)
+                        addedObject
 
-            other -> 
-                logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
+                    other -> 
+                        logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
     
     validationConfig = appContext ^. typed @Config . typed @ValidationConfig
-
 
 
 {-

@@ -10,6 +10,7 @@
 
 module RPKI.Store.Database where
 
+import           Control.DeepSeq
 import           Control.Exception.Lifted
 import           Control.Lens
 import           Control.Monad.Trans.Maybe
@@ -245,13 +246,13 @@ data MftShortcutMeta = MftShortcutMeta {
         crlShortcut    :: CrlShortcut
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass (TheBinary, NFData)
 
 newtype MftShortcutChildren = MftShortcutChildren {
         nonCrlEntries :: Map.Map ObjectKey MftEntry
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass TheBinary
+    deriving anyclass (TheBinary, NFData)
 
 
 data MftShortcutStore s = MftShortcutStore {

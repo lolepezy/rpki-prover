@@ -48,6 +48,7 @@ dependencies:
 - cryptonite
 - cryptohash-sha256
 - cryptohash-sha512
+- crypton-connection
 - deepseq
 - deque
 - directory
@@ -58,6 +59,7 @@ dependencies:
 - hashable
 - hourglass
 - http-client
+- http-client-tls
 - http-conduit
 - http-media
 - http-types

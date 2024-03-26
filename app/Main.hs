@@ -71,6 +71,11 @@ import           RPKI.Workflow
 import           RPKI.RSC.Verifier
 
 
+import           Network.HTTP.Client
+import           Network.HTTP.Client.TLS
+import           Network.HTTP.Simple
+import           Network.Connection
+
 main :: IO ()
 main = do
     cliOptions@CLIOptions{..} <- unwrapRecord $ 
@@ -133,6 +138,9 @@ executeWorkerProcess = do
                         logLevel = config ^. #logLevel,
                         logSetup = WorkerLog
                     }
+                    
+    turnOffTlsValidation
+
     withLogger logConfig (\_ -> pure ()) $ \logger -> liftIO $ do
         (z, validations) <- runValidatorT
                                 (newScopes "worker-create-app-context")
@@ -144,8 +152,13 @@ executeWorkerProcess = do
                 executeWorker input appContext
 
 
+turnOffTlsValidation = do 
+    manager <- newManager $ mkManagerSettings (TLSSettingsSimple True True True) Nothing 
+    setGlobalManager manager    
+
 runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorServer appContext@AppContext {..} = do
+    
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion  <- newWorldVersion
     talNames      <- listTALFiles $ config ^. #talDirectory
