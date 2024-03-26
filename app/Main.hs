@@ -311,7 +311,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 data TALsHandle = CreateTALs | CheckTALsExists
 
 initialiseFS :: CLIOptions Unwrapped -> AppLogger -> IO ()
-initialiseFS cliOptions logger = do
+initialiseFS cliOptions@CLIOptions {..} logger = do
     (r, _) <- runValidatorT
         (newScopes "initialise")
         $ do
@@ -324,18 +324,19 @@ initialiseFS cliOptions logger = do
             let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
             let talNames = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"]
 
-            logInfo logger [i|Downloading TALs from #{talsUrl} to #{tald}.|]
-            fromTryM
-                (\e -> UnspecifiedE "Error downloading TALs: " (fmtEx e))
-                $ forM_ talNames
-                    $ \tal -> do
-                        let talUrl = Text.pack $ talsUrl <> tal
-                        logDebug logger [i|Downloading #{talUrl} to #{tald </> tal}.|]
-                        httpStatus <- downloadToFile (URI talUrl) (tald </> tal) (Size 10_000)
-                        unless (isHttpSuccess httpStatus) $ do
-                            appError $ UnspecifiedE
-                                [i|Error downloading TAL #{tal} from #{talUrl}|]
-                                [i|Http status #{unHttpStatus httpStatus}|]
+            unless noRirTals $ do 
+                logInfo logger [i|Downloading TALs from #{talsUrl} to #{tald}.|]
+                fromTryM
+                    (\e -> UnspecifiedE "Error downloading TALs: " (fmtEx e))
+                    $ forM_ talNames
+                        $ \tal -> do
+                            let talUrl = Text.pack $ talsUrl <> tal
+                            logDebug logger [i|Downloading #{talUrl} to #{tald </> tal}.|]
+                            httpStatus <- downloadToFile (URI talUrl) (tald </> tal) (Size 10_000)
+                            unless (isHttpSuccess httpStatus) $ do
+                                appError $ UnspecifiedE
+                                    [i|Error downloading TAL #{tal} from #{talUrl}|]
+                                    [i|Http status #{unHttpStatus httpStatus}|]
     case r of
         Left e -> do
             logError logger [i|Failed to initialise: #{e}.|]
@@ -548,6 +549,9 @@ data CLIOptions wrapped = CLIOptions {
 
     initialise :: wrapped ::: Bool <?>
         "If set, the FS layout will be created and TAL files will be downloaded.",
+
+    noRirTals :: wrapped ::: Bool <?> 
+        "If set RIR TAL files will not be downloaded.",
 
     version :: wrapped ::: Bool <?> "Program version.",
 
