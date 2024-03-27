@@ -8,6 +8,7 @@
 
 module RPKI.Store.Types where
 
+import           Control.DeepSeq
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 
@@ -35,7 +36,7 @@ data ObjectMeta = ObjectMeta {
         objectType :: RpkiObjectType
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 data MftTimingMark = MftTimingMark Instant Instant 
     deriving stock (Show, Eq, Ord, Generic)
@@ -54,7 +55,7 @@ data Keyed a = Keyed {
 
 newtype ObjectOriginal = ObjectOriginal BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)        
+    deriving anyclass (TheBinary, NFData)        
 
 data DBFileStats = DBFileStats {
     fileSize :: Size

@@ -7,6 +7,7 @@
 
 module RPKI.AppTypes where
     
+import           Control.DeepSeq
 import           Data.Int
 import           Data.Text (Text)
 import           Data.Semigroup
@@ -18,7 +19,7 @@ import           RPKI.Store.Base.Serialisation
 -- clock timestamp in nanoseconds.
 newtype WorldVersion = WorldVersion Int64
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 instance Show WorldVersion where 
     show (WorldVersion v) = show v

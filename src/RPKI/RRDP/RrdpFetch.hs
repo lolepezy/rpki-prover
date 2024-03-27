@@ -29,6 +29,8 @@ import           Data.String.Interpolate.IsString
 import           Data.Proxy
 import           Data.Maybe
 
+import           GHC.Generics (Generic)
+
 import qualified Streaming.Prelude                as S
 
 import           RPKI.AppContext
@@ -461,23 +463,21 @@ saveSnapshot
                                         pure $! UknownObjectType rpkiURL
           where
             tryToParse rpkiURL hash blob type_ = do 
-                logDebug logger [i|uri = #{uri}|]
-                z <- try $! fmap force $ runValidatorT (newScopes $ unURI uri) $ vHoist $ readObject rpkiURL blob
-                logDebug logger [i|uri1 = #{uri}|]                
-                case z of 
-                    Left e -> do
-                        logDebug logger [i|z1|]                
+                z <- liftIO $ runValidatorT (newScopes $ unURI uri) $ vHoist $ readObject rpkiURL blob
+                (evaluate $ force $
+                    case z of 
+                        (Left e, _) -> 
+                            ObjectParsingProblem rpkiURL (VErr e) 
+                                (ObjectOriginal blob) hash
+                                (ObjectMeta worldVersion type_)                        
+                        (Right ro, _) ->                                     
+                            SuccessParsed rpkiURL (toStorableObject ro)                            
+                    ) `catch` 
+                    (\(e :: SomeException) -> 
                         pure $! ObjectParsingProblem rpkiURL (VErr $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e) 
                                 (ObjectOriginal blob) hash
                                 (ObjectMeta worldVersion type_)
-                    Right (Left e, _) -> do
-                        logDebug logger [i|z2 = #{e}|]
-                        pure $! ObjectParsingProblem rpkiURL (VErr e) 
-                                    (ObjectOriginal blob) hash
-                                    (ObjectMeta worldVersion type_)                        
-                    Right (Right ro, _) -> do
-                        logDebug logger [i|z3|]
-                        pure $! SuccessParsed rpkiURL (toStorableObject ro)                                          
+                    )
 
     saveStorable _ _ (Left (e, uri)) = 
         inSubLocationScope uri $ appWarn e             
@@ -576,7 +576,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
         case item of
             DP (DeltaPublish uri hash encodedb64) -> 
                 processSupportedTypes uri $ do 
-                    a <- liftIO $ async $ pure $! readBlob uri encodedb64
+                    a <- liftIO $ async $ readBlob uri encodedb64
                     pure $ Right $ maybe (Add uri a) (Replace uri a) hash
                     
             DW (DeltaWithdraw uri hash) -> 
@@ -589,27 +589,35 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
 
         readBlob uri encodedb64 = 
             case U.parseRpkiURL $ unURI uri of
-                Left e        -> UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
+                Left e        -> pure $! UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
                 Right rpkiURL -> do 
                     case decodeBase64 encodedb64 rpkiURL of
-                        Left e                        -> DecodingTrouble rpkiURL (VErr $ RrdpE e)
+                        Left e                        -> pure $! DecodingTrouble rpkiURL (VErr $ RrdpE e)
                         Right (DecodedBase64 blob) -> do                             
                             case validateSizeOfBS validationConfig blob of 
-                                Left e  -> DecodingTrouble rpkiURL (VErr $ ValidationE e)                                
+                                Left e  -> pure $! DecodingTrouble rpkiURL (VErr $ ValidationE e)                                
                                 Right _ -> do 
                                     let hash = U.sha256s blob                                    
                                     case urlObjectType rpkiURL of 
                                         Just type_ -> tryToParse rpkiURL hash blob type_                                                
-                                        Nothing    -> UknownObjectType rpkiURL                                                            
+                                        Nothing    -> pure $! UknownObjectType rpkiURL                                                            
           where
-            tryToParse rpkiURL hash blob type_ = 
-                case runPureValidator (newScopes $ unURI uri) (readObject rpkiURL blob) of 
-                    (Left e, _)   -> 
-                        ObjectParsingProblem rpkiURL (VErr e) 
-                                    (ObjectOriginal blob) hash
-                                    (ObjectMeta worldVersion type_)
-                    (Right ro, _) -> 
-                        SuccessParsed rpkiURL (toStorableObject ro)                         
+            tryToParse rpkiURL hash blob type_ = do
+                z <- liftIO $ runValidatorT (newScopes $ unURI uri) $ vHoist $ readObject rpkiURL blob
+                (evaluate $ force $
+                    case z of 
+                        (Left e, _) -> 
+                            ObjectParsingProblem rpkiURL (VErr e) 
+                                (ObjectOriginal blob) hash
+                                (ObjectMeta worldVersion type_)                        
+                        (Right ro, _) ->                                     
+                            SuccessParsed rpkiURL (toStorableObject ro)                            
+                    ) `catch` 
+                    (\(e :: SomeException) -> 
+                        pure $! ObjectParsingProblem rpkiURL (VErr $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e) 
+                                (ObjectOriginal blob) hash
+                                (ObjectMeta worldVersion type_)
+                    )                        
 
     saveStorable db tx r = 
         case r of 
@@ -718,7 +726,8 @@ data RrdpObjectProcessingResult =
         | UknownObjectType RpkiURL    
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta    
         | SuccessParsed RpkiURL (StorableObject RpkiObject) 
-    deriving Show
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass NFData
 
 data DeltaOp m a = Delete URI Hash 
                 | Add URI (Async a) 

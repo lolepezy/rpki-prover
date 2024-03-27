@@ -139,7 +139,7 @@ executeWorkerProcess = do
                         logSetup = WorkerLog
                     }
                     
-    turnOffTlsValidation
+    -- turnOffTlsValidation
 
     withLogger logConfig (\_ -> pure ()) $ \logger -> liftIO $ do
         (z, validations) <- runValidatorT
