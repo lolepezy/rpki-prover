@@ -405,11 +405,10 @@ instance ToJSON Parallelism
 instance ToJSON ManifestProcessing
 instance ToJSON ValidationAlgorithm
 instance ToJSON FetchTimingCalculation
+instance ToJSON FetchMethod
 instance ToJSON TAL
--- $(deriveToJSON defaultOptions ''TAL)
 instance ToJSON HttpApiConfig
 instance ToJSON ValidationConfig
-instance ToJSON AsyncFetchConfig
 instance ToJSON RtrConfig
 instance ToJSON SystemConfig
 instance ToJSON RrdpConf

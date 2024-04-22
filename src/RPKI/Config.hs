@@ -108,6 +108,10 @@ data FetchTimingCalculation = Constant | Adaptive
     deriving anyclass (TheBinary)
 
 
+data FetchMethod = SyncOnly | SyncAndAsync
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
 data ValidationConfig = ValidationConfig {    
         revalidationInterval           :: Seconds,
         rrdpRepositoryRefreshInterval  :: Seconds,
@@ -146,20 +150,14 @@ data ValidationConfig = ValidationConfig {
         fetchTimeoutCalculation        :: FetchTimingCalculation,
 
         minFetchInterval               :: Seconds,
-        maxFetchInterval               :: Seconds
+        maxFetchInterval               :: Seconds,
+
+        -- Categorise reposaitories into sync and async or always use only sync
+        fetchMethod                    :: FetchMethod
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-data AsyncFetchConfig = AsyncFetchConfig {
-        -- Maximal download time of a repository beyond 
-        -- which it is considered slow.    
-        slowRepositoryThreshold :: Seconds,
-        -- 
-        checkPeriod             :: Seconds       
-    } 
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
 
 data HttpApiConfig = HttpApiConfig {
         port :: Word16    
@@ -243,7 +241,8 @@ defaultConfig = Config {
         fetchIntervalCalculation       = Adaptive,
         fetchTimeoutCalculation        = Adaptive,
         minFetchInterval               = Seconds 60,
-        maxFetchInterval               = Seconds 600
+        maxFetchInterval               = Seconds 600,
+        fetchMethod                    = SyncAndAsync
     },
     httpApiConf = HttpApiConfig {
         port = 9999
