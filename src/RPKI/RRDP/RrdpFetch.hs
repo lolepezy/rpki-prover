@@ -592,7 +592,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 Left e        -> pure $! UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
                 Right rpkiURL -> do 
                     case decodeBase64 encodedb64 rpkiURL of
-                        Left e                        -> pure $! DecodingTrouble rpkiURL (VErr $ RrdpE e)
+                        Left e                     -> pure $! DecodingTrouble rpkiURL (VErr $ RrdpE e)
                         Right (DecodedBase64 blob) -> do                             
                             case validateSizeOfBS validationConfig blob of 
                                 Left e  -> pure $! DecodingTrouble rpkiURL (VErr $ ValidationE e)                                
