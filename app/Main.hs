@@ -73,7 +73,7 @@ import           RPKI.RSC.Verifier
 
 import           Network.HTTP.Client
 import           Network.HTTP.Client.TLS
-import           Network.HTTP.Simple
+-- import           Network.HTTP.Simple
 import           Network.Connection
 
 main :: IO ()

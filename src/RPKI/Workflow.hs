@@ -231,14 +231,18 @@ runWorkflow appContext@AppContext {..} tals = do
         runAsyncFetcherIfNeeded        
       where
         runAsyncFetcherIfNeeded = 
-            join $ atomically $ do 
-                readTVar asyncFetchIsRunning >>= \case                
-                    False -> pure $ 
-                        void $ forkFinally (do                                
-                                runConcurrentlyIfPossible logger asyncFetchTask runningTasks)
-                                (const $ atomically $ writeTVar asyncFetchIsRunning False)
-                    True -> 
-                        pure $ pure ()
+            case config ^. #validationConfig . #fetchMethod of             
+                -- no async fetch
+                SyncOnly     -> pure ()
+                SyncAndAsync -> 
+                    join $ atomically $ do 
+                        readTVar asyncFetchIsRunning >>= \case                
+                            False -> pure $ 
+                                void $ forkFinally (do                                
+                                        runConcurrentlyIfPossible logger asyncFetchTask runningTasks)
+                                        (const $ atomically $ writeTVar asyncFetchIsRunning False)
+                            True -> 
+                                pure $ pure ()
           where 
             asyncFetchTask = Task AsyncFetchTask $ do 
                 atomically (writeTVar asyncFetchIsRunning True)                
