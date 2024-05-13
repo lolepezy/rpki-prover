@@ -199,6 +199,7 @@ newtype InitError = InitError Text
     deriving anyclass (TheBinary, NFData)
 
 data InternalError = WorkerTimeout Text 
+                   | WorkerOutOfCpuTime Text 
                    | WorkerOutOfMemory Text 
                    | InternalError Text 
     deriving stock (Show, Eq, Ord, Generic)
@@ -462,7 +463,8 @@ data RawMetric = RawMetric {
 
 -- Misc
 
-data Trace = WorkerTimeoutTrace                   
+data Trace = WorkerTimeoutTrace               
+           | WorkerCpuOveruseTrace               
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 

@@ -128,3 +128,5 @@ cpuTimePerSecond (CPUTime t) from to = let
     Seconds duration = instantDiff to from
     in (fromInteger t :: Double) / (fromIntegral duration :: Double)
 
+asCpuTime :: Seconds -> CPUTime 
+asCpuTime (Seconds s) = CPUTime $ fromIntegral $ s * 1000

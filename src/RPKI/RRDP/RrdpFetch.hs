@@ -43,6 +43,7 @@ import           RPKI.Logging
 import           RPKI.Metrics.System
 import           RPKI.Worker
 import           RPKI.Parallel
+import           RPKI.Time
 import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.RRDP.Http
@@ -85,7 +86,8 @@ runRrdpFetchWorker AppContext {..} fetchConfig worldVersion repository = do
                                 config
                                 workerId 
                                 (RrdpFetchParams scopes repository worldVersion)                        
-                                (Timebox $ fetchConfig ^. #rrdpTimeout)
+                                (Timebox $ fetchConfig ^. #rrdpTimeout)                                
+                                (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
                                 arguments  
         
     let RrdpFetchResult z = payload

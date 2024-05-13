@@ -105,7 +105,8 @@ data WorkerInput = WorkerInput {
         params          :: WorkerParams,
         config          :: Config,
         initialParentId :: ProcessID,
-        workerTimeout   :: Timebox
+        workerTimeout   :: Timebox,
+        cpuLimit        :: Maybe CPUTime
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -157,11 +158,10 @@ executeWork input actualWork = do
                     atomically $ writeTVar exitCode $ Just ExitSuccess) 
                 (race 
                     (dieIfParentDies exitCode) 
-                    (dieAfterTimeout exitCode))
+                    (dieOfTiming exitCode))
 
     -- this complication is to guarantee that the main thread exits
-    -- the process as soon as there's exit code defined, regardless
-    -- of whether exceptions are handled or not handled inside of `race`.
+    -- the process as soon as there's exit code defined.
     exitWith =<< atomically (maybe retry pure =<< readTVar exitCode)
     
   where    
@@ -176,11 +176,30 @@ executeWork input actualWork = do
                 then atomically $ writeTVar exitCode (Just exitParentDied)
                 else threadDelay 500_000 >> go
 
+    dieOfTiming exitCode = 
+        case input ^. #cpuLimit of
+            Nothing       -> dieAfterTimeout exitCode
+            Just cpuLimit -> 
+                void $ race 
+                    (dieAfterTimeout exitCode)
+                    (dieOutOfCpuTime cpuLimit exitCode)
+
     -- Time bomb. Wait for the certain timeout and then exit.
     dieAfterTimeout exitCode = do
         let Timebox (Seconds s) = input ^. #workerTimeout
         threadDelay $ 1_000_000 * fromIntegral s        
         atomically $ writeTVar exitCode (Just exitTimeout)        
+
+    -- Exit if the worker consumed too much CPU time
+    dieOutOfCpuTime cpuLimit exitCode = go 
+      where 
+        go = do 
+            cpuTime <- getCpuTime
+            if cpuTime > cpuLimit 
+                then 
+                    atomically $ writeTVar exitCode (Just exitOutOfCpuTime)
+                else 
+                    threadDelay 1_000_000 >> go
 
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
@@ -216,9 +235,10 @@ rtsMemValue mb = show mb <> "m"
 defaultRts :: [String]
 defaultRts = [ "-I0" ]
 
-exitParentDied, exitTimeout, exitOutOfMemory, exitKillByTypedProcess :: ExitCode
+exitParentDied, exitTimeout, exitOutOfCpuTime, exitOutOfMemory, exitKillByTypedProcess :: ExitCode
 exitParentDied  = ExitFailure 11
 exitTimeout     = ExitFailure 12
+exitOutOfCpuTime  = ExitFailure 13
 exitOutOfMemory = ExitFailure 251
 exitKillByTypedProcess = ExitFailure (-2)
 
@@ -233,13 +253,14 @@ runWorker :: (TheBinary r, Show r) =>
             -> WorkerId
             -> WorkerParams                             
             -> Timebox
+            -> Maybe CPUTime
             -> [String] 
             -> ValidatorT IO r
-runWorker logger config workerId params timeout extraCli = do  
+runWorker logger config workerId params timeout cpuLimit extraCli = do  
     thisProcessId <- liftIO getProcessID
 
     let executableToRun = config ^. #programBinaryPath    
-    let workerStdin = serialise_ $ WorkerInput params config thisProcessId timeout
+    let workerStdin = serialise_ $ WorkerInput params config thisProcessId timeout cpuLimit
 
     let worker = 
             setStdin (byteStringInput $ LBS.fromStrict workerStdin) $             
@@ -281,6 +302,11 @@ runWorker logger config workerId params timeout extraCli = do
                     logError logger message
                     trace WorkerTimeoutTrace
                     appError $ InternalE $ WorkerTimeout message
+                | exit == exitOutOfCpuTime -> do                     
+                    let message = [i|Worker #{workerId} ran out of CPU time.|]
+                    logError logger message
+                    trace WorkerCpuOveruseTrace
+                    appError $ InternalE $ WorkerOutOfCpuTime message                    
                 | exit == exitOutOfMemory -> do                     
                     let message = [i|Worker #{workerId} ran out of memory.|]
                     logError logger message                    

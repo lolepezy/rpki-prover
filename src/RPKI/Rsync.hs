@@ -43,6 +43,7 @@ import           RPKI.Store.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
+import           RPKI.Time
 import qualified RPKI.Util                        as U
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Worker
@@ -107,6 +108,7 @@ runRsyncFetchWorker AppContext {..} fetchConfig worldVersion repository = do
                                 workerId 
                                 (RsyncFetchParams vp fetchConfig repository worldVersion)                        
                                 (Timebox $ fetchConfig ^. #rsyncTimeout)
+                                (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
                                 arguments                        
     let RsyncFetchResult z = payload        
     logWorkerDone logger workerId wr    

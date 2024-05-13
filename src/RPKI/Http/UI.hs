@@ -414,10 +414,10 @@ htmlMessage :: Text -> Html
 htmlMessage message = mapM_ (\z -> H.text z >> H.br) $ Text.lines message
 
 instance ToMarkup TimeMs where 
-    toMarkup (TimeMs s) = toMarkup $ show s <> "ms"
+    toMarkup (TimeMs ms) = toMarkup $ show ms <> "ms"
 
 instance ToMarkup HttpStatus where 
-    toMarkup (HttpStatus s) = toMarkup $ show s
+    toMarkup (HttpStatus st) = toMarkup $ show st
 
 instance ToMarkup FetchFreshness where 
     toMarkup UpToDate       = toMarkup ("Up-to-date" :: Text)

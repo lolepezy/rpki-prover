@@ -440,6 +440,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         workerId 
                         (ValidationParams worldVersion tals)                        
                         (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
+                        Nothing
                         arguments                                        
         pure (r, workerId)
 
@@ -460,6 +461,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         workerId 
                         (CacheCleanupParams worldVersion)
                         (Timebox 300)
+                        Nothing
                         arguments                                                                    
         pure (r, workerId)                            
 
@@ -586,11 +588,12 @@ runAsyncFetches appContext@AppContext {..} worldVersion = do
                 in catMaybes $ map (filterPPAccess config) $ 
                    catMaybes $ map toPpa $ toList $ pps ^. #usedForAsync
 
-        unless (null problematicPpas) $ do                         
+        unless (null problematicPpas) $ do                                     
             let ppaToText (PublicationPointAccess ppas) = 
                     Text.intercalate " -> " $ map (fmtGen . getRpkiURL) $ NE.toList ppas
             let reposText = Text.intercalate ", " $ map ppaToText problematicPpas
-            logInfo logger [i|Asynchronous fetch, version #{worldVersion}, repositories: #{reposText}|]
+            let totalRepoCount = repositoryCount pps 
+            logInfo logger [i|Asynchronous fetch, version #{worldVersion}, #{length problematicPpas} out of #{totalRepoCount} repositories: #{reposText}|]
 
         void $ forConcurrently (sortPpas asyncRepos problematicPpas) $ \ppAccess -> do                         
             let url = getRpkiURL $ NE.head $ unPublicationPointAccess ppAccess

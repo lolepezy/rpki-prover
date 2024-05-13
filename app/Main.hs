@@ -212,8 +212,11 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     -- Set capabilities to the values from the CLI or to all available CPUs,
     -- (disregard the HT issue for now it needs more testing).
-    liftIO $ setCpuCount cpuCount'
-    let parallelism = makeParallelism cpuCount'
+    liftIO $ setCpuCount cpuCount'    
+    let parallelism = 
+            case fetcherCount of 
+                Nothing -> makeParallelism cpuCount'
+                Just fc -> makeParallelismF cpuCount' fc
 
     let rtrConfig = if withRtr
             then Just $ defaultRtrConfig
@@ -595,6 +598,9 @@ data CLIOptions wrapped = CLIOptions {
         ("CPU number available to the program (default is 2). Note that higher CPU counts result in bigger " +++ 
         "memory allocations. It is also recommended to set real CPU core number rather than the (hyper-)thread " +++ 
         "number, since using the latter does not give much benefit and actually may cause performance degradation."),
+
+    fetcherCount :: wrapped ::: Maybe Natural <?>
+        ("Maximal number of concurrent fetchers (default is --cpu-count * 3)."),
 
     resetCache :: wrapped ::: Bool <?>
         "Reset the LMDB cache i.e. remove ~/.rpki/cache/*.mdb files.",

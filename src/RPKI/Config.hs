@@ -41,7 +41,8 @@ data FetchConfig = FetchConfig {
         rsyncSlowThreshold :: Seconds,
         rrdpTimeout        :: Seconds,
         rrdpSlowThreshold  :: Seconds,
-        fetchLaunchWaitDuration :: Seconds
+        fetchLaunchWaitDuration :: Seconds,
+        cpuLimit           :: Seconds
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -78,6 +79,7 @@ data RsyncConf = RsyncConf {
         rsyncRoot         :: FilePath,
         rsyncTimeout      :: Seconds,
         asyncRsyncTimeout :: Seconds,
+        cpuLimit          :: Seconds,
         enabled           :: Bool,
         rsyncPrefetchUrls :: [RsyncURL]
     } 
@@ -89,6 +91,7 @@ data RrdpConf = RrdpConf {
         maxSize          :: Size,
         rrdpTimeout      :: Seconds,
         asyncRrdpTimeout :: Seconds,
+        cpuLimit         :: Seconds,
         enabled          :: Bool
     }
     deriving stock (Eq, Ord, Show, Generic)
@@ -199,6 +202,9 @@ setCpuCount = setNumCapabilities . fromIntegral
 makeParallelism :: Natural -> Parallelism
 makeParallelism cpus = Parallelism cpus (2 * cpus) (3 * cpus)
 
+makeParallelismF :: Natural -> Natural -> Parallelism
+makeParallelismF cpus fetcherCount = Parallelism cpus (2 * cpus) fetcherCount
+
 defaultConfig :: Config
 defaultConfig = Config {    
     programBinaryPath = "rpki-prover",
@@ -213,6 +219,7 @@ defaultConfig = Config {
         rsyncRoot    = "",
         rsyncTimeout = 2 * 60,
         asyncRsyncTimeout = 15 * 60,
+        cpuLimit = 30 * 60,    
         enabled = True,
         rsyncPrefetchUrls = []
     },
@@ -221,6 +228,7 @@ defaultConfig = Config {
         maxSize = Size $ 1024 * 1024 * 1024,
         rrdpTimeout = 2 * 60,
         asyncRrdpTimeout = 10 * 60,
+        cpuLimit = 30 * 60,
         enabled = True
     },
     validationConfig = ValidationConfig {

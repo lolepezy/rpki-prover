@@ -142,12 +142,12 @@ instance Store V4.IpNetMask
 instance Store V6.IpNetMask
 
 
-deriving instance NFData (V4.IpBlock Canonical) 
-deriving instance NFData V4.IpAddress 
-deriving instance NFData V4.IpNetMask
-deriving instance NFData (V6.IpBlock Canonical) 
-deriving instance NFData V6.IpAddress 
-deriving instance NFData V6.IpNetMask
+deriving anyclass instance NFData (V4.IpBlock Canonical) 
+deriving anyclass instance NFData V4.IpAddress 
+deriving anyclass instance NFData V4.IpNetMask
+deriving anyclass instance NFData (V6.IpBlock Canonical) 
+deriving anyclass instance NFData V6.IpAddress 
+deriving anyclass instance NFData V6.IpNetMask
 
 instance Show PrefixesAndAsns where
     show (PrefixesAndAsns v4 v6 asn) = 

@@ -629,20 +629,26 @@ markForAsyncFetch RepositoryProcessing {..} repos = liftIO $ atomically $
 
 syncFetchConfig :: Config -> FetchConfig
 syncFetchConfig config = let 
-        rsyncTimeout = config ^. typed @RsyncConf . #rsyncTimeout
-        rrdpTimeout  = config ^. typed @RrdpConf . #rrdpTimeout
+        rsyncConfig = config ^. typed @RsyncConf
+        rrdpConfig = config ^. typed @RrdpConf
+        rsyncTimeout = rsyncConfig ^. #rsyncTimeout
+        rrdpTimeout  = rrdpConfig ^. #rrdpTimeout
         rsyncSlowThreshold = slowThreshold rsyncTimeout
         rrdpSlowThreshold = slowThreshold rrdpTimeout
         fetchLaunchWaitDuration = Seconds 30 
+        cpuLimit = max (rrdpConfig ^. #cpuLimit) (rsyncConfig ^. #cpuLimit)
     in FetchConfig {..}
 
 asyncFetchConfig :: Config -> FetchConfig
 asyncFetchConfig config = let 
-        rsyncTimeout = config ^. typed @RsyncConf . #asyncRsyncTimeout
-        rrdpTimeout  = config ^. typed @RrdpConf . #asyncRrdpTimeout
+        rsyncConfig = config ^. typed @RsyncConf
+        rrdpConfig = config ^. typed @RrdpConf
+        rsyncTimeout = rsyncConfig ^. #asyncRsyncTimeout
+        rrdpTimeout  = rrdpConfig ^. #asyncRrdpTimeout
         rsyncSlowThreshold = slowThreshold rsyncTimeout
         rrdpSlowThreshold = slowThreshold rrdpTimeout
-        fetchLaunchWaitDuration = Seconds 60 
+        fetchLaunchWaitDuration = Seconds 60
+        cpuLimit = max (rrdpConfig ^. #cpuLimit) (rsyncConfig ^. #cpuLimit)
     in FetchConfig {..}
 
 slowThreshold :: Seconds -> Seconds

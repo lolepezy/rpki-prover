@@ -357,9 +357,10 @@ toSlurmMessage = \case
 
 toInternalErrorMessage :: InternalError -> Text
 toInternalErrorMessage = \case 
-    InternalError t     -> t
-    WorkerTimeout t     -> t
-    WorkerOutOfMemory t -> t
+    InternalError t      -> t
+    WorkerTimeout t      -> t
+    WorkerOutOfCpuTime t -> t
+    WorkerOutOfMemory t  -> t
 
 fmtOID :: OID -> Text
 fmtOID oid = Text.intercalate "." $ map (Text.pack . show) oid
