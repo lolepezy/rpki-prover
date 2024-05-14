@@ -1,38 +1,13 @@
 {-# OPTIONS_GHC -fno-warn-orphans -Wno-type-defaults #-}
-{-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE DeriveAnyClass      #-}
-{-# LANGUAGE TemplateHaskell     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module RPKI.Orphans.NFData where
 
-import qualified Data.ByteString as BS
-
 import Control.DeepSeq
 
-import Data.ByteArray (convert)
-
 import Data.ASN1.Types
-
-import Data.These
-
 import Data.X509 as X509
-
-import Data.Hourglass
 import Data.ASN1.BitArray
-
-import Data.Tuple.Strict
-import Data.Set.NonEmpty
-import Data.Map.Monoidal.Strict
-
-import Crypto.Error
-import Crypto.PubKey.RSA.Types (PublicKey(..))
-import Crypto.PubKey.DSA (PublicKey(..), Params(..))
-
-import qualified Crypto.PubKey.Curve25519 as C25519
-import qualified Crypto.PubKey.Ed25519 as E25519
-import qualified Crypto.PubKey.Curve448 as C448
-import qualified Crypto.PubKey.Ed448 as E448
 
 import Crypto.PubKey.ECC.Types
 
