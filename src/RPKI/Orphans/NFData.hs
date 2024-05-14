@@ -1,5 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans -Wno-type-defaults #-}
-{-# LANGUAGE DeriveAnyClass      #-}
+{-# LANGUAGE DeriveAnyClass     #-}
+{-# LANGUAGE DerivingStrategies #-}
 
 module RPKI.Orphans.NFData where
 
@@ -13,30 +14,30 @@ import Crypto.PubKey.ECC.Types
 
 import RPKI.Orphans.Generics
 
-deriving instance NFData HashALG
+deriving anyclass instance NFData HashALG
 
-deriving instance NFData BitArray
-deriving instance NFData ASN1StringEncoding
-deriving instance NFData ASN1CharacterString
-deriving instance NFData ASN1TimeType
-deriving instance NFData ASN1Class
-deriving instance NFData ASN1ConstructionType
-deriving instance NFData SerializedPoint
-deriving instance NFData Crypto.PubKey.ECC.Types.CurveName
-deriving instance NFData ASN1
-deriving instance NFData DistinguishedName
+deriving anyclass instance NFData BitArray
+deriving anyclass instance NFData ASN1StringEncoding
+deriving anyclass instance NFData ASN1CharacterString
+deriving anyclass instance NFData ASN1TimeType
+deriving anyclass instance NFData ASN1Class
+deriving anyclass instance NFData ASN1ConstructionType
+deriving anyclass instance NFData SerializedPoint
+deriving anyclass instance NFData Crypto.PubKey.ECC.Types.CurveName
+deriving anyclass instance NFData ASN1
+deriving anyclass instance NFData DistinguishedName
 
-deriving instance NFData PubKeyEC
-deriving instance NFData PubKeyALG
-deriving instance NFData PubKey
-deriving instance NFData ExtensionRaw
-deriving instance NFData Extensions
-deriving instance NFData SignatureALG
+deriving anyclass instance NFData PubKeyEC
+deriving anyclass instance NFData PubKeyALG
+deriving anyclass instance NFData PubKey
+deriving anyclass instance NFData ExtensionRaw
+deriving anyclass instance NFData Extensions
+deriving anyclass instance NFData SignatureALG
 
-deriving instance NFData X509.Certificate
-deriving instance NFData X509.RevokedCertificate
-deriving instance NFData X509.CRL
+deriving anyclass instance NFData X509.Certificate
+deriving anyclass instance NFData X509.RevokedCertificate
+deriving anyclass instance NFData X509.CRL
 
-deriving instance NFData a => NFData (X509.Signed a)
-deriving instance NFData a => NFData (X509.SignedExact a)
+deriving anyclass instance NFData a => NFData (X509.Signed a)
+deriving anyclass instance NFData a => NFData (X509.SignedExact a)
 

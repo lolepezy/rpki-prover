@@ -265,9 +265,7 @@ extractCrlDistributionPoint crlDP = do
 
 certificatePoliciesToText :: BS.ByteString -> Text.Text
 certificatePoliciesToText bs =
-    either asText asText $ decodeASN1' BER bs
-  where
-    asText = Text.pack . show
+    either fmtGen fmtGen $ decodeASN1' BER bs
 
 
 toMaybe :: Either b a -> Maybe a

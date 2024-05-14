@@ -41,6 +41,7 @@ import           RPKI.Domain
 import           RPKI.RRDP.Types
 import           RPKI.Resources.Types
 import           RPKI.Time
+import           RPKI.Util (fmtGen)
 import           RPKI.Store.Base.Serialisation
 
 newtype ParseError s = ParseError s
@@ -502,11 +503,9 @@ focusToText = \case
     RepositoryFocus (getURL -> URI u) -> u
     LinkFocus (URI u) -> u
     TAFocus txt       -> txt
-    ObjectFocus key   -> fmt key
-    HashFocus hash_   -> fmt hash_    
+    ObjectFocus key   -> fmtGen key
+    HashFocus hash_   -> fmtGen hash_    
     TextFocus txt     -> txt    
-  where
-    fmt = Text.pack . show 
 
 scopeList :: Scope a -> [Focus]
 scopeList (Scope s) = NonEmpty.toList s
