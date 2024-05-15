@@ -32,7 +32,6 @@ import           GHC.Generics
 
 import           RPKI.Domain
 import           RPKI.Resources.Types
-import           RPKI.Orphans.Json
 import           RPKI.Orphans.Swagger
 import           RPKI.Store.Base.Serialisation
 

@@ -55,6 +55,7 @@ toRsyncMessage = \case
     FileReadError e                -> [i|Can't read local file created by rsync client #{e}.|]
     RsyncRunningError e            -> [i|Error running rsync client #{e}.|]
     RsyncDownloadTimeout t         -> [i|Could not update repository in #{t}.|]
+    RsyncFailedToParseObject url   -> [i|Failed to parse object #{url}.|]             
     RsyncUnsupportedObjectType url -> [i|Unsupported object type #{url}.|]             
     UnknownRsyncProblem e          -> [i|Unknown problem with rsync #{e}.|]
 

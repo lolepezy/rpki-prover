@@ -178,11 +178,12 @@ data RrdpError = BrokenXml Text |
     deriving anyclass (TheBinary, NFData)
 
 data RsyncError = RsyncProcessError Int Text |
-                    FileReadError Text |
-                    RsyncRunningError Text |         
-                    RsyncDownloadTimeout Seconds | 
-                    RsyncUnsupportedObjectType Text | 
-                    UnknownRsyncProblem Text
+                  FileReadError Text |
+                  RsyncRunningError Text |         
+                  RsyncDownloadTimeout Seconds | 
+                  RsyncFailedToParseObject Text | 
+                  RsyncUnsupportedObjectType Text | 
+                  UnknownRsyncProblem Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 

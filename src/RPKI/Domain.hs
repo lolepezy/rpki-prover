@@ -1,10 +1,7 @@
 {-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE AllowAmbiguousTypes        #-}
-{-# LANGUAGE ConstraintKinds            #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE UndecidableInstances       #-}
@@ -12,7 +9,7 @@
 
 module RPKI.Domain where
 
-import           Control.DeepSeq
+import           Control.DeepSeq          (NFData)
 import           Data.Int                 (Int64)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS

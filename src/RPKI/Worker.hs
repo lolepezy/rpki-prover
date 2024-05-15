@@ -1,16 +1,14 @@
 {-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE DeriveAnyClass       #-}
-{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE OverloadedLabels     #-}
 {-# LANGUAGE QuasiQuotes          #-}
 {-# LANGUAGE RecordWildCards      #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE OverloadedStrings    #-}
 
 module RPKI.Worker where
 
 import           Control.Exception.Lifted
-import           Control.Monad (void)
+import           Control.Monad (void, when)
 import           Control.Monad.IO.Class
 import           Control.Concurrent
 import           Control.Concurrent.Async
@@ -152,54 +150,54 @@ executeWork :: WorkerInput
             -> IO ()
 executeWork input actualWork = do 
     exitCode <- newTVarIO Nothing
+    let forceExit code = atomically $ writeTVar exitCode (Just code)
     void $ forkIO $ void $ race 
                 (do 
                     actualWork input writeWorkerOutput
-                    atomically $ writeTVar exitCode $ Just ExitSuccess) 
+                    `finally` 
+                        forceExit ExitSuccess) 
                 (race 
-                    (dieIfParentDies exitCode) 
-                    (dieOfTiming exitCode))
+                    (dieIfParentDies forceExit) 
+                    (dieOfTiming forceExit))
 
-    -- this complication is to guarantee that the main thread exits
-    -- the process as soon as there's exit code defined.
+    -- this complication is to guarantee that it is the main thread 
+    -- that exits the process as soon as there's exit code defined.
     exitWith =<< atomically (maybe retry pure =<< readTVar exitCode)
     
-  where    
+  where        
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
     -- there's no point continuing.
-    dieIfParentDies exitCode = go 
-      where
-        go = do 
+    dieIfParentDies exit' = 
+        loop 500_000 $ do 
             parentId <- getParentProcessID                    
-            if parentId /= input ^. #initialParentId
-                then atomically $ writeTVar exitCode (Just exitParentDied)
-                else threadDelay 500_000 >> go
+            when (parentId /= input ^. #initialParentId) $ 
+                exit' exitParentDied            
 
-    dieOfTiming exitCode = 
+    -- exit either because the time is up or too much CPU is spent
+    dieOfTiming exit' = 
         case input ^. #cpuLimit of
-            Nothing       -> dieAfterTimeout exitCode
+            Nothing       -> dieAfterTimeout exit'
             Just cpuLimit -> 
                 void $ race 
-                    (dieAfterTimeout exitCode)
-                    (dieOutOfCpuTime cpuLimit exitCode)
+                    (dieAfterTimeout exit')
+                    (dieOutOfCpuTime cpuLimit exit')
 
     -- Time bomb. Wait for the certain timeout and then exit.
-    dieAfterTimeout exitCode = do
+    dieAfterTimeout exit' = do
         let Timebox (Seconds s) = input ^. #workerTimeout
         threadDelay $ 1_000_000 * fromIntegral s        
-        atomically $ writeTVar exitCode (Just exitTimeout)        
+        exit' exitTimeout
 
     -- Exit if the worker consumed too much CPU time
-    dieOutOfCpuTime cpuLimit exitCode = go 
-      where 
-        go = do 
+    dieOutOfCpuTime cpuLimit exit' = 
+        loop 1_000_000 $ do 
             cpuTime <- getCpuTime
-            if cpuTime > cpuLimit 
-                then 
-                    atomically $ writeTVar exitCode (Just exitOutOfCpuTime)
-                else 
-                    threadDelay 1_000_000 >> go
+            when (cpuTime > cpuLimit) $ exit' exitOutOfCpuTime
+
+    loop ms f = 
+        f >> threadDelay ms >> loop ms f
+
 
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
