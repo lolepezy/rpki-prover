@@ -324,13 +324,13 @@ data ManifestChildDto = ManifestChildDto {
     deriving stock (Eq, Show, Generic)
 
 data ManifestShortcutDto = ManifestShortcutDto {
-        -- key            :: ObjectKey,
-        -- nonCrlEntries  :: Map.Map ObjectKey ManifestChildDto,
-        -- notValidBefore :: Instant,
-        -- notValidAfter  :: Instant,        
-        -- serial         :: Serial,
-        -- manifestNumber :: Serial,
-        -- crlShortcut    :: CrlShortcut
+        key            :: ObjectKey,
+        nonCrlChildren  :: Map.Map ObjectKey ManifestChildDto,
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant,        
+        serial         :: Serial,
+        manifestNumber :: Serial,
+        crlShortcut    :: CrlShortcut
     }
     deriving stock (Eq, Show, Generic)
 

@@ -33,6 +33,7 @@ import           RPKI.Reporting
 import           RPKI.Http.Types
 import           RPKI.Resources.Types
 import           RPKI.RTR.Types
+import           RPKI.Validation.Types
 import           RPKI.Util
 
 {-
@@ -150,19 +151,10 @@ vrpSetToCSV vrpDtos =
         str (show maxLength) <> ch '\n'
  
 
-rawCSV :: BB.Builder -> BB.Builder -> RawCSV
-rawCSV header body = RawCSV $ BB.toLazyByteString $ header <> body
-
-
-prefixStr :: IpPrefix -> String
-prefixStr (Ipv4P (Ipv4Prefix p)) = show p
-prefixStr (Ipv6P (Ipv6Prefix p)) = show p
-
-str :: String -> BB.Builder
-str = BB.stringUtf8
-
-ch :: Char -> BB.Builder
-ch  = BB.charUtf8
+toMftShortcutDto :: MftShortcut -> ManifestShortcutDto
+toMftShortcutDto MftShortcut {..} = let 
+        nonCrlChildren = mempty
+    in ManifestShortcutDto {..}
 
 objectToDto :: RpkiObject -> ObjectDto
 objectToDto = \case
@@ -329,3 +321,17 @@ objectToDto = \case
                                 | otherwise -> unwrapAsns $ IS.toList r
             bgpSecSki = getSKI bgpCert
         in bgpSecToDto BGPSecPayload {..}
+
+
+rawCSV :: BB.Builder -> BB.Builder -> RawCSV
+rawCSV header body = RawCSV $ BB.toLazyByteString $ header <> body
+
+prefixStr :: IpPrefix -> String
+prefixStr (Ipv4P (Ipv4Prefix p)) = show p
+prefixStr (Ipv6P (Ipv6Prefix p)) = show p
+
+str :: String -> BB.Builder
+str = BB.stringUtf8
+
+ch :: Char -> BB.Builder
+ch  = BB.charUtf8

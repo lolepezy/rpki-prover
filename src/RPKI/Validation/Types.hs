@@ -12,8 +12,6 @@
 
 module RPKI.Validation.Types where
 
-import           Control.DeepSeq
-
 import           Data.Aeson.Types
 
 import qualified Data.Map.Strict             as Map
@@ -24,6 +22,7 @@ import           GHC.Generics
 import           Data.Swagger hiding (url)
 
 import           RPKI.Orphans.Json
+import           RPKI.Orphans.Swagger
 import           RPKI.Time
 import           RPKI.Domain
 import           RPKI.Repository
@@ -168,13 +167,13 @@ getMftChildSerial = \case
     _                    -> Nothing
               
 
--- instance ToJSON CrlShortcut
+instance ToJSON CrlShortcut
 -- instance ToJSON GbrShortcut
 -- instance ToJSON BgpSecShortcut
 -- instance ToJSON AspaShortcut
 -- instance ToJSON RoaShortcut
 
--- instance ToSchema CrlShortcut
+instance ToSchema CrlShortcut
 -- instance ToSchema GbrShortcut
 -- instance ToSchema BgpSecShortcut
 -- instance ToSchema AspaShortcut

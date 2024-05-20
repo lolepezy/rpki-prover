@@ -460,16 +460,16 @@ getOriginal :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s
                 -> Maybe Text           
                 -> m ObjectOriginal
-getOriginal AppContext {..} hash =
-    case hash of
+getOriginal AppContext {..} hashText =
+    case hashText of
         Nothing ->
             throwError $ err400 { errBody = "'hash' parameter must be provided." }
                         
-        Just hash' ->
-            case parseHash hash' of
+        Just hashText' ->
+            case parseHash hashText' of
                 Left _  -> throwError err400
-                Right h -> do
-                    z <- roTxT database $ \tx db -> getOriginalBlobByHash tx db h
+                Right hash -> do
+                    z <- roTxT database $ \tx db -> getOriginalBlobByHash tx db hash
                     case z of 
                         Nothing -> throwError err404
                         Just b  -> pure b
@@ -488,10 +488,9 @@ getManifests AppContext {..} akiText =
             case parseAki akiText' of 
                 Left _    -> throwError err400
                 Right aki -> do
-                    -- roTxT database $ \tx db -> do 
-                        -- shortcutMft <- getMftShorcut tx db aki    
+                    roTxT database $ \tx db -> do 
+                        shortcutMft <- fmap toMftShortcutDto <$> getMftShorcut tx db aki                        
                         let manifests = []
-                        let shortcutMft = Nothing
                         pure ManifestsDto {..}
                 
             
