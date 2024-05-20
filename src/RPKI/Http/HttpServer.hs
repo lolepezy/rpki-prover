@@ -97,6 +97,7 @@ httpServer appContext = genericServe HttpApi {
         jobs = getJobs appContext,
         objectView = getRpkiObject appContext,
         originals  = getOriginal appContext,
+        manifests  = getManifests appContext,
         system = liftIO $ getSystem appContext,
         rtr = getRtr appContext,
         versions = getVersions appContext
@@ -399,7 +400,7 @@ getJobs AppContext {..} = liftIO $ do
     jobs <- roTx db $ \tx -> allJobs tx db
     pure JobsDto {..}
 
-getPPs :: (MonadIO m, Storage s) => AppContext s -> m PublicationPointDto
+getPPs :: (MonadIO m, Storage s) => AppContext s -> m PublicationPointsDto
 getPPs AppContext {..} = liftIO $ do
     db <- readTVarIO database
     pps <- roTx db $ \tx -> getPublicationPoints tx db
@@ -462,7 +463,7 @@ getOriginal :: (MonadIO m, Storage s, MonadError ServerError m)
 getOriginal AppContext {..} hash =
     case hash of
         Nothing ->
-            throwError $ err400 { errBody = "or 'hash' must be provided." }
+            throwError $ err400 { errBody = "'hash' parameter must be provided." }
                         
         Just hash' ->
             case parseHash hash' of
@@ -474,55 +475,26 @@ getOriginal AppContext {..} hash =
                         Just b  -> pure b
 
 
-{- 
-getOriginal :: (MonadIO m, Storage s, MonadError ServerError m)
+getManifests :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s
                 -> Maybe Text           
-                -> m ObjectOriginal
-getOriginal AppContext {..} hash =
-    case (uri, hash) of
-        (Nothing,  Nothing) ->
-            throwError $ err400 { errBody = "'uri' or 'hash' must be provided." }
-
-        (Just u, Nothing) ->
-            case parseRpkiURL u of
-                Left _ ->
-                    throwError $ err400 { errBody = "'uri' is not a valid object URL." }
-
-                Right rpkiUrl ->                     
-                    roTxT database $ \tx db -> 
-                        getKeysByUri tx db rpkiUrl >>= \case     
-                            []    -> pure [] 
-                            [key] -> (locatedDto <$>) <$> getObjectByKey tx db key
-
-                        getByUri tx db rpkiUrl >>= \case     
-                            [] -> do                                
-                                -- try TA certificates
-                                tas <- getTAs tx db                                 
-                                pure [ locatedDto (Located locations (CerRO taCert)) | 
-                                        (_, StorableTA {..}) <- tas, 
-                                        let locations = talCertLocations tal, 
-                                        oneOfLocations locations rpkiUrl ]                                
-                                
-                            os -> pure $ map locatedDto os
+                -> m ManifestsDto
+getManifests AppContext {..} akiText = 
+    case akiText of
+        Nothing ->
+            throwError $ err400 { errBody = "'aki' parameter must be provided." }
                         
-        (Nothing, Just hash') ->
-            case parseHash hash' of
-                Left _  -> throwError err400
-                Right h -> do
-                    z <- roTxT database $ \tx db -> getOriginalBlobByHash tx db h
-                    case z of 
-                        Nothing -> throwError err404
-                        Just b  -> pure b
-
-        (Just _, Just _) ->
-            throwError $ err400 { errBody =
-                "Only 'uri' or 'hash' must be provided, not both." }                        
-  where
-    locatedDto located = RObject $ located & #payload %~ objectToDto  
--}
-
-
+        Just akiText' ->
+            case parseAki akiText' of 
+                Left _    -> throwError err400
+                Right aki -> do
+                    -- roTxT database $ \tx db -> do 
+                        -- shortcutMft <- getMftShorcut tx db aki    
+                        let manifests = []
+                        let shortcutMft = Nothing
+                        pure ManifestsDto {..}
+                
+            
 
 getSystem :: Storage s =>  AppContext s -> IO SystemDto
 getSystem AppContext {..} = do

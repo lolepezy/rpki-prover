@@ -49,6 +49,8 @@ import           RPKI.Config
 
 import           RPKI.Logging
 import           RPKI.Reporting
+import           RPKI.Repository
+import           RPKI.RRDP.Types
 import           RPKI.Metrics.Metrics
 import           RPKI.Metrics.System
 import qualified RPKI.Resources.IntervalSet as IS
@@ -167,6 +169,9 @@ instance ToJSON Count where
 
 instance ToJSON ObjectKey where
     toJSON (ObjectKey (ArtificialKey k)) = toJSON k
+
+instance ToJSONKey ObjectKey where
+    toJSONKey = toJSONKeyText $ \(ObjectKey (ArtificialKey k)) -> U.fmtGen k
 
 instance ToJSON Focus
 instance ToJSONKey (Scope 'Metric)
@@ -336,11 +341,6 @@ $(deriveToJSON defaultOptions ''ResourceCertificate)
 instance ToJSON a => ToJSON (TypedCert a t)
 
 $(deriveToJSON defaultOptions ''EECerObject)
-
--- $(deriveToJSON defaultOptions ''CaCerObject)
--- $(deriveToJSON defaultOptions ''BgpCerObject)
--- $(deriveToJSON defaultOptions ''CrlObject)
--- $(deriveToJSON defaultOptions ''RpkiObject)
 
 instance ToJSON a => ToJSON (X509.SignedExact a)    
 instance ToJSON a => ToJSON (X509.Signed a) 

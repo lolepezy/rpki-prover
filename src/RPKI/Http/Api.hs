@@ -86,7 +86,7 @@ data API api = API {
         jobs :: api      :- "jobs" :> Get '[JSON] JobsDto,
         system :: api    :- "system" :> Get '[JSON] SystemDto,
 
-        repositories :: api :- "repositories" :> Get '[JSON] PublicationPointDto,        
+        repositories :: api :- "repositories" :> Get '[JSON] PublicationPointsDto,        
 
         objectView :: api :- "object" :> QueryParam "uri" Text 
                                       :> QueryParam "hash" Text 
@@ -95,6 +95,9 @@ data API api = API {
 
         originals :: api :- "original" :> QueryParam "hash" Text 
                                        :> Get '[ObjectBlob] ObjectOriginal,
+
+        manifests :: api :- "manifests" :> QueryParam "aki" Text 
+                                        :> Get '[JSON] ManifestsDto,
 
         rtr :: api :- "rtr" :> Get '[JSON] RtrDto,
 
