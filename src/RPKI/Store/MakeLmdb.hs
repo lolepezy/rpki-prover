@@ -96,7 +96,6 @@ createDatabase env logger checkAction = do
             mftByAKI         <- createMultiMap
             objectMetas      <- createMap        
             hashToKey        <- createMap
-            lastValidMfts    <- createMap
             uriToUriKey      <- createMap
             uriKeyToUri      <- createMap
             urlKeyToObjectKey  <- createMultiMap

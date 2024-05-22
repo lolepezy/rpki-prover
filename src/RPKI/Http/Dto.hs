@@ -152,9 +152,10 @@ vrpSetToCSV vrpDtos =
  
 
 toMftShortcutDto :: MftShortcut -> ManifestShortcutDto
-toMftShortcutDto MftShortcut {..} = let 
-        nonCrlChildren = mempty
-    in ManifestShortcutDto {..}
+toMftShortcutDto MftShortcut {..} = ManifestShortcutDto {..}
+  where
+    nonCrlChildren = Map.map (\MftEntry {..} -> ManifestChildDto {..}) nonCrlEntries
+    
 
 objectToDto :: RpkiObject -> ObjectDto
 objectToDto = \case
@@ -194,15 +195,6 @@ objectToDto = \case
         in objectDto c CMSObjectDto {..}
                 & #eeCertificate ?~ certDto c
                 & #ski ?~ getSKI c
-
-    manifestDto m = let
-            mft@Manifest {..} = getCMSContent $ m ^. #cmsPayload
-            entries = map (\(MftPair f h) -> (f, h)) mftEntries
-        in
-            ManifestDto {
-                fileHashAlg = Text.pack $ show $ mft ^. #fileHashAlg,
-                ..
-            }
 
     roaDto r = let
                 vrps = getCMSContent $ r ^. #cmsPayload
@@ -322,6 +314,16 @@ objectToDto = \case
             bgpSecSki = getSKI bgpCert
         in bgpSecToDto BGPSecPayload {..}
 
+
+manifestDto :: MftObject -> ManifestDto
+manifestDto m = let
+        mft@Manifest {..} = getCMSContent $ m ^. #cmsPayload
+        entries = map (\(MftPair f h) -> (f, h)) mftEntries
+    in
+        ManifestDto {
+            fileHashAlg = Text.pack $ show $ mft ^. #fileHashAlg,
+            ..
+        }
 
 rawCSV :: BB.Builder -> BB.Builder -> RawCSV
 rawCSV header body = RawCSV $ BB.toLazyByteString $ header <> body

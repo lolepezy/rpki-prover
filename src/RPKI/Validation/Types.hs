@@ -19,6 +19,7 @@ import qualified Data.Text                   as Text
 import           Data.Tuple.Strict
 import           GHC.Generics
 
+import           Data.Proxy
 import           Data.Swagger hiding (url)
 
 import           RPKI.Orphans.Json
@@ -168,13 +169,17 @@ getMftChildSerial = \case
               
 
 instance ToJSON CrlShortcut
--- instance ToJSON GbrShortcut
--- instance ToJSON BgpSecShortcut
--- instance ToJSON AspaShortcut
--- instance ToJSON RoaShortcut
+instance ToJSON GbrShortcut
+instance ToJSON BgpSecShortcut
+instance ToJSON AspaShortcut
+instance ToJSON RoaShortcut
+instance ToJSON SplShortcut
 
 instance ToSchema CrlShortcut
--- instance ToSchema GbrShortcut
--- instance ToSchema BgpSecShortcut
--- instance ToSchema AspaShortcut
--- instance ToSchema RoaShortcut
+instance ToSchema GbrShortcut
+instance ToSchema BgpSecShortcut
+instance ToSchema AspaShortcut
+instance ToSchema RoaShortcut
+instance ToSchema MftChild where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text.Text)
+

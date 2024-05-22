@@ -489,10 +489,10 @@ getManifests AppContext {..} akiText =
                 Left _    -> throwError err400
                 Right aki -> do
                     roTxT database $ \tx db -> do 
-                        shortcutMft <- fmap toMftShortcutDto <$> getMftShorcut tx db aki                        
-                        let manifests = []
+                        shortcutMft     <- fmap toMftShortcutDto <$> getMftShorcut tx db aki                        
+                        manifestObjects <- findAllMftsByAKI tx db aki
+                        let manifests = fmap (\(Keyed (Located _ m) _) -> manifestDto m) manifestObjects
                         pure ManifestsDto {..}
-                
             
 
 getSystem :: Storage s =>  AppContext s -> IO SystemDto
