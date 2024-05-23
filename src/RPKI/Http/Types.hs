@@ -313,11 +313,6 @@ data TalDto = TalDto {
     deriving stock (Eq, Show, Generic)
 
 
-data CrlShortcutDto = CrlShortcutDto {
-    
-    }
-    deriving stock (Eq, Show, Generic)
-
 data ManifestChildDto = ManifestChildDto {
         fileName :: Text,
         child    :: MftChild
@@ -407,7 +402,6 @@ instance ToJSON BgpCertDto
 instance ToJSON RtrDto
 instance ToJSON TalDto
 instance ToJSON ManifestShortcutDto
-instance ToJSON CrlShortcutDto
 instance ToJSON ManifestsDto
 
 instance ToJSON ManifestChildDto where 
@@ -415,15 +409,16 @@ instance ToJSON ManifestChildDto where
         case child of 
             CaChild caShortcut serial -> 
                 object ["type" .= ("ca-shortcut" :: Text), "serial" .= toJSON serial, "fileName" .= toJSON fileName ]
-            RoaChild shortcut serial  -> toJsonObject "roa-shortcut" serial fileName shortcut 
-            SplChild shortcut serial  -> toJsonObject "spl-shortcut" serial fileName shortcut
-            GbrChild shortcut serial  -> toJsonObject "gbr-shortcut" serial fileName shortcut                
-            AspaChild shortcut serial -> toJsonObject "aspa-shortcut" serial fileName shortcut                
-            BgpSecChild shortcut serial -> toJsonObject "bgpsec-shortcut" serial fileName shortcut            
+            RoaChild shortcut serial  -> toJsonObject "roa-shortcut" serial shortcut 
+            SplChild shortcut serial  -> toJsonObject "spl-shortcut" serial shortcut
+            GbrChild shortcut serial  -> toJsonObject "gbr-shortcut" serial shortcut                
+            AspaChild shortcut serial -> toJsonObject "aspa-shortcut" serial shortcut                
+            BgpSecChild shortcut serial -> toJsonObject "bgpsec-shortcut" serial shortcut            
             TroubledChild objectKey -> 
                 object ["type" .= ("troubled-shortcut" :: Text), "key" .= toJSON objectKey ]
       where
-        toJsonObject shortcutType serial fileName value = 
+        toJsonObject :: ToJSON a => Text -> Serial -> a -> Value
+        toJsonObject shortcutType serial value = 
             object [
                 "type" .= (shortcutType :: Text), 
                 "serial" .= toJSON serial, 
@@ -462,7 +457,6 @@ instance ToSchema RtrDto
 instance ToSchema TalDto
 instance ToSchema ManifestShortcutDto
 instance ToSchema ManifestChildDto
-instance ToSchema CrlShortcutDto
 instance ToSchema ManifestsDto
 instance ToSchema TAL
 instance ToSchema EncodedBase64 where
