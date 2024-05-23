@@ -319,6 +319,15 @@ data ManifestChildDto = ManifestChildDto {
     }
     deriving stock (Eq, Show, Generic)
 
+data CaShortcutDto = CaShortcutDto { 
+        key            :: ObjectKey,        
+        ski            :: SKI,
+        publicationPoints :: [Text],
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+
 data ManifestShortcutDto = ManifestShortcutDto {
         key            :: ObjectKey,
         nonCrlChildren :: Map.Map ObjectKey ManifestChildDto,
@@ -403,12 +412,17 @@ instance ToJSON RtrDto
 instance ToJSON TalDto
 instance ToJSON ManifestShortcutDto
 instance ToJSON ManifestsDto
+instance ToJSON CaShortcutDto
 
 instance ToJSON ManifestChildDto where 
     toJSON ManifestChildDto {..} = 
         case child of 
-            CaChild caShortcut serial -> 
-                object ["type" .= ("ca-shortcut" :: Text), "serial" .= toJSON serial, "fileName" .= toJSON fileName ]
+            CaChild CaShortcut {..} serial -> let 
+                    publicationPoints = map (toText . getRpkiURL) 
+                                        $ NonEmpty.toList 
+                                        $ unPublicationPointAccess ppas
+                in toJsonObject "ca-shortcut" serial (CaShortcutDto {..})
+                    
             RoaChild shortcut serial  -> toJsonObject "roa-shortcut" serial shortcut 
             SplChild shortcut serial  -> toJsonObject "spl-shortcut" serial shortcut
             GbrChild shortcut serial  -> toJsonObject "gbr-shortcut" serial shortcut                
