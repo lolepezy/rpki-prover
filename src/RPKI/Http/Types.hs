@@ -417,12 +417,7 @@ instance ToJSON CaShortcutDto
 instance ToJSON ManifestChildDto where 
     toJSON ManifestChildDto {..} = 
         case child of 
-            CaChild CaShortcut {..} serial -> let 
-                    publicationPoints = map (toText . getRpkiURL) 
-                                        $ NonEmpty.toList 
-                                        $ unPublicationPointAccess ppas
-                in toJsonObject "ca-shortcut" serial (CaShortcutDto {..})
-                    
+            CaChild shortcut serial   -> toJsonObject "ca-shortcut" serial (toDto shortcut)                    
             RoaChild shortcut serial  -> toJsonObject "roa-shortcut" serial shortcut 
             SplChild shortcut serial  -> toJsonObject "spl-shortcut" serial shortcut
             GbrChild shortcut serial  -> toJsonObject "gbr-shortcut" serial shortcut                
@@ -431,6 +426,12 @@ instance ToJSON ManifestChildDto where
             TroubledChild objectKey -> 
                 object ["type" .= ("troubled-shortcut" :: Text), "key" .= toJSON objectKey ]
       where
+        toDto CaShortcut {..} = let 
+            publicationPoints = map (toText . getRpkiURL) 
+                                $ NonEmpty.toList 
+                                $ unPublicationPointAccess ppas
+            in CaShortcutDto {..}
+
         toJsonObject :: ToJSON a => Text -> Serial -> a -> Value
         toJsonObject shortcutType serial value = 
             object [
