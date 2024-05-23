@@ -164,6 +164,51 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
                 "Metrics for the latest validation run (object counts, repository statuses, etc.)"),
 
             ("/repositories", mempty & get ?~ jsonOn200 "Statuses of the repositories"),
+
+            ("/object", mempty 
+                & get ?~ jsonOn200 
+                    [i|JSON-formatted array of objects with the given hash, url or key. 
+                       One (and only one) of the 'hash', 'url' or 'key' parameters must be provided.|]
+                & parameters .~ [ 
+                    Inline $ mempty
+                        & name .~ "hash"
+                        & description ?~ "Object hash in hex"
+                        & required ?~ False
+                        & schema .~ ParamOther (mempty & in_ .~ ParamQuery), 
+                    Inline $ mempty
+                        & name .~ "url"
+                        & description ?~ "Object url"
+                        & required ?~ False
+                        & schema .~ ParamOther (mempty & in_ .~ ParamQuery),
+                    Inline $ mempty
+                        & name .~ "key"
+                        & description ?~ "Object internal unique key (mainly for debugging purposes)"
+                        & required ?~ False
+                        & schema .~ ParamOther (mempty & in_ .~ ParamQuery)
+                ]            
+            ),        
+
+            ("/original", mempty 
+                & get ?~ jsonOn200 
+                            [i|Original ASN1 blob of the object (mainly for debugging purposes)
+                               Note: only the object that failed to parse are stored in their original form.|]
+                & parameters .~ [ 
+                    Inline $ mempty
+                        & name .~ "hash"
+                        & description ?~ "Object hash in hex"
+                        & required ?~ False
+                        & schema .~ ParamOther (mempty & in_ .~ ParamQuery) ]            
+            ),  
+
+            ("/manifests", mempty 
+                & get ?~ jsonOn200 "Returns all cached manifests and manifest shortcut for the given AKI"
+                & parameters .~ [ 
+                    Inline $ mempty
+                        & name .~ "aki"
+                        & description ?~ "AKI of the manifest in hex, i.e. SKI of the parent CA certificate"
+                        & required ?~ False
+                        & schema .~ ParamOther (mempty & in_ .~ ParamQuery) ]            
+            ),                            
         
             ("/slurm", mempty & get ?~ (jsonOn200 
                         "Returns SLURM (RFC 8416) that is set using --local-exceptions option"
