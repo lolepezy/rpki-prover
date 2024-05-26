@@ -26,7 +26,6 @@ import           Data.Maybe               (catMaybes, fromMaybe)
 import qualified Data.Set                 as Set
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
-import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import qualified Data.Hashable            as H
@@ -120,7 +119,6 @@ data RpkiObjectStore s = RpkiObjectStore {
         objects        :: SMap "objects" s ObjectKey (Compressed (StorableObject RpkiObject)),
         hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
         mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
-        lastValidMfts  :: SMap "last-valid-mfts" s Text (Compressed (Map AKI ObjectKey)),    
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
 
         objectMetas   :: SMap "object-meta" s ObjectKey ObjectMeta,
@@ -466,6 +464,13 @@ findLatestMftKeyByAKI tx DB { objectStore = RpkiObjectStore {..} } aki' = liftIO
                 | otherwise               -> latest                                  
 
 
+findAllMftsByAKI :: (MonadIO m, Storage s) => 
+                    Tx s mode -> DB s -> AKI -> m [Keyed (Located MftObject)]
+findAllMftsByAKI tx db@DB { objectStore = RpkiObjectStore {..} } aki' = liftIO $ do   
+    mftKeys <- List.sortOn Down <$> MM.allForKey tx mftByAKI aki'
+    fmap catMaybes $ forM mftKeys $ \(k, _) -> getMftByKey tx db k
+    
+
 getMftByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> ObjectKey -> m (Maybe (Keyed (Located MftObject)))
 getMftByKey tx db k = do 
@@ -541,16 +546,6 @@ getMftTimingMark :: MftObject -> MftTimingMark
 getMftTimingMark mft = let 
     m = getCMSContent $ cmsPayload mft 
     in MftTimingMark (thisTime m) (nextTime m)
-
-
-
-getLatestValidMfts :: (MonadIO m, Storage s) => 
-                        Tx s mode -> DB s -> m (Map AKI ObjectKey)
-getLatestValidMfts tx DB { objectStore = RpkiObjectStore {..}} = liftIO $ do
-    z <- M.get tx lastValidMfts lastValidMftKey
-    pure $ case z of 
-        Nothing             -> Map.empty
-        Just (Compressed r) -> r
 
 
 getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m (Maybe (Located CaCerObject))
@@ -855,23 +850,12 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
                 M.delete tx validatedByVersion version
                     
             (deletedObjects, keptObjects) <- deleteStaleObjects tx toKeep
-                                                    
-            -- Clean up the association between AKI and last valid manifest hash            
-            cleanupLatestValidMfts tx
 
             -- Delete URLs that are now not referred by any object
             deletedURLs <- deleteDanglingUrls db tx
 
             pure CleanUpResult {..}
   where
-
-    cleanupLatestValidMfts tx = liftIO $ do
-        z <- M.get tx lastValidMfts lastValidMftKey
-        for_ z $ \(Compressed valids) -> do
-            exisingKeys <- M.fold tx hashToKey (\allKeys _ k -> pure $! k `Set.insert` allKeys) Set.empty
-            let existingValids = Map.filter (`Set.member` exisingKeys) valids    
-            M.put tx lastValidMfts lastValidMftKey (Compressed existingValids)
-
     deleteStaleObjects tx versionsToKeep = do 
         -- Set of all objects touched by validation with versions
         -- that are not "too old".

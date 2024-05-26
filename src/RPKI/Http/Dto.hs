@@ -33,6 +33,7 @@ import           RPKI.Reporting
 import           RPKI.Http.Types
 import           RPKI.Resources.Types
 import           RPKI.RTR.Types
+import           RPKI.Validation.Types
 import           RPKI.Util
 
 {-
@@ -150,19 +151,11 @@ vrpSetToCSV vrpDtos =
         str (show maxLength) <> ch '\n'
  
 
-rawCSV :: BB.Builder -> BB.Builder -> RawCSV
-rawCSV header body = RawCSV $ BB.toLazyByteString $ header <> body
-
-
-prefixStr :: IpPrefix -> String
-prefixStr (Ipv4P (Ipv4Prefix p)) = show p
-prefixStr (Ipv6P (Ipv6Prefix p)) = show p
-
-str :: String -> BB.Builder
-str = BB.stringUtf8
-
-ch :: Char -> BB.Builder
-ch  = BB.charUtf8
+toMftShortcutDto :: MftShortcut -> ManifestShortcutDto
+toMftShortcutDto MftShortcut {..} = ManifestShortcutDto {..}
+  where
+    nonCrlChildren = Map.map (\MftEntry {..} -> ManifestChildDto {..}) nonCrlEntries
+    
 
 objectToDto :: RpkiObject -> ObjectDto
 objectToDto = \case
@@ -202,15 +195,6 @@ objectToDto = \case
         in objectDto c CMSObjectDto {..}
                 & #eeCertificate ?~ certDto c
                 & #ski ?~ getSKI c
-
-    manifestDto m = let
-            mft@Manifest {..} = getCMSContent $ m ^. #cmsPayload
-            entries = map (\(MftPair f h) -> (f, h)) mftEntries
-        in
-            ManifestDto {
-                fileHashAlg = Text.pack $ show $ mft ^. #fileHashAlg,
-                ..
-            }
 
     roaDto r = let
                 vrps = getCMSContent $ r ^. #cmsPayload
@@ -329,3 +313,27 @@ objectToDto = \case
                                 | otherwise -> unwrapAsns $ IS.toList r
             bgpSecSki = getSKI bgpCert
         in bgpSecToDto BGPSecPayload {..}
+
+
+manifestDto :: MftObject -> ManifestDto
+manifestDto m = let
+        mft@Manifest {..} = getCMSContent $ m ^. #cmsPayload
+        entries = map (\(MftPair f h) -> (f, h)) mftEntries
+    in
+        ManifestDto {
+            fileHashAlg = Text.pack $ show $ mft ^. #fileHashAlg,
+            ..
+        }
+
+rawCSV :: BB.Builder -> BB.Builder -> RawCSV
+rawCSV header body = RawCSV $ BB.toLazyByteString $ header <> body
+
+prefixStr :: IpPrefix -> String
+prefixStr (Ipv4P (Ipv4Prefix p)) = show p
+prefixStr (Ipv6P (Ipv6Prefix p)) = show p
+
+str :: String -> BB.Builder
+str = BB.stringUtf8
+
+ch :: Char -> BB.Builder
+ch  = BB.charUtf8
