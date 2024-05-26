@@ -40,6 +40,7 @@ import           Data.ASN1.OID
 
 import           RPKI.Config
 import           RPKI.AppTypes
+import           RPKI.Validation.Types
 import           RPKI.Repository
 import           RPKI.Domain
 import           RPKI.TAL
@@ -222,7 +223,6 @@ data CrlDto = CrlDto {
     }
     deriving stock (Eq, Show, Generic)
 
-
 data RoaDto = RoaDto {
         asn      :: ASN,
         prefixes :: [RoaPrefixDto]
@@ -246,7 +246,6 @@ data RoaPrefixDto = RoaPrefixDto {
         maxLength :: PrefixLength        
     }
     deriving stock (Eq, Show, Generic)
-
 
 data GbrDto = GbrDto {
         vcard :: Map Text Text
@@ -274,7 +273,7 @@ data MetricsDto = MetricsDto {
     } 
     deriving stock (Eq, Show, Generic)
 
-data PublicationPointDto = PublicationPointDto {
+data PublicationPointsDto = PublicationPointsDto {
         rrdp  :: [(RrdpURL, RrdpRepository)],
         rsync :: [(RsyncURL, RepositoryMeta)]        
     } 
@@ -310,6 +309,39 @@ newtype RtrDto = RtrDto {
 data TalDto = TalDto {
         tal :: TAL,
         repositories :: [Text]
+    }
+    deriving stock (Eq, Show, Generic)
+
+
+data ManifestChildDto = ManifestChildDto {
+        fileName :: Text,
+        child    :: MftChild
+    }
+    deriving stock (Eq, Show, Generic)
+
+data CaShortcutDto = CaShortcutDto { 
+        key            :: ObjectKey,        
+        ski            :: SKI,
+        publicationPoints :: [Text],
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+
+data ManifestShortcutDto = ManifestShortcutDto {
+        key            :: ObjectKey,
+        nonCrlChildren :: Map.Map ObjectKey ManifestChildDto,
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant,        
+        serial         :: Serial,
+        manifestNumber :: Serial,
+        crlShortcut    :: CrlShortcut
+    }
+    deriving stock (Eq, Show, Generic)
+
+data ManifestsDto = ManifestsDto {
+        shortcutMft :: Maybe ManifestShortcutDto,
+        manifests   :: [ManifestDto]
     }
     deriving stock (Eq, Show, Generic)
 
@@ -378,7 +410,37 @@ instance ToJSON AspaDto
 instance ToJSON BgpCertDto
 instance ToJSON RtrDto
 instance ToJSON TalDto
+instance ToJSON ManifestShortcutDto
+instance ToJSON ManifestsDto
+instance ToJSON CaShortcutDto
 
+instance ToJSON ManifestChildDto where 
+    toJSON ManifestChildDto {..} = 
+        case child of 
+            CaChild shortcut serial   -> toJsonObject "ca-shortcut" serial (toDto shortcut)                    
+            RoaChild shortcut serial  -> toJsonObject "roa-shortcut" serial shortcut 
+            SplChild shortcut serial  -> toJsonObject "spl-shortcut" serial shortcut
+            GbrChild shortcut serial  -> toJsonObject "gbr-shortcut" serial shortcut                
+            AspaChild shortcut serial -> toJsonObject "aspa-shortcut" serial shortcut                
+            BgpSecChild shortcut serial -> toJsonObject "bgpsec-shortcut" serial shortcut            
+            TroubledChild objectKey -> 
+                object ["type" .= ("troubled-shortcut" :: Text), "key" .= toJSON objectKey ]
+      where
+        toDto CaShortcut {..} = let 
+            publicationPoints = map (toText . getRpkiURL) 
+                                $ NonEmpty.toList 
+                                $ unPublicationPointAccess ppas
+            in CaShortcutDto {..}
+
+        toJsonObject :: ToJSON a => Text -> Serial -> a -> Value
+        toJsonObject shortcutType serial value = 
+            object [
+                "type" .= (shortcutType :: Text), 
+                "serial" .= toJSON serial, 
+                "fileName" .= toJSON fileName, 
+                "value" .= toJSON value ]
+            
+    
 instance ToSchema RObject
 instance ToSchema VrpDto where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
@@ -408,6 +470,9 @@ instance ToSchema AspaDto
 instance ToSchema BgpCertDto
 instance ToSchema RtrDto
 instance ToSchema TalDto
+instance ToSchema ManifestShortcutDto
+instance ToSchema ManifestChildDto
+instance ToSchema ManifestsDto
 instance ToSchema TAL
 instance ToSchema EncodedBase64 where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
@@ -465,7 +530,7 @@ instance ToJSON RrdpIntegrity
 instance ToJSON RrdpMeta
 instance ToJSON RrdpRepository
 instance ToJSON RepositoryMeta
-instance ToJSON PublicationPointDto
+instance ToJSON PublicationPointsDto
 
 instance ToSchema MetricsDto
 instance ToSchema FetchStatus where     
@@ -479,7 +544,7 @@ instance ToSchema RrdpIntegrity
 instance ToSchema RrdpMeta
 instance ToSchema RrdpRepository
 instance ToSchema RepositoryMeta
-instance ToSchema PublicationPointDto
+instance ToSchema PublicationPointsDto
 
 instance ToJSONKey (DtoScope s) where 
     toJSONKey = toJSONKeyText $ \(DtoScope (Scope s)) -> focusToText $ NonEmpty.head s    
@@ -501,8 +566,8 @@ toMetricsDto rawMetrics = MetricsDto {
         rrdp     = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #rrdpMetrics
     }
 
-toPublicationPointDto :: PublicationPoints -> PublicationPointDto
-toPublicationPointDto PublicationPoints {..} = PublicationPointDto {
+toPublicationPointDto :: PublicationPoints -> PublicationPointsDto
+toPublicationPointDto PublicationPoints {..} = PublicationPointsDto {
         rrdp  = Map.toList $ unRrdpMap rrdps,
         rsync = flattenRsyncTree rsyncs
     }
@@ -512,6 +577,12 @@ parseHash hashText = bimap
     (Text.pack . ("Broken hex: " <>) . show)
     mkHash
     $ Hex.decode $ encodeUtf8 hashText
+
+parseAki :: Text -> Either Text AKI
+parseAki akiText = bimap 
+    (Text.pack . ("Broken hex: " <>) . show)
+    (AKI . KI . toShortBS) 
+    $ Hex.decode $ encodeUtf8 akiText
 
 
 resolvedFocusToText :: FocusResolvedDto -> Text
