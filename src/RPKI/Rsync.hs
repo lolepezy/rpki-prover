@@ -1,12 +1,15 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE OverloadedLabels  #-}
-{-# LANGUAGE QuasiQuotes       #-}
-{-# LANGUAGE RecordWildCards   #-}
-{-# LANGUAGE StrictData        #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DeriveAnyClass     #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE OverloadedLabels   #-}
+{-# LANGUAGE QuasiQuotes        #-}
+{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE StrictData         #-}
 
 module RPKI.Rsync where
     
 import           Control.Lens
+import           Control.DeepSeq
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
@@ -26,7 +29,9 @@ import qualified Data.Text                        as Text
 import           Data.List.NonEmpty               (NonEmpty(..))
 import qualified Data.List.NonEmpty               as NonEmpty
 
-import Data.Hourglass
+import           Data.Hourglass
+
+import           GHC.Generics (Generic)
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -43,6 +48,7 @@ import           RPKI.Store.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database
+import           RPKI.Time
 import qualified RPKI.Util                        as U
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Worker
@@ -107,6 +113,7 @@ runRsyncFetchWorker AppContext {..} fetchConfig worldVersion repository = do
                                 workerId 
                                 (RsyncFetchParams vp fetchConfig repository worldVersion)                        
                                 (Timebox $ fetchConfig ^. #rsyncTimeout)
+                                (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
                                 arguments                        
     let RsyncFetchResult z = payload        
     logWorkerDone logger workerId wr    
@@ -214,7 +221,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                         s <- askScopes                     
                         let task = runValidatorT s (readAndParseObject path (RsyncU uri))
                         a <- liftIO $ async $ evaluate =<< task
-                        S.yield a
+                        S.yield (a, uri)
       where
         readAndParseObject filePath rpkiURL = 
             liftIO (getSizeAndContent (config ^. typed) filePath) >>= \case                    
@@ -226,22 +233,31 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                             -- before parsing ASN1 and serialising it.
                             let hash = U.sha256s blob  
                             exists <- liftIO $ roTx db $ \tx -> hashExists tx db hash
-                            pure $! if exists 
-                                then HashExists rpkiURL hash
+                            if exists 
+                                then pure $! HashExists rpkiURL hash
                                 else tryToParse hash blob type_                                    
                         Nothing -> 
                             pure $! UknownObjectType rpkiURL filePath
 
           where
-            tryToParse hash blob type_ = 
-                case runPureValidator (newScopes $ unURI $ getURL rpkiURL) (readObject rpkiURL blob) of 
-                    (Left e, _) -> ObjectParsingProblem rpkiURL (VErr e) 
-                                        (ObjectOriginal blob) hash 
-                                        (ObjectMeta worldVersion type_)
-                    (Right ro, _) -> 
-                        SuccessParsed rpkiURL (toStorableObject ro)            
+            tryToParse hash blob type_ = do            
+                z <- liftIO $ runValidatorT (newScopes $ unURI $ getURL rpkiURL) $ vHoist $ readObject rpkiURL blob
+                (evaluate $ force $
+                    case z of 
+                        (Left e, _) -> 
+                            ObjectParsingProblem rpkiURL (VErr e) 
+                                (ObjectOriginal blob) hash
+                                (ObjectMeta worldVersion type_)                        
+                        (Right ro, _) ->                                     
+                            SuccessParsed rpkiURL (toStorableObject ro)                            
+                    ) `catch` 
+                    (\(e :: SomeException) -> 
+                        pure $! ObjectParsingProblem rpkiURL (VErr $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e) 
+                                (ObjectOriginal blob) hash
+                                (ObjectMeta worldVersion type_)
+                    )
 
-    saveStorable tx a = do 
+    saveStorable tx (a, _) = do 
         (r, vs) <- fromTry (UnspecifiedE "Something bad happened in loadRsyncRepository" . U.fmtEx) $ wait a                
         embedState vs
         case r of 
@@ -267,6 +283,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                     updateMetric @RsyncMetric @_ (& #processed %~ (+1))
                 other -> 
                     logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                    
+                  
 
 data RsyncMode = RsyncOneFile | RsyncDirectory
 
@@ -337,4 +354,5 @@ data RsyncObjectProcessingResult =
         | UknownObjectType RpkiURL String
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
         | SuccessParsed RpkiURL (StorableObject RpkiObject) 
-    deriving Show
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass NFData

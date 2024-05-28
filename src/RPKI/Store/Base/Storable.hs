@@ -38,6 +38,7 @@ data StorableObject a = StorableObject {
         storable :: Storable 
     }
     deriving stock (Show, Eq, Generic)
+    deriving anyclass NFData
 
 newtype Verbatim a = Verbatim { unVerbatim :: Storable }
     deriving stock (Show, Eq, Generic)

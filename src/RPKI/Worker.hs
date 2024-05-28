@@ -1,16 +1,14 @@
 {-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE DeriveAnyClass       #-}
-{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE OverloadedLabels     #-}
 {-# LANGUAGE QuasiQuotes          #-}
 {-# LANGUAGE RecordWildCards      #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE OverloadedStrings    #-}
 
 module RPKI.Worker where
 
 import           Control.Exception.Lifted
-import           Control.Monad (void)
+import           Control.Monad (void, when)
 import           Control.Monad.IO.Class
 import           Control.Concurrent
 import           Control.Concurrent.Async
@@ -105,7 +103,8 @@ data WorkerInput = WorkerInput {
         params          :: WorkerParams,
         config          :: Config,
         initialParentId :: ProcessID,
-        workerTimeout   :: Timebox
+        workerTimeout   :: Timebox,
+        cpuLimit        :: Maybe CPUTime
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -151,36 +150,54 @@ executeWork :: WorkerInput
             -> IO ()
 executeWork input actualWork = do 
     exitCode <- newTVarIO Nothing
+    let forceExit code = atomically $ writeTVar exitCode (Just code)
     void $ forkIO $ void $ race 
                 (do 
                     actualWork input writeWorkerOutput
-                    atomically $ writeTVar exitCode $ Just ExitSuccess) 
+                    `finally` 
+                        forceExit ExitSuccess) 
                 (race 
-                    (dieIfParentDies exitCode) 
-                    (dieAfterTimeout exitCode))
+                    (dieIfParentDies forceExit) 
+                    (dieOfTiming forceExit))
 
-    -- this complication is to guarantee that the main thread exits
-    -- the process as soon as there's exit code defined, regardless
-    -- of whether exceptions are handled or not handled inside of `race`.
+    -- this complication is to guarantee that it is the main thread 
+    -- that exits the process as soon as there's exit code defined.
     exitWith =<< atomically (maybe retry pure =<< readTVar exitCode)
     
-  where    
+  where        
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
     -- there's no point continuing.
-    dieIfParentDies exitCode = go 
-      where
-        go = do 
+    dieIfParentDies exit' = 
+        loop 500_000 $ do 
             parentId <- getParentProcessID                    
-            if parentId /= input ^. #initialParentId
-                then atomically $ writeTVar exitCode (Just exitParentDied)
-                else threadDelay 500_000 >> go
+            when (parentId /= input ^. #initialParentId) $ 
+                exit' exitParentDied            
+
+    -- exit either because the time is up or too much CPU is spent
+    dieOfTiming exit' = 
+        case input ^. #cpuLimit of
+            Nothing       -> dieAfterTimeout exit'
+            Just cpuLimit -> 
+                void $ race 
+                    (dieAfterTimeout exit')
+                    (dieOutOfCpuTime cpuLimit exit')
 
     -- Time bomb. Wait for the certain timeout and then exit.
-    dieAfterTimeout exitCode = do
+    dieAfterTimeout exit' = do
         let Timebox (Seconds s) = input ^. #workerTimeout
         threadDelay $ 1_000_000 * fromIntegral s        
-        atomically $ writeTVar exitCode (Just exitTimeout)        
+        exit' exitTimeout
+
+    -- Exit if the worker consumed too much CPU time
+    dieOutOfCpuTime cpuLimit exit' = 
+        loop 1_000_000 $ do 
+            cpuTime <- getCpuTime
+            when (cpuTime > cpuLimit) $ exit' exitOutOfCpuTime
+
+    loop ms f = 
+        f >> threadDelay ms >> loop ms f
+
 
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
@@ -216,9 +233,10 @@ rtsMemValue mb = show mb <> "m"
 defaultRts :: [String]
 defaultRts = [ "-I0" ]
 
-exitParentDied, exitTimeout, exitOutOfMemory, exitKillByTypedProcess :: ExitCode
+exitParentDied, exitTimeout, exitOutOfCpuTime, exitOutOfMemory, exitKillByTypedProcess :: ExitCode
 exitParentDied  = ExitFailure 11
 exitTimeout     = ExitFailure 12
+exitOutOfCpuTime  = ExitFailure 13
 exitOutOfMemory = ExitFailure 251
 exitKillByTypedProcess = ExitFailure (-2)
 
@@ -233,13 +251,14 @@ runWorker :: (TheBinary r, Show r) =>
             -> WorkerId
             -> WorkerParams                             
             -> Timebox
+            -> Maybe CPUTime
             -> [String] 
             -> ValidatorT IO r
-runWorker logger config workerId params timeout extraCli = do  
+runWorker logger config workerId params timeout cpuLimit extraCli = do  
     thisProcessId <- liftIO getProcessID
 
     let executableToRun = config ^. #programBinaryPath    
-    let workerStdin = serialise_ $ WorkerInput params config thisProcessId timeout
+    let workerStdin = serialise_ $ WorkerInput params config thisProcessId timeout cpuLimit
 
     let worker = 
             setStdin (byteStringInput $ LBS.fromStrict workerStdin) $             
@@ -281,6 +300,11 @@ runWorker logger config workerId params timeout extraCli = do
                     logError logger message
                     trace WorkerTimeoutTrace
                     appError $ InternalE $ WorkerTimeout message
+                | exit == exitOutOfCpuTime -> do                     
+                    let message = [i|Worker #{workerId} ran out of CPU time.|]
+                    logError logger message
+                    trace WorkerCpuOveruseTrace
+                    appError $ InternalE $ WorkerOutOfCpuTime message                    
                 | exit == exitOutOfMemory -> do                     
                     let message = [i|Worker #{workerId} ran out of memory.|]
                     logError logger message                    

@@ -71,6 +71,11 @@ import           RPKI.Workflow
 import           RPKI.RSC.Verifier
 
 
+import           Network.HTTP.Client
+import           Network.HTTP.Client.TLS
+-- import           Network.HTTP.Simple
+import           Network.Connection
+
 main :: IO ()
 main = do
     cliOptions@CLIOptions{..} <- unwrapRecord $ 
@@ -133,6 +138,9 @@ executeWorkerProcess = do
                         logLevel = config ^. #logLevel,
                         logSetup = WorkerLog
                     }
+                    
+    -- turnOffTlsValidation
+
     withLogger logConfig (\_ -> pure ()) $ \logger -> liftIO $ do
         (z, validations) <- runValidatorT
                                 (newScopes "worker-create-app-context")
@@ -144,8 +152,13 @@ executeWorkerProcess = do
                 executeWorker input appContext
 
 
+turnOffTlsValidation = do 
+    manager <- newManager $ mkManagerSettings (TLSSettingsSimple True True True) Nothing 
+    setGlobalManager manager    
+
 runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorServer appContext@AppContext {..} = do
+    
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion  <- newWorldVersion
     talNames      <- listTALFiles $ config ^. #talDirectory
@@ -199,8 +212,11 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     -- Set capabilities to the values from the CLI or to all available CPUs,
     -- (disregard the HT issue for now it needs more testing).
-    liftIO $ setCpuCount cpuCount'
-    let parallelism = makeParallelism cpuCount'
+    liftIO $ setCpuCount cpuCount'    
+    let parallelism = 
+            case fetcherCount of 
+                Nothing -> makeParallelism cpuCount'
+                Just fc -> makeParallelismF cpuCount' fc
 
     let rtrConfig = if withRtr
             then Just $ defaultRtrConfig
@@ -246,6 +262,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 (if noAdaptiveFetchIntervals then Constant else Adaptive)
             & #validationConfig . #fetchTimeoutCalculation .~ 
                 (if noAdaptiveFetchTimeouts then Constant else Adaptive)        
+            & #validationConfig . #fetchMethod .~ 
+                (if noAsyncFetch then SyncOnly else SyncAndAsync)        
             & maybeSet (#httpApiConf . #port) httpApiPort
             & #rtrConfig .~ rtrConfig
             & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
@@ -581,6 +599,9 @@ data CLIOptions wrapped = CLIOptions {
         "memory allocations. It is also recommended to set real CPU core number rather than the (hyper-)thread " +++ 
         "number, since using the latter does not give much benefit and actually may cause performance degradation."),
 
+    fetcherCount :: wrapped ::: Maybe Natural <?>
+        ("Maximal number of concurrent fetchers (default is --cpu-count * 3)."),
+
     resetCache :: wrapped ::: Bool <?>
         "Reset the LMDB cache i.e. remove ~/.rpki/cache/*.mdb files.",
 
@@ -705,7 +726,11 @@ data CLIOptions wrapped = CLIOptions {
 
     noAdaptiveFetchTimeouts :: wrapped ::: Bool <?>
         ("Do not use adaptive fetch timeouts for repositories (adaptive fetch timeouts is the default " +++ 
-         "so default for this option is false).") 
+         "so default for this option is false)."),
+
+    noAsyncFetch :: wrapped ::: Bool <?>
+        ("Do not fetch repositories asynchronously, i.e. only fetch them while validating the RPKI tree "+++ 
+        "(default is false).") 
 
 } deriving (Generic)
 

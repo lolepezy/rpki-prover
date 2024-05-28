@@ -125,7 +125,6 @@ instance ToSchema Parallelism
 instance ToSchema RsyncConf
 instance ToSchema RrdpConf
 instance ToSchema ValidationConfig
-instance ToSchema AsyncFetchConfig
 instance ToSchema SystemConfig
 instance ToSchema HttpApiConfig
 instance ToSchema RtrConfig
@@ -133,6 +132,7 @@ instance ToSchema LogLevel
 instance ToSchema ManifestProcessing
 instance ToSchema ValidationAlgorithm
 instance ToSchema FetchTimingCalculation
+instance ToSchema FetchMethod
 
 instance ToSchema a => ToSchema (Located a)
 

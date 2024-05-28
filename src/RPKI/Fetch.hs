@@ -75,30 +75,44 @@ fetchSync appContext@AppContext {..}
     worldVersion
     ppa = do 
         pps <- readPublicationPoints repositoryProcessing
-        let (syncPp, asyncRepos) = onlyForSyncFetch pps ppa
-        case syncPp of 
-            Nothing -> do 
-                -- There's nothing to be fetched in the sync mode, 
-                -- so just mark all of them for async fetching.                
-                markForAsyncFetch repositoryProcessing asyncRepos     
-                pure Nothing           
-            Just syncPp_ -> do  
-                -- In sync mode fetch only the first PP
-                fetchResult <-                     
-                    fetchOnePp appContext (syncFetchConfig config) 
-                        repositoryProcessing worldVersion syncPp_ 
-                        (newMetaCallback syncPp_ pps)
+        case config ^. #validationConfig . #fetchMethod of 
 
-                case fetchResult of 
-                    FetchSuccess _ _ -> pure ()
-                    FetchFailure _ _ -> do 
-                        -- In case of failure mark ell repositories ForAsyncFetch
-                        ppsAfter <- readPublicationPoints repositoryProcessing
-                        let toMarkAsync = mapMaybe (repositoryFromPP ppsAfter) 
-                                            $ NonEmpty.toList $ unPublicationPointAccess ppa
-                        markForAsyncFetch repositoryProcessing toMarkAsync
-            
-                pure $ Just fetchResult
+            SyncOnly -> do 
+                -- It is a bit artificial case, because in "sync-only" mode
+                -- we only fetch the primary repository (i.e. RRDP one).
+                -- It exists mainly for comparisons and measurements and 
+                -- not very useful in practice.
+                let primaryRepo = getPrimaryRepository pps ppa
+                Just <$>  
+                    fetchOnePp appContext (syncFetchConfig config) 
+                        repositoryProcessing worldVersion primaryRepo
+                        (\meta _ -> pure meta)
+                
+            SyncAndAsync -> do 
+                let (syncPp, asyncRepos) = onlyForSyncFetch pps ppa
+                case syncPp of 
+                    Nothing -> do 
+                        -- There's nothing to be fetched in the sync mode, 
+                        -- so just mark all of them for async fetching.                
+                        markForAsyncFetch repositoryProcessing asyncRepos     
+                        pure Nothing           
+                    Just syncPp_ -> do  
+                        -- In sync mode fetch only the first PP
+                        fetchResult <-                     
+                            fetchOnePp appContext (syncFetchConfig config) 
+                                repositoryProcessing worldVersion syncPp_ 
+                                (newMetaCallback syncPp_ pps)
+
+                        case fetchResult of 
+                            FetchSuccess _ _ -> pure ()
+                            FetchFailure _ _ -> do 
+                                -- In case of failure mark all repositories ForAsyncFetch
+                                ppsAfter <- readPublicationPoints repositoryProcessing
+                                let toMarkAsync = mapMaybe (repositoryFromPP ppsAfter) 
+                                                    $ NonEmpty.toList $ unPublicationPointAccess ppa
+                                markForAsyncFetch repositoryProcessing toMarkAsync
+                    
+                        pure $ Just fetchResult
   where
     newMetaCallback syncPp_ pps newMeta fetchMoment = do
         -- Set fetchType to ForAsyncFetch to all fall-back URLs, 
@@ -296,7 +310,7 @@ fetchOnePp
                 let newMeta = deriveNewMeta config fetchConfig newRepo validations 
                                             rrdpStats duratioMs newStatus fetchMoment
 
-                -- Call externally passed callback
+                -- `Call externally passed callback
                 newMeta' <- newMetaCallback newMeta fetchMoment
 
                 modifyTVar' publicationPoints $ \pps -> 
@@ -567,8 +581,14 @@ getPrimaryRepositoryUrl :: PublicationPoints
                          -> PublicationPointAccess 
                          -> RpkiURL
 getPrimaryRepositoryUrl pps ppAccess = 
-    let primary = NonEmpty.head $ unPublicationPointAccess ppAccess
+    let primary = getPrimaryRepository pps ppAccess
     in maybe (getRpkiURL primary) getRpkiURL $ repositoryFromPP pps primary
+
+getPrimaryRepository :: PublicationPoints 
+                    -> PublicationPointAccess 
+                    -> PublicationPoint
+getPrimaryRepository pps ppAccess = 
+    NonEmpty.head $ unPublicationPointAccess ppAccess    
 
 getFetchablePP :: PublicationPoints -> PublicationPoint -> PublicationPoint
 getFetchablePP pps = \case 
@@ -609,20 +629,26 @@ markForAsyncFetch RepositoryProcessing {..} repos = liftIO $ atomically $
 
 syncFetchConfig :: Config -> FetchConfig
 syncFetchConfig config = let 
-        rsyncTimeout = config ^. typed @RsyncConf . #rsyncTimeout
-        rrdpTimeout  = config ^. typed @RrdpConf . #rrdpTimeout
+        rsyncConfig = config ^. typed @RsyncConf
+        rrdpConfig = config ^. typed @RrdpConf
+        rsyncTimeout = rsyncConfig ^. #rsyncTimeout
+        rrdpTimeout  = rrdpConfig ^. #rrdpTimeout
         rsyncSlowThreshold = slowThreshold rsyncTimeout
         rrdpSlowThreshold = slowThreshold rrdpTimeout
         fetchLaunchWaitDuration = Seconds 30 
+        cpuLimit = max (rrdpConfig ^. #cpuLimit) (rsyncConfig ^. #cpuLimit)
     in FetchConfig {..}
 
 asyncFetchConfig :: Config -> FetchConfig
 asyncFetchConfig config = let 
-        rsyncTimeout = config ^. typed @RsyncConf . #asyncRsyncTimeout
-        rrdpTimeout  = config ^. typed @RrdpConf . #asyncRrdpTimeout
+        rsyncConfig = config ^. typed @RsyncConf
+        rrdpConfig = config ^. typed @RrdpConf
+        rsyncTimeout = rsyncConfig ^. #asyncRsyncTimeout
+        rrdpTimeout  = rrdpConfig ^. #asyncRrdpTimeout
         rsyncSlowThreshold = slowThreshold rsyncTimeout
         rrdpSlowThreshold = slowThreshold rrdpTimeout
-        fetchLaunchWaitDuration = Seconds 60 
+        fetchLaunchWaitDuration = Seconds 60
+        cpuLimit = max (rrdpConfig ^. #cpuLimit) (rsyncConfig ^. #cpuLimit)
     in FetchConfig {..}
 
 slowThreshold :: Seconds -> Seconds

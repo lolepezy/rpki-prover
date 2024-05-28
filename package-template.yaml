@@ -1,5 +1,5 @@
 name:                rpki-prover
-version:             0.9.2
+version:             0.9.3
 github:              "lolepezy/rpki-prover"
 license:             BSD3
 author:              "Mikhail Puzanov"
@@ -48,6 +48,7 @@ dependencies:
 - cryptonite
 - cryptohash-sha256
 - cryptohash-sha512
+- crypton-connection
 - deepseq
 - deque
 - directory
@@ -58,6 +59,7 @@ dependencies:
 - hashable
 - hourglass
 - http-client
+- http-client-tls
 - http-conduit
 - http-media
 - http-types
