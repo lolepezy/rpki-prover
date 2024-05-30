@@ -98,7 +98,7 @@ main = do
 
 
 executeMainProcess :: CLIOptions Unwrapped -> IO ()
-executeMainProcess cliOptions = do 
+executeMainProcess cliOptions = do     
     -- TODO This doesn't look pretty, come up with something better.
     appStateHolder <- newTVarIO Nothing
 
@@ -109,7 +109,8 @@ executeMainProcess cliOptions = do
                 z <- readTVarIO appStateHolder
                 for_ z $ mergeSystemMetrics sm
 
-        withLogger logConfig bumpSysMetric $ \logger ->
+        withLogger logConfig bumpSysMetric $ \logger -> do
+            logDebug logger [i|Starting #{rpkiProverVersion}.|]
             if cliOptions ^. #initialise
                 then
                     -- init the FS layout and download TALs

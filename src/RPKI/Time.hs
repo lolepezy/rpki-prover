@@ -24,8 +24,22 @@ newtype Instant = Instant DateTime
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
+data LogDateFormat = LogDateFormat
+    deriving stock (Eq, Ord, Generic)
+
+instance TimeFormat LogDateFormat where
+    toFormat _ = TimeFormatString [
+            Format_Year, dash, Format_Month2, dash, Format_Day2, 
+            Format_Text ' ',
+            Format_Hour, colon, Format_Minute, colon, Format_Second, Format_Text '.', Format_MilliSecond, 
+            Format_TzHM_Colon_Z
+        ]
+      where 
+        dash = Format_Text '-'
+        colon = Format_Text ':'
+
 instance Show Instant where
-    show (Instant d) = timePrint ISO8601_DateAndTime d
+    show (Instant d) = timePrint LogDateFormat d
 
 -- | Current time that is to be passed into the environment of validating functions
 newtype Now = Now { unNow :: Instant }
