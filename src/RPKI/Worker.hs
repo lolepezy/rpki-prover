@@ -23,6 +23,7 @@ import qualified Data.ByteString.Lazy as LBS
 import           Data.String.Interpolate.IsString
 import           Data.Hourglass
 import           Data.Conduit.Process.Typed
+import           Data.Maybe
 
 import           GHC.Generics
 import           GHC.Stats
@@ -151,28 +152,28 @@ executeWork :: WorkerInput
 executeWork input actualWork = do 
     exitCode <- newTVarIO Nothing
     let forceExit code = atomically $ writeTVar exitCode (Just code)
-    void $ forkIO $ void $ race 
-                (do 
-                    actualWork input writeWorkerOutput
-                    `finally` 
-                        forceExit ExitSuccess) 
-                (race 
-                    (dieIfParentDies forceExit) 
-                    (dieOfTiming forceExit))
+    void $ race 
+        (actualWork input writeWorkerOutput) 
+        (race 
+            (dieIfParentDies forceExit) 
+            (dieOfTiming forceExit))
 
     -- this complication is to guarantee that it is the main thread 
     -- that exits the process as soon as there's exit code defined.
-    exitWith =<< atomically (maybe retry pure =<< readTVar exitCode)
+    ec <- readTVarIO exitCode
+    exitWith $ fromMaybe ExitSuccess ec
     
   where        
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
     -- there's no point continuing.
-    dieIfParentDies exit' = 
-        loop 500_000 $ do 
+    dieIfParentDies exit' = go
+      where
+        go = do 
             parentId <- getParentProcessID                    
-            when (parentId /= input ^. #initialParentId) $ 
-                exit' exitParentDied            
+            if parentId /= input ^. #initialParentId
+                then exit' exitParentDied            
+                else threadDelay 500_000 >> go
 
     -- exit either because the time is up or too much CPU is spent
     dieOfTiming exit' = 
@@ -190,14 +191,13 @@ executeWork input actualWork = do
         exit' exitTimeout
 
     -- Exit if the worker consumed too much CPU time
-    dieOutOfCpuTime cpuLimit exit' = 
-        loop 1_000_000 $ do 
+    dieOutOfCpuTime cpuLimit exit' = go
+      where
+        go = do 
             cpuTime <- getCpuTime
-            when (cpuTime > cpuLimit) $ exit' exitOutOfCpuTime
-
-    loop ms f = 
-        f >> threadDelay ms >> loop ms f
-
+            if cpuTime > cpuLimit 
+                then exit' exitOutOfCpuTime
+                else threadDelay 1_000_000 >> go
 
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
@@ -234,10 +234,10 @@ defaultRts :: [String]
 defaultRts = [ "-I0" ]
 
 exitParentDied, exitTimeout, exitOutOfCpuTime, exitOutOfMemory, exitKillByTypedProcess :: ExitCode
-exitParentDied  = ExitFailure 11
-exitTimeout     = ExitFailure 12
-exitOutOfCpuTime  = ExitFailure 13
-exitOutOfMemory = ExitFailure 251
+exitParentDied   = ExitFailure 111
+exitTimeout      = ExitFailure 122
+exitOutOfCpuTime = ExitFailure 113
+exitOutOfMemory  = ExitFailure 251
 exitKillByTypedProcess = ExitFailure (-2)
 
 worderIdS :: WorkerId -> String

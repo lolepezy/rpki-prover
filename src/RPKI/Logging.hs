@@ -19,6 +19,7 @@ import qualified Data.ByteString.Char8 as C8
 
 import Data.Bifunctor
 import Data.Foldable
+import Data.Maybe
 import Data.Text (Text, justifyLeft)
 
 import Data.String.Interpolate.IsString
@@ -211,7 +212,7 @@ withLogger LogConfig {..} sysMetricCallback f = do
                                                     
             MsgQE z -> processMessageInMainProcess z
 
-    -- Worker simply re-sends all the binary messages 
+    -- Worker simply resends all the binary messages 
     -- (received from children processes) to its parent. 
     -- Messages from this process are serialised and then sent
     let loopWorker = loopReadQueue messageQueue $ logRaw . \case 
@@ -248,8 +249,13 @@ withLogger LogConfig {..} sysMetricCallback f = do
 eol :: Char
 eol = '\n' 
 
+-- Start every base64-serialised message with something that 
+-- is _very_ unlikely to be an output of RTS or any library
+startMessageMark :: LBS.ByteString
+startMessageMark = "VvHNj244XjC5CI1kFdrU08JrTMxvMb8X"
+
 -- Read input stream and extract serialised log messages from it.
--- Messages are separated by the EOL character.
+-- Messages are separated by the EOL character and start with `startMessageMark`.
 sinkLog :: MonadIO m => AppLogger -> ConduitT C8.ByteString o m ()
 sinkLog logger = go mempty        
   where
@@ -269,9 +275,23 @@ gatherMsgs accum bs =
         | c == eol  = (mempty, BB.toLazyByteString acc : chunks)
         | otherwise = (acc <> BB.char8 c, chunks)
 
+collectMsgs :: BB.Builder -> BS.ByteString -> ([BS.ByteString], BB.Builder)
+collectMsgs accum bs = (messagesBytes, accum')
+  where  
+    messagesBytes = map LBS.toStrict
+        $ catMaybes 
+        $ map (LBS.stripPrefix startMessageMark) 
+        $ filter (not . LBS.null) completeChunks
+
+    (accum', completeChunks) = C8.foldl' splitByEol (accum, []) bs      
+    splitByEol (acc, chunks) c 
+        | c == eol  = (mempty, BB.toLazyByteString acc : chunks)
+        | otherwise = (acc <> BB.char8 c, chunks)
+
 msgToBs :: BusMessage -> BS.ByteString
 msgToBs msg = let     
     EncodedBase64 bs = encodeBase64 $ DecodedBase64 $ serialise_ msg
+    -- in LBS.toStrict startMessageMark <> bs
     in bs
 
 bsToMsg :: BS.ByteString -> Either Text BusMessage
