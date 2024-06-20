@@ -592,26 +592,25 @@ validateCaNoFetch
                                 -- That is really weird and should normally never happen. 
                                 -- Do not interrupt validation here, but complain in the log
                                 vWarn $ NoMFTButCachedMft childrenAki                                    
-                                let crlKey = mftShortcut ^. #crlShortcut . #key       
+                                let crlKey = mftShortcut ^. #crlShortcut . #key
+                                markAsRead topDownContext crlKey
                                 let message = [i|Internal error, there is a manifest shortcut, but no manifest for the key #{mftShortKey}.|]
                                 logError logger message
                                 collectPayloadsFromShortcuts mftShortcut Nothing 
                                     (getFullCa appContext topDownContext ca)
                                     -- getCrlByKey is the best we can have
-                                    (getCrlByKey appContext crlKey)
-                                    `andThen` 
-                                        markAsRead topDownContext crlKey
+                                    (getCrlByKey appContext crlKey)                                    
 
                             Just mftKey 
                                 | mftShortKey == mftKey -> do
                                     -- Nothing has changed, the real manifest is the 
                                     -- same as the shortcut, so use the shortcut
-                                    let crlKey = mftShortcut ^. #crlShortcut . #key
-                                    pure $! collectPayloadsFromShortcuts mftShortcut Nothing 
+                                    let crlKey = mftShortcut ^. #crlShortcut . #key                                    
+                                    pure $! do 
+                                        markAsRead topDownContext crlKey
+                                        collectPayloadsFromShortcuts mftShortcut Nothing 
                                                 (getFullCa appContext topDownContext ca)
                                                 (getCrlByKey appContext crlKey)
-                                                `andThen` 
-                                                    markAsRead topDownContext crlKey
 
                                 | otherwise -> do 
                                     -- logDebug logger [i|Option 2|]            
@@ -620,24 +619,21 @@ validateCaNoFetch
                                             internalError appContext [i|Internal error, can't find a manifest by its key #{mftKey}.|]
                                         Just mft -> pure $! do
                                             increment $ topDownCounters ^. #shortcutMft
+                                            markAsRead topDownContext mftKey
                                             fullCa <- getFullCa appContext topDownContext ca
-                                            let combineShortcutAndNewMft = do 
+                                            let combineShortcutAndNewMft = do                                                     
                                                     overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
                                                     collectPayloadsFromShortcuts mftShortcut (Just overlappingChildren) 
                                                                 (pure fullCa)
-                                                                (findAndValidateCrl fullCa mft childrenAki)
-                                                    markAsRead topDownContext mftKey                                                
+                                                                (findAndValidateCrl fullCa mft childrenAki)                                                    
 
                                             let useShortcutOnly = do 
                                                     let crlKey = mftShortcut ^. #crlShortcut . #key
+                                                    markAsRead topDownContext crlKey
                                                     collectPayloadsFromShortcuts mftShortcut Nothing 
                                                             (getFullCa appContext topDownContext ca)
                                                             (getCrlByKey appContext crlKey)
-                                                        `andThen` 
-                                                            (do 
-                                                                markAsRead topDownContext crlKey
-                                                                markAsRead topDownContext crlKey)
-
+                                            
                                             combineShortcutAndNewMft
                                                 `catchError`
                                                 (\e -> do 
