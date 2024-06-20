@@ -149,13 +149,13 @@ executeWork :: WorkerInput
             -> IO ()
 executeWork input actualWork = do         
     exitCode <- anyOf 
-                    ((actualWork input writeWorkerOutput >> exitSuccess) `onException` exitFailure)
+                    ((actualWork input writeWorkerOutput >> pure ExitSuccess) `onException` pure exitException)
                     (anyOf dieIfParentDies dieOfTiming)
     
     exitWith exitCode
   where        
     anyOf a b = either id id <$> race a b
-
+    
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
     -- there's no point continuing.
@@ -223,6 +223,7 @@ defaultRts :: [String]
 defaultRts = [ "-I0" ]
 
 exitParentDied, exitTimeout, exitOutOfCpuTime, exitOutOfMemory, exitKillByTypedProcess :: ExitCode
+exitException    = ExitFailure 99
 exitParentDied   = ExitFailure 111
 exitTimeout      = ExitFailure 122
 exitOutOfCpuTime = ExitFailure 113
