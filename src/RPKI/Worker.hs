@@ -149,8 +149,8 @@ executeWork :: WorkerInput
             -> IO ()
 executeWork input actualWork = do         
     exitCode <- anyOf 
-                    ((actualWork input writeWorkerOutput >> pure ExitSuccess) `onException` pure exitException)
-                    (anyOf dieIfParentDies dieOfTiming)
+        ((actualWork input writeWorkerOutput >> pure ExitSuccess) `onException` pure exitException)
+        (anyOf dieIfParentDies dieOfTiming)
     
     exitWith exitCode
   where        
@@ -222,7 +222,7 @@ rtsMemValue mb = show mb <> "m"
 defaultRts :: [String]
 defaultRts = [ "-I0" ]
 
-exitParentDied, exitTimeout, exitOutOfCpuTime, exitOutOfMemory, exitKillByTypedProcess :: ExitCode
+exitParentDied, exitTimeout, exitOutOfCpuTime, exitOutOfMemory, exitKillByTypedProcess, exitException :: ExitCode
 exitException    = ExitFailure 99
 exitParentDied   = ExitFailure 111
 exitTimeout      = ExitFailure 122

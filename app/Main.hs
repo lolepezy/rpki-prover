@@ -150,18 +150,22 @@ executeWorkerProcess = do
             case z of
                 Left e ->
                     logError logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
-                Right appContext ->                     
+                Right appContext ->                    
                     case input ^. #params of
                         RrdpFetchParams {..} -> exec resultHandler $
-                            fmap RrdpFetchResult $ runValidatorT scopes $ updateObjectForRrdpRepository
-                                appContext worldVersion rrdpRepository
+                            fmap RrdpFetchResult $ runValidatorT scopes $ 
+                                updateObjectForRrdpRepository appContext worldVersion rrdpRepository
+
                         RsyncFetchParams {..} -> exec resultHandler $
-                            fmap RsyncFetchResult $ runValidatorT scopes $ updateObjectForRsyncRepository
-                                appContext fetchConfig worldVersion rsyncRepository
+                            fmap RsyncFetchResult $ runValidatorT scopes $ 
+                                updateObjectForRsyncRepository appContext fetchConfig worldVersion rsyncRepository
+
                         CompactionParams {..} -> exec resultHandler $
                             CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
+
                         ValidationParams {..} -> exec resultHandler $
                             uncurry ValidationResult <$> runValidation appContext worldVersion tals
+
                         CacheCleanupParams {..} -> exec resultHandler $
                             CacheCleanupResult <$> runCacheCleanup appContext worldVersion
   where    
