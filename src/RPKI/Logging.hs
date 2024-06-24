@@ -250,7 +250,7 @@ eol :: Char
 eol = '\n' 
 
 -- Read input stream and extract serialised log messages from it.
--- Messages are separated by the EOL character and start with `startMessageMark`.
+-- Messages are separated by the EOL character.
 sinkLog :: MonadIO m => AppLogger -> ConduitT C8.ByteString o m ()
 sinkLog logger = go mempty        
   where
