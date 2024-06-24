@@ -19,6 +19,7 @@ import qualified Data.ByteString.Char8 as C8
 
 import Data.Bifunctor
 import Data.Foldable
+import Data.Maybe
 import Data.Text (Text, justifyLeft)
 
 import Data.String.Interpolate.IsString
@@ -211,7 +212,7 @@ withLogger LogConfig {..} sysMetricCallback f = do
                                                     
             MsgQE z -> processMessageInMainProcess z
 
-    -- Worker simply re-sends all the binary messages 
+    -- Worker simply resends all the binary messages 
     -- (received from children processes) to its parent. 
     -- Messages from this process are serialised and then sent
     let loopWorker = loopReadQueue messageQueue $ logRaw . \case 

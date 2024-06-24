@@ -3,8 +3,8 @@
 {-# LANGUAGE BangPatterns      #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE QuasiQuotes       #-}
-{-# LANGUAGE DeriveGeneric      #-}
-{-# LANGUAGE FlexibleInstances  #-}
+{-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Main where
 
@@ -142,15 +142,34 @@ executeWorkerProcess = do
                     
     -- turnOffTlsValidation
 
-    withLogger logConfig (\_ -> pure ()) $ \logger -> liftIO $ do
-        (z, validations) <- runValidatorT
-                                (newScopes "worker-create-app-context")
-                                (createWorkerAppContext config logger)
-        case z of
-            Left e ->
-                logError logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
-            Right appContext ->
-                executeWorker input appContext
+    executeWork input $ \_ resultHandler -> 
+        withLogger logConfig (\_ -> pure ()) $ \logger -> liftIO $ do
+            (z, validations) <- runValidatorT
+                                    (newScopes "worker-create-app-context")
+                                    (createWorkerAppContext config logger)
+            case z of
+                Left e ->
+                    logError logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
+                Right appContext ->                    
+                    case input ^. #params of
+                        RrdpFetchParams {..} -> exec resultHandler $
+                            fmap RrdpFetchResult $ runValidatorT scopes $ 
+                                updateObjectForRrdpRepository appContext worldVersion rrdpRepository
+
+                        RsyncFetchParams {..} -> exec resultHandler $
+                            fmap RsyncFetchResult $ runValidatorT scopes $ 
+                                updateObjectForRsyncRepository appContext fetchConfig worldVersion rsyncRepository
+
+                        CompactionParams {..} -> exec resultHandler $
+                            CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
+
+                        ValidationParams {..} -> exec resultHandler $
+                            uncurry ValidationResult <$> runValidation appContext worldVersion tals
+
+                        CacheCleanupParams {..} -> exec resultHandler $
+                            CacheCleanupResult <$> runCacheCleanup appContext worldVersion
+  where    
+    exec resultHandler f = resultHandler =<< execWithStats f                    
 
 
 turnOffTlsValidation = do 
@@ -456,29 +475,6 @@ rsyncPrefetches CLIOptions {..} = do
         case parseRsyncURL (convert u) of
             Left e         -> appError $ UnspecifiedE [i|Rsync URL #{u} is invalid|] (convert $ show e)
             Right rsyncURL -> pure rsyncURL
-
-
--- This is for worker processes.
-executeWorker :: WorkerInput
-            -> AppLmdbEnv
-            -> IO ()
-executeWorker input appContext =
-    executeWork input $ \_ resultHandler -> do
-        case input ^. #params of
-            RrdpFetchParams {..} -> exec resultHandler $
-                fmap RrdpFetchResult $ runValidatorT scopes $ updateObjectForRrdpRepository
-                    appContext worldVersion rrdpRepository
-            RsyncFetchParams {..} -> exec resultHandler $
-                fmap RsyncFetchResult $ runValidatorT scopes $ updateObjectForRsyncRepository
-                    appContext fetchConfig worldVersion rsyncRepository
-            CompactionParams {..} -> exec resultHandler $
-                CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
-            ValidationParams {..} -> exec resultHandler $
-                uncurry ValidationResult <$> runValidation appContext worldVersion tals
-            CacheCleanupParams {..} -> exec resultHandler $
-                CacheCleanupResult <$> runCacheCleanup appContext worldVersion
-  where
-    exec resultHandler f = resultHandler =<< execWithStats f
 
 
 createWorkerAppContext :: Config -> AppLogger -> ValidatorT IO AppLmdbEnv

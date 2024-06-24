@@ -8,7 +8,6 @@
 module RPKI.Worker where
 
 import           Control.Exception.Lifted
-import           Control.Monad (void, when)
 import           Control.Monad.IO.Class
 import           Control.Concurrent
 import           Control.Concurrent.Async
@@ -148,56 +147,46 @@ data WorkerResult r = WorkerResult {
 executeWork :: WorkerInput 
             -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                
             -> IO ()
-executeWork input actualWork = do 
-    exitCode <- newTVarIO Nothing
-    let forceExit code = atomically $ writeTVar exitCode (Just code)
-    void $ forkIO $ void $ race 
-                (do 
-                    actualWork input writeWorkerOutput
-                    `finally` 
-                        forceExit ExitSuccess) 
-                (race 
-                    (dieIfParentDies forceExit) 
-                    (dieOfTiming forceExit))
-
-    -- this complication is to guarantee that it is the main thread 
-    -- that exits the process as soon as there's exit code defined.
-    exitWith =<< atomically (maybe retry pure =<< readTVar exitCode)
+executeWork input actualWork = do         
+    exitCode <- anyOf 
+        ((actualWork input writeWorkerOutput >> pure ExitSuccess) `onException` pure exceptionExitCode)
+        (anyOf dieIfParentDies dieOfTiming)
     
+    exitWith exitCode
   where        
+    anyOf a b = either id id <$> race a b
+    
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
     -- there's no point continuing.
-    dieIfParentDies exit' = 
-        loop 500_000 $ do 
+    dieIfParentDies = go
+      where
+        go = do 
             parentId <- getParentProcessID                    
-            when (parentId /= input ^. #initialParentId) $ 
-                exit' exitParentDied            
+            if parentId /= input ^. #initialParentId
+                then pure parentDiedExitCode            
+                else threadDelay 500_000 >> go
 
     -- exit either because the time is up or too much CPU is spent
-    dieOfTiming exit' = 
+    dieOfTiming = 
         case input ^. #cpuLimit of
-            Nothing       -> dieAfterTimeout exit'
-            Just cpuLimit -> 
-                void $ race 
-                    (dieAfterTimeout exit')
-                    (dieOutOfCpuTime cpuLimit exit')
+            Nothing       -> dieAfterTimeout
+            Just cpuLimit -> anyOf dieAfterTimeout (dieOutOfCpuTime cpuLimit)
 
     -- Time bomb. Wait for the certain timeout and then exit.
-    dieAfterTimeout exit' = do
+    dieAfterTimeout = do
         let Timebox (Seconds s) = input ^. #workerTimeout
         threadDelay $ 1_000_000 * fromIntegral s        
-        exit' exitTimeout
+        pure timeoutExitCode
 
     -- Exit if the worker consumed too much CPU time
-    dieOutOfCpuTime cpuLimit exit' = 
-        loop 1_000_000 $ do 
+    dieOutOfCpuTime cpuLimit = go
+      where
+        go = do 
             cpuTime <- getCpuTime
-            when (cpuTime > cpuLimit) $ exit' exitOutOfCpuTime
-
-    loop ms f = 
-        f >> threadDelay ms >> loop ms f
-
+            if cpuTime > cpuLimit 
+                then pure outOfCpuTimeExitCode
+                else threadDelay 1_000_000 >> go
 
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
@@ -233,11 +222,13 @@ rtsMemValue mb = show mb <> "m"
 defaultRts :: [String]
 defaultRts = [ "-I0" ]
 
-exitParentDied, exitTimeout, exitOutOfCpuTime, exitOutOfMemory, exitKillByTypedProcess :: ExitCode
-exitParentDied  = ExitFailure 11
-exitTimeout     = ExitFailure 12
-exitOutOfCpuTime  = ExitFailure 13
-exitOutOfMemory = ExitFailure 251
+parentDiedExitCode, timeoutExitCode, outOfCpuTimeExitCode, outOfMemoryExitCode :: ExitCode
+exitKillByTypedProcess, exceptionExitCode :: ExitCode
+exceptionExitCode    = ExitFailure 99
+parentDiedExitCode   = ExitFailure 111
+timeoutExitCode      = ExitFailure 122
+outOfCpuTimeExitCode = ExitFailure 113
+outOfMemoryExitCode  = ExitFailure 251
 exitKillByTypedProcess = ExitFailure (-2)
 
 worderIdS :: WorkerId -> String
@@ -295,17 +286,17 @@ runWorker logger config workerId params timeout cpuLimit extraCli = do
                     Right r -> 
                         pure r            
             exit@(ExitFailure errorCode)
-                | exit == exitTimeout -> do                     
+                | exit == timeoutExitCode -> do                     
                     let message = [i|Worker #{workerId} execution timed out.|]
                     logError logger message
                     trace WorkerTimeoutTrace
                     appError $ InternalE $ WorkerTimeout message
-                | exit == exitOutOfCpuTime -> do                     
+                | exit == outOfCpuTimeExitCode -> do                     
                     let message = [i|Worker #{workerId} ran out of CPU time.|]
                     logError logger message
                     trace WorkerCpuOveruseTrace
                     appError $ InternalE $ WorkerOutOfCpuTime message                    
-                | exit == exitOutOfMemory -> do                     
+                | exit == outOfMemoryExitCode -> do                     
                     let message = [i|Worker #{workerId} ran out of memory.|]
                     logError logger message                    
                     appError $ InternalE $ WorkerOutOfMemory message
