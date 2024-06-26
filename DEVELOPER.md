@@ -9,11 +9,7 @@
 
 ## Build
 
-- Currently two different versions of the GHC are supported: 9.6 for the normal builds and docker images and 8.10.x for creating static binaries. There is a bug in the combination `ghc + alpine + musl + template haskell` leading to the compiler segfault for at least GHC 9.2, 9.4 and 9.6. That's why 8.10 is being dragged along, as soon as the GHC bug is fixed, 8.10 will be ditched.
-
-- It is important to run tests for both compiler versions, so `./run-tests.sh` is the way to go.
-
-- Another annoying bug is the stack bug where `stack build rpki-prover:rpki-prover` always tries to build `rpki-prover-static` executable as well and, obviously, fails. This problem exists since forever
+- There's an annoying bug is the stack where `stack build rpki-prover:rpki-prover` always tries to build `rpki-prover-static` executable as well and, obviously, fails. This problem exists since forever
 https://github.com/commercialhaskell/stack/issues/1406 and nobody gives a crap. That's why there is `package-template.yaml` that is being transformed to `package.yaml` depending on what kind of binary we want to build, normal or static. This can be fixed by moving to Cabal somewhere in the future.
 
 So
@@ -31,7 +27,7 @@ or
      ```docker build . --file Dockerfile.prover --tag lolepezy/rpki-prover:latest```
 
 Shell scripts are wrapping all the dual compiler details and generating the `package.yaml`.
- 
+
 ## Bumping DB version
 
 There is a value `currentDatabaseVersion` definted in `Database.hs`, that needs to be increased every time serialisation/deserialisation of the cache may break. In practice, that means whenever there's any change to the data types in `Domain.hs`. Changes in involved library types will also break serialisation, so essentially it's better to bump `currentDatabaseVersion` with any change of stack snapshot version of library version. Version change will result in prover erasing its cache and starting from scratch after upgrade and restart, which is a minor nuisance compared to processing serialisation errors.
