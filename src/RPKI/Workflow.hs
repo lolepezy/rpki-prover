@@ -62,7 +62,7 @@ import           RPKI.SLURM.Types
 -- A job run can be the first one or not and 
 -- sometimes we need this information.
 data JobRun = FirstRun | RanBefore
-    deriving (Show, Eq, Ord, Generic)  
+    deriving stock (Show, Eq, Ord, Generic)  
 
 data WorkflowShared = WorkflowShared { 
         -- Indicates if anything was ever deleted from the DB,
@@ -79,7 +79,7 @@ data WorkflowShared = WorkflowShared {
         -- running to avoid launching it until the previous run is done.
         asyncFetchIsRunning :: TVar Bool
     }
-    deriving (Generic)
+    deriving stock (Generic)
 
 newWorkflowShared :: PrometheusMetrics -> STM WorkflowShared
 newWorkflowShared prometheusMetrics = WorkflowShared 
@@ -106,7 +106,7 @@ data TaskType =
 
         -- Delete local rsync mirror once in a long while
         | RsyncCleanupTask
-        deriving (Show, Eq, Ord, Bounded, Enum, Generic)
+        deriving stock (Show, Eq, Ord, Bounded, Enum, Generic)
 
 
 data Task = Task TaskType (IO ())
@@ -118,15 +118,17 @@ data Scheduling = Scheduling {
         taskDef      :: (TaskType, WorldVersion -> JobRun -> IO ()),
         persistent   :: Bool        
     }
-    deriving (Generic)
+    deriving stock (Generic)
 
+data ProverRunMode = OneOffMode | ServerMode
+    deriving stock (Eq, Ord, Generic)
 
 -- The main entry point for the whole validator workflow. Runs multiple threads, 
 -- running validation, RTR server, cleanups, cache maintenance and async fetches.
 -- 
 runWorkflow :: (Storage s, MaintainableStorage s) =>
-                AppContext s -> [TAL] -> IO ()
-runWorkflow appContext@AppContext {..} tals = do    
+                AppContext s -> [TAL] -> ProverRunMode -> IO ()
+runWorkflow appContext@AppContext {..} tals runMode = do    
         
     prometheusMetrics <- createPrometheusMetrics config
 
@@ -136,11 +138,16 @@ runWorkflow appContext@AppContext {..} tals = do
     -- Fill in the current appState if it's not too old.
     -- It is useful in case of restarts. 
     void $ loadStoredAppState appContext
-
-    -- Run the main scheduler and RTR server if configured    
-    void $ concurrently
-            (runScheduledTasks workflowShared)
-            runRtrIfConfigured
+    
+    case runMode of     
+        OneOffMode -> do 
+            worldVersion <- createWorldVersion
+            void $ validateTAs workflowShared worldVersion FirstRun
+        ServerMode -> 
+            -- Run the main scheduler and RTR server if RTR is configured    
+            void $ concurrently
+                    (runScheduledTasks workflowShared)
+                    runRtrIfConfigured
   where        
 
     schedules workflowShared = [
@@ -228,7 +235,7 @@ runWorkflow appContext@AppContext {..} tals = do
     validateTAs workflowShared@WorkflowShared {..} worldVersion _ = do
         doValidateTAs workflowShared worldVersion 
         `finally`
-        runAsyncFetcherIfNeeded        
+        (unless (runMode == OneOffMode) runAsyncFetcherIfNeeded)
       where
         runAsyncFetcherIfNeeded = 
             case config ^. #validationConfig . #fetchMethod of             
@@ -258,7 +265,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 logInfo logger [i|Finished asynchronous fetch #{fetchVersion} in #{elapsed `div` 1000}s.|]
 
 
-    doValidateTAs WorkflowShared {..} worldVersion= do
+    doValidateTAs WorkflowShared {..} worldVersion = do
         logInfo logger [i|Validating all TAs, world version #{worldVersion} |]
         executeOrDie
             processTALs
@@ -351,7 +358,7 @@ runWorkflow appContext@AppContext {..} tals = do
         -- possible leakages (even if it were possible).
         cleaned <- cleanUpStaleTx appContext
         when (cleaned > 0) $ 
-            logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]      
+            logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]   
 
     -- Delete local rsync mirror. The assumption here is that over time there
     -- be a lot of local copies of rsync repositories that are so old that 

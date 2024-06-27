@@ -98,7 +98,7 @@ main = do
 
 
 executeMainProcess :: CLIOptions Unwrapped -> IO ()
-executeMainProcess cliOptions = do     
+executeMainProcess cliOptions@CLIOptions{..} = do     
     -- TODO This doesn't look pretty, come up with something better.
     appStateHolder <- newTVarIO Nothing
 
@@ -127,9 +127,11 @@ executeMainProcess cliOptions = do
                         Right appContext' -> do 
                             -- now we have the appState, set appStateHolder
                             atomically $ writeTVar appStateHolder $ Just $ appContext' ^. #appState
-                            void $ race
-                                (runHttpApi appContext')
-                                (runValidatorServer appContext')
+                            if once 
+                                then runValidatorServer appContext' OneOffMode
+                                else void $ race
+                                        (runHttpApi appContext')
+                                        (runValidatorServer appContext' ServerMode)
 
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
@@ -176,8 +178,9 @@ turnOffTlsValidation = do
     manager <- newManager $ mkManagerSettings (TLSSettingsSimple True True True) Nothing 
     setGlobalManager manager    
 
-runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
-runValidatorServer appContext@AppContext {..} = do
+
+runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> ProverRunMode -> IO ()
+runValidatorServer appContext@AppContext {..} runMode = do
     
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion  <- newWorldVersion
@@ -200,7 +203,7 @@ runValidatorServer appContext@AppContext {..} = do
         Right tals' -> do
             logInfo logger [i|Successfully loaded #{length totalTalsNames} TALs: #{map snd totalTalsNames}|]
             -- this is where it blocks and loops in never-ending re-validation
-            runWorkflow appContext tals'
+            runWorkflow appContext tals' runMode
                 `finally`
                 closeStorage appContext
   where
@@ -565,6 +568,13 @@ data CLIOptions wrapped = CLIOptions {
     initialise :: wrapped ::: Bool <?>
         "If set, the FS layout will be created and TAL files will be downloaded.",
 
+    once :: wrapped ::: Bool <?>
+        ("If set, will run one validation cycle and exit. Http API will not start, " +++ 
+         "result will be written to the file set by --vrp-output option"),
+
+    vrpOutput :: wrapped ::: Maybe FilePath <?> 
+        "Path of the file to write VRPs to. Only effectful when --once option is set",
+
     noRirTals :: wrapped ::: Bool <?> 
         "If set, RIR TAL files will not be downloaded.",
 
@@ -737,7 +747,6 @@ instance ParseRecord (CLIOptions Wrapped) where
 deriving instance Show (CLIOptions Unwrapped)
 
 type (+++) (a :: Symbol) (b :: Symbol) = AppendSymbol a b
-
 
 withLogConfig :: CLIOptions Unwrapped -> (LogConfig -> IO ()) -> IO ()
 withLogConfig CLIOptions{..} f =
