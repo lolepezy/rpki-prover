@@ -54,6 +54,7 @@ data Config = Config {
         extraTalsDirectories      :: [FilePath],
         tmpDirectory              :: FilePath,
         cacheDirectory            :: FilePath,
+        runMode                   :: ProverRunMode,
         parallelism               :: Parallelism, 
         rsyncConf                 :: RsyncConf,
         rrdpConf                  :: RrdpConf,
@@ -101,7 +102,6 @@ data ManifestProcessing = RFC6486_Strict | RFC9286
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-
 data ValidationAlgorithm = FullEveryIteration | Incremental
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -110,9 +110,12 @@ data FetchTimingCalculation = Constant | Adaptive
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-
 data FetchMethod = SyncOnly | SyncAndAsync
     deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+data ProverRunMode = OneOffMode FilePath | ServerMode
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
 data ValidationConfig = ValidationConfig {    
@@ -213,6 +216,7 @@ defaultConfig = Config {
     extraTalsDirectories = [],
     tmpDirectory = "",
     cacheDirectory = "",
+    runMode = ServerMode,
     parallelism = makeParallelism 2,
     rsyncConf = RsyncConf {
         rsyncClientPath = Nothing,

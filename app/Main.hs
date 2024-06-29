@@ -128,10 +128,10 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                             -- now we have the appState, set appStateHolder
                             atomically $ writeTVar appStateHolder $ Just $ appContext' ^. #appState
                             if once 
-                                then runValidatorServer appContext' OneOffMode
+                                then runValidatorServer appContext'
                                 else void $ race
                                         (runHttpApi appContext')
-                                        (runValidatorServer appContext' ServerMode)
+                                        (runValidatorServer appContext')
 
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
@@ -179,8 +179,8 @@ turnOffTlsValidation = do
     setGlobalManager manager    
 
 
-runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> ProverRunMode -> IO ()
-runValidatorServer appContext@AppContext {..} runMode = do
+runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
+runValidatorServer appContext@AppContext {..} = do
     
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion  <- newWorldVersion
@@ -203,7 +203,7 @@ runValidatorServer appContext@AppContext {..} runMode = do
         Right tals' -> do
             logInfo logger [i|Successfully loaded #{length totalTalsNames} TALs: #{map snd totalTalsNames}|]
             -- this is where it blocks and loops in never-ending re-validation
-            runWorkflow appContext tals' runMode
+            runWorkflow appContext tals'
                 `finally`
                 closeStorage appContext
   where
@@ -246,9 +246,10 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                         & maybeSet #rtrPort rtrPort
                         & maybeSet #rtrAddress rtrAddress
                         & #rtrLogFile .~ rtrLogFile
-            else Nothing    
+            else Nothing        
 
-    rsyncPrefetchUrls <- rsyncPrefetches cliOptions            
+    runMode           <- deriveRunMode cliOptions  
+    rsyncPrefetchUrls <- rsyncPrefetches cliOptions                
 
     let config = defaults
             & #programBinaryPath .~ programPath
@@ -257,6 +258,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & #tmpDirectory .~ tmpd
             & #cacheDirectory .~ cached
             & #extraTalsDirectories .~ extraTalsDirectory
+            & #runMode .~ runMode
             & #parallelism .~ parallelism
             & #rsyncConf . #rsyncRoot .~ rsyncd
             & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
@@ -512,6 +514,13 @@ createAppState logger localExceptions = do
 checkPreconditions :: CLIOptions Unwrapped -> ValidatorT IO ()
 checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
 
+deriveRunMode :: CLIOptions Unwrapped -> ValidatorT IO ProverRunMode
+deriveRunMode CLIOptions {..} = 
+    case (once, vrpOutput) of 
+        (False, Nothing) -> pure ServerMode  
+        (True, Just vo)  -> pure $ OneOffMode vo
+        _                -> appError $ UnspecifiedE 
+            [i|Options `--once` and `--vrp-output` must be either both set or both not set.|] ""
 
 -- | Run rpki-prover in a CLI mode for verifying RSC signature (*.sig file).
 executeVerifier :: CLIOptions Unwrapped -> IO ()
@@ -570,10 +579,10 @@ data CLIOptions wrapped = CLIOptions {
 
     once :: wrapped ::: Bool <?>
         ("If set, will run one validation cycle and exit. Http API will not start, " +++ 
-         "result will be written to the file set by --vrp-output option"),
+         "result will be written to the file set by --vrp-output option (which must also be set)."),
 
     vrpOutput :: wrapped ::: Maybe FilePath <?> 
-        "Path of the file to write VRPs to. Only effectful when --once option is set",
+        "Path of the file to write VRPs to. Only effectful when --once option is set.",
 
     noRirTals :: wrapped ::: Bool <?> 
         "If set, RIR TAL files will not be downloaded.",

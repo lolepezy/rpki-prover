@@ -133,6 +133,8 @@ instance ToSchema ManifestProcessing
 instance ToSchema ValidationAlgorithm
 instance ToSchema FetchTimingCalculation
 instance ToSchema FetchMethod
+instance ToSchema ProverRunMode where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema a => ToSchema (Located a)
 

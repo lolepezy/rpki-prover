@@ -120,15 +120,12 @@ data Scheduling = Scheduling {
     }
     deriving stock (Generic)
 
-data ProverRunMode = OneOffMode | ServerMode
-    deriving stock (Eq, Ord, Generic)
-
 -- The main entry point for the whole validator workflow. Runs multiple threads, 
 -- running validation, RTR server, cleanups, cache maintenance and async fetches.
 -- 
 runWorkflow :: (Storage s, MaintainableStorage s) =>
-                AppContext s -> [TAL] -> ProverRunMode -> IO ()
-runWorkflow appContext@AppContext {..} tals runMode = do    
+                AppContext s -> [TAL] -> IO ()
+runWorkflow appContext@AppContext {..} tals = do    
         
     prometheusMetrics <- createPrometheusMetrics config
 
@@ -139,8 +136,8 @@ runWorkflow appContext@AppContext {..} tals runMode = do
     -- It is useful in case of restarts. 
     void $ loadStoredAppState appContext
     
-    case runMode of     
-        OneOffMode -> do 
+    case config ^. #runMode of     
+        OneOffMode vrpOutputFile -> do 
             worldVersion <- createWorldVersion
             void $ validateTAs workflowShared worldVersion FirstRun
         ServerMode -> 
@@ -235,7 +232,9 @@ runWorkflow appContext@AppContext {..} tals runMode = do
     validateTAs workflowShared@WorkflowShared {..} worldVersion _ = do
         doValidateTAs workflowShared worldVersion 
         `finally`
-        (unless (runMode == OneOffMode) runAsyncFetcherIfNeeded)
+        (case config ^. #runMode of 
+            ServerMode   -> runAsyncFetcherIfNeeded
+            OneOffMode _ -> pure ())
       where
         runAsyncFetcherIfNeeded = 
             case config ^. #validationConfig . #fetchMethod of             
