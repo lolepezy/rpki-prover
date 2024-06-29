@@ -54,7 +54,7 @@ data Config = Config {
         extraTalsDirectories      :: [FilePath],
         tmpDirectory              :: FilePath,
         cacheDirectory            :: FilePath,
-        runMode                   :: ProverRunMode,
+        proverRunMode             :: ProverRunMode,
         parallelism               :: Parallelism, 
         rsyncConf                 :: RsyncConf,
         rrdpConf                  :: RrdpConf,
@@ -216,7 +216,7 @@ defaultConfig = Config {
     extraTalsDirectories = [],
     tmpDirectory = "",
     cacheDirectory = "",
-    runMode = ServerMode,
+    proverRunMode = ServerMode,
     parallelism = makeParallelism 2,
     rsyncConf = RsyncConf {
         rsyncClientPath = Nothing,

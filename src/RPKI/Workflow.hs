@@ -140,7 +140,7 @@ runWorkflow appContext@AppContext {..} tals = do
     -- It is useful in case of restarts. 
     void $ loadStoredAppState appContext
     
-    case config ^. #runMode of     
+    case config ^. #proverRunMode of     
         OneOffMode vrpOutputFile -> oneOffRun workflowShared vrpOutputFile
         ServerMode ->             
             void $ concurrently
@@ -245,7 +245,7 @@ runWorkflow appContext@AppContext {..} tals = do
     validateTAs workflowShared@WorkflowShared {..} worldVersion _ = do
         doValidateTAs workflowShared worldVersion 
         `finally`
-        (case config ^. #runMode of 
+        (case config ^. #proverRunMode of 
             ServerMode   -> runAsyncFetcherIfNeeded
             OneOffMode _ -> pure ())
       where

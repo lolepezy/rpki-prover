@@ -19,7 +19,6 @@ import qualified Data.ByteString.Char8 as C8
 
 import Data.Bifunctor
 import Data.Foldable
-import Data.Maybe
 import Data.Text (Text, justifyLeft)
 
 import Data.String.Interpolate.IsString

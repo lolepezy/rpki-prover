@@ -54,7 +54,10 @@ fromEither z =
             fromValue z
 
 fromEitherM :: Monad m => m (Either AppError r) -> ValidatorT m r
-fromEitherM s = embedValidatorT $ (, mempty) <$> s
+fromEitherM s = 
+    appLift s >>= \case 
+        Left e  -> appError e
+        Right r -> pure r    
 
 vFromEither :: Either ValidationError r -> PureValidatorT r
 vFromEither = fromEither . first ValidationE

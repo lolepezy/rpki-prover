@@ -118,12 +118,13 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                 else do
                     -- run the validator
                     (appContext, validations) <- do
-                                runValidatorT (newScopes "initialise") $ do
+                                runValidatorT (newScopes "Initialise") $ do
                                     checkPreconditions cliOptions
                                     createAppContext cliOptions logger (logConfig ^. #logLevel)
                     case appContext of
-                        Left _ ->
-                            logError logger [i|Couldn't initialise, problems: #{validations}.|]
+                        Left _ -> 
+                            logError logger [i|Failure:
+#{formatValidations (validations ^. typed)}.|]                            
                         Right appContext' -> do 
                             -- now we have the appState, set appStateHolder
                             atomically $ writeTVar appStateHolder $ Just $ appContext' ^. #appState
@@ -223,13 +224,17 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     programPath <- liftIO getExecutablePath
 
-    (root, tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger CheckTALsExists
-
     let defaults = defaultConfig
     let lmdbRealSize = (Size <$> lmdbSize) `orDefault` (defaults ^. #lmdbSizeMb)
 
-    -- clean up tmp directory if it's not empty
-    cleanDir tmpd
+    (root, tald, rsyncd, tmpd, cached) <- 
+            fromTryM 
+                (\e -> UnspecifiedE "Error verifying/creating FS layout: " (fmtEx e))
+                $ do 
+                    z@(_, _, _, tmpd, _) <- fsLayout cliOptions logger CheckTALsExists    
+                    -- clean up tmp directory if it's not empty
+                    cleanDir tmpd
+                    pure z
 
     let cpuCount' = fromMaybe getRtsCpuCount cpuCount
 
@@ -248,7 +253,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                         & #rtrLogFile .~ rtrLogFile
             else Nothing        
 
-    runMode           <- deriveRunMode cliOptions  
+    proverRunMode     <- deriveProverRunMode cliOptions  
     rsyncPrefetchUrls <- rsyncPrefetches cliOptions                
 
     let config = defaults
@@ -258,7 +263,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & #tmpDirectory .~ tmpd
             & #cacheDirectory .~ cached
             & #extraTalsDirectories .~ extraTalsDirectory
-            & #runMode .~ runMode
+            & #proverRunMode .~ proverRunMode
             & #parallelism .~ parallelism
             & #rsyncConf . #rsyncRoot .~ rsyncd
             & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
@@ -452,7 +457,7 @@ checkSubDirectory :: FilePath -> FilePath -> IO (Either Text FilePath)
 checkSubDirectory root sub = do
     let subDirectory = root </> sub
     doesDirectoryExist subDirectory >>= \case
-        False -> pure $ Left [i|Directory #{subDirectory} doesn't exist.|]
+        False -> pure $ Left [i|Directory #{subDirectory} doesn't exist|]
         True  -> pure $ Right subDirectory
 
 createSubDirectoryIfNeeded :: FilePath -> FilePath -> IO (Either Text FilePath)
@@ -514,8 +519,8 @@ createAppState logger localExceptions = do
 checkPreconditions :: CLIOptions Unwrapped -> ValidatorT IO ()
 checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
 
-deriveRunMode :: CLIOptions Unwrapped -> ValidatorT IO ProverRunMode
-deriveRunMode CLIOptions {..} = 
+deriveProverRunMode :: CLIOptions Unwrapped -> ValidatorT IO ProverRunMode
+deriveProverRunMode CLIOptions {..} = 
     case (once, vrpOutput) of 
         (False, Nothing) -> pure ServerMode  
         (True, Just vo)  -> pure $ OneOffMode vo
