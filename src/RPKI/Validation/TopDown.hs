@@ -612,8 +612,7 @@ validateCaNoFetch
                                                 (getFullCa appContext topDownContext ca)
                                                 (getCrlByKey appContext crlKey)
 
-                                | otherwise -> do 
-                                    -- logDebug logger [i|Option 2|]            
+                                | otherwise -> do    
                                     getMftByKey tx db mftKey >>= \case 
                                         Nothing -> pure $! 
                                             internalError appContext [i|Internal error, can't find a manifest by its key #{mftKey}.|]
@@ -621,15 +620,15 @@ validateCaNoFetch
                                             increment $ topDownCounters ^. #shortcutMft
                                             markAsRead topDownContext mftKey
                                             fullCa <- getFullCa appContext topDownContext ca
+                                            let crlKey = mftShortcut ^. #crlShortcut . #key
+                                            markAsRead topDownContext crlKey
                                             let combineShortcutAndNewMft = do                                                     
                                                     overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
                                                     collectPayloadsFromShortcuts mftShortcut (Just overlappingChildren) 
                                                                 (pure fullCa)
                                                                 (findAndValidateCrl fullCa mft childrenAki)                                                    
 
-                                            let useShortcutOnly = do 
-                                                    let crlKey = mftShortcut ^. #crlShortcut . #key
-                                                    markAsRead topDownContext crlKey
+                                            let useShortcutOnly =                                                    
                                                     collectPayloadsFromShortcuts mftShortcut Nothing 
                                                             (getFullCa appContext topDownContext ca)
                                                             (getCrlByKey appContext crlKey)
@@ -823,7 +822,7 @@ validateCaNoFetch
                             vWarn RevokedResourceCertificate
 
 
-    -- this indicates the difeerence between RFC9286-bis 
+    -- this indicates the difference between RFC9286-bis 
     -- version 02 (strict) and version 03 and later (more loose).                                                                                            
     gatherMftEntryValidations =
         case config ^. #validationConfig . #manifestProcessing of
