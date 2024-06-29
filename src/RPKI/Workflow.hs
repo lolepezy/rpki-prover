@@ -246,8 +246,8 @@ runWorkflow appContext@AppContext {..} tals = do
         doValidateTAs workflowShared worldVersion 
         `finally`
         (case config ^. #proverRunMode of 
-            ServerMode   -> runAsyncFetcherIfNeeded
-            OneOffMode _ -> pure ())
+            ServerMode    -> runAsyncFetcherIfNeeded
+            OneOffMode {} -> pure ())
       where
         runAsyncFetcherIfNeeded = 
             case config ^. #validationConfig . #fetchMethod of             
@@ -617,7 +617,8 @@ runAsyncFetches appContext@AppContext {..} worldVersion = do
         void $ forConcurrently (sortPpas asyncRepos problematicPpas) $ \ppAccess -> do                         
             let url = getRpkiURL $ NE.head $ unPublicationPointAccess ppAccess
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
-                    fetchAsync appContext repositoryProcessing worldVersion ppAccess
+                    fetchWithFallback appContext repositoryProcessing 
+                        worldVersion (asyncFetchConfig config) ppAccess
             
         validationStateOfFetches repositoryProcessing   
   where    

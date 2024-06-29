@@ -225,7 +225,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     programPath <- liftIO getExecutablePath
 
     let defaults = defaultConfig
-    let lmdbRealSize = (Size <$> lmdbSize) `orDefault` (defaults ^. #lmdbSizeMb)
+    let lmdbRealSize = (Size <$> lmdbSize) `orDefault` (defaults ^. #lmdbSizeMb)    
 
     (root, tald, rsyncd, tmpd, cached) <- 
             fromTryM 
@@ -234,12 +234,11 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                     z@(_, _, _, tmpd, _) <- fsLayout cliOptions logger CheckTALsExists    
                     -- clean up tmp directory if it's not empty
                     cleanDir tmpd
-                    pure z
-
-    let cpuCount' = fromMaybe getRtsCpuCount cpuCount
+                    pure z    
 
     -- Set capabilities to the values from the CLI or to all available CPUs,
     -- (disregard the HT issue for now it needs more testing).
+    let cpuCount' = fromMaybe getRtsCpuCount cpuCount
     liftIO $ setCpuCount cpuCount'    
     let parallelism = 
             case fetcherCount of 
@@ -306,6 +305,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
             & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory            
         
+    -- Do some "common sense" adjustmnents to the config for correctness
     let adjustedConfig = config 
             -- Cache must be cleaned up at least as often as the 
             -- lifetime of the objects in it    

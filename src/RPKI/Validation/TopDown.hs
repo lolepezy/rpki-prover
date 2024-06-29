@@ -498,15 +498,21 @@ validateCaNoLimitChecks
                     validateThisCertAndGoDown
                     
                 Just filteredPpa -> do
-                    r <- fetchSync appContext repositoryProcessing worldVersion filteredPpa
-                    case r of 
-                        Nothing -> 
+                    let fetch = case config ^. #proverRunMode of 
+                            ServerMode -> do 
+                                fetchQuickly appContext repositoryProcessing worldVersion filteredPpa
+                            OneOffMode {} -> 
+                                fetchWithFallback appContext repositoryProcessing worldVersion 
+                                            (syncFetchConfig config) filteredPpa                                            
+                    fetch >>= \case                     
+                        [] -> 
                             -- Nothing has been fetched
                             validateThisCertAndGoDown
-                        Just _  -> do     
+                        _  -> do     
                             pps <- readPublicationPoints repositoryProcessing      
                             let primaryUrl = getPrimaryRepositoryUrl pps filteredPpa
                             metricFocusOn PPFocus primaryUrl validateThisCertAndGoDown
+
   where
     validateThisCertAndGoDown = validateCaNoFetch appContext topDownContext ca
 
