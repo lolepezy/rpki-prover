@@ -18,6 +18,8 @@ import           Control.Lens
 import           Data.Generics.Product.Typed
 import           GHC.Generics (Generic)
 
+import qualified Data.ByteString.Lazy            as LBS
+
 import qualified Data.List.NonEmpty              as NE
 import           Data.Foldable                   (for_, toList)
 import qualified Data.Text                       as Text
@@ -57,6 +59,8 @@ import           RPKI.Util
 import           RPKI.Time
 import           RPKI.Worker
 import           RPKI.SLURM.Types
+import           RPKI.Http.Dto
+import           RPKI.Http.Types
 
 
 -- A job run can be the first one or not and 
@@ -137,15 +141,24 @@ runWorkflow appContext@AppContext {..} tals = do
     void $ loadStoredAppState appContext
     
     case config ^. #runMode of     
-        OneOffMode vrpOutputFile -> do 
-            worldVersion <- createWorldVersion
-            void $ validateTAs workflowShared worldVersion FirstRun
-        ServerMode -> 
-            -- Run the main scheduler and RTR server if RTR is configured    
+        OneOffMode vrpOutputFile -> oneOffRun workflowShared vrpOutputFile
+        ServerMode ->             
             void $ concurrently
+                    -- Run the main scheduler and RTR server if RTR is configured    
                     (runScheduledTasks workflowShared)
                     runRtrIfConfigured
   where        
+
+    oneOffRun workflowShared vrpOutputFile = do 
+        worldVersion <- createWorldVersion
+        void $ validateTAs workflowShared worldVersion FirstRun
+        vrps <- roTxT database $ \tx db -> 
+                getLastValidationVersion db tx >>= \case 
+                    Nothing            -> pure Nothing
+                    Just latestVersion -> getVrps tx db latestVersion
+        case vrps of 
+            Nothing -> logWarn logger [i|Don't have any VRPs.|]
+            _       -> LBS.writeFile vrpOutputFile $ unRawCSV $ vrpDtosToCSV $ toVrpDtos vrps
 
     schedules workflowShared = [
             Scheduling {                 

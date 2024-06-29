@@ -311,7 +311,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             readSlurmFiles files
 
     -- Read the files first to fail fast
-    unless (null localExceptions) $ do
+    unless (null localExceptions) $
         void $ readSlurms localExceptions
     
     appState <- createAppState logger localExceptions    
