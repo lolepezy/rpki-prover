@@ -38,7 +38,8 @@ import qualified Network.Wai.Handler.Warp         as Warp
 import           System.Directory
 import           System.Environment
 import           System.FilePath                  ((</>))
-import           System.IO                        (hPutStrLn, stderr)
+import           System.IO                        
+import           System.Exit
 
 import           Options.Generic
 
@@ -76,6 +77,7 @@ import           Network.HTTP.Client.TLS
 -- import           Network.HTTP.Simple
 import           Network.Connection
 
+
 main :: IO ()
 main = do
     cliOptions@CLIOptions{..} <- unwrapRecord $ 
@@ -98,7 +100,7 @@ main = do
 
 
 executeMainProcess :: CLIOptions Unwrapped -> IO ()
-executeMainProcess cliOptions = do     
+executeMainProcess cliOptions@CLIOptions{..} = do     
     -- TODO This doesn't look pretty, come up with something better.
     appStateHolder <- newTVarIO Nothing
 
@@ -110,7 +112,10 @@ executeMainProcess cliOptions = do
                 for_ z $ mergeSystemMetrics sm
 
         withLogger logConfig bumpSysMetric $ \logger -> do
-            logDebug logger [i|Starting #{rpkiProverVersion}.|]
+            logDebug logger $ if once 
+                    then [i|Starting #{rpkiProverVersion} in one-off mode.|]
+                    else [i|Starting #{rpkiProverVersion} as a server.|]
+            
             if cliOptions ^. #initialise
                 then
                     -- init the FS layout and download TALs
@@ -118,18 +123,25 @@ executeMainProcess cliOptions = do
                 else do
                     -- run the validator
                     (appContext, validations) <- do
-                                runValidatorT (newScopes "initialise") $ do
+                                runValidatorT (newScopes "Initialise") $ do
                                     checkPreconditions cliOptions
                                     createAppContext cliOptions logger (logConfig ^. #logLevel)
                     case appContext of
-                        Left _ ->
-                            logError logger [i|Couldn't initialise, problems: #{validations}.|]
+                        Left _ -> do 
+                            logError logger [i|Failure:
+#{formatValidations (validations ^. typed)}|]
+                            drainLog logger
+                            hFlush stdout
+                            hFlush stderr
+                            exitFailure
                         Right appContext' -> do 
                             -- now we have the appState, set appStateHolder
                             atomically $ writeTVar appStateHolder $ Just $ appContext' ^. #appState
-                            void $ race
-                                (runHttpApi appContext')
-                                (runValidatorServer appContext')
+                            if once 
+                                then runValidatorServer appContext'
+                                else void $ race
+                                        (runHttpApi appContext')
+                                        (runValidatorServer appContext')
 
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
@@ -176,6 +188,7 @@ turnOffTlsValidation = do
     manager <- newManager $ mkManagerSettings (TLSSettingsSimple True True True) Nothing 
     setGlobalManager manager    
 
+
 runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorServer appContext@AppContext {..} = do
     
@@ -220,18 +233,21 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     programPath <- liftIO getExecutablePath
 
-    (root, tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger CheckTALsExists
-
     let defaults = defaultConfig
-    let lmdbRealSize = (Size <$> lmdbSize) `orDefault` (defaults ^. #lmdbSizeMb)
+    let lmdbRealSize = (Size <$> lmdbSize) `orDefault` (defaults ^. #lmdbSizeMb)    
 
-    -- clean up tmp directory if it's not empty
-    cleanDir tmpd
-
-    let cpuCount' = fromMaybe getRtsCpuCount cpuCount
+    (root, tald, rsyncd, tmpd, cached) <- 
+            fromTryM 
+                (\e -> UnspecifiedE "Error verifying/creating FS layout: " (fmtEx e))
+                $ do 
+                    z@(_, _, _, tmpd, _) <- fsLayout cliOptions logger CheckTALsExists    
+                    -- clean up tmp directory if it's not empty
+                    cleanDir tmpd
+                    pure z    
 
     -- Set capabilities to the values from the CLI or to all available CPUs,
     -- (disregard the HT issue for now it needs more testing).
+    let cpuCount' = fromMaybe getRtsCpuCount cpuCount
     liftIO $ setCpuCount cpuCount'    
     let parallelism = 
             case fetcherCount of 
@@ -243,9 +259,10 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                         & maybeSet #rtrPort rtrPort
                         & maybeSet #rtrAddress rtrAddress
                         & #rtrLogFile .~ rtrLogFile
-            else Nothing    
+            else Nothing        
 
-    rsyncPrefetchUrls <- rsyncPrefetches cliOptions            
+    proverRunMode     <- deriveProverRunMode cliOptions  
+    rsyncPrefetchUrls <- rsyncPrefetches cliOptions                
 
     let config = defaults
             & #programBinaryPath .~ programPath
@@ -254,6 +271,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & #tmpDirectory .~ tmpd
             & #cacheDirectory .~ cached
             & #extraTalsDirectories .~ extraTalsDirectory
+            & #proverRunMode .~ proverRunMode
             & #parallelism .~ parallelism
             & #rsyncConf . #rsyncRoot .~ rsyncd
             & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
@@ -296,6 +314,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
             & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory            
         
+    -- Do some "common sense" adjustmnents to the config for correctness
     let adjustedConfig = config 
             -- Cache must be cleaned up at least as often as the 
             -- lifetime of the objects in it    
@@ -306,7 +325,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             readSlurmFiles files
 
     -- Read the files first to fail fast
-    unless (null localExceptions) $ do
+    unless (null localExceptions) $
         void $ readSlurms localExceptions
     
     appState <- createAppState logger localExceptions    
@@ -447,7 +466,7 @@ checkSubDirectory :: FilePath -> FilePath -> IO (Either Text FilePath)
 checkSubDirectory root sub = do
     let subDirectory = root </> sub
     doesDirectoryExist subDirectory >>= \case
-        False -> pure $ Left [i|Directory #{subDirectory} doesn't exist.|]
+        False -> pure $ Left [i|Directory #{subDirectory} doesn't exist|]
         True  -> pure $ Right subDirectory
 
 createSubDirectoryIfNeeded :: FilePath -> FilePath -> IO (Either Text FilePath)
@@ -509,6 +528,14 @@ createAppState logger localExceptions = do
 checkPreconditions :: CLIOptions Unwrapped -> ValidatorT IO ()
 checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
 
+deriveProverRunMode :: CLIOptions Unwrapped -> ValidatorT IO ProverRunMode
+deriveProverRunMode CLIOptions {..} = 
+    case (once, vrpOutput) of 
+        (False, Nothing) -> pure ServerMode  
+        (True, Just vo)  -> pure $ OneOffMode vo
+        _                -> appError $ UnspecifiedE "options"
+            [i|Options `--once` and `--vrp-output` must be either both set or both not set|]
+            
 
 -- | Run rpki-prover in a CLI mode for verifying RSC signature (*.sig file).
 executeVerifier :: CLIOptions Unwrapped -> IO ()
@@ -564,6 +591,13 @@ data CLIOptions wrapped = CLIOptions {
 
     initialise :: wrapped ::: Bool <?>
         "If set, the FS layout will be created and TAL files will be downloaded.",
+
+    once :: wrapped ::: Bool <?>
+        ("If set, will run one validation cycle and exit. Http API will not start, " +++ 
+         "result will be written to the file set by --vrp-output option (which must also be set)."),
+
+    vrpOutput :: wrapped ::: Maybe FilePath <?> 
+        "Path of the file to write VRPs to. Only effectful when --once option is set.",
 
     noRirTals :: wrapped ::: Bool <?> 
         "If set, RIR TAL files will not be downloaded.",
@@ -737,7 +771,6 @@ instance ParseRecord (CLIOptions Wrapped) where
 deriving instance Show (CLIOptions Unwrapped)
 
 type (+++) (a :: Symbol) (b :: Symbol) = AppendSymbol a b
-
 
 withLogConfig :: CLIOptions Unwrapped -> (LogConfig -> IO ()) -> IO ()
 withLogConfig CLIOptions{..} f =

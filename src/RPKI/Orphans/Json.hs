@@ -405,6 +405,7 @@ instance ToJSON ManifestProcessing
 instance ToJSON ValidationAlgorithm
 instance ToJSON FetchTimingCalculation
 instance ToJSON FetchMethod
+instance ToJSON ProverRunMode
 instance ToJSON TAL
 instance ToJSON HttpApiConfig
 instance ToJSON ValidationConfig

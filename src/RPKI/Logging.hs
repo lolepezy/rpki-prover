@@ -19,7 +19,6 @@ import qualified Data.ByteString.Char8 as C8
 
 import Data.Bifunctor
 import Data.Foldable
-import Data.Maybe
 import Data.Text (Text, justifyLeft)
 
 import Data.String.Interpolate.IsString
@@ -245,6 +244,12 @@ withLogger LogConfig {..} sysMetricCallback f = do
             pid   = justifyLeft 16 ' ' [i|[pid #{processId}]|]     
         in [i|#{level}  #{pid}  #{timestamp}  #{message}|] 
 
+
+drainLog :: MonadIO m => AppLogger -> m ()
+drainLog (getQueue -> queue) =     
+    liftIO $ atomically $ do 
+        empty <- isEmptyCQueue queue
+        unless empty retry    
 
 eol :: Char
 eol = '\n' 

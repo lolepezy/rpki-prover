@@ -179,6 +179,9 @@ closeCQueue (ClosableQueue _ s) = writeTVar s QClosed
 isClosedCQueue :: ClosableQueue a -> STM Bool
 isClosedCQueue (ClosableQueue _ s) = (QClosed ==) <$> readTVar s 
 
+isEmptyCQueue :: ClosableQueue a -> STM Bool
+isEmptyCQueue (ClosableQueue q _) = isEmptyTBQueue q 
+
 readCQueue :: ClosableQueue a -> STM (Maybe a)
 readCQueue (ClosableQueue q queueState) =
     Q.tryReadTBQueue q >>= \case    

@@ -44,7 +44,7 @@ toMessage = \case
     InternalE t -> toInternalErrorMessage t
     
     UnspecifiedE context e -> 
-        [i|Unspecified error #{context}, details: #{e}.|]
+        [i|Unspecified error in #{context}, details: #{e}.|]
 
 
 toRsyncMessage :: RsyncError -> Text

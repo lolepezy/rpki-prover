@@ -64,13 +64,13 @@ import           RPKI.Parallel
   Fall-back is disabled in the sync mode, so if primary repoistory doesn't 
   respond, we skip all the fall-backs and mark them all as ForAsyncFetch.
 -}
-fetchSync :: (MonadIO m, Storage s) => 
+fetchQuickly :: (MonadIO m, Storage s) => 
             AppContext s                       
         -> RepositoryProcessing
         -> WorldVersion
         -> PublicationPointAccess  
-        -> ValidatorT m (Maybe FetchResult)
-fetchSync appContext@AppContext {..}     
+        -> ValidatorT m [FetchResult]
+fetchQuickly appContext@AppContext {..}     
     repositoryProcessing@RepositoryProcessing {..}
     worldVersion
     ppa = do 
@@ -83,7 +83,7 @@ fetchSync appContext@AppContext {..}
                 -- It exists mainly for comparisons and measurements and 
                 -- not very useful in practice.
                 let primaryRepo = getPrimaryRepository pps ppa
-                Just <$>  
+                (:[]) <$>  
                     fetchOnePp appContext (syncFetchConfig config) 
                         repositoryProcessing worldVersion primaryRepo
                         (\meta _ -> pure meta)
@@ -95,7 +95,7 @@ fetchSync appContext@AppContext {..}
                         -- There's nothing to be fetched in the sync mode, 
                         -- so just mark all of them for async fetching.                
                         markForAsyncFetch repositoryProcessing asyncRepos     
-                        pure Nothing           
+                        pure []           
                     Just syncPp_ -> do  
                         -- In sync mode fetch only the first PP
                         fetchResult <-                     
@@ -112,7 +112,7 @@ fetchSync appContext@AppContext {..}
                                                     $ NonEmpty.toList $ unPublicationPointAccess ppa
                                 markForAsyncFetch repositoryProcessing toMarkAsync
                     
-                        pure $ Just fetchResult
+                        pure $! [fetchResult]
   where
     newMetaCallback syncPp_ pps newMeta fetchMoment = do
         -- Set fetchType to ForAsyncFetch to all fall-back URLs, 
@@ -140,26 +140,26 @@ fetchSync appContext@AppContext {..}
                                                 
 
 {- 
-  Fetch repositories in the async mode (i.e. concurrently to top-down validation).
-
   Fetch with fallback going through all (both RRDP and rsync) options.
 -}
-fetchAsync :: (MonadIO m, Storage s) => 
+fetchWithFallback :: (MonadIO m, Storage s) => 
                     AppContext s       
                 -> RepositoryProcessing
                 -> WorldVersion
+                -> FetchConfig
                 -> PublicationPointAccess  
                 -> ValidatorT m [FetchResult]
-fetchAsync   
+fetchWithFallback   
     appContext@AppContext {..}                  
     repositoryProcessing
     worldVersion
+    fetchConfig
     ppa
     = go True $ NonEmpty.toList $ unPublicationPointAccess ppa        
   where
     go _ [] = pure []
     go isPrimary (pp : rest) = do     
-        fetchResult <- fetchOnePp appContext (asyncFetchConfig config) 
+        fetchResult <- fetchOnePp appContext fetchConfig 
                             repositoryProcessing worldVersion pp (newMetaCallback isPrimary)
         case fetchResult of     
             FetchFailure _ _ -> do 
@@ -183,19 +183,23 @@ fetchAsync
                                 logWarn logger $ if nextOneNeedAFetch
                                     then [i|Failed to fetch #{getURL pp}, will fall-back to the next one: #{getURL $ getRpkiURL ppNext}.|]
                                     else [i|Failed to fetch #{getURL pp}, next one (#{getURL $ getRpkiURL ppNext}) is up-to-date.|]
-                                go False rest
+
+                                (fetchResult :) <$> go False rest
 
             _ -> pure [fetchResult]
   
-    -- We are doing async fetch here, so we are not going to promote fall-back 
-    -- repositories back to ForSyncFetch type. I.e. if a CA has publication 
-    -- points as "repo_a - fall-back-to -> repo_b", repo_b is never going to 
-    -- become ForSyncFetch, only repo_a can become sync and only after it is 
-    -- back to normal state.
     newMetaCallback isPrimary newMeta fetchMoment = 
-        pure $ if isPrimary 
-            then newMeta
-            else newMeta & #fetchType .~ ForAsyncFetch fetchMoment        
+        case config ^. #proverRunMode of 
+            OneOffMode {} -> pure newMeta
+            ServerMode    ->
+                -- We are doing async fetch here, so we are not going to promote fall-back 
+                -- repositories back to ForSyncFetch type. I.e. if a CA has publication 
+                -- points as "repo_a - fall-back-to -> repo_b", repo_b is never going to 
+                -- become ForSyncFetch, only repo_a can become sync and only after it is 
+                -- back to normal state.                
+                pure $ if isPrimary 
+                    then newMeta
+                    else newMeta & #fetchType .~ ForAsyncFetch fetchMoment        
 
 
 fetchOnePp :: (MonadIO m, Storage s) => 
@@ -260,7 +264,7 @@ fetchOnePp
             pure (rpkiUrl, fetchFreshness, f)
 
         -- This is hacky but basically setting the "fetched/up-to-date" metric
-        -- without ValidatorT/PureValidatorT.
+        -- without ValidatorT/PureValidatorT (we can only run it in IO).
         updateFetchMetric repoUrl fetchFreshness validations r elapsed = let
                 realFreshness = either (const FailedToFetch) (const fetchFreshness) r
                 repoScope = validatorSubScope' RepositoryFocus repoUrl parentScope     
