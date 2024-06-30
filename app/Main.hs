@@ -112,7 +112,10 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                 for_ z $ mergeSystemMetrics sm
 
         withLogger logConfig bumpSysMetric $ \logger -> do
-            logDebug logger [i|Starting #{rpkiProverVersion}.|]
+            logDebug logger $ if once 
+                    then [i|Starting #{rpkiProverVersion} in one-off mode.|]
+                    else [i|Starting #{rpkiProverVersion} as a server.|]
+            
             if cliOptions ^. #initialise
                 then
                     -- init the FS layout and download TALs
