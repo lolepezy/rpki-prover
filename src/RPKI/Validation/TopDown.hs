@@ -958,7 +958,7 @@ validateCaNoFetch
                 []  -> False
                 _   -> True
 
-    -- Given MFT entry with hash and filename, get the object it referes to
+    -- Given MFT entry with hash and filename, get the object it refers to
     -- 
     getManifestEntry filename hash' = do
         let objectType = textObjectType filename
@@ -1013,9 +1013,6 @@ validateCaNoFetch
     -- Optimised version of location validation when all we have is a key of an object
     -- 
     validateLocationForShortcut key = do  
-        -- pure ()
-        -- TODO Measure how much it costs and if it's noticeably costly 
-        -- validate them all after the main traverse
         count <- roTxT database $ \tx db -> getLocationCountByKey tx db key
         when (count > 1) $ do 
             z <- roTxT database $ \tx db -> getLocationsByKey tx db key
