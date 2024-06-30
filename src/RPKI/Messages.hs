@@ -234,7 +234,7 @@ toValidationMessage = \case
 
       ManifestNumberDecreased {..} ->
         [i|Manifest number #{newMftNumber} is smaller than the previous #{oldMftNumber}, |] <> 
-        [i|will use previous manifest if it exists and is valid.|]
+        [i|will fall back to the previous one.|]
 
       MftFallback e -> 
         [i|Fallback to the last valid manifest happened, with the error: #{toMessage e}|]
