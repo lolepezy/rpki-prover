@@ -38,7 +38,8 @@ import qualified Network.Wai.Handler.Warp         as Warp
 import           System.Directory
 import           System.Environment
 import           System.FilePath                  ((</>))
-import           System.IO                        (hPutStrLn, stderr)
+import           System.IO                        
+import           System.Exit
 
 import           Options.Generic
 
@@ -75,6 +76,7 @@ import           Network.HTTP.Client
 import           Network.HTTP.Client.TLS
 -- import           Network.HTTP.Simple
 import           Network.Connection
+
 
 main :: IO ()
 main = do
@@ -122,9 +124,13 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                                     checkPreconditions cliOptions
                                     createAppContext cliOptions logger (logConfig ^. #logLevel)
                     case appContext of
-                        Left _ -> 
+                        Left _ -> do 
                             logError logger [i|Failure:
-#{formatValidations (validations ^. typed)}.|]                            
+#{formatValidations (validations ^. typed)}|]
+                            drainLog logger
+                            hFlush stdout
+                            hFlush stderr
+                            exitFailure
                         Right appContext' -> do 
                             -- now we have the appState, set appStateHolder
                             atomically $ writeTVar appStateHolder $ Just $ appContext' ^. #appState
@@ -524,8 +530,9 @@ deriveProverRunMode CLIOptions {..} =
     case (once, vrpOutput) of 
         (False, Nothing) -> pure ServerMode  
         (True, Just vo)  -> pure $ OneOffMode vo
-        _                -> appError $ UnspecifiedE 
-            [i|Options `--once` and `--vrp-output` must be either both set or both not set.|] ""
+        _                -> appError $ UnspecifiedE "options"
+            [i|Options `--once` and `--vrp-output` must be either both set or both not set|]
+            
 
 -- | Run rpki-prover in a CLI mode for verifying RSC signature (*.sig file).
 executeVerifier :: CLIOptions Unwrapped -> IO ()

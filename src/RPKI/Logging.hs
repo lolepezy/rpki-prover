@@ -245,6 +245,12 @@ withLogger LogConfig {..} sysMetricCallback f = do
         in [i|#{level}  #{pid}  #{timestamp}  #{message}|] 
 
 
+drainLog :: MonadIO m => AppLogger -> m ()
+drainLog (getQueue -> queue) =     
+    liftIO $ atomically $ do 
+        empty <- isEmptyCQueue queue
+        unless empty retry    
+
 eol :: Char
 eol = '\n' 
 

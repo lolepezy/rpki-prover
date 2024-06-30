@@ -751,7 +751,7 @@ validateCaNoFetch
                         -- if CA prescribes to use standard validation instead of reconsidered.      
                         -- 
                         -- NOTE: That means that in case of full validation falling back to 
-                        -- the prevous valid manifest will not work, since there are no
+                        -- the previous valid manifest will not work, since there are no
                         -- shortcuts of previous manifests to fall back to.                  
                         (Incremental, StrictRFC) -> do  
                             issues <- vHoist thisScopeIssues
