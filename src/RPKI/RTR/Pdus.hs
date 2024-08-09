@@ -138,6 +138,14 @@ pduToBytes pdu protocolVersion =
         pduLen = pduLength pdu protocolVersion :: Word32
 
 
+-- Decide with PDUs are to be sent to a connection supporting specific RTR version 
+compatibleWith :: Pdu -> ProtocolVersion -> Bool
+-- V0 doesn't support router keys
+-- https://datatracker.ietf.org/doc/html/rfc6810#section-5
+-- V1 supports everything we care about at the moment
+compatibleWith RouterKeyPdu{} V0 = False
+compatibleWith _ _               = True
+
 -- 
 -- | Parse PDUs from bytestrings according to the RTR protocal 
 -- 
