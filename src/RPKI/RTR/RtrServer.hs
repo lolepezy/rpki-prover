@@ -233,10 +233,17 @@ runRtrServer appContext RtrConfig {..} = do
                     r <- atomically $ 
                                 readCQueue outboxQueue 
                             <|> (Just <$> readTChan stateUpdateChan)
+                    
 
                     for_ r $ \pdus -> do 
-                        for_ (chunksOf 3000 pdus) $ \chunk -> 
-                            sendMany connection $ map (pduBytesL (session ^. typed @ProtocolVersion)) chunk
+                        let protocolVersion = session ^. typed @ProtocolVersion
+                        let pdusToSend = 
+                                filter (\case 
+                                    TruePdu pdu     -> compatibleWith pdu protocolVersion
+                                    SerialisedPdu _ -> True) pdus
+
+                        for_ (chunksOf 3000 pdusToSend) $ \chunk ->                           
+                            sendMany connection $ map (pduBytesL protocolVersion) chunk
 
                         loop stateUpdateChan
             
@@ -508,6 +515,7 @@ currentCachePayloadBS protocolVersion RtrPayloads {..} =
         $ BB.toLazyByteString 
         $ mconcat 
         $ map (\pdu -> BB.lazyByteString $ pduToBytes pdu protocolVersion) 
+        $ filter (`compatibleWith` protocolVersion)
         $ vrpPdusAnn <> mconcat bgpSecPdusAnn
   where    
     vrpPdusAnn    = map (vrpToPdu Announcement) $ coerce $ Set.toAscList uniqueVrps
