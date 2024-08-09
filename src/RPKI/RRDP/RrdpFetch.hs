@@ -397,7 +397,7 @@ saveSnapshot
     let cpuParallelism = makeParallelism maxCpuAvailable ^. #cpuParallelism
     
     let snapshotUrl = notification ^. #snapshotInfo . typed @URI
-    logDebug logger [i|Snapshot for #{snapshotUrl} is #{BS.length snapshotContent} bytes.|]   
+    logDebug logger [i|Snapshot #{snapshotUrl} is #{BS.length snapshotContent} bytes.|]   
 
     db <- liftIO $ readTVarIO database    
     Snapshot _ sessionId serial snapshotItems <- vHoist $         
