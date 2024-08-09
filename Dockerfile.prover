@@ -13,7 +13,7 @@ COPY package-template.yaml  /opt/build/package.yaml
 RUN stack build rpki-prover:rpki-prover --system-ghc --dependencies-only
 
 # -------------------------------------------------------------------------------------------
-FROM fpco/stack-build-small:latest as build
+FROM fpco/stack-build-small:latest as rpki_prover_build
 
 # Copy compiled dependencies from previous stage
 COPY --from=dependencies /root/.stack /root/.stack
@@ -39,6 +39,6 @@ VOLUME /rpki-data/
 RUN mkdir -p /opt/app
 WORKDIR /opt/app
 
-COPY --from=build /opt/build/bin .
+COPY --from=rpki_prover_build /opt/build/bin .
 EXPOSE 9999
 ENTRYPOINT [ "/opt/app/rpki-prover", "--rpki-root-directory", "/rpki-data" ]
