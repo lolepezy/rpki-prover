@@ -395,6 +395,8 @@ saveSnapshot
     let maxCpuAvailable = appContext ^. typed @Config . typed @Parallelism . #cpuCount
     liftIO $ setCpuCount maxCpuAvailable
     let cpuParallelism = makeParallelism maxCpuAvailable ^. #cpuParallelism
+    
+    logDebug logger [i|Snapshot is #{BS.length snapshotContent} bytes.|]   
 
     db <- liftIO $ readTVarIO database    
     Snapshot _ sessionId serial snapshotItems <- vHoist $         
