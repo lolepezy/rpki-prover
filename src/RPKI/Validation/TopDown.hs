@@ -375,7 +375,13 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 pure (locatedTaCert (getTaCertURL tal) taCert, initialRepositories, Existing)
   where
     fetchValidateAndStore db (Now moment) previousCert = do
-        (uri', ro) <- fetchTACertificate appContext (syncFetchConfig config) tal
+        (uri', ro) <- 
+                (fetchTACertificate appContext (syncFetchConfig config) tal)
+                `catchError`
+                (\e -> do 
+                    -- TODO Use the cached one
+                    appError e)
+
         cert       <- vHoist $ validateTACert tal uri' ro
         -- Check for replay attacks
         actualCert <- case previousCert of
