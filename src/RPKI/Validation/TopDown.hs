@@ -381,7 +381,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 (u, ro) <- fetchTACertificate appContext (syncFetchConfig config) tal
                 pure $ FetchedTA u ro)
             `catchError`
-                fallbackToCached
+                tryToFallbackToCachedCopy
 
         case z of     
             FetchedTA actualUrl object -> do                                 
@@ -410,7 +410,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 pure (locatedTaCert actualUrl taCert, stored ^. #initialRepositories)
 
       where
-        fallbackToCached e =
+        tryToFallbackToCachedCopy e =
             case storableTa of
                 Nothing -> do 
                     logError logger $
