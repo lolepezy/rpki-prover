@@ -381,7 +381,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 (u, ro) <- fetchTACertificate appContext (syncFetchConfig config) tal
                 pure $ FetchedTA u ro)
             `catchError`
-                fallbackToCached              
+                fallbackToCached
 
         case z of     
             FetchedTA actualUrl object -> do                                 
@@ -401,7 +401,12 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
             CachedTA stored -> do 
                 let taCert = stored ^. #taCert
                 let actualUrl = stored ^. #actualUrl
-                void $ vHoist $ validateTACert tal actualUrl (CerRO taCert)
+                (void $ vHoist $ validateTACert tal actualUrl (CerRO taCert))
+                    `catchError`
+                    (\e -> do
+                        logError logger [i|Will delete cached TA certificate, it is invalid with the error: #{e}|]
+                        rwAppTxEx db storageError $ \tx -> deleteTA tx db tal                            
+                        appError e)
                 pure (locatedTaCert actualUrl taCert, stored ^. #initialRepositories)
 
       where

@@ -559,6 +559,9 @@ getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ runMaybe
 saveTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> StorableTA -> m ()
 saveTA tx DB { taStore = TAStore s } ta = liftIO $ M.put tx s (getTaName $ tal ta) ta
 
+deleteTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> TAL -> m ()
+deleteTA tx DB { taStore = TAStore s } tal = liftIO $ M.delete tx s (getTaName tal)
+
 getTA :: (MonadIO m, Storage s) => Tx s mode -> DB s -> TaName -> m (Maybe StorableTA)
 getTA tx DB { taStore = TAStore s } name = liftIO $ M.get tx s name
 
