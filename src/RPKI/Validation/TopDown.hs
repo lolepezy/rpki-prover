@@ -395,9 +395,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                         `catchError`
                             (\e -> do 
                                 CachedTA cached <- tryToFallbackToCachedCopy e
-                                logError logger $ 
-                                    [i|Fetched TA certificate is invalid with error #{e}|] <> 
-                                    [i| will use cached copy.|]
+                                logError logger [i|Fetched TA certificate is invalid with error #{e}, will use cached copy.|]
                                 pure $ cached ^. #taCert)
                 
                 case publicationPointsFromTAL tal actualCert of

@@ -182,8 +182,8 @@ toValidationMessage = \case
 
       TACertAKIIsNotEmpty u -> [i|TA certificate #{u} has an AKI.|]
       
-      TACertOlderThanPrevious {..} -> 
-          [i|New TA certificate has validity period of #{before}-#{after}, previous one has #{prevBefore}-#{prevAfter}. |] <>
+      TACertPreferCachedCopy TACertValidities {..} -> 
+          [i|New TA certificate has validity period of #{before}-#{after}, previous one has #{cachedBefore}-#{cachedAfter}. |] <>
           [i|Will use previous TA certificate. NOTE: this means something really bad happened to the TA, consider stopping to use it at all.|]
 
       CertNoPolicyExtension -> [i|Certificate has no policy extension.|]

@@ -48,6 +48,16 @@ newtype ParseError s = ParseError s
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
+
+data TACertValidities = TACertValidities {
+        before      :: Instant,
+        after       :: Instant,
+        cachedBefore  :: Instant,
+        cachedAfter   :: Instant    
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)    
+
 data ValidationError =  SPKIMismatch SPKI SPKI |
                         UnknownObjectAsTACert |
                         ObjectIsTooSmall Integer |
@@ -63,12 +73,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         NotFoundOnChecklist Hash Text |
                         ChecklistFileNameMismatch Hash Text Text |
                         TACertAKIIsNotEmpty URI |
-                        TACertOlderThanPrevious { 
-                                before :: Instant,
-                                after :: Instant,
-                                prevBefore :: Instant,
-                                prevAfter :: Instant
-                            } |
+                        TACertPreferCachedCopy TACertValidities |
                         CertNoPolicyExtension |
                         CertBrokenExtension OID BS.ByteString |
                         UnknownCriticalCertificateExtension OID BS.ByteString |

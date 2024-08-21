@@ -598,6 +598,10 @@ instance Arbitrary ValidationError where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary TACertValidities where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary StorageError where
     arbitrary = genericArbitrary
     shrink = genericShrink

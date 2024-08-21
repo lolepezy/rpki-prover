@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiWayIf          #-}
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE OverloadedLabels    #-}
 {-# LANGUAGE OverloadedStrings   #-}
@@ -145,7 +146,7 @@ validateTaCertAKI taCert u =
             | SKI ki == getSKI taCert -> pure ()
             | otherwise -> vPureError $ TACertAKIIsNotEmpty (getURL u)
 
--- | Compare new certificate and the previous one
+-- | Compare new certificate and the previously cached one
 -- If validaity period of the new certificate is somehow earlier than 
 -- the one of the previoius certificate, emit a warning and use
 -- the previous certificate.
@@ -154,15 +155,35 @@ validateTaCertAKI taCert u =
 -- https://datatracker.ietf.org/doc/draft-spaghetti-sidrops-rpki-ta-tiebreaker/
 --
 chooseTaCert :: CaCerObject -> CaCerObject -> PureValidatorT CaCerObject
-chooseTaCert cert previousCert = do
+chooseTaCert cert cachedCert = do
     let validities = bimap Instant Instant . certValidity . cwsX509certificate . getCertWithSignature
     let (before, after) = validities cert
-    let (prevBefore, prevAfter) = validities previousCert
-    if before < prevBefore || after < prevAfter
-        then do
-            void $ vPureWarning $ TACertOlderThanPrevious{..}
-            pure previousCert
-        else pure cert
+    let (cachedBefore, cachedAfter) = validities cachedCert
+    let bothValidities = TACertValidities {..}
+
+        {- 
+            Check whether the retrieved object has a more recent
+            notBefore than the locally cached copy of the retrieved TA.
+            If the notBefore of the retrieved object is less recent,
+            use the locally cached copy of the retrieved TA.        
+        -}
+    if | before < cachedBefore -> do
+            void $ vPureWarning $ TACertPreferCachedCopy bothValidities
+            pure cachedCert
+
+        {- 
+            If the notBefore dates are equal, check whether the
+            retrieved object has a shorter validity period than the
+            locally cached copy of the retrieved TA.  If the validity
+            period of the retrieved object is longer, use the locally
+            cached copy of the retrieved TA.        
+        -}
+        | before == cachedBefore && cachedAfter < after -> do 
+            void $ vPureWarning $ TACertPreferCachedCopy bothValidities
+            pure cachedCert            
+
+        | otherwise -> pure cert
+
 
 -- | In general, resource certifcate validation is:
 --
