@@ -172,7 +172,7 @@ toValidationMessage = \case
 
       NoValidatedVersion -> "No tree validations has been run, cannot validate the object"
 
-      NoAKI -> "NO AKI found"
+      NoAKI -> "No AKI found"
       ParentCertificateNotFound  -> "Could not find parent ceertificate for the object"
       ObjectNotOnManifest        -> "Object is not listed on the parent manifest"
 
