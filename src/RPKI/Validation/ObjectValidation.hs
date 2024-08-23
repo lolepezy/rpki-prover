@@ -146,14 +146,13 @@ validateTaCertAKI taCert u =
             | SKI ki == getSKI taCert -> pure ()
             | otherwise -> vPureError $ TACertAKIIsNotEmpty (getURL u)
 
--- | Compare new certificate and the previously cached one
--- If validaity period of the new certificate is somehow earlier than 
--- the one of the previoius certificate, emit a warning and use
--- the previous certificate.
 --
--- TODO Use the tiebreaker logic proposed by 
+-- Use the tiebreaker logic proposed by 
 -- https://datatracker.ietf.org/doc/draft-spaghetti-sidrops-rpki-ta-tiebreaker/
 --
+-- Emit a warning when deciding to use the cached certificate 
+-- instead of the fetched one.
+-- 
 chooseTaCert :: CaCerObject -> CaCerObject -> PureValidatorT CaCerObject
 chooseTaCert cert cachedCert = do
     let validities = bimap Instant Instant . certValidity . cwsX509certificate . getCertWithSignature
