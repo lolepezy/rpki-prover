@@ -156,8 +156,8 @@ validateTaCertAKI taCert u =
 chooseTaCert :: CaCerObject -> CaCerObject -> PureValidatorT CaCerObject
 chooseTaCert cert cachedCert = do
     let validities = bimap Instant Instant . certValidity . cwsX509certificate . getCertWithSignature
-    let (before, after) = validities cert
-    let (cachedBefore, cachedAfter) = validities cachedCert
+    let (notBefore, notAfter) = validities cert
+    let (cachedNotBefore, cachedNotAfter) = validities cachedCert
     let bothValidities = TACertValidities {..}
 
         {- 
@@ -166,7 +166,7 @@ chooseTaCert cert cachedCert = do
             If the notBefore of the retrieved object is less recent,
             use the locally cached copy of the retrieved TA.        
         -}
-    if | before < cachedBefore -> do
+    if | notBefore < cachedNotBefore -> do
             void $ vPureWarning $ TACertPreferCachedCopy bothValidities
             pure cachedCert
 
@@ -177,7 +177,7 @@ chooseTaCert cert cachedCert = do
             period of the retrieved object is longer, use the locally
             cached copy of the retrieved TA.        
         -}
-        | before == cachedBefore && cachedAfter < after -> do 
+        | notBefore == cachedNotBefore && cachedNotAfter < notAfter -> do 
             void $ vPureWarning $ TACertPreferCachedCopy bothValidities
             pure cachedCert            
 
@@ -228,11 +228,11 @@ validateResourceCert now cert parentCert vcrl = do
 
 validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT ()
 validateObjectValidityPeriod c (Now now) = do 
-    let (before, after) = getValidityPeriod c
-    when (now < before) $ 
-        vPureError $ ObjectValidityIsInTheFuture before after
-    when (now > after) $ 
-        vPureError $ ObjectIsExpired before after
+    let (notBefore, notAfter) = getValidityPeriod c
+    when (now < notBefore) $ 
+        vPureError $ ObjectValidityIsInTheFuture notBefore notAfter
+    when (now > notAfter) $ 
+        vPureError $ ObjectIsExpired notBefore notAfter
 
 
 validateResources ::

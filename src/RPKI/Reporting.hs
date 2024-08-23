@@ -50,10 +50,10 @@ newtype ParseError s = ParseError s
 
 
 data TACertValidities = TACertValidities {
-        before      :: Instant,
-        after       :: Instant,
-        cachedBefore  :: Instant,
-        cachedAfter   :: Instant    
+        notBefore       :: Instant,
+        notAfter        :: Instant,
+        cachedNotBefore :: Instant,
+        cachedNotAfter  :: Instant    
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)    
