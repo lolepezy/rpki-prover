@@ -175,11 +175,14 @@ runRtrServer appContext RtrConfig {..} = do
                     writeTChan updateBroadcastChan [TruePdu notifyPdu]
                     writeTVar lastTimeNotified $ Just now
         where
-          logDiff GenDiffs {..} = do 
-            
-            let diffText =
-                    [i|VRPs: added #{Set.size $ added vrpDiff}, deleted #{Set.size $ deleted vrpDiff}, |] <>
-                    [i|BGPSecs: added #{Set.size $ added bgpSecDiff}, deleted #{Set.size $ deleted bgpSecDiff}|] :: Text
+          logDiff GenDiffs {..} = do             
+            let vrpAdded   = vrpDiff ^. #added
+                vrpDeleted = vrpDiff ^. #deleted
+                bgpSecAdded   = bgpSecDiff ^. #added
+                bgpSecDeleted = bgpSecDiff ^. #deleted
+                diffText :: Text = 
+                    [i|VRPs: added #{Set.size vrpAdded}, deleted #{Set.size vrpDeleted}, |] <>
+                    [i|BGPSecs: added #{Set.size bgpSecAdded}, deleted #{Set.size bgpSecDeleted}|]
 
             logDebug logger [i|Generated new diff, #{diffText}.|]            
 

@@ -1,5 +1,6 @@
 {-# LANGUAGE DerivingStrategies    #-}
 {-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DerivingVia           #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards       #-}
@@ -11,7 +12,9 @@ module RPKI.Store.Types where
 import           Control.DeepSeq
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
-
+import           Data.Monoid.Generic
+import qualified Data.Set                 as Set
+import           Data.Tuple.Strict
 import           GHC.Generics
 import           RPKI.TAL
 
@@ -66,3 +69,24 @@ data TotalDBStats = TotalDBStats {
     total        :: SStats,
     fileStats    :: DBFileStats
 } deriving stock (Show, Eq, Generic)
+
+
+data StorablePayloads = StorablePayloads {
+        roas     :: Roas,
+        spls     :: Set.Set SplN,
+        aspas    :: Set.Set Aspa,
+        gbrs     :: Set.Set (T2 Hash Gbr),
+        bgpCerts :: Set.Set BGPSecPayload  
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+    deriving Semigroup via GenericSemigroup StorablePayloads
+    deriving Monoid    via GenericMonoid StorablePayloads
+
+
+data PayloadDiff a = PayloadDiff {
+        added   :: a,
+        deleted :: a
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)        

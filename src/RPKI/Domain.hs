@@ -575,7 +575,7 @@ data BGPSecPayload = BGPSecPayload {
         bgpSecSki  :: SKI,
         bgpSecAsns :: [ASN],
         bgpSecSpki :: SPKI
-        -- TODO Possible store the hash of the original BGP certificate?
+        -- TODO Possibly store the hash of the original BGP certificate?
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)

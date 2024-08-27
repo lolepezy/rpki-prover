@@ -904,7 +904,6 @@ deleteDanglingUrls DB { objectStore = RpkiObjectStore {..} } tx = do
                         else result)
             mempty
 
-
     forM_ urlsToDelete $ \(urlKey, url) -> do 
         M.delete tx uriKeyToUri urlKey
         M.delete tx uriToUriKey (makeSafeUrl url)           
