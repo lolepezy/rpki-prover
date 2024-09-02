@@ -15,11 +15,15 @@ import qualified Data.ByteString.Short    as BSS
 import           Data.Monoid.Generic
 import qualified Data.Set                 as Set
 import           Data.Tuple.Strict
+import           Data.Kind
+import           Data.Store               hiding (Size)
+
 import           GHC.Generics
 import           RPKI.TAL
 
 import           RPKI.Time                (Instant)
 
+import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.AppTypes
 import           RPKI.Domain
@@ -61,30 +65,53 @@ newtype ObjectOriginal = ObjectOriginal BS.ByteString
     deriving anyclass (TheBinary, NFData)        
 
 data DBFileStats = DBFileStats {
-    fileSize :: Size
-} deriving stock (Show, Eq, Generic)
+        fileSize :: Size
+    } 
+    deriving stock (Show, Eq, Generic)
 
 data TotalDBStats = TotalDBStats {
-    storageStats :: StorageStats,
-    total        :: SStats,
-    fileStats    :: DBFileStats
-} deriving stock (Show, Eq, Generic)
+        storageStats :: StorageStats,
+        total        :: SStats,
+        fileStats    :: DBFileStats
+    } 
+    deriving stock (Show, Eq, Generic)
+
+newtype AsIs a = AsIs { unAsIs :: a }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
 
 
-data StorablePayloads = StorablePayloads {
-        roas     :: Roas,
-        spls     :: Set.Set SplN,
-        aspas    :: Set.Set Aspa,
-        gbrs     :: Set.Set (T2 Hash Gbr),
-        bgpCerts :: Set.Set BGPSecPayload  
+data FlatPayloads = FlatPayloads {
+        roas        :: Roas,
+        vrps        :: Vrps,
+        spls        :: Set.Set SplN,
+        aspas       :: Set.Set Aspa,
+        gbrs        :: Set.Set (T2 Hash Gbr),
+        bgpCerts    :: Set.Set BGPSecPayload,
+        validations :: Validations,
+        metrics     :: RawMetric,
+        traces      :: Set.Set Trace
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
-    deriving Semigroup via GenericSemigroup StorablePayloads
-    deriving Monoid    via GenericMonoid StorablePayloads
 
 
-data PayloadDiff a = PayloadDiff {
+data PayloadsDiff = PayloadsDiff {
+        roas        :: GeneralDiff Roas,
+        vrps        :: GeneralDiff Vrps,
+        spls        :: GeneralDiff (Set.Set SplN),
+        aspas       :: GeneralDiff (Set.Set Aspa),
+        gbrs        :: GeneralDiff (Set.Set (T2 Hash Gbr)),
+        bgpCerts    :: GeneralDiff (Set.Set BGPSecPayload),
+        validations :: GeneralDiff Validations,
+        metrics     :: GeneralDiff RawMetric,
+        traces      :: GeneralDiff (Set.Set Trace)
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+
+data GeneralDiff a = GeneralDiff {
         added   :: a,
         deleted :: a
     }
