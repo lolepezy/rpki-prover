@@ -76,10 +76,6 @@ data TotalDBStats = TotalDBStats {
     } 
     deriving stock (Show, Eq, Generic)
 
-newtype AsIs a = AsIs { unAsIs :: a }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
-
 
 data FlatPayloads = FlatPayloads {
         roas        :: Roas,
