@@ -424,6 +424,7 @@ instance ToJSON InternalError
 instance ToJSON SlurmError
 instance ToJSON a => ToJSON (ParseError a)
 instance ToJSON RpkiObjectType
+instance ToJSON TACertValidities
 instance ToJSON ValidationError
 instance ToJSON ObjectIdentity
 instance ToJSON StorageError

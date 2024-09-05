@@ -51,7 +51,7 @@ createDatabase env logger checkAction = do
             dbVersion <- getDatabaseVersion tx db
             case dbVersion of 
                 Nothing -> do
-                    logInfo logger [i|Cache version is not set, setting it to #{currentDatabaseVersion}, dropping the cache.|]
+                    logInfo logger [i|Cache version is not set, setting it to #{currentDatabaseVersion}, cleaning up the cache.|]
                     (_, ms) <- timedMS $ emptyDBMaps tx db
                     logDebug logger  [i|Erasing cache took #{ms}ms.|]
                     saveCurrentDatabaseVersion tx db

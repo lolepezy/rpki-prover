@@ -342,14 +342,14 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
     validateFromTAL = do
         timedMetric (Proxy :: Proxy ValidationMetric) $
             vFocusOn LocationFocus (getURL $ getTaCertURL tal) $ do
-                ((taCert, repos, _), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
+                ((taCert, repos), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
                 -- this will be used as the "now" in all subsequent time and period validations                 
                 topDownContext <- newTopDownContext taName (taCert ^. #payload) allTas
                 (topDownContext, ) <$> validateFromTACert appContext topDownContext repos taCert
 
         
 
-data TACertStatus = Existing | Updated
+data WhichTA = FetchedTA RpkiURL RpkiObject | CachedTA StorableTA
 
 -- | Fetch and validated TA certificate starting from the TAL.
 -- | 
@@ -358,35 +358,76 @@ validateTACertificateFromTAL :: Storage s =>
                                 AppContext s
                                 -> TAL
                                 -> WorldVersion
-                                -> ValidatorT IO (Located CaCerObject, PublicationPointAccess, TACertStatus)
+                                -> ValidatorT IO (Located CaCerObject, PublicationPointAccess)
 validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let now = Now $ versionToMoment worldVersion
     let validationConfig = config ^. typed
 
-    db       <- liftIO $ readTVarIO database
-    taByName <- roAppTxEx db storageError $ \tx -> getTA tx db (getTaName tal)
-    case taByName of
+    db <- liftIO $ readTVarIO database
+    ta <- roAppTxEx db storageError $ \tx -> getTA tx db (getTaName tal)
+    case ta of
         Nothing -> fetchValidateAndStore db now Nothing
-        Just StorableTA { taCert, initialRepositories, fetchStatus = fs }
-            | needsFetching (getTaCertURL tal) Nothing fs validationConfig now ->
-                fetchValidateAndStore db now (Just taCert)
+        Just storedTa
+            | needsFetching (getTaCertURL tal) Nothing (storedTa ^. #fetchStatus) validationConfig now ->
+                fetchValidateAndStore db now (Just storedTa)
             | otherwise -> do
                 logInfo logger [i|Not re-fetching TA certificate #{getURL $ getTaCertURL tal}, it's up-to-date.|]
-                pure (locatedTaCert (getTaCertURL tal) taCert, initialRepositories, Existing)
+                let located = locatedTaCert (getTaCertURL tal) (storedTa ^. #taCert)
+                pure (located, storedTa ^. #initialRepositories)
+
   where
-    fetchValidateAndStore db (Now moment) previousCert = do
-        (uri', ro) <- fetchTACertificate appContext (syncFetchConfig config) tal
-        cert       <- vHoist $ validateTACert tal uri' ro
-        -- Check for replay attacks
-        actualCert <- case previousCert of
-                        Nothing       -> pure cert
-                        Just previous -> vHoist $ validateTACertWithPreviousCert cert previous
-        case publicationPointsFromTAL tal actualCert of
-            Left e         -> appError $ ValidationE e
-            Right ppAccess ->
-                rwAppTxEx db storageError $ \tx -> do
-                    saveTA tx db (StorableTA tal actualCert (FetchedAt moment) ppAccess)
-                    pure (locatedTaCert uri' actualCert, ppAccess, Updated)
+    fetchValidateAndStore db (Now moment) storableTa = do
+        z <- (do 
+                (u, ro) <- fetchTACertificate appContext (syncFetchConfig config) tal
+                pure $ FetchedTA u ro)
+            `catchError`
+                tryToFallbackToCachedCopy
+
+        case z of     
+            FetchedTA actualUrl object -> do                                 
+                certToUse <- case storableTa of
+                    Nothing  -> vHoist $ validateTACert tal actualUrl object
+                    Just StorableTA { taCert = cachedTaCert } -> 
+                        (vHoist $ do 
+                            cert <- validateTACert tal actualUrl object
+                            chooseTaCert cert cachedTaCert)
+                        `catchError`
+                            (\e -> do
+                                logError logger [i|Fetched TA certificate is invalid with error #{e}, will use cached copy.|]
+                                pure cachedTaCert)                            
+                
+                case publicationPointsFromTAL tal certToUse of
+                    Left e         -> appError $ ValidationE e
+                    Right ppAccess ->
+                        rwAppTxEx db storageError $ \tx -> do
+                            saveTA tx db (StorableTA tal certToUse (FetchedAt moment) ppAccess actualUrl)
+                            pure (locatedTaCert actualUrl certToUse, ppAccess)
+
+            CachedTA StorableTA { tal = _, ..} -> do 
+                void (vHoist $ validateTACert tal actualUrl (CerRO taCert))
+                    `catchError`
+                    (\e -> do
+                        logError logger [i|Will delete cached TA certificate, it is invalid with the error: #{e}|]
+                        rwAppTxEx db storageError $ \tx -> deleteTA tx db tal                            
+                        appError e)
+
+                pure (locatedTaCert actualUrl taCert, initialRepositories)
+
+      where
+        tryToFallbackToCachedCopy e =
+            case storableTa of
+                Nothing -> do 
+                    logError logger $
+                        [i|Could not download TA certiicate for #{getTaName tal}, error: #{e}|] <>
+                        [i| and there is no cached copy of it.|]
+                    appError e
+
+                Just cached -> do  
+                    logError logger $ 
+                        [i|Could not download TA certiicate for #{getTaName tal}, error: #{e}|] <> 
+                        [i| will use cached copy.|]                                        
+
+                    pure $ CachedTA cached
 
     locatedTaCert url cert = Located (toLocations url) cert
 

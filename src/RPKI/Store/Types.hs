@@ -34,7 +34,8 @@ data StorableTA = StorableTA {
         tal                 :: TAL,
         taCert              :: CaCerObject,
         fetchStatus         :: FetchStatus,
-        initialRepositories :: PublicationPointAccess
+        initialRepositories :: PublicationPointAccess,
+        actualUrl           :: RpkiURL
     } 
     deriving (Show, Eq, Generic, TheBinary)
 

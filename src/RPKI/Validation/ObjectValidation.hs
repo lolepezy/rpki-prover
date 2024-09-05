@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiWayIf          #-}
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE OverloadedLabels    #-}
 {-# LANGUAGE OverloadedStrings   #-}
@@ -145,21 +146,43 @@ validateTaCertAKI taCert u =
             | SKI ki == getSKI taCert -> pure ()
             | otherwise -> vPureError $ TACertAKIIsNotEmpty (getURL u)
 
--- | Compare new certificate and the previous one
--- If validaity period of the new certificate is somehow earlier than 
--- the one of the previoius certificate, emit a warning and use
--- the previous certificate.
 --
-validateTACertWithPreviousCert :: CaCerObject -> CaCerObject -> PureValidatorT CaCerObject
-validateTACertWithPreviousCert cert previousCert = do
+-- Use the tiebreaker logic proposed by 
+-- https://datatracker.ietf.org/doc/draft-spaghetti-sidrops-rpki-ta-tiebreaker/
+--
+-- Emit a warning when deciding to use the cached certificate 
+-- instead of the fetched one.
+-- 
+chooseTaCert :: CaCerObject -> CaCerObject -> PureValidatorT CaCerObject
+chooseTaCert cert cachedCert = do
     let validities = bimap Instant Instant . certValidity . cwsX509certificate . getCertWithSignature
-    let (before, after) = validities cert
-    let (prevBefore, prevAfter) = validities previousCert
-    if before < prevBefore || after < prevAfter
-        then do
-            void $ vPureWarning $ TACertOlderThanPrevious{..}
-            pure previousCert
-        else pure cert
+    let (notBefore, notAfter) = validities cert
+    let (cachedNotBefore, cachedNotAfter) = validities cachedCert
+    let bothValidities = TACertValidities {..}
+
+        {- 
+            Check whether the retrieved object has a more recent
+            notBefore than the locally cached copy of the retrieved TA.
+            If the notBefore of the retrieved object is less recent,
+            use the locally cached copy of the retrieved TA.        
+        -}
+    if | notBefore < cachedNotBefore -> do
+            void $ vPureWarning $ TACertPreferCachedCopy bothValidities
+            pure cachedCert
+
+        {- 
+            If the notBefore dates are equal, check whether the
+            retrieved object has a shorter validity period than the
+            locally cached copy of the retrieved TA.  If the validity
+            period of the retrieved object is longer, use the locally
+            cached copy of the retrieved TA.        
+        -}
+        | notBefore == cachedNotBefore && cachedNotAfter < notAfter -> do 
+            void $ vPureWarning $ TACertPreferCachedCopy bothValidities
+            pure cachedCert            
+
+        | otherwise -> pure cert
+
 
 -- | In general, resource certifcate validation is:
 --
@@ -205,53 +228,53 @@ validateResourceCert now cert parentCert vcrl = do
 
 validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT ()
 validateObjectValidityPeriod c (Now now) = do 
-    let (before, after) = getValidityPeriod c
-    when (now < before) $ 
-        vPureError $ ObjectValidityIsInTheFuture before after
-    when (now > after) $ 
-        vPureError $ ObjectIsExpired before after
+    let (notBefore, notAfter) = getValidityPeriod c
+    when (now < notBefore) $ 
+        vPureError $ ObjectValidityIsInTheFuture notBefore notAfter
+    when (now > notAfter) $ 
+        vPureError $ ObjectIsExpired notBefore notAfter
 
 
 validateResources ::
-    (WithRawResourceCertificate c, 
+    (WithRawResourceCertificate child, 
      WithRawResourceCertificate parent,
-     WithRFC c,
+     WithRFC child,
      OfCertType parent 'CACert) =>
     Maybe (VerifiedRS PrefixesAndAsns) ->
-    c ->
+    child ->
     parent ->
     PureValidatorT (VerifiedRS PrefixesAndAsns)
-validateResources verifiedResources cert parentCert =
+validateResources verifiedResources childCert parentCert =
     validateChildParentResources
-        (getRFC cert)
-        (getRawCert cert ^. typed)
+        (getRFC childCert)
+        (getRawCert childCert ^. typed)
         (getRawCert parentCert ^. typed)
         verifiedResources
 
 
 validateBgpCert ::
-    forall c parent.
-    ( WithRawResourceCertificate c
+    forall child parent.
+    ( WithRawResourceCertificate child
     , WithRawResourceCertificate parent
     , WithSKI parent
-    , WithAKI c
-    , WithSKI c
-    , WithValidityPeriod c
-    , WithSerial c
-    , OfCertType c 'BGPCert
-    , OfCertType parent 'CACert
+    , WithAKI child
+    , WithSKI child
+    , WithValidityPeriod child
+    , WithSerial child
+    , child `OfCertType` BGPCert
+    , parent `OfCertType` CACert
     ) =>
     Now ->
-    c ->
+    child ->
     parent ->
     Validated CrlObject ->
-    PureValidatorT (Validated c, BGPSecPayload)
+    PureValidatorT (Validated child, BGPSecPayload)
 validateBgpCert now bgpCert parentCert validCrl = do
     -- Validate BGP certificate according to 
     -- https://www.rfc-editor.org/rfc/rfc8209.html#section-3.3    
 
     -- Validate resource set
-    void $ validateResourceCert @_ @_ @'BGPCert now bgpCert parentCert validCrl
+    void $ validateResourceCert @_ @_ @BGPCert now bgpCert parentCert validCrl
 
     let cwsX509 = cwsX509certificate $ getCertWithSignature bgpCert
 
@@ -304,10 +327,12 @@ validateCrl now crlObject@CrlObject {..} parentCert = do
     
 
 validateMft ::
-  (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
+  (WithRawResourceCertificate parent, 
+   WithSKI parent, 
+   parent `OfCertType` CACert) =>
   Now ->
   MftObject ->
-  c ->
+  parent ->
   Validated CrlObject ->
   Maybe (VerifiedRS PrefixesAndAsns) ->
   PureValidatorT (Validated MftObject)
@@ -329,10 +354,12 @@ validateMft now mft parentCert crl verifiedResources = do
 
 
 validateRoa ::
-    (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
+    (WithRawResourceCertificate parent, 
+     WithSKI parent, 
+     OfCertType parent CACert) =>
     Now ->
     RoaObject ->
-    c ->
+    parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
     PureValidatorT (Validated RoaObject)
@@ -365,10 +392,12 @@ validateRoa now roa parentCert crl verifiedResources = do
                     vPureError $ errorReport vrs
 
 validateSpl ::
-    (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
+    (WithRawResourceCertificate parent, 
+     WithSKI parent, 
+     OfCertType parent CACert) =>
     Now ->
     SplObject ->
-    c ->
+    parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
     PureValidatorT (Validated SplObject)
