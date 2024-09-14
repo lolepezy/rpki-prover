@@ -112,7 +112,7 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                 for_ z $ mergeSystemMetrics sm
 
         withLogger logConfig bumpSysMetric $ \logger -> do
-            logDebug logger $ if once 
+            logInfo logger $ if once 
                     then [i|Starting #{rpkiProverVersion} in one-off mode.|]
                     else [i|Starting #{rpkiProverVersion} as a server.|]
             
