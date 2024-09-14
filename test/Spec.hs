@@ -5,6 +5,7 @@ import Test.Tasty
 import RPKI.Parse.ObjectParseSpec
 import RPKI.RRDP.ParseSpec
 import RPKI.Store.DatabaseSpec
+import RPKI.Store.DiffSpec
 import RPKI.RRDP.UpdateSpec
 import RPKI.RRDP.HttpSpec
 import RPKI.ResourcesSpec
@@ -26,5 +27,6 @@ main = defaultMain $ testGroup "All tests" [
         rtrGroup,
         httpSpec,
         slurmGroup,
-        loggingSpec
+        loggingSpec,
+        diffGroup
     ]  

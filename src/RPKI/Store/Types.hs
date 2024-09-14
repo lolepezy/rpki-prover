@@ -94,21 +94,21 @@ data FlatPayloads = FlatPayloads {
 
 
 data PayloadsDiff = PayloadsDiff {
-        roas        :: GeneralDiff Roas,
-        vrps        :: GeneralDiff Vrps,
-        spls        :: GeneralDiff (Set.Set SplN),
-        aspas       :: GeneralDiff (Set.Set Aspa),
-        gbrs        :: GeneralDiff (Set.Set (T2 Hash Gbr)),
-        bgpCerts    :: GeneralDiff (Set.Set BGPSecPayload),
-        validations :: GeneralDiff Validations,
-        metrics     :: GeneralDiff RawMetric,
-        traces      :: GeneralDiff (Set.Set Trace)
+        roas        :: StoredDiff Roas,
+        vrps        :: StoredDiff Vrps,
+        spls        :: StoredDiff (Set.Set SplN),
+        aspas       :: StoredDiff (Set.Set Aspa),
+        gbrs        :: StoredDiff (Set.Set (T2 Hash Gbr)),
+        bgpCerts    :: StoredDiff (Set.Set BGPSecPayload),
+        validations :: StoredDiff Validations,
+        metrics     :: StoredDiff RawMetric,
+        traces      :: StoredDiff (Set.Set Trace)
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
 
-data GeneralDiff a = GeneralDiff {
+data StoredDiff a = StoredDiff {
         added   :: a,
         deleted :: a
     }

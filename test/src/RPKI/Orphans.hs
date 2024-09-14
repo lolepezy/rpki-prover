@@ -275,6 +275,10 @@ instance Arbitrary SplPayload where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary SplN where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary ASN where
     arbitrary = genericArbitrary
     shrink = genericShrink
