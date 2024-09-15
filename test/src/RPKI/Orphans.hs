@@ -247,6 +247,14 @@ instance Arbitrary Vrp where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary Vrps where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary Roas where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary AscOrderedVrp where
     arbitrary = genericArbitrary
     shrink = genericShrink

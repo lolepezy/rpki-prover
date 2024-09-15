@@ -6,13 +6,16 @@
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE StrictData            #-}
 {-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE OverloadedLabels      #-}
 
 module RPKI.Store.Types where
 
+import           Control.Lens
 import           Control.DeepSeq
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Monoid.Generic
+import           Data.Set                 (Set, (\\))
 import qualified Data.Set                 as Set
 import           Data.Tuple.Strict
 import           Data.Kind
@@ -76,41 +79,3 @@ data TotalDBStats = TotalDBStats {
         fileStats    :: DBFileStats
     } 
     deriving stock (Show, Eq, Generic)
-
-
-data FlatPayloads = FlatPayloads {
-        roas        :: Roas,
-        vrps        :: Vrps,
-        spls        :: Set.Set SplN,
-        aspas       :: Set.Set Aspa,
-        gbrs        :: Set.Set (T2 Hash Gbr),
-        bgpCerts    :: Set.Set BGPSecPayload,
-        validations :: Validations,
-        metrics     :: RawMetric,
-        traces      :: Set.Set Trace
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
-
-
-data PayloadsDiff = PayloadsDiff {
-        roas        :: StoredDiff Roas,
-        vrps        :: StoredDiff Vrps,
-        spls        :: StoredDiff (Set.Set SplN),
-        aspas       :: StoredDiff (Set.Set Aspa),
-        gbrs        :: StoredDiff (Set.Set (T2 Hash Gbr)),
-        bgpCerts    :: StoredDiff (Set.Set BGPSecPayload),
-        validations :: StoredDiff Validations,
-        metrics     :: StoredDiff RawMetric,
-        traces      :: StoredDiff (Set.Set Trace)
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
-
-
-data StoredDiff a = StoredDiff {
-        added   :: a,
-        deleted :: a
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)        
