@@ -16,7 +16,7 @@ import           Control.DeepSeq
 import           Data.Generics.Product.Typed
 
 import           Data.Maybe
-import           Data.Set                 (Set, (\\))
+import           Data.Set                 ((\\))
 import qualified Data.Set                 as Set
 import           Data.Tuple.Strict
 import           Data.Map.Strict          (Map)
@@ -46,84 +46,120 @@ data FlatPayloads = FlatPayloads {
 
 
 data PayloadsDiff = PayloadsDiff {
-        roas        :: StoredDiff Roas,
-        vrps        :: StoredDiff Vrps,
-        spls        :: StoredDiff (Set.Set SplN),
-        aspas       :: StoredDiff (Set.Set Aspa),
-        gbrs        :: StoredDiff (Set.Set (T2 Hash Gbr)),
-        bgpCerts    :: StoredDiff (Set.Set BGPSecPayload),
-        validations :: StoredDiff Validations,
-        metrics     :: StoredDiff RawMetric,
-        traces      :: StoredDiff (Set.Set Trace)
+        roas        :: ADiff Roas,
+        vrps        :: ADiff Vrps,
+        spls        :: ADiff (Set.Set SplN),
+        aspas       :: ADiff (Set.Set Aspa),
+        gbrs        :: ADiff (Set.Set (T2 Hash Gbr)),
+        bgpCerts    :: ADiff (Set.Set BGPSecPayload),
+        validations :: ADiff Validations,
+        metrics     :: ADiff RawMetric,
+        traces      :: ADiff (Set.Set Trace)
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
 
-data StoredDiff a = StoredDiff {
-        added   :: a,
-        deleted :: a
-    }
+data ADiff a = NoDiff 
+            | AddDiff a 
+            | DeleteDiff a 
+            | MergeDiff a a
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)        
+    deriving anyclass (TheBinary, NFData)             
 
+mapDiff :: (a -> b) -> ADiff a -> ADiff b
+mapDiff f = \case 
+    NoDiff        -> NoDiff
+    AddDiff a     -> AddDiff $ f a
+    DeleteDiff d  -> DeleteDiff $ f d
+    MergeDiff a d -> MergeDiff (f a) (f d)
+
+optimiseDiff :: (v -> Bool) -> ADiff v -> ADiff v
+optimiseDiff isEmpty = \case
+    NoDiff    -> NoDiff
+    AddDiff a 
+        | isEmpty a -> NoDiff
+        | otherwise -> AddDiff a
+
+    DeleteDiff d  
+        | isEmpty d -> NoDiff
+        | otherwise -> DeleteDiff d
+
+    MergeDiff a d
+        | isEmpty a && isEmpty d -> NoDiff
+        | isEmpty d -> AddDiff a
+        | isEmpty a -> DeleteDiff d
+        | otherwise -> MergeDiff a d
 
 class Diffable a where
-    makeDiff  :: a -> a -> StoredDiff a
-    applyDiff :: a -> StoredDiff a -> a
+    makeDiff  :: a -> a -> ADiff a
+    applyDiff :: a -> ADiff a -> a
 
 instance Ord a => Diffable (Set.Set a) where
-    makeDiff before after = StoredDiff {
-            added   = after \\ before,
+    makeDiff before after = let         
+            added   = after \\ before
             deleted = before \\ after
-        }     
-    applyDiff before diff = 
-        before \\ (diff ^. #deleted) <> (diff ^. #added)
+        in case (Set.null added, Set.null deleted) of 
+            (True,  True)  -> NoDiff
+            (False, True)  -> AddDiff added
+            (True, False)  -> DeleteDiff deleted
+            (False, False) -> MergeDiff added deleted
+
+    applyDiff before = \case 
+        NoDiff        -> before
+        AddDiff a     -> before <> a
+        DeleteDiff d  -> before \\ d
+        MergeDiff a d -> before \\ d <> a
+            
+
+instance (Eq k, Ord k, Diffable v) => Diffable (MonoidalMap k v) where
+    makeDiff (MonoidalMap before) (MonoidalMap after) = mapDiff MonoidalMap $ makeDiff before after         
+    applyDiff (MonoidalMap before) diff = MonoidalMap $ applyDiff before (mapDiff getMonoidalMap diff)        
 
 instance Diffable Roas where
-    makeDiff (Roas (MonoidalMap before)) (Roas (MonoidalMap after)) = let 
-        -- zz = [ case Map.lookup ta after of 
-        --             Nothing -> Nothing
-        --             Just m  -> 
-        --         | (ta, x) <- Map.toList before ]
-
-        in StoredDiff (Roas (MonoidalMap before)) (Roas (MonoidalMap after))
-
-    applyDiff before diff = before
+    makeDiff (Roas before) (Roas after) = mapDiff Roas $ makeDiff before after                 
+    applyDiff (Roas before) diff =  Roas $ applyDiff before (mapDiff unRoas diff)                
 
 instance Diffable Vrps where
-    makeDiff = StoredDiff
-    applyDiff before diff = before
+    makeDiff (Vrps before) (Vrps after) = mapDiff Vrps $ makeDiff before after                 
+    applyDiff (Vrps before) diff =  Vrps $ applyDiff before (mapDiff unVrps diff)                
 
 instance Diffable Validations where
-    makeDiff = StoredDiff
+    makeDiff _ _ = NoDiff
     applyDiff before diff = before
 
 instance Diffable RawMetric where
-    makeDiff = StoredDiff
+    makeDiff _ _ = NoDiff
     applyDiff before diff = before
         
 
 instance (Eq k, Ord k, Diffable v) => Diffable (Map k v) where
     makeDiff before after = let 
-        commonKeys = Set.intersection 
-                (Set.fromList $ Map.keys before)
-                (Set.fromList $ Map.keys after)
-
+        beforeKeys = Set.fromList $ Map.keys before
+        afterKeys  = Set.fromList $ Map.keys after
+        commonKeys = Set.intersection beforeKeys afterKeys
         
-        z :: [(k, StoredDiff v)] = [ (k, makeDiff vb va)
+        commonKeyDiffs = 
+            [ (k, makeDiff vb va)
                 | k  <- Set.toList commonKeys,
                   vb <- maybeToList $ Map.lookup k before,
                   va <- maybeToList $ Map.lookup k after
                 ]
         
-
-        qq = foldr (\(k, diff) (added, deleted) -> 
-                    (Map.insert k (diff ^. #added) added, 
-                     Map.insert k (diff ^. #deleted) deleted)) 
-                (mempty, mempty) z
-
-        in StoredDiff before after
+        deleted = [ (k, DeleteDiff v) | (k, v) <- Map.toList before, not (k `Set.member` afterKeys) ]
+        added   = [ (k, AddDiff v)    | (k, v) <- Map.toList after, not (k `Set.member` beforeKeys) ]
+        
+        in optimiseDiff Map.null $
+            foldr (\(k, diff) totalDiff@(MergeDiff added deleted) -> let 
+                        ins v m = Map.insert k v m 
+                    in case diff of 
+                        NoDiff        -> totalDiff
+                        AddDiff a     -> MergeDiff (ins a added) deleted
+                        DeleteDiff d  -> MergeDiff added (ins d deleted)
+                        MergeDiff a d -> MergeDiff (ins a added) (ins d deleted)
+                ) 
+                (MergeDiff mempty mempty)
+                (commonKeyDiffs <> deleted <> added)        
 
     applyDiff before diff = before        
 
