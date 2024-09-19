@@ -15,9 +15,13 @@ import           Control.DeepSeq
 
 import           Data.Generics.Product.Typed
 
+import           Data.Maybe
 import           Data.Set                 (Set, (\\))
 import qualified Data.Set                 as Set
 import           Data.Tuple.Strict
+import           Data.Map.Strict          (Map)
+import qualified Data.Map.Strict          as Map
+import           Data.Map.Monoidal.Strict (MonoidalMap(..))
 
 import           GHC.Generics
 
@@ -77,9 +81,14 @@ instance Ord a => Diffable (Set.Set a) where
         before \\ (diff ^. #deleted) <> (diff ^. #added)
 
 instance Diffable Roas where
-    makeDiff (Roas before) (Roas after) = 
-        StoredDiff (Roas before) (Roas after)
-        
+    makeDiff (Roas (MonoidalMap before)) (Roas (MonoidalMap after)) = let 
+        -- zz = [ case Map.lookup ta after of 
+        --             Nothing -> Nothing
+        --             Just m  -> 
+        --         | (ta, x) <- Map.toList before ]
+
+        in StoredDiff (Roas (MonoidalMap before)) (Roas (MonoidalMap after))
+
     applyDiff before diff = before
 
 instance Diffable Vrps where
@@ -95,13 +104,37 @@ instance Diffable RawMetric where
     applyDiff before diff = before
         
 
+instance (Eq k, Ord k, Diffable v) => Diffable (Map k v) where
+    makeDiff before after = let 
+        commonKeys = Set.intersection 
+                (Set.fromList $ Map.keys before)
+                (Set.fromList $ Map.keys after)
+
+        
+        z :: [(k, StoredDiff v)] = [ (k, makeDiff vb va)
+                | k  <- Set.toList commonKeys,
+                  vb <- maybeToList $ Map.lookup k before,
+                  va <- maybeToList $ Map.lookup k after
+                ]
+        
+
+        qq = foldr (\(k, diff) (added, deleted) -> 
+                    (Map.insert k (diff ^. #added) added, 
+                     Map.insert k (diff ^. #deleted) deleted)) 
+                (mempty, mempty) z
+
+        in StoredDiff before after
+
+    applyDiff before diff = before        
+
+
 diff :: FlatPayloads -> FlatPayloads -> PayloadsDiff
 diff before after = PayloadsDiff {
-        roas  = makeDiff (before ^. typed) (after ^. typed),
-        vrps  = makeDiff (before ^. typed) (after ^. typed),
-        spls  = makeDiff (before ^. typed) (after ^. typed),
-        aspas = makeDiff (before ^. typed) (after ^. typed),
-        gbrs  = makeDiff (before ^. typed) (after ^. typed),
+        roas        = makeDiff (before ^. typed) (after ^. typed),
+        vrps        = makeDiff (before ^. typed) (after ^. typed),
+        spls        = makeDiff (before ^. typed) (after ^. typed),
+        aspas       = makeDiff (before ^. typed) (after ^. typed),
+        gbrs        = makeDiff (before ^. typed) (after ^. typed),
         bgpCerts    = makeDiff (before ^. typed) (after ^. typed),
         validations = makeDiff (before ^. typed) (after ^. typed),
         metrics     = makeDiff (before ^. typed) (after ^. typed),
