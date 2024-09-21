@@ -161,7 +161,26 @@ instance (Eq k, Ord k, Diffable v) => Diffable (Map k v) where
                 (MergeDiff mempty mempty)
                 (commonKeyDiffs <> deleted <> added)        
 
-    applyDiff before diff = before        
+    applyDiff before = \case
+        NoDiff                  -> before
+        AddDiff added           -> add added before
+        DeleteDiff deleted      -> delete deleted before
+        MergeDiff added deleted -> add added (delete deleted before)
+      where
+        add added totalMap = 
+            foldr (\(k, a) m -> 
+                    Map.alter (\v -> Just $ maybe a (`applyDiff` (AddDiff a)) v) k m
+                )
+                totalMap $ 
+                Map.toList added
+
+        delete deleted totalMap = 
+            foldr (\(k, d) m -> 
+                    Map.alter (fmap (`applyDiff` (DeleteDiff d))) k m
+                ) 
+                totalMap
+                $ Map.toList deleted
+
 
 
 diff :: FlatPayloads -> FlatPayloads -> PayloadsDiff
