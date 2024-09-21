@@ -118,11 +118,11 @@ instance (Eq k, Ord k, Diffable v) => Diffable (MonoidalMap k v) where
 
 instance Diffable Roas where
     makeDiff (Roas before) (Roas after) = mapDiff Roas $ makeDiff before after                 
-    applyDiff (Roas before) diff =  Roas $ applyDiff before (mapDiff unRoas diff)                
+    applyDiff (Roas before) diff = Roas $ applyDiff before (mapDiff unRoas diff)                
 
 instance Diffable Vrps where
     makeDiff (Vrps before) (Vrps after) = mapDiff Vrps $ makeDiff before after                 
-    applyDiff (Vrps before) diff =  Vrps $ applyDiff before (mapDiff unVrps diff)                
+    applyDiff (Vrps before) diff = Vrps $ applyDiff before (mapDiff unVrps diff)                
 
 instance Diffable Validations where
     makeDiff _ _ = NoDiff
