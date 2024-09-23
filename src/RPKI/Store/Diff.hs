@@ -112,7 +112,7 @@ instance Ord a => Diffable (Set.Set a) where
         MergeDiff a d -> before \\ d <> a
             
 
-instance (Eq k, Ord k, Diffable v) => Diffable (MonoidalMap k v) where
+instance (Eq k, Ord k, Eq v, Diffable v) => Diffable (MonoidalMap k v) where
     makeDiff (MonoidalMap before) (MonoidalMap after) = mapDiff MonoidalMap $ makeDiff before after         
     applyDiff (MonoidalMap before) diff = MonoidalMap $ applyDiff before (mapDiff getMonoidalMap diff)        
 
@@ -125,15 +125,15 @@ instance Diffable Vrps where
     applyDiff (Vrps before) diff = Vrps $ applyDiff before (mapDiff unVrps diff)                
 
 instance Diffable Validations where
-    makeDiff _ _ = NoDiff
-    applyDiff before diff = before
+    makeDiff (Validations before) (Validations after) = mapDiff Validations $ makeDiff before after                 
+    applyDiff (Validations before) diff = Validations $ applyDiff before (mapDiff unValidations diff)                
 
 instance Diffable RawMetric where
     makeDiff _ _ = NoDiff
     applyDiff before diff = before
         
 
-instance (Eq k, Ord k, Diffable v) => Diffable (Map k v) where
+instance (Eq k, Ord k, Eq v, Diffable v) => Diffable (Map k v) where
     makeDiff before after = let 
         beforeKeys = Set.fromList $ Map.keys before
         afterKeys  = Set.fromList $ Map.keys after
@@ -176,15 +176,20 @@ instance (Eq k, Ord k, Diffable v) => Diffable (Map k v) where
 
         delete deleted totalMap = 
             foldr (\(k, d) m -> 
-                    Map.alter (fmap (`applyDiff` (DeleteDiff d))) k m
+                    Map.alter (\case 
+                        Nothing -> Nothing
+                        Just v 
+                            | v == d    -> Nothing
+                            | otherwise -> Just $ applyDiff v (DeleteDiff d)
+                    ) k m 
                 ) 
                 totalMap
                 $ Map.toList deleted
 
 
 
-diff :: FlatPayloads -> FlatPayloads -> PayloadsDiff
-diff before after = PayloadsDiff {
+payloadDiff :: FlatPayloads -> FlatPayloads -> PayloadsDiff
+payloadDiff before after = PayloadsDiff {
         roas        = makeDiff (before ^. typed) (after ^. typed),
         vrps        = makeDiff (before ^. typed) (after ^. typed),
         spls        = makeDiff (before ^. typed) (after ^. typed),

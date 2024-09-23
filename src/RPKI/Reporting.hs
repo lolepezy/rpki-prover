@@ -244,7 +244,7 @@ newtype AppException = AppException AppError
 
 instance Exception AppException
 
-newtype Validations = Validations (Map VScope (Set VIssue))
+newtype Validations = Validations { unValidations :: Map VScope (Set VIssue) }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving newtype Monoid

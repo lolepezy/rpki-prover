@@ -4,7 +4,9 @@
 
 module RPKI.Store.DiffSpec where
 
+import           Data.Text
 import           Data.Set                 (Set)
+import           Data.Map.Strict          (Map)
 import           Data.Tuple.Strict
 
 import           Test.Tasty                 hiding (after)
