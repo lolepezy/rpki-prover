@@ -27,8 +27,7 @@ diffGroup = testGroup "PublicationPoints" [
         QC.testProperty "Trace applyDiff works" $ checkDiff @(Set Trace),
         QC.testProperty "Roas applyDiff works" $ checkDiff @Roas,
         QC.testProperty "Vrps applyDiff works" $ checkDiff @Vrps,
-        QC.testProperty "Validations applyDiff works" $ checkDiff @Validations,
-        QC.testProperty "RawMetric applyDiff works" $ checkDiff @RawMetric
+        QC.testProperty "Validations applyDiff works" $ checkDiff @Validations
     ]
 
 checkDiff :: (Eq a, Diffable a) => (a, a) -> Bool

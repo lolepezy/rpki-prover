@@ -53,7 +53,7 @@ data PayloadsDiff = PayloadsDiff {
         gbrs        :: ADiff (Set.Set (T2 Hash Gbr)),
         bgpCerts    :: ADiff (Set.Set BGPSecPayload),
         validations :: ADiff Validations,
-        metrics     :: ADiff RawMetric,
+        -- metrics     :: ADiff RawMetric,
         traces      :: ADiff (Set.Set Trace)
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -64,7 +64,6 @@ data ADiff a = NoDiff
             | AddDiff a 
             | DeleteDiff a 
             | MergeDiff a a
-            | OverwriteDiff a
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)             
 
@@ -74,7 +73,6 @@ mapDiff f = \case
     AddDiff a       -> AddDiff $ f a
     DeleteDiff d    -> DeleteDiff $ f d
     MergeDiff a d   -> MergeDiff (f a) (f d)
-    OverwriteDiff o -> OverwriteDiff $ f o
 
 optimiseDiff :: (v -> Bool) -> ADiff v -> ADiff v
 optimiseDiff isEmpty = \case
@@ -92,10 +90,6 @@ optimiseDiff isEmpty = \case
         | isEmpty d -> AddDiff a
         | isEmpty a -> DeleteDiff d
         | otherwise -> MergeDiff a d
-
-    OverwriteDiff o 
-        | isEmpty o -> NoDiff
-        | otherwise -> OverwriteDiff o
 
 class Diffable a where
     makeDiff  :: a -> a -> ADiff a
@@ -116,7 +110,6 @@ instance Ord a => Diffable (Set.Set a) where
         AddDiff a       -> before <> a
         DeleteDiff d    -> before \\ d
         MergeDiff a d   -> before \\ d <> a
-        OverwriteDiff o -> o
             
 
 instance (Eq k, Ord k, Eq v, Diffable v) => Diffable (MonoidalMap k v) where
@@ -135,11 +128,6 @@ instance Diffable Validations where
     makeDiff (Validations before) (Validations after) = mapDiff Validations $ makeDiff before after                 
     applyDiff (Validations before) diff = Validations $ applyDiff before (mapDiff unValidations diff)                
 
-instance Diffable RawMetric where
-    -- No real diff here, just overwrite values
-    makeDiff _ after = OverwriteDiff after    
-    applyDiff _ (OverwriteDiff o) = o
-        
 
 instance (Eq k, Ord k, Eq v, Diffable v) => Diffable (Map k v) where
     makeDiff before after = let 
@@ -161,10 +149,10 @@ instance (Eq k, Ord k, Eq v, Diffable v) => Diffable (Map k v) where
             foldr (\(k, diff) totalDiff@(MergeDiff added deleted) -> let 
                         ins v m = Map.insert k v m 
                     in case diff of 
-                        NoDiff        -> totalDiff
-                        AddDiff a     -> MergeDiff (ins a added) deleted
-                        DeleteDiff d  -> MergeDiff added (ins d deleted)
-                        MergeDiff a d -> MergeDiff (ins a added) (ins d deleted)
+                        NoDiff          -> totalDiff
+                        AddDiff a       -> MergeDiff (ins a added) deleted
+                        DeleteDiff d    -> MergeDiff added (ins d deleted)
+                        MergeDiff a d   -> MergeDiff (ins a added) (ins d deleted)
                 ) 
                 (MergeDiff mempty mempty)
                 (commonKeyDiffs <> deleted <> added)        
@@ -195,7 +183,6 @@ instance (Eq k, Ord k, Eq v, Diffable v) => Diffable (Map k v) where
                 $ Map.toList deleted
 
 
-
 payloadDiff :: FlatPayloads -> FlatPayloads -> PayloadsDiff
 payloadDiff before after = PayloadsDiff {
         roas        = makeDiff (before ^. typed) (after ^. typed),
@@ -205,7 +192,7 @@ payloadDiff before after = PayloadsDiff {
         gbrs        = makeDiff (before ^. typed) (after ^. typed),
         bgpCerts    = makeDiff (before ^. typed) (after ^. typed),
         validations = makeDiff (before ^. typed) (after ^. typed),
-        metrics     = makeDiff (before ^. typed) (after ^. typed),
+        -- metrics     = makeDiff (before ^. typed) (after ^. typed),
         traces      = makeDiff (before ^. typed) (after ^. typed)
     }
     
