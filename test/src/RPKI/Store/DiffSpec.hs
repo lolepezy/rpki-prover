@@ -4,9 +4,10 @@
 
 module RPKI.Store.DiffSpec where
 
-import           Data.Text
 import           Data.Set                 (Set)
-import           Data.Map.Strict          (Map)
+import qualified Data.Set                 as Set
+import qualified Data.Map.Strict          as Map
+import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Data.Tuple.Strict
 
 import           Test.Tasty                 hiding (after)
@@ -25,10 +26,20 @@ diffGroup = testGroup "PublicationPoints" [
         QC.testProperty "Gbr applyDiff works" $ checkDiff @(Set (T2 Hash Gbr)),
         QC.testProperty "BGPSecPayload applyDiff works" $ checkDiff @(Set BGPSecPayload),
         QC.testProperty "Trace applyDiff works" $ checkDiff @(Set Trace),
-        QC.testProperty "Roas applyDiff works" $ checkDiff @Roas,
-        QC.testProperty "Vrps applyDiff works" $ checkDiff @Vrps,
-        QC.testProperty "Validations applyDiff works" $ checkDiff @Validations
+
+        QC.testProperty "Roas applyDiff works" $ \(before, after) -> let
+                noEmptyOnes = Roas . MonoidalMap.filter (not . MonoidalMap.null) . unRoas    
+            in checkDiff (noEmptyOnes before, noEmptyOnes after),
+
+        QC.testProperty "Vrps applyDiff works" $ \(before, after) -> let
+                noEmptyOnes = Vrps . MonoidalMap.filter (not . Set.null) . unVrps    
+            in checkDiff (noEmptyOnes before, noEmptyOnes after),
+
+        QC.testProperty "Validations applyDiff works" $ \(before, after) -> let
+                noEmptyOnes = Validations . Map.filter (not . Set.null) . unValidations    
+            in checkDiff (noEmptyOnes before, noEmptyOnes after)
     ]
+
 
 checkDiff :: (Eq a, Diffable a) => (a, a) -> Bool
 checkDiff (before, after) = 
