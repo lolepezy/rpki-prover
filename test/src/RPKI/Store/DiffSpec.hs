@@ -21,7 +21,6 @@ import           RPKI.Domain
 import           RPKI.Store.Diff
 
 
-
 diffGroup :: TestTree
 diffGroup = localOption (QC.QuickCheckTests 300) $ testGroup "Diffs" [        
         QC.testProperty "Aspa applyDiff works" $ checkDiff @(Set Aspa),
@@ -49,13 +48,13 @@ checkDiff before after =
             -- The only reasons tests are not allowed to pass is
             -- empty map values that will be filtered out by the diff 
             -- procedure.
-            bShrunk = shrink before
-            aShrunk = shrink after
+            bShrunk = compress before
+            aShrunk = compress after
         in applyDiff bShrunk (makeDiff bShrunk aShrunk) == aShrunk        
 
 class Compressable a where 
-    shrink :: a -> a     
-    shrink = id
+    compress :: a -> a     
+    compress = id
     isEmpty :: a -> Bool
     isEmpty _ = False
 
@@ -63,21 +62,21 @@ instance Compressable (Set v) where
     isEmpty = Set.null
 
 instance Compressable Roas where    
-    shrink = Roas . shrink . unRoas
+    compress = Roas . compress . unRoas
     isEmpty = isEmpty . unRoas
 
 instance Compressable Vrps where    
-    shrink = Vrps . shrink . unVrps
+    compress = Vrps . compress . unVrps
     isEmpty = isEmpty . unVrps
 
 instance Compressable Validations where    
-    shrink = Validations . shrink . unValidations
+    compress = Validations . compress . unValidations
     isEmpty = isEmpty . unValidations
 
 instance Compressable v => Compressable (Map k v) where    
-    shrink = Map.filter (not . isEmpty) . Map.map shrink 
+    compress = Map.filter (not . isEmpty) . Map.map compress 
     isEmpty = Map.null
 
 instance Compressable v => Compressable (MonoidalMap.MonoidalMap k v) where    
-    shrink = MonoidalMap.filter (not . isEmpty) . MonoidalMap.map shrink 
+    compress = MonoidalMap.filter (not . isEmpty) . MonoidalMap.map compress 
     isEmpty = MonoidalMap.null
