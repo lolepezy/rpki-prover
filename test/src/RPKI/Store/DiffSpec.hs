@@ -73,6 +73,8 @@ instance Compressable Validations where
     compress = Validations . compress . unValidations
     isEmpty = isEmpty . unValidations
 
+-- delete keys from the map if corresponding values is "empty"
+-- for some definition of empty
 instance Compressable v => Compressable (Map k v) where    
     compress = Map.filter (not . isEmpty) . Map.map compress 
     isEmpty = Map.null
