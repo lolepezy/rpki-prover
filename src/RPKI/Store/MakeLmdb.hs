@@ -5,7 +5,7 @@
 
 module RPKI.Store.MakeLmdb where
 
-import Control.Lens
+import Control.Lens hiding (Empty)
 import Control.Concurrent.STM
 
 import           Data.IORef
@@ -77,7 +77,7 @@ createDatabase env logger checkAction = do
         aspaStore        <- AspaStore <$> createMap    
         gbrStore         <- GbrStore <$> createMap 
         bgpStore         <- BgpStore <$> createMap
-        versionStore     <- VersionStore <$> createMap
+        versionStore     <- createVersionStore
         metricStore      <- MetricStore <$> createMap
         slurmStore       <- SlurmStore <$> createMap
         jobStore         <- JobStore <$> createMap        
@@ -109,6 +109,9 @@ createDatabase env logger checkAction = do
         createRepositoryStore = 
             RepositoryStore <$> createMap <*> createMap <*> createMap
         
+        createVersionStore = 
+            VersionStore <$> createMap <*> newTVarIO EmptyVCache
+
         lmdb = LmdbStorage env
 
         createMap :: forall k v name . (KnownSymbol name) => IO (SMap name LmdbStorage k v)

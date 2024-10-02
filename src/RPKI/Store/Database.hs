@@ -10,6 +10,8 @@
 
 module RPKI.Store.Database where
 
+import           Control.Concurrent.STM
+import           Control.Concurrent.Async
 import           Control.DeepSeq
 import           Control.Exception.Lifted
 import           Control.Lens
@@ -200,14 +202,19 @@ instance Storage s => WithStorage s (VRPStore s) where
     storage (VRPStore s) = storage s
 
 
+data VersionCache = EmptyVCache 
+                |   ReadingVCache
+                |   ReadyVCache (Map.Map WorldVersion VersionMeta)
+
 -- Version store
-newtype VersionStore s = VersionStore {
-        versions :: SMap "versions" s WorldVersion VersionKind
+data VersionStore s = VersionStore {
+        versions :: SMap "versions" s WorldVersion VersionKind,
+        cache    :: TVar VersionCache
     }
     deriving stock (Generic)
 
 instance Storage s => WithStorage s (VersionStore s) where
-    storage (VersionStore s) = storage s
+    storage s = storage $ s ^. #versions
 
 
 newtype SlurmStore s = SlurmStore {
@@ -663,37 +670,6 @@ saveSpls :: (MonadIO m, Storage s) =>
 saveSpls tx DB { splStore = SplStore m } spls worldVersion = 
     liftIO $ M.put tx m worldVersion (Compressed spls)
 
-
-saveVersion :: (MonadIO m, Storage s) => 
-        Tx s 'RW -> DB s -> WorldVersion -> VersionKind -> m ()
-saveVersion tx DB { versionStore = VersionStore s } wv versionState = 
-    liftIO $ M.put tx s wv versionState
-
-allVersions :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(WorldVersion, VersionKind)]
-allVersions tx DB { versionStore = VersionStore s } = liftIO $ M.all tx s
-
-validationVersions :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [WorldVersion]
-validationVersions tx DB { versionStore = VersionStore s } = liftIO $ do 
-    z <- M.all tx s
-    pure [ wv | (wv, vk) <- z, vk == validationKind ]
-
-deleteVersion :: (MonadIO m, Storage s) => 
-        Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteVersion tx DB { versionStore = VersionStore s } wv = liftIO $ M.delete tx s wv
-
-completeValidationWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
-completeValidationWorldVersion tx database worldVersion =    
-    saveVersion tx database worldVersion validationKind
-
-generalWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
-generalWorldVersion tx database worldVersion =    
-    saveVersion tx database worldVersion generalKind
-
-asyncFetchWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
-asyncFetchWorldVersion tx database worldVersion =    
-    saveVersion tx database worldVersion asyncFetchKind
-
-
 saveMetrics :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> WorldVersion -> RawMetric -> m ()
 saveMetrics tx DB { metricStore = MetricStore s } wv appMetric = 
     liftIO $ M.put tx s wv (Compressed appMetric)
@@ -795,6 +771,7 @@ data CleanUpResult = CleanUpResult {
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+-- TODO Adjust for diff-based
 deleteOldNonValidationVersions :: (MonadIO m, Storage s) =>                                     
                                    Tx s 'RW 
                                 -> DB s 
@@ -809,6 +786,7 @@ deleteOldNonValidationVersions tx db tooOld = do
     pure $! List.length toDelete
 
 
+-- TODO Adjust for diff-based
 deleteOldestVersionsIfNeeded :: (MonadIO m, Storage s) => 
                                Tx s 'RW 
                             -> DB s 
@@ -829,6 +807,7 @@ deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
             else pure []        
 
 
+-- TODO Adjust for diff-based
 deleteStaleContent :: (MonadIO m, Storage s) => 
                     DB s -> 
                     (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
@@ -914,6 +893,7 @@ deleteDanglingUrls DB { objectStore = RpkiObjectStore {..} } tx = do
     pure $ length urlsToDelete
 
 
+-- TODO must be changed for diff-based storage
 deletePayloads :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
 deletePayloads tx db worldVersion = do    
@@ -926,18 +906,6 @@ deletePayloads tx db worldVersion = do
     deleteMetrics tx db worldVersion
     deleteSlurms tx db worldVersion
 
-
--- | Find the latest completed world version 
--- 
-getLastValidationVersion :: (Storage s) => DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
-getLastValidationVersion db tx = getLastVersionOfKind db tx validationKind        
-
-getLastVersionOfKind :: (Storage s) => DB s -> Tx s 'RO -> VersionKind -> IO (Maybe WorldVersion)
-getLastVersionOfKind database tx versionKind = do 
-        versions <- allVersions tx database        
-        pure $ case [ v | (v, k) <- versions, k == versionKind ] of         
-                []  -> Nothing
-                vs' -> Just $ maximum vs'
                     
 getGbrObjects :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> WorldVersion -> m [Located RpkiObject]
@@ -952,6 +920,68 @@ getRtrPayloads tx db worldVersion =
             vrps <- MaybeT $ getVrps tx db worldVersion
             bgps <- MaybeT $ getBgps tx db worldVersion
             pure $ mkRtrPayloads vrps bgps                       
+
+
+-- | Find the latest completed world version 
+-- 
+getLastValidationVersion :: (Storage s) => DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
+getLastValidationVersion db tx = getLastVersionOfKind db tx validationKind        
+
+getLastVersionOfKind :: (Storage s) => DB s -> Tx s 'RO -> VersionKind -> IO (Maybe WorldVersion)
+getLastVersionOfKind database tx versionKind = do 
+        versions <- allVersions tx database        
+        pure $ case [ v | (v, k) <- versions, k == versionKind ] of         
+                []  -> Nothing
+                vs' -> Just $ maximum vs'
+
+saveVersion :: (MonadIO m, Storage s) => 
+        Tx s 'RW -> DB s -> WorldVersion -> VersionKind -> m ()
+saveVersion tx DB { .. } wv versionState = 
+    liftIO $ M.put tx (versionStore ^. #versions) wv versionState
+
+
+allVersions :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(WorldVersion, VersionKind)]
+allVersions tx DB { .. } = liftIO $ M.all tx $ versionStore ^. #versions
+
+allVersions1 :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m (Map.Map WorldVersion VersionMeta)
+allVersions1 tx DB { .. } = liftIO $ do 
+    let cache = versionStore ^. #cache
+    join $ atomically $ do     
+        readTVar cache >>= \case
+            ReadingVCache  -> retry
+            ReadyVCache vs -> pure $ pure vs
+            EmptyVCache    -> do   
+                writeTVar cache ReadingVCache
+                pure $ do 
+                    vs <- M.all tx $ versionStore ^. #versions 
+                    let cached = Map.fromList $ map (\(wv, vk) -> (wv, VersionMeta vk FullVersion)) vs
+                    atomically $ writeTVar cache $ ReadyVCache cached
+                    pure $! cached
+
+
+validationVersions :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [WorldVersion]
+validationVersions tx DB { .. } = liftIO $ do 
+    z <- M.all tx $ versionStore ^. #versions
+    pure [ wv | (wv, vk) <- z, vk == validationKind ]
+
+deleteVersion :: (MonadIO m, Storage s) => 
+        Tx s 'RW -> DB s -> WorldVersion -> m ()
+deleteVersion tx DB { .. } wv = liftIO $ M.delete tx (versionStore ^. #versions) wv
+
+completeValidationWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
+completeValidationWorldVersion tx database worldVersion =    
+    saveVersion tx database worldVersion validationKind
+
+generalWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
+generalWorldVersion tx database worldVersion =    
+    saveVersion tx database worldVersion generalKind
+
+asyncFetchWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
+asyncFetchWorldVersion tx database worldVersion =    
+    saveVersion tx database worldVersion asyncFetchKind
+
+
+
 
 -- Get all SStats and `<>` them
 totalStats :: StorageStats -> SStats
@@ -1038,10 +1068,10 @@ data TxRollbackException = TxRollbackException AppError ValidationState
 
 instance Exception TxRollbackException
 
--- | URLs can potentially be much larger than 512 bytes that are allowed as LMDB
+-- | URLs can potentially be much larger than 512 bytes allowed as LMDB
 -- keys. So we 
 --     - calculate hash 
---     - truncate the URL so that that truncated version + hash fit into 512 bytes.
+--     - truncate the URL so that that "truncated URL + hash" fit into 512 bytes.
 --     - use "truncated URL + hash" as a key
 makeSafeUrl :: RpkiURL -> SafeUrlAsKey
 makeSafeUrl u = 

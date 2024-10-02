@@ -53,6 +53,7 @@ import           RPKI.AppContext
 import           RPKI.Metrics.Prometheus
 import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
+import           RPKI.Store.Diff
 import           RPKI.Store.AppStorage
 import           RPKI.TAL
 import           RPKI.Util                     
@@ -73,7 +74,7 @@ data WorkflowShared = WorkflowShared {
         -- it is needed for cleanup and compaction procedures.
         deletedAnythingFromDb :: TVar Bool,
 
-        -- Currently running tasks, it is needed to keep track which 
+        -- Currently running tasks, used to keep track which 
         -- tasks can run parallel to each other and avoid race conditions.
         runningTasks :: RunningTasks,
 
@@ -124,7 +125,7 @@ data Scheduling = Scheduling {
     }
     deriving stock (Generic)
 
--- The main entry point for the whole validator workflow. Runs multiple threads, 
+-- Main entry point for the whole validator workflow. Runs multiple threads, 
 -- running validation, RTR server, cleanups, cache maintenance and async fetches.
 -- 
 runWorkflow :: (Storage s, MaintainableStorage s) =>
@@ -214,8 +215,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
             let delayInSeconds = initialDelay `div` 1_000_000
             let delayText :: Text.Text = 
-                    case () of 
-                      _ | delay == 0 -> [i|for ASAP execution|] 
+                    if  | delay == 0 -> [i|for ASAP execution|] 
                         | delay < 0  -> [i|for ASAP execution (it is #{-delayInSeconds}s due)|] 
                         | otherwise  -> [i|with initial delay #{delayInSeconds}s|]                     
             logDebug logger [i|Scheduling task '#{name}' #{delayText} and interval #{interval}.|] 

@@ -10,23 +10,14 @@
 
 module RPKI.Store.Types where
 
-import           Control.Lens
 import           Control.DeepSeq
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
-import           Data.Monoid.Generic
-import           Data.Set                 (Set, (\\))
-import qualified Data.Set                 as Set
-import           Data.Tuple.Strict
-import           Data.Kind
-import           Data.Store               hiding (Size)
 
 import           GHC.Generics
 import           RPKI.TAL
 
 import           RPKI.Time                (Instant)
-
-import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.AppTypes
 import           RPKI.Domain
@@ -67,6 +58,17 @@ data Keyed a = Keyed {
 newtype ObjectOriginal = ObjectOriginal BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)        
+
+data VersionContent = FullVersion | DiffVersion
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)        
+
+data VersionMeta = VersionMeta {
+        versionKind    :: VersionKind,
+        versionContent :: VersionContent
+    }    
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)        
 
 data DBFileStats = DBFileStats {
         fileSize :: Size
