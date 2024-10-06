@@ -11,7 +11,6 @@
 module RPKI.Store.Database where
 
 import           Control.Concurrent.STM
-import           Control.Concurrent.Async
 import           Control.DeepSeq
 import           Control.Exception.Lifted
 import           Control.Lens
@@ -54,6 +53,7 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Sequence
 import           RPKI.Store.Types
+import           RPKI.Store.Diff
 import           RPKI.Validation.Types
 
 import           RPKI.Util                (ifJustM)
@@ -934,17 +934,27 @@ getLastVersionOfKind database tx versionKind = do
                 []  -> Nothing
                 vs' -> Just $ maximum vs'
 
+-- 
 saveVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> VersionKind -> m ()
-saveVersion tx DB { .. } wv versionState = 
-    liftIO $ M.put tx (versionStore ^. #versions) wv versionState
+saveVersion tx DB { .. } wv vk = liftIO $ do 
+    atomically $ modifyTVar' (versionStore ^. #cache) $ \case 
+        EmptyVCache       -> EmptyVCache
+        ReadingVCache     -> ReadingVCache
+        ReadyVCache cache -> ReadyVCache $
+            Map.alter (\case
+                Nothing -> Just $ VersionMeta vk FullVersion
+                Just c  -> Just $ c { versionKind = vk }) wv cache
+
+    M.put tx (versionStore ^. #versions) wv vk
 
 
 allVersions :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(WorldVersion, VersionKind)]
-allVersions tx DB { .. } = liftIO $ M.all tx $ versionStore ^. #versions
+allVersions tx db = (map (\(wv, vm) -> (wv, vm ^. #versionKind)) . Map.toList) 
+    <$> allVersionsMap tx db 
 
-allVersions1 :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m (Map.Map WorldVersion VersionMeta)
-allVersions1 tx DB { .. } = liftIO $ do 
+allVersionsMap :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m (Map.Map WorldVersion VersionMeta)
+allVersionsMap tx DB { .. } = liftIO $ do 
     let cache = versionStore ^. #cache
     join $ atomically $ do     
         readTVar cache >>= \case
@@ -982,6 +992,49 @@ asyncFetchWorldVersion tx database worldVersion =
 
 
 
+assembleVersion :: (MonadIO m, Storage s, Diffable a) 
+                => Tx s mode 
+                -> DB s 
+                -> WorldVersion 
+                -> (Tx s mode -> DB s -> WorldVersion -> m (Maybe a))
+                -> (Tx s mode -> DB s -> WorldVersion -> m (Maybe (ADiff a)))
+                -> m (Maybe a)
+assembleVersion tx db@DB {..} wv extract extractDiff = do 
+    versionMap <- allVersionsMap tx db
+    let (fullVersion, diffs) = versionsToRead wv versionMap
+    case fullVersion of 
+        Nothing -> pure Nothing
+        Just fv -> do
+            extract tx db fv >>= \case 
+                Nothing             -> pure Nothing
+                Just initialPayload -> do
+                    restoredPayload <- foldM 
+                            (\total diffVersion ->
+                                extractDiff tx db diffVersion >>= \case
+                                    -- TODO It should blow up here actually
+                                    Nothing   -> pure $! total
+                                    Just diff -> pure $! total `applyDiff` diff) 
+                            initialPayload diffs
+
+                    pure $ Just restoredPayload
+
+
+versionsToRead :: WorldVersion -> Map.Map WorldVersion VersionMeta -> (Maybe WorldVersion, [WorldVersion])
+versionsToRead version versionMap = 
+    case Map.splitLookup version versionMap of 
+        (_, Nothing, _)                 -> (Nothing, [])
+        (earlierVersions, Just meta, _) -> go version meta earlierVersions
+  where
+    go version meta earlierVersions = 
+        case meta ^. #versionContent of 
+            FullVersion -> (Just version, [])
+            DiffVersion -> 
+                case Map.maxViewWithKey earlierVersions of 
+                    Nothing -> (Nothing, [])
+                    Just ((version', meta'), earlierVersions') -> 
+                        let                
+                            (full, diffs) = go version' meta' earlierVersions'
+                        in (full, version' : diffs)
 
 -- Get all SStats and `<>` them
 totalStats :: StorageStats -> SStats

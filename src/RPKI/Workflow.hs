@@ -53,6 +53,7 @@ import           RPKI.AppContext
 import           RPKI.Metrics.Prometheus
 import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
+import           RPKI.Store.Types
 import           RPKI.Store.Diff
 import           RPKI.Store.AppStorage
 import           RPKI.TAL
@@ -512,24 +513,40 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     -- Save all the results into LMDB
     let updatedValidation = slurmValidations <> topDownValidations ^. typed
 
-    (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
-        saveMetrics tx db worldVersion (topDownValidations ^. typed)
-        saveValidations tx db worldVersion (updatedValidation ^. typed)
-        saveRoas tx db roas worldVersion
-        saveSpls tx db (payloads ^. typed) worldVersion
-        saveAspas tx db (payloads ^. typed) worldVersion
-        saveGbrs tx db (payloads ^. typed) worldVersion
-        saveBgps tx db (payloads ^. typed) worldVersion        
-        for_ maybeSlurm $ saveSlurm tx db worldVersion
-        completeValidationWorldVersion tx db worldVersion
+    (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do   
+
+        -- decide if we are going to save full version of diff version        
+        allVersions <- allVersionsMap tx db
+        let versionContent = decideVersionContent
+        case versionContent of 
+            FullVersion -> do 
+                -- Save full version for all payload
+                saveMetrics tx db worldVersion (topDownValidations ^. typed)
+                saveValidations tx db worldVersion (updatedValidation ^. typed)
+                saveRoas tx db roas worldVersion
+                saveSpls tx db (payloads ^. typed) worldVersion
+                saveAspas tx db (payloads ^. typed) worldVersion
+                saveGbrs tx db (payloads ^. typed) worldVersion
+                saveBgps tx db (payloads ^. typed) worldVersion        
+                for_ maybeSlurm $ saveSlurm tx db worldVersion
+                completeValidationWorldVersion tx db worldVersion
+            DiffVersion -> do 
+                -- read previous version, create diff (for some of the payloads) 
+                -- and store a diff version
+                
+                pure ()
 
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.
         deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
 
+
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deleted} oldest versions(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, maybeSlurm)
+  where
+    decideVersionContent = FullVersion
+
 
 
 -- To be called from the cache cleanup worker
