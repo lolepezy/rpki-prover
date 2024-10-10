@@ -122,8 +122,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
 
         objectMetas   :: SMap "object-meta" s ObjectKey ObjectMeta,
-        -- validatedByVersion :: SMap "validated-by-version" s WorldVersion (Compressed (Set.Set ObjectKey)),
-        validatedByVersion ::  SMap "validated-by-version" s Text (Compressed (Map.Map ObjectKey WorldVersion)),
+        validatedByVersion :: SMap "validated-by-version" s Text (Compressed (Map.Map ObjectKey WorldVersion)),
 
         -- Object URL mapping
         uriToUriKey    :: SMap "uri-to-uri-key" s SafeUrlAsKey UrlKey,
