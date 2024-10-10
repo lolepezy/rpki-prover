@@ -778,10 +778,10 @@ updateValidatedByVersionMap :: (MonadIO m, Storage s)
                             -> (Maybe (Map.Map ObjectKey WorldVersion) -> Map.Map ObjectKey WorldVersion)
                             -> m (Map.Map ObjectKey WorldVersion)
 updateValidatedByVersionMap tx DB { objectStore = RpkiObjectStore {..} } f = liftIO $ do
-    m <- M.get tx validatedByVersion validatedByVersionKey    
-    let m' = f $ fmap unCompressed m
-    M.put tx validatedByVersion validatedByVersionKey $ Compressed m'
-    pure m'
+    validatedBy <- M.get tx validatedByVersion validatedByVersionKey    
+    let validatedBy' = f $ fmap unCompressed validatedBy
+    M.put tx validatedByVersion validatedByVersionKey $ Compressed validatedBy'
+    pure validatedBy'
 
 
 cleanupValidatedByVersionMap :: (MonadIO m, Storage s) =>
