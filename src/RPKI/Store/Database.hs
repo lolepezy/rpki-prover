@@ -788,12 +788,11 @@ updateValidatedByVersionMap tx DB { objectStore = RpkiObjectStore {..} } f = lif
 cleanupValidatedByVersionMap :: (MonadIO m, Storage s) =>
                                 Tx s RW
                                 -> DB s
-                                -> [WorldVersion]
+                                -> (WorldVersion -> Bool)
                                 -> m (Map.Map ObjectKey WorldVersion)
-cleanupValidatedByVersionMap tx db versionsToDelete = liftIO $ do 
-    let deleteSet = Set.fromList versionsToDelete
+cleanupValidatedByVersionMap tx db toDelete = liftIO $ do     
     updateValidatedByVersionMap tx db $ 
-        maybe mempty $ Map.filter (not . (`Set.member` deleteSet))
+        maybe mempty $ Map.filter (not . toDelete)
 
 -- More complicated operations
 
@@ -835,8 +834,9 @@ deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
                 let versionsToDelete = drop reallyToKeep $ List.sortOn Down versions
                 forM_ versionsToDelete $ \v -> do 
                     deletePayloads tx db v
-                    deleteVersion tx db v                    
-                void $ cleanupValidatedByVersionMap tx db versionsToDelete
+                    deleteVersion tx db v                   
+                let toDeleteSet = Set.fromList versionsToDelete 
+                void $ cleanupValidatedByVersionMap tx db (`Set.member` toDeleteSet)
                 pure versionsToDelete
             else pure []        
 
@@ -863,7 +863,7 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
                 deleteVersion tx db version                    
                 deletePayloads tx db version                
                                 
-            validatedByRecentVersions <- cleanupValidatedByVersionMap tx db versionsToDelete                
+            validatedByRecentVersions <- cleanupValidatedByVersionMap tx db tooOld                
 
             (deletedObjects, keptObjects) <- deleteStaleObjects tx validatedByRecentVersions
 
