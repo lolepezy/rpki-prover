@@ -289,7 +289,7 @@ downloadAndUpdateRRDP
 rrdpNextStep :: RrdpRepository -> Notification -> PureValidatorT RrdpAction
 
 rrdpNextStep RrdpRepository { rrdpMeta = Nothing } Notification{..} = 
-    pure $ FetchSnapshot snapshotInfo "Unknown repository"
+    pure $ FetchSnapshot snapshotInfo "First time seeing repository"
 
 rrdpNextStep RrdpRepository { rrdpMeta = Just rrdpMeta } Notification {..} = 
 
