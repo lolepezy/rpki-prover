@@ -206,7 +206,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
 
             Size lmdbFileSize <- cacheFsSize appContext 
             let fileSizeMb :: Integer = fromIntegral $ lmdbFileSize `div` (1024 * 1024)
-            logInfo logger [i|New LMDB file size is #{fileSizeMb}mb, will perform compaction.|]            
+            logInfo logger [i|LMDB file size after compaction is #{fileSizeMb}mb.|]
         
     Size lmdbFileSize <- cacheFsSize appContext 
     
