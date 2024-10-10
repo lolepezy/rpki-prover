@@ -24,9 +24,7 @@ or
 
 - For local docker image build use 
 
-     ```docker build . --file Dockerfile.prover --tag lolepezy/rpki-prover:latest```
-
-Shell scripts are wrapping all the dual compiler details and generating the `package.yaml`.
+     ```cp package-template.yaml package.yaml && docker build . --file Dockerfile.prover --tag lolepezy/rpki-prover:latest```
 
 ## Bumping DB version
 
@@ -39,7 +37,7 @@ At the moment releasing is done manually, since github actions consistently fail
 For a release version `X.Y.Z` the procedure is this:
 
 - Update version in the `package-template.yaml` file (TODO Make it automated?)
-- `git tag -a vX.Y.Z -m "Release X.Y.Z"`
+- `git tag -a vX.Y.Z -m "Release X.Y.Z"` 
 - `git push -f --tags`
 - Create and push docker image with `./docker-release.sh X.Y.Z`
 - Build static binary with `./build-static.sh`
