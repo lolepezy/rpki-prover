@@ -604,8 +604,8 @@ validateCaNoFetch
                 Nothing ->                        
                     pure $! vError $ NoMFT childrenAki
                 Just mft ->                        
-                    pure $! do                      
-                        markAsRead topDownContext (mft ^. typed)                
+                    pure $! do
+                        markAsRead topDownContext (mft ^. typed)
                         caFull <- getFullCa appContext topDownContext ca
                         void $ manifestFullValidation caFull mft Nothing childrenAki                                   
                         oneMoreMft >> oneMoreCrl                                                    
@@ -721,7 +721,8 @@ validateCaNoFetch
 
             -- MFT can be revoked by the CRL that is on this MFT -- detect 
             -- revocation as well, this is clearly and error                               
-            validMft <- vHoist $ validateMft now mft fullCa validCrl verifiedResources
+            validMft <- vHoist $ validateMft (config ^. #validationConfig . typed) 
+                                    now mft fullCa validCrl verifiedResources
 
             -- Validate entry list and filter out CRL itself
             nonCrlChildren <- validateMftEntries mft (getHash validCrl)
@@ -787,14 +788,13 @@ validateCaNoFetch
                                 
                     let nextMftShortcut = makeMftShortcut mftKey validMft nextChildrenShortcuts keyedValidCrl
 
-                    case (validationAlgorithm, getRFC fullCa) of 
-                        -- Only create shortcuts for case of incremental validation and 
-                        -- if CA prescribes to use standard validation instead of reconsidered.      
+                    case validationAlgorithm of 
+                        -- Only create shortcuts for case of incremental validation.
                         -- 
                         -- NOTE: That means that in case of full validation falling back to 
                         -- the previous valid manifest will not work, since there are no
                         -- shortcuts of previous manifests to fall back to.                  
-                        (Incremental, StrictRFC) -> do  
+                        Incremental -> do  
                             issues <- vHoist thisScopeIssues
                             -- Do no create shortcuts for manifests with warnings 
                             -- (or errors, obviously)
@@ -1087,6 +1087,7 @@ validateCaNoFetch
             -> ValidatorT IO (Maybe MftEntry)
     validateChildObject fullCa (Keyed child@(Located locations childRo) childKey) fileName validCrl = do        
         let focusOnChild = vFocusOn LocationFocus (getURL $ pickLocation locations)
+        let validationRFC = config ^. #validationConfig . typed
         case childRo of
             CerRO childCert -> do
                 parentScope <- askScopes                
@@ -1106,7 +1107,8 @@ validateCaNoFetch
                         childVerifiedResources <- vHoist $ do
                                 Validated validCert <- validateResourceCert @_ @_ @'CACert
                                                             now childCert fullCa validCrl
-                                validateResources verifiedResources childCert validCert
+                                validateResources (config ^. #validationConfig . typed) 
+                                    verifiedResources childCert validCert
 
                         let childTopDownContext = topDownContext
                                 & #verifiedResources ?~ childVerifiedResources
@@ -1131,7 +1133,7 @@ validateCaNoFetch
                 focusOnChild $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
-                        validRoa <- vHoist $ validateRoa now roa fullCa validCrl verifiedResources
+                        validRoa <- vHoist $ validateRoa validationRFC now roa fullCa validCrl verifiedResources
                         let vrpList = getCMSContent $ cmsPayload roa
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrpList
@@ -1145,7 +1147,7 @@ validateCaNoFetch
                 focusOnChild $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
-                        validSpl <- vHoist $ validateSpl now spl fullCa validCrl verifiedResources
+                        validSpl <- vHoist $ validateSpl validationRFC now spl fullCa validCrl verifiedResources
                         let spls = getCMSContent $ cmsPayload spl
                         oneMoreSpl                        
                         increment $ topDownCounters ^. #originalSpl
@@ -1158,7 +1160,7 @@ validateCaNoFetch
                 focusOnChild $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
-                        validAspa <- vHoist $ validateAspa now aspa fullCa validCrl verifiedResources
+                        validAspa <- vHoist $ validateAspa validationRFC now aspa fullCa validCrl verifiedResources
                         oneMoreAspa
                         let aspaPayload = getCMSContent $ cmsPayload aspa                        
                         increment $ topDownCounters ^. #originalAspa
@@ -1183,7 +1185,7 @@ validateCaNoFetch
                 focusOnChild $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
-                        validGbr <- vHoist $ validateGbr now gbr fullCa validCrl verifiedResources
+                        validGbr <- vHoist $ validateGbr validationRFC now gbr fullCa validCrl verifiedResources
                         oneMoreGbr
                         let gbr' = getCMSContent $ cmsPayload gbr
                         let gbrPayload = T2 (getHash gbr) gbr'                        
@@ -1480,6 +1482,7 @@ makeCaShortcut key (Validated certificate) ppas fileName = let
         (notValidBefore, notValidAfter) = getValidityPeriod certificate            
         ski = getSKI certificate
         serial = getSerial certificate
+        resources = getRawCert certificate ^. #resources
         child = CaChild (CaShortcut {..}) serial
     in MftEntry {..}
 
@@ -1487,6 +1490,7 @@ makeRoaShortcut :: ObjectKey -> Validated RoaObject -> [Vrp] -> Text -> MftEntry
 makeRoaShortcut key (Validated roa) vrps fileName = let 
         (notValidBefore, notValidAfter) = getValidityPeriod roa    
         serial = getSerial roa
+        resources = getRawCert roa ^. #resources
         child = RoaChild (RoaShortcut {..}) serial
     in MftEntry {..}    
 
@@ -1494,6 +1498,7 @@ makeSplShortcut :: ObjectKey -> Validated SplObject -> SplPayload -> Text -> Mft
 makeSplShortcut key (Validated spl) splPayload fileName = let 
         (notValidBefore, notValidAfter) = getValidityPeriod spl
         serial = getSerial spl
+        resources = getRawCert spl ^. #resources
         child = SplChild (SplShortcut {..}) serial
     in MftEntry {..}    
 
@@ -1501,6 +1506,7 @@ makeAspaShortcut :: ObjectKey -> Validated AspaObject -> Aspa -> Text -> MftEntr
 makeAspaShortcut key (Validated aspaObject) aspa fileName = let 
         (notValidBefore, notValidAfter) = getValidityPeriod aspaObject            
         serial = getSerial aspaObject
+        resources = getRawCert aspaObject ^. #resources
         child = AspaChild (AspaShortcut {..}) serial
     in MftEntry {..}    
 
@@ -1508,6 +1514,7 @@ makeGbrShortcut :: ObjectKey -> Validated GbrObject -> T2 Hash Gbr -> Text -> Mf
 makeGbrShortcut key (Validated gbrObject) gbr fileName = let 
         (notValidBefore, notValidAfter) = getValidityPeriod gbrObject    
         serial = getSerial gbrObject
+        resources = getRawCert gbrObject ^. #resources
         child = GbrChild (GbrShortcut {..}) serial       
     in MftEntry {..}    
 
@@ -1515,6 +1522,7 @@ makeBgpSecShortcut :: ObjectKey -> Validated BgpCerObject -> BGPSecPayload -> Te
 makeBgpSecShortcut key (Validated bgpCert) bgpSec fileName = let         
         (notValidBefore, notValidAfter) = getValidityPeriod bgpCert                  
         serial = getSerial bgpCert
+        resources = getRawCert bgpCert ^. #resources        
         child = BgpSecChild (BgpSecShortcut {..}) serial
     in MftEntry {..}    
 
@@ -1529,6 +1537,7 @@ makeMftShortcut key
     (notValidBefore, notValidAfter) = getValidityPeriod mftObject        
     serial = getSerial mftObject
     manifestNumber = (getCMSContent $ cmsPayload mftObject) ^. #mftNumber
+    resources = getRawCert mftObject ^. #resources
     crlShortcut = let 
         SignCRL {..} = validCrl ^. #signCrl
         -- That must always match, since it's a validated CRL
@@ -1537,7 +1546,7 @@ makeMftShortcut key
             key = crlKey,
             notValidBefore = thisUpdateTime,
             notValidAfter = nextUpdateTime'
-        }    
+        }            
     in MftShortcut { .. }  
 
 -- Same as vFocusOn but it checks that there are no duplicates in the scope focuses, 
@@ -1587,7 +1596,7 @@ reportCounters AppContext {..} counters = do
 updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
-        let !raw = Verbatim $ toStorable $ Compressed MftShortcutMeta {..}
+        let !raw = Verbatim $ toStorable $ Compressed $ MftShortcutMeta {..}
         atomically $ writeCQueue shortcutQueue (UpdateMftShortcut aki raw)        
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()

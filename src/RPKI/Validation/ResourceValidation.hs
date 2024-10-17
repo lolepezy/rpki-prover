@@ -1,5 +1,6 @@
 module RPKI.Validation.ResourceValidation where
 
+import           RPKI.Domain
 import           RPKI.AppMonad
 import           RPKI.Reporting
 import qualified RPKI.Resources.IntervalSet as IS
@@ -44,7 +45,7 @@ validateChildParentResources validationRFC childResources parentResources verifi
             (Inherit, RS ps)   -> pure $ Left $ Nested ps
             (RS cs,   RS ps)   -> pure $ IS.subsetCheck cs ps
         Just vr -> 
-          pure $ case (c, p) of 
+          pure $! case (c, p) of 
             (Inherit, Inherit) -> Left $ Nested (verifiedSub vr)
             (RS cs,   Inherit) -> IS.subsetCheck cs (verifiedSub vr)
             (Inherit, RS _)    -> Left $ Nested (verifiedSub vr)

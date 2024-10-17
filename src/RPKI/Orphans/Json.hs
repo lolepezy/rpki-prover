@@ -220,8 +220,8 @@ $(deriveToJSON defaultOptions ''PrefixLength)
 instance ToJSON Gbr where
     toJSON (Gbr s) = toJSON $ show s
 
-instance ToJSON r => ToJSON (PolyRFC r rfc)
-instance ToJSON r => ToJSON (SomeRFC r)
+-- instance ToJSON r => ToJSON (PolyRFC r rfc)
+-- instance ToJSON r => ToJSON (SomeRFC r)
 
 $(deriveToJSON defaultOptions ''IpResourceSet)
 $(deriveToJSON defaultOptions ''AsResources)
@@ -402,6 +402,7 @@ instance ToJSON DecodedBase64 where
 instance ToJSON LogLevel
 instance ToJSON Parallelism
 instance ToJSON ManifestProcessing
+instance ToJSON ValidationRFC
 instance ToJSON ValidationAlgorithm
 instance ToJSON FetchTimingCalculation
 instance ToJSON FetchMethod

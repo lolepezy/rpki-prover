@@ -20,6 +20,7 @@ import RPKI.Logging
 import RPKI.Util (toNatural, convert)
 import GHC.Generics (Generic)
 
+-- import RPKI.Validation.Types
 import RPKI.Store.Base.Serialisation
 
 import Data.Version
@@ -102,6 +103,7 @@ data ManifestProcessing = RFC6486_Strict | RFC9286
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
+
 data ValidationAlgorithm = FullEveryIteration | Incremental
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -150,6 +152,7 @@ data ValidationConfig = ValidationConfig {
         -- Manimal allowed size of an individual object 
         minObjectSize                  :: Integer,
 
+        validationRFC                  :: ValidationRFC,
         validationAlgorithm            :: ValidationAlgorithm,
 
         fetchIntervalCalculation       :: FetchTimingCalculation,
@@ -249,6 +252,7 @@ defaultConfig = Config {
         -- couple of dates and a few extensions
         minObjectSize                  = 300,
         maxTaRepositories              = 3000,
+        validationRFC                  = StrictRFC,
         validationAlgorithm            = FullEveryIteration,
         fetchIntervalCalculation       = Adaptive,
         fetchTimeoutCalculation        = Adaptive,
