@@ -18,9 +18,6 @@ data SMap (name :: Symbol) s k v where
 instance Storage s => WithStorage s (SMap name s k v) where
     storage (SMap s _) = s
 
-instance WithTx s => CanErase s (SMap name s k v) where
-    erase tx (SMap _ s) = S.clear tx s
-
 put :: (AsStorable k, AsStorable v) =>
         Tx s 'RW -> SMap name s k v -> k -> v -> IO ()
 put tx (SMap _ s) k v = S.put tx s (storableKey k) (storableValue v)    

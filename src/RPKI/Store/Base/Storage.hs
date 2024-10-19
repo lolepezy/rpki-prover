@@ -63,7 +63,3 @@ rwTxT :: (MonadIO m, WithStorage s ws)
 rwTxT tdb f = liftIO $ do 
     db <- readTVarIO tdb
     rwTx db $ \tx -> f tx db
-
-
-class WithTx s => CanErase s a where
-    erase :: Tx s 'RW -> a -> IO ()

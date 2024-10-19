@@ -9,7 +9,7 @@
 
 module RPKI.Store.Base.LMDB where
 
-import Control.Monad (forM, forever)
+import Control.Monad
 import Control.Concurrent.STM
 
 import qualified Data.ByteString as BS
@@ -35,7 +35,6 @@ import qualified Lmdb.Map as LMap
 import qualified Lmdb.Multimap as LMMap
 import qualified Lmdb.Types as Lmdb
 
-
 import Pipes
 
 type Env = Lmdb.Environment 'Lmdb.ReadWrite
@@ -54,7 +53,7 @@ data LmdbStore (name :: Symbol) = LmdbStore {
 }
 
 data LmdbMultiStore (name :: Symbol) = LmdbMultiStore { 
-    db :: Lmdb.MultiDatabase BS.ByteString BS.ByteString,
+    db  :: Lmdb.MultiDatabase BS.ByteString BS.ByteString,
     env :: LmdbEnv
 }
 
@@ -314,5 +313,24 @@ getMapNames tx db =
         void $ runEffect $ LMap.firstForward c >-> do
             forever $ do
                 Lmdb.KeyValue name _ <- await
-                lift $ modifyIORef' maps ([name] <>)
+                lift $ modifyIORef' maps (name :)
         readIORef maps     
+
+
+eraseEnv :: Env -> Tx LmdbStorage 'RW -> IO [BS.ByteString]
+eraseEnv env (LmdbTx tx) = do     
+    db <- openDatabase tx Nothing defaultDbSettings    
+    mapNames <- getMapNames tx db        
+    forM_ mapNames $ \mapName -> do 
+        -- first open it as is
+        m <- openDatabase tx (Just $ convert mapName) defaultDbSettings
+        isMulti <- isMultiDatabase tx m                            
+        if isMulti 
+            then do 
+                -- close and reopen as multi map
+                closeDatabase env m
+                m' <- openMultiDatabase tx (Just $ convert mapName) defaultMultiDbSettngs                        
+                LMMap.clear tx m'
+            else 
+                LMap.clear tx m
+    pure mapNames
