@@ -284,13 +284,12 @@ optimiseAsns = mapMaybe f
 {-# INLINE optimiseAsns #-}    
 
 unwrapAsns :: [AsResource] -> [ASN]
-unwrapAsns = mconcat . map unwrap
-  where
-    unwrap = \case
-        AS asn  -> [asn]
+unwrapAsns = mconcat . map (
+    \case
+        AS asn          -> [asn]
         ASRange a1 a2
             | a1 >= a2  -> []
-            | otherwise -> [ a1 .. a2 ]
+            | otherwise -> [ a1 .. a2 ])
 
 
 -- Bits munching
@@ -302,6 +301,7 @@ fourW8sToW32 = \case
     [w1, w2, w3]          -> toW32 w1 24 .|. toW32 w2 16 .|. toW32 w3 8
     w1 : w2 : w3 : w4 : _ -> toW32 w1 24 .|. toW32 w2 16 .|. toW32 w3 8 .|. fromIntegral w4
   where        
+    {-# INLINE toW32 #-}
     toW32 !w !s = (fromIntegral w :: Word32) `shiftL` s
 {-# INLINE fourW8sToW32 #-}
 

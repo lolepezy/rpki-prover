@@ -28,6 +28,7 @@ import           RPKI.Orphans.Swagger
 import           RPKI.Time
 import           RPKI.Domain
 import           RPKI.Repository
+import           RPKI.Resources.Types
 import           RPKI.Store.Base.Serialisation
 
 
@@ -66,7 +67,8 @@ data MftShortcut = MftShortcut {
         notValidAfter  :: Instant,        
         serial         :: Serial,
         manifestNumber :: Serial,
-        crlShortcut    :: CrlShortcut
+        crlShortcut    :: CrlShortcut,
+        resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -76,7 +78,8 @@ data CaShortcut = CaShortcut {
         ski            :: SKI,
         ppas           :: PublicationPointAccess,
         notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notValidAfter  :: Instant,
+        resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -91,7 +94,8 @@ data RoaShortcut = RoaShortcut {
         key            :: ObjectKey,        
         vrps           :: [Vrp],
         notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notValidAfter  :: Instant,
+        resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -100,7 +104,8 @@ data SplShortcut = SplShortcut {
         key            :: ObjectKey,        
         splPayload     :: SplPayload,
         notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notValidAfter  :: Instant,
+        resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -109,7 +114,8 @@ data AspaShortcut = AspaShortcut {
         key            :: ObjectKey,
         aspa           :: Aspa,
         notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notValidAfter  :: Instant,
+        resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -118,7 +124,8 @@ data BgpSecShortcut = BgpSecShortcut {
         key            :: ObjectKey,
         bgpSec         :: BGPSecPayload,
         notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notValidAfter  :: Instant,
+        resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -127,7 +134,8 @@ data GbrShortcut = GbrShortcut {
         key            :: ObjectKey,    
         gbr            :: T2 Hash Gbr,
         notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notValidAfter  :: Instant,
+        resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
