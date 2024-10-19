@@ -317,21 +317,20 @@ getMapNames tx db =
         readIORef maps     
 
 
-eraseEnv :: Env -> IO [BS.ByteString]
-eraseEnv env = do 
-    withTransaction env $ \tx -> do                                  
-        db <- openDatabase tx Nothing defaultDbSettings    
-        mapNames <- getMapNames tx db        
-        forM_ mapNames $ \mapName -> do 
-            -- first open it as is
-            m <- openDatabase tx (Just $ convert mapName) defaultDbSettings
-            isMulti <- isMultiDatabase tx m                            
-            if isMulti 
-                then do 
-                    -- close and reopen as multi map
-                    closeDatabase env m
-                    m' <- openMultiDatabase tx (Just $ convert mapName) defaultMultiDbSettngs                        
-                    LMMap.clear tx m'
-                else 
-                    LMap.clear tx m
-        pure mapNames
+eraseEnv :: Env -> Tx LmdbStorage 'RW -> IO [BS.ByteString]
+eraseEnv env (LmdbTx tx) = do     
+    db <- openDatabase tx Nothing defaultDbSettings    
+    mapNames <- getMapNames tx db        
+    forM_ mapNames $ \mapName -> do 
+        -- first open it as is
+        m <- openDatabase tx (Just $ convert mapName) defaultDbSettings
+        isMulti <- isMultiDatabase tx m                            
+        if isMulti 
+            then do 
+                -- close and reopen as multi map
+                closeDatabase env m
+                m' <- openMultiDatabase tx (Just $ convert mapName) defaultMultiDbSettngs                        
+                LMMap.clear tx m'
+            else 
+                LMap.clear tx m
+    pure mapNames

@@ -51,7 +51,7 @@ createDatabase env logger checkAction = do
                 Nothing -> do
                     logInfo logger [i|Cache version is not set, will set the version to #{currentDatabaseVersion} and clean up the cache.|]
                     nativeEnv <- atomically $ getNativeEnv env
-                    (_, ms) <- timedMS $ eraseEnv nativeEnv
+                    (_, ms) <- timedMS $ eraseEnv nativeEnv tx
                     logDebug logger [i|Erased cache in #{ms}ms.|]
                     saveCurrentDatabaseVersion tx db
                     pure DidntHaveVersion
@@ -63,7 +63,7 @@ createDatabase env logger checkAction = do
                         -- now is to erase all the maps and start from scratch.
                         logInfo logger [i|Persisted cache version is #{version} and expected version is #{currentDatabaseVersion}, will drop the cache.|]    
                         nativeEnv <- atomically $ getNativeEnv env
-                        (_, ms) <- timedMS $ eraseEnv nativeEnv
+                        (_, ms) <- timedMS $ eraseEnv nativeEnv tx
                         logDebug logger [i|Erased cache in #{ms}ms.|]                  
                         saveCurrentDatabaseVersion tx db
                         pure WasIncompatible                        
