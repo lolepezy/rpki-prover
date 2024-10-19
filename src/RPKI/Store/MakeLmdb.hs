@@ -61,6 +61,8 @@ createDatabase env logger checkAction = do
                         -- We are seeing incompatible storage. The only option 
                         -- now is to erase all the maps and start from scratch.
                         logInfo logger [i|Persisted cache version is #{version} and expected version is #{currentDatabaseVersion}, will drop the cache.|]    
+                        -- NOTE: We erase every map in the cache, including metadata, but that's not an problem, 
+                        -- since we'll set new DB version here
                         ms <- eraseCache tx
                         logDebug logger [i|Erased cache in #{ms}ms.|]                  
                         saveCurrentDatabaseVersion tx db
