@@ -68,7 +68,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 34
+currentDatabaseVersion = 36
 
 -- Some constant keys
 databaseVersionKey, forAsyncFetchKey, validatedByVersionKey :: Text
