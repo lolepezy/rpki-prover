@@ -53,7 +53,7 @@ data LmdbStore (name :: Symbol) = LmdbStore {
 }
 
 data LmdbMultiStore (name :: Symbol) = LmdbMultiStore { 
-    db :: Lmdb.MultiDatabase BS.ByteString BS.ByteString,
+    db  :: Lmdb.MultiDatabase BS.ByteString BS.ByteString,
     env :: LmdbEnv
 }
 
