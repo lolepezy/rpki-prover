@@ -49,9 +49,8 @@ createDatabase env logger checkAction = do
             dbVersion <- getDatabaseVersion tx db
             case dbVersion of 
                 Nothing -> do
-                    logInfo logger [i|Cache version is not set, will set the version to #{currentDatabaseVersion} and clean up the cache.|]
-                    nativeEnv <- atomically $ getNativeEnv env
-                    (_, ms) <- timedMS $ eraseEnv nativeEnv tx
+                    logInfo logger [i|Cache version is not set, will set the version to #{currentDatabaseVersion} and clean up the cache.|]                    
+                    ms <- eraseCache tx
                     logDebug logger [i|Erased cache in #{ms}ms.|]
                     saveCurrentDatabaseVersion tx db
                     pure DidntHaveVersion
@@ -62,11 +61,15 @@ createDatabase env logger checkAction = do
                         -- We are seeing incompatible storage. The only option 
                         -- now is to erase all the maps and start from scratch.
                         logInfo logger [i|Persisted cache version is #{version} and expected version is #{currentDatabaseVersion}, will drop the cache.|]    
-                        nativeEnv <- atomically $ getNativeEnv env
-                        (_, ms) <- timedMS $ eraseEnv nativeEnv tx
+                        ms <- eraseCache tx
                         logDebug logger [i|Erased cache in #{ms}ms.|]                  
                         saveCurrentDatabaseVersion tx db
                         pure WasIncompatible                        
+
+    eraseCache tx = do 
+        nativeEnv <- atomically $ getNativeEnv env
+        (_, ms) <- timedMS $ eraseEnv nativeEnv tx        
+        pure ms
 
     doCreateDb = do 
         sequences        <- createMap
