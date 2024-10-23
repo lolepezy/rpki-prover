@@ -75,6 +75,7 @@ import           RPKI.Time
 import           RPKI.Util                        
 import           RPKI.Validation.Types
 import           RPKI.Validation.ObjectValidation
+import           RPKI.Validation.ResourceValidation
 import           RPKI.Validation.Common
 
 
@@ -771,12 +772,12 @@ validateCaNoFetch
 
             let processChildren = do                                              
                     -- Here we have the payloads for the fully validated MFT children
-                    -- and the shortcut objects for these children                        
-                    maybeChildrenShortcuts <- 
+                    -- and the shortcut objects for these children
+                    --                                            
+                    childrenShortcuts <- 
+                        fmap (\shortcuts -> [ (k, s) | T2 k (Just s) <- shortcuts ]) $
                             gatherMftEntryResults =<< 
                                 gatherMftEntryValidations fullCa newChildren validCrl
-                                            
-                    let childrenShortcuts = [ (k, s) | T2 k (Just s) <- maybeChildrenShortcuts ]
 
                     let newEntries = makeEntriesWithMap newChildren (Map.fromList childrenShortcuts)                            
 
@@ -805,7 +806,10 @@ validateCaNoFetch
                                     increment $ topDownCounters ^. #updateMftMeta
 
                                 -- Update manifest shortcut children in case there are new 
-                                -- or deleted children in the new manifest
+                                -- or deleted children in the new manifest. They are updated
+                                -- separately since changes to non-CRL children are less common
+                                -- then updates to metadata, hence we can save quite some 
+                                -- CPU on serialisation.
                                 when (isNothing mftShortcut || not (null newChildren) || isSomethingDeleted) $ do
                                     updateMftShortcutChildren topDownContext aki nextMftShortcut
                                     increment $ topDownCounters ^. #updateMftChildren
@@ -900,7 +904,7 @@ validateCaNoFetch
     
     allOrNothingMftChildrenResults fullCa nonCrlChildren validCrl = do
         scopes <- askScopes
-        liftIO $ parallelChildrenProcessing
+        liftIO $ forChildren
             nonCrlChildren
             $ \(T3 filename hash' key) -> do 
                 (z, vs) <- runValidatorT scopes $ do
@@ -915,7 +919,7 @@ validateCaNoFetch
     
     independentMftChildrenResults fullCa nonCrlChildren validCrl = do
         scopes <- askScopes
-        liftIO $ parallelChildrenProcessing
+        liftIO $ forChildren
             nonCrlChildren
             $ \(T3 filename hash key) -> do
                 (r, vs) <- runValidatorT scopes $ getManifestEntry filename hash
@@ -938,21 +942,19 @@ validateCaNoFetch
                                 Left e              -> InvalidChild e vs' key filename
                                 Right childShortcut -> Valid vs' childShortcut key filename
     
-    parallelChildrenProcessing nonCrlChildren f = do 
-        let itemsPerThread = 20
-        let threads = min 
-                    (length nonCrlChildren `div` itemsPerThread)
-                    (fromIntegral $ config ^. #parallelism . #cpuParallelism)
+    forChildren nonCrlChildren = let
+        itemsPerThread = 20
+        threads = min 
+                (length nonCrlChildren `div` itemsPerThread)
+                (fromIntegral $ config ^. #parallelism . #cpuParallelism)
 
-        let forAllChidlren = 
+        forAllChidlren = 
                 if threads <= 1
                     then forM 
                     else pooledForConcurrentlyN threads        
 
-        forAllChidlren nonCrlChildren f 
+        in forAllChidlren nonCrlChildren 
 
-    gatherMftEntryResults :: [ManifestValidity AppError ValidationState] 
-                          -> ValidatorT IO [T2 ObjectKey (Maybe MftEntry)]
     gatherMftEntryResults =        
         foldM (\childrenShortcuts r -> do                 
             case r of 
@@ -961,7 +963,7 @@ validateCaNoFetch
                     appError e
                 InvalidChild _ vs key fileName -> do
                     embedState vs
-                    pure $! T2 key (Just $! makeTroubledChild key fileName) : childrenShortcuts
+                    pure $! T2 key (Just $! makeChildWithIssues key fileName) : childrenShortcuts
                 Valid vs childShortcut key fileName -> do 
                     embedState vs
                     -- Don't create shortcuts for objects having either errors or warnings,
@@ -970,7 +972,7 @@ validateCaNoFetch
                         then do                            
                             pure $! T2 key childShortcut : childrenShortcuts
                         else do 
-                            pure $! T2 key (Just $! makeTroubledChild key fileName) : childrenShortcuts
+                            pure $! T2 key (Just $! makeChildWithIssues key fileName) : childrenShortcuts
             ) mempty
 
         
@@ -1118,7 +1120,7 @@ validateCaNoFetch
 
                 embedState validationState
                 case r of 
-                    Left _  -> pure $! Just $! makeTroubledChild childKey fileName
+                    Left _  -> pure $! Just $! makeChildWithIssues childKey fileName
                     Right _  -> do 
                         case getPublicationPointsFromCertObject childCert of 
                             -- It's not going to happen?
@@ -1199,18 +1201,18 @@ validateCaNoFetch
             _somethingElse -> 
                 focusOnChild $ do
                     logWarn logger [i|Unsupported type of object: #{locations}.|]                
-                    pure $! newShortcut (makeTroubledChild childKey fileName)
+                    pure $! newShortcut (makeChildWithIssues childKey fileName)
 
         where
             -- In case of RevokedResourceCertificate error, the whole manifest is not to be considered 
             -- invalid, only the object with the revoked certificate is considered invalid.
-            -- Replace RevokedResourceCertificate error with a warmning and don't break the 
+            -- Replace RevokedResourceCertificate error with a warning and don't break the 
             -- validation process.            
             -- This is a hacky and ad-hoc, but it works fine.
             allowRevoked f =
                 catchAndEraseError f isRevokedCertError $ do
                     vWarn RevokedResourceCertificate
-                    pure $! newShortcut (makeTroubledChild childKey fileName)
+                    pure $! newShortcut (makeChildWithIssues childKey fileName)
                 where
                     isRevokedCertError (ValidationE RevokedResourceCertificate) = True
                     isRevokedCertError _ = False
@@ -1222,7 +1224,7 @@ validateCaNoFetch
         issues <- thisScopeIssues
         pure $! if Set.null issues 
                     then makeShortcut fileName
-                    else makeTroubledChild key fileName
+                    else makeChildWithIssues key fileName
 
     thisScopeIssues :: PureValidatorT (Set VIssue)
     thisScopeIssues = 
@@ -1307,15 +1309,18 @@ validateCaNoFetch
                 void $ validateChildObject caFull childObject fileName validCrl
 
         getChildPayloads troubledValidation (childKey, MftEntry {..}) = do 
-            markAsRead topDownContext childKey                         
+            markAsRead topDownContext childKey        
+            let validationRFC = config ^. typed @ValidationConfig . typed @ValidationRFC 
             case child of 
                 CaChild caShortcut _ ->                     
                     validateCa appContext topDownContext (CaShort caShortcut)
                         
                 RoaChild r@RoaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do                    
-                        vHoist $ validateObjectValidityPeriod r now
-                        validateLocationForShortcut key
+                        vHoist $ do 
+                            validateObjectValidityPeriod r now
+                            validateChildParentResources validationRFC resources resources verifiedResources
+                        validateLocationForShortcut key                        
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrps
                         increment $ topDownCounters ^. #shortcutRoa
@@ -1679,8 +1684,8 @@ data ManifestValidity e v = InvalidEntry e v
                             | InvalidChild e v ObjectKey Text
                             | Valid v (Maybe MftEntry) ObjectKey Text
 
-makeTroubledChild :: ObjectKey -> Text -> MftEntry
-makeTroubledChild childKey fileName = 
+makeChildWithIssues :: ObjectKey -> Text -> MftEntry
+makeChildWithIssues childKey fileName = 
     MftEntry { child = TroubledChild childKey, .. }     
 
 
