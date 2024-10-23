@@ -1319,7 +1319,10 @@ validateCaNoFetch
                     vFocusOn ObjectFocus childKey $ do                    
                         vHoist $ do 
                             validateObjectValidityPeriod r now
-                            validateChildParentResources validationRFC resources resources verifiedResources
+                            case validationRFC of
+                                StrictRFC       -> pure ()
+                                ReconsideredRFC -> 
+                                    void $ validateChildParentResources validationRFC resources resources verifiedResources                                
                         validateLocationForShortcut key                        
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrps
