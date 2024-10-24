@@ -752,7 +752,7 @@ data CLIOptions wrapped = CLIOptions {
          "'rsync://rsync.paas.rpki.ripe.net/repository/', " +++
          "'rsync://rpki.sub.apnic.net/repository/', " +++
          "'rsync://rpki.cnnic.cn/rpki/A9162E3D0000/). " +++
-         "It is an optimisation and in absolute majority of cases the default is working fine."),
+         "It is an optimisation and most of the time this option is of no use."),
 
     metricsPrefix :: wrapped ::: Maybe String <?>
         "Prefix for Prometheus metrics (default is 'rpki_prover').",
