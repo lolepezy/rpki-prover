@@ -1262,7 +1262,8 @@ validateCaNoFetch
                     ) (T3 0 0 0 :: T3 Int Int Int) filteredChildren
 
         vFocusOn ObjectFocus (mftShortcut ^. #key) $ do
-            vHoist $ validateObjectValidityPeriod mftShortcut now
+            validateShortcut mftShortcut (mftShortcut ^. #key)
+            -- vHoist $ validateObjectValidityPeriod mftShortcut now
             vFocusOn ObjectFocus (mftShortcut ^. #crlShortcut . #key) $
                 vHoist $ validateObjectValidityPeriod (mftShortcut ^. #crlShortcut) now    
 
@@ -1322,52 +1323,53 @@ validateCaNoFetch
                         
                 RoaChild r@RoaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do                    
-                        vHoist $ do 
-                            validateObjectValidityPeriod r now
-                            case validationRFC of
-                                StrictRFC       -> pure ()
-                                ReconsideredRFC -> 
-                                    void $ validateChildParentResources validationRFC 
-                                        resources parentCaResources verifiedResources                                
-                        validateLocationForShortcut key                        
+                        validateShortcut r key                   
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrps
                         increment $ topDownCounters ^. #shortcutRoa
                         rememberPayloads typed (T2 vrps childKey :)
 
                 SplChild s@SplShortcut {..} _ -> 
-                    vFocusOn ObjectFocus childKey $ do                    
-                        vHoist $ validateObjectValidityPeriod s now
-                        validateLocationForShortcut key
+                    vFocusOn ObjectFocus childKey $ do
+                        validateShortcut s key
                         oneMoreSpl                        
                         increment $ topDownCounters ^. #shortcutSpl
                         rememberPayloads typed (splPayload :)
                 
                 AspaChild a@AspaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do 
-                        vHoist $ validateObjectValidityPeriod a now
-                        validateLocationForShortcut key
+                        validateShortcut a key
                         oneMoreAspa
                         increment $ topDownCounters ^. #shortcutAspa                        
                         rememberPayloads typed (aspa :)                        
 
                 BgpSecChild b@BgpSecShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do 
-                        vHoist $ validateObjectValidityPeriod b now
-                        validateLocationForShortcut key
+                        validateShortcut b key
                         oneMoreBgp                
                         rememberPayloads typed (bgpSec :)
 
                 GbrChild g@GbrShortcut {..} _ -> 
-                    vFocusOn ObjectFocus childKey $ do 
-                        vHoist $ validateObjectValidityPeriod g now         
-                        validateLocationForShortcut key
+                    vFocusOn ObjectFocus childKey $ do
+                        validateShortcut g key 
                         oneMoreGbr                 
                         rememberPayloads typed (gbr :)
 
                 TroubledChild childKey_ -> do
                     increment $ topDownCounters ^. #shortcutTroubled
                     troubledValidation childKey_ fileName
+    
+        validateShortcut :: (WithValidityPeriod s, HasField' "resources" s AllResources) => s -> ObjectKey -> ValidatorT IO ()
+        validateShortcut r key = do
+            validateLocationForShortcut key
+            vHoist $ do                 
+                validateObjectValidityPeriod r now
+                case validationRFC of
+                    StrictRFC       -> pure ()
+                    ReconsideredRFC -> 
+                        void $ validateChildParentResources validationRFC 
+                            (r ^. #resources) parentCaResources verifiedResources
+            
 
 
     -- TODO This is pretty bad, it's easy to forget to do it
