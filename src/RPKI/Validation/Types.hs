@@ -165,18 +165,6 @@ instance {-# OVERLAPPING #-} WithValidityPeriod BgpSecShortcut where
 instance {-# OVERLAPPING #-} WithValidityPeriod GbrShortcut where
     getValidityPeriod GbrShortcut {..} = (notValidBefore, notValidAfter)
 
-
-getMftChildSerial :: MftChild -> Maybe Serial     
-getMftChildSerial = \case 
-    CaChild _ serial     -> Just serial 
-    RoaChild _ serial    -> Just serial 
-    SplChild _ serial    -> Just serial 
-    AspaChild _ serial   -> Just serial 
-    BgpSecChild _ serial -> Just serial 
-    GbrChild _ serial    -> Just serial 
-    _                    -> Nothing
-              
-
 instance ToJSON CrlShortcut
 instance ToJSON GbrShortcut
 instance ToJSON BgpSecShortcut
@@ -192,3 +180,17 @@ instance ToSchema RoaShortcut
 instance ToSchema MftChild where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text.Text)
 
+getMftChildSerial :: MftChild -> Maybe Serial     
+getMftChildSerial = \case 
+    CaChild _ serial     -> Just serial 
+    RoaChild _ serial    -> Just serial 
+    SplChild _ serial    -> Just serial 
+    AspaChild _ serial   -> Just serial 
+    BgpSecChild _ serial -> Just serial 
+    GbrChild _ serial    -> Just serial 
+    _                    -> Nothing
+              
+getResources :: Ca -> AllResources
+getResources = \case 
+    CaShort CaShortcut {..} -> resources
+    CaFull (getRawCert -> RawResourceCertificate {..}) -> resources

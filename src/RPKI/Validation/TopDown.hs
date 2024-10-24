@@ -586,6 +586,7 @@ validateCaNoFetch
             join $! nextAction $ toAKI (c ^. #ski)
   where    
     validationAlgorithm = config ^. typed @ValidationConfig . typed @ValidationAlgorithm
+    validationRFC = config ^. typed @ValidationConfig . typed @ValidationRFC
 
     nextAction =
         case validationAlgorithm of 
@@ -647,7 +648,8 @@ validateCaNoFetch
                                 collectPayloadsFromShortcuts mftShortcut Nothing 
                                     (getFullCa appContext topDownContext ca)
                                     -- getCrlByKey is the best we can have
-                                    (getCrlByKey appContext crlKey)                                    
+                                    (getCrlByKey appContext crlKey)
+                                    (getResources ca)
 
                             Just mftKey 
                                 | mftShortKey == mftKey -> do
@@ -659,6 +661,7 @@ validateCaNoFetch
                                         collectPayloadsFromShortcuts mftShortcut Nothing 
                                                 (getFullCa appContext topDownContext ca)
                                                 (getCrlByKey appContext crlKey)
+                                                (getResources ca)
 
                                 | otherwise -> do    
                                     getMftByKey tx db mftKey >>= \case 
@@ -674,12 +677,14 @@ validateCaNoFetch
                                                     overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
                                                     collectPayloadsFromShortcuts mftShortcut (Just overlappingChildren) 
                                                                 (pure fullCa)
-                                                                (findAndValidateCrl fullCa mft childrenAki)                                                    
+                                                                (findAndValidateCrl fullCa mft childrenAki)   
+                                                                (getResources ca)
 
                                             let useShortcutOnly =                                                    
                                                     collectPayloadsFromShortcuts mftShortcut Nothing 
                                                             (getFullCa appContext topDownContext ca)
                                                             (getCrlByKey appContext crlKey)
+                                                            (getResources ca)
                                             
                                             combineShortcutAndNewMft
                                                 `catchError`
@@ -1089,7 +1094,7 @@ validateCaNoFetch
             -> ValidatorT IO (Maybe MftEntry)
     validateChildObject fullCa (Keyed child@(Located locations childRo) childKey) fileName validCrl = do        
         let focusOnChild = vFocusOn LocationFocus (getURL $ pickLocation locations)
-        let validationRFC = config ^. #validationConfig . typed
+        -- let validationRFC = config ^. #validationConfig . typed
         case childRo of
             CerRO childCert -> do
                 parentScope <- askScopes                
@@ -1236,8 +1241,9 @@ validateCaNoFetch
                                 -> Maybe [T3 Text Hash ObjectKey] 
                                 -> ValidatorT IO (Located CaCerObject)
                                 -> ValidatorT IO (Keyed (Validated CrlObject))             
+                                -> AllResources
                                 -> ValidatorT IO ()
-    collectPayloadsFromShortcuts mftShortcut childrenToCheck findFullCa findValidCrl = do      
+    collectPayloadsFromShortcuts mftShortcut childrenToCheck findFullCa findValidCrl parentCaResources = do      
         
         let nonCrlEntries = mftShortcut ^. #nonCrlEntries
 
@@ -1309,8 +1315,7 @@ validateCaNoFetch
                 void $ validateChildObject caFull childObject fileName validCrl
 
         getChildPayloads troubledValidation (childKey, MftEntry {..}) = do 
-            markAsRead topDownContext childKey        
-            let validationRFC = config ^. typed @ValidationConfig . typed @ValidationRFC 
+            markAsRead topDownContext childKey            
             case child of 
                 CaChild caShortcut _ ->                     
                     validateCa appContext topDownContext (CaShort caShortcut)
@@ -1322,7 +1327,8 @@ validateCaNoFetch
                             case validationRFC of
                                 StrictRFC       -> pure ()
                                 ReconsideredRFC -> 
-                                    void $ validateChildParentResources validationRFC resources resources verifiedResources                                
+                                    void $ validateChildParentResources validationRFC 
+                                        resources parentCaResources verifiedResources                                
                         validateLocationForShortcut key                        
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrps
