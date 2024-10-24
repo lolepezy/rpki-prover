@@ -90,8 +90,8 @@ parseSignedObject contentBinaryParse =
                         throwParseError $ "EE certificate is broken " <> show e
                     (Right (_,   _,  Nothing, _), _) -> 
                         throwParseError "EE certificate doesn't have an AKI"
-                    (Right (rc, ski, Just aki, rfc), _) -> do 
-                        let certificate = TypedCert $ ResourceCertificate $ mkPolyRFC rfc rc
+                    (Right (rc, ski, Just aki, _), _) -> do 
+                        let certificate = TypedCert $ ResourceCertificate rc
                         pure $ EECerObject {..}
                   where 
                     encodedCert = encodeASN1' DER $ 

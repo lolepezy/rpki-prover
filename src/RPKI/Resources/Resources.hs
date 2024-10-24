@@ -1,6 +1,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE BangPatterns               #-}
+{-# LANGUAGE MultiWayIf                 #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE UndecidableInstances       #-}
@@ -96,12 +97,11 @@ ipv6RangeToPrefixes w1 w2 = map Ipv6Prefix $ V6.rangeToBlocks $ Range (V6.IpAddr
     
 subtractRange :: (Enum a, Ord a) => a -> a -> a -> a -> r -> (Range a -> [r]) -> [r]
 subtractRange f1 l1 f2 l2 r fromRange = 
-    case () of  
-              _ | f2 > l1  || l2 <= f1 -> [r]
-                | f1 <= f2 && l1 < l2  -> fromRange $ Range f1 (pred f2)
-                | f1 <= f2 && l1 >= l2 -> fromRange (Range f1 (pred f2)) <> fromRange (Range (succ l2) l1)
-                | f1 > f2  && l1 >= l2 -> fromRange (Range l2 l1)
-                | f1 > f2  && l1 < l2  -> []
+    if | f2 > l1  || l2 <= f1 -> [r]
+       | f1 <= f2 && l1 < l2  -> fromRange $ Range f1 (pred f2)
+       | f1 <= f2 && l1 >= l2 -> fromRange (Range f1 (pred f2)) <> fromRange (Range (succ l2) l1)
+       | f1 > f2  && l1 >= l2 -> fromRange (Range l2 l1)
+       | f1 > f2  && l1 < l2  -> []
 
 ipRangesIntersection :: Ord a => r -> r -> (r -> r -> (a, a, a, a)) -> (Range a -> [r]) -> [r]
 ipRangesIntersection p1 p2 getEnds fromRange = 
@@ -284,13 +284,12 @@ optimiseAsns = mapMaybe f
 {-# INLINE optimiseAsns #-}    
 
 unwrapAsns :: [AsResource] -> [ASN]
-unwrapAsns = mconcat . map unwrap
-  where
-    unwrap = \case
-        AS asn  -> [asn]
+unwrapAsns = mconcat . map (
+    \case
+        AS asn          -> [asn]
         ASRange a1 a2
             | a1 >= a2  -> []
-            | otherwise -> [ a1 .. a2 ]
+            | otherwise -> [ a1 .. a2 ])
 
 
 -- Bits munching
@@ -302,6 +301,7 @@ fourW8sToW32 = \case
     [w1, w2, w3]          -> toW32 w1 24 .|. toW32 w2 16 .|. toW32 w3 8
     w1 : w2 : w3 : w4 : _ -> toW32 w1 24 .|. toW32 w2 16 .|. toW32 w3 8 .|. fromIntegral w4
   where        
+    {-# INLINE toW32 #-}
     toW32 !w !s = (fromIntegral w :: Word32) `shiftL` s
 {-# INLINE fourW8sToW32 #-}
 

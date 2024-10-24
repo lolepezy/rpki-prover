@@ -345,34 +345,34 @@ instance Arbitrary RawResourceCertificate where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
-instance (Arg (SomeRFC r) r, 
-          Arg (PolyRFC r 'StrictRFC) r,
-          Arg (PolyRFC r 'ReconsideredRFC) r,
-          Arbitrary r) => Arbitrary (SomeRFC r) where
-#else
-instance Arbitrary r => Arbitrary (SomeRFC r) where
-#endif      
-    arbitrary = genericArbitrary
-    shrink = genericShrink
+-- #if MIN_VERSION_generic_arbitrary(1,0,0)
+-- instance (Arg (SomeRFC r) r, 
+--           Arg (PolyRFC r 'StrictRFC) r,
+--           Arg (PolyRFC r 'ReconsideredRFC) r,
+--           Arbitrary r) => Arbitrary (SomeRFC r) where
+-- #else
+-- instance Arbitrary r => Arbitrary (SomeRFC r) where
+-- #endif      
+--     arbitrary = genericArbitrary
+--     shrink = genericShrink
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
-instance (Arg (PolyRFC r 'StrictRFC) r, Arbitrary r) => 
-        Arbitrary (PolyRFC r 'StrictRFC) where
-#else
-instance Arbitrary r => Arbitrary (PolyRFC r 'StrictRFC) where
-#endif      
-    arbitrary = genericArbitrary
-    shrink = genericShrink
+-- #if MIN_VERSION_generic_arbitrary(1,0,0)
+-- instance (Arg (PolyRFC r 'StrictRFC) r, Arbitrary r) => 
+--         Arbitrary (PolyRFC r 'StrictRFC) where
+-- #else
+-- instance Arbitrary r => Arbitrary (PolyRFC r 'StrictRFC) where
+-- #endif      
+--     arbitrary = genericArbitrary
+--     shrink = genericShrink
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
-instance (Arg (PolyRFC r 'ReconsideredRFC) r, Arbitrary r) => 
-        Arbitrary (PolyRFC r 'ReconsideredRFC) where
-#else
-instance Arbitrary r => Arbitrary (PolyRFC r 'ReconsideredRFC) where
-#endif
-    arbitrary = genericArbitrary
-    shrink = genericShrink
+-- #if MIN_VERSION_generic_arbitrary(1,0,0)
+-- instance (Arg (PolyRFC r 'ReconsideredRFC) r, Arbitrary r) => 
+--         Arbitrary (PolyRFC r 'ReconsideredRFC) where
+-- #else
+-- instance Arbitrary r => Arbitrary (PolyRFC r 'ReconsideredRFC) where
+-- #endif
+--     arbitrary = genericArbitrary
+--     shrink = genericShrink
 
 #if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (TypedCert r 'CACert) r, Arbitrary r) => Arbitrary (TypedCert r 'CACert) where
