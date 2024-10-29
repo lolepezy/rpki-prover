@@ -243,7 +243,7 @@ validateResources ::
     Maybe (VerifiedRS PrefixesAndAsns) ->        
     child ->
     parent ->
-    PureValidatorT (VerifiedRS PrefixesAndAsns)
+    PureValidatorT (VerifiedRS PrefixesAndAsns, Maybe (Overclaiming PrefixesAndAsns))
 validateResources validationRFC verifiedResources childCert parentCert =
     validateChildParentResources
         validationRFC

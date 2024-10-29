@@ -91,7 +91,7 @@ validateBottomUp
                 validateOnMft mft childCert                            
                 Validated validCert    <- vHoist $ validateResourceCert @_ @_ @'CACert 
                                                     now childCert cert crl
-                childVerifiedResources <- vHoist $ validateResources validationRFC
+                (childVerifiedResources, _) <- vHoist $ validateResources validationRFC
                                                     (Just verifiedResources) childCert validCert            
                 go childVerifiedResources certs
         

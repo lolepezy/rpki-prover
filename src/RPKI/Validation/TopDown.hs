@@ -105,7 +105,8 @@ data TopDownContext = TopDownContext {
         currentPathDepth        :: Int,
         startingRepositoryCount :: Int,
         interruptedByLimit      :: TVar Limited,
-        payloadBuilder          :: PayloadBuilder
+        payloadBuilder          :: PayloadBuilder,
+        overclaimingHappened    :: Bool
     }
     deriving stock (Generic)
 
@@ -173,9 +174,10 @@ newTopDownContext taName certificate allTas =
         payloadBuilder <- newPayloadBuilder
         atomically $ do
             let verifiedResources = Just $ createVerifiedResources certificate
-            let currentPathDepth = 0
+                currentPathDepth = 0
+                overclaimingHappened = False       
             startingRepositoryCount <- fmap repositoryCount $ readTVar $ allTas ^. #repositoryProcessing . #publicationPoints
-            interruptedByLimit      <- newTVar CanProceed            
+            interruptedByLimit      <- newTVar CanProceed                 
             pure $! TopDownContext {..}
 
 newAllTasTopDownContext :: MonadIO m =>
@@ -1111,7 +1113,8 @@ validateCaNoFetch
                         --                             
                         vHoist $ validateAIA @_ @_ @'CACert childCert fullCa
 
-                        childVerifiedResources <- vHoist $ do
+                        (childVerifiedResources, overlclaiming) 
+                            <- vHoist $ do
                                 Validated validCert <- validateResourceCert @_ @_ @'CACert
                                                             now childCert fullCa validCrl
                                 validateResources (config ^. #validationConfig . typed) 
