@@ -1123,6 +1123,7 @@ validateCaNoFetch
                         let childTopDownContext = topDownContext
                                 & #verifiedResources ?~ childVerifiedResources
                                 & #currentPathDepth %~ (+ 1)
+                                & #overclaimingHappened .~ isJust overlclaiming
 
                         validateCa appContext childTopDownContext (CaFull (Located locations childCert))
 
@@ -1369,9 +1370,11 @@ validateCaNoFetch
                 validateObjectValidityPeriod r now
                 case validationRFC of
                     StrictRFC       -> pure ()
-                    ReconsideredRFC -> 
-                        void $ validateChildParentResources validationRFC 
-                            (r ^. #resources) parentCaResources verifiedResources
+                    ReconsideredRFC 
+                        | overclaimingHappened -> 
+                            void $ validateChildParentResources validationRFC 
+                                (r ^. #resources) parentCaResources verifiedResources
+                        | otherwise -> pure ()
             
 
 
