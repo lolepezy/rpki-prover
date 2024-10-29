@@ -30,7 +30,7 @@ validateChildParentResources validationRFC childResources parentResources verifi
     verify validateBasedOnRFC = do 
       c4 <- check childIpv4s parentIpv4s (\(VerifiedRS (PrefixesAndAsns r _ _)) -> r)
       c6 <- check childIpv6s parentIpv6s (\(VerifiedRS (PrefixesAndAsns _ r _)) -> r)
-      ca <- check childAsns parentAsns (\(VerifiedRS (PrefixesAndAsns _ _ r)) -> r)
+      ca <- check childAsns  parentAsns  (\(VerifiedRS (PrefixesAndAsns _ _ r)) -> r)
       validateBasedOnRFC c4 c6 ca
 
     check :: Interval a =>               
@@ -59,7 +59,7 @@ validateChildParentResources validationRFC childResources parentResources verifi
         _ -> vPureError $ OverclaimedResources $ 
           PrefixesAndAsns (overclaimed q4) (overclaimed q6) (overclaimed qa)
  
-    reconsidered q4 q6 qa = do      
+    reconsidered q4 q6 qa = 
       case (q4, q6, qa) of
         (Left (Nested _), Left (Nested _), Left (Nested _)) -> 
           pure (VerifiedRS (PrefixesAndAsns (nested q4) (nested q6) (nested qa)), Nothing)
