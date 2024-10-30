@@ -458,9 +458,6 @@ instance WithSKI a => WithSKI (Located a) where
 instance WithRawResourceCertificate a => WithRawResourceCertificate (Located a) where    
     getRawCert (Located _ o) = getRawCert o
 
--- instance WithRFC a => WithRFC (Located a) where    
---     getRFC (Located _ o) = getRFC o
-
 instance WithRpkiObjectType a => WithRpkiObjectType (Located a) where    
     getRpkiObjectType (Located _ o) = getRpkiObjectType o
 
@@ -476,11 +473,9 @@ data RawResourceCertificate = RawResourceCertificate {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary, NFData)
 
--- Resource certificate with a validation RFC associated with it
 newtype ResourceCertificate = ResourceCertificate RawResourceCertificate
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary, NFData)
-    -- deriving newtype (WithRFC)
 
 data Vrp = Vrp ASN IpPrefix PrefixLength
     deriving stock (Show, Eq, Ord, Generic)

@@ -278,9 +278,7 @@ objectToDto = \case
                                         (Left e, _)   -> Text.pack $ "Could not parse AKI: " <> show e
                                         (Right ki, _) -> Text.pack $ show ki
                             | extRawOID == id_pe_ipAddrBlocks    -> "IP resources (see 'ipv4', 'ipv6' fields)"
-                            | extRawOID == id_pe_ipAddrBlocks_v2 -> "IP resources (see 'ipv4', 'ipv6' fields)"
                             | extRawOID == id_pe_autonomousSysIds    -> "ASN resources (see 'asn' field)"
-                            | extRawOID == id_pe_autonomousSysIds_v2 -> "ASN resources (see 'asn' field)"
                             | extRawOID == id_ce_certificatePolicies -> certificatePoliciesToText extRawContent
                                     
                             | otherwise -> "Unrecognised extension"

@@ -36,49 +36,38 @@ import           RPKI.Parse.Internal.Common
 parseResourceCertificate :: BS.ByteString 
                 -> PureValidatorT (
                         RawResourceCertificate, 
-                        CertType, 
-                        ValidationRFC, 
+                        CertType,                         
                         SKI, 
                         Maybe AKI, 
                         Hash)
 parseResourceCertificate bs = do
     cert <- mapParseErr $ decodeSignedObject bs      
     let z = unifyCert cert
-    (rc, ski_, aki_, rfc) <- toResourceCert z
+    (rc, ski_, aki_) <- toResourceCert z
     certType <- getCertificateType $ getExtsSign z
-    pure (rc, certType, rfc, ski_, aki_, U.sha256s bs)
+    pure (rc, certType, ski_, aki_, U.sha256s bs)
 
 
 toResourceCert :: CertificateWithSignature 
-                -> PureValidatorT (RawResourceCertificate, SKI, Maybe AKI, ValidationRFC)
+                -> PureValidatorT (RawResourceCertificate, SKI, Maybe AKI)
 toResourceCert cert = do  
     let exts = getExtsSign cert
     case extVal exts id_subjectKeyId of 
         Just s -> do
-            (rc, rfc) <- parseResources cert    
+            rc <- parseResources cert    
             ki <- parseKI s
             aki' <- case extVal exts id_authorityKeyId of
                             Nothing -> pure Nothing
                             Just a  -> Just . AKI <$> parseKI a                      
-            pure (rc, SKI ki, aki', rfc)
+            pure (rc, SKI ki, aki')
         Nothing -> 
             pureError $ parseErr "No SKI extension"
 
 
-parseResources :: CertificateWithSignature -> PureValidatorT (RawResourceCertificate, ValidationRFC)
+parseResources :: CertificateWithSignature -> PureValidatorT RawResourceCertificate
 parseResources x509cert = do    
-    let ext' = extVal $ getExtsSign x509cert
-    case (ext' id_pe_ipAddrBlocks,
-          ext' id_pe_ipAddrBlocks_v2,
-          ext' id_pe_autonomousSysIds,
-          ext' id_pe_autonomousSysIds_v2) 
-      of
-        (Just _, Just _, _, _) -> broken "Both versions of IP extensions"
-        (_, _, Just _, Just _) -> broken "Both versions of ASN extensions"
-        (Just _, _, _, Just _) -> broken "There are IP V1 and ASN V2 extensions"
-        (_, Just _, Just _, _) -> broken "There are IP V2 and ASN V1 extensions"
-        (ips, Nothing, asns', Nothing) -> (, StrictRFC)       <$> cert' x509cert ips asns'
-        (Nothing, ips, Nothing, asns') -> (, ReconsideredRFC) <$> cert' x509cert ips asns'
+    let ext' = extVal $ getExtsSign x509cert    
+    cert' x509cert (ext' id_pe_ipAddrBlocks) (ext' id_pe_autonomousSysIds)
   where 
     broken = pureError . parseErr
     cert' x509c ips asns1 = do 
