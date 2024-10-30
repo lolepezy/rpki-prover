@@ -61,24 +61,6 @@ data ValidationRFC = StrictRFC | ReconsideredRFC
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass (TheBinary, NFData)
 
--- newtype PolyRFC r (rfc :: ValidationRFC) = PolyRFC r
---     deriving stock (Show, Eq, Ord, Generic)
---     deriving anyclass (TheBinary, NFData)
-
--- -- Something that be related to validation with one of these two validation RFCs
--- data SomeRFC r = StrictRFC_ (PolyRFC r 'StrictRFC) 
---                | ReconsideredRFC_ (PolyRFC r 'ReconsideredRFC) 
---     deriving stock (Show, Eq, Ord, Generic)
---     deriving anyclass (TheBinary, NFData)               
-
--- polyRFC :: SomeRFC r -> r
--- polyRFC (StrictRFC_ (PolyRFC r))       = r
--- polyRFC (ReconsideredRFC_ (PolyRFC r)) = r
-
--- mkPolyRFC :: ValidationRFC -> r -> SomeRFC r
--- mkPolyRFC StrictRFC r       = StrictRFC_ (PolyRFC r) 
--- mkPolyRFC ReconsideredRFC r = ReconsideredRFC_ (PolyRFC r) 
-
 newtype TypedCert c (t :: CertType) = TypedCert c
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -159,9 +141,6 @@ class WithSKI a where
 
 class WithRawResourceCertificate a where
     getRawCert :: a -> RawResourceCertificate
-
--- class WithRFC a where
---     getRFC :: a -> ValidationRFC
 
 class WithSerial a where
     getSerial :: a -> Serial
@@ -407,30 +386,16 @@ instance WithRawResourceCertificate EECerObject where
 instance WithRawResourceCertificate BgpCerObject where
     getRawCert BgpCerObject {..} = getRawCert certificate
 
--- instance WithRawResourceCertificate c => WithRawResourceCertificate (SomeRFC c) where
---     getRawCert = getRawCert . polyRFC
-
 instance WithRawResourceCertificate RawResourceCertificate where
     getRawCert = id
 
 instance WithRawResourceCertificate ResourceCertificate where
     getRawCert (ResourceCertificate s) = s
 
--- instance WithRFC (SomeRFC a) where
---     getRFC (StrictRFC_ _)       = StrictRFC 
---     getRFC (ReconsideredRFC_ _) = ReconsideredRFC
-
--- instance WithRFC EECerObject where
---     getRFC EECerObject {..} = getRFC certificate
-
--- instance WithRFC CaCerObject where    
---     getRFC CaCerObject {..} = getRFC certificate
-
 instance OfCertType (TypedCert c (t :: CertType)) t
 instance OfCertType CaCerObject 'CACert
 instance OfCertType EECerObject 'EECert
 instance OfCertType BgpCerObject 'BGPCert
-
 
 instance WithAKI RpkiObject where
     getAKI (CerRO c) = getAKI c

@@ -167,8 +167,6 @@ instance ToSchema CertificateWithSignature  where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ResourceCertificate
 instance ToSchema RawResourceCertificate
--- instance ToSchema r => ToSchema (PolyRFC r rfc)
--- instance ToSchema r => ToSchema (SomeRFC r)
 instance ToSchema r => ToSchema (TypedCert r t)
 
 instance ToSchema Hash where

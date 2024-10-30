@@ -220,9 +220,6 @@ $(deriveToJSON defaultOptions ''PrefixLength)
 instance ToJSON Gbr where
     toJSON (Gbr s) = toJSON $ show s
 
--- instance ToJSON r => ToJSON (PolyRFC r rfc)
--- instance ToJSON r => ToJSON (SomeRFC r)
-
 $(deriveToJSON defaultOptions ''IpResourceSet)
 $(deriveToJSON defaultOptions ''AsResources)
 $(deriveToJSON defaultOptions ''IpResources)

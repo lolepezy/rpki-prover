@@ -20,7 +20,6 @@ import RPKI.Logging
 import RPKI.Util (toNatural, convert)
 import GHC.Generics (Generic)
 
--- import RPKI.Validation.Types
 import RPKI.Store.Base.Serialisation
 
 import Data.Version
