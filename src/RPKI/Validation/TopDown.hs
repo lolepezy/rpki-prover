@@ -1083,10 +1083,10 @@ validateCaNoFetch
 
 
     {-         
-        Validate manifest children according to 
+        Validate manifest child according to 
         https://datatracker.ietf.org/doc/rfc9286/
 
-        And return shortcuts created for them
+        And return shortcut created for it
     -}
     validateChildObject :: 
             Located CaCerObject
@@ -1268,7 +1268,6 @@ validateCaNoFetch
         vFocusOn ObjectFocus (mftShortcut ^. #key) $ do
             validateLocationForShortcut (mftShortcut ^. #key)
             vHoist $ validateObjectValidityPeriod mftShortcut now
-            -- vHoist $ validateObjectValidityPeriod mftShortcut now
             vFocusOn ObjectFocus (mftShortcut ^. #crlShortcut . #key) $
                 vHoist $ validateObjectValidityPeriod (mftShortcut ^. #crlShortcut) now    
 
