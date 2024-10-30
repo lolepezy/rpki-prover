@@ -242,8 +242,7 @@ data MftShortcutMeta = MftShortcutMeta {
         notValidAfter  :: Instant,        
         serial         :: Serial,
         manifestNumber :: Serial,
-        crlShortcut    :: CrlShortcut,
-        resources      :: AllResources
+        crlShortcut    :: CrlShortcut
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)

@@ -284,8 +284,8 @@ validateBgpCert now bgpCert parentCert validCrl = do
 
     -- No IP resources
     let AllResources ipv4 ipv6 asns = getRawCert bgpCert ^. #resources
-    ipMustBeEmpty ipv4 BGPCertIPv4Present
-    ipMustBeEmpty ipv6 BGPCertIPv6Present    
+    resourceSetMustBeEmpty ipv4 BGPCertIPv4Present
+    resourceSetMustBeEmpty ipv6 BGPCertIPv6Present    
     
     -- Must be some ASNs
     bgpSecAsns <- case asns of 
@@ -301,8 +301,8 @@ validateBgpCert now bgpCert parentCert validCrl = do
     pure (Validated bgpCert, BGPSecPayload {..})
 
 
-ipMustBeEmpty :: RSet (IntervalSet a) -> ValidationError -> PureValidatorT ()
-ipMustBeEmpty ips errConstructor = 
+resourceSetMustBeEmpty :: RSet (IntervalSet a) -> ValidationError -> PureValidatorT ()
+resourceSetMustBeEmpty ips errConstructor = 
     case ips of 
         Inherit -> vError errConstructor
         RS i    -> unless (IS.null i) $ vError errConstructor  
@@ -414,8 +414,8 @@ validateSpl validationRFC now spl parentCert crl verifiedResources = do
                     vPureError $ SplAsnNotInResourceSet asn (IS.toList asns)
 
             let AllResources ipv4 ipv6 _ = getRawCert (getEEResourceCert $ unCMS splCMS) ^. #resources
-            ipMustBeEmpty ipv4 (SplNotIpResources (ipToList Ipv4P ipv4))
-            ipMustBeEmpty ipv6 (SplNotIpResources (ipToList Ipv6P ipv6))
+            resourceSetMustBeEmpty ipv4 (SplNotIpResources (ipToList Ipv4P ipv4))
+            resourceSetMustBeEmpty ipv6 (SplNotIpResources (ipToList Ipv6P ipv6))
 
     pure $ Validated spl    
   where
@@ -476,8 +476,8 @@ validateAspa validationRFC now aspa parentCert crl verifiedResources = do
 
             -- https://www.ietf.org/archive/id/draft-ietf-sidrops-aspa-profile-12.html#name-aspa-validation
             let AllResources ipv4 ipv6 asns = getRawCert (getEEResourceCert $ unCMS aspaCms) ^. #resources
-            ipMustBeEmpty ipv4 AspaIPv4Present
-            ipMustBeEmpty ipv6 AspaIPv6Present
+            resourceSetMustBeEmpty ipv4 AspaIPv4Present
+            resourceSetMustBeEmpty ipv6 AspaIPv6Present
 
             asnSet <- case asns of 
                         Inherit -> vError AspaNoAsn

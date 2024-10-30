@@ -1266,7 +1266,8 @@ validateCaNoFetch
                     ) (T3 0 0 0 :: T3 Int Int Int) filteredChildren
 
         vFocusOn ObjectFocus (mftShortcut ^. #key) $ do
-            validateShortcut mftShortcut (mftShortcut ^. #key)
+            validateLocationForShortcut (mftShortcut ^. #key)
+            vHoist $ validateObjectValidityPeriod mftShortcut now
             -- vHoist $ validateObjectValidityPeriod mftShortcut now
             vFocusOn ObjectFocus (mftShortcut ^. #crlShortcut . #key) $
                 vHoist $ validateObjectValidityPeriod (mftShortcut ^. #crlShortcut) now    
