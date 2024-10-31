@@ -71,13 +71,6 @@ class (Eq p, Ord p, SafeEnum (Address p), Ord (Address p), WithSetOps p) => Pref
     toRange :: p -> Range (Address p)
     toPrefixes :: Range (Address p) -> [p]  
 
--- There are two validation algorithms for RPKI tree
---
--- Classical one described in RFC 6487, here referred as Strict
--- And the one described in RFC 8360, here (and in the RFC itself) referred as Reconsidered
--- 
-data ValidationRFC = StrictRFC | ReconsideredRFC
-    deriving stock (Show, Eq, Ord, Generic) 
 
 data RSet r = RS r | Inherit
     deriving stock (Show, Eq, Ord, Generic) 
@@ -152,8 +145,6 @@ deriving anyclass instance NFData V6.IpNetMask
 instance Show PrefixesAndAsns where
     show (PrefixesAndAsns v4 v6 asn) = 
         show v4 <> ", " <> show v6 <> ", " <> show asn
-        -- where 
-        --     print x = if empty x then Nothing else Just (show x)
 
 instance Show a => Show (IntervalSet a) where
     show (IntervalSet is) = show is        

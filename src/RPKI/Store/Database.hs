@@ -53,6 +53,7 @@ import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 import           RPKI.Validation.Types
+import           RPKI.Resources.Types
 
 import           RPKI.Util                (ifJustM)
 
@@ -68,7 +69,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 34
+currentDatabaseVersion = 35
 
 -- Some constant keys
 databaseVersionKey, forAsyncFetchKey, validatedByVersionKey :: Text

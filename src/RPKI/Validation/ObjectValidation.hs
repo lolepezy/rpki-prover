@@ -238,15 +238,15 @@ validateObjectValidityPeriod c (Now now) = do
 validateResources ::
     (WithRawResourceCertificate child, 
      WithRawResourceCertificate parent,
-     WithRFC child,
      OfCertType parent 'CACert) =>
-    Maybe (VerifiedRS PrefixesAndAsns) ->
+    ValidationRFC ->
+    Maybe (VerifiedRS PrefixesAndAsns) ->        
     child ->
     parent ->
-    PureValidatorT (VerifiedRS PrefixesAndAsns)
-validateResources verifiedResources childCert parentCert =
+    PureValidatorT (VerifiedRS PrefixesAndAsns, Maybe (Overclaiming PrefixesAndAsns))
+validateResources validationRFC verifiedResources childCert parentCert =
     validateChildParentResources
-        (getRFC childCert)
+        validationRFC
         (getRawCert childCert ^. typed)
         (getRawCert parentCert ^. typed)
         verifiedResources
@@ -284,8 +284,8 @@ validateBgpCert now bgpCert parentCert validCrl = do
 
     -- No IP resources
     let AllResources ipv4 ipv6 asns = getRawCert bgpCert ^. #resources
-    ipMustBeEmpty ipv4 BGPCertIPv4Present
-    ipMustBeEmpty ipv6 BGPCertIPv6Present    
+    resourceSetMustBeEmpty ipv4 BGPCertIPv4Present
+    resourceSetMustBeEmpty ipv6 BGPCertIPv6Present    
     
     -- Must be some ASNs
     bgpSecAsns <- case asns of 
@@ -301,8 +301,8 @@ validateBgpCert now bgpCert parentCert validCrl = do
     pure (Validated bgpCert, BGPSecPayload {..})
 
 
-ipMustBeEmpty :: RSet (IntervalSet a) -> ValidationError -> PureValidatorT ()
-ipMustBeEmpty ips errConstructor = 
+resourceSetMustBeEmpty :: RSet (IntervalSet a) -> ValidationError -> PureValidatorT ()
+resourceSetMustBeEmpty ips errConstructor = 
     case ips of 
         Inherit -> vError errConstructor
         RS i    -> unless (IS.null i) $ vError errConstructor  
@@ -330,14 +330,15 @@ validateMft ::
   (WithRawResourceCertificate parent, 
    WithSKI parent, 
    parent `OfCertType` CACert) =>
+  ValidationRFC ->
   Now ->
   MftObject ->
   parent ->
   Validated CrlObject ->
   Maybe (VerifiedRS PrefixesAndAsns) ->
   PureValidatorT (Validated MftObject)
-validateMft now mft parentCert crl verifiedResources = do
-    void $ validateCms now (cmsPayload mft) parentCert crl verifiedResources $ \mftCMS -> do
+validateMft validationRFC now mft parentCert crl verifiedResources = do
+    void $ validateCms validationRFC now (cmsPayload mft) parentCert crl verifiedResources $ \mftCMS -> do
         let Manifest {..} = getCMSContent mftCMS
         validateUpdateTimes now thisTime nextTime
 
@@ -357,15 +358,16 @@ validateRoa ::
     (WithRawResourceCertificate parent, 
      WithSKI parent, 
      OfCertType parent CACert) =>
+    ValidationRFC ->
     Now ->
     RoaObject ->
     parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
     PureValidatorT (Validated RoaObject)
-validateRoa now roa parentCert crl verifiedResources = do
+validateRoa validationRFC now roa parentCert crl verifiedResources = do
     void $
-        validateCms now (cmsPayload roa) parentCert crl verifiedResources $ \roaCMS -> do
+        validateCms validationRFC now (cmsPayload roa) parentCert crl verifiedResources $ \roaCMS -> do
             let checkerV4 = validatedPrefixInRS @Ipv4Prefix verifiedResources
             let checkerV6 = validatedPrefixInRS @Ipv6Prefix verifiedResources
             for_ (getCMSContent roaCMS) $ \vrp@(Vrp _ prefix maxLength) ->
@@ -395,15 +397,16 @@ validateSpl ::
     (WithRawResourceCertificate parent, 
      WithSKI parent, 
      OfCertType parent CACert) =>
+    ValidationRFC ->
     Now ->
     SplObject ->
     parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
     PureValidatorT (Validated SplObject)
-validateSpl now spl parentCert crl verifiedResources = do
+validateSpl validationRFC now spl parentCert crl verifiedResources = do
     void $
-        validateCms now (cmsPayload spl) parentCert crl verifiedResources $ \splCMS -> do            
+        validateCms validationRFC now (cmsPayload spl) parentCert crl verifiedResources $ \splCMS -> do            
             let SplPayload asn _ = getCMSContent splCMS
             for_ verifiedResources $ \(VerifiedRS vrs) -> do 
                 let asns = vrs ^. typed
@@ -411,8 +414,8 @@ validateSpl now spl parentCert crl verifiedResources = do
                     vPureError $ SplAsnNotInResourceSet asn (IS.toList asns)
 
             let AllResources ipv4 ipv6 _ = getRawCert (getEEResourceCert $ unCMS splCMS) ^. #resources
-            ipMustBeEmpty ipv4 (SplNotIpResources (ipToList Ipv4P ipv4))
-            ipMustBeEmpty ipv6 (SplNotIpResources (ipToList Ipv6P ipv6))
+            resourceSetMustBeEmpty ipv4 (SplNotIpResources (ipToList Ipv4P ipv4))
+            resourceSetMustBeEmpty ipv6 (SplNotIpResources (ipToList Ipv6P ipv6))
 
     pure $ Validated spl    
   where
@@ -422,15 +425,16 @@ validateSpl now spl parentCert crl verifiedResources = do
 
 validateGbr ::
     (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
+    ValidationRFC ->
     Now ->
     GbrObject ->
     c ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
     PureValidatorT (Validated GbrObject)
-validateGbr now gbr parentCert crl verifiedResources = do
+validateGbr validationRFC now gbr parentCert crl verifiedResources = do
     void $
-        validateCms now (cmsPayload gbr) parentCert crl verifiedResources $ \gbrCms -> do
+        validateCms validationRFC now (cmsPayload gbr) parentCert crl verifiedResources $ \gbrCms -> do
             let Gbr vcardBS = getCMSContent gbrCms
             case parseVCard $ toNormalBS vcardBS of
                 Left e                   -> vPureError $ InvalidVCardFormatInGbr e
@@ -440,15 +444,16 @@ validateGbr now gbr parentCert crl verifiedResources = do
 
 validateRsc ::
     (WithRawResourceCertificate c, WithSKI c, OfCertType c 'CACert) =>
+    ValidationRFC ->
     Now ->
     RscObject ->
     c ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
     PureValidatorT (Validated RscObject)
-validateRsc now rsc parentCert crl verifiedResources = do
+validateRsc validationRFC now rsc parentCert crl verifiedResources = do
     void $
-        validateCms now (cmsPayload rsc) parentCert crl verifiedResources $ \rscCms -> do
+        validateCms validationRFC now (cmsPayload rsc) parentCert crl verifiedResources $ \rscCms -> do
             let rsc' = getCMSContent rscCms
             let rc = getRawCert $ getEEResourceCert $ unCMS rscCms
             let eeCert = toPrefixesAndAsns $ resources rc 
@@ -458,20 +463,21 @@ validateRsc now rsc parentCert crl verifiedResources = do
 
 validateAspa ::
     (WithRawResourceCertificate parent, WithSKI parent, OfCertType parent 'CACert) =>
+    ValidationRFC ->
     Now ->
     AspaObject ->
     parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
     PureValidatorT (Validated AspaObject)
-validateAspa now aspa parentCert crl verifiedResources = do
+validateAspa validationRFC now aspa parentCert crl verifiedResources = do
     void $
-        validateCms now (aspa ^. #cmsPayload) parentCert crl verifiedResources $ \aspaCms -> do
+        validateCms validationRFC now (aspa ^. #cmsPayload) parentCert crl verifiedResources $ \aspaCms -> do
 
             -- https://www.ietf.org/archive/id/draft-ietf-sidrops-aspa-profile-12.html#name-aspa-validation
             let AllResources ipv4 ipv6 asns = getRawCert (getEEResourceCert $ unCMS aspaCms) ^. #resources
-            ipMustBeEmpty ipv4 AspaIPv4Present
-            ipMustBeEmpty ipv6 AspaIPv6Present
+            resourceSetMustBeEmpty ipv4 AspaIPv4Present
+            resourceSetMustBeEmpty ipv6 AspaIPv6Present
 
             asnSet <- case asns of 
                         Inherit -> vError AspaNoAsn
@@ -493,6 +499,7 @@ validateCms :: forall a c .
     (WithRawResourceCertificate c, 
     WithSKI c, 
     OfCertType c 'CACert) =>
+    ValidationRFC ->
     Now ->
     CMS a ->
     c ->
@@ -500,7 +507,7 @@ validateCms :: forall a c .
     Maybe (VerifiedRS PrefixesAndAsns) ->
     (CMS a -> PureValidatorT ()) ->
     PureValidatorT ()
-validateCms now cms parentCert crl verifiedResources extraValidation = do
+validateCms validationRFC now cms parentCert crl verifiedResources extraValidation = do
     -- Signature algorithm in the EE certificate has to be
     -- exactly the same as in the signed attributes
     let eeCert = getEEResourceCert $ unCMS cms
@@ -519,7 +526,7 @@ validateCms now cms parentCert crl verifiedResources extraValidation = do
 
     signatureCheck $ validateCMSSignature cms
     void $ validateResourceCert @_ @_ @'EECert now eeCert parentCert crl
-    void $ validateResources verifiedResources eeCert parentCert
+    void $ validateResources validationRFC verifiedResources eeCert parentCert
     extraValidation cms
 
 

@@ -290,6 +290,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                     (if strictManifestValidation then RFC6486_Strict else RFC9286)
             & #validationConfig . #validationAlgorithm .~
                     (if noIncrementalValidation then FullEveryIteration else Incremental)
+            & #validationConfig . #validationRFC .~
+                    (if allowOverclaiming then ReconsideredRFC else StrictRFC)
             & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
             & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
             & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
@@ -703,11 +705,19 @@ data CLIOptions wrapped = CLIOptions {
          " item 6.4) for manifest handling (default is false). More modern version is here " +++
          "https://www.rfc-editor.org/rfc/rfc9286.html#name-relying-party-processing-of and it is the default."),
 
+    allowOverclaiming :: wrapped ::: Bool <?>
+        ("Use validation reconsidered algorithm for validating resource sets on certificates " +++ 
+         "(https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-validation-update/) instead of " +++
+         "strict version (https://www.rfc-editor.org/rfc/rfc6487.html#section-7). The default if false, " +++
+         "i.e. strict version is used by default."),
+
     localExceptions :: wrapped ::: [String] <?>
-        "Files with local exceptions in the SLURM format (RFC 8416).",
+        ("Files with local exceptions in the SLURM format (RFC 8416). It is possible " +++ 
+         "to set multiple local exception files (i.e. set this option multiple times " +++ 
+         "with different arguments), they all will be united into one internally before applying."),
 
     maxTaRepositories :: wrapped ::: Maybe Int <?>
-        "Maximal number of new repositories that TA validation run can add (default is 1000).",
+        "Maximal number of new repositories that validation run can add per TA (default is 1000).",
 
     maxCertificatePathDepth :: wrapped ::: Maybe Int <?>
         "Maximal depth of the certificate path from the TA certificate to the RPKI tree (default is 32).",
@@ -731,9 +741,18 @@ data CLIOptions wrapped = CLIOptions {
 
     rsyncPrefetchUrl :: wrapped ::: [String] <?>
         ("Rsync repositories that will be fetched instead of their children (defaults are " +++
-         "'rsync://rpki.afrinic.net/repository/member_repository' and" +++
-         "'rsync://rpki.apnic.net/member_repository'). " +++
-         "It is an optimisation and in absolute majority of cases the default is working fine."),
+         "'rsync://rpki.afrinic.net/repository', " +++
+         "'rsync://rpki.apnic.net/member_repository', " +++
+         "'rsync://rpki-repo.registro.br/repo/', " +++
+         "'rsync://repo-rpki.idnic.net/repo/', " +++
+         "'rsync://0.sb/repo/', " +++
+         "'rsync://rpki.co/repo/', " +++
+         "'rsync://rpki-rps.arin.net/repository/', " +++
+         "'rsync://rpki-repository.nic.ad.jp/ap/', " +++
+         "'rsync://rsync.paas.rpki.ripe.net/repository/', " +++
+         "'rsync://rpki.sub.apnic.net/repository/', " +++
+         "'rsync://rpki.cnnic.cn/rpki/A9162E3D0000/). " +++
+         "It is an optimisation and most of the time this option is of no use."),
 
     metricsPrefix :: wrapped ::: Maybe String <?>
         "Prefix for Prometheus metrics (default is 'rpki_prover').",

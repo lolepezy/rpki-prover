@@ -82,7 +82,7 @@ fetchQuickly appContext@AppContext {..}
                 -- we only fetch the primary repository (i.e. RRDP one).
                 -- It exists mainly for comparisons and measurements and 
                 -- not very useful in practice.
-                let primaryRepo = getPrimaryRepository pps ppa
+                let primaryRepo = getPrimaryRepository ppa
                 (:[]) <$>  
                     fetchOnePp appContext (syncFetchConfig config) 
                         repositoryProcessing worldVersion primaryRepo
@@ -585,13 +585,11 @@ getPrimaryRepositoryUrl :: PublicationPoints
                          -> PublicationPointAccess 
                          -> RpkiURL
 getPrimaryRepositoryUrl pps ppAccess = 
-    let primary = getPrimaryRepository pps ppAccess
+    let primary = getPrimaryRepository ppAccess
     in maybe (getRpkiURL primary) getRpkiURL $ repositoryFromPP pps primary
 
-getPrimaryRepository :: PublicationPoints 
-                    -> PublicationPointAccess 
-                    -> PublicationPoint
-getPrimaryRepository pps ppAccess = 
+getPrimaryRepository :: PublicationPointAccess -> PublicationPoint
+getPrimaryRepository ppAccess = 
     NonEmpty.head $ unPublicationPointAccess ppAccess    
 
 getFetchablePP :: PublicationPoints -> PublicationPoint -> PublicationPoint
