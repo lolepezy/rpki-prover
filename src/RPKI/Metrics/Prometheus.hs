@@ -15,9 +15,9 @@ import           Control.Lens
 import           Control.Monad.IO.Class
 import           Control.Monad
 
-import qualified Data.ByteString.Lazy             as LBS
-import           Data.Text                        (Text)
-import qualified Data.List.NonEmpty               as NonEmpty
+import qualified Data.ByteString.Lazy     as LBS
+import           Data.Text                (Text)
+import qualified Data.List.NonEmpty       as NonEmpty
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
 import           GHC.Generics
@@ -95,10 +95,11 @@ updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} (WorldVersion wv) = do
     let grouped = groupedValidationMetric rm
     
     forM_ (MonoidalMap.toList $ grouped ^. #byTa) $ \(TaName name, metric) ->
-        setObjectMetricsPerUrl validObjectNumberPerTa name metric True vrpCounter
+        setObjectMetricsPerUrl validObjectNumberPerTa name 
+                metric True vrpCounter
     forM_ (MonoidalMap.toList $ grouped ^. #byRepository) $ \(rpkiUrl, metric) -> 
         setObjectMetricsPerUrl validObjectNumberPerRepo (unURI $ getURL rpkiUrl) 
-            metric False vrpCounterPerRepo
+                metric False vrpCounterPerRepo
   where      
     setValidObjects prometheusVector url tag count = withLabel prometheusVector (url, tag)
             $ flip setGauge
@@ -109,7 +110,7 @@ updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} (WorldVersion wv) = do
 
         when setUniqueVRPs $ withLabel uniqueVrpNumber url $ 
             flip setGauge $ fromIntegral $ unCount $ metric ^. #uniqueVrpNumber
-            
+
         let totalCount = metric ^. #validCertNumber +
                          metric ^. #validRoaNumber +
                          metric ^. #validMftNumber +

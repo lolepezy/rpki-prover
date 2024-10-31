@@ -53,6 +53,7 @@ import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 import           RPKI.Validation.Types
+import           RPKI.Resources.Types
 
 import           RPKI.Util                (ifJustM)
 

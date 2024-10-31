@@ -88,10 +88,10 @@ parseSignedObject contentBinaryParse =
                   case runPureValidator (newScopes "parseEE") (toResourceCert certWithSig) of
                     (Left e, _) -> 
                         throwParseError $ "EE certificate is broken " <> show e
-                    (Right (_,   _,  Nothing, _), _) -> 
+                    (Right (_,   _,  Nothing), _) -> 
                         throwParseError "EE certificate doesn't have an AKI"
-                    (Right (rc, ski, Just aki, rfc), _) -> do 
-                        let certificate = TypedCert $ ResourceCertificate $ mkPolyRFC rfc rc
+                    (Right (rc, ski, Just aki), _) -> do 
+                        let certificate = TypedCert $ ResourceCertificate rc
                         pure $ EECerObject {..}
                   where 
                     encodedCert = encodeASN1' DER $ 

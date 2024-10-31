@@ -28,6 +28,7 @@ import           RPKI.Orphans.Swagger
 import           RPKI.Time
 import           RPKI.Domain
 import           RPKI.Repository
+import           RPKI.Resources.Types
 import           RPKI.Store.Base.Serialisation
 
 
@@ -66,7 +67,7 @@ data MftShortcut = MftShortcut {
         notValidAfter  :: Instant,        
         serial         :: Serial,
         manifestNumber :: Serial,
-        crlShortcut    :: CrlShortcut
+        crlShortcut    :: CrlShortcut        
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -76,7 +77,8 @@ data CaShortcut = CaShortcut {
         ski            :: SKI,
         ppas           :: PublicationPointAccess,
         notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notValidAfter  :: Instant,
+        resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -91,7 +93,8 @@ data RoaShortcut = RoaShortcut {
         key            :: ObjectKey,        
         vrps           :: [Vrp],
         notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notValidAfter  :: Instant,
+        resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -100,7 +103,8 @@ data SplShortcut = SplShortcut {
         key            :: ObjectKey,        
         splPayload     :: SplPayload,
         notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notValidAfter  :: Instant,
+        resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -109,7 +113,8 @@ data AspaShortcut = AspaShortcut {
         key            :: ObjectKey,
         aspa           :: Aspa,
         notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notValidAfter  :: Instant,
+        resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -118,7 +123,8 @@ data BgpSecShortcut = BgpSecShortcut {
         key            :: ObjectKey,
         bgpSec         :: BGPSecPayload,
         notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notValidAfter  :: Instant,
+        resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -127,7 +133,8 @@ data GbrShortcut = GbrShortcut {
         key            :: ObjectKey,    
         gbr            :: T2 Hash Gbr,
         notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notValidAfter  :: Instant,
+        resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -157,18 +164,6 @@ instance {-# OVERLAPPING #-} WithValidityPeriod BgpSecShortcut where
 instance {-# OVERLAPPING #-} WithValidityPeriod GbrShortcut where
     getValidityPeriod GbrShortcut {..} = (notValidBefore, notValidAfter)
 
-
-getMftChildSerial :: MftChild -> Maybe Serial     
-getMftChildSerial = \case 
-    CaChild _ serial     -> Just serial 
-    RoaChild _ serial    -> Just serial 
-    SplChild _ serial    -> Just serial 
-    AspaChild _ serial   -> Just serial 
-    BgpSecChild _ serial -> Just serial 
-    GbrChild _ serial    -> Just serial 
-    _                    -> Nothing
-              
-
 instance ToJSON CrlShortcut
 instance ToJSON GbrShortcut
 instance ToJSON BgpSecShortcut
@@ -184,3 +179,17 @@ instance ToSchema RoaShortcut
 instance ToSchema MftChild where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text.Text)
 
+getMftChildSerial :: MftChild -> Maybe Serial     
+getMftChildSerial = \case 
+    CaChild _ serial     -> Just serial 
+    RoaChild _ serial    -> Just serial 
+    SplChild _ serial    -> Just serial 
+    AspaChild _ serial   -> Just serial 
+    BgpSecChild _ serial -> Just serial 
+    GbrChild _ serial    -> Just serial 
+    _                    -> Nothing
+              
+getResources :: Ca -> AllResources
+getResources = \case 
+    CaShort CaShortcut {..} -> resources
+    CaFull (getRawCert -> RawResourceCertificate {..}) -> resources

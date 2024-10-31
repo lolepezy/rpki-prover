@@ -89,10 +89,10 @@ readObjectOfType :: RpkiObjectType -> BS.ByteString -> PureValidatorT RpkiObject
 readObjectOfType objectType content = 
     case objectType of 
         CER -> do 
-            (rc, certType, rfc, ski, aki, hash) <- parseResourceCertificate content
+            (rc, certType, ski, aki, hash) <- parseResourceCertificate content
             case certType of 
                 CACert -> do 
-                    let certificate = TypedCert $ ResourceCertificate $ mkPolyRFC rfc rc
+                    let certificate = TypedCert $ ResourceCertificate rc
                     pure $ CerRO $ CaCerObject {..}
                 BGPCert -> do 
                     let certificate = TypedCert rc
