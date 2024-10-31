@@ -69,16 +69,13 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 35
+currentDatabaseVersion = 36
 
 -- Some constant keys
 databaseVersionKey, forAsyncFetchKey, validatedByVersionKey :: Text
 databaseVersionKey = "database-version"
 forAsyncFetchKey  = "for-async-fetch"
 validatedByVersionKey  = "validated-by-version-map"
-
-data EraseWrapper s where 
-    EraseWrapper :: forall t s . (Storage s, CanErase s t) => t -> EraseWrapper s
 
 -- All of the stores of the application in one place
 data DB s = DB {
@@ -96,8 +93,7 @@ data DB s = DB {
     slurmStore       :: SlurmStore s,
     jobStore         :: JobStore s,
     sequences        :: SequenceMap s,
-    metadataStore    :: MetadataStore s,
-    erasables        :: [EraseWrapper s]
+    metadataStore    :: MetadataStore s
 } deriving stock (Generic)
 
 instance Storage s => WithStorage s (DB s) where
@@ -964,10 +960,6 @@ getRtrPayloads tx db worldVersion =
 -- Get all SStats and `<>` them
 totalStats :: StorageStats -> SStats
 totalStats (StorageStats s) = mconcat $ Map.elems s
-
-emptyDBMaps :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> m ()
-emptyDBMaps tx DB {..} = liftIO $ 
-    forM_ erasables $ \(EraseWrapper t) -> erase tx t
    
 
 -- Utilities to have storage transaction in ValidatorT monad.

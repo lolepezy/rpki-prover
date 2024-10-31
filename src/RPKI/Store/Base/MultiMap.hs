@@ -14,9 +14,6 @@ data SMultiMap (name :: Symbol) s k v where
 instance Storage s => WithStorage s (SMultiMap name s k v) where
     storage (SMultiMap s _) = s
 
-instance WithTx s => CanErase s (SMultiMap name s k v) where
-    erase tx (SMultiMap _ s) = S.clearMu tx s
-
 put :: (AsStorable k, AsStorable v) =>
         Tx s 'RW -> SMultiMap name s k v -> k -> v -> IO ()
 put tx (SMultiMap _ s) k v = S.putMu tx s (storableKey k) (storableValue v)    
