@@ -120,6 +120,9 @@ instance ToSchema StorageStats
 instance ToSchema TotalDBStats
 instance ToSchema SStats
 
+instance ToSchema (WithVisbility a) where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
 instance ToSchema Config
 instance ToSchema Parallelism
 instance ToSchema RsyncConf

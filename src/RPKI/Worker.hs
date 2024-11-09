@@ -248,7 +248,7 @@ runWorker :: (TheBinary r, Show r) =>
 runWorker logger config workerId params timeout cpuLimit extraCli = do  
     thisProcessId <- liftIO getProcessID
 
-    let executableToRun = config ^. #programBinaryPath    
+    let executableToRun = configValue $ config ^. #programBinaryPath    
     let workerStdin = serialise_ $ WorkerInput params config thisProcessId timeout cpuLimit
 
     let worker = 

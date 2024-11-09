@@ -28,6 +28,19 @@ import qualified Paths_rpki_prover as Autogen
 rpkiProverVersion :: Text
 rpkiProverVersion = convert $ "rpki-prover-" <> showVersion Autogen.version
 
+data WithVisbility a = Hidden a
+                   |   Public a
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+    
+instance Show a => Show (WithVisbility a) where
+    show = show . configValue
+
+configValue :: WithVisbility a -> a
+configValue = \case 
+    Hidden a -> a
+    Public a -> a
+
 data Parallelism = Parallelism {
         cpuCount         :: Natural,
         cpuParallelism   :: Natural,
@@ -48,12 +61,12 @@ data FetchConfig = FetchConfig {
     deriving anyclass (TheBinary)
 
 data Config = Config {        
-        programBinaryPath         :: FilePath,
-        rootDirectory             :: FilePath,
-        talDirectory              :: FilePath,
-        extraTalsDirectories      :: [FilePath],
-        tmpDirectory              :: FilePath,
-        cacheDirectory            :: FilePath,
+        programBinaryPath         :: WithVisbility FilePath,
+        rootDirectory             :: WithVisbility FilePath,
+        talDirectory              :: WithVisbility FilePath,
+        extraTalsDirectories      :: WithVisbility [FilePath],
+        tmpDirectory              :: WithVisbility FilePath,
+        cacheDirectory            :: WithVisbility FilePath,
         proverRunMode             :: ProverRunMode,
         parallelism               :: Parallelism, 
         rsyncConf                 :: RsyncConf,
@@ -68,7 +81,7 @@ data Config = Config {
         storageCompactionInterval :: Seconds,
         rsyncCleanupInterval      :: Seconds,
         lmdbSizeMb                :: Size,
-        localExceptions           :: [FilePath],
+        localExceptions           :: WithVisbility [FilePath],
         logLevel                  :: LogLevel,
         metricsPrefix             :: Text
     } 
@@ -76,8 +89,8 @@ data Config = Config {
     deriving anyclass (TheBinary)
 
 data RsyncConf = RsyncConf {
-        rsyncClientPath   :: Maybe FilePath,
-        rsyncRoot         :: FilePath,
+        rsyncClientPath   :: Maybe (WithVisbility FilePath),
+        rsyncRoot         :: WithVisbility FilePath,
         rsyncTimeout      :: Seconds,
         asyncRsyncTimeout :: Seconds,
         cpuLimit          :: Seconds,
@@ -88,7 +101,7 @@ data RsyncConf = RsyncConf {
     deriving anyclass (TheBinary)
 
 data RrdpConf = RrdpConf {
-        tmpRoot          :: FilePath,
+        tmpRoot          :: WithVisbility FilePath,
         maxSize          :: Size,
         rrdpTimeout      :: Seconds,
         asyncRrdpTimeout :: Seconds,
@@ -212,17 +225,17 @@ makeParallelismF cpus fetcherCount = Parallelism cpus (2 * cpus) fetcherCount
 
 defaultConfig :: Config
 defaultConfig = Config {    
-    programBinaryPath = "rpki-prover",
-    rootDirectory = "",
-    talDirectory = "",
-    extraTalsDirectories = [],
-    tmpDirectory = "",
-    cacheDirectory = "",
+    programBinaryPath = Hidden "rpki-prover",
+    rootDirectory = Hidden "",
+    talDirectory = Hidden "",
+    extraTalsDirectories = Hidden [],
+    tmpDirectory = Hidden "",
+    cacheDirectory = Hidden "",
     proverRunMode = ServerMode,
     parallelism = makeParallelism 2,
     rsyncConf = RsyncConf {
         rsyncClientPath = Nothing,
-        rsyncRoot    = "",
+        rsyncRoot    = Hidden "",
         rsyncTimeout = 2 * 60,
         asyncRsyncTimeout = 15 * 60,
         cpuLimit = 30 * 60,    
@@ -230,7 +243,7 @@ defaultConfig = Config {
         rsyncPrefetchUrls = []
     },
     rrdpConf = RrdpConf {
-        tmpRoot = "",
+        tmpRoot = Hidden "",
         maxSize = Size $ 1024 * 1024 * 1024,
         rrdpTimeout = 2 * 60,
         asyncRrdpTimeout = 10 * 60,
@@ -275,7 +288,7 @@ defaultConfig = Config {
     storageCompactionInterval = Seconds $ 60 * 60 * 120,
     rsyncCleanupInterval      = Seconds $ 60 * 60 * 24 * 30,
     lmdbSizeMb                = Size $ 32 * 1024,
-    localExceptions = [],
+    localExceptions = Hidden [],
     logLevel = defaultsLogLevel,
     metricsPrefix = "rpki_prover_"
 }

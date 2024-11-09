@@ -150,7 +150,7 @@ setupWorkerLmdbCache logger cacheDir config = do
 compactStorageWithTmpDir :: AppContext LmdbStorage -> IO ()
 compactStorageWithTmpDir appContext@AppContext {..} = do      
     lmdbEnv <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
-    let cacheDir = config ^. #cacheDirectory
+    let cacheDir = configValue $ config ^. #cacheDirectory
     let currentCache = cacheDir </> "current"
 
     logInfo logger [i|Checking if compacting LMDB storage is needed.|]
@@ -228,7 +228,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
 
 cacheFsSize :: AppContext s -> IO Size 
 cacheFsSize AppContext {..} = do 
-    let cacheDir = config ^. #cacheDirectory
+    let cacheDir = configValue $ config ^. #cacheDirectory
     let currentCache = cacheDir </> "current"
     currentLinkTarget <- liftIO $ readSymbolicLink currentCache
     fmap (Size . fromIntegral . sum) 
