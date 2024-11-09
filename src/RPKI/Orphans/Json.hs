@@ -396,7 +396,7 @@ instance FromJSON DecodedBase64 where
 instance ToJSON DecodedBase64 where
     toJSON = toJSON . U.encodeBase64
 
-instance ToJSON a => ToJSON (WithVisbility a) where
+instance ToJSON a => ToJSON (ApiSecured a) where
     toJSON = \case 
         Hidden _ -> toJSON ("hidden" :: Text)
         Public a -> toJSON a

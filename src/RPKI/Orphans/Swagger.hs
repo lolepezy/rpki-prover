@@ -120,7 +120,7 @@ instance ToSchema StorageStats
 instance ToSchema TotalDBStats
 instance ToSchema SStats
 
-instance ToSchema (WithVisbility a) where
+instance ToSchema (ApiSecured a) where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema Config

@@ -264,7 +264,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     proverRunMode     <- deriveProverRunMode cliOptions  
     rsyncPrefetchUrls <- rsyncPrefetches cliOptions                
 
-    let conf :: a -> WithVisbility a
+    let conf :: a -> ApiSecured a
         conf a = if showHiddenConfig then Public a else Hidden a
 
     let config = defaults

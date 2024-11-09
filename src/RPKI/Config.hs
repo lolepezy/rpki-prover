@@ -28,15 +28,15 @@ import qualified Paths_rpki_prover as Autogen
 rpkiProverVersion :: Text
 rpkiProverVersion = convert $ "rpki-prover-" <> showVersion Autogen.version
 
-data WithVisbility a = Hidden a
+data ApiSecured a = Hidden a
                    |   Public a
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary)
     
-instance Show a => Show (WithVisbility a) where
+instance Show a => Show (ApiSecured a) where
     show = show . configValue
 
-configValue :: WithVisbility a -> a
+configValue :: ApiSecured a -> a
 configValue = \case 
     Hidden a -> a
     Public a -> a
@@ -61,12 +61,12 @@ data FetchConfig = FetchConfig {
     deriving anyclass (TheBinary)
 
 data Config = Config {        
-        programBinaryPath         :: WithVisbility FilePath,
-        rootDirectory             :: WithVisbility FilePath,
-        talDirectory              :: WithVisbility FilePath,
-        extraTalsDirectories      :: WithVisbility [FilePath],
-        tmpDirectory              :: WithVisbility FilePath,
-        cacheDirectory            :: WithVisbility FilePath,
+        programBinaryPath         :: ApiSecured FilePath,
+        rootDirectory             :: ApiSecured FilePath,
+        talDirectory              :: ApiSecured FilePath,
+        extraTalsDirectories      :: ApiSecured [FilePath],
+        tmpDirectory              :: ApiSecured FilePath,
+        cacheDirectory            :: ApiSecured FilePath,
         proverRunMode             :: ProverRunMode,
         parallelism               :: Parallelism, 
         rsyncConf                 :: RsyncConf,
@@ -81,7 +81,7 @@ data Config = Config {
         storageCompactionInterval :: Seconds,
         rsyncCleanupInterval      :: Seconds,
         lmdbSizeMb                :: Size,
-        localExceptions           :: WithVisbility [FilePath],
+        localExceptions           :: ApiSecured [FilePath],
         logLevel                  :: LogLevel,
         metricsPrefix             :: Text
     } 
@@ -89,8 +89,8 @@ data Config = Config {
     deriving anyclass (TheBinary)
 
 data RsyncConf = RsyncConf {
-        rsyncClientPath   :: Maybe (WithVisbility FilePath),
-        rsyncRoot         :: WithVisbility FilePath,
+        rsyncClientPath   :: Maybe (ApiSecured FilePath),
+        rsyncRoot         :: ApiSecured FilePath,
         rsyncTimeout      :: Seconds,
         asyncRsyncTimeout :: Seconds,
         cpuLimit          :: Seconds,
@@ -101,7 +101,7 @@ data RsyncConf = RsyncConf {
     deriving anyclass (TheBinary)
 
 data RrdpConf = RrdpConf {
-        tmpRoot          :: WithVisbility FilePath,
+        tmpRoot          :: ApiSecured FilePath,
         maxSize          :: Size,
         rrdpTimeout      :: Seconds,
         asyncRrdpTimeout :: Seconds,
