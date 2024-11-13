@@ -359,7 +359,7 @@ runWorkflow appContext@AppContext {..} tals = do
     cleanupLeftovers = do
         -- Cleanup tmp directory, if some fetchers died abruptly 
         -- there may be leftover files.
-        let tmpDir = config ^. #tmpDirectory
+        let tmpDir = configValue $ config ^. #tmpDirectory
         logDebug logger [i|Cleaning up temporary directory #{tmpDir}.|]
         listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
         
@@ -387,7 +387,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     -- that there's already a lot of garbage in the rsync mirror directory.                        
                     pure ()
                 RanBefore -> do
-                    let rsyncDir = config ^. #rsyncConf . #rsyncRoot
+                    let rsyncDir = configValue $ config ^. #rsyncConf . #rsyncRoot
                     logDebug logger [i|Deleting rsync mirrors in #{rsyncDir}.|]
                     listDirectory rsyncDir >>= mapM_ (removePathForcibly . (rsyncDir </>))
             )

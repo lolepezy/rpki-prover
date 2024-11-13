@@ -194,8 +194,8 @@ runValidatorServer appContext@AppContext {..} = do
     
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion  <- newWorldVersion
-    talNames      <- listTALFiles $ config ^. #talDirectory
-    extraTalNames <- fmap mconcat $ mapM listTALFiles $ config ^. #extraTalsDirectories
+    talNames      <- listTALFiles $ configValue $ config ^. #talDirectory
+    extraTalNames <- fmap mconcat $ mapM listTALFiles $ configValue $ config ^. #extraTalsDirectories
     let totalTalsNames = talNames <> extraTalNames
     (tals, vs) <- runValidatorT (newScopes "validation-root") $
         forM totalTalsNames $ \(talFilePath, taName) ->
@@ -264,22 +264,25 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     proverRunMode     <- deriveProverRunMode cliOptions  
     rsyncPrefetchUrls <- rsyncPrefetches cliOptions                
 
+    let apiSecured :: a -> ApiSecured a
+        apiSecured a = if showHiddenConfig then Public a else Hidden a
+
     let config = defaults
-            & #programBinaryPath .~ programPath
-            & #rootDirectory .~ root
-            & #talDirectory .~ tald
-            & #tmpDirectory .~ tmpd
-            & #cacheDirectory .~ cached
-            & #extraTalsDirectories .~ extraTalsDirectory
+            & #programBinaryPath .~ apiSecured programPath
+            & #rootDirectory .~ apiSecured root
+            & #talDirectory .~ apiSecured tald
+            & #tmpDirectory .~ apiSecured tmpd
+            & #cacheDirectory .~ apiSecured cached
+            & #extraTalsDirectories .~ apiSecured extraTalsDirectory
             & #proverRunMode .~ proverRunMode
             & #parallelism .~ parallelism
-            & #rsyncConf . #rsyncRoot .~ rsyncd
-            & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
+            & #rsyncConf . #rsyncRoot .~ apiSecured rsyncd
+            & #rsyncConf . #rsyncClientPath .~ fmap apiSecured rsyncClientPath
             & #rsyncConf . #enabled .~ not noRsync
             & #rsyncConf . #rsyncPrefetchUrls .~ rsyncPrefetchUrls
             & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
             & maybeSet (#rsyncConf . #asyncRsyncTimeout) (Seconds <$> asyncRsyncTimeout)
-            & #rrdpConf . #tmpRoot .~ tmpd
+            & #rrdpConf . #tmpRoot .~ apiSecured tmpd
             & #rrdpConf . #enabled .~ not noRrdp
             & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
             & maybeSet (#rrdpConf . #asyncRrdpTimeout) (Seconds <$> asyncRrdpTimeout)
@@ -309,7 +312,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
             & maybeSet #versionNumberToKeep versionNumberToKeep
             & #lmdbSizeMb .~ lmdbRealSize
-            & #localExceptions .~ localExceptions
+            & #localExceptions .~ apiSecured localExceptions
             & #logLevel .~ derivedLogLevel
             & maybeSet #metricsPrefix (convert <$> metricsPrefix)
             & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
@@ -502,12 +505,12 @@ createWorkerAppContext :: Config -> AppLogger -> ValidatorT IO AppLmdbEnv
 createWorkerAppContext config logger = do
     lmdbEnv <- setupWorkerLmdbCache
                     logger
-                    (config ^. #cacheDirectory)
+                    (configValue $ config ^. #cacheDirectory)
                     config
 
     (db, _) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
 
-    appState <- createAppState logger (config ^. #localExceptions)
+    appState <- createAppState logger (configValue $ config ^. #localExceptions)
     database <- liftIO $ newTVarIO db
 
     pure AppContext {..}
@@ -779,8 +782,13 @@ data CLIOptions wrapped = CLIOptions {
          "so default for this option is false)."),
 
     noAsyncFetch :: wrapped ::: Bool <?>
-        ("Do not fetch repositories asynchronously, i.e. only fetch them while validating the RPKI tree "+++ 
-        "(default is false).") 
+        ("Do not fetch repositories asynchronously, i.e. only fetch them while validating the RPKI tree " +++ 
+        "(default is false, i.e. asynchronous fetches are used by default)."),
+
+    showHiddenConfig :: wrapped ::: Bool <?>
+        ("Reveal all config values in the HTTP API call to `/api/system`. " +++ 
+         "This is a potential security issue since some of the config values include " +++ 
+         "local FS paths (default is false).") 
 
 } deriving (Generic)
 
@@ -803,11 +811,14 @@ withLogConfig CLIOptions{..} f =
                 "debug" -> run DebugL
                 other   -> hPutStrLn stderr $ "Invalid log level: " <> Text.unpack other
   where
-    run ll = f LogConfig { logLevel = ll, .. }
-    logSetup = 
-        case (rtrLogFile, worker) of 
-            (Just fs, Nothing) -> MainLogWithRtr fs
-            (Nothing, Nothing) -> MainLog
-            (_,        Just _) -> WorkerLog
+    run logLev = 
+        f LogConfig { 
+            logLevel = logLev,
+            logSetup = 
+                case (rtrLogFile, worker) of 
+                    (Just fs, Nothing) -> MainLogWithRtr fs
+                    (Nothing, Nothing) -> MainLog
+                    (_,        Just _) -> WorkerLog
+            }
             
                 

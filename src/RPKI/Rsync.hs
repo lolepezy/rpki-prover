@@ -130,7 +130,7 @@ rsyncRpkiObject :: AppContext s ->
                 ValidatorT IO RpkiObject
 rsyncRpkiObject AppContext{..} fetchConfig uri = do
     let RsyncConf {..} = rsyncConf config
-    destination <- liftIO $ rsyncDestination RsyncOneFile rsyncRoot uri
+    destination <- liftIO $ rsyncDestination RsyncOneFile (configValue rsyncRoot) uri
     let rsync = rsyncProcess config fetchConfig uri destination RsyncOneFile
     (exitCode, out, err) <- readProcess rsync      
     case exitCode of  
@@ -162,7 +162,7 @@ updateObjectForRsyncRepository
     repo@(RsyncRepository (RsyncPublicationPoint uri) _) = 
         
     timedMetric (Proxy :: Proxy RsyncMetric) $ do     
-        let rsyncRoot = appContext ^. typed @Config . typed @RsyncConf . typed @FilePath
+        let rsyncRoot = configValue $ appContext ^. typed @Config . typed @RsyncConf . typed
         db <- liftIO $ readTVarIO database        
         destination <- liftIO $ rsyncDestination RsyncDirectory rsyncRoot uri
         let rsync = rsyncProcess config fetchConfig uri destination RsyncDirectory
