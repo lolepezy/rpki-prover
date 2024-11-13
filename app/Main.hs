@@ -264,25 +264,25 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     proverRunMode     <- deriveProverRunMode cliOptions  
     rsyncPrefetchUrls <- rsyncPrefetches cliOptions                
 
-    let conf :: a -> ApiSecured a
-        conf a = if showHiddenConfig then Public a else Hidden a
+    let apiSecured :: a -> ApiSecured a
+        apiSecured a = if showHiddenConfig then Public a else Hidden a
 
     let config = defaults
-            & #programBinaryPath .~ conf programPath
-            & #rootDirectory .~ conf root
-            & #talDirectory .~ conf tald
-            & #tmpDirectory .~ conf tmpd
-            & #cacheDirectory .~ conf cached
-            & #extraTalsDirectories .~ conf extraTalsDirectory
+            & #programBinaryPath .~ apiSecured programPath
+            & #rootDirectory .~ apiSecured root
+            & #talDirectory .~ apiSecured tald
+            & #tmpDirectory .~ apiSecured tmpd
+            & #cacheDirectory .~ apiSecured cached
+            & #extraTalsDirectories .~ apiSecured extraTalsDirectory
             & #proverRunMode .~ proverRunMode
             & #parallelism .~ parallelism
-            & #rsyncConf . #rsyncRoot .~ conf rsyncd
-            & #rsyncConf . #rsyncClientPath .~ fmap conf rsyncClientPath
+            & #rsyncConf . #rsyncRoot .~ apiSecured rsyncd
+            & #rsyncConf . #rsyncClientPath .~ fmap apiSecured rsyncClientPath
             & #rsyncConf . #enabled .~ not noRsync
             & #rsyncConf . #rsyncPrefetchUrls .~ rsyncPrefetchUrls
             & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
             & maybeSet (#rsyncConf . #asyncRsyncTimeout) (Seconds <$> asyncRsyncTimeout)
-            & #rrdpConf . #tmpRoot .~ conf tmpd
+            & #rrdpConf . #tmpRoot .~ apiSecured tmpd
             & #rrdpConf . #enabled .~ not noRrdp
             & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
             & maybeSet (#rrdpConf . #asyncRrdpTimeout) (Seconds <$> asyncRrdpTimeout)
@@ -312,7 +312,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
             & maybeSet #versionNumberToKeep versionNumberToKeep
             & #lmdbSizeMb .~ lmdbRealSize
-            & #localExceptions .~ conf localExceptions
+            & #localExceptions .~ apiSecured localExceptions
             & #logLevel .~ derivedLogLevel
             & maybeSet #metricsPrefix (convert <$> metricsPrefix)
             & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
@@ -782,11 +782,13 @@ data CLIOptions wrapped = CLIOptions {
          "so default for this option is false)."),
 
     noAsyncFetch :: wrapped ::: Bool <?>
-        ("Do not fetch repositories asynchronously, i.e. only fetch them while validating the RPKI tree "+++ 
-        "(default is false)."),
+        ("Do not fetch repositories asynchronously, i.e. only fetch them while validating the RPKI tree " +++ 
+        "(default is false, i.e. asynchronous fetches are used by default)."),
 
     showHiddenConfig :: wrapped ::: Bool <?>
-        ("Reveal all config values in the HTTP API call to `/api/system` (default is false).") 
+        ("Reveal all config values in the HTTP API call to `/api/system`. " +++ 
+         "This is a potential security issue since some of the config values include " +++ 
+         "local FS paths (default is false).") 
 
 } deriving (Generic)
 
