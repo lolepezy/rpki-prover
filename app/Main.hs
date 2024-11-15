@@ -5,6 +5,7 @@
 {-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TemplateHaskell   #-}
 
 module Main where
 
@@ -66,10 +67,11 @@ import           RPKI.RRDP.RrdpFetch
 
 import           RPKI.Rsync
 import           RPKI.TAL
-import           RPKI.Util               (convert, fmtEx, parseRsyncURL)
+import           RPKI.Util               
 import           RPKI.Worker
 import           RPKI.Workflow
 import           RPKI.RSC.Verifier
+import           RPKI.Version
 
 
 import           Network.HTTP.Client
@@ -83,7 +85,7 @@ main = do
     cliOptions@CLIOptions{..} <- unwrapRecord $ 
             "RPKI prover, relying party software for RPKI, version " <> rpkiProverVersion
 
-    if version
+    if version        
         then do
             -- it is "--version" call, so print the version and exit
             putStrLn $ convert rpkiProverVersion
@@ -821,4 +823,3 @@ withLogConfig CLIOptions{..} f =
                     (_,        Just _) -> WorkerLog
             }
             
-                
