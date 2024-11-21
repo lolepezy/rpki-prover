@@ -347,7 +347,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
     database <- liftIO $ newTVarIO db    
     
-    let executableVersion = makeExecutableVersion
+    let executableVersion = thisExecutableVersion
     let appContext = AppContext {..}
 
     case dbCheck of 
@@ -516,7 +516,7 @@ createWorkerAppContext config logger = do
 
     appState <- createAppState logger (configValue $ config ^. #localExceptions)
     database <- liftIO $ newTVarIO db
-    let executableVersion = makeExecutableVersion
+    let executableVersion = thisExecutableVersion
 
     pure AppContext {..}
 
@@ -589,7 +589,7 @@ createVerifierContext cliOptions logger = do
 
     appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db
-    let executableVersion = makeExecutableVersion
+    let executableVersion = thisExecutableVersion
 
     pure AppContext {..}
 

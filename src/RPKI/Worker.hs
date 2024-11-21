@@ -45,6 +45,7 @@ import           RPKI.Util (fmtEx, trimmed)
 import           RPKI.SLURM.Types
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Database
+import           RPKI.Version
 
 
 {- | This is to run worker processes for some code that is better to be executed in an isolated process.
@@ -143,16 +144,7 @@ data ValidationResult = ValidationResult ValidationState (Maybe Slurm)
 
 data CacheCleanupResult = CacheCleanupResult CleanUpResult
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
-
-
-data WorkerR r = WResult (WorkerResult r)
-               | ExecutableVersionChange { 
-                    from :: ExecutableVersion,
-                    to   :: ExecutableVersion
-               }
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)                
+    deriving anyclass (TheBinary)              
 
 data WorkerResult r = WorkerResult {
         payload   :: r,        
@@ -169,12 +161,18 @@ data WorkerResult r = WorkerResult {
 executeWork :: WorkerInput 
             -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                
             -> IO ()
-executeWork input actualWork = do         
-    exitCode <- whicheverHappensFirst 
-        ((actualWork input writeWorkerOutput >> pure ExitSuccess) `onException` pure exceptionExitCode)
-        (whicheverHappensFirst dieIfParentDies dieOfTiming)
-    
-    exitWith exitCode
+executeWork input actualWork = 
+    -- Check if version of the executable has changed compared to the parent.
+    -- If that's the case, bail out, it's likely we can do more harm then good
+    if input ^. #parentExecutableVersion /= thisExecutableVersion
+        then 
+            exitWith replacedExecutableExitCode
+        else do 
+            exitCode <- whicheverHappensFirst 
+                ((actualWork input writeWorkerOutput >> pure ExitSuccess) `onException` pure exceptionExitCode)
+                (whicheverHappensFirst dieIfParentDies dieOfTiming)
+            
+            exitWith exitCode
   where        
     whicheverHappensFirst a b = either id id <$> race a b
     
@@ -245,11 +243,12 @@ defaultRts :: [String]
 defaultRts = [ "-I0" ]
 
 parentDiedExitCode, timeoutExitCode, outOfCpuTimeExitCode, outOfMemoryExitCode :: ExitCode
-exitKillByTypedProcess, exceptionExitCode :: ExitCode
+exitKillByTypedProcess, exceptionExitCode, replacedExecutableExitCode :: ExitCode
 exceptionExitCode    = ExitFailure 99
 parentDiedExitCode   = ExitFailure 111
-timeoutExitCode      = ExitFailure 122
 outOfCpuTimeExitCode = ExitFailure 113
+timeoutExitCode      = ExitFailure 122
+replacedExecutableExitCode = ExitFailure 123
 outOfMemoryExitCode  = ExitFailure 251
 exitKillByTypedProcess = ExitFailure (-2)
 
@@ -263,9 +262,7 @@ runWorker :: (TheBinary r, Show r)
             -> WorkerInput            
             -> [String] 
             -> ValidatorT IO r
-runWorker logger workerInput extraCli = do  
-    thisProcessId <- liftIO getProcessID
-
+runWorker logger workerInput extraCli = do
     let executableToRun = configValue $ workerInput ^. #config . #programBinaryPath    
     let workerStdin = serialise_ workerInput
 
@@ -321,6 +318,10 @@ runWorker logger workerInput extraCli = do
                     let message = [i|Worker #{workerId} ran out of memory.|]
                     logError logger message                    
                     appError $ InternalE $ WorkerOutOfMemory message
+                | exit == replacedExecutableExitCode -> do                     
+                    let message = [i|Worker #{workerId} detected that `rpki-prover` binary and exited.|]
+                    logError logger message                    
+                    appError $ InternalE $ WorkerDetectedDifferentExecutable message
                 | exit == exitKillByTypedProcess -> do
                     -- 
                     -- This is a hack to work around a problem in `readProcess`:

@@ -284,15 +284,14 @@ runCopyWorker appContext@AppContext {..} dbtats targetLmdbPath = do
             [ worderIdS workerId ] <>
             rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory (show maxMemoryMb <> "m") ]
 
-    workerInput <- makeWorkerInput appContext workerId
-                        (CompactionParams targetLmdbPath)
-                        -- timebox it to 30 minutes, it should be enough even 
-                        -- for a huge cache on a very slow machine
-                        (Timebox $ Seconds $ 30 * 60)
-                        Nothing
-
     (z, vs) <- runValidatorT 
-                (newScopes "lmdb-compaction-worker") $ 
+                (newScopes "lmdb-compaction-worker") $ do 
+                    workerInput <- makeWorkerInput appContext workerId
+                                        (CompactionParams targetLmdbPath)
+                                        -- timebox it to 30 minutes, it should be enough 
+                                        -- even for a huge cache on a very slow disk
+                                        (Timebox $ Seconds $ 30 * 60)
+                                        Nothing
                     runWorker logger workerInput arguments
     case z of 
         Left e  -> do 
