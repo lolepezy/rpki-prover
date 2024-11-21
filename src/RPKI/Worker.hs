@@ -33,6 +33,7 @@ import           System.Posix.Process
 
 import           RPKI.AppMonad
 import           RPKI.AppTypes
+import           RPKI.AppContext
 import           RPKI.Config
 import           RPKI.Reporting
 import           RPKI.Repository
@@ -99,15 +100,28 @@ newtype Timebox = Timebox { unTimebox :: Seconds }
     deriving anyclass (TheBinary)
 
 data WorkerInput = WorkerInput {
-        params          :: WorkerParams,
-        config          :: Config,
-        initialParentId :: ProcessID,
-        workerTimeout   :: Timebox,
-        cpuLimit        :: Maybe CPUTime
+        workerId                :: WorkerId,
+        params                  :: WorkerParams,
+        config                  :: Config,
+        initialParentId         :: ProcessID,
+        workerTimeout           :: Timebox,
+        cpuLimit                :: Maybe CPUTime,
+        parentExecutableVersion :: ExecutableVersion
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
+makeWorkerInput :: (MonadIO m) 
+                => AppContext s 
+                -> WorkerId
+                -> WorkerParams
+                -> Timebox
+                -> Maybe CPUTime                
+                -> m WorkerInput
+makeWorkerInput AppContext {..} workerId params timeout cpuLimit = do 
+    thisProcessId <- liftIO getProcessID    
+    pure $ WorkerInput workerId params config thisProcessId 
+                        timeout cpuLimit executableVersion
 
 newtype RrdpFetchResult = RrdpFetchResult 
                             (Either AppError (RrdpRepository, RrdpFetchStat), ValidationState)    
@@ -132,6 +146,14 @@ data CacheCleanupResult = CacheCleanupResult CleanUpResult
     deriving anyclass (TheBinary)
 
 
+data WorkerR r = WResult (WorkerResult r)
+               | ExecutableVersionChange { 
+                    from :: ExecutableVersion,
+                    to   :: ExecutableVersion
+               }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)                
+
 data WorkerResult r = WorkerResult {
         payload   :: r,        
         cpuTime   :: CPUTime,
@@ -148,13 +170,13 @@ executeWork :: WorkerInput
             -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                
             -> IO ()
 executeWork input actualWork = do         
-    exitCode <- anyOf 
+    exitCode <- whicheverHappensFirst 
         ((actualWork input writeWorkerOutput >> pure ExitSuccess) `onException` pure exceptionExitCode)
-        (anyOf dieIfParentDies dieOfTiming)
+        (whicheverHappensFirst dieIfParentDies dieOfTiming)
     
     exitWith exitCode
   where        
-    anyOf a b = either id id <$> race a b
+    whicheverHappensFirst a b = either id id <$> race a b
     
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
@@ -171,7 +193,7 @@ executeWork input actualWork = do
     dieOfTiming = 
         case input ^. #cpuLimit of
             Nothing       -> dieAfterTimeout
-            Just cpuLimit -> anyOf dieAfterTimeout (dieOutOfCpuTime cpuLimit)
+            Just cpuLimit -> whicheverHappensFirst dieAfterTimeout (dieOutOfCpuTime cpuLimit)
 
     -- Time bomb. Wait for the certain timeout and then exit.
     dieAfterTimeout = do
@@ -236,28 +258,24 @@ worderIdS (WorkerId w) = unpack w
 
 -- Main entry point to start a worker
 -- 
-runWorker :: (TheBinary r, Show r) => 
-            AppLogger 
-            -> Config            
-            -> WorkerId
-            -> WorkerParams                             
-            -> Timebox
-            -> Maybe CPUTime
+runWorker :: (TheBinary r, Show r)
+            => AppLogger 
+            -> WorkerInput            
             -> [String] 
             -> ValidatorT IO r
-runWorker logger config workerId params timeout cpuLimit extraCli = do  
+runWorker logger workerInput extraCli = do  
     thisProcessId <- liftIO getProcessID
 
-    let executableToRun = configValue $ config ^. #programBinaryPath    
-    let workerStdin = serialise_ $ WorkerInput params config thisProcessId timeout cpuLimit
+    let executableToRun = configValue $ workerInput ^. #config . #programBinaryPath    
+    let workerStdin = serialise_ workerInput
 
     let worker = 
             setStdin (byteStringInput $ LBS.fromStrict workerStdin) $             
             setStderr createSource $
             setStdout byteStringOutput $
                 proc executableToRun $ [ "--worker" ] <> extraCli
-
-    logDebug logger [i|Running worker: #{trimmed worker} with timeout #{unTimebox timeout}.|]        
+    
+    logDebug logger [i|Running worker: #{trimmed worker} with timeout #{timeout}.|]       
 
     runIt worker `catches` [                    
             Handler $ \e@(SomeAsyncException _) -> throwIO e,
@@ -265,6 +283,9 @@ runWorker logger config workerId params timeout cpuLimit extraCli = do
             Handler $ \e@(SomeException _)      -> complain [i|Worker #{workerId} died in a strange way: #{fmtEx e}|]       
         ] 
   where    
+
+    timeout = unTimebox $ workerInput ^. #workerTimeout
+    workerId = workerInput ^. #workerId
 
     waitForProcess conf f = bracket
         (startProcess conf)

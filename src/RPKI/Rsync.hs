@@ -90,7 +90,7 @@ runRsyncFetchWorker :: AppContext s
                     -> WorldVersion
                     -> RsyncRepository             
                     -> ValidatorT IO RsyncRepository
-runRsyncFetchWorker AppContext {..} fetchConfig worldVersion repository = do
+runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion repository = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
     -- are passed as 'RsyncFetchResult'.
@@ -107,14 +107,12 @@ runRsyncFetchWorker AppContext {..} fetchConfig worldVersion repository = do
                 rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rsyncWorkerMemoryMb) ]
 
     vp <- askScopes
-    wr@WorkerResult {..} <- runWorker 
-                                logger
-                                config
-                                workerId 
-                                (RsyncFetchParams vp fetchConfig repository worldVersion)                        
-                                (Timebox $ fetchConfig ^. #rsyncTimeout)
-                                (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
-                                arguments                        
+    workerInput <- makeWorkerInput appContext workerId
+                        (RsyncFetchParams vp fetchConfig repository worldVersion)                        
+                        (Timebox $ fetchConfig ^. #rsyncTimeout)
+                        (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
+
+    wr@WorkerResult {..} <- runWorker logger workerInput arguments
     let RsyncFetchResult z = payload        
     logWorkerDone logger workerId wr    
     pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory

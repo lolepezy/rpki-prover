@@ -186,6 +186,7 @@ executeWorkerProcess = do
     exec resultHandler f = resultHandler =<< execWithStats f                    
 
 
+turnOffTlsValidation :: IO ()
 turnOffTlsValidation = do 
     manager <- newManager $ mkManagerSettings (TLSSettingsSimple True True True) Nothing 
     setGlobalManager manager    
@@ -345,7 +346,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
     database <- liftIO $ newTVarIO db    
-
+    
+    let executableVersion = makeExecutableVersion
     let appContext = AppContext {..}
 
     case dbCheck of 
@@ -514,6 +516,7 @@ createWorkerAppContext config logger = do
 
     appState <- createAppState logger (configValue $ config ^. #localExceptions)
     database <- liftIO $ newTVarIO db
+    let executableVersion = makeExecutableVersion
 
     pure AppContext {..}
 
@@ -586,6 +589,7 @@ createVerifierContext cliOptions logger = do
 
     appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db
+    let executableVersion = makeExecutableVersion
 
     pure AppContext {..}
 

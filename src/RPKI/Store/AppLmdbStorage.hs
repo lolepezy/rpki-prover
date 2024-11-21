@@ -271,7 +271,7 @@ copyLmdbEnvironment AppContext {..} targetLmdbPath = do
 -- a worker process with limited heap that does the copying.
 -- 
 runCopyWorker :: AppContext LmdbStorage -> SStats -> FilePath -> IO ()
-runCopyWorker AppContext {..} dbtats targetLmdbPath = do 
+runCopyWorker appContext@AppContext {..} dbtats targetLmdbPath = do 
     let workerId = WorkerId "lmdb-compaction"
     
     -- Heap size is based on MS = "the biggest KV-pair that we need to copy"
@@ -284,18 +284,16 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
             [ worderIdS workerId ] <>
             rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory (show maxMemoryMb <> "m") ]
 
-    (z, vs) <- runValidatorT 
-                (newScopes "lmdb-compaction-worker") $ 
-                    runWorker 
-                        logger
-                        config
-                        workerId
-                        (CompactionParams targetLmdbPath)                        
+    workerInput <- makeWorkerInput appContext workerId
+                        (CompactionParams targetLmdbPath)
                         -- timebox it to 30 minutes, it should be enough even 
                         -- for a huge cache on a very slow machine
                         (Timebox $ Seconds $ 30 * 60)
                         Nothing
-                        arguments
+
+    (z, vs) <- runValidatorT 
+                (newScopes "lmdb-compaction-worker") $ 
+                    runWorker logger workerInput arguments
     case z of 
         Left e  -> do 
             let message = [i|Failed to run compaction worker: #{e}, validations: #{vs}.|]
