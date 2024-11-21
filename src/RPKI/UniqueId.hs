@@ -1,15 +1,11 @@
+{-# LANGUAGE OverloadedStrings    #-}
 module RPKI.UniqueId where
-
-import Data.Text (Text)
 
 import RPKI.AppTypes
 import RPKI.Version
-import RPKI.Util (convert)
-
--- The content between tags is to be updated by the 'src-hash' script 
--- that calculates hash of the source tree and configuration/build files 
-srcHash :: Text
-srcHash = convert "srcHash#7f1554f8413965101207ae9563bc7a29bfa89daec2fad993ec5c92320985ab40#srcHash"
 
 thisExecutableVersion :: ExecutableVersion
-thisExecutableVersion = ExecutableVersion $ rpkiProverVersion <> convert " " <> srcHash
+thisExecutableVersion = ExecutableVersion $ rpkiProverVersion <> " " <> 
+    -- The content is to be updated by the 'src-hash' script 
+    -- that calculates hash of the source tree and configuration/build files     
+    "srcHash#b0a3b75116b7100e77e89e632163056515cf37e06610d4108d91524db4fb0ad5#srcHash"
