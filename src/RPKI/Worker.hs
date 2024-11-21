@@ -319,7 +319,7 @@ runWorker logger workerInput extraCli = do
                     logError logger message                    
                     appError $ InternalE $ WorkerOutOfMemory message
                 | exit == replacedExecutableExitCode -> do                     
-                    let message = [i|Worker #{workerId} detected that `rpki-prover` binary and exited.|]
+                    let message = [i|Worker #{workerId} detected that `rpki-prover` binary is different and exited for good.|]
                     logError logger message                    
                     appError $ InternalE $ WorkerDetectedDifferentExecutable message
                 | exit == exitKillByTypedProcess -> do
