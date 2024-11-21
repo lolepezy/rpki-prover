@@ -14,7 +14,7 @@ rpkiProverVersion = convert $ "rpki-prover-" <> showVersion Autogen.version
 -- The content between tags is to be updated by the 'src-hash' script 
 -- that calculates hash of the source tree and configuration/build files 
 srcHash :: Text
-srcHash = convert "srcHash#bc12b0ec0ca0ea2393f32313feccb55ddda2b4a76358646d0ae8a1206631f137#srcHash"
+srcHash = convert "srcHash#b5dc998ce47134f0e0c96a891aabce0379b868d41cedebec309f5645f833f4f9#srcHash"
 
 thisExecutableVersion :: ExecutableVersion
 thisExecutableVersion = ExecutableVersion $ rpkiProverVersion <> convert " " <> srcHash

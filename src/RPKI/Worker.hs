@@ -263,11 +263,9 @@ runWorker :: (TheBinary r, Show r)
             -> [String] 
             -> ValidatorT IO r
 runWorker logger workerInput extraCli = do
-    let executableToRun = configValue $ workerInput ^. #config . #programBinaryPath    
-    let workerStdin = serialise_ workerInput
-
+    let executableToRun = configValue $ workerInput ^. #config . #programBinaryPath
     let worker = 
-            setStdin (byteStringInput $ LBS.fromStrict workerStdin) $             
+            setStdin (byteStringInput $ LBS.fromStrict $ serialise_ workerInput) $             
             setStderr createSource $
             setStdout byteStringOutput $
                 proc executableToRun $ [ "--worker" ] <> extraCli
