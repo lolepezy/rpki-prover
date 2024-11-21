@@ -1,5 +1,7 @@
 docker build - < Dockerfile.static-builder --tag rpki-prover-builder
 
+. ./src-hash.sh
+
 # This is extremely ugly but that's the only working option so far
 # to avoid attempts to build static binaries every time
 cat package-template.yaml | sed 's/#1//g' > package.yaml 

@@ -36,14 +36,13 @@ import           Text.Blaze.Html5.Attributes as A
 
 import           RPKI.AppTypes
 import           RPKI.AppState
-import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Http.Types
 import           RPKI.Metrics.Metrics
 import           RPKI.Metrics.System
 import           RPKI.Reporting
 import           RPKI.Time
-
+import           RPKI.Version
 
 mainPage :: SystemInfo 
         -> Maybe (WorldVersion, ValidationsDto ResolvedVDto, RawMetric) 

@@ -5,6 +5,7 @@
 {-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TemplateHaskell   #-}
 
 module Main where
 
@@ -66,10 +67,12 @@ import           RPKI.RRDP.RrdpFetch
 
 import           RPKI.Rsync
 import           RPKI.TAL
-import           RPKI.Util               (convert, fmtEx, parseRsyncURL)
+import           RPKI.Util               
 import           RPKI.Worker
 import           RPKI.Workflow
 import           RPKI.RSC.Verifier
+import           RPKI.Version
+import           RPKI.UniqueId
 
 
 import           Network.HTTP.Client
@@ -83,7 +86,7 @@ main = do
     cliOptions@CLIOptions{..} <- unwrapRecord $ 
             "RPKI prover, relying party software for RPKI, version " <> rpkiProverVersion
 
-    if version
+    if version        
         then do
             -- it is "--version" call, so print the version and exit
             putStrLn $ convert rpkiProverVersion
@@ -184,6 +187,7 @@ executeWorkerProcess = do
     exec resultHandler f = resultHandler =<< execWithStats f                    
 
 
+turnOffTlsValidation :: IO ()
 turnOffTlsValidation = do 
     manager <- newManager $ mkManagerSettings (TLSSettingsSimple True True True) Nothing 
     setGlobalManager manager    
@@ -343,7 +347,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
     database <- liftIO $ newTVarIO db    
-
+    
+    let executableVersion = thisExecutableVersion
     let appContext = AppContext {..}
 
     case dbCheck of 
@@ -512,6 +517,7 @@ createWorkerAppContext config logger = do
 
     appState <- createAppState logger (configValue $ config ^. #localExceptions)
     database <- liftIO $ newTVarIO db
+    let executableVersion = thisExecutableVersion
 
     pure AppContext {..}
 
@@ -584,6 +590,7 @@ createVerifierContext cliOptions logger = do
 
     appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db
+    let executableVersion = thisExecutableVersion
 
     pure AppContext {..}
 
@@ -821,4 +828,3 @@ withLogConfig CLIOptions{..} f =
                     (_,        Just _) -> WorkerLog
             }
             
-                

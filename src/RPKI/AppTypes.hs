@@ -30,6 +30,12 @@ data VersionKind = VersionKind Text
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
+-- Version of the executable, ideally it is supposed to 
+-- be different for every build of the program where 
+-- source or library versions are different.
+data ExecutableVersion = ExecutableVersion Text
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
 
 -- TODO Probably move it to some other module
 newtype MaxMemory = MaxMemory Int

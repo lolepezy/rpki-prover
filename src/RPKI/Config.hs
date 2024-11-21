@@ -17,16 +17,10 @@ import Data.Maybe (fromMaybe)
 
 import RPKI.Domain
 import RPKI.Logging
-import RPKI.Util (toNatural, convert)
+import RPKI.Util (toNatural)
 import GHC.Generics (Generic)
 
 import RPKI.Store.Base.Serialisation
-
-import Data.Version
-import qualified Paths_rpki_prover as Autogen
-
-rpkiProverVersion :: Text
-rpkiProverVersion = convert $ "rpki-prover-" <> showVersion Autogen.version
 
 data ApiSecured a = Hidden a
                    |   Public a

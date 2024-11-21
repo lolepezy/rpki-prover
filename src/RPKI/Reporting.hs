@@ -208,6 +208,7 @@ newtype InitError = InitError Text
 data InternalError = WorkerTimeout Text 
                    | WorkerOutOfCpuTime Text 
                    | WorkerOutOfMemory Text 
+                   | WorkerDetectedDifferentExecutable Text 
                    | InternalError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
