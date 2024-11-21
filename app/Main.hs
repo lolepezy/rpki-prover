@@ -72,6 +72,7 @@ import           RPKI.Worker
 import           RPKI.Workflow
 import           RPKI.RSC.Verifier
 import           RPKI.Version
+import           RPKI.UniqueId
 
 
 import           Network.HTTP.Client

@@ -3,7 +3,7 @@
 # Calculate hash of the sources and update it in the RPKI.Version module,
 # it is used for determining upgrades at the runtime.
 
-versionModule="src/RPKI/Version.hs"
+versionModule="src/RPKI/UniqueId.hs"
 
 hash=$((echo "package-template.yaml" "stack.yaml";
         find src app  -type f -name \*.hs) | \

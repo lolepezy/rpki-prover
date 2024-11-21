@@ -45,7 +45,7 @@ import           RPKI.Util (fmtEx, trimmed)
 import           RPKI.SLURM.Types
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Database
-import           RPKI.Version
+import           RPKI.UniqueId
 
 
 {- | This is to run worker processes for some code that is better to be executed in an isolated process.
