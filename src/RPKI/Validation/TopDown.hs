@@ -1559,7 +1559,6 @@ makeMftShortcut key
     (notValidBefore, notValidAfter) = getValidityPeriod mftObject        
     serial = getSerial mftObject
     manifestNumber = (getCMSContent $ cmsPayload mftObject) ^. #mftNumber
-    resources = getRawCert mftObject ^. #resources
     crlShortcut = let 
         SignCRL {..} = validCrl ^. #signCrl
         -- That must always match, since it's a validated CRL

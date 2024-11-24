@@ -100,7 +100,8 @@ httpServer appContext = genericServe HttpApi {
         manifests  = getManifests appContext,
         system = liftIO $ getSystem appContext,
         rtr = getRtr appContext,
-        versions = getVersions appContext
+        versions = getVersions appContext,
+        validity = getValidity appContext
     }
 
     uiServer AppContext {..} = do
@@ -534,6 +535,15 @@ getVersions AppContext {..} = liftIO $ do
     db <- readTVarIO database
     -- Sort versions from latest to earliest
     List.sortOn (Down . fst) <$> roTx db (`allVersions` db)
+
+
+getValidity :: (MonadIO m, Storage s, MonadError ServerError m)
+                => AppContext s
+                -> Text           
+                -> Text           
+                -> m ValidityDto
+getValidity AppContext {..} asnText prefixText = 
+    pure ValidityDto    
 
 
 resolveVDto :: (MonadIO m, Storage s) => 

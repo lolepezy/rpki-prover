@@ -3,7 +3,7 @@ module RPKI.Validation.ResourceValidation where
 import           RPKI.Domain
 import           RPKI.AppMonad
 import           RPKI.Reporting
-import qualified RPKI.Resources.IntervalSet as IS
+import qualified RPKI.Resources.IntervalContainers as IS
 import           RPKI.Resources.Types
 
 

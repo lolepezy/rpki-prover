@@ -101,7 +101,11 @@ data API api = API {
 
         rtr :: api :- "rtr" :> Get '[JSON] RtrDto,
 
-        versions :: api :- "versions" :> Get '[JSON] [(WorldVersion, VersionKind)]
+        versions :: api :- "versions" :> Get '[JSON] [(WorldVersion, VersionKind)],
+
+        validity :: api :- "validity" :> Capture "asn" Text :> 
+                                        Capture "prefix" Text :> 
+                                        Get '[JSON] ValidityDto
     }
     deriving (Generic)
 

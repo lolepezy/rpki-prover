@@ -24,7 +24,7 @@ import           HaskellWorks.Data.Network.Ip.Range
 import           HaskellWorks.Data.Network.Ip.Word128
 import           HaskellWorks.Data.Network.Ip.Ip      as Ips
 
-import           RPKI.Resources.IntervalSet           as IS
+import           RPKI.Resources.IntervalContainers           as IS
 import           RPKI.Resources.Types
 
 

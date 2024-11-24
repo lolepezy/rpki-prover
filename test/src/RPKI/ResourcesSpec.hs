@@ -15,7 +15,7 @@ import qualified Test.Tasty.QuickCheck      as QC
 
 import           RPKI.Orphans
 
-import qualified RPKI.Resources.IntervalSet as IS
+import qualified RPKI.Resources.IntervalContainers as IS
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 
