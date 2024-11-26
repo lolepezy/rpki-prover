@@ -72,16 +72,15 @@ newAppState = do
     atomically $ do 
         world       <- newTVar Nothing
         validated   <- newTVar mempty
-        filtered    <- newTVar mempty
-        cachedBinaryPdus <- newTVar Nothing        
+        filtered    <- newTVar mempty        
         rtrState    <- newTVar Nothing
         readSlurm   <- pure Nothing
         system      <- newTVar (newSystemInfo now)        
         prefixIndex <- newTVar Nothing
+        cachedBinaryPdus <- newTVar Nothing
         pure AppState {..}
                     
 
--- World versions are nanosecond-timestamps
 newWorldVersion :: IO WorldVersion
 newWorldVersion = instantToVersion . unNow <$> thisInstant        
 
