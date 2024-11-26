@@ -6,9 +6,10 @@
 
 module RPKI.AppState where
     
+import           Control.Concurrent.STM    
 import           Control.Lens hiding (filtered)
 import           Control.Monad (join)
-import           Control.Concurrent.STM
+import           Control.Monad.IO.Class
 
 import qualified Data.ByteString                  as BS
 
@@ -23,17 +24,38 @@ import           RPKI.SLURM.Types
 import           RPKI.Time
 import           RPKI.Metrics.System
 import           RPKI.RTR.Types
-import           Control.Monad.IO.Class
+import           RPKI.Resources.Types
 
 
 data AppState = AppState {
+        -- current world version
         world     :: TVar (Maybe WorldVersion),
+
+        -- Sunset of the last validated payloads that 
+        -- is feasible for RTR (VRPs, BGPSec certificates)
         validated :: TVar RtrPayloads,
+
+        -- The same but filtered through SLURM 
         filtered  :: TVar RtrPayloads,
+
+        -- Full RTR state sent to every RTR client.
+        -- It is serialised once and sent to every new client 
+        -- requesting the full state
         cachedBinaryPdus :: TVar (Maybe BS.ByteString),
-        readSlurm :: Maybe (ValidatorT IO Slurm),
-        rtrState  :: TVar (Maybe RtrState),
-        system    :: TVar SystemInfo
+
+        -- Function that re-reads SLURM file(s) after every re-validation
+        readSlurm   :: Maybe (ValidatorT IO Slurm),
+
+        -- Metadata about RTR server
+        rtrState    :: TVar (Maybe RtrState),
+
+        -- System metrics 
+        system      :: TVar SystemInfo,
+
+        -- Index for searching VRPs by a prefix used
+        -- by the validity check
+        prefixIndex :: TVar (Maybe PrefixIndex)
+
     } deriving stock (Generic)
 
 
@@ -47,14 +69,17 @@ mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrps vrps, .. }
 newAppState :: IO AppState
 newAppState = do        
     Now now <- thisInstant
-    atomically $ AppState <$> 
-                    newTVar Nothing <*>
-                    newTVar mempty <*>
-                    newTVar mempty <*>
-                    newTVar Nothing <*>
-                    pure Nothing <*>                    
-                    newTVar Nothing <*>
-                    newTVar (newSystemInfo now)
+    atomically $ do 
+        world       <- newTVar Nothing
+        validated   <- newTVar mempty
+        filtered    <- newTVar mempty
+        cachedBinaryPdus <- newTVar Nothing        
+        rtrState    <- newTVar Nothing
+        readSlurm   <- pure Nothing
+        system      <- newTVar (newSystemInfo now)        
+        prefixIndex <- newTVar Nothing
+        pure AppState {..}
+                    
 
 -- World versions are nanosecond-timestamps
 newWorldVersion :: IO WorldVersion

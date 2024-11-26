@@ -123,8 +123,7 @@ newtype IntervalSet a = IntervalSet (Vector a)
     deriving stock (Eq, Ord, Generic) 
     deriving anyclass (TheBinary, NFData)
 
-newtype PrefixIndex a = PrefixIndex { 
-        prefixStarts :: Vector a
+data PrefixIndex = PrefixIndex {         
     }
     deriving stock (Eq, Ord, Generic) 
     deriving anyclass (TheBinary, NFData)
