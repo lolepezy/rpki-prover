@@ -28,7 +28,6 @@ import           RPKI.Store.Database
 import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
-import           RPKI.Resources.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Validation.Common
 
