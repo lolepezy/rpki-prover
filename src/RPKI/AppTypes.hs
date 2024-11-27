@@ -20,7 +20,7 @@ import           RPKI.Store.Base.Serialisation
     Used to attribute pretty much everything (validation runs, (async) repository fetches, 
     etc.) to. Every validation happens for a specific world version which is also used 
     as 'now' for validity period comparisons. Also, most of the data in the cache is
-    associated with a world version (VRPs, metrics, SLURM data, etc.)
+    associated with a world version (VRPs, metrics, SLURM data, etc.).
    -}
 newtype WorldVersion = WorldVersion Int64
     deriving stock (Eq, Ord, Generic)

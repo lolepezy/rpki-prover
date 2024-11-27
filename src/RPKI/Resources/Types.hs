@@ -123,11 +123,6 @@ newtype IntervalSet a = IntervalSet (Vector a)
     deriving stock (Eq, Ord, Generic) 
     deriving anyclass (TheBinary, NFData)
 
-data PrefixIndex = PrefixIndex {         
-    }
-    deriving stock (Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
-
 
 -- Store instances
 instance Store (V4.IpBlock Canonical)

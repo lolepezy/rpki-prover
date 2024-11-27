@@ -54,6 +54,7 @@ import           RPKI.Store.Database
 import           RPKI.Store.AppStorage
 import           RPKI.Store.Types
 import           RPKI.SLURM.Types
+import           RPKI.Resources.Validity
 import           RPKI.Util
 import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 
@@ -539,8 +540,8 @@ getVersions AppContext {..} = liftIO $ do
 
 getValidity :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s
-                -> Text           
-                -> Text           
+                -> String           
+                -> String         
                 -> m ValidityDto
 getValidity AppContext {..} asnText prefixText = 
     pure ValidityDto    

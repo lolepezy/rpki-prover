@@ -24,7 +24,7 @@ import           RPKI.SLURM.Types
 import           RPKI.Time
 import           RPKI.Metrics.System
 import           RPKI.RTR.Types
-import           RPKI.Resources.Types
+import           RPKI.Resources.Validity
 
 
 data AppState = AppState {

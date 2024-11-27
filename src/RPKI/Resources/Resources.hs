@@ -290,6 +290,7 @@ unwrapAsns = mconcat . map (
         ASRange a1 a2
             | a1 >= a2  -> []
             | otherwise -> [ a1 .. a2 ])
+{-# INLINE unwrapAsns #-}                
 
 
 -- Bits munching
@@ -317,6 +318,7 @@ someW8ToW128 w8s = (
     drop4 = drop 4 unpacked
     drop8 = drop 4 drop4
     drop12 = drop 4 drop8
+{-# INLINE someW8ToW128 #-}    
 
 rightPad :: Int -> a -> [a] -> [a]
 rightPad n a = go 0
@@ -341,8 +343,9 @@ ipv6PrefixLen :: Ipv6Prefix -> PrefixLength
 ipv6PrefixLen (Ipv6Prefix (V6.IpBlock _ (V6.IpNetMask mask))) = PrefixLength mask
 
 prefixLen :: IpPrefix -> PrefixLength 
-prefixLen (Ipv4P p) = ipv4PrefixLen p
-prefixLen (Ipv6P p) = ipv6PrefixLen p
+prefixLen = \case 
+    Ipv4P p -> ipv4PrefixLen p
+    Ipv6P p -> ipv6PrefixLen p
  
 -- These are mainly for statically known values in tests
 -- 
