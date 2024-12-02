@@ -38,15 +38,15 @@ validateChildParentResources validationRFC childResources parentResources verifi
             RSet (IntervalSet a) -> 
             (VerifiedRS PrefixesAndAsns -> IntervalSet a) -> 
             PureValidatorT (IS.ResourceCheckResult a)
-    check c p verifiedSub = 
+    check child parent verifiedSub = 
       case verifiedResources of 
         Nothing -> 
-          case (c, p) of 
+          case (child, parent) of 
             (_,       Inherit) -> vPureError InheritWithoutParentResources
             (Inherit, RS ps)   -> pure $ Left $ Nested ps
             (RS cs,   RS ps)   -> pure $ IS.subsetCheck cs ps
         Just vr -> 
-          pure $! case (c, p) of 
+          pure $! case (child, parent) of 
             (Inherit, Inherit) -> Left $ Nested (verifiedSub vr)
             (RS cs,   Inherit) -> IS.subsetCheck cs (verifiedSub vr)
             (Inherit, RS _)    -> Left $ Nested (verifiedSub vr)
