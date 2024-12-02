@@ -118,6 +118,7 @@ dependencies:
 - unordered-containers
 - unliftio
 - vector
+- vector-algorithms
 - warp
 - xeno
 

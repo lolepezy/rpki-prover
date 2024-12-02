@@ -212,7 +212,7 @@ runValidatorServer appContext@AppContext {..} = do
             throwIO $ AppException e
         Right tals' -> do
             logInfo logger [i|Successfully loaded #{length totalTalsNames} TALs: #{map snd totalTalsNames}|]
-            -- this is where it blocks and loops in never-ending re-validation
+            -- here it blocks and loops in never-ending re-validation
             runWorkflow appContext tals'
                 `finally`
                 closeStorage appContext

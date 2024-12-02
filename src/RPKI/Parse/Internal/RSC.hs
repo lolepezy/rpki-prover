@@ -21,7 +21,7 @@ import RPKI.Resources.Types
 import RPKI.Parse.Internal.Common
 import RPKI.Parse.Internal.SignedObject 
 
-import RPKI.Resources.IntervalSet as IS
+import RPKI.Resources.IntervalContainers as IS
 import Data.Either
 
 import qualified RPKI.Util                  as U

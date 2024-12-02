@@ -26,7 +26,7 @@ import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Resources.Resources
-import qualified RPKI.Resources.IntervalSet as IS
+import qualified RPKI.Resources.IntervalContainers as IS
 import           RPKI.Parse.Parse
 import           RPKI.Time
 import           RPKI.Reporting

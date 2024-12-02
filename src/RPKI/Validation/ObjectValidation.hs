@@ -36,7 +36,7 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Types
-import           RPKI.Resources.IntervalSet as IS
+import           RPKI.Resources.IntervalContainers as IS
 import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Util                          (convert)
