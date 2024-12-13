@@ -72,7 +72,6 @@ insert vrpToInsert@(Vrp _ pp _) t =
   where
     (startToInsert, endToInsert) = prefixEdges pp
 
-    insertIntoTree :: Node Vrp -> Node Vrp
     insertIntoTree node = 
         case node ^. #subtree of
             AllTogether vrps count -> let 
