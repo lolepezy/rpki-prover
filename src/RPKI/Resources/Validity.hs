@@ -2,13 +2,20 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE StrictData         #-}
+{-# LANGUAGE OverloadedLabels   #-}
+{-# LANGUAGE MultiWayIf         #-}
 
 module RPKI.Resources.Validity where
+
+import           Control.Lens
+import           Data.Generics.Labels                  
 
 import qualified Data.List                as List
 import qualified Data.Set                 as Set
 import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
+import           Data.Word                (Word8, Word32)
+import           Data.Bits
 
 import           GHC.Generics
 
@@ -18,7 +25,7 @@ import qualified HaskellWorks.Data.Network.Ip.Ipv6     as V6
 import           RPKI.Domain
 import           RPKI.Resources.Types
 import           RPKI.Resources.Resources
-
+                  
 
 newtype ValidityByRoa = ValidityByRoa {
         vrp :: Vrp
@@ -28,76 +35,109 @@ newtype ValidityByRoa = ValidityByRoa {
 data ValidityResult = InvalidAsn 
                     | InvalidLength 
                     | Valid [ValidityByRoa]    
+                    | Unknown
     deriving stock (Eq, Ord, Generic)     
 
-
-data IndexEntry c = IndexEntry PrefixLength c 
-    deriving stock (Eq, Ord, Generic)     
-
-data PrefixIndex = PrefixIndex {
-        ipv4 :: Map V4.IpAddress [IndexEntry Vrp],
-        ipv6 :: Map V6.IpAddress [IndexEntry Vrp]
+data Node c = Node {
+        address :: Integer,
+        space   :: Word8,
+        subtree :: AddressTree c
     }
     deriving stock (Eq, Ord, Generic)     
 
+data AddressTree c = AllTogether [c] Int
+                     | Divided {
+                            lower       :: Node c,
+                            higher      :: Node c,
+                            overlapping :: [c]
+                        }
+    deriving stock (Eq, Ord, Generic)
 
-makePrefixIndex :: Vrps -> PrefixIndex 
-makePrefixIndex vrps = PrefixIndex {..}
+data PrefixIndex = PrefixIndex {
+        ipv4 :: Node Vrp,
+        ipv6 :: Node Vrp
+    }
+    deriving stock (Eq, Ord, Generic)     
+
+makePrefixIndex = let 
+        ipv4 = Node 0 32  (AllTogether [] 0)
+        ipv6 = Node 0 128 (AllTogether [] 0)
+    in PrefixIndex {..}
+
+insert :: Vrp -> PrefixIndex -> PrefixIndex
+insert vrpToInsert@(Vrp _ pp _) t = 
+    case pp of 
+        Ipv4P (Ipv4Prefix p) -> t & #ipv4 %~ insertIntoTree
+        Ipv6P (Ipv6Prefix p) -> t & #ipv6 %~ insertIntoTree
   where
-    ipv4 = mergeSortedByLength [ 
-                (V4.firstIpAddress ip, [IndexEntry (ipv4PrefixLen i) vrp]) | 
-                vrp@(Vrp _ (Ipv4P i@(Ipv4Prefix ip)) _) <- vrpList 
-            ]
+    (startToInsert, endToInsert) = prefixEdges pp
 
-    ipv6 = mergeSortedByLength [ 
-                (V6.firstIpAddress ip, [IndexEntry (ipv6PrefixLen i) vrp]) | 
-                vrp@(Vrp _ (Ipv6P i@(Ipv6Prefix ip)) _) <- vrpList 
-            ]            
+    insertIntoTree :: Node Vrp -> Node Vrp
+    insertIntoTree node = 
+        case node ^. #subtree of
+            AllTogether vrps count -> let 
+                    updated = AllTogether (vrpToInsert : vrps) (count + 1)
+                in 
+                    node & #subtree .~ if count > 5 then divide updated else updated                
+ 
+            Divided {..} -> 
+                case checkInterval startToInsert endToInsert boundary of  
+                    Lower    -> insertIntoTree lower
+                    Higher   -> insertIntoTree higher
+                    Overlaps -> node & #subtree .~ Divided { overlapping = vrpToInsert : overlapping, ..}
+      where
+        space' = node ^. #space - 1
+        boundary = node ^. #address + 1 `shiftL` (fromIntegral space')
 
-    mergeSortedByLength :: Ord a => [(a, [IndexEntry c])] -> Map a [IndexEntry c]
-    mergeSortedByLength = Map.map (List.sortOn (\(IndexEntry len _) -> len)) . Map.fromListWith (<>) 
+        divide (AllTogether vrps _) = let
+            (lowerVrps, higherVrps, overlapping) = 
+                foldr (\vrp@(Vrp _ (prefixEdges -> (vStart, vEnd)) _) (lowers, highers, overlaps) -> 
+                    case checkInterval vStart vEnd boundary of 
+                        Lower    -> (vrp : lowers, highers,       overlaps)
+                        Higher   -> (lowers,       vrp : highers, overlaps)
+                        Overlaps -> (lowers,       highers,       vrp : overlaps)    
+                
+                ) ([], [], []) vrps
 
-    vrpList = mconcat $ map Set.toList $ allVrps vrps
+            lower  = Node (node ^. #address) space' $ 
+                        AllTogether lowerVrps (length lowerVrps)
+            
+            higher = Node boundary space' $ 
+                        AllTogether higherVrps (length higherVrps)
 
+            in Divided {..}
 
-validity :: IpPrefix -> ASN -> PrefixIndex -> ValidityResult
-validity = \case
-    Ipv4P p -> validityV4 p
-    Ipv6P p -> validityV6 p
-
-
-validityV4 i@(Ipv4Prefix v4prefix) asn PrefixIndex {..} = let 
-    -- case closestLower of 
-
-        
-        
-    in InvalidAsn
---   where
---     beginning = V4.firstIpAddress v4prefix    
---     end = V4.lastIpAddress v4prefix    
---     closestLower = Map.lookupLE beginning ipv4
---     rest = findTheRest closestLower
-
---     findTheRest prefixStart = []
---         -- walk to lower adresses until there's no overlap
---       where
---         findAllLower start = 
---             case Map.lookupLT start ipv4 of 
---                 Nothing            -> []
---                 -- Get the ones that still bigger than v4prefix and cover it
---                 Just (addr, vrps)  -> 
---                     case filter (\(IndexEntry length _) -> addr + length >= end) vrps of 
---                         [] -> []
---                         overlaps -> overlaps <> findAllLower addr
-
---         findHigher start = 
---             if start > v4prefix 
---                 then []
---                 else case Map.lookupGT prefixStart ipv4 of 
---                     Nothing -> []
---                     Just _  -> []
+    
+prefixEdges :: IpPrefix -> (Integer, Integer)
+prefixEdges = \case
+    Ipv4P (Ipv4Prefix p) -> (v4toInteger (V4.firstIpAddress p), v4toInteger (V4.lastIpAddress p))
+    Ipv6P (Ipv6Prefix p) -> (v6toInteger (V6.firstIpAddress p), v6toInteger (V6.lastIpAddress p))  
 
 
+data What = Lower | Higher | Overlaps
+    deriving stock (Eq, Ord, Generic)     
 
 
-validityV6 _ _ _ = InvalidAsn
+checkInterval :: Integer -> Integer -> Integer -> What
+checkInterval start end boundary = 
+    if | end <= boundary  -> Lower
+       | start > boundary -> Higher
+       | otherwise        -> Overlaps
+
+
+{-# INLINE v4toInteger #-}
+v4toInteger :: V4.IpAddress -> Integer
+v4toInteger (V4.IpAddress w) = fromIntegral w
+
+{-# INLINE v6toInteger #-}
+v6toInteger :: V6.IpAddress -> Integer
+v6toInteger (V6.IpAddress (w0, w1, w2, w3)) = let 
+        i3 = fromIntegral w3 
+        i2 = fromIntegral w2 `shiftL` 32
+        i1 = fromIntegral w2 `shiftL` 64
+        i0 = fromIntegral w1 `shiftL` 96
+    in i0 + i1 + i2 + i3
+
+
+lookup :: IpPrefix -> PrefixIndex -> [Vrp]
+lookup _ _ = []
