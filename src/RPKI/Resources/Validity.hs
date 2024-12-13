@@ -40,7 +40,7 @@ data ValidityResult = InvalidAsn
 
 data Node c = Node {
         address :: Integer,
-        space   :: Word8,
+        bitSize :: Word8,
         subtree :: AddressTree c
     }
     deriving stock (Eq, Ord, Generic)     
@@ -81,47 +81,71 @@ insert vrpToInsert@(Vrp _ pp _) t =
                     node & #subtree .~ if count > 5 then divide updated else updated                
  
             Divided {..} -> 
-                case checkInterval startToInsert endToInsert boundary of  
+                case checkInterval startToInsert endToInsert middle of  
                     Lower    -> insertIntoTree lower
                     Higher   -> insertIntoTree higher
                     Overlaps -> node & #subtree .~ Divided { overlapping = vrpToInsert : overlapping, ..}
       where
-        space' = node ^. #space - 1
-        boundary = node ^. #address + 1 `shiftL` (fromIntegral space')
+        bitSize = node ^. #bitSize - 1
+        middle = intervalMiddle node
 
         divide (AllTogether vrps _) = let
             (lowerVrps, higherVrps, overlapping) = 
                 foldr (\vrp@(Vrp _ (prefixEdges -> (vStart, vEnd)) _) (lowers, highers, overlaps) -> 
-                    case checkInterval vStart vEnd boundary of 
+                    case checkInterval vStart vEnd middle of 
                         Lower    -> (vrp : lowers, highers,       overlaps)
                         Higher   -> (lowers,       vrp : highers, overlaps)
-                        Overlaps -> (lowers,       highers,       vrp : overlaps)    
-                
+                        Overlaps -> (lowers,       highers,       vrp : overlaps)     
                 ) ([], [], []) vrps
 
-            lower  = Node (node ^. #address) space' $ 
+            lower  = Node (node ^. #address) bitSize $ 
                         AllTogether lowerVrps (length lowerVrps)
             
-            higher = Node boundary space' $ 
+            higher = Node middle bitSize $ 
                         AllTogether higherVrps (length higherVrps)
 
             in Divided {..}
 
-    
+
+lookupVrps :: IpPrefix -> PrefixIndex -> [Vrp]
+lookupVrps prefix PrefixIndex {..} = 
+    case prefix of
+        Ipv4P (Ipv4Prefix p) -> lookupTree ipv4 
+        Ipv6P (Ipv6Prefix p) -> lookupTree ipv6 
+  where
+    (start, end) = prefixEdges prefix
+
+    lookupTree :: Node Vrp -> [Vrp]
+    lookupTree node@Node {..} = 
+        case subtree of 
+            AllTogether vrps _ -> filter suitable vrps
+            Divided {..}       -> 
+                case checkInterval start end (intervalMiddle node) of 
+                    Lower    -> lookupTree lower 
+                    Higher   -> lookupTree higher
+                    Overlaps -> filter suitable overlapping
+
+    suitable (Vrp _ (prefixEdges -> (vStart, vEnd)) _) =
+        vStart <= start && vEnd >= end
+         
+
 prefixEdges :: IpPrefix -> (Integer, Integer)
 prefixEdges = \case
     Ipv4P (Ipv4Prefix p) -> (v4toInteger (V4.firstIpAddress p), v4toInteger (V4.lastIpAddress p))
     Ipv6P (Ipv6Prefix p) -> (v6toInteger (V6.firstIpAddress p), v6toInteger (V6.lastIpAddress p))  
 
 
+intervalMiddle :: Node a -> Integer
+intervalMiddle node = node ^. #address + 1 `shiftL` (fromIntegral (node ^. #bitSize - 1))
+
 data What = Lower | Higher | Overlaps
     deriving stock (Eq, Ord, Generic)     
 
 
 checkInterval :: Integer -> Integer -> Integer -> What
-checkInterval start end boundary = 
-    if | end <= boundary  -> Lower
-       | start > boundary -> Higher
+checkInterval start end middle = 
+    if | end <= middle  -> Lower
+       | start > middle -> Higher
        | otherwise        -> Overlaps
 
 
@@ -137,7 +161,3 @@ v6toInteger (V6.IpAddress (w0, w1, w2, w3)) = let
         i1 = fromIntegral w2 `shiftL` 64
         i0 = fromIntegral w1 `shiftL` 96
     in i0 + i1 + i2 + i3
-
-
-lookup :: IpPrefix -> PrefixIndex -> [Vrp]
-lookup _ _ = []
