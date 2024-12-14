@@ -4,7 +4,7 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings         #-}
 
-module RPKI.ResourcesSpec where
+module RPKI.Resources.ResourcesSpec where
 
 import           Data.List                  as List
 import           Test.QuickCheck.Gen

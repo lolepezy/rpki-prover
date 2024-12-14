@@ -64,8 +64,8 @@ makePrefixIndex = let
         ipv6 = Node 0 128 (AllTogether [] 0)
     in PrefixIndex {..}
 
-insert :: Vrp -> PrefixIndex -> PrefixIndex
-insert vrpToInsert@(Vrp _ pp _) t = 
+insertVrp :: Vrp -> PrefixIndex -> PrefixIndex
+insertVrp vrpToInsert@(Vrp _ pp _) t = 
     case pp of 
         Ipv4P (Ipv4Prefix p) -> t & #ipv4 %~ insertIntoTree
         Ipv6P (Ipv6Prefix p) -> t & #ipv6 %~ insertIntoTree
