@@ -30,20 +30,20 @@ import           RPKI.Resources.Resources
 newtype ValidityByRoa = ValidityByRoa {
         vrp :: Vrp
     }
-    deriving stock (Eq, Ord, Generic)     
+    deriving stock (Show, Eq, Ord, Generic)     
 
 data ValidityResult = InvalidAsn 
                     | InvalidLength 
                     | Valid [ValidityByRoa]    
                     | Unknown
-    deriving stock (Eq, Ord, Generic)     
+    deriving stock (Show, Eq, Ord, Generic)     
 
 data Node c = Node {
         address :: Integer,
         bitSize :: Word8,
         subtree :: AddressTree c
     }
-    deriving stock (Eq, Ord, Generic)     
+    deriving stock (Show, Eq, Ord, Generic)     
 
 data AddressTree c = AllTogether [c] Int
                      | Divided {
@@ -51,13 +51,13 @@ data AddressTree c = AllTogether [c] Int
                             higher      :: Node c,
                             overlapping :: [c]
                         }
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
 
 data PrefixIndex = PrefixIndex {
         ipv4 :: Node Vrp,
         ipv6 :: Node Vrp
     }
-    deriving stock (Eq, Ord, Generic)     
+    deriving stock (Show, Eq, Ord, Generic)     
 
 makePrefixIndex = let 
         ipv4 = Node 0 32  (AllTogether [] 0)
@@ -77,15 +77,16 @@ insertVrp vrpToInsert@(Vrp _ pp _) t =
             AllTogether vrps count -> let 
                     updated = AllTogether (vrpToInsert : vrps) (count + 1)
                 in 
-                    node & #subtree .~ if count > 5 then divide updated else updated                
+                    node & #subtree .~ if count > 3 then divide updated else updated                
  
             Divided {..} -> 
-                case checkInterval startToInsert endToInsert middle of  
-                    Lower    -> insertIntoTree lower
-                    Higher   -> insertIntoTree higher
-                    Overlaps -> node & #subtree .~ Divided { overlapping = vrpToInsert : overlapping, ..}
+                node & #subtree .~
+                    case checkInterval startToInsert endToInsert middle of  
+                        Lower    -> Divided { lower = insertIntoTree lower, .. }
+                        Higher   -> Divided { higher = insertIntoTree higher, .. }
+                        Overlaps -> Divided { overlapping = vrpToInsert : overlapping, ..}
       where
-        bitSize = node ^. #bitSize - 1
+        newBitSize = node ^. #bitSize - 1
         middle = intervalMiddle node
 
         divide (AllTogether vrps _) = let
@@ -97,10 +98,10 @@ insertVrp vrpToInsert@(Vrp _ pp _) t =
                         Overlaps -> (lowers,       highers,       vrp : overlaps)     
                 ) ([], [], []) vrps
 
-            lower  = Node (node ^. #address) bitSize $ 
+            lower  = Node (node ^. #address) newBitSize $ 
                         AllTogether lowerVrps (length lowerVrps)
             
-            higher = Node middle bitSize $ 
+            higher = Node middle newBitSize $ 
                         AllTogether higherVrps (length higherVrps)
 
             in Divided {..}
@@ -109,8 +110,8 @@ insertVrp vrpToInsert@(Vrp _ pp _) t =
 lookupVrps :: IpPrefix -> PrefixIndex -> [Vrp]
 lookupVrps prefix PrefixIndex {..} = 
     case prefix of
-        Ipv4P (Ipv4Prefix p) -> lookupTree ipv4 
-        Ipv6P (Ipv6Prefix p) -> lookupTree ipv6 
+        Ipv4P (Ipv4Prefix _) -> lookupTree ipv4 
+        Ipv6P (Ipv6Prefix _) -> lookupTree ipv6 
   where
     (start, end) = prefixEdges prefix
 
@@ -143,9 +144,9 @@ data What = Lower | Higher | Overlaps
 
 checkInterval :: Integer -> Integer -> Integer -> What
 checkInterval start end middle = 
-    if | end <= middle  -> Lower
+    if | end < middle   -> Lower
        | start > middle -> Higher
-       | otherwise        -> Overlaps
+       | otherwise      -> Overlaps
 
 
 {-# INLINE v4toInteger #-}
@@ -157,6 +158,6 @@ v6toInteger :: V6.IpAddress -> Integer
 v6toInteger (V6.IpAddress (w0, w1, w2, w3)) = let 
         i3 = fromIntegral w3 
         i2 = fromIntegral w2 `shiftL` 32
-        i1 = fromIntegral w2 `shiftL` 64
-        i0 = fromIntegral w1 `shiftL` 96
+        i1 = fromIntegral w1 `shiftL` 64
+        i0 = fromIntegral w0 `shiftL` 96
     in i0 + i1 + i2 + i3
