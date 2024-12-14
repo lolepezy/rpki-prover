@@ -13,6 +13,7 @@ module RPKI.Resources.Validity where
 import           Control.Lens
 import           Data.Generics.Labels                  
 
+import           Data.List                as List
 import           Data.Word                (Word8)
 import           Data.Bits
 
@@ -37,11 +38,16 @@ newtype ValidityByRoa = ValidityByRoa {
     }
     deriving stock (Show, Eq, Ord, Generic)         
 
-data ValidityResult = InvalidAsn 
-                    | InvalidLength 
-                    | Valid [ValidityByRoa]    
-                    | Unknown
+data ValidityPerVrp = InvalidAsn Vrp
+                    | InvalidLength Vrp
+                    | Valid Vrp
     deriving stock (Show, Eq, Ord, Generic)     
+
+
+data ValidityResult = ValidOverall [Vrp] [ValidityPerVrp]
+                    | InvalidOverall [ValidityPerVrp]
+                    | Unknown
+    deriving stock (Show, Eq, Ord, Generic)                         
 
 data Node c = Node {
         address :: {-# UNPACK #-} Integer,
@@ -144,6 +150,28 @@ lookupVrps prefix PrefixIndex {..} =
     {-# INLINE suitable #-}
     suitable (FasterVrp vStart vEnd _) =
         vStart <= start && vEnd >= end
+
+validity :: ASN -> IpPrefix -> PrefixIndex -> ValidityResult
+validity asn prefix prefixIndex = 
+    case coveringVrps of 
+        [] -> Unknown
+        _  -> case validBy of            
+                [] -> InvalidOverall invalidBy
+                _  -> ValidOverall [ v | Valid v <- validBy ] invalidBy  
+  where
+    coveringVrps = lookupVrps prefix prefixIndex
+
+    validityPerVrp = 
+        map (\vrp@(Vrp vAsn vPrefix maxLength) -> 
+                if | vAsn /= asn                  -> InvalidAsn vrp
+                    | prefixLen prefix > maxLength -> InvalidLength vrp
+                    | otherwise                    -> Valid vrp
+            ) coveringVrps        
+
+    (validBy, invalidBy) = List.partition (\case 
+            Valid _ -> True
+            _       -> False) validityPerVrp        
+
 
 {-# INLINE prefixEdges #-}         
 prefixEdges :: IpPrefix -> (Integer, Integer)
