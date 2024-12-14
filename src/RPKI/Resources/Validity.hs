@@ -1,5 +1,6 @@
 
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE StrictData         #-}
 -- it is a little faster
@@ -27,12 +28,14 @@ import           RPKI.Resources.Resources
                   
 import           RPKI.Resources.Types                
 import           RPKI.Resources.Resources
+
+import           RPKI.Store.Base.Serialisation
                   
 
 newtype ValidityByRoa = ValidityByRoa {
         vrp :: Vrp
     }
-    deriving stock (Show, Eq, Ord, Generic)     
+    deriving stock (Show, Eq, Ord, Generic)         
 
 data ValidityResult = InvalidAsn 
                     | InvalidLength 
@@ -41,11 +44,12 @@ data ValidityResult = InvalidAsn
     deriving stock (Show, Eq, Ord, Generic)     
 
 data Node c = Node {
-        address :: Integer,
-        bitSize :: Word8,
+        address :: {-# UNPACK #-} Integer,
+        bitSize :: {-# UNPACK #-} Word8,
         subtree :: AddressTree c
     }
     deriving stock (Show, Eq, Ord, Generic)     
+    deriving anyclass (TheBinary)
 
 data AddressTree c = AllTogether [c]
                      | Divided {
@@ -54,12 +58,18 @@ data AddressTree c = AllTogether [c]
                             overlapping :: [c]
                         }
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+data FasterVrp = FasterVrp Integer Integer Vrp
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
 
 data PrefixIndex = PrefixIndex {
-        ipv4 :: Node Vrp,
-        ipv6 :: Node Vrp
+        ipv4 :: Node FasterVrp,
+        ipv6 :: Node FasterVrp
     }
     deriving stock (Show, Eq, Ord, Generic)     
+    deriving anyclass (TheBinary)
 
 makePrefixIndex :: PrefixIndex
 makePrefixIndex = let 
@@ -67,8 +77,8 @@ makePrefixIndex = let
         ipv6 = Node 0 128 (AllTogether [])
     in PrefixIndex {..}
 
-createIndex :: Vrps -> PrefixIndex
-createIndex = foldr insertVrp makePrefixIndex . mconcat . allVrps
+createPrefixIndex :: Vrps -> PrefixIndex
+createPrefixIndex = foldr insertVrp makePrefixIndex . mconcat . allVrps
 
 insertVrp :: Vrp -> PrefixIndex -> PrefixIndex
 insertVrp vrpToInsert@(Vrp _ pp _) t = 
@@ -81,8 +91,8 @@ insertVrp vrpToInsert@(Vrp _ pp _) t =
     insertIntoTree node = 
         node & #subtree %~ \case        
             AllTogether vrps -> let 
-                    vrps' = vrpToInsert : vrps
-                    updated = AllTogether (vrpToInsert : vrps)
+                    vrps' = toInsert : vrps
+                    updated = AllTogether vrps'
                 in if length vrps' > 3 
                         then divide updated 
                         else updated                
@@ -91,14 +101,15 @@ insertVrp vrpToInsert@(Vrp _ pp _) t =
                 case checkInterval startToInsert endToInsert middle of  
                     Lower    -> Divided { lower = insertIntoTree lower, .. }
                     Higher   -> Divided { higher = insertIntoTree higher, .. }
-                    Overlaps -> Divided { overlapping = vrpToInsert : overlapping, ..}
+                    Overlaps -> Divided { overlapping = toInsert : overlapping, ..}
       where
+        toInsert = FasterVrp startToInsert endToInsert vrpToInsert
         newBitSize = node ^. #bitSize - 1
         middle = intervalMiddle node
 
         divide (AllTogether vrps) = let
             (lowerVrps, higherVrps, overlapping) = 
-                foldr (\vrp@(Vrp _ (prefixEdges -> (vStart, vEnd)) _) (lowers, highers, overlaps) -> 
+                foldr (\vrp@(FasterVrp vStart vEnd _) (lowers, highers, overlaps) -> 
                     case checkInterval vStart vEnd middle of 
                         Lower    -> (vrp : lowers, highers,       overlaps)
                         Higher   -> (lowers,       vrp : highers, overlaps)
@@ -114,14 +125,14 @@ insertVrp vrpToInsert@(Vrp _ pp _) t =
 
 lookupVrps :: IpPrefix -> PrefixIndex -> [Vrp]
 lookupVrps prefix PrefixIndex {..} = 
-    case prefix of
-        Ipv4P (Ipv4Prefix _) -> lookupTree ipv4 
-        Ipv6P (Ipv6Prefix _) -> lookupTree ipv6 
+    map (\(FasterVrp _ _ vrp) -> vrp) $
+        case prefix of
+            Ipv4P (Ipv4Prefix _) -> lookupTree ipv4 
+            Ipv6P (Ipv6Prefix _) -> lookupTree ipv6 
   where
     (start, end) = prefixEdges prefix
 
-    lookupTree :: Node Vrp -> [Vrp]
-    lookupTree node = 
+    lookupTree node =         
         case node ^. #subtree of 
             AllTogether vrps -> filter suitable vrps
             Divided {..}     -> 
@@ -131,7 +142,7 @@ lookupVrps prefix PrefixIndex {..} =
                     Overlaps -> filter suitable overlapping
 
     {-# INLINE suitable #-}
-    suitable (Vrp _ (prefixEdges -> (vStart, vEnd)) _) =
+    suitable (FasterVrp vStart vEnd _) =
         vStart <= start && vEnd >= end
 
 {-# INLINE prefixEdges #-}         

@@ -59,8 +59,10 @@ import           RPKI.Util
 import           RPKI.Time
 import           RPKI.Worker
 import           RPKI.SLURM.Types
+import           RPKI.SLURM.SlurmProcessing
 import           RPKI.Http.Dto
 import           RPKI.Http.Types
+import           RPKI.Resources.Validity
 
 
 -- A job run can be the first one or not and 
@@ -320,7 +322,11 @@ runWorkflow appContext@AppContext {..} tals = do
                         logError logger [i|Something weird happened, could not re-read VRPs.|]
                         pure (mempty, mempty)
                     Just rtrPayloads -> do                 
-                        slurmedPayloads <- atomically $ completeVersion appState worldVersion rtrPayloads maybeSlurm
+                        prefixIndex <- roTxT database (\tx db -> getPrefixIndex tx db worldVersion) 
+                        slurmedPayloads <- atomically $                             
+                            completeVersion appState worldVersion 
+                                rtrPayloads maybeSlurm prefixIndex
+
                         pure (rtrPayloads, slurmedPayloads)
                           
     -- Delete objects in the store that were read by top-down validation 
@@ -338,7 +344,7 @@ runWorkflow appContext@AppContext {..} tals = do
                                          [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|])
       where
         cleanupUntochedObjects = do                 
-            ((z, _), workerId) <- runCleapUpWorker worldVersion      
+            ((z, _), workerId) <- runCleanUpWorker worldVersion      
             case z of 
                 Left e                    -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
                 Right wr@WorkerResult {..} -> do 
@@ -465,7 +471,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         arguments                                        
         pure (r, workerId)
 
-    runCleapUpWorker worldVersion = do             
+    runCleanUpWorker worldVersion = do             
         let workerId = WorkerId [i|version:#{worldVersion}:cache-clean-up|]
         
         let arguments = 
@@ -513,6 +519,11 @@ runValidation appContext@AppContext {..} worldVersion tals = do
 
     -- Save all the results into LMDB
     let updatedValidation = slurmValidations <> topDownValidations ^. typed
+    
+    let vrps = 
+            case maybeSlurm of 
+                Nothing    -> payloads ^. typed
+                Just slurm -> applySlurmToVrps slurm $ payloads ^. typed
 
     (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
         saveMetrics tx db worldVersion (topDownValidations ^. typed)
@@ -522,6 +533,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         saveAspas tx db (payloads ^. typed) worldVersion
         saveGbrs tx db (payloads ^. typed) worldVersion
         saveBgps tx db (payloads ^. typed) worldVersion        
+        savePrefixIndex tx db (createPrefixIndex vrps) worldVersion        
         for_ maybeSlurm $ saveSlurm tx db worldVersion
         completeValidationWorldVersion tx db worldVersion
 
@@ -569,10 +581,11 @@ loadStoredAppState AppContext {..} = do
 
                 | otherwise -> do
                     (payloads, elapsed) <- timedMS $ do                                            
-                        slurm    <- slurmForVersion tx db lastVersion
-                        payloads <- getRtrPayloads tx db lastVersion                        
+                        slurm       <- slurmForVersion tx db lastVersion
+                        payloads    <- getRtrPayloads tx db lastVersion                        
+                        prefixIndex <- getPrefixIndex tx db lastVersion                        
                         for_ payloads $ \payloads' -> 
-                            void $ atomically $ completeVersion appState lastVersion payloads' slurm
+                            void $ atomically $ completeVersion appState lastVersion payloads' slurm prefixIndex
                         pure payloads
                     for_ payloads $ \p -> do 
                         let vrps = p ^. #vrps
