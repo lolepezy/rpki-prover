@@ -2,6 +2,8 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE StrictData         #-}
+-- it is a little faster
+{-# LANGUAGE Strict             #-}
 {-# LANGUAGE OverloadedLabels   #-}
 {-# LANGUAGE MultiWayIf         #-}
 
@@ -10,11 +12,7 @@ module RPKI.Resources.Validity where
 import           Control.Lens
 import           Data.Generics.Labels                  
 
-import qualified Data.List                as List
-import qualified Data.Set                 as Set
-import           Data.Map.Strict          (Map)
-import qualified Data.Map.Strict          as Map
-import           Data.Word                (Word8, Word32)
+import           Data.Word                (Word8)
 import           Data.Bits
 
 import           GHC.Generics
@@ -24,6 +22,10 @@ import qualified HaskellWorks.Data.Network.Ip.Ipv6     as V6
 
 import           RPKI.Domain
 import           RPKI.Resources.Types
+import           RPKI.Resources.Types
+import           RPKI.Resources.Resources
+                  
+import           RPKI.Resources.Types                
 import           RPKI.Resources.Resources
                   
 
@@ -45,7 +47,7 @@ data Node c = Node {
     }
     deriving stock (Show, Eq, Ord, Generic)     
 
-data AddressTree c = AllTogether [c] Int
+data AddressTree c = AllTogether [c]
                      | Divided {
                             lower       :: Node c,
                             higher      :: Node c,
@@ -59,37 +61,42 @@ data PrefixIndex = PrefixIndex {
     }
     deriving stock (Show, Eq, Ord, Generic)     
 
+makePrefixIndex :: PrefixIndex
 makePrefixIndex = let 
-        ipv4 = Node 0 32  (AllTogether [] 0)
-        ipv6 = Node 0 128 (AllTogether [] 0)
+        ipv4 = Node 0 32  (AllTogether [])
+        ipv6 = Node 0 128 (AllTogether [])
     in PrefixIndex {..}
+
+createIndex :: Vrps -> PrefixIndex
+createIndex = foldr insertVrp makePrefixIndex . mconcat . allVrps
 
 insertVrp :: Vrp -> PrefixIndex -> PrefixIndex
 insertVrp vrpToInsert@(Vrp _ pp _) t = 
     case pp of 
-        Ipv4P (Ipv4Prefix p) -> t & #ipv4 %~ insertIntoTree
-        Ipv6P (Ipv6Prefix p) -> t & #ipv6 %~ insertIntoTree
+        Ipv4P (Ipv4Prefix _) -> t & #ipv4 %~ insertIntoTree
+        Ipv6P (Ipv6Prefix _) -> t & #ipv6 %~ insertIntoTree
   where
     (startToInsert, endToInsert) = prefixEdges pp
 
     insertIntoTree node = 
-        case node ^. #subtree of
-            AllTogether vrps count -> let 
-                    updated = AllTogether (vrpToInsert : vrps) (count + 1)
-                in 
-                    node & #subtree .~ if count > 3 then divide updated else updated                
- 
-            Divided {..} -> 
-                node & #subtree .~
-                    case checkInterval startToInsert endToInsert middle of  
-                        Lower    -> Divided { lower = insertIntoTree lower, .. }
-                        Higher   -> Divided { higher = insertIntoTree higher, .. }
-                        Overlaps -> Divided { overlapping = vrpToInsert : overlapping, ..}
+        node & #subtree %~ \case        
+            AllTogether vrps -> let 
+                    vrps' = vrpToInsert : vrps
+                    updated = AllTogether (vrpToInsert : vrps)
+                in if length vrps' > 3 
+                        then divide updated 
+                        else updated                
+             
+            Divided {..} ->                 
+                case checkInterval startToInsert endToInsert middle of  
+                    Lower    -> Divided { lower = insertIntoTree lower, .. }
+                    Higher   -> Divided { higher = insertIntoTree higher, .. }
+                    Overlaps -> Divided { overlapping = vrpToInsert : overlapping, ..}
       where
         newBitSize = node ^. #bitSize - 1
         middle = intervalMiddle node
 
-        divide (AllTogether vrps _) = let
+        divide (AllTogether vrps) = let
             (lowerVrps, higherVrps, overlapping) = 
                 foldr (\vrp@(Vrp _ (prefixEdges -> (vStart, vEnd)) _) (lowers, highers, overlaps) -> 
                     case checkInterval vStart vEnd middle of 
@@ -98,11 +105,9 @@ insertVrp vrpToInsert@(Vrp _ pp _) t =
                         Overlaps -> (lowers,       highers,       vrp : overlaps)     
                 ) ([], [], []) vrps
 
-            lower  = Node (node ^. #address) newBitSize $ 
-                        AllTogether lowerVrps (length lowerVrps)
+            lower  = Node (node ^. #address) newBitSize $ AllTogether lowerVrps 
             
-            higher = Node middle newBitSize $ 
-                        AllTogether higherVrps (length higherVrps)
+            higher = Node middle newBitSize $ AllTogether higherVrps 
 
             in Divided {..}
 
@@ -116,38 +121,38 @@ lookupVrps prefix PrefixIndex {..} =
     (start, end) = prefixEdges prefix
 
     lookupTree :: Node Vrp -> [Vrp]
-    lookupTree node@Node {..} = 
-        case subtree of 
-            AllTogether vrps _ -> filter suitable vrps
-            Divided {..}       -> 
+    lookupTree node = 
+        case node ^. #subtree of 
+            AllTogether vrps -> filter suitable vrps
+            Divided {..}     -> 
                 case checkInterval start end (intervalMiddle node) of 
                     Lower    -> lookupTree lower 
                     Higher   -> lookupTree higher
                     Overlaps -> filter suitable overlapping
 
+    {-# INLINE suitable #-}
     suitable (Vrp _ (prefixEdges -> (vStart, vEnd)) _) =
         vStart <= start && vEnd >= end
-         
 
+{-# INLINE prefixEdges #-}         
 prefixEdges :: IpPrefix -> (Integer, Integer)
 prefixEdges = \case
     Ipv4P (Ipv4Prefix p) -> (v4toInteger (V4.firstIpAddress p), v4toInteger (V4.lastIpAddress p))
     Ipv6P (Ipv6Prefix p) -> (v6toInteger (V6.firstIpAddress p), v6toInteger (V6.lastIpAddress p))  
 
-
+{-# INLINE intervalMiddle #-}
 intervalMiddle :: Node a -> Integer
 intervalMiddle node = node ^. #address + 1 `shiftL` (fromIntegral (node ^. #bitSize - 1))
 
 data What = Lower | Higher | Overlaps
     deriving stock (Eq, Ord, Generic)     
 
-
+{-# INLINE checkInterval #-}
 checkInterval :: Integer -> Integer -> Integer -> What
 checkInterval start end middle = 
     if | end < middle   -> Lower
        | start > middle -> Higher
        | otherwise      -> Overlaps
-
 
 {-# INLINE v4toInteger #-}
 v4toInteger :: V4.IpAddress -> Integer

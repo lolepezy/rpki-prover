@@ -86,13 +86,14 @@ newWorldVersion = instantToVersion . unNow <$> thisInstant
 
 completeVersion :: AppState -> WorldVersion -> RtrPayloads -> Maybe Slurm -> STM RtrPayloads
 completeVersion AppState {..} worldVersion rtrPayloads slurm = do 
-    writeTVar world $ Just worldVersion
-    writeTVar validated rtrPayloads
+    writeTVar world $ Just $! worldVersion
+    writeTVar validated $! rtrPayloads
     let slurmed = maybe rtrPayloads (filterWithSLURM rtrPayloads) slurm
-    writeTVar filtered slurmed
+    writeTVar filtered $! slurmed
     -- invalidate serialised PDU cache with every new version
     writeTVar cachedBinaryPdus Nothing
-    pure slurmed
+    writeTVar prefixIndex $! Just $! createIndex $ slurmed ^. #vrps
+    pure $! slurmed
 
 getWorldVerionIO :: AppState -> IO (Maybe WorldVersion)
 getWorldVerionIO AppState {..} = readTVarIO world

@@ -310,7 +310,9 @@ runWorkflow appContext@AppContext {..} tals = do
 #{formatValidations (topDownState ^. typed)}.|]
                     updatePrometheus (topDownState ^. typed) prometheusMetrics worldVersion                        
                     
-                    reReadAndUpdatePayloads maybeSlurm
+                    (!q, elapsed) <- timedMS $ reReadAndUpdatePayloads maybeSlurm
+                    logDebug logger [i|Re-read payloads, took #{elapsed}ms.|]
+                    pure q
           where
             reReadAndUpdatePayloads maybeSlurm = do 
                 roTxT database (\tx db -> getRtrPayloads tx db worldVersion) >>= \case                         
