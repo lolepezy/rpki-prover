@@ -17,6 +17,7 @@ import qualified Data.List                            as List
 import           Data.Maybe
 import qualified Data.Set                             as Set
 import           Data.Word
+import           Text.Read
 
 import qualified HaskellWorks.Data.Network.Ip.Ipv4    as V4
 import qualified HaskellWorks.Data.Network.Ip.Ipv6    as V6
@@ -350,13 +351,24 @@ prefixLen = \case
 -- These are mainly for statically known values in tests
 -- 
 readIp4 :: String -> Ipv4Prefix
-readIp4 s = Ipv4Prefix (read s :: V4.IpBlock V4.Canonical)
+readIp4 (parseIpv4 -> Just p) = p    
 
 readIp6 :: String -> Ipv6Prefix
-readIp6 s = 
-    case Ips.canonicalise (read s) of
-        Nothing -> error $ "Invalid IPv6: " <> show s
-        Just cb -> case cb of 
-                    IpBlockV4 _ -> error $ "Invalid IPv6: " <> show s
-                    IpBlockV6 b -> Ipv6Prefix b    
+readIp6 (parseIpv6 -> Just p) = p    
     
+parseIpv6 :: String -> Maybe Ipv6Prefix
+parseIpv6 s = 
+    case Ips.canonicalise (read s) of
+        Nothing -> Nothing
+        Just cb -> case cb of 
+            IpBlockV4 _ -> Nothing
+            IpBlockV6 b -> Just $ Ipv6Prefix b    
+
+parseIpv4 :: String -> Maybe Ipv4Prefix
+parseIpv4 s = Ipv4Prefix <$> readMaybe s
+
+parsePrefix :: String -> Maybe IpPrefix 
+parsePrefix s = 
+    case parseIpv4 s of 
+        Nothing   -> Ipv6P <$> parseIpv6 s
+        Just ipv4 -> Just $ Ipv4P ipv4
