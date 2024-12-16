@@ -372,3 +372,10 @@ parsePrefix s =
     case parseIpv4 s of 
         Nothing   -> Ipv6P <$> parseIpv6 s
         Just ipv4 -> Just $ Ipv4P ipv4
+
+parseAsn :: String -> Maybe ASN
+parseAsn = \case 
+    str@(a : s : n)
+        | (a == 'a' || a == 'A') && (s == 's' || s == 'S') -> 
+            ASN <$> readMaybe n
+    n -> ASN <$> readMaybe n
