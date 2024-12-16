@@ -114,10 +114,10 @@ filterWithSLURM RtrPayloads {..} slurm =
 -- TODO Make it more generic for things that need to be recomoputed for each version 
 -- and things that are computed on-demand.
 cachedPduBinary :: AppState -> ProtocolVersion -> (RtrPayloads -> BS.ByteString) -> STM BS.ByteString
-cachedPduBinary appState@AppState {..} protocolVersion f = do 
+cachedPduBinary appState@AppState {..} protocolVersion makeBs = do 
     (Map.lookup protocolVersion <$> readTVar cachedBinaryPdus) >>= \case
         Nothing -> do            
-            bs <- f <$> readRtrPayloads appState 
+            bs <- makeBs <$> readRtrPayloads appState 
             modifyTVar' cachedBinaryPdus $ Map.insert protocolVersion bs
             pure bs
         Just bs -> pure bs
