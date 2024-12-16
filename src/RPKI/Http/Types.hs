@@ -46,7 +46,6 @@ import           RPKI.Domain
 import           RPKI.TAL
 import           RPKI.Metrics.Metrics
 import           RPKI.Orphans.Json
-import           RPKI.Orphans.Swagger
 import           RPKI.Reporting
 
 import           RPKI.RRDP.Types
