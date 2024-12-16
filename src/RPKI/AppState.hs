@@ -14,7 +14,6 @@ import qualified Data.ByteString                  as BS
 
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
-import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 import           GHC.Generics
 import           RPKI.AppMonad
@@ -116,8 +115,7 @@ filterWithSLURM RtrPayloads {..} slurm =
 -- and things that are computed on-demand.
 cachedPduBinary :: AppState -> ProtocolVersion -> (RtrPayloads -> BS.ByteString) -> STM BS.ByteString
 cachedPduBinary appState@AppState {..} protocolVersion f = do 
-    z <- readTVar cachedBinaryPdus
-    case Map.lookup protocolVersion z of 
+    (Map.lookup protocolVersion <$> readTVar cachedBinaryPdus) >>= \case
         Nothing -> do            
             bs <- f <$> readRtrPayloads appState 
             modifyTVar' cachedBinaryPdus $ Map.insert protocolVersion bs

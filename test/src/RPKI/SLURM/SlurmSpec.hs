@@ -12,7 +12,6 @@ import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as LBS
 
 import           Test.Tasty
-import qualified Test.Tasty.QuickCheck as QC
 import qualified Test.Tasty.HUnit      as HU
 
 import           Data.These
@@ -20,15 +19,12 @@ import           Data.These
 import           Data.String
 import           Data.Aeson as Json
 
-import           Data.Text (Text)
-import qualified Data.Text as Text
 import qualified Data.Set                 as Set
 import           Data.String.Interpolate.IsString
 
 import           RPKI.Domain
 import           RPKI.AppMonad
 import           RPKI.Reporting
-import           RPKI.Repository
 import           RPKI.Orphans
 import           RPKI.SLURM.Types
 import           RPKI.SLURM.SlurmProcessing
