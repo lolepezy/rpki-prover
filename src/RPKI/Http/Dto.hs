@@ -32,6 +32,7 @@ import           RPKI.Time
 import           RPKI.Reporting
 import           RPKI.Http.Types
 import           RPKI.Resources.Types
+import           RPKI.Resources.Validity
 import           RPKI.RTR.Types
 import           RPKI.Validation.Types
 import           RPKI.Util
@@ -322,6 +323,43 @@ manifestDto m = let
             fileHashAlg = Text.pack $ show $ mft ^. #fileHashAlg,
             ..
         }
+
+toValidityResultDto :: Instant -> ASN -> IpPrefix -> ValidityResult -> ValidityResultDto
+toValidityResultDto 
+    (isoFormat -> generatedTime) 
+    origin_asn 
+    (prefixStr -> prefix) 
+    validityResult = ValidityResultDto {..}
+ where
+    route = RouteDto {..} 
+
+    state = 
+        case validityResult of 
+            ValidOverall _ _ -> "valid"
+            InvalidOverall _ -> "invalid"
+            Unknown          -> "unknown"
+
+    (matched, unmatched_as, unmatched_length) = 
+        case validityResult of 
+            ValidOverall valids invalids -> (
+                    vrpToMatch <$> valids,
+                    [ vrpToMatch vrp | InvalidAsn vrp <- invalids ],
+                    [ vrpToMatch vrp | InvalidLength vrp <- invalids ]
+                )
+
+            InvalidOverall invalids -> (
+                    [],
+                    [ vrpToMatch vrp | InvalidAsn vrp <- invalids ],
+                    [ vrpToMatch vrp | InvalidLength vrp <- invalids ]
+                )
+
+            Unknown -> ([], [], [])
+
+    vrps = ValidityVrpsDto {..}
+
+    validityDto = ValidityDto {..}
+            
+    vrpToMatch (Vrp asn (prefixStr -> prefix) max_length) = MatchVrpDto {..}
 
 rawCSV :: BB.Builder -> BB.Builder -> RawCSV
 rawCSV header body = RawCSV $ BB.toLazyByteString $ header <> body

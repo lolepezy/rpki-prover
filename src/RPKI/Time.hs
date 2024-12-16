@@ -144,3 +144,6 @@ cpuTimePerSecond (CPUTime t) from to = let
 
 asCpuTime :: Seconds -> CPUTime 
 asCpuTime (Seconds s) = CPUTime $ fromIntegral $ s * 1000
+
+isoFormat :: Instant -> String
+isoFormat (Instant t) = timePrint ISO8601_DateAndTime t

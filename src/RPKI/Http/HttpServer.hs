@@ -54,6 +54,7 @@ import           RPKI.Store.Database
 import           RPKI.Store.AppStorage
 import           RPKI.Store.Types
 import           RPKI.SLURM.Types
+import           RPKI.Resources.Resources
 import           RPKI.Resources.Validity
 import           RPKI.Util
 import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
@@ -542,9 +543,21 @@ getValidity :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s
                 -> String           
                 -> String         
-                -> m ValidityDto
-getValidity AppContext {..} asnText prefixText = 
-    pure ValidityDto    
+                -> m ValidityResultDto
+getValidity AppContext {..} asnText prefixText = do 
+    liftIO (readTVarIO $ appState ^. #prefixIndex) >>= \case     
+        Nothing          -> throwError $ err404 { errBody = [i|Could not build prefix index to detect validity.|] }
+        Just prefixIndex -> do             
+            case parsePrefix prefixText of 
+                Nothing     -> throwError $ err400 { errBody = [i|Could not parse prefix #{prefixText}.|] }
+                Just prefix -> 
+                    case parseAsn asnText of 
+                        Nothing  -> throwError $ err400 { errBody = [i|Could not parse ASN #{asnText}.|] }
+                        Just asn -> do 
+                            Now now <- liftIO thisInstant
+                            let validity = prefixValidity asn prefix prefixIndex
+                            pure $! toValidityResultDto now asn prefix validity
+            
 
 
 resolveVDto :: (MonadIO m, Storage s) => 

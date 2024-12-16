@@ -105,7 +105,7 @@ data API api = API {
 
         validity :: api :- "validity" :> Capture "asn" String :> 
                                         Capture "prefix" String :> 
-                                        Get '[JSON] ValidityDto
+                                        Get '[JSON] ValidityResultDto
     }
     deriving (Generic)
 

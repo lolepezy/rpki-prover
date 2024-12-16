@@ -151,8 +151,8 @@ lookupVrps prefix PrefixIndex {..} =
     suitable (FasterVrp vStart vEnd _) =
         vStart <= start && vEnd >= end
 
-validity :: ASN -> IpPrefix -> PrefixIndex -> ValidityResult
-validity asn prefix prefixIndex = 
+prefixValidity :: ASN -> IpPrefix -> PrefixIndex -> ValidityResult
+prefixValidity asn prefix prefixIndex = 
     case coveringVrps of 
         [] -> Unknown
         _  -> case validBy of            
@@ -162,10 +162,10 @@ validity asn prefix prefixIndex =
     coveringVrps = lookupVrps prefix prefixIndex
 
     validityPerVrp = 
-        map (\vrp@(Vrp vAsn vPrefix maxLength) -> 
+        map (\vrp@(Vrp vAsn _ maxLength) -> 
                 if | vAsn /= asn                  -> InvalidAsn vrp
-                    | prefixLen prefix > maxLength -> InvalidLength vrp
-                    | otherwise                    -> Valid vrp
+                   | prefixLen prefix > maxLength -> InvalidLength vrp
+                   | otherwise                    -> Valid vrp
             ) coveringVrps        
 
     (validBy, invalidBy) = List.partition (\case 
