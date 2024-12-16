@@ -542,9 +542,9 @@ getVersions AppContext {..} = liftIO $ do
 getValidity :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s
                 -> String           
-                -> String         
+                -> [String]         
                 -> m ValidityResultDto
-getValidity AppContext {..} asnText prefixText = do 
+getValidity AppContext {..} asnText (List.intercalate "/" -> prefixText) = do 
     liftIO (readTVarIO $ appState ^. #prefixIndex) >>= \case     
         Nothing          -> throwError $ err404 { errBody = [i|Could not build prefix index to detect validity.|] }
         Just prefixIndex -> do             

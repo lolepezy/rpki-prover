@@ -104,7 +104,7 @@ data API api = API {
         versions :: api :- "versions" :> Get '[JSON] [(WorldVersion, VersionKind)],
 
         validity :: api :- "validity" :> Capture "asn" String :> 
-                                        Capture "prefix" String :> 
+                                        CaptureAll "prefix" String :> 
                                         Get '[JSON] ValidityResultDto
     }
     deriving (Generic)
