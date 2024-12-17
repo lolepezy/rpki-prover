@@ -345,46 +345,6 @@ data ManifestsDto = ManifestsDto {
     deriving stock (Eq, Show, Generic)
 
 
-{- 
-{
-  "validated_route": {
-    "route": {
-      "origin_asn": "AS7029",
-      "prefix": "149.126.193.0/24"
-    },
-    "validity": {
-      "state": "valid",
-      "description": "At least one VRP Matches the Route Prefix",
-      "VRPs": {
-        "matched": [
-          {
-            "asn": "AS7029",
-            "prefix": "149.126.193.0/24",
-            "max_length": "24"
-          }
-        ],
-        "unmatched_as": [
-          {
-            "asn": "AS399989",
-            "prefix": "149.126.193.0/24",
-            "max_length": "24"
-          },
-          {
-            "asn": "AS209372",
-            "prefix": "149.126.192.0/18",
-            "max_length": "24"
-          }
-        ],
-        "unmatched_length": [
-        ]
-      }
-    }
-  },
-  "generatedTime": "2024-11-23T22:46:40Z"
-}
-
--}
-
 data RouteDto = RouteDto {
         origin_asn :: ASN,
         prefix     :: String

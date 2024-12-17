@@ -339,26 +339,19 @@ toValidityResultDto
             InvalidOverall _ -> "invalid"
             Unknown          -> "unknown"
 
-    (matched, unmatched_as, unmatched_length) = 
-        case validityResult of 
-            ValidOverall valids invalids -> (
-                    vrpToMatch <$> valids,
-                    [ vrpToMatch vrp | InvalidAsn vrp <- invalids ],
-                    [ vrpToMatch vrp | InvalidLength vrp <- invalids ]
-                )
-
-            InvalidOverall invalids -> (
-                    [],
-                    [ vrpToMatch vrp | InvalidAsn vrp <- invalids ],
-                    [ vrpToMatch vrp | InvalidLength vrp <- invalids ]
-                )
-
-            Unknown -> ([], [], [])
-
-    vrps = ValidityVrpsDto {..}
+    vrps = case validityResult of 
+        ValidOverall valids invalids -> allMatches valids invalids
+        InvalidOverall invalids      -> allMatches []     invalids
+        Unknown                      -> allMatches []     []
 
     validityDto = ValidityDto {..}
             
+    allMatches valids invalids = ValidityVrpsDto {
+            matched = vrpToMatch <$> valids,
+            unmatched_as = [ vrpToMatch vrp | InvalidAsn vrp <- invalids ],
+            unmatched_length = [ vrpToMatch vrp | InvalidLength vrp <- invalids ]
+        }
+
     vrpToMatch (Vrp asn (prefixStr -> prefix) max_length) = MatchVrpDto {..}
 
 rawCSV :: BB.Builder -> BB.Builder -> RawCSV
