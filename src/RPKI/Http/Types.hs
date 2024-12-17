@@ -448,10 +448,13 @@ instance ToJSON ManifestShortcutDto
 instance ToJSON ManifestsDto
 instance ToJSON CaShortcutDto
 instance ToJSON ValidityResultDto
-instance ToJSON ValidityDto
 instance ToJSON ValidityVrpsDto
 instance ToJSON MatchVrpDto
 instance ToJSON RouteDto
+
+instance ToJSON ValidityDto where
+    toJSON ValidityDto {..} = 
+        object ["state" .= state, "VRPs" .= toJSON vrps ]
 
 instance ToJSON ManifestChildDto where 
     toJSON ManifestChildDto {..} = 
