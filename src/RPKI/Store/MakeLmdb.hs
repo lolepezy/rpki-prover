@@ -84,7 +84,6 @@ createDatabase env logger checkAction = do
         bgpStore         <- BgpStore <$> createMap
         versionStore     <- VersionStore <$> createMap
         metricStore      <- MetricStore <$> createMap
-        indexStore       <- IndexStore <$> createMap
         slurmStore       <- SlurmStore <$> createMap
         jobStore         <- JobStore <$> createMap        
         metadataStore    <- MetadataStore <$> createMap          

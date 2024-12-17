@@ -546,7 +546,7 @@ getValidity :: (MonadIO m, Storage s, MonadError ServerError m)
                 -> m ValidityResultDto
 getValidity AppContext {..} asnText (List.intercalate "/" -> prefixText) = do 
     liftIO (readTVarIO $ appState ^. #prefixIndex) >>= \case     
-        Nothing          -> throwError $ err404 { errBody = [i|Could not build prefix index to detect validity.|] }
+        Nothing          -> throwError $ err404 { errBody = [i|Prefix index is not (yet) build.|] }
         Just prefixIndex -> do             
             case parsePrefix prefixText of 
                 Nothing     -> throwError $ err400 { errBody = [i|Could not parse prefix #{prefixText}.|] }

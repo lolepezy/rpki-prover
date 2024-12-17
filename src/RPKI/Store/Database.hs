@@ -61,7 +61,6 @@ import           RPKI.AppState
 import           RPKI.AppTypes
 import           RPKI.RTR.Types
 import           RPKI.Time
-import           RPKI.Resources.Validity
 
 -- This one is to be changed manually whenever 
 -- any of the serialisable/serialized types become incompatible.
@@ -90,7 +89,6 @@ data DB s = DB {
     bgpStore         :: BgpStore s,
     versionStore     :: VersionStore s,
     metricStore      :: MetricStore s,
-    indexStore       :: IndexStore s,
     slurmStore       :: SlurmStore s,
     jobStore         :: JobStore s,
     sequences        :: SequenceMap s,
@@ -257,11 +255,6 @@ data MftShortcutStore s = MftShortcutStore {
     }
     deriving stock (Generic)
 
-
-newtype IndexStore s = IndexStore {    
-        bgps :: SMap "indexes" s WorldVersion (Compressed PrefixIndex)
-    }
-    deriving stock (Generic)
 
 getKeyByHash :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> Hash -> m (Maybe ObjectKey)
@@ -706,18 +699,6 @@ slurmForVersion tx DB { slurmStore = SlurmStore s } wv =
 deleteSlurms :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteSlurms tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.delete tx s wv
 
-savePrefixIndex :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PrefixIndex -> WorldVersion -> m ()
-savePrefixIndex tx DB { indexStore = IndexStore s } prefixIndex wv = 
-    liftIO $ M.put tx s wv (Compressed prefixIndex)
-
-deletePrefixIndex :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> WorldVersion -> m ()
-deletePrefixIndex tx DB { indexStore = IndexStore s } wv = liftIO $ M.delete tx s wv
-
-getPrefixIndex :: (MonadIO m, Storage s) => 
-                   Tx s mode -> DB s -> WorldVersion -> m (Maybe PrefixIndex)
-getPrefixIndex tx DB { indexStore = IndexStore m } wv = 
-    liftIO $ fmap unCompressed <$> M.get tx m wv  
-
 updateRrdpMeta :: (MonadIO m, Storage s) =>
                 Tx s 'RW -> DB s -> RrdpMeta -> RrdpURL -> m ()
 updateRrdpMeta tx DB { repositoryStore = RepositoryStore {..} } meta url = liftIO $ do
@@ -945,7 +926,6 @@ deletePayloads tx db worldVersion = do
     deleteSpls tx db worldVersion            
     deleteMetrics tx db worldVersion
     deleteSlurms tx db worldVersion
-    deletePrefixIndex tx db worldVersion
 
 
 -- | Find the latest completed world version 

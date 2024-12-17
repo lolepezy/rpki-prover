@@ -51,17 +51,15 @@ data RtrState = RtrState {
 
 data RtrPayloads = RtrPayloads {
         vrps       :: Vrps,
-        uniqueVrps :: Set AscOrderedVrp,
+        uniqueVrps :: ~(Set AscOrderedVrp),
         bgpSec     :: Set BGPSecPayload
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (NFData)
     deriving Semigroup via GenericSemigroup RtrPayloads   
     deriving Monoid    via GenericMonoid RtrPayloads           
 
 newtype AscOrderedVrp = AscOrderedVrp Vrp
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (NFData)
 
 
 -- We store VRPs sorteed in a specific way, so that we don't have to sort them before 

@@ -17,6 +17,8 @@ import           Data.Generics.Labels
 import           Data.List                as List
 import           Data.Word                (Word8)
 import           Data.Bits
+import           Data.Foldable
+import           Data.Coerce
 
 import           GHC.Generics
 
@@ -79,8 +81,8 @@ makePrefixIndex = let
         ipv6 = Node 0 128 (AllTogether [])
     in PrefixIndex {..}
 
-createPrefixIndex :: Vrps -> PrefixIndex
-createPrefixIndex = foldr insertVrp makePrefixIndex . mconcat . allVrps
+createPrefixIndex :: (Foldable f, Coercible v Vrp) => f v -> PrefixIndex
+createPrefixIndex = foldr insertVrp makePrefixIndex . map coerce . toList
 
 insertVrp :: Vrp -> PrefixIndex -> PrefixIndex
 insertVrp vrpToInsert@(Vrp _ pp _) t = 

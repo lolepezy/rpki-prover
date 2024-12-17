@@ -85,13 +85,15 @@ newAppState = do
 newWorldVersion :: IO WorldVersion
 newWorldVersion = instantToVersion . unNow <$> thisInstant        
 
-completeVersion :: AppState -> WorldVersion -> RtrPayloads -> Maybe Slurm -> Maybe PrefixIndex -> STM RtrPayloads
-completeVersion AppState {..} worldVersion rtrPayloads slurm maybePrefixIndex = do 
+completeVersion :: AppState -> WorldVersion -> RtrPayloads -> Maybe Slurm -> STM RtrPayloads
+completeVersion AppState {..} worldVersion rtrPayloads slurm = do 
     writeTVar world $! Just $! worldVersion
-    writeTVar validated $! force rtrPayloads
+    writeTVar validated rtrPayloads
     let slurmed = maybe rtrPayloads (filterWithSLURM rtrPayloads) slurm
-    writeTVar filtered $! force slurmed
-    writeTVar prefixIndex $! force maybePrefixIndex
+    writeTVar filtered slurmed
+    writeTVar prefixIndex $! 
+        force $ Just $ createPrefixIndex $ slurmed ^. #uniqueVrps
+
     -- invalidate serialised PDU cache with every new version
     writeTVar cachedBinaryPdus Nothing
     pure $! slurmed    

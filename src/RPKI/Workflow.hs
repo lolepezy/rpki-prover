@@ -59,11 +59,8 @@ import           RPKI.Util
 import           RPKI.Time
 import           RPKI.Worker
 import           RPKI.SLURM.Types
-import           RPKI.SLURM.SlurmProcessing
 import           RPKI.Http.Dto
 import           RPKI.Http.Types
-import           RPKI.Resources.Validity
-
 
 -- A job run can be the first one or not and 
 -- sometimes we need this information.
@@ -322,10 +319,8 @@ runWorkflow appContext@AppContext {..} tals = do
                         logError logger [i|Something weird happened, could not re-read VRPs.|]
                         pure (mempty, mempty)
                     Just rtrPayloads -> do                 
-                        prefixIndex <- roTxT database (\tx db -> getPrefixIndex tx db worldVersion) 
                         slurmedPayloads <- atomically $                             
-                            completeVersion appState worldVersion 
-                                rtrPayloads maybeSlurm prefixIndex
+                            completeVersion appState worldVersion rtrPayloads maybeSlurm 
 
                         pure (rtrPayloads, slurmedPayloads)
                           
@@ -519,12 +514,6 @@ runValidation appContext@AppContext {..} worldVersion tals = do
 
     -- Save all the results into LMDB
     let updatedValidation = slurmValidations <> topDownValidations ^. typed
-    
-    let vrps = 
-            case maybeSlurm of 
-                Nothing    -> payloads ^. typed
-                Just slurm -> applySlurmToVrps slurm $ payloads ^. typed
-
     (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
         saveMetrics tx db worldVersion (topDownValidations ^. typed)
         saveValidations tx db worldVersion (updatedValidation ^. typed)
@@ -533,7 +522,6 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         saveAspas tx db (payloads ^. typed) worldVersion
         saveGbrs tx db (payloads ^. typed) worldVersion
         saveBgps tx db (payloads ^. typed) worldVersion        
-        savePrefixIndex tx db (createPrefixIndex vrps) worldVersion        
         for_ maybeSlurm $ saveSlurm tx db worldVersion
         completeValidationWorldVersion tx db worldVersion
 
@@ -581,11 +569,10 @@ loadStoredAppState AppContext {..} = do
 
                 | otherwise -> do
                     (payloads, elapsed) <- timedMS $ do                                            
-                        !slurm       <- slurmForVersion tx db lastVersion
-                        !payloads    <- getRtrPayloads tx db lastVersion                        
-                        !prefixIndex <- getPrefixIndex tx db lastVersion                        
+                        slurm    <- slurmForVersion tx db lastVersion
+                        payloads <- getRtrPayloads tx db lastVersion                        
                         for_ payloads $ \payloads' -> 
-                            void $ atomically $ completeVersion appState lastVersion payloads' slurm prefixIndex
+                            void $ atomically $ completeVersion appState lastVersion payloads' slurm
                         pure payloads
                     for_ payloads $ \p -> do 
                         let vrps = p ^. #vrps
