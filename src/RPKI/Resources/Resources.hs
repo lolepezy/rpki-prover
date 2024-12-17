@@ -358,11 +358,14 @@ readIp6 (parseIpv6 -> Just p) = p
     
 parseIpv6 :: String -> Maybe Ipv6Prefix
 parseIpv6 s = 
-    case Ips.canonicalise (read s) of
+    case readMaybe s of 
         Nothing -> Nothing
-        Just cb -> case cb of 
-            IpBlockV4 _ -> Nothing
-            IpBlockV6 b -> Just $ Ipv6Prefix b    
+        Just (Ips.canonicalise -> canonical) ->
+            case canonical of 
+                Nothing -> Nothing
+                Just cb -> case cb of 
+                    IpBlockV4 _ -> Nothing
+                    IpBlockV6 b -> Just $ Ipv6Prefix b    
 
 parseIpv4 :: String -> Maybe Ipv4Prefix
 parseIpv4 s = Ipv4Prefix <$> readMaybe s
