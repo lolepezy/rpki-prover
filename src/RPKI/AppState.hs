@@ -7,6 +7,7 @@
 module RPKI.AppState where
     
 import           Control.Concurrent.STM    
+import           Control.DeepSeq
 import           Control.Lens hiding (filtered)
 import           Control.Monad (join)
 import           Control.Monad.IO.Class
@@ -86,11 +87,11 @@ newWorldVersion = instantToVersion . unNow <$> thisInstant
 
 completeVersion :: AppState -> WorldVersion -> RtrPayloads -> Maybe Slurm -> Maybe PrefixIndex -> STM RtrPayloads
 completeVersion AppState {..} worldVersion rtrPayloads slurm maybePrefixIndex = do 
-    writeTVar world $ Just $! worldVersion
-    writeTVar validated $! rtrPayloads
+    writeTVar world $! Just $! worldVersion
+    writeTVar validated $! force rtrPayloads
     let slurmed = maybe rtrPayloads (filterWithSLURM rtrPayloads) slurm
-    writeTVar filtered $! slurmed
-    writeTVar prefixIndex maybePrefixIndex
+    writeTVar filtered $! force slurmed
+    writeTVar prefixIndex $! force maybePrefixIndex
     -- invalidate serialised PDU cache with every new version
     writeTVar cachedBinaryPdus Nothing
     pure $! slurmed    

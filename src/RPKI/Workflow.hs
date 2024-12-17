@@ -581,9 +581,9 @@ loadStoredAppState AppContext {..} = do
 
                 | otherwise -> do
                     (payloads, elapsed) <- timedMS $ do                                            
-                        slurm       <- slurmForVersion tx db lastVersion
-                        payloads    <- getRtrPayloads tx db lastVersion                        
-                        prefixIndex <- getPrefixIndex tx db lastVersion                        
+                        !slurm       <- slurmForVersion tx db lastVersion
+                        !payloads    <- getRtrPayloads tx db lastVersion                        
+                        !prefixIndex <- getPrefixIndex tx db lastVersion                        
                         for_ payloads $ \payloads' -> 
                             void $ atomically $ completeVersion appState lastVersion payloads' slurm prefixIndex
                         pure payloads

@@ -1,9 +1,11 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE StrictData          #-}
-{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE StrictData     #-}
+{-# LANGUAGE DerivingVia    #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
 module RPKI.RTR.Types where
 
+import           Control.DeepSeq
 import           Data.Set       (Set)
 import           Data.Monoid.Generic
 import           Data.Ord
@@ -53,11 +55,13 @@ data RtrPayloads = RtrPayloads {
         bgpSec     :: Set BGPSecPayload
     }
     deriving stock (Show, Eq, Generic)
+    deriving anyclass (NFData)
     deriving Semigroup via GenericSemigroup RtrPayloads   
     deriving Monoid    via GenericMonoid RtrPayloads           
 
 newtype AscOrderedVrp = AscOrderedVrp Vrp
     deriving stock (Show, Eq, Generic)
+    deriving anyclass (NFData)
 
 
 -- We store VRPs sorteed in a specific way, so that we don't have to sort them before 

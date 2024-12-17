@@ -10,6 +10,7 @@
 
 module RPKI.Resources.Validity where
 
+import           Control.DeepSeq
 import           Control.Lens
 import           Data.Generics.Labels                  
 
@@ -50,7 +51,7 @@ data Node c = Node {
         subtree :: AddressTree c
     }
     deriving stock (Show, Eq, Ord, Generic)     
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 data AddressTree c = AllTogether [c]
                      | Divided {
@@ -59,18 +60,18 @@ data AddressTree c = AllTogether [c]
                             overlapping :: [c]
                         }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 data FasterVrp = FasterVrp Integer Integer Vrp
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 data PrefixIndex = PrefixIndex {
         ipv4 :: Node FasterVrp,
         ipv6 :: Node FasterVrp
     }
     deriving stock (Show, Eq, Ord, Generic)     
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
 
 makePrefixIndex :: PrefixIndex
 makePrefixIndex = let 
