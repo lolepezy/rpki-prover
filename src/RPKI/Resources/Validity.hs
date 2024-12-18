@@ -15,7 +15,7 @@ import           Control.Lens
 import           Data.Generics.Labels                  
 
 import           Data.List                as List
-import           Data.Word                (Word8)
+import           Data.Word                (Word8, Word32)
 import           Data.Bits
 import           Data.Foldable
 import           Data.Coerce
@@ -47,30 +47,30 @@ data ValidityResult = ValidOverall [Vrp] [ValidityPerVrp]
                     | Unknown
     deriving stock (Show, Eq, Ord, Generic)                         
 
-data Node c = Node {
-        address :: {-# UNPACK #-} Integer,
+data Node a = Node {
+        address :: a,
         bitSize :: {-# UNPACK #-} Word8,
-        subtree :: AddressTree c
+        subtree :: AddressTree a
     }
     deriving stock (Show, Eq, Ord, Generic)     
     deriving anyclass (TheBinary, NFData)
 
-data AddressTree c = AllTogether [c]
+data AddressTree a = AllTogether [QuickCompVrp a]
                      | Divided {
-                            lower       :: Node c,
-                            higher      :: Node c,
-                            overlapping :: [c]
+                            lower       :: Node a,
+                            higher      :: Node a,
+                            overlapping :: [QuickCompVrp a]
                         }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-data FasterVrp = FasterVrp Integer Integer Vrp
+data QuickCompVrp a = QuickCompVrp a a Vrp
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
 data PrefixIndex = PrefixIndex {
-        ipv4 :: Node FasterVrp,
-        ipv6 :: Node FasterVrp
+        ipv4 :: Node Word32,
+        ipv6 :: Node Integer
     }
     deriving stock (Show, Eq, Ord, Generic)     
     deriving anyclass (TheBinary, NFData)
@@ -87,33 +87,38 @@ createPrefixIndex = foldr insertVrp makePrefixIndex . map coerce . toList
 insertVrp :: Vrp -> PrefixIndex -> PrefixIndex
 insertVrp vrpToInsert@(Vrp _ pp _) t = 
     case pp of 
-        Ipv4P (Ipv4Prefix _) -> t & #ipv4 %~ insertIntoTree
-        Ipv6P (Ipv6Prefix _) -> t & #ipv6 %~ insertIntoTree
-  where
-    (startToInsert, endToInsert) = prefixEdges pp
+        Ipv4P p@(Ipv4Prefix _) -> let 
+                (startToInsert, endToInsert) = prefixEdgesV4 p
+            in t & #ipv4 %~ insertIntoTree startToInsert endToInsert
 
-    insertIntoTree node = 
+        Ipv6P p@(Ipv6Prefix _) -> let 
+                (startToInsert, endToInsert) = prefixEdgesV6 p
+            in t & #ipv6 %~ insertIntoTree startToInsert endToInsert
+  where    
+    
+    insertIntoTree :: (Bits a, Num a, Ord a) => a -> a -> Node a -> Node a
+    insertIntoTree startToInsert endToInsert node = 
         node & #subtree %~ \case        
             AllTogether vrps -> let 
                     vrps' = toInsert : vrps
                     updated = AllTogether vrps'
-                in if length vrps' > 3 
+                in if length vrps' > 20 
                         then divide updated 
                         else updated                
              
             Divided {..} ->                 
                 case checkInterval startToInsert endToInsert middle of  
-                    Lower    -> Divided { lower = insertIntoTree lower, .. }
-                    Higher   -> Divided { higher = insertIntoTree higher, .. }
+                    Lower    -> Divided { lower = insertIntoTree startToInsert endToInsert lower, .. }
+                    Higher   -> Divided { higher = insertIntoTree startToInsert endToInsert higher, .. }
                     Overlaps -> Divided { overlapping = toInsert : overlapping, ..}
       where
-        toInsert = FasterVrp startToInsert endToInsert vrpToInsert
+        toInsert = QuickCompVrp startToInsert endToInsert vrpToInsert
         newBitSize = node ^. #bitSize - 1
         middle = intervalMiddle node
 
         divide (AllTogether vrps) = let
             (lowerVrps, higherVrps, overlapping) = 
-                foldr (\vrp@(FasterVrp vStart vEnd _) (lowers, highers, overlaps) -> 
+                foldr (\vrp@(QuickCompVrp vStart vEnd _) (lowers, highers, overlaps) -> 
                     case checkInterval vStart vEnd middle of 
                         Lower    -> (vrp : lowers, highers,       overlaps)
                         Higher   -> (lowers,       vrp : highers, overlaps)
@@ -128,26 +133,29 @@ insertVrp vrpToInsert@(Vrp _ pp _) t =
 
 
 lookupVrps :: IpPrefix -> PrefixIndex -> [Vrp]
-lookupVrps prefix PrefixIndex {..} = 
-    map (\(FasterVrp _ _ vrp) -> vrp) $
-        case prefix of
-            Ipv4P (Ipv4Prefix _) -> lookupTree ipv4 
-            Ipv6P (Ipv6Prefix _) -> lookupTree ipv6 
-  where
-    (start, end) = prefixEdges prefix
+lookupVrps prefix PrefixIndex {..} =         
+    case prefix of
+        Ipv4P p@(Ipv4Prefix _) -> let 
+                (start, end) = prefixEdgesV4 p
+            in map (\(QuickCompVrp _ _ vrp) -> vrp) $ lookupTree ipv4 start end
 
-    lookupTree node =         
+        Ipv6P p@(Ipv6Prefix _) -> let 
+                (start, end) = prefixEdgesV6 p
+            in map (\(QuickCompVrp _ _ vrp) -> vrp) $ lookupTree ipv6 start end
+  where    
+    lookupTree :: (Bits a, Num a, Ord a) => Node a -> a -> a -> [QuickCompVrp a]
+    lookupTree node start end =         
         case node ^. #subtree of 
             AllTogether vrps -> filter suitable vrps
             Divided {..}     -> 
                 case checkInterval start end (intervalMiddle node) of 
-                    Lower    -> lookupTree lower 
-                    Higher   -> lookupTree higher
+                    Lower    -> lookupTree lower start end
+                    Higher   -> lookupTree higher start end
                     Overlaps -> filter suitable overlapping
-
-    {-# INLINE suitable #-}
-    suitable (FasterVrp vStart vEnd _) =
-        vStart <= start && vEnd >= end
+      where
+        {-# INLINE suitable #-}
+        suitable (QuickCompVrp vStart vEnd _) =
+            vStart <= start && vEnd >= end
 
 prefixValidity :: ASN -> IpPrefix -> PrefixIndex -> ValidityResult
 prefixValidity asn prefix prefixIndex = 
@@ -170,30 +178,31 @@ prefixValidity asn prefix prefixIndex =
             Valid _ -> True
             _       -> False) validityPerVrp        
 
+{-# INLINE prefixEdgesV4 #-}
+prefixEdgesV4 :: Ipv4Prefix -> (Word32, Word32)
+prefixEdgesV4 (Ipv4Prefix p) = (asWord32 (V4.firstIpAddress p), asWord32 (V4.lastIpAddress p))
 
-{-# INLINE prefixEdges #-}         
-prefixEdges :: IpPrefix -> (Integer, Integer)
-prefixEdges = \case
-    Ipv4P (Ipv4Prefix p) -> (v4toInteger (V4.firstIpAddress p), v4toInteger (V4.lastIpAddress p))
-    Ipv6P (Ipv6Prefix p) -> (v6toInteger (V6.firstIpAddress p), v6toInteger (V6.lastIpAddress p))  
+{-# INLINE prefixEdgesV6 #-}
+prefixEdgesV6 :: Ipv6Prefix -> (Integer, Integer)
+prefixEdgesV6 (Ipv6Prefix p) = (v6toInteger (V6.firstIpAddress p), v6toInteger (V6.lastIpAddress p))
 
 {-# INLINE intervalMiddle #-}
-intervalMiddle :: Node a -> Integer
+intervalMiddle :: (Bits a, Num a) => Node a -> a
 intervalMiddle node = node ^. #address + 1 `shiftL` (fromIntegral (node ^. #bitSize - 1))
 
 data What = Lower | Higher | Overlaps
     deriving stock (Eq, Ord, Generic)     
 
 {-# INLINE checkInterval #-}
-checkInterval :: Integer -> Integer -> Integer -> What
+checkInterval :: Ord a => a -> a -> a -> What
 checkInterval start end middle = 
     if | end < middle   -> Lower
        | start > middle -> Higher
        | otherwise      -> Overlaps
 
-{-# INLINE v4toInteger #-}
-v4toInteger :: V4.IpAddress -> Integer
-v4toInteger (V4.IpAddress w) = fromIntegral w
+{-# INLINE asWord32 #-}
+asWord32 :: V4.IpAddress -> Word32
+asWord32 (V4.IpAddress w) = w
 
 {-# INLINE v6toInteger #-}
 v6toInteger :: V6.IpAddress -> Integer
