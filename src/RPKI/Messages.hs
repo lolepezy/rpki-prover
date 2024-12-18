@@ -362,6 +362,7 @@ toInternalErrorMessage = \case
     WorkerTimeout t      -> t
     WorkerOutOfCpuTime t -> t
     WorkerOutOfMemory t  -> t
+    WorkerDetectedDifferentExecutable t  -> t
 
 fmtOID :: OID -> Text
 fmtOID oid = Text.intercalate "." $ map (Text.pack . show) oid

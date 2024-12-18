@@ -38,7 +38,6 @@ import           RPKI.AppContext
 import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
-import           RPKI.Config
 import           RPKI.Metrics.Prometheus
 import           RPKI.Metrics.System
 import           RPKI.Time
@@ -56,6 +55,7 @@ import           RPKI.Store.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util
 import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
+import           RPKI.Version
 
 
 httpServer :: (Storage s, MaintainableStorage s) => AppContext s -> Application

@@ -28,6 +28,7 @@ import Network.HTTP.Simple
 import RPKI.AppContext
 import RPKI.AppMonad
 import RPKI.Config
+import RPKI.Version
 import RPKI.Domain
 import RPKI.Parse.Parse
 import RPKI.Reporting
