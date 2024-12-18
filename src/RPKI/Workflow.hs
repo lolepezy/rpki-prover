@@ -457,13 +457,14 @@ runWorkflow appContext@AppContext {..} tals = do
                     ])
         
         r <- runValidatorT 
-                (newScopes "validator") $ 
-                    runWorker logger config 
-                        workerId 
-                        (ValidationParams worldVersion tals)                        
-                        (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
-                        Nothing
-                        arguments                                        
+                (newScopes "validator") $ do 
+                    workerInput <- 
+                        makeWorkerInput appContext workerId
+                            (ValidationParams worldVersion tals)                        
+                            (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
+                            Nothing
+                    runWorker logger workerInput arguments
+
         pure (r, workerId)
 
     runCleanUpWorker worldVersion = do             
@@ -478,13 +479,12 @@ runWorkflow appContext@AppContext {..} tals = do
                     rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerMemoryMb) ]
         
         r <- runValidatorT             
-                (newScopes "cache-clean-up") $ 
-                    runWorker logger config
-                        workerId 
-                        (CacheCleanupParams worldVersion)
-                        (Timebox 300)
-                        Nothing
-                        arguments                                                                    
+                (newScopes "cache-clean-up") $ do 
+                    workerInput <- makeWorkerInput appContext workerId
+                                        (CacheCleanupParams worldVersion)
+                                        (Timebox 300)
+                                        Nothing
+                    runWorker logger workerInput arguments                                                                   
         pure (r, workerId)                            
 
 -- To be called by the validation worker process

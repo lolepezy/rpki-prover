@@ -64,7 +64,7 @@ runRrdpFetchWorker :: AppContext s
             -> WorldVersion
             -> RrdpRepository             
             -> ValidatorT IO (RrdpRepository, RrdpFetchStat)
-runRrdpFetchWorker AppContext {..} fetchConfig worldVersion repository = do
+runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repository = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
     -- are passed as 'RrdpFetchParams'.
@@ -81,15 +81,12 @@ runRrdpFetchWorker AppContext {..} fetchConfig worldVersion repository = do
 
     scopes <- askScopes
 
-    wr@WorkerResult {..} <- runWorker
-                                logger
-                                config
-                                workerId 
-                                (RrdpFetchParams scopes repository worldVersion)                        
-                                (Timebox $ fetchConfig ^. #rrdpTimeout)                                
-                                (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
-                                arguments  
-        
+    workerInput <- makeWorkerInput appContext workerId
+                        (RrdpFetchParams scopes repository worldVersion)                        
+                        (Timebox $ fetchConfig ^. #rrdpTimeout)                                
+                        (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
+
+    wr@WorkerResult {..} <- runWorker logger workerInput arguments 
     let RrdpFetchResult z = payload
     logWorkerDone logger workerId wr
     pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory

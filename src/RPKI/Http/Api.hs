@@ -24,12 +24,12 @@ import           Servant.Swagger.UI
 import qualified Data.HashMap.Strict.InsOrd as IOMap
 
 import           RPKI.AppTypes
-import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Store.Types
 import           RPKI.Http.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util (convert)
+import           RPKI.Version
 
 
 data API api = API {        
