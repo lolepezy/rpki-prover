@@ -14,8 +14,9 @@ import           Control.Monad.IO.Class
 
 import qualified Data.ByteString                  as BS
 
-import           Data.Set (Set)
-import qualified Data.Set as Set
+import           Data.Set                         (Set)
+import qualified Data.Set                         as Set
+import qualified Data.Map.Strict                  as Map
 import           GHC.Generics
 import           RPKI.AppMonad
 import           RPKI.Domain
@@ -24,6 +25,7 @@ import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
 import           RPKI.Time
 import           RPKI.Metrics.System
+import           RPKI.RTR.Protocol
 import           RPKI.RTR.Types
 import           RPKI.Resources.Validity
 
@@ -40,9 +42,9 @@ data AppState = AppState {
         filtered  :: TVar RtrPayloads,
 
         -- Full RTR state sent to every RTR client.
-        -- It is serialised once and sent to every new client 
-        -- requesting the full state
-        cachedBinaryPdus :: TVar (Maybe BS.ByteString),
+        -- It is serialised once per RTR protocol version 
+        -- and sent to every new client requesting the full state
+        cachedBinaryPdus :: TVar (Map.Map ProtocolVersion BS.ByteString),
 
         -- Function that re-reads SLURM file(s) after every re-validation
         readSlurm   :: Maybe (ValidatorT IO Slurm),
@@ -56,7 +58,7 @@ data AppState = AppState {
         -- Index for searching VRPs by a prefix used
         -- by the validity check
         prefixIndex :: TVar (Maybe PrefixIndex)
-
+        
     } deriving stock (Generic)
 
 
@@ -71,14 +73,14 @@ newAppState :: IO AppState
 newAppState = do        
     Now now <- thisInstant
     atomically $ do 
-        world       <- newTVar Nothing
-        validated   <- newTVar mempty
-        filtered    <- newTVar mempty        
-        rtrState    <- newTVar Nothing
-        readSlurm   <- pure Nothing
-        system      <- newTVar (newSystemInfo now)        
-        prefixIndex <- newTVar Nothing
-        cachedBinaryPdus <- newTVar Nothing
+        world            <- newTVar Nothing
+        validated        <- newTVar mempty
+        filtered         <- newTVar mempty        
+        rtrState         <- newTVar Nothing
+        readSlurm        <- pure Nothing
+        system           <- newTVar (newSystemInfo now)        
+        prefixIndex      <- newTVar Nothing
+        cachedBinaryPdus <- newTVar mempty
         pure AppState {..}
                     
 
@@ -95,8 +97,8 @@ completeVersion AppState {..} worldVersion rtrPayloads slurm = do
         force $ Just $ createPrefixIndex $ slurmed ^. #uniqueVrps
 
     -- invalidate serialised PDU cache with every new version
-    writeTVar cachedBinaryPdus Nothing
-    pure $! slurmed    
+    writeTVar cachedBinaryPdus mempty
+    pure $! slurmed
 
 getWorldVerionIO :: AppState -> IO (Maybe WorldVersion)
 getWorldVerionIO AppState {..} = readTVarIO world
@@ -139,11 +141,11 @@ filterWithSLURM RtrPayloads {..} slurm =
 
 -- TODO Make it more generic for things that need to be recomoputed for each version 
 -- and things that are computed on-demand.
-cachedPduBinary :: AppState -> (RtrPayloads -> BS.ByteString) -> STM BS.ByteString
-cachedPduBinary appState@AppState {..} f = 
-    readTVar cachedBinaryPdus >>= \case     
+cachedPduBinary :: AppState -> ProtocolVersion -> (RtrPayloads -> BS.ByteString) -> STM BS.ByteString
+cachedPduBinary appState@AppState {..} protocolVersion makeBs = do 
+    (Map.lookup protocolVersion <$> readTVar cachedBinaryPdus) >>= \case
         Nothing -> do            
-            bs <- f <$> readRtrPayloads appState 
-            writeTVar cachedBinaryPdus $ Just bs
+            bs <- makeBs <$> readRtrPayloads appState 
+            modifyTVar' cachedBinaryPdus $ Map.insert protocolVersion bs
             pure bs
         Just bs -> pure bs
