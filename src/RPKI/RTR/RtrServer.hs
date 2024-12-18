@@ -454,7 +454,7 @@ respondToPdu
                     ResetQueryPdu -> 
                         withProtocolVersionCheck pdu $ let 
                             action = do 
-                                bs <- cachedPduBinary appState (currentCachePayloadBS pduProtocol)
+                                bs <- cachedPduBinary appState pduProtocol (currentCachePayloadBS pduProtocol)
                                 pure $ [TruePdu $ CacheResponsePdu currentSessionId] 
                                     <> [SerialisedPdu bs]
                                     <> [TruePdu $ EndOfDataPdu currentSessionId currentSerial defIntervals]                                    

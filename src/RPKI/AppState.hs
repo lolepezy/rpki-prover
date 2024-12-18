@@ -12,8 +12,9 @@ import           Control.Concurrent.STM
 
 import qualified Data.ByteString                  as BS
 
-import           Data.Set (Set)
-import qualified Data.Set as Set
+import           Data.Set                         (Set)
+import qualified Data.Set                         as Set
+import qualified Data.Map.Strict                  as Map
 import           GHC.Generics
 import           RPKI.AppMonad
 import           RPKI.Domain
@@ -22,6 +23,7 @@ import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
 import           RPKI.Time
 import           RPKI.Metrics.System
+import           RPKI.RTR.Protocol
 import           RPKI.RTR.Types
 import           Control.Monad.IO.Class
 
@@ -30,7 +32,7 @@ data AppState = AppState {
         world     :: TVar (Maybe WorldVersion),
         validated :: TVar RtrPayloads,
         filtered  :: TVar RtrPayloads,
-        cachedBinaryPdus :: TVar (Maybe BS.ByteString),
+        cachedBinaryPdus :: TVar (Map.Map ProtocolVersion BS.ByteString),
         readSlurm :: Maybe (ValidatorT IO Slurm),
         rtrState  :: TVar (Maybe RtrState),
         system    :: TVar SystemInfo
@@ -51,7 +53,7 @@ newAppState = do
                     newTVar Nothing <*>
                     newTVar mempty <*>
                     newTVar mempty <*>
-                    newTVar Nothing <*>
+                    newTVar mempty <*>
                     pure Nothing <*>                    
                     newTVar Nothing <*>
                     newTVar (newSystemInfo now)
@@ -67,7 +69,7 @@ completeVersion AppState {..} worldVersion rtrPayloads slurm = do
     let slurmed = maybe rtrPayloads (filterWithSLURM rtrPayloads) slurm
     writeTVar filtered slurmed
     -- invalidate serialised PDU cache with every new version
-    writeTVar cachedBinaryPdus Nothing
+    writeTVar cachedBinaryPdus mempty
     pure slurmed
 
 getWorldVerionIO :: AppState -> IO (Maybe WorldVersion)
@@ -111,11 +113,11 @@ filterWithSLURM RtrPayloads {..} slurm =
 
 -- TODO Make it more generic for things that need to be recomoputed for each version 
 -- and things that are computed on-demand.
-cachedPduBinary :: AppState -> (RtrPayloads -> BS.ByteString) -> STM BS.ByteString
-cachedPduBinary appState@AppState {..} f = 
-    readTVar cachedBinaryPdus >>= \case     
+cachedPduBinary :: AppState -> ProtocolVersion -> (RtrPayloads -> BS.ByteString) -> STM BS.ByteString
+cachedPduBinary appState@AppState {..} protocolVersion makeBs = do 
+    (Map.lookup protocolVersion <$> readTVar cachedBinaryPdus) >>= \case
         Nothing -> do            
-            bs <- f <$> readRtrPayloads appState 
-            writeTVar cachedBinaryPdus $ Just bs
+            bs <- makeBs <$> readRtrPayloads appState 
+            modifyTVar' cachedBinaryPdus $ Map.insert protocolVersion bs
             pure bs
         Just bs -> pure bs
