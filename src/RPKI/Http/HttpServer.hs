@@ -30,6 +30,7 @@ import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
+import qualified Data.Vector                      as V
 import           Data.String.Interpolate.IsString
 
 import           Text.Read                        (readMaybe)
@@ -103,7 +104,7 @@ httpServer appContext = genericServe HttpApi {
         system = liftIO $ getSystem appContext,
         rtr = getRtr appContext,
         versions = getVersions appContext,
-        validity = getValidity appContext
+        validity = getPrefixValidity appContext
     }
 
     uiServer AppContext {..} = do
@@ -158,7 +159,7 @@ getVRPsUniqueRaw appContext version =
     vrpSetToCSV <$> 
         getValuesByVersion appContext version 
         (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #filtered)) 
-        getVrps toVrpSet
+        getVrps toVrpV
 
 getVRPsUnique :: (MonadIO m, Storage s, MonadError ServerError m)
                     => AppContext s -> Maybe Text -> m [VrpMinimalDto]
@@ -188,7 +189,7 @@ getRoasValidatedRaw appContext version =
                                     pure $! [ VrpExtDto { 
                                                     uri = toText $ pickLocation locs,
                                                     vrp = toVrpDto vrp taName
-                                                } | vrp <- Set.toList vrps ] 
+                                                } | vrp <- V.toList vrps ] 
 asMaybe :: (Eq a, Monoid a) => a -> Maybe a
 asMaybe a = if mempty == a then Nothing else Just a
 
@@ -539,12 +540,12 @@ getVersions AppContext {..} = liftIO $ do
     List.sortOn (Down . fst) <$> roTx db (`allVersions` db)
 
 
-getValidity :: (MonadIO m, Storage s, MonadError ServerError m)
+getPrefixValidity :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s
                 -> String           
                 -> [String]         
                 -> m ValidityResultDto
-getValidity AppContext {..} asnText (List.intercalate "/" -> prefixText) = do 
+getPrefixValidity AppContext {..} asnText (List.intercalate "/" -> prefixText) = do 
     liftIO (readTVarIO $ appState ^. #prefixIndex) >>= \case     
         Nothing          -> throwError $ err404 { errBody = [i|Prefix index is not (yet) build.|] }
         Just prefixIndex -> do             

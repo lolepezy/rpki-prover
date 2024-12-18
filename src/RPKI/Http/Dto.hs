@@ -12,11 +12,13 @@ import qualified Data.ByteString.Builder          as BB
 
 import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set                         as Set
+import qualified Data.Vector                      as V
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
+import           Data.Foldable
 
 import qualified Data.X509 as X509
 import qualified Crypto.PubKey.RSA.Types as RSA
@@ -46,16 +48,16 @@ toVrpDtos = \case
     Nothing   -> []
     Just vrps -> [ VrpDto a p len (unTaName ta) |
                     (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
-                    Vrp a p len  <- Set.toList vrpSet ]
+                    Vrp a p len  <- V.toList vrpSet ]
 
 toVrpDto :: Vrp -> TaName -> VrpDto
 toVrpDto (Vrp a p len) (TaName ta) = VrpDto a p len ta
 
-toVrpSet :: Maybe Vrps -> Set.Set AscOrderedVrp
-toVrpSet = maybe mempty uniqVrps
+toVrpV :: Maybe Vrps -> V.Vector AscOrderedVrp
+toVrpV = maybe mempty uniqVrps
 
 toVrpMinimalDtos :: Maybe Vrps -> [VrpMinimalDto]
-toVrpMinimalDtos = map asDto . Set.toList . toVrpSet
+toVrpMinimalDtos = map asDto . V.toList . toVrpV
   where
     asDto (AscOrderedVrp (Vrp asn prefix maxLength)) = VrpMinimalDto {..}
 
@@ -140,11 +142,11 @@ vrpExtDtosToCSV vrpDtos =
             str (convert ta) <> ch '\n'
 
 
-vrpSetToCSV :: Set.Set AscOrderedVrp -> RawCSV
+vrpSetToCSV :: Foldable f => f AscOrderedVrp -> RawCSV
 vrpSetToCSV vrpDtos =
     rawCSV
         (str "ASN,IP Prefix,Max Length\n")
-        (mconcat $ map toBS $ Set.toList vrpDtos)
+        (mconcat $ map toBS $ toList vrpDtos)
   where
     toBS (AscOrderedVrp (Vrp (ASN asn) prefix (PrefixLength maxLength))) =
         str "AS" <> str (show asn) <> ch ',' <>

@@ -44,6 +44,7 @@ import           Data.Monoid.Generic
 import qualified Data.List                        as List
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
+import qualified Data.Vector                      as V
 import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
@@ -333,9 +334,11 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
 
             let payloads = Payloads {..}        
             let payloads' = payloads & #vrps .~ 
-                                newVrps taName (Set.fromList [ v | T2 vrp _ <- vrps, v <- vrp ])
+                                newVrps taName (V.fromList [ v | T2 vrp _ <- vrps, v <- vrp ])
+
             let roas = newRoas taName $ MonoidalMap.fromList $ 
-                            map (\(T2 vrp k) -> (k, Set.fromList vrp)) vrps 
+                            map (\(T2 vrp k) -> (k, V.fromList vrp)) vrps 
+
             pure $ TopDownResult payloads' roas vs
 
   where
@@ -1679,7 +1682,7 @@ addUniqueVRPCount :: (HasType ValidationState s, HasField' "payloads" s (Payload
 addUniqueVRPCount !s = let
         vrpCountLens = typed @ValidationState . typed @RawMetric . #vrpCounts
         totalUnique = Count (fromIntegral $ uniqueVrpCount $ (s ^. #payloads) ^. #vrps)
-        perTaUnique = MonoidalMap.map (Count . fromIntegral . Set.size) (unVrps $ (s ^. #payloads) ^. #vrps)   
+        perTaUnique = MonoidalMap.map (Count . fromIntegral . V.length) (unVrps $ (s ^. #payloads) ^. #vrps)   
     in s & vrpCountLens . #totalUnique .~ totalUnique                
          & vrpCountLens . #perTaUnique .~ perTaUnique
 

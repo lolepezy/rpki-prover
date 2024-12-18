@@ -12,6 +12,7 @@ import           Data.Foldable  (toList)
 import           Data.Set       (Set, (\\))
 import qualified Data.Set       as Set
 import qualified Data.List      as List
+import qualified Data.Vector    as V
 import           Data.Generics.Labels
 
 import           Deque.Strict   as Deq
@@ -130,10 +131,15 @@ setDiff previous current
                 deleted = previous \\ current
             }
 
+setDiffV :: Ord a => V.Vector a -> V.Vector a -> Diff a
+setDiffV previous current = 
+    setDiff (Set.fromList $ V.toList previous)
+            (Set.fromList $ V.toList current) 
+
 evalDiffs :: RtrPayloads -> RtrPayloads -> RtrDiffs
 evalDiffs previous current =
     GenDiffs {
-        vrpDiff    = setDiff (uniqueVrps previous) (uniqueVrps current),
+        vrpDiff    = setDiffV (uniqueVrps previous) (uniqueVrps current),
         bgpSecDiff = setDiff (bgpSec previous) (bgpSec current)
     }
 
