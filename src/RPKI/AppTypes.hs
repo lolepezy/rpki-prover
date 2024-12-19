@@ -16,7 +16,7 @@ import           GHC.Generics
 import           RPKI.Store.Base.Serialisation
 
 {- 
-    Sequence of versions that is equal to some monotonic clock timestamp in nanoseconds. 
+    Sequence of versions that are equal to some monotonic clock timestamp in nanoseconds. 
     Used to attribute pretty much everything (validation runs, (async) repository fetches, 
     etc.) to. Every validation happens for a specific world version which is also used 
     as 'now' for validity period comparisons. Also, most of the data in the cache is
