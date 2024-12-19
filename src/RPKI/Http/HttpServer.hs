@@ -568,8 +568,8 @@ getQueryPrefixValidity :: (MonadIO m, Storage s, MonadError ServerError m)
 getQueryPrefixValidity appContext maybeAsn maybePrefix = do 
     case (maybeAsn, maybePrefix) of 
         (Just asn, Just prefix) -> getPrefixValidity appContext asn [prefix]
-        (Nothing, _)            -> throwError $ err400 { errBody = "Parameter 'asn' is not set" }
-        (_, Nothing)            -> throwError $ err400 { errBody = "Parameter 'prefix' is not set" }
+        (Nothing,   _         ) -> throwError $ err400 { errBody = "Parameter 'asn' is not set" }
+        (_,         Nothing   ) -> throwError $ err400 { errBody = "Parameter 'prefix' is not set" }
 
 
 resolveVDto :: (MonadIO m, Storage s) => 

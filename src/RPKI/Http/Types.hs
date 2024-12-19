@@ -344,13 +344,11 @@ data ManifestsDto = ManifestsDto {
     }
     deriving stock (Eq, Show, Generic)
 
-
 data RouteDto = RouteDto {
         origin_asn :: ASN,
         prefix     :: String
     }
     deriving stock (Eq, Show, Generic)
-
 
 data ValidatedRouteDto = ValidatedRouteDto {
         route    :: RouteDto,
