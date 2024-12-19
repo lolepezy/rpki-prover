@@ -871,7 +871,7 @@ estimateVrpCount (Vrps vrps) = sum $ map V.length $ MonoidalMap.elems vrps
 
 -- Precise but much more expensive
 uniqueVrpCount :: Vrps -> Int 
-uniqueVrpCount (Vrps vrps) = V.length $ mconcat $ MonoidalMap.elems vrps
+uniqueVrpCount (Vrps vrps) = Set.size $ Set.fromList $ concatMap V.toList $ MonoidalMap.elems vrps
 
 newVrps :: TaName -> V.Vector Vrp -> Vrps
 newVrps taName vrps = Vrps $ MonoidalMap.singleton taName vrps
