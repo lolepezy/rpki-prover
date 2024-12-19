@@ -1,12 +1,15 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE StrictData          #-}
-{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE StrictData     #-}
+{-# LANGUAGE DerivingVia    #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
 module RPKI.RTR.Types where
 
+import           Control.DeepSeq
 import           Data.Set       (Set)
 import           Data.Monoid.Generic
 import           Data.Ord
+import           Data.Vector    
 import           Deque.Strict   as Deq
 
 import           GHC.Generics
@@ -49,7 +52,7 @@ data RtrState = RtrState {
 
 data RtrPayloads = RtrPayloads {
         vrps       :: Vrps,
-        uniqueVrps :: Set AscOrderedVrp,
+        uniqueVrps :: ~(Vector AscOrderedVrp),
         bgpSec     :: Set BGPSecPayload
     }
     deriving stock (Show, Eq, Generic)

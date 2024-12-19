@@ -101,7 +101,15 @@ data API api = API {
 
         rtr :: api :- "rtr" :> Get '[JSON] RtrDto,
 
-        versions :: api :- "versions" :> Get '[JSON] [(WorldVersion, VersionKind)]
+        versions :: api :- "versions" :> Get '[JSON] [(WorldVersion, VersionKind)],
+
+        validity :: api :- "validity" :> Capture "asn" String 
+                                      :> CaptureAll "prefix" String 
+                                      :> Get '[JSON] ValidityResultDto,
+
+        validityQ :: api :- "validity" :> QueryParam "asn" String 
+                                       :> QueryParam "prefix" String 
+                                       :> Get '[JSON] ValidityResultDto
     }
     deriving (Generic)
 
@@ -222,9 +230,29 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             ("/jobs", mempty & get ?~ jsonOn200 "List of latest job runs"),
             ("/system", mempty & get ?~ jsonOn200 "State of RPKI prover instance itself, some metrics and config"),
             ("/rtr", mempty & get ?~ jsonOn200 "State of the RTR server"),
-            ("/versions", mempty & get ?~ jsonOn200 "Return list of all world versions")                        
+            ("/versions", mempty & get ?~ jsonOn200 "Return list of all world versions"),
+
+            ("/validity/{asn}/{prefix}", mempty & get ?~ jsonOn200 validityDescription),
+
+            ("/validity", mempty 
+                & get ?~ jsonOn200 validityDescription                    
+                & parameters .~ [ 
+                    Inline $ mempty
+                        & name .~ "asn"
+                        & description ?~ "ASN"
+                        & required ?~ True
+                        & schema .~ ParamOther (mempty & in_ .~ ParamQuery), 
+                    Inline $ mempty
+                        & name .~ "prefix"
+                        & description ?~ "Prefix"
+                        & required ?~ True
+                        & schema .~ ParamOther (mempty & in_ .~ ParamQuery)                    
+                ]            
+            )               
         ] 
-  where                
+  where            
+    validityDescription = [i|Returns the same as Routinator's /validity 
+                             end-point (https://routinator.docs.nlnetlabs.nl/en/stable/api-endpoints.html)|]    
     jsonOn200 txt = mempty
                     & produces ?~ MimeList ["application/json"]
                     & at 200 ?~ txt

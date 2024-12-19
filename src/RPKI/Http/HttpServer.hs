@@ -30,6 +30,7 @@ import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
+import qualified Data.Vector                      as V
 import           Data.String.Interpolate.IsString
 
 import           Text.Read                        (readMaybe)
@@ -53,6 +54,8 @@ import           RPKI.Store.Database
 import           RPKI.Store.AppStorage
 import           RPKI.Store.Types
 import           RPKI.SLURM.Types
+import           RPKI.Resources.Resources
+import           RPKI.Resources.Validity
 import           RPKI.Util
 import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 import           RPKI.Version
@@ -100,7 +103,9 @@ httpServer appContext = genericServe HttpApi {
         manifests  = getManifests appContext,
         system = liftIO $ getSystem appContext,
         rtr = getRtr appContext,
-        versions = getVersions appContext
+        versions = getVersions appContext,
+        validity = getPrefixValidity appContext,
+        validityQ = getQueryPrefixValidity appContext
     }
 
     uiServer AppContext {..} = do
@@ -155,7 +160,7 @@ getVRPsUniqueRaw appContext version =
     vrpSetToCSV <$> 
         getValuesByVersion appContext version 
         (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #filtered)) 
-        getVrps toVrpSet
+        getVrps toVrpV
 
 getVRPsUnique :: (MonadIO m, Storage s, MonadError ServerError m)
                     => AppContext s -> Maybe Text -> m [VrpMinimalDto]
@@ -185,7 +190,7 @@ getRoasValidatedRaw appContext version =
                                     pure $! [ VrpExtDto { 
                                                     uri = toText $ pickLocation locs,
                                                     vrp = toVrpDto vrp taName
-                                                } | vrp <- Set.toList vrps ] 
+                                                } | vrp <- V.toList vrps ] 
 asMaybe :: (Eq a, Monoid a) => a -> Maybe a
 asMaybe a = if mempty == a then Nothing else Just a
 
@@ -534,6 +539,37 @@ getVersions AppContext {..} = liftIO $ do
     db <- readTVarIO database
     -- Sort versions from latest to earliest
     List.sortOn (Down . fst) <$> roTx db (`allVersions` db)
+
+
+getPrefixValidity :: (MonadIO m, Storage s, MonadError ServerError m)
+                => AppContext s
+                -> String           
+                -> [String]         
+                -> m ValidityResultDto
+getPrefixValidity AppContext {..} asnText (List.intercalate "/" -> prefixText) = do 
+    liftIO (readTVarIO $ appState ^. #prefixIndex) >>= \case     
+        Nothing          -> throwError $ err404 { errBody = [i|Prefix index is not (yet) build.|] }
+        Just prefixIndex -> do             
+            case parsePrefix prefixText of 
+                Nothing     -> throwError $ err400 { errBody = [i|Could not parse prefix #{prefixText}.|] }
+                Just prefix -> 
+                    case parseAsn asnText of 
+                        Nothing  -> throwError $ err400 { errBody = [i|Could not parse ASN #{asnText}.|] }
+                        Just asn -> do 
+                            Now now <- liftIO thisInstant
+                            let validity = prefixValidity asn prefix prefixIndex
+                            pure $! toValidityResultDto now asn prefix validity
+
+getQueryPrefixValidity :: (MonadIO m, Storage s, MonadError ServerError m)
+                        => AppContext s
+                        -> Maybe String           
+                        -> Maybe String
+                        -> m ValidityResultDto
+getQueryPrefixValidity appContext maybeAsn maybePrefix = do 
+    case (maybeAsn, maybePrefix) of 
+        (Just asn, Just prefix) -> getPrefixValidity appContext asn [prefix]
+        (Nothing,   _         ) -> throwError $ err400 { errBody = "Parameter 'asn' is not set" }
+        (_,         Nothing   ) -> throwError $ err400 { errBody = "Parameter 'prefix' is not set" }
 
 
 resolveVDto :: (MonadIO m, Storage s) => 

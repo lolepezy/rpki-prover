@@ -22,6 +22,7 @@ import           Data.Maybe (fromMaybe)
 import           Data.List (nub)
 import           Data.Coerce
 
+import qualified Data.Vector as V
 import qualified Data.Set as Set
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
@@ -50,9 +51,9 @@ applySlurmToVrps :: Slurm -> Vrps -> Vrps
 applySlurmToVrps slurm (Vrps vrps) = 
     Vrps $ filteredVrps vrps <> MonoidalMap.singleton slurmVrpName assertedVrps
   where     
-    filteredVrps = MonoidalMap.map (Set.filter filterFunc)
+    filteredVrps = MonoidalMap.map (V.filter filterFunc)
 
-    assertedVrps = Set.fromList 
+    assertedVrps = V.fromList 
         $ map toVrp 
         $ slurm ^. #locallyAddedAssertions . #prefixAssertions
       where

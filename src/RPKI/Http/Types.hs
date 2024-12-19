@@ -46,7 +46,6 @@ import           RPKI.Domain
 import           RPKI.TAL
 import           RPKI.Metrics.Metrics
 import           RPKI.Orphans.Json
-import           RPKI.Orphans.Swagger
 import           RPKI.Reporting
 
 import           RPKI.RRDP.Types
@@ -345,6 +344,44 @@ data ManifestsDto = ManifestsDto {
     }
     deriving stock (Eq, Show, Generic)
 
+data RouteDto = RouteDto {
+        origin_asn :: ASN,
+        prefix     :: String
+    }
+    deriving stock (Eq, Show, Generic)
+
+data ValidatedRouteDto = ValidatedRouteDto {
+        route    :: RouteDto,
+        validity :: ValidityDto
+    }
+    deriving stock (Eq, Show, Generic)
+
+data ValidityResultDto = ValidityResultDto {
+        validated_route :: ValidatedRouteDto,        
+        generatedTime   :: String
+    }
+    deriving stock (Eq, Show, Generic)
+
+data MatchVrpDto = MatchVrpDto {
+        asn        :: ASN,
+        prefix     :: String,
+        max_length :: PrefixLength
+    }
+    deriving stock (Eq, Show, Generic)
+    
+data ValidityVrpsDto = ValidityVrpsDto {
+        matched          :: [MatchVrpDto],
+        unmatched_as     :: [MatchVrpDto],
+        unmatched_length :: [MatchVrpDto]
+    }
+    deriving stock (Eq, Show, Generic)
+
+data ValidityDto = ValidityDto {
+        state :: Text,
+        vrps  :: ValidityVrpsDto
+    }
+    deriving stock (Eq, Show, Generic)
+
 data ManualCVS = ManualCVS
 data ObjectBlob = ObjectBlob
 
@@ -413,6 +450,15 @@ instance ToJSON TalDto
 instance ToJSON ManifestShortcutDto
 instance ToJSON ManifestsDto
 instance ToJSON CaShortcutDto
+instance ToJSON ValidatedRouteDto
+instance ToJSON ValidityResultDto
+instance ToJSON ValidityVrpsDto
+instance ToJSON MatchVrpDto
+instance ToJSON RouteDto
+
+instance ToJSON ValidityDto where
+    toJSON ValidityDto {..} = 
+        object ["state" .= state, "VRPs" .= toJSON vrps ]
 
 instance ToJSON ManifestChildDto where 
     toJSON ManifestChildDto {..} = 
@@ -473,6 +519,12 @@ instance ToSchema TalDto
 instance ToSchema ManifestShortcutDto
 instance ToSchema ManifestChildDto
 instance ToSchema ManifestsDto
+instance ToSchema ValidatedRouteDto
+instance ToSchema ValidityResultDto
+instance ToSchema ValidityDto
+instance ToSchema ValidityVrpsDto
+instance ToSchema MatchVrpDto
+instance ToSchema RouteDto
 instance ToSchema TAL
 instance ToSchema EncodedBase64 where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)

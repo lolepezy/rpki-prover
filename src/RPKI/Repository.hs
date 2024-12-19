@@ -499,8 +499,8 @@ lookupRsyncTree (RsyncURL host path) (RsyncTree t) =
 
 flattenRsyncTree :: RsyncTree -> [(RsyncURL, RepositoryMeta)]
 flattenRsyncTree (RsyncTree t) = 
-    mconcat $ map (\(host, tree) -> flattenTree host tree []) $ Map.toList t    
+    concatMap (\(host, tree) -> flattenTree host tree []) $ Map.toList t    
   where    
     flattenTree host (Leaf info) realPath  = [(RsyncURL host (reverse realPath), info)]
     flattenTree host SubTree {..} realPath = 
-        mconcat $ map (\(p, n) -> flattenTree host n (p : realPath)) $ Map.toList rsyncChildren  
+        concatMap (\(p, n) -> flattenTree host n (p : realPath)) $ Map.toList rsyncChildren  

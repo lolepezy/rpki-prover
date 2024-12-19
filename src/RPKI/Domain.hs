@@ -15,6 +15,7 @@ import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
+import qualified Data.Vector              as V
 
 import           Data.ByteString.Base16   as Hex
 import qualified Data.String.Conversions  as SC
@@ -699,13 +700,13 @@ newtype TaName = TaName { unTaName :: Text }
 instance Show TaName where
     show = show . unTaName
 
-newtype Vrps = Vrps { unVrps :: MonoidalMap TaName (Set Vrp) }
+newtype Vrps = Vrps { unVrps :: MonoidalMap TaName (V.Vector Vrp) }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup Vrps
     deriving Monoid    via GenericMonoid Vrps
 
-newtype Roas = Roas { unRoas :: MonoidalMap TaName (MonoidalMap ObjectKey (Set Vrp)) }
+newtype Roas = Roas { unRoas :: MonoidalMap TaName (MonoidalMap ObjectKey (V.Vector Vrp)) }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup Roas
@@ -866,20 +867,20 @@ makeSerial i =
 
 
 estimateVrpCount :: Vrps -> Int 
-estimateVrpCount (Vrps vrps) = sum $ map Set.size $ MonoidalMap.elems vrps
+estimateVrpCount (Vrps vrps) = sum $ map V.length $ MonoidalMap.elems vrps
 
 -- Precise but much more expensive
 uniqueVrpCount :: Vrps -> Int 
-uniqueVrpCount (Vrps vrps) = Set.size $ mconcat $ MonoidalMap.elems vrps
+uniqueVrpCount (Vrps vrps) = Set.size $ Set.fromList $ concatMap V.toList $ MonoidalMap.elems vrps
 
-newVrps :: TaName -> Set Vrp -> Vrps
-newVrps taName vrpSet = Vrps $ MonoidalMap.singleton taName vrpSet
+newVrps :: TaName -> V.Vector Vrp -> Vrps
+newVrps taName vrps = Vrps $ MonoidalMap.singleton taName vrps
 
-newRoas :: TaName -> MonoidalMap ObjectKey (Set.Set Vrp) -> Roas
+newRoas :: TaName -> MonoidalMap ObjectKey (V.Vector Vrp) -> Roas
 newRoas taName vrps = Roas $ MonoidalMap.singleton taName vrps
 
-allVrps :: Vrps -> [Set Vrp] 
+allVrps :: Vrps -> [V.Vector Vrp] 
 allVrps (Vrps vrps) = MonoidalMap.elems vrps          
 
 createVrps :: Foldable f => TaName -> f Vrp -> Vrps
-createVrps taName vrps = Vrps $ MonoidalMap.fromList [(taName, Set.fromList $ toList vrps)]
+createVrps taName vrps = Vrps $ MonoidalMap.fromList [(taName, V.fromList $ toList vrps)]
