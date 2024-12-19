@@ -1,12 +1,13 @@
 
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DeriveAnyClass     #-}
-{-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE StrictData         #-}
+{-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE DeriveAnyClass      #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE StrictData          #-}
 -- it is a little faster
-{-# LANGUAGE Strict             #-}
-{-# LANGUAGE OverloadedLabels   #-}
-{-# LANGUAGE MultiWayIf         #-}
+{-# LANGUAGE Strict              #-}
+{-# LANGUAGE OverloadedLabels    #-}
+{-# LANGUAGE MultiWayIf          #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 
 module RPKI.Resources.Validity where
 
@@ -19,6 +20,7 @@ import           Data.Word                (Word8, Word32)
 import           Data.Bits
 import           Data.Foldable
 import           Data.Coerce
+import           Data.Kind
 
 import           GHC.Generics
 
@@ -28,38 +30,31 @@ import qualified HaskellWorks.Data.Network.Ip.Ipv6     as V6
 import           RPKI.Domain
 import           RPKI.Resources.Types
 import           RPKI.Resources.Resources
-import           RPKI.Store.Base.Serialisation
-                  
-
-newtype ValidityByRoa = ValidityByRoa {
-        vrp :: Vrp
-    }
-    deriving stock (Show, Eq, Ord, Generic)         
+import           RPKI.Store.Base.Serialisation                       
 
 data ValidityPerVrp = InvalidAsn Vrp
                     | InvalidLength Vrp
                     | Valid Vrp
     deriving stock (Show, Eq, Ord, Generic)     
 
-
 data ValidityResult = ValidOverall [Vrp] [ValidityPerVrp]
                     | InvalidOverall [ValidityPerVrp]
                     | Unknown
     deriving stock (Show, Eq, Ord, Generic)                         
 
-data Node a = Node {
+data Bucket a c = Bucket {
         address :: a,
         bitSize :: {-# UNPACK #-} Word8,
-        subtree :: AddressTree a
+        subtree :: AddressTree a c
     }
     deriving stock (Show, Eq, Ord, Generic)     
     deriving anyclass (TheBinary, NFData)
 
-data AddressTree a = AllTogether [QuickCompVrp a]
+data AddressTree a c = AllTogether [c]
                      | Divided {
-                            lower       :: Node a,
-                            higher      :: Node a,
-                            overlapping :: [QuickCompVrp a]
+                            lower       :: Bucket a c,
+                            higher      :: Bucket a c,
+                            overlapping :: [c]
                         }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -68,17 +63,32 @@ data QuickCompVrp a = QuickCompVrp a a Vrp
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
+class StoredVrp a where
+    type ActuallyStored a :: Type
+    makeStoredVrp :: a -> a -> Vrp -> ActuallyStored a
+    prefixEgdes :: ActuallyStored a -> (a, a)
+
+instance StoredVrp Word32 where 
+    type ActuallyStored Word32 = Vrp
+    makeStoredVrp _ _ vrp = vrp
+    prefixEgdes (Vrp _ (Ipv4P p) _) = prefixEdgesV4 p
+
+instance StoredVrp Integer where 
+    type ActuallyStored Integer = QuickCompVrp Integer
+    makeStoredVrp s e vrp = QuickCompVrp s e vrp
+    prefixEgdes (QuickCompVrp s e _) = (s, e)
+
 data PrefixIndex = PrefixIndex {
-        ipv4 :: Node Word32,
-        ipv6 :: Node Integer
+        ipv4 :: Bucket Word32 (ActuallyStored Word32),
+        ipv6 :: Bucket Integer (ActuallyStored Integer)
     }
     deriving stock (Show, Eq, Ord, Generic)     
     deriving anyclass (TheBinary, NFData)
 
 makePrefixIndex :: PrefixIndex
 makePrefixIndex = let 
-        ipv4 = Node 0 32  (AllTogether [])
-        ipv6 = Node 0 128 (AllTogether [])
+        ipv4 = Bucket 0 32  (AllTogether [])
+        ipv6 = Bucket 0 128 (AllTogether [])
     in PrefixIndex {..}
 
 createPrefixIndex :: (Foldable f, Coercible v Vrp) => f v -> PrefixIndex
@@ -96,9 +106,9 @@ insertVrp vrpToInsert@(Vrp _ pp _) t =
             in t & #ipv6 %~ insertIntoTree startToInsert endToInsert
   where    
     
-    insertIntoTree :: (Bits a, Num a, Ord a) => a -> a -> Node a -> Node a
-    insertIntoTree startToInsert endToInsert node = 
-        node & #subtree %~ \case        
+    insertIntoTree :: (Bits a, Num a, Ord a, StoredVrp a) => a -> a -> Bucket a (ActuallyStored a) -> Bucket a (ActuallyStored a)
+    insertIntoTree startToInsert endToInsert bucket = 
+        bucket & #subtree %~ \case        
             AllTogether vrps -> let 
                     vrps' = toInsert : vrps
                     updated = AllTogether vrps'
@@ -112,22 +122,23 @@ insertVrp vrpToInsert@(Vrp _ pp _) t =
                     Higher   -> Divided { higher = insertIntoTree startToInsert endToInsert higher, .. }
                     Overlaps -> Divided { overlapping = toInsert : overlapping, ..}
       where
-        toInsert = QuickCompVrp startToInsert endToInsert vrpToInsert
-        newBitSize = node ^. #bitSize - 1
-        middle = intervalMiddle node
+        toInsert = makeStoredVrp startToInsert endToInsert vrpToInsert
+        newBitSize = bucket ^. #bitSize - 1
+        middle = intervalMiddle bucket
 
         divide (AllTogether vrps) = let
             (lowerVrps, higherVrps, overlapping) = 
-                foldr (\vrp@(QuickCompVrp vStart vEnd _) (lowers, highers, overlaps) -> 
-                    case checkInterval vStart vEnd middle of 
+                foldr (\vrp (lowers, highers, overlaps) -> let 
+                        (vStart, vEnd) = prefixEgdes vrp
+                    in case checkInterval vStart vEnd middle of 
                         Lower    -> (vrp : lowers, highers,       overlaps)
                         Higher   -> (lowers,       vrp : highers, overlaps)
                         Overlaps -> (lowers,       highers,       vrp : overlaps)     
                 ) ([], [], []) vrps
 
-            lower  = Node (node ^. #address) newBitSize $ AllTogether lowerVrps 
+            lower  = Bucket (bucket ^. #address) newBitSize $ AllTogether lowerVrps 
             
-            higher = Node middle newBitSize $ AllTogether higherVrps 
+            higher = Bucket middle newBitSize $ AllTogether higherVrps 
 
             in Divided {..}
 
@@ -137,24 +148,23 @@ lookupVrps prefix PrefixIndex {..} =
     case prefix of
         Ipv4P p@(Ipv4Prefix _) -> let 
                 (start, end) = prefixEdgesV4 p
-            in map (\(QuickCompVrp _ _ vrp) -> vrp) $ lookupTree ipv4 start end
+            in lookupTree ipv4 start end
 
         Ipv6P p@(Ipv6Prefix _) -> let 
                 (start, end) = prefixEdgesV6 p
             in map (\(QuickCompVrp _ _ vrp) -> vrp) $ lookupTree ipv6 start end
   where    
-    lookupTree :: (Bits a, Num a, Ord a) => Node a -> a -> a -> [QuickCompVrp a]
-    lookupTree node start end =         
-        case node ^. #subtree of 
+    lookupTree bucket start end =         
+        case bucket ^. #subtree of 
             AllTogether vrps -> filter suitable vrps
             Divided {..}     -> 
-                case checkInterval start end (intervalMiddle node) of 
+                case checkInterval start end (intervalMiddle bucket) of 
                     Lower    -> lookupTree lower start end
                     Higher   -> lookupTree higher start end
                     Overlaps -> filter suitable overlapping
       where
         {-# INLINE suitable #-}
-        suitable (QuickCompVrp vStart vEnd _) =
+        suitable (prefixEgdes -> (vStart, vEnd)) = 
             vStart <= start && vEnd >= end
 
 prefixValidity :: ASN -> IpPrefix -> PrefixIndex -> ValidityResult
@@ -187,8 +197,8 @@ prefixEdgesV6 :: Ipv6Prefix -> (Integer, Integer)
 prefixEdgesV6 (Ipv6Prefix p) = (v6toInteger (V6.firstIpAddress p), v6toInteger (V6.lastIpAddress p))
 
 {-# INLINE intervalMiddle #-}
-intervalMiddle :: (Bits a, Num a) => Node a -> a
-intervalMiddle node = node ^. #address + 1 `shiftL` (fromIntegral (node ^. #bitSize - 1))
+intervalMiddle :: (Bits a, Num a) => Bucket a c -> a
+intervalMiddle bucket = bucket ^. #address + 1 `shiftL` (fromIntegral (bucket ^. #bitSize - 1))
 
 data What = Lower | Higher | Overlaps
     deriving stock (Eq, Ord, Generic)     
