@@ -17,6 +17,7 @@ import qualified Data.ByteString                  as BS
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
 import qualified Data.Map.Strict                  as Map
+import qualified Data.Vector                      as V
 import           GHC.Generics
 import           RPKI.AppMonad
 import           RPKI.Domain
@@ -62,8 +63,10 @@ data AppState = AppState {
     } deriving stock (Generic)
 
 
-uniqVrps :: Vrps -> Set AscOrderedVrp 
-uniqVrps = mconcat . Prelude.map (Set.map AscOrderedVrp) . allVrps
+uniqVrps :: Vrps -> V.Vector AscOrderedVrp 
+uniqVrps vrps = let 
+        s = Set.fromList $ concatMap V.toList $ allVrps vrps
+    in V.fromListN (Set.size s) $ Prelude.map AscOrderedVrp $ Set.toList s
 
 mkRtrPayloads :: Vrps -> Set BGPSecPayload -> RtrPayloads
 mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrps vrps, .. }
@@ -92,13 +95,16 @@ completeVersion AppState {..} worldVersion rtrPayloads slurm = do
     writeTVar world $! Just $! worldVersion
     writeTVar validated rtrPayloads
     let slurmed = maybe rtrPayloads (filterWithSLURM rtrPayloads) slurm
-    writeTVar filtered slurmed
-    writeTVar prefixIndex $! 
-        force $ Just $ createPrefixIndex $ slurmed ^. #uniqueVrps
+    writeTVar filtered slurmed        
 
     -- invalidate serialised PDU cache with every new version
     writeTVar cachedBinaryPdus mempty
     pure $! slurmed
+
+updatePrefixIndex :: AppState -> RtrPayloads -> STM ()
+updatePrefixIndex AppState {..} rtrPayloads = 
+    writeTVar prefixIndex $! 
+        force $ Just $ createPrefixIndex $ rtrPayloads ^. #uniqueVrps
 
 getWorldVerionIO :: AppState -> IO (Maybe WorldVersion)
 getWorldVerionIO AppState {..} = readTVarIO world
