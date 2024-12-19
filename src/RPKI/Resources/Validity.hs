@@ -157,11 +157,12 @@ lookupVrps prefix PrefixIndex {..} =
     lookupTree bucket start end =         
         case bucket ^. #subtree of 
             AllTogether vrps -> filter suitable vrps
-            Divided {..}     -> 
-                case checkInterval start end (intervalMiddle bucket) of 
-                    Lower    -> lookupTree lower start end
-                    Higher   -> lookupTree higher start end
-                    Overlaps -> filter suitable overlapping
+            Divided {..}     -> let 
+                    overlaps = filter suitable overlapping
+                in case checkInterval start end (intervalMiddle bucket) of 
+                    Lower    -> overlaps <> lookupTree lower start end
+                    Higher   -> overlaps <> lookupTree higher start end
+                    Overlaps -> overlaps
       where
         {-# INLINE suitable #-}
         suitable (prefixEgdes -> (vStart, vEnd)) = 
