@@ -161,7 +161,7 @@ toMftShortcutDto MftShortcut {..} = ManifestShortcutDto {..}
 objectToDto :: RpkiObject -> ObjectDto
 objectToDto = \case
     CerRO c -> CertificateD $ objectDto c (certDto c) & #ski ?~ getSKI c
-    CrlRO c -> CRLD $ objectDto c $ crlDto c
+    CrlRO c -> CRLD $ objectDto c $ crlDto c    
     BgpRO b -> BGPSecD $ objectDto b (bgpSecDto b) & #ski ?~ getSKI b
 
     -- CMS-based stuff
@@ -331,6 +331,8 @@ toValidityResultDto
     (prefixStr -> prefix) 
     validityResult = ValidityResultDto {..}
  where
+    validated_route = ValidatedRouteDto {..}
+
     route = RouteDto {..} 
 
     state = 
@@ -344,7 +346,7 @@ toValidityResultDto
         InvalidOverall invalids      -> allMatches []     invalids
         Unknown                      -> allMatches []     []
 
-    validityDto = ValidityDto {..}
+    validity = ValidityDto {..}
             
     allMatches valids invalids = ValidityVrpsDto {
             matched = vrpToMatch <$> valids,

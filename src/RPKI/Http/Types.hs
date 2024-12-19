@@ -352,10 +352,15 @@ data RouteDto = RouteDto {
     deriving stock (Eq, Show, Generic)
 
 
+data ValidatedRouteDto = ValidatedRouteDto {
+        route    :: RouteDto,
+        validity :: ValidityDto
+    }
+    deriving stock (Eq, Show, Generic)
+
 data ValidityResultDto = ValidityResultDto {
-        route         :: RouteDto,
-        validityDto   :: ValidityDto,
-        generatedTime :: String
+        validated_route :: ValidatedRouteDto,        
+        generatedTime   :: String
     }
     deriving stock (Eq, Show, Generic)
 
@@ -447,6 +452,7 @@ instance ToJSON TalDto
 instance ToJSON ManifestShortcutDto
 instance ToJSON ManifestsDto
 instance ToJSON CaShortcutDto
+instance ToJSON ValidatedRouteDto
 instance ToJSON ValidityResultDto
 instance ToJSON ValidityVrpsDto
 instance ToJSON MatchVrpDto
@@ -515,6 +521,7 @@ instance ToSchema TalDto
 instance ToSchema ManifestShortcutDto
 instance ToSchema ManifestChildDto
 instance ToSchema ManifestsDto
+instance ToSchema ValidatedRouteDto
 instance ToSchema ValidityResultDto
 instance ToSchema ValidityDto
 instance ToSchema ValidityVrpsDto
