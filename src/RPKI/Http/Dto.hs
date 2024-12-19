@@ -337,18 +337,13 @@ toValidityResultDto
 
     route = RouteDto {..} 
 
-    state = 
-        case validityResult of 
-            ValidOverall _ _ -> "valid"
-            InvalidOverall _ -> "invalid"
-            Unknown          -> "unknown"
-
-    vrps = case validityResult of 
-        ValidOverall valids invalids -> allMatches valids invalids
-        InvalidOverall invalids      -> allMatches []     invalids
-        Unknown                      -> allMatches []     []
-
     validity = ValidityDto {..}
+
+    (state, vrps) = 
+        case validityResult of 
+            ValidOverall valids invalids -> ("valid",   allMatches valids invalids)
+            InvalidOverall invalids      -> ("invalid", allMatches []     invalids)
+            Unknown                      -> ("unknown", allMatches []     []      )
             
     allMatches valids invalids = ValidityVrpsDto {
             matched = vrpToMatch <$> valids,
