@@ -226,7 +226,13 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             ("/jobs", mempty & get ?~ jsonOn200 "List of latest job runs"),
             ("/system", mempty & get ?~ jsonOn200 "State of RPKI prover instance itself, some metrics and config"),
             ("/rtr", mempty & get ?~ jsonOn200 "State of the RTR server"),
-            ("/versions", mempty & get ?~ jsonOn200 "Return list of all world versions")                        
+            ("/versions", mempty & get ?~ jsonOn200 "Return list of all world versions"),
+
+            ("/validity/{asn}/{prefix}", 
+                mempty 
+                & get ?~ jsonOn200 [i|Returns the same as Routinator's /validity 
+                                      end-point (https://routinator.docs.nlnetlabs.nl/en/stable/api-endpoints.html)|]
+            ) 
         ] 
   where                
     jsonOn200 txt = mempty
