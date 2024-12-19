@@ -64,9 +64,9 @@ data AppState = AppState {
 
 
 uniqVrps :: Vrps -> V.Vector AscOrderedVrp 
-uniqVrps = V.fromList . Prelude.map AscOrderedVrp 
-        . Set.toList . Set.fromList 
-        . V.toList . mconcat . allVrps
+uniqVrps vrps = let 
+        s = Set.fromList $ V.toList $ mconcat $ allVrps vrps
+    in V.fromListN (Set.size s) $ Prelude.map AscOrderedVrp $ Set.toList s
 
 mkRtrPayloads :: Vrps -> Set BGPSecPayload -> RtrPayloads
 mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrps vrps, .. }
