@@ -95,13 +95,16 @@ completeVersion AppState {..} worldVersion rtrPayloads slurm = do
     writeTVar world $! Just $! worldVersion
     writeTVar validated rtrPayloads
     let slurmed = maybe rtrPayloads (filterWithSLURM rtrPayloads) slurm
-    writeTVar filtered slurmed
-    writeTVar prefixIndex $! 
-        force $ Just $ createPrefixIndex $ slurmed ^. #uniqueVrps
+    writeTVar filtered slurmed        
 
     -- invalidate serialised PDU cache with every new version
     writeTVar cachedBinaryPdus mempty
     pure $! slurmed
+
+updatePrefixIndex :: AppState -> RtrPayloads -> STM ()
+updatePrefixIndex AppState {..} rtrPayloads = 
+    writeTVar prefixIndex $! 
+        force $ Just $ createPrefixIndex $ rtrPayloads ^. #uniqueVrps
 
 getWorldVerionIO :: AppState -> IO (Maybe WorldVersion)
 getWorldVerionIO AppState {..} = readTVarIO world
