@@ -104,7 +104,8 @@ httpServer appContext = genericServe HttpApi {
         system = liftIO $ getSystem appContext,
         rtr = getRtr appContext,
         versions = getVersions appContext,
-        validity = getPrefixValidity appContext
+        validity = getPrefixValidity appContext,
+        validityQ = getQueryPrefixValidity appContext
     }
 
     uiServer AppContext {..} = do
@@ -558,7 +559,17 @@ getPrefixValidity AppContext {..} asnText (List.intercalate "/" -> prefixText) =
                             Now now <- liftIO thisInstant
                             let validity = prefixValidity asn prefix prefixIndex
                             pure $! toValidityResultDto now asn prefix validity
-            
+
+getQueryPrefixValidity :: (MonadIO m, Storage s, MonadError ServerError m)
+                        => AppContext s
+                        -> Maybe String           
+                        -> Maybe String
+                        -> m ValidityResultDto
+getQueryPrefixValidity appContext maybeAsn maybePrefix = do 
+    case (maybeAsn, maybePrefix) of 
+        (Just asn, Just prefix) -> getPrefixValidity appContext asn [prefix]
+        (Nothing, _)            -> throwError $ err400 { errBody = "Parameter 'asn' is not set" }
+        (_, Nothing)            -> throwError $ err400 { errBody = "Parameter 'prefix' is not set" }
 
 
 resolveVDto :: (MonadIO m, Storage s) => 
