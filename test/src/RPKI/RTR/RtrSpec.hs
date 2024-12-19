@@ -7,8 +7,6 @@ module RPKI.RTR.RtrSpec where
 
 import           Control.Monad
 
-import qualified Data.ByteString.Lazy     as LBS
-
 import qualified Data.List                         as List
 import           Data.Set                          (Set)
 import qualified Data.Set                          as Set
@@ -25,11 +23,8 @@ import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Protocol
 
-import           RPKI.Resources.Types
 import           RPKI.RTR.Types
-import           RPKI.RTR.Protocol
 
-import           Test.QuickCheck.Monadic
 import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
 

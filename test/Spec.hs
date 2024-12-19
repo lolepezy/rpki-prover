@@ -7,7 +7,8 @@ import RPKI.RRDP.ParseSpec
 import RPKI.Store.DatabaseSpec
 import RPKI.RRDP.UpdateSpec
 import RPKI.RRDP.HttpSpec
-import RPKI.ResourcesSpec
+import RPKI.Resources.ResourcesSpec
+import RPKI.Resources.ValiditySpec
 import RPKI.AppMonadSpec
 import RPKI.LoggingSpec
 import RPKI.RepositorySpec
@@ -22,6 +23,7 @@ main = defaultMain $ testGroup "All tests" [
         rrdpUpdateSpec,
         storeGroup,
         resourceGroup,        
+        validityGroup,
         repositoryGroup,
         rtrGroup,
         httpSpec,

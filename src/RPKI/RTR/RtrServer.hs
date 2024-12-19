@@ -27,6 +27,7 @@ import qualified Data.ByteString.Builder          as BB
 import           Data.List.Split                  (chunksOf)
 
 import qualified Data.Set                         as Set
+import qualified Data.Vector                      as V
 
 import           Data.Coerce
 import           Data.String.Interpolate.IsString
@@ -127,7 +128,7 @@ runRtrServer appContext RtrConfig {..} = do
         -- Do not store more than amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
         rtrPayloads <- atomically $ readRtrPayloads appState
-        let maxStoredDiffs = Set.size (rtrPayloads ^. #uniqueVrps)
+        let maxStoredDiffs = V.length (rtrPayloads ^. #uniqueVrps)
                 
         logDebug logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
 
@@ -144,8 +145,8 @@ runRtrServer appContext RtrConfig {..} = do
             let thereAreRtrUpdates = not $ emptyDiffs rtrDiff
 
             let 
-                previousVrpSize = Set.size $ previousRtrPayload ^. #uniqueVrps 
-                currentVrpSize  = Set.size $ currentRtrPayload ^. #uniqueVrps
+                previousVrpSize = V.length $ previousRtrPayload ^. #uniqueVrps 
+                currentVrpSize  = V.length $ currentRtrPayload ^. #uniqueVrps
                 previousBgpSecSize = Set.size $ previousRtrPayload ^. #bgpSec 
                 currentBgpSecSize  = Set.size $ currentRtrPayload ^. #bgpSec 
                 in logDebug logger $ [i|Notified about an update: #{previousVersion} -> #{newVersion}, |] <> 
@@ -518,9 +519,8 @@ currentCachePayloadBS protocolVersion RtrPayloads {..} =
         $ filter (`compatibleWith` protocolVersion)
         $ vrpPdusAnn <> mconcat bgpSecPdusAnn
   where    
-    vrpPdusAnn    = map (vrpToPdu Announcement) $ coerce $ Set.toAscList uniqueVrps
+    vrpPdusAnn    = map (vrpToPdu Announcement) $ coerce $ V.toList uniqueVrps
     bgpSecPdusAnn = map (bgpSecToPdu Announcement) $ Set.toList bgpSec
-
     
     
 vrpToPdu :: Flags -> Vrp -> Pdu

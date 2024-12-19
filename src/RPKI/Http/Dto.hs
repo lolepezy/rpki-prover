@@ -12,11 +12,13 @@ import qualified Data.ByteString.Builder          as BB
 
 import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set                         as Set
+import qualified Data.Vector                      as V
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
+import           Data.Foldable
 
 import qualified Data.X509 as X509
 import qualified Crypto.PubKey.RSA.Types as RSA
@@ -26,12 +28,13 @@ import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Resources.Resources
-import qualified RPKI.Resources.IntervalSet as IS
+import qualified RPKI.Resources.IntervalContainers as IS
 import           RPKI.Parse.Parse
 import           RPKI.Time
 import           RPKI.Reporting
 import           RPKI.Http.Types
 import           RPKI.Resources.Types
+import           RPKI.Resources.Validity
 import           RPKI.RTR.Types
 import           RPKI.Validation.Types
 import           RPKI.Util
@@ -45,16 +48,16 @@ toVrpDtos = \case
     Nothing   -> []
     Just vrps -> [ VrpDto a p len (unTaName ta) |
                     (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
-                    Vrp a p len  <- Set.toList vrpSet ]
+                    Vrp a p len  <- V.toList vrpSet ]
 
 toVrpDto :: Vrp -> TaName -> VrpDto
 toVrpDto (Vrp a p len) (TaName ta) = VrpDto a p len ta
 
-toVrpSet :: Maybe Vrps -> Set.Set AscOrderedVrp
-toVrpSet = maybe mempty uniqVrps
+toVrpV :: Maybe Vrps -> V.Vector AscOrderedVrp
+toVrpV = maybe mempty uniqVrps
 
 toVrpMinimalDtos :: Maybe Vrps -> [VrpMinimalDto]
-toVrpMinimalDtos = map asDto . Set.toList . toVrpSet
+toVrpMinimalDtos = map asDto . V.toList . toVrpV
   where
     asDto (AscOrderedVrp (Vrp asn prefix maxLength)) = VrpMinimalDto {..}
 
@@ -139,11 +142,11 @@ vrpExtDtosToCSV vrpDtos =
             str (convert ta) <> ch '\n'
 
 
-vrpSetToCSV :: Set.Set AscOrderedVrp -> RawCSV
+vrpSetToCSV :: Foldable f => f AscOrderedVrp -> RawCSV
 vrpSetToCSV vrpDtos =
     rawCSV
         (str "ASN,IP Prefix,Max Length\n")
-        (mconcat $ map toBS $ Set.toList vrpDtos)
+        (mconcat $ map toBS $ toList vrpDtos)
   where
     toBS (AscOrderedVrp (Vrp (ASN asn) prefix (PrefixLength maxLength))) =
         str "AS" <> str (show asn) <> ch ',' <>
@@ -160,7 +163,7 @@ toMftShortcutDto MftShortcut {..} = ManifestShortcutDto {..}
 objectToDto :: RpkiObject -> ObjectDto
 objectToDto = \case
     CerRO c -> CertificateD $ objectDto c (certDto c) & #ski ?~ getSKI c
-    CrlRO c -> CRLD $ objectDto c $ crlDto c
+    CrlRO c -> CRLD $ objectDto c $ crlDto c    
     BgpRO b -> BGPSecD $ objectDto b (bgpSecDto b) & #ski ?~ getSKI b
 
     -- CMS-based stuff
@@ -322,6 +325,33 @@ manifestDto m = let
             fileHashAlg = Text.pack $ show $ mft ^. #fileHashAlg,
             ..
         }
+
+toValidityResultDto :: Instant -> ASN -> IpPrefix -> ValidityResult -> ValidityResultDto
+toValidityResultDto 
+    (isoFormat -> generatedTime) 
+    origin_asn 
+    (prefixStr -> prefix) 
+    validityResult = ValidityResultDto {..}
+ where
+    validated_route = ValidatedRouteDto {..}
+
+    route = RouteDto {..} 
+
+    validity = ValidityDto {..}
+
+    (state, vrps) = 
+        case validityResult of 
+            ValidOverall valids invalids -> ("valid",   allMatches valids invalids)
+            InvalidOverall invalids      -> ("invalid", allMatches []     invalids)
+            Unknown                      -> ("unknown", allMatches []     []      )
+            
+    allMatches valids invalids = ValidityVrpsDto {
+            matched = vrpToMatch <$> valids,
+            unmatched_as = [ vrpToMatch vrp | InvalidAsn vrp <- invalids ],
+            unmatched_length = [ vrpToMatch vrp | InvalidLength vrp <- invalids ]
+        }
+
+    vrpToMatch (Vrp asn (prefixStr -> prefix) max_length) = MatchVrpDto {..}
 
 rawCSV :: BB.Builder -> BB.Builder -> RawCSV
 rawCSV header body = RawCSV $ BB.toLazyByteString $ header <> body
