@@ -68,7 +68,7 @@ validateMftLocation mft certficate =
         Just mftSIA -> do 
             let mftLocations = getLocations mft
             when (Set.null $ NESet.filter ((mftSIA ==) . getURL) $ unLocations mftLocations) $ 
-                vWarn $ MFTOnDifferentLocation mftSIA mftLocations                    
+                vError $ MFTOnDifferentLocation mftSIA mftLocations                    
 
 
 -- | Validate that the object has only one location: if not, 
