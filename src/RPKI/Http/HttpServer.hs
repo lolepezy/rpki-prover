@@ -105,7 +105,8 @@ httpServer appContext = genericServe HttpApi {
         rtr = getRtr appContext,
         versions = getVersions appContext,
         validity = getPrefixValidity appContext,
-        validityQ = getQueryPrefixValidity appContext
+        validityAsnPrefix = getQueryPrefixValidity appContext,
+        validityBulk = getBulkPrefixValidity appContext
     }
 
     uiServer AppContext {..} = do
@@ -570,6 +571,27 @@ getQueryPrefixValidity appContext maybeAsn maybePrefix = do
         (Just asn, Just prefix) -> getPrefixValidity appContext asn [prefix]
         (Nothing,   _         ) -> throwError $ err400 { errBody = "Parameter 'asn' is not set" }
         (_,         Nothing   ) -> throwError $ err400 { errBody = "Parameter 'prefix' is not set" }
+
+getBulkPrefixValidity :: (MonadIO m, Storage s, MonadError ServerError m)
+                        => AppContext s
+                        -> [ValidityBulkInputDto]
+                        -> m ValidityBulkResultDto
+getBulkPrefixValidity AppContext {..} inputs =
+    liftIO (readTVarIO $ appState ^. #prefixIndex) >>= \case     
+        Nothing          -> throwError $ err404 { errBody = [i|Prefix index is not (yet) build.|] }
+        Just prefixIndex -> do 
+            Now now <- liftIO thisInstant
+            validated <- forM inputs validatedPair
+            let results = map (\(asn, prefix) -> (asn, prefix, prefixValidity asn prefix prefixIndex)) validated            
+            pure $ toBulkResultDto now results
+  where
+    validatedPair ValidityBulkInputDto {..} = 
+        case parsePrefix prefix of 
+            Nothing -> throwError $ err400 { errBody = [i|Could not parse prefix #{prefix}.|] }
+            Just p  -> 
+                case parseAsn asn of 
+                    Nothing -> throwError $ err400 { errBody = [i|Could not parse ASN #{asn}.|] }
+                    Just a  -> pure (a, p)            
 
 
 resolveVDto :: (MonadIO m, Storage s) => 

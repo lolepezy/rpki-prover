@@ -107,9 +107,12 @@ data API api = API {
                                       :> CaptureAll "prefix" String 
                                       :> Get '[JSON] ValidityResultDto,
 
-        validityQ :: api :- "validity" :> QueryParam "asn" String 
+        validityAsnPrefix :: api :- "validity" :> QueryParam "asn" String 
                                        :> QueryParam "prefix" String 
-                                       :> Get '[JSON] ValidityResultDto
+                                       :> Get '[JSON] ValidityResultDto,
+
+        validityBulk :: api :- "validity" :> ReqBody '[JSON] [ValidityBulkInputDto] 
+                                          :> Post '[JSON] ValidityBulkResultDto 
     }
     deriving (Generic)
 

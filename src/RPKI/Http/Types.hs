@@ -362,6 +362,18 @@ data ValidityResultDto = ValidityResultDto {
     }
     deriving stock (Eq, Show, Generic)
 
+data ValidityBulkResultDto = ValidityBulkResultDto {
+        generatedTime :: String,
+        results       :: [ValidatedRouteDto]        
+    }
+    deriving stock (Eq, Show, Generic)
+
+data ValidityBulkInputDto = ValidityBulkInputDto {
+        asn    :: String,
+        prefix :: String
+    }
+    deriving stock (Eq, Show, Generic)
+
 data MatchVrpDto = MatchVrpDto {
         asn        :: ASN,
         prefix     :: String,
@@ -452,9 +464,13 @@ instance ToJSON ManifestsDto
 instance ToJSON CaShortcutDto
 instance ToJSON ValidatedRouteDto
 instance ToJSON ValidityResultDto
+instance ToJSON ValidityBulkInputDto
+instance ToJSON ValidityBulkResultDto
 instance ToJSON ValidityVrpsDto
 instance ToJSON MatchVrpDto
 instance ToJSON RouteDto
+
+instance FromJSON ValidityBulkInputDto
 
 instance ToJSON ValidityDto where
     toJSON ValidityDto {..} = 
@@ -521,6 +537,8 @@ instance ToSchema ManifestChildDto
 instance ToSchema ManifestsDto
 instance ToSchema ValidatedRouteDto
 instance ToSchema ValidityResultDto
+instance ToSchema ValidityBulkInputDto
+instance ToSchema ValidityBulkResultDto
 instance ToSchema ValidityDto
 instance ToSchema ValidityVrpsDto
 instance ToSchema MatchVrpDto

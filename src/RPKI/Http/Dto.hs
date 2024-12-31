@@ -329,14 +329,19 @@ manifestDto m = let
 toValidityResultDto :: Instant -> ASN -> IpPrefix -> ValidityResult -> ValidityResultDto
 toValidityResultDto 
     (isoFormat -> generatedTime) 
+    origin_asn prefix validityResult = 
+        ValidityResultDto { 
+            validated_route = toRouteDto origin_asn prefix validityResult, 
+            ..}
+    
+
+toRouteDto :: ASN -> IpPrefix -> ValidityResult -> ValidatedRouteDto
+toRouteDto 
     origin_asn 
     (prefixStr -> prefix) 
-    validityResult = ValidityResultDto {..}
- where
-    validated_route = ValidatedRouteDto {..}
-
+    validityResult = ValidatedRouteDto {..}
+  where
     route = RouteDto {..} 
-
     validity = ValidityDto {..}
 
     (state, vrps) = 
@@ -352,6 +357,13 @@ toValidityResultDto
         }
 
     vrpToMatch (Vrp asn (prefixStr -> prefix) max_length) = MatchVrpDto {..}
+
+
+toBulkResultDto :: Instant -> [(ASN, IpPrefix, ValidityResult)] -> ValidityBulkResultDto
+toBulkResultDto
+    (isoFormat -> generatedTime) 
+    (map (\(asn, prefix, result) -> toRouteDto asn prefix result) -> results) = ValidityBulkResultDto {..}
+  
 
 rawCSV :: BB.Builder -> BB.Builder -> RawCSV
 rawCSV header body = RawCSV $ BB.toLazyByteString $ header <> body
