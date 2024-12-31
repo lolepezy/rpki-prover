@@ -251,7 +251,22 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
                         & required ?~ True
                         & schema .~ ParamOther (mempty & in_ .~ ParamQuery)                    
                 ]            
-            )               
+            ),               
+
+            ("/validity", mempty 
+                & post ?~ 
+                    (jsonOn200                
+                            [i|Accepts a list of asn/prefix pair encoded in JSON, e.g. 
+                               [{ "asn": "AS123", "prefix": "X.X.X.X/Y" }, ...] and returns the list of 
+                               validity for each pair. |]                
+                    & consumes ?~ MimeList ["application/json"])
+                & parameters .~ [ 
+                    Inline $ mempty
+                        & name .~ "input"                        
+                        & required ?~ True
+                        & schema .~ ParamBody (Inline mempty)
+                ]
+            )
         ] 
   where            
     validityDescription = [i|Returns the same as Routinator's /validity 
