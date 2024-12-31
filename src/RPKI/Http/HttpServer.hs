@@ -583,9 +583,8 @@ getBulkPrefixValidity AppContext {..} inputs =
             Now now <- liftIO thisInstant
             results <- forM inputs $ \input -> do 
                 (asn, prefix) <- validatedPair input
-                let validity = prefixValidity asn prefix prefixIndex
-                pure (asn, prefix, validity)
-            pure $! toBulkResultDto now results
+                pure (asn, prefix, prefixValidity asn prefix prefixIndex)
+            pure $ toBulkResultDto now results
   where
     validatedPair ValidityBulkInputDto {..} = 
         case parsePrefix prefix of 
