@@ -30,7 +30,6 @@ import qualified HaskellWorks.Data.Network.Ip.Ipv6     as V6
 import           RPKI.Domain
 import           RPKI.Resources.Types
 import           RPKI.Resources.Resources
-import           RPKI.Store.Base.Serialisation                       
 
 data ValidityPerVrp = InvalidAsn Vrp
                     | InvalidLength Vrp
@@ -40,7 +39,7 @@ data ValidityPerVrp = InvalidAsn Vrp
 data ValidityResult = ValidOverall [Vrp] [ValidityPerVrp]
                     | InvalidOverall [ValidityPerVrp]
                     | Unknown
-    deriving stock (Show, Eq, Ord, Generic)                         
+    deriving stock (Show, Eq, Ord, Generic)                 
 
 data Bucket a c = Bucket {
         address :: a,
@@ -48,7 +47,7 @@ data Bucket a c = Bucket {
         subtree :: AddressTree a c
     }
     deriving stock (Show, Eq, Ord, Generic)     
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (NFData)    
 
 data AddressTree a c = AllTogether [c]
                      | Divided {
@@ -57,11 +56,11 @@ data AddressTree a c = AllTogether [c]
                             overlapping :: [c]
                         }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (NFData)
 
 data QuickCompVrp a = QuickCompVrp a a Vrp
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (NFData)
 
 class StoredVrp a where
     type ActuallyStored a :: Type
@@ -83,7 +82,7 @@ data PrefixIndex = PrefixIndex {
         ipv6 :: Bucket Integer (ActuallyStored Integer)
     }
     deriving stock (Show, Eq, Ord, Generic)     
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (NFData)
 
 makePrefixIndex :: PrefixIndex
 makePrefixIndex = let 

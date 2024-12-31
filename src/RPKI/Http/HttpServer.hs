@@ -581,9 +581,11 @@ getBulkPrefixValidity AppContext {..} inputs =
         Nothing          -> throwError $ err404 { errBody = [i|Prefix index is not (yet) build.|] }
         Just prefixIndex -> do 
             Now now <- liftIO thisInstant
-            validated <- forM inputs validatedPair
-            let results = map (\(asn, prefix) -> (asn, prefix, prefixValidity asn prefix prefixIndex)) validated            
-            pure $ toBulkResultDto now results
+            results <- forM inputs $ \input -> do 
+                (asn, prefix) <- validatedPair input
+                let validity = prefixValidity asn prefix prefixIndex
+                pure (asn, prefix, validity)
+            pure $! toBulkResultDto now results
   where
     validatedPair ValidityBulkInputDto {..} = 
         case parsePrefix prefix of 
