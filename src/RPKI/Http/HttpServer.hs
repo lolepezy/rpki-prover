@@ -581,18 +581,15 @@ getBulkPrefixValidity AppContext {..} inputs =
         Nothing          -> throwError $ err404 { errBody = [i|Prefix index is not (yet) build.|] }
         Just prefixIndex -> do 
             Now now <- liftIO thisInstant
-            results <- forM inputs $ \input -> do 
-                (asn, prefix) <- validatedPair input
-                pure (asn, prefix, prefixValidity asn prefix prefixIndex)
-            pure $ toBulkResultDto now results
-  where
-    validatedPair ValidityBulkInputDto {..} = 
-        case parsePrefix prefix of 
-            Nothing -> throwError $ err400 { errBody = [i|Could not parse prefix #{prefix}.|] }
-            Just p  -> 
-                case parseAsn asn of 
-                    Nothing -> throwError $ err400 { errBody = [i|Could not parse ASN #{asn}.|] }
-                    Just a  -> pure (a, p)            
+            results <- forM inputs $ \(ValidityBulkInputDto {..}) -> 
+                case parsePrefixT prefix of 
+                    Nothing -> throwError $ err400 { errBody = [i|Could not parse prefix #{prefix}.|] }
+                    Just p  -> 
+                        case parseAsnT asn of 
+                            Nothing -> throwError $ err400 { errBody = [i|Could not parse ASN #{asn}.|] }
+                            Just a  -> pure (a, p, prefixValidity a p prefixIndex)
+
+            pure $ toBulkResultDto now results  
 
 
 resolveVDto :: (MonadIO m, Storage s) => 

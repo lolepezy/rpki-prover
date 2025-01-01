@@ -346,7 +346,7 @@ data ManifestsDto = ManifestsDto {
 
 data RouteDto = RouteDto {
         origin_asn :: ASN,
-        prefix     :: String
+        prefix     :: Text
     }
     deriving stock (Eq, Show, Generic)
 
@@ -369,14 +369,14 @@ data ValidityBulkResultDto = ValidityBulkResultDto {
     deriving stock (Eq, Show, Generic)
 
 data ValidityBulkInputDto = ValidityBulkInputDto {
-        asn    :: String,
-        prefix :: String
+        asn    :: Text,
+        prefix :: Text
     }
     deriving stock (Eq, Show, Generic)
 
 data MatchVrpDto = MatchVrpDto {
         asn        :: ASN,
-        prefix     :: String,
+        prefix     :: Text,
         max_length :: PrefixLength
     }
     deriving stock (Eq, Show, Generic)

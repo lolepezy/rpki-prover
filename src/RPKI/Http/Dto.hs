@@ -118,7 +118,7 @@ vrpDtosToCSV vrpDtos =
             maxLength = PrefixLength ml,
             ..
         } = str "AS" <> str (show as) <> ch ',' <>
-            str (prefixStr prefix) <> ch ',' <>
+            text (prefixStr prefix) <> ch ',' <>
             str (show ml) <> ch ',' <>
             str (convert ta) <> ch '\n'
 
@@ -137,7 +137,7 @@ vrpExtDtosToCSV vrpDtos =
             ..
         } = str (Text.unpack uri) <> ch ',' <>
             str "AS" <> str (show as) <> ch ',' <>
-            str (prefixStr prefix) <> ch ',' <>
+            text (prefixStr prefix) <> ch ',' <>
             str (show ml) <> ch ',' <>
             str (convert ta) <> ch '\n'
 
@@ -150,7 +150,7 @@ vrpSetToCSV vrpDtos =
   where
     toBS (AscOrderedVrp (Vrp (ASN asn) prefix (PrefixLength maxLength))) =
         str "AS" <> str (show asn) <> ch ',' <>
-        str (prefixStr prefix) <> ch ',' <>
+        text (prefixStr prefix) <> ch ',' <>
         str (show maxLength) <> ch '\n'
  
 
@@ -368,12 +368,15 @@ toBulkResultDto
 rawCSV :: BB.Builder -> BB.Builder -> RawCSV
 rawCSV header body = RawCSV $ BB.toLazyByteString $ header <> body
 
-prefixStr :: IpPrefix -> String
-prefixStr (Ipv4P (Ipv4Prefix p)) = show p
-prefixStr (Ipv6P (Ipv6Prefix p)) = show p
+prefixStr :: IpPrefix -> Text.Text
+prefixStr (Ipv4P (Ipv4Prefix p)) = Text.pack $ show p
+prefixStr (Ipv6P (Ipv6Prefix p)) = Text.pack $ show p
 
 str :: String -> BB.Builder
 str = BB.stringUtf8
+
+text :: Text.Text -> BB.Builder
+text = str . Text.unpack
 
 ch :: Char -> BB.Builder
 ch  = BB.charUtf8

@@ -11,7 +11,8 @@ module RPKI.Resources.Resources where
 import           Prelude                              hiding (subtract, last)
 
 import qualified Data.ByteString                      as BS
-
+import           Data.Text                            (Text)
+import qualified Data.Text                            as Text
 import           Data.Bits
 import qualified Data.List                            as List
 import           Data.Maybe
@@ -366,11 +367,17 @@ parseIpv6 s =
 parseIpv4 :: String -> Maybe Ipv4Prefix
 parseIpv4 s = Ipv4Prefix <$> readMaybe s
 
+parsePrefixT :: Text -> Maybe IpPrefix 
+parsePrefixT = parsePrefix . Text.unpack
+
 parsePrefix :: String -> Maybe IpPrefix 
 parsePrefix s =     
     case parseIpv4 s of 
         Nothing   -> Ipv6P <$> parseIpv6 s
         Just ipv4 -> Just $ Ipv4P ipv4
+
+parseAsnT :: Text -> Maybe ASN
+parseAsnT = parseAsn . Text.unpack
 
 parseAsn :: String -> Maybe ASN
 parseAsn = \case 
