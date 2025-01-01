@@ -381,7 +381,7 @@ parseAsnT = parseAsn . Text.unpack
 
 parseAsn :: String -> Maybe ASN
 parseAsn = \case 
-    str@(a : s : n)
+    (a : s : n)
         | (a == 'a' || a == 'A') && (s == 's' || s == 'S') -> 
             ASN <$> readMaybe n
     n -> ASN <$> readMaybe n
