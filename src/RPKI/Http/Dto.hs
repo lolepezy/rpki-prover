@@ -359,10 +359,10 @@ toRouteDto
     vrpToMatch (Vrp asn (prefixStr -> prefix) max_length) = MatchVrpDto {..}
 
 
-toBulkResultDto :: Instant -> [(ASN, IpPrefix, ValidityResult)] -> ValidityBulkResultDto
+toBulkResultDto :: Instant -> [T3 ASN IpPrefix ValidityResult] -> ValidityBulkResultDto
 toBulkResultDto
     (isoFormat -> generatedTime) 
-    (map (\(asn, prefix, result) -> toRouteDto asn prefix result) -> results) = ValidityBulkResultDto {..}
+    (map (\(T3 asn prefix result) -> toRouteDto asn prefix result) -> results) = ValidityBulkResultDto {..}
   
 
 rawCSV :: BB.Builder -> BB.Builder -> RawCSV

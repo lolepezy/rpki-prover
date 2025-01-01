@@ -30,6 +30,7 @@ import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
+import           Data.Tuple.Strict
 import qualified Data.Vector                      as V
 import           Data.String.Interpolate.IsString
 
@@ -581,15 +582,15 @@ getBulkPrefixValidity AppContext {..} inputs =
         Nothing          -> throwError $ err404 { errBody = [i|Prefix index is not (yet) build.|] }
         Just prefixIndex -> do 
             Now now <- liftIO thisInstant
-            results <- forM inputs $ \(ValidityBulkInputDto {..}) -> 
+            !results <- forM inputs $ \(ValidityBulkInputDto {..}) -> 
                 case parsePrefixT prefix of 
                     Nothing -> throwError $ err400 { errBody = [i|Could not parse prefix #{prefix}.|] }
                     Just p  -> 
                         case parseAsnT asn of 
                             Nothing -> throwError $ err400 { errBody = [i|Could not parse ASN #{asn}.|] }
-                            Just a  -> pure (a, p, prefixValidity a p prefixIndex)
+                            Just a  -> pure $! T3 a p (prefixValidity a p prefixIndex)
 
-            pure $ toBulkResultDto now results  
+            pure $! toBulkResultDto now results  
 
 
 resolveVDto :: (MonadIO m, Storage s) => 
