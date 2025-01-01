@@ -543,25 +543,6 @@ getVersions AppContext {..} = liftIO $ do
     List.sortOn (Down . fst) <$> roTx db (`allVersions` db)
 
 
-getPrefixValidity :: (MonadIO m, Storage s, MonadError ServerError m)
-                => AppContext s
-                -> String           
-                -> [String]         
-                -> m ValidityResultDto
-getPrefixValidity AppContext {..} asnText (List.intercalate "/" -> prefixText) = do 
-    liftIO (readTVarIO $ appState ^. #prefixIndex) >>= \case     
-        Nothing          -> throwError $ err404 { errBody = [i|Prefix index is not (yet) build.|] }
-        Just prefixIndex -> do             
-            case parsePrefix prefixText of 
-                Nothing     -> throwError $ err400 { errBody = [i|Could not parse prefix #{prefixText}.|] }
-                Just prefix -> 
-                    case parseAsn asnText of 
-                        Nothing  -> throwError $ err400 { errBody = [i|Could not parse ASN #{asnText}.|] }
-                        Just asn -> do 
-                            Now now <- liftIO thisInstant
-                            let validity = prefixValidity asn prefix prefixIndex
-                            pure $! toValidityResultDto now asn prefix validity
-
 getQueryPrefixValidity :: (MonadIO m, Storage s, MonadError ServerError m)
                         => AppContext s
                         -> Maybe String           
@@ -572,25 +553,50 @@ getQueryPrefixValidity appContext maybeAsn maybePrefix = do
         (Just asn, Just prefix) -> getPrefixValidity appContext asn [prefix]
         (Nothing,   _         ) -> throwError $ err400 { errBody = "Parameter 'asn' is not set" }
         (_,         Nothing   ) -> throwError $ err400 { errBody = "Parameter 'prefix' is not set" }
+        
+
+getPrefixValidity :: (MonadIO m, Storage s, MonadError ServerError m)
+                => AppContext s
+                -> String           
+                -> [String]         
+                -> m ValidityResultDto
+getPrefixValidity appContext asnText (List.intercalate "/" -> prefixText) = do 
+    withPrefixIndex appContext $ \prefixIndex -> 
+        case parsePrefix prefixText of 
+            Nothing     -> throwError $ err400 { errBody = [i|Could not parse prefix #{prefixText}.|] }
+            Just prefix -> 
+                case parseAsn asnText of 
+                    Nothing  -> throwError $ err400 { errBody = [i|Could not parse ASN #{asnText}.|] }
+                    Just asn -> do 
+                        Now now <- liftIO thisInstant
+                        let validity = prefixValidity asn prefix prefixIndex
+                        pure $! toValidityResultDto now asn prefix validity
 
 getBulkPrefixValidity :: (MonadIO m, Storage s, MonadError ServerError m)
                         => AppContext s
                         -> [ValidityBulkInputDto]
                         -> m ValidityBulkResultDto
-getBulkPrefixValidity AppContext {..} inputs =
-    liftIO (readTVarIO $ appState ^. #prefixIndex) >>= \case     
-        Nothing          -> throwError $ err404 { errBody = [i|Prefix index is not (yet) build.|] }
-        Just prefixIndex -> do 
-            Now now <- liftIO thisInstant
-            !results <- forM inputs $ \(ValidityBulkInputDto {..}) -> 
-                case parsePrefixT prefix of 
-                    Nothing -> throwError $ err400 { errBody = [i|Could not parse prefix #{prefix}.|] }
-                    Just p  -> 
-                        case parseAsnT asn of 
-                            Nothing -> throwError $ err400 { errBody = [i|Could not parse ASN #{asn}.|] }
-                            Just a  -> pure $! T3 a p (prefixValidity a p prefixIndex)
+getBulkPrefixValidity appContext inputs =
+    withPrefixIndex appContext $ \prefixIndex -> do
+        Now now <- liftIO thisInstant
+        !results <- forM inputs $ \(ValidityBulkInputDto {..}) -> 
+            case parsePrefixT prefix of 
+                Nothing -> throwError $ err400 { errBody = [i|Could not parse prefix #{prefix}.|] }
+                Just p  -> 
+                    case parseAsnT asn of 
+                        Nothing -> throwError $ err400 { errBody = [i|Could not parse ASN #{asn}.|] }
+                        Just a  -> pure $! T3 a p (prefixValidity a p prefixIndex)
 
-            pure $! toBulkResultDto now results  
+        pure $! toBulkResultDto now results  
+
+withPrefixIndex :: (MonadIO m, Storage s, MonadError ServerError m) => 
+                    AppContext s 
+                -> (PrefixIndex -> m a) 
+                -> m a
+withPrefixIndex AppContext {..} f = do
+    liftIO (readTVarIO $ appState ^. #prefixIndex) >>= \case     
+        Nothing          -> throwError $ err404 { errBody = [i|Prefix index is not (yet) built.|] }
+        Just prefixIndex -> f prefixIndex                
 
 
 resolveVDto :: (MonadIO m, Storage s) => 
