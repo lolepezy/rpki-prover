@@ -318,9 +318,10 @@ runWorkflow appContext@AppContext {..} tals = do
                     Nothing -> do 
                         logError logger [i|Something weird happened, could not re-read VRPs.|]
                         pure (mempty, mempty)
-                    Just rtrPayloads -> atomically $ do                            
+                    Just rtrPayloads -> atomically $ do                                                    
                             slurmedPayloads <- completeVersion appState worldVersion rtrPayloads maybeSlurm 
-                            updatePrefixIndex appState slurmedPayloads
+                            when (config ^. #withValidityApi) $
+                                updatePrefixIndex appState slurmedPayloads
                             pure (rtrPayloads, slurmedPayloads)
                           
     -- Delete objects in the store that were read by top-down validation 
@@ -571,9 +572,10 @@ loadStoredAppState AppContext {..} = do
                         slurm    <- slurmForVersion tx db lastVersion
                         payloads <- getRtrPayloads tx db lastVersion                        
                         for_ payloads $ \payloads' -> do 
-                            slurmedPayloads <- atomically $ completeVersion appState lastVersion payloads' slurm
-                            -- do it in a separate thread to speed up the startup
-                            forkIO $ atomically $ updatePrefixIndex appState slurmedPayloads
+                            slurmedPayloads <- atomically $ completeVersion appState lastVersion payloads' slurm                            
+                            when (config ^. #withValidityApi) $                                
+                                -- do it in a separate thread to speed up the startup
+                                void $ forkIO $ atomically $ updatePrefixIndex appState slurmedPayloads
                         pure payloads
                     for_ payloads $ \p -> do 
                         let vrps = p ^. #vrps

@@ -77,7 +77,8 @@ data Config = Config {
         lmdbSizeMb                :: Size,
         localExceptions           :: ApiSecured [FilePath],
         logLevel                  :: LogLevel,
-        metricsPrefix             :: Text
+        metricsPrefix             :: Text,
+        withValidityApi           :: Bool
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -264,7 +265,7 @@ defaultConfig = Config {
         fetchTimeoutCalculation        = Adaptive,
         minFetchInterval               = Seconds 60,
         maxFetchInterval               = Seconds 600,
-        fetchMethod                    = SyncAndAsync
+        fetchMethod                    = SyncAndAsync        
     },
     httpApiConf = HttpApiConfig {
         port = 9999
@@ -284,7 +285,8 @@ defaultConfig = Config {
     lmdbSizeMb                = Size $ 32 * 1024,
     localExceptions = Hidden [],
     logLevel = defaultsLogLevel,
-    metricsPrefix = "rpki_prover_"
+    metricsPrefix = "rpki_prover_",
+    withValidityApi = False
 }
 
 defaultsLogLevel :: LogLevel

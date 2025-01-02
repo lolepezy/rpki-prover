@@ -318,6 +318,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & #lmdbSizeMb .~ lmdbRealSize
             & #localExceptions .~ apiSecured localExceptions
             & #logLevel .~ derivedLogLevel
+            & #withValidityApi .~ not noValidityApi
             & maybeSet #metricsPrefix (convert <$> metricsPrefix)
             & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
             & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
@@ -601,6 +602,8 @@ data CLIOptions wrapped = CLIOptions {
     -- It is not documented since it's for internal machinery
     worker :: wrapped ::: Maybe String,
 
+    version :: wrapped ::: Bool <?> "Program version.",
+
     initialise :: wrapped ::: Bool <?>
         "If set, the FS layout will be created and TAL files will be downloaded.",
 
@@ -613,8 +616,6 @@ data CLIOptions wrapped = CLIOptions {
 
     noRirTals :: wrapped ::: Bool <?> 
         "If set, RIR TAL files will not be downloaded.",
-
-    version :: wrapped ::: Bool <?> "Program version.",
 
     rpkiRootDirectory :: wrapped ::: [FilePath] <?>
         ("Root directory (default is ${HOME}/.rpki/). This option can be passed multiple times and "
@@ -795,7 +796,12 @@ data CLIOptions wrapped = CLIOptions {
     showHiddenConfig :: wrapped ::: Bool <?>
         ("Reveal all config values in the HTTP API call to `/api/system`. " +++ 
          "This is a potential security issue since some of the config values include " +++ 
-         "local FS paths (default is false).") 
+         "local FS paths (default is false)."),
+
+    noValidityApi :: wrapped ::: Bool <?>
+        ("Do not build VRP index for /api/validity calls in the REST API (default is false, i.e. the index " +++ 
+         "is built by default). This option is useful for the cases when the VRP index is not needed, " +++ 
+         "it will save some memory and CPU spent on the index.") 
 
 } deriving (Generic)
 
