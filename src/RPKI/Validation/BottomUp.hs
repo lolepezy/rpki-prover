@@ -57,6 +57,7 @@ validateBottomUp
                     validateTopDownAlongPath db certPath 
                     pure (Validated object, certPath)
   where
+    validationRFC = config ^. #validationConfig . #validationRFC
     {- Given a chain of certificatees from a TA to the object, 
        proceed with top-down validation along this chain only.
     -}
@@ -66,9 +67,9 @@ validateBottomUp
         let location = pickLocation $ getLocations taCert
         vHoist $ vFocusOn LocationFocus (getURL location) 
                $ validateTaCertAKI taCert location
-        let verifiedResources = createVerifiedResources $ taCert ^. #payload
+        let verifiedResources = createVerifiedResources $ taCert ^. #payload        
         go verifiedResources certPath
-      where        
+      where                
         go _ [] = pure ()
 
         go verifiedResources [bottomCert] = do            
@@ -88,8 +89,9 @@ validateBottomUp
                 let childCert = head certs                
                 validateOnMft mft childCert                            
                 Validated validCert    <- vHoist $ validateResourceCert @_ @_ @'CACert 
-                                                    now childCert (cert ^. #payload) crl
-                childVerifiedResources <- vHoist $ validateResources (Just verifiedResources) childCert validCert            
+                                                    now childCert cert crl
+                (childVerifiedResources, _) <- vHoist $ validateResources validationRFC
+                                                    (Just verifiedResources) childCert validCert            
                 go childVerifiedResources certs
         
         validateOnMft mft o = do             
@@ -104,15 +106,15 @@ validateBottomUp
             case object of 
                 CerRO child ->
                     void $ vHoist $ validateResourceCert @_ @_ @'CACert 
-                                        now child (bottomCert ^. #payload) crl                
+                                        now child bottomCert crl                
                 RoaRO roa -> 
-                    void $ vHoist $ validateRoa now roa bottomCert crl (Just verifiedResources)
+                    void $ vHoist $ validateRoa validationRFC now roa bottomCert crl (Just verifiedResources)
                 GbrRO gbr -> 
-                    void $ vHoist $ validateGbr now gbr bottomCert crl (Just verifiedResources)
+                    void $ vHoist $ validateGbr validationRFC now gbr bottomCert crl (Just verifiedResources)
                 AspaRO rsc -> 
-                    void $ vHoist $ validateAspa now rsc bottomCert crl (Just verifiedResources)                    
+                    void $ vHoist $ validateAspa validationRFC now rsc bottomCert crl (Just verifiedResources)                    
                 RscRO rsc -> 
-                    void $ vHoist $ validateRsc now rsc bottomCert crl (Just verifiedResources)
+                    void $ vHoist $ validateRsc validationRFC now rsc bottomCert crl (Just verifiedResources)
                 _somethingElse -> do 
                     logWarn logger [i|Unsupported type of object: #{_somethingElse}.|]        
 

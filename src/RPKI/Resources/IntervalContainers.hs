@@ -3,7 +3,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
-module RPKI.Resources.IntervalSet where
+module RPKI.Resources.IntervalContainers where
 
 import Prelude hiding (subtract, null)
 

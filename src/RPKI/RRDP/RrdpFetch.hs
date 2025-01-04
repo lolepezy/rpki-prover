@@ -64,7 +64,7 @@ runRrdpFetchWorker :: AppContext s
             -> WorldVersion
             -> RrdpRepository             
             -> ValidatorT IO (RrdpRepository, RrdpFetchStat)
-runRrdpFetchWorker AppContext {..} fetchConfig worldVersion repository = do
+runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repository = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
     -- are passed as 'RrdpFetchParams'.
@@ -81,15 +81,12 @@ runRrdpFetchWorker AppContext {..} fetchConfig worldVersion repository = do
 
     scopes <- askScopes
 
-    wr@WorkerResult {..} <- runWorker
-                                logger
-                                config
-                                workerId 
-                                (RrdpFetchParams scopes repository worldVersion)                        
-                                (Timebox $ fetchConfig ^. #rrdpTimeout)                                
-                                (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
-                                arguments  
-        
+    workerInput <- makeWorkerInput appContext workerId
+                        (RrdpFetchParams scopes repository worldVersion)                        
+                        (Timebox $ fetchConfig ^. #rrdpTimeout)                                
+                        (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
+
+    wr@WorkerResult {..} <- runWorker logger workerInput arguments 
     let RrdpFetchResult z = payload
     logWorkerDone logger workerId wr
     pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory
@@ -289,7 +286,7 @@ downloadAndUpdateRRDP
 rrdpNextStep :: RrdpRepository -> Notification -> PureValidatorT RrdpAction
 
 rrdpNextStep RrdpRepository { rrdpMeta = Nothing } Notification{..} = 
-    pure $ FetchSnapshot snapshotInfo "Unknown repository"
+    pure $ FetchSnapshot snapshotInfo "First time seeing repository"
 
 rrdpNextStep RrdpRepository { rrdpMeta = Just rrdpMeta } Notification {..} = 
 
@@ -395,6 +392,9 @@ saveSnapshot
     let maxCpuAvailable = appContext ^. typed @Config . typed @Parallelism . #cpuCount
     liftIO $ setCpuCount maxCpuAvailable
     let cpuParallelism = makeParallelism maxCpuAvailable ^. #cpuParallelism
+    
+    let snapshotUrl = notification ^. #snapshotInfo . typed @URI
+    logDebug logger [i|Snapshot #{snapshotUrl} is #{BS.length snapshotContent} bytes.|]   
 
     db <- liftIO $ readTVarIO database    
     Snapshot _ sessionId serial snapshotItems <- vHoist $         

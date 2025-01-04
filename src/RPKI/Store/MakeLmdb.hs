@@ -8,7 +8,6 @@ module RPKI.Store.MakeLmdb where
 import Control.Lens
 import Control.Concurrent.STM
 
-import           Data.IORef
 import           Data.String.Interpolate.IsString
 
 import           GHC.TypeLits
@@ -35,9 +34,8 @@ data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion
 
 createDatabase :: LmdbEnv -> AppLogger -> IncompatibleDbCheck -> IO (DB LmdbStorage, DbCheckResult)
 createDatabase env logger checkAction = do 
-
-    erasables <- newIORef []
-    db <- doCreateDb erasables
+    
+    db <- doCreateDb
     
     case checkAction of     
         CheckVersion -> 
@@ -51,24 +49,31 @@ createDatabase env logger checkAction = do
             dbVersion <- getDatabaseVersion tx db
             case dbVersion of 
                 Nothing -> do
-                    logInfo logger [i|Cache version is not set, setting it to #{currentDatabaseVersion}, dropping the cache.|]
-                    (_, ms) <- timedMS $ emptyDBMaps tx db
-                    logDebug logger  [i|Erasing cache took #{ms}ms.|]
+                    logInfo logger [i|Cache version is not set, will set the version to #{currentDatabaseVersion} and clean up the cache.|]                    
+                    ms <- eraseCache tx
+                    logDebug logger [i|Erased cache in #{ms}ms.|]
                     saveCurrentDatabaseVersion tx db
                     pure DidntHaveVersion
-                Just version -> 
-                    if version /= currentDatabaseVersion then do
+                Just version
+                    | version == currentDatabaseVersion -> 
+                        pure WasCompatible
+                    | otherwise -> do
                         -- We are seeing incompatible storage. The only option 
                         -- now is to erase all the maps and start from scratch.
-                        logInfo logger [i|Persisted cache version is #{version} and expected version is #{currentDatabaseVersion}, dropping the cache.|]    
-                        (_, ms) <- timedMS $ emptyDBMaps tx db
-                        logDebug logger [i|Erasing cache took #{ms}ms.|]                        
+                        logInfo logger [i|Persisted cache version is #{version} and expected version is #{currentDatabaseVersion}, will drop the cache.|]    
+                        -- NOTE: We erase every map in the cache, including metadata, but that's not an problem, 
+                        -- since we'll set new DB version here
+                        ms <- eraseCache tx
+                        logDebug logger [i|Erased cache in #{ms}ms.|]                  
                         saveCurrentDatabaseVersion tx db
-                        pure WasIncompatible
-                    else
-                        pure WasCompatible
+                        pure WasIncompatible                        
 
-    doCreateDb erasablesRef = do 
+    eraseCache tx = do 
+        nativeEnv <- atomically $ getNativeEnv env
+        (_, ms) <- timedMS $ eraseEnv nativeEnv tx        
+        pure ms
+
+    doCreateDb = do 
         sequences        <- createMap
         taStore          <- TAStore <$> createMap        
         validationsStore <- ValidationsStore <$> createMap
@@ -83,10 +88,7 @@ createDatabase env logger checkAction = do
         jobStore         <- JobStore <$> createMap        
         metadataStore    <- MetadataStore <$> createMap          
         repositoryStore  <- createRepositoryStore
-        objectStore      <- createObjectStore sequences            
-
-        erasables <- readIORef erasablesRef
-
+        objectStore      <- createObjectStore sequences
         pure DB {..}
       where
 
@@ -112,16 +114,10 @@ createDatabase env logger checkAction = do
         lmdb = LmdbStorage env
 
         createMap :: forall k v name . (KnownSymbol name) => IO (SMap name LmdbStorage k v)
-        createMap = do 
-            sm <- SMap lmdb <$> createLmdbStore env
-            modifyIORef' erasablesRef (EraseWrapper sm :)
-            pure sm
+        createMap = SMap lmdb <$> createLmdbStore env            
 
         createMultiMap :: forall k v name . (KnownSymbol name) => IO (SMultiMap name LmdbStorage k v)
-        createMultiMap = do 
-            sm <- SMultiMap lmdb <$> createLmdbMultiStore env
-            modifyIORef' erasablesRef (EraseWrapper sm :)
-            pure sm
+        createMultiMap = SMultiMap lmdb <$> createLmdbMultiStore env            
         
 
 mkLmdb :: FilePath -> Config -> IO LmdbEnv

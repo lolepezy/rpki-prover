@@ -5,6 +5,7 @@
 {-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TemplateHaskell   #-}
 
 module Main where
 
@@ -66,10 +67,12 @@ import           RPKI.RRDP.RrdpFetch
 
 import           RPKI.Rsync
 import           RPKI.TAL
-import           RPKI.Util               (convert, fmtEx, parseRsyncURL)
+import           RPKI.Util               
 import           RPKI.Worker
 import           RPKI.Workflow
 import           RPKI.RSC.Verifier
+import           RPKI.Version
+import           RPKI.UniqueId
 
 
 import           Network.HTTP.Client
@@ -83,7 +86,7 @@ main = do
     cliOptions@CLIOptions{..} <- unwrapRecord $ 
             "RPKI prover, relying party software for RPKI, version " <> rpkiProverVersion
 
-    if version
+    if version        
         then do
             -- it is "--version" call, so print the version and exit
             putStrLn $ convert rpkiProverVersion
@@ -184,6 +187,7 @@ executeWorkerProcess = do
     exec resultHandler f = resultHandler =<< execWithStats f                    
 
 
+turnOffTlsValidation :: IO ()
 turnOffTlsValidation = do 
     manager <- newManager $ mkManagerSettings (TLSSettingsSimple True True True) Nothing 
     setGlobalManager manager    
@@ -194,8 +198,8 @@ runValidatorServer appContext@AppContext {..} = do
     
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion  <- newWorldVersion
-    talNames      <- listTALFiles $ config ^. #talDirectory
-    extraTalNames <- fmap mconcat $ mapM listTALFiles $ config ^. #extraTalsDirectories
+    talNames      <- listTALFiles $ configValue $ config ^. #talDirectory
+    extraTalNames <- fmap mconcat $ mapM listTALFiles $ configValue $ config ^. #extraTalsDirectories
     let totalTalsNames = talNames <> extraTalNames
     (tals, vs) <- runValidatorT (newScopes "validation-root") $
         forM totalTalsNames $ \(talFilePath, taName) ->
@@ -212,7 +216,7 @@ runValidatorServer appContext@AppContext {..} = do
             throwIO $ AppException e
         Right tals' -> do
             logInfo logger [i|Successfully loaded #{length totalTalsNames} TALs: #{map snd totalTalsNames}|]
-            -- this is where it blocks and loops in never-ending re-validation
+            -- here it blocks and loops in never-ending re-validation
             runWorkflow appContext tals'
                 `finally`
                 closeStorage appContext
@@ -264,22 +268,25 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     proverRunMode     <- deriveProverRunMode cliOptions  
     rsyncPrefetchUrls <- rsyncPrefetches cliOptions                
 
+    let apiSecured :: a -> ApiSecured a
+        apiSecured a = if showHiddenConfig then Public a else Hidden a
+
     let config = defaults
-            & #programBinaryPath .~ programPath
-            & #rootDirectory .~ root
-            & #talDirectory .~ tald
-            & #tmpDirectory .~ tmpd
-            & #cacheDirectory .~ cached
-            & #extraTalsDirectories .~ extraTalsDirectory
+            & #programBinaryPath .~ apiSecured programPath
+            & #rootDirectory .~ apiSecured root
+            & #talDirectory .~ apiSecured tald
+            & #tmpDirectory .~ apiSecured tmpd
+            & #cacheDirectory .~ apiSecured cached
+            & #extraTalsDirectories .~ apiSecured extraTalsDirectory
             & #proverRunMode .~ proverRunMode
             & #parallelism .~ parallelism
-            & #rsyncConf . #rsyncRoot .~ rsyncd
-            & #rsyncConf . #rsyncClientPath .~ rsyncClientPath
+            & #rsyncConf . #rsyncRoot .~ apiSecured rsyncd
+            & #rsyncConf . #rsyncClientPath .~ fmap apiSecured rsyncClientPath
             & #rsyncConf . #enabled .~ not noRsync
             & #rsyncConf . #rsyncPrefetchUrls .~ rsyncPrefetchUrls
             & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
             & maybeSet (#rsyncConf . #asyncRsyncTimeout) (Seconds <$> asyncRsyncTimeout)
-            & #rrdpConf . #tmpRoot .~ tmpd
+            & #rrdpConf . #tmpRoot .~ apiSecured tmpd
             & #rrdpConf . #enabled .~ not noRrdp
             & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
             & maybeSet (#rrdpConf . #asyncRrdpTimeout) (Seconds <$> asyncRrdpTimeout)
@@ -290,6 +297,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                     (if strictManifestValidation then RFC6486_Strict else RFC9286)
             & #validationConfig . #validationAlgorithm .~
                     (if noIncrementalValidation then FullEveryIteration else Incremental)
+            & #validationConfig . #validationRFC .~
+                    (if allowOverclaiming then ReconsideredRFC else StrictRFC)
             & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
             & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
             & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
@@ -307,8 +316,9 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
             & maybeSet #versionNumberToKeep versionNumberToKeep
             & #lmdbSizeMb .~ lmdbRealSize
-            & #localExceptions .~ localExceptions
+            & #localExceptions .~ apiSecured localExceptions
             & #logLevel .~ derivedLogLevel
+            & #withValidityApi .~ not noValidityApi
             & maybeSet #metricsPrefix (convert <$> metricsPrefix)
             & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
             & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
@@ -338,7 +348,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
     database <- liftIO $ newTVarIO db    
-
+    
+    let executableVersion = thisExecutableVersion
     let appContext = AppContext {..}
 
     case dbCheck of 
@@ -500,13 +511,14 @@ createWorkerAppContext :: Config -> AppLogger -> ValidatorT IO AppLmdbEnv
 createWorkerAppContext config logger = do
     lmdbEnv <- setupWorkerLmdbCache
                     logger
-                    (config ^. #cacheDirectory)
+                    (configValue $ config ^. #cacheDirectory)
                     config
 
     (db, _) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
 
-    appState <- createAppState logger (config ^. #localExceptions)
+    appState <- createAppState logger (configValue $ config ^. #localExceptions)
     database <- liftIO $ newTVarIO db
+    let executableVersion = thisExecutableVersion
 
     pure AppContext {..}
 
@@ -579,6 +591,7 @@ createVerifierContext cliOptions logger = do
 
     appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db
+    let executableVersion = thisExecutableVersion
 
     pure AppContext {..}
 
@@ -588,6 +601,8 @@ data CLIOptions wrapped = CLIOptions {
 
     -- It is not documented since it's for internal machinery
     worker :: wrapped ::: Maybe String,
+
+    version :: wrapped ::: Bool <?> "Program version.",
 
     initialise :: wrapped ::: Bool <?>
         "If set, the FS layout will be created and TAL files will be downloaded.",
@@ -601,8 +616,6 @@ data CLIOptions wrapped = CLIOptions {
 
     noRirTals :: wrapped ::: Bool <?> 
         "If set, RIR TAL files will not be downloaded.",
-
-    version :: wrapped ::: Bool <?> "Program version.",
 
     rpkiRootDirectory :: wrapped ::: [FilePath] <?>
         ("Root directory (default is ${HOME}/.rpki/). This option can be passed multiple times and "
@@ -703,11 +716,19 @@ data CLIOptions wrapped = CLIOptions {
          " item 6.4) for manifest handling (default is false). More modern version is here " +++
          "https://www.rfc-editor.org/rfc/rfc9286.html#name-relying-party-processing-of and it is the default."),
 
+    allowOverclaiming :: wrapped ::: Bool <?>
+        ("Use validation reconsidered algorithm for validating resource sets on certificates " +++ 
+         "(https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-validation-update/) instead of " +++
+         "strict version (https://www.rfc-editor.org/rfc/rfc6487.html#section-7). The default if false, " +++
+         "i.e. strict version is used by default."),
+
     localExceptions :: wrapped ::: [String] <?>
-        "Files with local exceptions in the SLURM format (RFC 8416).",
+        ("Files with local exceptions in the SLURM format (RFC 8416). It is possible " +++ 
+         "to set multiple local exception files (i.e. set this option multiple times " +++ 
+         "with different arguments), they all will be united into one internally before applying."),
 
     maxTaRepositories :: wrapped ::: Maybe Int <?>
-        "Maximal number of new repositories that TA validation run can add (default is 1000).",
+        "Maximal number of new repositories that validation run can add per TA (default is 1000).",
 
     maxCertificatePathDepth :: wrapped ::: Maybe Int <?>
         "Maximal depth of the certificate path from the TA certificate to the RPKI tree (default is 32).",
@@ -731,9 +752,18 @@ data CLIOptions wrapped = CLIOptions {
 
     rsyncPrefetchUrl :: wrapped ::: [String] <?>
         ("Rsync repositories that will be fetched instead of their children (defaults are " +++
-         "'rsync://rpki.afrinic.net/repository/member_repository' and" +++
-         "'rsync://rpki.apnic.net/member_repository'). " +++
-         "It is an optimisation and in absolute majority of cases the default is working fine."),
+         "'rsync://rpki.afrinic.net/repository', " +++
+         "'rsync://rpki.apnic.net/member_repository', " +++
+         "'rsync://rpki-repo.registro.br/repo/', " +++
+         "'rsync://repo-rpki.idnic.net/repo/', " +++
+         "'rsync://0.sb/repo/', " +++
+         "'rsync://rpki.co/repo/', " +++
+         "'rsync://rpki-rps.arin.net/repository/', " +++
+         "'rsync://rpki-repository.nic.ad.jp/ap/', " +++
+         "'rsync://rsync.paas.rpki.ripe.net/repository/', " +++
+         "'rsync://rpki.sub.apnic.net/repository/', " +++
+         "'rsync://rpki.cnnic.cn/rpki/A9162E3D0000/). " +++
+         "It is an optimisation and most of the time this option is of no use."),
 
     metricsPrefix :: wrapped ::: Maybe String <?>
         "Prefix for Prometheus metrics (default is 'rpki_prover').",
@@ -760,8 +790,18 @@ data CLIOptions wrapped = CLIOptions {
          "so default for this option is false)."),
 
     noAsyncFetch :: wrapped ::: Bool <?>
-        ("Do not fetch repositories asynchronously, i.e. only fetch them while validating the RPKI tree "+++ 
-        "(default is false).") 
+        ("Do not fetch repositories asynchronously, i.e. only fetch them while validating the RPKI tree " +++ 
+        "(default is false, i.e. asynchronous fetches are used by default)."),
+
+    showHiddenConfig :: wrapped ::: Bool <?>
+        ("Reveal all config values in the HTTP API call to `/api/system`. " +++ 
+         "This is a potential security issue since some of the config values include " +++ 
+         "local FS paths (default is false)."),
+
+    noValidityApi :: wrapped ::: Bool <?>
+        ("Do not build VRP index for /api/validity calls in the REST API (default is false, i.e. the index " +++ 
+         "is built by default). This option is useful for the cases when the VRP index is not needed, " +++ 
+         "it will save some memory and CPU spent on the index.") 
 
 } deriving (Generic)
 
@@ -784,11 +824,13 @@ withLogConfig CLIOptions{..} f =
                 "debug" -> run DebugL
                 other   -> hPutStrLn stderr $ "Invalid log level: " <> Text.unpack other
   where
-    run ll = f LogConfig { logLevel = ll, .. }
-    logSetup = 
-        case (rtrLogFile, worker) of 
-            (Just fs, Nothing) -> MainLogWithRtr fs
-            (Nothing, Nothing) -> MainLog
-            (_,        Just _) -> WorkerLog
+    run logLev = 
+        f LogConfig { 
+            logLevel = logLev,
+            logSetup = 
+                case (rtrLogFile, worker) of 
+                    (Just fs, Nothing) -> MainLogWithRtr fs
+                    (Nothing, Nothing) -> MainLog
+                    (_,        Just _) -> WorkerLog
+            }
             
-                

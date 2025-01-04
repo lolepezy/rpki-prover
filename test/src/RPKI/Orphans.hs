@@ -346,35 +346,6 @@ instance Arbitrary RawResourceCertificate where
     shrink = genericShrink
 
 #if MIN_VERSION_generic_arbitrary(1,0,0)
-instance (Arg (SomeRFC r) r, 
-          Arg (PolyRFC r 'StrictRFC) r,
-          Arg (PolyRFC r 'ReconsideredRFC) r,
-          Arbitrary r) => Arbitrary (SomeRFC r) where
-#else
-instance Arbitrary r => Arbitrary (SomeRFC r) where
-#endif      
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-#if MIN_VERSION_generic_arbitrary(1,0,0)
-instance (Arg (PolyRFC r 'StrictRFC) r, Arbitrary r) => 
-        Arbitrary (PolyRFC r 'StrictRFC) where
-#else
-instance Arbitrary r => Arbitrary (PolyRFC r 'StrictRFC) where
-#endif      
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-#if MIN_VERSION_generic_arbitrary(1,0,0)
-instance (Arg (PolyRFC r 'ReconsideredRFC) r, Arbitrary r) => 
-        Arbitrary (PolyRFC r 'ReconsideredRFC) where
-#else
-instance Arbitrary r => Arbitrary (PolyRFC r 'ReconsideredRFC) where
-#endif
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (TypedCert r 'CACert) r, Arbitrary r) => Arbitrary (TypedCert r 'CACert) where
 #else
 instance Arbitrary r => Arbitrary (TypedCert r 'CACert) where
@@ -598,6 +569,10 @@ instance Arbitrary ValidationError where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary TACertValidities where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary StorageError where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -759,7 +734,7 @@ instance Arbitrary Ipv6Prefix where
         w2 :: Word32 <- arbitrary
         w3 :: Word32 <- arbitrary
         w4 :: Word32 <- arbitrary
-        m :: Word8  <- choose (46, 128)
+        m :: Word8   <- choose (46, 128)
         let x = (w1, w2, w3, w4) `shift` (128 - fromIntegral m)
         pure $! mkIpv6Block x m
 

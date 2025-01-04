@@ -68,16 +68,13 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 32
+currentDatabaseVersion = 36
 
 -- Some constant keys
-databaseVersionKey, lastValidMftKey, forAsyncFetchKey :: Text
+databaseVersionKey, forAsyncFetchKey, validatedByVersionKey :: Text
 databaseVersionKey = "database-version"
-lastValidMftKey    = "last-valid-mft"
 forAsyncFetchKey  = "for-async-fetch"
-
-data EraseWrapper s where 
-    EraseWrapper :: forall t s . (Storage s, CanErase s t) => t -> EraseWrapper s
+validatedByVersionKey  = "validated-by-version-map"
 
 -- All of the stores of the application in one place
 data DB s = DB {
@@ -95,8 +92,7 @@ data DB s = DB {
     slurmStore       :: SlurmStore s,
     jobStore         :: JobStore s,
     sequences        :: SequenceMap s,
-    metadataStore    :: MetadataStore s,
-    erasables        :: [EraseWrapper s]
+    metadataStore    :: MetadataStore s
 } deriving stock (Generic)
 
 instance Storage s => WithStorage s (DB s) where
@@ -122,7 +118,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
 
         objectMetas   :: SMap "object-meta" s ObjectKey ObjectMeta,
-        validatedByVersion :: SMap "validated-by-version" s WorldVersion (Compressed (Set.Set ObjectKey)),
+        validatedByVersion :: SMap "validated-by-version" s Text (Compressed (Map.Map ObjectKey WorldVersion)),
 
         -- Object URL mapping
         uriToUriKey    :: SMap "uri-to-uri-key" s SafeUrlAsKey UrlKey,
@@ -516,21 +512,9 @@ markAsValidated :: (MonadIO m, Storage s) =>
                     Tx s 'RW -> DB s 
                 -> Set.Set ObjectKey 
                 -> WorldVersion -> m ()
-markAsValidated tx db@DB { objectStore = RpkiObjectStore {..} } allKeys worldVersion = liftIO $ do 
-    existingVersions <- validationVersions tx db                
-
-    M.put tx validatedByVersion worldVersion (Compressed allKeys)    
-    case existingVersions of 
-        [] -> pure ()
-        _ -> do
-            -- This is an optimisation, but a necessary one:
-            -- Delete 'validatedKeys' from the previous version if
-            -- they are present in the last one. In most cases it
-            -- will delete most of the entries.
-            let previousVersion = List.maximum existingVersions 
-            ifJustM (M.get tx validatedByVersion previousVersion) $ \(Compressed previousKeys) ->                
-                M.put tx validatedByVersion previousVersion $ 
-                        Compressed $ previousKeys `Set.difference` allKeys
+markAsValidated tx db allKeys worldVersion = 
+    liftIO $ void $ updateValidatedByVersionMap tx db $ \m -> 
+        foldr (\k -> Map.insert k worldVersion) (fromMaybe mempty m) allKeys
 
 
 -- This is for testing purposes mostly
@@ -558,6 +542,9 @@ getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ runMaybe
 
 saveTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> StorableTA -> m ()
 saveTA tx DB { taStore = TAStore s } ta = liftIO $ M.put tx s (getTaName $ tal ta) ta
+
+deleteTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> TAL -> m ()
+deleteTA tx DB { taStore = TAStore s } tal = liftIO $ M.delete tx s (getTaName tal)
 
 getTA :: (MonadIO m, Storage s) => Tx s mode -> DB s -> TaName -> m (Maybe StorableTA)
 getTA tx DB { taStore = TAStore s } name = liftIO $ M.get tx s name
@@ -712,8 +699,6 @@ slurmForVersion tx DB { slurmStore = SlurmStore s } wv =
 deleteSlurms :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteSlurms tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.delete tx s wv
 
-
-
 updateRrdpMeta :: (MonadIO m, Storage s) =>
                 Tx s 'RW -> DB s -> RrdpMeta -> RrdpURL -> m ()
 updateRrdpMeta tx DB { repositoryStore = RepositoryStore {..} } meta url = liftIO $ do
@@ -781,6 +766,27 @@ saveCurrentDatabaseVersion tx DB { metadataStore = MetadataStore s } =
     liftIO $ M.put tx s databaseVersionKey (Text.pack $ show currentDatabaseVersion)
 
 
+updateValidatedByVersionMap :: (MonadIO m, Storage s) 
+                            => Tx s 'RW 
+                            -> DB s 
+                            -> (Maybe (Map.Map ObjectKey WorldVersion) -> Map.Map ObjectKey WorldVersion)
+                            -> m (Map.Map ObjectKey WorldVersion)
+updateValidatedByVersionMap tx DB { objectStore = RpkiObjectStore {..} } f = liftIO $ do
+    validatedBy <- M.get tx validatedByVersion validatedByVersionKey    
+    let validatedBy' = f $ fmap unCompressed validatedBy
+    M.put tx validatedByVersion validatedByVersionKey $ Compressed validatedBy'
+    pure validatedBy'
+
+
+cleanupValidatedByVersionMap :: (MonadIO m, Storage s) =>
+                                Tx s RW
+                                -> DB s
+                                -> (WorldVersion -> Bool)
+                                -> m (Map.Map ObjectKey WorldVersion)
+cleanupValidatedByVersionMap tx db toDelete = liftIO $ do     
+    updateValidatedByVersionMap tx db $ 
+        maybe mempty $ Map.filter (not . toDelete)
+
 -- More complicated operations
 
 data CleanUpResult = CleanUpResult {
@@ -818,11 +824,13 @@ deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
         let reallyToKeep = max 2 (fromIntegral versionNumberToKeep)
         if length versions > reallyToKeep
             then do                     
-                let toDelete = drop reallyToKeep $ List.sortOn Down versions
-                forM_ toDelete $ \v -> do 
+                let versionsToDelete = drop reallyToKeep $ List.sortOn Down versions
+                forM_ versionsToDelete $ \v -> do 
                     deletePayloads tx db v
-                    deleteVersion tx db v
-                pure toDelete
+                    deleteVersion tx db v                   
+                let toDeleteSet = Set.fromList versionsToDelete 
+                void $ cleanupValidatedByVersionMap tx db (`Set.member` toDeleteSet)
+                pure versionsToDelete
             else pure []        
 
 
@@ -839,36 +847,31 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
             deleteOldNonValidationVersions tx db tooOld
 
         versions <- roTx db (`validationVersions` db)
-        let (toDelete, toKeep) = List.partition tooOld versions
+        let versionsToDelete = filter tooOld versions
 
         rwTx db $ \tx -> do
             -- delete versions and payloads associated with them, 
             -- e.g. VRPs, ASPAs, BGPSec certificatees, etc.
-            forM_ toDelete $ \version -> do 
+            forM_ versionsToDelete $ \version -> do 
                 deleteVersion tx db version                    
-                deletePayloads tx db version
-                M.delete tx validatedByVersion version
-                    
-            (deletedObjects, keptObjects) <- deleteStaleObjects tx toKeep
+                deletePayloads tx db version                
+                                
+            validatedByRecentVersions <- cleanupValidatedByVersionMap tx db tooOld                
+
+            (deletedObjects, keptObjects) <- deleteStaleObjects tx validatedByRecentVersions
 
             -- Delete URLs that are now not referred by any object
             deletedURLs <- deleteDanglingUrls db tx
 
             pure CleanUpResult {..}
   where
-    deleteStaleObjects tx versionsToKeep = do 
+    deleteStaleObjects tx validatedByRecentVersions = do 
         -- Set of all objects touched by validation with versions
         -- that are not "too old".
-        touchedObjectKeys <- foldM 
-            (\allKeys version ->
-                M.get tx validatedByVersion version >>= \case                        
-                    Nothing                 -> pure $! allKeys
-                    Just (Compressed keys') -> pure $! allKeys <> keys')
-            mempty 
-            versionsToKeep
+        let touchedObjectKeys = Map.keysSet validatedByRecentVersions
 
-        -- Objects inserted by validation with version that is not too old.
-        -- We want to preseve these objects in the cache even if they are 
+        -- Objects inserted by validation with version that is not "too old".
+        -- We want to preseve these objects in the cache even if they were 
         -- never used, they may still be used later. That may happens if
         -- a repository updates a manifest aftert updating its children.
         recentlyInsertedObjectKeys <- M.fold tx objectMetas 
@@ -954,10 +957,6 @@ getRtrPayloads tx db worldVersion =
 -- Get all SStats and `<>` them
 totalStats :: StorageStats -> SStats
 totalStats (StorageStats s) = mconcat $ Map.elems s
-
-emptyDBMaps :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> m ()
-emptyDBMaps tx DB {..} = liftIO $ 
-    forM_ erasables $ \(EraseWrapper t) -> erase tx t
    
 
 -- Utilities to have storage transaction in ValidatorT monad.
@@ -967,12 +966,6 @@ roAppTx ws f = appTx ws f roTx
 
 rwAppTx :: (Storage s, WithStorage s ws) => ws -> (Tx s 'RW -> ValidatorT IO a) -> ValidatorT IO a
 rwAppTx ws f = appTx ws f rwTx
-
--- roAppTxT :: (Storage s, WithStorage s ws) => ws -> (Tx s 'RO -> db -> ValidatorT IO a) -> ValidatorT IO a 
--- roAppTxT ws f = appTx ws f roTxT    
-
--- rwAppTxT :: (Storage s, WithStorage s ws) => ws -> (Tx s 'RW -> db -> ValidatorT IO a) -> ValidatorT IO a
--- rwAppTxT ws f = appTx ws f rwTxT
 
 
 appTx :: (Storage s, WithStorage s ws) => 

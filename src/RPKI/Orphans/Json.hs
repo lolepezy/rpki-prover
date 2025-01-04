@@ -51,7 +51,7 @@ import           RPKI.Reporting
 import           RPKI.RRDP.Types
 import           RPKI.Metrics.Metrics
 import           RPKI.Metrics.System
-import qualified RPKI.Resources.IntervalSet as IS
+import qualified RPKI.Resources.IntervalContainers as IS
 import           RPKI.Resources.Types
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
@@ -219,9 +219,6 @@ $(deriveToJSON defaultOptions ''PrefixLength)
 
 instance ToJSON Gbr where
     toJSON (Gbr s) = toJSON $ show s
-
-instance ToJSON r => ToJSON (PolyRFC r rfc)
-instance ToJSON r => ToJSON (SomeRFC r)
 
 $(deriveToJSON defaultOptions ''IpResourceSet)
 $(deriveToJSON defaultOptions ''AsResources)
@@ -399,9 +396,15 @@ instance FromJSON DecodedBase64 where
 instance ToJSON DecodedBase64 where
     toJSON = toJSON . U.encodeBase64
 
+instance ToJSON a => ToJSON (ApiSecured a) where
+    toJSON = \case 
+        Hidden _ -> toJSON ("hidden" :: Text)
+        Public a -> toJSON a
+
 instance ToJSON LogLevel
 instance ToJSON Parallelism
 instance ToJSON ManifestProcessing
+instance ToJSON ValidationRFC
 instance ToJSON ValidationAlgorithm
 instance ToJSON FetchTimingCalculation
 instance ToJSON FetchMethod
@@ -424,6 +427,7 @@ instance ToJSON InternalError
 instance ToJSON SlurmError
 instance ToJSON a => ToJSON (ParseError a)
 instance ToJSON RpkiObjectType
+instance ToJSON TACertValidities
 instance ToJSON ValidationError
 instance ToJSON ObjectIdentity
 instance ToJSON StorageError

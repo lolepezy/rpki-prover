@@ -1,5 +1,6 @@
 export RELEASE=$1
 
+. ./src-hash.sh
 cp package-template.yaml package.yaml
 
 docker build . --file Dockerfile.prover --tag lolepezy/rpki-prover:${RELEASE} && \

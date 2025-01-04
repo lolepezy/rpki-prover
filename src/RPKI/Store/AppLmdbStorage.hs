@@ -150,7 +150,7 @@ setupWorkerLmdbCache logger cacheDir config = do
 compactStorageWithTmpDir :: AppContext LmdbStorage -> IO ()
 compactStorageWithTmpDir appContext@AppContext {..} = do      
     lmdbEnv <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
-    let cacheDir = config ^. #cacheDirectory
+    let cacheDir = configValue $ config ^. #cacheDirectory
     let currentCache = cacheDir </> "current"
 
     logInfo logger [i|Checking if compacting LMDB storage is needed.|]
@@ -206,7 +206,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
 
             Size lmdbFileSize <- cacheFsSize appContext 
             let fileSizeMb :: Integer = fromIntegral $ lmdbFileSize `div` (1024 * 1024)
-            logInfo logger [i|New LMDB file size is #{fileSizeMb}mb, will perform compaction.|]            
+            logInfo logger [i|LMDB file size after compaction is #{fileSizeMb}mb.|]
         
     Size lmdbFileSize <- cacheFsSize appContext 
     
@@ -228,7 +228,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
 
 cacheFsSize :: AppContext s -> IO Size 
 cacheFsSize AppContext {..} = do 
-    let cacheDir = config ^. #cacheDirectory
+    let cacheDir = configValue $ config ^. #cacheDirectory
     let currentCache = cacheDir </> "current"
     currentLinkTarget <- liftIO $ readSymbolicLink currentCache
     fmap (Size . fromIntegral . sum) 
@@ -271,7 +271,7 @@ copyLmdbEnvironment AppContext {..} targetLmdbPath = do
 -- a worker process with limited heap that does the copying.
 -- 
 runCopyWorker :: AppContext LmdbStorage -> SStats -> FilePath -> IO ()
-runCopyWorker AppContext {..} dbtats targetLmdbPath = do 
+runCopyWorker appContext@AppContext {..} dbtats targetLmdbPath = do 
     let workerId = WorkerId "lmdb-compaction"
     
     -- Heap size is based on MS = "the biggest KV-pair that we need to copy"
@@ -285,17 +285,14 @@ runCopyWorker AppContext {..} dbtats targetLmdbPath = do
             rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory (show maxMemoryMb <> "m") ]
 
     (z, vs) <- runValidatorT 
-                (newScopes "lmdb-compaction-worker") $ 
-                    runWorker 
-                        logger
-                        config
-                        workerId
-                        (CompactionParams targetLmdbPath)                        
-                        -- timebox it to 30 minutes, it should be enough even 
-                        -- for a huge cache on a very slow machine
-                        (Timebox $ Seconds $ 30 * 60)
-                        Nothing
-                        arguments
+                (newScopes "lmdb-compaction-worker") $ do 
+                    workerInput <- makeWorkerInput appContext workerId
+                                        (CompactionParams targetLmdbPath)
+                                        -- timebox it to 30 minutes, it should be enough 
+                                        -- even for a huge cache on a very slow disk
+                                        (Timebox $ Seconds $ 30 * 60)
+                                        Nothing
+                    runWorker logger workerInput arguments
     case z of 
         Left e  -> do 
             let message = [i|Failed to run compaction worker: #{e}, validations: #{vs}.|]

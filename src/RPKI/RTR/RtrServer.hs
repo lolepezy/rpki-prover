@@ -27,6 +27,7 @@ import qualified Data.ByteString.Builder          as BB
 import           Data.List.Split                  (chunksOf)
 
 import qualified Data.Set                         as Set
+import qualified Data.Vector                      as V
 
 import           Data.Coerce
 import           Data.String.Interpolate.IsString
@@ -127,7 +128,7 @@ runRtrServer appContext RtrConfig {..} = do
         -- Do not store more than amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
         rtrPayloads <- atomically $ readRtrPayloads appState
-        let maxStoredDiffs = Set.size (rtrPayloads ^. #uniqueVrps)
+        let maxStoredDiffs = V.length (rtrPayloads ^. #uniqueVrps)
                 
         logDebug logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
 
@@ -144,8 +145,8 @@ runRtrServer appContext RtrConfig {..} = do
             let thereAreRtrUpdates = not $ emptyDiffs rtrDiff
 
             let 
-                previousVrpSize = Set.size $ previousRtrPayload ^. #uniqueVrps 
-                currentVrpSize  = Set.size $ currentRtrPayload ^. #uniqueVrps
+                previousVrpSize = V.length $ previousRtrPayload ^. #uniqueVrps 
+                currentVrpSize  = V.length $ currentRtrPayload ^. #uniqueVrps
                 previousBgpSecSize = Set.size $ previousRtrPayload ^. #bgpSec 
                 currentBgpSecSize  = Set.size $ currentRtrPayload ^. #bgpSec 
                 in logDebug logger $ [i|Notified about an update: #{previousVersion} -> #{newVersion}, |] <> 
@@ -233,10 +234,17 @@ runRtrServer appContext RtrConfig {..} = do
                     r <- atomically $ 
                                 readCQueue outboxQueue 
                             <|> (Just <$> readTChan stateUpdateChan)
+                    
 
                     for_ r $ \pdus -> do 
-                        for_ (chunksOf 3000 pdus) $ \chunk -> 
-                            sendMany connection $ map (pduBytesL (session ^. typed @ProtocolVersion)) chunk
+                        let protocolVersion = session ^. typed @ProtocolVersion
+                        let pdusToSend = 
+                                filter (\case 
+                                    TruePdu pdu     -> compatibleWith pdu protocolVersion
+                                    SerialisedPdu _ -> True) pdus
+
+                        for_ (chunksOf 3000 pdusToSend) $ \chunk ->                           
+                            sendMany connection $ map (pduBytesL protocolVersion) chunk
 
                         loop stateUpdateChan
             
@@ -447,7 +455,7 @@ respondToPdu
                     ResetQueryPdu -> 
                         withProtocolVersionCheck pdu $ let 
                             action = do 
-                                bs <- cachedPduBinary appState (currentCachePayloadBS pduProtocol)
+                                bs <- cachedPduBinary appState pduProtocol (currentCachePayloadBS pduProtocol)
                                 pure $ [TruePdu $ CacheResponsePdu currentSessionId] 
                                     <> [SerialisedPdu bs]
                                     <> [TruePdu $ EndOfDataPdu currentSessionId currentSerial defIntervals]                                    
@@ -508,11 +516,11 @@ currentCachePayloadBS protocolVersion RtrPayloads {..} =
         $ BB.toLazyByteString 
         $ mconcat 
         $ map (\pdu -> BB.lazyByteString $ pduToBytes pdu protocolVersion) 
+        $ filter (`compatibleWith` protocolVersion)
         $ vrpPdusAnn <> mconcat bgpSecPdusAnn
   where    
-    vrpPdusAnn    = map (vrpToPdu Announcement) $ coerce $ Set.toAscList uniqueVrps
+    vrpPdusAnn    = map (vrpToPdu Announcement) $ coerce $ V.toList uniqueVrps
     bgpSecPdusAnn = map (bgpSecToPdu Announcement) $ Set.toList bgpSec
-
     
     
 vrpToPdu :: Flags -> Vrp -> Pdu

@@ -62,7 +62,6 @@ import           RPKI.SLURM.Types
 import           RPKI.Http.Dto
 import           RPKI.Http.Types
 
-
 -- A job run can be the first one or not and 
 -- sometimes we need this information.
 data JobRun = FirstRun | RanBefore
@@ -310,16 +309,20 @@ runWorkflow appContext@AppContext {..} tals = do
 #{formatValidations (topDownState ^. typed)}.|]
                     updatePrometheus (topDownState ^. typed) prometheusMetrics worldVersion                        
                     
-                    reReadAndUpdatePayloads maybeSlurm
+                    (!q, elapsed) <- timedMS $ reReadAndUpdatePayloads maybeSlurm
+                    logDebug logger [i|Re-read payloads, took #{elapsed}ms.|]
+                    pure q
           where
             reReadAndUpdatePayloads maybeSlurm = do 
                 roTxT database (\tx db -> getRtrPayloads tx db worldVersion) >>= \case                         
                     Nothing -> do 
                         logError logger [i|Something weird happened, could not re-read VRPs.|]
                         pure (mempty, mempty)
-                    Just rtrPayloads -> do                 
-                        slurmedPayloads <- atomically $ completeVersion appState worldVersion rtrPayloads maybeSlurm
-                        pure (rtrPayloads, slurmedPayloads)
+                    Just rtrPayloads -> atomically $ do                                                    
+                            slurmedPayloads <- completeVersion appState worldVersion rtrPayloads maybeSlurm 
+                            when (config ^. #withValidityApi) $
+                                updatePrefixIndex appState slurmedPayloads
+                            pure (rtrPayloads, slurmedPayloads)
                           
     -- Delete objects in the store that were read by top-down validation 
     -- longer than `cacheLifeTime` hours ago.
@@ -336,7 +339,7 @@ runWorkflow appContext@AppContext {..} tals = do
                                          [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|])
       where
         cleanupUntochedObjects = do                 
-            ((z, _), workerId) <- runCleapUpWorker worldVersion      
+            ((z, _), workerId) <- runCleanUpWorker worldVersion      
             case z of 
                 Left e                    -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
                 Right wr@WorkerResult {..} -> do 
@@ -359,7 +362,7 @@ runWorkflow appContext@AppContext {..} tals = do
     cleanupLeftovers = do
         -- Cleanup tmp directory, if some fetchers died abruptly 
         -- there may be leftover files.
-        let tmpDir = config ^. #tmpDirectory
+        let tmpDir = configValue $ config ^. #tmpDirectory
         logDebug logger [i|Cleaning up temporary directory #{tmpDir}.|]
         listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
         
@@ -387,7 +390,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     -- that there's already a lot of garbage in the rsync mirror directory.                        
                     pure ()
                 RanBefore -> do
-                    let rsyncDir = config ^. #rsyncConf . #rsyncRoot
+                    let rsyncDir = configValue $ config ^. #rsyncConf . #rsyncRoot
                     logDebug logger [i|Deleting rsync mirrors in #{rsyncDir}.|]
                     listDirectory rsyncDir >>= mapM_ (removePathForcibly . (rsyncDir </>))
             )
@@ -454,16 +457,17 @@ runWorkflow appContext@AppContext {..} tals = do
                     ])
         
         r <- runValidatorT 
-                (newScopes "validator") $ 
-                    runWorker logger config 
-                        workerId 
-                        (ValidationParams worldVersion tals)                        
-                        (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
-                        Nothing
-                        arguments                                        
+                (newScopes "validator") $ do 
+                    workerInput <- 
+                        makeWorkerInput appContext workerId
+                            (ValidationParams worldVersion tals)                        
+                            (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
+                            Nothing
+                    runWorker logger workerInput arguments
+
         pure (r, workerId)
 
-    runCleapUpWorker worldVersion = do             
+    runCleanUpWorker worldVersion = do             
         let workerId = WorkerId [i|version:#{worldVersion}:cache-clean-up|]
         
         let arguments = 
@@ -475,13 +479,12 @@ runWorkflow appContext@AppContext {..} tals = do
                     rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerMemoryMb) ]
         
         r <- runValidatorT             
-                (newScopes "cache-clean-up") $ 
-                    runWorker logger config
-                        workerId 
-                        (CacheCleanupParams worldVersion)
-                        (Timebox 300)
-                        Nothing
-                        arguments                                                                    
+                (newScopes "cache-clean-up") $ do 
+                    workerInput <- makeWorkerInput appContext workerId
+                                        (CacheCleanupParams worldVersion)
+                                        (Timebox 300)
+                                        Nothing
+                    runWorker logger workerInput arguments                                                                   
         pure (r, workerId)                            
 
 -- To be called by the validation worker process
@@ -511,7 +514,6 @@ runValidation appContext@AppContext {..} worldVersion tals = do
 
     -- Save all the results into LMDB
     let updatedValidation = slurmValidations <> topDownValidations ^. typed
-
     (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
         saveMetrics tx db worldVersion (topDownValidations ^. typed)
         saveValidations tx db worldVersion (updatedValidation ^. typed)
@@ -569,8 +571,11 @@ loadStoredAppState AppContext {..} = do
                     (payloads, elapsed) <- timedMS $ do                                            
                         slurm    <- slurmForVersion tx db lastVersion
                         payloads <- getRtrPayloads tx db lastVersion                        
-                        for_ payloads $ \payloads' -> 
-                            void $ atomically $ completeVersion appState lastVersion payloads' slurm
+                        for_ payloads $ \payloads' -> do 
+                            slurmedPayloads <- atomically $ completeVersion appState lastVersion payloads' slurm                            
+                            when (config ^. #withValidityApi) $                                
+                                -- do it in a separate thread to speed up the startup
+                                void $ forkIO $ atomically $ updatePrefixIndex appState slurmedPayloads
                         pure payloads
                     for_ payloads $ \p -> do 
                         let vrps = p ^. #vrps

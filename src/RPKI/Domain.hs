@@ -15,6 +15,7 @@ import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
+import qualified Data.Vector              as V
 
 import           Data.ByteString.Base16   as Hex
 import qualified Data.String.Conversions  as SC
@@ -51,28 +52,20 @@ import           RPKI.Time
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Orphans.NFData
 
-newtype PolyRFC r (rfc :: ValidationRFC) = PolyRFC r
-    deriving stock (Show, Eq, Ord, Generic)
+
+-- There are two validation algorithms for RPKI tree
+--
+-- Classical one described in RFC 6487, here referred as Strict
+-- And the one described in RFC 8360, here (and in the RFC itself) referred as Reconsidered
+-- 
+data ValidationRFC = StrictRFC | ReconsideredRFC
+    deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass (TheBinary, NFData)
-
--- Something that be related to validation with one of these two validation RFCs
-data SomeRFC r = StrictRFC_ (PolyRFC r 'StrictRFC) 
-               | ReconsideredRFC_ (PolyRFC r 'ReconsideredRFC) 
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)               
-
-polyRFC :: SomeRFC r -> r
-polyRFC (StrictRFC_ (PolyRFC r))       = r
-polyRFC (ReconsideredRFC_ (PolyRFC r)) = r
-
-mkPolyRFC :: ValidationRFC -> r -> SomeRFC r
-mkPolyRFC StrictRFC r       = StrictRFC_ (PolyRFC r) 
-mkPolyRFC ReconsideredRFC r = ReconsideredRFC_ (PolyRFC r) 
 
 newtype TypedCert c (t :: CertType) = TypedCert c
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
-    deriving newtype (WithSKI, WithRFC, WithRawResourceCertificate, WithAKI)
+    deriving newtype (WithSKI, WithRawResourceCertificate, WithAKI)
 
 class OfCertType c (t :: CertType)    
 
@@ -149,9 +142,6 @@ class WithSKI a where
 
 class WithRawResourceCertificate a where
     getRawCert :: a -> RawResourceCertificate
-
-class WithRFC a where
-    getRFC :: a -> ValidationRFC
 
 class WithSerial a where
     getSerial :: a -> Serial
@@ -397,30 +387,16 @@ instance WithRawResourceCertificate EECerObject where
 instance WithRawResourceCertificate BgpCerObject where
     getRawCert BgpCerObject {..} = getRawCert certificate
 
-instance WithRawResourceCertificate c => WithRawResourceCertificate (SomeRFC c) where
-    getRawCert = getRawCert . polyRFC
-
 instance WithRawResourceCertificate RawResourceCertificate where
     getRawCert = id
 
 instance WithRawResourceCertificate ResourceCertificate where
-    getRawCert (ResourceCertificate s) = polyRFC s
-
-instance WithRFC (SomeRFC a) where
-    getRFC (StrictRFC_ _)       = StrictRFC 
-    getRFC (ReconsideredRFC_ _) = ReconsideredRFC
-
-instance WithRFC EECerObject where
-    getRFC EECerObject {..} = getRFC certificate
-
-instance WithRFC CaCerObject where    
-    getRFC CaCerObject {..} = getRFC certificate
+    getRawCert (ResourceCertificate s) = s
 
 instance OfCertType (TypedCert c (t :: CertType)) t
 instance OfCertType CaCerObject 'CACert
 instance OfCertType EECerObject 'EECert
 instance OfCertType BgpCerObject 'BGPCert
-
 
 instance WithAKI RpkiObject where
     getAKI (CerRO c) = getAKI c
@@ -483,9 +459,6 @@ instance WithSKI a => WithSKI (Located a) where
 instance WithRawResourceCertificate a => WithRawResourceCertificate (Located a) where    
     getRawCert (Located _ o) = getRawCert o
 
-instance WithRFC a => WithRFC (Located a) where    
-    getRFC (Located _ o) = getRFC o
-
 instance WithRpkiObjectType a => WithRpkiObjectType (Located a) where    
     getRpkiObjectType (Located _ o) = getRpkiObjectType o
 
@@ -501,11 +474,9 @@ data RawResourceCertificate = RawResourceCertificate {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary, NFData)
 
--- Resource certificate with a validation RFC associated with it
-newtype ResourceCertificate = ResourceCertificate (SomeRFC RawResourceCertificate)
+newtype ResourceCertificate = ResourceCertificate RawResourceCertificate
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary, NFData)
-    deriving newtype (WithRFC)
 
 data Vrp = Vrp ASN IpPrefix PrefixLength
     deriving stock (Show, Eq, Ord, Generic)
@@ -729,13 +700,13 @@ newtype TaName = TaName { unTaName :: Text }
 instance Show TaName where
     show = show . unTaName
 
-newtype Vrps = Vrps { unVrps :: MonoidalMap TaName (Set Vrp) }
+newtype Vrps = Vrps { unVrps :: MonoidalMap TaName (V.Vector Vrp) }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup Vrps
     deriving Monoid    via GenericMonoid Vrps
 
-newtype Roas = Roas { unRoas :: MonoidalMap TaName (MonoidalMap ObjectKey (Set Vrp)) }
+newtype Roas = Roas { unRoas :: MonoidalMap TaName (MonoidalMap ObjectKey (V.Vector Vrp)) }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup Roas
@@ -896,20 +867,20 @@ makeSerial i =
 
 
 estimateVrpCount :: Vrps -> Int 
-estimateVrpCount (Vrps vrps) = sum $ map Set.size $ MonoidalMap.elems vrps
+estimateVrpCount (Vrps vrps) = sum $ map V.length $ MonoidalMap.elems vrps
 
 -- Precise but much more expensive
 uniqueVrpCount :: Vrps -> Int 
-uniqueVrpCount (Vrps vrps) = Set.size $ mconcat $ MonoidalMap.elems vrps
+uniqueVrpCount (Vrps vrps) = Set.size $ Set.fromList $ concatMap V.toList $ MonoidalMap.elems vrps
 
-newVrps :: TaName -> Set Vrp -> Vrps
-newVrps taName vrpSet = Vrps $ MonoidalMap.singleton taName vrpSet
+newVrps :: TaName -> V.Vector Vrp -> Vrps
+newVrps taName vrps = Vrps $ MonoidalMap.singleton taName vrps
 
-newRoas :: TaName -> MonoidalMap ObjectKey (Set.Set Vrp) -> Roas
+newRoas :: TaName -> MonoidalMap ObjectKey (V.Vector Vrp) -> Roas
 newRoas taName vrps = Roas $ MonoidalMap.singleton taName vrps
 
-allVrps :: Vrps -> [Set Vrp] 
+allVrps :: Vrps -> [V.Vector Vrp] 
 allVrps (Vrps vrps) = MonoidalMap.elems vrps          
 
 createVrps :: Foldable f => TaName -> f Vrp -> Vrps
-createVrps taName vrps = Vrps $ MonoidalMap.fromList [(taName, Set.fromList $ toList vrps)]
+createVrps taName vrps = Vrps $ MonoidalMap.fromList [(taName, V.fromList $ toList vrps)]

@@ -234,7 +234,7 @@ withLogger LogConfig {..} sysMetricCallback f = do
   where
     loopReadQueue queue g = do 
         z <- atomically $ readCQueue queue        
-        for_ z $ \m -> g m >> loopReadQueue queue g   
+        for_ z $ \message -> g message >> loopReadQueue queue g   
 
     finallyCloseQ queue g = 
         g `finally` atomically (closeCQueue queue)

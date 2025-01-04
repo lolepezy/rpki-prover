@@ -1,6 +1,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE BangPatterns               #-}
+{-# LANGUAGE MultiWayIf                 #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE UndecidableInstances       #-}
@@ -10,12 +11,14 @@ module RPKI.Resources.Resources where
 import           Prelude                              hiding (subtract, last)
 
 import qualified Data.ByteString                      as BS
-
+import           Data.Text                            (Text)
+import qualified Data.Text                            as Text
 import           Data.Bits
 import qualified Data.List                            as List
 import           Data.Maybe
 import qualified Data.Set                             as Set
 import           Data.Word
+import           Text.Read
 
 import qualified HaskellWorks.Data.Network.Ip.Ipv4    as V4
 import qualified HaskellWorks.Data.Network.Ip.Ipv6    as V6
@@ -23,7 +26,7 @@ import           HaskellWorks.Data.Network.Ip.Range
 import           HaskellWorks.Data.Network.Ip.Word128
 import           HaskellWorks.Data.Network.Ip.Ip      as Ips
 
-import           RPKI.Resources.IntervalSet           as IS
+import           RPKI.Resources.IntervalContainers           as IS
 import           RPKI.Resources.Types
 
 
@@ -96,12 +99,11 @@ ipv6RangeToPrefixes w1 w2 = map Ipv6Prefix $ V6.rangeToBlocks $ Range (V6.IpAddr
     
 subtractRange :: (Enum a, Ord a) => a -> a -> a -> a -> r -> (Range a -> [r]) -> [r]
 subtractRange f1 l1 f2 l2 r fromRange = 
-    case () of  
-              _ | f2 > l1  || l2 <= f1 -> [r]
-                | f1 <= f2 && l1 < l2  -> fromRange $ Range f1 (pred f2)
-                | f1 <= f2 && l1 >= l2 -> fromRange (Range f1 (pred f2)) <> fromRange (Range (succ l2) l1)
-                | f1 > f2  && l1 >= l2 -> fromRange (Range l2 l1)
-                | f1 > f2  && l1 < l2  -> []
+    if | f2 > l1  || l2 <= f1 -> [r]
+       | f1 <= f2 && l1 < l2  -> fromRange $ Range f1 (pred f2)
+       | f1 <= f2 && l1 >= l2 -> fromRange (Range f1 (pred f2)) <> fromRange (Range (succ l2) l1)
+       | f1 > f2  && l1 >= l2 -> fromRange (Range l2 l1)
+       | f1 > f2  && l1 < l2  -> []
 
 ipRangesIntersection :: Ord a => r -> r -> (r -> r -> (a, a, a, a)) -> (Range a -> [r]) -> [r]
 ipRangesIntersection p1 p2 getEnds fromRange = 
@@ -284,13 +286,13 @@ optimiseAsns = mapMaybe f
 {-# INLINE optimiseAsns #-}    
 
 unwrapAsns :: [AsResource] -> [ASN]
-unwrapAsns = mconcat . map unwrap
-  where
-    unwrap = \case
-        AS asn  -> [asn]
+unwrapAsns = mconcat . map (
+    \case
+        AS asn          -> [asn]
         ASRange a1 a2
             | a1 >= a2  -> []
-            | otherwise -> [ a1 .. a2 ]
+            | otherwise -> [ a1 .. a2 ])
+{-# INLINE unwrapAsns #-}                
 
 
 -- Bits munching
@@ -302,6 +304,7 @@ fourW8sToW32 = \case
     [w1, w2, w3]          -> toW32 w1 24 .|. toW32 w2 16 .|. toW32 w3 8
     w1 : w2 : w3 : w4 : _ -> toW32 w1 24 .|. toW32 w2 16 .|. toW32 w3 8 .|. fromIntegral w4
   where        
+    {-# INLINE toW32 #-}
     toW32 !w !s = (fromIntegral w :: Word32) `shiftL` s
 {-# INLINE fourW8sToW32 #-}
 
@@ -317,6 +320,7 @@ someW8ToW128 w8s = (
     drop4 = drop 4 unpacked
     drop8 = drop 4 drop4
     drop12 = drop 4 drop8
+{-# INLINE someW8ToW128 #-}    
 
 rightPad :: Int -> a -> [a] -> [a]
 rightPad n a = go 0
@@ -341,19 +345,43 @@ ipv6PrefixLen :: Ipv6Prefix -> PrefixLength
 ipv6PrefixLen (Ipv6Prefix (V6.IpBlock _ (V6.IpNetMask mask))) = PrefixLength mask
 
 prefixLen :: IpPrefix -> PrefixLength 
-prefixLen (Ipv4P p) = ipv4PrefixLen p
-prefixLen (Ipv6P p) = ipv6PrefixLen p
+prefixLen = \case 
+    Ipv4P p -> ipv4PrefixLen p
+    Ipv6P p -> ipv6PrefixLen p
  
 -- These are mainly for statically known values in tests
 -- 
 readIp4 :: String -> Ipv4Prefix
-readIp4 s = Ipv4Prefix (read s :: V4.IpBlock V4.Canonical)
+readIp4 (parseIpv4 -> Just p) = p    
 
 readIp6 :: String -> Ipv6Prefix
-readIp6 s = 
-    case Ips.canonicalise (read s) of
-        Nothing -> error $ "Invalid IPv6: " <> show s
-        Just cb -> case cb of 
-                    IpBlockV4 _ -> error $ "Invalid IPv6: " <> show s
-                    IpBlockV6 b -> Ipv6Prefix b    
+readIp6 (parseIpv6 -> Just p) = p    
     
+parseIpv6 :: String -> Maybe Ipv6Prefix
+parseIpv6 s = 
+    readMaybe s >>= 
+    Ips.canonicalise >>= \case 
+        IpBlockV4 _ -> Nothing
+        IpBlockV6 b -> Just $ Ipv6Prefix b    
+
+parseIpv4 :: String -> Maybe Ipv4Prefix
+parseIpv4 s = Ipv4Prefix <$> readMaybe s
+
+parsePrefixT :: Text -> Maybe IpPrefix 
+parsePrefixT = parsePrefix . Text.unpack
+
+parsePrefix :: String -> Maybe IpPrefix 
+parsePrefix s =     
+    case parseIpv4 s of 
+        Nothing   -> Ipv6P <$> parseIpv6 s
+        Just ipv4 -> Just $ Ipv4P ipv4
+
+parseAsnT :: Text -> Maybe ASN
+parseAsnT = parseAsn . Text.unpack
+
+parseAsn :: String -> Maybe ASN
+parseAsn = \case 
+    (a : s : n)
+        | (a == 'a' || a == 'A') && (s == 's' || s == 'S') -> 
+            ASN <$> readMaybe n
+    n -> ASN <$> readMaybe n

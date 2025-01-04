@@ -17,16 +17,23 @@ import Data.Maybe (fromMaybe)
 
 import RPKI.Domain
 import RPKI.Logging
-import RPKI.Util (toNatural, convert)
+import RPKI.Util (toNatural)
 import GHC.Generics (Generic)
 
 import RPKI.Store.Base.Serialisation
 
-import Data.Version
-import qualified Paths_rpki_prover as Autogen
+data ApiSecured a = Hidden a
+                   |   Public a
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+    
+instance Show a => Show (ApiSecured a) where
+    show = show . configValue
 
-rpkiProverVersion :: Text
-rpkiProverVersion = convert $ "rpki-prover-" <> showVersion Autogen.version
+configValue :: ApiSecured a -> a
+configValue = \case 
+    Hidden a -> a
+    Public a -> a
 
 data Parallelism = Parallelism {
         cpuCount         :: Natural,
@@ -48,12 +55,12 @@ data FetchConfig = FetchConfig {
     deriving anyclass (TheBinary)
 
 data Config = Config {        
-        programBinaryPath         :: FilePath,
-        rootDirectory             :: FilePath,
-        talDirectory              :: FilePath,
-        extraTalsDirectories      :: [FilePath],
-        tmpDirectory              :: FilePath,
-        cacheDirectory            :: FilePath,
+        programBinaryPath         :: ApiSecured FilePath,
+        rootDirectory             :: ApiSecured FilePath,
+        talDirectory              :: ApiSecured FilePath,
+        extraTalsDirectories      :: ApiSecured [FilePath],
+        tmpDirectory              :: ApiSecured FilePath,
+        cacheDirectory            :: ApiSecured FilePath,
         proverRunMode             :: ProverRunMode,
         parallelism               :: Parallelism, 
         rsyncConf                 :: RsyncConf,
@@ -68,16 +75,17 @@ data Config = Config {
         storageCompactionInterval :: Seconds,
         rsyncCleanupInterval      :: Seconds,
         lmdbSizeMb                :: Size,
-        localExceptions           :: [FilePath],
+        localExceptions           :: ApiSecured [FilePath],
         logLevel                  :: LogLevel,
-        metricsPrefix             :: Text
+        metricsPrefix             :: Text,
+        withValidityApi           :: Bool
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
 data RsyncConf = RsyncConf {
-        rsyncClientPath   :: Maybe FilePath,
-        rsyncRoot         :: FilePath,
+        rsyncClientPath   :: Maybe (ApiSecured FilePath),
+        rsyncRoot         :: ApiSecured FilePath,
         rsyncTimeout      :: Seconds,
         asyncRsyncTimeout :: Seconds,
         cpuLimit          :: Seconds,
@@ -88,7 +96,7 @@ data RsyncConf = RsyncConf {
     deriving anyclass (TheBinary)
 
 data RrdpConf = RrdpConf {
-        tmpRoot          :: FilePath,
+        tmpRoot          :: ApiSecured FilePath,
         maxSize          :: Size,
         rrdpTimeout      :: Seconds,
         asyncRrdpTimeout :: Seconds,
@@ -101,6 +109,7 @@ data RrdpConf = RrdpConf {
 data ManifestProcessing = RFC6486_Strict | RFC9286
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
+
 
 data ValidationAlgorithm = FullEveryIteration | Incremental
     deriving stock (Eq, Ord, Show, Generic)
@@ -150,6 +159,7 @@ data ValidationConfig = ValidationConfig {
         -- Manimal allowed size of an individual object 
         minObjectSize                  :: Integer,
 
+        validationRFC                  :: ValidationRFC,
         validationAlgorithm            :: ValidationAlgorithm,
 
         fetchIntervalCalculation       :: FetchTimingCalculation,
@@ -210,17 +220,17 @@ makeParallelismF cpus fetcherCount = Parallelism cpus (2 * cpus) fetcherCount
 
 defaultConfig :: Config
 defaultConfig = Config {    
-    programBinaryPath = "rpki-prover",
-    rootDirectory = "",
-    talDirectory = "",
-    extraTalsDirectories = [],
-    tmpDirectory = "",
-    cacheDirectory = "",
+    programBinaryPath = Hidden "rpki-prover",
+    rootDirectory = Hidden "",
+    talDirectory = Hidden "",
+    extraTalsDirectories = Hidden [],
+    tmpDirectory = Hidden "",
+    cacheDirectory = Hidden "",
     proverRunMode = ServerMode,
     parallelism = makeParallelism 2,
     rsyncConf = RsyncConf {
         rsyncClientPath = Nothing,
-        rsyncRoot    = "",
+        rsyncRoot    = Hidden "",
         rsyncTimeout = 2 * 60,
         asyncRsyncTimeout = 15 * 60,
         cpuLimit = 30 * 60,    
@@ -228,7 +238,7 @@ defaultConfig = Config {
         rsyncPrefetchUrls = []
     },
     rrdpConf = RrdpConf {
-        tmpRoot = "",
+        tmpRoot = Hidden "",
         maxSize = Size $ 1024 * 1024 * 1024,
         rrdpTimeout = 2 * 60,
         asyncRrdpTimeout = 10 * 60,
@@ -249,12 +259,13 @@ defaultConfig = Config {
         -- couple of dates and a few extensions
         minObjectSize                  = 300,
         maxTaRepositories              = 3000,
+        validationRFC                  = StrictRFC,
         validationAlgorithm            = FullEveryIteration,
         fetchIntervalCalculation       = Adaptive,
         fetchTimeoutCalculation        = Adaptive,
         minFetchInterval               = Seconds 60,
         maxFetchInterval               = Seconds 600,
-        fetchMethod                    = SyncAndAsync
+        fetchMethod                    = SyncAndAsync        
     },
     httpApiConf = HttpApiConfig {
         port = 9999
@@ -268,13 +279,14 @@ defaultConfig = Config {
     rtrConfig                 = Nothing,
     cacheCleanupInterval      = Seconds $ 60 * 60 * 6,
     cacheLifeTime             = Seconds $ 60 * 60 * 24,
-    versionNumberToKeep       = 100,
+    versionNumberToKeep       = 3,
     storageCompactionInterval = Seconds $ 60 * 60 * 120,
     rsyncCleanupInterval      = Seconds $ 60 * 60 * 24 * 30,
     lmdbSizeMb                = Size $ 32 * 1024,
-    localExceptions = [],
+    localExceptions = Hidden [],
     logLevel = defaultsLogLevel,
-    metricsPrefix = "rpki_prover_"
+    metricsPrefix = "rpki_prover_",
+    withValidityApi = False
 }
 
 defaultsLogLevel :: LogLevel

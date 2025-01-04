@@ -33,6 +33,7 @@ import           System.Posix.Process
 
 import           RPKI.AppMonad
 import           RPKI.AppTypes
+import           RPKI.AppContext
 import           RPKI.Config
 import           RPKI.Reporting
 import           RPKI.Repository
@@ -44,6 +45,7 @@ import           RPKI.Util (fmtEx, trimmed)
 import           RPKI.SLURM.Types
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Database
+import           RPKI.UniqueId
 
 
 {- | This is to run worker processes for some code that is better to be executed in an isolated process.
@@ -99,15 +101,28 @@ newtype Timebox = Timebox { unTimebox :: Seconds }
     deriving anyclass (TheBinary)
 
 data WorkerInput = WorkerInput {
-        params          :: WorkerParams,
-        config          :: Config,
-        initialParentId :: ProcessID,
-        workerTimeout   :: Timebox,
-        cpuLimit        :: Maybe CPUTime
+        workerId                :: WorkerId,
+        params                  :: WorkerParams,
+        config                  :: Config,
+        initialParentId         :: ProcessID,
+        workerTimeout           :: Timebox,
+        cpuLimit                :: Maybe CPUTime,
+        parentExecutableVersion :: ExecutableVersion
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
+makeWorkerInput :: (MonadIO m) 
+                => AppContext s 
+                -> WorkerId
+                -> WorkerParams
+                -> Timebox
+                -> Maybe CPUTime                
+                -> m WorkerInput
+makeWorkerInput AppContext {..} workerId params timeout cpuLimit = do 
+    thisProcessId <- liftIO getProcessID    
+    pure $ WorkerInput workerId params config thisProcessId 
+                        timeout cpuLimit executableVersion
 
 newtype RrdpFetchResult = RrdpFetchResult 
                             (Either AppError (RrdpRepository, RrdpFetchStat), ValidationState)    
@@ -129,8 +144,7 @@ data ValidationResult = ValidationResult ValidationState (Maybe Slurm)
 
 data CacheCleanupResult = CacheCleanupResult CleanUpResult
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
-
+    deriving anyclass (TheBinary)              
 
 data WorkerResult r = WorkerResult {
         payload   :: r,        
@@ -147,14 +161,20 @@ data WorkerResult r = WorkerResult {
 executeWork :: WorkerInput 
             -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                
             -> IO ()
-executeWork input actualWork = do         
-    exitCode <- anyOf 
-        ((actualWork input writeWorkerOutput >> pure ExitSuccess) `onException` pure exceptionExitCode)
-        (anyOf dieIfParentDies dieOfTiming)
-    
-    exitWith exitCode
+executeWork input actualWork = 
+    -- Check if version of the executable has changed compared to the parent.
+    -- If that's the case, bail out, it's likely we can do more harm then good
+    if input ^. #parentExecutableVersion /= thisExecutableVersion
+        then 
+            exitWith replacedExecutableExitCode
+        else do 
+            exitCode <- whicheverHappensFirst 
+                ((actualWork input writeWorkerOutput >> pure ExitSuccess) `onException` pure exceptionExitCode)
+                (whicheverHappensFirst dieIfParentDies dieOfTiming)
+            
+            exitWith exitCode
   where        
-    anyOf a b = either id id <$> race a b
+    whicheverHappensFirst a b = either id id <$> race a b
     
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
@@ -171,7 +191,7 @@ executeWork input actualWork = do
     dieOfTiming = 
         case input ^. #cpuLimit of
             Nothing       -> dieAfterTimeout
-            Just cpuLimit -> anyOf dieAfterTimeout (dieOutOfCpuTime cpuLimit)
+            Just cpuLimit -> whicheverHappensFirst dieAfterTimeout (dieOutOfCpuTime cpuLimit)
 
     -- Time bomb. Wait for the certain timeout and then exit.
     dieAfterTimeout = do
@@ -223,11 +243,12 @@ defaultRts :: [String]
 defaultRts = [ "-I0" ]
 
 parentDiedExitCode, timeoutExitCode, outOfCpuTimeExitCode, outOfMemoryExitCode :: ExitCode
-exitKillByTypedProcess, exceptionExitCode :: ExitCode
+exitKillByTypedProcess, exceptionExitCode, replacedExecutableExitCode :: ExitCode
 exceptionExitCode    = ExitFailure 99
 parentDiedExitCode   = ExitFailure 111
-timeoutExitCode      = ExitFailure 122
 outOfCpuTimeExitCode = ExitFailure 113
+timeoutExitCode      = ExitFailure 122
+replacedExecutableExitCode = ExitFailure 123
 outOfMemoryExitCode  = ExitFailure 251
 exitKillByTypedProcess = ExitFailure (-2)
 
@@ -236,28 +257,20 @@ worderIdS (WorkerId w) = unpack w
 
 -- Main entry point to start a worker
 -- 
-runWorker :: (TheBinary r, Show r) => 
-            AppLogger 
-            -> Config            
-            -> WorkerId
-            -> WorkerParams                             
-            -> Timebox
-            -> Maybe CPUTime
+runWorker :: (TheBinary r, Show r)
+            => AppLogger 
+            -> WorkerInput            
             -> [String] 
             -> ValidatorT IO r
-runWorker logger config workerId params timeout cpuLimit extraCli = do  
-    thisProcessId <- liftIO getProcessID
-
-    let executableToRun = config ^. #programBinaryPath    
-    let workerStdin = serialise_ $ WorkerInput params config thisProcessId timeout cpuLimit
-
+runWorker logger workerInput extraCli = do
+    let executableToRun = configValue $ workerInput ^. #config . #programBinaryPath
     let worker = 
-            setStdin (byteStringInput $ LBS.fromStrict workerStdin) $             
+            setStdin (byteStringInput $ LBS.fromStrict $ serialise_ workerInput) $             
             setStderr createSource $
             setStdout byteStringOutput $
                 proc executableToRun $ [ "--worker" ] <> extraCli
-
-    logDebug logger [i|Running worker: #{trimmed worker} with timeout #{unTimebox timeout}.|]        
+    
+    logDebug logger [i|Running worker: #{trimmed worker} with timeout #{timeout}.|]       
 
     runIt worker `catches` [                    
             Handler $ \e@(SomeAsyncException _) -> throwIO e,
@@ -265,6 +278,9 @@ runWorker logger config workerId params timeout cpuLimit extraCli = do
             Handler $ \e@(SomeException _)      -> complain [i|Worker #{workerId} died in a strange way: #{fmtEx e}|]       
         ] 
   where    
+
+    timeout = unTimebox $ workerInput ^. #workerTimeout
+    workerId = workerInput ^. #workerId
 
     waitForProcess conf f = bracket
         (startProcess conf)
@@ -300,6 +316,10 @@ runWorker logger config workerId params timeout cpuLimit extraCli = do
                     let message = [i|Worker #{workerId} ran out of memory.|]
                     logError logger message                    
                     appError $ InternalE $ WorkerOutOfMemory message
+                | exit == replacedExecutableExitCode -> do                     
+                    let message = [i|Worker #{workerId} detected that `rpki-prover` binary is different and exited for good.|]
+                    logError logger message                    
+                    appError $ InternalE $ WorkerDetectedDifferentExecutable message
                 | exit == exitKillByTypedProcess -> do
                     -- 
                     -- This is a hack to work around a problem in `readProcess`:
