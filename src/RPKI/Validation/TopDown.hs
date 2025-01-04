@@ -31,7 +31,7 @@ import           Barbies
 
 import           Data.Generics.Product.Typed
 import           Data.Generics.Product.Fields
-import           GHC.Generics (Generic)
+import           GHC.Generics
 
 import           Data.Foldable
 import           Data.IORef
@@ -44,6 +44,7 @@ import           Data.Monoid.Generic
 import qualified Data.List                        as List
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
+import qualified Data.Vector                      as V
 import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
@@ -333,9 +334,11 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
 
             let payloads = Payloads {..}        
             let payloads' = payloads & #vrps .~ 
-                                newVrps taName (Set.fromList [ v | T2 vrp _ <- vrps, v <- vrp ])
+                                newVrps taName (V.fromList [ v | T2 vrp _ <- vrps, v <- vrp ])
+
             let roas = newRoas taName $ MonoidalMap.fromList $ 
-                            map (\(T2 vrp k) -> (k, Set.fromList vrp)) vrps 
+                            map (\(T2 vrp k) -> (k, V.fromList vrp)) vrps 
+
             pure $ TopDownResult payloads' roas vs
 
   where
@@ -922,7 +925,7 @@ validateCaNoFetch
                     -- In this case invalid child is considered invalid entry 
                     -- and the whole manifest is invalid
                     Left e              -> InvalidEntry e vs
-                    Right childShortcut -> Valid vs childShortcut key filename   
+                    Right childShortcut -> ValidEntry vs childShortcut key filename   
     
     independentMftChildrenResults fullCa nonCrlChildren validCrl = do
         scopes <- askScopes
@@ -947,7 +950,7 @@ validateCaNoFetch
                         (z, vs') <- runValidatorT scopes $ validateMftChild fullCa ro filename validCrl
                         pure $! case z of
                                 Left e              -> InvalidChild e vs' key filename
-                                Right childShortcut -> Valid vs' childShortcut key filename
+                                Right childShortcut -> ValidEntry vs' childShortcut key filename
     
     forChildren nonCrlChildren = let
         itemsPerThread = 20
@@ -971,7 +974,7 @@ validateCaNoFetch
                 InvalidChild _ vs key fileName -> do
                     embedState vs
                     pure $! T2 key (Just $! makeChildWithIssues key fileName) : childrenShortcuts
-                Valid vs childShortcut key fileName -> do 
+                ValidEntry vs childShortcut key fileName -> do 
                     embedState vs
                     -- Don't create shortcuts for objects having either errors or warnings,
                     -- otherwise warnings will disappear after the first validation 
@@ -1559,7 +1562,6 @@ makeMftShortcut key
     (notValidBefore, notValidAfter) = getValidityPeriod mftObject        
     serial = getSerial mftObject
     manifestNumber = (getCMSContent $ cmsPayload mftObject) ^. #mftNumber
-    resources = getRawCert mftObject ^. #resources
     crlShortcut = let 
         SignCRL {..} = validCrl ^. #signCrl
         -- That must always match, since it's a validated CRL
@@ -1680,7 +1682,7 @@ addUniqueVRPCount :: (HasType ValidationState s, HasField' "payloads" s (Payload
 addUniqueVRPCount !s = let
         vrpCountLens = typed @ValidationState . typed @RawMetric . #vrpCounts
         totalUnique = Count (fromIntegral $ uniqueVrpCount $ (s ^. #payloads) ^. #vrps)
-        perTaUnique = MonoidalMap.map (Count . fromIntegral . Set.size) (unVrps $ (s ^. #payloads) ^. #vrps)   
+        perTaUnique = MonoidalMap.map (Count . fromIntegral . V.length) (unVrps $ (s ^. #payloads) ^. #vrps)   
     in s & vrpCountLens . #totalUnique .~ totalUnique                
          & vrpCountLens . #perTaUnique .~ perTaUnique
 
@@ -1699,7 +1701,7 @@ getCaLocations AppContext {..} = \case
 
 data ManifestValidity e v = InvalidEntry e v 
                             | InvalidChild e v ObjectKey Text
-                            | Valid v (Maybe MftEntry) ObjectKey Text
+                            | ValidEntry v (Maybe MftEntry) ObjectKey Text
 
 makeChildWithIssues :: ObjectKey -> Text -> MftEntry
 makeChildWithIssues childKey fileName = 

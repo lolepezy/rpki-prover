@@ -53,7 +53,6 @@ import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 import           RPKI.Validation.Types
-import           RPKI.Resources.Types
 
 import           RPKI.Util                (ifJustM)
 
@@ -700,8 +699,6 @@ slurmForVersion tx DB { slurmStore = SlurmStore s } wv =
 deleteSlurms :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteSlurms tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.delete tx s wv
 
-
-
 updateRrdpMeta :: (MonadIO m, Storage s) =>
                 Tx s 'RW -> DB s -> RrdpMeta -> RrdpURL -> m ()
 updateRrdpMeta tx DB { repositoryStore = RepositoryStore {..} } meta url = liftIO $ do
@@ -969,12 +966,6 @@ roAppTx ws f = appTx ws f roTx
 
 rwAppTx :: (Storage s, WithStorage s ws) => ws -> (Tx s 'RW -> ValidatorT IO a) -> ValidatorT IO a
 rwAppTx ws f = appTx ws f rwTx
-
--- roAppTxT :: (Storage s, WithStorage s ws) => ws -> (Tx s 'RO -> db -> ValidatorT IO a) -> ValidatorT IO a 
--- roAppTxT ws f = appTx ws f roTxT    
-
--- rwAppTxT :: (Storage s, WithStorage s ws) => ws -> (Tx s 'RW -> db -> ValidatorT IO a) -> ValidatorT IO a
--- rwAppTxT ws f = appTx ws f rwTxT
 
 
 appTx :: (Storage s, WithStorage s ws) => 

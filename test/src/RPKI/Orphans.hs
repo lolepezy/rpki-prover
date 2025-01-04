@@ -734,7 +734,7 @@ instance Arbitrary Ipv6Prefix where
         w2 :: Word32 <- arbitrary
         w3 :: Word32 <- arbitrary
         w4 :: Word32 <- arbitrary
-        m :: Word8  <- choose (46, 128)
+        m :: Word8   <- choose (46, 128)
         let x = (w1, w2, w3, w4) `shift` (128 - fromIntegral m)
         pure $! mkIpv6Block x m
 

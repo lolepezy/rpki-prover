@@ -51,7 +51,7 @@ import           RPKI.Reporting
 import           RPKI.RRDP.Types
 import           RPKI.Metrics.Metrics
 import           RPKI.Metrics.System
-import qualified RPKI.Resources.IntervalSet as IS
+import qualified RPKI.Resources.IntervalContainers as IS
 import           RPKI.Resources.Types
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
