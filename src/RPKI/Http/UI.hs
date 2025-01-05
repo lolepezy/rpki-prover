@@ -27,11 +27,11 @@ import qualified Data.Map.Strict             as Map
 
 import qualified Data.List.NonEmpty          as NonEmpty
 import qualified Data.List                   as List
-import           Data.Map.Monoidal.Strict (getMonoidalMap)
-import qualified Data.Map.Monoidal.Strict as MonoidalMap
+import           Data.Map.Monoidal.Strict    (getMonoidalMap)
+import qualified Data.Map.Monoidal.Strict    as MonoidalMap
 import           Data.String.Interpolate.IsString as S
 
-import           Text.Blaze.Html5 as H
+import           Text.Blaze.Html5            as H
 import           Text.Blaze.Html5.Attributes as A
 
 import           RPKI.AppTypes

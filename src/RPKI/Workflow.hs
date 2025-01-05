@@ -16,7 +16,7 @@ import           Control.Monad
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
-import           GHC.Generics (Generic)
+import           GHC.Generics
 
 import qualified Data.ByteString.Lazy            as LBS
 

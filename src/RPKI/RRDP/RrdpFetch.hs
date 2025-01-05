@@ -29,7 +29,7 @@ import           Data.String.Interpolate.IsString
 import           Data.Proxy
 import           Data.Maybe
 
-import           GHC.Generics (Generic)
+import           GHC.Generics
 
 import qualified Streaming.Prelude                as S
 

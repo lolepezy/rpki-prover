@@ -76,7 +76,7 @@ instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAs
     convert (RsyncU u) = convert u
     convert (RrdpU u) = convert u
 
-normalizeUri :: Text.Text -> Text.Text
+normalizeUri :: Text -> Text
 normalizeUri = Text.map (\c -> if isOkForAFile c then c else '_')
   where
     isOkForAFile c = isAlpha c || isDigit c || c `elem` ("-._" :: String)
@@ -93,10 +93,10 @@ removeSpaces = C.filter (not . isSpace)
 isSpace_ :: Word8 -> Bool
 isSpace_ = isSpace . chr . fromEnum
 
-fmtEx :: SomeException -> Text.Text
+fmtEx :: SomeException -> Text
 fmtEx = Text.pack . show
 
-fmtGen :: Show a => a -> Text.Text
+fmtGen :: Show a => a -> Text
 fmtGen = Text.pack . show
 
 toNatural :: Int -> Maybe Natural 

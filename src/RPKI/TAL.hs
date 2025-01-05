@@ -18,6 +18,7 @@ import           Data.List.NonEmpty               (NonEmpty(..))
 import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set.NonEmpty                as NESet
 import           Data.String.Interpolate.IsString
+import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Text.Encoding               (encodeUtf8)
 import qualified Data.ByteString                  as BS
@@ -38,7 +39,7 @@ import           RPKI.Store.Base.Serialisation
 -- | (I couldn't find any formal definiteion of the "RIPE format")
 -- | 
 data TAL = PropertiesTAL {
-        caName              :: Maybe Text.Text,
+        caName              :: Maybe Text,
         certificateLocation :: Locations,
         publicKeyInfo       :: EncodedBase64,
         prefetchUris        :: [RpkiURL],
@@ -63,11 +64,11 @@ getTaCertURL :: TAL -> RpkiURL
 getTaCertURL PropertiesTAL {..} = pickLocation certificateLocation
 getTaCertURL RFC_TAL {..}       = pickLocation certificateLocations
 
-newLocation :: Text.Text -> NonEmpty RpkiURL
+newLocation :: Text -> NonEmpty RpkiURL
 newLocation t =  RrdpU (RrdpURL $ URI t) :| []
 
 -- | Parse TAL object from raw text
-parseTAL :: Text.Text -> Text.Text -> Either TALError TAL
+parseTAL :: Text -> Text -> Either TALError TAL
 parseTAL bs taName = 
     case validTaName taName of 
         Left e -> Left e
@@ -114,7 +115,7 @@ parseTAL bs taName =
                                 Nothing    -> Left $ TALError [i|Empty list of TA certificate URLs in #{propertyName}|]
                                 Just uris' -> bimap TALError (Locations . NESet.fromList) $ mapM parseRpkiURL uris'
                     where
-                        propertyName = "certificate.location" :: Text.Text
+                        propertyName = "certificate.location" :: Text
 
                 getMandatory name ps =
                     case lookup name ps of
@@ -141,7 +142,7 @@ parseTAL bs taName =
                 looksLikeUri s = any (`Text.isPrefixOf` s) ["rsync://", "http://", "https://"]
 
 
-validTaName :: Text.Text -> Either TALError TaName
+validTaName :: Text -> Either TALError TaName
 validTaName taName = 
     if BS.length (encodeUtf8 taName) > 512
         then 

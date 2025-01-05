@@ -16,6 +16,7 @@ import           Control.DeepSeq
 
 import           Data.Aeson.Types
 import qualified Data.Map.Strict             as Map
+import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 import           Data.Tuple.Strict
 import           GHC.Generics
@@ -45,7 +46,7 @@ data MftChild = CaChild CaShortcut Serial
 
 
 data MftEntry = MftEntry {        
-        fileName :: Text.Text,
+        fileName :: Text,
         child    :: MftChild
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -177,7 +178,7 @@ instance ToSchema BgpSecShortcut
 instance ToSchema AspaShortcut
 instance ToSchema RoaShortcut
 instance ToSchema MftChild where
-    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text.Text)
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 getMftChildSerial :: MftChild -> Maybe Serial     
 getMftChildSerial = \case 

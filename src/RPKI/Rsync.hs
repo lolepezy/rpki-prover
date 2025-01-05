@@ -31,7 +31,7 @@ import qualified Data.List.NonEmpty               as NonEmpty
 
 import           Data.Hourglass
 
-import           GHC.Generics (Generic)
+import           GHC.Generics
 
 import           RPKI.AppContext
 import           RPKI.AppMonad

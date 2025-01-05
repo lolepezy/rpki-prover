@@ -24,7 +24,7 @@ import qualified Crypto.Hash.SHA512        as S512
 
 import qualified Data.ByteString as BS
 
-import           GHC.Generics (Generic)
+import           GHC.Generics
 
 import           Data.Maybe
 import           Data.Foldable (for_)

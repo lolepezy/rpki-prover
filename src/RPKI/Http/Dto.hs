@@ -15,6 +15,7 @@ import qualified Data.Set                         as Set
 import qualified Data.Vector                      as V
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
+import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
@@ -288,10 +289,10 @@ objectToDto = \case
 
                 in ExtensionDto {..}
 
-            strExt :: forall a . (Show a, X509.Extension a) => Proxy a -> BS.ByteString -> Text.Text
+            strExt :: forall a . (Show a, X509.Extension a) => Proxy a -> BS.ByteString -> Text
             strExt _ bytes = Text.pack $ show (X509.extDecodeBs bytes :: Either String a)
 
-            urlText :: Maybe BS.ByteString -> Text.Text
+            urlText :: Maybe BS.ByteString -> Text
             urlText = \case 
                 Nothing -> "undefined"
                 Just bs -> either id unURI $ extractURI bs
@@ -368,14 +369,14 @@ toBulkResultDto
 rawCSV :: BB.Builder -> BB.Builder -> RawCSV
 rawCSV header body = RawCSV $ BB.toLazyByteString $ header <> body
 
-prefixStr :: IpPrefix -> Text.Text
+prefixStr :: IpPrefix -> Text
 prefixStr (Ipv4P (Ipv4Prefix p)) = Text.pack $ show p
 prefixStr (Ipv6P (Ipv6Prefix p)) = Text.pack $ show p
 
 str :: String -> BB.Builder
 str = BB.stringUtf8
 
-text :: Text.Text -> BB.Builder
+text :: Text -> BB.Builder
 text = str . Text.unpack
 
 ch :: Char -> BB.Builder

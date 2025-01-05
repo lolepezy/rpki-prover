@@ -10,7 +10,7 @@ import           Data.Int
 import           Data.Semigroup
 import           Control.Monad.IO.Class (MonadIO, liftIO)
 
-import           GHC.Generics (Generic)
+import           GHC.Generics
 
 import           Data.Hourglass         
 import           System.Hourglass       (dateCurrent)
