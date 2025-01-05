@@ -472,58 +472,56 @@ validateCa :: Storage s =>
 validateCa 
     appContext@AppContext {..}
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
-    ca = do
-
-    let validationConfig = config ^. typed @ValidationConfig
-
-    -- First check if we have reached some limit for the total depth of the CA tree
-    -- it's total size of the number of repositories. 
+    ca = 
+    checkAndReport treeDepthLimit
+        $ checkAndReport visitedObjectCountLimit
+        $ checkAndReport repositoryCountLimit
+        $ validateCaNoLimitChecks appContext topDownContext ca        
+  where
 
     -- Check and report for the maximal tree depth
-    let treeDepthLimit = (
-            pure (currentPathDepth > validationConfig ^. #maxCertificatePathDepth),
-            do
-                locations <- getCaLocations appContext ca
-                for_ locations $ \loc -> 
-                    logError logger [i|Interrupting validation on #{fmtLocations loc}, maximum tree depth is reached.|]
-                vError $ CertificatePathTooDeep $ validationConfig ^. #maxCertificatePathDepth
-            )
+    treeDepthLimit = (
+        pure (currentPathDepth > validationConfig ^. #maxCertificatePathDepth),
+        logCheck 
+            (CertificatePathTooDeep $ validationConfig ^. #maxCertificatePathDepth)
+            (\loc -> [i|Interrupting validation on #{fmtLocations loc}, maximum tree depth is reached.|])
+        )
 
     -- Check and report for the maximal number of objects in the tree
-    let visitedObjectCountLimit = (
-            (> validationConfig ^. #maxTotalTreeSize) . Set.size <$> readTVar visitedKeys,
-            do
-                locations <- getCaLocations appContext ca
-                for_ locations $ \loc -> 
-                    logError logger [i|Interrupting validation on #{fmtLocations loc}, maximum total object number in the tree is reached.|]
-                vError $ TreeIsTooBig $ validationConfig ^. #maxTotalTreeSize
-            )
+    visitedObjectCountLimit = (
+        (> validationConfig ^. #maxTotalTreeSize) . Set.size <$> readTVar visitedKeys,
+        logCheck 
+            (TreeIsTooBig $ validationConfig ^. #maxTotalTreeSize)
+            (\loc -> [i|Interrupting validation on #{fmtLocations loc}, maximum total object number in the tree is reached.|])
+        )
 
     -- Check and report for the maximal increase in the repository number
-    let repositoryCountLimit = (
-            do
-                pps <- readTVar $ repositoryProcessing ^. #publicationPoints
-                pure $! repositoryCount pps - startingRepositoryCount > validationConfig ^. #maxTaRepositories,
-            do
-                locations <- getCaLocations appContext ca
-                for_ locations $ \loc -> 
-                    logError logger [i|Interrupting validation on #{fmtLocations loc}, maximum total new repository count is reached.|]
-                vError $ TooManyRepositories $ validationConfig ^. #maxTaRepositories
-            )                
+    repositoryCountLimit = (
+        do
+            pps <- readTVar $ repositoryProcessing ^. #publicationPoints
+            pure $! repositoryCount pps - startingRepositoryCount > validationConfig ^. #maxTaRepositories,
+        logCheck
+            (TooManyRepositories $ validationConfig ^. #maxTaRepositories)
+            (\loc -> [i|Interrupting validation on #{fmtLocations loc}, maximum total new repository count is reached.|])
+        )                
+
+    logCheck validationError errorText = do 
+        locations <- getCaLocations appContext ca
+        for_ locations $ \loc -> 
+            logError logger (errorText loc)
+        vError validationError                
 
     -- This is to make sure that the error of hitting a limit
     -- is reported only by the thread that first hits it
-    let checkAndReport (condition, report) nextOne = do
+    checkAndReport (condition, report) nextOne = do
             z <- liftIO $ atomically $ verifyLimit condition interruptedByLimit
             case z of
                 CanProceed           -> nextOne
                 FirstToHitLimit      -> report
                 AlreadyReportedLimit -> pure mempty
 
-    checkAndReport treeDepthLimit
-        $ checkAndReport visitedObjectCountLimit
-        $ checkAndReport repositoryCountLimit
-        $ validateCaNoLimitChecks appContext topDownContext ca
+    validationConfig = config ^. typed @ValidationConfig
+    
 
 
 validateCaNoLimitChecks :: Storage s =>
