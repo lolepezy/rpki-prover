@@ -243,7 +243,8 @@ instance ToSchema Extensions where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ExtensionRaw where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema HashALG
+instance ToSchema HashALG where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema AsResource
 
