@@ -466,7 +466,7 @@ saveSnapshot
           where
             tryToParse rpkiURL hash blob type_ = do 
                 z <- liftIO $ runValidatorT (newScopes $ unURI uri) $ vHoist $ readObject rpkiURL blob
-                (evaluate $ force $
+                (evaluate $!
                     case z of 
                         (Left e, _) -> 
                             ObjectParsingProblem rpkiURL (VErr e) 
@@ -606,7 +606,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
           where
             tryToParse rpkiURL hash blob type_ = do
                 z <- liftIO $ runValidatorT (newScopes $ unURI uri) $ vHoist $ readObject rpkiURL blob
-                (evaluate $ force $
+                (evaluate $!
                     case z of 
                         (Left e, _) -> 
                             ObjectParsingProblem rpkiURL (VErr e) 
@@ -729,7 +729,7 @@ data RrdpObjectProcessingResult =
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta    
         | SuccessParsed RpkiURL (StorableObject RpkiObject) 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass NFData
+    -- deriving anyclass NFData
 
 data DeltaOp m a = Delete URI Hash 
                 | Add URI (Async a) 

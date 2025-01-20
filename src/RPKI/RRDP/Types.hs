@@ -17,7 +17,7 @@ import           RPKI.Store.Base.Serialisation
 
 newtype RrdpSerial = RrdpSerial Integer
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary, NFData)     
 
 instance Show RrdpSerial where
     show (RrdpSerial s) = show s

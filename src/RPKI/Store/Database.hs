@@ -240,13 +240,13 @@ data MftShortcutMeta = MftShortcutMeta {
         crlShortcut    :: CrlShortcut
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 newtype MftShortcutChildren = MftShortcutChildren {
         nonCrlEntries :: Map.Map ObjectKey MftEntry
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 
 data MftShortcutStore s = MftShortcutStore {

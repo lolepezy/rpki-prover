@@ -247,7 +247,7 @@ instance Exception AppException
 
 newtype Validations = Validations (Map VScope (Set VIssue))
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
     deriving newtype Monoid
 
 instance Semigroup Validations where
@@ -348,7 +348,7 @@ class Monoid metric => MetricC metric where
 
 newtype Count = Count { unCount :: Int64 }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
     deriving newtype (Num)
     deriving Semigroup via Sum Count
     deriving Monoid via Sum Count
@@ -358,7 +358,7 @@ instance Show Count where
 
 newtype HttpStatus = HttpStatus { unHttpStatus :: Int }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)        
+    deriving anyclass (TheBinary)        
 
 instance Monoid HttpStatus where
     mempty = HttpStatus 200
@@ -368,7 +368,7 @@ instance Semigroup HttpStatus where
 
 data RrdpSource = RrdpNoUpdate | RrdpDelta | RrdpSnapshot
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)        
+    deriving anyclass (TheBinary)        
 
 instance Monoid RrdpSource where
     mempty = RrdpNoUpdate
@@ -381,7 +381,7 @@ instance Semigroup RrdpSource where
 
 data FetchFreshness = UpToDate | AttemptedFetch | FailedToFetch
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)        
+    deriving anyclass (TheBinary)        
 
 instance Monoid FetchFreshness where
     mempty = UpToDate
@@ -400,7 +400,7 @@ data RrdpMetric = RrdpMetric {
         fetchFreshness  :: FetchFreshness
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup RrdpMetric   
     deriving Monoid    via GenericMonoid RrdpMetric
 
@@ -410,7 +410,7 @@ data RsyncMetric = RsyncMetric {
         fetchFreshness :: FetchFreshness
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup RsyncMetric   
     deriving Monoid    via GenericMonoid RsyncMetric
 
@@ -429,7 +429,7 @@ data ValidationMetric = ValidationMetric {
         totalTimeMs     :: TimeMs
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup ValidationMetric   
     deriving Monoid    via GenericMonoid ValidationMetric
 
@@ -444,7 +444,7 @@ instance MetricC ValidationMetric where
 
 newtype MetricMap a = MetricMap { unMetricMap :: MonoidalMap MetricScope a }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
     deriving newtype Monoid    
     deriving newtype Semigroup
 
@@ -453,7 +453,7 @@ data VrpCounts = VrpCounts {
         perTaUnique :: MonoidalMap TaName Count
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup VrpCounts   
     deriving Monoid    via GenericMonoid VrpCounts
 
@@ -464,7 +464,7 @@ data RawMetric = RawMetric {
         vrpCounts         :: VrpCounts
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup RawMetric   
     deriving Monoid    via GenericMonoid RawMetric
 
@@ -474,7 +474,7 @@ data RawMetric = RawMetric {
 data Trace = WorkerTimeoutTrace               
            | WorkerCpuOveruseTrace               
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data ValidationState = ValidationState {
         validations   :: Validations,
@@ -482,7 +482,7 @@ data ValidationState = ValidationState {
         traces        :: Set Trace
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup ValidationState
     deriving Monoid    via GenericMonoid ValidationState
 

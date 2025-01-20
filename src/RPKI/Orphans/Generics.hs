@@ -18,6 +18,8 @@ import Crypto.PubKey.DSA (PublicKey(..), Params(..))
 
 import Crypto.PubKey.ECC.Types
     
+import qualified Data.X509                as X509
+
 deriving instance Generic DateTime
 deriving instance Generic Date
 deriving instance Generic TimeOfDay
@@ -44,3 +46,20 @@ deriving instance Generic Crypto.PubKey.ECC.Types.CurveName
 deriving instance Generic BitArray
 deriving instance Generic (NESet a)
 deriving instance Generic (MonoidalMap a b)
+
+-- deriving instance Generic X509.Certificate
+-- deriving instance Generic X509.SignatureALG
+-- deriving instance Generic X509.HashALG
+-- deriving instance Generic X509.SerializedPoint
+-- deriving instance Generic X509.DistinguishedName
+-- deriving instance Generic X509.PubKeyEC
+-- deriving instance Generic X509.PubKeyALG
+-- deriving instance Generic X509.PubKey
+-- deriving instance Generic X509.ExtensionRaw
+-- deriving instance Generic X509.Extensions
+-- deriving instance Generic X509.RevokedCertificate
+-- deriving instance Generic X509.CRL
+
+-- deriving instance Generic X509.SignedCertificate
+-- deriving instance Generic X509.SignedCRL
+

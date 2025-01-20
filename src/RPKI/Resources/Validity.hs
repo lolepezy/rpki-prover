@@ -47,7 +47,8 @@ data Bucket a c = Bucket {
         subtree :: AddressTree a c
     }
     deriving stock (Show, Eq, Ord, Generic)     
-    deriving anyclass (NFData)    
+    deriving anyclass (NFData)
+        
 
 data AddressTree a c = AllTogether [c]
                      | Divided {
@@ -56,12 +57,13 @@ data AddressTree a c = AllTogether [c]
                             overlapping :: [c]
                         }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (NFData)
+    deriving anyclass (NFData)    
+    
 
 data QuickCompVrp a = QuickCompVrp a a Vrp
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (NFData)
-
+    deriving anyclass (NFData)    
+    
 class StoredVrp a where
     type ActuallyStored a :: Type
     makeStoredVrp :: a -> a -> Vrp -> ActuallyStored a
@@ -83,6 +85,7 @@ data PrefixIndex = PrefixIndex {
     }
     deriving stock (Show, Eq, Ord, Generic)     
     deriving anyclass (NFData)
+
 
 makePrefixIndex :: PrefixIndex
 makePrefixIndex = let 

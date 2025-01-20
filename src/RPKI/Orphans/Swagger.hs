@@ -146,31 +146,31 @@ instance ToSchema Locations where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 
-instance ToSchema RpkiObject
-instance ToSchema CaCerObject
-instance ToSchema BgpCerObject
-instance ToSchema CrlObject
-instance ToSchema EECerObject
+-- instance ToSchema RpkiObject
+-- instance ToSchema CaCerObject
+-- instance ToSchema BgpCerObject
+-- instance ToSchema CrlObject
+-- instance ToSchema EECerObject
 
-instance ToSchema a => ToSchema (CMSBasedObject a)
-instance ToSchema a => ToSchema (CMS a)
-instance ToSchema a => ToSchema (SignedObject a)
-instance ToSchema a => ToSchema (SignedData a)
-instance ToSchema a => ToSchema (EncapsulatedContentInfo a)
+-- instance ToSchema a => ToSchema (CMSBasedObject a)
+-- instance ToSchema a => ToSchema (CMS a)
+-- instance ToSchema a => ToSchema (SignedObject a)
+-- instance ToSchema a => ToSchema (SignedData a)
+-- instance ToSchema a => ToSchema (EncapsulatedContentInfo a)
 
 instance ToSchema Vrp
 instance ToSchema SplPayload
 instance ToSchema Gbr where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema Rsc
-instance ToSchema Aspa
-instance ToSchema MftPair
-instance ToSchema Manifest
-instance ToSchema CertificateWithSignature  where
-    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema ResourceCertificate
-instance ToSchema RawResourceCertificate
-instance ToSchema r => ToSchema (TypedCert r t)
+-- instance ToSchema Rsc
+-- instance ToSchema Aspa
+-- instance ToSchema MftPair
+-- instance ToSchema Manifest
+-- instance ToSchema CertificateWithSignature  where
+--     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+-- instance ToSchema ResourceCertificate
+-- instance ToSchema RawResourceCertificate
+-- instance ToSchema r => ToSchema (TypedCert r t)
 
 instance ToSchema Hash where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
@@ -204,30 +204,34 @@ instance ToSchema IpResourceSet
 instance ToSchema SignCRL where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ContentType
-instance ToSchema SignerInfos
+-- instance ToSchema SignerInfos
 instance ToSchema SignerIdentifier where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema SignatureValue where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema SignatureAlgorithmIdentifier
+
+instance ToSchema SignatureAlgorithmIdentifier where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
 instance ToSchema SignedAttributes where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema Attribute where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
 instance ToSchema DigestAlgorithmIdentifier
 instance ToSchema DigestAlgorithmIdentifiers
 instance ToSchema Version
 instance ToSchema CMSVersion
 
-instance ToSchema X509.Certificate
-instance ToSchema X509.CRL
-instance ToSchema X509.RevokedCertificate
-instance ToSchema a => ToSchema (X509.SignedExact a) where
-    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema a => ToSchema (X509.Signed a) where
-    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+-- instance ToSchema X509.Certificate
+-- instance ToSchema X509.CRL
+-- instance ToSchema X509.RevokedCertificate
+-- instance ToSchema a => ToSchema (X509.SignedExact a) where
+--     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+-- instance ToSchema a => ToSchema (X509.Signed a) where
+--     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
     
-instance ToSchema SignatureALG
+-- instance ToSchema SignatureALG
 
 instance ToSchema ASN1 where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)

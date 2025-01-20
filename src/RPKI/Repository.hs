@@ -8,9 +8,7 @@
 
 module RPKI.Repository where
 
-import           Control.DeepSeq
 import           Control.Lens
-
 import           Control.Concurrent.STM
 import           Control.Concurrent.Async
 import           Data.Generics.Product.Typed
@@ -47,19 +45,19 @@ data FetchType = Unknown
                | ForSyncFetch Instant 
                | ForAsyncFetch Instant
     deriving stock (Show, Eq, Generic)    
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
     deriving Semigroup via Max FetchType
 
 data FetchStatus = Pending
                  | FetchedAt Instant
                  | FailedAt Instant  
     deriving stock (Show, Eq, Generic)    
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
     deriving Semigroup via Max FetchStatus
 
 newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL } 
     deriving stock (Show, Eq, Ord, Generic)    
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data RrdpRepository = RrdpRepository {
         uri       :: RrdpURL,
@@ -68,12 +66,12 @@ data RrdpRepository = RrdpRepository {
         meta      :: RepositoryMeta        
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data PublicationPoint = RrdpPP  RrdpRepository | 
                         RsyncPP RsyncPublicationPoint
     deriving (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
    
 {-   
     NOTE: This is an over-generalised version of publication point list, since the current
@@ -88,19 +86,19 @@ newtype PublicationPointAccess = PublicationPointAccess {
         unPublicationPointAccess :: NonEmpty PublicationPoint
     }
     deriving (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data Repository = RrdpR RrdpRepository | 
                   RsyncR RsyncRepository
     deriving (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data RsyncRepository = RsyncRepository {
         repoPP :: RsyncPublicationPoint,
         meta   :: RepositoryMeta
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data PublicationPoints = PublicationPoints {
         rrdps  :: RrdpMap,
@@ -123,7 +121,7 @@ data RepositoryMeta = RepositoryMeta {
         refreshInterval   :: Maybe Seconds
     } 
     deriving stock (Show, Eq, Ord, Generic)   
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 
 instance Semigroup RepositoryMeta where

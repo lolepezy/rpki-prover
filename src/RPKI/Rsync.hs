@@ -240,7 +240,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
           where
             tryToParse hash blob type_ = do            
                 z <- liftIO $ runValidatorT (newScopes $ unURI $ getURL rpkiURL) $ vHoist $ readObject rpkiURL blob
-                (evaluate $ force $
+                (evaluate $! 
                     case z of 
                         (Left e, _) -> 
                             ObjectParsingProblem rpkiURL (VErr e) 
@@ -353,4 +353,4 @@ data RsyncObjectProcessingResult =
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
         | SuccessParsed RpkiURL (StorableObject RpkiObject) 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass NFData
+    -- deriving anyclass NFData

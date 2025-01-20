@@ -42,7 +42,7 @@ data MftChild = CaChild CaShortcut Serial
               -- Invalid, revoked or an object of unknown type
               | TroubledChild ObjectKey
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 
 data MftEntry = MftEntry {        
@@ -50,7 +50,7 @@ data MftEntry = MftEntry {
         child    :: MftChild
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 
 data CrlShortcut = CrlShortcut {
@@ -59,7 +59,7 @@ data CrlShortcut = CrlShortcut {
         notValidAfter  :: Instant        
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data MftShortcut = MftShortcut { 
         key            :: ObjectKey,
@@ -71,7 +71,7 @@ data MftShortcut = MftShortcut {
         crlShortcut    :: CrlShortcut        
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data CaShortcut = CaShortcut { 
         key            :: ObjectKey,        
@@ -82,12 +82,12 @@ data CaShortcut = CaShortcut {
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data Ca = CaShort CaShortcut
         | CaFull (Located CaCerObject)
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 
 data RoaShortcut = RoaShortcut {
@@ -98,7 +98,7 @@ data RoaShortcut = RoaShortcut {
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data SplShortcut = SplShortcut {
         key            :: ObjectKey,        
@@ -108,7 +108,7 @@ data SplShortcut = SplShortcut {
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data AspaShortcut = AspaShortcut {
         key            :: ObjectKey,
@@ -118,7 +118,7 @@ data AspaShortcut = AspaShortcut {
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data BgpSecShortcut = BgpSecShortcut {
         key            :: ObjectKey,
@@ -128,7 +128,7 @@ data BgpSecShortcut = BgpSecShortcut {
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data GbrShortcut = GbrShortcut {
         key            :: ObjectKey,    
@@ -138,7 +138,7 @@ data GbrShortcut = GbrShortcut {
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 
 instance {-# OVERLAPPING #-} WithValidityPeriod CaShortcut where
@@ -173,10 +173,10 @@ instance ToJSON RoaShortcut
 instance ToJSON SplShortcut
 
 instance ToSchema CrlShortcut
-instance ToSchema GbrShortcut
-instance ToSchema BgpSecShortcut
-instance ToSchema AspaShortcut
-instance ToSchema RoaShortcut
+-- instance ToSchema GbrShortcut
+-- instance ToSchema BgpSecShortcut
+-- instance ToSchema AspaShortcut
+-- instance ToSchema RoaShortcut
 instance ToSchema MftChild where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 

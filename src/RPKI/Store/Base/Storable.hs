@@ -45,7 +45,7 @@ newtype Verbatim a = Verbatim { unVerbatim :: Storable }
               
 
 toStorableObject :: AsStorable a => a -> StorableObject a
-toStorableObject a = StorableObject a (force (toStorable a))
+toStorableObject a = StorableObject a (toStorable a)
 
 storableValue :: AsStorable v => v -> SValue
 storableValue = SValue . toStorable

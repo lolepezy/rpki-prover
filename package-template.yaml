@@ -45,7 +45,10 @@ dependencies:
 - containers
 - conduit
 - conduit-extra
-- cryptonite
+# - cryptonite
+- crypton
+- crypton-x509
+- crypton-x509-validation
 - cryptohash-sha256
 - cryptohash-sha512
 - crypton-connection
@@ -104,8 +107,6 @@ dependencies:
 - typed-process
 - transformers
 - temporary
-- x509
-- x509-validation
 - QuickCheck
 - quickcheck-instances
 - tasty
