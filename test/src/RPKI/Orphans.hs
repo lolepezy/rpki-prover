@@ -50,6 +50,7 @@ import           Crypto.PubKey.ECC.Types
 import qualified Crypto.PubKey.Ed25519                as Ed25519
 import qualified Crypto.PubKey.Ed448                  as Ed448
 import qualified Crypto.PubKey.RSA                    as RSA
+
 import           Data.Map        (Map)
 import qualified Data.Map.Strict as Map
 
@@ -186,16 +187,6 @@ instance Arbitrary CPid where
     shrink (CPid i) = Prelude.map CPid $ shrink i
 
 instance Arbitrary LogMessage where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-instance (Arg (X509.SignedExact a) (X509.Signed a), 
-          Arg (X509.Signed a) a, 
-          Arbitrary a) => Arbitrary (X509.SignedExact a) where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-instance (Arg (X509.Signed a) a, Arbitrary a) => Arbitrary (X509.Signed a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -739,10 +730,6 @@ instance Arbitrary ASN1ConstructionType where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary SerializedPoint where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
 instance Arbitrary Crypto.PubKey.ECC.Types.CurveName where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -785,24 +772,8 @@ instance Arbitrary ASN1 where
     
 instance Arbitrary PubKey where
     arbitrary = PubKeyRSA <$> arbitrary
-
-instance Arbitrary PubKeyEC where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
   
-instance Arbitrary PubKeyALG where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-  
-instance Arbitrary ExtensionRaw where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-  
-instance Arbitrary HashALG where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-  
-  
+   
 instance Arbitrary RSA.PublicKey where
     arbitrary = do
         bytes <- elements [64,128,256]
@@ -834,9 +805,6 @@ instance Arbitrary Ed448.PublicKey where
 instance Arbitrary DSA.PrivateKey where
     arbitrary = DSA.PrivateKey <$> arbitrary <*> arbitrary
 
-instance Arbitrary X25519.SecretKey where
-    arbitrary = throwCryptoError . X25519.secretKey <$> arbitraryBS 32 32
-
 instance Arbitrary X448.SecretKey where
     arbitrary = throwCryptoError . X448.secretKey <$> arbitraryBS 56 56
 
@@ -852,10 +820,6 @@ instance Arbitrary ASN1StringEncoding where
 
 instance Arbitrary ASN1CharacterString where
     arbitrary = ASN1CharacterString <$> arbitrary <*> arbitraryBS 2 36
-
-instance Arbitrary DistinguishedName where
-    arbitrary = DistinguishedName <$> (choose (1,5) >>= \l -> replicateM l arbitraryDE)
-        where arbitraryDE = (,) <$> arbitrary <*> arbitrary
 
 instance Arbitrary DateTime where
     arbitrary = timeConvert <$> (arbitrary :: Gen Elapsed)
@@ -882,6 +846,7 @@ instance Arbitrary ExtKeyUsagePurpose where
                           , KeyUsagePurpose_EmailProtection
                           , KeyUsagePurpose_TimeStamping
                           , KeyUsagePurpose_OCSPSigning ]
+
 instance Arbitrary ExtExtendedKeyUsage where
     arbitrary = ExtExtendedKeyUsage . List.nub <$> listOf1 arbitrary
 
@@ -907,5 +872,42 @@ instance Arbitrary X509.CRL where
                     <*> arbitrary
                     <*> arbitrary
 
+instance Arbitrary RSA.PrivateKey where
+    arbitrary =
+        RSA.PrivateKey
+            <$> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+
+instance Arbitrary X25519.SecretKey where
+    arbitrary = throwCryptoError . X25519.secretKey <$> arbitraryBS 32 32
+
+instance Arbitrary PrivKey where
+    arbitrary =
+        oneof
+            [ PrivKeyRSA <$> arbitrary
+            , PrivKeyDSA <$> arbitrary
+            , -- , PrivKeyECDSA ECDSA_Hash_SHA384 <$> (B.pack <$> replicateM 384 arbitrary)
+              PrivKeyX25519 <$> arbitrary
+            , PrivKeyX448 <$> arbitrary
+            , PrivKeyEd25519 <$> arbitrary
+            , PrivKeyEd448 <$> arbitrary
+            ]
+
+instance Arbitrary HashALG where
+    arbitrary = pure HashSHA256
+
+instance Arbitrary PubKeyALG where
+    arbitrary = pure PubKeyALG_RSA
+
 arbitraryBS :: Int -> Int -> Gen BS.ByteString
-arbitraryBS r1 r2 = choose (r1,r2) >>= \l -> BS.pack <$> replicateM l arbitrary
+arbitraryBS r1 r2 = choose (r1, r2) >>= \l -> (BS.pack <$> replicateM l arbitrary)
+
+instance Arbitrary DistinguishedName where
+    arbitrary = DistinguishedName <$> (choose (1, 5) >>= \l -> replicateM l arbitraryDE)
+      where
+        arbitraryDE = (,) <$> arbitrary <*> arbitrary
