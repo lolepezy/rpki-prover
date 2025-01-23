@@ -1,0 +1,7 @@
+bookwork 12 stable 
+trixie 13 testing
+sid
+
+slim - small image
+
+
