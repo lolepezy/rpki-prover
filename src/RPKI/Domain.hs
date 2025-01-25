@@ -50,7 +50,6 @@ import           RPKI.Resources.Types
 import           RPKI.Time
 
 import           RPKI.Store.Base.Serialisation
-import           RPKI.Orphans.NFData
 
 
 -- There are two validation algorithms for RPKI tree
