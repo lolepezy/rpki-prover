@@ -45,7 +45,6 @@ dependencies:
 - containers
 - conduit
 - conduit-extra
-# - cryptonite
 - crypton
 - crypton-x509
 - crypton-x509-validation
