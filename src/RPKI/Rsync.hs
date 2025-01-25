@@ -9,7 +9,6 @@
 module RPKI.Rsync where
     
 import           Control.Lens
-import           Control.DeepSeq
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
@@ -353,4 +352,3 @@ data RsyncObjectProcessingResult =
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
         | SuccessParsed RpkiURL (StorableObject RpkiObject) 
     deriving stock (Show, Eq, Generic)
-    -- deriving anyclass NFData

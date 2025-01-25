@@ -11,7 +11,6 @@ module RPKI.RRDP.RrdpFetch where
 
 import           Control.Concurrent.STM
 import           Control.Concurrent.Async
-import           Control.DeepSeq
 import           Control.Lens
 import           Control.Exception.Lifted
 import           Control.Monad
@@ -728,8 +727,7 @@ data RrdpObjectProcessingResult =
         | UknownObjectType RpkiURL    
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta    
         | SuccessParsed RpkiURL (StorableObject RpkiObject) 
-    deriving stock (Show, Eq, Generic)
-    -- deriving anyclass NFData
+    deriving stock (Show, Eq, Generic)    
 
 data DeltaOp m a = Delete URI Hash 
                 | Add URI (Async a) 
