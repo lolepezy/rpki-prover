@@ -429,9 +429,9 @@ saveSnapshot
         if supportedExtension $ U.convert uri 
             then do 
                 a <- liftIO $ async readBlob
-                pure $ Right (uri, a)
+                pure $! Right (uri, a)
             else
-                pure $ Left (RrdpE (RrdpUnsupportedObjectType (U.convert uri)), uri)
+                pure $! Left (RrdpE (RrdpUnsupportedObjectType (U.convert uri)), uri)
       where 
         readBlob = case U.parseRpkiURL $ unURI uri of
             Left e -> 
@@ -444,9 +444,7 @@ saveSnapshot
                     Right (DecodedBase64 blob) -> 
                         case validateSizeOfBS validationConfig blob of 
                             Left e  -> pure $! DecodingTrouble rpkiURL (VErr $ ValidationE e)
-                            Right _ -> do
-                                -- We want to store parsed and partially validated certificates 
-                                -- and manifests since we need to index them by SKI or AKI
+                            Right _ ->                                 
                                 case urlObjectType rpkiURL of                                 
                                     Just type_ -> do 
                                         let hash = U.sha256s blob  
@@ -464,7 +462,7 @@ saveSnapshot
                                         pure $! UknownObjectType rpkiURL
           where
             tryToParse rpkiURL hash blob type_ = do 
-                z <- liftIO $ runValidatorT (newScopes $ unURI uri) $ vHoist $ readObject rpkiURL blob
+                z <- liftIO $ runValidatorT (newScopes $ unURI uri) $ vHoist $ readObjectOfType type_ blob
                 (evaluate $!
                     case z of 
                         (Left e, _) -> 
@@ -604,7 +602,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                                         Nothing    -> pure $! UknownObjectType rpkiURL                                                            
           where
             tryToParse rpkiURL hash blob type_ = do
-                z <- liftIO $ runValidatorT (newScopes $ unURI uri) $ vHoist $ readObject rpkiURL blob
+                z <- liftIO $ runValidatorT (newScopes $ unURI uri) $ vHoist $ readObjectOfType type_ blob
                 (evaluate $!
                     case z of 
                         (Left e, _) -> 
