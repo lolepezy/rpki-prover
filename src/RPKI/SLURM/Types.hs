@@ -9,7 +9,6 @@
 
 module RPKI.SLURM.Types where
 
-import           Control.DeepSeq
 import           Data.Text (Text)
 import           Data.These
 import           Data.Aeson as Json

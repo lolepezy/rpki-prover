@@ -7,7 +7,6 @@
 
 module RPKI.Metrics.Metrics where
 
-import           Control.DeepSeq
 import           Control.Lens
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           GHC.Generics
