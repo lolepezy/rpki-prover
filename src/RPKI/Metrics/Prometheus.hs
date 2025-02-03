@@ -33,7 +33,6 @@ import           RPKI.Metrics.Metrics
 
 
 data PrometheusMetrics = PrometheusMetrics {
-        worldVersion    :: Gauge,
         rrdpCode        :: Vector Text Gauge,
         downloadTime    :: Vector Text Gauge,
         vrpCounter      :: Vector Text Gauge,        
@@ -62,7 +61,7 @@ createPrometheusMetrics Config {..} = do
     vrpCounterPerRepo <- register
             $ vector ("repository" :: Text)
             $ gauge (Info (metricsPrefix <> "vrp_total") "Number of original VRPs")            
-    uniqueVrpNumber <- register
+    uniqueVrpNumber <- register 
             $ vector ("trustanchor" :: Text)
             $ gauge (Info (metricsPrefix <> "unique_vrp_total") "Number of unique VRPs")
     validObjectNumberPerTa <- register
@@ -71,8 +70,6 @@ createPrometheusMetrics Config {..} = do
     validObjectNumberPerRepo <- register
             $ vector ("repository", "type")
             $ gauge (Info (metricsPrefix <> "object_total") "Number of valid objects of different types per repository")
-    worldVersion <- register
-            $ gauge (Info (metricsPrefix <> "world_version") "Current world version")
 
     pure $ PrometheusMetrics {..}
 
@@ -81,8 +78,7 @@ textualMetrics :: MonadIO m => m LBS.ByteString
 textualMetrics = exportMetricsAsText
 
 updatePrometheus :: (MonadIO m, MonadMonitor m) => RawMetric -> PrometheusMetrics -> WorldVersion -> m ()
-updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} (WorldVersion wv) = do
-    setGauge worldVersion (fromInteger $ toInteger wv)
+updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} _ = do    
     forM_ (MonoidalMap.toList $ unMetricMap rsyncMetrics) $ \(metricScope, metric) -> do
         let url = focusToText $ NonEmpty.head $ metricScope ^. coerced
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #totalTimeMs
