@@ -381,9 +381,9 @@ fsLayout :: CLIOptions Unwrapped
 fsLayout cliOptions@CLIOptions {..} logger = do
     root <- getRoot cliOptions    
     
-    logInfo logger $ case root of
-        Left d  -> [i|Root directory is set to #{d}.|]
-        Right d -> [i|Root directory is not set, using default #{d}, i.e. ${HOME}/.rpki|]
+    logInfo logger $ case root of        
+        Left d  -> [i|Root directory is not set, using default #{d}, i.e. ${HOME}/.rpki|]
+        Right d -> [i|Root directory is set to #{d}.|]
     
     let rootDir = either id id root
 
@@ -454,12 +454,15 @@ getRoot cliOptions = do
     case getRootDirectory cliOptions of 
         Nothing -> do 
             home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
-            pure $ Right (home </> ".rpki")
-        Just root -> do
-            rootExists <- liftIO $ doesDirectoryExist root
-            if rootExists
-                then pure $ Left root
-                else appError $ InitE $ InitError [i|Root directory #{root} doesn't exist.|]
+            Left <$> makeSureRootExists (home </> ".rpki")
+        Just root -> 
+            Right <$> makeSureRootExists root            
+  where
+    makeSureRootExists root = do 
+        rootExists <- liftIO $ doesDirectoryExist root
+        if rootExists
+            then pure root
+            else appError $ InitE $ InitError [i|Root directory #{root} doesn't exist.|]
 
 orDefault :: Maybe a -> a -> a
 m `orDefault` d = fromMaybe d m
