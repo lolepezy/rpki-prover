@@ -19,9 +19,9 @@ RPKI prover is an implementation of the [RPKI relying party software](https://rp
 
 Issues are tracked [here](https://github.com/lolepezy/rpki-prover/issues), any questions can be asked there as well. 
 
-This implementation seeks to address potential security vulnerabilites by utilising process isolation, 
+This implementation seeks to address potential security vulnerabilities by utilising process isolation, 
 memory and time constraints and other ways of preventing resource exhaustion attacks and make sure 
-that "it keeps going" regardless of unstable or potentially maliciouly constructed RPKI repositories.
+that "it keeps going" regardless of unstable or potentially maliciously constructed RPKI repositories.
 
 # Features <a name="features"></a>
 
@@ -44,7 +44,7 @@ Running `rpki-prover --help` gives a description of CLI options.
 
 The only dependency needed for `rpki-prover` to run is an `rsync` client.
 
-`rpki-prover` is a daemon that runs periodic re-validation of all TAs in the RPKI hierachy. The results of these runs are exposes in UI, JSON API and Prometheus metrics. Also the `--with-rtr` option enables RTR server pushing VRP updates to RTR clients.
+`rpki-prover` is a daemon that runs periodic re-validation of all TAs in the RPKI hierarchy. The results of these runs are exposed in UI, JSON API and Prometheus metrics. Also the `--with-rtr` option enables RTR server pushing VRP updates to RTR clients.
 
 There is no config file and all the configuration is provided with CLI (most of the defaults are pretty reasonable, so normally you don't need to adjust a lot of parameters). Typical command line could look like this
 
@@ -102,14 +102,14 @@ Normally it prints quite a lot of logs about what it's doing to the stdout. Afte
 network are) VRPs can be fetched by executing `curl -s http://localhost:9999/api/vrps.csv` 
 (or `curl -s http://localhost:9999/api/vrps.json`).
 
-Main page http://localhost:9999 is the UI that reports some metrics about trust anchorts, 
+Main page http://localhost:9999 is the UI that reports some metrics about trust anchors, 
 repositories and the list of errors and warnings.
 
 
 # HTTP API <a name="http-api"></a>
 
 There are a bunch of API endpoints. The easiest way to find out what is available is to go to the 
-`/swagger-ui` URL and explore the Swager UI. 
+`/swagger-ui` URL and explore the Swagger UI. 
 
 ## Prometheus metrics <a name="prometheus-metrics"></a>
 
@@ -124,7 +124,7 @@ In order to validate a set of files with an RSC object it is necessary to have a
 instance to be able to use its cache of validated object. In the examples below it is assumed that 
 there's an instance of rpki-prover (the same version) running with `/var/prover` set as `--rpki-root-directory` 
 option. It is also possible to skip `--rpki-root-directory` parameter assuming that the default (`~/.rpki`) 
-with be used.
+will be used.
 
 The following example validates two files `foo.txt` and `bar.bin` against the `checklist.sig` object:
 
@@ -144,7 +144,7 @@ rpki-prover  --rpki-root-directory /var/prover --verify-signature --signature-fi
 Cold start, i.e. the first start without cache takes at least a few minutes to complete and consumes around 
 3-5 minutes of CPU time. This clock time can be slightly reduced by setting higher `--cpu-count` value in case 
 multiple CPUs are available. While CPU-intensive tasks scale pretty well (speed-up is sublinear up to 8-10 CPU 
-cores), the total warm up time is moslty limited by the download time of the slowest of RPKI repositories and 
+cores), the total warm up time is mostly limited by the download time of the slowest of RPKI repositories and 
 cannot be reduced drastically. 
 
 After initial warmup, it's not a very CPU-bound application. With revalidation every 3 minutes RPKI Prover 
@@ -167,10 +167,10 @@ download RRDP repositories, etc.). That means that actual heap of the process is
 
 Note that memory consumption is mostly determined by how big the biggest objects are and not 
 that much by how many there are objects in total, so the growth of repositories is not such 
-a big issue for rpki-prover. It it recommended to have 3GB of RAM available on the machine 
+a big issue for rpki-prover. It is recommended to have 3GB of RAM available on the machine 
 mostly to reduce the IOPS related to reading objects from the LMDB cache. Since every validation 
 typically goes through more than 400K of objects (at the moment of writing), each of them being 
-3Kb in size on average, it would be benificial to have at least few hundred of megabytes in FS page cache.
+3Kb in size on average, it would be beneficial to have at least few hundred of megabytes in FS page cache.
 
 Disk space usage depends on the `--cache-lifetime-hours` parameter. The default is 24 hours and it 
 results in a cache size about 4Gb. There is a periodic compaction procedure that needs extra disk space 
