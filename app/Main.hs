@@ -372,25 +372,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 #{shower (adjustedConfig)}|]
     pure appContext
 
-  
-downloadTals :: AppLogger -> FilePath -> ValidatorT IO ()
-downloadTals logger tald = do
-    -- TODO Change it to something more local? Probably not
-    let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
-    let talNames = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"]            
-    logInfo logger [i|Downloading TALs from #{talsUrl} to #{tald}.|]
-    fromTryM
-        (\e -> InitE $ InitError [i|Error downloading TALs: #{fmtEx e}|])
-        $ forM_ talNames
-            $ \tal -> do
-                let talUrl = Text.pack $ talsUrl <> tal
-                logDebug logger [i|Downloading #{talUrl} to #{tald </> tal}.|]
-                httpStatus <- downloadToFile (URI talUrl) (tald </> tal) (Size 10_000)
-                unless (isHttpSuccess httpStatus) $ 
-                    appError $ InitE $ InitError $ 
-                        [i|Error downloading TAL #{tal} from #{talUrl}, |] <>
-                        [i|Http status #{unHttpStatus httpStatus}|]        
-
+      
 fsLayout :: CLIOptions Unwrapped
         -> AppLogger
         -> ValidatorT IO (FilePath, FilePath, FilePath, FilePath, FilePath)
@@ -417,23 +399,47 @@ fsLayout cliOptions@CLIOptions {..} logger = do
                 fromEitherM $ first (InitE . InitError) <$> 
                     createSubDirectoryIfNeeded rootDir dir    
 
-    tals <- liftIO $ listTalFiles tald    
-    when (null tals) $ 
-        if noRirTals then
-            -- We don't know what you wanted here, but we respect your choice
-            logWarn logger $ "There are no TAL files and RIR TALs download is disabled, " <> 
-                             "so the validator is not going to do anything useful."
-        else do
-            -- Assume the reason is the very first start of a typical 
-            -- installation and do the most reasonable thing, download TALs
-            logInfo logger [i|No TAL files found in #{tald}, downloading them.|]
-            downloadTals logger tald
+    if refetchRirTals then do 
+        logInfo logger "Will refetch TAL files for RIRs because `--refetch-rir-tals` flag is set."
+        downloadTals tald
+    else do 
+        tals <- liftIO $ listTalFiles tald    
+        when (null tals) $         
+            if noRirTals then 
+                -- We don't know what you wanted here, but we respect your choice
+                logWarn logger $ "There are no TAL files and RIR TALs download is disabled, " <> 
+                                "so the validator is not going to do anything useful."
+            else do
+                -- Assume the reason is the very first start of a typical 
+                -- installation and do the most reasonable thing, download TALs
+                logInfo logger [i|No TAL files found in #{tald}, downloading them.|]
+                downloadTals tald
  
     -- Do not do anything with `tmp` and `rsync`, they most likely are going 
     -- to be okay for either a new installation or an existing one. Otherwise,
     -- they will be cleaned up by one of the periodic maintenance tasks.
 
     pure (rootDir, tald, rsyncd, tmpd, cached)
+
+  where
+
+    downloadTals tald = do
+        -- TODO Change it to something more local? Probably not
+        let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
+        let talNames = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"]            
+        logInfo logger [i|Downloading TALs from #{talsUrl} to #{tald}.|]
+        fromTryM
+            (\e -> InitE $ InitError [i|Error downloading TALs: #{fmtEx e}|])
+            $ forM_ talNames
+                $ \tal -> do
+                    let talUrl = Text.pack $ talsUrl <> tal
+                    logDebug logger [i|Downloading #{talUrl} to #{tald </> tal}.|]
+                    httpStatus <- downloadToFile (URI talUrl) (tald </> tal) (Size 10_000)
+                    unless (isHttpSuccess httpStatus) $ 
+                        appError $ InitE $ InitError $ 
+                            [i|Error downloading TAL #{tal} from #{talUrl}, |] <>
+                            [i|Http status #{unHttpStatus httpStatus}|]       
+
 
 getRoot :: CLIOptions Unwrapped -> ValidatorT IO (Either FilePath FilePath)
 getRoot cliOptions = do    
@@ -612,6 +618,9 @@ data CLIOptions wrapped = CLIOptions {
 
     noRirTals :: wrapped ::: Bool <?> 
         "If set, RIR TAL files will not be downloaded.",
+
+    refetchRirTals :: wrapped ::: Bool <?> 
+        "If set, RIR TAL files will be re-downloaded.",        
 
     rpkiRootDirectory :: wrapped ::: [FilePath] <?>
         ("Root directory (default is ${HOME}/.rpki/). This option can be passed multiple times and "
