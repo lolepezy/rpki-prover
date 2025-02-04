@@ -230,9 +230,11 @@ runValidatorServer appContext@AppContext {..} = do
 
 
 runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
-runHttpApi appContext = let
-    httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
-    in Warp.run httpPort $ httpServer appContext
+runHttpApi appContext@AppContext {..} = do 
+    let httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
+    (Warp.run httpPort $ httpServer appContext) 
+        `catch` 
+        (\(e :: SomeException) -> logError logger [i|Could not start HTTP server: #{e}.|])
 
 
 createAppContext :: CLIOptions Unwrapped -> AppLogger -> LogLevel -> ValidatorT IO AppLmdbEnv
@@ -408,8 +410,8 @@ fsLayout cliOptions@CLIOptions {..} logger = do
     if refetchRirTals then do 
         logInfo logger "Will refetch TAL files for RIRs because `--refetch-rir-tals` flag is set."
         downloadTals tald
-    else do 
-        tals <- liftIO $ listTalFiles tald    
+    else do         
+        tals <- liftIO $ listTalFiles tald
         when (null tals) $         
             if noRirTals then 
                 -- We don't know what you wanted here, but we respect your choice
@@ -432,8 +434,8 @@ fsLayout cliOptions@CLIOptions {..} logger = do
     downloadTals tald = do
         -- TODO Change it to something more local? Probably not
         let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
-        let talNames = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"]            
-        logInfo logger [i|Downloading TALs from #{talsUrl} to #{tald}.|]
+        let talNames :: [String] = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"]            
+        logInfo logger [i|Downloading TALs #{talNames} from #{talsUrl} to #{tald}.|]
         fromTryM
             (\e -> InitE $ InitError [i|Error downloading TALs: #{fmtEx e}|])
             $ forM_ talNames
