@@ -417,11 +417,16 @@ fsLayout cliOptions@CLIOptions {..} logger = do
                 -- We don't know what you wanted here, but we respect your choice
                 logWarn logger $ "There are no TAL files and RIR TALs download is disabled, " <> 
                                  "so the validator is not going to do anything useful."
-            else do
-                -- Assume the reason is the very first start of a typical 
-                -- installation and do the most reasonable thing, download TALs
-                logInfo logger [i|No TAL files found in #{tald}, downloading them.|]
-                downloadTals tald
+            else
+                -- Assume the reason is the very first start of a typical installation 
+                case extraTalsDirectory of 
+                    [] -> do
+                        -- Since there are no extra TAL locations set do the most reasonable thing, download TALs
+                        logInfo logger [i|No TAL files found in #{tald}, assuming it is the first launch and downloading them.|]
+                        downloadTals tald
+                    _ -> 
+                        -- Assume the user knows better and there are some TALs in the extraTalsDirectory
+                        logInfo logger [i|No TAL files found in #{tald}, assuming there are some TALs in #{extraTalsDirectory}.|]
  
     -- Do not do anything with `tmp` and `rsync`, they most likely are going 
     -- to be okay for either a new installation or an existing one. Otherwise,
