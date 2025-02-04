@@ -194,7 +194,7 @@ runValidatorServer appContext@AppContext {..} = do
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion  <- newWorldVersion
 
-    -- Check TAL names are unique
+    -- Check that TAL names are unique
     let talSourcesDirs = (configValue $ config ^. #talDirectory) 
                        : (configValue $ config ^. #extraTalsDirectories)
     talNames <- fmap mconcat $ mapM listTalFiles talSourcesDirs    
@@ -207,7 +207,7 @@ runValidatorServer appContext@AppContext {..} = do
     (tals, vs) <- runValidatorT (newScopes "validation-root") $
         forM talNames $ \(talFilePath, taName) ->
             vFocusOn TAFocus (convert taName) $
-                parseTALFromFile talFilePath (Text.pack taName)    
+                parseTalFromFile talFilePath (Text.pack taName)    
 
     db <- readTVarIO database
     rwTx db $ \tx -> do 
@@ -224,7 +224,7 @@ runValidatorServer appContext@AppContext {..} = do
                 `finally`
                 closeStorage appContext
   where
-    parseTALFromFile talFileName taName = do
+    parseTalFromFile talFileName taName = do
         talContent <- fromTry (TAL_E . TALError . fmtEx) $ LBS.readFile talFileName
         vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName
 
@@ -399,6 +399,12 @@ fsLayout cliOptions@CLIOptions {..} logger = do
                 fromEitherM $ first (InitE . InitError) <$> 
                     createSubDirectoryIfNeeded rootDir dir    
 
+    when (refetchRirTals && noRirTals) $ do
+        let message = "Both `--refetch-rir-tals` and `--no-rir-tals` flags are set, " <>
+                      "which is contradictory. Please, remove one of them."
+        logError logger message
+        appError $ InitE $ InitError message
+
     if refetchRirTals then do 
         logInfo logger "Will refetch TAL files for RIRs because `--refetch-rir-tals` flag is set."
         downloadTals tald
@@ -408,7 +414,7 @@ fsLayout cliOptions@CLIOptions {..} logger = do
             if noRirTals then 
                 -- We don't know what you wanted here, but we respect your choice
                 logWarn logger $ "There are no TAL files and RIR TALs download is disabled, " <> 
-                                "so the validator is not going to do anything useful."
+                                 "so the validator is not going to do anything useful."
             else do
                 -- Assume the reason is the very first start of a typical 
                 -- installation and do the most reasonable thing, download TALs
