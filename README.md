@@ -25,13 +25,11 @@ that "it keeps going" regardless of unstable or potentially maliciouly construct
 
 # Features <a name="features"></a>
 
-- Fetching from both rsync and RRDP repositories
-- X509 validation and validation of EE certificates 
-- Validation of resource sets, including support for RFC8360 "validation reconsidered"
 - UI for reporting metrics and found problems
 - REST API for pretty much everything the validator does 
 - Output of VRPs in CSV and JSON formats
-- Support for RTR protocol, both version 0 and 1
+- RTR server supporting versions 0 and 1
+- Support of RFC8360 "validation reconsidered"
 - Support of SLURM (RFC 8416)
 - Support of ASPA object validation and output
 - Support of BGPSec certificates validation and RTR
@@ -51,7 +49,7 @@ The only dependency needed for `rpki-prover` to run is an `rsync` client.
 There is no config file and all the configuration is provided with CLI (most of the defaults are pretty reasonable, so normally you don't need to adjust a lot of parameters). Typical command line could look like this
 
 ```
-/opt/bin/rpki-prover-linux.exe --rpki-root-directory /var/rpki/ --cpu-count 4 --http-api-port 8080
+/opt/bin/rpki-prover --rpki-root-directory /var/rpki/ --cpu-count 4 --http-api-port 8080
 ```
 
 At the first launch `rpki-prover` initialises the filesystem layout for the data it uses and 
@@ -100,7 +98,7 @@ The instruction below is for linux, but it can work equally for \*BSD or Mac (Wi
    - Run `rpki-prover` from the `~/.local/bin` when repeating steps from the usage section above.
 
 Normally it prints quite a lot of logs about what it's doing to the stdout. After it prints 
-"Validated all TAs, took ..." (it should take 2-4 minutes depending on how fast the CPU and 
+"Validated all TAs, took ..." (it should take a few minutes depending on how fast the CPU and 
 network are) VRPs can be fetched by executing `curl -s http://localhost:9999/api/vrps.csv` 
 (or `curl -s http://localhost:9999/api/vrps.json`).
 
@@ -144,7 +142,7 @@ rpki-prover  --rpki-root-directory /var/prover --verify-signature --signature-fi
 # Resource consumption <a name="resource-consumption"></a>
 
 Cold start, i.e. the first start without cache takes at least a few minutes to complete and consumes around 
-3-5 minutes of CPU time. This time can be slightly reduced by setting higher `--cpu-count` value in case 
+3-5 minutes of CPU time. This clock time can be slightly reduced by setting higher `--cpu-count` value in case 
 multiple CPUs are available. While CPU-intensive tasks scale pretty well (speed-up is sublinear up to 8-10 CPU 
 cores), the total warm up time is moslty limited by the download time of the slowest of RPKI repositories and 
 cannot be reduced drastically. 
@@ -154,7 +152,7 @@ consumes on average less than 10% of CPU time. Smaller revalidation interval wil
 
 The amount of memory needed for a smooth run for the current state of the repositories (7 trust anchors, 
 including [AS0 TA](https://www.apnic.net/community/security/resource-certification/tal-archive/) of APNIC 
-and [AS 0](https://www.lacnic.net/innovaportal/file/4983/1/lacnic-as0.tal) of LACNINC with about 800K of 
+and [AS 0](https://www.lacnic.net/4984/2/lacnic/rpki-rpki-trust-anchor) of LACNINC with about 800K of 
 VRPs in total) is less than 3GB for all processes in total. Adding or removing TAs can increase or reduce 
 this amount. 
 
