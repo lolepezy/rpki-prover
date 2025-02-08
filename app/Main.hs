@@ -401,14 +401,12 @@ fsLayout cliOptions@CLIOptions {..} logger = do
                 fromEitherM $ first (InitE . InitError) <$> 
                     createSubDirectoryIfNeeded rootDir dir    
 
-    when (refetchRirTals && noRirTals) $ do
-        let message = "Both `--refetch-rir-tals` and `--no-rir-tals` flags are set, " <>
-                      "which is contradictory. Please, remove one of them."
-        logError logger message
-        appError $ InitE $ InitError message
-
     if refetchRirTals then do 
-        logInfo logger "Will refetch TAL files for RIRs because `--refetch-rir-tals` flag is set."
+        if noRirTals then
+            logInfo logger $ "Will re-fetch and overwrite TAL files, but not use them. " <> 
+                             "Maybe only one of  `--refetch-rir-tals` and `--no-rir-tals` should be set?"
+        else 
+            logInfo logger "Will re-fetch and overwrite TAL files."
         downloadTals tald
     else do         
         tals <- liftIO $ listTalFiles tald
