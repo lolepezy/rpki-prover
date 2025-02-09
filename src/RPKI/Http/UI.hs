@@ -244,8 +244,8 @@ rrdpMetricsHtml rrdpMetricMap =
                 let repository = NonEmpty.head scope'
                 htmlRow index $ do 
                     genTd $ toHtml $ focusToText repository                        
-                    genTd ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness
-                    genTd ! A.class_ "no-wrap" $ toHtml $ rm ^. #rrdpSource                    
+                    td ! A.class_ "gen-t no-wrap" $ toHtml $ rm ^. #fetchFreshness
+                    td ! A.class_ "gen-t no-wrap" $ toHtml $ rm ^. #rrdpSource                    
                     genTd $ toHtml $ show $ rm ^. #added
                     genTd $ toHtml $ show $ rm ^. #deleted
                     genTd $ toHtml $ rm ^. #lastHttpStatus
@@ -379,18 +379,6 @@ objectLink :: Text -> Html
 objectLink url = 
     H.a ! A.href (textValue ("/api/object?uri=" <> url)) $ toHtml url
 
-
--- focusLink :: Focus -> Html
--- focusLink = \case 
---     TAFocus txt         -> toHtml txt
---     ObjectFocus txt     -> objectLink txt
---     PPFocus uri         -> directLink $ unURI $ getURL uri
---     RepositoryFocus uri -> directLink $ unURI $ getURL uri
---     TextFocus txt       -> toHtml txt
---   where
---     directLink url = 
---         H.a ! A.href (textValue url) $ toHtml url
-
 htmlRow :: Int -> Html -> Html
 htmlRow index = 
     case index `mod` 2 of 
@@ -419,15 +407,23 @@ instance ToMarkup HttpStatus where
     toMarkup (HttpStatus st) = toMarkup $ show st
 
 instance ToMarkup FetchFreshness where 
-    toMarkup UpToDate       = toMarkup ("Up-to-date" :: Text)
-    toMarkup AttemptedFetch = toMarkup ("Succeeded" :: Text)
-    toMarkup FailedToFetch  = toMarkup ("Failed" :: Text)
+    toMarkup = \case 
+        NoFetchNeeded -> toMarkup ("Up-to-date" :: Text)
+        FetchFailed   -> toMarkup ("Failed" :: Text)
+        NoUpdates     -> toMarkup ("No updates" :: Text)
+        Updated       -> toMarkup ("Succeeded" :: Text)
 
 instance ToMarkup RrdpSource where 
-    toMarkup RrdpNoUpdate = toMarkup ("-" :: Text)
-    toMarkup RrdpDelta    = toMarkup ("Deltas" :: Text)
-    toMarkup RrdpSnapshot = toMarkup ("Snapshot" :: Text)
-
+    toMarkup = \case 
+        RrdpNoUpdate      -> toMarkup ("-" :: Text)
+        RrdpDelta from to -> let 
+                message :: Text = if from == to 
+                    then [T.i|Delta #{from}|]
+                    else [T.i|Deltas #{from} to #{to}|]
+            in toMarkup message
+        RrdpSnapshot serial -> let 
+            message :: Text = [T.i|Snapshot #{serial}|]
+            in toMarkup message
         
 focusLink1 :: FocusResolvedDto -> Html
 focusLink1 = \case 
