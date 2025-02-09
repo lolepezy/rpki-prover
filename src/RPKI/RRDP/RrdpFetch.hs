@@ -23,6 +23,7 @@ import           Data.Foldable
 import           Data.Bifunctor                   (first)
 import           Data.Text                        (Text)
 import qualified Data.ByteString                  as BS
+import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.List                        as List
 import qualified Data.Map.Strict                  as Map
 import           Data.String.Interpolate.IsString
@@ -164,18 +165,21 @@ downloadAndUpdateRRDP
                         pure repo
 
                     FetchSnapshot snapshotInfo message -> do 
-                        usedSource RrdpSnapshot
+                        usedSource $ RrdpSnapshot $ notification ^. #serial
                         logDebug logger [i|Going to use snapshot for #{repoUri}: #{message}|]
                         useSnapshot snapshotInfo notification                        
 
                     FetchDeltas sortedDeltas snapshotInfo message -> 
-                        (do 
-                            usedSource RrdpDelta
+                        (do                             
+                            usedSource $ RrdpDelta 
+                                ((NonEmpty.head sortedDeltas) ^. typed) 
+                                ((NonEmpty.last sortedDeltas) ^. typed)
+
                             logDebug logger [i|Going to use deltas for #{repoUri}: #{message}|]
                             useDeltas sortedDeltas notification                            
                             `catchError` 
                         \e -> do         
-                            usedSource RrdpSnapshot
+                            usedSource $ RrdpSnapshot $ notification ^. #serial
                             logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
                             useSnapshot snapshotInfo notification)
 
@@ -247,7 +251,7 @@ downloadAndUpdateRRDP
                 (\t -> (& #saveTimeMs %~ (<> t))) $ 
                 foldPipeline
                         maxDeltaDownloadSimultaneously
-                        (S.each sortedDeltas)
+                        (S.each $ NonEmpty.toList sortedDeltas)
                         downloadDelta
                         (\(rawContent, serial, deltaUri) _ -> 
                             inSubVScope deltaUri $ 
@@ -272,9 +276,9 @@ downloadAndUpdateRRDP
             updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
             pure (rawContent, serial, deltaUri)
 
-        serials = map (^. typed @RrdpSerial) sortedDeltas
-        maxDeltaSerial = List.maximum serials
-        minDeltaSerial = List.minimum serials
+        serials = NonEmpty.map (^. typed @RrdpSerial) sortedDeltas
+        maxDeltaSerial = NonEmpty.maximum serials
+        minDeltaSerial = NonEmpty.minimum serials
         
         rrdpMeta' = let 
             Notification {..} = notification 

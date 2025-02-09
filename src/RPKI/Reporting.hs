@@ -366,7 +366,9 @@ instance Monoid HttpStatus where
 instance Semigroup HttpStatus where
     s1 <> s2 = if isHttpSuccess s1 then s2 else s1
 
-data RrdpSource = RrdpNoUpdate | RrdpDelta | RrdpSnapshot
+data RrdpSource = RrdpNoUpdate 
+                | RrdpDelta RrdpSerial RrdpSerial 
+                | RrdpSnapshot RrdpSerial
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)        
 
@@ -379,12 +381,12 @@ instance Semigroup RrdpSource where
     _           <> r           = r
 
 
-data FetchFreshness = UpToDate | AttemptedFetch | FailedToFetch
+data FetchFreshness = NoFetchNeeded | FetchFailed | NoUpdates | Updated
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)        
+    deriving anyclass (TheBinary, NFData)       
 
 instance Monoid FetchFreshness where
-    mempty = UpToDate
+    mempty = NoFetchNeeded
 
 instance Semigroup FetchFreshness where
     (<>) = max    

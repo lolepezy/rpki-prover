@@ -244,46 +244,59 @@ fetchOnePp
                 pure $ getRpkiURL $ getFetchablePP pps pp                
     
     fetchPPOnce parentScope = do 
-        ((repoUrl, fetchFreshness, (r, validations)), elapsed) <- timedMS doFetch      
-        let validations' = updateFetchMetric repoUrl fetchFreshness validations r elapsed       
+        ((repoUrl, (r, validations)), elapsed) <- timedMS doFetch      
+        let validations' = updateFetchMetric repoUrl validations r elapsed       
         pure $ case r of
             Left _     -> FetchFailure repoUrl validations'                
             Right repo -> FetchSuccess repo validations'      
       where        
         doFetch = do 
             fetchMoment <- thisInstant
-            (rpkiUrl, fetchFreshness, fetchIO) <- atomically $ do                                     
+            (rpkiUrl, fetchIO) <- atomically $ do                                     
                 (repoNeedAFetch, repo) <- needsAFetch fetchMoment
                 let rpkiUrl = getRpkiURL repo
                 pure $ if repoNeedAFetch then 
-                    (rpkiUrl, AttemptedFetch, fetchPP parentScope repo fetchMoment)                
+                    (rpkiUrl, fetchPP parentScope repo fetchMoment)                
                 else
-                    (rpkiUrl, UpToDate, pure (Right repo, mempty))                
+                    (rpkiUrl, pure (Right repo, mempty))                
 
-            f <- fetchIO
-            pure (rpkiUrl, fetchFreshness, f)
+            (rpkiUrl, ) <$> fetchIO            
 
         -- This is hacky but basically setting the "fetched/up-to-date" metric
         -- without ValidatorT/PureValidatorT (we can only run it in IO).
-        updateFetchMetric repoUrl fetchFreshness validations r elapsed = let
-                realFreshness = either (const FailedToFetch) (const fetchFreshness) r
-                repoScope = validatorSubScope' RepositoryFocus repoUrl parentScope     
-                rrdpMetricUpdate v f  = v & typed @RawMetric . #rrdpMetrics  %~ updateMetricInMap (repoScope ^. typed) f
-                rsyncMetricUpdate v f = v & typed @RawMetric . #rsyncMetrics %~ updateMetricInMap (repoScope ^. typed) f
-                -- this is also a hack to make sure time is updated if the fetch has failed 
-                -- and we probably don't have time at all if the worker timed out                                       
-                updateTime t = if t == mempty then elapsed else t
-            in case repoUrl of 
-                RrdpU _ -> let 
-                        updatedFreshness = rrdpMetricUpdate validations (#fetchFreshness .~ realFreshness)                            
+        updateFetchMetric repoUrl validations r elapsed = 
+            case repoUrl of 
+                RrdpU _ -> 
+                    let 
+                        updatedFreshness = rrdpMetricUpdate validations rrdpFreshness
                     in case r of 
                         Left _  -> rrdpMetricUpdate updatedFreshness (#totalTimeMs %~ updateTime)
                         Right _ -> updatedFreshness
                 RsyncU _ -> let 
-                        updatedFreshness = rsyncMetricUpdate validations (#fetchFreshness .~ realFreshness)                            
+                        updatedFreshness = rsyncMetricUpdate validations rsyncFreshness
                     in case r of 
                         Left _  -> rsyncMetricUpdate updatedFreshness (#totalTimeMs %~ updateTime)
                         Right _ -> updatedFreshness           
+          where
+            rrdpFreshness metrics@RrdpMetric {..} = 
+                metrics & #fetchFreshness .~ g (added > 0 || deleted > 0)
+
+            rsyncFreshness metrics@RsyncMetric {..} = 
+                metrics & #fetchFreshness .~ g (processed > 0)
+            
+            g condition = case r of 
+                Left _ -> FetchFailed
+                Right _ 
+                    | condition -> Updated
+                    | otherwise -> NoUpdates
+
+            repoScope = validatorSubScope' RepositoryFocus repoUrl parentScope     
+            rrdpMetricUpdate v f  = v & typed @RawMetric . #rrdpMetrics  %~ updateMetricInMap (repoScope ^. typed) f
+            rsyncMetricUpdate v f = v & typed @RawMetric . #rsyncMetrics %~ updateMetricInMap (repoScope ^. typed) f
+            -- this is also a hack to make sure time is updated if the fetch has failed 
+            -- and we probably don't have time at all if the worker timed out                                       
+            updateTime t = if t == mempty then elapsed else t
+
       
     -- Do fetch the publication point and update the #publicationPoints
     -- 
@@ -428,12 +441,12 @@ deriveNextTimeout config absoluteMaxDuration RepositoryMeta {..} =
             case lastFetchDuration of
                 Nothing       -> absoluteMaxDuration
                 Just duration -> let
-                    previousSeconds = Seconds 1 + Seconds (unTimeMs duration `div` 1000)
+                    previousDuration = Seconds 1 + Seconds (unTimeMs duration `div` 1000)
                     heuristicalNextTimeout = 
-                        if | previousSeconds < Seconds 3  -> Seconds 10
-                           | previousSeconds < Seconds 10 -> Seconds 20
-                           | previousSeconds < Seconds 30 -> previousSeconds + Seconds 30
-                           | otherwise                    -> previousSeconds + Seconds 60             
+                        if | previousDuration < Seconds 3  -> Seconds 10
+                           | previousDuration < Seconds 10 -> Seconds 20
+                           | previousDuration < Seconds 30 -> previousDuration + Seconds 30
+                           | otherwise                     -> previousDuration + Seconds 60             
                     in min absoluteMaxDuration heuristicalNextTimeout
 
 

@@ -101,7 +101,8 @@ instance ToSchema SystemMetrics
 instance ToSchema ScopeKind
 instance ToSchema FetchFreshness
 instance ToSchema HttpStatus
-instance ToSchema RrdpSource
+instance ToSchema RrdpSource where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 
 instance ToSchema (Scope 'Metric)
 instance ToSchema Count where
