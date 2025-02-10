@@ -37,6 +37,7 @@ data PrometheusMetrics = PrometheusMetrics {
         downloadTime    :: Vector Text Gauge,
         vrpCounter      :: Vector Text Gauge,        
         vrpCounterPerRepo :: Vector Text Gauge,
+        fetchStatus       :: Vector Text Gauge,
         uniqueVrpNumber   :: Vector Text Gauge,
         validObjectNumberPerTa   :: Vector (Text, Text) Gauge,
         validObjectNumberPerRepo :: Vector (Text, Text) Gauge
@@ -64,6 +65,13 @@ createPrometheusMetrics Config {..} = do
     uniqueVrpNumber <- register 
             $ vector ("trustanchor" :: Text)
             $ gauge (Info (metricsPrefix <> "unique_vrp_total") "Number of unique VRPs")
+    fetchStatus <- register 
+            $ vector ("repository" :: Text)
+            $ gauge (Info (metricsPrefix <> "repo_fetch_status") 
+                          ("0 if fetch for a repositry is not necessary (not enough time has passed), " <> 
+                           "1 if fetch has failed, " <> 
+                           "2 if fetch was successful but there are no updates, " <> 
+                           "3 if data was successfully fetched from the repository"))
     validObjectNumberPerTa <- register
             $ vector ("trustanchor", "type")
             $ gauge (Info (metricsPrefix <> "object_total") "Number of valid objects of different types per TA")
@@ -82,11 +90,13 @@ updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} _ = do
     forM_ (MonoidalMap.toList $ unMetricMap rsyncMetrics) $ \(metricScope, metric) -> do
         let url = focusToText $ NonEmpty.head $ metricScope ^. coerced
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #totalTimeMs
+        withLabel fetchStatus url $ flip setGauge $ fetchStatusAsNumber $ metric ^. #fetchFreshness
 
     forM_ (MonoidalMap.toList $ unMetricMap rrdpMetrics) $ \(metricScope, metric) -> do
         let url = focusToText $ NonEmpty.head $ metricScope ^. coerced
         withLabel rrdpCode url $ flip setGauge $ fromIntegral $ unHttpStatus $ metric ^. #lastHttpStatus
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #downloadTimeMs
+        withLabel fetchStatus url $ flip setGauge $ fetchStatusAsNumber $ metric ^. #fetchFreshness
 
     let grouped = groupedValidationMetric rm
     
@@ -122,3 +132,9 @@ updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} _ = do
         setValidObjects prometheusVector url "aspa" $ metric ^. #validAspaNumber
         setValidObjects prometheusVector url "bgp" $ metric ^. #validBgpNumber
         setValidObjects prometheusVector url "allobjects" totalCount
+
+    fetchStatusAsNumber = \case
+        NoFetchNeeded -> 0
+        FetchFailed   -> 1
+        NoUpdates     -> 2
+        Updated       -> 3

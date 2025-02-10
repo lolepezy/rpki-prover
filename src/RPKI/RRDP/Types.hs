@@ -6,9 +6,8 @@
 module RPKI.RRDP.Types where
 
 import           Control.DeepSeq
-import qualified Data.ByteString as BS
-import           Data.List.NonEmpty          (NonEmpty (..))
-import qualified Data.List.NonEmpty          as NonEmpty
+import qualified Data.ByteString                  as BS
+import           Data.List.NonEmpty               (NonEmpty (..))
 import           Data.Text                        (Text)
 import           GHC.Generics
 import           RPKI.Domain

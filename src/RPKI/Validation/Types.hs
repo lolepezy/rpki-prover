@@ -17,7 +17,6 @@ import           Control.DeepSeq
 import           Data.Aeson.Types
 import qualified Data.Map.Strict             as Map
 import           Data.Text                   (Text)
-import qualified Data.Text                   as Text
 import           Data.Tuple.Strict
 import           GHC.Generics
 
