@@ -244,27 +244,25 @@ fetchOnePp
                 pure $ getRpkiURL $ getFetchablePP pps pp                
     
     fetchPPOnce parentScope = do 
-        ((repoUrl, (r, validations)), elapsed) <- timedMS doFetch      
-        let validations' = updateFetchMetric repoUrl validations r elapsed       
+        ((repoUrl, initialFreshness, (r, validations)), elapsed) <- timedMS doFetch      
+        let validations' = updateFetchMetric repoUrl initialFreshness validations r elapsed       
         pure $ case r of
             Left _     -> FetchFailure repoUrl validations'                
             Right repo -> FetchSuccess repo validations'      
       where        
         doFetch = do 
             fetchMoment <- thisInstant
-            (rpkiUrl, fetchIO) <- atomically $ do                                     
+            join $ atomically $ do                                     
                 (repoNeedAFetch, repo) <- needsAFetch fetchMoment
                 let rpkiUrl = getRpkiURL repo
                 pure $ if repoNeedAFetch then 
-                    (rpkiUrl, fetchPP parentScope repo fetchMoment)                
+                    (rpkiUrl, Nothing, ) <$> fetchPP parentScope repo fetchMoment  
                 else
-                    (rpkiUrl, pure (Right repo, mempty))                
-
-            (rpkiUrl, ) <$> fetchIO            
+                    pure (rpkiUrl, Just NoFetchNeeded, (Right repo, mempty))
 
         -- This is hacky but basically setting the "fetched/up-to-date" metric
         -- without ValidatorT/PureValidatorT (we can only run it in IO).
-        updateFetchMetric repoUrl validations r elapsed = 
+        updateFetchMetric repoUrl initialFreshness validations r elapsed = 
             case repoUrl of 
                 RrdpU _ -> 
                     let 
@@ -278,17 +276,17 @@ fetchOnePp
                         Left _  -> rsyncMetricUpdate updatedFreshness (#totalTimeMs %~ updateTime)
                         Right _ -> updatedFreshness           
           where
-            rrdpFreshness metrics@RrdpMetric {..} = 
-                metrics & #fetchFreshness .~ g (added > 0 || deleted > 0)
+            rrdpFreshness metrics = 
+                metrics & #fetchFreshness .~ g (rrdpRepoHasUpdates metrics)
 
-            rsyncFreshness metrics@RsyncMetric {..} = 
-                metrics & #fetchFreshness .~ g (processed > 0)
+            rsyncFreshness metrics = 
+                metrics & #fetchFreshness .~ g (rsyncRepoHasUpdates metrics)
             
-            g condition = case r of 
-                Left _ -> FetchFailed
-                Right _ 
-                    | condition -> Updated
-                    | otherwise -> NoUpdates
+            g condition = flip fromMaybe initialFreshness $ case r of 
+                            Left _ -> FetchFailed
+                            Right _ 
+                                | condition -> Updated
+                                | otherwise -> NoUpdates
 
             repoScope = validatorSubScope' RepositoryFocus repoUrl parentScope     
             rrdpMetricUpdate v f  = v & typed @RawMetric . #rrdpMetrics  %~ updateMetricInMap (repoScope ^. typed) f

@@ -6,6 +6,7 @@
 {-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RecordWildCards            #-}
 
 
 module RPKI.Reporting where
@@ -518,3 +519,9 @@ focusToText = \case
 
 scopeList :: Scope a -> [Focus]
 scopeList (Scope s) = NonEmpty.toList s
+
+rrdpRepoHasUpdates :: RrdpMetric -> Bool
+rrdpRepoHasUpdates RrdpMetric {..} = added > 0 || deleted > 0
+
+rsyncRepoHasUpdates :: RsyncMetric -> Bool
+rsyncRepoHasUpdates RsyncMetric {..} = processed > 0
