@@ -173,10 +173,9 @@ typically goes through more than 400K of objects (at the moment of writing), eac
 3Kb in size on average, it would be beneficial to have at least few hundred of megabytes in FS page cache.
 
 Disk space usage depends on the `--cache-lifetime-hours` parameter. The default is 24 hours and it 
-results in a cache size about 4Gb. There is a periodic compaction procedure that needs extra disk space 
-to execute, which needs extra 30-40% of disk space at peak. Also, some space (about 2Gb) mnight be 
-necessary for local mirrors of `rsync` repositories. Overall, to be safe it is recommended to have 
-10Gb of disk space available.
+results in a cache size about 4Gb. There is a periodic compaction procedure that needs extra 30-40% 
+of disk space to execute. Also, some space (about 2Gb) mnight be necessary for local mirrors of 
+`rsync` repositories. Overall, to be safe it is recommended to have 10Gb of disk space available.
 
 # Known issues <a name="known-issues"></a>
 
