@@ -340,7 +340,9 @@ fetchTooltip repoType setting =
         space >> space >> H.text "Used values" >> H.br
         H.ul $ do 
             H.li $ H.text [T.i|'Up-to-date' - no fetch is needed, #{repoType} repository was fetched less than '#{setting}' seconds ago.|]
-            H.li $ H.text "'Succeeded' and 'Failed' are self-explanatory"
+            H.li $ H.text $ "'No updates' - there are not updates to fetch. In case of RRDP repository it " <> 
+                            "means its serial didn't change since the last fetch, in case of rsync -- no new objects found after fetch."
+            H.li $ H.text "'Updated' and 'Failed' are self-explanatory"
 
 rrdpFetchTooltip, rsyncFetchTooltip :: Html
 rrdpFetchTooltip  = fetchTooltip "RRDP" "rrdp-refresh-interval"
@@ -351,8 +353,8 @@ rrdpUpdateTooltip =
     H.div ! A.style "text-align: left;" $ do 
         space >> space >> H.text "Used values" >> H.br
         H.ul $ do 
-            H.li $ H.text "'Snapshot' - snapshot was used for RRDP update"
-            H.li $ H.text "'Deltas' - deltas were used for RRDP update"
+            H.li $ H.text "'Snapshot N' - snapshot with serial N was used for RRDP update"
+            H.li $ H.text "'Deltas N to M' - deltas from serial N to serial M were used for RRDP update"
             H.li $ H.text "'-' - No update is needed, local and remote serials are equal"
 
 validationPathTootip :: Html
@@ -411,7 +413,7 @@ instance ToMarkup FetchFreshness where
         NoFetchNeeded -> toMarkup ("Up-to-date" :: Text)
         FetchFailed   -> toMarkup ("Failed" :: Text)
         NoUpdates     -> toMarkup ("No updates" :: Text)
-        Updated       -> toMarkup ("Succeeded" :: Text)
+        Updated       -> toMarkup ("Updated" :: Text)
 
 instance ToMarkup RrdpSource where 
     toMarkup = \case 
