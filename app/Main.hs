@@ -25,6 +25,7 @@ import           Data.Generics.Product.Typed
 import           Data.Bifunctor
 import qualified Data.ByteString.Lazy             as LBS
 import qualified Data.Text                        as Text
+import qualified Data.Set                         as Set
 
 import           Data.Hourglass
 import           Data.Int                         (Int16, Int64)    
@@ -119,32 +120,26 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     then [i|Starting #{rpkiProverVersion} in one-off mode.|]
                     else [i|Starting #{rpkiProverVersion} as a server.|]
             
-            if cliOptions ^. #initialise
-                then
-                    -- init the FS layout and download TALs
-                    void $ liftIO $ initialiseFS cliOptions logger
-                else do
-                    -- run the validator
-                    (appContext, validations) <- do
-                                runValidatorT (newScopes "Initialise") $ do
-                                    checkPreconditions cliOptions
-                                    createAppContext cliOptions logger (logConfig ^. #logLevel)
-                    case appContext of
-                        Left _ -> do 
-                            logError logger [i|Failure:
+            (appContext, validations) <- do
+                        runValidatorT (newScopes "Startup") $ do
+                            checkPreconditions cliOptions
+                            createAppContext cliOptions logger (logConfig ^. #logLevel)
+            case appContext of
+                Left _ -> do 
+                    logError logger [i|Failure:
 #{formatValidations (validations ^. typed)}|]
-                            drainLog logger
-                            hFlush stdout
-                            hFlush stderr
-                            exitFailure
-                        Right appContext' -> do 
-                            -- now we have the appState, set appStateHolder
-                            atomically $ writeTVar appStateHolder $ Just $ appContext' ^. #appState
-                            if once 
-                                then runValidatorServer appContext'
-                                else void $ race
-                                        (runHttpApi appContext')
-                                        (runValidatorServer appContext')
+                    drainLog logger
+                    hFlush stdout
+                    hFlush stderr
+                    exitFailure
+                Right appContext' -> do 
+                    -- now we have the appState, set appStateHolder
+                    atomically $ writeTVar appStateHolder $ Just $ appContext' ^. #appState
+                    if once 
+                        then runValidatorServer appContext'
+                        else void $ race
+                                (runHttpApi appContext')
+                                (runValidatorServer appContext')
 
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
@@ -198,13 +193,21 @@ runValidatorServer appContext@AppContext {..} = do
     
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion  <- newWorldVersion
-    talNames      <- listTALFiles $ configValue $ config ^. #talDirectory
-    extraTalNames <- fmap mconcat $ mapM listTALFiles $ configValue $ config ^. #extraTalsDirectories
-    let totalTalsNames = talNames <> extraTalNames
+
+    -- Check that TAL names are unique
+    let talSourcesDirs = (configValue $ config ^. #talDirectory) 
+                       : (configValue $ config ^. #extraTalsDirectories)
+    talNames <- fmap mconcat $ mapM listTalFiles talSourcesDirs    
+    when (Set.size (Set.fromList talNames) < length talNames) $ do
+        let message = [i|TAL names are not unique #{talNames}, |] <> 
+                      [i|TAL are from directories #{talSourcesDirs}.|]
+        logError logger message
+        throwIO $ AppException $ TAL_E $ TALError message
+
     (tals, vs) <- runValidatorT (newScopes "validation-root") $
-        forM totalTalsNames $ \(talFilePath, taName) ->
+        forM talNames $ \(talFilePath, taName) ->
             vFocusOn TAFocus (convert taName) $
-                parseTALFromFile talFilePath (Text.pack taName)    
+                parseTalFromFile talFilePath (Text.pack taName)    
 
     db <- readTVarIO database
     rwTx db $ \tx -> do 
@@ -215,21 +218,23 @@ runValidatorServer appContext@AppContext {..} = do
             logError logger [i|Error reading some of the TALs, e = #{e}.|]
             throwIO $ AppException e
         Right tals' -> do
-            logInfo logger [i|Successfully loaded #{length totalTalsNames} TALs: #{map snd totalTalsNames}|]
+            logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
             -- here it blocks and loops in never-ending re-validation
             runWorkflow appContext tals'
                 `finally`
                 closeStorage appContext
   where
-    parseTALFromFile talFileName taName = do
+    parseTalFromFile talFileName taName = do
         talContent <- fromTry (TAL_E . TALError . fmtEx) $ LBS.readFile talFileName
         vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName
 
 
 runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
-runHttpApi appContext = let
-    httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
-    in Warp.run httpPort $ httpServer appContext
+runHttpApi appContext@AppContext {..} = do 
+    let httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
+    (Warp.run httpPort $ httpServer appContext) 
+        `catch` 
+        (\(e :: SomeException) -> logError logger [i|Could not start HTTP server: #{e}.|])
 
 
 createAppContext :: CLIOptions Unwrapped -> AppLogger -> LogLevel -> ValidatorT IO AppLmdbEnv
@@ -240,14 +245,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     let defaults = defaultConfig
     let lmdbRealSize = (Size <$> lmdbSize) `orDefault` (defaults ^. #lmdbSizeMb)    
 
-    (root, tald, rsyncd, tmpd, cached) <- 
-            fromTryM 
-                (\e -> UnspecifiedE "Error verifying/creating FS layout: " (fmtEx e))
-                $ do 
-                    z@(_, _, _, tmpd, _) <- fsLayout cliOptions logger CheckTALsExists    
-                    -- clean up tmp directory if it's not empty
-                    cleanDir tmpd
-                    pure z    
+    -- Create (or make sure exist) necessary directories in the root directory
+    (root, tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger
 
     -- Set capabilities to the values from the CLI or to all available CPUs,
     -- (disregard the HT issue for now it needs more testing).
@@ -375,70 +374,98 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 #{shower (adjustedConfig)}|]
     pure appContext
 
-
-data TALsHandle = CreateTALs | CheckTALsExists
-
-initialiseFS :: CLIOptions Unwrapped -> AppLogger -> IO ()
-initialiseFS cliOptions@CLIOptions {..} logger = do
-    (r, _) <- runValidatorT
-        (newScopes "initialise")
-        $ do
-            logInfo logger [i|Initialising FS layout...|]
-
-            -- this one checks that "tals" exists
-            (_, tald, _, _, _) <- fsLayout cliOptions logger CreateTALs
-
-            -- TODO Change it to 
-            let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
-            let talNames = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"]
-
-            unless noRirTals $ do 
-                logInfo logger [i|Downloading TALs from #{talsUrl} to #{tald}.|]
-                fromTryM
-                    (\e -> UnspecifiedE "Error downloading TALs: " (fmtEx e))
-                    $ forM_ talNames
-                        $ \tal -> do
-                            let talUrl = Text.pack $ talsUrl <> tal
-                            logDebug logger [i|Downloading #{talUrl} to #{tald </> tal}.|]
-                            httpStatus <- downloadToFile (URI talUrl) (tald </> tal) (Size 10_000)
-                            unless (isHttpSuccess httpStatus) $ do
-                                appError $ UnspecifiedE
-                                    [i|Error downloading TAL #{tal} from #{talUrl}|]
-                                    [i|Http status #{unHttpStatus httpStatus}|]
-    case r of
-        Left e -> do
-            logError logger [i|Failed to initialise: #{e}.|]
-            logError logger [i|Please read https://github.com/lolepezy/rpki-prover/blob/master/README.md for the instructions on how to fix it manually.|]
-        Right _ ->
-            logInfo logger [i|Done.|]
-
-
+      
 fsLayout :: CLIOptions Unwrapped
         -> AppLogger
-        -> TALsHandle
         -> ValidatorT IO (FilePath, FilePath, FilePath, FilePath, FilePath)
-fsLayout cliOptions logger talsHandle = do
-    (root, rootDir) <- getRoot cliOptions
+fsLayout cliOptions@CLIOptions {..} logger = do
+    root <- getRoot cliOptions    
+    
+    logInfo logger $ case root of        
+        Left d  -> [i|Root directory is not set, using default #{d}, i.e. ${HOME}/.rpki|]
+        Right d -> [i|Root directory is set to #{d}.|]
+    
+    let rootDir = either id id root
 
-    let message =
-            case root of
-                Just d  -> [i|Root directory is set to #{d}.|]
-                Nothing -> [i|Root directory is not set, using defaul ${HOME}/.rpki|]
+    rootExists <- liftIO $ doesDirectoryExist rootDir
+    unless rootExists $ do
+        let message = [i|Root directory #{rootDir} doesn't exist.|]
+        logError logger message
+        appError $ InitE $ InitError message
 
-    logInfo logger message
+    -- For each sub-directory create it if it doesn't exist
+    [cached, rsyncd, tald, tmpd] <- 
+        fromTryM 
+            (\e -> InitE $ InitError [i|Error verifying/creating directories: #{fmtEx e}|])
+            $ forM [cacheDirName, rsyncDirName, talsDirName, tmpDirName] $ \dir -> 
+                fromEitherM $ first (InitE . InitError) <$> 
+                    createSubDirectoryIfNeeded rootDir dir    
 
-    tald   <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir talsHandle
-    rsyncd <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
-    tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir
-    cached <- fromEitherM $ first (InitE . InitError) <$> cacheDir rootDir
+    if refetchRirTals then do 
+        if noRirTals then
+            logInfo logger $ "Will re-fetch and overwrite TAL files, but not use them. " <> 
+                             "Maybe only one of  `--refetch-rir-tals` and `--no-rir-tals` should be set?"
+        else 
+            logInfo logger "Will re-fetch and overwrite TAL files."
+        downloadTals tald
+    else do         
+        tals <- liftIO $ listTalFiles tald
+        when (null tals) $         
+            if noRirTals then 
+                -- We don't know what you wanted here, but we respect your choice
+                logWarn logger $ "There are no TAL files and RIR TALs download is disabled, " <> 
+                                 "so the validator is not going to do anything useful."
+            else
+                -- Assume the reason is the very first start of a typical installation 
+                case extraTalsDirectory of 
+                    [] -> do
+                        -- Since there are no extra TAL locations set do the most reasonable thing, download TALs
+                        logInfo logger [i|No TAL files found in #{tald}, assuming it is the first launch and downloading them.|]
+                        downloadTals tald
+                    _ -> 
+                        -- Assume the user knows better and there are some TALs in the extraTalsDirectory
+                        logInfo logger [i|No TAL files found in #{tald}, assuming there are some TALs in #{extraTalsDirectory}.|]
+ 
+    -- Do not do anything with `tmp` and `rsync`, they most likely are going 
+    -- to be okay for either a new installation or an existing one. Otherwise,
+    -- they will be cleaned up by one of the periodic maintenance tasks.
+
     pure (rootDir, tald, rsyncd, tmpd, cached)
 
+  where
 
-getRoot :: CLIOptions Unwrapped -> ValidatorT IO (Maybe FilePath, FilePath)
-getRoot cliOptions = do
-    home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
-    let root = getRootDirectory cliOptions
-    pure (root, root `orDefault` (home </> ".rpki"))
+    downloadTals tald = do
+        -- TODO Change it to something more local? Probably not
+        let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
+        let talNames :: [String] = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"]            
+        logInfo logger [i|Downloading TALs #{talNames} from #{talsUrl} to #{tald}.|]
+        fromTryM
+            (\e -> InitE $ InitError [i|Error downloading TALs: #{fmtEx e}|])
+            $ forM_ talNames
+                $ \tal -> do
+                    let talUrl = Text.pack $ talsUrl <> tal
+                    logDebug logger [i|Downloading #{talUrl} to #{tald </> tal}.|]
+                    httpStatus <- downloadToFile (URI talUrl) (tald </> tal) (Size 10_000)
+                    unless (isHttpSuccess httpStatus) $ 
+                        appError $ InitE $ InitError $ 
+                            [i|Error downloading TAL #{tal} from #{talUrl}, |] <>
+                            [i|Http status #{unHttpStatus httpStatus}|]       
+
+
+getRoot :: CLIOptions Unwrapped -> ValidatorT IO (Either FilePath FilePath)
+getRoot cliOptions = do    
+    case getRootDirectory cliOptions of 
+        Nothing -> do 
+            home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
+            Left <$> makeSureRootExists (home </> ".rpki")
+        Just root -> 
+            Right <$> makeSureRootExists root            
+  where
+    makeSureRootExists root = do 
+        rootExists <- liftIO $ doesDirectoryExist root
+        if rootExists
+            then pure root
+            else appError $ InitE $ InitError [i|Root directory #{root} doesn't exist.|]
 
 orDefault :: Maybe a -> a -> a
 m `orDefault` d = fromMaybe d m
@@ -447,8 +474,8 @@ maybeSet :: ASetter s s a b -> Maybe b -> s -> s
 maybeSet lenz newValue big = maybe big (\val -> big & lenz .~ val) newValue
 
 
-listTALFiles :: FilePath -> IO [(FilePath, FilePath)]
-listTALFiles talDirectory = do
+listTalFiles :: FilePath -> IO [(FilePath, FilePath)]
+listTalFiles talDirectory = do
     names <- getDirectoryContents talDirectory
     pure $ map (\f -> (talDirectory </> f, cutOffTalExtension f)) $
             filter (".tal" `List.isSuffixOf`) $
@@ -457,21 +484,11 @@ listTALFiles talDirectory = do
     cutOffTalExtension s = List.take (List.length s - 4) s
 
 
-cacheDirN, rsyncDirN, talsDirN, tmpDirN :: FilePath
-cacheDirN = "cache"
-rsyncDirN = "rsync"
-talsDirN  = "tals"
-tmpDirN   = "tmp"
-
-talsDir :: FilePath -> TALsHandle -> IO (Either Text FilePath)
-talsDir root CreateTALs      = createSubDirectoryIfNeeded root talsDirN
-talsDir root CheckTALsExists = checkSubDirectory root talsDirN
-
-rsyncDir, tmpDir, cacheDir :: FilePath -> IO (Either Text FilePath)
-rsyncDir root = createSubDirectoryIfNeeded root rsyncDirN
-tmpDir root   = createSubDirectoryIfNeeded root tmpDirN
-cacheDir root = createSubDirectoryIfNeeded root cacheDirN
-
+cacheDirName, rsyncDirName, talsDirName, tmpDirName :: FilePath
+cacheDirName = "cache"
+rsyncDirName = "rsync"
+talsDirName  = "tals"
+tmpDirName   = "tmp"
 
 checkSubDirectory :: FilePath -> FilePath -> IO (Either Text FilePath)
 checkSubDirectory root sub = do
@@ -580,9 +597,8 @@ executeVerifier cliOptions@CLIOptions {..} = do
 
 createVerifierContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppLmdbEnv
 createVerifierContext cliOptions logger = do
-
-    (_, rootDir) <- getRoot cliOptions
-    cached <- fromEitherM $ first (InitE . InitError) <$> checkSubDirectory rootDir cacheDirN
+    rootDir <- either id id <$> getRoot cliOptions
+    cached <- fromEitherM $ first (InitE . InitError) <$> checkSubDirectory rootDir cacheDirName
 
     let config = defaultConfig
     lmdbEnv <- setupWorkerLmdbCache logger cached config
@@ -605,7 +621,7 @@ data CLIOptions wrapped = CLIOptions {
     version :: wrapped ::: Bool <?> "Program version.",
 
     initialise :: wrapped ::: Bool <?>
-        "If set, the FS layout will be created and TAL files will be downloaded.",
+        "Deprecated, does nothing, used to initialise FS layout before the first launch.",
 
     once :: wrapped ::: Bool <?>
         ("If set, will run one validation cycle and exit. Http API will not start, " +++ 
@@ -616,6 +632,9 @@ data CLIOptions wrapped = CLIOptions {
 
     noRirTals :: wrapped ::: Bool <?> 
         "If set, RIR TAL files will not be downloaded.",
+
+    refetchRirTals :: wrapped ::: Bool <?> 
+        "If set, RIR TAL files will be re-downloaded.",        
 
     rpkiRootDirectory :: wrapped ::: [FilePath] <?>
         ("Root directory (default is ${HOME}/.rpki/). This option can be passed multiple times and "
