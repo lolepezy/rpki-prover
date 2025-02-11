@@ -5,6 +5,7 @@ module RPKI.RRDP.UpdateSpec where
 import           Control.Lens
 import           Data.Generics.Product.Typed
 import qualified Data.Text               as Text
+import           Data.List.NonEmpty      (NonEmpty (..))
 
 import           RPKI.AppMonad
 import           RPKI.Domain
@@ -59,7 +60,7 @@ testDeltaUpdate =
                                     deltas = [delta]
                                 }
         HU.assertEqual "It's a bummer" nextStep 
-            (Right $ FetchDeltas [delta] (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
+            (Right $ FetchDeltas (delta :| []) (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
             "SessionId \"something\", deltas look good.")
 
 testNoDeltaLocalTooOld :: TestTree
@@ -137,7 +138,7 @@ testIntegrity =
             (Right $ FetchDeltas {
                 message = "SessionId \"something\", deltas look good.",
                 snapshotInfo = snapshotInfo,
-                sortedDeltas = [DeltaInfo (URI "http://rrdp.ripe.net/delta14.xml") (Hash "hash14") serial14] 
+                sortedDeltas = (DeltaInfo (URI "http://rrdp.ripe.net/delta14.xml") (Hash "hash14") serial14 :| []) 
             })
         
         let (nextStep1, _) = runPureValidator (newScopes "test") $ 
