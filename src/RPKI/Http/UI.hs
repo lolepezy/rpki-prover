@@ -417,12 +417,10 @@ instance ToMarkup FetchFreshness where
 
 instance ToMarkup RrdpSource where 
     toMarkup = \case 
-        RrdpNoUpdate      -> toMarkup ("-" :: Text)
-        RrdpDelta from to -> let 
-                message :: Text = if from == to 
-                    then [T.i|Delta #{from}|]
-                    else [T.i|Deltas #{from} to #{to}|]
-            in toMarkup message
+        RrdpNoUpdate -> toMarkup ("-" :: Text)
+        RrdpDelta from to 
+            | from == to -> [T.i|Delta #{from}|]
+            | otherwise  -> [T.i|Deltas #{from} to #{to}|]                
         RrdpSnapshot serial -> let 
             message :: Text = [T.i|Snapshot #{serial}|]
             in toMarkup message
