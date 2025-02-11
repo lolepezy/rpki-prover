@@ -439,9 +439,7 @@ fsLayout cliOptions@CLIOptions {..} logger = do
                 httpStatuses <- liftIO $ forConcurrently defaultTalUrls $ \(talName, Text.pack -> talUrl) -> do                    
                         logDebug logger [i|Downloading #{talUrl} to #{tald </> talName}.|]                    
                         fmap (talName, talUrl, ) $ try $ downloadToFile (URI talUrl) (tald </> talName) (Size 10_000)                        
-
-                logError logger [i|Downloaded TALs: #{httpStatuses}.|]
-                
+               
                 let statusText = \case 
                         (talName, talUrl, Left (e :: SomeException)) -> 
                             [i|Failed to download TAL #{talName} from #{talUrl}, error: #{e}.|]
