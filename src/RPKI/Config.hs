@@ -316,10 +316,10 @@ defaulPrefetchURLs = [
 
 defaultTalUrls :: [(String, String)]
 defaultTalUrls = [
-        ("afrinic.tal", "https://rpki.afrinic.net/tal/afrinic.tal"),
-        ("apnic.tal", "https://tal.apnic.net/tal-archive/apnic-rfc7730-https.tal"),
-        ("arin.tal", "https://www.arin.net/resources/manage/rpki/arin.tal"),
+        ("afrinic.tal", "https://rpki.afrinic.net/tal/afrinic.tal1"),
+        ("apnic.tal", "https://tal.apnic.net/tal-archive/apnic-rfc7730-https.tal1"),
+        ("arin.tal", "https://www.arin.net/resources/manage/rpki/arin.tal1"),
         ("lacnic.tal", "https://www.lacnic.net/innovaportal/file/4983/1/lacnic.tal"),
-        ("ripe.tal", "https://tal.rpki.ripe.net/ripe-ncc.tal")
+        ("ripe.tal", "https://tal.rpki.ripe.net/ripe-ncc.tal1")
     ]        
     

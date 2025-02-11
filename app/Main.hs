@@ -11,6 +11,7 @@ module Main where
 
 import           Control.Lens ((^.), (&))
 import           Control.Lens.Setter
+import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Concurrent.Async
 
@@ -131,6 +132,7 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     drainLog logger
                     hFlush stdout
                     hFlush stderr
+                    threadDelay 100_000
                     exitFailure
                 Right appContext' -> do 
                     -- now we have the appState, set appStateHolder
@@ -439,20 +441,19 @@ fsLayout cliOptions@CLIOptions {..} logger = do
                 httpStatuses <- liftIO $ forConcurrently defaultTalUrls $ \(talName, Text.pack -> talUrl) -> do                    
                         logDebug logger [i|Downloading #{talUrl} to #{tald </> talName}.|]                    
                         fmap (talName, talUrl, ) $ try $ downloadToFile (URI talUrl) (tald </> talName) (Size 10_000)                        
-               
-                let statusText = \case 
+                
+                let talText = \case 
                         (talName, talUrl, Left (e :: SomeException)) -> 
-                            [i|Failed to download TAL #{talName} from #{talUrl}, error: #{e}.|]
-                        (talName, talUrl, Right status) ->                     
-                            if isHttpSuccess status 
-                                then mempty
-                                else [i|Failed to download TAL #{talName} from #{talUrl}, HTTP status: #{status}.|]            
+                            Just [i|Failed to download TAL #{talName} from #{talUrl}, error: #{e}.|]
+                        (talName, talUrl, Right status) 
+                            | isHttpSuccess status -> Nothing
+                            | otherwise -> Just 
+                                [i|Failed to download TAL #{talName} from #{talUrl}, HTTP status: #{status}.|]
 
-                -- It's a bit stupid but it's the simplest
-                let message = Text.intercalate "\n" $ map statusText httpStatuses
-                unless (Text.null message) $ do                
-                    logError logger message
-                    appError $ InitE $ InitError message
+                let anyFailures = any (\(_, _, s) -> either (const True) (not . isHttpSuccess) s) httpStatuses
+                when anyFailures $  
+                    appError $ InitE $ InitError $ 
+                        Text.intercalate "\n" $ catMaybes $ map talText httpStatuses                                        
 
 
 getRoot :: CLIOptions Unwrapped -> ValidatorT IO (Either FilePath FilePath)
