@@ -69,15 +69,13 @@ newLocation t =  RrdpU (RrdpURL $ URI t) :| []
 
 -- | Parse TAL object from raw text
 parseTAL :: Text -> Text -> Either TALError TAL
-parseTAL bs taName = 
-    case validTaName taName of 
-        Left e -> Left e
-        Right taName' -> 
-            case (parseAsProperties taName', parseRFC taName') of
-                (Right t, _)       -> Right t
-                (Left _,  Right t) -> Right t
-                (Left (TALError e1), Left (TALError e2)) -> 
-                    Left $ TALError $ e1 <> " | " <> e2    
+parseTAL bs taName = do 
+    taName' <- validTaName taName    
+    case (parseAsProperties taName', parseRFC taName') of
+        (Right t, _)       -> Right t
+        (Left _,  Right t) -> Right t
+        (Left (TALError e1), Left (TALError e2)) -> 
+            Left $ TALError $ e1 <> " | " <> e2    
     where
         parseAsProperties taName' = 
             case Text.lines bs of 
