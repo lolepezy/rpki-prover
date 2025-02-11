@@ -26,7 +26,6 @@ import qualified Data.ByteString                  as BS
 import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.List                        as List
 import qualified Data.Map.Strict                  as Map
-import           Data.Foldable  
 import           Data.String.Interpolate.IsString
 import           Data.Proxy
 import           Data.Maybe
