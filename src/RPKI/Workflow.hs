@@ -268,11 +268,11 @@ runWorkflow appContext@AppContext {..} tals = do
                 logInfo logger [i|Running asynchronous fetch #{fetchVersion}.|]            
                 (_, TimeMs elapsed) <- timedMS $ do 
                     validations <- runAsyncFetches appContext fetchVersion
-                    db <- readTVarIO database
-                    rwTx db $ \tx -> do
+                    updatePrometheus (validations ^. typed) prometheusMetrics worldVersion
+                    rwTxT database $ \tx db -> do
                         saveValidations tx db fetchVersion (validations ^. typed)
                         saveMetrics tx db fetchVersion (validations ^. typed)
-                        asyncFetchWorldVersion tx db fetchVersion                  
+                        asyncFetchWorldVersion tx db fetchVersion                                      
                 logInfo logger [i|Finished asynchronous fetch #{fetchVersion} in #{elapsed `div` 1000}s.|]
 
 
@@ -624,7 +624,7 @@ runAsyncFetches appContext@AppContext {..} worldVersion = do
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
                     fetchWithFallback appContext repositoryProcessing 
                         worldVersion (asyncFetchConfig config) ppAccess
-            
+                    
         validationStateOfFetches repositoryProcessing   
   where    
     -- Sort them by the last fetch time, the fastest first. 

@@ -23,8 +23,10 @@ import           Data.Foldable
 import           Data.Bifunctor                   (first)
 import           Data.Text                        (Text)
 import qualified Data.ByteString                  as BS
+import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.List                        as List
 import qualified Data.Map.Strict                  as Map
+import           Data.Foldable  
 import           Data.String.Interpolate.IsString
 import           Data.Proxy
 import           Data.Maybe
@@ -164,18 +166,21 @@ downloadAndUpdateRRDP
                         pure repo
 
                     FetchSnapshot snapshotInfo message -> do 
-                        usedSource RrdpSnapshot
+                        usedSource $ RrdpSnapshot $ notification ^. #serial
                         logDebug logger [i|Going to use snapshot for #{repoUri}: #{message}|]
                         useSnapshot snapshotInfo notification                        
 
                     FetchDeltas sortedDeltas snapshotInfo message -> 
-                        (do 
-                            usedSource RrdpDelta
+                        (do                             
+                            usedSource $ RrdpDelta 
+                                ((NonEmpty.head sortedDeltas) ^. typed) 
+                                ((NonEmpty.last sortedDeltas) ^. typed)
+
                             logDebug logger [i|Going to use deltas for #{repoUri}: #{message}|]
                             useDeltas sortedDeltas notification                            
                             `catchError` 
                         \e -> do         
-                            usedSource RrdpSnapshot
+                            usedSource $ RrdpSnapshot $ notification ^. #serial
                             logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
                             useSnapshot snapshotInfo notification)
 
@@ -247,7 +252,7 @@ downloadAndUpdateRRDP
                 (\t -> (& #saveTimeMs %~ (<> t))) $ 
                 foldPipeline
                         maxDeltaDownloadSimultaneously
-                        (S.each sortedDeltas)
+                        (S.each $ NonEmpty.toList sortedDeltas)
                         downloadDelta
                         (\(rawContent, serial, deltaUri) _ -> 
                             inSubVScope deltaUri $ 
@@ -272,13 +277,13 @@ downloadAndUpdateRRDP
             updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
             pure (rawContent, serial, deltaUri)
 
-        serials = map (^. typed @RrdpSerial) sortedDeltas
-        maxDeltaSerial = List.maximum serials
-        minDeltaSerial = List.minimum serials
+        serials = NonEmpty.map (^. typed @RrdpSerial) sortedDeltas
+        maxDeltaSerial = maximum serials
+        minDeltaSerial = minimum serials
         
         rrdpMeta' = let 
             Notification {..} = notification 
-            in Just $ RrdpMeta sessionId maxDeltaSerial (RrdpIntegrity sortedDeltas)
+            in Just $ RrdpMeta sessionId maxDeltaSerial (RrdpIntegrity $ toList sortedDeltas)
 
 
 -- | Decides what to do next based on current state of the repository
@@ -320,7 +325,7 @@ rrdpNextStep RrdpRepository { rrdpMeta = Just rrdpMeta } Notification {..} =
                             pure $ FetchSnapshot snapshotInfo formattedIntegrityIssues
 
                         | otherwise ->
-                            pure $ FetchDeltas chosenDeltas snapshotInfo 
+                            pure $ FetchDeltas (NonEmpty.fromList chosenDeltas) snapshotInfo 
                                     [i|#{localSessionId}, deltas look good.|]
 
                 (_, nc) -> do 
@@ -339,17 +344,17 @@ rrdpNextStep RrdpRepository { rrdpMeta = Just rrdpMeta } Notification {..} =
         nonConsecutiveDeltas = List.filter (\(s, s') -> nextSerial s /= s') $
             List.zip sortedSerials (tail sortedSerials)
 
-        deltaIntegrityIssues = let 
-                previousDeltasBySerial = 
-                    Map.fromList 
-                        $ map (\d -> (d ^. typed @RrdpSerial, d)) 
-                        $ rrdpMeta ^. #integrity . #deltas
-
-            in [ (serial_, hash, previousHash) | 
-                    DeltaInfo _ hash serial_   <- deltas,
-                    DeltaInfo _ previousHash _ <- maybeToList $ Map.lookup serial_ previousDeltasBySerial,
-                    previousHash /= hash
-                ]       
+        deltaIntegrityIssues = 
+            [ (serial_, hash, previousHash) | 
+                DeltaInfo _ hash serial_   <- deltas,
+                DeltaInfo _ previousHash _ <- maybeToList $ Map.lookup serial_ previousDeltasBySerial,
+                previousHash /= hash
+            ]
+          where
+            previousDeltasBySerial = 
+                Map.fromList 
+                    $ map (\d -> (d ^. typed @RrdpSerial, d)) 
+                    $ rrdpMeta ^. #integrity . #deltas            
 
         formattedIntegrityIssues = [i|These deltas have integrity issues: #{issues}.|]            
           where
