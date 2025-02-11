@@ -386,7 +386,7 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
         increaseInterval (Seconds s) = Seconds $ s + 1 + s `div` 10        
         decreaseInterval (Seconds s) = Seconds $ s - s `div` 3 - 1
 
-        moreThanOne = ( > 1) . NonEmpty.length
+        moreThanOne = ( > 1) . length . NonEmpty.take 2
 
         in Just $ 
             case vConfig ^. #fetchIntervalCalculation of 
