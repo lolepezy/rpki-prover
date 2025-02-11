@@ -434,22 +434,28 @@ fsLayout cliOptions@CLIOptions {..} logger = do
 
   where
 
-    downloadTals tald = do
-        -- TODO Change it to something more local? Probably not
-        let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
-        let talNames :: [String] = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"]            
-        logInfo logger [i|Downloading TALs #{talNames} from #{talsUrl} to #{tald}.|]
+    downloadTals tald = do        
+        let talUrls = [
+                    ("afrinic.tal", "https://rpki.afrinic.net/tal/afrinic.tal"),
+                    ("apnic.tal", "https://tal.apnic.net/tal-archive/apnic-rfc7730-https.tal"),
+                    ("arin.tal", "https://www.arin.net/resources/manage/rpki/arin.tal"),
+                    ("lacnic.tal", "https://www.lacnic.net/innovaportal/file/4983/1/lacnic.tal"),
+                    ("ripe.tal", "https://tal.rpki.ripe.net/ripe-ncc.tal")                                                            
+                ]        
         fromTryM
             (\e -> InitE $ InitError [i|Error downloading TALs: #{fmtEx e}|])
-            $ forM_ talNames
-                $ \tal -> do
-                    let talUrl = Text.pack $ talsUrl <> tal
-                    logDebug logger [i|Downloading #{talUrl} to #{tald </> tal}.|]
-                    httpStatus <- downloadToFile (URI talUrl) (tald </> tal) (Size 10_000)
-                    unless (isHttpSuccess httpStatus) $ 
-                        appError $ InitE $ InitError $ 
-                            [i|Error downloading TAL #{tal} from #{talUrl}, |] <>
-                            [i|Http status #{unHttpStatus httpStatus}|]       
+            $ do
+                httpStatuses <- liftIO $ forConcurrently talUrls $ \(talName, talUrl) -> do                    
+                        logDebug logger [i|Downloading #{talUrl} to #{tald </> talName}.|]
+                        (talName, talUrl,) <$> downloadToFile (URI talUrl) (tald </> talName) (Size 10_000)
+
+                let failedOnes = filter (\(_, _, status) -> not $ isHttpSuccess status) httpStatuses
+                unless (null failedOnes) $ do 
+                    let message = Text.intercalate "\n" $ map (\(talName, talUrl, status) -> 
+                            [i|Error downloading TAL #{talName} from #{talUrl}, |] <>
+                            [i|Http status #{unHttpStatus status}|]) failedOnes
+                    logError logger message
+                    appError $ InitE $ InitError message                    
 
 
 getRoot :: CLIOptions Unwrapped -> ValidatorT IO (Either FilePath FilePath)
