@@ -358,8 +358,11 @@ instance Show Count where
     show (Count c) = show c
 
 newtype HttpStatus = HttpStatus { unHttpStatus :: Int }
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)        
+
+instance Show HttpStatus where
+    show = show . unHttpStatus
 
 instance Monoid HttpStatus where
     mempty = HttpStatus 200

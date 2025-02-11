@@ -11,6 +11,7 @@ module Main where
 
 import           Control.Lens ((^.), (&))
 import           Control.Lens.Setter
+import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Concurrent.Async
 
@@ -131,6 +132,7 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     drainLog logger
                     hFlush stdout
                     hFlush stderr
+                    threadDelay 100_000
                     exitFailure
                 Right appContext' -> do 
                     -- now we have the appState, set appStateHolder
@@ -431,25 +433,27 @@ fsLayout cliOptions@CLIOptions {..} logger = do
     -- they will be cleaned up by one of the periodic maintenance tasks.
 
     pure (rootDir, tald, rsyncd, tmpd, cached)
-
   where
-
-    downloadTals tald = do
-        -- TODO Change it to something more local? Probably not
-        let talsUrl :: String = "https://raw.githubusercontent.com/NLnetLabs/routinator/master/tals/"
-        let talNames :: [String] = ["afrinic.tal", "apnic.tal", "arin.tal", "lacnic.tal", "ripe.tal"]            
-        logInfo logger [i|Downloading TALs #{talNames} from #{talsUrl} to #{tald}.|]
+    downloadTals tald =     
         fromTryM
             (\e -> InitE $ InitError [i|Error downloading TALs: #{fmtEx e}|])
-            $ forM_ talNames
-                $ \tal -> do
-                    let talUrl = Text.pack $ talsUrl <> tal
-                    logDebug logger [i|Downloading #{talUrl} to #{tald </> tal}.|]
-                    httpStatus <- downloadToFile (URI talUrl) (tald </> tal) (Size 10_000)
-                    unless (isHttpSuccess httpStatus) $ 
-                        appError $ InitE $ InitError $ 
-                            [i|Error downloading TAL #{tal} from #{talUrl}, |] <>
-                            [i|Http status #{unHttpStatus httpStatus}|]       
+            $ do                
+                httpStatuses <- liftIO $ forConcurrently defaultTalUrls $ \(talName, Text.pack -> talUrl) -> do                    
+                        logDebug logger [i|Downloading #{talUrl} to #{tald </> talName}.|]                    
+                        fmap (talName, talUrl, ) $ try $ downloadToFile (URI talUrl) (tald </> talName) (Size 10_000)                        
+                
+                let talText = \case 
+                        (talName, talUrl, Left (e :: SomeException)) -> 
+                            Just [i|Failed to download TAL #{talName} from #{talUrl}, error: #{e}.|]
+                        (talName, talUrl, Right status) 
+                            | isHttpSuccess status -> Nothing
+                            | otherwise -> Just 
+                                [i|Failed to download TAL #{talName} from #{talUrl}, HTTP status: #{status}.|]
+
+                let anyFailures = any (\(_, _, s) -> either (const True) (not . isHttpSuccess) s) httpStatuses
+                when anyFailures $  
+                    appError $ InitE $ InitError $ 
+                        Text.intercalate "\n" $ catMaybes $ map talText httpStatuses                                        
 
 
 getRoot :: CLIOptions Unwrapped -> ValidatorT IO (Either FilePath FilePath)

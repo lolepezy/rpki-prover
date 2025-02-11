@@ -69,15 +69,13 @@ newLocation t =  RrdpU (RrdpURL $ URI t) :| []
 
 -- | Parse TAL object from raw text
 parseTAL :: Text -> Text -> Either TALError TAL
-parseTAL bs taName = 
-    case validTaName taName of 
-        Left e -> Left e
-        Right taName' -> 
-            case (parseAsProperties taName', parseRFC taName') of
-                (Right t, _)       -> Right t
-                (Left _,  Right t) -> Right t
-                (Left (TALError e1), Left (TALError e2)) -> 
-                    Left $ TALError $ e1 <> " | " <> e2    
+parseTAL bs taName = do 
+    taName' <- validTaName taName    
+    case (parseAsProperties taName', parseRFC taName') of
+        (Right t, _)       -> Right t
+        (Left _,  Right t) -> Right t
+        (Left (TALError e1), Left (TALError e2)) -> 
+            Left $ TALError $ e1 <> " | " <> e2    
     where
         parseAsProperties taName' = 
             case Text.lines bs of 
@@ -95,10 +93,7 @@ parseTAL bs taName =
                         getPublicKeyInfo properties <*>
                         getPrefetchUris properties <*>     
                         pure taName'
-            where 
-                -- Lines that are not comments are the ones not startig with '#'
-                nonComments = List.filter $ not . ("#" `Text.isPrefixOf`) . Text.stripStart 
-
+            where                 
                 getCaName ps              = Right $ lookup "ca.name" ps                
                 getPublicKeyInfo       ps = EncodedBase64 . convert <$> getMandatory "public.key.info" ps
                 getPrefetchUris ps        = first TALError $ 
@@ -123,7 +118,7 @@ parseTAL bs taName =
                         Just cl -> Right cl
 
         parseRFC taName' =      
-            case List.span looksLikeUri $ Text.lines bs of        
+            case List.span looksLikeUri $ nonComments $ Text.lines bs of        
                 (_, [])        -> Left $ TALError "Empty public key info"
                 (uris, base64) ->
                     case NonEmpty.nonEmpty uris of
@@ -138,8 +133,11 @@ parseTAL bs taName =
                                     Text.concat $ filter (not . Text.null) $ map Text.strip base64,
                                 taName = taName'
                             }
-            where 
+            where                 
                 looksLikeUri s = any (`Text.isPrefixOf` s) ["rsync://", "http://", "https://"]
+
+        -- Lines that are not comments are the ones not startig with '#'
+        nonComments = List.filter $ not . ("#" `Text.isPrefixOf`) . Text.stripStart 
 
 
 validTaName :: Text -> Either TALError TaName

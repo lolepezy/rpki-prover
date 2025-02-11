@@ -3,6 +3,7 @@
 {-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE OverloadedLabels    #-}
 {-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE QuasiQuotes         #-}
 
 module RPKI.RRDP.Http where
 
@@ -18,6 +19,8 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text as Text
 import           Data.Tuple.Strict
+
+import           Data.String.Interpolate.IsString
 
 import GHC.Generics (Generic)
 
@@ -153,11 +156,16 @@ fsRead = BS.readFile
 mapFile :: FilePath -> IO BS.ByteString
 mapFile = unsafeMMapFile
 
-data OversizedDownloadStream = OversizedDownloadStream URI Size 
-    deriving stock (Show, Eq, Ord, Generic)    
+data OversizedDownloadStream = OversizedDownloadStream URI Size Size 
+    deriving stock (Eq, Ord, Generic)    
 
 instance Exception OversizedDownloadStream
     
+
+instance Show OversizedDownloadStream where 
+    show (OversizedDownloadStream uri (Size actualSize) (Size maxSize)) = 
+        [i|Http stream for #{uri} is #{actualSize} bytes, bigger than #{maxSize} bytes limit|]    
+
 
 -- | Stream URL content to a file suing http conduit.
 --
@@ -224,5 +232,5 @@ sinkGenSize uri maxAllowedSize initialValue updateValue finalValue = do
             Just chunk -> let 
                 !newSize = s + (fromIntegral (BS.length chunk) :: Size)                
                 in if newSize > maxAllowedSize
-                    then liftIO $ throwIO $ OversizedDownloadStream uri newSize
+                    then liftIO $ throwIO $ OversizedDownloadStream uri newSize maxAllowedSize
                     else loop $! T2 (updateValue ctx chunk) newSize
