@@ -156,15 +156,15 @@ fsRead = BS.readFile
 mapFile :: FilePath -> IO BS.ByteString
 mapFile = unsafeMMapFile
 
-data OversizedDownloadStream = OversizedDownloadStream URI Size 
+data OversizedDownloadStream = OversizedDownloadStream URI Size Size 
     deriving stock (Eq, Ord, Generic)    
 
 instance Exception OversizedDownloadStream
     
 
 instance Show OversizedDownloadStream where 
-    show (OversizedDownloadStream uri (Size s)) = 
-        [i|Http stream for #{uri} is bigger than #{s} bytes|]    
+    show (OversizedDownloadStream uri (Size actualSize) (Size maxSize)) = 
+        [i|Http stream for #{uri} is #{actualSize} bytes, bigger than #{maxSize} bytes limit|]    
 
 
 -- | Stream URL content to a file suing http conduit.
@@ -232,5 +232,5 @@ sinkGenSize uri maxAllowedSize initialValue updateValue finalValue = do
             Just chunk -> let 
                 !newSize = s + (fromIntegral (BS.length chunk) :: Size)                
                 in if newSize > maxAllowedSize
-                    then liftIO $ throwIO $ OversizedDownloadStream uri newSize
+                    then liftIO $ throwIO $ OversizedDownloadStream uri newSize maxAllowedSize
                     else loop $! T2 (updateValue ctx chunk) newSize
