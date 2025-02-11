@@ -3,6 +3,7 @@
 {-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE OverloadedLabels    #-}
 {-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE QuasiQuotes         #-}
 
 module RPKI.RRDP.Http where
 
@@ -18,6 +19,8 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text as Text
 import           Data.Tuple.Strict
+
+import           Data.String.Interpolate.IsString
 
 import GHC.Generics (Generic)
 
@@ -154,10 +157,15 @@ mapFile :: FilePath -> IO BS.ByteString
 mapFile = unsafeMMapFile
 
 data OversizedDownloadStream = OversizedDownloadStream URI Size 
-    deriving stock (Show, Eq, Ord, Generic)    
+    deriving stock (Eq, Ord, Generic)    
 
 instance Exception OversizedDownloadStream
     
+
+instance Show OversizedDownloadStream where 
+    show (OversizedDownloadStream uri (Size s)) = 
+        [i|Http stream for #{uri} is bigger than #{s} bytes|]    
+
 
 -- | Stream URL content to a file suing http conduit.
 --

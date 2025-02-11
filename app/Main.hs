@@ -431,31 +431,30 @@ fsLayout cliOptions@CLIOptions {..} logger = do
     -- they will be cleaned up by one of the periodic maintenance tasks.
 
     pure (rootDir, tald, rsyncd, tmpd, cached)
-
   where
-
-    downloadTals tald = do        
-        let talUrls = [
-                    ("afrinic.tal", "https://rpki.afrinic.net/tal/afrinic.tal"),
-                    ("apnic.tal", "https://tal.apnic.net/tal-archive/apnic-rfc7730-https.tal"),
-                    ("arin.tal", "https://www.arin.net/resources/manage/rpki/arin.tal"),
-                    ("lacnic.tal", "https://www.lacnic.net/innovaportal/file/4983/1/lacnic.tal"),
-                    ("ripe.tal", "https://tal.rpki.ripe.net/ripe-ncc.tal")                                                            
-                ]        
+    downloadTals tald =     
         fromTryM
             (\e -> InitE $ InitError [i|Error downloading TALs: #{fmtEx e}|])
-            $ do
-                httpStatuses <- liftIO $ forConcurrently talUrls $ \(talName, talUrl) -> do                    
-                        logDebug logger [i|Downloading #{talUrl} to #{tald </> talName}.|]
-                        (talName, talUrl,) <$> downloadToFile (URI talUrl) (tald </> talName) (Size 10_000)
+            $ do                
+                httpStatuses <- liftIO $ forConcurrently defaultTalUrls $ \(talName, Text.pack -> talUrl) -> do                    
+                        logDebug logger [i|Downloading #{talUrl} to #{tald </> talName}.|]                    
+                        fmap (talName, talUrl, ) $ try $ downloadToFile (URI talUrl) (tald </> talName) (Size 10_000)                        
 
-                let failedOnes = filter (\(_, _, status) -> not $ isHttpSuccess status) httpStatuses
-                unless (null failedOnes) $ do 
-                    let message = Text.intercalate "\n" $ map (\(talName, talUrl, status) -> 
-                            [i|Error downloading TAL #{talName} from #{talUrl}, |] <>
-                            [i|Http status #{unHttpStatus status}|]) failedOnes
+                logError logger [i|Downloaded TALs: #{httpStatuses}.|]
+                
+                let statusText = \case 
+                        (talName, talUrl, Left (e :: SomeException)) -> 
+                            [i|Failed to download TAL #{talName} from #{talUrl}, error: #{e}.|]
+                        (talName, talUrl, Right status) ->                     
+                            if isHttpSuccess status 
+                                then mempty
+                                else [i|Failed to download TAL #{talName} from #{talUrl}, HTTP status: #{status}.|]            
+
+                -- It's a bit stupid but it's the simplest
+                let message = Text.intercalate "\n" $ map statusText httpStatuses
+                unless (Text.null message) $ do                
                     logError logger message
-                    appError $ InitE $ InitError message                    
+                    appError $ InitE $ InitError message
 
 
 getRoot :: CLIOptions Unwrapped -> ValidatorT IO (Either FilePath FilePath)

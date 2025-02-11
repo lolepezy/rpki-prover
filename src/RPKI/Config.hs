@@ -23,7 +23,7 @@ import GHC.Generics (Generic)
 import RPKI.Store.Base.Serialisation
 
 data ApiSecured a = Hidden a
-                   |   Public a
+                  | Public a
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary)
     
@@ -313,4 +313,13 @@ defaulPrefetchURLs = [
         "rsync://rpki.sub.apnic.net/repository/",
         "rsync://rpki.cnnic.cn/rpki/A9162E3D0000/"
     ]    
+
+defaultTalUrls :: [(String, String)]
+defaultTalUrls = [
+        ("afrinic.tal", "https://rpki.afrinic.net/tal/afrinic.tal1"),
+        ("apnic.tal", "https://tal.apnic.net/tal-archive/apnic-rfc7730-https.tal1"),
+        ("arin.tal", "https://www.arin.net/resources/manage/rpki/arin.tal1"),
+        ("lacnic.tal", "https://www.lacnic.net/innovaportal/file/4983/1/lacnic.tal"),
+        ("ripe.tal", "https://tal.rpki.ripe.net/ripe-ncc.tal")
+    ]        
     
