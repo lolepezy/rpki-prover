@@ -68,8 +68,9 @@ data JobRun = FirstRun | RanBefore
     deriving stock (Show, Eq, Ord, Generic)  
 
 data WorkflowShared = WorkflowShared { 
-        -- Indicates if anything was ever deleted from the DB,
-        -- it is needed for cleanup and compaction procedures.
+        -- Indicates if anything was ever deleted from the DB
+        -- since the start of the server. It helps to avoid 
+        -- unnecessary cleanup and compaction procedures.
         deletedAnythingFromDb :: TVar Bool,
 
         -- Currently running tasks, it is needed to keep track which 
