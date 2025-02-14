@@ -10,7 +10,6 @@
 
 module RPKI.Store.Database where
 
-import           Control.DeepSeq
 import           Control.Exception.Lifted
 import           Control.Lens
 import           Control.Monad.Trans.Maybe
@@ -68,7 +67,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 36
+currentDatabaseVersion = 37
 
 -- Some constant keys
 databaseVersionKey, forAsyncFetchKey, validatedByVersionKey :: Text
