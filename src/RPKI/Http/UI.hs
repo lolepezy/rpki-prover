@@ -244,8 +244,8 @@ rrdpMetricsHtml rrdpMetricMap =
                 let repository = NonEmpty.head scope'
                 htmlRow index $ do 
                     genTd $ toHtml $ focusToText repository                        
-                    genTd ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness
-                    genTd ! A.class_ "no-wrap" $ toHtml $ rm ^. #rrdpSource                    
+                    td ! A.class_ "gen-t no-wrap" $ toHtml $ rm ^. #fetchFreshness
+                    td ! A.class_ "gen-t no-wrap" $ toHtml $ rm ^. #rrdpSource                    
                     genTd $ toHtml $ show $ rm ^. #added
                     genTd $ toHtml $ show $ rm ^. #deleted
                     genTd $ toHtml $ rm ^. #lastHttpStatus
@@ -340,7 +340,9 @@ fetchTooltip repoType setting =
         space >> space >> H.text "Used values" >> H.br
         H.ul $ do 
             H.li $ H.text [T.i|'Up-to-date' - no fetch is needed, #{repoType} repository was fetched less than '#{setting}' seconds ago.|]
-            H.li $ H.text "'Succeeded' and 'Failed' are self-explanatory"
+            H.li $ H.text $ "'No updates' - there are not updates to fetch. In case of RRDP repository it " <> 
+                            "means its serial didn't change since the last fetch, in case of rsync -- no new objects found after fetch."
+            H.li $ H.text "'Updated' and 'Failed' are self-explanatory"
 
 rrdpFetchTooltip, rsyncFetchTooltip :: Html
 rrdpFetchTooltip  = fetchTooltip "RRDP" "rrdp-refresh-interval"
@@ -351,8 +353,8 @@ rrdpUpdateTooltip =
     H.div ! A.style "text-align: left;" $ do 
         space >> space >> H.text "Used values" >> H.br
         H.ul $ do 
-            H.li $ H.text "'Snapshot' - snapshot was used for RRDP update"
-            H.li $ H.text "'Deltas' - deltas were used for RRDP update"
+            H.li $ H.text "'Snapshot N' - snapshot with serial N was used for RRDP update"
+            H.li $ H.text "'Deltas N to M' - deltas from serial N to serial M were used for RRDP update"
             H.li $ H.text "'-' - No update is needed, local and remote serials are equal"
 
 validationPathTootip :: Html
@@ -378,18 +380,6 @@ groupByTa vrs =
 objectLink :: Text -> Html
 objectLink url = 
     H.a ! A.href (textValue ("/api/object?uri=" <> url)) $ toHtml url
-
-
--- focusLink :: Focus -> Html
--- focusLink = \case 
---     TAFocus txt         -> toHtml txt
---     ObjectFocus txt     -> objectLink txt
---     PPFocus uri         -> directLink $ unURI $ getURL uri
---     RepositoryFocus uri -> directLink $ unURI $ getURL uri
---     TextFocus txt       -> toHtml txt
---   where
---     directLink url = 
---         H.a ! A.href (textValue url) $ toHtml url
 
 htmlRow :: Int -> Html -> Html
 htmlRow index = 
@@ -419,15 +409,21 @@ instance ToMarkup HttpStatus where
     toMarkup (HttpStatus st) = toMarkup $ show st
 
 instance ToMarkup FetchFreshness where 
-    toMarkup UpToDate       = toMarkup ("Up-to-date" :: Text)
-    toMarkup AttemptedFetch = toMarkup ("Succeeded" :: Text)
-    toMarkup FailedToFetch  = toMarkup ("Failed" :: Text)
+    toMarkup = \case 
+        NoFetchNeeded -> toMarkup ("Up-to-date" :: Text)
+        FetchFailed   -> toMarkup ("Failed" :: Text)
+        NoUpdates     -> toMarkup ("No updates" :: Text)
+        Updated       -> toMarkup ("Updated" :: Text)
 
 instance ToMarkup RrdpSource where 
-    toMarkup RrdpNoUpdate = toMarkup ("-" :: Text)
-    toMarkup RrdpDelta    = toMarkup ("Deltas" :: Text)
-    toMarkup RrdpSnapshot = toMarkup ("Snapshot" :: Text)
-
+    toMarkup = \case 
+        RrdpNoUpdate -> toMarkup ("-" :: Text)
+        RrdpDelta from to 
+            | from == to -> [T.i|Delta #{from}|]
+            | otherwise  -> [T.i|Deltas #{from} to #{to}|]                
+        RrdpSnapshot serial -> let 
+            message :: Text = [T.i|Snapshot #{serial}|]
+            in toMarkup message
         
 focusLink1 :: FocusResolvedDto -> Html
 focusLink1 = \case 

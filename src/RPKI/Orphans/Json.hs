@@ -187,6 +187,9 @@ instance ToJSON MaxMemory where
 
 instance ToJSON HttpStatus where
     toJSON (HttpStatus s) = toJSON s
+
+instance ToJSON RrdpSerial where
+    toJSON (RrdpSerial s) = toJSON s
     
 $(deriveToJSON defaultOptions ''RrdpSource)
 
@@ -352,7 +355,6 @@ instance ToJSON SPKI
 instance ToJSON SessionId where
     toJSON (SessionId s) = toJSON s
 
-instance ToJSON RrdpSerial
 instance ToJSON RtrState
 instance ToJSON BGPSecPayload
 instance ToJSON SerialNumber

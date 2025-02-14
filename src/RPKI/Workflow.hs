@@ -68,8 +68,9 @@ data JobRun = FirstRun | RanBefore
     deriving stock (Show, Eq, Ord, Generic)  
 
 data WorkflowShared = WorkflowShared { 
-        -- Indicates if anything was ever deleted from the DB,
-        -- it is needed for cleanup and compaction procedures.
+        -- Indicates if anything was ever deleted from the DB
+        -- since the start of the server. It helps to avoid 
+        -- unnecessary cleanup and compaction procedures.
         deletedAnythingFromDb :: TVar Bool,
 
         -- Currently running tasks, it is needed to keep track which 
@@ -268,11 +269,11 @@ runWorkflow appContext@AppContext {..} tals = do
                 logInfo logger [i|Running asynchronous fetch #{fetchVersion}.|]            
                 (_, TimeMs elapsed) <- timedMS $ do 
                     validations <- runAsyncFetches appContext fetchVersion
-                    db <- readTVarIO database
-                    rwTx db $ \tx -> do
+                    updatePrometheus (validations ^. typed) prometheusMetrics worldVersion
+                    rwTxT database $ \tx db -> do
                         saveValidations tx db fetchVersion (validations ^. typed)
                         saveMetrics tx db fetchVersion (validations ^. typed)
-                        asyncFetchWorldVersion tx db fetchVersion                  
+                        asyncFetchWorldVersion tx db fetchVersion                                      
                 logInfo logger [i|Finished asynchronous fetch #{fetchVersion} in #{elapsed `div` 1000}s.|]
 
 
@@ -624,7 +625,7 @@ runAsyncFetches appContext@AppContext {..} worldVersion = do
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
                     fetchWithFallback appContext repositoryProcessing 
                         worldVersion (asyncFetchConfig config) ppAccess
-            
+                    
         validationStateOfFetches repositoryProcessing   
   where    
     -- Sort them by the last fetch time, the fastest first. 

@@ -956,12 +956,12 @@ validateCaNoFetch
                 (length nonCrlChildren `div` itemsPerThread)
                 (fromIntegral $ config ^. #parallelism . #cpuParallelism)
 
-        forAllChidlren = 
+        forAllChildren = 
                 if threads <= 1
                     then forM 
                     else pooledForConcurrentlyN threads        
 
-        in forAllChidlren nonCrlChildren 
+        in forAllChildren nonCrlChildren 
 
     gatherMftEntryResults =        
         foldM (\childrenShortcuts r -> do                 
@@ -1298,27 +1298,29 @@ validateCaNoFetch
                     (caCount `div` caPerThread + (totalCount - caCount) `div` eePerThread)
                     (fromIntegral $ config ^. #parallelism . #cpuParallelism)                        
             
-            let forAllChidlren = 
+            let forAllChildren = 
                     if threads <= 1
                         then forM 
                         else pooledForConcurrentlyN threads
 
             scopes <- askScopes
-            z <- liftIO $ forAllChidlren children $ runValidatorT scopes . f
+            z <- liftIO $ forAllChildren children $ runValidatorT scopes . f
             embedState $ mconcat $ map snd z                 
 
         validateTroubledChild caFull fileName (Keyed validCrl _) childKey = do  
             -- It was an invalid child and nothing about it is cached, so 
             -- we have to process full validation for it           
-            db <- liftIO $ readTVarIO database
-            roAppTx db $ \tx -> do
-                increment $ topDownCounters ^. #readParsed
-                childObject <- getParsedObject tx db childKey $ do 
-                                    increment $ topDownCounters ^. #readOriginal
-                                    getLocatedOriginalUnknownType tx db childKey $                                       
-                                        internalError appContext 
-                                            [i|Internal error, can't find a troubled child by its key #{childKey}.|]                    
-                void $ validateChildObject caFull childObject fileName validCrl
+            db <- liftIO $ readTVarIO database            
+            childObject <- 
+                roAppTx db $ \tx -> do
+                    increment $ topDownCounters ^. #readParsed
+                    getParsedObject tx db childKey $ do 
+                        increment $ topDownCounters ^. #readOriginal
+                        getLocatedOriginalUnknownType tx db childKey $     
+                            internalError appContext 
+                                [i|Internal error, can't find a troubled child by its key #{childKey}.|]
+
+            void $ validateChildObject caFull childObject fileName validCrl
 
         getChildPayloads troubledValidation (childKey, MftEntry {..}) = do 
             markAsRead topDownContext childKey            

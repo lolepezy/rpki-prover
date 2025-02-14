@@ -6,7 +6,8 @@
 module RPKI.RRDP.Types where
 
 import           Control.DeepSeq
-import qualified Data.ByteString as BS
+import qualified Data.ByteString                  as BS
+import           Data.List.NonEmpty               (NonEmpty (..))
 import           Data.Text                        (Text)
 import           GHC.Generics
 import           RPKI.Domain
@@ -70,7 +71,7 @@ data RrdpFetchStat = RrdpFetchStat {
 data RrdpAction
   = FetchSnapshot SnapshotInfo Text
   | FetchDeltas
-      { sortedDeltas :: [DeltaInfo]
+      { sortedDeltas :: NonEmpty DeltaInfo
       , snapshotInfo :: SnapshotInfo
       , message :: Text
       }

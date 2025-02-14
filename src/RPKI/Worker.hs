@@ -179,13 +179,11 @@ executeWork input actualWork =
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
     -- there's no point continuing.
-    dieIfParentDies = go
-      where
-        go = do 
-            parentId <- getParentProcessID                    
-            if parentId /= input ^. #initialParentId
-                then pure parentDiedExitCode            
-                else threadDelay 500_000 >> go
+    dieIfParentDies = do 
+        parentId <- getParentProcessID                    
+        if parentId /= input ^. #initialParentId
+            then pure parentDiedExitCode            
+            else threadDelay 500_000 >> dieIfParentDies
 
     -- exit either because the time is up or too much CPU is spent
     dieOfTiming = 

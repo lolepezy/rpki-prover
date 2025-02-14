@@ -310,10 +310,10 @@ resourceSetMustBeEmpty ips errConstructor =
 
 -- | Validate CRL object with the parent certificate
 validateCrl ::    
-    (WithRawResourceCertificate c, WithSKI c) =>
+    (WithRawResourceCertificate parent, WithSKI parent) =>
     Now ->
     CrlObject ->
-    c ->
+    parent ->
     PureValidatorT (Validated CrlObject)
 validateCrl now crlObject@CrlObject {..} parentCert = do
     let SignCRL {..} = signCrl

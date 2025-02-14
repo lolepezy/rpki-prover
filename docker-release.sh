@@ -1,3 +1,4 @@
+#!/bin/bash 
 export RELEASE=$1
 
 . ./src-hash.sh

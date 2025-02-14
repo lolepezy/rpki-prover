@@ -6,6 +6,7 @@
 {-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RecordWildCards            #-}
 
 
 module RPKI.Reporting where
@@ -357,8 +358,11 @@ instance Show Count where
     show (Count c) = show c
 
 newtype HttpStatus = HttpStatus { unHttpStatus :: Int }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)        
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)        
+
+instance Show HttpStatus where
+    show = show . unHttpStatus
 
 instance Monoid HttpStatus where
     mempty = HttpStatus 200
@@ -366,7 +370,9 @@ instance Monoid HttpStatus where
 instance Semigroup HttpStatus where
     s1 <> s2 = if isHttpSuccess s1 then s2 else s1
 
-data RrdpSource = RrdpNoUpdate | RrdpDelta | RrdpSnapshot
+data RrdpSource = RrdpNoUpdate 
+                | RrdpDelta RrdpSerial RrdpSerial 
+                | RrdpSnapshot RrdpSerial
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)        
 
@@ -379,12 +385,12 @@ instance Semigroup RrdpSource where
     _           <> r           = r
 
 
-data FetchFreshness = UpToDate | AttemptedFetch | FailedToFetch
+data FetchFreshness = NoFetchNeeded | FetchFailed | NoUpdates | Updated
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)        
 
 instance Monoid FetchFreshness where
-    mempty = UpToDate
+    mempty = NoFetchNeeded
 
 instance Semigroup FetchFreshness where
     (<>) = max    
@@ -516,3 +522,9 @@ focusToText = \case
 
 scopeList :: Scope a -> [Focus]
 scopeList (Scope s) = NonEmpty.toList s
+
+rrdpRepoHasUpdates :: RrdpMetric -> Bool
+rrdpRepoHasUpdates RrdpMetric {..} = added > 0 || deleted > 0
+
+rsyncRepoHasUpdates :: RsyncMetric -> Bool
+rsyncRepoHasUpdates RsyncMetric {..} = processed > 0

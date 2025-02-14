@@ -1,3 +1,4 @@
+#!/bin/bash 
 docker build - < Dockerfile.static-builder --tag rpki-prover-builder
 
 . ./src-hash.sh
