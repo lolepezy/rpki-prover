@@ -513,7 +513,7 @@ validateCms validationRFC now cms parentCert crl verifiedResources extraValidati
     let eeCert = getEEResourceCert $ unCMS cms
     let certWSign = getCertWithSignature eeCert
     let SignatureAlgorithmIdentifier eeCertSigAlg = certWSign ^. #cwsSignatureAlgorithm
-    let attributeSigAlg = certWSign ^. #cwsX509certificate . #certSignatureAlg
+    let attributeSigAlg = certSignatureAlg $ certWSign ^. #cwsX509certificate
 
     -- That can be a problem:
     -- http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt

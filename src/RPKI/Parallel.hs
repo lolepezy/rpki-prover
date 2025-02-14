@@ -95,7 +95,7 @@ txFoldPipeline parallelism stream withTx consume =
 
 txFoldPipelineBatch :: forall m q tx . (MonadBaseControl IO m, MonadIO m) =>
                     Natural ->
-                    Natural ->
+                    Natural -> -- ^ batch size for each transaction
                     Stream (Of q) (ValidatorTCurried m) () ->                    
                     (forall z . (tx -> ValidatorT m z) -> ValidatorT m z) -> -- ^ transaction in which all consumerers are wrapped
                     (tx -> q -> ValidatorT m ()) ->           -- ^ consumer, called for every item of the traversed argument            

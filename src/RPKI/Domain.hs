@@ -50,7 +50,6 @@ import           RPKI.Resources.Types
 import           RPKI.Time
 
 import           RPKI.Store.Base.Serialisation
-import           RPKI.Orphans.NFData
 
 
 -- There are two validation algorithms for RPKI tree
@@ -239,7 +238,7 @@ hexShow = SC.cs . Hex.encode . BSS.fromShort
 
 newtype CMS a = CMS { unCMS :: SignedObject a } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data CrlObject = CrlObject {
         hash    :: {-# UNPACK #-} Hash,
@@ -247,7 +246,7 @@ data CrlObject = CrlObject {
         signCrl :: SignCRL
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data CaCerObject = CaCerObject {
         hash        :: {-# UNPACK #-} Hash,
@@ -256,7 +255,7 @@ data CaCerObject = CaCerObject {
         certificate :: TypedCert ResourceCertificate 'CACert
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data EECerObject = EECerObject {
         ski         :: {-# UNPACK #-} SKI,
@@ -264,7 +263,7 @@ data EECerObject = EECerObject {
         certificate :: TypedCert ResourceCertificate 'EECert
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)   
+    deriving anyclass (TheBinary)   
 
 data BgpCerObject = BgpCerObject {
         hash        :: {-# UNPACK #-} Hash,
@@ -273,14 +272,14 @@ data BgpCerObject = BgpCerObject {
         certificate :: TypedCert RawResourceCertificate 'BGPCert
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data CMSBasedObject a = CMSBasedObject {
         hash       :: {-# UNPACK #-} Hash,
         cmsPayload :: CMS a
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 -- https://datatracker.ietf.org/doc/rfc9286/
 type MftObject = CMSBasedObject Manifest
@@ -311,7 +310,7 @@ data RpkiObject = CerRO CaCerObject
                 | BgpRO BgpCerObject
                 | CrlRO CrlObject
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData) 
+    deriving anyclass (TheBinary) 
 
 data RpkiObjectType = CER | MFT | CRL | ROA | ASPA | GBR | SPL | BGPSec | RSC
     deriving (Show, Eq, Ord, Generic)    
@@ -438,7 +437,7 @@ data Located a = Located {
         payload   :: a
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 
 instance WithLocations (Located a) where
@@ -472,11 +471,11 @@ data RawResourceCertificate = RawResourceCertificate {
         resources :: AllResources
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 newtype ResourceCertificate = ResourceCertificate RawResourceCertificate
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data Vrp = Vrp ASN IpPrefix PrefixLength
     deriving stock (Show, Eq, Ord, Generic)
@@ -489,7 +488,7 @@ data SplN = SplN ASN IpPrefix
 
 data SplPayload = SplPayload ASN [IpPrefix]     
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data MftPair = MftPair {
         fileName :: Text,
@@ -506,7 +505,7 @@ data Manifest = Manifest {
         mftEntries  :: [MftPair]
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data SignCRL = SignCRL {
         thisUpdateTime     :: Instant,
@@ -518,7 +517,7 @@ data SignCRL = SignCRL {
         revokedSerials     :: Set Serial
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 
 data Gbr = Gbr BSS.ShortByteString
@@ -559,7 +558,7 @@ data CertificateWithSignature = CertificateWithSignature {
         cwsEncoded            :: BSS.ShortByteString
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 
 -- | Types for the signed object template 
@@ -570,7 +569,7 @@ data SignedObject a = SignedObject {
         soContent     :: SignedData a
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 -- deriving instance NFData ASN1
 
@@ -595,7 +594,7 @@ data SignedData a = SignedData {
         scSignerInfos      :: SignerInfos
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 {- 
     EncapsulatedContentInfo ::= SEQUENCE {
@@ -607,7 +606,7 @@ data EncapsulatedContentInfo a = EncapsulatedContentInfo {
         cContent     :: a    
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 {-
     SignerInfo ::= SEQUENCE {
@@ -628,23 +627,23 @@ data SignerInfos = SignerInfos {
         signature          :: SignatureValue
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 newtype IssuerAndSerialNumber = IssuerAndSerialNumber Text 
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 newtype SignerIdentifier = SignerIdentifier BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 newtype ContentType = ContentType OID 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 newtype CMSVersion = CMSVersion Int 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] 
     deriving stock (Show, Eq, Ord, Generic)
@@ -656,7 +655,7 @@ newtype DigestAlgorithmIdentifier = DigestAlgorithmIdentifier OID
 
 newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier X509.SignatureALG  
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 newtype SignatureValue = SignatureValue BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)  
@@ -667,7 +666,7 @@ newtype SignatureValue = SignatureValue BSS.ShortByteString
 -- there has to be DER encoded signedAttribute set
 data SignedAttributes = SignedAttributes [Attribute] BSS.ShortByteString
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data Attribute = ContentTypeAttr ContentType 
             | MessageDigest BSS.ShortByteString
@@ -675,7 +674,7 @@ data Attribute = ContentTypeAttr ContentType
             | BinarySigningTime Integer 
             | UnknownAttribute OID [ASN1]
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 
 -- Subject Public Key Info
@@ -719,7 +718,7 @@ data TA = TA {
         taSpki        :: SPKI
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
   
 
 data Payloads a = Payloads {

@@ -17,7 +17,7 @@ import Crypto.PubKey.RSA.Types (PublicKey(..))
 import Crypto.PubKey.DSA (PublicKey(..), Params(..))
 
 import Crypto.PubKey.ECC.Types
-    
+
 deriving instance Generic DateTime
 deriving instance Generic Date
 deriving instance Generic TimeOfDay
@@ -44,3 +44,5 @@ deriving instance Generic Crypto.PubKey.ECC.Types.CurveName
 deriving instance Generic BitArray
 deriving instance Generic (NESet a)
 deriving instance Generic (MonoidalMap a b)
+
+

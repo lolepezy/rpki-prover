@@ -45,7 +45,9 @@ dependencies:
 - containers
 - conduit
 - conduit-extra
-- cryptonite
+- crypton
+- crypton-x509
+- crypton-x509-validation
 - cryptohash-sha256
 - cryptohash-sha512
 - crypton-connection
@@ -104,8 +106,6 @@ dependencies:
 - typed-process
 - transformers
 - temporary
-- x509
-- x509-validation
 - QuickCheck
 - quickcheck-instances
 - tasty
@@ -133,6 +133,19 @@ executables:
   rpki-prover:
     main:                Main.hs
     source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -O2
+    - -Wall    
+    - -rtsopts
+    - -funbox-strict-fields
+    - '"-with-rtsopts=-A16m -AL64m -N2 -qg -T -I0 --disable-delayed-os-memory-return"'
+    dependencies:
+    - rpki-prover  
+
+  profiler:
+    main:                Profile.hs
+    source-dirs:         perf
     ghc-options:
     - -threaded
     - -O2

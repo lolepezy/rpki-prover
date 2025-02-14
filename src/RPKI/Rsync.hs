@@ -9,7 +9,6 @@
 module RPKI.Rsync where
     
 import           Control.Lens
-import           Control.DeepSeq
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
@@ -239,8 +238,9 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
 
           where
             tryToParse hash blob type_ = do            
-                z <- liftIO $ runValidatorT (newScopes $ unURI $ getURL rpkiURL) $ vHoist $ readObject rpkiURL blob
-                (evaluate $ force $
+                let scopes = newScopes $ unURI $ getURL rpkiURL
+                z <- liftIO $ runValidatorT scopes $ vHoist $ readObjectOfType type_ blob
+                (evaluate $! 
                     case z of 
                         (Left e, _) -> 
                             ObjectParsingProblem rpkiURL (VErr e) 
@@ -353,4 +353,3 @@ data RsyncObjectProcessingResult =
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
         | SuccessParsed RpkiURL (StorableObject RpkiObject) 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass NFData

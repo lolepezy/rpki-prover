@@ -220,24 +220,24 @@ objectToDto = \case
             AllResources (asRS -> ipv4) (asRS -> ipv6) (asRS -> asn) = rawCert ^. #resources
             x509cert = rawCert ^. #certX509 . #cwsX509certificate
 
-            certVersion = Version $ fromIntegral $ x509cert ^. #certVersion
-            certSerial  = Serial $ x509cert ^. #certSerial
+            certVersion = Version $ fromIntegral $ X509.certVersion x509cert
+            certSerial  = Serial $ X509.certSerial x509cert
 
-            certIssuerDN = Text.pack $ show $ x509cert ^. #certSignatureAlg
-            certSubjectDN = Text.pack $ show $ x509cert ^. #certSubjectDN
+            certIssuerDN = Text.pack $ show $ X509.certSignatureAlg x509cert
+            certSubjectDN = Text.pack $ show $ X509.certSubjectDN x509cert
 
-            certSignatureAlg = Text.pack $ show $ x509cert ^. #certSignatureAlg
+            certSignatureAlg = Text.pack $ show $ X509.certSignatureAlg x509cert
 
-            notValidBefore = Instant $ fst $ x509cert ^. #certValidity
-            notValidAfter  = Instant $ snd $ x509cert ^. #certValidity
+            notValidBefore = Instant $ fst $ X509.certValidity x509cert
+            notValidAfter  = Instant $ snd $ X509.certValidity x509cert
 
-            pubKey = case x509cert ^. #certPubKey of
+            pubKey = case X509.certPubKey x509cert of
                         X509.PubKeyRSA RSA.PublicKey {..} -> Right $ let
                                 pubKeySize = public_size
                                 pubKeyPQ   = public_n
                                 pubKeyExp  = public_e
                             in PubKeyDto {..}
-                        _ -> Left $ Text.pack $ show $ x509cert ^. #certPubKey
+                        _ -> Left $ Text.pack $ show $ X509.certPubKey x509cert
 
             extensions = getExtensions $ rawCert ^. #certX509
 

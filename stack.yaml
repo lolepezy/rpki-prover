@@ -1,5 +1,5 @@
-# resolver: lts-22.20
-resolver: lts-22.42
+# resolver:  nightly-2025-01-23
+resolver: lts-22.43
 
 packages:
 - .
@@ -7,11 +7,6 @@ packages:
 extra-deps: 
   - git: https://github.com/lolepezy/lmdb-high-level.git
     commit: c1bfd9564b5a894659428281f328df2975d04569
-  - git: https://github.com/lolepezy/hs-certificate.git          
-    commit: b416b13123eb7bac10a1e5b2c2925fb4d72c2e19    
-    subdirs:
-      - x509
-      - x509-validation
 
   - git: https://github.com/lolepezy/hs-connection
     commit: e3cf8623979f8687694280939349734868cd18ac    
