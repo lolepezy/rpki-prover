@@ -89,7 +89,7 @@ toRrdpMessage = \case
     BadVersion v   -> [i|String #{v} is not a valid RRDP version.|]  
     NoPublishURI   -> [i|An "publish" element doesn't have URL attribute.|]  
 
-    BadBase64 base64 url -> [i|Base64 #{base64} for URL #{url} is invalid.|]  
+    BadBase64 base64 -> [i|Base64 #{base64} is invalid.|]  
 
     BadURL u -> [i|Unsupported or invalid URL #{u}.|]  
 

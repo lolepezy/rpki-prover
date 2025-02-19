@@ -9,7 +9,6 @@ module RPKI.Orphans where
 import           Control.Monad
 
 import qualified Data.ByteString                      as BS
-import qualified Data.ByteString.Base64               as B64
 import qualified Data.List                            as List
 import qualified Data.Text                            as Text
 
@@ -60,7 +59,7 @@ import           Data.Map.Monoidal.Strict
 import           RPKI.Logging
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
-import           RPKI.Util       (convert, mkHash)
+import           RPKI.Util       (convert, mkHash, encodeBase64)
 
 
 instance Arbitrary URI where
@@ -146,7 +145,7 @@ instance Arbitrary DecodedBase64 where
 instance Arbitrary EncodedBase64 where
     arbitrary = do 
         DecodedBase64 bs <- arbitrary
-        pure $ EncodedBase64 $ B64.encodeBase64' bs
+        pure $ encodeBase64 $ DecodedBase64 bs
 
 instance Arbitrary SPKI where
     arbitrary = genericArbitrary

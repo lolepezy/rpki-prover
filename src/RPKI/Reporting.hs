@@ -155,7 +155,7 @@ data RrdpError = BrokenXml Text |
                 NoVersion | 
                 BadVersion Text | 
                 NoPublishURI |
-                BadBase64 Text Text |
+                BadBase64 Text |
                 BadURL Text |
                 NoHashInWithdraw |
                 ContentInWithdraw Text Text |
