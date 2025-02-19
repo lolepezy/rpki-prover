@@ -15,9 +15,10 @@ import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Error.Class
 
-import           FileEmbedLzma
+import           FileEmbedLzma.Untyped
 
 import           Servant.Server.Generic
+import           Servant.Server.StaticFiles
 import           Servant hiding (contentType, URI)
 import           Servant.Swagger.UI
 
