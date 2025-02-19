@@ -1,5 +1,5 @@
-# resolver:  nightly-2025-01-23
-resolver: lts-23.9
+resolver:  nightly-2025-02-19
+# resolver: lts-23.9
 # for static builds for now
 # resolver: lts-22.20
 
@@ -24,5 +24,9 @@ extra-deps:
 
   - hw-ip-2.4.2.1
   - shower-0.2.0.2@sha256:2c2b1cd25e4330f03ba68631b37d4346bf42644bc8e9a7a819ce605acc72bb34,1473
+
+  - insert-ordered-containers-0.2.6@sha256:8f46527a04f92e1a1b11fb45633f85d2dd73c2ab7b5de13ccf504c8f98a079f1,2358
+  - servant-swagger-1.2.1@sha256:a9e3b279269dcaeebf801b03568d5f2d2a8d34bf2533cb65e726c72e4084077e,4661
+  - swagger2-2.8.9@sha256:8434f71bf8017c1421d85ee8021e3f56f45f15c8ba50fff55f7329ace4cb0076,4518  
 
 allow-newer: true
