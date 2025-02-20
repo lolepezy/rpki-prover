@@ -1,0 +1,17 @@
+#!/bin/sh -e
+
+RPKI_PROVER_HOME="/var/lib/rpki-prover/"
+RPKI_PROVER_USER="rpki-prover"
+
+create_user() {
+    if id ${RPKI_PROVER_USER} > /dev/null 2>&1; then return; fi
+    adduser --system --home "${RPKI_PROVER_HOME}" --group ${RPKI_PROVER_USER}
+}
+
+case "$1" in
+configure)
+    create_user
+    ;;
+esac
+
+#DEBHELPER#
