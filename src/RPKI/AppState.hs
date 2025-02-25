@@ -45,7 +45,7 @@ data AppState = AppState {
         -- Full RTR state sent to every RTR client.
         -- It is serialised once per RTR protocol version 
         -- and sent to every new client requesting the full state
-        cachedBinaryPdus :: TVar (Map.Map ProtocolVersion BS.ByteString),
+        cachedBinaryRtrPdus :: TVar (Map.Map ProtocolVersion BS.ByteString),
 
         -- Function that re-reads SLURM file(s) after every re-validation
         readSlurm   :: Maybe (ValidatorT IO Slurm),
@@ -76,14 +76,14 @@ newAppState :: IO AppState
 newAppState = do        
     Now now <- thisInstant
     atomically $ do 
-        world            <- newTVar Nothing
-        validated        <- newTVar mempty
-        filtered         <- newTVar mempty        
-        rtrState         <- newTVar Nothing
-        readSlurm        <- pure Nothing
-        system           <- newTVar (newSystemInfo now)        
-        prefixIndex      <- newTVar Nothing
-        cachedBinaryPdus <- newTVar mempty
+        world       <- newTVar Nothing
+        validated   <- newTVar mempty
+        filtered    <- newTVar mempty        
+        rtrState    <- newTVar Nothing
+        readSlurm   <- pure Nothing
+        system      <- newTVar (newSystemInfo now)        
+        prefixIndex <- newTVar Nothing
+        cachedBinaryRtrPdus <- newTVar mempty
         pure AppState {..}
                     
 
@@ -98,7 +98,7 @@ completeVersion AppState {..} worldVersion rtrPayloads slurm = do
     writeTVar filtered slurmed        
 
     -- invalidate serialised PDU cache with every new version
-    writeTVar cachedBinaryPdus mempty
+    writeTVar cachedBinaryRtrPdus mempty
     pure $! slurmed
 
 updatePrefixIndex :: AppState -> RtrPayloads -> STM ()
@@ -149,9 +149,9 @@ filterWithSLURM RtrPayloads {..} slurm =
 -- and things that are computed on-demand.
 cachedPduBinary :: AppState -> ProtocolVersion -> (RtrPayloads -> BS.ByteString) -> STM BS.ByteString
 cachedPduBinary appState@AppState {..} protocolVersion makeBs = do 
-    (Map.lookup protocolVersion <$> readTVar cachedBinaryPdus) >>= \case
+    (Map.lookup protocolVersion <$> readTVar cachedBinaryRtrPdus) >>= \case
         Nothing -> do            
             bs <- makeBs <$> readRtrPayloads appState 
-            modifyTVar' cachedBinaryPdus $ Map.insert protocolVersion bs
+            modifyTVar' cachedBinaryRtrPdus $ Map.insert protocolVersion bs
             pure bs
         Just bs -> pure bs

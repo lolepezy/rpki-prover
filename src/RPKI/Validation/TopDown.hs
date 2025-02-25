@@ -69,7 +69,8 @@ import           RPKI.Repository
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Storable
-import           RPKI.Store.Database
+import           RPKI.Store.Database    (DB)
+import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
@@ -253,7 +254,7 @@ withRepositoriesProcessing AppContext {..} f =
             db <- readTVarIO database
 
             mapException (AppException . storageError) $ do
-                pps <- roTx db $ \tx -> getPublicationPoints tx db
+                pps <- roTx db $ \tx -> DB.getPublicationPoints tx db
                 let pps' = addRsyncPrefetchUrls config pps
                 atomically $ writeTVar (rp ^. #publicationPoints) pps'
 
@@ -262,7 +263,7 @@ withRepositoriesProcessing AppContext {..} f =
             -- save publication points state    
             mapException (AppException . storageError) $ do
                 pps <- readTVarIO $ (rp ^. #publicationPoints)
-                rwTx db $ \tx -> savePublicationPoints tx db pps          
+                rwTx db $ \tx -> DB.savePublicationPoints tx db pps          
 
             pure a
 
@@ -370,7 +371,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let validationConfig = config ^. typed
 
     db <- liftIO $ readTVarIO database
-    ta <- roAppTxEx db storageError $ \tx -> getTA tx db (getTaName tal)
+    ta <- DB.roAppTxEx db storageError $ \tx -> DB.getTA tx db (getTaName tal)
     case ta of
         Nothing -> fetchValidateAndStore db now Nothing
         Just storedTa
@@ -405,8 +406,8 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 case publicationPointsFromTAL tal certToUse of
                     Left e         -> appError $ ValidationE e
                     Right ppAccess ->
-                        rwAppTxEx db storageError $ \tx -> do
-                            saveTA tx db (StorableTA tal certToUse (FetchedAt moment) ppAccess actualUrl)
+                        DB.rwAppTxEx db storageError $ \tx -> do
+                            DB.saveTA tx db (StorableTA tal certToUse (FetchedAt moment) ppAccess actualUrl)
                             pure (locatedTaCert actualUrl certToUse, ppAccess)
 
             CachedTA StorableTA { tal = _, ..} -> do 
@@ -414,7 +415,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                     `catchError`
                     (\e -> do
                         logError logger [i|Will delete cached TA certificate, it is invalid with the error: #{e}|]
-                        rwAppTxEx db storageError $ \tx -> deleteTA tx db tal                            
+                        DB.rwAppTxEx db storageError $ \tx -> DB.deleteTA tx db tal                            
                         appError e)
 
                 pure (locatedTaCert actualUrl taCert, initialRepositories)
@@ -605,7 +606,7 @@ validateCaNoFetch
     makeNextFullValidationAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextFullValidationAction childrenAki = do 
         roTxT database $ \tx db -> do 
-            findLatestMftByAKI tx db childrenAki >>= \case 
+            DB.findLatestMftByAKI tx db childrenAki >>= \case 
                 Nothing ->                        
                     pure $! vError $ NoMFT childrenAki
                 Just mft ->                        
@@ -619,9 +620,9 @@ validateCaNoFetch
     makeNextIncrementalAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextIncrementalAction childrenAki = 
         roTxT database $ \tx db -> do 
-            getMftShorcut tx db childrenAki >>= \case
+            DB.getMftShorcut tx db childrenAki >>= \case
                 Nothing -> do 
-                    findLatestMftByAKI tx db childrenAki >>= \case 
+                    DB.findLatestMftByAKI tx db childrenAki >>= \case 
                         Nothing -> do 
                             -- No current manifest and not shortcut as well, bail out 
                             pure $! vError $ NoMFT childrenAki
@@ -639,7 +640,7 @@ validateCaNoFetch
                     increment $ topDownCounters ^. #shortcutMft
                     -- Find the key of the latest real manifest
                     action <- 
-                        findLatestMftKeyByAKI tx db childrenAki >>= \case 
+                        DB.findLatestMftKeyByAKI tx db childrenAki >>= \case 
                             Nothing -> pure $! do                                             
                                 -- That is really weird and should normally never happen. 
                                 -- Do not interrupt validation here, but complain in the log
@@ -667,7 +668,7 @@ validateCaNoFetch
                                                 (getResources ca)
 
                                 | otherwise -> do    
-                                    getMftByKey tx db mftKey >>= \case 
+                                    DB.getMftByKey tx db mftKey >>= \case 
                                         Nothing -> pure $! 
                                             internalError appContext [i|Internal error, can't find a manifest by its key #{mftKey}.|]
                                         Just mft -> pure $! do
@@ -841,8 +842,8 @@ validateCaNoFetch
                 crls  -> vError $ MoreThanOneCRLOnMFT aki crls
 
         db <- liftIO $ readTVarIO database
-        roAppTx db $ \tx -> 
-            getKeyByHash tx db crlHash >>= \case         
+        DB.roAppTx db $ \tx -> 
+            DB.getKeyByHash tx db crlHash >>= \case         
                 Nothing  -> vError $ NoCRLExists aki crlHash
                 Just key -> do           
                     increment $ topDownCounters ^. #readParsed
@@ -1005,7 +1006,7 @@ validateCaNoFetch
 
         db <- liftIO $ readTVarIO database
         forM nonCrlChildren $ \(MftPair fileName hash) -> do
-                k <- roAppTx db $ \tx -> getKeyByHash tx db hash            
+                k <- DB.roAppTx db $ \tx -> DB.getKeyByHash tx db hash            
                 case k of 
                     Nothing  -> vError $ ManifestEntryDoesn'tExist hash fileName
                     Just key -> pure $! T3 fileName hash key        
@@ -1020,8 +1021,8 @@ validateCaNoFetch
     getManifestEntry filename hash' = do
         let objectType = textObjectType filename
         db <- liftIO $ readTVarIO database
-        ro <- roAppTx db $ \tx -> do             
-            getKeyByHash tx db hash' >>= \case                     
+        ro <- DB.roAppTx db $ \tx -> do             
+            DB.getKeyByHash tx db hash' >>= \case                     
                 Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename            
                 Just key -> 
                     vFocusOn ObjectFocus key $
@@ -1070,9 +1071,9 @@ validateCaNoFetch
     -- Optimised version of location validation when all we have is a key of an object
     -- 
     validateLocationForShortcut key = do  
-        count <- roTxT database $ \tx db -> getLocationCountByKey tx db key
+        count <- roTxT database $ \tx db -> DB.getLocationCountByKey tx db key
         when (count > 1) $ do 
-            z <- roTxT database $ \tx db -> getLocationsByKey tx db key
+            z <- roTxT database $ \tx db -> DB.getLocationsByKey tx db key
             case z of 
                 Nothing -> 
                     -- That's weird and it means DB inconsitency                                
@@ -1312,7 +1313,7 @@ validateCaNoFetch
             -- we have to process full validation for it           
             db <- liftIO $ readTVarIO database            
             childObject <- 
-                roAppTx db $ \tx -> do
+                DB.roAppTx db $ \tx -> do
                     increment $ topDownCounters ^. #readParsed
                     getParsedObject tx db childKey $ do 
                         increment $ topDownCounters ^. #readOriginal
@@ -1441,12 +1442,12 @@ getLocatedOriginal' :: Storage s =>
                     -> ValidatorT IO (Keyed (Located RpkiObject))
                     -> ValidatorT IO (Keyed (Located RpkiObject))
 getLocatedOriginal' tx db key type_ ifNotFound = do
-    getOriginalBlob tx db key >>= \case 
+    DB.getOriginalBlob tx db key >>= \case 
         Nothing                    -> ifNotFound
         Just (ObjectOriginal blob) -> do 
             case type_  of 
                 Nothing -> 
-                    getObjectMeta tx db key >>= \case            
+                    DB.getObjectMeta tx db key >>= \case            
                         Nothing               -> ifNotFound
                         Just (ObjectMeta _ t) -> parse blob t
                 Just t -> 
@@ -1455,7 +1456,7 @@ getLocatedOriginal' tx db key type_ ifNotFound = do
     parse blob t = do
         ro <- vFocusOn ObjectFocus key $ 
                     vHoist $ readObjectOfType t blob
-        getLocationsByKey tx db key >>= \case                                             
+        DB.getLocationsByKey tx db key >>= \case                                             
             Nothing        -> ifNotFound
             Just locations -> pure $! Keyed (Located locations ro) key
 
@@ -1466,7 +1467,7 @@ getParsedObject :: Storage s =>
                     -> ValidatorT IO (Keyed (Located RpkiObject))
                     -> ValidatorT IO (Keyed (Located RpkiObject))
 getParsedObject tx db key ifNotFound = do
-    getLocatedByKey tx db key >>= \case 
+    DB.getLocatedByKey tx db key >>= \case 
         Just ro -> pure $! Keyed ro key
         Nothing -> ifNotFound
 
@@ -1476,7 +1477,7 @@ getFullCa appContext@AppContext {..} topDownContext = \case
     CaFull c -> pure c            
     CaShort CaShortcut {..} -> do   
         db <- liftIO $ readTVarIO database
-        roAppTx db $ \tx -> do 
+        DB.roAppTx db $ \tx -> do 
             increment $ topDownContext ^. #allTas . #topDownCounters . #readParsed
             z <- getParsedObject tx db key $ do
                     increment $ topDownContext ^. #allTas . #topDownCounters . #readOriginal
@@ -1491,7 +1492,7 @@ getFullCa appContext@AppContext {..} topDownContext = \case
 
 getCrlByKey :: Storage s => AppContext s -> ObjectKey -> ValidatorT IO (Keyed (Validated CrlObject))
 getCrlByKey appContext@AppContext {..} crlKey = do        
-    z <- roTxT database $ \tx db -> getObjectByKey tx db crlKey
+    z <- roTxT database $ \tx db -> DB.getObjectByKey tx db crlKey
     case z of 
         Just (CrlRO c) -> pure $! Keyed (Validated c) crlKey 
         _ -> internalError appContext [i|Internal error, can't find a CRL by its key #{crlKey}.|]
@@ -1596,7 +1597,7 @@ applyValidationSideEffects
     AllTasTopDownContext {..} = liftIO $ do        
     (visitedSize, elapsed) <- timedMS $ do
         vks <- atomically $ readTVar visitedKeys            
-        rwTxT database $ \tx db -> markAsValidated tx db vks worldVersion        
+        rwTxT database $ \tx db -> DB.markAsValidated tx db vks worldVersion        
         pure $! Set.size vks
     
     liftIO $ reportCounters appContext topDownCounters        
@@ -1620,14 +1621,14 @@ reportCounters AppContext {..} counters = do
 updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
-        let !raw = Verbatim $ toStorable $ Compressed $ MftShortcutMeta {..}
+        let !raw = Verbatim $ toStorable $ Compressed $ DB.MftShortcutMeta {..}
         atomically $ writeCQueue shortcutQueue (UpdateMftShortcut aki raw)        
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         -- Pre-serialise the object so that all the heavy-lifting happens in the thread 
-        let !raw = Verbatim $ toStorable $ Compressed MftShortcutChildren {..}        
+        let !raw = Verbatim $ toStorable $ Compressed DB.MftShortcutChildren {..}        
         atomically $ writeCQueue shortcutQueue (UpdateMftShortcutChildren aki raw) 
     
 storeShortcuts :: (Storage s, MonadIO m) => 
@@ -1637,12 +1638,12 @@ storeShortcuts AppContext {..} shortcutQueue = liftIO $
     readQueueChunked shortcutQueue 1000 $ \mftShortcuts -> 
         rwTxT database $ \tx db -> 
             for_ mftShortcuts $ \case 
-                UpdateMftShortcut aki s         -> saveMftShorcutMeta tx db aki s                    
-                UpdateMftShortcutChildren aki s -> saveMftShorcutChildren tx db aki s
+                UpdateMftShortcut aki s         -> DB.saveMftShorcutMeta tx db aki s                    
+                UpdateMftShortcutChildren aki s -> DB.saveMftShorcutChildren tx db aki s
                  
 
-data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed MftShortcutMeta))
-                   | UpdateMftShortcutChildren AKI (Verbatim (Compressed MftShortcutChildren))            
+data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta))
+                   | UpdateMftShortcutChildren AKI (Verbatim (Compressed DB.MftShortcutChildren))            
 
 -- Do whatever is required to notify other subsystems that the object was touched 
 -- during top-down validation. It doesn't mean that the object is valid, just that 
@@ -1656,7 +1657,7 @@ markAsRead TopDownContext { allTas = AllTasTopDownContext {..} } k =
 markAsReadByHash :: Storage s => 
                     AppContext s -> TopDownContext -> Hash -> ValidatorT IO ()
 markAsReadByHash AppContext {..} topDownContext hash = do
-    key <- roTxT database $ \tx db -> getKeyByHash tx db hash
+    key <- roTxT database $ \tx db -> DB.getKeyByHash tx db hash
     for_ key $ markAsRead topDownContext              
 
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()
@@ -1694,7 +1695,7 @@ extractPPAs = \case
 getCaLocations :: Storage s => AppContext s -> Ca -> ValidatorT IO (Maybe Locations)
 getCaLocations AppContext {..} = \case 
     CaShort (CaShortcut {..}) -> 
-        roTxT database $ \tx db -> getLocationsByKey tx db key
+        roTxT database $ \tx db -> DB.getLocationsByKey tx db key
     CaFull c -> 
         pure $! Just $ getLocations c
 
