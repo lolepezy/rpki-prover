@@ -44,7 +44,7 @@ import           RPKI.Time
 import           RPKI.Util (fmtEx, trimmed)
 import           RPKI.SLURM.Types
 import           RPKI.Store.Base.Serialisation
-import           RPKI.Store.Database
+import qualified RPKI.Store.Database    as DB
 import           RPKI.UniqueId
 
 
@@ -142,7 +142,7 @@ data ValidationResult = ValidationResult ValidationState (Maybe Slurm)
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-data CacheCleanupResult = CacheCleanupResult CleanUpResult
+data CacheCleanupResult = CacheCleanupResult DB.CleanUpResult
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)              
 
@@ -213,11 +213,17 @@ readWorkerInput = liftIO $ deserialise_ . LBS.toStrict <$> LBS.hGetContents stdi
 execWithStats :: MonadIO m => m r -> m (WorkerResult r)
 execWithStats f = do        
     (payload, clockTime) <- timedMS f
-    cpuTime <- getCpuTime    
-    RTSStats {..} <- liftIO getRTSStats
-    let maxMemory = MaxMemory $ fromIntegral max_mem_in_use_bytes
+    (cpuTime, maxMemory) <- processStat    
     pure WorkerResult {..}
   
+
+processStat :: MonadIO m => m (CPUTime, MaxMemory)
+processStat = do 
+    cpuTime <- getCpuTime
+    RTSStats {..} <- liftIO getRTSStats
+    let maxMemory = MaxMemory $ fromIntegral max_mem_in_use_bytes
+    pure (cpuTime, maxMemory)
+
 
 writeWorkerOutput :: TheBinary a => a -> IO ()
 writeWorkerOutput = LBS.hPut stdout . LBS.fromStrict . serialise_

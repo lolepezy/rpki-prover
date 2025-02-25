@@ -10,14 +10,33 @@ module RPKI.Metrics.System where
 import           Control.Lens
 import           GHC.Generics
 import           Data.Monoid.Generic
+import           Data.Semigroup
 import           Data.Text
 import           RPKI.Time
 import           RPKI.AppTypes
 import           RPKI.Reporting
 import           RPKI.Store.Base.Serialisation
 
+
+newtype AggregatedCPUTime = AggregatedCPUTime CPUTime
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass (TheBinary)
+    deriving newtype (Num)
+    deriving Semigroup via Sum AggregatedCPUTime
+    deriving Monoid via Sum AggregatedCPUTime
+
+newtype LatestCPUTime = LatestCPUTime CPUTime
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass (TheBinary)
+    deriving newtype (Num)
+    deriving Semigroup via Last LatestCPUTime
+
+instance Monoid LatestCPUTime where
+    mempty = LatestCPUTime $ CPUTime 0
+
 data ResourceUsage = ResourceUsage {
-        aggregatedCpuTime   :: CPUTime,
+        latestCpuTime      :: LatestCPUTime,
+        aggregatedCpuTime   :: AggregatedCPUTime,
         aggregatedClockTime :: TimeMs,
         maxMemory           :: MaxMemory
     }
@@ -49,7 +68,8 @@ cpuMemMetric :: Text -> CPUTime -> TimeMs -> MaxMemory -> SystemMetrics
 cpuMemMetric scope cpuTime clockTime maxMemory' = SystemMetrics {
         resources = updateMetricInMap 
                         (newScope scope) 
-                        ((& #aggregatedCpuTime %~ (<> cpuTime)) . 
+                        ((& #latestCpuTime %~ (<> LatestCPUTime cpuTime)) . 
+                         (& #aggregatedCpuTime %~ (<> AggregatedCPUTime cpuTime)) . 
                          (& #aggregatedClockTime %~ (<> clockTime)) .  
                          (& #maxMemory %~ (<> maxMemory')))
                         mempty

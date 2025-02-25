@@ -182,6 +182,12 @@ instance ToJSON TimeMs where
 instance ToJSON CPUTime where 
     toJSON (CPUTime s) = toJSON s
 
+instance ToJSON AggregatedCPUTime where 
+    toJSON (AggregatedCPUTime (CPUTime s)) = toJSON s
+
+instance ToJSON LatestCPUTime where 
+    toJSON (LatestCPUTime (CPUTime s)) = toJSON s
+
 instance ToJSON MaxMemory where 
     toJSON (MaxMemory s) = toJSON s
 
