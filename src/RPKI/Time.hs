@@ -71,8 +71,8 @@ getCpuTime = do
     picos <- liftIO getCPUTime
     pure $! CPUTime $ picos `div` 1000_000_000
 
-timeDuration :: Instant -> Instant -> TimeMs
-timeDuration (Instant begin) (Instant end) = let 
+durationMs :: Instant -> Instant -> TimeMs
+durationMs (Instant begin) (Instant end) = let 
     (Seconds s, NanoSeconds ns) = timeDiffP end begin    
     in fromIntegral $! (s * nanosPerSecond + ns) `div` microsecondsPerSecond 
     

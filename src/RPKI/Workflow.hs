@@ -251,7 +251,7 @@ runWorkflow appContext@AppContext {..} tals = do
         (cpuTime, maxMemory) <- processStat
         SystemInfo {..} <- readTVarIO $ appState ^. #system
         Now now <- thisInstant
-        let clockTime = timeDuration startUpTime now
+        let clockTime = durationMs startUpTime now
         pushSystem logger $ cpuMemMetric "root" cpuTime clockTime maxMemory        
 
     validateTAs workflowShared@WorkflowShared {..} worldVersion _ = do
