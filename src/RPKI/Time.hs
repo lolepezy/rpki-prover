@@ -90,8 +90,6 @@ timedMS action = do
     (!z, ns) <- timed action   
     pure $! (z, fromIntegral $! ns `div` nanosPerMicrosecond)
 
--- cpuTime :: 
-
 nanosPerSecond :: Num p => p
 nanosPerSecond = 1000_000_000
 {-# INLINE nanosPerSecond #-}
