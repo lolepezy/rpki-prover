@@ -139,7 +139,7 @@ instantDateFormat (Instant d) = timePrint format d
 secondsToInt :: Seconds -> Int
 secondsToInt (Seconds s) = fromIntegral s
 
-toMicroseconds :: Seconds -> Int64
+toMicroseconds :: Seconds -> Int
 toMicroseconds (Seconds s) = fromIntegral $ 1000_000 * s
 
 cpuTimePerSecond :: CPUTime -> Instant -> Instant -> Double

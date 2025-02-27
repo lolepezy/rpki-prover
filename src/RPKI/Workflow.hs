@@ -194,9 +194,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 persistent = False,
                 ..
             }
-        ]
-      where
-        toMicroseconds (Seconds s) = fromIntegral $ 1000_000 * s
+        ]              
 
     -- For each schedule 
     --   * run a thread that would try to run the task periodically 
