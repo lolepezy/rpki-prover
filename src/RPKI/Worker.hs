@@ -175,7 +175,7 @@ executeWork input actualWork =
             exitWith exitCode
   where        
     whicheverHappensFirst a b = either id id <$> race a b
-    
+
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
     -- there's no point continuing.
@@ -193,8 +193,8 @@ executeWork input actualWork =
 
     -- Time bomb. Wait for the certain timeout and then exit.
     dieAfterTimeout = do
-        let Timebox (Seconds s) = input ^. #workerTimeout
-        threadDelay $ 1_000_000 * fromIntegral s        
+        let Timebox timebox = input ^. #workerTimeout
+        threadDelay $ toMicroseconds timebox
         pure timeoutExitCode
 
     -- Exit if the worker consumed too much CPU time
