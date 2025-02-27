@@ -166,12 +166,14 @@ runWorkflow appContext@AppContext {..} tals = do
                 interval = config ^. typed @ValidationConfig . #revalidationInterval,
                 taskDef = (ValidationTask, validateTAs workflowShared),
                 persistent = False
-            },                
-            Scheduling { 
-                initialDelay = 600_000_000,
-                interval = config ^. #cacheCleanupInterval,
+            },
+            let interval = config ^. #cacheCleanupInterval
+            in Scheduling { 
+                -- do it half of the interval from now, it will be reasonable "on average"
+                initialDelay = toMicroseconds interval `div` 2,                
                 taskDef = (CacheCleanupTask, cacheCleanup workflowShared),
-                persistent = True
+                persistent = True,
+                ..
             },        
             Scheduling {                 
                 initialDelay = 1200_000_000,
@@ -185,13 +187,16 @@ runWorkflow appContext@AppContext {..} tals = do
                 taskDef = (RsyncCleanupTask, rsyncCleanup),
                 persistent = True
             },
-            Scheduling {                 
-                initialDelay = 600_000_000,
-                interval = config ^. typed @ValidationConfig . #revalidationInterval,
+            let interval = config ^. typed @ValidationConfig . #revalidationInterval
+            in Scheduling {                 
+                initialDelay = toMicroseconds interval `div` 2,                
                 taskDef = (LeftoversCleanupTask, \_ _ -> cleanupLeftovers),
-                persistent = False
+                persistent = False,
+                ..
             }
         ]
+      where
+        toMicroseconds (Seconds s) = fromIntegral $ 1000_000 * s
 
     -- For each schedule 
     --   * run a thread that would try to run the task periodically 
