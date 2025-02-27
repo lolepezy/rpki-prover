@@ -54,7 +54,7 @@ import           RPKI.Util                        (convert, hex, decodeBase64)
 import           RPKI.AppState
 import           RPKI.AppTypes
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database
+import qualified RPKI.Store.Database    as DB
 
 import           System.Timeout                   (timeout)
 import           Time.Types
@@ -278,12 +278,12 @@ readRtrPayload AppContext {..} worldVersion = do
     db <- readTVarIO database
 
     (vrps, bgpSec) <- roTx db $ \tx -> do 
-                slurm <- slurmForVersion tx db worldVersion
-                vrps <- getVrps tx db worldVersion >>= \case 
+                slurm <- DB.slurmForVersion tx db worldVersion
+                vrps <- DB.getVrps tx db worldVersion >>= \case 
                             Nothing   -> pure mempty
                             Just vrps -> pure $ maybe vrps (`applySlurmToVrps` vrps) slurm
 
-                bgpSec <- getBgps tx db worldVersion >>= \case 
+                bgpSec <- DB.getBgps tx db worldVersion >>= \case 
                             Nothing   -> pure mempty
                             Just bgps -> pure $ maybe bgps (`applySlurmBgpSec` bgps) slurm
                 

@@ -59,7 +59,7 @@ import           RPKI.RRDP.Http (downloadToFile)
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database
+import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.AppStorage
 import           RPKI.Store.AppLmdbStorage
 import qualified RPKI.Store.MakeLmdb as Lmdb
@@ -213,8 +213,8 @@ runValidatorServer appContext@AppContext {..} = do
 
     db <- readTVarIO database
     rwTx db $ \tx -> do 
-        generalWorldVersion tx db worldVersion
-        saveValidations tx db worldVersion (vs ^. typed)
+        DB.generalWorldVersion tx db worldVersion
+        DB.saveValidations tx db worldVersion (vs ^. typed)
     case tals of
         Left e -> do
             logError logger [i|Error reading some of the TALs, e = #{e}.|]

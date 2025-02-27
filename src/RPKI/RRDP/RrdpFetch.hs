@@ -53,9 +53,9 @@ import           RPKI.Validation.ObjectValidation
 import           RPKI.Store.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database              (rwAppTx)
-import qualified RPKI.Store.Database              as DB
-import qualified RPKI.Util                        as U
+import qualified RPKI.Store.Database    as DB              (rwAppTx)
+import qualified RPKI.Store.Database    as DB
+import qualified RPKI.Util              as U
 
 
 
@@ -422,10 +422,10 @@ saveSnapshot
             cpuParallelism
             10000    
             (S.mapM (newStorable db) $ S.each snapshotItems)
-            (rwAppTx db)
+            (DB.rwAppTx db)
             (saveStorable db)           
 
-    rwAppTx db $ \tx -> DB.updateRrdpMeta tx db (fromNotification notification) repoUri      
+    DB.rwAppTx db $ \tx -> DB.updateRrdpMeta tx db (fromNotification notification) repoUri      
 
   where        
 
@@ -562,7 +562,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
         appError $ RrdpE $ DeltaSerialMismatch serial notificationSerial
     
     let savingTx f = 
-            rwAppTx db $ \tx -> 
+            DB.rwAppTx db $ \tx -> 
                 f tx >> DB.updateRrdpMeta tx db (fromNotification notification) repoUri 
 
     -- Propagate exceptions from here, anything that can happen here 

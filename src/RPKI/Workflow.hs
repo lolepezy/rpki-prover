@@ -46,7 +46,7 @@ import           RPKI.Repository
 import           RPKI.Fetch
 import           RPKI.Logging
 import           RPKI.Metrics.System
-import           RPKI.Store.Database
+import qualified RPKI.Store.Database               as DB
 import           RPKI.Validation.TopDown
 
 import           RPKI.AppContext
@@ -130,32 +130,32 @@ data Scheduling = Scheduling {
 runWorkflow :: (Storage s, MaintainableStorage s) =>
                 AppContext s -> [TAL] -> IO ()
 runWorkflow appContext@AppContext {..} tals = do    
-        
-    prometheusMetrics <- createPrometheusMetrics config
+    void $ concurrently (
+            -- Fill in the current appState if it's not too old.
+            -- It is useful in case of restarts.             
+            loadStoredAppState appContext)
+        (do 
+            prometheusMetrics <- createPrometheusMetrics config
 
-    -- Shared state between the threads for simplicity.
-    workflowShared <- atomically $ newWorkflowShared prometheusMetrics    
+            -- Shared state between the threads for simplicity.
+            workflowShared <- atomically $ newWorkflowShared prometheusMetrics    
 
-    -- Fill in the current appState if it's not too old.
-    -- It is useful in case of restarts. 
-    void $ loadStoredAppState appContext
-    
-    case config ^. #proverRunMode of     
-        OneOffMode vrpOutputFile -> oneOffRun workflowShared vrpOutputFile
-        ServerMode ->             
-            void $ concurrently
-                    -- Run the main scheduler and RTR server if RTR is configured    
-                    (runScheduledTasks workflowShared)
-                    runRtrIfConfigured
-  where        
-
+            case config ^. #proverRunMode of     
+                OneOffMode vrpOutputFile -> oneOffRun workflowShared vrpOutputFile
+                ServerMode ->             
+                    void $ concurrently
+                            -- Run the main scheduler and RTR server if RTR is configured    
+                            (runScheduledTasks workflowShared)
+                            runRtrIfConfigured            
+        )
+  where
     oneOffRun workflowShared vrpOutputFile = do 
         worldVersion <- createWorldVersion
         void $ validateTAs workflowShared worldVersion FirstRun
         vrps <- roTxT database $ \tx db -> 
-                getLastValidationVersion db tx >>= \case 
+                DB.getLastValidationVersion db tx >>= \case 
                     Nothing            -> pure Nothing
-                    Just latestVersion -> getVrps tx db latestVersion
+                    Just latestVersion -> DB.getVrps tx db latestVersion
         case vrps of 
             Nothing -> logWarn logger [i|Don't have any VRPs.|]
             _       -> LBS.writeFile vrpOutputFile $ unRawCSV $ vrpDtosToCSV $ toVrpDtos vrps
@@ -166,12 +166,14 @@ runWorkflow appContext@AppContext {..} tals = do
                 interval = config ^. typed @ValidationConfig . #revalidationInterval,
                 taskDef = (ValidationTask, validateTAs workflowShared),
                 persistent = False
-            },                
-            Scheduling { 
-                initialDelay = 600_000_000,
-                interval = config ^. #cacheCleanupInterval,
+            },
+            let interval = config ^. #cacheCleanupInterval
+            in Scheduling { 
+                -- do it half of the interval from now, it will be reasonable "on average"
+                initialDelay = toMicroseconds interval `div` 2,                
                 taskDef = (CacheCleanupTask, cacheCleanup workflowShared),
-                persistent = True
+                persistent = True,
+                ..
             },        
             Scheduling {                 
                 initialDelay = 1200_000_000,
@@ -185,20 +187,23 @@ runWorkflow appContext@AppContext {..} tals = do
                 taskDef = (RsyncCleanupTask, rsyncCleanup),
                 persistent = True
             },
-            Scheduling {                 
-                initialDelay = 600_000_000,
-                interval = config ^. typed @ValidationConfig . #revalidationInterval,
+            let interval = config ^. typed @ValidationConfig . #revalidationInterval
+            in Scheduling {                 
+                initialDelay = toMicroseconds interval `div` 2,                
                 taskDef = (LeftoversCleanupTask, \_ _ -> cleanupLeftovers),
-                persistent = False
+                persistent = False,
+                ..
             }
         ]
+      where
+        toMicroseconds (Seconds s) = fromIntegral $ 1000_000 * s
 
     -- For each schedule 
     --   * run a thread that would try to run the task periodically 
     --   * run tasks using `runConcurrentlyIfPossible` to make sure 
     --     there is no data races between different tasks
     runScheduledTasks workflowShared@WorkflowShared {..} = do                
-        persistedJobs <- roTxT database $ \tx db -> Map.fromList <$> allJobs tx db        
+        persistedJobs <- roTxT database $ \tx db -> Map.fromList <$> DB.allJobs tx db        
 
         Now now <- thisInstant
         forConcurrently (schedules workflowShared) $ \Scheduling {..} -> do                        
@@ -234,20 +239,27 @@ runWorkflow appContext@AppContext {..} tals = do
                                     Now endTime <- thisInstant
                                     -- re-read `db` since it could have been changed by the time the
                                     -- job is finished (after compaction, in particular)                                                                
-                                    rwTxT database $ \tx db' -> setJobCompletionTime tx db' name endTime
+                                    rwTxT database $ \tx db' -> DB.setJobCompletionTime tx db' name endTime
+                                updateMainResourcesStat
                                 logDebug logger [i|Done with task '#{name}'.|])    
 
             periodically interval jobRun0 $ \jobRun -> do                 
                 runConcurrentlyIfPossible logger (makeTask jobRun) runningTasks                    
                 pure RanBefore
 
+    updateMainResourcesStat = do 
+        (cpuTime, maxMemory) <- processStat
+        SystemInfo {..} <- readTVarIO $ appState ^. #system
+        Now now <- thisInstant
+        let clockTime = durationMs startUpTime now
+        pushSystem logger $ cpuMemMetric "root" cpuTime clockTime maxMemory        
 
     validateTAs workflowShared@WorkflowShared {..} worldVersion _ = do
         doValidateTAs workflowShared worldVersion 
         `finally`
         (case config ^. #proverRunMode of 
-            ServerMode    -> runAsyncFetcherIfNeeded
-            OneOffMode {} -> pure ())
+                ServerMode    -> runAsyncFetcherIfNeeded
+                OneOffMode {} -> pure ())
       where
         runAsyncFetcherIfNeeded = 
             case config ^. #validationConfig . #fetchMethod of             
@@ -271,9 +283,9 @@ runWorkflow appContext@AppContext {..} tals = do
                     validations <- runAsyncFetches appContext fetchVersion
                     updatePrometheus (validations ^. typed) prometheusMetrics worldVersion
                     rwTxT database $ \tx db -> do
-                        saveValidations tx db fetchVersion (validations ^. typed)
-                        saveMetrics tx db fetchVersion (validations ^. typed)
-                        asyncFetchWorldVersion tx db fetchVersion                                      
+                        DB.saveValidations tx db fetchVersion (validations ^. typed)
+                        DB.saveMetrics tx db fetchVersion (validations ^. typed)
+                        DB.asyncFetchWorldVersion tx db fetchVersion                                      
                 logInfo logger [i|Finished asynchronous fetch #{fetchVersion} in #{elapsed `div` 1000}s.|]
 
 
@@ -294,9 +306,9 @@ runWorkflow appContext@AppContext {..} tals = do
                 Left e -> do 
                     logError logger [i|Validator process failed: #{e}.|]
                     rwTxT database $ \tx db -> do
-                        saveValidations tx db worldVersion (workerVS ^. typed)
-                        saveMetrics tx db worldVersion (workerVS ^. typed)
-                        completeValidationWorldVersion tx db worldVersion                            
+                        DB.saveValidations tx db worldVersion (workerVS ^. typed)
+                        DB.saveMetrics tx db worldVersion (workerVS ^. typed)
+                        DB.completeValidationWorldVersion tx db worldVersion                            
                     updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
                     pure (mempty, mempty)            
                 Right wr@WorkerResult {..} -> do                              
@@ -315,7 +327,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     pure q
           where
             reReadAndUpdatePayloads maybeSlurm = do 
-                roTxT database (\tx db -> getRtrPayloads tx db worldVersion) >>= \case                         
+                roTxT database (\tx db -> DB.getRtrPayloads tx db worldVersion) >>= \case                         
                     Nothing -> do 
                         logError logger [i|Something weird happened, could not re-read VRPs.|]
                         pure (mempty, mempty)
@@ -333,7 +345,7 @@ runWorkflow appContext@AppContext {..} tals = do
             (\z elapsed -> 
                 case z of 
                     Left message -> logError logger message
-                    Right CleanUpResult {..} -> do 
+                    Right DB.CleanUpResult {..} -> do 
                         when (deletedObjects > 0) $ do
                             atomically $ writeTVar deletedAnythingFromDb True
                         logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
@@ -516,19 +528,19 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     -- Save all the results into LMDB
     let updatedValidation = slurmValidations <> topDownValidations ^. typed
     (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
-        saveMetrics tx db worldVersion (topDownValidations ^. typed)
-        saveValidations tx db worldVersion (updatedValidation ^. typed)
-        saveRoas tx db roas worldVersion
-        saveSpls tx db (payloads ^. typed) worldVersion
-        saveAspas tx db (payloads ^. typed) worldVersion
-        saveGbrs tx db (payloads ^. typed) worldVersion
-        saveBgps tx db (payloads ^. typed) worldVersion        
-        for_ maybeSlurm $ saveSlurm tx db worldVersion
-        completeValidationWorldVersion tx db worldVersion
+        DB.saveMetrics tx db worldVersion (topDownValidations ^. typed)
+        DB.saveValidations tx db worldVersion (updatedValidation ^. typed)
+        DB.saveRoas tx db roas worldVersion
+        DB.saveSpls tx db (payloads ^. typed) worldVersion
+        DB.saveAspas tx db (payloads ^. typed) worldVersion
+        DB.saveGbrs tx db (payloads ^. typed) worldVersion
+        DB.saveBgps tx db (payloads ^. typed) worldVersion        
+        for_ maybeSlurm $ DB.saveSlurm tx db worldVersion
+        DB.completeValidationWorldVersion tx db worldVersion
 
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.
-        deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
+        DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
 
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deleted} oldest versions(s) in #{elapsed}ms.|]
 
@@ -540,16 +552,16 @@ runValidation appContext@AppContext {..} worldVersion tals = do
 runCacheCleanup :: Storage s =>
                 AppContext s
                 -> WorldVersion                
-                -> IO CleanUpResult
+                -> IO DB.CleanUpResult
 runCacheCleanup AppContext {..} worldVersion = do        
     db <- readTVarIO database
     -- Use the latest completed validation moment as a cutting point.
     -- This is to prevent cleaning up objects if they were untouched 
     -- because prover wasn't running for too long.
     cutOffVersion <- roTx db $ \tx -> 
-        fromMaybe worldVersion <$> getLastValidationVersion db tx
+        fromMaybe worldVersion <$> DB.getLastValidationVersion db tx
 
-    deleteStaleContent db (versionIsOld (versionToMoment cutOffVersion) (config ^. #cacheLifeTime))
+    DB.deleteStaleContent db (versionIsOld (versionToMoment cutOffVersion) (config ^. #cacheLifeTime))
 
 
 -- | Load the state corresponding to the last completed validation version.
@@ -557,10 +569,9 @@ runCacheCleanup AppContext {..} worldVersion = do
 loadStoredAppState :: Storage s => AppContext s -> IO (Maybe WorldVersion)
 loadStoredAppState AppContext {..} = do
     Now now' <- thisInstant
-    let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
-    db <- readTVarIO database
-    roTx db $ \tx ->
-        getLastValidationVersion db tx >>= \case
+    let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval    
+    roTxT database $ \tx db ->
+        DB.getLastValidationVersion db tx >>= \case
             Nothing  -> pure Nothing
 
             Just lastVersion
@@ -570,8 +581,8 @@ loadStoredAppState AppContext {..} = do
 
                 | otherwise -> do
                     (payloads, elapsed) <- timedMS $ do                                            
-                        slurm    <- slurmForVersion tx db lastVersion
-                        payloads <- getRtrPayloads tx db lastVersion                        
+                        slurm    <- DB.slurmForVersion tx db lastVersion
+                        payloads <- DB.getRtrPayloads tx db lastVersion                        
                         for_ payloads $ \payloads' -> do 
                             slurmedPayloads <- atomically $ completeVersion appState lastVersion payloads' slurm                            
                             when (config ^. #withValidityApi) $                                

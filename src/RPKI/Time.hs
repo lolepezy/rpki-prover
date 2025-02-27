@@ -56,8 +56,6 @@ newtype CPUTime = CPUTime { unCPUTime :: Integer }
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving newtype (Num)
-    deriving Semigroup via Sum CPUTime
-    deriving Monoid via Sum CPUTime
 
 instance Show TimeMs where 
     show (TimeMs ms) = show ms
@@ -73,6 +71,11 @@ getCpuTime = do
     picos <- liftIO getCPUTime
     pure $! CPUTime $ picos `div` 1000_000_000
 
+durationMs :: Instant -> Instant -> TimeMs
+durationMs (Instant begin) (Instant end) = let 
+    (Seconds s, NanoSeconds ns) = timeDiffP end begin    
+    in fromIntegral $! (s * nanosPerSecond + ns) `div` microsecondsPerSecond 
+    
 timed :: MonadIO m => m a -> m (a, Int64)
 timed action = do 
     Now (Instant begin) <- thisInstant

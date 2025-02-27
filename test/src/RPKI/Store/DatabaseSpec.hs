@@ -47,7 +47,8 @@ import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Map               as M
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database
+import           RPKI.Store.Database    (DB(..))
+import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 
 import qualified RPKI.Store.MakeLmdb as Lmdb
@@ -112,10 +113,10 @@ shouldMergeObjectLocations io = do
     extraLocations :: Locations <- QC.generate arbitrary    
 
     let storeIt obj url = rwTx db $ \tx -> do        
-            saveObject tx db (toStorableObject obj) (instantToVersion now)
-            linkObjectToUrl tx db url (getHash obj)
+            DB.saveObject tx db (toStorableObject obj) (instantToVersion now)
+            DB.linkObjectToUrl tx db url (getHash obj)
 
-    let getIt hash = roTx db $ \tx -> getByHash tx db hash    
+    let getIt hash = roTx db $ \tx -> DB.getByHash tx db hash    
 
     storeIt ro1 url1
     storeIt ro1 url2
@@ -131,12 +132,12 @@ shouldMergeObjectLocations io = do
 
     verifyUrlCount db "case 1" 3    
 
-    rwTx db $ \tx -> deleteObject tx db (getHash ro1)    
+    rwTx db $ \tx -> DB.deleteObject tx db (getHash ro1)    
 
     verifyUrlCount db "case 2" 3
 
     -- should only clean up URLs
-    deletedUrls <- rwTx db $ deleteDanglingUrls db
+    deletedUrls <- rwTx db $ DB.deleteDanglingUrls db
     HU.assertEqual "Should have deleted 2 URLs" 2 deletedUrls
 
     verifyUrlCount db "case 3" 1
@@ -145,8 +146,8 @@ shouldMergeObjectLocations io = do
     HU.assertEqual "Wrong locations 3" loc2 (toLocations url3)
     where 
         verifyUrlCount db@DB {..} s count = do 
-            uriToUriKey <- roTx db $ \tx -> M.all tx (uriToUriKey objectStore)
-            uriKeyToUri <- roTx db $ \tx -> M.all tx (uriKeyToUri objectStore)
+            uriToUriKey <- roTx db $ \tx -> M.all tx (DB.uriToUriKey objectStore)
+            uriKeyToUri <- roTx db $ \tx -> M.all tx (DB.uriKeyToUri objectStore)
             HU.assertEqual ("Not all URLs one way " <> s) count (length uriToUriKey)
             HU.assertEqual ("Not all URLs backwards " <> s) count (length uriKeyToUri)        
 
@@ -162,7 +163,7 @@ shouldCreateAndDeleteAllTheMaps io = do
 
     rwTx db $ \tx -> 
         for_ ros $ \ro -> 
-            saveObject tx db (toStorableObject ro) (instantToVersion now)
+            DB.saveObject tx db (toStorableObject ro) (instantToVersion now)
 
     -- roTx objectStore $ \tx -> 
     --     forM ros $ \ro -> do 
@@ -190,11 +191,11 @@ shouldInsertAndGetAllBackFromObjectStore io = do
 
     rwTx db $ \tx -> 
         for_ ros' $ \(Located (Locations locations) ro) -> do             
-            saveObject tx db (toStorableObject ro) (instantToVersion now)
+            DB.saveObject tx db (toStorableObject ro) (instantToVersion now)
             forM_ locations $ \url -> 
-                linkObjectToUrl tx db url (getHash ro)
+                DB.linkObjectToUrl tx db url (getHash ro)
 
-    allObjects <- roTx db $ \tx -> getAll tx db
+    allObjects <- roTx db $ \tx -> DB.getAll tx db
     HU.assertEqual 
         "Not the same objects" 
         (List.sortOn (getHash . (^. #payload)) allObjects) 
@@ -207,7 +208,7 @@ shouldInsertAndGetAllBackFromObjectStore io = do
 
     rwTx db $ \tx -> 
         forM_ toDelete $ \(Located _ ro) -> 
-            deleteObject tx db (getHash ro)
+            DB.deleteObject tx db (getHash ro)
     
     compareLatestMfts db ros2 aki2      
     compareLatestMfts db toKeep aki1
@@ -216,13 +217,13 @@ shouldInsertAndGetAllBackFromObjectStore io = do
     removeMftNumberDuplicates = List.nubBy $ \ro1 ro2 ->
             case (ro1, ro2) of
                 (Located _ (MftRO mft1), Located _ (MftRO mft2)) -> 
-                    getMftTimingMark mft1 == getMftTimingMark mft2
+                    DB.getMftTimingMark mft1 == DB.getMftTimingMark mft2
                 _ -> False
 
     compareLatestMfts db ros a = do
-        mftLatest <- roTx db $ \tx -> findLatestMftByAKI tx db a         
+        mftLatest <- roTx db $ \tx -> DB.findLatestMftByAKI tx db a         
         
-        let mftLatest' = listToMaybe $ List.sortOn (Down . getMftTimingMark)
+        let mftLatest' = listToMaybe $ List.sortOn (Down . DB.getMftTimingMark)
                 [ mft | Located _ (MftRO mft) <- ros, getAKI mft == Just a ]                                    
         
         HU.assertEqual "Not the same manifests" ((^. #object . #payload) <$> mftLatest) mftLatest'                    
@@ -238,14 +239,14 @@ shouldOrderManifests io = do
     let worldVersion = instantToVersion now
 
     rwTx objectStore $ \tx -> do        
-            saveObject tx db (toStorableObject mft1) worldVersion
-            saveObject tx db (toStorableObject mft2) worldVersion
-            linkObjectToUrl tx db url1 (getHash mft1)
-            linkObjectToUrl tx db url2 (getHash mft2)
+            DB.saveObject tx db (toStorableObject mft1) worldVersion
+            DB.saveObject tx db (toStorableObject mft2) worldVersion
+            DB.linkObjectToUrl tx db url1 (getHash mft1)
+            DB.linkObjectToUrl tx db url2 (getHash mft2)
 
     -- they have the same AKIs
     let Just aki1 = getAKI mft1
-    Just (Keyed (Located _ mftLatest) _) <- roTx objectStore $ \tx -> findLatestMftByAKI tx db aki1
+    Just (Keyed (Located _ mftLatest) _) <- roTx objectStore $ \tx -> DB.findLatestMftByAKI tx db aki1
 
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) mft2
 
@@ -257,8 +258,8 @@ shouldInsertAndGetAllBackFromValidationResultStore io = do
 
     world <- getOrCreateWorldVerion =<< newAppState
 
-    rwTx validationsStore $ \tx -> saveValidations tx db world vrs
-    vrs' <- roTx validationsStore $ \tx -> validationsForVersion tx db world
+    rwTx validationsStore $ \tx -> DB.saveValidations tx db world vrs
+    vrs' <- roTx validationsStore $ \tx -> DB.validationsForVersion tx db world
 
     HU.assertEqual "Not the same Validations" (Just vrs) vrs'
 
@@ -269,12 +270,12 @@ shouldInsertAndGetAllBackFromRepositoryStore io = do
 
     createdPPs <- generateRepositories
 
-    storedPps1 <- roTx db $ \tx -> getPublicationPoints tx db
+    storedPps1 <- roTx db $ \tx -> DB.getPublicationPoints tx db
 
     let changeSet1 = changeSet storedPps1 createdPPs
 
-    rwTx db $ \tx -> applyChangeSet tx db changeSet1
-    storedPps2 <- roTx db $ \tx -> getPublicationPoints tx db
+    rwTx db $ \tx -> DB.applyChangeSet tx db changeSet1
+    storedPps2 <- roTx db $ \tx -> DB.getPublicationPoints tx db
 
     HU.assertEqual "Not the same publication points" createdPPs storedPps2
 
@@ -285,8 +286,8 @@ shouldInsertAndGetAllBackFromRepositoryStore io = do
 
     let changeSet2 = changeSet storedPps2 shrunkPPs
 
-    rwTx db $ \tx -> applyChangeSet tx db changeSet2
-    storedPps3 <- roTx db $ \tx -> getPublicationPoints tx db
+    rwTx db $ \tx -> DB.applyChangeSet tx db changeSet2
+    storedPps3 <- roTx db $ \tx -> DB.getPublicationPoints tx db
 
     HU.assertEqual "Not the same publication points after shrinking" shrunkPPs storedPps3
 
@@ -296,8 +297,8 @@ shouldGetAndSaveRepositories io = do
     db <- io
 
     pps1 <- generateRepositories
-    rwTx db $ \tx -> savePublicationPoints tx db pps1
-    pps1' <- roTx db $ \tx -> getPublicationPoints tx db       
+    rwTx db $ \tx -> DB.savePublicationPoints tx db pps1
+    pps1' <- roTx db $ \tx -> DB.getPublicationPoints tx db       
 
     HU.assertEqual "Not the same publication points first" pps1 pps1'
     
@@ -306,8 +307,8 @@ shouldGetAndSaveRepositories io = do
 
     let pps2 = List.foldr mergeRsyncPP (PublicationPoints rrdpMap2 newRsyncTree mempty) rsyncPPs2
 
-    rwTx db $ \tx -> savePublicationPoints tx db pps2
-    pps2' <- roTx db $ \tx -> getPublicationPoints tx db       
+    rwTx db $ \tx -> DB.savePublicationPoints tx db pps2
+    pps2' <- roTx db $ \tx -> DB.getPublicationPoints tx db       
 
     HU.assertEqual "Not the same publication points second" pps2 pps2'
     
@@ -333,15 +334,15 @@ shouldRollbackAppTx io = do
     let storage' = LmdbStorage env
     z :: SMap "test" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
 
-    void $ runValidatorT (newScopes "bla") $ rwAppTx storage' $ \tx -> do
+    void $ runValidatorT (newScopes "bla") $ DB.rwAppTx storage' $ \tx -> do
         liftIO $ M.put tx z 1 "aa"
         appError $ UnspecifiedE "Test" "Test problem"
 
-    void $ runValidatorT (newScopes "bla") $ rwAppTx storage' $ \tx ->
+    void $ runValidatorT (newScopes "bla") $ DB.rwAppTx storage' $ \tx ->
         liftIO $ M.put tx z 2 "bb"        
 
     let throwFromTx =
-            void $ runValidatorT (newScopes "bla") $ rwAppTx storage' $ \tx -> liftIO $ do
+            void $ runValidatorT (newScopes "bla") $ DB.rwAppTx storage' $ \tx -> liftIO $ do
                     M.put tx z 3 "cc"        
                     throwIO RatioZeroDenominator
 
@@ -350,7 +351,7 @@ shouldRollbackAppTx io = do
             (fromException (toException e)) 
             (Just RatioZeroDenominator)
 
-    void $ runValidatorT (newScopes "bla") $ roAppTx storage' $ \tx -> liftIO $ do         
+    void $ runValidatorT (newScopes "bla") $ DB.roAppTx storage' $ \tx -> liftIO $ do         
          v1 <- M.get tx z 1  
          HU.assertEqual "Must not be there" v1 Nothing
          v2 <- M.get tx z 2  
@@ -372,7 +373,7 @@ shouldPreserveStateInAppTx io = do
         <- runValidatorT (newScopes "root") $ 
             timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                 appWarn $ UnspecifiedE "Error0" "text 0"
-                void $ rwAppTx storage' $ \tx -> do                             
+                void $ DB.rwAppTx storage' $ \tx -> do                             
                     addedObject        
                     appWarn $ UnspecifiedE "Error1" "text 1"
                     inSubVScope "nested-1" $ 
