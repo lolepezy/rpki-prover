@@ -74,7 +74,8 @@ getCpuTime = do
 durationMs :: Instant -> Instant -> TimeMs
 durationMs (Instant begin) (Instant end) = let 
     (Seconds s, NanoSeconds ns) = timeDiffP end begin    
-    in fromIntegral $! (s * nanosPerSecond + ns) `div` microsecondsPerSecond 
+    totalNanos = s * nanosPerSecond + ns
+    in fromIntegral $! totalNanos `div` nanosPerMicrosecond 
     
 timed :: MonadIO m => m a -> m (a, Int64)
 timed action = do 
@@ -87,7 +88,7 @@ timed action = do
 timedMS :: MonadIO m => m a -> m (a, TimeMs)
 timedMS action = do 
     (!z, ns) <- timed action   
-    pure $! (z, fromIntegral $! ns `div` microsecondsPerSecond)
+    pure $! (z, fromIntegral $! ns `div` nanosPerMicrosecond)
 
 -- cpuTime :: 
 
@@ -95,9 +96,9 @@ nanosPerSecond :: Num p => p
 nanosPerSecond = 1000_000_000
 {-# INLINE nanosPerSecond #-}
 
-microsecondsPerSecond :: Num p => p
-microsecondsPerSecond = 1000_000
-{-# INLINE microsecondsPerSecond #-}
+nanosPerMicrosecond :: Num p => p
+nanosPerMicrosecond = 1000_000
+{-# INLINE nanosPerMicrosecond #-}
 
 toNanoseconds :: Instant -> Int64
 toNanoseconds (Instant instant) = 
@@ -139,6 +140,9 @@ instantDateFormat (Instant d) = timePrint format d
 
 secondsToInt :: Seconds -> Int
 secondsToInt (Seconds s) = fromIntegral s
+
+toMicroseconds :: Seconds -> Int64
+toMicroseconds (Seconds s) = fromIntegral $ 1000_000 * s
 
 cpuTimePerSecond :: CPUTime -> Instant -> Instant -> Double
 cpuTimePerSecond (CPUTime t) from to = let
