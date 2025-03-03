@@ -34,6 +34,7 @@ import           Data.String.Interpolate.IsString
 import           System.Exit
 import           System.Directory
 import           System.FilePath                  ((</>))
+import           System.Posix.Signals
 
 import           RPKI.AppState
 import           RPKI.AppMonad
@@ -385,6 +386,16 @@ runWorkflow appContext@AppContext {..} tals = do
         cleaned <- cleanUpStaleTx appContext
         when (cleaned > 0) $ 
             logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]   
+        
+        -- Kill all orphan rsync processes that are still running and refusing to die
+        -- Sometimes and rsync process can leak and linger, kill the expired ones
+        removeExpiredRsyncProcesses appState >>= 
+            mapM_ (\(pid, expiration) -> do
+                logInfo logger [i|Killing rsync client process with PID #{pid}, it expired at #{expiration}.|]
+                -- Run it in a separate thread, if sending the signal fails
+                -- the thread gets killed without no impact on anything else 
+                -- ever. That's exactly the behavious we want here.
+                forkIO $ signalProcess killProcess pid)
 
     -- Delete local rsync mirror. The assumption here is that over time there
     -- be a lot of local copies of rsync repositories that are so old that 
@@ -392,24 +403,20 @@ runWorkflow appContext@AppContext {..} tals = do
     -- anyway. Since most of the time RRDP is up, rsync updates are rare, so local 
     -- data is stale and just takes disk space.
     rsyncCleanup _ jobRun =
-        executeOrDie
-            (case jobRun of 
-                FirstRun -> 
-                    -- Do not actually do anything at the very first run.
-                    -- Statistically the first run would mean that the application 
-                    -- just was installed and started working and it's not very likely 
-                    -- that there's already a lot of garbage in the rsync mirror directory.                        
-                    pure ()
-                RanBefore -> do
-                    let rsyncDir = configValue $ config ^. #rsyncConf . #rsyncRoot
-                    logDebug logger [i|Deleting rsync mirrors in #{rsyncDir}.|]
-                    listDirectory rsyncDir >>= mapM_ (removePathForcibly . (rsyncDir </>))
-            )
-            (\_ elapsed -> 
-                case jobRun of 
-                    FirstRun  -> pure ()  
-                    RanBefore ->                    
-                        logInfo logger [i|Done cleaning up rsync, took #{elapsed}ms.|])
+        case jobRun of 
+            -- Do not actually do anything at the very first run.
+            -- Statistically the first run would mean that the application 
+            -- just was installed and started working and it's not very likely 
+            -- that there's already a lot of garbage in the rsync mirror directory.                                    
+            FirstRun  -> pure ()  
+            RanBefore -> 
+                executeOrDie
+                    (do
+                        let rsyncDir = configValue $ config ^. #rsyncConf . #rsyncRoot
+                        logDebug logger [i|Deleting rsync mirrors in #{rsyncDir}.|]
+                        listDirectory rsyncDir >>= mapM_ (removePathForcibly . (rsyncDir </>))
+                    )
+                    (\_ elapsed -> logInfo logger [i|Done cleaning up rsync, took #{elapsed}ms.|])
 
     -- Give up and die as soon as something serious happends. 
     -- If disk data is corrupted or we run out of disk or something 

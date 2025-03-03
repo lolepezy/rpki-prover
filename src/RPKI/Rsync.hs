@@ -17,9 +17,10 @@ import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Monad
-import           Control.Monad.IO.Class           (liftIO)
+import           Control.Monad.IO.Class           
 
 import qualified Data.ByteString                  as BS
+import qualified Data.ByteString.Lazy             as LBS
 import           Data.Maybe (fromMaybe)
 import           Data.Proxy
 import           Data.List (stripPrefix)
@@ -129,7 +130,7 @@ rsyncRpkiObject AppContext{..} fetchConfig uri = do
     let RsyncConf {..} = rsyncConf config
     destination <- liftIO $ rsyncDestination RsyncOneFile (configValue rsyncRoot) uri
     let rsync = rsyncProcess config fetchConfig uri destination RsyncOneFile
-    (exitCode, out, err) <- readProcess rsync      
+    (exitCode, out, err) <- readRsyncProcess logger fetchConfig rsync
     case exitCode of  
         ExitFailure errorCode -> do
             logError logger [i|Rsync process failed: #rsync 
@@ -165,9 +166,19 @@ updateObjectForRsyncRepository
         let rsync = rsyncProcess config fetchConfig uri destination RsyncDirectory
             
         logDebug logger [i|Runnning #{U.trimmed rsync}|]
-        (exitCode, out, err) <- fromTry 
-                (RsyncE . RsyncRunningError . U.fmtEx) $ 
-                readProcess rsync
+
+        -- The timeout we are getting here includes the extra timeout for the rsync fetcher 
+        -- process to kill itself. So reserve less time specifically for the rsync client.
+        let timeout = fetchConfig ^. #rsyncTimeout - Seconds 2
+
+        (exitCode, out, err) <- timeoutVT 
+                timeout
+                (fromTry  
+                    (RsyncE . RsyncRunningError . U.fmtEx) $ 
+                    readRsyncProcess logger fetchConfig rsync)
+                (do 
+                    logError logger [i|rsync client timed out after #{timeout}}.|]
+                    appError $ RsyncE $ RsyncDownloadTimeout timeout)
         logInfo logger [i|Finished rsynching #{getURL uri} to #{destination}.|]
         case exitCode of  
             ExitSuccess -> do                 
@@ -179,6 +190,29 @@ updateObjectForRsyncRepository
                                             stderr = #{err}, 
                                             stdout = #{out}|]
                 appError $ RsyncE $ RsyncProcessError errorCode $ U.convert err 
+  
+-- Repeat the readProcess but register PID of the launched rsync process
+-- together with its maximal lifetime
+readRsyncProcess :: MonadIO m =>
+                    AppLogger
+                    -> FetchConfig
+                    -> ProcessConfig stdin stdout0 stderr0
+                    -> m (ExitCode, LBS.ByteString, LBS.ByteString)
+readRsyncProcess logger fetchConfig pc = do 
+    Now now <- thisInstant
+    let endOfLife = momentAfter now (fetchConfig ^. #rsyncTimeout)
+    liftIO $ withProcessTerm pc' $ \p -> do 
+        U.ifJustM (getPid p) $ \pid -> 
+            registerhWorker logger $ 
+                WorkerInfo pid endOfLife (U.convert $ show pc')
+        atomically $ (,,)
+            <$> waitExitCodeSTM p
+            <*> getStdout p
+            <*> getStderr p
+    where
+    pc' = setStdout byteStringOutput
+        $ setStderr byteStringOutput pc
+
 
 
 -- | Recursively traverse given directory and save all the parseable 
@@ -290,7 +324,7 @@ rsyncProcess Config {..} fetchConfig rsyncURL destination rsyncMode =
     proc "rsync" $ 
         [ "--update",  "--times" ] <> 
         [ "--timeout=" <> show timeout' ] <>         
-        [ "--contimeout=" <> show timeout' ] <>         
+        [ "--contimeout=60" ] <>         
         [ "--max-size=" <> show (validationConfig ^. #maxObjectSize) ] <> 
         [ "--min-size=" <> show (validationConfig ^. #minObjectSize) ] <> 
         extraOptions <> 

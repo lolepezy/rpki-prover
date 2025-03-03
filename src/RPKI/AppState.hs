@@ -19,9 +19,11 @@ import qualified Data.Set                         as Set
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Vector                      as V
 import           GHC.Generics
+import           System.Process.Typed
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.AppTypes
+import           RPKI.Logging
 import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
 import           RPKI.Time
@@ -58,7 +60,9 @@ data AppState = AppState {
 
         -- Index for searching VRPs by a prefix used
         -- by the validity check
-        prefixIndex :: TVar (Maybe PrefixIndex)
+        prefixIndex :: TVar (Maybe PrefixIndex),
+
+        runningRsyncClients :: TVar (Map.Map Pid WorkerInfo)
         
     } deriving stock (Generic)
 
@@ -84,6 +88,7 @@ newAppState = do
         system      <- newTVar (newSystemInfo now)        
         prefixIndex <- newTVar Nothing
         cachedBinaryRtrPdus <- newTVar mempty
+        runningRsyncClients <- newTVar mempty
         pure AppState {..}
                     
 
@@ -136,6 +141,22 @@ waitForAnyVersion AppState {..} =
 mergeSystemMetrics :: MonadIO m => SystemMetrics -> AppState -> m ()           
 mergeSystemMetrics sm AppState {..} = 
     liftIO $ atomically $ modifyTVar' system (& #metrics %~ (<> sm))
+
+updateRsyncClient :: MonadIO m => WorkerInfo -> AppState -> m ()           
+updateRsyncClient wi@WorkerInfo {..} AppState {..} = 
+    liftIO $ atomically $ modifyTVar' runningRsyncClients $ Map.insert workerPid wi
+
+removeExpiredRsyncProcesses :: MonadIO m => AppState -> m [(Pid, WorkerInfo)]
+removeExpiredRsyncProcesses AppState {..} = liftIO $ do 
+    Now now <- thisInstant
+    atomically $ do 
+        expired <- filterExpired now <$> readTVar runningRsyncClients
+        modifyTVar' runningRsyncClients $ \clients -> 
+                        foldr (\(pid, _) m -> Map.delete pid m) clients expired 
+        pure expired
+  where
+    filterExpired now clients =
+        filter (\(_, WorkerInfo {..}) -> endOfLife > now) $ Map.toList clients
 
 readRtrPayloads :: AppState -> STM RtrPayloads    
 readRtrPayloads AppState {..} = readTVar filtered

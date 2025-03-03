@@ -168,42 +168,49 @@ executeWork input actualWork =
         then 
             exitWith replacedExecutableExitCode
         else do 
-            exitCode <- whicheverHappensFirst 
-                ((actualWork input writeWorkerOutput >> pure ExitSuccess) `onException` pure exceptionExitCode)
-                (whicheverHappensFirst dieIfParentDies dieOfTiming)
-            
-            exitWith exitCode
+            exitCode <- newEmptyTMVarIO            
+            let done = atomically . putTMVar exitCode 
+
+            _ <- mapM_ forkIO [
+                    ((actualWork input writeWorkerOutput >> done ExitSuccess) 
+                        `onException` 
+                    done exceptionExitCode),                
+                    dieIfParentDies done,
+                    dieOfTiming done
+                ]
+                
+            exitWith =<< atomically (takeTMVar exitCode)
   where        
     whicheverHappensFirst a b = either id id <$> race a b
 
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
     -- there's no point continuing.
-    dieIfParentDies = do 
+    dieIfParentDies done = do 
         parentId <- getParentProcessID                    
         if parentId /= input ^. #initialParentId
-            then pure parentDiedExitCode            
-            else threadDelay 500_000 >> dieIfParentDies
+            then done parentDiedExitCode            
+            else threadDelay 500_000 >> dieIfParentDies done
 
     -- exit either because the time is up or too much CPU is spent
-    dieOfTiming = 
+    dieOfTiming done = 
         case input ^. #cpuLimit of
-            Nothing       -> dieAfterTimeout
-            Just cpuLimit -> whicheverHappensFirst dieAfterTimeout (dieOutOfCpuTime cpuLimit)
+            Nothing       -> dieAfterTimeout done
+            Just cpuLimit -> whicheverHappensFirst (dieAfterTimeout done) (dieOutOfCpuTime cpuLimit done)
 
     -- Time bomb. Wait for the certain timeout and then exit.
-    dieAfterTimeout = do
+    dieAfterTimeout done = do
         let Timebox timebox = input ^. #workerTimeout
         threadDelay $ toMicroseconds timebox
-        pure timeoutExitCode
+        done timeoutExitCode
 
     -- Exit if the worker consumed too much CPU time
-    dieOutOfCpuTime cpuLimit = go
+    dieOutOfCpuTime cpuLimit done = go
       where
         go = do 
             cpuTime <- getCpuTime
             if cpuTime > cpuLimit 
-                then pure outOfCpuTimeExitCode
+                then done outOfCpuTimeExitCode
                 else threadDelay 1_000_000 >> go
 
 
@@ -291,9 +298,10 @@ runWorker logger workerInput extraCli = do
         stopProcess
         (\p -> (,) <$> f p <*> waitExitCode p) 
 
-    runIt worker = do   
+    runIt workerConf = do   
         ((_, workerStdout), exitCode) <- 
-            liftIO $ waitForProcess worker $ \p ->
+            liftIO $ waitForProcess workerConf $ \p -> do 
+                workerPid <- getPid p
                 concurrently 
                     (runConduitRes $ getStderr p .| sinkLog logger)
                     (atomically $ getStdout p)

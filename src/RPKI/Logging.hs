@@ -31,6 +31,7 @@ import GHC.Generics (Generic)
 
 import System.Posix.Types
 import System.Posix.Process
+import System.Process.Typed
 import System.IO
 
 import RPKI.Domain
@@ -45,8 +46,8 @@ import RPKI.Store.Base.Serialisation
 Every process, the main one or a worker, has it's own queue of messages.
 
 These messages are 
- - sent to the parent process (if current process is a worker) 
- - interpreted, e.g. printed to the stdout/file/whatnot (if current process is the main one)
+ - sent to the parent process if current process is a worker 
+ - interpreted, e.g. printed to the stdout/file/whatnot if current process is the main one
 
 At the moment there are 3 kinds of messages, logging messages, RTR logging messages 
 and system metrics upadates.
@@ -78,8 +79,20 @@ data AppLogger = AppLogger {
         rtrLogger    :: RtrLogger        
     }
 
+data WorkerInfo = WorkerInfo {
+        workerPid :: Pid,
+        endOfLife :: Instant,
+        cli       :: Text
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+
 -- Messages in the queue 
-data BusMessage = LogM LogMessage | RtrLogM LogMessage | SystemM SystemMetrics
+data BusMessage = LogM LogMessage 
+                | RtrLogM LogMessage 
+                | SystemM SystemMetrics
+                | WorkerM WorkerInfo
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -124,14 +137,21 @@ instance Logger AppLogger where
     logLevel_ AppLogger {..}   = logLevel_ commonLogger
 
 data LogConfig = LogConfig {
-        logLevel :: LogLevel,
-        logSetup :: LogSetup
+        logLevel       :: LogLevel,
+        logType        :: LogType,
+        metricsHandler :: SystemMetrics -> IO (), -- ^ what to do with incoming system metrics messages
+        workerHandler  :: WorkerInfo -> IO () -- ^ what to do with incoming worker messages
     }
+    deriving stock (Generic)
+
+data LogType = WorkerLog | MainLog | MainLogWithRtr String
     deriving stock (Eq, Ord, Show, Generic)
 
-data LogSetup = WorkerLog | MainLog | MainLogWithRtr String
-    deriving stock (Eq, Ord, Show, Generic)
-
+makeLogConfig :: LogLevel -> LogType -> LogConfig
+makeLogConfig logLevel logType = let 
+    metricsHandler = const $ pure ()
+    workerHandler = const $ pure ()
+    in LogConfig {..}
 
 logError, logWarn, logInfo, logDebug :: (Logger log, MonadIO m) => log -> Text -> m ()
 logError logger t = liftIO $ logMessage_ logger =<< createLogMessage ErrorL t
@@ -157,6 +177,10 @@ pushSystem :: MonadIO m => AppLogger -> SystemMetrics -> m ()
 pushSystem logger sm = 
     liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ SystemM sm  
 
+registerhWorker :: MonadIO m => AppLogger -> WorkerInfo -> m ()
+registerhWorker logger wi = 
+    liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ WorkerM wi
+
 logBytes :: AppLogger -> BS.ByteString -> IO ()
 logBytes logger bytes = 
     atomically $ writeCQueue (getQueue logger) $ BinQE bytes             
@@ -167,17 +191,16 @@ getQueue AppLogger { commonLogger = CommonLogger ALogger {..} } = queue
 
 -- The main entry-point, done in CPS style.
 withLogger :: LogConfig 
-            -> (SystemMetrics -> IO ()) -- ^ what to do with incoming system metrics messages
             -> (AppLogger -> IO b)      -- ^ what to do with the configured and initialised logger
             -> IO b
-withLogger LogConfig {..} sysMetricCallback f = do 
+withLogger LogConfig {..} f = do 
     -- this one is the process' log message queue
     messageQueue <- newCQueueIO 1000    
 
     -- Main process writes to stdout, workers -- to stderr
     -- TODO Think about it more, maybe there's more consistent option
     (commonLogStream, rtrLogStream) <-
-            case logSetup of
+            case logType of
                 WorkerLog -> pure (stderr, stderr)
                 MainLog   -> pure (stdout, stdout)
                 MainLogWithRtr rtrLog -> 
@@ -198,7 +221,8 @@ withLogger LogConfig {..} sysMetricCallback f = do
     let processMessageInMainProcess = \case
             LogM logMessage    -> logRaw $ messageToText logMessage
             RtrLogM logMessage -> logRtr $ messageToText logMessage
-            SystemM sysMetric  -> sysMetricCallback sysMetric
+            SystemM sysMetric  -> metricsHandler sysMetric
+            WorkerM workerInfo -> workerHandler workerInfo
     
     let loopMain = loopReadQueue messageQueue $ \case 
             BinQE b -> 
@@ -218,7 +242,7 @@ withLogger LogConfig {..} sysMetricCallback f = do
                                 BinQE b   -> b
                                 MsgQE msg -> msgToBs msg        
     let actualLoop = 
-            case logSetup of
+            case logType of
                 WorkerLog -> loopWorker
                 _         -> loopMain
                 
