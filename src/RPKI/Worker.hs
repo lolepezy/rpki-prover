@@ -300,8 +300,7 @@ runWorker logger workerInput extraCli = do
 
     runIt workerConf = do   
         ((_, workerStdout), exitCode) <- 
-            liftIO $ waitForProcess workerConf $ \p -> do 
-                workerPid <- getPid p
+            liftIO $ waitForProcess workerConf $ \p -> 
                 concurrently 
                     (runConduitRes $ getStderr p .| sinkLog logger)
                     (atomically $ getStdout p)

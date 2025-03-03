@@ -203,9 +203,9 @@ readRsyncProcess logger fetchConfig pc = do
     let endOfLife = momentAfter now (fetchConfig ^. #rsyncTimeout)
     liftIO $ withProcessTerm pc' $ \p -> do 
         pid <- getPid p
-        forM_ pid $ \pid -> 
+        forM_ pid $ \pid_ -> 
             registerhWorker logger $ 
-                WorkerInfo pid endOfLife (U.convert $ show pc')
+                WorkerInfo pid_ endOfLife (U.convert $ show pc')
 
         z <- atomically $ (,,)
             <$> waitExitCodeSTM p
