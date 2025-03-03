@@ -394,9 +394,11 @@ runWorkflow appContext@AppContext {..} tals = do
                 -- Run it in a separate thread, if sending the signal fails
                 -- the thread gets killed without no impact on anything else 
                 -- ever. If it's successful, we'll log a message about it
-                forkIO $ do
+                forkIO $ (do
                     signalProcess killProcess pid
-                    logInfo logger [i|Killed rsync client process with PID #{pid}, #{cli}, it expired at #{endOfLife}.|]
+                    logInfo logger [i|Killed rsync client process with PID #{pid}, #{cli}, it expired at #{endOfLife}.|])
+                    `catch` 
+                    (\(_ :: SomeException) -> pure ())            
 
     -- Delete local rsync mirror. The assumption here is that over time there
     -- be a lot of local copies of rsync repositories that are so old that 
