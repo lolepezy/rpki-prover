@@ -87,12 +87,16 @@ data WorkerInfo = WorkerInfo {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
+data WorkerMessage = AddWorker WorkerInfo
+                   | RemoveWorker Pid
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)                    
 
 -- Messages in the queue 
 data BusMessage = LogM LogMessage 
                 | RtrLogM LogMessage 
                 | SystemM SystemMetrics
-                | WorkerM WorkerInfo
+                | WorkerM WorkerMessage
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -140,7 +144,7 @@ data LogConfig = LogConfig {
         logLevel       :: LogLevel,
         logType        :: LogType,
         metricsHandler :: SystemMetrics -> IO (), -- ^ what to do with incoming system metrics messages
-        workerHandler  :: WorkerInfo -> IO () -- ^ what to do with incoming worker messages
+        workerHandler  :: WorkerMessage -> IO () -- ^ what to do with incoming worker messages
     }
     deriving stock (Generic)
 
@@ -179,7 +183,11 @@ pushSystem logger sm =
 
 registerhWorker :: MonadIO m => AppLogger -> WorkerInfo -> m ()
 registerhWorker logger wi = 
-    liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ WorkerM wi
+    liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ WorkerM $ AddWorker wi
+
+deregisterhWorker :: MonadIO m => AppLogger -> Pid -> m ()
+deregisterhWorker logger pid = 
+    liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ WorkerM $ RemoveWorker pid
 
 logBytes :: AppLogger -> BS.ByteString -> IO ()
 logBytes logger bytes = 

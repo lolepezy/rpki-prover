@@ -142,9 +142,13 @@ mergeSystemMetrics :: MonadIO m => SystemMetrics -> AppState -> m ()
 mergeSystemMetrics sm AppState {..} = 
     liftIO $ atomically $ modifyTVar' system (& #metrics %~ (<> sm))
 
-updateRsyncClient :: MonadIO m => WorkerInfo -> AppState -> m ()           
-updateRsyncClient wi@WorkerInfo {..} AppState {..} = 
-    liftIO $ atomically $ modifyTVar' runningRsyncClients $ Map.insert workerPid wi
+updateRsyncClient :: MonadIO m => WorkerMessage -> AppState -> m ()           
+updateRsyncClient message AppState {..} =     
+    liftIO $ atomically $ modifyTVar' runningRsyncClients $ 
+        case message of 
+            AddWorker wi     -> Map.insert (wi ^. #workerPid) wi
+            RemoveWorker pid -> Map.delete pid
+        
 
 removeExpiredRsyncProcesses :: MonadIO m => AppState -> m [(Pid, WorkerInfo)]
 removeExpiredRsyncProcesses AppState {..} = liftIO $ do 
@@ -156,7 +160,7 @@ removeExpiredRsyncProcesses AppState {..} = liftIO $ do
         pure expired
   where
     filterExpired now clients =
-        filter (\(_, WorkerInfo {..}) -> endOfLife > now) $ Map.toList clients
+        filter (\(_, WorkerInfo {..}) -> endOfLife < now) $ Map.toList clients
 
 readRtrPayloads :: AppState -> STM RtrPayloads    
 readRtrPayloads AppState {..} = readTVar filtered

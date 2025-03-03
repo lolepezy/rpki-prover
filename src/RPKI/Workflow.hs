@@ -385,17 +385,18 @@ runWorkflow appContext@AppContext {..} tals = do
         -- possible leakages (even if it were possible).
         cleaned <- cleanUpStaleTx appContext
         when (cleaned > 0) $ 
-            logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]   
+            logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]
         
         -- Kill all orphan rsync processes that are still running and refusing to die
         -- Sometimes and rsync process can leak and linger, kill the expired ones
-        removeExpiredRsyncProcesses appState >>= 
-            mapM_ (\(pid, expiration) -> do
-                logInfo logger [i|Killing rsync client process with PID #{pid}, it expired at #{expiration}.|]
+        removeExpiredRsyncProcesses appState >>= \processes ->
+            forM_ processes $ \(pid, WorkerInfo {..}) ->  
                 -- Run it in a separate thread, if sending the signal fails
                 -- the thread gets killed without no impact on anything else 
-                -- ever. That's exactly the behavious we want here.
-                forkIO $ signalProcess killProcess pid)
+                -- ever. If it's successful, we'll log a message about it
+                forkIO $ do
+                    signalProcess killProcess pid
+                    logInfo logger [i|Killed rsync client process with PID #{pid}, #{cli}, it expired at #{endOfLife}.|]
 
     -- Delete local rsync mirror. The assumption here is that over time there
     -- be a lot of local copies of rsync repositories that are so old that 
