@@ -154,13 +154,11 @@ removeExpiredRsyncProcesses :: MonadIO m => AppState -> m [(Pid, WorkerInfo)]
 removeExpiredRsyncProcesses AppState {..} = liftIO $ do 
     Now now <- thisInstant
     atomically $ do 
-        expired <- filterExpired now <$> readTVar runningRsyncClients
-        modifyTVar' runningRsyncClients $ \clients -> 
-                        foldr (\(pid, _) m -> Map.delete pid m) clients expired 
-        pure expired
-  where
-    filterExpired now clients =
-        filter (\(_, WorkerInfo {..}) -> endOfLife < now) $ Map.toList clients
+        clients <- readTVar runningRsyncClients
+        let expired = filter (\(_, WorkerInfo {..}) -> endOfLife < now) $ Map.toList clients        
+        modifyTVar' runningRsyncClients $ \clients_ -> 
+                        foldr (\(pid, _) m -> Map.delete pid m) clients_ expired 
+        pure expired  
 
 readRtrPayloads :: AppState -> STM RtrPayloads    
 readRtrPayloads AppState {..} = readTVar filtered
