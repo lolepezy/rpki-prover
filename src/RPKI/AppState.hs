@@ -156,8 +156,7 @@ removeExpiredRsyncProcesses AppState {..} = liftIO $ do
     atomically $ do 
         clients <- readTVar runningRsyncClients
         let expired = filter (\(_, WorkerInfo {..}) -> endOfLife < now) $ Map.toList clients        
-        modifyTVar' runningRsyncClients $ \clients_ -> 
-                        foldr (\(pid, _) m -> Map.delete pid m) clients_ expired 
+        writeTVar runningRsyncClients $ foldr (\(pid, _) m -> Map.delete pid m) clients expired 
         pure expired  
 
 readRtrPayloads :: AppState -> STM RtrPayloads    
