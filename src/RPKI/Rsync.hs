@@ -130,7 +130,7 @@ rsyncRpkiObject AppContext{..} fetchConfig uri = do
     let RsyncConf {..} = rsyncConf config
     destination <- liftIO $ rsyncDestination RsyncOneFile (configValue rsyncRoot) uri
     let rsync = rsyncProcess config fetchConfig uri destination RsyncOneFile
-    (exitCode, out, err) <- readRsyncProcess logger fetchConfig rsync
+    (exitCode, out, err) <- readRsyncProcess logger fetchConfig rsync [i|rsync for #{uri}|]
     case exitCode of  
         ExitFailure errorCode -> do
             logError logger [i|Rsync process failed: #rsync 
@@ -175,7 +175,7 @@ updateObjectForRsyncRepository
                 timeout
                 (fromTry  
                     (RsyncE . RsyncRunningError . U.fmtEx) $ 
-                    readRsyncProcess logger fetchConfig rsync)
+                    readRsyncProcess logger fetchConfig rsync [i|rsync for #{uri}|])
                 (do 
                     logError logger [i|rsync client timed out after #{timeout}}.|]
                     appError $ RsyncE $ RsyncDownloadTimeout timeout)
@@ -197,15 +197,16 @@ readRsyncProcess :: MonadIO m =>
                     AppLogger
                     -> FetchConfig
                     -> ProcessConfig stdin stdout0 stderr0
+                    -> Text.Text
                     -> m (ExitCode, LBS.ByteString, LBS.ByteString)
-readRsyncProcess logger fetchConfig pc = do 
+readRsyncProcess logger fetchConfig pc textual = do 
     Now now <- thisInstant
     let endOfLife = momentAfter now (fetchConfig ^. #rsyncTimeout)
     liftIO $ withProcessTerm pc' $ \p -> do 
         pid <- getPid p
         forM_ pid $ \pid_ -> 
             registerhWorker logger $ 
-                WorkerInfo pid_ endOfLife (U.convert $ show pc')
+                WorkerInfo pid_ endOfLife textual
 
         z <- atomically $ (,,)
             <$> waitExitCodeSTM p
