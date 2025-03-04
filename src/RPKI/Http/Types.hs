@@ -293,11 +293,19 @@ data ResourcesDto = ResourcesDto {
     }
     deriving stock (Eq, Show, Generic)
 
+data WorkerInfoDto = WorkerInfoDto {
+        pid       :: Int,
+        endOfLife :: Instant,
+        cli       :: Text
+    }
+    deriving stock (Eq, Show, Generic)
+
 data SystemDto = SystemDto {
         proverVersion :: Text,
         config        :: Config,
         startUpTime   :: Instant,
-        resources     :: [ResourcesDto]
+        resources     :: [ResourcesDto],
+        rsyncClients  :: [WorkerInfoDto]
     }
     deriving stock (Eq, Show, Generic)
 
@@ -551,8 +559,10 @@ instance ToSchema EncodedBase64 where
 instance ToJSON JobsDto     
 instance ToSchema JobsDto   
 instance ToJSON SystemDto  
+instance ToJSON WorkerInfoDto  
 instance ToJSON ResourcesDto
 instance ToSchema SystemDto     
+instance ToSchema WorkerInfoDto     
 instance ToSchema ResourcesDto     
 
 instance ToJSON a => ToJSON (ValidationsDto a)

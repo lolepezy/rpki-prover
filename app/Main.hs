@@ -109,14 +109,23 @@ executeMainProcess cliOptions@CLIOptions{..} = do
     -- TODO This doesn't look pretty, come up with something better.
     appStateHolder <- newTVarIO Nothing
 
-    withLogConfig cliOptions $ \logConfig -> do
+    let bumpSysMetric sm = do 
+            z <- readTVarIO appStateHolder
+            for_ z $ mergeSystemMetrics sm
+
+    let updateWorkers wi = do 
+            z <- readTVarIO appStateHolder
+            -- We only keep track of running rsync clients
+            for_ z $ updateRsyncClient wi
+
+    withLogConfig cliOptions $ \lc -> do
+        let logConfig = lc
+                & #metricsHandler .~ bumpSysMetric
+                & #workerHandler .~ updateWorkers
+
         -- This one modifies system metrics in AppState
         -- if appState is actually initialised
-        let bumpSysMetric sm = do 
-                z <- readTVarIO appStateHolder
-                for_ z $ mergeSystemMetrics sm
-
-        withLogger logConfig bumpSysMetric $ \logger -> do
+        withLogger logConfig $ \logger -> do
             logDebug logger $ if once 
                     then [i|Starting #{rpkiProverVersion} in one-off mode.|]
                     else [i|Starting #{rpkiProverVersion} as a server.|]
@@ -147,15 +156,12 @@ executeWorkerProcess :: IO ()
 executeWorkerProcess = do
     input <- readWorkerInput
     let config = input ^. typed @Config    
-    let logConfig = LogConfig {
-                        logLevel = config ^. #logLevel,
-                        logSetup = WorkerLog
-                    }
+    let logConfig = makeLogConfig (config ^. #logLevel) WorkerLog
                     
     -- turnOffTlsValidation
 
     executeWork input $ \_ resultHandler -> 
-        withLogger logConfig (\_ -> pure ()) $ \logger -> liftIO $ do
+        withLogger logConfig $ \logger -> liftIO $ do
             (z, validations) <- runValidatorT
                                     (newScopes "worker-create-app-context")
                                     (createWorkerAppContext config logger)
@@ -574,7 +580,7 @@ deriveProverRunMode CLIOptions {..} =
 executeVerifier :: CLIOptions Unwrapped -> IO ()
 executeVerifier cliOptions@CLIOptions {..} = do
     withLogConfig cliOptions $ \logConfig ->
-        withLogger logConfig (\_ -> pure ()) $ \logger ->
+        withLogger logConfig $ \logger ->
             withVerifier logger $ \verifyPath rscFile -> do
                 logDebug logger [i|Verifying #{verifyPath} with RSC #{rscFile}.|]
                 (ac, vs) <- runValidatorT (newScopes "Verify RSC") $ do
@@ -847,13 +853,10 @@ withLogConfig CLIOptions{..} f =
                 "debug" -> run DebugL
                 other   -> hPutStrLn stderr $ "Invalid log level: " <> Text.unpack other
   where
-    run logLev = 
-        f LogConfig { 
-            logLevel = logLev,
-            logSetup = 
-                case (rtrLogFile, worker) of 
-                    (Just fs, Nothing) -> MainLogWithRtr fs
-                    (Nothing, Nothing) -> MainLog
-                    (_,        Just _) -> WorkerLog
-            }
+    run logLev = f $ makeLogConfig logLev logType
+      where
+        logType = case (rtrLogFile, worker) of 
+            (Just fs, Nothing) -> MainLogWithRtr fs
+            (Nothing, Nothing) -> MainLog
+            (_,        Just _) -> WorkerLog
             

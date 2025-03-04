@@ -40,6 +40,7 @@ import           RPKI.AppContext
 import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
+import           RPKI.Logging
 import           RPKI.Metrics.Prometheus
 import           RPKI.Metrics.System
 import           RPKI.Time
@@ -518,6 +519,10 @@ getSystem AppContext {..} = do
                     let avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime startUpTime now
                     tag <- fmtScope scope
                     pure ResourcesDto {..}
+    
+    let wiToDto WorkerInfo {..} = let pid = fromIntegral workerPid in WorkerInfoDto {..}
+
+    rsyncClients <- map (wiToDto . snd) . Map.toList <$> readTVarIO (appState ^. #runningRsyncClients)
 
     pure SystemDto {..}  
   where
