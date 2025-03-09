@@ -10,6 +10,7 @@
 
 module RPKI.Store.Database where
 
+import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Lens
 import           Control.Monad.Trans.Maybe
@@ -790,8 +791,9 @@ cleanupValidatedByVersionMap tx db toDelete = liftIO $ do
 
 data CleanUpResult = CleanUpResult {
         deletedObjects :: Int,
-        keptObjects :: Int,
-        deletedURLs :: Int,
+        deletedPerType :: Map.Map RpkiObjectType Count,
+        keptObjects    :: Int,
+        deletedURLs    :: Int,
         deletedVersions :: Int
     }
     deriving (Show, Eq, Ord, Generic)
@@ -857,7 +859,7 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
                                 
             validatedByRecentVersions <- cleanupValidatedByVersionMap tx db tooOld                
 
-            (deletedObjects, keptObjects) <- deleteStaleObjects tx validatedByRecentVersions
+            (deletedObjects, deletedPerType, keptObjects) <- deleteStaleObjects tx validatedByRecentVersions
 
             -- Delete URLs that are now not referred by any object
             deletedURLs <- deleteDanglingUrls db tx
@@ -882,14 +884,21 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
         let keysToKeep = touchedObjectKeys <> recentlyInsertedObjectKeys            
 
         -- Everything else must be purged
-        hashesToDelete <- M.fold tx hashToKey 
-            (\allHashes hash key ->
+        T2 hashesToDelete deletedCount <- M.fold tx hashToKey 
+            (\r@(T2 allHashes deletedCount) hash key ->
                 if key `Set.member` keysToKeep
-                    then pure $! allHashes
-                    else pure $! hash `Set.insert` allHashes) mempty 
+                    then pure $! r
+                    else pure $! T2 ((key, hash) : allHashes) (deletedCount + 1)) (T2 mempty 0)
         
-        forM_ hashesToDelete $ deleteObject tx db        
-        pure (Set.size hashesToDelete, Set.size keysToKeep)
+        deletedPerType <- newTVarIO (mempty :: Map.Map RpkiObjectType Count)
+        forM_ hashesToDelete $ \(key, hash) -> do 
+            ifJustM (M.get tx objectMetas key) $ \(ObjectMeta _ type_) -> 
+                atomically $ modifyTVar' deletedPerType $ (<> Map.singleton type_ 1)                
+            deleteObject tx db hash
+
+        atomically $ do 
+            z <- readTVar deletedPerType
+            pure (deletedCount, z, Set.size keysToKeep)
 
 
 deleteDanglingUrls :: DB s -> Tx s 'RW -> IO Int

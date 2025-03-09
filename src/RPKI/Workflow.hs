@@ -167,10 +167,12 @@ runWorkflow appContext@AppContext {..} tals = do
                 taskDef = (ValidationTask, validateTAs workflowShared),
                 persistent = False
             },
-            let interval = config ^. #cacheCleanupInterval
+            -- let interval = config ^. #cacheCleanupInterval
+            let interval = 300_000_000
             in Scheduling { 
                 -- do it half of the interval from now, it will be reasonable "on average"
                 initialDelay = toMicroseconds interval `div` 2,                
+                -- initialDelay = 200_000_000,
                 taskDef = (CacheCleanupTask, cacheCleanup workflowShared),
                 persistent = True,
                 ..
@@ -346,7 +348,10 @@ runWorkflow appContext@AppContext {..} tals = do
                     Right DB.CleanUpResult {..} -> do 
                         when (deletedObjects > 0) $ do
                             atomically $ writeTVar deletedAnythingFromDb True
-                        logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
+                        let perType :: String = if mempty /= deletedPerType 
+                            then [i|in particular #{Map.toList deletedPerType}, |] 
+                            else ""
+                        logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, #{perType}kept #{keptObjects}, |] <>
                                          [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|])
       where
         cleanupUntochedObjects = do                 
