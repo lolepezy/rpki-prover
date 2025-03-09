@@ -791,7 +791,7 @@ cleanupValidatedByVersionMap tx db toDelete = liftIO $ do
 
 data CleanUpResult = CleanUpResult {
         deletedObjects :: Int,
-        deletedPerType :: Map.Map RpkiObjectType Count,
+        deletedPerType :: Map.Map RpkiObjectType Integer,
         keptObjects    :: Int,
         deletedURLs    :: Int,
         deletedVersions :: Int
@@ -890,10 +890,10 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
                     then pure $! r
                     else pure $! T2 ((key, hash) : allHashes) (deletedCount + 1)) (T2 mempty 0)
         
-        deletedPerType <- newTVarIO (mempty :: Map.Map RpkiObjectType Count)
+        deletedPerType <- newTVarIO mempty
         forM_ hashesToDelete $ \(key, hash) -> do 
             ifJustM (M.get tx objectMetas key) $ \(ObjectMeta _ type_) -> 
-                atomically $ modifyTVar' deletedPerType $ (<> Map.singleton type_ 1)                
+                atomically $ modifyTVar' deletedPerType $ Map.unionWith (+) (Map.singleton type_ 1)
             deleteObject tx db hash
 
         atomically $ do 

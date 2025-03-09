@@ -167,8 +167,8 @@ runWorkflow appContext@AppContext {..} tals = do
                 taskDef = (ValidationTask, validateTAs workflowShared),
                 persistent = False
             },
-            -- let interval = config ^. #cacheCleanupInterval
-            let interval = 300_000_000
+            let interval = config ^. #cacheCleanupInterval
+            -- let interval = 300_000_000
             in Scheduling { 
                 -- do it half of the interval from now, it will be reasonable "on average"
                 initialDelay = toMicroseconds interval `div` 2,                
@@ -338,7 +338,7 @@ runWorkflow appContext@AppContext {..} tals = do
                             pure (rtrPayloads, slurmedPayloads)
                           
     -- Delete objects in the store that were read by top-down validation 
-    -- longer than `cacheLifeTime` hours ago.
+    -- longer than `mftCacheLifeTime` hours ago.
     cacheCleanup WorkflowShared {..} worldVersion _ = do            
         executeOrDie
             cleanupUntochedObjects
@@ -564,7 +564,9 @@ runCacheCleanup AppContext {..} worldVersion = do
     cutOffVersion <- roTx db $ \tx -> 
         fromMaybe worldVersion <$> DB.getLastValidationVersion db tx
 
-    DB.deleteStaleContent db (versionIsOld (versionToMoment cutOffVersion) (config ^. #cacheLifeTime))
+    DB.deleteStaleContent db (versionIsOld 
+        (versionToMoment cutOffVersion) 
+        (config ^. #mftCacheLifeTime))
 
 
 -- | Load the state corresponding to the last completed validation version.

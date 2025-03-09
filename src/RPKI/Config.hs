@@ -70,7 +70,8 @@ data Config = Config {
         httpApiConf               :: HttpApiConfig,
         rtrConfig                 :: Maybe RtrConfig,
         cacheCleanupInterval      :: Seconds,
-        cacheLifeTime             :: Seconds,
+        mftCacheLifeTime          :: Seconds,
+        certCacheLifeTime         :: Seconds,
         versionNumberToKeep       :: Natural,
         storageCompactionInterval :: Seconds,
         rsyncCleanupInterval      :: Seconds,
@@ -277,8 +278,9 @@ defaultConfig = Config {
         cleanupWorkerMemoryMb    = 512
     },
     rtrConfig                 = Nothing,
-    cacheCleanupInterval      = Seconds $ 60 * 60 * 6,
-    cacheLifeTime             = Seconds $ 60 * 60 * 24,
+    cacheCleanupInterval      = Seconds $ 60 * 60 * 1,
+    mftCacheLifeTime          = frequentObjectCacheLifetime,
+    certCacheLifeTime         = stableObjectCacheLifetime,
     versionNumberToKeep       = 3,
     storageCompactionInterval = Seconds $ 60 * 60 * 120,
     rsyncCleanupInterval      = Seconds $ 60 * 60 * 24 * 30,
@@ -288,6 +290,10 @@ defaultConfig = Config {
     metricsPrefix = "rpki_prover_",
     withValidityApi = False
 }
+  where
+    frequentObjectCacheLifetime = Seconds $ 60 * 60 * 24
+    -- certificates and end entities should leave longer than manifests and CRLs
+    stableObjectCacheLifetime = 10 * frequentObjectCacheLifetime
 
 defaultsLogLevel :: LogLevel
 defaultsLogLevel = InfoL

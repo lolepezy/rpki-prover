@@ -314,7 +314,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 (if noAsyncFetch then SyncOnly else SyncAndAsync)        
             & maybeSet (#httpApiConf . #port) httpApiPort
             & #rtrConfig .~ rtrConfig
-            & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
+            & maybeSet #mftCacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
             & maybeSet #versionNumberToKeep versionNumberToKeep
             & #lmdbSizeMb .~ lmdbRealSize
             & #localExceptions .~ apiSecured localExceptions
@@ -329,7 +329,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     let adjustedConfig = config 
             -- Cache must be cleaned up at least as often as the 
             -- lifetime of the objects in it    
-            & #cacheCleanupInterval %~ (`min` (config ^. #cacheLifeTime))
+            & #cacheCleanupInterval %~ (`min` (config ^. #mftCacheLifeTime))
 
     let readSlurms files = do
             logDebug logger [i|Reading SLURM files: #{files}.|]
@@ -667,7 +667,7 @@ data CLIOptions wrapped = CLIOptions {
         "number, since using the latter does not give much benefit and actually may cause performance degradation."),
 
     fetcherCount :: wrapped ::: Maybe Natural <?>
-        ("Maximal number of concurrent fetchers (default is --cpu-count * 3)."),
+        ("Maximal number of concurrent fetchers (default is --cpu-count * 3)."), 
 
     resetCache :: wrapped ::: Bool <?>
         "Reset the LMDB cache i.e. remove ~/.rpki/cache/*.mdb files.",
@@ -677,7 +677,7 @@ data CLIOptions wrapped = CLIOptions {
         "and fetching repositories on the way, in seconds. Default is 7 minutes, i.e. 560 seconds."),
 
     cacheLifetimeHours :: wrapped ::: Maybe Int64 <?>
-        "Lifetime of objects in the local cache, in hours (default is 72 hours)",
+        "Lifetime of objects in the local cache, in hours (default is 24 hours)",
 
     versionNumberToKeep :: wrapped ::: Maybe Natural <?>
         ("Number of versions to keep in the local cache (default is 100). " +++
