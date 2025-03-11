@@ -124,6 +124,9 @@ instantDiff :: Instant -> Instant -> Seconds
 instantDiff (Instant firstMoment) (Instant secondMoment) = 
     timeDiff firstMoment secondMoment 
 
+momentAfter :: Instant -> Seconds -> Instant
+momentAfter (Instant moment) seconds = Instant $ timeAdd moment seconds
+
 instantDateFormat :: Instant -> String
 instantDateFormat (Instant d) = timePrint format d
   where 
