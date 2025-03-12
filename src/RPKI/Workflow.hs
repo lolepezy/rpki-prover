@@ -169,9 +169,11 @@ runWorkflow appContext@AppContext {..} tals = do
                 persistent = False
             },
             let interval = config ^. #cacheCleanupInterval
+            -- let interval = 300_000_000
             in Scheduling { 
                 -- do it half of the interval from now, it will be reasonable "on average"
                 initialDelay = toMicroseconds interval `div` 2,                
+                -- initialDelay = 200_000_000,
                 taskDef = (CacheCleanupTask, cacheCleanup workflowShared),
                 persistent = True,
                 ..
@@ -337,7 +339,7 @@ runWorkflow appContext@AppContext {..} tals = do
                             pure (rtrPayloads, slurmedPayloads)
                           
     -- Delete objects in the store that were read by top-down validation 
-    -- longer than `cacheLifeTime` hours ago.
+    -- longer than `mftCacheLifeTime` hours ago.
     cacheCleanup WorkflowShared {..} worldVersion _ = do            
         executeOrDie
             cleanupUntochedObjects
@@ -347,7 +349,10 @@ runWorkflow appContext@AppContext {..} tals = do
                     Right DB.CleanUpResult {..} -> do 
                         when (deletedObjects > 0) $ do
                             atomically $ writeTVar deletedAnythingFromDb True
-                        logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
+                        let perType :: String = if mempty /= deletedPerType 
+                            then [i|in particular #{Map.toList deletedPerType}, |] 
+                            else ""
+                        logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, #{perType}kept #{keptObjects}, |] <>
                                          [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|])
       where
         cleanupUntochedObjects = do                 
@@ -568,9 +573,11 @@ runCacheCleanup AppContext {..} worldVersion = do
     -- because prover wasn't running for too long.
     cutOffVersion <- roTx db $ \tx -> 
         fromMaybe worldVersion <$> DB.getLastValidationVersion db tx
-
-    DB.deleteStaleContent db (versionIsOld (versionToMoment cutOffVersion) (config ^. #cacheLifeTime))
-
+    
+    DB.deleteStaleContent db DeletionCriterion {
+            general = versionIsOld (versionToMoment cutOffVersion) (config ^. #certEECacheLifeTime),
+            mftCrl  = versionIsOld (versionToMoment cutOffVersion) (config ^. #mftCacheLifeTime)        
+        }
 
 -- | Load the state corresponding to the last completed validation version.
 -- 

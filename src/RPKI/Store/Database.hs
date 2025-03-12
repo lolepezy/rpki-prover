@@ -10,6 +10,7 @@
 
 module RPKI.Store.Database where
 
+import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Lens
 import           Control.Monad.Trans.Maybe
@@ -780,7 +781,7 @@ updateValidatedByVersionMap tx DB { objectStore = RpkiObjectStore {..} } f = lif
 cleanupValidatedByVersionMap :: (MonadIO m, Storage s) =>
                                 Tx s RW
                                 -> DB s
-                                -> (WorldVersion -> Bool)
+                                -> DeletionCriterion
                                 -> m (Map.Map ObjectKey WorldVersion)
 cleanupValidatedByVersionMap tx db toDelete = liftIO $ do     
     updateValidatedByVersionMap tx db $ 
@@ -790,12 +791,20 @@ cleanupValidatedByVersionMap tx db toDelete = liftIO $ do
 
 data CleanUpResult = CleanUpResult {
         deletedObjects :: Int,
-        keptObjects :: Int,
-        deletedURLs :: Int,
+        deletedPerType :: Map.Map RpkiObjectType Integer,
+        keptObjects    :: Int,
+        deletedURLs    :: Int,
         deletedVersions :: Int
     }
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
+
+
+data DeletionCriterion = DeletionCriterion {
+        general :: WorldVersion -> Bool,
+        mftCrl  :: WorldVersion -> RpkiObjectType -> Bool
+    }
+    deriving (Generic)    
 
 deleteOldNonValidationVersions :: (MonadIO m, Storage s) =>                                     
                                    Tx s 'RW 
@@ -834,19 +843,19 @@ deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
 
 
 deleteStaleContent :: (MonadIO m, Storage s) => 
-                    DB s -> 
-                    (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
-                    m CleanUpResult
-deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld = 
+                    DB s 
+                -> DeletionCriterion                                       
+                -> m CleanUpResult
+deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } deletionCriterion = 
     mapException (AppException . storageError) <$> liftIO $ do                
         
         -- Delete old versions associated with async fetches and 
         -- other non-validation related stuff
         deletedVersions <- rwTx db $ \tx -> 
-            deleteOldNonValidationVersions tx db tooOld
+            deleteOldNonValidationVersions tx db (deletionCriterion ^. #general)
 
         versions <- roTx db (`validationVersions` db)
-        let versionsToDelete = filter tooOld versions
+        let versionsToDelete = filter (deletionCriterion ^. #general) versions
 
         rwTx db $ \tx -> do
             -- delete versions and payloads associated with them, 
@@ -855,9 +864,9 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
                 deleteVersion tx db version                    
                 deletePayloads tx db version                
                                 
-            validatedByRecentVersions <- cleanupValidatedByVersionMap tx db tooOld                
+            validatedByRecentVersions <- cleanupValidatedByVersionMap tx db deletionCriterion
 
-            (deletedObjects, keptObjects) <- deleteStaleObjects tx validatedByRecentVersions
+            (deletedObjects, deletedPerType, keptObjects) <- deleteStaleObjects tx validatedByRecentVersions
 
             -- Delete URLs that are now not referred by any object
             deletedURLs <- deleteDanglingUrls db tx
@@ -869,27 +878,36 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
         -- that are not "too old".
         let touchedObjectKeys = Map.keysSet validatedByRecentVersions
 
+        metas <- M.all tx objectMetas
+
         -- Objects inserted by validation with version that is not "too old".
         -- We want to preseve these objects in the cache even if they were 
         -- never used, they may still be used later. That may happens if
         -- a repository updates a manifest aftert updating its children.
         recentlyInsertedObjectKeys <- M.fold tx objectMetas 
-            (\allKeys key (ObjectMeta version _) -> 
-                pure $! if tooOld version 
+            (\allKeys key (ObjectMeta version type_) -> 
+                pure $! if (deletionCriterion ^. #mftCrl) version type_
                     then allKeys 
                     else key `Set.insert` allKeys) mempty
 
         let keysToKeep = touchedObjectKeys <> recentlyInsertedObjectKeys            
 
         -- Everything else must be purged
-        hashesToDelete <- M.fold tx hashToKey 
-            (\allHashes hash key ->
+        T2 hashesToDelete deletedCount <- M.fold tx hashToKey 
+            (\r@(T2 allHashes deletedCount) hash key ->
                 if key `Set.member` keysToKeep
-                    then pure $! allHashes
-                    else pure $! hash `Set.insert` allHashes) mempty 
+                    then pure $! r
+                    else pure $! T2 ((key, hash) : allHashes) (deletedCount + 1)) (T2 mempty 0)
         
-        forM_ hashesToDelete $ deleteObject tx db        
-        pure (Set.size hashesToDelete, Set.size keysToKeep)
+        deletedPerType <- newTVarIO mempty
+        forM_ hashesToDelete $ \(key, hash) -> do 
+            ifJustM (M.get tx objectMetas key) $ \(ObjectMeta _ type_) -> 
+                atomically $ modifyTVar' deletedPerType $ Map.unionWith (+) (Map.singleton type_ 1)
+            deleteObject tx db hash
+
+        atomically $ do 
+            z <- readTVar deletedPerType
+            pure (deletedCount, z, Set.size keysToKeep)
 
 
 deleteDanglingUrls :: DB s -> Tx s 'RW -> IO Int
