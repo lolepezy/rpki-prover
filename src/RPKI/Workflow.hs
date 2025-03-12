@@ -573,11 +573,11 @@ runCacheCleanup AppContext {..} worldVersion = do
     -- because prover wasn't running for too long.
     cutOffVersion <- roTx db $ \tx -> 
         fromMaybe worldVersion <$> DB.getLastValidationVersion db tx
-
-    DB.deleteStaleContent db (versionIsOld 
-        (versionToMoment cutOffVersion) 
-        (config ^. #mftCacheLifeTime))
-
+    
+    DB.deleteStaleContent db DeletionCriterion {
+            general = versionIsOld (versionToMoment cutOffVersion) (config ^. #certEECacheLifeTime),
+            mftCrl  = versionIsOld (versionToMoment cutOffVersion) (config ^. #mftCacheLifeTime)        
+        }
 
 -- | Load the state corresponding to the last completed validation version.
 -- 
