@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StrictData #-}
 
 module RPKI.Config where
@@ -70,8 +71,8 @@ data Config = Config {
         httpApiConf               :: HttpApiConfig,
         rtrConfig                 :: Maybe RtrConfig,
         cacheCleanupInterval      :: Seconds,
-        mftCacheLifeTime          :: Seconds,
-        certEECacheLifeTime       :: Seconds,
+        shortLivedCacheLifeTime   :: Seconds,
+        longLivedCacheLifeTime    :: Seconds,
         versionNumberToKeep       :: Natural,
         storageCompactionInterval :: Seconds,
         rsyncCleanupInterval      :: Seconds,
@@ -278,9 +279,7 @@ defaultConfig = Config {
         cleanupWorkerMemoryMb    = 512
     },
     rtrConfig                 = Nothing,
-    cacheCleanupInterval      = Seconds $ 60 * 60 * 1,
-    mftCacheLifeTime          = frequentObjectCacheLifetime,
-    certEECacheLifeTime         = stableObjectCacheLifetime,
+    cacheCleanupInterval      = Seconds $ 60 * 60 * 6,    
     versionNumberToKeep       = 3,
     storageCompactionInterval = Seconds $ 60 * 60 * 120,
     rsyncCleanupInterval      = Seconds $ 60 * 60 * 24 * 30,
@@ -288,12 +287,12 @@ defaultConfig = Config {
     localExceptions = Hidden [],
     logLevel = defaultsLogLevel,
     metricsPrefix = "rpki_prover_",
-    withValidityApi = False
+    withValidityApi = False,
+    ..
 }
   where
-    frequentObjectCacheLifetime = Seconds $ 60 * 60 * 24
-    -- certificates and end entities should leave longer than manifests and CRLs
-    stableObjectCacheLifetime = 10 * frequentObjectCacheLifetime
+    shortLivedCacheLifeTime = Seconds $ 60 * 60 * 24
+    longLivedCacheLifeTime  = 10 * shortLivedCacheLifeTime    
 
 defaultsLogLevel :: LogLevel
 defaultsLogLevel = InfoL

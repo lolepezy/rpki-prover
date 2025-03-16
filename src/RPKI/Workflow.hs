@@ -575,8 +575,8 @@ runCacheCleanup AppContext {..} worldVersion = do
         fromMaybe worldVersion <$> DB.getLastValidationVersion db tx
     
     let cutOffMoment = versionToMoment cutOffVersion
-        tooOldLongLived  = versionIsOld cutOffMoment (config ^. #certEECacheLifeTime)
-        tooOldShortLived = versionIsOld cutOffMoment (config ^. #mftCacheLifeTime)
+        tooOldLongLived  = versionIsOld cutOffMoment (config ^. #longLivedCacheLifeTime)
+        tooOldShortLived = versionIsOld cutOffMoment (config ^. #shortLivedCacheLifeTime)
 
     DB.deleteStaleContent db DB.DeletionCriteria {
             versionIsTooOld  = tooOldLongLived,

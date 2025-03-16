@@ -320,7 +320,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 (if noAsyncFetch then SyncOnly else SyncAndAsync)        
             & maybeSet (#httpApiConf . #port) httpApiPort
             & #rtrConfig .~ rtrConfig
-            & maybeSet #mftCacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
+            & maybeSet #longLivedCacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
             & maybeSet #versionNumberToKeep versionNumberToKeep
             & #lmdbSizeMb .~ lmdbRealSize
             & #localExceptions .~ apiSecured localExceptions
@@ -335,7 +335,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     let adjustedConfig = config 
             -- Cache must be cleaned up at least as often as the 
             -- lifetime of the objects in it    
-            & #cacheCleanupInterval %~ (`min` (config ^. #mftCacheLifeTime))
+            & #cacheCleanupInterval %~ (`min` (config ^. #longLivedCacheLifeTime))
 
     let readSlurms files = do
             logDebug logger [i|Reading SLURM files: #{files}.|]

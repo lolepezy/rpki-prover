@@ -848,17 +848,15 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria
     mapException (AppException . storageError) <$> liftIO $ do                
         
         -- Delete old versions associated with async fetches and 
-        -- other non-validation related stuff
-        deletedVersions <- rwTx db $ \tx -> 
-            deleteOldNonValidationVersions tx db versionIsTooOld
-
-        versions <- roTx db (`validationVersions` db)
-        let versionsToDelete = filter versionIsTooOld versions
-
+        -- other non-validation related stuff        
         rwTx db $ \tx -> do
+            deletedVersions <- deleteOldNonValidationVersions tx db versionIsTooOld
+
+            validationVersionsToDelete <- filter versionIsTooOld <$> validationVersions tx db        
+
             -- delete versions and payloads associated with them, 
             -- e.g. VRPs, ASPAs, BGPSec certificates, etc.
-            forM_ versionsToDelete $ \version -> do 
+            forM_ validationVersionsToDelete $ \version -> do 
                 deleteVersion tx db version                    
                 deletePayloads tx db version                                                        
 
