@@ -574,9 +574,17 @@ runCacheCleanup AppContext {..} worldVersion = do
     cutOffVersion <- roTx db $ \tx -> 
         fromMaybe worldVersion <$> DB.getLastValidationVersion db tx
     
-    DB.deleteStaleContent db DeletionCriterion {
-            general = versionIsOld (versionToMoment cutOffVersion) (config ^. #certEECacheLifeTime),
-            mftCrl  = versionIsOld (versionToMoment cutOffVersion) (config ^. #mftCacheLifeTime)        
+    let cutOffMoment = versionToMoment cutOffVersion
+        tooOldLongLived  = versionIsOld cutOffMoment (config ^. #certEECacheLifeTime)
+        tooOldShortLived = versionIsOld cutOffMoment (config ^. #mftCacheLifeTime)
+
+    DB.deleteStaleContent db DB.DeletionCriteria {
+            versionIsTooOld  = tooOldLongLived,
+            objectIsTooOld = \version type_ -> 
+                case type_ of 
+                    MFT -> tooOldShortLived version
+                    CRL -> tooOldShortLived version
+                    _   -> tooOldLongLived version
         }
 
 -- | Load the state corresponding to the last completed validation version.
@@ -741,3 +749,4 @@ leftToWait start end (Seconds interval) = let
     executionTimeNs = toNanoseconds end - toNanoseconds start
     timeToWaitNs = nanosPerSecond * interval - executionTimeNs
     in timeToWaitNs `div` 1000               
+
