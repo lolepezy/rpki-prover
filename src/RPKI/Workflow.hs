@@ -339,7 +339,7 @@ runWorkflow appContext@AppContext {..} tals = do
                             pure (rtrPayloads, slurmedPayloads)
                           
     -- Delete objects in the store that were read by top-down validation 
-    -- longer than `mftCacheLifeTime` hours ago.
+    -- longer than `shortLivedCacheLifeTime` hours ago.
     cacheCleanup WorkflowShared {..} worldVersion _ = do            
         executeOrDie
             cleanupUntochedObjects
