@@ -2,10 +2,13 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedLabels  #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StrictData #-}
 
 module RPKI.Config where
+
+import           Control.Lens 
 
 import GHC.Conc
 import Numeric.Natural
@@ -248,11 +251,11 @@ defaultConfig = Config {
         enabled = True
     },
     validationConfig = ValidationConfig {
-        revalidationInterval           = Seconds $ 7 * 60,
-        rrdpRepositoryRefreshInterval  = Seconds 120,
-        rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
+        revalidationInterval           = 7 * minutes,
+        rrdpRepositoryRefreshInterval  = 2 * minutes,
+        rsyncRepositoryRefreshInterval = 11 * minutes,    
         minimalRepositoryRetryInterval = Seconds 10,    
-        topDownTimeout                 = Seconds $ 60 * 60,    
+        topDownTimeout                 = hour,    
         manifestProcessing             = RFC9286,
         maxCertificatePathDepth        = 32,
         maxTotalTreeSize               = 5_000_000,
@@ -279,10 +282,10 @@ defaultConfig = Config {
         cleanupWorkerMemoryMb    = 512
     },
     rtrConfig                 = Nothing,
-    cacheCleanupInterval      = Seconds $ 60 * 60 * 6,    
+    cacheCleanupInterval      = 6 * hours,    
     versionNumberToKeep       = 3,
-    storageCompactionInterval = Seconds $ 60 * 60 * 120,
-    rsyncCleanupInterval      = Seconds $ 60 * 60 * 24 * 30,
+    storageCompactionInterval = 5 * days,
+    rsyncCleanupInterval      = 30 * days,
     lmdbSizeMb                = Size $ 32 * 1024,
     localExceptions = Hidden [],
     logLevel = defaultsLogLevel,
@@ -291,8 +294,23 @@ defaultConfig = Config {
     ..
 }
   where
-    shortLivedCacheLifeTime = Seconds $ 60 * 60 * 24
-    longLivedCacheLifeTime  = 10 * shortLivedCacheLifeTime    
+    shortLivedCacheLifeTime = 24 * hours
+    longLivedCacheLifeTime  = 10 * days
+    minutes = Seconds 60
+    hour = hours
+    days = 24 * hours
+    hours = Seconds $ 60 * 60    
+
+
+adjustConfig :: Config -> Config
+adjustConfig config = config 
+        -- Cache must be cleaned up at least as often as the 
+        -- lifetime of the objects in it    
+        & #cacheCleanupInterval %~ (`min` (config ^. #longLivedCacheLifeTime))
+        -- to accomodate for a weird case of longLivedCacheLifeTime < shortLivedCacheLifeTime
+        -- we still want some correctness here, so the "short" one should be shorter
+        & #shortLivedCacheLifeTime %~ (`min` (config ^. #longLivedCacheLifeTime))
+
 
 defaultsLogLevel :: LogLevel
 defaultsLogLevel = InfoL
