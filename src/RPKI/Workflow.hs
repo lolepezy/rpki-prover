@@ -569,8 +569,8 @@ runCacheCleanup :: Storage s =>
 runCacheCleanup AppContext {..} worldVersion = do        
     db <- readTVarIO database
     -- Use the latest completed validation moment as a cutting point.
-    -- This is to prevent cleaning up objects if they were untouched 
-    -- because prover wasn't running for too long.
+    -- This is to prevent cleaning up objects actual object if they were 
+    -- untouched because prover was stopped for a long period.
     cutOffVersion <- roTx db $ \tx -> 
         fromMaybe worldVersion <$> DB.getLastValidationVersion db tx
     
@@ -582,6 +582,8 @@ runCacheCleanup AppContext {..} worldVersion = do
             versionIsTooOld  = tooOldLongLived,
             objectIsTooOld = \version type_ -> 
                 case type_ of 
+                    -- Most of the object churn happens because of the manifest and CRL updates, 
+                    -- so they should be removed from the cache sooner than more long-lived objects
                     MFT -> tooOldShortLived version
                     CRL -> tooOldShortLived version
                     _   -> tooOldLongLived version
