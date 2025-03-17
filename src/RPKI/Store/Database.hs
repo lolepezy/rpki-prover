@@ -850,16 +850,10 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria
         -- Delete old versions associated with async fetches and 
         -- other non-validation related stuff        
         rwTx db $ \tx -> do
-            deletedVersions <- deleteOldNonValidationVersions tx db versionIsTooOld
+            -- First delete the oldest versions            
+            deletedVersions <- deleteOldVersions tx
 
-            validationVersionsToDelete <- filter versionIsTooOld <$> validationVersions tx db        
-
-            -- delete versions and payloads associated with them, 
-            -- e.g. VRPs, ASPAs, BGPSec certificates, etc.
-            forM_ validationVersionsToDelete $ \version -> do 
-                deleteVersion tx db version                    
-                deletePayloads tx db version                                                        
-
+            -- Now delete objects that are last used by the deleted versions
             (deletedObjects, deletedPerType, keptObjects) <- deleteStaleObjects tx
 
             -- Delete URLs that are now not referred by any object
@@ -867,6 +861,17 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria
 
             pure CleanUpResult {..}
   where
+
+    deleteOldVersions tx = do 
+        deletedNotValidationVersions <- deleteOldNonValidationVersions tx db versionIsTooOld        
+        validationVersionsToDelete   <- filter versionIsTooOld <$> validationVersions tx db
+
+        for_ validationVersionsToDelete $ \version -> do 
+            deletePayloads tx db version
+            deleteVersion tx db version                                
+
+        pure $ deletedNotValidationVersions + (List.length validationVersionsToDelete)
+
     deleteStaleObjects tx = do 
 
         validatedBy <- maybe mempty unCompressed <$> M.get tx validatedByVersion validatedByVersionKey        

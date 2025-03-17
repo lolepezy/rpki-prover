@@ -369,7 +369,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
         -- a week or so. So don't compact,
         Lmdb.DidntHaveVersion -> pure ()
 
-        -- Nothing special, the cache is totally normal
+        -- Nothing special, the cache has the version as expected
         Lmdb.WasCompatible    -> pure ()
 
     logInfo logger [i|Created application context with configuration: 
