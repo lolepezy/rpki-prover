@@ -167,25 +167,21 @@ runWorkflow appContext@AppContext {..} tals = do
                 interval = config ^. typed @ValidationConfig . #revalidationInterval,
                 taskDef = (ValidationTask, validateTAs workflowShared),
                 persistent = False
-            },
-            let interval = config ^. #cacheCleanupInterval
-            -- let interval = 300_000_000
-            in Scheduling { 
-                -- do it half of the interval from now, it will be reasonable "on average"
-                initialDelay = toMicroseconds interval `div` 2,                
-                -- initialDelay = 200_000_000,
+            },            
+            Scheduling {                                 
+                initialDelay = 600 * 1_000_000,
+                interval = config ^. #cacheCleanupInterval,
                 taskDef = (CacheCleanupTask, cacheCleanup workflowShared),
-                persistent = True,
-                ..
+                persistent = True                
             },        
             Scheduling {                 
-                initialDelay = 1200_000_000,
+                initialDelay = 900 * 1_000_000,
                 interval = config ^. #storageCompactionInterval,
                 taskDef = (LmdbCompactTask, compact workflowShared),
                 persistent = True
             },
             Scheduling {             
-                initialDelay = 1200_000_000,
+                initialDelay = 1200 * 1_000_000,
                 interval = config ^. #rsyncCleanupInterval,
                 taskDef = (RsyncCleanupTask, rsyncCleanup),
                 persistent = True
