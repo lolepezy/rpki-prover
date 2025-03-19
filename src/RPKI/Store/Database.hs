@@ -10,6 +10,7 @@
 
 module RPKI.Store.Database where
 
+import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Lens
 import           Control.Monad.Trans.Maybe
@@ -414,28 +415,30 @@ hashExists tx DB { objectStore = RpkiObjectStore {..} } h =
     liftIO $ M.exists tx hashToKey h
 
 
-deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Hash -> m ()
-deleteObject tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $
-    ifJustM (M.get tx hashToKey h) $ \objectKey ->             
-        ifJustM (getObjectByKey tx db objectKey) $ \ro -> do 
-            M.delete tx objects objectKey
-            M.delete tx objectMetas objectKey        
-            M.delete tx hashToKey h        
-            case ro of 
-                CerRO c -> M.delete tx certBySKI (getSKI c)
-                _       -> pure ()
-            ifJustM (M.get tx objectKeyToUrlKeys objectKey) $ \urlKeys -> do 
-                M.delete tx objectKeyToUrlKeys objectKey            
-                forM_ urlKeys $ \urlKey ->
-                    MM.delete tx urlKeyToObjectKey urlKey objectKey                
-            
-            for_ (getAKI ro) $ \aki' -> 
-                case ro of
-                    MftRO mft -> do 
-                        MM.delete tx mftByAKI aki' (objectKey, getMftTimingMark mft)
-                        deleteMftShortcut tx db aki'
-                    _  -> pure ()        
+deleteObjectByHash :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Hash -> m ()
+deleteObjectByHash tx db@DB { objectStore = RpkiObjectStore {..} } hash = liftIO $ 
+    ifJustM (M.get tx hashToKey hash) $ deleteObjectByKey tx db
 
+deleteObjectByKey :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> ObjectKey -> m ()
+deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore {..} } objectKey = liftIO $ do 
+    ifJustM (getObjectByKey tx db objectKey) $ \ro -> do 
+        M.delete tx objects objectKey
+        M.delete tx objectMetas objectKey        
+        M.delete tx hashToKey (getHash ro)
+        case ro of 
+            CerRO c -> M.delete tx certBySKI (getSKI c)
+            _       -> pure ()
+        ifJustM (M.get tx objectKeyToUrlKeys objectKey) $ \urlKeys -> do 
+            M.delete tx objectKeyToUrlKeys objectKey            
+            forM_ urlKeys $ \urlKey ->
+                MM.delete tx urlKeyToObjectKey urlKey objectKey                
+        
+        for_ (getAKI ro) $ \aki' -> 
+            case ro of
+                MftRO mft -> do 
+                    MM.delete tx mftByAKI aki' (objectKey, getMftTimingMark mft)
+                    deleteMftShortcut tx db aki'
+                _  -> pure ()   
 
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
                     Tx s mode -> DB s -> AKI -> m (Maybe (Keyed (Located MftObject)))
@@ -772,7 +775,7 @@ updateValidatedByVersionMap :: (MonadIO m, Storage s)
                             -> m (Map.Map ObjectKey WorldVersion)
 updateValidatedByVersionMap tx DB { objectStore = RpkiObjectStore {..} } f = liftIO $ do
     validatedBy <- M.get tx validatedByVersion validatedByVersionKey    
-    let validatedBy' = f $ fmap unCompressed validatedBy
+    let validatedBy' = f $ unCompressed <$> validatedBy
     M.put tx validatedByVersion validatedByVersionKey $ Compressed validatedBy'
     pure validatedBy'
 
@@ -790,12 +793,20 @@ cleanupValidatedByVersionMap tx db toDelete = liftIO $ do
 
 data CleanUpResult = CleanUpResult {
         deletedObjects :: Int,
-        keptObjects :: Int,
-        deletedURLs :: Int,
+        deletedPerType :: Map.Map RpkiObjectType Integer,
+        keptObjects    :: Int,
+        deletedURLs    :: Int,
         deletedVersions :: Int
     }
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
+
+
+data DeletionCriteria = DeletionCriteria {
+        versionIsTooOld :: WorldVersion -> Bool,
+        objectIsTooOld  :: WorldVersion -> RpkiObjectType -> Bool
+    }
+    deriving (Generic)
 
 deleteOldNonValidationVersions :: (MonadIO m, Storage s) =>                                     
                                    Tx s 'RW 
@@ -834,62 +845,77 @@ deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
 
 
 deleteStaleContent :: (MonadIO m, Storage s) => 
-                    DB s -> 
-                    (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
-                    m CleanUpResult
-deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld = 
+                    DB s 
+                -> DeletionCriteria                                       
+                -> m CleanUpResult
+deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria {..} = 
     mapException (AppException . storageError) <$> liftIO $ do                
         
         -- Delete old versions associated with async fetches and 
-        -- other non-validation related stuff
-        deletedVersions <- rwTx db $ \tx -> 
-            deleteOldNonValidationVersions tx db tooOld
-
-        versions <- roTx db (`validationVersions` db)
-        let versionsToDelete = filter tooOld versions
-
+        -- other non-validation related stuff        
         rwTx db $ \tx -> do
-            -- delete versions and payloads associated with them, 
-            -- e.g. VRPs, ASPAs, BGPSec certificatees, etc.
-            forM_ versionsToDelete $ \version -> do 
-                deleteVersion tx db version                    
-                deletePayloads tx db version                
-                                
-            validatedByRecentVersions <- cleanupValidatedByVersionMap tx db tooOld                
+            -- First delete the oldest versions            
+            deletedVersions <- deleteOldVersions tx
 
-            (deletedObjects, keptObjects) <- deleteStaleObjects tx validatedByRecentVersions
+            -- Now delete objects that are last used by the deleted versions
+            (deletedObjects, deletedPerType, keptObjects) <- deleteStaleObjects tx
 
             -- Delete URLs that are now not referred by any object
             deletedURLs <- deleteDanglingUrls db tx
 
             pure CleanUpResult {..}
   where
-    deleteStaleObjects tx validatedByRecentVersions = do 
-        -- Set of all objects touched by validation with versions
-        -- that are not "too old".
-        let touchedObjectKeys = Map.keysSet validatedByRecentVersions
 
-        -- Objects inserted by validation with version that is not "too old".
-        -- We want to preseve these objects in the cache even if they were 
-        -- never used, they may still be used later. That may happens if
-        -- a repository updates a manifest aftert updating its children.
-        recentlyInsertedObjectKeys <- M.fold tx objectMetas 
-            (\allKeys key (ObjectMeta version _) -> 
-                pure $! if tooOld version 
-                    then allKeys 
-                    else key `Set.insert` allKeys) mempty
+    deleteOldVersions tx = do 
+        deletedNotValidationVersions <- deleteOldNonValidationVersions tx db versionIsTooOld        
+        validationVersionsToDelete   <- filter versionIsTooOld <$> validationVersions tx db
 
-        let keysToKeep = touchedObjectKeys <> recentlyInsertedObjectKeys            
+        for_ validationVersionsToDelete $ \version -> do 
+            deletePayloads tx db version
+            deleteVersion tx db version                                
 
-        -- Everything else must be purged
-        hashesToDelete <- M.fold tx hashToKey 
-            (\allHashes hash key ->
-                if key `Set.member` keysToKeep
-                    then pure $! allHashes
-                    else pure $! hash `Set.insert` allHashes) mempty 
-        
-        forM_ hashesToDelete $ deleteObject tx db        
-        pure (Set.size hashesToDelete, Set.size keysToKeep)
+        pure $ deletedNotValidationVersions + (List.length validationVersionsToDelete)
+
+    deleteStaleObjects tx = do 
+
+        validatedBy <- maybe mempty unCompressed <$> M.get tx validatedByVersion validatedByVersionKey        
+
+        deletedPerType <- newTVarIO mempty
+        keptTotal      <- newTVarIO 0
+        keysToDelete <- M.fold tx objectMetas 
+            (\toDelete key (ObjectMeta insertedBy type_) -> do 
+                -- Object was inserted by a version that is "too old".
+                let insertedWayBack = objectIsTooOld insertedBy type_                
+
+                -- Object was validated by versions that is "too old" or not validated at all.
+                let validatedWayBack = 
+                        case Map.lookup key validatedBy of 
+                            Just validated -> objectIsTooOld validated type_
+                            Nothing        -> True
+            
+                -- An object can stay in the cache if 
+                -- 1. It was inserted by a recent version or
+                -- 2. It was validated by a recent version
+                if insertedWayBack && validatedWayBack
+                    then do 
+                        atomically $ modifyTVar' deletedPerType $ Map.unionWith (+) (Map.singleton type_ 1)
+                        pure $! key : toDelete
+                    else do 
+                        atomically $ modifyTVar' keptTotal (+1)                            
+                        pure $! toDelete
+            )
+            mempty
+                        
+        let validatedBy' = foldr Map.delete validatedBy keysToDelete        
+        M.put tx validatedByVersion validatedByVersionKey $ Compressed validatedBy'
+
+        forM_ keysToDelete $ deleteObjectByKey tx db        
+
+        atomically $ do             
+            deleted <- readTVar deletedPerType
+            let deletedCount = fromIntegral $ sum $ Map.elems deleted
+            kept    <- readTVar keptTotal
+            pure (deletedCount, deleted, kept)
 
 
 deleteDanglingUrls :: DB s -> Tx s 'RW -> IO Int
@@ -1048,3 +1074,4 @@ makeSafeUrl u =
                         C8.pack hashBytes
                    ]
     in SafeUrlAsKey $ toShortBS bsUrlKey
+

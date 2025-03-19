@@ -167,23 +167,21 @@ runWorkflow appContext@AppContext {..} tals = do
                 interval = config ^. typed @ValidationConfig . #revalidationInterval,
                 taskDef = (ValidationTask, validateTAs workflowShared),
                 persistent = False
-            },
-            let interval = config ^. #cacheCleanupInterval
-            in Scheduling { 
-                -- do it half of the interval from now, it will be reasonable "on average"
-                initialDelay = toMicroseconds interval `div` 2,                
+            },            
+            Scheduling {                                 
+                initialDelay = 600 * 1_000_000,
+                interval = config ^. #cacheCleanupInterval,
                 taskDef = (CacheCleanupTask, cacheCleanup workflowShared),
-                persistent = True,
-                ..
+                persistent = True                
             },        
             Scheduling {                 
-                initialDelay = 1200_000_000,
+                initialDelay = 900 * 1_000_000,
                 interval = config ^. #storageCompactionInterval,
                 taskDef = (LmdbCompactTask, compact workflowShared),
                 persistent = True
             },
             Scheduling {             
-                initialDelay = 1200_000_000,
+                initialDelay = 1200 * 1_000_000,
                 interval = config ^. #rsyncCleanupInterval,
                 taskDef = (RsyncCleanupTask, rsyncCleanup),
                 persistent = True
@@ -337,7 +335,7 @@ runWorkflow appContext@AppContext {..} tals = do
                             pure (rtrPayloads, slurmedPayloads)
                           
     -- Delete objects in the store that were read by top-down validation 
-    -- longer than `cacheLifeTime` hours ago.
+    -- longer than `shortLivedCacheLifeTime` hours ago.
     cacheCleanup WorkflowShared {..} worldVersion _ = do            
         executeOrDie
             cleanupUntochedObjects
@@ -347,7 +345,10 @@ runWorkflow appContext@AppContext {..} tals = do
                     Right DB.CleanUpResult {..} -> do 
                         when (deletedObjects > 0) $ do
                             atomically $ writeTVar deletedAnythingFromDb True
-                        logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
+                        let perType :: String = if mempty /= deletedPerType 
+                            then [i|in particular #{Map.toList deletedPerType}, |] 
+                            else ""
+                        logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, #{perType}kept #{keptObjects}, |] <>
                                          [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|])
       where
         cleanupUntochedObjects = do                 
@@ -564,13 +565,25 @@ runCacheCleanup :: Storage s =>
 runCacheCleanup AppContext {..} worldVersion = do        
     db <- readTVarIO database
     -- Use the latest completed validation moment as a cutting point.
-    -- This is to prevent cleaning up objects if they were untouched 
-    -- because prover wasn't running for too long.
+    -- This is to prevent cleaning up objects actual object if they were 
+    -- untouched because prover was stopped for a long period.
     cutOffVersion <- roTx db $ \tx -> 
         fromMaybe worldVersion <$> DB.getLastValidationVersion db tx
+    
+    let cutOffMoment = versionToMoment cutOffVersion
+        tooOldLongLived  = versionIsOld cutOffMoment (config ^. #longLivedCacheLifeTime)
+        tooOldShortLived = versionIsOld cutOffMoment (config ^. #shortLivedCacheLifeTime)
 
-    DB.deleteStaleContent db (versionIsOld (versionToMoment cutOffVersion) (config ^. #cacheLifeTime))
-
+    DB.deleteStaleContent db DB.DeletionCriteria {
+            versionIsTooOld  = tooOldLongLived,
+            objectIsTooOld = \version type_ -> 
+                case type_ of 
+                    -- Most of the object churn happens because of the manifest and CRL updates, 
+                    -- so they should be removed from the cache sooner than more long-lived objects
+                    MFT -> tooOldShortLived version
+                    CRL -> tooOldShortLived version
+                    _   -> tooOldLongLived version
+        }
 
 -- | Load the state corresponding to the last completed validation version.
 -- 
@@ -734,3 +747,4 @@ leftToWait start end (Seconds interval) = let
     executionTimeNs = toNanoseconds end - toNanoseconds start
     timeToWaitNs = nanosPerSecond * interval - executionTimeNs
     in timeToWaitNs `div` 1000               
+

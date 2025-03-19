@@ -278,7 +278,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     let apiSecured :: a -> ApiSecured a
         apiSecured a = if showHiddenConfig then Public a else Hidden a
 
-    let config = defaults
+    let config = adjustConfig $ defaults
             & #programBinaryPath .~ apiSecured programPath
             & #rootDirectory .~ apiSecured root
             & #talDirectory .~ apiSecured tald
@@ -320,7 +320,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                 (if noAsyncFetch then SyncOnly else SyncAndAsync)        
             & maybeSet (#httpApiConf . #port) httpApiPort
             & #rtrConfig .~ rtrConfig
-            & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
+            & maybeSet #longLivedCacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
             & maybeSet #versionNumberToKeep versionNumberToKeep
             & #lmdbSizeMb .~ lmdbRealSize
             & #localExceptions .~ apiSecured localExceptions
@@ -331,12 +331,6 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
             & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory            
         
-    -- Do some "common sense" adjustmnents to the config for correctness
-    let adjustedConfig = config 
-            -- Cache must be cleaned up at least as often as the 
-            -- lifetime of the objects in it    
-            & #cacheCleanupInterval %~ (`min` (config ^. #cacheLifeTime))
-
     let readSlurms files = do
             logDebug logger [i|Reading SLURM files: #{files}.|]
             readSlurmFiles files
@@ -351,7 +345,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                     (if resetCache then Reset else UseExisting)
                     logger
                     cached
-                    adjustedConfig
+                    config
 
     (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
     database <- liftIO $ newTVarIO db    
@@ -375,11 +369,11 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
         -- a week or so. So don't compact,
         Lmdb.DidntHaveVersion -> pure ()
 
-        -- Nothing special, the cache is totally normal
+        -- Nothing special, the cache has the version as expected
         Lmdb.WasCompatible    -> pure ()
 
     logInfo logger [i|Created application context with configuration: 
-#{shower (adjustedConfig)}|]
+#{shower (config)}|]
     pure appContext
 
       
@@ -673,7 +667,7 @@ data CLIOptions wrapped = CLIOptions {
         "number, since using the latter does not give much benefit and actually may cause performance degradation."),
 
     fetcherCount :: wrapped ::: Maybe Natural <?>
-        ("Maximal number of concurrent fetchers (default is --cpu-count * 3)."),
+        ("Maximal number of concurrent fetchers (default is --cpu-count * 3)."), 
 
     resetCache :: wrapped ::: Bool <?>
         "Reset the LMDB cache i.e. remove ~/.rpki/cache/*.mdb files.",
@@ -683,7 +677,7 @@ data CLIOptions wrapped = CLIOptions {
         "and fetching repositories on the way, in seconds. Default is 7 minutes, i.e. 560 seconds."),
 
     cacheLifetimeHours :: wrapped ::: Maybe Int64 <?>
-        "Lifetime of objects in the local cache, in hours (default is 72 hours)",
+        "Lifetime of objects in the local cache, in hours (default is 24 hours)",
 
     versionNumberToKeep :: wrapped ::: Maybe Natural <?>
         ("Number of versions to keep in the local cache (default is 100). " +++

@@ -34,7 +34,6 @@ import           RPKI.Time
 import           RPKI.Metrics.System
 import           RPKI.Util
 
-
 import           System.Directory
 import           System.FilePath                  ((</>))
 import           System.Posix.Files
