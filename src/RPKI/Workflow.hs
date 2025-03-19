@@ -533,6 +533,8 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                     Right slurm ->
                         pure (vs, Just slurm)        
 
+    handleValidations $ topDownValidations ^. typed
+
     -- Save all the results into LMDB
     let updatedValidation = slurmValidations <> topDownValidations ^. typed
     (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
@@ -553,6 +555,31 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deleted} oldest versions(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, maybeSlurm)
+  where
+    -- Here we do anything that needs to be done in case of specific 
+    -- fetch/validation issues are present
+    handleValidations :: Validations -> IO ()
+    handleValidations (Validations validations) = do 
+
+        -- Find repositories where manifests had referential integrity issues                        
+        let z = [ mostNarrowRepository scope | 
+                    (scope, issues) <- Map.toList validations, 
+                    any manifestIntegrityError (Set.toList issues) ]
+        pure ()
+      where
+        manifestIntegrityError = \case
+            VErr (ValidationE e) -> case e of 
+                ManifestEntryDoesn'tExist _ _       -> True
+                NoCRLExists _ _                     -> True                
+                ManifestEntryHasWrongFileType _ _ _ -> True                
+                _                                   -> False
+            _                                       -> False
+
+        mostNarrowRepository :: VScope -> Maybe RpkiURL
+        mostNarrowRepository (Scope s) = 
+            case [ url | RepositoryFocus url <- NE.toList s ] of 
+                [] -> Nothing
+                xs -> Just $ last xs
 
 
 -- To be called from the cache cleanup worker
