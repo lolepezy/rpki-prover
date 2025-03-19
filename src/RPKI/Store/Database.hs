@@ -884,7 +884,7 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria
         keptTotal      <- newTVarIO 0
         keysToDelete <- M.fold tx objectMetas 
             (\toDelete key (ObjectMeta insertedBy type_) -> do 
-                -- Objects was inserted by a version that is "too old".
+                -- Object was inserted by a version that is "too old".
                 let insertedWayBack = objectIsTooOld insertedBy type_                
 
                 -- Object was validated by versions that is "too old" or not validated at all.
