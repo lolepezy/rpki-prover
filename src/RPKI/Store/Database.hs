@@ -415,6 +415,10 @@ hashExists tx DB { objectStore = RpkiObjectStore {..} } h =
     liftIO $ M.exists tx hashToKey h
 
 
+deleteObjectByHash :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Hash -> m ()
+deleteObjectByHash tx db@DB { objectStore = RpkiObjectStore {..} } hash = liftIO $ 
+    ifJustM (M.get tx hashToKey hash) $ deleteObjectByKey tx db
+
 deleteObjectByKey :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> ObjectKey -> m ()
 deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore {..} } objectKey = liftIO $ do 
     ifJustM (getObjectByKey tx db objectKey) $ \ro -> do 

@@ -132,7 +132,7 @@ shouldMergeObjectLocations io = do
 
     verifyUrlCount db "case 1" 3    
 
-    rwTx db $ \tx -> DB.deleteObject tx db (getHash ro1)    
+    rwTx db $ \tx -> DB.deleteObjectByHash tx db (getHash ro1)    
 
     verifyUrlCount db "case 2" 3
 
@@ -208,7 +208,7 @@ shouldInsertAndGetAllBackFromObjectStore io = do
 
     rwTx db $ \tx -> 
         forM_ toDelete $ \(Located _ ro) -> 
-            DB.deleteObject tx db (getHash ro)
+            DB.deleteObjectByHash tx db (getHash ro)
     
     compareLatestMfts db ros2 aki2      
     compareLatestMfts db toKeep aki1
