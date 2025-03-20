@@ -562,9 +562,12 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     handleValidations (Validations validations) = do 
 
         -- Find repositories where manifests had referential integrity issues                        
-        let z = [ mostNarrowRepository scope | 
-                    (scope, issues) <- Map.toList validations, 
+        let relevantRepositories = 
+                [ relevantRepo | 
+                    (scope, issues) <- Map.toList validations,
+                    Just (RrdpU relevantRepo) <- [mostNarrowRepositoryScope scope],
                     any manifestIntegrityError (Set.toList issues) ]
+        -- Mark these repositories as "download snapshot next time"
         pure ()
       where
         manifestIntegrityError = \case
@@ -575,8 +578,8 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                 _                                   -> False
             _                                       -> False
 
-        mostNarrowRepository :: VScope -> Maybe RpkiURL
-        mostNarrowRepository (Scope s) = 
+        mostNarrowRepositoryScope :: VScope -> Maybe RpkiURL
+        mostNarrowRepositoryScope (Scope s) = 
             case [ url | RepositoryFocus url <- NE.toList s ] of 
                 [] -> Nothing
                 xs -> Just $ last xs

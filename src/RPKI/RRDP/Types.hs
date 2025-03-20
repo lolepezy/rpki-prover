@@ -11,6 +11,7 @@ import           Data.List.NonEmpty               (NonEmpty (..))
 import           Data.Text                        (Text)
 import           GHC.Generics
 import           RPKI.Domain
+import           RPKI.Time
 import           RPKI.Store.Base.Serialisation
 
 
@@ -79,10 +80,16 @@ data RrdpAction
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (TheBinary, NFData)     
 
+data RrdpEnforcement = NextTimeFetchSnapshot
+                    | ForcedSnaphotAt Instant
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass (TheBinary, NFData)                                
+
 data RrdpMeta = RrdpMeta {
-        sessionId :: SessionId,
-        serial    :: RrdpSerial,
-        integrity :: RrdpIntegrity
+        sessionId   :: SessionId,
+        serial      :: RrdpSerial,
+        integrity   :: RrdpIntegrity,
+        enforcement :: Maybe RrdpEnforcement
     }    
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary, NFData)            
@@ -97,4 +104,7 @@ newRrdpIntegrity :: Notification -> RrdpIntegrity
 newRrdpIntegrity Notification {..} = RrdpIntegrity deltas
 
 fromNotification :: Notification -> RrdpMeta
-fromNotification Notification {..} = RrdpMeta { integrity = RrdpIntegrity {..}, .. }
+fromNotification Notification {..} = let 
+        integrity = RrdpIntegrity {..}
+        enforcement = Nothing
+    in RrdpMeta {..}

@@ -230,7 +230,9 @@ downloadAndUpdateRRDP
         where
             rrdpMeta' = let 
                 Notification {..} = notification 
-                in Just $ RrdpMeta sessionId serial (RrdpIntegrity deltas)
+                integrity = RrdpIntegrity deltas
+                enforcement = Nothing
+                in Just $ RrdpMeta {..}
     
 
     useDeltas sortedDeltas notification = do
@@ -279,8 +281,11 @@ downloadAndUpdateRRDP
         minDeltaSerial = minimum serials
         
         rrdpMeta' = let 
-            Notification {..} = notification 
-            in Just $ RrdpMeta sessionId maxDeltaSerial (RrdpIntegrity $ toList sortedDeltas)
+                Notification { serial = _ignore, .. } = notification 
+                integrity = RrdpIntegrity $ toList sortedDeltas
+                enforcement = Nothing
+                serial = maxDeltaSerial
+            in Just $ RrdpMeta {..}            
 
 
 -- | Decides what to do next based on current state of the repository
