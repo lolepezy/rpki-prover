@@ -700,10 +700,20 @@ deleteSlurms tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.delete tx s wv
 
 updateRrdpMeta :: (MonadIO m, Storage s) =>
                 Tx s 'RW -> DB s -> RrdpMeta -> RrdpURL -> m ()
-updateRrdpMeta tx DB { repositoryStore = RepositoryStore {..} } meta url = liftIO $ do
-    z <- M.get tx rrdpS url
-    for_ z $ \r -> M.put tx rrdpS url (r { rrdpMeta = Just meta })
+updateRrdpMeta tx db meta url = 
+    updateRrdpMetaIf tx db url (const $ Just meta) 
 
+updateRrdpMetaIf :: (MonadIO m, Storage s) =>
+                    Tx s 'RW 
+                -> DB s 
+                -> RrdpURL                  
+                -> (Maybe RrdpMeta -> Maybe RrdpMeta)                
+                -> m ()
+updateRrdpMetaIf tx DB { repositoryStore = RepositoryStore {..} } url f = liftIO $ do
+    z <- M.get tx rrdpS url
+    for_ z $ \r -> 
+        for_ (f $ r ^. #rrdpMeta) $ 
+            \m -> M.put tx rrdpS url (r { rrdpMeta = Just m })
 
 applyChangeSet :: (MonadIO m, Storage s) =>
                 Tx s 'RW ->

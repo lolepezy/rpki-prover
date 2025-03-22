@@ -45,6 +45,7 @@ import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.Fetch
+import           RPKI.RRDP.Types
 import           RPKI.Logging
 import           RPKI.Metrics.System
 import qualified RPKI.Store.Database               as DB
@@ -533,8 +534,6 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                     Right slurm ->
                         pure (vs, Just slurm)        
 
-    handleValidations $ topDownValidations ^. typed
-
     -- Save all the results into LMDB
     let updatedValidation = slurmValidations <> topDownValidations ^. typed
     (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
@@ -550,39 +549,60 @@ runValidation appContext@AppContext {..} worldVersion tals = do
 
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.
-        DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
+        r <- DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
+
+        handleValidations tx db (topDownValidations ^. typed)        
+
+        pure r
 
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deleted} oldest versions(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, maybeSlurm)
   where
     -- Here we do anything that needs to be done in case of specific 
-    -- fetch/validation issues are present
-    handleValidations :: Validations -> IO ()
-    handleValidations (Validations validations) = do 
+    -- fetch/validation issues are present    
+    handleValidations tx db (Validations validations) = do 
+        Now now <- thisInstant
+        for_ repositoriesWithManifestIntegrityIssues $ \rrdpUrl -> do
+            logInfo logger [i|Repository #{rrdpUrl} has manifest integrity issues, will force it to re-fetch.|]
+            DB.updateRrdpMetaIf tx db rrdpUrl $ \case 
+                Nothing   -> Nothing
+                Just meta -> 
+                    case meta ^. #enforcement of    
+                        -- That looks strange, but it means the repository was never fetched before, 
+                        -- so we should fetch the snapshot anyway                    
+                        Nothing -> Just $ meta { enforcement = Just NextTimeFetchSnapshot }
 
-        -- Find repositories where manifests had referential integrity issues                        
-        let relevantRepositories = 
-                [ relevantRepo | 
+                        -- Don't update the enforcement if it's already set to fetch the snapshot
+                        Just NextTimeFetchSnapshot -> Nothing                    
+
+                        Just (ForcedSnaphotAt processedAt)  
+                            -- If the last forced fetch was less than N hours ago, don't do it again
+                            | closeEnoughMoments processedAt now (Seconds 6 * 60 * 60) -> Nothing
+                            | otherwise -> 
+                                Just $ meta { enforcement = Just NextTimeFetchSnapshot }
+      where 
+        repositoriesWithManifestIntegrityIssues = 
+            List.nub [ 
+                relevantRepo | 
                     (scope, issues) <- Map.toList validations,
                     Just (RrdpU relevantRepo) <- [mostNarrowRepositoryScope scope],
-                    any manifestIntegrityError (Set.toList issues) ]
-        -- Mark these repositories as "download snapshot next time"
-        pure ()
-      where
-        manifestIntegrityError = \case
-            VErr (ValidationE e) -> case e of 
-                ManifestEntryDoesn'tExist _ _       -> True
-                NoCRLExists _ _                     -> True                
-                ManifestEntryHasWrongFileType _ _ _ -> True                
-                _                                   -> False
-            _                                       -> False
+                    any manifestIntegrityError (Set.toList issues) 
+                ]        
+          where
+            manifestIntegrityError = \case
+                VErr (ValidationE e) -> case e of 
+                    ManifestEntryDoesn'tExist _ _       -> True
+                    NoCRLExists _ _                     -> True                
+                    ManifestEntryHasWrongFileType _ _ _ -> True                
+                    _                                   -> False
+                _                                       -> False
 
-        mostNarrowRepositoryScope :: VScope -> Maybe RpkiURL
-        mostNarrowRepositoryScope (Scope s) = 
-            case [ url | RepositoryFocus url <- NE.toList s ] of 
-                [] -> Nothing
-                xs -> Just $ last xs
+            mostNarrowRepositoryScope :: VScope -> Maybe RpkiURL
+            mostNarrowRepositoryScope (Scope s) = 
+                case [ url | RepositoryFocus url <- NE.toList s ] of 
+                    [] -> Nothing
+                    xs -> Just $ last xs
 
 
 -- To be called from the cache cleanup worker

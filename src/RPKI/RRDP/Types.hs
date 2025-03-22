@@ -71,6 +71,7 @@ data RrdpFetchStat = RrdpFetchStat {
 
 data RrdpAction
   = FetchSnapshot SnapshotInfo Text
+  | ForcedFetchSnapshot SnapshotInfo
   | FetchDeltas
       { sortedDeltas :: NonEmpty DeltaInfo
       , snapshotInfo :: SnapshotInfo
@@ -99,6 +100,10 @@ data RrdpIntegrity = RrdpIntegrity {
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary, NFData)            
+
+newRrdpMeta :: SessionId -> RrdpSerial -> RrdpMeta
+newRrdpMeta sessionId serial = 
+    RrdpMeta sessionId serial (RrdpIntegrity []) Nothing 
 
 newRrdpIntegrity :: Notification -> RrdpIntegrity
 newRrdpIntegrity Notification {..} = RrdpIntegrity deltas
