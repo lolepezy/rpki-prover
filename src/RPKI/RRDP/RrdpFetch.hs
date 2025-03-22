@@ -103,33 +103,13 @@ updateObjectForRrdpRepository :: Storage s =>
                             -> WorldVersion 
                             -> RrdpRepository
                             -> ValidatorT IO (RrdpRepository, RrdpFetchStat) 
-updateObjectForRrdpRepository appContext worldVersion repository =
-    timedMetric (Proxy :: Proxy RrdpMetric) $ 
-        downloadAndUpdateRRDP 
-            appContext 
-            repository 
-            (saveSnapshot appContext worldVersion)  
-            (saveDelta appContext worldVersion)    
-
--- | 
---  Update RRDP repository, i.e. do the full cycle
---    - download notifications file, parse it
---    - decide what to do next based on it
---    - download snapshot or deltas
---    - do something appropriate with either of them
--- 
-downloadAndUpdateRRDP :: AppContext s ->
-                        RrdpRepository 
-                        -> (RrdpURL -> Notification -> BS.ByteString -> ValidatorT IO ()) 
-                        -> (RrdpURL -> Notification -> RrdpSerial -> BS.ByteString -> ValidatorT IO ()) 
-                        -> ValidatorT IO (RrdpRepository, RrdpFetchStat)
-downloadAndUpdateRRDP 
+updateObjectForRrdpRepository     
         appContext@AppContext {..}
-        repo@RrdpRepository { uri = repoUri, .. }
-        handleSnapshotBS                       -- ^ function to handle the snapshot bytecontent
-        handleDeltaBS =                        -- ^ function to handle delta bytecontents
-  do                                   
-
+        worldVersion 
+        repo@RrdpRepository { uri = repoUri, .. } =
+        
+  timedMetric (Proxy :: Proxy RrdpMetric) $ do                                   
+    
     for_ eTag $ \et -> 
         logDebug logger [i|Existing eTag for #{repoUri} is #{et}.|]
 
@@ -228,7 +208,7 @@ downloadAndUpdateRRDP
 
             void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
                     (\t -> (& #saveTimeMs %~ (<> t)))
-                    (handleSnapshotBS repoUri notification rawContent)                                    
+                    (saveSnapshot appContext worldVersion repoUri notification rawContent)                                    
 
             meta' <- makeRrdpMeta'
             pure $ repo & #rrdpMeta .~ meta'
@@ -265,7 +245,8 @@ downloadAndUpdateRRDP
                         downloadDelta
                         (\(rawContent, serial, deltaUri) _ -> 
                             inSubVScope deltaUri $ 
-                                handleDeltaBS repoUri notification serial rawContent)
+                                saveDelta appContext worldVersion 
+                                    repoUri notification serial rawContent)
                         (mempty :: ())     
 
         pure $ repo & #rrdpMeta %~ makeRrdpMeta
