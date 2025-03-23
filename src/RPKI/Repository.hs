@@ -157,7 +157,7 @@ data FetchTask a = Stub
 
 data RepositoryProcessing = RepositoryProcessing {
         fetchRuns              :: StmMap.Map RpkiURL (FetchTask FetchResult),
-        indivudualFetchResults :: StmMap.Map RpkiURL ValidationState,
+        individualFetchResults :: StmMap.Map RpkiURL ValidationState,
         publicationPoints      :: TVar PublicationPoints,
         fetchSemaphore         :: Semaphore
     }

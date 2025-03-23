@@ -317,9 +317,9 @@ validaionDetailsHtml result =
                     space 
                     mapM_ (\z -> H.text z >> H.br) $ Text.lines problem
                 td ! A.class_ "sub-t" $ H.details $ do 
-                    H.summary $ focusLink1 objectUrl
+                    H.summary $ focusLink objectUrl
                     forM_ (Prelude.tail path) $ \f -> 
-                        focusLink1 f >> H.br
+                        focusLink f >> H.br
     countProblems = 
         List.foldl' countP (0 :: Int, 0 :: Int)
       where
@@ -425,8 +425,8 @@ instance ToMarkup RrdpSource where
             message :: Text = [T.i|Snapshot #{serial}|]
             in toMarkup message
         
-focusLink1 :: FocusResolvedDto -> Html
-focusLink1 = \case 
+focusLink :: FocusResolvedDto -> Html
+focusLink = \case 
     TextDto txt     -> toHtml txt
     TA_UI txt       -> toHtml txt
     ObjectLink txt  -> objectLink txt

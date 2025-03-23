@@ -94,16 +94,13 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
 
 -- | 
 --  Update RRDP repository, actually saving all the objects in the DB.
---
--- NOTE: It will update the sessionId and serial of the repository 
--- in the same transaction it stores the data in.
 -- 
-updateObjectForRrdpRepository :: Storage s => 
-                                AppContext s 
-                            -> WorldVersion 
-                            -> RrdpRepository
-                            -> ValidatorT IO (RrdpRepository, RrdpFetchStat) 
-updateObjectForRrdpRepository     
+updateRrdpRepository :: Storage s => 
+                        AppContext s 
+                    -> WorldVersion 
+                    -> RrdpRepository
+                    -> ValidatorT IO (RrdpRepository, RrdpFetchStat) 
+updateRrdpRepository     
         appContext@AppContext {..}
         worldVersion 
         repo@RrdpRepository { uri = repoUri, .. } =
