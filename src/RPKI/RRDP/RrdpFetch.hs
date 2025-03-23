@@ -433,15 +433,6 @@ saveSnapshot
             (saveStorable db)           
 
     DB.rwAppTx db $ \tx -> DB.updateRrdpMeta tx db (fromNotification notification) repoUri      
-    
-    txFoldPipelineBatch 
-            cpuParallelism
-            10000    
-            (S.mapM (newStorable db) $ S.each snapshotItems)
-            (DB.rwAppTx db)
-            (saveStorable db)           
-
-    DB.rwAppTx db $ \tx -> DB.updateRrdpMeta tx db (fromNotification notification) repoUri      
 
   where        
 
