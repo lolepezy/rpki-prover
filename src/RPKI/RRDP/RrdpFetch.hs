@@ -94,42 +94,19 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
 
 -- | 
 --  Update RRDP repository, actually saving all the objects in the DB.
---
--- NOTE: It will update the sessionId and serial of the repository 
--- in the same transaction it stores the data in.
 -- 
-updateObjectForRrdpRepository :: Storage s => 
-                                AppContext s 
-                            -> WorldVersion 
-                            -> RrdpRepository
-                            -> ValidatorT IO (RrdpRepository, RrdpFetchStat) 
-updateObjectForRrdpRepository appContext worldVersion repository =
-    timedMetric (Proxy :: Proxy RrdpMetric) $ 
-        downloadAndUpdateRRDP 
-            appContext 
-            repository 
-            (saveSnapshot appContext worldVersion)  
-            (saveDelta appContext worldVersion)    
-
--- | 
---  Update RRDP repository, i.e. do the full cycle
---    - download notifications file, parse it
---    - decide what to do next based on it
---    - download snapshot or deltas
---    - do something appropriate with either of them
--- 
-downloadAndUpdateRRDP :: AppContext s ->
-                        RrdpRepository 
-                        -> (RrdpURL -> Notification -> BS.ByteString -> ValidatorT IO ()) 
-                        -> (RrdpURL -> Notification -> RrdpSerial -> BS.ByteString -> ValidatorT IO ()) 
-                        -> ValidatorT IO (RrdpRepository, RrdpFetchStat)
-downloadAndUpdateRRDP 
+updateRrdpRepository :: Storage s => 
+                        AppContext s 
+                    -> WorldVersion 
+                    -> RrdpRepository
+                    -> ValidatorT IO (RrdpRepository, RrdpFetchStat) 
+updateRrdpRepository     
         appContext@AppContext {..}
-        repo@RrdpRepository { uri = repoUri, .. }
-        handleSnapshotBS                       -- ^ function to handle the snapshot bytecontent
-        handleDeltaBS =                        -- ^ function to handle delta bytecontents
-  do                                   
-
+        worldVersion 
+        repo@RrdpRepository { uri = repoUri, .. } =
+        
+  timedMetric (Proxy :: Proxy RrdpMetric) $ do                                   
+    
     for_ eTag $ \et -> 
         logDebug logger [i|Existing eTag for #{repoUri} is #{et}.|]
 
@@ -162,10 +139,15 @@ downloadAndUpdateRRDP
                         logDebug logger [i|Nothing to update for #{repoUri}: #{message}|]
                         pure repo
 
+                    ForcedFetchSnapshot snapshotInfo reason -> do 
+                        usedSource $ RrdpSnapshot $ notification ^. #serial
+                        logDebug logger [i|Forced to use snapshot for #{repoUri}, because #{reason}.|]
+                        useSnapshot snapshotInfo notification nextStep   
+
                     FetchSnapshot snapshotInfo message -> do 
                         usedSource $ RrdpSnapshot $ notification ^. #serial
                         logDebug logger [i|Going to use snapshot for #{repoUri}: #{message}|]
-                        useSnapshot snapshotInfo notification                        
+                        useSnapshot snapshotInfo notification nextStep                       
 
                     FetchDeltas sortedDeltas snapshotInfo message -> 
                         (do                             
@@ -179,7 +161,7 @@ downloadAndUpdateRRDP
                         \e -> do         
                             usedSource $ RrdpSnapshot $ notification ^. #serial
                             logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
-                            useSnapshot snapshotInfo notification)
+                            useSnapshot snapshotInfo notification nextStep)
 
             pure (repo', RrdpFetchStat nextStep)                            
   where
@@ -205,7 +187,7 @@ downloadAndUpdateRRDP
                             appError $ RrdpE $ DeltaUriHostname repoU deltaHostname
         pure notification
 
-    useSnapshot (SnapshotInfo uri expectedHash) notification = do         
+    useSnapshot (SnapshotInfo uri expectedHash) notification nextStep = do         
         vFocusOn LinkFocus uri $ do            
             logInfo logger [i|#{uri}: downloading snapshot.|] 
             
@@ -223,14 +205,21 @@ downloadAndUpdateRRDP
 
             void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
                     (\t -> (& #saveTimeMs %~ (<> t)))
-                    (handleSnapshotBS repoUri notification rawContent)
+                    (saveSnapshot appContext worldVersion repoUri notification rawContent)                                    
 
-            pure $ repo { rrdpMeta = rrdpMeta' }
-
+            meta' <- makeRrdpMeta'
+            pure $ repo & #rrdpMeta .~ meta'
         where
-            rrdpMeta' = let 
-                Notification {..} = notification 
-                in Just $ RrdpMeta sessionId serial (RrdpIntegrity deltas)
+            makeRrdpMeta' = do                
+                let Notification {..} = notification 
+                let integrity = RrdpIntegrity deltas
+                enforcement <- case nextStep of  
+                    ForcedFetchSnapshot _ _ -> do 
+                        Now now <- thisInstant
+                        pure $ Just $ ForcedSnaphotAt now       
+                    _  -> 
+                        pure Nothing 
+                pure $ Just $ RrdpMeta {..}
     
 
     useDeltas sortedDeltas notification = do
@@ -253,10 +242,11 @@ downloadAndUpdateRRDP
                         downloadDelta
                         (\(rawContent, serial, deltaUri) _ -> 
                             inSubVScope deltaUri $ 
-                                handleDeltaBS repoUri notification serial rawContent)
+                                saveDelta appContext worldVersion 
+                                    repoUri notification serial rawContent)
                         (mempty :: ())     
 
-        pure $ repo { rrdpMeta = rrdpMeta' }      
+        pure $ repo & #rrdpMeta %~ makeRrdpMeta
 
       where        
         downloadDelta (DeltaInfo uri hash serial) = do
@@ -278,9 +268,21 @@ downloadAndUpdateRRDP
         maxDeltaSerial = maximum serials
         minDeltaSerial = minimum serials
         
-        rrdpMeta' = let 
-            Notification {..} = notification 
-            in Just $ RrdpMeta sessionId maxDeltaSerial (RrdpIntegrity $ toList sortedDeltas)
+        makeRrdpMeta currentMeta = let                 
+                integrity = RrdpIntegrity $ toList sortedDeltas                
+                serial = maxDeltaSerial
+            in Just $ 
+                case currentMeta of 
+                    Nothing -> RrdpMeta {
+                            enforcement = Nothing,
+                            sessionId = notification ^. #sessionId, 
+                            ..
+                        }
+                    Just z  -> z 
+                        & #sessionId .~ notification ^. #sessionId 
+                        & #serial .~ maxDeltaSerial
+                        & #integrity .~ integrity
+                    
 
 
 -- | Decides what to do next based on current state of the repository
@@ -290,80 +292,86 @@ rrdpNextStep :: RrdpRepository -> Notification -> PureValidatorT RrdpAction
 rrdpNextStep RrdpRepository { rrdpMeta = Nothing } Notification{..} = 
     pure $ FetchSnapshot snapshotInfo "First time seeing repository"
 
-rrdpNextStep RrdpRepository { rrdpMeta = Just rrdpMeta } Notification {..} = 
+rrdpNextStep RrdpRepository { rrdpMeta = Just rrdpMeta } Notification {..} =     
 
-    if  | sessionId /= localSessionId -> 
-            pure $ FetchSnapshot snapshotInfo [i|Resetting RRDP session from #{localSessionId} to #{sessionId}|]
+    case rrdpMeta ^. #enforcement of 
+        Nothing                             -> normalFlow
+        Just (ForcedSnaphotAt _)            -> normalFlow        
+        Just (NextTimeFetchSnapshot reason) -> pure $ ForcedFetchSnapshot snapshotInfo reason
+  where
+    normalFlow = 
+        if  | sessionId /= localSessionId -> 
+                pure $ FetchSnapshot snapshotInfo [i|Resetting RRDP session from #{localSessionId} to #{sessionId}|]
 
-        | localSerial > serial -> do 
-            appWarn $ RrdpE $ LocalSerialBiggerThanRemote localSerial serial
-            pure $ NothingToFetch [i|#{localSessionId}, local serial #{localSerial} is higher than the remote serial #{serial}.|]
+            | localSerial > serial -> do 
+                appWarn $ RrdpE $ LocalSerialBiggerThanRemote localSerial serial
+                pure $ NothingToFetch [i|#{localSessionId}, local serial #{localSerial} is higher than the remote serial #{serial}.|]
 
-        | localSerial == serial -> 
-            pure $ NothingToFetch [i|up-to-date, #{localSessionId}, serial #{localSerial}|]
-    
-        | otherwise ->
-            case (deltas, nonConsecutiveDeltas) of
-                ([], _) -> pure $ FetchSnapshot snapshotInfo 
-                                [i|#{localSessionId}, there is no deltas to use.|]
+            | localSerial == serial -> 
+                pure $ NothingToFetch [i|up-to-date, #{localSessionId}, serial #{localSerial}|]
+        
+            | otherwise ->
+                case (deltas, nonConsecutiveDeltas) of
+                    ([], _) -> pure $ FetchSnapshot snapshotInfo 
+                                    [i|#{localSessionId}, there is no deltas to use.|]
 
-                (_, []) | nextSerial localSerial < deltaSerial (head sortedDeltas) ->
-                            -- we are too far behind
-                            pure $ FetchSnapshot snapshotInfo 
-                                    [i|#{localSessionId}, local serial #{localSerial} is too far behind remote #{serial}.|]
+                    (_, []) | nextSerial localSerial < deltaSerial (head sortedDeltas) ->
+                                -- we are too far behind
+                                pure $ FetchSnapshot snapshotInfo 
+                                        [i|#{localSessionId}, local serial #{localSerial} is too far behind remote #{serial}.|]
 
-                        -- too many deltas means huge overhead -- just use snapshot, 
-                        -- it's more data but less chances of getting killed by timeout
-                        | length chosenDeltas > 100 ->
-                            pure $ FetchSnapshot snapshotInfo 
-                                    [i|#{localSessionId}, there are too many deltas: #{length chosenDeltas}.|]
+                            -- too many deltas means huge overhead -- just use snapshot, 
+                            -- it's more data but less chances of getting killed by timeout
+                            | length chosenDeltas > 100 ->
+                                pure $ FetchSnapshot snapshotInfo 
+                                        [i|#{localSessionId}, there are too many deltas: #{length chosenDeltas}.|]
 
-                        | not (null deltaIntegrityIssues) -> 
-                            pure $ FetchSnapshot snapshotInfo formattedIntegrityIssues
+                            | not (null deltaIntegrityIssues) -> 
+                                pure $ FetchSnapshot snapshotInfo formattedIntegrityIssues
 
-                        | otherwise ->
-                            pure $ FetchDeltas (NonEmpty.fromList chosenDeltas) snapshotInfo 
-                                    [i|#{localSessionId}, deltas look good.|]
+                            | otherwise ->
+                                pure $ FetchDeltas (NonEmpty.fromList chosenDeltas) snapshotInfo 
+                                        [i|#{localSessionId}, deltas look good.|]
 
-                (_, nc) -> do 
-                    appWarn $ RrdpE $ NonConsecutiveDeltaSerials nc
-                    pure $ FetchSnapshot snapshotInfo 
-                            [i|#{localSessionId}, there are non-consecutive delta serials: #{nc}.|]                        
-                
-    where
-        localSessionId = rrdpMeta ^. #sessionId
-        localSerial    = rrdpMeta ^. #serial
-
-        sortedSerials = map deltaSerial sortedDeltas
-        sortedDeltas = List.sortOn deltaSerial deltas
-        chosenDeltas = filter ((> localSerial) . deltaSerial) sortedDeltas
-
-        nonConsecutiveDeltas = List.filter (\(s, s') -> nextSerial s /= s') $
-            List.zip sortedSerials (tail sortedSerials)
-
-        deltaIntegrityIssues = 
-            [ (serial_, hash, previousHash) | 
-                DeltaInfo _ hash serial_   <- deltas,
-                DeltaInfo _ previousHash _ <- maybeToList $ Map.lookup serial_ previousDeltasBySerial,
-                previousHash /= hash
-            ]
+                    (_, nc) -> do 
+                        appWarn $ RrdpE $ NonConsecutiveDeltaSerials nc
+                        pure $ FetchSnapshot snapshotInfo 
+                                [i|#{localSessionId}, there are non-consecutive delta serials: #{nc}.|]                        
+                    
           where
-            previousDeltasBySerial = 
-                Map.fromList 
-                    $ map (\d -> (d ^. typed @RrdpSerial, d)) 
-                    $ rrdpMeta ^. #integrity . #deltas            
+            localSessionId = rrdpMeta ^. #sessionId
+            localSerial    = rrdpMeta ^. #serial
 
-        formattedIntegrityIssues = [i|These deltas have integrity issues: #{issues}.|]            
-          where
-            issues :: Text = 
-                mconcat 
-                $ List.intersperse "; "
-                $ flip map deltaIntegrityIssues                    
-                $ \(serial_, hash, previousHash) -> 
-                    [i|serial #{serial_}|] <>                    
-                    (if previousHash /= hash 
-                        then [i|, used to have hash #{previousHash} and now #{hash}|] 
-                        else "") 
+            sortedSerials = map deltaSerial sortedDeltas
+            sortedDeltas = List.sortOn deltaSerial deltas
+            chosenDeltas = filter ((> localSerial) . deltaSerial) sortedDeltas
+
+            nonConsecutiveDeltas = List.filter (\(s, s') -> nextSerial s /= s') $
+                List.zip sortedSerials (tail sortedSerials)
+
+            deltaIntegrityIssues = 
+                [ (serial_, hash, previousHash) | 
+                    DeltaInfo _ hash serial_   <- deltas,
+                    DeltaInfo _ previousHash _ <- maybeToList $ Map.lookup serial_ previousDeltasBySerial,
+                    previousHash /= hash
+                ]
+              where
+                previousDeltasBySerial = 
+                    Map.fromList 
+                        $ map (\d -> (d ^. typed @RrdpSerial, d)) 
+                        $ rrdpMeta ^. #integrity . #deltas            
+
+            formattedIntegrityIssues = [i|These deltas have integrity issues: #{issues}.|]            
+              where
+                issues :: Text = 
+                    mconcat 
+                    $ List.intersperse "; "
+                    $ flip map deltaIntegrityIssues                    
+                    $ \(serial_, hash, previousHash) -> 
+                        [i|serial #{serial_}|] <>                    
+                        (if previousHash /= hash 
+                            then [i|, used to have hash #{previousHash} and now #{hash}|] 
+                            else "") 
         
                                 
 deltaSerial :: DeltaInfo -> RrdpSerial

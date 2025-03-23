@@ -315,7 +315,7 @@ getValidationsImpl AppContext {..} getVersionF = do
     db <- readTVarIO database
     roTx db $ \tx ->
         runMaybeT $ do
-            version     <- MaybeT $ getVersionF db tx
+            version            <- MaybeT $ getVersionF db tx
             (Validations vMap) <- MaybeT $ DB.validationsForVersion tx db version
             let validationDtos = map toVDto $ Map.toList vMap
             pure $ ValidationsDto {
