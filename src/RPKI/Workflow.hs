@@ -563,30 +563,32 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     -- fetch/validation issues are present    
     handleValidations tx db (Validations validations) = do 
         Now now <- thisInstant
-        for_ repositoriesWithManifestIntegrityIssues $ \rrdpUrl -> do
-            logInfo logger [i|Repository #{rrdpUrl} has manifest integrity issues, will force it to re-fetch.|]
+        for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) -> do
+            logInfo logger [i|Repository #{rrdpUrl} has manifest integrity issues #{issues}, will force it to re-fetch.|]
             DB.updateRrdpMetaIf tx db rrdpUrl $ \case 
                 Nothing   -> Nothing
-                Just meta -> 
-                    case meta ^. #enforcement of    
-                        Nothing -> Just $ meta { enforcement = Just NextTimeFetchSnapshot }
+                Just meta -> let 
+                        enforcement = Just $ NextTimeFetchSnapshot [i|Manifest integrity issues: #{issues}|]
+                    in case meta ^. #enforcement of    
+                        Nothing -> Just $ meta { enforcement = enforcement }
 
                         -- Don't update the enforcement if it's already set to fetch the snapshot
-                        Just NextTimeFetchSnapshot -> Nothing                    
+                        Just (NextTimeFetchSnapshot _) -> Nothing                    
 
                         Just (ForcedSnaphotAt processedAt)  
                             -- If the last forced fetch was less than N hours ago, don't do it again
                             | closeEnoughMoments processedAt now 
                                 (config ^. #validationConfig . #rrdpForcedSnapshotMinInterval) -> Nothing
                             | otherwise -> 
-                                Just $ meta { enforcement = Just NextTimeFetchSnapshot }
+                                Just $ meta { enforcement = enforcement }
       where 
         repositoriesWithManifestIntegrityIssues = 
-            List.nub [ 
-                relevantRepo | 
+            Map.fromListWith (<>) [ 
+                (relevantRepo, relevantIssues) | 
                     (scope, issues) <- Map.toList validations,
-                    RrdpU relevantRepo <- mostNarrowPPScope scope,
-                    any manifestIntegrityError (Set.toList issues) 
+                    relevantRepo    <- mostNarrowPPScope scope,
+                    let relevantIssues = filter manifestIntegrityError (Set.toList issues),
+                    not (null relevantIssues)
                 ]        
           where
             manifestIntegrityError = \case
@@ -598,7 +600,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                 _                                       -> False
 
             mostNarrowPPScope (Scope s) = 
-                take 1 [ url | PPFocus url <- NE.toList s ]
+                take 1 [ url | PPFocus (RrdpU url) <- NE.toList s ]
 
 
 -- To be called from the cache cleanup worker

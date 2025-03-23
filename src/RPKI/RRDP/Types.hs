@@ -71,7 +71,7 @@ data RrdpFetchStat = RrdpFetchStat {
 
 data RrdpAction
   = FetchSnapshot SnapshotInfo Text
-  | ForcedFetchSnapshot SnapshotInfo
+  | ForcedFetchSnapshot SnapshotInfo Text
   | FetchDeltas
       { sortedDeltas :: NonEmpty DeltaInfo
       , snapshotInfo :: SnapshotInfo
@@ -81,7 +81,7 @@ data RrdpAction
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (TheBinary, NFData)     
 
-data RrdpEnforcement = NextTimeFetchSnapshot
+data RrdpEnforcement = NextTimeFetchSnapshot Text
                     | ForcedSnaphotAt Instant
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary, NFData)                                

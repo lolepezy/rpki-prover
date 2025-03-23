@@ -139,9 +139,9 @@ updateRrdpRepository
                         logDebug logger [i|Nothing to update for #{repoUri}: #{message}|]
                         pure repo
 
-                    ForcedFetchSnapshot snapshotInfo -> do 
+                    ForcedFetchSnapshot snapshotInfo reason -> do 
                         usedSource $ RrdpSnapshot $ notification ^. #serial
-                        logDebug logger [i|Forced to use snapshot for #{repoUri}.|]
+                        logDebug logger [i|Forced to use snapshot for #{repoUri}, because #{reason}.|]
                         useSnapshot snapshotInfo notification nextStep   
 
                     FetchSnapshot snapshotInfo message -> do 
@@ -214,7 +214,7 @@ updateRrdpRepository
                 let Notification {..} = notification 
                 let integrity = RrdpIntegrity deltas
                 enforcement <- case nextStep of  
-                    ForcedFetchSnapshot _ -> do 
+                    ForcedFetchSnapshot _ _ -> do 
                         Now now <- thisInstant
                         pure $ Just $ ForcedSnaphotAt now       
                     _  -> 
@@ -295,9 +295,9 @@ rrdpNextStep RrdpRepository { rrdpMeta = Nothing } Notification{..} =
 rrdpNextStep RrdpRepository { rrdpMeta = Just rrdpMeta } Notification {..} =     
 
     case rrdpMeta ^. #enforcement of 
-        Nothing                    -> normalFlow
-        Just (ForcedSnaphotAt _)   -> normalFlow        
-        Just NextTimeFetchSnapshot -> pure $ ForcedFetchSnapshot snapshotInfo        
+        Nothing                             -> normalFlow
+        Just (ForcedSnaphotAt _)            -> normalFlow        
+        Just (NextTimeFetchSnapshot reason) -> pure $ ForcedFetchSnapshot snapshotInfo reason
   where
     normalFlow = 
         if  | sessionId /= localSessionId -> 
