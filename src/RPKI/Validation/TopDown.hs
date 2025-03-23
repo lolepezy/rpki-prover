@@ -544,20 +544,21 @@ validateCaNoLimitChecks
                     validateThisCertAndGoDown
                     
                 Just filteredPpa -> do
-                    let fetch = case config ^. #proverRunMode of 
-                            ServerMode -> do 
-                                fetchQuickly appContext repositoryProcessing worldVersion filteredPpa
-                            OneOffMode {} -> 
-                                fetchWithFallback appContext repositoryProcessing worldVersion 
-                                            (syncFetchConfig config) filteredPpa                                            
-                    fetch >>= \case                     
+                    let fetch =                             
+                            case config ^. #proverRunMode of 
+                                ServerMode -> do 
+                                    fetchQuickly appContext repositoryProcessing worldVersion filteredPpa
+                                OneOffMode {} -> 
+                                    fetchWithFallback appContext repositoryProcessing worldVersion 
+                                                (syncFetchConfig config) filteredPpa                                            
+                    f <- fetch
+                    pps <- readPublicationPoints repositoryProcessing      
+                    let primaryUrl = getPrimaryRepositoryUrl pps filteredPpa
+                    vFocusOn PPFocus primaryUrl $ case f of 
                         [] -> 
                             -- Nothing has been fetched
                             validateThisCertAndGoDown
-                        _  -> do     
-                            pps <- readPublicationPoints repositoryProcessing      
-                            let primaryUrl = getPrimaryRepositoryUrl pps filteredPpa
-                            metricFocusOn PPFocus primaryUrl validateThisCertAndGoDown
+                        _  -> metricFocusOn PPFocus primaryUrl validateThisCertAndGoDown
 
   where
     validateThisCertAndGoDown = validateCaNoFetch appContext topDownContext ca

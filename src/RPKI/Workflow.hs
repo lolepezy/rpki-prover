@@ -569,8 +569,6 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                 Nothing   -> Nothing
                 Just meta -> 
                     case meta ^. #enforcement of    
-                        -- That looks strange, but it means the repository was never fetched before, 
-                        -- so we should fetch the snapshot anyway                    
                         Nothing -> Just $ meta { enforcement = Just NextTimeFetchSnapshot }
 
                         -- Don't update the enforcement if it's already set to fetch the snapshot
@@ -586,7 +584,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
             List.nub [ 
                 relevantRepo | 
                     (scope, issues) <- Map.toList validations,
-                    Just (RrdpU relevantRepo) <- [mostNarrowRepositoryScope scope],
+                    RrdpU relevantRepo <- mostNarrowPPScope scope,
                     any manifestIntegrityError (Set.toList issues) 
                 ]        
           where
@@ -598,11 +596,8 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                     _                                   -> False
                 _                                       -> False
 
-            mostNarrowRepositoryScope :: VScope -> Maybe RpkiURL
-            mostNarrowRepositoryScope (Scope s) = 
-                case [ url | RepositoryFocus url <- NE.toList s ] of 
-                    [] -> Nothing
-                    xs -> Just $ last xs
+            mostNarrowPPScope (Scope s) = 
+                take 1 [ url | PPFocus url <- NE.toList s ]
 
 
 -- To be called from the cache cleanup worker
