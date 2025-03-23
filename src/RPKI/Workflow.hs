@@ -576,7 +576,8 @@ runValidation appContext@AppContext {..} worldVersion tals = do
 
                         Just (ForcedSnaphotAt processedAt)  
                             -- If the last forced fetch was less than N hours ago, don't do it again
-                            | closeEnoughMoments processedAt now (Seconds 6 * 60 * 60) -> Nothing
+                            | closeEnoughMoments processedAt now 
+                                (config ^. #validationConfig . #rrdpForcedSnapshotMinInterval) -> Nothing
                             | otherwise -> 
                                 Just $ meta { enforcement = Just NextTimeFetchSnapshot }
       where 
