@@ -10,6 +10,7 @@ import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Config
 import           RPKI.Logging
+import           RPKI.Logging.Types
 import           RPKI.Store.Database    (DB)
 
 data AppContext s = AppContext {

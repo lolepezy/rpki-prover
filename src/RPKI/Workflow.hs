@@ -45,6 +45,7 @@ import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.Fetch
+import           RPKI.Logging.Types
 import           RPKI.Logging
 import           RPKI.Metrics.System
 import qualified RPKI.Store.Database               as DB

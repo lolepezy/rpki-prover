@@ -23,7 +23,7 @@ import           System.Process.Typed
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.AppTypes
-import           RPKI.Logging
+import           RPKI.Logging.Types
 import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
 import           RPKI.Time

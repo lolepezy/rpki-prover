@@ -40,6 +40,7 @@ import           RPKI.Repository
 import           RPKI.RRDP.Types
 import           RPKI.TAL
 import           RPKI.Logging
+import           RPKI.Logging.Types
 import           RPKI.Time
 import           RPKI.Util (fmtEx, trimmed)
 import           RPKI.SLURM.Types

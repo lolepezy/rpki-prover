@@ -36,6 +36,7 @@ import Network.Socket.ByteString (recv, sendAll)
 import RPKI.AppTypes
 import RPKI.AppContext
 import RPKI.Logging
+import RPKI.Logging.Types
 import RPKI.Metrics.System
 import RPKI.Store.Base.Serialisation
 import RPKI.Time
@@ -45,6 +46,19 @@ import RPKI.IPC.Types
 runIpc :: AppContext s -> IO ()
 runIpc _ = do 
     pure ()
+
+
+handleIpcMessage :: AppContext s -> IpcMessage -> IO ()
+handleIpcMessage appContext@AppContext {..} = \case
+    LogIpc logMessage -> do
+        let logger = getRtrLogger appContext
+        logMessage_ logger logMessage        
+    RtrLogIpc logMessage -> do
+        -- Handle RTR-specific log message
+        pure ()
+    SystemIpc metrics -> do
+        -- Handle system metrics
+        pure ()
 
 
 runServer :: AppContext s -> FilePath -> (IpcMessage -> IO ()) -> IO ()

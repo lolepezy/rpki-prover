@@ -16,7 +16,7 @@ import Data.Hourglass
 import Data.Maybe (fromMaybe)
 
 import RPKI.Domain
-import RPKI.Logging
+import RPKI.Logging.Types
 import RPKI.Util (toNatural)
 import GHC.Generics (Generic)
 

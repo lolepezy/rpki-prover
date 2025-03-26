@@ -711,9 +711,9 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
             other -> 
                 logDebug logger [i|Weird thing happened in `replaceObject` #{other}.|]                                                                                                
 
-    logger           = appContext ^. typed @AppLogger           
-    cpuParallelism   = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism    
-    validationConfig = appContext ^. typed @Config . typed @ValidationConfig
+    logger           = appContext ^. #logger
+    cpuParallelism   = appContext ^. #config . #parallelism . #cpuParallelism    
+    validationConfig = appContext ^. #config . #validationConfig
 
 
 addedObject, deletedObject :: Monad m => ValidatorT m ()

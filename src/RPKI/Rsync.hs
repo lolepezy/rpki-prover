@@ -40,6 +40,7 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
+import           RPKI.Logging.Types
 import           RPKI.Metrics.System
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
@@ -126,11 +127,11 @@ rsyncRpkiObject :: AppContext s ->
                 FetchConfig -> 
                 RsyncURL -> 
                 ValidatorT IO RpkiObject
-rsyncRpkiObject AppContext{..} fetchConfig uri = do
+rsyncRpkiObject appContext@AppContext{..} fetchConfig uri = do
     let RsyncConf {..} = rsyncConf config
     destination <- liftIO $ rsyncDestination RsyncOneFile (configValue rsyncRoot) uri
     let rsync = rsyncProcess config fetchConfig uri destination RsyncOneFile
-    (exitCode, out, err) <- readRsyncProcess logger fetchConfig rsync [i|rsync for #{uri}|]
+    (exitCode, out, err) <- readRsyncProcess appContext fetchConfig rsync [i|rsync for #{uri}|]
     case exitCode of  
         ExitFailure errorCode -> do
             logError logger [i|Rsync process failed: #rsync 
@@ -175,7 +176,7 @@ updateObjectForRsyncRepository
                 timeout
                 (fromTry  
                     (RsyncE . RsyncRunningError . U.fmtEx) $ 
-                    readRsyncProcess logger fetchConfig rsync [i|rsync for #{uri}|])
+                    readRsyncProcess appContext fetchConfig rsync [i|rsync for #{uri}|])
                 (do 
                     logError logger [i|rsync client timed out after #{timeout}}.|]
                     appError $ RsyncE $ RsyncDownloadTimeout timeout)
@@ -194,12 +195,12 @@ updateObjectForRsyncRepository
 -- Repeat the readProcess but register PID of the launched rsync process
 -- together with its maximal lifetime
 readRsyncProcess :: MonadIO m =>
-                    AppLogger
+                    AppContext s
                     -> FetchConfig
                     -> ProcessConfig stdin stdout0 stderr0
                     -> Text.Text
                     -> m (ExitCode, LBS.ByteString, LBS.ByteString)
-readRsyncProcess logger fetchConfig pc textual = do 
+readRsyncProcess AppContext {..} fetchConfig pc textual = do 
     Now now <- thisInstant
     let endOfLife = momentAfter now (fetchConfig ^. #rsyncTimeout)
     liftIO $ withProcessTerm pc' $ \p -> do 

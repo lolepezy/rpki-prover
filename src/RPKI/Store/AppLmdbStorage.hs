@@ -23,6 +23,7 @@ import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Logging
+import           RPKI.Logging.Types
 import           RPKI.Worker
 import           RPKI.Reporting
 import           RPKI.Store.Base.LMDB

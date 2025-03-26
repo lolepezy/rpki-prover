@@ -57,6 +57,7 @@ import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.RRDP.Http (downloadToFile)
 import           RPKI.Http.HttpServer
+import           RPKI.Logging.Types
 import           RPKI.Logging
 import           RPKI.Store.Base.Storage
 import qualified RPKI.Store.Database    as DB

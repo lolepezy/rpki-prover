@@ -23,6 +23,7 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Parallel
 import           RPKI.Logging
+import           RPKI.Logging.Types
 import           RPKI.Time
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database    
