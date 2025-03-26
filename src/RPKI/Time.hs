@@ -10,7 +10,7 @@ import           Data.Int
 import           Data.Semigroup
 import           Control.Monad.IO.Class (MonadIO, liftIO)
 
-import           GHC.Generics
+import           GHC.Generics (Generic)
 
 import           Data.Hourglass         
 import           System.Hourglass       (dateCurrent)
@@ -44,6 +44,10 @@ instance Show Instant where
 -- | Current time that is to be passed into the environment of validating functions
 newtype Now = Now { unNow :: Instant }
     deriving stock (Show, Eq, Ord)
+
+newtype Timebox = Timebox { unTimebox :: Seconds }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
 
 newtype TimeMs = TimeMs { unTimeMs :: Int64 }
     deriving stock (Eq, Ord, Generic)

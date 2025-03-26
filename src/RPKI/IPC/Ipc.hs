@@ -50,14 +50,12 @@ runIpc _ = do
 
 handleIpcMessage :: AppContext s -> IpcMessage -> IO ()
 handleIpcMessage appContext@AppContext {..} = \case
-    LogIpc logMessage -> do
-        let logger = getRtrLogger appContext
-        logMessage_ logger logMessage        
+    LogIpc logMessage -> 
+        logMessage_ (getRtrLogger appContext) logMessage        
     RtrLogIpc logMessage -> do
-        -- Handle RTR-specific log message
-        pure ()
+        logMessage_ logger logMessage                
     SystemIpc metrics -> do
-        -- Handle system metrics
+        -- TODO Handle system metrics
         pure ()
 
 

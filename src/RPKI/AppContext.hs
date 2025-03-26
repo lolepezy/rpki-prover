@@ -9,7 +9,6 @@ import           GHC.Generics
 import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Config
-import           RPKI.Logging
 import           RPKI.Logging.Types
 import           RPKI.Store.Database    (DB)
 
@@ -24,4 +23,5 @@ data AppContext s = AppContext {
 
 getRtrLogger :: AppContext s -> RtrLogger
 getRtrLogger AppContext { logger = AppLogger {..} } = rtrLogger    
+
 
