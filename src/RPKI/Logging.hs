@@ -318,4 +318,3 @@ bsToMsg bs =
         Left e -> Left $ fmtGen e
         Right (DecodedBase64 decoded) -> 
             first fmtGen $ deserialiseOrFail_ decoded    
-
