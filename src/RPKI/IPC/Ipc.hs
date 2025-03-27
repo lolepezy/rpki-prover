@@ -11,6 +11,7 @@
 module RPKI.IPC.Ipc where
 
 import Control.Concurrent
+import Control.Concurrent.Async
 import Control.Concurrent.STM
 import Control.Exception (bracket, try, finally, SomeException)
 import Control.Monad (unless, forever, void, when)
@@ -38,6 +39,7 @@ import RPKI.AppContext
 import RPKI.Logging
 import RPKI.Logging.Types
 import RPKI.Metrics.System
+import RPKI.Parallel
 import RPKI.Store.Base.Serialisation
 import RPKI.Time
 import RPKI.IPC.Types
@@ -48,18 +50,29 @@ runIpc _ = do
     pure ()
 
 
-handleIpcMessage :: AppContext s -> IpcMessage -> IO ()
-handleIpcMessage appContext@AppContext {..} = \case
-    LogIpc logMessage -> 
-        logMessage_ (getRtrLogger appContext) logMessage        
-    RtrLogIpc logMessage -> do
-        logMessage_ logger logMessage                
-    SystemIpc metrics -> do
-        -- TODO Handle system metrics
-        pure ()
+makeIpcMessageHandler :: AppContext s 
+                    -> (CommandSpec -> IO CommandResultSpec) 
+                    -> (IpcMessage -> (CommandResult -> IO ()) -> IO ())
+makeIpcMessageHandler appContext@AppContext {..} commandHandler = 
+    \message resultHandler -> 
+        case message of
+            LogIpc logMessage -> 
+                logMessage_ (getRtrLogger appContext) logMessage        
+            RtrLogIpc logMessage -> do
+                logMessage_ logger logMessage                
+            SystemIpc metrics -> do
+                -- TODO Handle system metrics
+                pure ()
+            CommandIpc Command {..} -> do
+                result <- commandHandler commandSpec
+                resultHandler $ CommandResult {..}
+            
 
 
-runServer :: AppContext s -> FilePath -> (IpcMessage -> IO ()) -> IO ()
+runServer :: AppContext s 
+        -> FilePath 
+        -> (IpcMessage -> (CommandResult -> IO ()) -> IO ()) 
+        -> IO ()
 runServer AppContext {..} socketPath handleMessage = do
     logDebug logger [i|Starting server on Unix socket at #{socketPath}...|]    
     socketExists <- doesFileExist socketPath
@@ -84,11 +97,23 @@ runServer AppContext {..} socketPath handleMessage = do
         pure sock
         
     handleClient clientSock = do        
-        message <- recv clientSock 4096
-        if BS.null message
-            then 
-                logDebug logger "Client disconnected"
-            else do
-                case deserialiseOrFail_ message of
-                    Left err -> logError logger [i|Error deserialising message #{message}: #{err}|]
-                    Right r -> handleMessage r                
+        resultQueue <- atomically $ newCQueue 1024
+        let withQueue f = f `finally` atomically (closeCQueue resultQueue)
+        void $ concurrently 
+            (withQueue $ processMessages clientSock resultQueue)
+            (withQueue $ processResults clientSock resultQueue)
+      where 
+        processResults clientSock queue = do
+            message <- atomically $ readCQueue queue
+            sendAll clientSock $ serialise_ message
+            processResults clientSock queue
+
+        processMessages clientSock queue = do 
+            message <- recv clientSock 4096
+            if BS.null message
+                then 
+                    logDebug logger "Client disconnected"
+                else do
+                    case deserialiseOrFail_ message of
+                        Left err -> logError logger [i|Error deserialising message #{message}: #{err}|]
+                        Right r  -> handleMessage r (atomically . writeCQueue queue)                

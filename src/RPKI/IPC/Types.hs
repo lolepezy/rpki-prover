@@ -43,7 +43,7 @@ data CommandResultSpec = RunFetcherR RunFetcherResult
     deriving anyclass (TheBinary)
 
 
-data RunFetcherResult = RunFetcherResult {        
+data RunFetcherResult = RunFetcherResult {
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
