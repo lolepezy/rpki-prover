@@ -888,7 +888,8 @@ executeMainProcess2 cliOptions@CLIOptions{..} = do
         -- if appState is actually initialised
         withLogger logConfig $ \logger -> do
 
-            -- runIpcServer
+            -- runIpcServer logger $ \message -> 
+            --     makeIpcMessageHandler                    
 
             logDebug logger $ if once 
                     then [i|Starting #{rpkiProverVersion} in one-off mode.|]

@@ -84,41 +84,6 @@ getQueue :: AppLogger -> ClosableQueue QElem
 getQueue AppLogger { defaultLogger = CommonLogger ALogger {..} } = queue
 
 
-data ALogConsumer where 
-    ALogConsumer :: forall a . LogConsumer a => a -> ALogConsumer
-
-newtype CommonLogger2 = CommonLogger2 Logger2
-newtype RtrLogger2    = RtrLogger2 Logger2
-
-data Logger2 = Logger2 {
-        queue    :: ClosableQueue QElem,
-        logLevel :: LogLevel,
-        consumer :: TVar (Maybe ALogConsumer)
-    }
-    deriving stock (Generic)
-
-data AppLogger2 = AppLogger2 {
-        defaultLogger :: CommonLogger2,
-        rtrLogger     :: RtrLogger2        
-    }
-
-class LogConsumer consumer where 
-    consumeMessage :: MonadIO m => consumer -> LogMessage -> m ()
-
-data StdOutConsumer = StdOutConsumer 
-data SocketConsumer = SocketConsumer 
-newtype FileConsumer = FileConsumer Handle
-
-instance LogConsumer StdOutConsumer where
-    consumeMessage _ _ = pure ()
- 
-instance LogConsumer FileConsumer where
-    consumeMessage _ _ = pure ()
- 
-instance LogConsumer SocketConsumer where
-    consumeMessage _ _ = pure ()
-
-
 {- 
 
     Worker logger:
@@ -145,52 +110,58 @@ instance LogConsumer SocketConsumer where
 
 -}
 
+consumeLogger Logger2 {..} = do     
+    -- block until the consumer is initialised
+    ALogConsumer consumer <- atomically $ maybe retry pure =<< readTVar consumer
+    go consumer
+  where
+    go :: LogConsumer a => a -> IO ()
+    go consumer = do 
+        z <- atomically $ readCQueue queue        
+        for_ z $ \message -> consumeMessage consumer message >> go consumer
+
 
 withLogger2 :: LogConfig 
         -> (AppLogger2 -> IO b)      -- ^ what to do with the configured and initialised logger
         -> IO b
 withLogger2 logConfig@LogConfig {..} f = do
         
-    (defaultLogger, rtrLogger) <- 
-        case logType of
-            WorkerLog -> do 
-                logger <- makeLogger2 logConfig
-                pure (logger, logger)
+    let newAppLogger logger1 logger2 = 
+            AppLogger2 (CommonLogger2 logger1) (RtrLogger2 logger2)
 
-            MainLog -> do 
-                logger <- makeLogger2 logConfig
-                atomically $ writeTVar (logger ^. #consumer) $ Just $ ALogConsumer StdOutConsumer
-                pure (logger, logger)
+    let oneLoggerCase logger = 
+            fst <$> concurrently 
+                (withQ (logger ^. #queue) $ f $ newAppLogger logger logger)
+                (withQ (logger ^. #queue) $ consumeLogger logger)        
 
-            MainLogWithRtr rtrLog -> do 
-                logger <- makeLogger2 logConfig
-                rtrLogger <- makeLogger2 logConfig
-                file <- openFile rtrLog WriteMode   
-                atomically $ do 
-                    writeTVar (logger ^. #consumer) $ Just $ ALogConsumer StdOutConsumer                
-                    writeTVar (rtrLogger ^. #consumer) $ Just $ ALogConsumer $ FileConsumer file
-                pure (logger, rtrLogger)
+    case logType of
 
-    let appLogger = AppLogger2 { 
-            defaultLogger = CommonLogger2 defaultLogger, 
-            rtrLogger = RtrLogger2 rtrLogger 
-        }
+        WorkerLog -> oneLoggerCase =<< newLogger2 Nothing            
+        MainLog ->   oneLoggerCase =<< newLogger2 (Just $ ALogConsumer StdOutConsumer)
 
-    f appLogger
-    -- fst <$> concurrently
-    --             (withQ messageQueue (f logger))    
-    --             (withQ messageQueue actualLoop)                     
-  where
+        MainLogWithRtr rtrLog -> do 
+            file <- openFile rtrLog WriteMode   
+
+            logger    <- newLogger2 $ Just $ ALogConsumer StdOutConsumer            
+            rtrLogger <- newLogger2 $ Just $ ALogConsumer $ FileConsumer file            
+
+            fst <$> concurrently 
+                (withQ (logger ^. #queue) $ f $ newAppLogger logger rtrLogger)
+                (concurrently 
+                    (withQ (logger ^. #queue) $ consumeLogger logger)
+                    (withQ (logger ^. #queue) $ consumeLogger rtrLogger))                  
+  where  
+    newLogger2 :: Maybe ALogConsumer -> IO Logger2
+    newLogger2 c = do
+        -- Create a long queue, we don't want to 
+        -- potetially deadlock anything through logging        
+        queue <- newCQueueIO 100_000
+        consumer <- newTVarIO c
+        pure Logger2 {..}     
+
     withQ queue = 
         (`finally` atomically (closeCQueue queue))
-    
-
-makeLogger2 :: LogConfig -> IO Logger2
-makeLogger2 LogConfig {..} = do
-    queue <- newCQueueIO 1000
-    consumer <- newTVarIO Nothing
-    pure Logger2 {..}
-    
+        
 
 drainLog :: MonadIO m => AppLogger -> m ()
 drainLog (getQueue -> queue) =     

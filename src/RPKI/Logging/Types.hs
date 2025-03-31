@@ -1,9 +1,11 @@
 
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE InstanceSigs #-}
 
 module RPKI.Logging.Types where
 
@@ -39,6 +41,7 @@ import RPKI.Parallel
 import RPKI.Metrics.System
 
 import RPKI.Store.Base.Serialisation
+
 
 data LogLevel = ErrorL | WarnL | InfoL | DebugL
     deriving stock (Eq, Ord, Generic)
@@ -93,7 +96,7 @@ class Logger logger where
     logMessage_ :: MonadIO m => logger -> LogMessage -> m ()
     logLevel_   :: logger -> LogLevel
 
-newtype CommonLogger = CommonLogger ALogger
+newtype CommonLogger = CommonLogger ALogger    
 newtype RtrLogger    = RtrLogger ALogger
 
 data ALogger = ALogger {
@@ -140,3 +143,45 @@ data LogConfig = LogConfig {
 
 data LogType = WorkerLog | MainLog | MainLogWithRtr String
     deriving stock (Eq, Ord, Show, Generic)
+
+
+data ALogConsumer where 
+    ALogConsumer :: forall a . LogConsumer a => a -> ALogConsumer
+
+newtype CommonLogger2 = CommonLogger2 Logger2    
+newtype RtrLogger2    = RtrLogger2 Logger2
+
+deriving instance Logger CommonLogger2 
+deriving instance Logger RtrLogger2 
+
+data Logger2 = Logger2 {
+        queue    :: ClosableQueue LogMessage,
+        logLevel :: LogLevel,
+        consumer :: TVar (Maybe ALogConsumer)
+    }
+    deriving stock (Generic)
+
+data AppLogger2 = AppLogger2 {
+        defaultLogger :: CommonLogger2,
+        rtrLogger     :: RtrLogger2        
+    }
+    deriving stock (Generic)
+
+class LogConsumer consumer where 
+    consumeMessage :: MonadIO m => consumer -> LogMessage -> m ()
+
+data StdOutConsumer = StdOutConsumer 
+data SocketConsumer = SocketConsumer 
+newtype FileConsumer = FileConsumer Handle
+
+instance LogConsumer StdOutConsumer where
+    consumeMessage :: MonadIO m => StdOutConsumer -> LogMessage -> m ()
+    consumeMessage _ message = 
+        liftIO $ BS.hPut stdout $ serialise_ message
+ 
+instance LogConsumer FileConsumer where
+    consumeMessage (FileConsumer handle) message = 
+        liftIO $ BS.hPut handle $ serialise_ message
+ 
+instance LogConsumer SocketConsumer where
+    consumeMessage _ _ = pure ()

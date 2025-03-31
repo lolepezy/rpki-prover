@@ -45,17 +45,18 @@ import RPKI.Parallel
 import RPKI.Store.Base.Serialisation
 import RPKI.Logging.Types
 import RPKI.IPC.Types
+import Data.Foldable (for_)
 
 
-makeIpcMessageHandler :: AppContext s 
+makeIpcMessageHandler :: AppLogger2
                     -> (CommandSpec -> IO CommandResultSpec) 
                     -> (IpcMessage -> (CommandResult -> IO ()) -> IO ())
-makeIpcMessageHandler appContext@AppContext {..} commandHandler message resultHandler =
+makeIpcMessageHandler AppLogger2 {..} commandHandler message resultHandler =
     case message of
         LogIpc logMessage -> do
-            logMessage_ logger logMessage                            
+            logMessage_ defaultLogger logMessage                            
         RtrLogIpc logMessage -> 
-            logMessage_ (getRtrLogger appContext) logMessage                    
+            logMessage_ rtrLogger logMessage                    
         SystemIpc metrics -> do
             -- TODO Handle system metrics
             pure ()
@@ -100,9 +101,10 @@ runIpcServer logger handleMessage = do
             (withQueue $ processResults clientSock resultQueue)
       where 
         processResults clientSock queue = do
-            message <- atomically $ readCQueue queue
-            sendAll clientSock $ serialise_ message
-            processResults clientSock queue
+            z <- atomically $ readCQueue queue
+            for_ z $ \message -> do 
+                sendAll clientSock $ serialise_ message
+                processResults clientSock queue
 
         processMessages clientSock queue = do 
             message <- recv clientSock 4096
