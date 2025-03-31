@@ -145,9 +145,10 @@ data LogType = WorkerLog | MainLog | MainLogWithRtr String
     deriving stock (Eq, Ord, Show, Generic)
 
 
-data ALogConsumer where 
-    ALogConsumer :: forall a . LogConsumer a => a -> ALogConsumer
-
+newtype ALogConsumer = ALogConsumer { 
+        consumeMessage :: forall m . MonadIO m => LogMessage -> m ()
+    }
+    
 newtype CommonLogger2 = CommonLogger2 Logger2    
 newtype RtrLogger2    = RtrLogger2 Logger2
 
@@ -167,21 +168,10 @@ data AppLogger2 = AppLogger2 {
     }
     deriving stock (Generic)
 
-class LogConsumer consumer where 
-    consumeMessage :: MonadIO m => consumer -> LogMessage -> m ()
+fileConsumer :: (MonadIO m, TheBinary a) => Handle -> a -> m ()
+fileConsumer handle message = 
+    liftIO $ BS.hPut handle $ serialise_ message
 
-data StdOutConsumer = StdOutConsumer 
-data SocketConsumer = SocketConsumer 
-newtype FileConsumer = FileConsumer Handle
-
-instance LogConsumer StdOutConsumer where
-    consumeMessage :: MonadIO m => StdOutConsumer -> LogMessage -> m ()
-    consumeMessage _ message = 
-        liftIO $ BS.hPut stdout $ serialise_ message
- 
-instance LogConsumer FileConsumer where
-    consumeMessage (FileConsumer handle) message = 
-        liftIO $ BS.hPut handle $ serialise_ message
- 
-instance LogConsumer SocketConsumer where
-    consumeMessage _ _ = pure ()
+stdoutConsumer :: (MonadIO m, TheBinary a) => a -> m ()
+stdoutConsumer message = 
+    liftIO $ BS.hPut stdout $ serialise_ message

@@ -112,13 +112,12 @@ getQueue AppLogger { defaultLogger = CommonLogger ALogger {..} } = queue
 
 consumeLogger Logger2 {..} = do     
     -- block until the consumer is initialised
-    ALogConsumer consumer <- atomically $ maybe retry pure =<< readTVar consumer
-    go consumer
+    ALogConsumer consume <- atomically $ maybe retry pure =<< readTVar consumer
+    go consume
   where
-    go :: LogConsumer a => a -> IO ()
-    go consumer = do 
+    go consume = do 
         z <- atomically $ readCQueue queue        
-        for_ z $ \message -> consumeMessage consumer message >> go consumer
+        for_ z $ \message -> consume message >> go consume
 
 
 withLogger2 :: LogConfig 
@@ -137,13 +136,13 @@ withLogger2 logConfig@LogConfig {..} f = do
     case logType of
 
         WorkerLog -> oneLoggerCase =<< newLogger2 Nothing            
-        MainLog ->   oneLoggerCase =<< newLogger2 (Just $ ALogConsumer StdOutConsumer)
+        MainLog ->   oneLoggerCase =<< newLogger2 (Just $ ALogConsumer stdoutConsumer)
 
         MainLogWithRtr rtrLog -> do 
             file <- openFile rtrLog WriteMode   
 
-            logger    <- newLogger2 $ Just $ ALogConsumer StdOutConsumer            
-            rtrLogger <- newLogger2 $ Just $ ALogConsumer $ FileConsumer file            
+            logger    <- newLogger2 $ Just $ ALogConsumer stdoutConsumer            
+            rtrLogger <- newLogger2 $ Just $ ALogConsumer $ fileConsumer file            
 
             fst <$> concurrently 
                 (withQ (logger ^. #queue) $ f $ newAppLogger logger rtrLogger)
