@@ -108,7 +108,7 @@ logBytes logger bytes =
     atomically $ writeCQueue (getQueue logger) $ BinQE bytes             
 
 getQueue :: AppLogger -> ClosableQueue QElem
-getQueue AppLogger { commonLogger = CommonLogger ALogger {..} } = queue
+getQueue AppLogger { defaultLogger = CommonLogger ALogger {..} } = queue
 
 
 -- The main entry-point, done in CPS style.
@@ -143,8 +143,9 @@ withLogger LogConfig {..} f = do
     let processMessageInMainProcess = \case
             LogM logMessage    -> logRaw $ messageToText logMessage
             RtrLogM logMessage -> logRtr $ messageToText logMessage
-            SystemM sysMetric  -> metricsHandler sysMetric
-            WorkerM workerInfo -> workerHandler workerInfo
+            -- SystemM sysMetric  -> metricsHandler sysMetric
+            -- WorkerM workerInfo -> workerHandler workerInfo
+            _ -> pure ()            
     
     let loopMain = loopReadQueue messageQueue $ \case 
             BinQE b -> 
@@ -169,7 +170,7 @@ withLogger LogConfig {..} f = do
                 _         -> loopMain
                 
     let appLogger = AppLogger {
-            commonLogger = CommonLogger $ ALogger messageQueue logLevel,
+            defaultLogger = CommonLogger $ ALogger messageQueue logLevel,
             rtrLogger    = RtrLogger $ ALogger messageQueue logLevel
         }
 

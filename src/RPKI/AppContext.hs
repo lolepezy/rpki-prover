@@ -12,12 +12,13 @@ import           RPKI.Config
 import           RPKI.Logging.Types
 import           RPKI.Store.Database    (DB)
 
+
 data AppContext s = AppContext {
-        logger            :: AppLogger, 
+        logger            :: AppLogger,         
         config            :: Config,
         appState          :: AppState,
         database          :: TVar (DB s),
-        executableVersion :: ExecutableVersion
+        executableVersion :: ExecutableVersion        
     } 
     deriving stock (Generic)
 

@@ -33,7 +33,11 @@ import           RPKI.Store.Sequence
 data IncompatibleDbCheck = CheckVersion | DontCheckVersion
 data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion
 
-createDatabase :: LmdbEnv -> AppLogger -> IncompatibleDbCheck -> IO (DB LmdbStorage, DbCheckResult)
+createDatabase :: Logger logger => 
+                LmdbEnv 
+            -> logger 
+            -> IncompatibleDbCheck 
+            -> IO (DB LmdbStorage, DbCheckResult)
 createDatabase env logger checkAction = do 
     
     db <- doCreateDb

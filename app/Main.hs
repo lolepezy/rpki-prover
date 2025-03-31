@@ -5,7 +5,6 @@
 {-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TemplateHaskell   #-}
 
 module Main where
 
@@ -29,7 +28,7 @@ import qualified Data.Text                        as Text
 import qualified Data.Set                         as Set
 
 import           Data.Hourglass
-import           Data.Int                         (Int16, Int64)    
+import           Data.Int                         (Int16, Int64)
 import qualified Data.List                        as List
 import           Data.Maybe
 import           Data.Word                        (Word16)
@@ -38,13 +37,13 @@ import           GHC.TypeLits
 
 import qualified Network.Wai.Handler.Warp         as Warp
 
+import           Options.Generic
+
 import           System.Directory
 import           System.Environment
 import           System.FilePath                  ((</>))
-import           System.IO                        
+import           System.IO
 import           System.Exit
-
-import           Options.Generic
 
 import           Shower
 
@@ -58,7 +57,8 @@ import           RPKI.Reporting
 import           RPKI.RRDP.Http (downloadToFile)
 import           RPKI.Http.HttpServer
 import           RPKI.Logging.Types
-import           RPKI.Logging
+import           RPKI.Logging 
+-- import           RPKI.Logging2
 import           RPKI.Store.Base.Storage
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.AppStorage
@@ -68,9 +68,10 @@ import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.RRDP.RrdpFetch
 
+-- import           RPKI.Process
 import           RPKI.Rsync
 import           RPKI.TAL
-import           RPKI.Util               
+import           RPKI.Util
 import           RPKI.Worker
 import           RPKI.Workflow
 import           RPKI.RSC.Verifier
@@ -82,14 +83,15 @@ import           Network.HTTP.Client
 import           Network.HTTP.Client.TLS
 -- import           Network.HTTP.Simple
 import           Network.Connection
+import RPKI.Logging2 (withLogger2)
 
 
 main :: IO ()
 main = do
-    cliOptions@CLIOptions{..} <- unwrapRecord $ 
+    cliOptions@CLIOptions{..} <- unwrapRecord $
             "RPKI prover, relying party software for RPKI, version " <> rpkiProverVersion
 
-    if version        
+    if version
         then do
             -- it is "--version" call, so print the version and exit
             putStrLn $ convert rpkiProverVersion
@@ -106,37 +108,38 @@ main = do
 
 
 executeMainProcess :: CLIOptions Unwrapped -> IO ()
-executeMainProcess cliOptions@CLIOptions{..} = do     
+executeMainProcess cliOptions@CLIOptions{..} = do
     -- TODO This doesn't look pretty, come up with something better.
     appStateHolder <- newTVarIO Nothing
 
-    let bumpSysMetric sm = do 
+    let bumpSysMetric sm = do
             z <- readTVarIO appStateHolder
             for_ z $ mergeSystemMetrics sm
 
-    let updateWorkers wi = do 
+    let updateWorkers wi = do
             z <- readTVarIO appStateHolder
             -- We only keep track of running rsync clients
             for_ z $ updateRsyncClient wi
 
     withLogConfig cliOptions $ \lc -> do
-        let logConfig = lc
-                & #metricsHandler .~ bumpSysMetric
-                & #workerHandler .~ updateWorkers
+        -- let logConfig = lc
+        --         & #metricsHandler .~ bumpSysMetric
+        --         & #workerHandler .~ updateWorkers
+        let logConfig = lc                
 
         -- This one modifies system metrics in AppState
         -- if appState is actually initialised
         withLogger logConfig $ \logger -> do
-            logDebug logger $ if once 
+            logDebug logger $ if once
                     then [i|Starting #{rpkiProverVersion} in one-off mode.|]
                     else [i|Starting #{rpkiProverVersion} as a server.|]
-            
+
             (appContext, validations) <- do
                         runValidatorT (newScopes "Startup") $ do
                             checkPreconditions cliOptions
                             createAppContext cliOptions logger (logConfig ^. #logLevel)
             case appContext of
-                Left _ -> do 
+                Left _ -> do
                     logError logger [i|Failure:
 #{formatValidations (validations ^. typed)}|]
                     drainLog logger
@@ -144,24 +147,26 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     hFlush stderr
                     threadDelay 100_000
                     exitFailure
-                Right appContext' -> do 
+                Right appContext' -> do
                     -- now we have the appState, set appStateHolder
                     atomically $ writeTVar appStateHolder $ Just $ appContext' ^. #appState
-                    if once 
+                    if once
                         then runValidatorServer appContext'
                         else void $ race
                                 (runHttpApi appContext')
                                 (runValidatorServer appContext')
 
+
+
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
     input <- readWorkerInput
-    let config = input ^. typed @Config    
+    let config = input ^. typed @Config
     let logConfig = makeLogConfig (config ^. #logLevel) WorkerLog
-                    
+
     -- turnOffTlsValidation
 
-    executeWork input $ \_ resultHandler -> 
+    executeWork input $ \_ resultHandler ->
         withLogger logConfig $ \logger -> liftIO $ do
             (z, validations) <- runValidatorT
                                     (newScopes "worker-create-app-context")
@@ -169,14 +174,14 @@ executeWorkerProcess = do
             case z of
                 Left e ->
                     logError logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
-                Right appContext ->                    
+                Right appContext ->
                     case input ^. #params of
                         RrdpFetchParams {..} -> exec resultHandler $
-                            fmap RrdpFetchResult $ runValidatorT scopes $ 
+                            fmap RrdpFetchResult $ runValidatorT scopes $
                                 updateObjectForRrdpRepository appContext worldVersion rrdpRepository
 
                         RsyncFetchParams {..} -> exec resultHandler $
-                            fmap RsyncFetchResult $ runValidatorT scopes $ 
+                            fmap RsyncFetchResult $ runValidatorT scopes $
                                 updateObjectForRsyncRepository appContext fetchConfig worldVersion rsyncRepository
 
                         CompactionParams {..} -> exec resultHandler $
@@ -187,28 +192,28 @@ executeWorkerProcess = do
 
                         CacheCleanupParams {..} -> exec resultHandler $
                             CacheCleanupResult <$> runCacheCleanup appContext worldVersion
-  where    
-    exec resultHandler f = resultHandler =<< execWithStats f                    
+  where
+    exec resultHandler f = resultHandler =<< execWithStats f
 
 
 turnOffTlsValidation :: IO ()
-turnOffTlsValidation = do 
-    manager <- newManager $ mkManagerSettings (TLSSettingsSimple True True True) Nothing 
-    setGlobalManager manager    
+turnOffTlsValidation = do
+    manager <- newManager $ mkManagerSettings (TLSSettingsSimple True True True) Nothing
+    setGlobalManager manager
 
 
 runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
 runValidatorServer appContext@AppContext {..} = do
-    
+
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion  <- newWorldVersion
 
     -- Check that TAL names are unique
-    let talSourcesDirs = (configValue $ config ^. #talDirectory) 
-                       : (configValue $ config ^. #extraTalsDirectories)
-    talNames <- fmap mconcat $ mapM listTalFiles talSourcesDirs    
+    let talSourcesDirs = configValue (config ^. #talDirectory)
+                       : configValue (config ^. #extraTalsDirectories)
+    talNames <- mconcat <$> mapM listTalFiles talSourcesDirs
     when (Set.size (Set.fromList talNames) < length talNames) $ do
-        let message = [i|TAL names are not unique #{talNames}, |] <> 
+        let message = [i|TAL names are not unique #{talNames}, |] <>
                       [i|TAL are from directories #{talSourcesDirs}.|]
         logError logger message
         throwIO $ AppException $ TAL_E $ TALError message
@@ -216,10 +221,10 @@ runValidatorServer appContext@AppContext {..} = do
     (tals, vs) <- runValidatorT (newScopes "validation-root") $
         forM talNames $ \(talFilePath, taName) ->
             vFocusOn TAFocus (convert taName) $
-                parseTalFromFile talFilePath (Text.pack taName)    
+                parseTalFromFile talFilePath (Text.pack taName)
 
     db <- readTVarIO database
-    rwTx db $ \tx -> do 
+    rwTx db $ \tx -> do
         DB.generalWorldVersion tx db worldVersion
         DB.saveValidations tx db worldVersion (vs ^. typed)
     case tals of
@@ -239,20 +244,23 @@ runValidatorServer appContext@AppContext {..} = do
 
 
 runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
-runHttpApi appContext@AppContext {..} = do 
+runHttpApi appContext@AppContext {..} = do
     let httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
-    (Warp.run httpPort $ httpServer appContext) 
-        `catch` 
+    Warp.run httpPort (httpServer appContext)
+        `catch`
         (\(e :: SomeException) -> logError logger [i|Could not start HTTP server: #{e}.|])
 
 
-createAppContext :: CLIOptions Unwrapped -> AppLogger -> LogLevel -> ValidatorT IO AppLmdbEnv
+createAppContext :: CLIOptions Unwrapped 
+                -> AppLogger 
+                -> LogLevel 
+                -> ValidatorT IO AppLmdbEnv
 createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     programPath <- liftIO getExecutablePath
 
     let defaults = defaultConfig
-    let lmdbRealSize = (Size <$> lmdbSize) `orDefault` (defaults ^. #lmdbSizeMb)    
+    let lmdbRealSize = (Size <$> lmdbSize) `orDefault` (defaults ^. #lmdbSizeMb)
 
     -- Create (or make sure exist) necessary directories in the root directory
     (root, tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger
@@ -260,9 +268,9 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     -- Set capabilities to the values from the CLI or to all available CPUs,
     -- (disregard the HT issue for now it needs more testing).
     let cpuCount' = fromMaybe getRtsCpuCount cpuCount
-    liftIO $ setCpuCount cpuCount'    
-    let parallelism = 
-            case fetcherCount of 
+    liftIO $ setCpuCount cpuCount'
+    let parallelism =
+            case fetcherCount of
                 Nothing -> makeParallelism cpuCount'
                 Just fc -> makeParallelismF cpuCount' fc
 
@@ -271,10 +279,10 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                         & maybeSet #rtrPort rtrPort
                         & maybeSet #rtrAddress rtrAddress
                         & #rtrLogFile .~ rtrLogFile
-            else Nothing        
+            else Nothing
 
-    proverRunMode     <- deriveProverRunMode cliOptions  
-    rsyncPrefetchUrls <- rsyncPrefetches cliOptions                
+    proverRunMode     <- deriveProverRunMode cliOptions
+    rsyncPrefetchUrls <- rsyncPrefetches cliOptions
 
     let apiSecured :: a -> ApiSecured a
         apiSecured a = if showHiddenConfig then Public a else Hidden a
@@ -313,12 +321,12 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
             & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
             & maybeSet (#validationConfig . #minObjectSize) minObjectSize
-            & #validationConfig . #fetchIntervalCalculation .~ 
+            & #validationConfig . #fetchIntervalCalculation .~
                 (if noAdaptiveFetchIntervals then Constant else Adaptive)
-            & #validationConfig . #fetchTimeoutCalculation .~ 
-                (if noAdaptiveFetchTimeouts then Constant else Adaptive)        
-            & #validationConfig . #fetchMethod .~ 
-                (if noAsyncFetch then SyncOnly else SyncAndAsync)        
+            & #validationConfig . #fetchTimeoutCalculation .~
+                (if noAdaptiveFetchTimeouts then Constant else Adaptive)
+            & #validationConfig . #fetchMethod .~
+                (if noAsyncFetch then SyncOnly else SyncAndAsync)
             & maybeSet (#httpApiConf . #port) httpApiPort
             & #rtrConfig .~ rtrConfig
             & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
@@ -330,10 +338,10 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & maybeSet #metricsPrefix (convert <$> metricsPrefix)
             & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
             & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
-            & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory            
-        
+            & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
+
     -- Do some "common sense" adjustmnents to the config for correctness
-    let adjustedConfig = config 
+    let adjustedConfig = config
             -- Cache must be cleaned up at least as often as the 
             -- lifetime of the objects in it    
             & #cacheCleanupInterval %~ (`min` (config ^. #cacheLifeTime))
@@ -345,9 +353,9 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     -- Read the files first to fail fast
     unless (null localExceptions) $
         void $ readSlurms localExceptions
-    
-    appState <- createAppState logger localExceptions    
-    
+
+    appState <- createAppState logger localExceptions
+
     lmdbEnv <- setupLmdbCache
                     (if resetCache then Reset else UseExisting)
                     logger
@@ -355,12 +363,12 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                     adjustedConfig
 
     (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
-    database <- liftIO $ newTVarIO db    
-    
+    database <- liftIO $ newTVarIO db
+
     let executableVersion = thisExecutableVersion
     let appContext = AppContext {..}
 
-    case dbCheck of 
+    case dbCheck of
         -- If the DB version wasn't compatible with the expected version, 
         -- all the data was erased and it makes a lot of sense to perform 
         -- compaction. Not performing it may potentially bloat the database 
@@ -383,17 +391,18 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 #{shower (adjustedConfig)}|]
     pure appContext
 
-      
-fsLayout :: CLIOptions Unwrapped
-        -> AppLogger
+
+fsLayout :: Logger logger => 
+            CLIOptions Unwrapped
+        -> logger
         -> ValidatorT IO (FilePath, FilePath, FilePath, FilePath, FilePath)
 fsLayout cliOptions@CLIOptions {..} logger = do
-    root <- getRoot cliOptions    
-    
-    logInfo logger $ case root of        
+    root <- getRoot cliOptions
+
+    logInfo logger $ case root of
         Left d  -> [i|Root directory is not set, using default #{d}, i.e. ${HOME}/.rpki|]
         Right d -> [i|Root directory is set to #{d}.|]
-    
+
     let rootDir = either id id root
 
     rootExists <- liftIO $ doesDirectoryExist rootDir
@@ -403,76 +412,76 @@ fsLayout cliOptions@CLIOptions {..} logger = do
         appError $ InitE $ InitError message
 
     -- For each sub-directory create it if it doesn't exist
-    [cached, rsyncd, tald, tmpd] <- 
-        fromTryM 
+    [cached, rsyncd, tald, tmpd] <-
+        fromTryM
             (\e -> InitE $ InitError [i|Error verifying/creating directories: #{fmtEx e}|])
-            $ forM [cacheDirName, rsyncDirName, talsDirName, tmpDirName] $ \dir -> 
-                fromEitherM $ first (InitE . InitError) <$> 
-                    createSubDirectoryIfNeeded rootDir dir    
+            $ forM [cacheDirName, rsyncDirName, talsDirName, tmpDirName] $ \dir ->
+                fromEitherM $ first (InitE . InitError) <$>
+                    createSubDirectoryIfNeeded rootDir dir
 
-    if refetchRirTals then do 
+    if refetchRirTals then do
         if noRirTals then
-            logInfo logger $ "Will re-fetch and overwrite TAL files, but not use them. " <> 
+            logInfo logger $ "Will re-fetch and overwrite TAL files, but not use them. " <>
                              "Maybe only one of  `--refetch-rir-tals` and `--no-rir-tals` should be set?"
-        else 
+        else
             logInfo logger "Will re-fetch and overwrite TAL files."
         downloadTals tald
-    else do         
+    else do
         tals <- liftIO $ listTalFiles tald
-        when (null tals) $         
-            if noRirTals then 
+        when (null tals) $
+            if noRirTals then
                 -- We don't know what you wanted here, but we respect your choice
-                logWarn logger $ "There are no TAL files and RIR TALs download is disabled, " <> 
+                logWarn logger $ "There are no TAL files and RIR TALs download is disabled, " <>
                                  "so the validator is not going to do anything useful."
             else
                 -- Assume the reason is the very first start of a typical installation 
-                case extraTalsDirectory of 
+                case extraTalsDirectory of
                     [] -> do
                         -- Since there are no extra TAL locations set do the most reasonable thing, download TALs
                         logInfo logger [i|No TAL files found in #{tald}, assuming it is the first launch and downloading them.|]
                         downloadTals tald
-                    _ -> 
+                    _ ->
                         -- Assume the user knows better and there are some TALs in the extraTalsDirectory
                         logInfo logger [i|No TAL files found in #{tald}, assuming there are some TALs in #{extraTalsDirectory}.|]
- 
+
     -- Do not do anything with `tmp` and `rsync`, they most likely are going 
     -- to be okay for either a new installation or an existing one. Otherwise,
     -- they will be cleaned up by one of the periodic maintenance tasks.
 
     pure (rootDir, tald, rsyncd, tmpd, cached)
   where
-    downloadTals tald =     
+    downloadTals tald =
         fromTryM
             (\e -> InitE $ InitError [i|Error downloading TALs: #{fmtEx e}|])
-            $ do                
-                httpStatuses <- liftIO $ forConcurrently defaultTalUrls $ \(talName, Text.pack -> talUrl) -> do                    
-                        logDebug logger [i|Downloading #{talUrl} to #{tald </> talName}.|]                    
-                        fmap (talName, talUrl, ) $ try $ downloadToFile (URI talUrl) (tald </> talName) (Size 10_000)                        
-                
-                let talText = \case 
-                        (talName, talUrl, Left (e :: SomeException)) -> 
+            $ do
+                httpStatuses <- liftIO $ forConcurrently defaultTalUrls $ \(talName, Text.pack -> talUrl) -> do
+                        logDebug logger [i|Downloading #{talUrl} to #{tald </> talName}.|]
+                        fmap (talName, talUrl, ) $ try $ downloadToFile (URI talUrl) (tald </> talName) (Size 10_000)
+
+                let talText = \case
+                        (talName, talUrl, Left (e :: SomeException)) ->
                             Just [i|Failed to download TAL #{talName} from #{talUrl}, error: #{e}.|]
-                        (talName, talUrl, Right status) 
+                        (talName, talUrl, Right status)
                             | isHttpSuccess status -> Nothing
-                            | otherwise -> Just 
+                            | otherwise -> Just
                                 [i|Failed to download TAL #{talName} from #{talUrl}, HTTP status: #{status}.|]
 
                 let anyFailures = any (\(_, _, s) -> either (const True) (not . isHttpSuccess) s) httpStatuses
-                when anyFailures $  
-                    appError $ InitE $ InitError $ 
-                        Text.intercalate "\n" $ catMaybes $ map talText httpStatuses                                        
+                when anyFailures $
+                    appError $ InitE $ InitError $
+                        Text.intercalate "\n" $ catMaybes $ map talText httpStatuses
 
 
 getRoot :: CLIOptions Unwrapped -> ValidatorT IO (Either FilePath FilePath)
-getRoot cliOptions = do    
-    case getRootDirectory cliOptions of 
-        Nothing -> do 
+getRoot cliOptions = do
+    case getRootDirectory cliOptions of
+        Nothing -> do
             home <- fromTry (InitE . InitError . fmtEx) $ getEnv "HOME"
             Left <$> makeSureRootExists (home </> ".rpki")
-        Just root -> 
-            Right <$> makeSureRootExists root            
+        Just root ->
+            Right <$> makeSureRootExists root
   where
-    makeSureRootExists root = do 
+    makeSureRootExists root = do
         rootExists <- liftIO $ doesDirectoryExist root
         if rootExists
             then pure root
@@ -550,32 +559,28 @@ createWorkerAppContext config logger = do
 
     pure AppContext {..}
 
-createAppState :: MonadIO m => AppLogger -> [String] -> m AppState
+createAppState :: (Logger logger, MonadIO m) => logger -> [String] -> m AppState
 createAppState logger localExceptions = do
-    appState <- liftIO newAppState    
+    appState <- liftIO newAppState
 
     -- Set the function that re-reads SLURM files with every re-validation.
     pure $ case localExceptions of
             []         -> appState
-            slurmFiles -> appState & #readSlurm ?~ readSlurms slurmFiles    
+            slurmFiles -> appState & #readSlurm ?~ readSlurms slurmFiles
   where
     readSlurms files = do
         logDebug logger [i|Reading SLURM files: #{files}.|]
         readSlurmFiles files
 
 
--- | Check some crucial things before running the validator
-checkPreconditions :: CLIOptions Unwrapped -> ValidatorT IO ()
-checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
-
 deriveProverRunMode :: CLIOptions Unwrapped -> ValidatorT IO ProverRunMode
-deriveProverRunMode CLIOptions {..} = 
-    case (once, vrpOutput) of 
-        (False, Nothing) -> pure ServerMode  
+deriveProverRunMode CLIOptions {..} =
+    case (once, vrpOutput) of
+        (False, Nothing) -> pure ServerMode
         (True, Just vo)  -> pure $ OneOffMode vo
         _                -> appError $ UnspecifiedE "options"
             [i|Options `--once` and `--vrp-output` must be either both set or both not set|]
-            
+
 
 -- | Run rpki-prover in a CLI mode for verifying RSC signature (*.sig file).
 executeVerifier :: CLIOptions Unwrapped -> IO ()
@@ -635,24 +640,24 @@ data CLIOptions wrapped = CLIOptions {
         "Deprecated, does nothing, used to initialise FS layout before the first launch.",
 
     once :: wrapped ::: Bool <?>
-        ("If set, will run one validation cycle and exit. Http API will not start, " +++ 
+        ("If set, will run one validation cycle and exit. Http API will not start, " +++
          "result will be written to the file set by --vrp-output option (which must also be set)."),
 
-    vrpOutput :: wrapped ::: Maybe FilePath <?> 
+    vrpOutput :: wrapped ::: Maybe FilePath <?>
         "Path of the file to write VRPs to. Only effectful when --once option is set.",
 
-    noRirTals :: wrapped ::: Bool <?> 
+    noRirTals :: wrapped ::: Bool <?>
         "If set, RIR TAL files will not be downloaded.",
 
-    refetchRirTals :: wrapped ::: Bool <?> 
-        "If set, RIR TAL files will be re-downloaded.",        
+    refetchRirTals :: wrapped ::: Bool <?>
+        "If set, RIR TAL files will be re-downloaded.",
 
     rpkiRootDirectory :: wrapped ::: [FilePath] <?>
         ("Root directory (default is ${HOME}/.rpki/). This option can be passed multiple times and "
          +++ "the last one will be used, it is done for convenience of overriding this option with dockerised version."),
 
     extraTalsDirectory :: wrapped ::: [FilePath] <?>
-        ("And extra directories where to look for TAL files. By default there is none, " +++ 
+        ("And extra directories where to look for TAL files. By default there is none, " +++
          "TALs are picked up only from the $rpkiRootDirectory/tals directory"),
 
     verifySignature :: wrapped ::: Bool <?>
@@ -669,8 +674,8 @@ data CLIOptions wrapped = CLIOptions {
         ("Files to be verified using and RSC signaure file, may be multiple files."),
 
     cpuCount :: wrapped ::: Maybe Natural <?>
-        ("CPU number available to the program (default is 2). Note that higher CPU counts result in bigger " +++ 
-        "memory allocations. It is also recommended to set real CPU core number rather than the (hyper-)thread " +++ 
+        ("CPU number available to the program (default is 2). Note that higher CPU counts result in bigger " +++
+        "memory allocations. It is also recommended to set real CPU core number rather than the (hyper-)thread " +++
         "number, since using the latter does not give much benefit and actually may cause performance degradation."),
 
     fetcherCount :: wrapped ::: Maybe Natural <?>
@@ -680,7 +685,7 @@ data CLIOptions wrapped = CLIOptions {
         "Reset the LMDB cache i.e. remove ~/.rpki/cache/*.mdb files.",
 
     revalidationInterval :: wrapped ::: Maybe Int64 <?>
-        ("Interval between validation cycles, each consisting of traversing RPKI tree for each TA " +++ 
+        ("Interval between validation cycles, each consisting of traversing RPKI tree for each TA " +++
         "and fetching repositories on the way, in seconds. Default is 7 minutes, i.e. 560 seconds."),
 
     cacheLifetimeHours :: wrapped ::: Maybe Int64 <?>
@@ -692,15 +697,15 @@ data CLIOptions wrapped = CLIOptions {
          "(validation results, metrics, VRPs, etc.) with it."),
 
     rrdpRefreshInterval :: wrapped ::: Maybe Int64 <?>
-        ("Period of time after which an RRDP repository must be updated, " +++ 
+        ("Period of time after which an RRDP repository must be updated, " +++
          "in seconds (default is 120 seconds)"),
 
     rsyncRefreshInterval :: wrapped ::: Maybe Int64 <?>
-        ("Period of time after which an rsync repository must be updated, " +++ 
+        ("Period of time after which an rsync repository must be updated, " +++
          "in seconds (default is 11 minutes, i.e. 660 seconds)"),
 
     rrdpTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timebox for RRDP repositories, in seconds. If fetching of a repository does not " +++ 
+        ("Timebox for RRDP repositories, in seconds. If fetching of a repository does not " +++
          "finish within this timeout, the repository is considered unavailable and fetching process is interrupted"),
 
     asyncRrdpTimeout :: wrapped ::: Maybe Int64 <?>
@@ -722,8 +727,8 @@ data CLIOptions wrapped = CLIOptions {
         "Port to listen to for http API (default is 9999)",
 
     lmdbSize :: wrapped ::: Maybe Int64 <?>
-        ("Maximal LMDB cache size in MBs (default is 32768, i.e. 32GB). Note that " +++ 
-         "(a) It is the maximal size of LMDB, i.e. it will not claim that much space from the beginning. " +++ 
+        ("Maximal LMDB cache size in MBs (default is 32768, i.e. 32GB). Note that " +++
+         "(a) It is the maximal size of LMDB, i.e. it will not claim that much space from the beginning. " +++
          "(b) About 1Gb of cache is required for every extra 24 hours of cache life time."),
 
     withRtr :: wrapped ::: Bool <?>
@@ -742,19 +747,19 @@ data CLIOptions wrapped = CLIOptions {
         "Log level, may be 'error', 'warn', 'info' or 'debug' (case-insensitive). Default is 'info'.",
 
     strictManifestValidation :: wrapped ::: Bool <?>
-        ("Use the strict version of RFC 6486 (https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/" +++ 
+        ("Use the strict version of RFC 6486 (https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/" +++
          " item 6.4) for manifest handling (default is false). More modern version is here " +++
          "https://www.rfc-editor.org/rfc/rfc9286.html#name-relying-party-processing-of and it is the default."),
 
     allowOverclaiming :: wrapped ::: Bool <?>
-        ("Use validation reconsidered algorithm for validating resource sets on certificates " +++ 
+        ("Use validation reconsidered algorithm for validating resource sets on certificates " +++
          "(https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-validation-update/) instead of " +++
          "strict version (https://www.rfc-editor.org/rfc/rfc6487.html#section-7). The default if false, " +++
          "i.e. strict version is used by default."),
 
     localExceptions :: wrapped ::: [String] <?>
-        ("Files with local exceptions in the SLURM format (RFC 8416). It is possible " +++ 
-         "to set multiple local exception files (i.e. set this option multiple times " +++ 
+        ("Files with local exceptions in the SLURM format (RFC 8416). It is possible " +++
+         "to set multiple local exception files (i.e. set this option multiple times " +++
          "with different arguments), they all will be united into one internally before applying."),
 
     maxTaRepositories :: wrapped ::: Maybe Int <?>
@@ -808,30 +813,30 @@ data CLIOptions wrapped = CLIOptions {
         "Maximal allowed memory allocation (in megabytes) for validation process (default is 2048).",
 
     noIncrementalValidation :: wrapped ::: Bool <?>
-        ("Do not use incremental validation algorithm (incremental validation is the default " +++ 
+        ("Do not use incremental validation algorithm (incremental validation is the default " +++
          "so default for this option is false)."),
 
     noAdaptiveFetchIntervals :: wrapped ::: Bool <?>
-        ("Do not use adaptive fetch intervals for repositories (adaptive fetch intervals is the default " +++ 
+        ("Do not use adaptive fetch intervals for repositories (adaptive fetch intervals is the default " +++
          "so default for this option is false)."),
 
     noAdaptiveFetchTimeouts :: wrapped ::: Bool <?>
-        ("Do not use adaptive fetch timeouts for repositories (adaptive fetch timeouts is the default " +++ 
+        ("Do not use adaptive fetch timeouts for repositories (adaptive fetch timeouts is the default " +++
          "so default for this option is false)."),
 
     noAsyncFetch :: wrapped ::: Bool <?>
-        ("Do not fetch repositories asynchronously, i.e. only fetch them while validating the RPKI tree " +++ 
+        ("Do not fetch repositories asynchronously, i.e. only fetch them while validating the RPKI tree " +++
         "(default is false, i.e. asynchronous fetches are used by default)."),
 
     showHiddenConfig :: wrapped ::: Bool <?>
-        ("Reveal all config values in the HTTP API call to `/api/system`. " +++ 
-         "This is a potential security issue since some of the config values include " +++ 
+        ("Reveal all config values in the HTTP API call to `/api/system`. " +++
+         "This is a potential security issue since some of the config values include " +++
          "local FS paths (default is false)."),
 
     noValidityApi :: wrapped ::: Bool <?>
-        ("Do not build VRP index for /api/validity calls in the REST API (default is false, i.e. the index " +++ 
-         "is built by default). This option is useful for the cases when the VRP index is not needed, " +++ 
-         "it will save some memory and CPU spent on the index.") 
+        ("Do not build VRP index for /api/validity calls in the REST API (default is false, i.e. the index " +++
+         "is built by default). This option is useful for the cases when the VRP index is not needed, " +++
+         "it will save some memory and CPU spent on the index.")
 
 } deriving (Generic)
 
@@ -856,8 +861,82 @@ withLogConfig CLIOptions{..} f =
   where
     run logLev = f $ makeLogConfig logLev logType
       where
-        logType = case (rtrLogFile, worker) of 
+        logType = case (rtrLogFile, worker) of
             (Just fs, Nothing) -> MainLogWithRtr fs
             (Nothing, Nothing) -> MainLog
             (_,        Just _) -> WorkerLog
+
+
+
+executeMainProcess2 :: CLIOptions Unwrapped -> IO ()
+executeMainProcess2 cliOptions@CLIOptions{..} = do     
+    -- TODO This doesn't look pretty, come up with something better.
+    appStateHolder <- newTVarIO Nothing
+
+    let bumpSysMetric sm = do 
+            z <- readTVarIO appStateHolder
+            for_ z $ mergeSystemMetrics sm
+
+    let updateWorkers wi = do 
+            z <- readTVarIO appStateHolder
+            -- We only keep track of running rsync clients
+            for_ z $ updateRsyncClient wi
+
+    withLogConfig cliOptions $ \logConfig -> do                
+
+        -- This one modifies system metrics in AppState
+        -- if appState is actually initialised
+        withLogger logConfig $ \logger -> do
+
+            -- runIpcServer
+
+            logDebug logger $ if once 
+                    then [i|Starting #{rpkiProverVersion} in one-off mode.|]
+                    else [i|Starting #{rpkiProverVersion} as a server.|]
             
+            (appContext, validations) <- do
+                        runValidatorT (newScopes "Startup") $ do
+                            checkPreconditions cliOptions
+                            createAppContext cliOptions logger (logConfig ^. #logLevel)
+            case appContext of
+                Left _ -> do 
+                    logError logger [i|Failure:
+#{formatValidations (validations ^. typed)}|]
+                    drainLog logger
+                    hFlush stdout
+                    hFlush stderr
+                    threadDelay 100_000
+                    exitFailure
+                Right appContext' -> do 
+                    -- now we have the appState, set appStateHolder
+                    atomically $ writeTVar appStateHolder $ Just $ appContext' ^. #appState
+                    if once 
+                        then runValidatorServer appContext'
+                        else void $ race
+                                (runHttpApi appContext')
+                                (runValidatorServer appContext')
+
+
+withLogConfig2 :: CLIOptions Unwrapped -> (LogConfig -> IO ()) -> IO ()
+withLogConfig2 CLIOptions{..} f =
+    case logLevel of
+        Nothing -> run defaultsLogLevel
+        Just s  ->
+            case Text.toLower $ Text.pack s of
+                "error" -> run ErrorL
+                "warn"  -> run WarnL
+                "info"  -> run InfoL
+                "debug" -> run DebugL
+                other   -> hPutStrLn stderr $ "Invalid log level: " <> Text.unpack other
+  where
+    run logLev = f $ LogConfig logLev logType
+      where
+        logType = case (rtrLogFile, worker) of 
+            (Just fs, Nothing) -> MainLogWithRtr fs
+            (Nothing, Nothing) -> MainLog
+            (_,        Just _) -> WorkerLog            
+
+-- | Check some crucial things before running the validator
+checkPreconditions :: CLIOptions Unwrapped -> ValidatorT IO ()
+checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath            
+

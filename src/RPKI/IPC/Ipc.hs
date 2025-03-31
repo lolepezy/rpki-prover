@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE QuasiQuotes                #-}
 {-# LANGUAGE RecordWildCards            #-}
@@ -10,6 +11,7 @@
 
 module RPKI.IPC.Ipc where
 
+import Control.Lens
 import Control.Concurrent
 import Control.Concurrent.Async
 import Control.Concurrent.STM
@@ -36,44 +38,38 @@ import Network.Socket.ByteString (recv, sendAll)
 
 import RPKI.AppTypes
 import RPKI.AppContext
+import RPKI.Config
 import RPKI.Logging
-import RPKI.Logging.Types
 import RPKI.Metrics.System
 import RPKI.Parallel
 import RPKI.Store.Base.Serialisation
-import RPKI.Time
+import RPKI.Logging.Types
 import RPKI.IPC.Types
-
-
-runIpc :: AppContext s -> IO ()
-runIpc _ = do 
-    pure ()
 
 
 makeIpcMessageHandler :: AppContext s 
                     -> (CommandSpec -> IO CommandResultSpec) 
                     -> (IpcMessage -> (CommandResult -> IO ()) -> IO ())
-makeIpcMessageHandler appContext@AppContext {..} commandHandler = 
-    \message resultHandler -> 
-        case message of
-            LogIpc logMessage -> 
-                logMessage_ (getRtrLogger appContext) logMessage        
-            RtrLogIpc logMessage -> do
-                logMessage_ logger logMessage                
-            SystemIpc metrics -> do
-                -- TODO Handle system metrics
-                pure ()
-            CommandIpc Command {..} -> do
-                result <- commandHandler commandSpec
-                resultHandler $ CommandResult {..}
+makeIpcMessageHandler appContext@AppContext {..} commandHandler message resultHandler =
+    case message of
+        LogIpc logMessage -> do
+            logMessage_ logger logMessage                            
+        RtrLogIpc logMessage -> 
+            logMessage_ (getRtrLogger appContext) logMessage                    
+        SystemIpc metrics -> do
+            -- TODO Handle system metrics
+            pure ()
+        CommandIpc Command {..} -> do
+            result <- commandHandler commandSpec
+            resultHandler $ CommandResult {..}
             
 
-
-runServer :: AppContext s 
-        -> FilePath 
-        -> (IpcMessage -> (CommandResult -> IO ()) -> IO ()) 
-        -> IO ()
-runServer AppContext {..} socketPath handleMessage = do
+runIpcServer :: Logger logger => 
+                logger 
+            -> (IpcMessage -> (CommandResult -> IO ()) -> IO ()) 
+            -> IO ()
+runIpcServer logger handleMessage = do
+    socketPath <- unixSocketPath
     logDebug logger [i|Starting server on Unix socket at #{socketPath}...|]    
     socketExists <- doesFileExist socketPath
     when socketExists $ do
@@ -117,3 +113,4 @@ runServer AppContext {..} socketPath handleMessage = do
                     case deserialiseOrFail_ message of
                         Left err -> logError logger [i|Error deserialising message #{message}: #{err}|]
                         Right r  -> handleMessage r (atomically . writeCQueue queue)                
+

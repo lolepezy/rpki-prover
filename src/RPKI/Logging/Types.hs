@@ -2,21 +2,10 @@
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE RecordWildCards            #-}
 
 module RPKI.Logging.Types where
-
-import Data.Text
-
-import GHC.Generics (Generic)
-
-import System.Posix.Types
-
-import RPKI.Metrics.System
-import RPKI.Store.Base.Serialisation
-import RPKI.Time
 
 import           Conduit
 import           Control.Exception
@@ -63,8 +52,8 @@ instance Show LogLevel where
         DebugL -> "Debug"
 
 data AppLogger = AppLogger {
-        commonLogger :: CommonLogger,
-        rtrLogger    :: RtrLogger        
+        defaultLogger :: CommonLogger,
+        rtrLogger     :: RtrLogger        
     }
 
 data WorkerInfo = WorkerInfo {
@@ -112,6 +101,9 @@ data ALogger = ALogger {
         logLevel :: LogLevel
     }
 
+data SomeLogger where 
+    SomeLogger :: forall a . Logger a => a -> SomeLogger     
+
 instance Logger CommonLogger where 
     logMessage_ (CommonLogger ALogger {..}) message =
         liftIO $ atomically $ writeCQueue queue $ MsgQE $ LogM message  
@@ -125,20 +117,26 @@ instance Logger RtrLogger where
     logLevel_ (RtrLogger ALogger {..}) = logLevel
 
 instance Logger AppLogger where 
-    logMessage_ AppLogger {..} = logMessage_ commonLogger
-    logLevel_ AppLogger {..}   = logLevel_ commonLogger
+    logMessage_ AppLogger {..} = logMessage_ defaultLogger
+    logLevel_ AppLogger {..}   = logLevel_ defaultLogger
+
+instance Logger SomeLogger where 
+    logMessage_ (SomeLogger a) = logMessage_ a
+    logLevel_ (SomeLogger a)   = logLevel_ a
+
+-- data LogConfig = LogConfig {
+--         logLevel       :: LogLevel,
+--         logType        :: LogType,
+--         metricsHandler :: SystemMetrics -> IO (), -- ^ what to do with incoming system metrics messages
+--         workerHandler  :: WorkerMessage -> IO () -- ^ what to do with incoming worker messages
+--     }
+--     deriving stock (Generic)
 
 data LogConfig = LogConfig {
         logLevel       :: LogLevel,
-        logType        :: LogType,
-        metricsHandler :: SystemMetrics -> IO (), -- ^ what to do with incoming system metrics messages
-        workerHandler  :: WorkerMessage -> IO () -- ^ what to do with incoming worker messages
+        logType        :: LogType
     }
     deriving stock (Generic)
 
 data LogType = WorkerLog | MainLog | MainLogWithRtr String
     deriving stock (Eq, Ord, Show, Generic)
-
-
-
-

@@ -211,7 +211,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
         
     Size lmdbFileSize <- cacheFsSize appContext 
     
-    dbStats <- fmap DB.totalStats $ lmdbGetStats appContext
+    dbStats <- DB.totalStats <$> lmdbGetStats appContext
     let Size dataSize = dbStats ^. #statKeyBytes + dbStats ^. #statValueBytes    
 
     let fileSizeMb :: Integer = fromIntegral $ lmdbFileSize `div` (1024 * 1024)
