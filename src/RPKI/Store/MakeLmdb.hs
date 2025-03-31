@@ -23,6 +23,7 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Parallel
 import           RPKI.Logging
+import           RPKI.Logging.Types
 import           RPKI.Time
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database    
@@ -32,7 +33,11 @@ import           RPKI.Store.Sequence
 data IncompatibleDbCheck = CheckVersion | DontCheckVersion
 data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion
 
-createDatabase :: LmdbEnv -> AppLogger -> IncompatibleDbCheck -> IO (DB LmdbStorage, DbCheckResult)
+createDatabase :: Logger logger => 
+                LmdbEnv 
+            -> logger 
+            -> IncompatibleDbCheck 
+            -> IO (DB LmdbStorage, DbCheckResult)
 createDatabase env logger checkAction = do 
     
     db <- doCreateDb

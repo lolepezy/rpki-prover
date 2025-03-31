@@ -156,6 +156,19 @@ executables:
     dependencies:
     - rpki-prover  
 
+  misc:
+    main:                SocketTest.hs
+    source-dirs:         misc
+    ghc-options:
+    - -threaded
+    - -O2
+    - -Wall    
+    - -rtsopts
+    - -funbox-strict-fields
+    - '"-with-rtsopts=-A16m -AL64m -N2 -qg -T -I0 --disable-delayed-os-memory-return"'
+    dependencies:
+    - rpki-prover  
+
   # This is necessary to work around a ugly bug in stack
   #
   #1rpki-prover-static:    

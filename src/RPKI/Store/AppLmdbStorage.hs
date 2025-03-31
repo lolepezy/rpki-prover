@@ -23,6 +23,7 @@ import           RPKI.AppMonad
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Logging
+import           RPKI.Logging.Types
 import           RPKI.Worker
 import           RPKI.Reporting
 import           RPKI.Store.Base.LMDB
@@ -210,7 +211,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
         
     Size lmdbFileSize <- cacheFsSize appContext 
     
-    dbStats <- fmap DB.totalStats $ lmdbGetStats appContext
+    dbStats <- DB.totalStats <$> lmdbGetStats appContext
     let Size dataSize = dbStats ^. #statKeyBytes + dbStats ^. #statValueBytes    
 
     let fileSizeMb :: Integer = fromIntegral $ lmdbFileSize `div` (1024 * 1024)

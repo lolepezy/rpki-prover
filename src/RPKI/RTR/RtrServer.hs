@@ -40,6 +40,7 @@ import           RPKI.AppContext
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Logging
+import           RPKI.Logging.Types
 import           RPKI.Resources.Types
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState

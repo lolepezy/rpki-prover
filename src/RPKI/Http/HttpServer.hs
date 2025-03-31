@@ -40,7 +40,7 @@ import           RPKI.AppContext
 import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
-import           RPKI.Logging
+import           RPKI.Logging.Types
 import           RPKI.Metrics.Prometheus
 import           RPKI.Metrics.System
 import           RPKI.Time

@@ -16,11 +16,14 @@ import Data.Hourglass
 import Data.Maybe (fromMaybe)
 
 import RPKI.Domain
-import RPKI.Logging
+import RPKI.Logging.Types
 import RPKI.Util (toNatural)
 import GHC.Generics (Generic)
 
 import RPKI.Store.Base.Serialisation
+
+import System.FilePath ((</>))
+import System.Directory (getTemporaryDirectory)
 
 data ApiSecured a = Hidden a
                   | Public a
@@ -274,7 +277,7 @@ defaultConfig = Config {
         rsyncWorkerMemoryMb      = 1024,
         rrdpWorkerMemoryMb       = 1024,        
         validationWorkerMemoryMb = 2048,
-        cleanupWorkerMemoryMb    = 512
+        cleanupWorkerMemoryMb    = 512        
     },
     rtrConfig                 = Nothing,
     cacheCleanupInterval      = Seconds $ 60 * 60 * 6,
@@ -299,6 +302,10 @@ defaultRtrConfig = RtrConfig {
         rtrLogFile = Nothing
     }
     
+unixSocketPath :: IO FilePath
+unixSocketPath =  (</> "rpki-prover.socket") <$> getTemporaryDirectory
+    
+
 defaulPrefetchURLs :: [String]
 defaulPrefetchURLs = [
         "rsync://rpki.afrinic.net/repository",
