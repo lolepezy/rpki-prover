@@ -520,6 +520,7 @@ saveSnapshot
                         DB.saveObject tx db so worldVersion                    
                         DB.linkObjectToUrl tx db rpkiUrl (getHash object)
                         addedObject
+                        logDebug logger [i||Added object #{rpkiUrl} with hash #{getHash object} to the database.|]
 
                     other -> 
                         logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
@@ -657,7 +658,8 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
                 inSubLocationScope (getURL rpkiUrl) $ appWarn e
                 DB.saveOriginal tx db original hash objectMeta
-                DB.linkObjectToUrl tx db rpkiUrl hash                          
+                DB.linkObjectToUrl tx db rpkiUrl hash         
+                logDebug logger [i||Added original object #{rpkiUrl} with hash #{hash} to the database.|]                 
 
             SuccessParsed rpkiUrl so@StorableObject {..} -> do            
                 let newHash = getHash object
@@ -665,6 +667,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 unless newOneIsAlreadyThere $ do 
                     DB.saveObject tx db so worldVersion                        
                     addedObject
+                    logDebug logger [i||Added object #{rpkiUrl} with hash #{newHash} to the database.|]
                 DB.linkObjectToUrl tx db rpkiUrl newHash            
 
             other -> 
@@ -706,6 +709,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 unless newOneIsAlreadyThere $ do 
                     DB.saveObject tx db so worldVersion                        
                     addedObject
+                    logDebug logger [i||Added object #{rpkiUrl} with hash #{newHash} to the database.|]
                 DB.linkObjectToUrl tx db rpkiUrl newHash 
 
             other -> 

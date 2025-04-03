@@ -32,6 +32,9 @@ import qualified Data.Hashable            as H
 import           Data.Ord
 import           Data.Text.Encoding       (encodeUtf8)
 import           Data.Tuple.Strict
+
+import           Data.String.Interpolate.IsString
+
 import           GHC.Generics
 import           GHC.Natural
 import           Text.Read
@@ -59,6 +62,7 @@ import           RPKI.Util                (ifJustM)
 import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.AppTypes
+import           RPKI.Logging
 import           RPKI.RTR.Types
 import           RPKI.Time
 
@@ -738,7 +742,7 @@ getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m Publica
 getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
     rrdps <- M.all tx rrdpS
     rsyns <- M.all tx rsyncS    
-    forAsyncS' <- fromMaybe mempty . fmap unCompressed <$> M.get tx forAsyncS forAsyncFetchKey
+    forAsyncS' <- maybe mempty unCompressed <$> M.get tx forAsyncS forAsyncFetchKey
     pure $ PublicationPoints
             (RrdpMap $ Map.fromList rrdps)
             (RsyncTree $ Map.fromList rsyns)           
@@ -844,11 +848,12 @@ deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
             else pure []        
 
 
-deleteStaleContent :: (MonadIO m, Storage s) => 
-                    DB s 
+deleteStaleContent :: (MonadIO m, Storage s, Logger logger) => 
+                logger
+                -> DB s                 
                 -> DeletionCriteria                                       
                 -> m CleanUpResult
-deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria {..} = 
+deleteStaleContent logger db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria {..} = 
     mapException (AppException . storageError) <$> liftIO $ do                
         
         -- Delete old versions associated with async fetches and 
@@ -874,7 +879,7 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria
             deletePayloads tx db version
             deleteVersion tx db version                                
 
-        pure $ deletedNotValidationVersions + (List.length validationVersionsToDelete)
+        pure $ deletedNotValidationVersions + List.length validationVersionsToDelete
 
     deleteStaleObjects tx = do 
 
@@ -909,7 +914,15 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria
         let validatedBy' = foldr Map.delete validatedBy keysToDelete        
         M.put tx validatedByVersion validatedByVersionKey $ Compressed validatedBy'
 
-        forM_ keysToDelete $ deleteObjectByKey tx db        
+        hashes <- Map.fromList . map (\(h, k) -> (k, h)) <$> M.all tx hashToKey 
+
+        forM_ keysToDelete $ \key -> do 
+            z <- getLocationsByKey tx db key
+            forM_ z $ \location -> do 
+                forM_ (Map.lookup key hashes) $ \hash -> 
+                    logDebug logger [i||Deleted object #{pickLocation location} with hash #{hash} to the database.|]
+
+            deleteObjectByKey tx db key
 
         atomically $ do             
             deleted <- readTVar deletedPerType
