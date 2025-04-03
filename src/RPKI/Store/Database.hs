@@ -920,7 +920,7 @@ deleteStaleContent logger db@DB { objectStore = RpkiObjectStore {..} } DeletionC
             z <- getLocationsByKey tx db key
             forM_ z $ \location -> do 
                 forM_ (Map.lookup key hashes) $ \hash -> 
-                    logDebug logger [i||Deleted object #{pickLocation location} with hash #{hash} to the database.|]
+                    logDebug logger [i||Deleted #{pickLocation location}, #{hash}.|]
 
             deleteObjectByKey tx db key
 

@@ -520,7 +520,7 @@ saveSnapshot
                         DB.saveObject tx db so worldVersion                    
                         DB.linkObjectToUrl tx db rpkiUrl (getHash object)
                         addedObject
-                        logDebug logger [i||Added object #{rpkiUrl} with hash #{getHash object} to the database.|]
+                        logDebug logger [i|Added #{rpkiUrl}, #{getHash object}.|]
 
                     other -> 
                         logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
@@ -659,7 +659,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 inSubLocationScope (getURL rpkiUrl) $ appWarn e
                 DB.saveOriginal tx db original hash objectMeta
                 DB.linkObjectToUrl tx db rpkiUrl hash         
-                logDebug logger [i||Added original object #{rpkiUrl} with hash #{hash} to the database.|]                 
+                logDebug logger [i|Added original object #{rpkiUrl}, #{hash}.|]                 
 
             SuccessParsed rpkiUrl so@StorableObject {..} -> do            
                 let newHash = getHash object
@@ -667,7 +667,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 unless newOneIsAlreadyThere $ do 
                     DB.saveObject tx db so worldVersion                        
                     addedObject
-                    logDebug logger [i||Added object #{rpkiUrl} with hash #{newHash} to the database.|]
+                    logDebug logger [i|Added #{rpkiUrl}, #{newHash}.|]
                 DB.linkObjectToUrl tx db rpkiUrl newHash            
 
             other -> 
@@ -681,7 +681,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                         -- Ignore withdraws and just use the time-based garbage collection
                         deletedObject
                     else do 
-                        logError logger [i|No object #{uri} with hash #{oldHash} to replace.|]
+                        logError logger [i|No object #{uri}, #{oldHash} to replace.|]
                         inSubLocationScope uri $ 
                             appError $ RrdpE $ NoObjectToReplace uri oldHash
 
@@ -709,7 +709,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 unless newOneIsAlreadyThere $ do 
                     DB.saveObject tx db so worldVersion                        
                     addedObject
-                    logDebug logger [i||Added object #{rpkiUrl} with hash #{newHash} to the database.|]
+                    logDebug logger [i|Added #{rpkiUrl}, #{newHash}.|]
                 DB.linkObjectToUrl tx db rpkiUrl newHash 
 
             other -> 
