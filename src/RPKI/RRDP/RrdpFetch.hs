@@ -222,12 +222,12 @@ updateRrdpRepository
                     (\t -> (& #saveTimeMs %~ (<> t)))
                     (saveSnapshot appContext worldVersion repoUri notification rawContent)                                    
 
-            meta' <- makeRrdpMeta
+            meta' <- makeRrdpMeta rrdpMeta
             logDebug logger [i|Old meta for #{uri}: #{meta}.|]
             logDebug logger [i|New meta for #{uri}: #{meta'}.|]
-            pure $ repo { rrdpMeta = meta' }
+            pure $ repo & #rrdpMeta .~ meta'
         where
-            makeRrdpMeta = do                
+            makeRrdpMeta currentMeta = do                
                 let Notification {..} = notification 
                 let integrity = RrdpIntegrity deltas
                 enforcement <- case nextStep of 
@@ -235,7 +235,7 @@ updateRrdpRepository
                         Now now <- thisInstant
                         pure $ Just $ ForcedSnaphotAt now       
                     _  -> 
-                        pure Nothing 
+                        pure $ maybe Nothing (^. #enforcement) currentMeta
                 pure $ Just $ RrdpMeta {..}
     
 
