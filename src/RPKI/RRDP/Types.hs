@@ -82,7 +82,7 @@ data RrdpAction
   deriving anyclass (TheBinary, NFData)     
 
 data RrdpEnforcement = NextTimeFetchSnapshot Text
-                    | ForcedSnaphotAt Instant
+                     | ForcedSnaphotAt Instant
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary, NFData)                                
 

@@ -109,7 +109,10 @@ httpServer appContext = genericServe HttpApi {
         versions = getVersions appContext,
         validity = getPrefixValidity appContext,
         validityAsnPrefix = getQueryPrefixValidity appContext,
-        validityBulk = getBulkPrefixValidity appContext
+        validityBulk = getBulkPrefixValidity appContext,
+
+        -- TODO Remove it after testing
+        delete = deleteObject appContext
     }
 
     uiServer AppContext {..} = do
@@ -483,6 +486,23 @@ getOriginal AppContext {..} hashText =
                         Nothing -> throwError err404
                         Just b  -> pure b
 
+
+deleteObject :: (MonadIO m, Storage s, MonadError ServerError m)
+                => AppContext s
+                -> Maybe Text           
+                -> m Bool
+deleteObject AppContext {..} hashText =
+    case hashText of
+        Nothing ->
+            throwError $ err400 { errBody = "'hash' parameter must be provided." }
+                        
+        Just hashText' ->
+            case parseHash hashText' of
+                Left _  -> throwError err400
+                Right hash -> do
+                    rwTxT database $ \tx db -> do 
+                        DB.deleteObject tx db hash
+                        pure True
 
 getManifests :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s

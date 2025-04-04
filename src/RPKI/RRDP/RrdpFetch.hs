@@ -119,10 +119,24 @@ updateRrdpRepository
     for_ newETag $ \et -> 
         logDebug logger [i|New eTag for #{repoUri} is #{et}.|]
 
-    case httpStatus of 
-        HttpStatus 304 -> do 
-            repo' <- bumpETag newETag $ do 
-                usedSource RrdpNoUpdate                
+    let enforcement = 
+            case repo ^. #rrdpMeta of 
+                Nothing -> Nothing 
+                Just m  -> m ^. #enforcement
+
+    case (httpStatus, enforcement) of 
+        (_, Just (NextTimeFetchSnapshot reason)) -> do            
+            notification <- validatedNotification =<< hoistHere (parseNotification notificationXml)
+            nextStep     <- vHoist $ rrdpNextStep repo notification
+            repo' <- bumpETag newETag $ do
+                usedSource $ RrdpSnapshot $ notification ^. #serial
+                logDebug logger [i|Forced to use snapshot for #{repoUri}, because #{reason}.|]
+                useSnapshot notification nextStep         
+            pure (repo', RrdpFetchStat nextStep)            
+
+        (HttpStatus 304, _) -> do 
+            repo' <- bumpETag newETag $ do
+                usedSource RrdpNoUpdate
                 pure repo
             let message = [i|Nothing to update for #{repoUri} based on ETag comparison.|]
             logDebug logger message
@@ -139,17 +153,17 @@ updateRrdpRepository
                         logDebug logger [i|Nothing to update for #{repoUri}: #{message}|]
                         pure repo
 
-                    ForcedFetchSnapshot snapshotInfo reason -> do 
+                    ForcedFetchSnapshot _ reason -> do 
                         usedSource $ RrdpSnapshot $ notification ^. #serial
                         logDebug logger [i|Forced to use snapshot for #{repoUri}, because #{reason}.|]
-                        useSnapshot snapshotInfo notification nextStep   
+                        useSnapshot notification nextStep   
 
-                    FetchSnapshot snapshotInfo message -> do 
+                    FetchSnapshot _ message -> do 
                         usedSource $ RrdpSnapshot $ notification ^. #serial
                         logDebug logger [i|Going to use snapshot for #{repoUri}: #{message}|]
-                        useSnapshot snapshotInfo notification nextStep                       
+                        useSnapshot notification nextStep                       
 
-                    FetchDeltas sortedDeltas snapshotInfo message -> 
+                    FetchDeltas sortedDeltas _ message -> 
                         (do                             
                             usedSource $ RrdpDelta 
                                 ((NonEmpty.head sortedDeltas) ^. typed) 
@@ -161,7 +175,7 @@ updateRrdpRepository
                         \e -> do         
                             usedSource $ RrdpSnapshot $ notification ^. #serial
                             logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
-                            useSnapshot snapshotInfo notification nextStep)
+                            useSnapshot notification nextStep)
 
             pure (repo', RrdpFetchStat nextStep)                            
   where
@@ -187,7 +201,8 @@ updateRrdpRepository
                             appError $ RrdpE $ DeltaUriHostname repoU deltaHostname
         pure notification
 
-    useSnapshot (SnapshotInfo uri expectedHash) notification nextStep = do         
+    useSnapshot notification nextStep = do         
+        let SnapshotInfo uri expectedHash = notification ^. #snapshotInfo
         vFocusOn LinkFocus uri $ do            
             logInfo logger [i|#{uri}: downloading snapshot.|] 
             
@@ -207,13 +222,15 @@ updateRrdpRepository
                     (\t -> (& #saveTimeMs %~ (<> t)))
                     (saveSnapshot appContext worldVersion repoUri notification rawContent)                                    
 
-            meta' <- makeRrdpMeta'
-            pure $ repo & #rrdpMeta .~ meta'
+            meta' <- makeRrdpMeta
+            logDebug logger [i|Old meta for #{uri}: #{meta}.|]
+            logDebug logger [i|New meta for #{uri}: #{meta'}.|]
+            pure $ repo { rrdpMeta = meta' }
         where
-            makeRrdpMeta' = do                
+            makeRrdpMeta = do                
                 let Notification {..} = notification 
                 let integrity = RrdpIntegrity deltas
-                enforcement <- case nextStep of  
+                enforcement <- case nextStep of 
                     ForcedFetchSnapshot _ _ -> do 
                         Now now <- thisInstant
                         pure $ Just $ ForcedSnaphotAt now       

@@ -401,7 +401,7 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
                                         FetchDeltas {..} 
                                             | moreThanOne sortedDeltas -> trimInterval $ decreaseInterval ri 
                                             | otherwise                -> ri                                    
-                                        FetchSnapshot _ _ -> ri                    
+                                        _                              -> ri                                                            
 
     fetchType =
         -- If the fetch timed out then it's definitely for async fetch

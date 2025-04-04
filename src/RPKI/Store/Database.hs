@@ -67,7 +67,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 39
+currentDatabaseVersion = 40
 
 -- Some constant keys
 databaseVersionKey, forAsyncFetchKey, validatedByVersionKey :: Text
@@ -426,7 +426,7 @@ deleteObject tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $
                 _       -> pure ()
             ifJustM (M.get tx objectKeyToUrlKeys objectKey) $ \urlKeys -> do 
                 M.delete tx objectKeyToUrlKeys objectKey            
-                forM_ urlKeys $ \urlKey ->
+                for_ urlKeys $ \urlKey ->
                     MM.delete tx urlKeyToObjectKey urlKey objectKey                
             
             for_ (getAKI ro) $ \aki' -> 
@@ -701,19 +701,20 @@ deleteSlurms tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.delete tx s wv
 updateRrdpMeta :: (MonadIO m, Storage s) =>
                 Tx s 'RW -> DB s -> RrdpMeta -> RrdpURL -> m ()
 updateRrdpMeta tx db meta url = 
-    updateRrdpMetaIf tx db url (const $ Just meta) 
+    updateRrdpMetaM tx db url (const $ pure $ Just meta) 
 
-updateRrdpMetaIf :: (MonadIO m, Storage s) =>
+updateRrdpMetaM :: (MonadIO m, Storage s) =>
                     Tx s 'RW 
-                -> DB s 
+                -> DB s
                 -> RrdpURL                  
-                -> (Maybe RrdpMeta -> Maybe RrdpMeta)                
+                -> (Maybe RrdpMeta -> IO (Maybe RrdpMeta))                
                 -> m ()
-updateRrdpMetaIf tx DB { repositoryStore = RepositoryStore {..} } url f = liftIO $ do
+updateRrdpMetaM tx DB { repositoryStore = RepositoryStore {..} } url f = liftIO $ do
     z <- M.get tx rrdpS url
-    for_ z $ \r -> 
-        for_ (f $ r ^. #rrdpMeta) $ 
-            \m -> M.put tx rrdpS url (r { rrdpMeta = Just m })
+    for_ z $ \r -> do
+        f (r ^. #rrdpMeta) >>= 
+            (`for_` (\m -> 
+                M.put tx rrdpS url (r { rrdpMeta = Just m })))
 
 applyChangeSet :: (MonadIO m, Storage s) =>
                 Tx s 'RW ->
@@ -815,7 +816,7 @@ deleteOldNonValidationVersions :: (MonadIO m, Storage s) =>
 deleteOldNonValidationVersions tx db tooOld = do    
     versions <- allVersions tx db
     let toDelete = [ version | (version, vk) <- versions, vk /= validationKind, tooOld version ]
-    forM_ toDelete $ \v -> do 
+    for_ toDelete $ \v -> do 
         deletePayloads tx db v
         deleteVersion tx db v
     pure $! List.length toDelete
@@ -834,7 +835,7 @@ deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
         if length versions > reallyToKeep
             then do                     
                 let versionsToDelete = drop reallyToKeep $ List.sortOn Down versions
-                forM_ versionsToDelete $ \v -> do 
+                for_ versionsToDelete $ \v -> do 
                     deletePayloads tx db v
                     deleteVersion tx db v                   
                 let toDeleteSet = Set.fromList versionsToDelete 
@@ -861,7 +862,7 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
         rwTx db $ \tx -> do
             -- delete versions and payloads associated with them, 
             -- e.g. VRPs, ASPAs, BGPSec certificatees, etc.
-            forM_ versionsToDelete $ \version -> do 
+            for_ versionsToDelete $ \version -> do 
                 deleteVersion tx db version                    
                 deletePayloads tx db version                
                                 
@@ -898,7 +899,7 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
                     then pure $! allHashes
                     else pure $! hash `Set.insert` allHashes) mempty 
         
-        forM_ hashesToDelete $ deleteObject tx db        
+        for_ hashesToDelete $ deleteObject tx db        
         pure (Set.size hashesToDelete, Set.size keysToKeep)
 
 
@@ -917,7 +918,7 @@ deleteDanglingUrls DB { objectStore = RpkiObjectStore {..} } tx = do
             mempty
 
 
-    forM_ urlsToDelete $ \(urlKey, url) -> do 
+    for_ urlsToDelete $ \(urlKey, url) -> do 
         M.delete tx uriKeyToUri urlKey
         M.delete tx uriToUriKey (makeSafeUrl url)           
 

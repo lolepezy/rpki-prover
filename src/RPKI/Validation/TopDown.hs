@@ -671,7 +671,7 @@ validateCaNoFetch
                                 | otherwise -> do    
                                     DB.getMftByKey tx db mftKey >>= \case 
                                         Nothing -> pure $! 
-                                            internalError appContext [i|Internal error, can't find a manifest by its key #{mftKey}.|]
+                                            integrityError appContext [i|Internal error, can't find a manifest by its key #{mftKey}.|]
                                         Just mft -> pure $! do
                                             increment $ topDownCounters ^. #shortcutMft
                                             markAsRead topDownContext mftKey
@@ -1078,7 +1078,7 @@ validateCaNoFetch
             case z of 
                 Nothing -> 
                     -- That's weird and it means DB inconsitency                                
-                    internalError appContext 
+                    integrityError appContext 
                         [i|Internal error, can't find locations for the object #{key} with positive location count #{count}.|]
                 Just locations -> 
                     vFocusOn LocationFocus (getURL $ pickLocation locations) $
@@ -1281,7 +1281,7 @@ validateCaNoFetch
                     case troubledCount of 
                         0 -> pure $! \_ _ -> 
                                 -- Should never happen, there are no troubled children
-                                internalError appContext [i|Impossible happened!|]
+                                integrityError appContext [i|Impossible happened!|]
                         _  -> do 
                             caFull   <- findFullCa
                             validCrl <- findValidCrl
@@ -1319,7 +1319,7 @@ validateCaNoFetch
                     getParsedObject tx db childKey $ do 
                         increment $ topDownCounters ^. #readOriginal
                         getLocatedOriginalUnknownType tx db childKey $     
-                            internalError appContext 
+                            integrityError appContext 
                                 [i|Internal error, can't find a troubled child by its key #{childKey}.|]
 
             void $ validateChildObject caFull childObject fileName validCrl
@@ -1483,11 +1483,11 @@ getFullCa appContext@AppContext {..} topDownContext = \case
             z <- getParsedObject tx db key $ do
                     increment $ topDownContext ^. #allTas . #topDownCounters . #readOriginal
                     getLocatedOriginal tx db key CER $ 
-                        internalError appContext 
+                        integrityError appContext 
                             [i|Internal error, can't find a CA by its key #{key}.|]            
             case z of 
                 Keyed (Located locations (CerRO ca_)) _ -> pure $! Located locations ca_
-                _ -> internalError appContext 
+                _ -> integrityError appContext 
                         [i|Internal error, wrong type of the CA found by its key #{key}.|]            
     
 
@@ -1496,13 +1496,13 @@ getCrlByKey appContext@AppContext {..} crlKey = do
     z <- roTxT database $ \tx db -> DB.getObjectByKey tx db crlKey
     case z of 
         Just (CrlRO c) -> pure $! Keyed (Validated c) crlKey 
-        _ -> internalError appContext [i|Internal error, can't find a CRL by its key #{crlKey}.|]
+        _ -> integrityError appContext [i|Internal error, can't find a CRL by its key #{crlKey}.|]
      
     
-internalError :: AppContext s -> Text -> ValidatorT IO a
-internalError AppContext {..} message = do     
+integrityError :: AppContext s -> Text -> ValidatorT IO a
+integrityError AppContext {..} message = do     
     logError logger message
-    appError $ InternalE $ InternalError message  
+    appError $ ValidationE $ ReferentialIntegrityError message  
 
 makeCaShortcut :: ObjectKey -> Validated CaCerObject -> PublicationPointAccess -> Text -> MftEntry
 makeCaShortcut key (Validated certificate) ppas fileName = let 

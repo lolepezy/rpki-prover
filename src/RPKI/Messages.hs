@@ -337,6 +337,8 @@ toValidationMessage = \case
       SplNotIpResources prefixes -> 
         [i|Prefix list must not have IP resources on its EE certificate, but has #{prefixes}.|]
 
+      ReferentialIntegrityError message -> [i|Referential integrity problem: #{message}.|]
+
   where
     fmtUrlList = mconcat . 
                  List.intersperse "," . map (show . getURL)
