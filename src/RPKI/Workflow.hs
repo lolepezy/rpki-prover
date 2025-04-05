@@ -598,13 +598,16 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                 ]        
           where
             manifestIntegrityError = \case
-                VErr (ValidationE e) -> case e of 
+                VErr (ValidationE e)             -> isRefentialIntegrityError e
+                VWarn (VWarning (ValidationE e)) -> isRefentialIntegrityError e                    
+                _                                -> False
+              where
+                isRefentialIntegrityError = \case
                     ManifestEntryDoesn'tExist _ _       -> True
                     NoCRLExists _ _                     -> True                
                     ManifestEntryHasWrongFileType _ _ _ -> True                
                     ReferentialIntegrityError _         -> True                
                     _                                   -> False
-                _                                       -> False
 
             mostNarrowPPScope (Scope s) = 
                 take 1 [ url | PPFocus (RrdpU url) <- NE.toList s ]
