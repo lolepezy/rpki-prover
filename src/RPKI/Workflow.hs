@@ -563,15 +563,15 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     -- fetch/validation issues are present    
     handleValidations tx db (Validations validations) = do 
         Now now <- thisInstant
-        for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) -> do
-            logInfo logger [i|Repository #{rrdpUrl} has manifest integrity issues #{issues}, will force it to re-fetch snapshot.|]
-            
+        for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) ->            
             DB.updateRrdpMetaM tx db rrdpUrl $ \case 
                 Nothing   -> pure Nothing
                 Just meta -> do 
-                    let enforcement = Just $ NextTimeFetchSnapshot [i|Manifest integrity issues: #{issues}|]
+                    let enforcement = Just $ NextTimeFetchSnapshot [i|Manifest integrity issues: #{issues}|] 
                     case meta ^. #enforcement of    
-                        Nothing -> 
+                        Nothing -> do
+                            logInfo logger 
+                                [i|Repository #{rrdpUrl} has integrity issues #{issues}, will force it to re-fetch snapshot.|]
                             pure $ Just $ meta { enforcement = enforcement }
 
                         -- Don't update the enforcement if it's already set to fetch the snapshot
@@ -585,7 +585,8 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                                     pure $ Just meta
 
                             | otherwise -> do 
-                                logInfo logger [i|Last time snapshot was forced at #{processedAt} will force it again.|]
+                                logInfo logger 
+                                    [i|Repository #{rrdpUrl} has integrity issues #{issues}, last forced snapshot fetch was at #{processedAt}, will force it again.|]
                                 pure $ Just $ meta { enforcement = enforcement }
       where 
         repositoriesWithManifestIntegrityIssues = 
