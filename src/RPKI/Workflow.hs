@@ -564,7 +564,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     handleValidations tx db (Validations validations) = do 
         Now now <- thisInstant
         unless (Map.null repositoriesWithManifestIntegrityIssues) $ 
-            logInfo logger [i|Repositories with integrity issues #{repositoriesWithManifestIntegrityIssues}.|]
+            logDebug logger [i|Repositories with integrity issues #{repositoriesWithManifestIntegrityIssues}.|]
 
         for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) ->
             DB.updateRrdpMetaM tx db rrdpUrl $ \case 
@@ -572,9 +572,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                 Just meta -> do 
                     let enforcedSnapshot = meta { 
                             enforcement = Just $ NextTimeFetchSnapshot now [i|Manifest integrity issues: #{issues}|] 
-                        }
-                    let enf = meta ^. #enforcement
-                    logDebug logger [i|Repository #{rrdpUrl} has integrity issues, enforcement #{enf}.|]
+                        }                    
                     case meta ^. #enforcement of    
                         Nothing -> do
                             logInfo logger 
@@ -589,8 +587,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                         Just (ForcedSnaphotAt processedAt)
                             -- If the last forced fetch was less than N hours ago, don't do it again
                             | closeEnoughMoments processedAt now 
-                                (config ^. #validationConfig . #rrdpForcedSnapshotMinInterval) -> do 
-                                    logDebug logger [i|Repository #{rrdpUrl} has integrity issues #{issues}, last forced snapshot fetch was at #{processedAt}, will not force it again.|]
+                                (config ^. #validationConfig . #rrdpForcedSnapshotMinInterval) -> 
                                     pure $ Just meta
 
                             | otherwise -> do 

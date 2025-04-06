@@ -87,7 +87,6 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
 
     wr@WorkerResult {..} <- runWorker logger workerInput arguments 
     let RrdpFetchResult z = payload
-    logDebug logger [i|Worker #{workerId} finished with result: #{z}.|]
     logWorkerDone logger workerId wr
     pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory
     embedValidatorT $ pure z
@@ -224,8 +223,6 @@ updateRrdpRepository
                     (saveSnapshot appContext worldVersion repoUri notification rawContent)                                    
 
             rrdpMeta' <- makeRrdpMeta rrdpMeta
-            logDebug logger [i|Old meta for #{uri}: #{rrdpMeta}.|]
-            logDebug logger [i|New meta for #{uri}: #{rrdpMeta'}.|]
             pure $ repo & #rrdpMeta .~ rrdpMeta'
         where
             makeRrdpMeta currentMeta = do                
@@ -749,7 +746,7 @@ updateRepositoryMeta :: Storage s =>
                     -> ValidatorT IO ()
 updateRepositoryMeta tx db repoUri notification = do                            
     DB.updateRrdpMetaM tx db repoUri $ \case 
-        Nothing -> pure $ Just $ fromNotification notification
+        Nothing -> pure $ Just $ newRrdpMeta (notification ^. #sessionId) (notification ^. #serial)
         Just currentMeta -> 
             pure $ Just $ currentMeta
                 & #sessionId .~ notification ^. #sessionId

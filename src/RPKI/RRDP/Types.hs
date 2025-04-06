@@ -108,8 +108,3 @@ newRrdpMeta sessionId serial =
 newRrdpIntegrity :: Notification -> RrdpIntegrity
 newRrdpIntegrity Notification {..} = RrdpIntegrity deltas
 
-fromNotification :: Notification -> RrdpMeta
-fromNotification Notification {..} = let 
-        integrity = RrdpIntegrity {..}
-        enforcement = Nothing
-    in RrdpMeta {..}

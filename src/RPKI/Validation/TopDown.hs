@@ -648,9 +648,9 @@ validateCaNoFetch
                                 vWarn $ NoMFTButCachedMft childrenAki                                    
                                 let crlKey = mftShortcut ^. #crlShortcut . #key
                                 markAsRead topDownContext crlKey
-                                let message = [i|Internal error, there is a manifest shortcut, but no manifest for the key #{mftShortKey}.|]
+                                let message = [i|Referential integrity error, there is a manifest shortcut, but no manifest for the key #{mftShortKey}.|]
                                 logError logger message
-                                collectPayloadsFromShortcuts mftShortcut Nothing 
+                                collectPayloadsFromShortcuts childrenAki mftShortcut Nothing 
                                     (getFullCa appContext topDownContext ca)
                                     -- getCrlByKey is the best we can have
                                     (getCrlByKey appContext crlKey)
@@ -663,7 +663,7 @@ validateCaNoFetch
                                     let crlKey = mftShortcut ^. #crlShortcut . #key                                    
                                     pure $! do 
                                         markAsRead topDownContext crlKey
-                                        collectPayloadsFromShortcuts mftShortcut Nothing 
+                                        collectPayloadsFromShortcuts childrenAki mftShortcut Nothing 
                                                 (getFullCa appContext topDownContext ca)
                                                 (getCrlByKey appContext crlKey)
                                                 (getResources ca)
@@ -671,7 +671,7 @@ validateCaNoFetch
                                 | otherwise -> do    
                                     DB.getMftByKey tx db mftKey >>= \case 
                                         Nothing -> pure $! 
-                                            integrityError appContext [i|Internal error, can't find a manifest by its key #{mftKey}.|]
+                                            integrityError appContext [i|Referential integrity error, can't find a manifest by its key #{mftKey}.|]
                                         Just mft -> pure $! do
                                             increment $ topDownCounters ^. #shortcutMft
                                             markAsRead topDownContext mftKey
@@ -680,13 +680,13 @@ validateCaNoFetch
                                             markAsRead topDownContext crlKey
                                             let combineShortcutAndNewMft = do                                                     
                                                     overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
-                                                    collectPayloadsFromShortcuts mftShortcut (Just overlappingChildren) 
+                                                    collectPayloadsFromShortcuts childrenAki mftShortcut (Just overlappingChildren) 
                                                                 (pure fullCa)
                                                                 (findAndValidateCrl fullCa mft childrenAki)   
                                                                 (getResources ca)
 
                                             let useShortcutOnly =                                                    
-                                                    collectPayloadsFromShortcuts mftShortcut Nothing 
+                                                    collectPayloadsFromShortcuts childrenAki mftShortcut Nothing 
                                                             (getFullCa appContext topDownContext ca)
                                                             (getCrlByKey appContext crlKey)
                                                             (getResources ca)
@@ -1079,7 +1079,7 @@ validateCaNoFetch
                 Nothing -> 
                     -- That's weird and it means DB inconsitency                                
                     integrityError appContext 
-                        [i|Internal error, can't find locations for the object #{key} with positive location count #{count}.|]
+                        [i|Referential integrity error, can't find locations for the object #{key} with positive location count #{count}.|]
                 Just locations -> 
                     vFocusOn LocationFocus (getURL $ pickLocation locations) $
                         validateObjectLocations locations
@@ -1244,13 +1244,14 @@ validateCaNoFetch
             getIssues (scopes ^. typed) (vs ^. typed)
 
 
-    collectPayloadsFromShortcuts :: MftShortcut 
+    collectPayloadsFromShortcuts :: AKI 
+                                -> MftShortcut 
                                 -> Maybe [T3 Text Hash ObjectKey] 
                                 -> ValidatorT IO (Located CaCerObject)
                                 -> ValidatorT IO (Keyed (Validated CrlObject))             
                                 -> AllResources
                                 -> ValidatorT IO ()
-    collectPayloadsFromShortcuts mftShortcut childrenToCheck findFullCa findValidCrl parentCaResources = do      
+    collectPayloadsFromShortcuts manifestAki mftShortcut childrenToCheck findFullCa findValidCrl parentCaResources = do      
         
         let nonCrlEntries = mftShortcut ^. #nonCrlEntries
 
@@ -1319,9 +1320,12 @@ validateCaNoFetch
                     getParsedObject tx db childKey $ do 
                         increment $ topDownCounters ^. #readOriginal
                         getLocatedOriginalUnknownType tx db childKey $ do
-                            -- deleteMftShortcut topDownContext aki
+                            -- Something is wrong with the references in the database. Normally it should never happen,
+                            -- but if it does, we have to delete the shortcut and report the error.
+                            deleteMftShortcut topDownContext manifestAki
+                            logError logger [i|Troubled child #{childKey} not found in the database, will delete manifest shortcut.|]
                             integrityError appContext 
-                                [i|Internal error, can't find a troubled child by its key #{childKey}.|]
+                                [i|Referential integrity error, can't find a troubled child by its key #{childKey}.|]
 
             void $ validateChildObject caFull childObject fileName validCrl
 
@@ -1485,11 +1489,11 @@ getFullCa appContext@AppContext {..} topDownContext = \case
                     increment $ topDownContext ^. #allTas . #topDownCounters . #readOriginal
                     getLocatedOriginal tx db key CER $ 
                         integrityError appContext 
-                            [i|Internal error, can't find a CA by its key #{key}.|]            
+                            [i|Referential integrity error, can't find a CA by its key #{key}.|]            
             case z of 
                 Keyed (Located locations (CerRO ca_)) _ -> pure $! Located locations ca_
                 _ -> integrityError appContext 
-                        [i|Internal error, wrong type of the CA found by its key #{key}.|]            
+                        [i|Referential integrity error, wrong type of the CA found by its key #{key}.|]            
     
 
 getCrlByKey :: Storage s => AppContext s -> ObjectKey -> ValidatorT IO (Keyed (Validated CrlObject))
@@ -1497,7 +1501,7 @@ getCrlByKey appContext@AppContext {..} crlKey = do
     z <- roTxT database $ \tx db -> DB.getObjectByKey tx db crlKey
     case z of 
         Just (CrlRO c) -> pure $! Keyed (Validated c) crlKey 
-        _ -> integrityError appContext [i|Internal error, can't find a CRL by its key #{crlKey}.|]
+        _ -> integrityError appContext [i|Referential integrity error, can't find a CRL by its key #{crlKey}.|]
      
     
 integrityError :: AppContext s -> Text -> ValidatorT IO a
