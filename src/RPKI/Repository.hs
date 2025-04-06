@@ -372,9 +372,7 @@ changeSet
 
         newRrdp  = map Put [ new | (new, Nothing) <- rrdps' ]
 
-        -- We trust RRDP meta from the DB more -- it has been updated by the 
-        -- delta/snapshot fetchers in the same transactions as the data
-        mergedRrdp = map Put [ new { rrdpMeta = dbRrdpMeta } | 
+        mergedRrdp = map Put [ new & #rrdpMeta %~ mergeRrdpMeta dbRrdpMeta | 
                                 (new, Just (RrdpRepository { rrdpMeta = dbRrdpMeta })) <- rrdps' ]
 
         rrdpToDelete = map Remove [ r | (u, r) <- Map.toList rrdpDb, not (u `Map.member` rrdpNew) ]
@@ -384,6 +382,19 @@ changeSet
         putNewRsyncs    = map Put    $ filter (not . (\(u, p) -> Map.lookup u rsyncDb == Just p)) rsyncNewList        
         removeOldRsyncs = map Remove $ filter (not . (\(u, p) -> Map.lookup u rsyncNew == Just p)) rsyncOldList                
 
+        -- We trust RRDP meta from the DB more -- it has been updated by the 
+        -- delta/snapshot fetchers in the same transactions as the data
+        mergeRrdpMeta dbMeta newMeta = 
+            case (dbMeta, newMeta) of
+                (Nothing, Nothing)  -> Nothing
+                (Nothing, Just _)   -> newMeta
+                (Just _, Nothing)   -> dbMeta
+                (Just db, Just new) -> Just $ RrdpMeta { 
+                        sessionId   = db ^. #sessionId,
+                        serial      = db ^. #serial,
+                        integrity   = new ^. #integrity,
+                        enforcement = new ^. #enforcement
+                    }
 
 -- Update statuses of the repositories and last successful fetch times for them
 updateMeta :: Foldable t => PublicationPoints -> t (Repository, RepositoryMeta) -> PublicationPoints

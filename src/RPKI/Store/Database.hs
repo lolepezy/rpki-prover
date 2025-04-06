@@ -698,10 +698,6 @@ slurmForVersion tx DB { slurmStore = SlurmStore s } wv =
 deleteSlurms :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteSlurms tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.delete tx s wv
 
-updateRrdpMeta :: (MonadIO m, Storage s) =>
-                Tx s 'RW -> DB s -> RrdpMeta -> RrdpURL -> m ()
-updateRrdpMeta tx db meta url = 
-    updateRrdpMetaM tx db url (const $ pure $ Just meta) 
 
 updateRrdpMetaM :: (MonadIO m, Storage s) =>
                     Tx s 'RW 

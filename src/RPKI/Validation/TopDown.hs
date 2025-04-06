@@ -1318,7 +1318,8 @@ validateCaNoFetch
                     increment $ topDownCounters ^. #readParsed
                     getParsedObject tx db childKey $ do 
                         increment $ topDownCounters ^. #readOriginal
-                        getLocatedOriginalUnknownType tx db childKey $     
+                        getLocatedOriginalUnknownType tx db childKey $ do
+                            -- deleteMftShortcut topDownContext aki
                             integrityError appContext 
                                 [i|Internal error, can't find a troubled child by its key #{childKey}.|]
 
@@ -1618,20 +1619,24 @@ reportCounters AppContext {..} counters = do
     c <- btraverse (fmap IdenticalShow . readIORef) counters
     logDebug logger $ fmtGen c
                        
-
+   
 updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         let !raw = Verbatim $ toStorable $ Compressed $ DB.MftShortcutMeta {..}
-        atomically $ writeCQueue shortcutQueue (UpdateMftShortcut aki raw)        
+        atomically $ writeCQueue shortcutQueue $ UpdateMftShortcut aki raw   
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         -- Pre-serialise the object so that all the heavy-lifting happens in the thread 
         let !raw = Verbatim $ toStorable $ Compressed DB.MftShortcutChildren {..}        
-        atomically $ writeCQueue shortcutQueue (UpdateMftShortcutChildren aki raw) 
-    
+        atomically $ writeCQueue shortcutQueue $ UpdateMftShortcutChildren aki raw
+
+deleteMftShortcut :: MonadIO m => TopDownContext -> AKI -> m ()
+deleteMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki = 
+    liftIO $ atomically $ writeCQueue shortcutQueue $ DeleteMftShortcut aki
+
 storeShortcuts :: (Storage s, MonadIO m) => 
                 AppContext s 
              -> ClosableQueue MftShortcutOp -> m ()
@@ -1641,10 +1646,12 @@ storeShortcuts AppContext {..} shortcutQueue = liftIO $
             for_ mftShortcuts $ \case 
                 UpdateMftShortcut aki s         -> DB.saveMftShorcutMeta tx db aki s                    
                 UpdateMftShortcutChildren aki s -> DB.saveMftShorcutChildren tx db aki s
+                DeleteMftShortcut aki           -> DB.deleteMftShortcut tx db aki
                  
 
 data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta))
                    | UpdateMftShortcutChildren AKI (Verbatim (Compressed DB.MftShortcutChildren))            
+                   | DeleteMftShortcut AKI            
 
 -- Do whatever is required to notify other subsystems that the object was touched 
 -- during top-down validation. It doesn't mean that the object is valid, just that 

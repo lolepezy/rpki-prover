@@ -563,31 +563,40 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     -- fetch/validation issues are present    
     handleValidations tx db (Validations validations) = do 
         Now now <- thisInstant
-        for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) ->            
+        unless (Map.null repositoriesWithManifestIntegrityIssues) $ 
+            logInfo logger [i|Repositories with integrity issues #{repositoriesWithManifestIntegrityIssues}.|]
+
+        for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) ->
             DB.updateRrdpMetaM tx db rrdpUrl $ \case 
                 Nothing   -> pure Nothing
                 Just meta -> do 
-                    let enforcement = Just $ NextTimeFetchSnapshot [i|Manifest integrity issues: #{issues}|] 
+                    let enforcedSnapshot = meta { 
+                            enforcement = Just $ NextTimeFetchSnapshot now [i|Manifest integrity issues: #{issues}|] 
+                        }
+                    let enf = meta ^. #enforcement
+                    logDebug logger [i|Repository #{rrdpUrl} has integrity issues, enforcement #{enf}.|]
                     case meta ^. #enforcement of    
                         Nothing -> do
                             logInfo logger 
                                 [i|Repository #{rrdpUrl} has integrity issues #{issues}, will force it to re-fetch snapshot.|]
-                            pure $ Just $ meta { enforcement = enforcement }
+                            pure $ Just enforcedSnapshot
 
                         -- Don't update the enforcement if it's already set to fetch the snapshot
-                        Just (NextTimeFetchSnapshot _) -> 
+                        Just n@(NextTimeFetchSnapshot _ _) -> do 
+                                logDebug logger [i|Repository #{rrdpUrl} has integrity issues, not changing #{n}.|]
                                 pure $ Just meta
 
                         Just (ForcedSnaphotAt processedAt)
-                                -- If the last forced fetch was less than N hours ago, don't do it again
+                            -- If the last forced fetch was less than N hours ago, don't do it again
                             | closeEnoughMoments processedAt now 
-                                (config ^. #validationConfig . #rrdpForcedSnapshotMinInterval) -> 
+                                (config ^. #validationConfig . #rrdpForcedSnapshotMinInterval) -> do 
+                                    logDebug logger [i|Repository #{rrdpUrl} has integrity issues #{issues}, last forced snapshot fetch was at #{processedAt}, will not force it again.|]
                                     pure $ Just meta
 
                             | otherwise -> do 
                                 logInfo logger 
                                     [i|Repository #{rrdpUrl} has integrity issues #{issues}, last forced snapshot fetch was at #{processedAt}, will force it again.|]
-                                pure $ Just $ meta { enforcement = enforcement }
+                                pure $ Just enforcedSnapshot
       where 
         repositoriesWithManifestIntegrityIssues = 
             Map.fromListWith (<>) [ 

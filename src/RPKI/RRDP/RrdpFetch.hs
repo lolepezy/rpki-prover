@@ -87,6 +87,7 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
 
     wr@WorkerResult {..} <- runWorker logger workerInput arguments 
     let RrdpFetchResult z = payload
+    logDebug logger [i|Worker #{workerId} finished with result: #{z}.|]
     logWorkerDone logger workerId wr
     pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory
     embedValidatorT $ pure z
@@ -125,7 +126,7 @@ updateRrdpRepository
                 Just m  -> m ^. #enforcement
 
     case (httpStatus, enforcement) of 
-        (_, Just (NextTimeFetchSnapshot reason)) -> do            
+        (_, Just (NextTimeFetchSnapshot _ reason)) -> do            
             notification <- validatedNotification =<< hoistHere (parseNotification notificationXml)
             nextStep     <- vHoist $ rrdpNextStep repo notification
             repo' <- bumpETag newETag $ do
@@ -312,9 +313,9 @@ rrdpNextStep RrdpRepository { rrdpMeta = Nothing } Notification{..} =
 rrdpNextStep RrdpRepository { rrdpMeta = Just rrdpMeta } Notification {..} =     
 
     case rrdpMeta ^. #enforcement of 
-        Nothing                             -> normalFlow
-        Just (ForcedSnaphotAt _)            -> normalFlow        
-        Just (NextTimeFetchSnapshot reason) -> pure $ ForcedFetchSnapshot snapshotInfo reason
+        Nothing                               -> normalFlow
+        Just (ForcedSnaphotAt _)              -> normalFlow        
+        Just (NextTimeFetchSnapshot _ reason) -> pure $ ForcedFetchSnapshot snapshotInfo reason
   where
     normalFlow = 
         if  | sessionId /= localSessionId -> 
@@ -449,7 +450,7 @@ saveSnapshot
             (DB.rwAppTx db)
             (saveStorable db)           
 
-    DB.rwAppTx db $ \tx -> DB.updateRrdpMeta tx db (fromNotification notification) repoUri      
+    DB.rwAppTx db $ \tx -> updateRepositoryMeta tx db repoUri notification
 
   where        
 
@@ -586,8 +587,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
         appError $ RrdpE $ DeltaSerialMismatch serial notificationSerial
     
     let savingTx f = 
-            DB.rwAppTx db $ \tx -> 
-                f tx >> DB.updateRrdpMeta tx db (fromNotification notification) repoUri 
+            DB.rwAppTx db $ \tx -> f tx >> updateRepositoryMeta tx db repoUri notification
 
     -- Propagate exceptions from here, anything that can happen here 
     -- (storage failure, file read failure) should stop the validation and 
@@ -740,6 +740,20 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
     cpuParallelism   = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism    
     validationConfig = appContext ^. typed @Config . typed @ValidationConfig
 
+
+updateRepositoryMeta :: Storage s => 
+                        Tx s 'RW 
+                    -> DB.DB s
+                    -> RrdpURL 
+                    -> Notification 
+                    -> ValidatorT IO ()
+updateRepositoryMeta tx db repoUri notification = do                            
+    DB.updateRrdpMetaM tx db repoUri $ \case 
+        Nothing -> pure $ Just $ fromNotification notification
+        Just currentMeta -> 
+            pure $ Just $ currentMeta
+                & #sessionId .~ notification ^. #sessionId
+                & #serial .~ notification ^. #serial
 
 addedObject, deletedObject :: Monad m => ValidatorT m ()
 addedObject   = updateMetric @RrdpMetric @_ (& #added %~ (+1))

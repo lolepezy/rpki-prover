@@ -501,8 +501,12 @@ deleteObject AppContext {..} hashText =
                 Left _  -> throwError err400
                 Right hash -> do
                     rwTxT database $ \tx db -> do 
-                        DB.deleteObject tx db hash
-                        pure True
+                        exists <- DB.hashExists tx db hash
+                        if exists then do                            
+                            DB.deleteObject tx db hash
+                            pure True
+                        else 
+                            pure False
 
 getManifests :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s
