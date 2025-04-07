@@ -63,6 +63,82 @@ import           RPKI.SLURM.Types
 import           RPKI.Http.Dto
 import           RPKI.Http.Types
 
+
+{- 
+    Full async execution.
+
+    - Validations are scheduled periodically for all TAs.
+
+    - Validation creates a list of repositories mentioned in the certificates.
+
+    - Every newly discovered repository is added to the fetching machinery
+
+    - After every fetch a validation can be triggered iff
+        * there are "significant" updates in the fetch (not MFTs and CRLs only)
+        * validation happened not less than N seconds ago
+    
+    - Fetches must always happen atomically, including snapshot fetches
+
+    - This architecture assumes that we can get into a situation with a running 
+      fetcher at any given moment. Therefore we need a locking mechanism that would allow 
+        * maintenance jobs (cleanup, compaction) to be able to block launches 
+          of new fetchers and run exclusively
+        * validations to be blocked only by running maintenance jobs, 
+          but not by waiting maintenance jobs
+        * temp/tx cleanups to be able blocked only by maintenance jobs
+
+    - 
+-}
+
+data JobId = Fetcher RrdpURL [RsyncURL]
+           | Validation [TAL]
+           | CachCleanup
+           | LmdbCompaction
+           | RsyncCleanup
+    deriving stock (Show, Eq, Ord, Generic)
+
+data JobExec a = Placeholder 
+               | Running (Async a)
+    deriving stock (Eq, Ord, Generic)
+
+data Run = Run {
+        jobId :: JobId,
+        exec  :: JobExec () 
+    }
+    deriving stock (Eq, Ord, Generic)
+
+newtype Jobs = Jobs {
+        running :: TVar (Map.Map JobId Run)
+    }
+    deriving stock (Generic)  
+
+runJob :: Jobs -> JobId -> IO () -> IO ()
+runJob Jobs {..} jobId action = 
+    join $ atomically $ do
+        r <- readTVar running
+        case Map.lookup jobId r of
+            Nothing -> do 
+                modifyTVar' running $ Map.insert jobId (Run jobId Placeholder)
+                pure $ do             
+                    a <- async $ do
+                        action `finally` 
+                            atomically (do 
+                                -- There's race condition possible here between deletion and insertion
+                                -- so first wait until the job is actually added to the map
+                                r' <- readTVar running
+                                case Map.lookup jobId r' of
+                                    Just (Run _ (Running _)) -> modifyTVar' running $ Map.delete jobId
+                                    _ -> retry
+                            )
+
+                    atomically $ modifyTVar' running $  Map.insert jobId (Run jobId (Running a))
+                    wait a    
+
+            Just (Run _ Placeholder) -> retry
+            Just (Run _ (Running a)) -> pure $ wait a
+            
+
+
 -- A job run can be the first one or not and 
 -- sometimes we need this information.
 data JobRun = FirstRun | RanBefore
