@@ -26,7 +26,7 @@ import qualified Data.Text                       as Text
 import qualified Data.List                       as List
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Set                        as Set
-import           Data.Maybe                      (fromMaybe, catMaybes)
+import           Data.Maybe                      (fromMaybe, mapMaybe)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
 
@@ -690,12 +690,11 @@ runAsyncFetches appContext@AppContext {..} worldVersion = do
                 toPpa urls = fmap PublicationPointAccess 
                                 $ NE.nonEmpty 
                                 $ map repositoryToPP
-                                $ catMaybes
-                                $ map (\u -> Map.lookup u asyncRepos) urls                 
+                                $ mapMaybe (`Map.lookup` asyncRepos) urls                 
                 
                 -- Also use only the ones filtered by config options 
-                in catMaybes $ map (filterPPAccess config) $ 
-                   catMaybes $ map toPpa $ toList $ pps ^. #usedForAsync
+                in mapMaybe (filterPPAccess config) $ 
+                   mapMaybe toPpa $ toList $ pps ^. #usedForAsync
 
         unless (null problematicPpas) $ do                                     
             let ppaToText (PublicationPointAccess ppas) = 
@@ -704,7 +703,7 @@ runAsyncFetches appContext@AppContext {..} worldVersion = do
             let totalRepoCount = repositoryCount pps 
             logInfo logger [i|Asynchronous fetch, version #{worldVersion}, #{length problematicPpas} out of #{totalRepoCount} repositories: #{reposText}|]
 
-        void $ forConcurrently (sortPpas asyncRepos problematicPpas) $ \ppAccess -> do                         
+        forConcurrently_ (sortPpas asyncRepos problematicPpas) $ \ppAccess -> do                         
             let url = getRpkiURL $ NE.head $ unPublicationPointAccess ppAccess
             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
                     fetchWithFallback appContext repositoryProcessing 

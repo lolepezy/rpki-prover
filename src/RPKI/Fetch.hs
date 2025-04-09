@@ -112,7 +112,7 @@ fetchQuickly appContext@AppContext {..}
                                                     $ NonEmpty.toList $ unPublicationPointAccess ppa
                                 markForAsyncFetch repositoryProcessing toMarkAsync
                     
-                        pure $! [fetchResult]
+                        pure [fetchResult]
   where
     newMetaCallback syncPp_ pps newMeta fetchMoment = do
         -- Set fetchType to ForAsyncFetch to all fall-back URLs, 
