@@ -544,20 +544,21 @@ validateCaNoLimitChecks
                     validateThisCertAndGoDown
                     
                 Just filteredPpa -> do
-                    let fetch = case config ^. #proverRunMode of 
-                            ServerMode -> do 
-                                fetchQuickly appContext repositoryProcessing worldVersion filteredPpa
-                            OneOffMode {} -> 
-                                fetchWithFallback appContext repositoryProcessing worldVersion 
-                                            (syncFetchConfig config) filteredPpa                                            
-                    fetch >>= \case                     
+                    let fetch =                             
+                            case config ^. #proverRunMode of 
+                                ServerMode -> do 
+                                    fetchQuickly appContext repositoryProcessing worldVersion filteredPpa
+                                OneOffMode {} -> 
+                                    fetchWithFallback appContext repositoryProcessing worldVersion 
+                                                (syncFetchConfig config) filteredPpa                                            
+                    f <- fetch
+                    pps <- readPublicationPoints repositoryProcessing      
+                    let primaryUrl = getPrimaryRepositoryUrl pps filteredPpa
+                    vFocusOn PPFocus primaryUrl $ case f of 
                         [] -> 
                             -- Nothing has been fetched
                             validateThisCertAndGoDown
-                        _  -> do     
-                            pps <- readPublicationPoints repositoryProcessing      
-                            let primaryUrl = getPrimaryRepositoryUrl pps filteredPpa
-                            metricFocusOn PPFocus primaryUrl validateThisCertAndGoDown
+                        _  -> metricFocusOn PPFocus primaryUrl validateThisCertAndGoDown
 
   where
     validateThisCertAndGoDown = validateCaNoFetch appContext topDownContext ca
@@ -647,9 +648,9 @@ validateCaNoFetch
                                 vWarn $ NoMFTButCachedMft childrenAki                                    
                                 let crlKey = mftShortcut ^. #crlShortcut . #key
                                 markAsRead topDownContext crlKey
-                                let message = [i|Internal error, there is a manifest shortcut, but no manifest for the key #{mftShortKey}.|]
+                                let message = [i|Referential integrity error, there is a manifest shortcut, but no manifest for the key #{mftShortKey}.|]
                                 logError logger message
-                                collectPayloadsFromShortcuts mftShortcut Nothing 
+                                collectPayloadsFromShortcuts childrenAki mftShortcut Nothing 
                                     (getFullCa appContext topDownContext ca)
                                     -- getCrlByKey is the best we can have
                                     (getCrlByKey appContext crlKey)
@@ -662,7 +663,7 @@ validateCaNoFetch
                                     let crlKey = mftShortcut ^. #crlShortcut . #key                                    
                                     pure $! do 
                                         markAsRead topDownContext crlKey
-                                        collectPayloadsFromShortcuts mftShortcut Nothing 
+                                        collectPayloadsFromShortcuts childrenAki mftShortcut Nothing 
                                                 (getFullCa appContext topDownContext ca)
                                                 (getCrlByKey appContext crlKey)
                                                 (getResources ca)
@@ -670,7 +671,7 @@ validateCaNoFetch
                                 | otherwise -> do    
                                     DB.getMftByKey tx db mftKey >>= \case 
                                         Nothing -> pure $! 
-                                            internalError appContext [i|Internal error, can't find a manifest by its key #{mftKey}.|]
+                                            integrityError appContext [i|Referential integrity error, can't find a manifest by its key #{mftKey}.|]
                                         Just mft -> pure $! do
                                             increment $ topDownCounters ^. #shortcutMft
                                             markAsRead topDownContext mftKey
@@ -679,13 +680,13 @@ validateCaNoFetch
                                             markAsRead topDownContext crlKey
                                             let combineShortcutAndNewMft = do                                                     
                                                     overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
-                                                    collectPayloadsFromShortcuts mftShortcut (Just overlappingChildren) 
+                                                    collectPayloadsFromShortcuts childrenAki mftShortcut (Just overlappingChildren) 
                                                                 (pure fullCa)
                                                                 (findAndValidateCrl fullCa mft childrenAki)   
                                                                 (getResources ca)
 
                                             let useShortcutOnly =                                                    
-                                                    collectPayloadsFromShortcuts mftShortcut Nothing 
+                                                    collectPayloadsFromShortcuts childrenAki mftShortcut Nothing 
                                                             (getFullCa appContext topDownContext ca)
                                                             (getCrlByKey appContext crlKey)
                                                             (getResources ca)
@@ -1077,8 +1078,8 @@ validateCaNoFetch
             case z of 
                 Nothing -> 
                     -- That's weird and it means DB inconsitency                                
-                    internalError appContext 
-                        [i|Internal error, can't find locations for the object #{key} with positive location count #{count}.|]
+                    integrityError appContext 
+                        [i|Referential integrity error, can't find locations for the object #{key} with positive location count #{count}.|]
                 Just locations -> 
                     vFocusOn LocationFocus (getURL $ pickLocation locations) $
                         validateObjectLocations locations
@@ -1243,13 +1244,14 @@ validateCaNoFetch
             getIssues (scopes ^. typed) (vs ^. typed)
 
 
-    collectPayloadsFromShortcuts :: MftShortcut 
+    collectPayloadsFromShortcuts :: AKI 
+                                -> MftShortcut 
                                 -> Maybe [T3 Text Hash ObjectKey] 
                                 -> ValidatorT IO (Located CaCerObject)
                                 -> ValidatorT IO (Keyed (Validated CrlObject))             
                                 -> AllResources
                                 -> ValidatorT IO ()
-    collectPayloadsFromShortcuts mftShortcut childrenToCheck findFullCa findValidCrl parentCaResources = do      
+    collectPayloadsFromShortcuts manifestAki mftShortcut childrenToCheck findFullCa findValidCrl parentCaResources = do      
         
         let nonCrlEntries = mftShortcut ^. #nonCrlEntries
 
@@ -1280,7 +1282,7 @@ validateCaNoFetch
                     case troubledCount of 
                         0 -> pure $! \_ _ -> 
                                 -- Should never happen, there are no troubled children
-                                internalError appContext [i|Impossible happened!|]
+                                integrityError appContext [i|Impossible happened!|]
                         _  -> do 
                             caFull   <- findFullCa
                             validCrl <- findValidCrl
@@ -1317,9 +1319,13 @@ validateCaNoFetch
                     increment $ topDownCounters ^. #readParsed
                     getParsedObject tx db childKey $ do 
                         increment $ topDownCounters ^. #readOriginal
-                        getLocatedOriginalUnknownType tx db childKey $     
-                            internalError appContext 
-                                [i|Internal error, can't find a troubled child by its key #{childKey}.|]
+                        getLocatedOriginalUnknownType tx db childKey $ do
+                            -- Something is wrong with the references in the database. Normally it should never happen,
+                            -- but if it does, we have to delete the shortcut and report the error.
+                            deleteMftShortcut topDownContext manifestAki
+                            logError logger [i|Troubled child #{childKey} not found in the database, will delete manifest shortcut.|]
+                            integrityError appContext 
+                                [i|Referential integrity error, can't find a troubled child by its key #{childKey}.|]
 
             void $ validateChildObject caFull childObject fileName validCrl
 
@@ -1482,12 +1488,12 @@ getFullCa appContext@AppContext {..} topDownContext = \case
             z <- getParsedObject tx db key $ do
                     increment $ topDownContext ^. #allTas . #topDownCounters . #readOriginal
                     getLocatedOriginal tx db key CER $ 
-                        internalError appContext 
-                            [i|Internal error, can't find a CA by its key #{key}.|]            
+                        integrityError appContext 
+                            [i|Referential integrity error, can't find a CA by its key #{key}.|]            
             case z of 
                 Keyed (Located locations (CerRO ca_)) _ -> pure $! Located locations ca_
-                _ -> internalError appContext 
-                        [i|Internal error, wrong type of the CA found by its key #{key}.|]            
+                _ -> integrityError appContext 
+                        [i|Referential integrity error, wrong type of the CA found by its key #{key}.|]            
     
 
 getCrlByKey :: Storage s => AppContext s -> ObjectKey -> ValidatorT IO (Keyed (Validated CrlObject))
@@ -1495,13 +1501,13 @@ getCrlByKey appContext@AppContext {..} crlKey = do
     z <- roTxT database $ \tx db -> DB.getObjectByKey tx db crlKey
     case z of 
         Just (CrlRO c) -> pure $! Keyed (Validated c) crlKey 
-        _ -> internalError appContext [i|Internal error, can't find a CRL by its key #{crlKey}.|]
+        _ -> integrityError appContext [i|Referential integrity error, can't find a CRL by its key #{crlKey}.|]
      
     
-internalError :: AppContext s -> Text -> ValidatorT IO a
-internalError AppContext {..} message = do     
+integrityError :: AppContext s -> Text -> ValidatorT IO a
+integrityError AppContext {..} message = do     
     logError logger message
-    appError $ InternalE $ InternalError message  
+    appError $ ValidationE $ ReferentialIntegrityError message  
 
 makeCaShortcut :: ObjectKey -> Validated CaCerObject -> PublicationPointAccess -> Text -> MftEntry
 makeCaShortcut key (Validated certificate) ppas fileName = let 
@@ -1617,20 +1623,24 @@ reportCounters AppContext {..} counters = do
     c <- btraverse (fmap IdenticalShow . readIORef) counters
     logDebug logger $ fmtGen c
                        
-
+   
 updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         let !raw = Verbatim $ toStorable $ Compressed $ DB.MftShortcutMeta {..}
-        atomically $ writeCQueue shortcutQueue (UpdateMftShortcut aki raw)        
+        atomically $ writeCQueue shortcutQueue $ UpdateMftShortcut aki raw   
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         -- Pre-serialise the object so that all the heavy-lifting happens in the thread 
         let !raw = Verbatim $ toStorable $ Compressed DB.MftShortcutChildren {..}        
-        atomically $ writeCQueue shortcutQueue (UpdateMftShortcutChildren aki raw) 
-    
+        atomically $ writeCQueue shortcutQueue $ UpdateMftShortcutChildren aki raw
+
+deleteMftShortcut :: MonadIO m => TopDownContext -> AKI -> m ()
+deleteMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki = 
+    liftIO $ atomically $ writeCQueue shortcutQueue $ DeleteMftShortcut aki
+
 storeShortcuts :: (Storage s, MonadIO m) => 
                 AppContext s 
              -> ClosableQueue MftShortcutOp -> m ()
@@ -1640,10 +1650,12 @@ storeShortcuts AppContext {..} shortcutQueue = liftIO $
             for_ mftShortcuts $ \case 
                 UpdateMftShortcut aki s         -> DB.saveMftShorcutMeta tx db aki s                    
                 UpdateMftShortcutChildren aki s -> DB.saveMftShorcutChildren tx db aki s
+                DeleteMftShortcut aki           -> DB.deleteMftShortcut tx db aki
                  
 
 data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta))
                    | UpdateMftShortcutChildren AKI (Verbatim (Compressed DB.MftShortcutChildren))            
+                   | DeleteMftShortcut AKI            
 
 -- Do whatever is required to notify other subsystems that the object was touched 
 -- during top-down validation. It doesn't mean that the object is valid, just that 

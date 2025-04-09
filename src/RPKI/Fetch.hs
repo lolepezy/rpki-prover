@@ -377,9 +377,7 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
                 RrdpR _  -> vConfig ^. #rrdpRepositoryRefreshInterval
                 RsyncR _ -> vConfig ^. #rsyncRepositoryRefreshInterval
 
-        trimInterval interval = 
-            max (vConfig ^. #minFetchInterval) 
-                (min (vConfig ^. #maxFetchInterval) interval)            
+        trimInterval = max (vConfig ^. #minFetchInterval) . min (vConfig ^. #maxFetchInterval)
 
         -- Extra seconds are to increase or decrese even very small values
         -- Increase by ~10% each time, decrease by ~30%
@@ -403,7 +401,7 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
                                         FetchDeltas {..} 
                                             | moreThanOne sortedDeltas -> trimInterval $ decreaseInterval ri 
                                             | otherwise                -> ri                                    
-                                        FetchSnapshot _ _ -> ri                    
+                                        _                              -> ri                                                            
 
     fetchType =
         -- If the fetch timed out then it's definitely for async fetch
@@ -567,7 +565,7 @@ validationStateOfFetches repositoryProcessing = liftIO $
     atomically $ 
         fmap (foldr (\(_, vs) r -> r <> vs) mempty) $ 
             ListT.toList $ StmMap.listT $ 
-                repositoryProcessing ^. #indivudualFetchResults    
+                repositoryProcessing ^. #individualFetchResults    
 
 setFetchValidationState :: MonadIO m => RepositoryProcessing -> FetchResult -> m ()
 setFetchValidationState repositoryProcessing fr = liftIO $ do        
@@ -575,7 +573,7 @@ setFetchValidationState repositoryProcessing fr = liftIO $ do
             FetchFailure r vs'    -> (r, vs')
             FetchSuccess repo vs' -> (getRpkiURL repo, vs')
         
-    atomically $ StmMap.insert vs u (repositoryProcessing ^. #indivudualFetchResults)
+    atomically $ StmMap.insert vs u (repositoryProcessing ^. #individualFetchResults)
     
 
 cancelFetchTasks :: RepositoryProcessing -> IO ()    
