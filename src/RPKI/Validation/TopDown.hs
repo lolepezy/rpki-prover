@@ -119,7 +119,6 @@ data AllTasTopDownContext = AllTasTopDownContext {
         visitedKeys          :: TVar (Set ObjectKey),        
         repositoryProcessing :: RepositoryProcessing,
         shortcutQueue        :: ClosableQueue MftShortcutOp,
-        shortcutsCreated     :: TVar [MftShortcutOp],
         topDownCounters      :: TopDownCounters IORef 
     }
     deriving stock (Generic)
@@ -191,8 +190,7 @@ newAllTasTopDownContext worldVersion repositoryProcessing shortcutQueue = liftIO
     let now = Now $ versionToMoment worldVersion
     topDownCounters <- newTopDownCounters
     atomically $ do        
-        visitedKeys      <- newTVar mempty
-        shortcutsCreated <- newTVar []        
+        visitedKeys <- newTVar mempty
         pure $! AllTasTopDownContext {..}
 
 newTopDownCounters :: IO (TopDownCounters IORef)
@@ -262,7 +260,7 @@ withRepositoriesProcessing AppContext {..} f =
 
             -- save publication points state    
             mapException (AppException . storageError) $ do
-                pps <- readTVarIO $ (rp ^. #publicationPoints)
+                pps <- readTVarIO $ rp ^. #publicationPoints
                 rwTx db $ \tx -> DB.savePublicationPoints tx db pps          
 
             pure a
@@ -288,7 +286,8 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
             allTas <- newAllTasTopDownContext worldVersion repositoryProcessing queue
             resetForAsyncFetch repositoryProcessing
             validateThem allTas
-                `finally` (applyValidationSideEffects appContext allTas)                    
+                `finally` 
+                applyValidationSideEffects appContext allTas
 
     
     validateThem allTas = do
@@ -319,7 +318,6 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
                 (do
                     logError logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
                     appError $ ValidationE $ ValidationTimeout maxDuration)    
-
     case r of
         Left _                    -> pure $ TopDownResult mempty mempty vs       
         Right (topDownContext, _) -> do     
@@ -395,7 +393,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 certToUse <- case storableTa of
                     Nothing  -> vHoist $ validateTACert tal actualUrl object
                     Just StorableTA { taCert = cachedTaCert } -> 
-                        (vHoist $ do 
+                        vHoist (do 
                             cert <- validateTACert tal actualUrl object
                             chooseTaCert cert cachedTaCert)
                         `catchError`
@@ -436,7 +434,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
 
                     pure $ CachedTA cached
 
-    locatedTaCert url cert = Located (toLocations url) cert
+    locatedTaCert url = Located (toLocations url)
 
 
 -- | Do the validation starting from the TA certificate.
@@ -561,6 +559,38 @@ validateCaNoLimitChecks
 
   where
     validateThisCertAndGoDown = validateCaNoFetch appContext topDownContext ca
+
+
+validateCaNoLimitChecks1 :: Storage s =>
+                        AppContext s ->
+                        TopDownContext ->
+                        Ca ->
+                        ValidatorT IO ()
+validateCaNoLimitChecks1
+    appContext@AppContext {..}
+    topDownContext@TopDownContext { allTas = AllTasTopDownContext {..} }
+    ca = 
+    case extractPPAs ca of        
+        Left e         -> vError e
+        Right ppAccess -> do 
+            pps <- readPublicationPoints repositoryProcessing     
+            let fetcheables = getFetchables pps ppAccess
+
+            -- Add these PPs to the validation-wide set of fetcheables, 
+            -- i.e. all newly discovered publication points/repositories
+            mergeFetcheables fetcheables
+
+            -- Do not validate if nothing was fetched for this CA
+            -- otherwise we'll have a lot of 
+            -- useless errors about missing manifests, so just 
+            -- don't go there
+            unless (all ((== Pending) . snd) fetcheables) $ do                                 
+                let primaryUrl = getPrimaryRepositoryUrl pps ppAccess
+                metricFocusOn PPFocus primaryUrl $
+                    validateCaNoFetch appContext topDownContext ca
+  where
+    mergeFetcheables fetcheables = do   
+        pure ()
 
 
 validateCaNoFetch :: Storage s =>
@@ -777,7 +807,7 @@ validateCaNoFetch
             -- validation or a validation error.
             let markAllEntriesAsVisited = do                             
                     forM_ (newChildren <> overlappingChildren) $ 
-                        (\(T3 _ _ k) -> markAsRead topDownContext k)
+                        \(T3 _ _ k) -> markAsRead topDownContext k
 
             let processChildren = do                                              
                     -- Here we have the payloads for the fully validated MFT children
@@ -809,7 +839,10 @@ validateCaNoFetch
                             -- Do no create shortcuts for manifests with warnings 
                             -- (or errors, obviously)
                             when (Set.null issues) $ do   
-                                let aki = toAKI $ getSKI fullCa                        
+                                let aki = toAKI $ getSKI fullCa                  
+
+                                -- If manifest key is not the same as the shortcut key,
+                                -- we need to replace the shortcut with the new one      
                                 when (maybe True ((/= mftKey) . (^. #key)) mftShortcut) $ do                                
                                     updateMftShortcut topDownContext aki nextMftShortcut
                                     increment $ topDownCounters ^. #updateMftMeta
@@ -1012,9 +1045,8 @@ validateCaNoFetch
                     Just key -> pure $! T3 fileName hash key        
         where
             longerThanOne = \case 
-                [_] -> False
-                []  -> False
-                _   -> True
+                _:_:_ -> True
+                _     -> False
 
     -- Given MFT entry with hash and filename, get the object it refers to
     -- 
@@ -1581,7 +1613,7 @@ vUniqueFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m
 vUniqueFocusOn c a f nonUniqueError = do
     Scopes { validationScope = Scope vs } <- vHoist $ withCurrentScope $ \scopes _ -> scopes
     let focus = c a
-    unless (null (NonEmpty.filter (==focus) vs)) nonUniqueError
+    when (focus `elem` vs) nonUniqueError
     vFocusOn c a f 
         
 
@@ -1596,7 +1628,7 @@ applyValidationSideEffects
     appContext@AppContext {..}
     AllTasTopDownContext {..} = liftIO $ do        
     (visitedSize, elapsed) <- timedMS $ do
-        vks <- atomically $ readTVar visitedKeys            
+        vks <- readTVarIO visitedKeys            
         rwTxT database $ \tx db -> DB.markAsValidated tx db vks worldVersion        
         pure $! Set.size vks
     

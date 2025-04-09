@@ -409,23 +409,16 @@ saveSnapshot
     let notificationSerial = notification ^. typed @RrdpSerial
     when (serial /= notificationSerial) $ 
         appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
-
-    -- Save objects in batches since
-    -- 1) It's not crucial to save the whole snapshot in one transaction, 
-    --    it's an idempotent operation and can be restarted 
-    -- 2) It's better to not block the DB for too long if snapshot is very big.
-    --    Other fetcher processes can be killed by timeout waiting on the DB
-    --    rather that waiting on download
-    -- 
-    txFoldPipelineBatch 
+         
+    let savingTx f = 
+            DB.rwAppTx db $ \tx -> 
+                f tx >> DB.updateRrdpMeta tx db (fromNotification notification) repoUri 
+    
+    txFoldPipeline 
             cpuParallelism
-            10000    
             (S.mapM (newStorable db) $ S.each snapshotItems)
-            (DB.rwAppTx db)
-            (saveStorable db)           
-
-    DB.rwAppTx db $ \tx -> DB.updateRrdpMeta tx db (fromNotification notification) repoUri      
-
+            savingTx
+            (saveStorable db)
   where        
 
     newStorable db (SnapshotPublish uri encodedb64) =             
@@ -563,10 +556,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
     let savingTx f = 
             DB.rwAppTx db $ \tx -> 
                 f tx >> DB.updateRrdpMeta tx db (fromNotification notification) repoUri 
-
-    -- Propagate exceptions from here, anything that can happen here 
-    -- (storage failure, file read failure) should stop the validation and 
-    -- probably stop the whole program.
+    
     txFoldPipeline 
             cpuParallelism
             (S.mapM newStorable $ S.each deltaItems)

@@ -565,7 +565,7 @@ needsFetching r fetchInterval status ValidationConfig {..} (Now now) =
 validationStateOfFetches :: MonadIO m => RepositoryProcessing -> m ValidationState 
 validationStateOfFetches repositoryProcessing = liftIO $ 
     atomically $ 
-        fmap (foldr (\(_, vs) r -> r <> vs) mempty) $ 
+        fmap (mconcat . map snd) $ 
             ListT.toList $ StmMap.listT $ 
                 repositoryProcessing ^. #indivudualFetchResults    
 
@@ -607,6 +607,25 @@ getFetchablePP pps = \case
         case rsyncRepository (mergeRsyncPP rpp pps) rsyncUrl of 
             Nothing   -> r
             Just repo -> RsyncPP $ repo ^. #repoPP            
+
+getFetchableUrls :: PublicationPoints -> PublicationPointAccess -> [RpkiURL]
+getFetchableUrls pps ppAccess = 
+    [ getRpkiURL fetchablePP
+    | pp <- NonEmpty.toList $ unPublicationPointAccess ppAccess
+    , let fetchablePP = getFetchablePP pps pp
+    , isPendingRepository pps fetchablePP
+    ]
+  where
+    isPendingRepository publicationPoints pubPoint = 
+        case repositoryFromPP publicationPoints pubPoint of
+            Just repo -> getFetchStatus repo == Pending
+            Nothing   -> False
+
+getFetchables :: PublicationPoints -> PublicationPointAccess -> [(RpkiURL, FetchStatus)]
+getFetchables pps ppAccess = 
+    [ (getRpkiURL repo, getFetchStatus repo)
+        | pp <- NonEmpty.toList $ unPublicationPointAccess ppAccess,                
+          repo <- maybeToList $ repositoryFromPP pps pp ]
 
 onlyForSyncFetch :: PublicationPoints 
                 -> PublicationPointAccess 

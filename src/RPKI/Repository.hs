@@ -78,7 +78,7 @@ data PublicationPoint = RrdpPP  RrdpRepository |
     RFC prescribes to only fallback from RRDP to rsync publication point, i.e. real instances 
     of this type will always consist of 1 or 2 elements.
     
-    However, generic implementation is just simpler to implement (See Fetch.hs module). 
+    However, generic implementation is just simpler (See Fetch.hs module). 
     Whether this generic fetching procedure will be ever useful for fetching from more 
     than one RRDP links -- no idea.
 -}   
@@ -140,7 +140,6 @@ instance Monoid RepositoryMeta where
         refreshInterval = Nothing
     }
 
-
 newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -162,6 +161,26 @@ data RepositoryProcessing = RepositoryProcessing {
         fetchSemaphore         :: Semaphore
     }
     deriving stock (Generic)
+
+-- | Publication points grouped by the primary URL
+data Repos = Repos {
+        primary   :: PublicationPoint,
+        -- There may be multiple fallnack URLs in the whole fallback pipeline,         
+        fallbacks :: [NonEmpty PublicationPoint]
+    }
+    deriving stock (Show, Eq, Ord, Generic)  
+
+-- The way CA can publish itselt
+data CaPP = RrdpCaPP RrdpURL 
+          | RsyncCaPP RsyncTree
+    deriving stock (Show, Eq, Ord, Generic) 
+    deriving anyclass (TheBinary)
+
+
+newtype CaGroupedAccess = CaGroupedAccess (NonEmpty CaPP)          
+    deriving stock (Show, Eq, Ord, Generic) 
+    deriving anyclass (TheBinary)
+        
 
 instance WithRpkiURL PublicationPoint where
     getRpkiURL (RrdpPP RrdpRepository {..})          = RrdpU uri
@@ -236,7 +255,7 @@ newRepositoryProcessing Config {..} = RepositoryProcessing <$>
 
 addRsyncPrefetchUrls :: Config -> PublicationPoints -> PublicationPoints
 addRsyncPrefetchUrls Config {..} pps =     
-    foldr (\u pps' -> mergePP (rsyncPP u) pps') pps (rsyncConf ^. #rsyncPrefetchUrls)
+    foldr (mergePP . rsyncPP) pps (rsyncConf ^. #rsyncPrefetchUrls)
 
 newRepositoryProcessingIO :: Config -> IO RepositoryProcessing
 newRepositoryProcessingIO = atomically . newRepositoryProcessing
@@ -411,10 +430,10 @@ updateMeta
 repositoryCount :: PublicationPoints -> Int
 repositoryCount (PublicationPoints (RrdpMap rrdps) (RsyncTree rsyncs) _) =     
     Map.size rrdps + 
-    sum (map counts $ Map.elems rsyncs)
+    sum (map rsyncCounts $ Map.elems rsyncs)
   where
-    counts (Leaf _) = 1
-    counts SubTree {..} = sum $ map counts $ Map.elems rsyncChildren
+    rsyncCounts (Leaf _) = 1
+    rsyncCounts SubTree {..} = sum $ map rsyncCounts $ Map.elems rsyncChildren
 
 
 filterPPAccess :: Config -> PublicationPointAccess -> Maybe PublicationPointAccess    

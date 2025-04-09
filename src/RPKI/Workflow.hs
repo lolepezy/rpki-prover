@@ -8,8 +8,8 @@
 
 module RPKI.Workflow where
 
-import           Control.Concurrent.Async
 import           Control.Concurrent
+import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
@@ -62,6 +62,7 @@ import           RPKI.Worker
 import           RPKI.SLURM.Types
 import           RPKI.Http.Dto
 import           RPKI.Http.Types
+import Data.List.NonEmpty (NonEmpty)
 
 
 {- 
@@ -137,6 +138,51 @@ runJob Jobs {..} jobId action =
             Just (Run _ Placeholder) -> retry
             Just (Run _ (Running a)) -> pure $ wait a
             
+
+newtype Fetchers = Fetchers {
+        -- Fetchers that are currently running
+        runningFetchers :: TVar (Map.Map RpkiURL (Async ()))
+    }
+    deriving stock (Generic)    
+
+
+withFetchers :: (Fetchers -> IO b) -> IO b
+withFetchers f = do 
+    fetchers <- newTVarIO mempty
+    f (Fetchers fetchers)
+        `finally` (do 
+            fs <- atomically $ Map.elems <$> readTVar fetchers 
+            for_ fs $ \a -> throwTo (asyncThreadId a) AsyncCancelled)   
+     
+
+-- adjustFetchers :: [Repos] -> Fetchers -> IO ()
+-- adjustFetchers repos Fetchers {..} = do 
+--     running <- readTVarIO runningFetchers
+--     let fetchedUrls = Map.keysSet running
+--     for_ repos $ \r@Repos {..} -> 
+--         unless (primary `Set.member` fetchedUrls) $ do 
+--             a <- async $ newFetcher r
+--             atomically $ modifyTVar' runningFetchers $ Map.insert primary a
+
+
+newFetcher :: Repos -> IO ()
+newFetcher Repos {..} = do 
+    go
+  where
+    go = do 
+        Now start <- thisInstant        
+        interval <- actuallyFetch
+        Now end <- thisInstant
+        let pause = leftToWait start end interval
+        when (pause > 0) $
+            threadDelay $ fromIntegral pause
+        
+        go
+
+    actuallyFetch = do 
+        pure $ Seconds 100
+
+
 
 
 -- A job run can be the first one or not and 
