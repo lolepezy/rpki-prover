@@ -4,7 +4,6 @@
 {-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StrictData                 #-}
-{-# LANGUAGE MultiWayIf                 #-}
 
 module RPKI.Repository where
 
@@ -102,7 +101,7 @@ data RsyncRepository = RsyncRepository {
 
 data PublicationPoints = PublicationPoints {
         rrdps  :: RrdpMap,
-        rsyncs :: RsyncTree,        
+        rsyncs :: RsyncForest,        
         -- Set of for-async-fetch URLs that were requested to fetch as a 
         -- result of finding publication points on certificats during the 
         -- last validation.
@@ -164,23 +163,17 @@ data RepositoryProcessing = RepositoryProcessing {
 
 -- | Publication points grouped by the primary URL
 data Repos = Repos {
-        primary   :: PublicationPoint,
-        -- There may be multiple fallnack URLs in the whole fallback pipeline,         
-        fallbacks :: [NonEmpty PublicationPoint]
+        primary   :: CaGroupAccess,
+        fallbacks :: [CaGroupAccess]
     }
     deriving stock (Show, Eq, Ord, Generic)  
 
 -- The way CA can publish itselt
-data CaPP = RrdpCaPP RrdpURL 
-          | RsyncCaPP RsyncTree
+data CaGroupAccess = RrdpCaGroupAccess RrdpURL 
+                   | RsyncCaGroupAccess RsyncSuffixTree
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass (TheBinary)
 
-
-newtype CaGroupedAccess = CaGroupedAccess (NonEmpty CaPP)          
-    deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary)
-        
 
 instance WithRpkiURL PublicationPoint where
     getRpkiURL (RrdpPP RrdpRepository {..})          = RrdpU uri
@@ -244,7 +237,7 @@ isForAsync = \case
     _               -> False
 
 newPPs :: PublicationPoints
-newPPs = PublicationPoints mempty newRsyncTree mempty
+newPPs = PublicationPoints mempty newRsyncForest mempty
 
 newRepositoryProcessing :: Config -> STM RepositoryProcessing
 newRepositoryProcessing Config {..} = RepositoryProcessing <$> 
@@ -284,7 +277,7 @@ rsyncRepository PublicationPoints {..} rsyncUrl =
     (\(u, meta) -> RsyncRepository (RsyncPublicationPoint u) meta)
                     <$> lookupRsyncTree rsyncUrl rsyncs    
 
-repositoryFromPP :: PublicationPoints -> PublicationPoint -> Maybe Repository                    
+repositoryFromPP :: PublicationPoints -> PublicationPoint -> Maybe Repository
 repositoryFromPP pps pp = 
     case getRpkiURL pp of
         RrdpU u  -> RrdpR <$> rrdpRepository merged u
@@ -295,7 +288,7 @@ repositoryFromPP pps pp =
 
 mergeRsyncPP :: RsyncPublicationPoint -> PublicationPoints -> PublicationPoints
 mergeRsyncPP (RsyncPublicationPoint u) pps = 
-    pps & typed %~ toRsyncTree u mempty
+    pps & typed @RsyncForest %~ toRsyncForest u mempty
 
 mergeRrdp :: RrdpRepository -> PublicationPoints -> PublicationPoints
 mergeRrdp r@RrdpRepository {..} pps =
@@ -380,8 +373,8 @@ data ChangeSet = ChangeSet
 -- | Derive a diff between two states of publication points
 changeSet :: PublicationPoints -> PublicationPoints -> ChangeSet
 changeSet 
-    (PublicationPoints (RrdpMap rrdpDb) (RsyncTree rsyncDb)  _ ) 
-    (PublicationPoints (RrdpMap rrdpNew) (RsyncTree rsyncNew) requestNew) = 
+    (PublicationPoints (RrdpMap rrdpDb) (RsyncForestGen rsyncDb)  _ ) 
+    (PublicationPoints (RrdpMap rrdpNew) (RsyncForestGen rsyncNew) requestNew) = 
     ChangeSet 
         (mergedRrdp <> newRrdp <> rrdpToDelete) 
         (putNewRsyncs <> removeOldRsyncs)        
@@ -424,11 +417,11 @@ updateMeta
         foldRepos 
             (RsyncR (RsyncRepository (RsyncPublicationPoint uri) _), newMeta) 
             (rrdps', rsyncs') = 
-                (rrdps', toRsyncTree uri newMeta rsyncs')            
+                (rrdps', toRsyncForest uri newMeta rsyncs')            
 
 -- Number of repositories
 repositoryCount :: PublicationPoints -> Int
-repositoryCount (PublicationPoints (RrdpMap rrdps) (RsyncTree rsyncs) _) =     
+repositoryCount (PublicationPoints (RrdpMap rrdps) (RsyncForestGen rsyncs) _) =     
     Map.size rrdps + 
     sum (map rsyncCounts $ Map.elems rsyncs)
   where
@@ -461,52 +454,55 @@ findRepositoriesForAsyncFetch (PublicationPoints (RrdpMap rrdps) rsyncTree _) =
         rsyncRepo (RsyncPublicationPoint -> repoPP) meta = RsyncR $ RsyncRepository {..}
 
 
-type RsyncNodeNormal = RsyncNode RepositoryMeta
+type RsyncNodeNormal = RsyncTree RepositoryMeta
+type RsyncSuffixTree = RsyncTree ()
 
 -- Simple tree for representing rsync repositories grouped by host.
--- Every RsyncNode corresponds to a path chunk in the rsync URL. 
+-- Every RsyncTree corresponds to a path chunk in the rsync URL. 
 
-newtype RsyncTree = RsyncTree (Map RsyncHost RsyncNodeNormal)
+type RsyncForest = RsyncForestGen RepositoryMeta
+    
+newtype RsyncForestGen a = RsyncForestGen (Map RsyncHost (RsyncTree a))
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
-data RsyncNode a = Leaf a
+data RsyncTree a = Leaf a
                | SubTree {
-                   rsyncChildren :: Map RsyncPathChunk (RsyncNode a)
+                   rsyncChildren :: Map RsyncPathChunk (RsyncTree a)
                } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
-newRsyncTree :: RsyncTree
-newRsyncTree = RsyncTree Map.empty
+newRsyncForest :: RsyncForest
+newRsyncForest = RsyncForestGen Map.empty
 
-toRsyncTree :: RsyncURL -> RepositoryMeta -> RsyncTree -> RsyncTree 
-toRsyncTree (RsyncURL host path) meta (RsyncTree byHost) = 
-    RsyncTree $ Map.alter (Just . maybe 
-        (buildRsyncTree path meta) 
-        (pathToRsyncTree path meta)) host byHost      
+toRsyncForest :: Semigroup a => RsyncURL -> a -> RsyncForestGen a -> RsyncForestGen a
+toRsyncForest (RsyncURL host path) a (RsyncForestGen byHost) = 
+    RsyncForestGen $ Map.alter (Just . maybe 
+        (buildRsyncTree path a) 
+        (pathToRsyncTree path a)) host byHost      
 
-pathToRsyncTree :: [RsyncPathChunk] -> RepositoryMeta -> RsyncNodeNormal -> RsyncNodeNormal
+pathToRsyncTree :: Semigroup a => [RsyncPathChunk] -> a -> RsyncTree a -> RsyncTree a
 
-pathToRsyncTree [] meta (Leaf existingMeta) = Leaf $ existingMeta <> meta
-pathToRsyncTree [] meta SubTree {} = Leaf meta
+pathToRsyncTree [] a (Leaf existingA) = Leaf $ existingA <> a
+pathToRsyncTree [] a SubTree {} = Leaf a
 
 -- Strange case when we by some reason decide to merge
 -- a deeper nested PP while there's a dowloaded  one some
 -- higher level. Not supported, don't change the tree.
-pathToRsyncTree _ _ (Leaf meta) = Leaf meta
+pathToRsyncTree _ _ (Leaf a) = Leaf a
 
-pathToRsyncTree (u : us) meta (SubTree ch) = 
+pathToRsyncTree (u : us) a (SubTree ch) = 
     case Map.lookup u ch of
-        Nothing    -> SubTree $ Map.insert u (buildRsyncTree us meta) ch            
-        Just child -> SubTree $ Map.insert u (pathToRsyncTree us meta child) ch             
+        Nothing    -> SubTree $ Map.insert u (buildRsyncTree us a) ch            
+        Just child -> SubTree $ Map.insert u (pathToRsyncTree us a child) ch             
 
-buildRsyncTree :: [RsyncPathChunk] -> RepositoryMeta -> RsyncNodeNormal
+buildRsyncTree :: [RsyncPathChunk] -> a -> RsyncTree a
 buildRsyncTree [] fs      = Leaf fs
 buildRsyncTree (u: us) fs = SubTree $ Map.singleton u $ buildRsyncTree us fs    
 
-lookupRsyncTree :: RsyncURL -> RsyncTree -> Maybe (RsyncURL, RepositoryMeta)
-lookupRsyncTree (RsyncURL host path) (RsyncTree t) = 
+lookupRsyncTree :: RsyncURL -> RsyncForestGen a -> Maybe (RsyncURL, a)
+lookupRsyncTree (RsyncURL host path) (RsyncForestGen t) = 
     meta_ path [] =<< Map.lookup host t
   where    
     meta_ _ realPath (Leaf fs) = Just (RsyncURL host realPath, fs)
@@ -514,8 +510,8 @@ lookupRsyncTree (RsyncURL host path) (RsyncTree t) =
     meta_ (u: us) realPath SubTree {..} = 
         Map.lookup u rsyncChildren >>= meta_ us (realPath <> [u])
 
-flattenRsyncTree :: RsyncTree -> [(RsyncURL, RepositoryMeta)]
-flattenRsyncTree (RsyncTree t) = 
+flattenRsyncTree :: RsyncForestGen a -> [(RsyncURL, a)]
+flattenRsyncTree (RsyncForestGen t) = 
     concatMap (\(host, tree) -> flattenTree host tree []) $ Map.toList t    
   where    
     flattenTree host (Leaf info) realPath  = [(RsyncURL host (reverse realPath), info)]

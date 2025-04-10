@@ -452,7 +452,7 @@ instance Arbitrary FetchStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RsyncTree where
+instance Arbitrary RsyncForest where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

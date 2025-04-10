@@ -41,21 +41,26 @@ import           Text.URI.Lens
 
 sha256 :: LBS.ByteString -> Hash
 sha256 = mkHash . S256.hashlazy
+{-# INLINE sha256 #-}
 
 sha256s :: BS.ByteString -> Hash
 sha256s = mkHash . S256.hash
+{-# INLINE sha256s #-}
 
 mkHash :: BS.ByteString -> Hash
 mkHash = Hash . BSS.toShort
+{-# INLINE mkHash #-}
 
 unhex :: BS.ByteString -> Maybe BS.ByteString
 unhex hexed = either (const Nothing) Just $ Hex.decode hexed    
 
 hex :: BS.ByteString -> BS.ByteString
 hex = Hex.encode    
+{-# INLINE hex #-}
 
 hexL :: LBS.ByteString -> LBS.ByteString
 hexL = HexLazy.encode    
+{-# INLINE hexL #-}
 
 class ConvertibleAsSomethingString s1 s2 where
     convert :: s1 -> s2
@@ -79,7 +84,11 @@ instance {-# OVERLAPPING #-} ConvertibleAsSomethingString Text s => ConvertibleA
 normalizeUri :: Text -> Text
 normalizeUri = Text.map (\c -> if isOkForAFile c then c else '_')
   where
-    isOkForAFile c = isAlpha c || isDigit c || c `elem` ("-._" :: String)
+    isOkForAFile c = isValidFileNameCharacter c || c == '.'
+
+{-# INLINE isValidFileNameCharacter #-}
+isValidFileNameCharacter :: Char -> Bool
+isValidFileNameCharacter c = isAsciiLower c || isAsciiUpper c || isDigit c || c == '-' || c == '_'
 
 trim :: BS.ByteString -> BS.ByteString
 trim = C.dropWhile isSpace . fst . C.breakEnd (not . isSpace)
@@ -90,6 +99,7 @@ trimmed = Text.strip . Text.pack . show
 removeSpaces :: BS.ByteString -> BS.ByteString
 removeSpaces = C.filter (not . isSpace)
 
+{-# INLINE isSpace_ #-}
 isSpace_ :: Word8 -> Bool
 isSpace_ = isSpace . chr . fromEnum
 
@@ -103,13 +113,17 @@ toNatural :: Int -> Maybe Natural
 toNatural i | i > 0     = Just (fromIntegral i :: Natural)
             | otherwise = Nothing
 
-
 -- Some URL utilities 
 isRsyncURI, isRrdpURI, isHttpsURI, isHttpURI :: URI -> Bool
 isRsyncURI (URI u) = "rsync://" `Text.isPrefixOf` u
 isHttpsURI (URI u) = "https://" `Text.isPrefixOf` u 
 isHttpURI (URI u)  = "http://" `Text.isPrefixOf` u
 isRrdpURI u = isHttpURI u || isHttpsURI u
+
+{-# INLINE isRsyncURI #-}
+{-# INLINE isHttpsURI #-}
+{-# INLINE isHttpURI #-}
+{-# INLINE isRrdpURI #-}
 
 isParentOf :: WithURL u => u -> u -> Bool
 isParentOf (getURL -> URI parent) (getURL -> URI child) = 

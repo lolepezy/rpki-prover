@@ -119,7 +119,8 @@ data AllTasTopDownContext = AllTasTopDownContext {
         visitedKeys          :: TVar (Set ObjectKey),        
         repositoryProcessing :: RepositoryProcessing,
         shortcutQueue        :: ClosableQueue MftShortcutOp,
-        topDownCounters      :: TopDownCounters IORef 
+        topDownCounters      :: TopDownCounters IORef,
+        caAccessGroups       :: TVar (Map.Map CaGroupAccess Repos) 
     }
     deriving stock (Generic)
 
@@ -190,7 +191,8 @@ newAllTasTopDownContext worldVersion repositoryProcessing shortcutQueue = liftIO
     let now = Now $ versionToMoment worldVersion
     topDownCounters <- newTopDownCounters
     atomically $ do        
-        visitedKeys <- newTVar mempty
+        visitedKeys    <- newTVar mempty
+        caAccessGroups <- newTVar mempty
         pure $! AllTasTopDownContext {..}
 
 newTopDownCounters :: IO (TopDownCounters IORef)
@@ -576,20 +578,26 @@ validateCaNoLimitChecks1
             pps <- readPublicationPoints repositoryProcessing     
             let fetcheables = getFetchables pps ppAccess
 
+            -- We never tried to fetch aither RRDP or rsync 
+            let firstTime = all ((== Pending) . snd) fetcheables
+
             -- Add these PPs to the validation-wide set of fetcheables, 
             -- i.e. all newly discovered publication points/repositories
-            mergeFetcheables fetcheables
+            when firstTime $ 
+                mergeFetcheables fetcheables
 
             -- Do not validate if nothing was fetched for this CA
-            -- otherwise we'll have a lot of 
-            -- useless errors about missing manifests, so just 
-            -- don't go there
-            unless (all ((== Pending) . snd) fetcheables) $ do                                 
+            -- otherwise we'll have a lot of useless errors about 
+            -- missing manifests, so just don't go there
+            unless firstTime $ do   
                 let primaryUrl = getPrimaryRepositoryUrl pps ppAccess
                 metricFocusOn PPFocus primaryUrl $
                     validateCaNoFetch appContext topDownContext ca
   where
-    mergeFetcheables fetcheables = do   
+    mergeFetcheables fetcheables = liftIO $ do           
+        atomically $ modifyTVar' caAccessGroups $ \cag -> do 
+
+            cag
         pure ()
 
 
@@ -1594,7 +1602,7 @@ makeMftShortcut key
   let 
     (notValidBefore, notValidAfter) = getValidityPeriod mftObject        
     serial = getSerial mftObject
-    manifestNumber = (getCMSContent $ cmsPayload mftObject) ^. #mftNumber
+    manifestNumber = getCMSContent (cmsPayload mftObject) ^. #mftNumber
     crlShortcut = let 
         SignCRL {..} = validCrl ^. #signCrl
         -- That must always match, since it's a validated CRL
@@ -1617,11 +1625,7 @@ vUniqueFocusOn c a f nonUniqueError = do
     vFocusOn c a f 
         
 
--- Mark validated objects in the database, i.e.
--- 
--- - save all the visited hashes together with the current world version
--- - save all the valid manifests for each CA/AKI
--- 
+-- | Mark validated objects in the database, i.e.
 applyValidationSideEffects :: (MonadIO m, Storage s) =>
                               AppContext s -> AllTasTopDownContext -> m ()
 applyValidationSideEffects
@@ -1633,7 +1637,7 @@ applyValidationSideEffects
         pure $! Set.size vks
     
     liftIO $ reportCounters appContext topDownCounters        
-    logDebug logger $ [i|Marked #{visitedSize} objects as used, took #{elapsed}ms.|]
+    logDebug logger [i|Marked #{visitedSize} objects as used, took #{elapsed}ms.|]
 
 
 -- This is to be able to print all counters as Int, not Identity Int

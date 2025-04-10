@@ -738,7 +738,7 @@ getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ 
     forAsyncS' <- fromMaybe mempty . fmap unCompressed <$> M.get tx forAsyncS forAsyncFetchKey
     pure $ PublicationPoints
             (RrdpMap $ Map.fromList rrdps)
-            (RsyncTree $ Map.fromList rsyns)           
+            (RsyncForestGen $ Map.fromList rsyns)           
             forAsyncS'
 
 savePublicationPoints :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PublicationPoints -> m ()

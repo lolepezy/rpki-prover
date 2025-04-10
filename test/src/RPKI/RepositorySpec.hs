@@ -25,11 +25,11 @@ import           RPKI.Orphans
 repositoryGroup :: TestTree
 repositoryGroup = testGroup "PublicationPoints" [
         QC.testProperty
-            "RsyncNode is commutative"
+            "RsyncTree is commutative"
             prop_rsync_tree_commutative,
 
         QC.testProperty
-            "RsyncNode gets properly updated"
+            "RsyncTree gets properly updated"
             prop_rsync_tree_update,
     
         QC.testProperty "FetchStatus is a semigroup" $ isASemigroup @FetchStatus,
@@ -84,7 +84,7 @@ prop_rsync_tree_update =
                                 []   -> original
                                 s :_ -> s)) 
                         toUpdate allShorter
-                updatedTree = foldr (\u t -> toRsyncTree u (newMeta newStatus newSpeed) t) tree sameOrShorter
+                updatedTree = foldr (\u t -> toRsyncForest u (newMeta newStatus newSpeed) t) tree sameOrShorter
                 sameOrLonger = filter (\(RsyncURL h p) -> 
                                     any (\(RsyncURL h' p') -> 
                                         h == h' && (p == p' || p' `isPrefixOf` p)) toUpdate) urls
@@ -93,9 +93,9 @@ prop_rsync_tree_update =
                         Just (newMeta newStatus newSpeed)) sameOrLonger
     
 
-convertToRepos :: [RsyncURL] -> FetchStatus -> RsyncTree
+convertToRepos :: [RsyncURL] -> FetchStatus -> RsyncForest
 convertToRepos urls status = 
-    foldr (\u t -> toRsyncTree u (newMeta status Unknown) t) newRsyncTree urls  
+    foldr (\u t -> toRsyncForest u (newMeta status Unknown) t) newRsyncForest urls  
 
 
 generateRsyncUrl :: Gen RsyncURL
