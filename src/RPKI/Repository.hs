@@ -170,9 +170,15 @@ data Repos = Repos {
 
 -- The way CA can publish itselt
 data CaGroupAccess = RrdpCaGroupAccess RrdpURL 
-                   | RsyncCaGroupAccess RsyncSuffixTree
+                   | RsyncCaGroupAccess RsyncForestNoContent
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass (TheBinary)
+
+data Fetcheable = Fetcheable {
+        primary   :: RpkiURL,
+        fallbacks :: [RpkiURL]
+    }
+    deriving stock (Show, Eq, Ord, Generic)  
 
 
 instance WithRpkiURL PublicationPoint where
@@ -461,6 +467,7 @@ type RsyncSuffixTree = RsyncTree ()
 -- Every RsyncTree corresponds to a path chunk in the rsync URL. 
 
 type RsyncForest = RsyncForestGen RepositoryMeta
+type RsyncForestNoContent = RsyncForestGen ()
     
 newtype RsyncForestGen a = RsyncForestGen (Map RsyncHost (RsyncTree a))
     deriving stock (Show, Eq, Ord, Generic)

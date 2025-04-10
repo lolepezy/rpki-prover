@@ -108,7 +108,8 @@ data TopDownContext = TopDownContext {
         startingRepositoryCount :: Int,
         interruptedByLimit      :: TVar Limited,
         payloadBuilder          :: PayloadBuilder,
-        overclaimingHappened    :: Bool
+        overclaimingHappened    :: Bool,
+        fetcheables             :: TVar [Fetcheable]
     }
     deriving stock (Generic)
 
@@ -119,8 +120,7 @@ data AllTasTopDownContext = AllTasTopDownContext {
         visitedKeys          :: TVar (Set ObjectKey),        
         repositoryProcessing :: RepositoryProcessing,
         shortcutQueue        :: ClosableQueue MftShortcutOp,
-        topDownCounters      :: TopDownCounters IORef,
-        caAccessGroups       :: TVar (Map.Map CaGroupAccess Repos) 
+        topDownCounters      :: TopDownCounters IORef        
     }
     deriving stock (Generic)
 
@@ -155,16 +155,17 @@ data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
     deriving stock (Show, Eq, Ord, Generic)
 
 data TopDownResult = TopDownResult {
-        payloads           :: Payloads Vrps,
-        roas               :: Roas,
-        topDownValidations :: ValidationState
+        payloads               :: Payloads Vrps,
+        roas                   :: Roas,
+        topDownValidations     :: ValidationState,
+        discoveredRepositories :: MonoidalMap.MonoidalMap TaName [Fetcheable]
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving Semigroup via GenericSemigroup TopDownResult
     deriving Monoid    via GenericMonoid TopDownResult
 
 fromValidations :: ValidationState -> TopDownResult
-fromValidations = TopDownResult mempty mempty
+fromValidations vs = TopDownResult mempty mempty vs mempty
 
 newTopDownContext :: MonadIO m =>
                     TaName
@@ -180,6 +181,7 @@ newTopDownContext taName certificate allTas =
                 overclaimingHappened = False       
             startingRepositoryCount <- fmap repositoryCount $ readTVar $ allTas ^. #repositoryProcessing . #publicationPoints
             interruptedByLimit      <- newTVar CanProceed                 
+            fetcheables             <- newTVar mempty                 
             pure $! TopDownContext {..}
 
 newAllTasTopDownContext :: MonadIO m =>
@@ -192,7 +194,6 @@ newAllTasTopDownContext worldVersion repositoryProcessing shortcutQueue = liftIO
     topDownCounters <- newTopDownCounters
     atomically $ do        
         visitedKeys    <- newTVar mempty
-        caAccessGroups <- newTVar mempty
         pure $! AllTasTopDownContext {..}
 
 newTopDownCounters :: IO (TopDownCounters IORef)
@@ -321,7 +322,7 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
                     logError logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
                     appError $ ValidationE $ ValidationTimeout maxDuration)    
     case r of
-        Left _                    -> pure $ TopDownResult mempty mempty vs       
+        Left _                    -> pure $ fromValidations vs 
         Right (topDownContext, _) -> do     
             let builder = topDownContext ^. #payloadBuilder
             vrps     <- readIORef $ builder ^. #vrps 
@@ -340,7 +341,8 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
             let roas = newRoas taName $ MonoidalMap.fromList $ 
                             map (\(T2 vrp k) -> (k, V.fromList vrp)) vrps 
 
-            pure $ TopDownResult payloads' roas vs
+            newRepos <- readTVarIO $ topDownContext ^. #fetcheables
+            pure $ TopDownResult payloads' roas vs (MonoidalMap.singleton taName newRepos)
 
   where
     taName = getTaName tal
@@ -570,21 +572,21 @@ validateCaNoLimitChecks1 :: Storage s =>
                         ValidatorT IO ()
 validateCaNoLimitChecks1
     appContext@AppContext {..}
-    topDownContext@TopDownContext { allTas = AllTasTopDownContext {..} }
+    topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
     ca = 
     case extractPPAs ca of        
         Left e         -> vError e
         Right ppAccess -> do 
             pps <- readPublicationPoints repositoryProcessing     
-            let fetcheables = getFetchables pps ppAccess
+            let caFetcheables = getFetchables pps ppAccess
 
-            -- We never tried to fetch aither RRDP or rsync 
-            let firstTime = all ((== Pending) . snd) fetcheables
+            -- We never tried to fetch either RRDP or rsync 
+            let firstTime = all ((== Pending) . snd) caFetcheables
 
             -- Add these PPs to the validation-wide set of fetcheables, 
-            -- i.e. all newly discovered publication points/repositories
-            when firstTime $ 
-                mergeFetcheables fetcheables
+            -- i.e. all newly discovered publication points/repositories            
+            when (firstTime && not (List.null caFetcheables)) $ 
+                mergeFetcheables caFetcheables
 
             -- Do not validate if nothing was fetched for this CA
             -- otherwise we'll have a lot of useless errors about 
@@ -594,11 +596,11 @@ validateCaNoLimitChecks1
                 metricFocusOn PPFocus primaryUrl $
                     validateCaNoFetch appContext topDownContext ca
   where
-    mergeFetcheables fetcheables = liftIO $ do           
-        atomically $ modifyTVar' caAccessGroups $ \cag -> do 
-
-            cag
-        pure ()
+    mergeFetcheables caFetcheables = liftIO $ 
+        atomically $ modifyTVar' fetcheables $ \fs -> let 
+            primary : fallbacks = map fst caFetcheables
+            !z = Fetcheable {..} : fs
+            in z
 
 
 validateCaNoFetch :: Storage s =>
