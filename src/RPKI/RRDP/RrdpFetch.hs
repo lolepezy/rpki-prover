@@ -284,7 +284,7 @@ updateRrdpRepository
         minDeltaSerial = minimum serials
         
         makeRrdpMeta currentMeta = let                 
-                integrity = RrdpIntegrity $ toList sortedDeltas                
+                integrity = RrdpIntegrity $ notification ^. #deltas
                 serial = maxDeltaSerial
             in Just $ 
                 case currentMeta of 
