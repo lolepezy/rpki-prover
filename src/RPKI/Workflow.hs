@@ -45,6 +45,7 @@ import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.Fetch
+import           RPKI.RRDP.Types
 import           RPKI.Logging
 import           RPKI.Metrics.System
 import qualified RPKI.Store.Database               as DB
@@ -548,11 +549,75 @@ runValidation appContext@AppContext {..} worldVersion tals = do
 
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.
-        DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
+        r <- DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
+
+        handleValidations tx db (topDownValidations ^. typed)        
+
+        pure r
 
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deleted} oldest versions(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, maybeSlurm)
+  where
+    -- Here we do anything that needs to be done in case of specific 
+    -- fetch/validation issues are present    
+    handleValidations tx db (Validations validations) = do 
+        Now now <- thisInstant
+        unless (Map.null repositoriesWithManifestIntegrityIssues) $ 
+            logDebug logger [i|Repositories with integrity issues #{repositoriesWithManifestIntegrityIssues}.|]
+
+        for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) ->
+            DB.updateRrdpMetaM tx db rrdpUrl $ \case 
+                Nothing   -> pure Nothing
+                Just meta -> do 
+                    let enforcedSnapshot = meta { 
+                            enforcement = Just $ NextTimeFetchSnapshot now [i|Manifest integrity issues: #{issues}|] 
+                        }                    
+                    case meta ^. #enforcement of    
+                        Nothing -> do
+                            logInfo logger 
+                                [i|Repository #{rrdpUrl} has integrity issues #{issues}, will force it to re-fetch snapshot.|]
+                            pure $ Just enforcedSnapshot
+
+                        -- Don't update the enforcement if it's already set to fetch the snapshot
+                        Just n@(NextTimeFetchSnapshot _ _) -> do 
+                                logDebug logger [i|Repository #{rrdpUrl} has integrity issues, not changing #{n}.|]
+                                pure $ Just meta
+
+                        Just (ForcedSnaphotAt processedAt)
+                            -- If the last forced fetch was less than N hours ago, don't do it again
+                            | closeEnoughMoments processedAt now 
+                                (config ^. #validationConfig . #rrdpForcedSnapshotMinInterval) -> 
+                                    pure $ Just meta
+
+                            | otherwise -> do 
+                                logInfo logger 
+                                    [i|Repository #{rrdpUrl} has integrity issues #{issues}, last forced snapshot fetch was at #{processedAt}, will force it again.|]
+                                pure $ Just enforcedSnapshot
+      where 
+        repositoriesWithManifestIntegrityIssues = 
+            Map.fromListWith (<>) [ 
+                (relevantRepo, relevantIssues) | 
+                    (scope, issues) <- Map.toList validations,
+                    relevantRepo    <- mostNarrowPPScope scope,
+                    let relevantIssues = filter manifestIntegrityError (Set.toList issues),
+                    not (null relevantIssues)
+                ]        
+          where
+            manifestIntegrityError = \case
+                VErr (ValidationE e)             -> isRefentialIntegrityError e
+                VWarn (VWarning (ValidationE e)) -> isRefentialIntegrityError e                    
+                _                                -> False
+              where
+                isRefentialIntegrityError = \case
+                    ManifestEntryDoesn'tExist _ _       -> True
+                    NoCRLExists _ _                     -> True                
+                    ManifestEntryHasWrongFileType _ _ _ -> True                
+                    ReferentialIntegrityError _         -> True                
+                    _                                   -> False
+
+            mostNarrowPPScope (Scope s) = 
+                take 1 [ url | PPFocus (RrdpU url) <- NE.toList s ]
 
 
 -- To be called from the cache cleanup worker

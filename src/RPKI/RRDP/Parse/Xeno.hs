@@ -57,7 +57,7 @@ parseNotification bs = catchExceptions $ runST $ do
                     forAttribute attributes "version" NoVersion $
                         \v -> case parseInteger v of
                             Nothing -> throwE NoVersion
-                            Just v' -> lift $ writeSTRef versionRef  (Just $ Version v')
+                            Just v' -> lift $ writeSTRef versionRef $ Just $ Version v'
                 ("snapshot", attributes) -> do
                     forAttribute attributes "hash" NoSnapshotHash $
                         \v  -> case makeHash v of
