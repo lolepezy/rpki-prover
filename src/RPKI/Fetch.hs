@@ -426,21 +426,30 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
                 else ForSyncFetch fetchMoment       
 
 
-deriveNextTimeout :: Config -> Seconds -> RepositoryMeta -> Seconds
-deriveNextTimeout config absoluteMaxDuration RepositoryMeta {..} = 
-    case config ^. #validationConfig . #fetchTimeoutCalculation of 
-        Constant -> absoluteMaxDuration
-        Adaptive -> 
-            case lastFetchDuration of
-                Nothing       -> absoluteMaxDuration
-                Just duration -> let
-                    previousDuration = Seconds 1 + Seconds (unTimeMs duration `div` 1000)
-                    heuristicalNextTimeout = 
-                        if | previousDuration < Seconds 3  -> Seconds 10
-                           | previousDuration < Seconds 10 -> Seconds 20
-                           | previousDuration < Seconds 30 -> previousDuration + Seconds 30
-                           | otherwise                     -> previousDuration + Seconds 60             
-                    in min absoluteMaxDuration heuristicalNextTimeout
+deriveNextTimeout :: Config -> Seconds -> Repository -> Seconds
+deriveNextTimeout config absoluteMaxDuration r =     
+    case r of 
+        -- Reset timeout to the original if we are forced to re-fetch snapshot
+        RrdpR RrdpRepository { 
+                rrdpMeta = Just RrdpMeta { 
+                    enforcement = Just (NextTimeFetchSnapshot _ _) 
+                }
+         } -> absoluteMaxDuration
+
+        (getMeta -> RepositoryMeta {..}) ->      
+            case config ^. #validationConfig . #fetchTimeoutCalculation of 
+                Constant -> absoluteMaxDuration
+                Adaptive -> 
+                    case lastFetchDuration of
+                        Nothing       -> absoluteMaxDuration
+                        Just duration -> let
+                            previousDuration = Seconds 1 + Seconds (unTimeMs duration `div` 1000)
+                            heuristicalNextTimeout = 
+                                if | previousDuration < Seconds 3  -> Seconds 10
+                                   | previousDuration < Seconds 10 -> Seconds 20
+                                   | previousDuration < Seconds 30 -> previousDuration + Seconds 30
+                                   | otherwise                     -> previousDuration + Seconds 60             
+                            in min absoluteMaxDuration heuristicalNextTimeout
 
 
 -- Fetch one individual repository. 
@@ -474,7 +483,7 @@ fetchRepository
     timeToKillItself = Seconds 5
     
     fetchRrdpRepository r = do 
-        let fetcherTimeout = deriveNextTimeout config (fetchConfig ^. #rrdpTimeout) (r ^. #meta)        
+        let fetcherTimeout = deriveNextTimeout config (fetchConfig ^. #rrdpTimeout) repo
         let totalTimeout = fetcherTimeout + timeToKillItself
         timeoutVT totalTimeout
             (do
@@ -490,7 +499,7 @@ fetchRepository
                 appError $ RrdpE $ RrdpDownloadTimeout totalTimeout)
 
     fetchRsyncRepository r = do 
-        let fetcherTimeout = deriveNextTimeout config (fetchConfig ^. #rsyncTimeout) (r ^. #meta)        
+        let fetcherTimeout = deriveNextTimeout config (fetchConfig ^. #rsyncTimeout) repo 
         let totalTimeout = fetcherTimeout + timeToKillItself
         timeoutVT 
             totalTimeout
