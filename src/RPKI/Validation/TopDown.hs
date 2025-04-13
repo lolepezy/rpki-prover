@@ -109,7 +109,7 @@ data TopDownContext = TopDownContext {
         interruptedByLimit      :: TVar Limited,
         payloadBuilder          :: PayloadBuilder,
         overclaimingHappened    :: Bool,
-        fetcheables             :: TVar [Fetcheable]
+        fetcheables             :: TVar Fetcheables
     }
     deriving stock (Generic)
 
@@ -158,7 +158,7 @@ data TopDownResult = TopDownResult {
         payloads               :: Payloads Vrps,
         roas                   :: Roas,
         topDownValidations     :: ValidationState,
-        discoveredRepositories :: MonoidalMap.MonoidalMap TaName [Fetcheable]
+        discoveredRepositories :: MonoidalMap.MonoidalMap TaName Fetcheables
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving Semigroup via GenericSemigroup TopDownResult
@@ -479,7 +479,7 @@ validateCa
     checkAndReport treeDepthLimit
         $ checkAndReport visitedObjectCountLimit
         $ checkAndReport repositoryCountLimit
-        $ validateCaNoLimitChecks appContext topDownContext ca        
+        $ validateCaNoLimitChecks1 appContext topDownContext ca        
   where
 
     -- Check and report for the maximal tree depth
@@ -580,27 +580,32 @@ validateCaNoLimitChecks1
             pps <- readPublicationPoints repositoryProcessing     
             let caFetcheables = getFetchables pps ppAccess
 
-            -- We never tried to fetch either RRDP or rsync 
-            let firstTime = all ((== Pending) . snd) caFetcheables
-
             -- Add these PPs to the validation-wide set of fetcheables, 
-            -- i.e. all newly discovered publication points/repositories            
-            when (firstTime && not (List.null caFetcheables)) $ 
-                mergeFetcheables caFetcheables
+            -- i.e. all newly discovered publication points/repositories                        
+            mergeFetcheables caFetcheables
 
             -- Do not validate if nothing was fetched for this CA
             -- otherwise we'll have a lot of useless errors about 
             -- missing manifests, so just don't go there
-            unless firstTime $ do   
+            unless (all ((== Pending) . snd) caFetcheables) $ do   
                 let primaryUrl = getPrimaryRepositoryUrl pps ppAccess
                 metricFocusOn PPFocus primaryUrl $
                     validateCaNoFetch appContext topDownContext ca
   where
-    mergeFetcheables caFetcheables = liftIO $ 
-        atomically $ modifyTVar' fetcheables $ \fs -> let 
-            primary : fallbacks = map fst caFetcheables
-            !z = Fetcheable {..} : fs
-            in z
+    mergeFetcheables caFetcheables = do 
+        z <- liftIO $ atomically $ do 
+            fs <- readTVar fetcheables 
+            case map fst caFetcheables of 
+                -- Expect either one of two PPs per CA
+                primary : (listToMaybe -> fallback) -> do 
+                    modifyTVar' fetcheables (<> newFetcheables primary fallback)
+                    pure Nothing
+                caUrls -> 
+                    pure $ Just caUrls
+
+        for_ z $ \weirdCaUrls -> do 
+            logError logger [i|Found CA certificate with uncommon publication points: #{weirdCaUrls}.|]
+            appError $ ValidationE $ WeirdCaPublicationPoints weirdCaUrls                        
 
 
 validateCaNoFetch :: Storage s =>

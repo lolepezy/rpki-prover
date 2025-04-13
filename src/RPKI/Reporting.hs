@@ -80,6 +80,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         UnknownCriticalCertificateExtension OID BS.ByteString |
                         MissingCriticalExtension OID |
                         BrokenKeyUsage Text |
+                        WeirdCaPublicationPoints [RpkiURL] | 
                         ObjectHasMultipleLocations [RpkiURL] |
                         NoMFT AKI |
                         NoMFTButCachedMft AKI |

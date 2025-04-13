@@ -17,7 +17,9 @@ import           Control.Lens ((^.))
 
 import           Conduit
 import           Data.Text
-import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Lazy       as LBS
+import qualified Data.Map.Strict            as Map
+import qualified Data.Set                   as Set
 
 import           Data.String.Interpolate.IsString
 import           Data.Hourglass
@@ -35,6 +37,7 @@ import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.AppContext
 import           RPKI.Config
+import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.RRDP.Types
@@ -46,6 +49,7 @@ import           RPKI.SLURM.Types
 import           RPKI.Store.Base.Serialisation
 import qualified RPKI.Store.Database    as DB
 import           RPKI.UniqueId
+import Data.Map.Monoidal (MonoidalMap)
 
 
 {- | This is to run worker processes for some code that is better to be executed in an isolated process.
@@ -138,7 +142,10 @@ newtype CompactionResult = CompactionResult ()
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-data ValidationResult = ValidationResult ValidationState (Maybe Slurm)
+data ValidationResult = ValidationResult 
+            ValidationState 
+            (Map.Map TaName Fetcheables)
+            (Maybe Slurm) 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -171,10 +178,10 @@ executeWork input actualWork =
             exitCode <- newEmptyTMVarIO            
             let done = atomically . putTMVar exitCode 
 
-            _ <- mapM_ forkIO [
-                    ((actualWork input writeWorkerOutput >> done ExitSuccess) 
+            mapM_ forkIO [
+                    (actualWork input writeWorkerOutput >> done ExitSuccess) 
                         `onException` 
-                    done exceptionExitCode),                
+                    done exceptionExitCode,
                     dieIfParentDies done,
                     dieOfTiming done
                 ]

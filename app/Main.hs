@@ -181,8 +181,9 @@ executeWorkerProcess = do
                         CompactionParams {..} -> exec resultHandler $
                             CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
 
-                        ValidationParams {..} -> exec resultHandler $
-                            uncurry ValidationResult <$> runValidation appContext worldVersion tals
+                        ValidationParams {..} -> exec resultHandler $ do 
+                            (vs, discoveredRepositories, slurm) <- runValidation appContext worldVersion tals
+                            pure $ ValidationResult vs discoveredRepositories slurm
 
                         CacheCleanupParams {..} -> exec resultHandler $
                             CacheCleanupResult <$> runCacheCleanup appContext worldVersion

@@ -8,11 +8,12 @@
 
 module RPKI.Workflow where
 
-import           Control.Concurrent
+import Control.Concurrent ( forkIO, forkFinally, threadDelay )
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
-import           Control.Exception
+import           Control.Exception.Lifted
 import           Control.Monad
+import           Control.Monad.IO.Class
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
@@ -25,6 +26,7 @@ import           Data.Foldable                   (for_, toList)
 import qualified Data.Text                       as Text
 import qualified Data.List                       as List
 import qualified Data.Map.Strict                 as Map
+import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import qualified Data.Set                        as Set
 import           Data.Maybe                      (fromMaybe, catMaybes)
 import           Data.Int                        (Int64)
@@ -63,6 +65,8 @@ import           RPKI.SLURM.Types
 import           RPKI.Http.Dto
 import           RPKI.Http.Types
 import Data.List.NonEmpty (NonEmpty)
+import Data.Map.Monoidal (MonoidalMap)
+import Control.Monad.Trans.Control (MonadBaseControl)
 
 
 {- 
@@ -139,48 +143,81 @@ runJob Jobs {..} jobId action =
             Just (Run _ (Running a)) -> pure $ wait a
             
 
-newtype Fetchers = Fetchers {
+data Fetchers = Fetchers {
         -- Fetchers that are currently running
+        fetcheables     :: TVar Fetcheables,
         runningFetchers :: TVar (Map.Map RpkiURL (Async ()))
     }
     deriving stock (Generic)    
 
 
-withFetchers :: (Fetchers -> IO b) -> IO b
+withFetchers :: (MonadBaseControl IO m, MonadIO m) => (Fetchers -> m b) -> m b
 withFetchers f = do 
-    fetchers <- newTVarIO mempty
-    f (Fetchers fetchers)
-        `finally` (do 
+    fetchers    <- liftIO $ newTVarIO mempty
+    fetcheables <- liftIO $ newTVarIO mempty
+    f (Fetchers fetcheables fetchers)
+        `finally` liftIO (do             
             fs <- atomically $ Map.elems <$> readTVar fetchers 
-            for_ fs $ \a -> throwTo (asyncThreadId a) AsyncCancelled)   
+            for_ fs $ \a -> throwTo (asyncThreadId a) AsyncCancelled)           
+        
      
 
--- adjustFetchers :: [Repos] -> Fetchers -> IO ()
--- adjustFetchers repos Fetchers {..} = do 
---     running <- readTVarIO runningFetchers
---     let fetchedUrls = Map.keysSet running
---     for_ repos $ \r@Repos {..} -> 
---         unless (primary `Set.member` fetchedUrls) $ do 
---             a <- async $ newFetcher r
---             atomically $ modifyTVar' runningFetchers $ Map.insert primary a
+-- | Adjust running fetchers to the current state of the system.
+-- Updates fetcheables with new ones, creates fetchers for new URLs,
+-- and stops fetchers that are no longer needed.
+adjustFetchers :: Fetcheables -> Fetchers -> IO ()
+adjustFetchers discoveredFetcheables fetchers@Fetchers {..} = do 
+    
+    (running, Fetcheables current) <- atomically $ do 
+        f <- readTVar fetcheables
+        writeTVar fetcheables discoveredFetcheables
+        (,f) <$> readTVar runningFetchers            
+    
+    let neededUrls = MonoidalMap.keysSet current
+    let fetcherUrls = Map.keysSet running
+    
+    -- Identify URLs that no longer need fetchers
+    let toStop = Set.difference fetcherUrls neededUrls
+    
+    -- Stop and remove fetchers for URLs that are no longer needed
+    for_ (Set.toList toStop) $ \url -> do
+        atomically $ modifyTVar' runningFetchers (Map.delete url)
+        for_ (Map.lookup url running) $ \a -> do            
+            throwTo (asyncThreadId a) AsyncCancelled
+                            
+    let toStart = Set.difference neededUrls fetcherUrls
+    
+    -- Create new fetchers for newly discovered URLs
+    for_ (Set.toList toStart) $ \url -> do                
+        a <- async $ newFetcher fetchers url
+        atomically $ modifyTVar' runningFetchers (Map.insert url a)
 
 
-newFetcher :: Repos -> IO ()
-newFetcher Repos {..} = do 
+newFetcher :: Fetchers -> RpkiURL -> IO ()
+newFetcher Fetchers {..} url = do 
     go
   where
     go = do 
         Now start <- thisInstant        
-        interval <- actuallyFetch
-        Now end <- thisInstant
-        let pause = leftToWait start end interval
-        when (pause > 0) $
-            threadDelay $ fromIntegral pause
-        
-        go
+        actuallyFetch >>= \case        
+            Nothing -> do                
+                pure ()
+            Just interval -> do 
+                Now end <- thisInstant
+                let pause = leftToWait start end interval
+                when (pause > 0) $
+                    threadDelay $ fromIntegral pause
+                
+                go
 
     actuallyFetch = do 
-        pure $ Seconds 100
+        Fetcheables fs <- readTVarIO fetcheables
+        case MonoidalMap.lookup url fs of 
+            Nothing -> 
+                pure Nothing
+            Just fallbacks -> do 
+                -- fetchOnePp appContext asyncFetchConfig 
+                pure $ Just $ Seconds 100
 
 
 
@@ -431,9 +468,11 @@ runWorkflow appContext@AppContext {..} tals = do
                         DB.saveMetrics tx db worldVersion (workerVS ^. typed)
                         DB.completeValidationWorldVersion tx db worldVersion                            
                     updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
-                    pure (mempty, mempty)            
+                    pure (mempty, mempty)
+
                 Right wr@WorkerResult {..} -> do                              
-                    let ValidationResult vs maybeSlurm = payload
+                    let ValidationResult vs discoveredRepositories maybeSlurm = payload
+                    logDebug logger [i|discoveredRepositories = #{discoveredRepositories}|]
                     
                     logWorkerDone logger workerId wr
                     pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory
@@ -635,7 +674,7 @@ runValidation :: Storage s =>
                 AppContext s
             -> WorldVersion
             -> [TAL]
-            -> IO (ValidationState, Maybe Slurm)
+            -> IO (ValidationState, Map.Map TaName Fetcheables, Maybe Slurm)
 runValidation appContext@AppContext {..} worldVersion tals = do           
 
     TopDownResult {..} <- addUniqueVRPCount . mconcat <$>
@@ -674,7 +713,9 @@ runValidation appContext@AppContext {..} worldVersion tals = do
 
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deleted} oldest versions(s) in #{elapsed}ms.|]
 
-    pure (updatedValidation, maybeSlurm)
+    pure (updatedValidation, 
+        MonoidalMap.getMonoidalMap discoveredRepositories, 
+        maybeSlurm)
 
 
 -- To be called from the cache cleanup worker
@@ -855,4 +896,4 @@ leftToWait :: Instant -> Instant -> Seconds -> Int64
 leftToWait start end (Seconds interval) = let
     executionTimeNs = toNanoseconds end - toNanoseconds start
     timeToWaitNs = nanosPerSecond * interval - executionTimeNs
-    in timeToWaitNs `div` 1000               
+    in timeToWaitNs `div` 1000

@@ -12,6 +12,7 @@ import           Control.Concurrent.STM
 import           Control.Concurrent.Async
 import           Data.Generics.Product.Typed
 import           Data.Ord
+import           Data.Monoid.Generic
 import           Data.Semigroup
 
 import           Data.X509                   (Certificate)
@@ -22,6 +23,8 @@ import           Data.List.NonEmpty          (NonEmpty (..), nonEmpty)
 import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
+import           Data.Map.Monoidal.Strict    (MonoidalMap(..))
+import qualified Data.Map.Monoidal.Strict    as MonoidalMap
 import qualified Data.Set                    as Set
 
 import qualified StmContainers.Map           as StmMap
@@ -161,25 +164,11 @@ data RepositoryProcessing = RepositoryProcessing {
     }
     deriving stock (Generic)
 
--- | Publication points grouped by the primary URL
-data Repos = Repos {
-        primary   :: CaGroupAccess,
-        fallbacks :: [CaGroupAccess]
-    }
+newtype Fetcheables = Fetcheables { unFetcheables :: MonoidalMap RpkiURL (Set.Set RpkiURL) }    
     deriving stock (Show, Eq, Ord, Generic)  
-
--- The way CA can publish itselt
-data CaGroupAccess = RrdpCaGroupAccess RrdpURL 
-                   | RsyncCaGroupAccess RsyncForestNoContent
-    deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary)
-
-data Fetcheable = Fetcheable {
-        primary   :: RpkiURL,
-        fallbacks :: [RpkiURL]
-    }
-    deriving stock (Show, Eq, Ord, Generic)  
-
+    deriving anyclass (TheBinary)    
+    deriving newtype Monoid
+    deriving newtype Semigroup
 
 instance WithRpkiURL PublicationPoint where
     getRpkiURL (RrdpPP RrdpRepository {..})          = RrdpU uri
@@ -225,7 +214,7 @@ instance Ord FetchType where
         time (ForAsyncFetch t)  = Just t  
 
 instance Semigroup RrdpMap where
-    RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2        
+    RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2             
 
 getFetchStatus :: Repository -> FetchStatus
 getFetchStatus r = getMeta r ^. #status
@@ -251,6 +240,10 @@ newRepositoryProcessing Config {..} = RepositoryProcessing <$>
         StmMap.new <*>
         newTVar newPPs <*>
         newSemaphore (fromIntegral $ parallelism ^. #fetchParallelism)  
+
+newFetcheables :: RpkiURL -> Maybe RpkiURL -> Fetcheables
+newFetcheables primary fallback = Fetcheables $ 
+    MonoidalMap.singleton primary (maybe Set.empty Set.singleton fallback)
 
 addRsyncPrefetchUrls :: Config -> PublicationPoints -> PublicationPoints
 addRsyncPrefetchUrls Config {..} pps =     
