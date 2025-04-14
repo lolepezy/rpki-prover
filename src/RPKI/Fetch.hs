@@ -94,7 +94,7 @@ fetchQuickly appContext@AppContext {..}
                     Nothing -> do 
                         -- There's nothing to be fetched in the sync mode, 
                         -- so just mark all of them for async fetching.                
-                        markForAsyncFetch repositoryProcessing asyncRepos     
+                        -- markForAsyncFetch repositoryProcessing asyncRepos     
                         pure []           
                     Just syncPp_ -> do  
                         -- In sync mode fetch only the first PP
@@ -103,14 +103,14 @@ fetchQuickly appContext@AppContext {..}
                                 repositoryProcessing worldVersion syncPp_ 
                                 (newMetaCallback syncPp_ pps)
 
-                        case fetchResult of 
-                            FetchSuccess _ _ -> pure ()
-                            FetchFailure _ _ -> do 
-                                -- In case of failure mark all repositories ForAsyncFetch
-                                ppsAfter <- readPublicationPoints repositoryProcessing
-                                let toMarkAsync = mapMaybe (repositoryFromPP ppsAfter) 
-                                                    $ NonEmpty.toList $ unPublicationPointAccess ppa
-                                markForAsyncFetch repositoryProcessing toMarkAsync
+                        -- case fetchResult of 
+                        --     FetchSuccess _ _ -> pure ()
+                        --     FetchFailure _ _ -> do 
+                        --         -- In case of failure mark all repositories ForAsyncFetch
+                        --         ppsAfter <- readPublicationPoints repositoryProcessing
+                        --         let toMarkAsync = mapMaybe (repositoryFromPP ppsAfter) 
+                        --                             $ NonEmpty.toList $ unPublicationPointAccess ppa
+                                -- markForAsyncFetch repositoryProcessing toMarkAsync
                     
                         pure $! [fetchResult]
   where
@@ -310,7 +310,7 @@ fetchOnePp
     --     
     fetchPP parentScope repo (Now fetchMoment) = do 
         let Seconds (fromIntegral . (*1000_000) -> intervalMicroSeconds) = fetchConfig ^. #fetchLaunchWaitDuration
-        withSemaphoreAndTimeout fetchSemaphore intervalMicroSeconds $ do         
+        withSemaphoreOrTimeout fetchSemaphore intervalMicroSeconds $ do         
             let rpkiUrl = getRpkiURL repo                    
             let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope
             
@@ -644,16 +644,6 @@ onlyForSyncFetch pps ppAccess = let
         case repositoryFromPP pps pp of 
             Nothing -> (False, Nothing)
             Just r  -> (isForAsync $ getFetchType r, Just r)                        
-
-resetForAsyncFetch ::  MonadIO m => RepositoryProcessing -> m ()
-resetForAsyncFetch RepositoryProcessing {..} = liftIO $ atomically $ do 
-    modifyTVar' publicationPoints (#usedForAsync .~ mempty)
-
-markForAsyncFetch ::  MonadIO m => RepositoryProcessing -> [Repository] -> m ()
-markForAsyncFetch RepositoryProcessing {..} repos = liftIO $ atomically $ 
-    unless (null repos) $
-        modifyTVar' publicationPoints
-            (#usedForAsync %~ Set.insert (map getRpkiURL repos))
 
 
 syncFetchConfig :: Config -> FetchConfig

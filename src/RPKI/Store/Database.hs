@@ -711,7 +711,7 @@ applyChangeSet :: (MonadIO m, Storage s) =>
                 ChangeSet ->
                 m ()
 applyChangeSet tx DB { repositoryStore = RepositoryStore {..}} 
-                  (ChangeSet rrdpChanges rsyncChanges usedForAsync) = liftIO $ do
+                  (ChangeSet rrdpChanges rsyncChanges) = liftIO $ do
     -- Do the Remove first and only then Put
     let (rrdpPuts, rrdpRemoves) = separate rrdpChanges
 
@@ -722,9 +722,7 @@ applyChangeSet tx DB { repositoryStore = RepositoryStore {..}}
 
     for_ rsyncRemoves $ \(uri', _) -> M.delete tx rsyncS uri'
     for_ rsyncPuts $ uncurry (M.put tx rsyncS)    
-
-    let (lastSPuts, _) = separate [usedForAsync]    
-    for_ lastSPuts $ \rr -> M.put tx forAsyncS forAsyncFetchKey (Compressed rr)
+    
   where
     separate = foldr f ([], [])
       where
@@ -735,11 +733,33 @@ getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m Publica
 getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
     rrdps <- M.all tx rrdpS
     rsyns <- M.all tx rsyncS    
-    forAsyncS' <- fromMaybe mempty . fmap unCompressed <$> M.get tx forAsyncS forAsyncFetchKey
     pure $ PublicationPoints
             (RrdpMap $ Map.fromList rrdps)
             (RsyncForestGen $ Map.fromList rsyns)           
-            forAsyncS'
+
+getRrdpRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RrdpURL -> m (Maybe RrdpRepository)
+getRrdpRepository tx DB { repositoryStore = RepositoryStore {..}} url = 
+    liftIO $ M.get tx rrdpS url
+
+getRsyncRepositories :: (MonadIO m, Storage s) => Tx s mode -> DB s -> [RsyncURL] -> m (Map.Map RsyncURL RsyncRepository)
+getRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} urls = liftIO $ do 
+
+    let groupedByHost = Map.fromListWith (<>) [ (host, [u]) | u@(RsyncURL host _) <- urls ]    
+
+    fmap (Map.fromList . mconcat)
+        $ forM (Map.toList groupedByHost) 
+        $ \(host, thisHostUrls) -> do        
+            z <- M.get tx rsyncS host
+            pure $ case z of
+                Nothing   -> []
+                Just tree -> 
+                    [ (u, RsyncRepository {..}) |
+                        u@(RsyncURL _ path) <- thisHostUrls,
+                        Just (path', meta) <- [ lookupInRsyncTree path tree ],
+                        let repoPP = RsyncPublicationPoint (RsyncURL host path')
+                    ] 
+    
+    
 
 savePublicationPoints :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PublicationPoints -> m ()
 savePublicationPoints tx db newPPs' = do

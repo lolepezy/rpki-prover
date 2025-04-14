@@ -250,21 +250,21 @@ getSemaphoreState Semaphore {..} = (,) <$> readTVar current <*> readTVar highest
 
 -- Execute using a semaphore as a barrier, but if the sempahore 
 -- is not allowing execution, execute after a timeout anyway
-withSemaphoreAndTimeout :: Semaphore -> Int -> IO a -> IO a
-withSemaphoreAndTimeout Semaphore {..} intervalMicroSeconds f =     
+withSemaphoreOrTimeout :: Semaphore -> Int -> IO a -> IO a
+withSemaphoreOrTimeout Semaphore {..} timeoutMs f =     
     bracket aquireSlot releaseSlot (const f)
   where  
+    aquireSlot = 
+        either (const True) (const False) <$> 
+            race 
+                (atomically thereIsSpaceToRun)
+                (threadDelay timeoutMs)
+
     thereIsSpaceToRun = do 
         c <- readTVar current
         if c >= capacity 
             then retry
             else writeTVar current (c + 1)                                        
-
-    aquireSlot = 
-        either (const True) (const False) <$> 
-            race 
-                (atomically thereIsSpaceToRun)
-                (threadDelay intervalMicroSeconds)
         
     releaseSlot increasedCounter = 
         when increasedCounter $ 

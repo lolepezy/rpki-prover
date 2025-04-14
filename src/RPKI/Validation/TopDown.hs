@@ -287,7 +287,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
     validateMutlipleTAs' queue = do 
         withRepositoriesProcessing appContext $ \repositoryProcessing -> do 
             allTas <- newAllTasTopDownContext worldVersion repositoryProcessing queue
-            resetForAsyncFetch repositoryProcessing
+            -- resetForAsyncFetch repositoryProcessing
             validateThem allTas
                 `finally` 
                 applyValidationSideEffects appContext allTas

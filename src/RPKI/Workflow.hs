@@ -162,11 +162,11 @@ withFetchers f = do
         
      
 
--- | Adjust running fetchers to the current state of the system.
+-- | Adjust running fetchers to the latest discovered repositories
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
-adjustFetchers :: Fetcheables -> Fetchers -> IO ()
-adjustFetchers discoveredFetcheables fetchers@Fetchers {..} = do 
+adjustFetchers :: AppContext s -> Fetcheables -> Fetchers -> IO ()
+adjustFetchers appContext discoveredFetcheables fetchers@Fetchers {..} = do 
     
     (running, Fetcheables current) <- atomically $ do 
         f <- readTVar fetcheables
@@ -189,19 +189,19 @@ adjustFetchers discoveredFetcheables fetchers@Fetchers {..} = do
     
     -- Create new fetchers for newly discovered URLs
     for_ (Set.toList toStart) $ \url -> do                
-        a <- async $ newFetcher fetchers url
+        a <- async $ newFetcher appContext fetchers url
         atomically $ modifyTVar' runningFetchers (Map.insert url a)
 
 
-newFetcher :: Fetchers -> RpkiURL -> IO ()
-newFetcher Fetchers {..} url = do 
+newFetcher :: AppContext s -> Fetchers -> RpkiURL -> IO ()
+newFetcher appContext@AppContext {..} Fetchers {..} url = do 
     go
   where
     go = do 
         Now start <- thisInstant        
         actuallyFetch >>= \case        
             Nothing -> do                
-                pure ()
+                logDebug logger [i|Fetcher for #{url} is not needed.|]
             Just interval -> do 
                 Now end <- thisInstant
                 let pause = leftToWait start end interval
@@ -216,7 +216,7 @@ newFetcher Fetchers {..} url = do
             Nothing -> 
                 pure Nothing
             Just fallbacks -> do 
-                -- fetchOnePp appContext asyncFetchConfig 
+                
                 pure $ Just $ Seconds 100
 
 
@@ -437,14 +437,14 @@ runWorkflow appContext@AppContext {..} tals = do
                 atomically (writeTVar asyncFetchIsRunning True)                
                 fetchVersion <- createWorldVersion     
                 logInfo logger [i|Running asynchronous fetch #{fetchVersion}.|]            
-                (_, TimeMs elapsed) <- timedMS $ do 
-                    validations <- runAsyncFetches appContext fetchVersion
-                    updatePrometheus (validations ^. typed) prometheusMetrics worldVersion
-                    rwTxT database $ \tx db -> do
-                        DB.saveValidations tx db fetchVersion (validations ^. typed)
-                        DB.saveMetrics tx db fetchVersion (validations ^. typed)
-                        DB.asyncFetchWorldVersion tx db fetchVersion                                      
-                logInfo logger [i|Finished asynchronous fetch #{fetchVersion} in #{elapsed `div` 1000}s.|]
+                -- (_, TimeMs elapsed) <- timedMS $ do 
+                    -- validations <- runAsyncFetches appContext fetchVersion
+                    -- updatePrometheus (validations ^. typed) prometheusMetrics worldVersion
+                    -- rwTxT database $ \tx db -> do
+                    --     DB.saveValidations tx db fetchVersion (validations ^. typed)
+                    --     DB.saveMetrics tx db fetchVersion (validations ^. typed)
+                    --     DB.asyncFetchWorldVersion tx db fetchVersion                                      
+                -- logInfo logger [i|Finished asynchronous fetch #{fetchVersion} in #{elapsed `div` 1000}s.|]
 
 
     doValidateTAs WorkflowShared {..} worldVersion = do
@@ -774,60 +774,60 @@ loadStoredAppState AppContext {..} = do
     - Try to refetch these repositories
     - Repositories that were successful and fast enought get back `ForSyncFetch` fetch type.
 -}
-runAsyncFetches :: Storage s => AppContext s -> WorldVersion -> IO ValidationState
-runAsyncFetches appContext@AppContext {..} worldVersion = do             
-    withRepositoriesProcessing appContext $ \repositoryProcessing -> do
+-- runAsyncFetches :: Storage s => AppContext s -> WorldVersion -> IO ValidationState
+-- runAsyncFetches appContext@AppContext {..} worldVersion = do             
+--     withRepositoriesProcessing appContext $ \repositoryProcessing -> do
 
-        pps <- readPublicationPoints repositoryProcessing      
-        -- We only care about the repositories that are maarked for asynchronous fetch 
-        let asyncRepos = Map.fromList $ findRepositoriesForAsyncFetch pps        
+--         pps <- readPublicationPoints repositoryProcessing      
+--         -- We only care about the repositories that are maarked for asynchronous fetch 
+--         let asyncRepos = Map.fromList $ findRepositoriesForAsyncFetch pps        
 
-        -- And mentioned on some certificates during the last validation.        
-        let problematicPpas = let 
-                toPpa []   = Nothing
-                toPpa urls = fmap PublicationPointAccess 
-                                $ NE.nonEmpty 
-                                $ map repositoryToPP
-                                $ catMaybes
-                                $ map (\u -> Map.lookup u asyncRepos) urls                 
+--         -- And mentioned on some certificates during the last validation.        
+--         let problematicPpas = let 
+--                 toPpa []   = Nothing
+--                 toPpa urls = fmap PublicationPointAccess 
+--                                 $ NE.nonEmpty 
+--                                 $ map repositoryToPP
+--                                 $ catMaybes
+--                                 $ map (\u -> Map.lookup u asyncRepos) urls                 
                 
-                -- Also use only the ones filtered by config options 
-                in catMaybes $ map (filterPPAccess config) $ 
-                   catMaybes $ map toPpa $ toList $ pps ^. #usedForAsync
+--                 -- Also use only the ones filtered by config options 
+--                 in catMaybes $ map (filterPPAccess config) $ 
+--                    catMaybes $ map toPpa $ toList $ pps ^. #usedForAsync
 
-        unless (null problematicPpas) $ do                                     
-            let ppaToText (PublicationPointAccess ppas) = 
-                    Text.intercalate " -> " $ map (fmtGen . getRpkiURL) $ NE.toList ppas
-            let reposText = Text.intercalate ", " $ map ppaToText problematicPpas
-            let totalRepoCount = repositoryCount pps 
-            logInfo logger [i|Asynchronous fetch, version #{worldVersion}, #{length problematicPpas} out of #{totalRepoCount} repositories: #{reposText}|]
+--         unless (null problematicPpas) $ do                                     
+--             let ppaToText (PublicationPointAccess ppas) = 
+--                     Text.intercalate " -> " $ map (fmtGen . getRpkiURL) $ NE.toList ppas
+--             let reposText = Text.intercalate ", " $ map ppaToText problematicPpas
+--             let totalRepoCount = repositoryCount pps 
+--             logInfo logger [i|Asynchronous fetch, version #{worldVersion}, #{length problematicPpas} out of #{totalRepoCount} repositories: #{reposText}|]
 
-        void $ forConcurrently (sortPpas asyncRepos problematicPpas) $ \ppAccess -> do                         
-            let url = getRpkiURL $ NE.head $ unPublicationPointAccess ppAccess
-            void $ runValidatorT (newScopes' RepositoryFocus url) $ 
-                    fetchWithFallback appContext repositoryProcessing 
-                        worldVersion (asyncFetchConfig config) ppAccess
+--         void $ forConcurrently (sortPpas asyncRepos problematicPpas) $ \ppAccess -> do                         
+--             let url = getRpkiURL $ NE.head $ unPublicationPointAccess ppAccess
+--             void $ runValidatorT (newScopes' RepositoryFocus url) $ 
+--                     fetchWithFallback appContext repositoryProcessing 
+--                         worldVersion (asyncFetchConfig config) ppAccess
                     
-        validationStateOfFetches repositoryProcessing   
-  where    
-    -- Sort them by the last fetch time, the fastest first. 
-    -- If a repository was never fetched, it goes to the end of the list
-    sortPpas asyncRepos ppas = map fst 
-            $ List.sortOn promisingFirst
-            $ map withRepo ppas    
-      where
-        promisingFirst (_, repo) = fmap duration repo
+--         validationStateOfFetches repositoryProcessing   
+--   where    
+--     -- Sort them by the last fetch time, the fastest first. 
+--     -- If a repository was never fetched, it goes to the end of the list
+--     sortPpas asyncRepos ppas = map fst 
+--             $ List.sortOn promisingFirst
+--             $ map withRepo ppas    
+--       where
+--         promisingFirst (_, repo) = fmap duration repo
 
-        withRepo ppa = let 
-                primary = NE.head $ unPublicationPointAccess ppa
-            in (ppa, Map.lookup (getRpkiURL primary) asyncRepos)
+--         withRepo ppa = let 
+--                 primary = NE.head $ unPublicationPointAccess ppa
+--             in (ppa, Map.lookup (getRpkiURL primary) asyncRepos)
 
-        duration r = 
-            fromMaybe (TimeMs 1000_000_000) $ (getMeta r) ^. #lastFetchDuration
+--         duration r = 
+--             fromMaybe (TimeMs 1000_000_000) $ (getMeta r) ^. #lastFetchDuration
 
-    repositoryToPP = \case    
-        RsyncR r -> RsyncPP $ r ^. #repoPP
-        RrdpR r  -> RrdpPP r
+--     repositoryToPP = \case    
+--         RsyncR r -> RsyncPP $ r ^. #repoPP
+--         RrdpR r  -> RrdpPP r
 
 
 canRunInParallel :: TaskType -> TaskType -> Bool

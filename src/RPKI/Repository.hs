@@ -104,14 +104,7 @@ data RsyncRepository = RsyncRepository {
 
 data PublicationPoints = PublicationPoints {
         rrdps  :: RrdpMap,
-        rsyncs :: RsyncForest,        
-        -- Set of for-async-fetch URLs that were requested to fetch as a 
-        -- result of finding publication points on certificats during the 
-        -- last validation.
-        -- 
-        -- In other words, failed and timing out repository URLs we care about
-        -- and will fetch asynchronously
-        usedForAsync :: Set.Set [RpkiURL]
+        rsyncs :: RsyncForest
     } 
     deriving stock (Show, Eq, Ord, Generic)       
 
@@ -232,7 +225,7 @@ isForAsync = \case
     _               -> False
 
 newPPs :: PublicationPoints
-newPPs = PublicationPoints mempty newRsyncForest mempty
+newPPs = PublicationPoints mempty newRsyncForest
 
 newRepositoryProcessing :: Config -> STM RepositoryProcessing
 newRepositoryProcessing Config {..} = RepositoryProcessing <$> 
@@ -274,7 +267,7 @@ rrdpRepository PublicationPoints { rrdps = RrdpMap rrdps } u = Map.lookup u rrdp
 rsyncRepository :: PublicationPoints -> RsyncURL -> Maybe RsyncRepository
 rsyncRepository PublicationPoints {..} rsyncUrl = 
     (\(u, meta) -> RsyncRepository (RsyncPublicationPoint u) meta)
-                    <$> lookupRsyncTree rsyncUrl rsyncs    
+                    <$> lookupInRsyncForest rsyncUrl rsyncs    
 
 repositoryFromPP :: PublicationPoints -> PublicationPoint -> Maybe Repository
 repositoryFromPP pps pp = 
@@ -366,18 +359,16 @@ data Change a = Put a | Remove a
 data ChangeSet = ChangeSet
     [Change RrdpRepository]    
     [Change (RsyncHost, RsyncNodeNormal)]    
-    (Change (Set.Set [RpkiURL]))
 
 
 -- | Derive a diff between two states of publication points
 changeSet :: PublicationPoints -> PublicationPoints -> ChangeSet
 changeSet 
-    (PublicationPoints (RrdpMap rrdpDb) (RsyncForestGen rsyncDb)  _ ) 
-    (PublicationPoints (RrdpMap rrdpNew) (RsyncForestGen rsyncNew) requestNew) = 
+    (PublicationPoints (RrdpMap rrdpDb) (RsyncForestGen rsyncDb)) 
+    (PublicationPoints (RrdpMap rrdpNew) (RsyncForestGen rsyncNew)) = 
     ChangeSet 
         (mergedRrdp <> newRrdp <> rrdpToDelete) 
-        (putNewRsyncs <> removeOldRsyncs)        
-        (Put requestNew)
+        (putNewRsyncs <> removeOldRsyncs)                
     where
         rrdps' = map (\(u, new) -> (new, Map.lookup u rrdpDb)) $ Map.toList rrdpNew
 
@@ -399,11 +390,10 @@ changeSet
 -- Update statuses of the repositories and last successful fetch times for them
 updateMeta :: Foldable t => PublicationPoints -> t (Repository, RepositoryMeta) -> PublicationPoints
 updateMeta 
-    (PublicationPoints rrdps rsyncs usedForAsync) newMetas = 
+    (PublicationPoints rrdps rsyncs) newMetas = 
         PublicationPoints 
             (rrdps <> RrdpMap (Map.fromList rrdps_))
             rsyncs_ 
-            usedForAsync
     where
         (rrdps_, rsyncs_) = 
             foldr foldRepos ([], rsyncs) newMetas
@@ -420,7 +410,7 @@ updateMeta
 
 -- Number of repositories
 repositoryCount :: PublicationPoints -> Int
-repositoryCount (PublicationPoints (RrdpMap rrdps) (RsyncForestGen rsyncs) _) =     
+repositoryCount (PublicationPoints (RrdpMap rrdps) (RsyncForestGen rsyncs)) =     
     Map.size rrdps + 
     sum (map rsyncCounts $ Map.elems rsyncs)
   where
@@ -440,7 +430,7 @@ filterPPAccess Config {..} ppAccess =
 
 
 findRepositoriesForAsyncFetch :: PublicationPoints -> [(RpkiURL, Repository)]
-findRepositoriesForAsyncFetch (PublicationPoints (RrdpMap rrdps) rsyncTree _) = 
+findRepositoriesForAsyncFetch (PublicationPoints (RrdpMap rrdps) rsyncTree) = 
     rrdpSpeedProblem <> rsyncSpeedProblem
   where
     rrdpSpeedProblem  = [ (RrdpU u, RrdpR r) 
@@ -501,14 +491,19 @@ buildRsyncTree :: [RsyncPathChunk] -> a -> RsyncTree a
 buildRsyncTree [] fs      = Leaf fs
 buildRsyncTree (u: us) fs = SubTree $ Map.singleton u $ buildRsyncTree us fs    
 
-lookupRsyncTree :: RsyncURL -> RsyncForestGen a -> Maybe (RsyncURL, a)
-lookupRsyncTree (RsyncURL host path) (RsyncForestGen t) = 
-    meta_ path [] =<< Map.lookup host t
+lookupInRsyncForest :: RsyncURL -> RsyncForestGen a -> Maybe (RsyncURL, a)
+lookupInRsyncForest (RsyncURL host path) (RsyncForestGen t) = do
+    (path', a) <- lookupInRsyncTree path =<< Map.lookup host t
+    pure (RsyncURL host path', a)
+
+lookupInRsyncTree :: [RsyncPathChunk] -> RsyncTree a -> Maybe ([RsyncPathChunk], a)
+lookupInRsyncTree path = meta_ path []
   where    
-    meta_ _ realPath (Leaf fs) = Just (RsyncURL host realPath, fs)
+    meta_ _ realPath (Leaf fs) = Just (realPath, fs)
     meta_ [] _  SubTree {} = Nothing
     meta_ (u: us) realPath SubTree {..} = 
         Map.lookup u rsyncChildren >>= meta_ us (realPath <> [u])
+
 
 flattenRsyncTree :: RsyncForestGen a -> [(RsyncURL, a)]
 flattenRsyncTree (RsyncForestGen t) = 
