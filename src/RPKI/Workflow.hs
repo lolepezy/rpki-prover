@@ -165,7 +165,7 @@ withFetchers f = do
 -- | Adjust running fetchers to the latest discovered repositories
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
-adjustFetchers :: AppContext s -> Fetcheables -> Fetchers -> IO ()
+adjustFetchers :: Storage s => AppContext s -> Fetcheables -> Fetchers -> IO ()
 adjustFetchers appContext discoveredFetcheables fetchers@Fetchers {..} = do 
     
     (running, Fetcheables current) <- atomically $ do 
@@ -193,7 +193,7 @@ adjustFetchers appContext discoveredFetcheables fetchers@Fetchers {..} = do
         atomically $ modifyTVar' runningFetchers (Map.insert url a)
 
 
-newFetcher :: AppContext s -> Fetchers -> RpkiURL -> IO ()
+newFetcher :: Storage s => AppContext s -> Fetchers -> RpkiURL -> IO ()
 newFetcher appContext@AppContext {..} Fetchers {..} url = do 
     go
   where
@@ -201,13 +201,12 @@ newFetcher appContext@AppContext {..} Fetchers {..} url = do
         Now start <- thisInstant        
         actuallyFetch >>= \case        
             Nothing -> do                
-                logDebug logger [i|Fetcher for #{url} is not needed.|]
+                logInfo logger [i|Fetcher for #{url} is not needed and will be deleted.|]
             Just interval -> do 
                 Now end <- thisInstant
                 let pause = leftToWait start end interval
                 when (pause > 0) $
-                    threadDelay $ fromIntegral pause
-                
+                    threadDelay $ fromIntegral pause                
                 go
 
     actuallyFetch = do 
@@ -216,7 +215,16 @@ newFetcher appContext@AppContext {..} Fetchers {..} url = do
             Nothing -> 
                 pure Nothing
             Just fallbacks -> do 
-                
+                worldVersion <- getOrCreateWorldVerion appState
+                case url of 
+                    RrdpU rrdpUrl -> do 
+                        roTxT database (\tx db -> DB.getRepository tx db url) >>= \case
+                            Nothing -> 
+                                logError logger [i|RRDP repository #{rrdpUrl} not found in the database.|]
+                            Just r -> do 
+                                void $ runValidatorT (newScopes' RepositoryFocus url) $ 
+                                    fetchRepository appContext (asyncFetchConfig config) worldVersion r
+                        
                 pure $ Just $ Seconds 100
 
 

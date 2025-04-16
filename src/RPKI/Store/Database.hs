@@ -60,6 +60,7 @@ import           RPKI.AppState
 import           RPKI.AppTypes
 import           RPKI.RTR.Types
 import           RPKI.Time
+import RPKI.Parse.Internal.Common (getRepositoryUri)
 
 -- This one is to be changed manually whenever 
 -- any of the serialisable/serialized types become incompatible.
@@ -737,9 +738,17 @@ getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ 
             (RrdpMap $ Map.fromList rrdps)
             (RsyncForestGen $ Map.fromList rsyns)           
 
+getRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RpkiURL -> m (Maybe Repository)
+getRepository tx db = \case
+        RrdpU u  -> fmap RrdpR <$> getRrdpRepository tx db u
+        RsyncU u -> fmap RsyncR <$> getRsyncRepository tx db u
+
 getRrdpRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RrdpURL -> m (Maybe RrdpRepository)
 getRrdpRepository tx DB { repositoryStore = RepositoryStore {..}} url = 
     liftIO $ M.get tx rrdpS url
+
+getRsyncRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RsyncURL -> m (Maybe RsyncRepository)
+getRsyncRepository tx db url = Map.lookup url <$> getRsyncRepositories tx db [url]        
 
 getRsyncRepositories :: (MonadIO m, Storage s) => Tx s mode -> DB s -> [RsyncURL] -> m (Map.Map RsyncURL RsyncRepository)
 getRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} urls = liftIO $ do 
