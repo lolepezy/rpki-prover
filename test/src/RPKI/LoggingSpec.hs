@@ -4,22 +4,12 @@
 
 module RPKI.LoggingSpec where
 
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Builder as BB
-import qualified Data.ByteString.Char8 as C8
 
 import           Test.Tasty
-import           Test.Tasty.QuickCheck   as QC
-
 import qualified Test.Tasty.HUnit        as HU
 
-import           RPKI.AppMonad
 import           RPKI.Logging
-import           RPKI.Orphans
-
-import RPKI.Util (toNatural)
-import Data.Maybe (fromMaybe)
 
 
 loggingSpec :: TestTree

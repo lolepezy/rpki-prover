@@ -12,7 +12,7 @@ module RPKI.Store.DatabaseSpec where
 
 import           Control.Exception.Lifted
 
-import           Control.Lens                     ((.~), (%~), (&), (^.))
+import           Control.Lens                     
 import           Control.Monad
 import           Control.Monad.Reader
 import           Data.Generics.Product.Typed
@@ -110,8 +110,7 @@ shouldMergeObjectLocations io = do
 
     ro1 :: RpkiObject <- QC.generate arbitrary    
     ro2 :: RpkiObject <- QC.generate arbitrary        
-    extraLocations :: Locations <- QC.generate arbitrary    
-
+    
     let storeIt obj url = rwTx db $ \tx -> do        
             DB.saveObject tx db (toStorableObject obj) (instantToVersion now)
             DB.linkObjectToUrl tx db url (getHash obj)
@@ -152,26 +151,26 @@ shouldMergeObjectLocations io = do
             HU.assertEqual ("Not all URLs backwards " <> s) count (length uriKeyToUri)        
 
 
-shouldCreateAndDeleteAllTheMaps :: Storage s => IO (DB s) -> HU.Assertion
-shouldCreateAndDeleteAllTheMaps io = do 
+-- shouldCreateAndDeleteAllTheMaps :: Storage s => IO (DB s) -> HU.Assertion
+-- shouldCreateAndDeleteAllTheMaps io = do 
     
-    db <- io
-    Now now <- thisInstant 
+--     db <- io
+--     Now now <- thisInstant 
 
-    url :: RpkiURL <- QC.generate arbitrary    
-    ros :: [RpkiObject] <- generateSome
+--     url :: RpkiURL <- QC.generate arbitrary    
+--     ros :: [RpkiObject] <- generateSome
 
-    rwTx db $ \tx -> 
-        for_ ros $ \ro -> 
-            DB.saveObject tx db (toStorableObject ro) (instantToVersion now)
+--     rwTx db $ \tx -> 
+--         for_ ros $ \ro -> 
+--             DB.saveObject tx db (toStorableObject ro) (instantToVersion now)
 
-    -- roTx objectStore $ \tx -> 
-    --     forM ros $ \ro -> do 
-    --         Just ro' <- getByHash tx objectStore (getHash ro)
-    --         HU.assertEqual "Not the same objects" ro ro'
+--     -- roTx objectStore $ \tx -> 
+--     --     forM ros $ \ro -> do 
+--     --         Just ro' <- getByHash tx objectStore (getHash ro)
+--     --         HU.assertEqual "Not the same objects" ro ro'
     
 
-    pure ()
+--     pure ()
 
 
 shouldInsertAndGetAllBackFromObjectStore :: Storage s => IO (DB s) -> HU.Assertion
@@ -183,8 +182,8 @@ shouldInsertAndGetAllBackFromObjectStore io = do
 
     let (firstHalf, secondHalf) = List.splitAt (List.length ros `div` 2) ros
 
-    let ros1 = List.map (& typed @RpkiObject %~ replaceAKI aki1) firstHalf
-    let ros2 = List.map (& typed @RpkiObject %~ replaceAKI aki2) secondHalf
+    let ros1 = List.map (typed @RpkiObject %~ replaceAKI aki1) firstHalf
+    let ros2 = List.map (typed @RpkiObject %~ replaceAKI aki2) secondHalf
     let ros' = ros1 <> ros2 
 
     Now now <- thisInstant     
@@ -440,14 +439,14 @@ releaseLmdb ((dir, e), _) = do
 readObjectFromFile :: FilePath -> ValidatorT IO (RpkiURL, RpkiObject)
 readObjectFromFile path = do 
     bs <- liftIO $ BS.readFile path
-    let url = let Right u = parseRpkiURL ("rsync://host/" <> Text.pack path) in u
+    let Right url = parseRpkiURL $ "rsync://host/" <> Text.pack path
     o <- vHoist $ readObject url bs
     pure (url, o)
 
 replaceAKI :: AKI -> RpkiObject -> RpkiObject
 replaceAKI a = \case 
-    CerRO c  -> CerRO $ c & #aki .~ Just a
-    BgpRO c  -> BgpRO $ c & #aki .~ Just a    
+    CerRO c  -> CerRO $ c & #aki ?~ a
+    BgpRO c  -> BgpRO $ c & #aki ?~ a    
     CrlRO c  -> CrlRO $ c & #aki .~ a
     MftRO c  -> MftRO $ c & #cmsPayload %~ mapCms
     RoaRO c  -> RoaRO $ c & #cmsPayload %~ mapCms
