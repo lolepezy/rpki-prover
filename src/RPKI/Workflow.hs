@@ -179,18 +179,20 @@ adjustFetchers appContext discoveredFetcheables fetchers@Fetchers {..} = do
     -- Identify URLs that no longer need fetchers
     let toStop = Set.difference fetcherUrls neededUrls
     
-    -- Stop and remove fetchers for URLs that are no longer needed
-    for_ (Set.toList toStop) $ \url -> do
-        atomically $ modifyTVar' runningFetchers (Map.delete url)
-        for_ (Map.lookup url running) $ \a -> do            
-            throwTo (asyncThreadId a) AsyncCancelled
+    -- Stop and remove fetchers for URLs that are no longer needed    
+    for_ (Set.toList toStop) $ \url ->
+        mask_ $ do
+            atomically $ modifyTVar' runningFetchers (Map.delete url)
+            for_ (Map.lookup url running) $ \a -> do            
+                throwTo (asyncThreadId a) AsyncCancelled
                             
     let toStart = Set.difference neededUrls fetcherUrls
     
     -- Create new fetchers for newly discovered URLs
-    for_ (Set.toList toStart) $ \url -> do                
-        a <- async $ newFetcher appContext fetchers url
-        atomically $ modifyTVar' runningFetchers (Map.insert url a)
+    for_ (Set.toList toStart) $ \url -> 
+        mask_ $ do
+            a <- async $ newFetcher appContext fetchers url
+            atomically $ modifyTVar' runningFetchers (Map.insert url a)
 
 
 newFetcher :: Storage s => AppContext s -> Fetchers -> RpkiURL -> IO ()
@@ -216,14 +218,14 @@ newFetcher appContext@AppContext {..} Fetchers {..} url = do
                 pure Nothing
             Just fallbacks -> do 
                 worldVersion <- getOrCreateWorldVerion appState
-                case url of 
-                    RrdpU rrdpUrl -> do 
-                        roTxT database (\tx db -> DB.getRepository tx db url) >>= \case
-                            Nothing -> 
-                                logError logger [i|RRDP repository #{rrdpUrl} not found in the database.|]
-                            Just r -> do 
-                                void $ runValidatorT (newScopes' RepositoryFocus url) $ 
-                                    fetchRepository appContext (asyncFetchConfig config) worldVersion r
+                
+                roTxT database (\tx db -> DB.getRepository tx db url) >>= \case
+                    Nothing -> do
+                        logDebug logger [i|Repository #{url} not found in the database and will be created.|]
+                        rwTxT database (\tx db -> DB.saveRepository tx db $ newRepository url)
+                    Just r -> do 
+                        void $ runValidatorT (newScopes' RepositoryFocus url) $ 
+                            fetchRepository appContext (asyncFetchConfig config) worldVersion r
                         
                 pure $ Just $ Seconds 100
 

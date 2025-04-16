@@ -767,8 +767,22 @@ getRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} urls = lift
                         Just (path', meta) <- [ lookupInRsyncTree path tree ],
                         let repoPP = RsyncPublicationPoint (RsyncURL host path')
                     ] 
-    
-    
+
+saveRepository :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Repository -> m ()
+saveRepository tx db = \case
+    RrdpR rrdp -> saveRrdpRepository tx db rrdp
+    RsyncR rsync -> saveRsyncRepository tx db rsync
+
+saveRrdpRepository :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> RrdpRepository -> m ()
+saveRrdpRepository tx DB { repositoryStore = RepositoryStore {..}} r = 
+    liftIO $ M.put tx rrdpS (r ^. #uri) r
+
+saveRsyncRepository :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> RsyncRepository -> m ()
+saveRsyncRepository tx DB { repositoryStore = RepositoryStore {..}} 
+                        r@(RsyncRepository { repoPP = RsyncPublicationPoint uri}) = do 
+    pure ()
+    -- TODO Implement it
+    -- liftIO $ M.put tx rrdpS uri r
 
 savePublicationPoints :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PublicationPoints -> m ()
 savePublicationPoints tx db newPPs' = do

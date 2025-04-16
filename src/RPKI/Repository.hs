@@ -227,6 +227,25 @@ isForAsync = \case
 newPPs :: PublicationPoints
 newPPs = PublicationPoints mempty newRsyncForest
 
+newRepository :: RpkiURL -> Repository
+newRepository = \case   
+    RrdpU u -> RrdpR $ newRrdpRepository u
+    RsyncU u -> RsyncR $ newRsyncRepository u
+
+newRrdpRepository :: RrdpURL -> RrdpRepository
+newRrdpRepository uri = RrdpRepository {    
+        rrdpMeta = Nothing,
+        eTag     = Nothing,
+        meta     = mempty,
+        uri      = uri
+    }
+
+newRsyncRepository :: RsyncURL -> RsyncRepository
+newRsyncRepository url = RsyncRepository {
+        repoPP = RsyncPublicationPoint url,
+        meta   = mempty
+    }
+
 newRepositoryProcessing :: Config -> STM RepositoryProcessing
 newRepositoryProcessing Config {..} = RepositoryProcessing <$> 
         StmMap.new <*>               
@@ -248,18 +267,7 @@ newRepositoryProcessingIO = atomically . newRepositoryProcessing
 rsyncPP :: RsyncURL -> PublicationPoint
 rrdpPP  :: RrdpURL  -> PublicationPoint
 rsyncPP = RsyncPP . RsyncPublicationPoint
-rrdpPP = RrdpPP . mkRrdp
-
-rrdpR  :: RrdpURL  -> Repository
-rrdpR = RrdpR . mkRrdp
-
-mkRrdp :: RrdpURL -> RrdpRepository
-mkRrdp u = RrdpRepository {
-        uri      = u,
-        rrdpMeta = Nothing,
-        eTag     = Nothing,
-        meta     = mempty        
-    }
+rrdpPP = RrdpPP . newRrdpRepository
 
 rrdpRepository :: PublicationPoints -> RrdpURL -> Maybe RrdpRepository
 rrdpRepository PublicationPoints { rrdps = RrdpMap rrdps } u = Map.lookup u rrdps        
