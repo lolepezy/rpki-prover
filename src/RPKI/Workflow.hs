@@ -209,26 +209,59 @@ newFetcher appContext@AppContext {..} Fetchers {..} url = do
                 let pause = leftToWait start end interval
                 when (pause > 0) $
                     threadDelay $ fromIntegral pause                
-                go
+                go    
 
     actuallyFetch = do 
-        Fetcheables fs <- readTVarIO fetcheables
-        case MonoidalMap.lookup url fs of 
+        getFetchable >>= \case        
             Nothing -> 
                 pure Nothing
-            Just fallbacks -> do 
-                worldVersion <- getOrCreateWorldVerion appState
-                
-                roTxT database (\tx db -> DB.getRepository tx db url) >>= \case
-                    Nothing -> do
-                        logDebug logger [i|Repository #{url} not found in the database and will be created.|]
-                        rwTxT database (\tx db -> DB.saveRepository tx db $ newRepository url)
-                    Just r -> do 
-                        void $ runValidatorT (newScopes' RepositoryFocus url) $ 
-                            fetchRepository appContext (asyncFetchConfig config) worldVersion r
-                        
-                pure $ Just $ Seconds 100
 
+            Just _ -> do 
+                let fetchConfig = asyncFetchConfig config
+                worldVersion <- getOrCreateWorldVerion appState            
+                repository <- fromMaybe (newRepository url) <$> 
+                                roTxT database (\tx db -> DB.getRepository tx db url) 
+                                
+                ((r, validations), duratioMs) <- timedMS $ 
+                            runValidatorT (newScopes' RepositoryFocus url) $ 
+                                fetchRepository appContext fetchConfig worldVersion repository
+
+                case r of
+                    Right (repository', stats) -> do 
+                        rwTxT database $ \tx db -> DB.saveRepository tx db repository'
+                        pure Nothing
+                    Left _ -> do
+                        -- TODO Save error status here somehow
+                        getFetchable >>= \case
+                            Nothing -> 
+                                pure Nothing
+                            Just fallbacks -> do  
+                                fetchFallbacks fetchConfig worldVersion fallbacks
+                                pure Nothing                   
+
+                pure $ Just $ Seconds 100
+      where
+        fetchFallbacks fetchConfig worldVersion fallbacks = do 
+            repositories <- forConcurrently (Set.toList fallbacks) $ \fallbackUrl -> do 
+
+                repository <- fromMaybe (newRepository fallbackUrl) <$> 
+                                roTxT database (\tx db -> DB.getRepository tx db fallbackUrl) 
+                                
+                ((r, validations), duratioMs) <- timedMS $ 
+                            runValidatorT (newScopes' RepositoryFocus fallbackUrl) $ 
+                                fetchRepository appContext fetchConfig worldVersion repository
+
+                case r of
+                    Right (repository', stats) -> 
+                        pure repository' 
+                    Left _ -> do
+                        pure $ updateMeta' repository (#status .~ FailedAt (versionToMoment worldVersion))
+            
+            rwTxT database $ \tx db -> DB.saveRepositories tx db repositories                
+        
+        getFetchable = do   
+            Fetcheables fs <- readTVarIO fetcheables
+            pure $ MonoidalMap.lookup url fs
 
 
 

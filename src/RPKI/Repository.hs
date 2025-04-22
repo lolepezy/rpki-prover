@@ -246,6 +246,10 @@ newRsyncRepository url = RsyncRepository {
         meta   = mempty
     }
 
+updateMeta' :: Repository -> (RepositoryMeta -> RepositoryMeta) -> Repository
+updateMeta' (RrdpR r) newMeta = RrdpR $ r & #meta %~ newMeta
+updateMeta' (RsyncR r) newMeta = RsyncR $ r & #meta %~ newMeta
+
 newRepositoryProcessing :: Config -> STM RepositoryProcessing
 newRepositoryProcessing Config {..} = RepositoryProcessing <$> 
         StmMap.new <*>               

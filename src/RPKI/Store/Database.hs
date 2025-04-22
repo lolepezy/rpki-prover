@@ -773,6 +773,17 @@ saveRepository tx db = \case
     RrdpR rrdp -> saveRrdpRepository tx db rrdp
     RsyncR rsync -> saveRsyncRepository tx db rsync
 
+saveRepositories :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [Repository] -> m ()
+saveRepositories tx db repositories = do    
+    let (rrdps, rsyncs) = separate repositories
+    forM_ rrdps $ saveRrdpRepository tx db
+    forM_ rsyncs $ saveRsyncRepository tx db
+  where
+    separate = foldr f ([], [])
+      where
+        f (RrdpR r)  (rrdps, rsyncs) = (r : rrdps, rsyncs)
+        f (RsyncR r) (rrdps, rsyncs) = (rrdps, r : rsyncs)
+
 saveRrdpRepository :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> RrdpRepository -> m ()
 saveRrdpRepository tx DB { repositoryStore = RepositoryStore {..}} r = 
     liftIO $ M.put tx rrdpS (r ^. #uri) r
