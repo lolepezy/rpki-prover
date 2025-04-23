@@ -59,9 +59,6 @@ import           RPKI.Util
 import           RPKI.RepositorySpec
 
 import Data.Generics.Product (HasField)
-import qualified RPKI.Store.Database as DB
-import qualified RPKI.Store.Database as DB
-import Data.Conduit.Combinators (repeatM)
 
 
 storeGroup :: TestTree
