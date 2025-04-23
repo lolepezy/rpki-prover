@@ -456,11 +456,9 @@ findRepositoriesForAsyncFetch (PublicationPoints (RrdpMap rrdps) rsyncTree) =
 
 
 type RsyncNodeNormal = RsyncTree RepositoryMeta
-type RsyncSuffixTree = RsyncTree ()
 
 -- Simple tree for representing rsync repositories grouped by host.
 -- Every RsyncTree corresponds to a path chunk in the rsync URL. 
-
 type RsyncForest = RsyncForestGen RepositoryMeta
 type RsyncForestNoContent = RsyncForestGen ()
     
@@ -475,8 +473,14 @@ data RsyncTree a = Leaf a
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
+newRsyncTree :: RsyncTree a
+newRsyncTree = SubTree mempty
+
 newRsyncForest :: RsyncForest
-newRsyncForest = RsyncForestGen Map.empty
+newRsyncForest = newRsyncForestGen
+
+newRsyncForestGen :: RsyncForestGen a
+newRsyncForestGen = RsyncForestGen Map.empty
 
 toRsyncForest :: Semigroup a => RsyncURL -> a -> RsyncForestGen a -> RsyncForestGen a
 toRsyncForest (RsyncURL host path) a (RsyncForestGen byHost) = 

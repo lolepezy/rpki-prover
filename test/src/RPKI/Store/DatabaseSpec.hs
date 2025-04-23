@@ -59,6 +59,9 @@ import           RPKI.Util
 import           RPKI.RepositorySpec
 
 import Data.Generics.Product (HasField)
+import qualified RPKI.Store.Database as DB
+import qualified RPKI.Store.Database as DB
+import Data.Conduit.Combinators (repeatM)
 
 
 storeGroup :: TestTree
@@ -82,14 +85,15 @@ objectStoreGroup = testGroup "Object storage test"
 validationResultStoreGroup :: TestTree
 validationResultStoreGroup = testGroup "Validation result storage test"
     [
-        dbTestCase "Should insert and get back" shouldInsertAndGetAllBackFromValidationResultStore,
-        dbTestCase "Should insert and get back" shouldGetAndSaveRepositories
+        dbTestCase "Should insert and get back" shouldInsertAndGetAllBackFromValidationResultStore
     ]
 
 repositoryStoreGroup :: TestTree
 repositoryStoreGroup = testGroup "Repository LMDB storage test"
     [
-        dbTestCase "Should insert and get a repository" shouldInsertAndGetAllBackFromRepositoryStore
+        dbTestCase "Should insert and get a repository" shouldInsertAndGetAllBackFromRepositoryStore,
+        dbTestCase "Should insert and get back a buynch of repositories" shouldGetAndSaveRepositories,
+        dbTestCase "Should insert and get an rsync repository" shouldSaveAndGetRsyncRepositories
     ]        
 
 txGroup :: TestTree
@@ -149,28 +153,6 @@ shouldMergeObjectLocations io = do
             uriKeyToUri <- roTx db $ \tx -> M.all tx (DB.uriKeyToUri objectStore)
             HU.assertEqual ("Not all URLs one way " <> s) count (length uriToUriKey)
             HU.assertEqual ("Not all URLs backwards " <> s) count (length uriKeyToUri)        
-
-
--- shouldCreateAndDeleteAllTheMaps :: Storage s => IO (DB s) -> HU.Assertion
--- shouldCreateAndDeleteAllTheMaps io = do 
-    
---     db <- io
---     Now now <- thisInstant 
-
---     url :: RpkiURL <- QC.generate arbitrary    
---     ros :: [RpkiObject] <- generateSome
-
---     rwTx db $ \tx -> 
---         for_ ros $ \ro -> 
---             DB.saveObject tx db (toStorableObject ro) (instantToVersion now)
-
---     -- roTx objectStore $ \tx -> 
---     --     forM ros $ \ro -> do 
---     --         Just ro' <- getByHash tx objectStore (getHash ro)
---     --         HU.assertEqual "Not the same objects" ro ro'
-    
-
---     pure ()
 
 
 shouldInsertAndGetAllBackFromObjectStore :: Storage s => IO (DB s) -> HU.Assertion
@@ -310,7 +292,33 @@ shouldGetAndSaveRepositories io = do
     pps2' <- roTx db $ \tx -> DB.getPublicationPoints tx db       
 
     HU.assertEqual "Not the same publication points second" pps2 pps2'
-    
+
+shouldSaveAndGetRsyncRepositories :: Storage s => IO (DB s) -> HU.Assertion
+shouldSaveAndGetRsyncRepositories io = do  
+    db <- io
+
+    repositories <- (<>) <$> 
+            replicateM 100 (QC.generate arbitrary) <*>
+            rsyncReposWithCommonHosts
+
+    let urls = [ u | r <- repositories, RsyncU u <- [ getRpkiURL $ RsyncR r]]
+    rwTx db $ \tx -> DB.saveRsyncRepositories tx db repositories
+
+    repositories' <- roTx db $ \tx -> DB.getRsyncRepositories tx db urls
+
+    HU.assertEqual "Not the same set of rsync repositories" 
+        (Set.fromList repositories) 
+        (Set.fromList $ Map.elems repositories')
+  where    
+    rsyncReposWithCommonHosts = do
+        replicateM 100 $ QC.generate $ do 
+            hostName  <- RsyncHostName <$> QC.elements [ "host1", "host2", "host3" ]        
+            let host = RsyncHost hostName Nothing
+            pathChunks <- do 
+                n <- QC.choose (1, 3)
+                replicateM n arbitrary                    
+            RsyncRepository (RsyncPublicationPoint $ RsyncURL host pathChunks) <$> arbitrary      
+
 
 generateRepositories :: IO PublicationPoints
 generateRepositories = do     

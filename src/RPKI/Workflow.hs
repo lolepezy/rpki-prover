@@ -253,6 +253,7 @@ newFetcher appContext@AppContext {..} Fetchers {..} url = do
 
                 case r of
                     Right (repository', stats) -> 
+                        -- TODO Do something with RRDP stats
                         pure repository' 
                     Left _ -> do
                         pure $ updateMeta' repository (#status .~ FailedAt (versionToMoment worldVersion))

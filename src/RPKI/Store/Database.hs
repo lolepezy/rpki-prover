@@ -60,7 +60,6 @@ import           RPKI.AppState
 import           RPKI.AppTypes
 import           RPKI.RTR.Types
 import           RPKI.Time
-import RPKI.Parse.Internal.Common (getRepositoryUri)
 
 -- This one is to be changed manually whenever 
 -- any of the serialisable/serialized types become incompatible.
@@ -771,13 +770,13 @@ getRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} urls = lift
 saveRepository :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Repository -> m ()
 saveRepository tx db = \case
     RrdpR rrdp -> saveRrdpRepository tx db rrdp
-    RsyncR rsync -> saveRsyncRepository tx db rsync
+    RsyncR rsync -> saveRsyncRepositories tx db [rsync]
 
 saveRepositories :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [Repository] -> m ()
 saveRepositories tx db repositories = do    
     let (rrdps, rsyncs) = separate repositories
     forM_ rrdps $ saveRrdpRepository tx db
-    forM_ rsyncs $ saveRsyncRepository tx db
+    saveRsyncRepositories tx db rsyncs
   where
     separate = foldr f ([], [])
       where
@@ -788,12 +787,16 @@ saveRrdpRepository :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> RrdpReposito
 saveRrdpRepository tx DB { repositoryStore = RepositoryStore {..}} r = 
     liftIO $ M.put tx rrdpS (r ^. #uri) r
 
-saveRsyncRepository :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> RsyncRepository -> m ()
-saveRsyncRepository tx DB { repositoryStore = RepositoryStore {..}} 
-                        r@(RsyncRepository { repoPP = RsyncPublicationPoint uri}) = do 
-    pure ()
-    -- TODO Implement it
-    -- liftIO $ M.put tx rrdpS uri r
+saveRsyncRepositories :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [RsyncRepository] -> m ()
+saveRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} repositories = liftIO $ do 
+
+    let groupedByHost = Map.fromListWith (<>) [ (host, [(path, meta)]) | 
+            RsyncRepository { repoPP = RsyncPublicationPoint (RsyncURL host path), ..} <- repositories ] 
+        
+    for_ (Map.toList groupedByHost) $ \(host, pathAndMetas) -> do
+        startTree <- fromMaybe newRsyncTree <$> M.get tx rsyncS host        
+        let tree' = foldr (uncurry pathToRsyncTree) startTree pathAndMetas
+        M.put tx rsyncS host tree'
 
 savePublicationPoints :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PublicationPoints -> m ()
 savePublicationPoints tx db newPPs' = do

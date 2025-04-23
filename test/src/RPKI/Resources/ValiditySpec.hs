@@ -24,7 +24,7 @@ validityGroup = testGroup "Prefix validity" [
     ]
   where
     makeIndex = foldr insertVrp makePrefixIndex
-    checkVrps index = all (\vrp@(Vrp asn prefix _) -> vrp `elem` lookupVrps prefix index)
+    checkVrps index = all (\vrp@(Vrp _ prefix _) -> vrp `elem` lookupVrps prefix index)
 
     makeV4Vrps = map (\prefix -> Vrp (ASN 0) (Ipv4P prefix) (PrefixLength 32))
     makeV6Vrps = map (\prefix -> Vrp (ASN 0) (Ipv6P prefix) (PrefixLength 128))
