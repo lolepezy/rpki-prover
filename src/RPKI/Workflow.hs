@@ -98,7 +98,7 @@ import UnliftIO (pooledForConcurrentlyN)
 
 data JobId = Fetcher RrdpURL [RsyncURL]
            | Validation [TAL]
-           | CachCleanup
+           | CacheCleanup
            | LmdbCompaction
            | RsyncCleanup
     deriving stock (Show, Eq, Ord, Generic)
@@ -157,9 +157,9 @@ withFetchers f = do
     fetchers    <- liftIO $ newTVarIO mempty
     fetcheables <- liftIO $ newTVarIO mempty
     f (Fetchers fetcheables fetchers)
-        `finally` liftIO (do             
+        `finally` (liftIO $ mask_ $ do             
             fs <- atomically $ Map.elems <$> readTVar fetchers 
-            for_ fs $ \a -> throwTo (asyncThreadId a) AsyncCancelled)           
+            for_ fs $ \a -> throwTo (asyncThreadId a) AsyncCancelled)
         
      
 
@@ -241,7 +241,7 @@ newFetcher appContext@AppContext {..} Fetchers {..} url = do
                             Just fallbacks -> do  
                                 fetchFallbacks fetchConfig worldVersion fallbacks
                                 -- TODO It must be much longer?
-                                pure $ Just $ refreshInterval repository              
+                                pure $ Just $ 5 * refreshInterval repository  
       where
         fetchFallbacks fetchConfig worldVersion fallbacks = do 
             -- TODO Make it a bit smarter based on the overal number and overall load
@@ -249,7 +249,7 @@ newFetcher appContext@AppContext {..} Fetchers {..} url = do
             repositories <- pooledForConcurrentlyN maxThreads (Set.toList fallbacks) $ \fallbackUrl -> do 
 
                 repository <- fromMaybe (newRepository fallbackUrl) <$> 
-                                roTxT database (\tx db -> DB.getRepository tx db fallbackUrl) 
+                                roTxT database (\tx db -> DB.getRepository tx db fallbackUrl)
                                 
                 ((r, validations), duratioMs) <- timedMS $ 
                             runValidatorT (newScopes' RepositoryFocus fallbackUrl) $ 
@@ -292,16 +292,28 @@ data WorkflowShared = WorkflowShared {
 
         -- Async fetch is a special case, we want to know if it's 
         -- running to avoid launching it until the previous run is done.
-        asyncFetchIsRunning :: TVar Bool
+        asyncFetchIsRunning :: TVar Bool,
+
+        fetchers            :: Fetchers
     }
     deriving stock (Generic)
 
-newWorkflowShared :: PrometheusMetrics -> STM WorkflowShared
-newWorkflowShared prometheusMetrics = WorkflowShared 
-            <$> newTVar False             
-            <*> newRunningTasks
-            <*> pure prometheusMetrics
-            <*> newTVar False
+
+withWorkflowShared :: (MonadBaseControl IO m, MonadIO m) 
+                    => PrometheusMetrics 
+                    -> (WorkflowShared -> m b) 
+                    -> m b
+withWorkflowShared prometheusMetrics f = do 
+    shared <- liftIO $ atomically $ WorkflowShared 
+                        <$> newTVar False             
+                        <*> newRunningTasks
+                        <*> pure prometheusMetrics
+                        <*> newTVar False
+                        <*> (Fetchers <$> newTVar mempty <*> newTVar mempty)
+    f shared `finally` (
+        liftIO $ mask_ $ do
+            fs <- atomically $ Map.elems <$> readTVar (shared ^. #fetchers . #runningFetchers)
+            for_ fs $ \a -> throwTo (asyncThreadId a) AsyncCancelled)
 
 -- Different types of periodic tasks that may run 
 data TaskType = 
@@ -349,12 +361,11 @@ runWorkflow appContext@AppContext {..} tals = do
             prometheusMetrics <- createPrometheusMetrics config
 
             -- Shared state between the threads for simplicity.
-            workflowShared <- atomically $ newWorkflowShared prometheusMetrics    
-
-            case config ^. #proverRunMode of     
-                OneOffMode vrpOutputFile -> oneOffRun workflowShared vrpOutputFile
-                ServerMode ->             
-                    void $ concurrently
+            withWorkflowShared prometheusMetrics $ \workflowShared ->             
+                case config ^. #proverRunMode of     
+                    OneOffMode vrpOutputFile -> oneOffRun workflowShared vrpOutputFile
+                    ServerMode ->             
+                        void $ concurrently
                             -- Run the main scheduler and RTR server if RTR is configured    
                             (runScheduledTasks workflowShared)
                             runRtrIfConfigured            
