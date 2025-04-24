@@ -150,17 +150,6 @@ data Fetchers = Fetchers {
         runningFetchers :: TVar (Map.Map RpkiURL (Async ()))
     }
     deriving stock (Generic)    
-
-
-withFetchers :: (MonadBaseControl IO m, MonadIO m) => (Fetchers -> m b) -> m b
-withFetchers f = do 
-    fetchers    <- liftIO $ newTVarIO mempty
-    fetcheables <- liftIO $ newTVarIO mempty
-    f (Fetchers fetcheables fetchers)
-        `finally` (liftIO $ mask_ $ do             
-            fs <- atomically $ Map.elems <$> readTVar fetchers 
-            for_ fs $ \a -> throwTo (asyncThreadId a) AsyncCancelled)
-        
      
 
 -- | Adjust running fetchers to the latest discovered repositories
