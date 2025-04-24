@@ -67,6 +67,7 @@ import           RPKI.Http.Types
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Monoidal (MonoidalMap)
 import Control.Monad.Trans.Control (MonadBaseControl)
+import UnliftIO (pooledForConcurrentlyN)
 
 
 {- 
@@ -197,7 +198,8 @@ adjustFetchers appContext discoveredFetcheables fetchers@Fetchers {..} = do
 
 newFetcher :: Storage s => AppContext s -> Fetchers -> RpkiURL -> IO ()
 newFetcher appContext@AppContext {..} Fetchers {..} url = do 
-    go
+    go `finally` 
+        atomically (modifyTVar' runningFetchers (Map.delete url))
   where
     go = do 
         Now start <- thisInstant        
@@ -229,20 +231,22 @@ newFetcher appContext@AppContext {..} Fetchers {..} url = do
                 case r of
                     Right (repository', stats) -> do 
                         rwTxT database $ \tx db -> DB.saveRepository tx db repository'
-                        pure Nothing
+                        pure $ Just $ refreshInterval repository
                     Left _ -> do
                         -- TODO Save error status here somehow
                         getFetchable >>= \case
                             Nothing -> 
+                                -- this whole fetcheable is gone
                                 pure Nothing
                             Just fallbacks -> do  
                                 fetchFallbacks fetchConfig worldVersion fallbacks
-                                pure Nothing                   
-
-                pure $ Just $ Seconds 100
+                                -- TODO It must be much longer?
+                                pure $ Just $ refreshInterval repository              
       where
         fetchFallbacks fetchConfig worldVersion fallbacks = do 
-            repositories <- forConcurrently (Set.toList fallbacks) $ \fallbackUrl -> do 
+            -- TODO Make it a bit smarter based on the overal number and overall load
+            let maxThreads = 32
+            repositories <- pooledForConcurrentlyN maxThreads (Set.toList fallbacks) $ \fallbackUrl -> do 
 
                 repository <- fromMaybe (newRepository fallbackUrl) <$> 
                                 roTxT database (\tx db -> DB.getRepository tx db fallbackUrl) 
@@ -264,6 +268,9 @@ newFetcher appContext@AppContext {..} Fetchers {..} url = do
             Fetcheables fs <- readTVarIO fetcheables
             pure $ MonoidalMap.lookup url fs
 
+        refreshInterval = \case 
+            RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
+            RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
 
 
 -- A job run can be the first one or not and 
