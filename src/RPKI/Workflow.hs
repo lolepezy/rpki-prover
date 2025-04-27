@@ -28,7 +28,7 @@ import qualified Data.List                       as List
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import qualified Data.Set                        as Set
-import           Data.Maybe                      (fromMaybe, catMaybes)
+import           Data.Maybe                      (fromMaybe, catMaybes, maybeToList)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
 
@@ -147,48 +147,115 @@ runJob Jobs {..} jobId action =
 data Fetchers = Fetchers {
         -- Fetchers that are currently running
         fetcheables     :: TVar Fetcheables,
-        runningFetchers :: TVar (Map.Map RpkiURL (Async ()))
+        runningFetchers :: TVar (Map.Map RpkiURL (Async ())),
+        fetcheableToTAs :: TVar (Map.Map RpkiURL (Set.Set TaName))
     }
-    deriving stock (Generic)    
-     
+    deriving stock (Generic)
+
+
+runFetcher :: Storage s => AppContext s -> Fetchers -> TaName -> RpkiURL -> IO ()
+runFetcher appContext fetchers@Fetchers {..} taName url = mask_ $ do
+    a <- async $ newFetcher appContext fetchers url
+    atomically $ do
+        modifyTVar' runningFetchers (Map.insert url a)
+        modifyTVar' fetcheableToTAs (Map.insertWith Set.union url (Set.singleton taName))
+
+dropFetcher :: Fetchers -> RpkiURL -> IO ()
+dropFetcher Fetchers {..} url = mask_ $ do
+    readTVarIO runningFetchers >>= \running -> do
+        for_ (Map.lookup url running) $ \a -> do
+            throwTo (asyncThreadId a) AsyncCancelled
+            atomically $ do
+                modifyTVar' runningFetchers (Map.delete url)
+                modifyTVar' fetcheableToTAs (Map.delete url)
 
 -- | Adjust running fetchers to the latest discovered repositories
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
-adjustFetchers :: Storage s => AppContext s -> Fetcheables -> Fetchers -> IO ()
-adjustFetchers appContext discoveredFetcheables fetchers@Fetchers {..} = do 
-    
-    (running, Fetcheables current) <- atomically $ do 
-        f <- readTVar fetcheables
-        writeTVar fetcheables discoveredFetcheables
-        (,f) <$> readTVar runningFetchers            
-    
-    let neededUrls = MonoidalMap.keysSet current
-    let fetcherUrls = Map.keysSet running
-    
-    -- Identify URLs that no longer need fetchers
-    let toStop = Set.difference fetcherUrls neededUrls
-    
-    -- Stop and remove fetchers for URLs that are no longer needed    
-    for_ (Set.toList toStop) $ \url ->
-        mask_ $ do
-            atomically $ modifyTVar' runningFetchers (Map.delete url)
-            for_ (Map.lookup url running) $ \a -> do            
-                throwTo (asyncThreadId a) AsyncCancelled
-                            
-    let toStart = Set.difference neededUrls fetcherUrls
-    
-    -- Create new fetchers for newly discovered URLs
-    for_ (Set.toList toStart) $ \url -> 
-        mask_ $ do
-            a <- async $ newFetcher appContext fetchers url
-            atomically $ modifyTVar' runningFetchers (Map.insert url a)
+adjustFetchersOld :: Storage s => AppContext s -> Map.Map TaName Fetcheables -> Fetchers -> IO ()
+adjustFetchersOld appContext discoveredFetcheables fetchers@Fetchers {..} = do
 
+    (running, Fetcheables current) <- atomically $ do
+        f <- readTVar fetcheables
+        writeTVar fetcheables $ mconcat $ Map.elems discoveredFetcheables
+        (,f) <$> readTVar runningFetchers
+
+    let neededUrls = MonoidalMap.keysSet current
+    let runningFetcherUrls = Map.keysSet running
+
+    -- Identify URLs that no longer need fetchers
+    let toStop = Set.difference runningFetcherUrls neededUrls
+
+    -- Stop and remove fetchers for URLs that are no longer needed    
+    for_ (Set.toList toStop) $ dropFetcher fetchers
+
+    -- let toStart = Set.difference neededUrls runningFetcherUrls
+
+    -- Create new fetchers for newly discovered URLs
+    -- for_ (Set.toList toStart) $ runFetcher appContext fetchers taName
+
+
+adjustFetchers :: Storage s => AppContext s -> Map.Map TaName Fetcheables -> Fetchers -> IO ()
+adjustFetchers appContext discoveredFetcheables fetchers@Fetchers {..} = do
+
+    (currentFetchers, toStop, toStart) <- atomically $ do
+        Fetcheables previousFetchables <- readTVar fetcheables        
+        writeTVar fetcheables $ mconcat $ Map.elems discoveredFetcheables
+        currentFetchers <- readTVar runningFetchers
+
+        let updatedUrls = Map.keysSet currentFetchers
+            runningFetcherUrls = MonoidalMap.keysSet previousFetchables
+
+        pure (currentFetchers, 
+              Set.difference runningFetcherUrls updatedUrls,
+              Set.difference updatedUrls runningFetcherUrls)        
+
+    mask_ $ do
+        -- Stop and remove fetchers for URLs that are no longer needed    
+        for_ (Set.toList toStop) $ \url ->
+            for_ (Map.lookup url currentFetchers) $ \a -> do
+                throwTo (asyncThreadId a) AsyncCancelled
+
+        asyncs <- forM (Set.toList toStart) $ \url ->
+            (url, ) <$> async (newFetcher appContext fetchers url)
+
+        atomically $ do
+            modifyTVar' runningFetchers $ \r -> do 
+                let withNewAsyncs = foldr (uncurry Map.insert) r asyncs
+                foldr Map.delete withNewAsyncs $ Set.toList toStop
+
+            let discoveredUrls = Map.fromListWith Set.union 
+                    [ (ta, Set.singleton url) | 
+                        (ta, Fetcheables fs) <- Map.toList discoveredFetcheables,
+                        url <- MonoidalMap.keys fs
+                        ]
+
+            modifyTVar' fetcheableToTAs (`updateRepositoryToTAs` discoveredUrls)
+                        
+
+updateRepositoryToTAs :: Map.Map RpkiURL (Set.Set TaName) 
+                    -> Map.Map TaName (Set.Set RpkiURL) 
+                    -> Map.Map RpkiURL (Set.Set TaName)
+updateRepositoryToTAs fetcheableToTAs discoveredUrls = let         
+        newlyAdded =             
+                [ (url, Set.singleton ta)
+                | (ta, urls) <- Map.toList discoveredUrls
+                , url <- Set.toList urls
+                ]    
+        
+        existingOverlapping = [ (url, Set.singleton ta) | 
+                (url, tas) <- Map.toList fetcheableToTAs,
+                ta <- Set.toList tas,                
+                maybe True (Set.member url) (Map.lookup ta discoveredUrls)
+            ]
+
+        in Map.fromListWith Set.union $ newlyAdded <> existingOverlapping
+        
 
 newFetcher :: Storage s => AppContext s -> Fetchers -> RpkiURL -> IO ()
-newFetcher appContext@AppContext {..} Fetchers {..} url = do 
-    go `finally` 
-        atomically (modifyTVar' runningFetchers (Map.delete url))
+newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
+    go `finally`
+        dropFetcher fetchers url
   where
     go = do 
         Now start <- thisInstant        
@@ -292,20 +359,23 @@ withWorkflowShared :: (MonadBaseControl IO m, MonadIO m)
                     => PrometheusMetrics 
                     -> (WorkflowShared -> m b) 
                     -> m b
-withWorkflowShared prometheusMetrics f = do 
-    shared <- liftIO $ atomically $ WorkflowShared 
-                        <$> newTVar False             
+withWorkflowShared prometheusMetrics f = do
+    shared <- liftIO $ atomically $ WorkflowShared
+                        <$> newTVar False
                         <*> newRunningTasks
                         <*> pure prometheusMetrics
                         <*> newTVar False
-                        <*> (Fetchers <$> newTVar mempty <*> newTVar mempty)
-    f shared `finally` (
-        liftIO $ mask_ $ do
+                        <*> (Fetchers <$>
+                                newTVar mempty <*>
+                                newTVar mempty <*>
+                                newTVar mempty)
+    f shared `finally`
+        liftIO (mask_ $ do
             fs <- atomically $ Map.elems <$> readTVar (shared ^. #fetchers . #runningFetchers)
             for_ fs $ \a -> throwTo (asyncThreadId a) AsyncCancelled)
 
 -- Different types of periodic tasks that may run 
-data TaskType = 
+data TaskType =
         -- top-down validation and sync fetches
         ValidationTask
 
