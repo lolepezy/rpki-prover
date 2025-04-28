@@ -4,51 +4,91 @@
 
 module RPKI.WorkflowSpec where
 
-import RPKI.Workflow
-import Test.Tasty
-import qualified Test.Tasty.HUnit                as HU
-import qualified Test.Tasty.QuickCheck           as QC
+import           Data.Text (Text)
+
+import           Test.Tasty
+import           Test.Tasty.HUnit                as HU
 
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Set                        as Set
 
 import           RPKI.Domain
 import           RPKI.Workflow
-import           RPKI.Orphans
+
+
+-- Helper to create a Map of URL to TA names
+urlToTas :: [(Text, [Text])] -> Map.Map RpkiURL (Set.Set TaName)
+urlToTas pairs = Map.fromList [
+    (RrdpU (RrdpURL (URI url)), Set.fromList (map TaName tas)) 
+    | (url, tas) <- pairs
+    ]
+
+-- Helper to create a Map of TA names to URLs
+taToUrls :: [(Text, [Text])] -> Map.Map TaName (Set.Set RpkiURL)
+taToUrls pairs = Map.fromList [
+    (TaName ta, Set.fromList [RrdpU (RrdpURL (URI url)) | url <- urls])
+    | (ta, urls) <- pairs
+    ]
 
 
 workflowSpec :: TestTree
-workflowSpec = testGroup "Workflow" [      
-      propertyTests
-    ]
+workflowSpec = testGroup "Workflow"  [ 
+  HU.testCase "Keeps entries that are in both maps" $
+      let fetcheableToTAs = urlToTas [(repo1, ["TA1"])]
+          discoveredUrls = taToUrls [("TA1", [repo1])]
+          expected = urlToTas [(repo1, ["TA1"])]
+      in updateRepositoryToTAs fetcheableToTAs discoveredUrls @?= expected
 
-propertyTests :: TestTree
-propertyTests = testGroup "Property Tests"
-  [ QC.testProperty "Includes all URLs discovered by any TA" $
-      \fetcheableToTAs discoveredUrls -> 
-          let allDiscoveredUrls = Set.unions $ Map.elems discoveredUrls
-              result = updateRepositoryToTAs fetcheableToTAs discoveredUrls
-          in all (`Set.member` allDiscoveredUrls) (Map.keys result)
+  , HU.testCase "Adds newly discovered URLs" $
+      let fetcheableToTAs = urlToTas [(repo1, ["TA1", "TA2"])]
+          discoveredUrls = taToUrls [("TA1", [repo1, repo2])]
+          expected = urlToTas [(repo1, ["TA1", "TA2"]),(repo2, ["TA1"])]
+      in updateRepositoryToTAs fetcheableToTAs discoveredUrls @?= expected
 
-  , QC.testProperty "Preserves TAs for URLs not mentioned in discoveredUrls" $
-      \fetcheableToTAs discoveredUrls ->
-          let result = updateRepositoryToTAs fetcheableToTAs discoveredUrls
-              tasInDiscovered = Map.keysSet discoveredUrls
-              urlsInDiscovered = Set.unions $ Map.elems discoveredUrls
-              unmentionedUrls = Set.filter (`Set.notMember` urlsInDiscovered) $ Map.keysSet fetcheableToTAs
-          in all (\url -> 
-                case (Map.lookup url fetcheableToTAs, Map.lookup url result) of
-                  (Just oldTas, Just newTas) -> 
-                      Set.filter (`Set.notMember` tasInDiscovered) oldTas `Set.isSubsetOf` newTas
-                  _ -> True
-              ) (Set.toList unmentionedUrls)
+  , HU.testCase "Removes URLs that aren't discovered by their TA" $
+      let fetcheableToTAs = urlToTas [(repo1, ["TA1"]),(repo2, ["TA1"])]
+          discoveredUrls = taToUrls [("TA1", [repo1])]
+          expected = urlToTas [(repo1, ["TA1"])]
+      in updateRepositoryToTAs fetcheableToTAs discoveredUrls @?= expected
 
-  , QC.testProperty "All TAs in result actually discovered their URLs" $
-      \fetcheableToTAs discoveredUrls -> 
-          let result = updateRepositoryToTAs fetcheableToTAs discoveredUrls
-          in all (\(url, tas) -> 
-                all (\ta -> 
-                    maybe True (Set.member url) (Map.lookup ta discoveredUrls)
-                ) (Set.toList tas)
-              ) (Map.toList result)
+  , HU.testCase "Keeps URLs for TAs not mentioned in discoveredUrls" $
+      let fetcheableToTAs = urlToTas [(repo1, ["TA1", "TA2"]),(repo2, ["TA2"])]
+          discoveredUrls = taToUrls [("TA1", [repo1])]
+          expected = urlToTas [(repo1, ["TA1", "TA2"]),(repo2, ["TA2"])]
+      in updateRepositoryToTAs fetcheableToTAs discoveredUrls @?= expected
+
+  , HU.testCase "Merges TAs for the same URL" $
+      let fetcheableToTAs = urlToTas [(repo1, ["TA1"]),(repo2, ["TA1"])]
+          discoveredUrls = taToUrls [("TA1", [repo1]),("TA2", [repo1])]
+          expected = urlToTas [(repo1, ["TA1", "TA2"])]
+      in updateRepositoryToTAs fetcheableToTAs discoveredUrls @?= expected
+
+  , HU.testCase "Handles empty fetcheableToTAs map" $
+      let fetcheableToTAs = Map.empty
+          discoveredUrls = taToUrls [("TA1", [repo1])]
+          expected = urlToTas [(repo1, ["TA1"])]
+      in updateRepositoryToTAs fetcheableToTAs discoveredUrls @?= expected
+            
+  , HU.testCase "Handles empty discoveredUrls map with non-empty fetcheableToTAs" $
+      let fetcheableToTAs = urlToTas [(repo1, ["TA1"])]
+          discoveredUrls = Map.empty
+          expected = urlToTas [(repo1, ["TA1"])]
+      in updateRepositoryToTAs fetcheableToTAs discoveredUrls @?= expected
+
+  , HU.testCase "Handles empty set of TAs for a URL" $
+      let fetcheableToTAs = urlToTas [(repo1, [])]
+          discoveredUrls = taToUrls [("TA1", [repo1])]
+          expected = urlToTas [(repo1, ["TA1"])]
+      in updateRepositoryToTAs fetcheableToTAs discoveredUrls @?= expected
+
+  , HU.testCase "Handles multiple TAs per URL" $
+      let fetcheableToTAs = urlToTas [(repo1, ["TA1", "TA2"]), (repo2, ["TA1", "TA3"])]
+          discoveredUrls = taToUrls [("TA1", [repo1])]
+          expected = urlToTas [(repo1, ["TA1", "TA2"]), (repo2, ["TA3"])]
+      in updateRepositoryToTAs fetcheableToTAs discoveredUrls @?= expected
   ]
+  where
+    repo1, repo2 :: Text
+    repo1 = "https://repo1.example.com"
+    repo2 = "https://repo2.example.com"
+ 

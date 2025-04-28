@@ -28,7 +28,7 @@ import qualified Data.List                       as List
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import qualified Data.Set                        as Set
-import           Data.Maybe                      (fromMaybe, catMaybes, maybeToList)
+import           Data.Maybe                      (fromMaybe)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
 
@@ -172,29 +172,6 @@ dropFetcher Fetchers {..} url = mask_ $ do
 -- | Adjust running fetchers to the latest discovered repositories
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
-adjustFetchersOld :: Storage s => AppContext s -> Map.Map TaName Fetcheables -> Fetchers -> IO ()
-adjustFetchersOld appContext discoveredFetcheables fetchers@Fetchers {..} = do
-
-    (running, Fetcheables current) <- atomically $ do
-        f <- readTVar fetcheables
-        writeTVar fetcheables $ mconcat $ Map.elems discoveredFetcheables
-        (,f) <$> readTVar runningFetchers
-
-    let neededUrls = MonoidalMap.keysSet current
-    let runningFetcherUrls = Map.keysSet running
-
-    -- Identify URLs that no longer need fetchers
-    let toStop = Set.difference runningFetcherUrls neededUrls
-
-    -- Stop and remove fetchers for URLs that are no longer needed    
-    for_ (Set.toList toStop) $ dropFetcher fetchers
-
-    -- let toStart = Set.difference neededUrls runningFetcherUrls
-
-    -- Create new fetchers for newly discovered URLs
-    -- for_ (Set.toList toStart) $ runFetcher appContext fetchers taName
-
-
 adjustFetchers :: Storage s => AppContext s -> Map.Map TaName Fetcheables -> Fetchers -> IO ()
 adjustFetchers appContext discoveredFetcheables fetchers@Fetchers {..} = do
 
@@ -232,24 +209,27 @@ adjustFetchers appContext discoveredFetcheables fetchers@Fetchers {..} = do
 
             modifyTVar' fetcheableToTAs (`updateRepositoryToTAs` discoveredUrls)
                         
-
+-- This one is made public only for testing purposes.
+-- Update the mapping between repositories and TAs based 
+-- on the newly discovered URLs per TAs.
 updateRepositoryToTAs :: Map.Map RpkiURL (Set.Set TaName) 
                     -> Map.Map TaName (Set.Set RpkiURL) 
                     -> Map.Map RpkiURL (Set.Set TaName)
-updateRepositoryToTAs fetcheableToTAs discoveredUrls = let         
-        newlyAdded =             
-                [ (url, Set.singleton ta)
-                | (ta, urls) <- Map.toList discoveredUrls
-                , url <- Set.toList urls
-                ]    
+updateRepositoryToTAs fetcheableToTAs discoveredUrls = 
+    Map.fromListWith Set.union $ newlyAdded <> existingOverlapping
+  where
+    newlyAdded = [ 
+        (url, Set.singleton ta)
+            | (ta, urls) <- Map.toList discoveredUrls
+            , url <- Set.toList urls
+        ]    
         
-        existingOverlapping = [ (url, Set.singleton ta) | 
-                (url, tas) <- Map.toList fetcheableToTAs,
-                ta <- Set.toList tas,                
-                maybe True (Set.member url) (Map.lookup ta discoveredUrls)
-            ]
-
-        in Map.fromListWith Set.union $ newlyAdded <> existingOverlapping
+    existingOverlapping = [ 
+        (url, Set.singleton ta) | 
+            (url, tas) <- Map.toList fetcheableToTAs,
+            ta <- Set.toList tas,                
+            maybe True (Set.member url) (Map.lookup ta discoveredUrls)
+        ]
         
 
 newFetcher :: Storage s => AppContext s -> Fetchers -> RpkiURL -> IO ()
@@ -594,6 +574,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 Right wr@WorkerResult {..} -> do                              
                     let ValidationResult vs discoveredRepositories maybeSlurm = payload
                     logDebug logger [i|discoveredRepositories = #{discoveredRepositories}|]
+                    adjustFetchers appContext discoveredRepositories fetchers
                     
                     logWorkerDone logger workerId wr
                     pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory
