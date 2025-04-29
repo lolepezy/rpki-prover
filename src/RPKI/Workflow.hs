@@ -173,19 +173,21 @@ dropFetcher Fetchers {..} url = mask_ $ do
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
 adjustFetchers :: Storage s => AppContext s -> Map.Map TaName Fetcheables -> Fetchers -> IO ()
-adjustFetchers appContext discoveredFetcheables fetchers@Fetchers {..} = do
+adjustFetchers appContext@AppContext {..} discoveredFetcheables fetchers@Fetchers {..} = do
 
-    (currentFetchers, toStop, toStart) <- atomically $ do
-        Fetcheables previousFetchables <- readTVar fetcheables        
-        writeTVar fetcheables $ mconcat $ Map.elems discoveredFetcheables
-        currentFetchers <- readTVar runningFetchers
+    (currentFetchers, toStop, toStart) <- atomically $ do        
+        let newFetcheables = mconcat $ Map.elems discoveredFetcheables
+        writeTVar fetcheables newFetcheables
+        running <- readTVar runningFetchers
 
-        let updatedUrls = Map.keysSet currentFetchers
-            runningFetcherUrls = MonoidalMap.keysSet previousFetchables
+        let updatedUrls = MonoidalMap.keysSet $ unFetcheables newFetcheables
+            runningFetcherUrls = Map.keysSet running
 
-        pure (currentFetchers, 
+        pure (running, 
               Set.difference runningFetcherUrls updatedUrls,
               Set.difference updatedUrls runningFetcherUrls)        
+
+    logDebug logger [i|Adjusting fetchers: toStop = #{toStop}, toStart = #{toStart}, currentFetchers = #{Map.keys currentFetchers}|]
 
     mask_ $ do
         -- Stop and remove fetchers for URLs that are no longer needed    
