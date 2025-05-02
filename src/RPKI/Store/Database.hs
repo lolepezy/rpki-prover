@@ -211,14 +211,15 @@ newtype SlurmStore s = SlurmStore {
     deriving stock (Generic)
 
 data RepositoryStore s = RepositoryStore {
-        rrdpS     :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
-        rsyncS    :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,        
-        forAsyncS :: SMap "for-async-fetch" s Text (Compressed (Set.Set [RpkiURL]))
+        rrdpS       :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
+        rsyncS      :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
+        rrdpVState  :: SMap "rrdp-valitation-state" s RrdpURL (Compressed ValidationState),
+        rsyncVState :: SMap "rsync-valitation-state" s RsyncHost (Compressed (RsyncTree ValidationState))
     }
     deriving stock (Generic)
 
 instance Storage s => WithStorage s (RepositoryStore s) where
-    storage (RepositoryStore s _ _) = storage s
+    storage (RepositoryStore s _ _ _) = storage s
 
 newtype JobStore s = JobStore {
         jobs :: SMap "jobs" s Text Instant
@@ -513,7 +514,7 @@ markAsValidated :: (MonadIO m, Storage s) =>
                 -> WorldVersion -> m ()
 markAsValidated tx db allKeys worldVersion = 
     liftIO $ void $ updateValidatedByVersionMap tx db $ \m -> 
-        foldr (\k -> Map.insert k worldVersion) (fromMaybe mempty m) allKeys
+        foldr (`Map.insert` worldVersion) (fromMaybe mempty m) allKeys
 
 
 -- This is for testing purposes mostly
@@ -750,27 +751,38 @@ getRsyncRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RsyncURL ->
 getRsyncRepository tx db url = Map.lookup url <$> getRsyncRepositories tx db [url]        
 
 getRsyncRepositories :: (MonadIO m, Storage s) => Tx s mode -> DB s -> [RsyncURL] -> m (Map.Map RsyncURL RsyncRepository)
-getRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} urls = liftIO $ do 
+getRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} urls = 
+    getRsyncAnything urls 
+        (M.get tx rsyncS) 
+        (\url meta -> RsyncRepository { repoPP = RsyncPublicationPoint url, .. })  
+
+getRsyncValidationState :: (MonadIO m, Storage s) => Tx s mode -> DB s -> [RsyncURL] -> m (Map.Map RsyncURL ValidationState)
+getRsyncValidationState tx DB { repositoryStore = RepositoryStore {..}} urls = do 
+    getRsyncAnything urls 
+        (fmap (fmap unCompressed) . M.get tx rsyncVState)
+        (\_ validationState -> validationState)
+
+getRsyncAnything :: MonadIO m 
+                => [RsyncURL] 
+                -> (RsyncHost -> IO (Maybe (RsyncTree a)))
+                -> (RsyncURL -> a -> b)
+                -> m (Map.Map RsyncURL b)
+getRsyncAnything urls extractTree create = liftIO $ do 
 
     let groupedByHost = Map.fromListWith (<>) [ (host, [u]) | u@(RsyncURL host _) <- urls ]    
 
     fmap (Map.fromList . mconcat)
         $ forM (Map.toList groupedByHost) 
         $ \(host, thisHostUrls) -> do        
-            z <- M.get tx rsyncS host
+            z <- extractTree host
             pure $ case z of
                 Nothing   -> []
                 Just tree -> 
-                    [ (u, RsyncRepository {..}) |
+                    [ (u, create url' content) |
                         u@(RsyncURL _ path) <- thisHostUrls,
-                        Just (path', meta) <- [ lookupInRsyncTree path tree ],
-                        let repoPP = RsyncPublicationPoint (RsyncURL host path')
+                        Just (path', content ) <- [ lookupInRsyncTree path tree ],
+                        let url' = RsyncURL host path'
                     ] 
-
-saveRepository :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Repository -> m ()
-saveRepository tx db = \case
-    RrdpR rrdp -> saveRrdpRepository tx db rrdp
-    RsyncR rsync -> saveRsyncRepositories tx db [rsync]
 
 saveRepositories :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [Repository] -> m ()
 saveRepositories tx db repositories = do    
@@ -788,15 +800,31 @@ saveRrdpRepository tx DB { repositoryStore = RepositoryStore {..}} r =
     liftIO $ M.put tx rrdpS (r ^. #uri) r
 
 saveRsyncRepositories :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [RsyncRepository] -> m ()
-saveRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} repositories = liftIO $ do 
+saveRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} repositories = liftIO $ do
+    saveRsyncAnything (map (\r -> (r, r ^. #meta)) repositories)
+        (M.get tx rsyncS)
+        (M.put tx rsyncS)        
 
-    let groupedByHost = Map.fromListWith (<>) [ (host, [(path, meta)]) | 
-            RsyncRepository { repoPP = RsyncPublicationPoint (RsyncURL host path), ..} <- repositories ] 
+saveRsyncValidationStates :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [(RsyncRepository, ValidationState)] -> m ()
+saveRsyncValidationStates tx DB { repositoryStore = RepositoryStore {..}} repositories = liftIO $ do
+    saveRsyncAnything repositories
+        (fmap (fmap unCompressed) . M.get tx rsyncVState)
+        (\host tree -> M.put tx rsyncVState host (Compressed tree))        
+
+saveRsyncAnything :: (MonadIO m, Semigroup a) 
+                    => [(RsyncRepository, a)] 
+                    -> (RsyncHost -> IO (Maybe (RsyncTree a)))
+                    -> (RsyncHost -> RsyncTree a -> IO ())
+                    -> m ()
+saveRsyncAnything repositories extractTree saveTree = liftIO $ do 
+
+    let groupedByHost = Map.fromListWith (<>) [ (host, [(path, a)]) | 
+            (RsyncRepository { repoPP = RsyncPublicationPoint (RsyncURL host path) }, a) <- repositories ] 
         
-    for_ (Map.toList groupedByHost) $ \(host, pathAndMetas) -> do
-        startTree <- fromMaybe newRsyncTree <$> M.get tx rsyncS host        
-        let tree' = foldr (uncurry pathToRsyncTree) startTree pathAndMetas
-        M.put tx rsyncS host tree'
+    for_ (Map.toList groupedByHost) $ \(host, pathAndA) -> do
+        startTree <- fromMaybe newRsyncTree <$> extractTree host
+        let tree' = foldr (uncurry pathToRsyncTree) startTree pathAndA
+        saveTree host tree'
 
 savePublicationPoints :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PublicationPoints -> m ()
 savePublicationPoints tx db newPPs' = do

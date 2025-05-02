@@ -109,7 +109,7 @@ createDatabase env logger checkAction = do
             pure RpkiObjectStore {..}
             
         createRepositoryStore = 
-            RepositoryStore <$> createMap <*> createMap <*> createMap
+            RepositoryStore <$> createMap <*> createMap <*> createMap <*> createMap
         
         lmdb = LmdbStorage env
 

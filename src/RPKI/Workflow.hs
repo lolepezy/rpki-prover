@@ -269,7 +269,8 @@ newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
                 case r of
                     Right (repository', stats) -> do 
                         let r = updateMeta' repository' (#status .~ FetchedAt (versionToMoment worldVersion))
-                        rwTxT database $ \tx db -> DB.saveRepository tx db r
+                        rwTxT database $ \tx db -> do                             
+                            DB.saveRepositories tx db [r]
                         pure $ Just $ refreshInterval repository
                     Left _ -> do
                         -- TODO Save error status here somehow
