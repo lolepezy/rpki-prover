@@ -593,19 +593,14 @@ validateCaNoLimitChecks1
                     validateCaNoFetch appContext topDownContext ca
   where
     mergeFetcheables caFetcheables = do 
-        z <- liftIO $ atomically $ do 
-            fs <- readTVar fetcheables 
-            case map fst caFetcheables of 
-                -- Expect either one of two PPs per CA
-                primary : (listToMaybe -> fallback) -> do 
-                    modifyTVar' fetcheables (<> newFetcheables primary fallback)
-                    pure Nothing
-                caUrls -> 
-                    pure $ Just caUrls
-
-        for_ z $ \weirdCaUrls -> do 
-            logError logger [i|Found CA certificate with uncommon publication points: #{weirdCaUrls}.|]
-            appError $ ValidationE $ WeirdCaPublicationPoints weirdCaUrls                        
+        -- logDebug logger [i|Adding new fetcheables: #{caFetcheables}|]
+        case map fst caFetcheables of 
+            -- Expect either one of two PPs per CA
+            primary : (listToMaybe -> fallback) -> do 
+                liftIO $ atomically $ modifyTVar' fetcheables (<> newFetcheables primary fallback)
+            weirdCaUrls -> do 
+                logError logger [i|Found CA certificate with uncommon publication points: #{weirdCaUrls}.|]
+                appError $ ValidationE $ WeirdCaPublicationPoints weirdCaUrls                        
 
 
 validateCaNoFetch :: Storage s =>

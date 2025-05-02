@@ -268,7 +268,8 @@ newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
 
                 case r of
                     Right (repository', stats) -> do 
-                        rwTxT database $ \tx db -> DB.saveRepository tx db repository'
+                        let r = updateMeta' repository' (#status .~ FetchedAt (versionToMoment worldVersion))
+                        rwTxT database $ \tx db -> DB.saveRepository tx db r
                         pure $ Just $ refreshInterval repository
                     Left _ -> do
                         -- TODO Save error status here somehow
@@ -291,21 +292,24 @@ newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
                                 
                 ((r, validations), duratioMs) <- timedMS $ 
                             runValidatorT (newScopes' RepositoryFocus fallbackUrl) $ 
-                                fetchRepository appContext fetchConfig worldVersion repository
+                                fetchRepository appContext fetchConfig worldVersion repository                
 
-                case r of
+                pure $ case r of
                     Right (repository', stats) -> 
                         -- TODO Do something with RRDP stats
-                        pure repository' 
+                        updateMeta' repository' (#status .~ FetchedAt (versionToMoment worldVersion))
                     Left _ -> do
-                        pure $ updateMeta' repository (#status .~ FailedAt (versionToMoment worldVersion))
+                        updateMeta' repository (#status .~ FailedAt (versionToMoment worldVersion))
             
+            logDebug logger [i|repositories: #{repositories}.|]
+
             rwTxT database $ \tx db -> DB.saveRepositories tx db repositories                
         
         getFetchable = do   
             Fetcheables fs <- readTVarIO fetcheables
             pure $ MonoidalMap.lookup url fs
 
+        -- TODO Include all the adaptive logic here
         refreshInterval = \case 
             RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
             RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
