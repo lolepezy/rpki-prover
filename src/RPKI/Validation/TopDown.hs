@@ -479,7 +479,7 @@ validateCa
     checkAndReport treeDepthLimit
         $ checkAndReport visitedObjectCountLimit
         $ checkAndReport repositoryCountLimit
-        $ validateCaNoLimitChecks1 appContext topDownContext ca        
+        $ validateCaNoLimitChecks appContext topDownContext ca        
   where
 
     -- Check and report for the maximal tree depth
@@ -526,51 +526,12 @@ validateCa
     validationConfig = config ^. typed @ValidationConfig
     
 
-
 validateCaNoLimitChecks :: Storage s =>
                         AppContext s ->
                         TopDownContext ->
                         Ca ->
                         ValidatorT IO ()
 validateCaNoLimitChecks
-    appContext@AppContext {..}
-    topDownContext@TopDownContext { allTas = AllTasTopDownContext {..} }
-    ca = 
-    case extractPPAs ca of        
-        Left e         -> vError e
-        Right ppAccess ->
-            case filterPPAccess config ppAccess of
-                Nothing ->
-                    -- Both rrdp and rsync (and whatever else in the future?) are
-                    -- disabled, don't fetch at all.
-                    validateThisCertAndGoDown
-                    
-                Just filteredPpa -> do
-                    let fetch = case config ^. #proverRunMode of 
-                            ServerMode -> do 
-                                fetchQuickly appContext repositoryProcessing worldVersion filteredPpa
-                            OneOffMode {} -> 
-                                fetchWithFallback appContext repositoryProcessing worldVersion 
-                                            (syncFetchConfig config) filteredPpa                                            
-                    fetch >>= \case                     
-                        [] -> 
-                            -- Nothing has been fetched
-                            validateThisCertAndGoDown
-                        _  -> do     
-                            pps <- readPublicationPoints repositoryProcessing      
-                            let primaryUrl = getPrimaryRepositoryUrl pps filteredPpa
-                            metricFocusOn PPFocus primaryUrl validateThisCertAndGoDown
-
-  where
-    validateThisCertAndGoDown = validateCaNoFetch appContext topDownContext ca
-
-
-validateCaNoLimitChecks1 :: Storage s =>
-                        AppContext s ->
-                        TopDownContext ->
-                        Ca ->
-                        ValidatorT IO ()
-validateCaNoLimitChecks1
     appContext@AppContext {..}
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
     ca = 
@@ -592,8 +553,7 @@ validateCaNoLimitChecks1
                 metricFocusOn PPFocus primaryUrl $
                     validateCaNoFetch appContext topDownContext ca
   where
-    mergeFetcheables caFetcheables = do 
-        -- logDebug logger [i|Adding new fetcheables: #{caFetcheables}|]
+    mergeFetcheables caFetcheables =
         case map fst caFetcheables of 
             -- Expect either one of two PPs per CA
             primary : (listToMaybe -> fallback) -> do 

@@ -523,8 +523,11 @@ lookupInRsyncTree path = meta_ path []
 
 flattenRsyncTree :: RsyncForestGen a -> [(RsyncURL, a)]
 flattenRsyncTree (RsyncForestGen t) = 
-    concatMap (\(host, tree) -> flattenTree host tree []) $ Map.toList t    
-  where    
-    flattenTree host (Leaf info) realPath  = [(RsyncURL host (reverse realPath), info)]
-    flattenTree host SubTree {..} realPath = 
-        concatMap (\(p, n) -> flattenTree host n (p : realPath)) $ Map.toList rsyncChildren  
+    concatMap (uncurry flattenTree) $ Map.toList t    
+
+flattenTree :: RsyncHost -> RsyncTree a -> [(RsyncURL, a)]
+flattenTree host tree = go tree []
+  where 
+    go (Leaf info) realPath  = [(RsyncURL host (reverse realPath), info)]
+    go SubTree {..} realPath = 
+        concatMap (\(p, n) -> go n (p : realPath)) $ Map.toList rsyncChildren  

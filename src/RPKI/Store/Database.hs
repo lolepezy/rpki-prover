@@ -17,11 +17,10 @@ import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
 import           Data.Foldable            (for_)
 
-import           Data.Bifunctor           (second)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as C8
 import qualified Data.List                as List
-import           Data.Maybe               (catMaybes, fromMaybe, maybeToList)
+import           Data.Maybe               (catMaybes, fromMaybe)
 import qualified Data.Set                 as Set
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
@@ -838,11 +837,24 @@ getRepositories :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(Repository
 getRepositories tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
     rrdps <- M.all tx rrdpS
     rsyncs <- M.all tx rsyncS    
-    rrdpVs <- Map.fromList . map (second unCompressed) <$> M.all tx rrdpVState
-    
-    -- TODO Add rsync here         
-               
-    pure [ (RrdpR r, vs) | (u, r) <- rrdps, vs <- maybeToList (Map.lookup u rrdpVs) ]
+
+    rrpdRepos <- fmap mconcat $ 
+        forM rrdps $ \(url, r) -> do 
+            M.get tx rrdpVState url >>= \case 
+                Nothing              -> pure []
+                Just (Compressed vs) -> pure [(RrdpR r, vs)]            
+
+    rsyncRepos <- fmap mconcat $ 
+        forM rsyncs $ \(host, metas) -> do 
+            M.get tx rsyncVState host >>= \case 
+                Nothing               -> pure []
+                Just (Compressed vss) -> 
+                    pure [ (RsyncR repo, vs) | 
+                            (RsyncURL _ path, meta) <- flattenTree host metas,
+                            let repo = RsyncRepository { repoPP = RsyncPublicationPoint (RsyncURL host path), .. },
+                            Just (_, vs) <- [lookupInRsyncTree path vss]      
+                        ]
+    pure $ rrpdRepos <> rsyncRepos
 
 savePublicationPoints :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PublicationPoints -> m ()
 savePublicationPoints tx db newPPs' = do

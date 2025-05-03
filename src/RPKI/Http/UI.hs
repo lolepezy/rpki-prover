@@ -319,7 +319,7 @@ rrdpUpdateTooltip =
         space >> space >> H.text "Used values" >> H.br
         H.ul $ do 
             H.li $ H.text "'Snapshot N' - snapshot with serial N was used for RRDP update"
-            H.li $ H.text "'Deltas N to M' - deltas from serial N to serial M were used for RRDP update"
+            H.li $ H.text "'Deltas N to M' - deltas from serial N to serial M were used for RRDP update "
             H.li $ H.text "'Up-to-date' - No update is needed, local and remote serials are equal or E-Tag didn't change"
 
 validationPathTootip :: Html

@@ -13,6 +13,7 @@ import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Monad
+import           Control.Monad.Trans.Control (MonadBaseControl)
 import           Control.Monad.IO.Class
 
 import           Control.Lens
@@ -21,8 +22,7 @@ import           GHC.Generics
 
 import qualified Data.ByteString.Lazy            as LBS
 
-import qualified Data.List.NonEmpty              as NE
-import           Data.Foldable                   (for_, toList)
+import           Data.Foldable                   (for_)
 import qualified Data.Text                       as Text
 import qualified Data.List                       as List
 import qualified Data.Map.Strict                 as Map
@@ -65,9 +65,6 @@ import           RPKI.Worker
 import           RPKI.SLURM.Types
 import           RPKI.Http.Dto
 import           RPKI.Http.Types
-import Data.List.NonEmpty (NonEmpty)
-import Data.Map.Monoidal (MonoidalMap, valid)
-import Control.Monad.Trans.Control (MonadBaseControl)
 import UnliftIO (pooledForConcurrentlyN)
 
 
@@ -264,19 +261,22 @@ newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
                 repository <- fromMaybe (newRepository url) <$> 
                                 roTxT database (\tx db -> DB.getRepository tx db url) 
                                 
-                ((r, validations), duratioMs) <- 
+                -- TODO Do not fetch before some minimal period after the previous fetch
+
+                ((r, validations), duratioMs) <-                 
                         withFetchLimits fetchConfig $ timedMS $ 
                             runValidatorT (newScopes' RepositoryFocus url) $ 
                                 fetchRepository appContext fetchConfig worldVersion repository
 
+                -- TODO Use duratioMs, it is the only time metric for failed and killed fetches 
                 case r of
                     Right (repository', stats) -> do 
-                        let r = updateMeta' repository' (#status .~ FetchedAt (versionToMoment worldVersion))
-                        saveFetchOutcome r validations
-                        pure $ Just $ refreshInterval repository
+                        let repo = updateMeta' repository' (#status .~ FetchedAt (versionToMoment worldVersion))
+                        saveFetchOutcome repo validations
+                        pure $ Just $ refreshInterval repository stats
                     Left _ -> do
-                        let r = updateMeta' repository (#status .~ FailedAt (versionToMoment worldVersion))
-                        saveFetchOutcome r validations
+                        let repo = updateMeta' repository (#status .~ FailedAt (versionToMoment worldVersion))
+                        saveFetchOutcome repo validations
                         getFetchable >>= \case
                             Nothing -> 
                                 -- this whole fetcheable is gone
@@ -284,7 +284,7 @@ newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
                             Just fallbacks -> do  
                                 fetchFallbacks fetchConfig worldVersion fallbacks
                                 -- TODO It must be much longer?
-                                pure $ Just $ 5 * refreshInterval repository  
+                                pure $ Just $ 5 * refreshInterval repository Nothing 
       where
         fetchFallbacks fetchConfig worldVersion fallbacks = do 
             -- TODO Make it a bit smarter based on the overal number and overall load
@@ -306,8 +306,7 @@ newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
                         Left _ -> do
                             updateMeta' repository (#status .~ FailedAt (versionToMoment worldVersion))
             
-                pure (repo, validations)
-            
+                pure (repo, validations)            
 
             rwTxT database $ \tx db -> do
                 DB.saveRepositories tx db (map fst repositories)
@@ -318,9 +317,10 @@ newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
             pure $ MonoidalMap.lookup url fs
 
         -- TODO Include all the adaptive logic here
-        refreshInterval = \case 
-            RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
-            RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
+        refreshInterval repository rrdpStats = 
+            case repository of 
+                RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
+                RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
 
         saveFetchOutcome r validations =
             rwTxT database $ \tx db -> do
@@ -599,7 +599,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
                 Right wr@WorkerResult {..} -> do                              
                     let ValidationResult vs discoveredRepositories maybeSlurm = payload
-                    logDebug logger [i|discoveredRepositories = #{discoveredRepositories}|]
+                    -- logDebug logger [i|discoveredRepositories = #{discoveredRepositories}|]
                     adjustFetchers appContext discoveredRepositories fetchers
                     
                     logWorkerDone logger workerId wr
