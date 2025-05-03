@@ -212,8 +212,8 @@ newtype SlurmStore s = SlurmStore {
 data RepositoryStore s = RepositoryStore {
         rrdpS       :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
         rsyncS      :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
-        rrdpVState  :: SMap "rrdp-valitation-state" s RrdpURL (Compressed ValidationState),
-        rsyncVState :: SMap "rsync-valitation-state" s RsyncHost (Compressed (RsyncTree ValidationState))
+        rrdpVState  :: SMap "rrdp-validation-state" s RrdpURL (Compressed ValidationState),
+        rsyncVState :: SMap "rsync-validation-state" s RsyncHost (Compressed (RsyncTree ValidationState))
     }
     deriving stock (Generic)
 
