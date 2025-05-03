@@ -35,7 +35,6 @@ import           GHC.Generics
 import           Data.Foldable
 import           Data.IORef
 import           Data.Maybe
-import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set.NonEmpty                as NESet
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
