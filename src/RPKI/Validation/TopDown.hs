@@ -1,4 +1,3 @@
-{-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE OverloadedLabels           #-}
@@ -574,20 +573,22 @@ validateCaNoFetch
     ca = do 
     
     case ca of 
-        CaFull c -> do
-            increment $ topDownCounters ^. #originalCa
-            markAsReadByHash appContext topDownContext (getHash c)                         
-            validateObjectLocations c
-            vHoist $ validateObjectValidityPeriod c now
-            oneMoreCert
-            join $! nextAction $ toAKI $ getSKI c
-        CaShort c -> do 
-            increment $ topDownCounters ^. #shortcutCa 
-            markAsRead topDownContext (c ^. #key) 
-            validateLocationForShortcut (c ^. #key)
-            vHoist $ validateObjectValidityPeriod c now
-            oneMoreCert
-            join $! nextAction $ toAKI (c ^. #ski)
+        CaFull c -> 
+            vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
+                increment $ topDownCounters ^. #originalCa
+                markAsReadByHash appContext topDownContext (getHash c)                         
+                validateObjectLocations c
+                vHoist $ validateObjectValidityPeriod c now
+                oneMoreCert
+                join $! nextAction $ toAKI $ getSKI c
+        CaShort c -> 
+            vFocusOn ObjectFocus (c ^. #key) $ do            
+                increment $ topDownCounters ^. #shortcutCa 
+                markAsRead topDownContext (c ^. #key) 
+                validateLocationForShortcut (c ^. #key)
+                vHoist $ validateObjectValidityPeriod c now
+                oneMoreCert
+                join $! nextAction $ toAKI (c ^. #ski)
   where    
     validationAlgorithm = config ^. typed @ValidationConfig . typed @ValidationAlgorithm
     validationRFC = config ^. typed @ValidationConfig . typed @ValidationRFC
@@ -1100,7 +1101,6 @@ validateCaNoFetch
             -> ValidatorT IO (Maybe MftEntry)
     validateChildObject fullCa (Keyed child@(Located locations childRo) childKey) fileName validCrl = do        
         let focusOnChild = vFocusOn LocationFocus (getURL $ pickLocation locations)
-        -- let validationRFC = config ^. #validationConfig . typed
         case childRo of
             CerRO childCert -> do
                 parentScope <- askScopes                
