@@ -15,6 +15,8 @@ import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Error.Class
 
+import           Data.Generics.Product.Typed
+
 import           FileEmbedLzma
 
 import           Servant.Server.Generic
@@ -117,22 +119,16 @@ httpServer appContext = genericServe HttpApi {
         version <- liftIO $ roTx db $ \tx -> DB.getLastValidationVersion db tx 
         case version of 
             Nothing -> notFoundException
-            Just validationVersion -> do                  
-                asyncFetch <- liftIO $ roTx db $ \tx -> runMaybeT $ do 
-                                afVersion     <- MaybeT $ getLastAsyncFetchVersion appContext
-                                afMetrics     <- MaybeT $ DB.metricsForVersion tx db afVersion
-                                afValidations <- MaybeT $ getValidationsForVersion appContext afVersion
-                                resolvedValidations <- lift $ resolveVDto tx db afValidations
-                                pure (afVersion, resolvedValidations, afMetrics)
-                    
+            Just validationVersion -> do                                      
                 validation <- liftIO $ roTx db $ \tx -> runMaybeT $ do                 
                                 vMetrics     <- MaybeT $ DB.metricsForVersion tx db validationVersion
                                 vValidations <- MaybeT $ getValidationsForVersion appContext validationVersion
+                                repoValidations <- mconcat . map snd <$> DB.getRepositories tx db
                                 resolvedValidations <- lift $ resolveVDto tx db vValidations
-                                pure (validationVersion, resolvedValidations, vMetrics)
+                                pure (validationVersion, resolvedValidations, vMetrics <> repoValidations ^. typed)
 
                 systemInfo <- liftIO $ readTVarIO $ appContext ^. #appState . #system
-                pure $ mainPage systemInfo validation asyncFetch
+                pure $ mainPage systemInfo validation
 
 getVRPValidated :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s -> Maybe Text -> m [VrpDto]

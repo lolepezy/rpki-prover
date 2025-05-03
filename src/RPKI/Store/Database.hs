@@ -6,7 +6,6 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE OverloadedLabels      #-}
 {-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE QuasiQuotes           #-}
 
 module RPKI.Store.Database where
 
@@ -18,10 +17,11 @@ import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
 import           Data.Foldable            (for_)
 
+import           Data.Bifunctor           (second)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as C8
 import qualified Data.List                as List
-import           Data.Maybe               (catMaybes, fromMaybe)
+import           Data.Maybe               (catMaybes, fromMaybe, maybeToList)
 import qualified Data.Set                 as Set
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
@@ -785,9 +785,9 @@ getRsyncAnything urls extractTree create = liftIO $ do
                     ] 
 
 saveRepositories :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [Repository] -> m ()
-saveRepositories tx db repositories = do    
+saveRepositories tx db@DB { repositoryStore = RepositoryStore {..}} repositories = liftIO $ do    
     let (rrdps, rsyncs) = separate repositories
-    forM_ rrdps $ saveRrdpRepository tx db
+    forM_ rrdps $ \r -> M.put tx rrdpS (r ^. #uri) r
     saveRsyncRepositories tx db rsyncs
   where
     separate = foldr f ([], [])
@@ -795,9 +795,16 @@ saveRepositories tx db repositories = do
         f (RrdpR r)  (rrdps, rsyncs) = (r : rrdps, rsyncs)
         f (RsyncR r) (rrdps, rsyncs) = (rrdps, r : rsyncs)
 
-saveRrdpRepository :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> RrdpRepository -> m ()
-saveRrdpRepository tx DB { repositoryStore = RepositoryStore {..}} r = 
-    liftIO $ M.put tx rrdpS (r ^. #uri) r
+saveRepositoryValidationStates :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [(Repository, ValidationState)] -> m ()
+saveRepositoryValidationStates tx db@DB { repositoryStore = RepositoryStore {..}} repositories = liftIO $ do    
+    let (rrdps, rsyncs) = separate repositories
+    forM_ rrdps $ \(r, vs) -> M.put tx rrdpVState (r ^. #uri) (Compressed vs)
+    saveRsyncValidationStates tx db rsyncs
+  where
+    separate = foldr f ([], [])
+      where
+        f (RrdpR r, a)  (rrdps, rsyncs) = ((r, a) : rrdps, rsyncs)
+        f (RsyncR r, a) (rrdps, rsyncs) = (rrdps, (r, a) : rsyncs)
 
 saveRsyncRepositories :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [RsyncRepository] -> m ()
 saveRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} repositories = liftIO $ do
@@ -825,6 +832,17 @@ saveRsyncAnything repositories extractTree saveTree = liftIO $ do
         startTree <- fromMaybe newRsyncTree <$> extractTree host
         let tree' = foldr (uncurry pathToRsyncTree) startTree pathAndA
         saveTree host tree'
+
+
+getRepositories :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(Repository, ValidationState)]
+getRepositories tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
+    rrdps <- M.all tx rrdpS
+    rsyncs <- M.all tx rsyncS    
+    rrdpVs <- Map.fromList . map (second unCompressed) <$> M.all tx rrdpVState
+    
+    -- TODO Add rsync here         
+               
+    pure [ (RrdpR r, vs) | (u, r) <- rrdps, vs <- maybeToList (Map.lookup u rrdpVs) ]
 
 savePublicationPoints :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PublicationPoints -> m ()
 savePublicationPoints tx db newPPs' = do

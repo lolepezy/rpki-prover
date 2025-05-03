@@ -58,6 +58,7 @@ import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.AppStorage
 import           RPKI.TAL
+import           RPKI.Parallel
 import           RPKI.Util                     
 import           RPKI.Time
 import           RPKI.Worker
@@ -65,7 +66,7 @@ import           RPKI.SLURM.Types
 import           RPKI.Http.Dto
 import           RPKI.Http.Types
 import Data.List.NonEmpty (NonEmpty)
-import Data.Map.Monoidal (MonoidalMap)
+import Data.Map.Monoidal (MonoidalMap, valid)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import UnliftIO (pooledForConcurrentlyN)
 
@@ -148,7 +149,8 @@ data Fetchers = Fetchers {
         -- Fetchers that are currently running
         fetcheables     :: TVar Fetcheables,
         runningFetchers :: TVar (Map.Map RpkiURL (Async ())),
-        fetcheableToTAs :: TVar (Map.Map RpkiURL (Set.Set TaName))
+        fetcheableToTAs :: TVar (Map.Map RpkiURL (Set.Set TaName)),
+        fetchSemaphore  :: Semaphore
     }
     deriving stock (Generic)
 
@@ -262,18 +264,19 @@ newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
                 repository <- fromMaybe (newRepository url) <$> 
                                 roTxT database (\tx db -> DB.getRepository tx db url) 
                                 
-                ((r, validations), duratioMs) <- timedMS $ 
+                ((r, validations), duratioMs) <- 
+                        withFetchLimits fetchConfig $ timedMS $ 
                             runValidatorT (newScopes' RepositoryFocus url) $ 
                                 fetchRepository appContext fetchConfig worldVersion repository
 
                 case r of
                     Right (repository', stats) -> do 
                         let r = updateMeta' repository' (#status .~ FetchedAt (versionToMoment worldVersion))
-                        rwTxT database $ \tx db -> do                             
-                            DB.saveRepositories tx db [r]
+                        saveFetchOutcome r validations
                         pure $ Just $ refreshInterval repository
                     Left _ -> do
-                        -- TODO Save error status here somehow
+                        let r = updateMeta' repository (#status .~ FailedAt (versionToMoment worldVersion))
+                        saveFetchOutcome r validations
                         getFetchable >>= \case
                             Nothing -> 
                                 -- this whole fetcheable is gone
@@ -291,20 +294,24 @@ newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
                 repository <- fromMaybe (newRepository fallbackUrl) <$> 
                                 roTxT database (\tx db -> DB.getRepository tx db fallbackUrl)
                                 
-                ((r, validations), duratioMs) <- timedMS $ 
+                ((r, validations), duratioMs) <- 
+                        withFetchLimits fetchConfig $ timedMS $ 
                             runValidatorT (newScopes' RepositoryFocus fallbackUrl) $ 
                                 fetchRepository appContext fetchConfig worldVersion repository                
 
-                pure $ case r of
-                    Right (repository', stats) -> 
-                        -- TODO Do something with RRDP stats
-                        updateMeta' repository' (#status .~ FetchedAt (versionToMoment worldVersion))
-                    Left _ -> do
-                        updateMeta' repository (#status .~ FailedAt (versionToMoment worldVersion))
+                let repo = case r of
+                        Right (repository', stats) -> 
+                            -- TODO Do something with RRDP stats
+                            updateMeta' repository' (#status .~ FetchedAt (versionToMoment worldVersion))
+                        Left _ -> do
+                            updateMeta' repository (#status .~ FailedAt (versionToMoment worldVersion))
             
-            logDebug logger [i|repositories: #{repositories}.|]
+                pure (repo, validations)
+            
 
-            rwTxT database $ \tx db -> DB.saveRepositories tx db repositories                
+            rwTxT database $ \tx db -> do
+                DB.saveRepositories tx db (map fst repositories)
+                DB.saveRepositoryValidationStates tx db repositories
         
         getFetchable = do   
             Fetcheables fs <- readTVarIO fetcheables
@@ -314,6 +321,16 @@ newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
         refreshInterval = \case 
             RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
             RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
+
+        saveFetchOutcome r validations =
+            rwTxT database $ \tx db -> do
+                DB.saveRepositories tx db [r]
+                DB.saveRepositoryValidationStates tx db [(r, validations)]
+
+        withFetchLimits fetchConfig f = do
+            let Seconds (fromIntegral . (*1000_000) -> intervalMicroSeconds) = fetchConfig ^. #fetchLaunchWaitDuration
+            withSemaphoreOrTimeout fetchSemaphore intervalMicroSeconds f
+
 
 
 -- A job run can be the first one or not and 
@@ -342,11 +359,12 @@ data WorkflowShared = WorkflowShared {
     deriving stock (Generic)
 
 
-withWorkflowShared :: (MonadBaseControl IO m, MonadIO m) 
-                    => PrometheusMetrics 
+withWorkflowShared :: (MonadBaseControl IO m, MonadIO m, Storage s) 
+                    => AppContext s
+                    -> PrometheusMetrics 
                     -> (WorkflowShared -> m b) 
                     -> m b
-withWorkflowShared prometheusMetrics f = do
+withWorkflowShared AppContext {..} prometheusMetrics f = do
     shared <- liftIO $ atomically $ WorkflowShared
                         <$> newTVar False
                         <*> newRunningTasks
@@ -355,7 +373,8 @@ withWorkflowShared prometheusMetrics f = do
                         <*> (Fetchers <$>
                                 newTVar mempty <*>
                                 newTVar mempty <*>
-                                newTVar mempty)
+                                newTVar mempty <*>
+                                newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism))
     f shared `finally`
         liftIO (mask_ $ do
             fs <- atomically $ Map.elems <$> readTVar (shared ^. #fetchers . #runningFetchers)
@@ -407,7 +426,7 @@ runWorkflow appContext@AppContext {..} tals = do
             prometheusMetrics <- createPrometheusMetrics config
 
             -- Shared state between the threads for simplicity.
-            withWorkflowShared prometheusMetrics $ \workflowShared ->             
+            withWorkflowShared appContext prometheusMetrics $ \workflowShared ->             
                 case config ^. #proverRunMode of     
                     OneOffMode vrpOutputFile -> oneOffRun workflowShared vrpOutputFile
                     ServerMode ->             

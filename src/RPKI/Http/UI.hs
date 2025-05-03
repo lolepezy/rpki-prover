@@ -29,7 +29,6 @@ import qualified Data.List.NonEmpty          as NonEmpty
 import qualified Data.List                   as List
 import           Data.Map.Monoidal.Strict    (getMonoidalMap)
 import qualified Data.Map.Monoidal.Strict    as MonoidalMap
-import           Data.String.Interpolate.IsString as S
 
 import           Text.Blaze.Html5            as H
 import           Text.Blaze.Html5.Attributes as A
@@ -46,8 +45,8 @@ import           RPKI.Version
 
 mainPage :: SystemInfo 
         -> Maybe (WorldVersion, ValidationsDto ResolvedVDto, RawMetric) 
-        -> Maybe (WorldVersion, ValidationsDto ResolvedVDto, RawMetric) -> Html
-mainPage systemInfo validation asyncFecth =     
+        -> Html
+mainPage systemInfo validation =     
     H.docTypeHtml $ do
         H.head $ 
             link ! rel "stylesheet" ! href "/static/styles.css"
@@ -58,12 +57,7 @@ mainPage systemInfo validation asyncFecth =
                 H.a ! A.href "#rrdp-metrics"       $ H.text "RRDP metrics"
                 H.a ! A.href "#rsync-metrics"      $ H.text "Rsync metrics"
                 H.a ! A.href "#validation-details" $ H.text "Validation details"
-                let spaces = replicateM_ 4 space
-                for_ asyncFecth $ \_ -> do                 
-                    H.a ! A.href "#async-fetch"                    $ H.text "Asynchronous fetches"
-                    H.a ! A.href "#async-fetch-rrdp-metrics"       $ spaces >> H.text "RRDP fetches"
-                    H.a ! A.href "#async-fetch-rsync-metrics"      $ spaces >> H.text "Rsync fetches"
-                    H.a ! A.href "#async-fetch-validation-details" $ spaces >> H.text "Errors & Warnings"
+                
 
         for_ validation $ \(version, vs, rawMetric@RawMetric {..}) ->
             H.div ! A.class_ "main" $ do
@@ -83,31 +77,6 @@ mainPage systemInfo validation asyncFecth =
                 H.a ! A.id "validation-details" $ ""
                 H.section $ H.h4 "Validation details"
                 validaionDetailsHtml $ vs ^. #validations
-
-                for_ asyncFecth $ \(afVersion, asValidations, rawMetrics) -> do 
-                    H.a ! A.id "async-fetch" $ ""
-                    H.section $ H.h4 "Asynchronous fetches"                    
-                    H.text [S.i|Metrics, errors and warning for the slow and timed out repositories 
-                                that are fetched asynchronously at #{instantDateFormat $ versionToMoment afVersion}.|]
-                    H.br >> H.br            
-                    H.a ! A.id "async-fetch-rrdp-metrics" $ ""
-                    H.section $ H.h4 "RRDP metrics"
-                    if rawMetrics ^. #rrdpMetrics == mempty then 
-                        H.text "No RRDP metrics for async fetches."
-                    else 
-                        rrdpMetricsHtml $ rawMetrics ^. #rrdpMetrics
-                    H.a ! A.id "async-fetch-rsync-metrics" $ ""
-                    H.section $ H.h4 "Rsync metrics"
-                    if rawMetrics ^. #rsyncMetrics == mempty then 
-                        H.section $ H.text "No rsync metrics for async fetches."
-                    else 
-                        rsyncMetricsHtml $ rawMetrics ^. #rsyncMetrics        
-                    H.a ! A.id "async-fetch-validation-details" $ ""
-                    H.section $ H.h4 "Errors & Warnings"                
-                    if asValidations ^. #validations == mempty then
-                        H.section $ H.text "No issues for async fetches."
-                    else 
-                        validaionDetailsHtml $ asValidations ^. #validations
 
 
 overallHtml :: SystemInfo -> WorldVersion -> Html
@@ -224,10 +193,7 @@ rrdpMetricsHtml rrdpMetricMap =
             genTh $ do 
                 H.text "Repository (" 
                 toHtml $ MonoidalMap.size rrdpMap
-                H.text " in total)"                                 
-            genTh $ H.div ! A.class_ "tooltip" $ do
-                H.text "Fetching"
-                H.span ! A.class_ "tooltiptext" $ rrdpFetchTooltip            
+                H.text " in total)"                                         
             genTh $ H.div ! A.class_ "tooltip" $ do 
                 H.text "RRDP Update"            
                 H.span ! A.class_ "tooltiptext" $ rrdpUpdateTooltip
@@ -244,7 +210,6 @@ rrdpMetricsHtml rrdpMetricMap =
                 let repository = NonEmpty.head scope'
                 htmlRow index $ do 
                     genTd $ toHtml $ focusToText repository                        
-                    td ! A.class_ "gen-t no-wrap" $ toHtml $ rm ^. #fetchFreshness
                     td ! A.class_ "gen-t no-wrap" $ toHtml $ rm ^. #rrdpSource                    
                     genTd $ toHtml $ show $ rm ^. #added
                     genTd $ toHtml $ show $ rm ^. #deleted
@@ -355,7 +320,7 @@ rrdpUpdateTooltip =
         H.ul $ do 
             H.li $ H.text "'Snapshot N' - snapshot with serial N was used for RRDP update"
             H.li $ H.text "'Deltas N to M' - deltas from serial N to serial M were used for RRDP update"
-            H.li $ H.text "'-' - No update is needed, local and remote serials are equal"
+            H.li $ H.text "'Up-to-date' - No update is needed, local and remote serials are equal or E-Tag didn't change"
 
 validationPathTootip :: Html
 validationPathTootip = do   
@@ -417,7 +382,7 @@ instance ToMarkup FetchFreshness where
 
 instance ToMarkup RrdpSource where 
     toMarkup = \case 
-        RrdpNoUpdate -> toMarkup ("-" :: Text)
+        RrdpNoUpdate -> toMarkup ("Up-to-date" :: Text)
         RrdpDelta from to 
             | from == to -> [T.i|Delta #{from}|]
             | otherwise  -> [T.i|Deltas #{from} to #{to}|]                
