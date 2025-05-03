@@ -8,7 +8,7 @@
 
 module RPKI.Workflow where
 
-import Control.Concurrent ( forkIO, forkFinally, threadDelay )
+import           Control.Concurrent              as Conc
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
@@ -69,7 +69,7 @@ import UnliftIO (pooledForConcurrentlyN)
 
 
 {- 
-    Full async execution.
+    Fully asynchronous execution.
 
     - Validations are scheduled periodically for all TAs.
 
@@ -94,7 +94,7 @@ import UnliftIO (pooledForConcurrentlyN)
     - 
 -}
 
-data JobId = Fetcher RrdpURL [RsyncURL]
+data JobId = Fetcher Fetcheables
            | Validation [TAL]
            | CacheCleanup
            | LmdbCompaction
@@ -145,7 +145,7 @@ runJob Jobs {..} jobId action =
 data Fetchers = Fetchers {
         -- Fetchers that are currently running
         fetcheables     :: TVar Fetcheables,
-        runningFetchers :: TVar (Map.Map RpkiURL (Async ())),
+        runningFetchers :: TVar (Map.Map RpkiURL ThreadId),
         fetcheableToTAs :: TVar (Map.Map RpkiURL (Set.Set TaName)),
         fetchSemaphore  :: Semaphore
     }
@@ -154,16 +154,16 @@ data Fetchers = Fetchers {
 
 runFetcher :: Storage s => AppContext s -> Fetchers -> TaName -> RpkiURL -> IO ()
 runFetcher appContext fetchers@Fetchers {..} taName url = mask_ $ do
-    a <- async $ newFetcher appContext fetchers url
+    thread <- forkIO $ newFetcher appContext fetchers url
     atomically $ do
-        modifyTVar' runningFetchers (Map.insert url a)
+        modifyTVar' runningFetchers (Map.insert url thread)
         modifyTVar' fetcheableToTAs (Map.insertWith Set.union url (Set.singleton taName))
 
 dropFetcher :: Fetchers -> RpkiURL -> IO ()
 dropFetcher Fetchers {..} url = mask_ $ do
     readTVarIO runningFetchers >>= \running -> do
-        for_ (Map.lookup url running) $ \a -> do
-            throwTo (asyncThreadId a) AsyncCancelled
+        for_ (Map.lookup url running) $ \thread -> do
+            Conc.throwTo thread AsyncCancelled
             atomically $ do
                 modifyTVar' runningFetchers (Map.delete url)
                 modifyTVar' fetcheableToTAs (Map.delete url)
@@ -175,38 +175,38 @@ adjustFetchers :: Storage s => AppContext s -> Map.Map TaName Fetcheables -> Fet
 adjustFetchers appContext@AppContext {..} discoveredFetcheables fetchers@Fetchers {..} = do
 
     (currentFetchers, toStop, toStart) <- atomically $ do        
-        let newFetcheables = mconcat $ Map.elems discoveredFetcheables
-        writeTVar fetcheables newFetcheables
+        let newFetcheables_ = mconcat $ Map.elems discoveredFetcheables
+        writeTVar fetcheables newFetcheables_
         running <- readTVar runningFetchers
 
-        let updatedUrls = MonoidalMap.keysSet $ unFetcheables newFetcheables
+        let updatedUrls = MonoidalMap.keysSet $ unFetcheables newFetcheables_
             runningFetcherUrls = Map.keysSet running
 
         pure (running, 
               Set.difference runningFetcherUrls updatedUrls,
               Set.difference updatedUrls runningFetcherUrls)        
 
-    logDebug logger [i|Adjusting fetchers: toStop = #{toStop}, toStart = #{toStart}, currentFetchers = #{Map.keys currentFetchers}|]
+    -- logDebug logger [i|Adjusting fetchers: toStop = #{toStop}, toStart = #{toStart}, currentFetchers = #{Map.keys currentFetchers}|]
 
     mask_ $ do
         -- Stop and remove fetchers for URLs that are no longer needed    
         for_ (Set.toList toStop) $ \url ->
-            for_ (Map.lookup url currentFetchers) $ \a -> do
-                throwTo (asyncThreadId a) AsyncCancelled
+            for_ (Map.lookup url currentFetchers) $ \thread -> do
+                Conc.throwTo thread AsyncCancelled
 
-        asyncs <- forM (Set.toList toStart) $ \url ->
-            (url, ) <$> async (newFetcher appContext fetchers url)
+        threads <- forM (Set.toList toStart) $ \url ->
+            (url, ) <$> forkIO (newFetcher appContext fetchers url)
 
         atomically $ do
             modifyTVar' runningFetchers $ \r -> do 
-                let withNewAsyncs = foldr (uncurry Map.insert) r asyncs
-                foldr Map.delete withNewAsyncs $ Set.toList toStop
+                let addedNewAsyncs = foldr (uncurry Map.insert) r threads
+                foldr Map.delete addedNewAsyncs $ Set.toList toStop
 
             let discoveredUrls = Map.fromListWith Set.union 
                     [ (ta, Set.singleton url) | 
                         (ta, Fetcheables fs) <- Map.toList discoveredFetcheables,
                         url <- MonoidalMap.keys fs
-                        ]
+                    ]
 
             modifyTVar' fetcheableToTAs (`updateRepositoryToTAs` discoveredUrls)
                         
@@ -240,15 +240,43 @@ newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
   where
     go = do 
         Now start <- thisInstant        
-        actuallyFetch >>= \case        
-            Nothing -> do                
-                logInfo logger [i|Fetcher for #{url} is not needed and will be deleted.|]
-            Just interval -> do 
-                Now end <- thisInstant
-                let pause = leftToWait start end interval
-                when (pause > 0) $
-                    threadDelay $ fromIntegral pause                
-                go    
+        pauseIfNeeded start
+        fetchLoop
+      where
+        fetchLoop = do 
+            Now start <- thisInstant
+            actuallyFetch >>= \case        
+                Nothing -> do                
+                    logInfo logger [i|Fetcher for #{url} is not needed and will be deleted.|]
+                Just interval -> do 
+                    Now end <- thisInstant
+                    let pause = leftToWait start end interval
+                    when (pause > 0) $
+                        threadDelay $ fromIntegral pause
+
+                    fetchLoop 
+
+    pauseIfNeeded now = do 
+        f <- getFetchable 
+        for_ f $ \_ -> do 
+            r <- roTxT database (\tx db -> DB.getRepository tx db url)
+            for_ r $ \repository -> do          
+                let lastFetchMoment = 
+                        case getMeta repository ^. #status of
+                            FetchedAt t -> Just t
+                            FailedAt t  -> Just t
+                            _           -> Nothing
+
+                for_ lastFetchMoment $ \lastFetch -> do 
+                    let interval :: Seconds = refreshInterval repository Nothing
+                    let pause = leftToWait lastFetch now interval                                        
+                    when (pause > 0) $ do  
+                        let pauseSeconds = pause `div` 1_000_000
+                        logDebug logger $ 
+                            [i|Fetcher for #{url} finished at #{lastFetch}, now is #{now}, |] <> 
+                            [i|interval is #{interval}s, first fetch will be paused by #{pauseSeconds}s.|]
+                        threadDelay $ fromIntegral pause
+
 
     actuallyFetch = do 
         getFetchable >>= \case        
@@ -312,24 +340,24 @@ newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
                 DB.saveRepositories tx db (map fst repositories)
                 DB.saveRepositoryValidationStates tx db repositories
         
-        getFetchable = do   
-            Fetcheables fs <- readTVarIO fetcheables
-            pure $ MonoidalMap.lookup url fs
+    getFetchable = do   
+        Fetcheables fs <- readTVarIO fetcheables
+        pure $ MonoidalMap.lookup url fs
 
-        -- TODO Include all the adaptive logic here
-        refreshInterval repository rrdpStats = 
-            case repository of 
-                RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
-                RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
+    -- TODO Include all the adaptive logic here
+    refreshInterval repository rrdpStats = 
+        case repository of 
+            RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
+            RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
 
-        saveFetchOutcome r validations =
-            rwTxT database $ \tx db -> do
-                DB.saveRepositories tx db [r]
-                DB.saveRepositoryValidationStates tx db [(r, validations)]
+    saveFetchOutcome r validations =
+        rwTxT database $ \tx db -> do
+            DB.saveRepositories tx db [r]
+            DB.saveRepositoryValidationStates tx db [(r, validations)]
 
-        withFetchLimits fetchConfig f = do
-            let Seconds (fromIntegral . (*1000_000) -> intervalMicroSeconds) = fetchConfig ^. #fetchLaunchWaitDuration
-            withSemaphoreOrTimeout fetchSemaphore intervalMicroSeconds f
+    withFetchLimits fetchConfig f = do
+        let Seconds (fromIntegral . (*1000_000) -> intervalMicroSeconds) = fetchConfig ^. #fetchLaunchWaitDuration
+        withSemaphoreOrTimeout fetchSemaphore intervalMicroSeconds f
 
 
 
@@ -378,7 +406,7 @@ withWorkflowShared AppContext {..} prometheusMetrics f = do
     f shared `finally`
         liftIO (mask_ $ do
             fs <- atomically $ Map.elems <$> readTVar (shared ^. #fetchers . #runningFetchers)
-            for_ fs $ \a -> throwTo (asyncThreadId a) AsyncCancelled)
+            for_ fs $ \thread -> Conc.throwTo thread AsyncCancelled)
 
 -- Different types of periodic tasks that may run 
 data TaskType =
