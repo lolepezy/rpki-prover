@@ -720,8 +720,8 @@ runWorkflow appContext@AppContext {..} tals = do
         
         -- Kill all orphan rsync processes that are still running and refusing to die
         -- Sometimes and rsync process can leak and linger, kill the expired ones
-        removeExpiredRsyncProcesses appState >>= \processes ->
-            forM_ processes $ \(pid, WorkerInfo {..}) ->  
+        removeExpiredRsyncProcesses appState >>=
+            mapM_ (\(pid, WorkerInfo {..}) ->  
                 -- Run it in a separate thread, if sending the signal fails
                 -- the thread gets killed without no impact on anything else 
                 -- ever. If it's successful, we'll log a message about it
@@ -729,13 +729,13 @@ runWorkflow appContext@AppContext {..} tals = do
                     signalProcess killProcess pid
                     logInfo logger [i|Killed rsync client process with PID #{pid}, #{cli}, it expired at #{endOfLife}.|])
                     `catch` 
-                    (\(_ :: SomeException) -> pure ())            
+                    (\(_ :: SomeException) -> pure ()))         
 
     -- Delete local rsync mirror. The assumption here is that over time there
     -- be a lot of local copies of rsync repositories that are so old that 
     -- the next time they are updated, most of the new repository will be downloaded 
     -- anyway. Since most of the time RRDP is up, rsync updates are rare, so local 
-    -- data is stale and just takes disk space.
+    -- data is mostly stale and just takes disk space.
     rsyncCleanup _ jobRun =
         case jobRun of 
             -- Do not actually do anything at the very first run.
