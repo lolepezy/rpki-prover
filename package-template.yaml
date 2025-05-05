@@ -112,6 +112,7 @@ dependencies:
 - tasty-hunit
 - tasty-quickcheck    
 - th-utilities
+- time
 - generic-arbitrary
 - quickcheck-instances
 - unix

@@ -31,6 +31,7 @@ import qualified Data.Set                        as Set
 import           Data.Maybe                      (fromMaybe)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
+import           Data.Time.Clock                 (NominalDiffTime, diffUTCTime, getCurrentTime)
 
 import           Data.String.Interpolate.IsString
 import           System.Exit
@@ -65,7 +66,7 @@ import           RPKI.Worker
 import           RPKI.SLURM.Types
 import           RPKI.Http.Dto
 import           RPKI.Http.Types
-import UnliftIO (pooledForConcurrentlyN)
+import           UnliftIO (pooledForConcurrentlyN)
 
 
 {- 
@@ -690,16 +691,29 @@ runWorkflow appContext@AppContext {..} tals = do
     -- Delete temporary files and LMDB stale reader transactions
     cleanupLeftovers = do
         -- Cleanup tmp directory, if some fetchers died abruptly 
-        -- there may be leftover files.
+        -- there may be leftover files.        
         let tmpDir = configValue $ config ^. #tmpDirectory
         logDebug logger [i|Cleaning up temporary directory #{tmpDir}.|]
-        listDirectory tmpDir >>= mapM_ (removePathForcibly . (tmpDir </>))
+        now <- getCurrentTime
+        files <- listDirectory tmpDir
+
+        -- Temporary files cannot meaningfully live longer than that
+        let Seconds (fromIntegral -> maxTimeout :: NominalDiffTime) = 
+                10 + max
+                    (config ^. #rrdpConf . #rrdpTimeout)
+                    (config ^. #rrdpConf . #asyncRrdpTimeout)
+
+        forM_ files $ \file -> do 
+            let fullPath = tmpDir </> file
+            ageInSeconds <- diffUTCTime now <$> getModificationTime fullPath            
+            when (ageInSeconds > maxTimeout) $
+                removePathForcibly fullPath
         
         -- Cleanup reader table of LMDB cache, it may get littered by 
         -- dead processes, unfinished/killed transaction, etc.
         -- All these stale transactions are essentially bugs, but it's 
-        -- easier to just clean them up rather then prevent all 
-        -- possible leakages (even if it were possible).
+        -- easier to just clean them up rather than prevent all 
+        -- possible leakages (even if it were possible to prevent them).
         cleaned <- cleanUpStaleTx appContext
         when (cleaned > 0) $ 
             logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]
