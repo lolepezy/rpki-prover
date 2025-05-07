@@ -1031,7 +1031,7 @@ validateCaNoFetch
                         case objectType of 
                             Just type_ -> do
                                 increment $ topDownCounters ^. #readParsed
-                                -- we expect certificates to be stored in the parsed-serialised form                                                            
+                                -- we expect objects to be stored in the parsed-serialised form                                                            
                                 getParsedObject tx db key $ do
                                     increment $ topDownCounters ^. #readOriginal
                                     -- try to get the original blob and (re-)parse 

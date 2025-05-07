@@ -25,8 +25,10 @@ import qualified Data.ByteString.Lazy            as LBS
 import           Data.Foldable                   (for_)
 import qualified Data.Text                       as Text
 import qualified Data.List                       as List
+import           Data.Map.Strict                 (Map)
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
+import           Data.Set                        (Set)
 import qualified Data.Set                        as Set
 import           Data.Maybe                      (fromMaybe)
 import           Data.Int                        (Int64)
@@ -34,6 +36,7 @@ import           Data.Hourglass
 import           Data.Time.Clock                 (NominalDiffTime, diffUTCTime, getCurrentTime)
 
 import           Data.String.Interpolate.IsString
+import           Numeric.Natural
 import           System.Exit
 import           System.Directory
 import           System.FilePath                  ((</>))
@@ -113,7 +116,7 @@ data Run = Run {
     deriving stock (Eq, Ord, Generic)
 
 newtype Jobs = Jobs {
-        running :: TVar (Map.Map JobId Run)
+        running :: TVar (Map JobId Run)
     }
     deriving stock (Generic)  
 
@@ -146,19 +149,13 @@ runJob Jobs {..} jobId action =
 data Fetchers = Fetchers {
         -- Fetchers that are currently running
         fetcheables     :: TVar Fetcheables,
-        runningFetchers :: TVar (Map.Map RpkiURL ThreadId),
-        fetcheableToTAs :: TVar (Map.Map RpkiURL (Set.Set TaName)),
+        runningFetchers :: TVar (Map RpkiURL ThreadId),
+        fetcheableToTAs :: TVar (Map RpkiURL (Set TaName)),
         fetchSemaphore  :: Semaphore
     }
     deriving stock (Generic)
 
 
-runFetcher :: Storage s => AppContext s -> Fetchers -> TaName -> RpkiURL -> IO ()
-runFetcher appContext fetchers@Fetchers {..} taName url = mask_ $ do
-    thread <- forkIO $ newFetcher appContext fetchers url
-    atomically $ do
-        modifyTVar' runningFetchers (Map.insert url thread)
-        modifyTVar' fetcheableToTAs (Map.insertWith Set.union url (Set.singleton taName))
 
 dropFetcher :: Fetchers -> RpkiURL -> IO ()
 dropFetcher Fetchers {..} url = mask_ $ do
@@ -172,8 +169,8 @@ dropFetcher Fetchers {..} url = mask_ $ do
 -- | Adjust running fetchers to the latest discovered repositories
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
-adjustFetchers :: Storage s => AppContext s -> Map.Map TaName Fetcheables -> Fetchers -> IO ()
-adjustFetchers appContext@AppContext {..} discoveredFetcheables fetchers@Fetchers {..} = do
+adjustFetchers :: Storage s => AppContext s -> Map TaName Fetcheables -> WorkflowShared -> IO ()
+adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@WorkflowShared { fetchers = Fetchers {..}, ..} = do
 
     (currentFetchers, toStop, toStart) <- atomically $ do        
         let newFetcheables_ = mconcat $ Map.elems discoveredFetcheables
@@ -196,7 +193,7 @@ adjustFetchers appContext@AppContext {..} discoveredFetcheables fetchers@Fetcher
                 Conc.throwTo thread AsyncCancelled
 
         threads <- forM (Set.toList toStart) $ \url ->
-            (url, ) <$> forkIO (newFetcher appContext fetchers url)
+            (url, ) <$> forkIO (newFetcher appContext workflowShared url)
 
         atomically $ do
             modifyTVar' runningFetchers $ \r -> do 
@@ -214,9 +211,9 @@ adjustFetchers appContext@AppContext {..} discoveredFetcheables fetchers@Fetcher
 -- This one is made public only for testing purposes.
 -- Update the mapping between repositories and TAs based 
 -- on the newly discovered URLs per TAs.
-updateRepositoryToTAs :: Map.Map RpkiURL (Set.Set TaName) 
-                    -> Map.Map TaName (Set.Set RpkiURL) 
-                    -> Map.Map RpkiURL (Set.Set TaName)
+updateRepositoryToTAs :: Map RpkiURL (Set TaName) 
+                    -> Map TaName (Set RpkiURL) 
+                    -> Map RpkiURL (Set TaName)
 updateRepositoryToTAs fetcheableToTAs discoveredUrls = 
     Map.fromListWith Set.union $ newlyAdded <> existingOverlapping
   where
@@ -234,8 +231,8 @@ updateRepositoryToTAs fetcheableToTAs discoveredUrls =
         ]
         
 
-newFetcher :: Storage s => AppContext s -> Fetchers -> RpkiURL -> IO ()
-newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
+newFetcher :: Storage s => AppContext s -> WorkflowShared -> RpkiURL -> IO ()
+newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetchers {..}, ..} url = do
     go `finally`
         dropFetcher fetchers url
   where
@@ -301,7 +298,8 @@ newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
                 case r of
                     Right (repository', stats) -> do 
                         let repo = updateMeta' repository' (#status .~ FetchedAt (versionToMoment worldVersion))
-                        saveFetchOutcome repo validations
+                        saveFetchOutcome repo validations                        
+                        when (hasUpdates validations) triggerTaRevalidation
                         pure $ Just $ refreshInterval repository stats
                     Left _ -> do
                         let repo = updateMeta' repository (#status .~ FailedAt (versionToMoment worldVersion))
@@ -340,8 +338,10 @@ newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
             rwTxT database $ \tx db -> do
                 DB.saveRepositories tx db (map fst repositories)
                 DB.saveRepositoryValidationStates tx db repositories
+
+            when (any (hasUpdates . snd) repositories) triggerTaRevalidation
         
-    getFetchable = do   
+    getFetchable = do 
         Fetcheables fs <- readTVarIO fetcheables
         pure $ MonoidalMap.lookup url fs
 
@@ -358,7 +358,20 @@ newFetcher appContext@AppContext {..} fetchers@Fetchers {..} url = do
 
     withFetchLimits fetchConfig f = do
         let Seconds (fromIntegral . (*1000_000) -> intervalMicroSeconds) = fetchConfig ^. #fetchLaunchWaitDuration
-        withSemaphoreOrTimeout fetchSemaphore intervalMicroSeconds f
+        withSemaphoreOrTimeout (fetchers ^. #fetchSemaphore) intervalMicroSeconds f
+
+    hasUpdates validations = let 
+            metrics = validations ^. #topDownMetric
+            rrdps = MonoidalMap.elems $ unMetricMap $ metrics ^. #rrdpMetrics
+            rsyncs = MonoidalMap.elems $ unMetricMap $ metrics ^. #rsyncMetrics                
+        in any (\m -> rrdpRepoHasUpdates (m ^. typed)) rrdps ||
+           any (\m -> rsyncRepoHasUpdates (m ^. typed)) rsyncs
+            
+    triggerTaRevalidation = atomically $ do 
+        f2ta <- readTVar fetcheableToTAs
+        modifyTVar' tasToValidate $ (<>) (fromMaybe mempty (Map.lookup url f2ta))        
+
+
 
 
 
@@ -370,20 +383,23 @@ data JobRun = FirstRun | RanBefore
 data WorkflowShared = WorkflowShared { 
         -- Indicates if anything was ever deleted from the DB
         -- since the start of the server. It helps to avoid 
-        -- unnecessary cleanup and compaction procedures.
+        -- unnecessary compaction procedures: no deletions 
+        -- means no compaction is reqired.
         deletedAnythingFromDb :: TVar Bool,
 
         -- Currently running tasks, it is needed to keep track which 
         -- tasks can run parallel to each other and avoid race conditions.
-        runningTasks :: RunningTasks,
+        runningTasks :: Tasks,
 
+        -- It's just handy to avoid passing this one as a parameter the whole time
         prometheusMetrics :: PrometheusMetrics,
 
-        -- Async fetch is a special case, we want to know if it's 
-        -- running to avoid launching it until the previous run is done.
-        asyncFetchIsRunning :: TVar Bool,
+        -- Looping fetcher threads
+        fetchers :: Fetchers,
 
-        fetchers            :: Fetchers
+        -- TAs that need to be revalidated because repositories 
+        -- associated with these TAs have been fetched.
+        tasToValidate :: TVar (Set TaName)
     }
     deriving stock (Generic)
 
@@ -394,16 +410,17 @@ withWorkflowShared :: (MonadBaseControl IO m, MonadIO m, Storage s)
                     -> (WorkflowShared -> m b) 
                     -> m b
 withWorkflowShared AppContext {..} prometheusMetrics f = do
-    shared <- liftIO $ atomically $ WorkflowShared
-                        <$> newTVar False
-                        <*> newRunningTasks
-                        <*> pure prometheusMetrics
-                        <*> newTVar False
-                        <*> (Fetchers <$>
-                                newTVar mempty <*>
-                                newTVar mempty <*>
-                                newTVar mempty <*>
-                                newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism))
+    shared <- liftIO $ atomically $ do 
+        deletedAnythingFromDb <- newTVar False
+        runningTasks          <- newRunningTasks
+        fetchers <- Fetchers <$>
+                        newTVar mempty <*>
+                        newTVar mempty <*>
+                        newTVar mempty <*>
+                        newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)
+        tasToValidate <- newTVar mempty
+        pure WorkflowShared {..}
+
     f shared `finally`
         liftIO (mask_ $ do
             fs <- atomically $ Map.elems <$> readTVar (shared ^. #fetchers . #runningFetchers)
@@ -419,11 +436,11 @@ data TaskType =
 
         | LmdbCompactTask
 
-        -- cleanup files in tmp and stale LMDB reader transactions
+        -- cleanup files in tmp, stale LMDB reader transactions, run-away child processes, etc.
         | LeftoversCleanupTask
 
         -- async fetches of slow repositories
-        | AsyncFetchTask
+        | FetchTask
 
         -- Delete local rsync mirror once in a long while
         | RsyncCleanupTask
@@ -457,32 +474,75 @@ runWorkflow appContext@AppContext {..} tals = do
             -- Shared state between the threads for simplicity.
             withWorkflowShared appContext prometheusMetrics $ \workflowShared ->             
                 case config ^. #proverRunMode of     
+                    -- TODO This one can be implemented the same as server mode, but
+                    -- it should stop when 
+                    --  1) no pending repositories exist anymore
+                    --  2) one more validation run happened after that
                     OneOffMode vrpOutputFile -> oneOffRun workflowShared vrpOutputFile
                     ServerMode ->             
                         void $ concurrently
                             -- Run the main scheduler and RTR server if RTR is configured    
-                            (runScheduledTasks workflowShared)
+                            (concurrently
+                                (runScheduledTasks workflowShared)
+                                (revalidate workflowShared))
                             runRtrIfConfigured            
         )
   where
+    revalidate workflowShared = do 
+        canValidateAgain <- newTVarIO True
+        concurrently_ 
+            (go canValidateAgain FirstRun)
+            (let interval = config ^. typed @ValidationConfig . #revalidationInterval
+             in forever $ do                 
+                threadDelay (toMicroseconds interval)
+                atomically $ do                         
+                    writeTVar (workflowShared ^. #tasToValidate) (Set.fromList $ map getTaName tals)
+                    writeTVar canValidateAgain True)
+      where
+        go canValidateAgain run = do 
+            talsToValidate <- atomically $ do
+                (`unless` retry) =<< readTVar canValidateAgain
+                case run of
+                    FirstRun -> do
+                        writeTVar (workflowShared ^. #tasToValidate) mempty
+                        writeTVar canValidateAgain False
+                        pure tals
+                    RanBefore -> do 
+                        tas <- readTVar (workflowShared ^. #tasToValidate)
+                        when (Set.null tas) retry
+                        -- reset it every time
+                        writeTVar (workflowShared ^. #tasToValidate) mempty
+                        writeTVar canValidateAgain False
+                        pure $ filter (\tal -> getTaName tal `Set.member` tas) tals 
+
+            worldVersion <- createWorldVersion
+            
+            void $ validateTAs workflowShared worldVersion talsToValidate
+            forkIO $ do     
+                let minimalPeriodBetweenRevalidations = 30_000_000
+                Conc.threadDelay minimalPeriodBetweenRevalidations
+                atomically $ writeTVar canValidateAgain True
+            
+            go canValidateAgain RanBefore
+
     oneOffRun workflowShared vrpOutputFile = do 
         worldVersion <- createWorldVersion
-        void $ validateTAs workflowShared worldVersion FirstRun
+        void $ validateTAs workflowShared worldVersion tals
         vrps <- roTxT database $ \tx db -> 
                 DB.getLastValidationVersion db tx >>= \case 
-                    Nothing            -> pure Nothing
+                    Nothing            -> pure Nothing  
                     Just latestVersion -> DB.getVrps tx db latestVersion
         case vrps of 
             Nothing -> logWarn logger [i|Don't have any VRPs.|]
             _       -> LBS.writeFile vrpOutputFile $ unRawCSV $ vrpDtosToCSV $ toVrpDtos vrps
 
     schedules workflowShared = [
-            Scheduling {                 
-                initialDelay = 0,
-                interval = config ^. typed @ValidationConfig . #revalidationInterval,
-                taskDef = (ValidationTask, validateTAs workflowShared),
-                persistent = False
-            },
+            -- Scheduling {                 
+            --     initialDelay = 0,
+            --     interval = config ^. typed @ValidationConfig . #revalidationInterval,
+            --     taskDef = (ValidationTask, validateTAs workflowShared),
+            --     persistent = False
+            -- },
             let interval = config ^. #cacheCleanupInterval
             in Scheduling { 
                 -- do it half of the interval from now, it will be reasonable "on average"
@@ -520,8 +580,8 @@ runWorkflow appContext@AppContext {..} tals = do
         persistedJobs <- roTxT database $ \tx db -> Map.fromList <$> DB.allJobs tx db        
 
         Now now <- thisInstant
-        forConcurrently (schedules workflowShared) $ \Scheduling {..} -> do                        
-            let name = fmtGen $ fst taskDef
+        forConcurrently (schedules workflowShared) $ \Scheduling { taskDef = (task, action), ..} -> do                        
+            let name = fmtGen task
             let (delay, jobRun0) =                  
                     if persistent
                     then case Map.lookup name persistedJobs of 
@@ -543,10 +603,9 @@ runWorkflow appContext@AppContext {..} tals = do
                 threadDelay delay
 
             let makeTask jobRun = do 
-                    Task (fst taskDef) $ do                         
+                    Task task $ do
                         logDebug logger [i|Running task '#{name}'.|]
                         worldVersion <- createWorldVersion
-                        let action = snd taskDef
                         action worldVersion jobRun 
                             `finally` (do  
                                 when persistent $ do                       
@@ -568,43 +627,8 @@ runWorkflow appContext@AppContext {..} tals = do
         let clockTime = durationMs startUpTime now
         pushSystem logger $ cpuMemMetric "root" cpuTime clockTime maxMemory        
 
-    validateTAs workflowShared@WorkflowShared {..} worldVersion _ = do
-        doValidateTAs workflowShared worldVersion 
-        `finally`
-        (case config ^. #proverRunMode of 
-                ServerMode    -> runAsyncFetcherIfNeeded
-                OneOffMode {} -> pure ())
-      where
-        runAsyncFetcherIfNeeded = 
-            case config ^. #validationConfig . #fetchMethod of             
-                -- no async fetch
-                SyncOnly     -> pure ()
-                SyncAndAsync -> 
-                    join $ atomically $ do 
-                        readTVar asyncFetchIsRunning >>= \case                
-                            False -> pure $ 
-                                void $ forkFinally (do                                
-                                        runConcurrentlyIfPossible logger asyncFetchTask runningTasks)
-                                        (const $ atomically $ writeTVar asyncFetchIsRunning False)
-                            True -> 
-                                pure $ pure ()
-          where 
-            asyncFetchTask = Task AsyncFetchTask $ do 
-                atomically (writeTVar asyncFetchIsRunning True)                
-                fetchVersion <- createWorldVersion     
-                logInfo logger [i|Running asynchronous fetch #{fetchVersion}.|]            
-                -- (_, TimeMs elapsed) <- timedMS $ do 
-                    -- validations <- runAsyncFetches appContext fetchVersion
-                    -- updatePrometheus (validations ^. typed) prometheusMetrics worldVersion
-                    -- rwTxT database $ \tx db -> do
-                    --     DB.saveValidations tx db fetchVersion (validations ^. typed)
-                    --     DB.saveMetrics tx db fetchVersion (validations ^. typed)
-                    --     DB.asyncFetchWorldVersion tx db fetchVersion                                      
-                -- logInfo logger [i|Finished asynchronous fetch #{fetchVersion} in #{elapsed `div` 1000}s.|]
-
-
-    doValidateTAs WorkflowShared {..} worldVersion = do
-        logInfo logger [i|Validating all TAs, world version #{worldVersion} |]
+    validateTAs workflowShared@WorkflowShared {..} worldVersion talsToValidate = do        
+        logInfo logger [i|Validating TAs #{map getTaName talsToValidate}, world version #{worldVersion} |]
         executeOrDie
             processTALs
             (\(rtrPayloads, slurmedPayloads) elapsed -> do 
@@ -615,7 +639,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
       where
         processTALs = do
-            ((z, workerVS), workerId) <- runValidationWorker worldVersion                    
+            ((z, workerVS), workerId) <- runValidationWorker worldVersion talsToValidate                   
             case z of 
                 Left e -> do 
                     logError logger [i|Validator process failed: #{e}.|]
@@ -629,7 +653,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 Right wr@WorkerResult {..} -> do                              
                     let ValidationResult vs discoveredRepositories maybeSlurm = payload
                     -- logDebug logger [i|discoveredRepositories = #{discoveredRepositories}|]
-                    adjustFetchers appContext discoveredRepositories fetchers
+                    adjustFetchers appContext discoveredRepositories workflowShared
                     
                     logWorkerDone logger workerId wr
                     pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory
@@ -658,7 +682,7 @@ runWorkflow appContext@AppContext {..} tals = do
     -- longer than `cacheLifeTime` hours ago.
     cacheCleanup WorkflowShared {..} worldVersion _ = do            
         executeOrDie
-            cleanupUntochedObjects
+            cleanupOldObjects
             (\z elapsed -> 
                 case z of 
                     Left message -> logError logger message
@@ -668,10 +692,10 @@ runWorkflow appContext@AppContext {..} tals = do
                         logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
                                          [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|])
       where
-        cleanupUntochedObjects = do                 
+        cleanupOldObjects = do                 
             ((z, _), workerId) <- runCleanUpWorker worldVersion      
             case z of 
-                Left e                    -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
+                Left e                     -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
                 Right wr@WorkerResult {..} -> do 
                     logWorkerDone logger workerId wr
                     pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxMemory
@@ -697,7 +721,7 @@ runWorkflow appContext@AppContext {..} tals = do
         now <- getCurrentTime
         files <- listDirectory tmpDir
 
-        -- Temporary files cannot meaningfully live longer than that
+        -- Temporary RRDP files cannot meaningfully live longer than that
         let Seconds (fromIntegral -> maxTimeout :: NominalDiffTime) = 
                 10 + max
                     (config ^. #rrdpConf . #rrdpTimeout)
@@ -788,8 +812,8 @@ runWorkflow appContext@AppContext {..} tals = do
 
     -- Workers for functionality running in separate processes.
     --     
-    runValidationWorker worldVersion = do 
-        let talsStr = Text.intercalate "," $ List.sort $ map (unTaName . getTaName) tals                    
+    runValidationWorker worldVersion talsToValidate = do 
+        let talsStr = Text.intercalate "," $ List.sort $ map (unTaName . getTaName) talsToValidate                    
             workerId = WorkerId [i|version:#{worldVersion}:validation:#{talsStr}|]
 
             maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
@@ -844,7 +868,7 @@ runValidation :: Storage s =>
                 AppContext s
             -> WorldVersion
             -> [TAL]
-            -> IO (ValidationState, Map.Map TaName Fetcheables, Maybe Slurm)
+            -> IO (ValidationState, Map TaName Fetcheables, Maybe Slurm)
 runValidation appContext@AppContext {..} worldVersion tals = do           
 
     TopDownResult {..} <- addUniqueVRPCount . mconcat <$>
@@ -1000,45 +1024,70 @@ loadStoredAppState AppContext {..} = do
 --         RrdpR r  -> RrdpPP r
 
 
+isMaintenance :: TaskType -> Bool
+isMaintenance = \case    
+    CacheCleanupTask      -> True
+    LmdbCompactTask       -> True
+    LeftoversCleanupTask  -> True
+    RsyncCleanupTask      -> True
+    _                     -> False       
+
 canRunInParallel :: TaskType -> TaskType -> Bool
 canRunInParallel t1 t2 = 
     t2 `elem` canRunWith t1 || t1 `elem` canRunWith t2
   where    
-    canRunWith ValidationTask        = [AsyncFetchTask]    
-    canRunWith AsyncFetchTask        = [ValidationTask]
-    canRunWith RsyncCleanupTask      = allExcept [ValidationTask, AsyncFetchTask]
-    canRunWith _                     = []
+    canRunWith = \case 
+        ValidationTask       -> allExcept [LmdbCompactTask]
+
+        -- two different fetches can run in parallel, it's fine    
+        FetchTask            -> [ValidationTask, FetchTask, CacheCleanupTask]
+
+        CacheCleanupTask     -> [ValidationTask, FetchTask, RsyncCleanupTask]    
+        RsyncCleanupTask     -> allExcept [FetchTask]
+        LeftoversCleanupTask -> allExcept [LmdbCompactTask]
+    
+        -- this one can only run alone
+        LmdbCompactTask     -> []
   
     allExcept tasks = filter (not . (`elem` tasks)) [minBound..maxBound]
         
     
-newtype RunningTasks = RunningTasks { 
-        running :: TVar (Set.Set TaskType)
+newtype Tasks = Tasks { 
+        running :: TVar (Map TaskType Natural)
     }
+    deriving stock (Generic)
 
-newRunningTasks :: STM RunningTasks
-newRunningTasks = RunningTasks <$> newTVar mempty
+newRunningTasks :: STM Tasks
+newRunningTasks = Tasks <$> newTVar mempty
 
-runConcurrentlyIfPossible :: AppLogger -> Task -> RunningTasks -> IO ()
-runConcurrentlyIfPossible logger (Task taskType action) RunningTasks {..} = do 
+runConcurrentlyIfPossible :: AppLogger -> Task -> Tasks -> IO ()
+runConcurrentlyIfPossible logger (Task taskType action) Tasks {..} = do 
+    {- 
+        Theoretically, exclusive maintenance tasks can starve indefinitely and 
+        never get picked up because of fechers running all the time.
+        But in practice that is very unlikely to happen, so we'll gamble for now.
+    -}    
+    let canRunWith runningTasks =             
+            all (canRunInParallel taskType . fst) $ Map.toList runningTasks
+
     (runningTasks, canRun) <- atomically $ do 
                 runningTasks <- readTVar running
-                let canRun = Set.null $ Set.filter (not . canRunInParallel taskType) runningTasks
-                pure (Set.toList runningTasks, canRun)
+                pure (Map.toList runningTasks, canRunWith runningTasks)
 
     unless canRun $ 
         logDebug logger [i|Task #{taskType} cannot run concurrently with #{runningTasks} and has to wait.|]        
 
     join $ atomically $ do 
-        r <- readTVar running
-        if Set.null $ Set.filter (not . canRunInParallel taskType) r
+        runningTasks <- readTVar running
+        if canRunWith runningTasks
             then do 
-                writeTVar running $ Set.insert taskType r
+                writeTVar running $ Map.insertWith (+) taskType 1 runningTasks
                 pure $ action
                         `finally` 
-                        atomically (modifyTVar' running $ Set.filter (/= taskType))
+                        atomically (modifyTVar' running $ Map.alter (>>= 
+                                    (\count -> if count > 1 then Just (count - 1) else Nothing)
+                                ) taskType)
             else retry
-
 
 -- 
 versionIsOld :: Instant -> Seconds -> WorldVersion -> Bool

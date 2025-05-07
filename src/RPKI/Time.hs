@@ -143,7 +143,7 @@ secondsToInt :: Seconds -> Int
 secondsToInt (Seconds s) = fromIntegral s
 
 toMicroseconds :: Seconds -> Int
-toMicroseconds (Seconds s) = fromIntegral $ 1000_000 * s
+toMicroseconds (Seconds s) = fromIntegral $ 1_000_000 * s
 
 cpuTimePerSecond :: CPUTime -> Instant -> Instant -> Double
 cpuTimePerSecond (CPUTime t) from to = let
