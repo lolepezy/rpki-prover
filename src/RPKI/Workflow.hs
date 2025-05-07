@@ -502,17 +502,15 @@ runWorkflow appContext@AppContext {..} tals = do
         go canValidateAgain run = do 
             talsToValidate <- atomically $ do
                 (`unless` retry) =<< readTVar canValidateAgain
-                case run of
-                    FirstRun -> do
+                let reset = do 
                         writeTVar (workflowShared ^. #tasToValidate) mempty
                         writeTVar canValidateAgain False
-                        pure tals
+                case run of
+                    FirstRun -> reset >> pure tals
                     RanBefore -> do 
                         tas <- readTVar (workflowShared ^. #tasToValidate)
                         when (Set.null tas) retry
-                        -- reset it every time
-                        writeTVar (workflowShared ^. #tasToValidate) mempty
-                        writeTVar canValidateAgain False
+                        reset
                         pure $ filter (\tal -> getTaName tal `Set.member` tas) tals 
 
             worldVersion <- createWorldVersion
@@ -627,15 +625,16 @@ runWorkflow appContext@AppContext {..} tals = do
         let clockTime = durationMs startUpTime now
         pushSystem logger $ cpuMemMetric "root" cpuTime clockTime maxMemory        
 
-    validateTAs workflowShared@WorkflowShared {..} worldVersion talsToValidate = do        
-        logInfo logger [i|Validating TAs #{map getTaName talsToValidate}, world version #{worldVersion} |]
+    validateTAs workflowShared@WorkflowShared {..} worldVersion talsToValidate = do  
+        let taNames = map getTaName talsToValidate
+        logInfo logger [i|Validating TAs #{taNames}, world version #{worldVersion} |]
         executeOrDie
             processTALs
             (\(rtrPayloads, slurmedPayloads) elapsed -> do 
                 let vrps = rtrPayloads ^. #vrps
                 let slurmedVrps = slurmedPayloads ^. #vrps
                 logInfo logger $
-                    [i|Validated all TAs, got #{estimateVrpCount vrps} VRPs (probably not unique), |] <>
+                    [i|Validated TAs #{taNames}, got #{estimateVrpCount vrps} VRPs (probably not unique), |] <>
                     [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
       where
         processTALs = do
@@ -836,7 +835,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 (newScopes "validator") $ do 
                     workerInput <- 
                         makeWorkerInput appContext workerId
-                            (ValidationParams worldVersion tals)                        
+                            (ValidationParams worldVersion talsToValidate)                        
                             (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
                             Nothing
                     runWorker logger workerInput arguments
