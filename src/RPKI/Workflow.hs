@@ -1,4 +1,5 @@
 {-# LANGUAGE DerivingStrategies   #-}
+{-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE OverloadedLabels     #-}
 {-# LANGUAGE QuasiQuotes          #-}
@@ -16,12 +17,13 @@ import           Control.Monad
 import           Control.Monad.Trans.Control (MonadBaseControl)
 import           Control.Monad.IO.Class
 
-import           Control.Lens
+import           Control.Lens hiding (indices, Indexable)
 import           Data.Generics.Product.Typed
 import           GHC.Generics
 
 import qualified Data.ByteString.Lazy            as LBS
 
+import           Data.Data
 import           Data.Foldable                   (for_)
 import qualified Data.Text                       as Text
 import qualified Data.List                       as List
@@ -34,6 +36,8 @@ import           Data.Maybe                      (fromMaybe)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
 import           Data.Time.Clock                 (NominalDiffTime, diffUTCTime, getCurrentTime)
+import           Data.IxSet.Typed                (IxSet, Indexable, ixGen, ixList)
+import qualified Data.IxSet.Typed                as IxSet
 
 import           Data.String.Interpolate.IsString
 import           Numeric.Natural
@@ -151,11 +155,22 @@ data Fetchers = Fetchers {
         fetcheables     :: TVar Fetcheables,
         runningFetchers :: TVar (Map RpkiURL ThreadId),
         fetcheableToTAs :: TVar (Map RpkiURL (Set TaName)),
-        fetchSemaphore  :: Semaphore
+        fetchSemaphore  :: Semaphore,
+        links           :: TVar (IxSet Indexes UriTA)  
     }
     deriving stock (Generic)
 
 
+data UriTA = UriTA RpkiURL TaName
+    deriving stock (Show, Eq, Ord, Generic, Typeable)
+    deriving anyclass (Data)
+
+type Indexes = '[RpkiURL, TaName]
+
+instance Indexable Indexes UriTA where
+    indices = ixList
+        (ixGen (Proxy :: Proxy RpkiURL))
+        (ixGen (Proxy :: Proxy TaName))              
 
 dropFetcher :: Fetchers -> RpkiURL -> IO ()
 dropFetcher Fetchers {..} url = mask_ $ do
@@ -170,8 +185,7 @@ dropFetcher Fetchers {..} url = mask_ $ do
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
 adjustFetchers :: Storage s => AppContext s -> Map TaName Fetcheables -> WorkflowShared -> IO ()
-adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@WorkflowShared { fetchers = Fetchers {..}, ..} = do
-
+adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@WorkflowShared { fetchers = Fetchers {..} } = do
     (currentFetchers, toStop, toStart) <- atomically $ do        
         let newFetcheables_ = mconcat $ Map.elems discoveredFetcheables
         writeTVar fetcheables newFetcheables_
@@ -184,7 +198,7 @@ adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@W
               Set.difference runningFetcherUrls updatedUrls,
               Set.difference updatedUrls runningFetcherUrls)        
 
-    -- logDebug logger [i|Adjusting fetchers: toStop = #{toStop}, toStart = #{toStart}, currentFetchers = #{Map.keys currentFetchers}|]
+    logDebug logger [i|Adjusting fetchers: toStop = #{toStop}, toStart = #{toStart}, currentFetchers = #{Map.keys currentFetchers}|]
 
     mask_ $ do
         -- Stop and remove fetchers for URLs that are no longer needed    
@@ -208,7 +222,7 @@ adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@W
 
             modifyTVar' fetcheableToTAs (`updateRepositoryToTAs` discoveredUrls)
                         
--- This one is made public only for testing purposes.
+-- This one is made separate function only for testing purposes.
 -- Update the mapping between repositories and TAs based 
 -- on the newly discovered URLs per TAs.
 updateRepositoryToTAs :: Map RpkiURL (Set TaName) 
@@ -233,8 +247,11 @@ updateRepositoryToTAs fetcheableToTAs discoveredUrls =
 
 newFetcher :: Storage s => AppContext s -> WorkflowShared -> RpkiURL -> IO ()
 newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetchers {..}, ..} url = do
-    go `finally`
-        dropFetcher fetchers url
+    go `finally` dropFetcher fetchers url
+    `catch` 
+        (\(_ :: SomeException) -> 
+            -- Complain any something else then AsyncCancelled
+            pure ())
   where
     go = do 
         Now start <- thisInstant        
@@ -417,7 +434,9 @@ withWorkflowShared AppContext {..} prometheusMetrics f = do
                         newTVar mempty <*>
                         newTVar mempty <*>
                         newTVar mempty <*>
-                        newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)
+                        newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism) <*>
+                        newTVar mempty
+
         tasToValidate <- newTVar mempty
         pure WorkflowShared {..}
 
@@ -495,9 +514,8 @@ runWorkflow appContext@AppContext {..} tals = do
             (let interval = config ^. typed @ValidationConfig . #revalidationInterval
              in forever $ do                 
                 threadDelay (toMicroseconds interval)
-                atomically $ do                         
-                    writeTVar (workflowShared ^. #tasToValidate) (Set.fromList $ map getTaName tals)
-                    writeTVar canValidateAgain True)
+                atomically $ writeTVar 
+                    (workflowShared ^. #tasToValidate) (Set.fromList $ map getTaName tals))
       where
         go canValidateAgain run = do 
             talsToValidate <- atomically $ do
@@ -535,22 +553,15 @@ runWorkflow appContext@AppContext {..} tals = do
             _       -> LBS.writeFile vrpOutputFile $ unRawCSV $ vrpDtosToCSV $ toVrpDtos vrps
 
     schedules workflowShared = [
-            -- Scheduling {                 
-            --     initialDelay = 0,
-            --     interval = config ^. typed @ValidationConfig . #revalidationInterval,
-            --     taskDef = (ValidationTask, validateTAs workflowShared),
-            --     persistent = False
-            -- },
             let interval = config ^. #cacheCleanupInterval
-            in Scheduling { 
-                -- do it half of the interval from now, it will be reasonable "on average"
-                initialDelay = toMicroseconds interval `div` 2,                
+            in Scheduling {                 
+                initialDelay = 600_000_000,                
                 taskDef = (CacheCleanupTask, cacheCleanup workflowShared),
                 persistent = True,
                 ..
             },        
             Scheduling {                 
-                initialDelay = 1200_000_000,
+                initialDelay = 900_000_000,
                 interval = config ^. #storageCompactionInterval,
                 taskDef = (LmdbCompactTask, compact workflowShared),
                 persistent = True

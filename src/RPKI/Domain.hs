@@ -16,6 +16,7 @@ import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
 import qualified Data.Vector              as V
+import           Data.Typeable
 
 import           Data.ByteString.Base16   as Hex
 import qualified Data.String.Conversions  as SC
@@ -114,7 +115,7 @@ newtype RrdpURL = RrdpURL URI
     deriving anyclass Hashable
 
 data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
-    deriving  (Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 

@@ -68,6 +68,7 @@ dependencies:
 - hw-ip
 - interpolate
 - insert-ordered-containers
+- ixset-typed
 - lens
 - lmdb-high-level
 - lifted-async
