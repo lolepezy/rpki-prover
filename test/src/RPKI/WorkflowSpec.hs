@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module RPKI.WorkflowSpec where
@@ -11,7 +10,6 @@ import           Test.Tasty.HUnit                as HU
 
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
-import qualified Data.Set                        as Set
 import qualified Data.IxSet.Typed                as IxSet
 
 import           RPKI.Domain
@@ -21,7 +19,7 @@ import           RPKI.Workflow
 
 uriTaSet :: [(Text, Text)] -> UriTaIxSet
 uriTaSet pairs = IxSet.fromList [
-    UriTA (RrdpU (RrdpURL (URI url))) (TaName ta)
+    UrlTA (RrdpU (RrdpURL (URI url))) (TaName ta)
     | (url, ta) <- pairs
     ]
 
@@ -47,35 +45,35 @@ workflowSpec :: TestTree
 workflowSpec = testGroup "Workflow"  [ 
 
     HU.testCase "Adds entries to empty IxSet" $
-        let fetcheables = taFetchables [(ta1, [repo1])]
-            initialIxSet = uriTaSet []
+        let fs = taFetchables [(ta1, [repo1])]
+            urlTa = uriTaSet []
             expected = uriTaSet [(repo1, ta1)]
-        in updateUriPerTa fetcheables initialIxSet @?= expected
+        in updateUriPerTa fs urlTa @?= expected
 
   , HU.testCase "Replaces all entries for a TA" $
-        let fetcheables = taFetchables [(ta1, [repo2])]
-            initialIxSet = uriTaSet [(repo1, ta1)]
+        let fs = taFetchables [(ta1, [repo2])]
+            urlTa = uriTaSet [(repo1, ta1)]
             expected = uriTaSet [(repo2, ta1)]
-        in updateUriPerTa fetcheables initialIxSet @?= expected
+        in updateUriPerTa fs urlTa @?= expected
 
-  , HU.testCase "Preserves entries for TAs not in fetcheables" $
-        let fetcheables = taFetchables [(ta1, [repo1])]
-            initialIxSet = uriTaSet [(repo2, ta2)]
+  , HU.testCase "Preserves entries for TAs not in fs" $
+        let fs = taFetchables [(ta1, [repo1])]
+            urlTa = uriTaSet [(repo2, ta2)]
             expected = uriTaSet [(repo1, ta1), (repo2, ta2)]
-        in updateUriPerTa fetcheables initialIxSet @?= expected
+        in updateUriPerTa fs urlTa @?= expected
 
   , HU.testCase "Handles multiple URLs per TA" $
-        let fetcheables = taFetchables [(ta1, [repo1, repo2])]
-            initialIxSet = uriTaSet []
+        let fs = taFetchables [(ta1, [repo1, repo2])]
+            urlTa = uriTaSet []
             expected = uriTaSet [(repo1, ta1),(repo2, ta1)]
-        in updateUriPerTa fetcheables initialIxSet @?= expected
+        in updateUriPerTa fs urlTa @?= expected
 
   , HU.testCase "Handles multiple TAs and URLs" $
-        let fetcheables = taFetchables [
+        let fs = taFetchables [
                 (ta1, [repo1]),
                 (ta2, [repo2])
               ]
-            initialIxSet = uriTaSet [
+            urlTa = uriTaSet [
                 (oldRepo, ta1),
                 (repo3, ta3)
               ]
@@ -84,14 +82,14 @@ workflowSpec = testGroup "Workflow"  [
                 (repo2, ta2),
                 (repo3, ta3)
               ]
-        in updateUriPerTa fetcheables initialIxSet @?= expected
+        in updateUriPerTa fs urlTa @?= expected
 
-  , HU.testCase "Handles TAs with no URLs in fetcheables" $
-        let fetcheables = taFetchables [
+  , HU.testCase "Handles TAs with no URLs in fs" $
+        let fs = taFetchables [
                 (ta1, []),
                 (ta2, [repo2])
               ]
-            initialIxSet = uriTaSet [
+            urlTa = uriTaSet [
                 (repo1, ta1),
                 (oldRepo, ta2),
                 (repo3, ta3)
@@ -100,14 +98,14 @@ workflowSpec = testGroup "Workflow"  [
                 (repo2, ta2),
                 (repo3, ta3)
               ]
-        in updateUriPerTa fetcheables initialIxSet @?= expected
+        in updateUriPerTa fs urlTa @?= expected
 
-  , HU.testCase "Handles empty fetcheables map" $
-        let fetcheables = taFetchables []
-            initialIxSet = uriTaSet [
+  , HU.testCase "Handles empty fs map" $
+        let fs = taFetchables []
+            urlTa = uriTaSet [
                 (repo1, ta1),
                 (repo2, ta2)
               ]
-            expected = initialIxSet
-        in updateUriPerTa fetcheables initialIxSet @?= expected
+            expected = urlTa
+        in updateUriPerTa fs urlTa @?= expected
   ]

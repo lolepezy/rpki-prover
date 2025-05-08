@@ -110,17 +110,17 @@ data Fetchers = Fetchers {
     }
     deriving stock (Generic)
 
-type UriTaIxSet = IxSet Indexes UriTA
+type UriTaIxSet = IxSet Indexes UrlTA
 
-data UriTA = UriTA RpkiURL TaName
+data UrlTA = UrlTA RpkiURL TaName
     deriving stock (Show, Eq, Ord, Generic, Data, Typeable)    
 
 type Indexes = '[RpkiURL, TaName]
 
-instance Indexable Indexes UriTA where
+instance Indexable Indexes UrlTA where
     indices = ixList
-        (ixFun (\(UriTA url _) -> [url]))
-        (ixFun (\(UriTA _ ta)  -> [ta]))        
+        (ixFun (\(UrlTA url _) -> [url]))
+        (ixFun (\(UrlTA _ ta)  -> [ta]))        
 
 deleteByIx :: (Indexable ixs a, IsIndexOf ix ixs) => ix -> IxSet ixs a -> IxSet ixs a
 deleteByIx ix_ s = foldr IxSet.delete s $ IxSet.getEQ ix_ s
@@ -141,7 +141,7 @@ adjustFetchers :: Storage s => AppContext s -> Map TaName Fetcheables -> Workflo
 adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@WorkflowShared { fetchers = Fetchers {..} } = do
     (currentFetchers, toStop, toStart) <- atomically $ do            
 
-        -- All the URLs that were ever discovered for all TAs
+        -- All the URLs that were discovered by the recent validations of every TA
         relevantUrls :: Set RpkiURL <- do 
                 uriByTa' <- updateUriPerTa discoveredFetcheables <$> readTVar uriByTa
                 writeTVar uriByTa uriByTa'
@@ -185,7 +185,7 @@ updateUriPerTa fetcheablesPerTa uriTa = uriTa'
     cleanedUpPerTa = foldr deleteByIx uriTa $ Map.keys fetcheablesPerTa        
 
     uriTa' = 
-        IxSet.insertList [ UriTA url ta | 
+        IxSet.insertList [ UrlTA url ta | 
                 (ta, Fetcheables fs) <- Map.toList fetcheablesPerTa,
                 url <- MonoidalMap.keys fs
             ] cleanedUpPerTa 
