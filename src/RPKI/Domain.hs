@@ -16,12 +16,14 @@ import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
 import qualified Data.Vector              as V
+import           Data.Data
 import           Data.Typeable
 
 import           Data.ByteString.Base16   as Hex
 import qualified Data.String.Conversions  as SC
 
 import           Data.Hourglass
+import           Data.Data
 import           Data.Foldable            as F
 import           Data.Set.NonEmpty        (NESet)
 import qualified Data.Set.NonEmpty        as NESet
@@ -78,44 +80,44 @@ newtype Hash = Hash BSS.ShortByteString
     deriving anyclass (TheBinary, NFData)
 
 newtype URI = URI { unURI :: Text } 
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
 data RsyncHost = RsyncHost RsyncHostName (Maybe RsyncPort)
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
 newtype RsyncHostName = RsyncHostName { unRsyncHostName :: Text }
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
 newtype RsyncPort = RsyncPort { unRsyncPort :: Int }
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
 newtype RsyncPathChunk = RsyncPathChunk { unRsyncPathChunk :: Text }
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving newtype Monoid    
     deriving newtype Semigroup
     deriving anyclass Hashable
 
 data RsyncURL = RsyncURL RsyncHost [RsyncPathChunk]
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
 newtype RrdpURL = RrdpURL URI
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
 data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
-    deriving stock (Eq, Ord, Generic, Typeable)
+    deriving stock (Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
@@ -694,7 +696,7 @@ newtype DecodedBase64 = DecodedBase64 BS.ByteString
     deriving newtype (Monoid, Semigroup)
 
 newtype TaName = TaName { unTaName :: Text }
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic, Typeable, Data)
     deriving anyclass (TheBinary, NFData)
 
 instance Show TaName where

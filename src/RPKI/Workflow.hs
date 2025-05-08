@@ -36,7 +36,7 @@ import           Data.Maybe                      (fromMaybe)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
 import           Data.Time.Clock                 (NominalDiffTime, diffUTCTime, getCurrentTime)
-import           Data.IxSet.Typed                (IxSet, Indexable, ixGen, ixList)
+import           Data.IxSet.Typed                (IxSet, Indexable, ixFun, ixList)
 import qualified Data.IxSet.Typed                as IxSet
 
 import           Data.String.Interpolate.IsString
@@ -108,10 +108,11 @@ data Fetchers = Fetchers {
         runningFetchers :: TVar (Map RpkiURL ThreadId),
         fetcheableToTAs :: TVar (Map RpkiURL (Set TaName)),
         fetchSemaphore  :: Semaphore,
-        links           :: TVar (IxSet Indexes UriTA)  
+        uriByTa         :: TVar UriTaIxSet
     }
     deriving stock (Generic)
 
+type UriTaIxSet = IxSet Indexes UriTA
 
 data UriTA = UriTA RpkiURL TaName
     deriving stock (Show, Eq, Ord, Generic, Typeable)
@@ -121,8 +122,8 @@ type Indexes = '[RpkiURL, TaName]
 
 instance Indexable Indexes UriTA where
     indices = ixList
-        (ixGen (Proxy :: Proxy RpkiURL))
-        (ixGen (Proxy :: Proxy TaName))              
+        (ixFun (\(UriTA url _) -> [url]))
+        (ixFun (\(UriTA _ ta)  -> [ta]))        
 
 dropFetcher :: Fetchers -> RpkiURL -> IO ()
 dropFetcher Fetchers {..} url = mask_ $ do
@@ -174,6 +175,22 @@ adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@W
 
             modifyTVar' fetcheableToTAs (`updateRepositoryToTAs` discoveredUrls)
                         
+
+updateUriPerTa :: Map TaName Fetcheables -> UriTaIxSet -> UriTaIxSet
+updateUriPerTa fetcheablesPerTa uriTa = uriTa'
+  where 
+    cleanedUpPerTa = 
+        foldr IxSet.delete uriTa 
+            $ concatMap (\ta -> IxSet.toList $ IxSet.getEQ ta uriTa) 
+            $ Map.keys fetcheablesPerTa
+
+    uriTa' = 
+        IxSet.insertList [ UriTA url ta | 
+                (ta, Fetcheables fs) <- Map.toList fetcheablesPerTa,
+                url <- MonoidalMap.keys fs
+            ] cleanedUpPerTa 
+    
+
 -- This one is made separate function only for testing purposes.
 -- Update the mapping between repositories and TAs based 
 -- on the newly discovered URLs per TAs.
