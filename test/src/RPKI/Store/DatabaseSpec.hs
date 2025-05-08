@@ -371,7 +371,7 @@ shouldPreserveStateInAppTx io = do
     let storage' = LmdbStorage env
     z :: SMap "test-state" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
 
-    let addedObject = updateMetric @RrdpMetric @_ (& #added %~ (+1))    
+    let addedObject = updateMetric @RrdpMetric @_ (#added %~ Map.unionWith (+) (Map.singleton (Just CER) 1))
 
     (_, ValidationState { validations = Validations validationMap, .. }) 
         <- runValidatorT (newScopes "root") $ 
@@ -389,7 +389,7 @@ shouldPreserveStateInAppTx io = do
                 addedObject
 
     HU.assertEqual "Root metric should count 2 objects" 
-        (Just $ mempty { added = 2, deleted = 0 })
+        (Just $ mempty { added = Map.fromList [(Just CER, Count 2)], deleted = Map.fromList [] })
         (stripTime <$> lookupMetric (newScope "root") (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Nested metric should count 1 object" 

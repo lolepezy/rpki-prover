@@ -94,6 +94,7 @@ instance ToSchema TaName where
 
 instance ToSchema a => ToSchema (MetricMap a)
 instance ToSchema ValidationMetric
+instance ToSchema RpkiObjectType
 instance ToSchema RsyncMetric
 instance ToSchema RrdpMetric
 instance ToSchema ResourceUsage

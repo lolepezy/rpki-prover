@@ -143,9 +143,9 @@ adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@W
 
         -- All the URLs that were discovered by the recent validations of every TA
         relevantUrls :: Set RpkiURL <- do 
-                uriByTa' <- updateUriPerTa discoveredFetcheables <$> readTVar uriByTa
-                writeTVar uriByTa uriByTa'
-                pure $ Set.fromList $ IxSet.indexKeys uriByTa'
+                uriByTa_ <- updateUriPerTa discoveredFetcheables <$> readTVar uriByTa
+                writeTVar uriByTa uriByTa_
+                pure $ Set.fromList $ IxSet.indexKeys uriByTa_
             
         -- This basically means that we filter all the fetcheables 
         -- (new or current) by being amongst the relevant URLs. 
@@ -327,8 +327,8 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             metrics = validations ^. #topDownMetric
             rrdps = MonoidalMap.elems $ unMetricMap $ metrics ^. #rrdpMetrics
             rsyncs = MonoidalMap.elems $ unMetricMap $ metrics ^. #rsyncMetrics                
-        in any (\m -> rrdpRepoHasUpdates (m ^. typed)) rrdps ||
-           any (\m -> rsyncRepoHasUpdates (m ^. typed)) rsyncs
+        in any (\m -> rrdpRepoHasSignificantUpdates (m ^. typed)) rrdps ||
+           any (\m -> rsyncRepoHasSignificantUpdates (m ^. typed)) rsyncs
             
     triggerTaRevalidation = atomically $ do 
         ut <- readTVar uriByTa        

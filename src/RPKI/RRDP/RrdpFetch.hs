@@ -135,7 +135,7 @@ downloadAndUpdateRRDP
 
     (notificationXml, _, httpStatus, newETag) <- 
             timedMetric' (Proxy :: Proxy RrdpMetric) 
-                (\t -> (& #downloadTimeMs %~ (<> t))) $
+                (\t -> #downloadTimeMs %~ (<> t)) $
                 fromTry (RrdpE . CantDownloadNotification . U.fmtEx)
                     $ downloadToBS (appContext ^. typed) (getURL repoUri) eTag
     
@@ -167,25 +167,24 @@ downloadAndUpdateRRDP
                         logDebug logger [i|Going to use snapshot for #{repoUri}: #{message}|]
                         useSnapshot snapshotInfo notification                        
 
-                    FetchDeltas sortedDeltas snapshotInfo message -> 
-                        (do                             
+                    FetchDeltas sortedDeltas snapshotInfo message -> do                             
                             usedSource $ RrdpDelta 
-                                ((NonEmpty.head sortedDeltas) ^. typed) 
-                                ((NonEmpty.last sortedDeltas) ^. typed)
+                                (NonEmpty.head sortedDeltas ^. typed) 
+                                (NonEmpty.last sortedDeltas ^. typed)
 
                             logDebug logger [i|Going to use deltas for #{repoUri}: #{message}|]
                             useDeltas sortedDeltas notification                            
-                            `catchError` 
-                        \e -> do         
-                            usedSource $ RrdpSnapshot $ notification ^. #serial
-                            logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
-                            useSnapshot snapshotInfo notification)
+                        `catchError` 
+                            \e -> do         
+                                usedSource $ RrdpSnapshot $ notification ^. #serial
+                                logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
+                                useSnapshot snapshotInfo notification
 
             pure (repo', RrdpFetchStat nextStep)                            
   where
     bumpETag newETag f = (\r -> r { eTag = newETag }) <$> f        
 
-    usedSource z = updateMetric @RrdpMetric @_ (& #rrdpSource .~ z)        
+    usedSource z = updateMetric @RrdpMetric @_ (#rrdpSource .~ z)        
     hoistHere    = vHoist . fromEither . first RrdpE
 
     validatedNotification notification = do    
@@ -211,7 +210,7 @@ downloadAndUpdateRRDP
             
             (rawContent, _, httpStatus', _) <- 
                 timedMetric' (Proxy :: Proxy RrdpMetric) 
-                    (\t -> (& #downloadTimeMs %~ (<> t))) $ do     
+                    (\t -> #downloadTimeMs %~ (<> t)) $ do     
                     fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
                         downloadHashedBS (appContext ^. typed @Config) uri Nothing expectedHash                                    
                             (\actualHash -> 
@@ -219,10 +218,10 @@ downloadAndUpdateRRDP
                                     expectedHash = expectedHash,
                                     actualHash = actualHash                                            
                                 })                                            
-            updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
+            updateMetric @RrdpMetric @_ (#lastHttpStatus .~ httpStatus') 
 
             void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
-                    (\t -> (& #saveTimeMs %~ (<> t)))
+                    (\t -> #saveTimeMs %~ (<> t))
                     (handleSnapshotBS repoUri notification rawContent)
 
             pure $ repo { rrdpMeta = rrdpMeta' }
@@ -246,7 +245,7 @@ downloadAndUpdateRRDP
         let maxDeltaDownloadSimultaneously = 8                        
 
         void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
-                (\t -> (& #saveTimeMs %~ (<> t))) $ 
+                (\t -> #saveTimeMs %~ (<> t)) $ 
                 foldPipeline
                         maxDeltaDownloadSimultaneously
                         (S.each $ NonEmpty.toList sortedDeltas)
@@ -271,7 +270,7 @@ downloadAndUpdateRRDP
                                     expectedHash = hash,
                                     serial = serial
                                 })            
-            updateMetric @RrdpMetric @_ (& #lastHttpStatus .~ httpStatus') 
+            updateMetric @RrdpMetric @_ (#lastHttpStatus .~ httpStatus') 
             pure (rawContent, serial, deltaUri)
 
         serials = NonEmpty.map (^. typed @RrdpSerial) sortedDeltas
@@ -466,7 +465,7 @@ saveSnapshot
                                 (ObjectOriginal blob) hash
                                 (ObjectMeta worldVersion type_)                        
                         (Right ro, _) ->                                     
-                            SuccessParsed rpkiURL (toStorableObject ro)                            
+                            SuccessParsed rpkiURL (toStorableObject ro) type_                           
                     ) `catch` 
                     (\(e :: SomeException) -> 
                         pure $! ObjectParsingProblem rpkiURL (VErr $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e) 
@@ -507,12 +506,12 @@ saveSnapshot
                         inSubLocationScope uri $ appWarn e                 
                         DB.saveOriginal tx db original hash objectMeta
                         DB.linkObjectToUrl tx db rpkiUrl hash                
-                        addedObject
+                        addedObject $ Just $ objectMeta ^. #objectType
 
-                    SuccessParsed rpkiUrl so@StorableObject {..} -> do 
+                    SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do 
                         DB.saveObject tx db so worldVersion                    
                         DB.linkObjectToUrl tx db rpkiUrl (getHash object)
-                        addedObject
+                        addedObject $ Just type_
 
                     other -> 
                         logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
@@ -591,8 +590,8 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                                 Right _ -> do 
                                     let hash = U.sha256s blob                                    
                                     case urlObjectType rpkiURL of 
-                                        Just type_ -> tryToParse rpkiURL hash blob type_                                                
-                                        Nothing    -> pure $! UknownObjectType rpkiURL                                                            
+                                        Just type_ -> tryToParse rpkiURL hash blob type_
+                                        Nothing    -> pure $! UknownObjectType rpkiURL
           where
             tryToParse rpkiURL hash blob type_ = do
                 z <- liftIO $ runValidatorT (newScopes $ unURI uri) $ vHoist $ readObjectOfType type_ blob
@@ -603,13 +602,13 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                                 (ObjectOriginal blob) hash
                                 (ObjectMeta worldVersion type_)                        
                         (Right ro, _) ->                                     
-                            SuccessParsed rpkiURL (toStorableObject ro)                            
+                            SuccessParsed rpkiURL (toStorableObject ro) type_                    
                     ) `catch` 
                     (\(e :: SomeException) -> 
                         pure $! ObjectParsingProblem rpkiURL (VErr $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e) 
                                 (ObjectOriginal blob) hash
                                 (ObjectMeta worldVersion type_)
-                    )                        
+                    )
 
     saveStorable db tx r = 
         case r of 
@@ -623,7 +622,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
         existsLocally <- DB.hashExists tx db existingHash
         if existsLocally
             -- Ignore withdraws and just use the time-based garbage collection
-            then deletedObject
+            then deletedObject $ textObjectType $ unURI uri
             else appError $ RrdpE $ NoObjectToWithdraw uri existingHash
         
 
@@ -649,12 +648,12 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 DB.saveOriginal tx db original hash objectMeta
                 DB.linkObjectToUrl tx db rpkiUrl hash                          
 
-            SuccessParsed rpkiUrl so@StorableObject {..} -> do            
+            SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do            
                 let newHash = getHash object
                 newOneIsAlreadyThere <- DB.hashExists tx db newHash     
                 unless newOneIsAlreadyThere $ do 
                     DB.saveObject tx db so worldVersion                        
-                    addedObject
+                    addedObject $ Just type_
                 DB.linkObjectToUrl tx db rpkiUrl newHash            
 
             other -> 
@@ -666,7 +665,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 if oldOneIsAlreadyThere
                     then do 
                         -- Ignore withdraws and just use the time-based garbage collection
-                        deletedObject
+                        deletedObject $ textObjectType $ unURI uri
                     else do 
                         logError logger [i|No object #{uri} with hash #{oldHash} to replace.|]
                         inSubLocationScope uri $ 
@@ -689,13 +688,13 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 DB.saveOriginal tx db original hash objectMeta
                 DB.linkObjectToUrl tx db rpkiUrl hash
 
-            SuccessParsed rpkiUrl so@StorableObject {..} -> do 
+            SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do 
                 validateOldHash
                 let newHash = getHash object
                 newOneIsAlreadyThere <- DB.hashExists tx db newHash
                 unless newOneIsAlreadyThere $ do 
                     DB.saveObject tx db so worldVersion                        
-                    addedObject
+                    addedObject $ Just type_
                 DB.linkObjectToUrl tx db rpkiUrl newHash 
 
             other -> 
@@ -706,9 +705,11 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
     validationConfig = appContext ^. typed @Config . typed @ValidationConfig
 
 
-addedObject, deletedObject :: Monad m => ValidatorT m ()
-addedObject   = updateMetric @RrdpMetric @_ (& #added %~ (+1))
-deletedObject = updateMetric @RrdpMetric @_ (& #deleted %~ (+1))
+addedObject, deletedObject :: Monad m => Maybe RpkiObjectType -> ValidatorT m ()
+addedObject type_  = updateMetric @RrdpMetric @_ 
+    (#added %~ Map.unionWith (+) (Map.singleton type_ 1))
+deletedObject type_ = updateMetric @RrdpMetric @_ 
+    (#deleted %~ Map.unionWith (+) (Map.singleton type_ 1))
 
 
 data RrdpObjectProcessingResult =           
@@ -717,7 +718,7 @@ data RrdpObjectProcessingResult =
         | HashExists RpkiURL Hash
         | UknownObjectType RpkiURL    
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta    
-        | SuccessParsed RpkiURL (StorableObject RpkiObject) 
+        | SuccessParsed RpkiURL (StorableObject RpkiObject) RpkiObjectType
     deriving stock (Show, Eq, Generic)    
 
 data DeltaOp m a = Delete URI Hash 

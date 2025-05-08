@@ -14,7 +14,6 @@ import           Control.Lens                     ((^.))
 import           Control.Monad
 
 import qualified Data.List                        as List
-import           Data.List.NonEmpty               (NonEmpty(..))
 import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set.NonEmpty                as NESet
 import           Data.String.Interpolate.IsString

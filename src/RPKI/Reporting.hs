@@ -396,8 +396,8 @@ instance Semigroup FetchFreshness where
     (<>) = max    
 
 data RrdpMetric = RrdpMetric {
-        added           :: Count,
-        deleted         :: Count,        
+        added           :: Map (Maybe RpkiObjectType) Count,
+        deleted         :: Map (Maybe RpkiObjectType) Count,        
         rrdpSource      :: RrdpSource,        
         lastHttpStatus  :: HttpStatus,        
         downloadTimeMs  :: TimeMs,
@@ -411,7 +411,7 @@ data RrdpMetric = RrdpMetric {
     deriving Monoid    via GenericMonoid RrdpMetric
 
 data RsyncMetric = RsyncMetric {
-        processed      :: Count,        
+        processed      :: Map (Maybe RpkiObjectType) Count,        
         totalTimeMs    :: TimeMs,
         fetchFreshness :: FetchFreshness
     }
@@ -523,8 +523,30 @@ focusToText = \case
 scopeList :: Scope a -> [Focus]
 scopeList (Scope s) = NonEmpty.toList s
 
+totalCount :: Map a Count -> Count
+totalCount m = sum $ Map.elems m
+
 rrdpRepoHasUpdates :: RrdpMetric -> Bool
-rrdpRepoHasUpdates RrdpMetric {..} = added > 0 || deleted > 0
+rrdpRepoHasUpdates RrdpMetric {..} = anyPositive added || anyPositive deleted   
 
 rsyncRepoHasUpdates :: RsyncMetric -> Bool
-rsyncRepoHasUpdates RsyncMetric {..} = processed > 0
+rsyncRepoHasUpdates RsyncMetric {..} = anyPositive processed
+
+rrdpRepoHasSignificantUpdates :: RrdpMetric -> Bool
+rrdpRepoHasSignificantUpdates RrdpMetric {..} = 
+    anySignificantPositive added || anySignificantPositive deleted   
+
+rsyncRepoHasSignificantUpdates :: RsyncMetric -> Bool
+rsyncRepoHasSignificantUpdates RsyncMetric {..} = anySignificantPositive processed
+
+anyPositive :: (Ord b, Num b) => Map a b -> Bool
+anyPositive m = Prelude.any ((> 0) . snd) $ Map.toList m    
+
+anySignificantPositive :: (Ord b, Num b) => Map (Maybe RpkiObjectType) b -> Bool
+anySignificantPositive m = Prelude.any f $ Map.toList m    
+  where
+    f (type_, c) = 
+        case type_ of 
+            Just MFT -> False
+            Just CRL -> False
+            _        -> c > 0

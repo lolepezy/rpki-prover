@@ -162,7 +162,7 @@ validationMetricsHtml grouped = do
                     (const $ pure ()) vm                  
   where
     metricRow index ta validationTime uniqueVrps vm = do 
-        let totalCount = vm ^. #validCertNumber + 
+        let totalCount_ = vm ^. #validCertNumber + 
                          vm ^. #validRoaNumber +
                          vm ^. #validMftNumber +
                          vm ^. #validCrlNumber +
@@ -175,7 +175,7 @@ validationMetricsHtml grouped = do
             void $ validationTime vm
             genTd $ toHtml $ show $ vm ^. #vrpCounter
             void $ uniqueVrps vm 
-            genTd $ toHtml $ show totalCount
+            genTd $ toHtml $ show totalCount_
             genTd $ toHtml $ show $ vm ^. #validRoaNumber
             genTd $ toHtml $ show $ vm ^. #validCertNumber
             genTd $ toHtml $ show $ vm ^. #validMftNumber
@@ -211,8 +211,8 @@ rrdpMetricsHtml rrdpMetricMap =
                 htmlRow index $ do 
                     genTd $ toHtml $ focusToText repository                        
                     td ! A.class_ "gen-t no-wrap" $ toHtml $ rm ^. #rrdpSource                    
-                    genTd $ toHtml $ show $ rm ^. #added
-                    genTd $ toHtml $ show $ rm ^. #deleted
+                    genTd $ toHtml $ show $ totalCount $ rm ^. #added
+                    genTd $ toHtml $ show $ totalCount $ rm ^. #deleted
                     genTd $ toHtml $ rm ^. #lastHttpStatus
                     genTd $ toHtml $ rm ^. #downloadTimeMs                                
                     genTd $ toHtml $ rm ^. #saveTimeMs
@@ -242,7 +242,7 @@ rsyncMetricsHtml rsyncMetricMap =
                 htmlRow index $ do
                     genTd $ toHtml $ focusToText repository                                                        
                     genTd ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness            
-                    genTd $ toHtml $ show $ rm ^. #processed            
+                    genTd $ toHtml $ show $ totalCount $ rm ^. #processed            
                     genTd $ toHtml $ rm ^. #totalTimeMs            
 
 

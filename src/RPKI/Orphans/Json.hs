@@ -205,6 +205,11 @@ instance ToJSONKey TaName where
 instance ToJSONKey RpkiURL where
     toJSONKey = toJSONKeyText $ unURI . getURL
 
+instance ToJSON RpkiObjectType
+
+instance ToJSONKey (Maybe RpkiObjectType) where
+    toJSONKey = toJSONKeyText U.fmtGen
+
 $(deriveToJSON defaultOptions ''ValidationMetric)
 
 instance ToJSON a => ToJSON (GroupedValidationMetric a)
@@ -304,7 +309,7 @@ instance ToJSON Attribute where
             ]            
         SigningTime dt _ -> Json.object [
                 "type" .= ("SigningTime" :: Text),
-                "value" .= (instantDateFormat $ Instant dt)                
+                "value" .= instantDateFormat (Instant dt)                
             ]
         BinarySigningTime bst -> Json.object [
                 "type" .= ("BinarySigningTime" :: Text),
@@ -431,7 +436,6 @@ instance ToJSON InitError
 instance ToJSON InternalError
 instance ToJSON SlurmError
 instance ToJSON a => ToJSON (ParseError a)
-instance ToJSON RpkiObjectType
 instance ToJSON TACertValidities
 instance ToJSON ValidationError
 instance ToJSON ObjectIdentity
