@@ -191,29 +191,6 @@ updateUriPerTa fetcheablesPerTa uriTa = uriTa'
             ] cleanedUpPerTa 
     
 
--- This one is made separate function only for testing purposes.
--- Update the mapping between repositories and TAs based 
--- on the newly discovered URLs per TAs.
-updateRepositoryToTAs :: Map RpkiURL (Set TaName) 
-                    -> Map TaName (Set RpkiURL) 
-                    -> Map RpkiURL (Set TaName)
-updateRepositoryToTAs fetcheableToTAs discoveredUrls = 
-    Map.fromListWith Set.union $ newlyAdded <> existingOverlapping
-  where
-    newlyAdded = [ 
-        (url, Set.singleton ta)
-            | (ta, urls) <- Map.toList discoveredUrls
-            , url <- Set.toList urls
-        ]    
-        
-    existingOverlapping = [ 
-        (url, Set.singleton ta) | 
-            (url, tas) <- Map.toList fetcheableToTAs,
-            ta <- Set.toList tas,                
-            maybe True (Set.member url) (Map.lookup ta discoveredUrls)
-        ]
-        
-
 newFetcher :: Storage s => AppContext s -> WorkflowShared -> RpkiURL -> IO ()
 newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetchers {..}, ..} url = do
     go `finally` dropFetcher fetchers url
