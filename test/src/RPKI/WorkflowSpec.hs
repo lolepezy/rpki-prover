@@ -32,13 +32,13 @@ taFetchables = Map.fromList . map convertEntry
       where
         primaryFallbacks = [(RrdpU (RrdpURL (URI primary)), mempty) | primary <- urls ]
 
-repo1, repo2, repo3 :: Text
+repo1, repo2, repo3, oldRepo :: Text
 repo1 = "https://repo1.example.com"
 repo2 = "https://repo2.example.com"
 repo3 = "https://repo3.example.com"
 oldRepo = "https://old-repo.example.com"
 
-ta1, ta2 :: Text
+ta1, ta2, ta3 :: Text
 ta1 = "TA1"
 ta2 = "TA2"
 ta3 = "TA3"

@@ -36,7 +36,7 @@ import           Data.Maybe                      (fromMaybe)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
 import           Data.Time.Clock                 (NominalDiffTime, diffUTCTime, getCurrentTime)
-import           Data.IxSet.Typed                (IxSet, Indexable, ixFun, ixList)
+import           Data.IxSet.Typed                (IxSet, Indexable, IsIndexOf, ixFun, ixList)
 import qualified Data.IxSet.Typed                as IxSet
 
 import           Data.String.Interpolate.IsString
@@ -75,7 +75,6 @@ import           RPKI.Http.Dto
 import           RPKI.Http.Types
 import           UnliftIO (pooledForConcurrentlyN)
 
-
 {- 
     Fully asynchronous execution.
 
@@ -105,8 +104,7 @@ import           UnliftIO (pooledForConcurrentlyN)
 data Fetchers = Fetchers {
         -- Fetchers that are currently running
         fetcheables     :: TVar Fetcheables,
-        runningFetchers :: TVar (Map RpkiURL ThreadId),
-        fetcheableToTAs :: TVar (Map RpkiURL (Set TaName)),
+        runningFetchers :: TVar (Map RpkiURL ThreadId),        
         fetchSemaphore  :: Semaphore,
         uriByTa         :: TVar UriTaIxSet
     }
@@ -115,8 +113,7 @@ data Fetchers = Fetchers {
 type UriTaIxSet = IxSet Indexes UriTA
 
 data UriTA = UriTA RpkiURL TaName
-    deriving stock (Show, Eq, Ord, Generic, Typeable)
-    deriving anyclass (Data)
+    deriving stock (Show, Eq, Ord, Generic, Data, Typeable)    
 
 type Indexes = '[RpkiURL, TaName]
 
@@ -125,31 +122,44 @@ instance Indexable Indexes UriTA where
         (ixFun (\(UriTA url _) -> [url]))
         (ixFun (\(UriTA _ ta)  -> [ta]))        
 
+deleteByIx :: (Indexable ixs a, IsIndexOf ix ixs) => ix -> IxSet ixs a -> IxSet ixs a
+deleteByIx ix_ s = foldr IxSet.delete s $ IxSet.getEQ ix_ s
+
 dropFetcher :: Fetchers -> RpkiURL -> IO ()
 dropFetcher Fetchers {..} url = mask_ $ do
     readTVarIO runningFetchers >>= \running -> do
         for_ (Map.lookup url running) $ \thread -> do
             Conc.throwTo thread AsyncCancelled
             atomically $ do
-                modifyTVar' runningFetchers (Map.delete url)
-                modifyTVar' fetcheableToTAs (Map.delete url)
+                modifyTVar' runningFetchers $ Map.delete url
+                modifyTVar' uriByTa $ deleteByIx url
 
 -- | Adjust running fetchers to the latest discovered repositories
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
 adjustFetchers :: Storage s => AppContext s -> Map TaName Fetcheables -> WorkflowShared -> IO ()
 adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@WorkflowShared { fetchers = Fetchers {..} } = do
-    (currentFetchers, toStop, toStart) <- atomically $ do        
-        let newFetcheables_ = mconcat $ Map.elems discoveredFetcheables
-        writeTVar fetcheables newFetcheables_
-        running <- readTVar runningFetchers
+    (currentFetchers, toStop, toStart) <- atomically $ do            
 
-        let updatedUrls = MonoidalMap.keysSet $ unFetcheables newFetcheables_
-            runningFetcherUrls = Map.keysSet running
+        -- All the URLs that were ever discovered for all TAs
+        relevantUrls :: Set RpkiURL <- do 
+                uriByTa' <- updateUriPerTa discoveredFetcheables <$> readTVar uriByTa
+                writeTVar uriByTa uriByTa'
+                pure $ Set.fromList $ IxSet.indexKeys uriByTa'
+            
+        -- This basically means that we filter all the fetcheables 
+        -- (new or current) by being amongst the relevant URLs. 
+        modifyTVar' fetcheables $ \currentFetcheables -> 
+                Fetcheables $ MonoidalMap.filterWithKey 
+                    (\url _ -> url `Set.member` relevantUrls) $ 
+                    unFetcheables $ currentFetcheables <> mconcat (Map.elems discoveredFetcheables)
+
+        running <- readTVar runningFetchers
+        let runningFetcherUrls = Map.keysSet running
 
         pure (running, 
-              Set.difference runningFetcherUrls updatedUrls,
-              Set.difference updatedUrls runningFetcherUrls)        
+              Set.difference runningFetcherUrls relevantUrls,
+              Set.difference relevantUrls runningFetcherUrls)        
 
     logDebug logger [i|Adjusting fetchers: toStop = #{toStop}, toStart = #{toStart}, currentFetchers = #{Map.keys currentFetchers}|]
 
@@ -166,23 +176,13 @@ adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@W
             modifyTVar' runningFetchers $ \r -> do 
                 let addedNewAsyncs = foldr (uncurry Map.insert) r threads
                 foldr Map.delete addedNewAsyncs $ Set.toList toStop
-
-            let discoveredUrls = Map.fromListWith Set.union 
-                    [ (ta, Set.singleton url) | 
-                        (ta, Fetcheables fs) <- Map.toList discoveredFetcheables,
-                        url <- MonoidalMap.keys fs
-                    ]
-
-            modifyTVar' fetcheableToTAs (`updateRepositoryToTAs` discoveredUrls)
                         
 
 updateUriPerTa :: Map TaName Fetcheables -> UriTaIxSet -> UriTaIxSet
 updateUriPerTa fetcheablesPerTa uriTa = uriTa'
   where 
-    cleanedUpPerTa = 
-        foldr IxSet.delete uriTa 
-            $ concatMap (\ta -> IxSet.toList $ IxSet.getEQ ta uriTa) 
-            $ Map.keys fetcheablesPerTa
+    -- TODO Optimise it
+    cleanedUpPerTa = foldr deleteByIx uriTa $ Map.keys fetcheablesPerTa        
 
     uriTa' = 
         IxSet.insertList [ UriTA url ta | 
@@ -354,8 +354,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
            any (\m -> rsyncRepoHasUpdates (m ^. typed)) rsyncs
             
     triggerTaRevalidation = atomically $ do 
-        f2ta <- readTVar fetcheableToTAs
-        modifyTVar' tasToValidate $ (<>) (fromMaybe mempty (Map.lookup url f2ta))        
+        ut <- readTVar uriByTa        
+        let tas = Set.fromList $ IxSet.indexKeys $ IxSet.getEQ url ut
+        modifyTVar' tasToValidate $ (<>) tas
 
 
 
@@ -401,8 +402,7 @@ withWorkflowShared AppContext {..} prometheusMetrics f = do
         runningTasks          <- newRunningTasks
         fetchers <- Fetchers <$>
                         newTVar mempty <*>
-                        newTVar mempty <*>
-                        newTVar mempty <*>
+                        newTVar mempty <*>                        
                         newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism) <*>
                         newTVar mempty
 
@@ -502,11 +502,12 @@ runWorkflow appContext@AppContext {..} tals = do
 
             worldVersion <- createWorldVersion
             
-            void $ validateTAs workflowShared worldVersion talsToValidate
-            forkIO $ do     
-                let minimalPeriodBetweenRevalidations = 30_000_000
-                Conc.threadDelay minimalPeriodBetweenRevalidations
-                atomically $ writeTVar canValidateAgain True
+            void $ do 
+                validateTAs workflowShared worldVersion talsToValidate
+                forkIO $ do     
+                    let minimalPeriodBetweenRevalidations = 30_000_000
+                    Conc.threadDelay minimalPeriodBetweenRevalidations
+                    atomically $ writeTVar canValidateAgain True
             
             go canValidateAgain RanBefore
 
@@ -1057,10 +1058,10 @@ runConcurrentlyIfPossible logger (Task taskType action) Tasks {..} = do
         logDebug logger [i|Task #{taskType} cannot run concurrently with #{runningTasks} and has to wait.|]        
 
     join $ atomically $ do 
-        runningTasks <- readTVar running
-        if canRunWith runningTasks
+        runningTasks_ <- readTVar running
+        if canRunWith runningTasks_
             then do 
-                writeTVar running $ Map.insertWith (+) taskType 1 runningTasks
+                writeTVar running $ Map.insertWith (+) taskType 1 runningTasks_
                 pure $ action
                         `finally` 
                         atomically (modifyTVar' running $ Map.alter (>>= 
