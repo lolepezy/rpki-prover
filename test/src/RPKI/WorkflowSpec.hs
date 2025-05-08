@@ -42,70 +42,47 @@ ta2 = "TA2"
 ta3 = "TA3"
 
 workflowSpec :: TestTree
-workflowSpec = testGroup "Workflow"  [ 
+workflowSpec = testGroup "Workflow" [ 
 
     HU.testCase "Adds entries to empty IxSet" $
-        let fs = taFetchables [(ta1, [repo1])]
-            urlTa = uriTaSet []
-            expected = uriTaSet [(repo1, ta1)]
-        in updateUriPerTa fs urlTa @?= expected
+        updateUriPerTa 
+            (taFetchables [(ta1, [repo1])]) 
+            (uriTaSet []) 
+            @?= uriTaSet [(repo1, ta1)]
 
   , HU.testCase "Replaces all entries for a TA" $
-        let fs = taFetchables [(ta1, [repo2])]
-            urlTa = uriTaSet [(repo1, ta1)]
-            expected = uriTaSet [(repo2, ta1)]
-        in updateUriPerTa fs urlTa @?= expected
+        updateUriPerTa 
+            (taFetchables [(ta1, [repo2])]) 
+            (uriTaSet [(repo1, ta1)]) 
+            @?= uriTaSet [(repo2, ta1)]
 
   , HU.testCase "Preserves entries for TAs not in fs" $
-        let fs = taFetchables [(ta1, [repo1])]
-            urlTa = uriTaSet [(repo2, ta2)]
-            expected = uriTaSet [(repo1, ta1), (repo2, ta2)]
-        in updateUriPerTa fs urlTa @?= expected
+        updateUriPerTa 
+            (taFetchables [(ta1, [repo1])]) 
+            (uriTaSet [(repo2, ta2)]) 
+            @?= uriTaSet [(repo1, ta1), (repo2, ta2)]
 
   , HU.testCase "Handles multiple URLs per TA" $
-        let fs = taFetchables [(ta1, [repo1, repo2])]
-            urlTa = uriTaSet []
-            expected = uriTaSet [(repo1, ta1),(repo2, ta1)]
-        in updateUriPerTa fs urlTa @?= expected
+        updateUriPerTa 
+            (taFetchables [(ta1, [repo1, repo2])]) 
+            (uriTaSet []) 
+            @?= uriTaSet [(repo1, ta1), (repo2, ta1)]
 
   , HU.testCase "Handles multiple TAs and URLs" $
-        let fs = taFetchables [
-                (ta1, [repo1]),
-                (ta2, [repo2])
-              ]
-            urlTa = uriTaSet [
-                (oldRepo, ta1),
-                (repo3, ta3)
-              ]
-            expected = uriTaSet [
-                (repo1, ta1),
-                (repo2, ta2),
-                (repo3, ta3)
-              ]
-        in updateUriPerTa fs urlTa @?= expected
+        updateUriPerTa 
+            (taFetchables [(ta1, [repo1]),(ta2, [repo2])])
+            (uriTaSet [(oldRepo, ta1),(repo3, ta3)])
+            @?= uriTaSet [(repo1, ta1),(repo2, ta2),(repo3, ta3)]
 
   , HU.testCase "Handles TAs with no URLs in fs" $
-        let fs = taFetchables [
-                (ta1, []),
-                (ta2, [repo2])
-              ]
-            urlTa = uriTaSet [
-                (repo1, ta1),
-                (oldRepo, ta2),
-                (repo3, ta3)
-              ]
-            expected = uriTaSet [
-                (repo2, ta2),
-                (repo3, ta3)
-              ]
-        in updateUriPerTa fs urlTa @?= expected
+        updateUriPerTa 
+            (taFetchables [(ta1, []),(ta2, [repo2])])
+            (uriTaSet [(repo1, ta1),(oldRepo, ta2),(repo3, ta3)])
+            @?= uriTaSet [(repo2, ta2),(repo3, ta3)]
 
   , HU.testCase "Handles empty fs map" $
-        let fs = taFetchables []
-            urlTa = uriTaSet [
-                (repo1, ta1),
-                (repo2, ta2)
-              ]
-            expected = urlTa
-        in updateUriPerTa fs urlTa @?= expected
+        updateUriPerTa 
+            (taFetchables [])
+            (uriTaSet [(repo1, ta1), (repo2, ta2)])
+            @?= uriTaSet [(repo1, ta1), (repo2, ta2)]
   ]
