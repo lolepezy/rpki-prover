@@ -36,6 +36,7 @@ import           Data.Foldable
 import           Data.IORef
 import           Data.Maybe
 import qualified Data.Set.NonEmpty                as NESet
+import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Monoid.Generic
@@ -153,7 +154,7 @@ data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
     deriving stock (Show, Eq, Ord, Generic)
 
 data TopDownResult = TopDownResult {
-        payloads               :: Payloads Vrps,
+        payloads               :: Payloads,
         roas                   :: Roas,
         topDownValidations     :: ValidationState,
         discoveredRepositories :: MonoidalMap.MonoidalMap TaName Fetcheables
@@ -272,7 +273,7 @@ validateMutlipleTAs :: Storage s =>
                     AppContext s
                     -> WorldVersion
                     -> [TAL]
-                    -> IO [TopDownResult]
+                    -> IO (Map TaName TopDownResult)
 validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
 
     fst <$> bracketChanClosable
@@ -291,17 +292,13 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
                 applyValidationSideEffects appContext allTas
 
     
-    validateThem allTas = do
-        rs <- forConcurrently tals $ \tal -> do
-            (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $
-                    validateTA appContext tal worldVersion allTas
-            logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
-            pure r
-
-        -- Get validations for all the fetches that happened during this top-down traversal
-        fetchValidation <- validationStateOfFetches $ allTas ^. #repositoryProcessing
-        pure $! fromValidations fetchValidation : rs
-    
+    validateThem allTas =
+        fmap Map.fromList $ 
+            forConcurrently tals $ \tal -> do
+                (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $
+                        validateTA appContext tal worldVersion allTas
+                logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
+                pure (getTaName tal, r)
 
 --
 validateTA :: Storage s =>
@@ -1676,7 +1673,7 @@ moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
 
 -- Number of unique VRPs requires explicit counting of the VRP set sizes, 
 -- so just counting the number of VRPs in ROAs in not enough
-addUniqueVRPCount :: (HasType ValidationState s, HasField' "payloads" s (Payloads Vrps)) => s -> s
+addUniqueVRPCount :: (HasType ValidationState s, HasField' "payloads" s Payloads) => s -> s
 addUniqueVRPCount !s = let
         vrpCountLens = typed @ValidationState . typed @RawMetric . #vrpCounts
         totalUnique = Count (fromIntegral $ uniqueVrpCount $ (s ^. #payloads) ^. #vrps)

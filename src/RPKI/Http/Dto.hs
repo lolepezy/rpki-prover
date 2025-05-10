@@ -39,18 +39,17 @@ import           RPKI.Resources.Validity
 import           RPKI.RTR.Types
 import           RPKI.Validation.Types
 import           RPKI.Util
-import RPKI.AppTypes (WorldVersion)
+import          RPKI.AppTypes (WorldVersion)
 
 {-
     Mainly domain objects -> DTO convertions. 
 -}
 
-toVrpDtos :: Maybe Vrps -> [VrpDto]
-toVrpDtos = \case
-    Nothing   -> []
-    Just vrps -> [ VrpDto a p len (unTaName ta) |
-                    (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
-                    Vrp a p len  <- V.toList vrpSet ]
+toVrpDtos :: PerTA Vrps -> [VrpDto]
+toVrpDtos vrpsPerTa =     
+    [ VrpDto {..} | 
+        (TaName ta, Vrps vrps) <- perTA vrpsPerTa,
+        Vrp asn prefix maxLength <- V.toList vrps ]
 
 toVrpDto :: Vrp -> TaName -> VrpDto
 toVrpDto (Vrp a p len) (TaName ta) = VrpDto a p len ta

@@ -16,8 +16,6 @@ import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
 import qualified Data.Vector              as V
-import           Data.Data
-import           Data.Typeable
 
 import           Data.ByteString.Base16   as Hex
 import qualified Data.String.Conversions  as SC
@@ -702,13 +700,13 @@ newtype TaName = TaName { unTaName :: Text }
 instance Show TaName where
     show = show . unTaName
 
-newtype Vrps = Vrps { unVrps :: MonoidalMap TaName (V.Vector Vrp) }
+newtype Vrps = Vrps { unVrps :: V.Vector Vrp }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup Vrps
     deriving Monoid    via GenericMonoid Vrps
 
-newtype Roas = Roas { unRoas :: MonoidalMap TaName (MonoidalMap ObjectKey (V.Vector Vrp)) }
+newtype Roas = Roas { unRoas :: MonoidalMap ObjectKey (V.Vector Vrp) }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup Roas
@@ -724,8 +722,8 @@ data TA = TA {
     deriving anyclass (TheBinary)
   
 
-data Payloads a = Payloads {
-        vrps     :: a,
+data Payloads = Payloads {
+        vrps     :: Vrps,
         spls     :: Set.Set SplN,
         aspas    :: Set.Set Aspa,
         gbrs     :: Set.Set (T2 Hash Gbr),
@@ -733,8 +731,14 @@ data Payloads a = Payloads {
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
-    deriving Semigroup via GenericSemigroup (Payloads a)
-    deriving Monoid    via GenericMonoid (Payloads a)
+    deriving Semigroup via GenericSemigroup Payloads
+    deriving Monoid    via GenericMonoid Payloads
+
+newtype PerTA a = PerTA (MonoidalMap TaName a)        
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+    deriving Semigroup via GenericSemigroup (PerTA a)
+    deriving Monoid    via GenericMonoid (PerTA a)
 
 -- Some auxiliary types
 newtype Size = Size { unSize :: Int64 }
@@ -761,6 +765,25 @@ data ObjectIdentity = KeyIdentity ObjectKey
                     | HashIdentity Hash
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
+
+data VersionId = TaValidationMetrics TaName ArtificialKey
+               | TaValidationOutcome TaName ArtificialKey
+               | TaPayloads { 
+                    roasKey     :: ArtificialKey,
+                    aspasKey    :: ArtificialKey,
+                    splsKey     :: ArtificialKey,            
+                    gbrsKey     :: ArtificialKey,
+                    bgpCertsKey :: ArtificialKey
+                }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)    
+
+
+newtype VersionMeta = VersionMeta (Set VersionId)        
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+    deriving Semigroup via GenericSemigroup VersionMeta
+    deriving Monoid    via GenericMonoid VersionMeta
 
 
 -- Small utility functions that don't have anywhere else to go
@@ -848,7 +871,7 @@ sortRrdpFirstNE :: NonEmpty.NonEmpty RpkiURL -> NonEmpty.NonEmpty RpkiURL
 sortRrdpFirstNE = NonEmpty.fromList . sortRrdpFirst . NonEmpty.toList
 
 oneOfLocations :: Locations -> RpkiURL -> Bool
-oneOfLocations (Locations urls) url = not $ null $ filter (==url) $ neSetToList urls
+oneOfLocations (Locations urls) url = url `elem` neSetToList urls
 
 {- 
 https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.2
@@ -869,20 +892,26 @@ makeSerial i =
 
 
 estimateVrpCount :: Vrps -> Int 
-estimateVrpCount (Vrps vrps) = sum $ map V.length $ MonoidalMap.elems vrps
+estimateVrpCount (Vrps vrps) = V.length vrps
 
 -- Precise but much more expensive
 uniqueVrpCount :: Vrps -> Int 
-uniqueVrpCount (Vrps vrps) = Set.size $ Set.fromList $ concatMap V.toList $ MonoidalMap.elems vrps
+uniqueVrpCount (Vrps vrps) = Set.size $ Set.fromList $ V.toList vrps
 
-newVrps :: TaName -> V.Vector Vrp -> Vrps
-newVrps taName vrps = Vrps $ MonoidalMap.singleton taName vrps
+-- newVrps :: TaName -> V.Vector Vrp -> Vrps
+-- newVrps taName vrps = Vrps $ MonoidalMap.singleton taName vrps
 
-newRoas :: TaName -> MonoidalMap ObjectKey (V.Vector Vrp) -> Roas
-newRoas taName vrps = Roas $ MonoidalMap.singleton taName vrps
+-- newRoas :: TaName -> MonoidalMap ObjectKey (V.Vector Vrp) -> Roas
+-- newRoas taName vrps = Roas $ MonoidalMap.singleton taName vrps
 
-allVrps :: Vrps -> [V.Vector Vrp] 
-allVrps (Vrps vrps) = MonoidalMap.elems vrps          
+-- allVrps :: Vrps -> [V.Vector Vrp] 
+-- allVrps (Vrps vrps) = vrps          
 
-createVrps :: Foldable f => TaName -> f Vrp -> Vrps
-createVrps taName vrps = Vrps $ MonoidalMap.fromList [(taName, V.fromList $ toList vrps)]
+createVrps :: Foldable f => f Vrp -> Vrps
+createVrps vrps = Vrps $ V.fromList $ toList vrps
+
+toVrps :: Roas -> Vrps
+toVrps (Roas roas) = Vrps $ V.concat $ MonoidalMap.elems roas
+
+perTA :: PerTA a -> [(TaName, a)]
+perTA (PerTA a) = MonoidalMap.toList a

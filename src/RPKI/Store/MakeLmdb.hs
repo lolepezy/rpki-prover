@@ -76,8 +76,8 @@ createDatabase env logger checkAction = do
     doCreateDb = do 
         sequences        <- createMap
         taStore          <- TAStore <$> createMap        
-        validationsStore <- ValidationsStore <$> createMap
-        vrpStore         <- VRPStore <$> createMap
+        validationsStore <- ValidationsStore <$> createMap <*> createMap
+        roaStore         <- RoaStore <$> createMap
         splStore         <- SplStore <$> createMap
         aspaStore        <- AspaStore <$> createMap    
         gbrStore         <- GbrStore <$> createMap 

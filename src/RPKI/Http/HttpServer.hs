@@ -198,6 +198,7 @@ getRoasValidatedRaw appContext version =
                                                     uri = toText $ pickLocation locs,
                                                     vrp = toVrpDto vrp taName
                                                 } | vrp <- V.toList vrps ] 
+
 asMaybe :: (Eq a, Monoid a) => a -> Maybe a
 asMaybe a = if mempty == a then Nothing else Just a
 

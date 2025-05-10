@@ -49,10 +49,8 @@ slurmVrpName = TaName "slurm"
 
 applySlurmToVrps :: Slurm -> Vrps -> Vrps
 applySlurmToVrps slurm (Vrps vrps) = 
-    Vrps $ filteredVrps vrps <> MonoidalMap.singleton slurmVrpName assertedVrps
-  where     
-    filteredVrps = MonoidalMap.map (V.filter filterFunc)
-
+    Vrps $ V.filter filterFunc vrps <> assertedVrps
+  where         
     assertedVrps = V.fromList 
         $ map toVrp 
         $ slurm ^. #locallyAddedAssertions . #prefixAssertions

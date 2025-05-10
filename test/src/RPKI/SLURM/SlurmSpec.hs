@@ -174,13 +174,13 @@ test_apply_slurm :: HU.Assertion
 test_apply_slurm = do    
     let rtrPayloads = 
             mkRtrPayloads 
-                (createVrps (TaName "ta") [
+                (createVrps [
                     mkVrp4 123 "192.168.0.0/16" 16,
                     mkVrp4 124 "192.0.2.0/24" 24,
                     mkVrp4 64496 "10.1.1.0/24" 24,
                     mkVrp4 64497 "198.51.100.0/24" 24,
                     mkVrp4 64497 "198.51.101.0/24" 24
-                ]) 
+                ] 
                 (Set.fromList [
                     mkBgpSec "aabb" [ASN 64496] "aabbcc",
                     mkBgpSec "foo" [ASN 123] "112233",                
@@ -193,11 +193,11 @@ test_apply_slurm = do
 
     let expected = 
             mkRtrPayloads 
-                (createVrps (TaName "ta") [
+                (createVrps [
                     mkVrp4 123 "192.168.0.0/16" 16,
                     mkVrp4 64497 "198.51.101.0/24" 24                    
                 ] <>
-                createVrps (TaName "slurm") [
+                createVrps [
                     mkVrp4 64496 "198.51.100.0/24" 24,
                     mkVrp6 64496 "2001:db8::/32" 48
                 ]) 

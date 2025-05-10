@@ -29,6 +29,7 @@ import qualified Data.Text                       as Text
 import qualified Data.List                       as List
 import           Data.Map.Strict                 (Map)
 import qualified Data.Map.Strict                 as Map
+import           Data.Map.Monoidal.Strict        (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import           Data.Set                        (Set)
 import qualified Data.Set                        as Set
@@ -628,10 +629,10 @@ runWorkflow appContext@AppContext {..} tals = do
                         logError logger [i|Something weird happened, could not re-read VRPs.|]
                         pure (mempty, mempty)
                     Just rtrPayloads -> atomically $ do                                                    
-                            slurmedPayloads <- completeVersion appState worldVersion rtrPayloads maybeSlurm 
-                            when (config ^. #withValidityApi) $
-                                updatePrefixIndex appState slurmedPayloads
-                            pure (rtrPayloads, slurmedPayloads)
+                        slurmedPayloads <- completeVersion appState worldVersion rtrPayloads maybeSlurm 
+                        when (config ^. #withValidityApi) $
+                            updatePrefixIndex appState slurmedPayloads
+                        pure (rtrPayloads, slurmedPayloads)
                           
     -- Delete objects in the store that were read by top-down validation 
     -- longer than `cacheLifeTime` hours ago.
@@ -829,6 +830,11 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     TopDownResult {..} <- addUniqueVRPCount . mconcat <$>
                 validateMutlipleTAs appContext worldVersion tals
 
+    results <- validateMutlipleTAs appContext worldVersion tals
+
+    let validationStates :: Map TaName ValidationState = Map.map (^. typed) results
+    let payloads :: Map TaName Payloads = Map.map (^. typed) results
+    
     -- Apply SLURM if it is set in the appState
     (slurmValidations, maybeSlurm) <-
         case appState ^. #readSlurm of
@@ -845,17 +851,21 @@ runValidation appContext@AppContext {..} worldVersion tals = do
 
     -- Save all the results into LMDB
     let updatedValidation = slurmValidations <> topDownValidations ^. typed
-    (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
-        DB.saveMetrics tx db worldVersion (topDownValidations ^. typed)
-        DB.saveValidations tx db worldVersion (updatedValidation ^. typed)
-        DB.saveRoas tx db roas worldVersion
-        DB.saveSpls tx db (payloads ^. typed) worldVersion
-        DB.saveAspas tx db (payloads ^. typed) worldVersion
-        DB.saveGbrs tx db (payloads ^. typed) worldVersion
-        DB.saveBgps tx db (payloads ^. typed) worldVersion        
+    (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do      
+
+        DB.savePayloads tx db worldVersion payloads
+        DB.saveValidationStates tx db worldVersion validationStates
+
+        -- DB.saveMetrics tx db worldVersion (topDownValidations ^. typed)
+        -- DB.saveValidations tx db worldVersion (updatedValidation ^. typed)
+        -- DB.saveRoas tx db roas worldVersion
+        -- DB.saveSpls tx db (payloads ^. typed) worldVersion
+        -- DB.saveAspas tx db (payloads ^. typed) worldVersion
+        -- DB.saveGbrs tx db (payloads ^. typed) worldVersion
+        -- DB.saveBgps tx db (payloads ^. typed) worldVersion        
         for_ maybeSlurm $ DB.saveSlurm tx db worldVersion        
         DB.saveTaValidationVersion tx db worldVersion (map getTaName tals)       
-        DB.completeValidationWorldVersion tx db worldVersion        
+        -- DB.completeValidationWorldVersion tx db worldVersion        
 
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.
