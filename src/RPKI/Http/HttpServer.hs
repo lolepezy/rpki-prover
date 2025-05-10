@@ -11,7 +11,6 @@ import           Control.Monad
 
 import           Control.Concurrent.STM
 import           Control.Monad.IO.Class
-import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Error.Class
 
@@ -66,8 +65,8 @@ import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 import           RPKI.Version
 
 
-httpServer :: (Storage s, MaintainableStorage s) => AppContext s -> Application
-httpServer appContext = genericServe HttpApi {
+httpServer :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> Application
+httpServer appContext tals = genericServe HttpApi {
         api     = apiServer,
         metrics = convert <$> textualMetrics,
         ui      = uiServer appContext,
@@ -118,17 +117,25 @@ httpServer appContext = genericServe HttpApi {
         db <- liftIO $ readTVarIO database
         version <- liftIO $ roTx db $ \tx -> DB.getLastValidationVersion db tx 
         case version of 
-            Nothing -> notFoundException
-            Just validationVersion -> do                                      
-                validation <- liftIO $ roTx db $ \tx -> runMaybeT $ do                 
-                                vMetrics     <- MaybeT $ DB.metricsForVersion tx db validationVersion
-                                vValidations <- MaybeT $ getValidationsForVersion appContext validationVersion
-                                repoValidations <- mconcat . map snd <$> DB.getRepositories tx db
-                                resolvedValidations <- lift $ resolveVDto tx db vValidations
-                                pure (validationVersion, resolvedValidations, vMetrics <> repoValidations ^. typed)
+            Nothing                      -> notFoundException
+            Just latestValidationVersion -> do                      
+                liftIO $ roTx db $ \tx -> do                             
+                    let taNames = map getTaName tals
 
-                systemInfo <- liftIO $ readTVarIO $ appContext ^. #appState . #system
-                pure $ mainPage systemInfo validation
+                    validations       <- DB.getPayloadsForTas tx db taNames DB.validationsForVersion
+                    validationMetrics <- DB.getPayloadsForTas tx db taNames DB.metricsForVersion
+                    repoVs            <- mconcat . map snd <$> DB.getRepositories tx db
+                    
+                    resolvedValidations <- resolveVDto tx db $ 
+                            validationsToDto latestValidationVersion validations
+
+                    resolvedFetchVDtos <- mapM (resolveDto tx db) $ toVDtos $ repoVs ^. typed
+                    
+                    systemInfo <- readTVarIO $ appContext ^. #appState . #system
+                    pure $ mainPage latestValidationVersion systemInfo  
+                            resolvedValidations
+                            resolvedFetchVDtos
+                            (validationMetrics <> repoVs ^. typed)
 
 getVRPValidated :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s -> Maybe Text -> m [VrpDto]
@@ -312,13 +319,8 @@ getValidationsImpl AppContext {..} getVersionF = do
     roTx db $ \tx ->
         runMaybeT $ do
             version     <- MaybeT $ getVersionF db tx
-            (Validations vMap) <- MaybeT $ DB.validationsForVersion tx db version
-            let validationDtos = map toVDto $ Map.toList vMap
-            pure $ ValidationsDto {
-                    worldVersion = version,
-                    timestamp    = versionToMoment version,
-                    validations  = validationDtos
-                }                
+            validations <- MaybeT $ DB.validationsForVersion tx db version
+            pure $ validationsToDto version validations            
 
 getLastAsyncFetchVersion :: Storage s => AppContext s -> IO (Maybe WorldVersion)
 getLastAsyncFetchVersion appContext = getLastKindVersion appContext asyncFetchKind
@@ -601,6 +603,16 @@ withPrefixIndex AppContext {..} f = do
         Nothing          -> throwError $ err404 { errBody = [i|Prefix index is not (yet) built.|] }
         Just prefixIndex -> f prefixIndex                
 
+
+resolveDto :: (MonadIO m, Storage s) 
+            => Tx s 'RO
+            -> DB s 
+            -> OriginalVDto 
+            -> m ResolvedVDto
+resolveDto tx db (OriginalVDto fd) = liftIO $ 
+    ResolvedVDto <$> 
+        #path (mapM (resolveLocations tx db)) fd
+  
 
 resolveVDto :: (MonadIO m, Storage s) => 
                 Tx s 'RO

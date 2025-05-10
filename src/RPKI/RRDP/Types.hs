@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE StrictData         #-}
 {-# LANGUAGE RecordWildCards    #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module RPKI.RRDP.Types where
 

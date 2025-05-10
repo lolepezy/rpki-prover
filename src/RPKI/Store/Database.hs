@@ -195,13 +195,14 @@ instance Storage s => WithStorage s (VRPStore s) where
 
 
 -- Version store
-newtype VersionStore s = VersionStore {
-        versions :: SMap "versions" s WorldVersion VersionKind
+data VersionStore s = VersionStore {
+        versions                  :: SMap "versions" s WorldVersion VersionKind,
+        latestTaValidationVersion :: SMap "latest-ta-validation-versions" s TaName WorldVersion
     }
     deriving stock (Generic)
 
 instance Storage s => WithStorage s (VersionStore s) where
-    storage (VersionStore s) = storage s
+    storage (VersionStore s _) = storage s
 
 
 newtype SlurmStore s = SlurmStore {
@@ -561,6 +562,20 @@ validationsForVersion :: (MonadIO m, Storage s) =>
 validationsForVersion tx DB { validationsStore = ValidationsStore {..} } wv = 
     liftIO $ fmap unCompressed <$> M.get tx results wv
 
+getPayloadsForTas :: (MonadIO m, Storage s, Monoid payload)
+                => Tx s mode 
+                -> DB s 
+                -> [TaName] 
+                -> (Tx s mode -> DB s -> WorldVersion -> m (Maybe payload)) 
+                -> m payload
+getPayloadsForTas tx db@DB { versionStore = VersionStore _ latest } taNames f = do
+    fmap (mconcat . catMaybes) $ 
+        forM taNames $ \taName -> do 
+            liftIO (M.get tx latest taName) >>= \case
+                Nothing      -> pure Nothing
+                Just version -> f tx db version
+                    
+
 deleteValidations :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> DB s -> WorldVersion -> m ()
 deleteValidations tx DB { validationsStore = ValidationsStore {..} } wv = 
@@ -649,20 +664,25 @@ saveSpls tx DB { splStore = SplStore m } spls worldVersion =
 
 saveVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> VersionKind -> m ()
-saveVersion tx DB { versionStore = VersionStore s } wv versionState = 
+saveVersion tx DB { versionStore = VersionStore s _ } wv versionState = 
     liftIO $ M.put tx s wv versionState
 
 allVersions :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(WorldVersion, VersionKind)]
-allVersions tx DB { versionStore = VersionStore s } = liftIO $ M.all tx s
+allVersions tx DB { versionStore = VersionStore s _ } = liftIO $ M.all tx s
 
 validationVersions :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [WorldVersion]
-validationVersions tx DB { versionStore = VersionStore s } = liftIO $ do 
+validationVersions tx DB { versionStore = VersionStore s _ } = liftIO $ do 
     z <- M.all tx s
     pure [ wv | (wv, vk) <- z, vk == validationKind ]
 
 deleteVersion :: (MonadIO m, Storage s) => 
         Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteVersion tx DB { versionStore = VersionStore s } wv = liftIO $ M.delete tx s wv
+deleteVersion tx DB { versionStore = VersionStore s _ } wv = liftIO $ M.delete tx s wv
+
+saveTaValidationVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> [TaName] -> IO ()
+saveTaValidationVersion tx  DB { versionStore = VersionStore _ latest } worldVersion taNames = 
+    for_ taNames $ \taName -> 
+        M.put tx latest taName worldVersion
 
 completeValidationWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
 completeValidationWorldVersion tx database worldVersion =    

@@ -146,11 +146,13 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                 Right appContext' -> do 
                     -- now we have the appState, set appStateHolder
                     atomically $ writeTVar appStateHolder $ Just $ appContext' ^. #appState
+                    tals <- readTALs appContext'
                     if once 
-                        then runValidatorServer appContext'
-                        else void $ race
-                                (runHttpApi appContext')
-                                (runValidatorServer appContext')
+                        then runValidatorServer appContext' tals
+                        else do                             
+                            void $ race
+                                (runHttpApi appContext' tals)
+                                (runValidatorServer appContext' tals)
 
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
@@ -197,8 +199,8 @@ turnOffTlsValidation = do
     setGlobalManager manager    
 
 
-runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
-runValidatorServer appContext@AppContext {..} = do
+readTALs :: (Storage s, MaintainableStorage s) => AppContext s -> IO [TAL]
+readTALs AppContext {..} = do
     
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
     worldVersion  <- newWorldVersion
@@ -227,21 +229,25 @@ runValidatorServer appContext@AppContext {..} = do
             logError logger [i|Error reading some of the TALs, e = #{e}.|]
             throwIO $ AppException e
         Right tals' -> do
-            logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
-            -- here it blocks and loops in never-ending re-validation
-            runWorkflow appContext tals'
-                `finally`
-                closeStorage appContext
+            logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]            
+            pure tals'
   where
     parseTalFromFile talFileName taName = do
         talContent <- fromTry (TAL_E . TALError . fmtEx) $ LBS.readFile talFileName
-        vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName
+        vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName            
 
 
-runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
-runHttpApi appContext@AppContext {..} = do 
+runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> IO ()
+runValidatorServer appContext tals =     
+    runWorkflow appContext tals
+        `finally`
+        closeStorage appContext
+
+
+runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> IO ()
+runHttpApi appContext@AppContext {..} tals = do 
     let httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
-    (Warp.run httpPort $ httpServer appContext) 
+    (Warp.run httpPort $ httpServer appContext tals) 
         `catch` 
         (\(e :: SomeException) -> logError logger [i|Could not start HTTP server: #{e}.|])
 

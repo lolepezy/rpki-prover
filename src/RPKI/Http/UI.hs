@@ -43,10 +43,13 @@ import           RPKI.Reporting
 import           RPKI.Time
 import           RPKI.Version
 
-mainPage :: SystemInfo 
-        -> Maybe (WorldVersion, ValidationsDto ResolvedVDto, RawMetric) 
+mainPage :: WorldVersion
+        -> SystemInfo 
+        -> ValidationsDto ResolvedVDto
+        -> [ResolvedVDto]
+        -> RawMetric
         -> Html
-mainPage systemInfo validation =     
+mainPage version systemInfo validation fetchValidation rawMetric@RawMetric {..} =     
     H.docTypeHtml $ do
         H.head $ 
             link ! rel "stylesheet" ! href "/static/styles.css"
@@ -58,25 +61,23 @@ mainPage systemInfo validation =
                 H.a ! A.href "#rsync-metrics"      $ H.text "Rsync metrics"
                 H.a ! A.href "#validation-details" $ H.text "Validation details"
                 
-
-        for_ validation $ \(version, vs, rawMetric@RawMetric {..}) ->
-            H.div ! A.class_ "main" $ do
-                H.a ! A.id "overall" $ ""                 
-                H.section $ H.h4 "Overall"                
-                overallHtml systemInfo version                      
-                H.a ! A.id "validation-metrics" $ "" 
-                H.section $ H.h4 "Validation metrics"
-                let metricsDto = toMetricsDto rawMetric
-                validationMetricsHtml $ metricsDto ^. #groupedValidations
-                H.a ! A.id "rrdp-metrics" $ ""
-                H.section $ H.h4 "RRDP metrics"
-                rrdpMetricsHtml rrdpMetrics
-                H.a ! A.id "rsync-metrics" $ ""
-                H.section $ H.h4 "Rsync metrics"
-                rsyncMetricsHtml rsyncMetrics
-                H.a ! A.id "validation-details" $ ""
-                H.section $ H.h4 "Validation details"
-                validaionDetailsHtml $ vs ^. #validations
+        H.div ! A.class_ "main" $ do
+            H.a ! A.id "overall" $ ""                 
+            H.section $ H.h4 "Overall"                
+            overallHtml systemInfo version                      
+            H.a ! A.id "validation-metrics" $ "" 
+            H.section $ H.h4 "Validation metrics"
+            let metricsDto = toMetricsDto rawMetric
+            validationMetricsHtml $ metricsDto ^. #groupedValidations
+            H.a ! A.id "rrdp-metrics" $ ""
+            H.section $ H.h4 "RRDP metrics"
+            rrdpMetricsHtml rrdpMetrics
+            H.a ! A.id "rsync-metrics" $ ""
+            H.section $ H.h4 "Rsync metrics"
+            rsyncMetricsHtml rsyncMetrics
+            H.a ! A.id "validation-details" $ ""
+            H.section $ H.h4 "Validation details"
+            validaionDetailsHtml $ validation ^. #validations
 
 
 overallHtml :: SystemInfo -> WorldVersion -> Html

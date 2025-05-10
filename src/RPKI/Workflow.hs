@@ -499,13 +499,12 @@ runWorkflow appContext@AppContext {..} tals = do
             Nothing -> logWarn logger [i|Don't have any VRPs.|]
             _       -> LBS.writeFile vrpOutputFile $ unRawCSV $ vrpDtosToCSV $ toVrpDtos vrps
 
-    schedules workflowShared = [
-            let interval = config ^. #cacheCleanupInterval
-            in Scheduling {                 
+    schedules workflowShared = [            
+            Scheduling {                 
                 initialDelay = 600_000_000,                
                 taskDef = (CacheCleanupTask, cacheCleanup workflowShared),
                 persistent = True,
-                ..
+                interval = config ^. #cacheCleanupInterval
             },        
             Scheduling {                 
                 initialDelay = 900_000_000,
@@ -609,7 +608,6 @@ runWorkflow appContext@AppContext {..} tals = do
 
                 Right wr@WorkerResult {..} -> do                              
                     let ValidationResult vs discoveredRepositories maybeSlurm = payload
-                    -- logDebug logger [i|discoveredRepositories = #{discoveredRepositories}|]
                     adjustFetchers appContext discoveredRepositories workflowShared
                     
                     logWorkerDone logger workerId wr
@@ -855,8 +853,9 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         DB.saveAspas tx db (payloads ^. typed) worldVersion
         DB.saveGbrs tx db (payloads ^. typed) worldVersion
         DB.saveBgps tx db (payloads ^. typed) worldVersion        
-        for_ maybeSlurm $ DB.saveSlurm tx db worldVersion
-        DB.completeValidationWorldVersion tx db worldVersion
+        for_ maybeSlurm $ DB.saveSlurm tx db worldVersion        
+        DB.saveTaValidationVersion tx db worldVersion (map getTaName tals)       
+        DB.completeValidationWorldVersion tx db worldVersion        
 
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.

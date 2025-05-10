@@ -39,6 +39,7 @@ import           RPKI.Resources.Validity
 import           RPKI.RTR.Types
 import           RPKI.Validation.Types
 import           RPKI.Util
+import RPKI.AppTypes (WorldVersion)
 
 {-
     Mainly domain objects -> DTO convertions. 
@@ -75,7 +76,7 @@ aspaToDto aspa =
     AspaDto {
         customer = aspa ^. #customer,
         providers = Set.toList $ aspa ^. #providers
-    }
+}
 
 gbrObjectToDto :: GbrObject -> GbrDto
 gbrObjectToDto g = gbrToDto $ getCMSContent $ g ^. #cmsPayload
@@ -96,12 +97,22 @@ gbrToDto (Gbr vcardBS) = let
     in GbrDto {..}
 
 
-toVDto :: (Scope a, Set.Set VIssue) -> OriginalVDto
-toVDto (Scope scope, issues) = OriginalVDto $ FullVDto {
-        issues = map toDto $ Set.toList issues,
-        path   = NonEmpty.toList scope,
-        url    = NonEmpty.head scope
-    }
+validationsToDto :: WorldVersion -> Validations -> ValidationsDto OriginalVDto
+validationsToDto version validations =
+    ValidationsDto {
+            worldVersion = version,
+            timestamp    = versionToMoment version,
+            validations  = toVDtos validations
+        }              
+
+toVDtos :: Validations -> [OriginalVDto]
+toVDtos (Validations vMap) = 
+    flip map (Map.toList vMap) $ \(Scope scope, issues) ->        
+        OriginalVDto $ FullVDto {
+            issues = map toDto $ Set.toList issues,
+            path   = NonEmpty.toList scope,
+            url    = NonEmpty.head scope
+        }
   where
     toDto = \case
         VErr e               -> ErrorDto $ toMessage e
