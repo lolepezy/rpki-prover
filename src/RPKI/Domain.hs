@@ -766,24 +766,22 @@ data ObjectIdentity = KeyIdentity ObjectKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-data VersionId = TaValidationMetrics TaName ArtificialKey
-               | TaValidationOutcome TaName ArtificialKey
-               | TaPayloads { 
-                    roasKey     :: ArtificialKey,
-                    aspasKey    :: ArtificialKey,
-                    splsKey     :: ArtificialKey,            
-                    gbrsKey     :: ArtificialKey,
-                    bgpCertsKey :: ArtificialKey
-                }
+data ValidationVersion = ValidationVersion { 
+        validationsKey :: ArtificialKey,
+        metricsKey  :: ArtificialKey,
+        roasKey     :: ArtificialKey,
+        aspasKey    :: ArtificialKey,
+        splsKey     :: ArtificialKey,            
+        gbrsKey     :: ArtificialKey,
+        bgpCertsKey :: ArtificialKey
+    }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)    
 
 
-newtype VersionMeta = VersionMeta (Set VersionId)        
+newtype VersionMeta = VersionMeta (PerTA ValidationVersion)        
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
-    deriving Semigroup via GenericSemigroup VersionMeta
-    deriving Monoid    via GenericMonoid VersionMeta
 
 
 -- Small utility functions that don't have anywhere else to go
@@ -915,3 +913,6 @@ toVrps (Roas roas) = Vrps $ V.concat $ MonoidalMap.elems roas
 
 perTA :: PerTA a -> [(TaName, a)]
 perTA (PerTA a) = MonoidalMap.toList a
+
+toPerTA :: [(TaName, a)] -> PerTA a
+toPerTA = PerTA . MonoidalMap.fromList
