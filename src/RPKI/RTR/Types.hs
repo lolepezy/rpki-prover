@@ -51,7 +51,7 @@ data RtrState = RtrState {
 
 
 data RtrPayloads = RtrPayloads {
-        vrps       :: Vrps,
+        vrps       :: PerTA Vrps,
         uniqueVrps :: ~(Vector AscOrderedVrp),
         bgpSec     :: Set BGPSecPayload
     }

@@ -91,8 +91,9 @@ data WorkerParams = RrdpFetchParams {
                 targetLmdbEnv :: FilePath 
             } | 
             ValidationParams {                 
-                worldVersion :: WorldVersion,
-                tals         :: [TAL]
+                worldVersion   :: WorldVersion,
+                allTals        :: [TAL],
+                talsToValidate :: [TAL]
             } | 
             CacheCleanupParams { 
                 worldVersion :: WorldVersion

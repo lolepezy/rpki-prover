@@ -492,13 +492,13 @@ runWorkflow appContext@AppContext {..} tals = do
     oneOffRun workflowShared vrpOutputFile = do 
         worldVersion <- createWorldVersion
         void $ validateTAs workflowShared worldVersion tals
-        vrps <- roTxT database $ \tx db -> 
-                DB.getLastValidationVersion db tx >>= \case 
-                    Nothing            -> pure Nothing  
-                    Just latestVersion -> DB.getVrps tx db latestVersion
-        case vrps of 
-            Nothing -> logWarn logger [i|Don't have any VRPs.|]
-            _       -> LBS.writeFile vrpOutputFile $ unRawCSV $ vrpDtosToCSV $ toVrpDtos vrps
+        -- vrps <- roTxT database $ \tx db -> 
+        --         DB.getLastValidationVersion db tx >>= \case 
+        --             Nothing            -> pure Nothing  
+        --             Just latestVersion -> DB.getVrps tx db latestVersion
+        -- case vrps of 
+        --     Nothing -> logWarn logger [i|Don't have any VRPs.|]
+        --     _       -> LBS.writeFile vrpOutputFile $ unRawCSV $ vrpDtosToCSV $ toVrpDtos vrps
 
     schedules workflowShared = [            
             Scheduling {                 
@@ -601,9 +601,11 @@ runWorkflow appContext@AppContext {..} tals = do
                 Left e -> do 
                     logError logger [i|Validator process failed: #{e}.|]
                     rwTxT database $ \tx db -> do
-                        DB.saveValidations tx db worldVersion (workerVS ^. typed)
-                        DB.saveMetrics tx db worldVersion (workerVS ^. typed)
-                        DB.completeValidationWorldVersion tx db worldVersion                            
+                        -- DB.saveValidations tx db worldVersion (workerVS ^. typed)
+                        -- DB.saveMetrics tx db worldVersion (workerVS ^. typed)
+                        -- DB.completeValidationWorldVersion tx db worldVersion   
+
+                        DB.saveValidationVersion tx db (mempty, workerVS)                         
                     updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
                     pure (mempty, mempty)
 
@@ -768,7 +770,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
     -- Workers for functionality running in separate processes.
     --     
-    runValidationWorker worldVersion talsToValidate = do 
+    runValidationWorker worldVersion talsToValidate allTals = do 
         let talsStr = Text.intercalate "," $ List.sort $ map (unTaName . getTaName) talsToValidate                    
             workerId = WorkerId [i|version:#{worldVersion}:validation:#{talsStr}|]
 
@@ -792,7 +794,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 (newScopes "validator") $ do 
                     workerInput <- 
                         makeWorkerInput appContext workerId
-                            (ValidationParams worldVersion talsToValidate)                        
+                            ValidationParams {..}
                             (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
                             Nothing
                     runWorker logger workerInput arguments
@@ -824,16 +826,18 @@ runValidation :: Storage s =>
                 AppContext s
             -> WorldVersion
             -> [TAL]
+            -> [TAL]
             -> IO (ValidationState, Map TaName Fetcheables, Maybe Slurm)
-runValidation appContext@AppContext {..} worldVersion tals = do           
+runValidation appContext@AppContext {..} worldVersion talsToValidate allTals = do           
 
-    TopDownResult {..} <- addUniqueVRPCount . mconcat <$>
-                validateMutlipleTAs appContext worldVersion tals
+    -- TopDownResult {..} <- addUniqueVRPCount . mconcat <$>
+    --             validateMutlipleTAs appContext worldVersion tals
 
-    results <- validateMutlipleTAs appContext worldVersion tals
-
-    let validationStates :: Map TaName ValidationState = Map.map (^. typed) results
-    let payloads :: Map TaName Payloads = Map.map (^. typed) results
+    results <- validateMutlipleTAs appContext worldVersion talsToValidate
+    
+    let resultsToSave = toPerTA 
+            $ map (\(ta, r) -> (ta, (r ^. typed, r ^. typed))) 
+            $ Map.toList results
     
     -- Apply SLURM if it is set in the appState
     (slurmValidations, maybeSlurm) <-
@@ -853,8 +857,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
     let updatedValidation = slurmValidations <> topDownValidations ^. typed
     (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do      
 
-        DB.savePayloads tx db worldVersion payloads
-        DB.saveValidationStates tx db worldVersion validationStates
+        DB.saveValidationVersion tx db worldVersion allTals resultsToSave
 
         -- DB.saveMetrics tx db worldVersion (topDownValidations ^. typed)
         -- DB.saveValidations tx db worldVersion (updatedValidation ^. typed)
@@ -864,7 +867,7 @@ runValidation appContext@AppContext {..} worldVersion tals = do
         -- DB.saveGbrs tx db (payloads ^. typed) worldVersion
         -- DB.saveBgps tx db (payloads ^. typed) worldVersion        
         for_ maybeSlurm $ DB.saveSlurm tx db worldVersion        
-        DB.saveTaValidationVersion tx db worldVersion (map getTaName tals)       
+        -- DB.saveTaValidationVersion tx db worldVersion (map getTaName tals)       
         -- DB.completeValidationWorldVersion tx db worldVersion        
 
         -- We want to keep not more than certain number of latest versions in the DB,
@@ -912,7 +915,7 @@ loadStoredAppState AppContext {..} = do
 
                 | otherwise -> do
                     (payloads, elapsed) <- timedMS $ do                                            
-                        slurm    <- DB.slurmForVersion tx db lastVersion
+                        slurm    <- DB.getSlurm tx db lastVersion
                         payloads <- DB.getRtrPayloads tx db lastVersion                        
                         for_ payloads $ \payloads' -> do 
                             slurmedPayloads <- atomically $ completeVersion appState lastVersion payloads' slurm                            

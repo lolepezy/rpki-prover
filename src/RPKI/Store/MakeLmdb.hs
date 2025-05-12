@@ -75,6 +75,7 @@ createDatabase env logger checkAction = do
 
     doCreateDb = do 
         sequences        <- createMap
+        let keys = Sequence "object-key" sequences
         taStore          <- TAStore <$> createMap        
         validationsStore <- ValidationsStore <$> createMap <*> createMap
         roaStore         <- RoaStore <$> createMap
@@ -82,18 +83,17 @@ createDatabase env logger checkAction = do
         aspaStore        <- AspaStore <$> createMap    
         gbrStore         <- GbrStore <$> createMap 
         bgpStore         <- BgpStore <$> createMap
-        versionStore     <- VersionStore <$> createMap <*> createMap
+        versionStore     <- VersionStore <$> createMap
         metricStore      <- MetricStore <$> createMap
         slurmStore       <- SlurmStore <$> createMap
         jobStore         <- JobStore <$> createMap        
         metadataStore    <- MetadataStore <$> createMap          
         repositoryStore  <- createRepositoryStore
-        objectStore      <- createObjectStore sequences
+        objectStore      <- createObjectStore
         pure DB {..}
       where
 
-        createObjectStore seqMap = do 
-            let keys = Sequence "object-key" seqMap
+        createObjectStore = do             
             objects          <- createMap
             mftByAKI         <- createMultiMap
             objectMetas      <- createMap        

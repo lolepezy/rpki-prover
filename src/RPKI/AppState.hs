@@ -72,8 +72,8 @@ uniqVrps vrps = let
         s = Set.fromList $ V.toList $ unVrps vrps
     in V.fromListN (Set.size s) $ Prelude.map AscOrderedVrp $ Set.toList s
 
-mkRtrPayloads :: Vrps -> Set BGPSecPayload -> RtrPayloads
-mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrps vrps, .. }
+mkRtrPayloads :: PerTA Vrps -> Set BGPSecPayload -> RtrPayloads
+mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrps $ allTAs vrps, .. }
 
 -- 
 newAppState :: IO AppState

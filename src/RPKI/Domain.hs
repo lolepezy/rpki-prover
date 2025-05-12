@@ -723,7 +723,7 @@ data TA = TA {
   
 
 data Payloads = Payloads {
-        vrps     :: Vrps,
+        roas     :: Roas,
         spls     :: Set.Set SplN,
         aspas    :: Set.Set Aspa,
         gbrs     :: Set.Set (T2 Hash Gbr),
@@ -739,6 +739,9 @@ newtype PerTA a = PerTA (MonoidalMap TaName a)
     deriving anyclass (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup (PerTA a)
     deriving Monoid    via GenericMonoid (PerTA a)
+
+instance Functor PerTA where
+    fmap f (PerTA m) = PerTA $ fmap f m 
 
 -- Some auxiliary types
 newtype Size = Size { unSize :: Int64 }
@@ -783,6 +786,12 @@ newtype VersionMeta = VersionMeta (PerTA ValidationVersion)
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+instance Monoid VersionMeta where
+    mempty = VersionMeta $ toPerTA []
+
+instance Semigroup VersionMeta where
+    VersionMeta (PerTA pt1) <> VersionMeta (PerTA pt2) = 
+        VersionMeta (PerTA $ MonoidalMap.unionWith (\_ p2 -> p2) pt1 pt2)
 
 -- Small utility functions that don't have anywhere else to go
 
@@ -889,8 +898,11 @@ makeSerial i =
           | otherwise      -> Right $ Serial i
 
 
-estimateVrpCount :: Vrps -> Int 
-estimateVrpCount (Vrps vrps) = V.length vrps
+-- estimateVrpCount :: Vrps -> Int 
+-- estimateVrpCount (Vrps vrps) = V.length vrps
+
+estimateVrpCount :: Roas -> Int 
+estimateVrpCount (Roas roas) = sum $ map V.length $ MonoidalMap.elems roas
 
 -- Precise but much more expensive
 uniqueVrpCount :: Vrps -> Int 
@@ -916,3 +928,6 @@ perTA (PerTA a) = MonoidalMap.toList a
 
 toPerTA :: [(TaName, a)] -> PerTA a
 toPerTA = PerTA . MonoidalMap.fromList
+
+allTAs :: Monoid a => PerTA a -> a
+allTAs (PerTA a) = mconcat $ MonoidalMap.elems a

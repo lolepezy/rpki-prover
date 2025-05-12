@@ -297,7 +297,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
             forConcurrently tals $ \tal -> do
                 (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $
                         validateTA appContext tal worldVersion allTas
-                logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount vrps} VRPs, took #{elapsed}ms|]
+                logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount roas} VRPs, took #{elapsed}ms|]
                 pure (getTaName tal, r)
 
 --
@@ -329,15 +329,13 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
             let spls = Set.fromList [ SplN asn prefix | 
                                       SplPayload asn prefixes <- splPayloads, prefix <- prefixes ]
 
-            let payloads = Payloads {..}        
-            let payloads' = payloads & #vrps .~ 
-                                newVrps taName (V.fromList [ v | T2 vrp _ <- vrps, v <- vrp ])
-
-            let roas = newRoas taName $ MonoidalMap.fromList $ 
+            let roas = Roas $ MonoidalMap.fromList $ 
                             map (\(T2 vrp k) -> (k, V.fromList vrp)) vrps 
 
+            let payloads = Payloads {..}        
+
             newRepos <- readTVarIO $ topDownContext ^. #fetcheables
-            pure $ TopDownResult payloads' roas vs (MonoidalMap.singleton taName newRepos)
+            pure $ TopDownResult payloads roas vs (MonoidalMap.singleton taName newRepos)
 
   where
     taName = getTaName tal
