@@ -297,7 +297,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
             forConcurrently tals $ \tal -> do
                 (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $
                         validateTA appContext tal worldVersion allTas
-                logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCount roas} VRPs, took #{elapsed}ms|]
+                logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCountRoas roas} VRPs, took #{elapsed}ms|]
                 pure (getTaName tal, r)
 
 --

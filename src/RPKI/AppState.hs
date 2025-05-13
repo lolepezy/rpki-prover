@@ -140,7 +140,7 @@ waitForAnyVersion AppState {..} =
 
 mergeSystemMetrics :: MonadIO m => SystemMetrics -> AppState -> m ()           
 mergeSystemMetrics sm AppState {..} = 
-    liftIO $ atomically $ modifyTVar' system (& #metrics %~ (<> sm))
+    liftIO $ atomically $ modifyTVar' system (#metrics %~ (<> sm))
 
 updateRsyncClient :: MonadIO m => WorkerMessage -> AppState -> m ()           
 updateRsyncClient message AppState {..} =     

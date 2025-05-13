@@ -118,9 +118,7 @@ httpServer appContext tals = genericServe HttpApi {
         case version of 
             Nothing                      -> notFoundException
             Just latestValidationVersion -> do                      
-                liftIO $ roTx db $ \tx -> do                             
-                    let taNames = map getTaName tals
-
+                liftIO $ roTx db $ \tx -> do                    
                     (validations, validationMetrics) <- DB.getResult tx db latestValidationVersion
                     repoValidationState              <- mconcat . map snd <$> DB.getRepositories tx db
 

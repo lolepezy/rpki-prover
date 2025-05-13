@@ -598,7 +598,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
       where
         processTALs = do
-            ((z, workerVS), workerId) <- runValidationWorker worldVersion talsToValidate                   
+            ((z, workerVS), workerId) <- runValidationWorker worldVersion talsToValidate allTaNames                  
             case z of 
                 Left e -> do 
                     logError logger [i|Validator process failed: #{e}.|]
@@ -607,7 +607,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         -- DB.saveMetrics tx db worldVersion (workerVS ^. typed)
                         -- DB.completeValidationWorldVersion tx db worldVersion   
 
-                        DB.saveValidationVersion tx db worldVersion (mempty, mempty) workerVS
+                        DB.saveValidationVersion tx db worldVersion allTaNames mempty workerVS
                     updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
                     pure (mempty, mempty)
 

@@ -790,16 +790,6 @@ data VersionMeta = VersionMeta {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
--- instance Monoid VersionMeta where
---     mempty = VersionMeta {
---         perTa = toPerTA [],
---         commonValidationKey = ArtificialKey 0,
---         commonMetricsKey = ArtificialKey 0
---     }
-
--- instance Semigroup VersionMeta where
---     VersionMeta (PerTA pt1) <> VersionMeta (PerTA pt2) =
---         VersionMeta (PerTA $ MonoidalMap.unionWith (\_ p2 -> p2) pt1 pt2)
 
 -- Small utility functions that don't have anywhere else to go
 
@@ -906,24 +896,15 @@ makeSerial i =
           | otherwise      -> Right $ Serial i
 
 
--- estimateVrpCount :: Vrps -> Int 
--- estimateVrpCount (Vrps vrps) = V.length vrps
+estimateVrpCount :: PerTA Vrps -> Int 
+estimateVrpCount = sum . map (V.length . unVrps . snd) . perTA
 
-estimateVrpCount :: Roas -> Int 
-estimateVrpCount (Roas roas) = sum $ map V.length $ MonoidalMap.elems roas
+estimateVrpCountRoas :: Roas -> Int 
+estimateVrpCountRoas = sum . map V.length . MonoidalMap.elems . unRoas
 
 -- Precise but much more expensive
 uniqueVrpCount :: Vrps -> Int 
 uniqueVrpCount (Vrps vrps) = Set.size $ Set.fromList $ V.toList vrps
-
--- newVrps :: TaName -> V.Vector Vrp -> Vrps
--- newVrps taName vrps = Vrps $ MonoidalMap.singleton taName vrps
-
--- newRoas :: TaName -> MonoidalMap ObjectKey (V.Vector Vrp) -> Roas
--- newRoas taName vrps = Roas $ MonoidalMap.singleton taName vrps
-
--- allVrps :: Vrps -> [V.Vector Vrp] 
--- allVrps (Vrps vrps) = vrps          
 
 createVrps :: Foldable f => f Vrp -> Vrps
 createVrps vrps = Vrps $ V.fromList $ toList vrps
