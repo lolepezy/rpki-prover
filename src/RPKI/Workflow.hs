@@ -454,6 +454,8 @@ runWorkflow appContext@AppContext {..} tals = do
                             runRtrIfConfigured            
         )
   where
+    allTaNames = map getTaName tals
+    
     revalidate workflowShared = do 
         canValidateAgain <- newTVarIO True
         concurrently_ 
@@ -461,8 +463,8 @@ runWorkflow appContext@AppContext {..} tals = do
             (let interval = config ^. typed @ValidationConfig . #revalidationInterval
              in forever $ do                 
                 threadDelay (toMicroseconds interval)
-                atomically $ writeTVar 
-                    (workflowShared ^. #tasToValidate) (Set.fromList $ map getTaName tals))
+                atomically $ writeTVar
+                    (workflowShared ^. #tasToValidate) (Set.fromList allTaNames))
       where
         go canValidateAgain run = do 
             talsToValidate <- atomically $ do
@@ -605,7 +607,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         -- DB.saveMetrics tx db worldVersion (workerVS ^. typed)
                         -- DB.completeValidationWorldVersion tx db worldVersion   
 
-                        DB.saveValidationVersion tx db (mempty, workerVS)                         
+                        DB.saveValidationVersion tx db worldVersion (mempty, mempty) workerVS
                     updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
                     pure (mempty, mempty)
 
@@ -770,7 +772,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
     -- Workers for functionality running in separate processes.
     --     
-    runValidationWorker worldVersion talsToValidate allTals = do 
+    runValidationWorker worldVersion talsToValidate allTaNames = do 
         let talsStr = Text.intercalate "," $ List.sort $ map (unTaName . getTaName) talsToValidate                    
             workerId = WorkerId [i|version:#{worldVersion}:validation:#{talsStr}|]
 
@@ -826,9 +828,9 @@ runValidation :: Storage s =>
                 AppContext s
             -> WorldVersion
             -> [TAL]
-            -> [TAL]
+            -> [TaName]
             -> IO (ValidationState, Map TaName Fetcheables, Maybe Slurm)
-runValidation appContext@AppContext {..} worldVersion talsToValidate allTals = do           
+runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames = do           
 
     -- TopDownResult {..} <- addUniqueVRPCount . mconcat <$>
     --             validateMutlipleTAs appContext worldVersion tals
@@ -853,11 +855,18 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTals = d
                     Right slurm ->
                         pure (vs, Just slurm)        
 
-    -- Save all the results into LMDB
-    let updatedValidation = slurmValidations <> topDownValidations ^. typed
-    (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do      
+    -- Calculate metrics common for all TAs
+    -- TODO It is expensive to build a unique set of VRPs, 
+    -- can we do something about it?
+    let vrps = fmap (\(p, _) -> toVrps (p ^. #roas)) resultsToSave 
+    let updatedValidation = addUniqueVRPCount vrps slurmValidations 
 
-        DB.saveValidationVersion tx db worldVersion allTals resultsToSave
+    -- Save all the results into LMDB    
+    (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do              
+
+        DB.saveValidationVersion tx db worldVersion 
+            allTaNames resultsToSave slurmValidations                    
+        
 
         -- DB.saveMetrics tx db worldVersion (topDownValidations ^. typed)
         -- DB.saveValidations tx db worldVersion (updatedValidation ^. typed)
@@ -876,8 +885,9 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTals = d
 
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deleted} oldest versions(s) in #{elapsed}ms.|]
 
+
     pure (updatedValidation, 
-        MonoidalMap.getMonoidalMap discoveredRepositories, 
+        Map.map (\r -> r ^. #discoveredRepositories) results, 
         maybeSlurm)
 
 
@@ -893,7 +903,7 @@ runCacheCleanup AppContext {..} worldVersion = do
     -- This is to prevent cleaning up objects if they were untouched 
     -- because prover wasn't running for too long.
     cutOffVersion <- roTx db $ \tx -> 
-        fromMaybe worldVersion <$> DB.getLastValidationVersion db tx
+        fromMaybe worldVersion <$> DB.getLatestVersion db tx
 
     DB.deleteStaleContent db (versionIsOld (versionToMoment cutOffVersion) (config ^. #cacheLifeTime))
 
@@ -905,7 +915,7 @@ loadStoredAppState AppContext {..} = do
     Now now' <- thisInstant
     let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval    
     roTxT database $ \tx db ->
-        DB.getLastValidationVersion db tx >>= \case
+        DB.getLatestVersion db tx >>= \case
             Nothing  -> pure Nothing
 
             Just lastVersion

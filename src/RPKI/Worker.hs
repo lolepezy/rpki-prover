@@ -92,7 +92,7 @@ data WorkerParams = RrdpFetchParams {
             } | 
             ValidationParams {                 
                 worldVersion   :: WorldVersion,
-                allTals        :: [TAL],
+                allTaNames     :: [TaName],
                 talsToValidate :: [TAL]
             } | 
             CacheCleanupParams { 

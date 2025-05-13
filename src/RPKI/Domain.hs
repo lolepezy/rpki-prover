@@ -734,7 +734,7 @@ data Payloads = Payloads {
     deriving Semigroup via GenericSemigroup Payloads
     deriving Monoid    via GenericMonoid Payloads
 
-newtype PerTA a = PerTA (MonoidalMap TaName a)        
+newtype PerTA a = PerTA { unPerTA :: MonoidalMap TaName a }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup (PerTA a)
@@ -782,16 +782,24 @@ data ValidationVersion = ValidationVersion {
     deriving anyclass (TheBinary)    
 
 
-newtype VersionMeta = VersionMeta (PerTA ValidationVersion)        
+data VersionMeta = VersionMeta { 
+        perTa               :: PerTA ValidationVersion,
+        commonValidationKey :: ArtificialKey,
+        commonMetricsKey    :: ArtificialKey
+    }      
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-instance Monoid VersionMeta where
-    mempty = VersionMeta $ toPerTA []
+-- instance Monoid VersionMeta where
+--     mempty = VersionMeta {
+--         perTa = toPerTA [],
+--         commonValidationKey = ArtificialKey 0,
+--         commonMetricsKey = ArtificialKey 0
+--     }
 
-instance Semigroup VersionMeta where
-    VersionMeta (PerTA pt1) <> VersionMeta (PerTA pt2) = 
-        VersionMeta (PerTA $ MonoidalMap.unionWith (\_ p2 -> p2) pt1 pt2)
+-- instance Semigroup VersionMeta where
+--     VersionMeta (PerTA pt1) <> VersionMeta (PerTA pt2) =
+--         VersionMeta (PerTA $ MonoidalMap.unionWith (\_ p2 -> p2) pt1 pt2)
 
 -- Small utility functions that don't have anywhere else to go
 

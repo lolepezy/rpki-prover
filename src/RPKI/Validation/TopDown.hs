@@ -157,7 +157,7 @@ data TopDownResult = TopDownResult {
         payloads               :: Payloads,
         roas                   :: Roas,
         topDownValidations     :: ValidationState,
-        discoveredRepositories :: MonoidalMap.MonoidalMap TaName Fetcheables
+        discoveredRepositories :: Fetcheables
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving Semigroup via GenericSemigroup TopDownResult
@@ -335,7 +335,7 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
             let payloads = Payloads {..}        
 
             newRepos <- readTVarIO $ topDownContext ^. #fetcheables
-            pure $ TopDownResult payloads roas vs (MonoidalMap.singleton taName newRepos)
+            pure $ TopDownResult payloads roas vs newRepos
 
   where
     taName = getTaName tal
@@ -1671,12 +1671,20 @@ moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
 
 -- Number of unique VRPs requires explicit counting of the VRP set sizes, 
 -- so just counting the number of VRPs in ROAs in not enough
-addUniqueVRPCount :: (HasType ValidationState s, HasField' "payloads" s Payloads) => s -> s
-addUniqueVRPCount !s = let
-        vrpCountLens = typed @ValidationState . typed @RawMetric . #vrpCounts
-        totalUnique = Count (fromIntegral $ uniqueVrpCount $ (s ^. #payloads) ^. #vrps)
-        perTaUnique = MonoidalMap.map (Count . fromIntegral . V.length) (unVrps $ (s ^. #payloads) ^. #vrps)   
-    in s & vrpCountLens . #totalUnique .~ totalUnique                
+-- addUniqueVRPCount1 :: (HasType ValidationState s, HasField' "payloads" s Payloads) => s -> s
+-- addUniqueVRPCount1 !s = let
+--         vrpCountLens = typed @ValidationState . typed @RawMetric . #vrpCounts
+--         totalUnique = Count (fromIntegral $ uniqueVrpCount $ (s ^. #payloads) ^. #vrps)
+--         perTaUnique = MonoidalMap.map (Count . fromIntegral . V.length) (unVrps $ (s ^. #payloads) ^. #vrps)   
+--     in s & vrpCountLens . #totalUnique .~ totalUnique                
+--          & vrpCountLens . #perTaUnique .~ perTaUnique
+
+addUniqueVRPCount :: PerTA Vrps -> ValidationState -> ValidationState
+addUniqueVRPCount vrps !vs = let
+        vrpCountLens = typed @RawMetric . #vrpCounts
+        totalUnique = Count (fromIntegral $ uniqueVrpCount $ allTAs vrps)
+        perTaUnique = MonoidalMap.map (Count . fromIntegral . V.length . unVrps) (unPerTA vrps)   
+    in vs & vrpCountLens . #totalUnique .~ totalUnique                
          & vrpCountLens . #perTaUnique .~ perTaUnique
 
 extractPPAs :: Ca -> Either ValidationError PublicationPointAccess

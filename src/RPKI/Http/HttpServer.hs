@@ -22,7 +22,6 @@ import           Servant.Server.Generic
 import           Servant hiding (contentType, URI)
 import           Servant.Swagger.UI
 
-import           Data.Ord
 import           Data.Maybe                       (maybeToList, fromMaybe)
 import qualified Data.Set                         as Set
 import qualified Data.List                        as List
@@ -168,14 +167,16 @@ getVRPsUniqueRaw appContext version =
     vrpSetToCSV <$> 
         getValuesByVersion appContext version 
         (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #filtered)) 
-        DB.getVrps toVrpV
+        (\tx db v -> Just <$> DB.getVrps tx db v) 
+        (toVrpV . (allTAs <$>))
 
 getVRPsUnique :: (MonadIO m, Storage s, MonadError ServerError m)
                     => AppContext s -> Maybe Text -> m [VrpMinimalDto]
 getVRPsUnique appContext version = 
     getValuesByVersion appContext version 
         (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #filtered)) 
-        DB.getVrps toVrpMinimalDtos
+        (\tx db v -> Just <$> DB.getVrps tx db v) 
+        (toVrpMinimalDtos . (allTAs <$>))        
 
 
 getRoasValidatedRaw :: (MonadIO m, Storage s, MonadError ServerError m)
@@ -186,19 +187,17 @@ getRoasValidatedRaw appContext version =
         getRoaDtos (vrpExtDtosToCSV . fromMaybe [])
   where
     getRoaDtos tx db version_ = do  
-        DB.getRoas tx db version_ >>= \case  
-            Nothing       -> pure Nothing     
-            Just (Roas r) -> 
-                fmap (Just . mconcat . mconcat) $ 
-                    forM (MonoidalMap.toList r) $ \(taName, r1) -> 
-                        forM (MonoidalMap.toList r1) $ \(roaKey, vrps) ->                             
-                            DB.getLocationsByKey tx db roaKey >>= \case 
-                                Nothing   -> pure []
-                                Just locs -> 
-                                    pure $! [ VrpExtDto { 
-                                                    uri = toText $ pickLocation locs,
-                                                    vrp = toVrpDto vrp taName
-                                                } | vrp <- V.toList vrps ] 
+        roas <- DB.getRoas tx db version_
+        fmap (Just . mconcat . mconcat) $ 
+            forM (perTA roas) $ \(taName, Roas r) -> 
+                forM (MonoidalMap.toList r) $ \(roaKey, vrps) ->                             
+                    DB.getLocationsByKey tx db roaKey >>= \case 
+                        Nothing   -> pure []
+                        Just locs -> 
+                            pure $! [ VrpExtDto { 
+                                            uri = toText $ pickLocation locs,
+                                            vrp = toVrpDto vrp taName
+                                        } | vrp <- V.toList vrps ] 
 
 asMaybe :: (Eq a, Monoid a) => a -> Maybe a
 asMaybe a = if mempty == a then Nothing else Just a
@@ -230,7 +229,7 @@ getValuesByVersion AppContext {..} version readFromState readForVersion convertT
                 pure $ Just values
 
     getByVersion worldVersion = do        
-        versions <- roTxT database DB.allVersions        
+        versions <- roTxT database DB.versionsBackwards        
         case filter ((worldVersion == ) . fst) versions of
             [] -> throwError $ err404 { errBody = [i|Version #{worldVersion} doesn't exist.|] }
             _  -> roTxT database $ \tx db -> 
@@ -377,8 +376,8 @@ getAllSlurms :: (MonadIO m, Storage s, MonadError ServerError m) =>
                 AppContext s -> m [(WorldVersion, Slurm)]
 getAllSlurms AppContext {..} = 
     liftIO $ roTxT database $ \tx db -> do
-        versions <- List.sortOn Down <$> DB.allVersions tx db
-        slurms   <- mapM (\wv -> (wv, ) <$> DB.getSlurm tx db wv) versions        
+        versions <- DB.versionsBackwards tx db
+        slurms   <- mapM (\(wv, _) -> (wv, ) <$> DB.getSlurm tx db wv) versions        
         pure [ (w, s) | (w, Just s) <- slurms ]
 
 getAllTALs :: (MonadIO m, Storage s, MonadError ServerError m) =>
@@ -542,11 +541,9 @@ getRtr AppContext {..} = do
         Just rtrState -> pure RtrDto {..}
 
 getVersions :: (MonadIO m, Storage s, MonadError ServerError m) =>
-                AppContext s -> m [(WorldVersion, VersionKind)]
-getVersions AppContext {..} = liftIO $ do
-    db <- readTVarIO database
-    -- Sort versions from latest to earliest
-    List.sortOn (Down . fst) <$> roTx db (`DB.allVersions` db)
+                AppContext s -> m [WorldVersion]
+getVersions AppContext {..} = 
+    liftIO $ map fst <$> roTxT database DB.versionsBackwards
 
 
 getQueryPrefixValidity :: (MonadIO m, Storage s, MonadError ServerError m)

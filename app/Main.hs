@@ -185,7 +185,7 @@ executeWorkerProcess = do
 
                         ValidationParams {..} -> exec resultHandler $ do 
                             (vs, discoveredRepositories, slurm) <- 
-                                runValidation appContext worldVersion talsToValidate allTals
+                                runValidation appContext worldVersion talsToValidate allTaNames
                             pure $ ValidationResult vs discoveredRepositories slurm
 
                         CacheCleanupParams {..} -> exec resultHandler $
