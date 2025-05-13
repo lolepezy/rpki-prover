@@ -120,6 +120,7 @@ httpServer appContext tals = genericServe HttpApi {
             Just latestValidationVersion -> do                      
                 liftIO $ roTx db $ \tx -> do                    
                     (validations, validationMetrics) <- DB.getResult tx db latestValidationVersion
+                    logDebug logger [i|Validations: #{validations}, Metrics: #{validationMetrics}|]
                     repoValidationState              <- mconcat . map snd <$> DB.getRepositories tx db
 
                     resolvedValidations <- resolveVDto tx db $
@@ -132,6 +133,7 @@ httpServer appContext tals = genericServe HttpApi {
                             resolvedValidations
                             resolvedRepoVDtos
                             (validationMetrics <> repoValidationState ^. typed)
+
 
 getVRPValidated :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s -> Maybe Text -> m [VrpDto]

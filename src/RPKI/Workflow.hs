@@ -236,7 +236,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                         let pauseSeconds = pause `div` 1_000_000
                         logDebug logger $ 
                             [i|Fetcher for #{url} finished at #{lastFetch}, now is #{now}, |] <> 
-                            [i|interval is #{interval}s, first fetch will be paused by #{pauseSeconds}s.|]
+                            [i|interval is #{interval}, first fetch will be paused by #{pauseSeconds}s.|]
                         threadDelay $ fromIntegral pause
 
 
