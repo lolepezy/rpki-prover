@@ -362,13 +362,8 @@ shouldSaveAndGetValidationVersion io = do
     rwTx db $ \tx -> 
         DB.saveValidationVersion tx db worldVersion taNames perTaResults commonVS
 
-    z <- roTx db $ \tx -> DB.getResult tx db worldVersion     
-
-    storedValidations <- roTx db $ \tx -> DB.getValidations tx db worldVersion
-    storedMetrics <- roTx db $ \tx -> DB.getMetrics tx db worldVersion
-
-    HU.assertEqual "getResult returns the same as individual validation" (fmap fst z) storedValidations
-    HU.assertEqual "getResult returns the same as individual metrics" (fmap snd z) storedMetrics
+    storedValidations <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion
+    storedMetrics <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion
 
     HU.assertEqual "Validations don't match" (fmap (\(_, vs) -> vs ^. typed) perTaResults) storedValidations
     HU.assertEqual "Metrics don't match" (fmap (\(_, vs) -> vs ^. typed) perTaResults) storedMetrics
@@ -405,14 +400,14 @@ shouldSaveAndGetValidationVersionFilledWithPastData io = do
         commonVS <- QC.generate arbitrary
         DB.saveValidationVersion tx db worldVersion3 taNames perTa3 commonVS
 
-    v1 <- roTx db $ \tx -> DB.getValidations tx db worldVersion1
-    m1 <- roTx db $ \tx -> DB.getMetrics tx db worldVersion1    
+    v1 <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion1
+    m1 <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion1    
 
-    v2 <- roTx db $ \tx -> DB.getValidations tx db worldVersion2
-    m2 <- roTx db $ \tx -> DB.getMetrics tx db worldVersion2
+    v2 <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion2
+    m2 <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion2
 
-    v3 <- roTx db $ \tx -> DB.getValidations tx db worldVersion3
-    m3 <- roTx db $ \tx -> DB.getMetrics tx db worldVersion3
+    v3 <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion3
+    m3 <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion3
 
     let extract (_, vs) = vs ^. typed
 

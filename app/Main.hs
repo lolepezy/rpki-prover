@@ -220,11 +220,7 @@ readTALs AppContext {..} = do
         forM talNames $ \(talFilePath, taName) ->
             vFocusOn TAFocus (convert taName) $
                 parseTalFromFile talFilePath (Text.pack taName)    
-
-    -- db <- readTVarIO database
-    -- rwTx db $ \tx -> do 
-    --     DB.generalWorldVersion tx db worldVersion
-    --     DB.saveValidations tx db worldVersion (vs ^. typed)
+    
     case tals of
         Left e -> do
             logError logger [i|Error reading some of the TALs, e = #{e}.|]

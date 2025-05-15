@@ -77,7 +77,7 @@ createDatabase env logger checkAction = do
         sequences        <- createMap
         let keys = Sequence "object-key" sequences
         taStore          <- TAStore <$> createMap        
-        validationsStore <- ValidationsStore <$> createMap <*> createMap
+        validationsStore <- ValidationsStore <$> createMap
         roaStore         <- RoaStore <$> createMap
         splStore         <- SplStore <$> createMap
         aspaStore        <- AspaStore <$> createMap    

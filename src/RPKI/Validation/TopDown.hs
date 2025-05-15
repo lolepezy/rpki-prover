@@ -1671,14 +1671,6 @@ moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
 
 -- Number of unique VRPs requires explicit counting of the VRP set sizes, 
 -- so just counting the number of VRPs in ROAs in not enough
--- addUniqueVRPCount1 :: (HasType ValidationState s, HasField' "payloads" s Payloads) => s -> s
--- addUniqueVRPCount1 !s = let
---         vrpCountLens = typed @ValidationState . typed @RawMetric . #vrpCounts
---         totalUnique = Count (fromIntegral $ uniqueVrpCount $ (s ^. #payloads) ^. #vrps)
---         perTaUnique = MonoidalMap.map (Count . fromIntegral . V.length) (unVrps $ (s ^. #payloads) ^. #vrps)   
---     in s & vrpCountLens . #totalUnique .~ totalUnique                
---          & vrpCountLens . #perTaUnique .~ perTaUnique
-
 addUniqueVRPCount :: PerTA Vrps -> ValidationState -> ValidationState
 addUniqueVRPCount vrps !vs = let
         vrpCountLens = typed @RawMetric . #vrpCounts
