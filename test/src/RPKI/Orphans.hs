@@ -587,7 +587,7 @@ instance Arbitrary ValidationMetric where
     shrink = genericShrink
 
 instance Arbitrary TaName where
-    arbitrary = TaName <$> arbitrary
+    arbitrary = TaName <$> elements [ "apnic", "arin", "ripe", "lacnic", "afrinic" ]
     shrink = genericShrink
 
 instance Arbitrary RpkiObjectType where
@@ -640,6 +640,20 @@ instance (Arg (T3 a b c) a, Arg (T3 a b c) b, Arg (T3 a b c) c,
          Arbitrary a, Arbitrary b, Arbitrary c) => Arbitrary (T3 a b c) where
     arbitrary = genericArbitrary
     shrink = genericShrink
+
+-- Domain
+instance Arbitrary Payloads where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary Roas where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary SplN where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 
 -- IPs
 

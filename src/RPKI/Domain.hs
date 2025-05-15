@@ -920,3 +920,6 @@ toPerTA = PerTA . MonoidalMap.fromList
 
 allTAs :: Monoid a => PerTA a -> a
 allTAs (PerTA a) = mconcat $ MonoidalMap.elems a
+
+getForTA :: PerTA a -> TaName -> Maybe a
+getForTA (PerTA a) taName = MonoidalMap.lookup taName a

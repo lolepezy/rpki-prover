@@ -119,8 +119,7 @@ httpServer appContext tals = genericServe HttpApi {
             Nothing                      -> notFoundException
             Just latestValidationVersion -> do                      
                 liftIO $ roTx db $ \tx -> do                    
-                    (validations, validationMetrics) <- DB.getResult tx db latestValidationVersion
-                    logDebug logger [i|Validations: #{validations}, Metrics: #{validationMetrics}|]
+                    (validations, validationMetrics) <- allTAs <$> DB.getResult tx db latestValidationVersion
                     repoValidationState              <- mconcat . map snd <$> DB.getRepositories tx db
 
                     resolvedValidations <- resolveVDto tx db $
@@ -320,7 +319,7 @@ getValidationsImpl AppContext {..} getVersionF = do
     roTx db $ \tx ->
         runMaybeT $ do
             version     <- MaybeT $ getVersionF db tx
-            validations <- MaybeT $ DB.validationsForVersion tx db version
+            validations <- MaybeT $ Just . allTAs <$> DB.getValidations tx db version
             pure $ validationsToDto version validations            
 
 -- getLastAsyncFetchVersion :: Storage s => AppContext s -> IO (Maybe WorldVersion)
@@ -350,7 +349,7 @@ getMetricsImpl AppContext {..} getVersionF = do
     metrics <- liftIO $ roTx db $ \tx ->
         runMaybeT $ do
             version    <- MaybeT $ getVersionF db tx
-            rawMetrics <- MaybeT $ Just <$> DB.getMetrics tx db version
+            rawMetrics <- MaybeT $ Just . allTAs <$> DB.getMetrics tx db version
             pure (rawMetrics, toMetricsDto rawMetrics)
     maybe notFoundException pure metrics
 

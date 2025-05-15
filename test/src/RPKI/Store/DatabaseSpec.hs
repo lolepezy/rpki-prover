@@ -36,6 +36,7 @@ import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
 
 import           RPKI.AppMonad
+import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Config
@@ -59,14 +60,16 @@ import           RPKI.Util
 import           RPKI.RepositorySpec
 
 import Data.Generics.Product (HasField)
+import Control.Concurrent (threadDelay)
 
 
-storeGroup :: TestTree
-storeGroup = testGroup "LMDB storage tests"
+dbGroup :: TestTree
+dbGroup = testGroup "LMDB storage tests"
     [
         objectStoreGroup,
-        validationResultStoreGroup,
+        -- validationResultStoreGroup,
         repositoryStoreGroup,
+        versionStoreGroup,
         txGroup
     ]
 
@@ -79,11 +82,11 @@ objectStoreGroup = testGroup "Object storage test"
         -- dbTestCase "Should save, delete and have no garbage left" shouldCreateAndDeleteAllTheMaps
     ]        
 
-validationResultStoreGroup :: TestTree
-validationResultStoreGroup = testGroup "Validation result storage test"
-    [
-        dbTestCase "Should insert and get back" shouldInsertAndGetAllBackFromValidationResultStore
-    ]
+-- validationResultStoreGroup :: TestTree
+-- validationResultStoreGroup = testGroup "Validation result storage test"
+--     [
+--         dbTestCase "Should insert and get back" shouldInsertAndGetAllBackFromValidationResultStore
+--     ]
 
 repositoryStoreGroup :: TestTree
 repositoryStoreGroup = testGroup "Repository LMDB storage test"
@@ -91,6 +94,14 @@ repositoryStoreGroup = testGroup "Repository LMDB storage test"
         dbTestCase "Should insert and get a repository" shouldInsertAndGetAllBackFromRepositoryStore,
         dbTestCase "Should insert and get back a buynch of repositories" shouldGetAndSaveRepositories,
         dbTestCase "Should insert and get an rsync repository" shouldSaveAndGetRsyncRepositories
+    ]        
+
+versionStoreGroup :: TestTree
+versionStoreGroup = testGroup "Version LMDB storage test"
+    [
+        dbTestCase "Should insert and get a version" shouldSaveAndGetValidationVersion,
+        dbTestCase "Should insert and get a version with data from previous versions" 
+            shouldSaveAndGetValidationVersionFilledWithPastData
     ]        
 
 txGroup :: TestTree
@@ -212,9 +223,8 @@ shouldOrderManifests io = do
     db@DB {..} <- io
     (Right (url1, mft1), _) <- runValidatorT (newScopes "read1") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
     (Right (url2, mft2), _) <- runValidatorT (newScopes "read2") $ readObjectFromFile "./test/data/afrinic_mft2.mft"
-
-    Now now <- thisInstant 
-    let worldVersion = instantToVersion now
+    
+    worldVersion <- newVersion
 
     rwTx objectStore $ \tx -> do        
             DB.saveObject tx db (toStorableObject mft1) worldVersion
@@ -229,17 +239,17 @@ shouldOrderManifests io = do
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) mft2
 
 
-shouldInsertAndGetAllBackFromValidationResultStore :: Storage s => IO (DB s) -> HU.Assertion
-shouldInsertAndGetAllBackFromValidationResultStore io = do  
-    db@DB {..} <- io
-    vrs :: Validations <- QC.generate arbitrary      
+-- shouldInsertAndGetAllBackFromValidationResultStore :: Storage s => IO (DB s) -> HU.Assertion
+-- shouldInsertAndGetAllBackFromValidationResultStore io = do  
+--     db@DB {..} <- io
+--     vrs :: Validations <- QC.generate arbitrary      
 
-    world <- getOrCreateWorldVerion =<< newAppState
+--     world <- getOrCreateWorldVerion =<< newAppState
 
-    rwTx validationsStore $ \tx -> DB.saveValidations tx db world vrs
-    vrs' <- roTx validationsStore $ \tx -> DB.validationsForVersion tx db world
+--     rwTx validationsStore $ \tx -> DB.saveValidations tx db world vrs
+--     vrs' <- roTx validationsStore $ \tx -> DB.validationsForVersion tx db world
 
-    HU.assertEqual "Not the same Validations" (Just vrs) vrs'
+--     HU.assertEqual "Not the same Validations" (Just vrs) vrs'
 
 
 shouldInsertAndGetAllBackFromRepositoryStore :: Storage s => IO (DB s) -> HU.Assertion
@@ -331,6 +341,124 @@ rrdpSubMap pps = do
     pure $ RrdpMap $ Map.filterWithKey (\u _ -> u `elem` keys_) rrdpsM
 
 
+shouldSaveAndGetValidationVersion :: Storage s => IO (DB s) -> HU.Assertion
+shouldSaveAndGetValidationVersion io = do
+    db <- io
+
+    worldVersion <- newVersion 
+    let taNames = map TaName [ "ripe", "apnic", "afrinic" ]
+
+    perTaResults <- QC.generate $ do
+        taCount <- QC.choose (1, length taNames)
+        let selectedTAs = take taCount taNames
+        perTaMap <- QC.vectorOf taCount $ do
+            payloads <- arbitrary
+            validationState <- arbitrary
+            pure (payloads, validationState)
+        pure $ toPerTA $ zip selectedTAs perTaMap
+    
+    commonVS <- QC.generate arbitrary
+
+    rwTx db $ \tx -> 
+        DB.saveValidationVersion tx db worldVersion taNames perTaResults commonVS
+
+    z <- roTx db $ \tx -> DB.getResult tx db worldVersion     
+
+    storedValidations <- roTx db $ \tx -> DB.getValidations tx db worldVersion
+    storedMetrics <- roTx db $ \tx -> DB.getMetrics tx db worldVersion
+
+    HU.assertEqual "getResult returns the same as individual validation" (fmap fst z) storedValidations
+    HU.assertEqual "getResult returns the same as individual metrics" (fmap snd z) storedMetrics
+
+    HU.assertEqual "Validations don't match" (fmap (\(_, vs) -> vs ^. typed) perTaResults) storedValidations
+    HU.assertEqual "Metrics don't match" (fmap (\(_, vs) -> vs ^. typed) perTaResults) storedMetrics
+
+
+shouldSaveAndGetValidationVersionFilledWithPastData :: Storage s => IO (DB s) -> HU.Assertion
+shouldSaveAndGetValidationVersionFilledWithPastData io = do
+    db <- io
+
+    worldVersion1 <- newVersion        
+    threadDelay 10_000
+    worldVersion2 <- newVersion    
+    threadDelay 10_000
+    worldVersion3 <- newVersion    
+
+    let ripe = TaName "ripe"
+    let apnic = TaName "apnic"
+    let afrinic = TaName "afrinic"
+    let taNames = [ ripe, apnic, afrinic ]
+
+    perTa1 <- QC.generate $ generatePerTa taNames
+    perTa2 <- QC.generate $ generatePerTa [ ripe ]
+    perTa3 <- QC.generate $ generatePerTa [ afrinic ]
+    
+    rwTx db $ \tx -> do 
+        commonVS <- QC.generate arbitrary
+        DB.saveValidationVersion tx db worldVersion1 taNames perTa1 commonVS
+
+    rwTx db $ \tx -> do 
+        commonVS <- QC.generate arbitrary
+        DB.saveValidationVersion tx db worldVersion2 taNames perTa2 commonVS        
+
+    rwTx db $ \tx -> do 
+        commonVS <- QC.generate arbitrary
+        DB.saveValidationVersion tx db worldVersion3 taNames perTa3 commonVS
+
+    v1 <- roTx db $ \tx -> DB.getValidations tx db worldVersion1
+    m1 <- roTx db $ \tx -> DB.getMetrics tx db worldVersion1    
+
+    v2 <- roTx db $ \tx -> DB.getValidations tx db worldVersion2
+    m2 <- roTx db $ \tx -> DB.getMetrics tx db worldVersion2
+
+    v3 <- roTx db $ \tx -> DB.getValidations tx db worldVersion3
+    m3 <- roTx db $ \tx -> DB.getMetrics tx db worldVersion3
+
+    let extract (_, vs) = vs ^. typed
+
+    HU.assertEqual "1" (extract <$> perTa1 `getForTA` ripe) (v1 `getForTA` ripe)
+    HU.assertEqual "2" (extract <$> perTa1 `getForTA` apnic) (v1 `getForTA` apnic)
+    HU.assertEqual "3" (extract <$> perTa1 `getForTA` afrinic) (v1 `getForTA` afrinic)
+
+    HU.assertEqual "1" (extract <$> perTa2 `getForTA` ripe) (v2 `getForTA` ripe)
+    HU.assertEqual "2" (extract <$> perTa1 `getForTA` apnic) (v2 `getForTA` apnic)
+    HU.assertEqual "3" (extract <$> perTa1 `getForTA` afrinic) (v2 `getForTA` afrinic)
+
+    HU.assertEqual "1" (extract <$> perTa2 `getForTA` ripe) (v3 `getForTA` ripe)
+    HU.assertEqual "2" (extract <$> perTa1 `getForTA` apnic) (v3 `getForTA` apnic)
+    HU.assertEqual "3" (extract <$> perTa3 `getForTA` afrinic) (v3 `getForTA` afrinic)
+
+    HU.assertEqual "RIPE data in version 1 doesn't match original input" 
+        (extract <$> perTa1 `getForTA` ripe) (v1 `getForTA` ripe)
+    HU.assertEqual "APNIC data in version 1 doesn't match original input" 
+        (extract <$> perTa1 `getForTA` apnic) (v1 `getForTA` apnic)
+    HU.assertEqual "AFRINIC data in version 1 doesn't match original input" 
+        (extract <$> perTa1 `getForTA` afrinic) (v1 `getForTA` afrinic)
+
+    HU.assertEqual "RIPE data in version 2 doesn't match updated input" 
+        (extract <$> perTa2 `getForTA` ripe) (v2 `getForTA` ripe)
+    HU.assertEqual "APNIC data in version 2 doesn't match inherited data from version 1" 
+        (extract <$> perTa1 `getForTA` apnic) (v2 `getForTA` apnic)
+    HU.assertEqual "AFRINIC data in version 2 doesn't match inherited data from version 1" 
+        (extract <$> perTa1 `getForTA` afrinic) (v2 `getForTA` afrinic)
+
+    HU.assertEqual "RIPE data in version 3 doesn't match inherited data from version 2" 
+        (extract <$> perTa2 `getForTA` ripe) (v3 `getForTA` ripe)
+    HU.assertEqual "APNIC data in version 3 doesn't match inherited data from version 1" 
+        (extract <$> perTa1 `getForTA` apnic) (v3 `getForTA` apnic)
+    HU.assertEqual "AFRINIC data in version 3 doesn't match updated input" 
+        (extract <$> perTa3 `getForTA` afrinic) (v3 `getForTA` afrinic)
+
+
+generatePerTa :: (Arbitrary a, Arbitrary b) => [TaName] -> QC.Gen (PerTA (a, b))
+generatePerTa taNames = do        
+    perTaMap <- QC.vectorOf (length taNames) $ do
+        payloads <- arbitrary
+        validationState <- arbitrary
+        pure (payloads, validationState)
+    pure $ toPerTA $ zip taNames perTaMap
+
+
 shouldRollbackAppTx :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
 shouldRollbackAppTx io = do  
     ((_, env), _) <- io
@@ -410,7 +538,7 @@ shouldPreserveStateInAppTx io = do
 
 
 stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> metric
-stripTime = (& #totalTimeMs .~ TimeMs 0)
+stripTime = #totalTimeMs .~ TimeMs 0
 
 generateSome :: Arbitrary a => IO [a]
 generateSome = replicateM 1000 $ QC.generate arbitrary      
@@ -462,3 +590,6 @@ replaceAKI a = \case
     where
         mapCms :: CMS a -> CMS a
         mapCms (CMS so) = CMS $ so & #soContent . #scCertificate . #aki .~ a
+
+newVersion :: MonadIO m => m WorldVersion
+newVersion = instantToVersion . unNow <$> thisInstant     

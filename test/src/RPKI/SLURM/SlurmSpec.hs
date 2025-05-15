@@ -180,7 +180,7 @@ test_apply_slurm = do
                     mkVrp4 64496 "10.1.1.0/24" 24,
                     mkVrp4 64497 "198.51.100.0/24" 24,
                     mkVrp4 64497 "198.51.101.0/24" 24
-                ] 
+                ]) 
                 (Set.fromList [
                     mkBgpSec "aabb" [ASN 64496] "aabbcc",
                     mkBgpSec "foo" [ASN 123] "112233",                

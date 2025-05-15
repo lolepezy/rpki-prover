@@ -689,10 +689,16 @@ runWorkflow appContext@AppContext {..} tals = do
 
         forM_ files $ \file -> do 
             let fullPath = tmpDir </> file
-            ageInSeconds <- diffUTCTime now <$> getModificationTime fullPath            
-            when (ageInSeconds > maxTimeout) $
-                removePathForcibly fullPath
-        
+            (do 
+                ageInSeconds <- diffUTCTime now <$> getModificationTime fullPath            
+                when (ageInSeconds > maxTimeout) $
+                    removePathForcibly fullPath
+                )
+                `catch` 
+                (\(_ :: SomeException) -> 
+                    -- the file can disappear in the meantime
+                    pure ())
+
         -- Cleanup reader table of LMDB cache, it may get littered by 
         -- dead processes, unfinished/killed transaction, etc.
         -- All these stale transactions are essentially bugs, but it's 

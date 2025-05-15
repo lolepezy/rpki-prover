@@ -555,39 +555,44 @@ getTA tx DB { taStore = TAStore s } name = liftIO $ M.get tx s name
 getTAs :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(TaName, StorableTA)]
 getTAs tx DB { taStore = TAStore s } = liftIO $ M.all tx s
 
-saveValidations :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> WorldVersion -> Validations -> m ()
-saveValidations tx DB { validationsStore = ValidationsStore s _ } wv validations = 
-    liftIO $ M.put tx s wv (Compressed validations)
+-- saveValidations :: (MonadIO m, Storage s) => 
+--             Tx s 'RW -> DB s -> WorldVersion -> Validations -> m ()
+-- saveValidations tx DB { validationsStore = ValidationsStore s _ } wv validations = 
+--     liftIO $ M.put tx s wv (Compressed validations)
 
-validationsForVersion :: (MonadIO m, Storage s) => 
-                        Tx s mode -> DB s -> WorldVersion -> m (Maybe Validations)
-validationsForVersion tx DB { validationsStore = ValidationsStore {..} } wv = 
-    liftIO $ fmap unCompressed <$> M.get tx results wv
+-- validationsForVersion :: (MonadIO m, Storage s) => 
+--                         Tx s mode -> DB s -> WorldVersion -> m (Maybe Validations)
+-- validationsForVersion tx DB { validationsStore = ValidationsStore {..} } wv = 
+--     liftIO $ fmap unCompressed <$> M.get tx results wv
 
 -- metricsForVersion :: (MonadIO m, Storage s) => Tx s mode -> DB s  -> WorldVersion -> m (Maybe RawMetric)
 -- metricsForVersion tx DB { metricStore = MetricStore {..} } wv = 
 --     liftIO $ fmap unCompressed <$> M.get tx metrics wv    
 
 
+getValidations :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> WorldVersion -> m (PerTA Validations)
+getValidations tx db@DB {..} version = 
+    liftIO $ getPayloadsForTas tx db version $ 
+        \_ _ ValidationVersion {..} -> 
+            fmap unCompressed <$> M.get tx (validationsStore ^. #validations) validationsKey
+
 getMetrics :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> WorldVersion -> m RawMetric
+            Tx s mode -> DB s -> WorldVersion -> m (PerTA RawMetric)
 getMetrics tx db@DB {..} version = 
-    liftIO $ fmap allTAs
-        $ getPayloadsForTas tx db version $ 
-            \_ _ ValidationVersion {..} -> 
-                fmap unCompressed <$> M.get tx (metricStore ^. #metrics) metricsKey                   
+    liftIO $ getPayloadsForTas tx db version $ 
+        \_ _ ValidationVersion {..} -> 
+            fmap unCompressed <$> M.get tx (metricStore ^. #metrics) metricsKey                   
 
 getResult :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> WorldVersion -> m (Validations, RawMetric)
+            Tx s mode -> DB s -> WorldVersion -> m (PerTA (Validations, RawMetric))
 getResult tx db@DB {..} version = 
-    liftIO $ fmap allTAs
-        $ getPayloadsForTas tx db version $ 
-            \_ _ ValidationVersion {..} -> 
-                runMaybeT $ do 
-                    v <- MaybeT $ fmap unCompressed <$> M.get tx (validationsStore ^. #validations) validationsKey   
-                    m <- MaybeT $ fmap unCompressed <$> M.get tx (metricStore ^. #metrics) metricsKey   
-                    pure (v, m)
+    liftIO $ getPayloadsForTas tx db version $ 
+        \_ _ ValidationVersion {..} -> 
+            runMaybeT $ do 
+                v <- MaybeT $ fmap unCompressed <$> M.get tx (validationsStore ^. #validations) validationsKey   
+                m <- MaybeT $ fmap unCompressed <$> M.get tx (metricStore ^. #metrics) metricsKey   
+                pure (v, m)
 
 
 getVrps :: (MonadIO m, Storage s) => 
@@ -746,28 +751,22 @@ saveValidationVersion :: forall m s . (MonadIO m, Storage s) =>
                     -> ValidationState
                     -> m ()
 saveValidationVersion tx db@DB { ..} 
-    worldVersion allTaNames results@(PerTA perTAResults) commonVS = liftIO $ do     
+    worldVersion allTaNames results@(PerTA perTAResults) commonVS = liftIO $ do         
 
-    [commonMetricsKey, commonValidationKey] <- 
-            replicateM 2 (ArtificialKey . unSequenceValue <$> nextValue tx keys)
-
-    save (commonVS ^. typed @Validations) commonValidationKey $ validationsStore ^. #validations
-    save (commonVS ^. typed @RawMetric) commonMetricsKey $ metricStore ^. #metrics
+    commonValidationKey <- save (commonVS ^. typed @Validations) $ validationsStore ^. #validations
+    commonMetricsKey <- save (commonVS ^. typed @RawMetric) $ metricStore ^. #metrics
 
     -- For the TAs present in results save the results
     addedResults <- 
-        forM (perTA results) $ \(taName, (Payloads {..}, vs)) -> do 
-            [roasKey, aspasKey, splsKey, gbrsKey, bgpCertsKey, validationsKey, metricsKey] <- 
-                replicateM 7 (ArtificialKey . unSequenceValue <$> nextValue tx keys)
-            
-            save roas roasKey $ roaStore ^. typed
-            save aspas aspasKey $ aspaStore ^. typed
-            save spls splsKey $ splStore ^. typed
-            save gbrs gbrsKey $ gbrStore ^. typed
-            save bgpCerts bgpCertsKey $ bgpStore ^. typed
+        forM (perTA results) $ \(taName, (Payloads {..}, vs)) -> do                         
+            roasKey  <- save roas $ roaStore ^. typed
+            aspasKey <- save aspas $ aspaStore ^. typed
+            splsKey  <- save spls $ splStore ^. typed
+            gbrsKey  <- save gbrs $ gbrStore ^. typed
+            bgpCertsKey <- save bgpCerts $ bgpStore ^. typed
 
-            save (vs ^. typed @Validations) validationsKey $ validationsStore ^. #validations
-            save (vs ^. typed @RawMetric) metricsKey $ metricStore ^. #metrics
+            validationsKey <- save (vs ^. typed @Validations) $ validationsStore ^. #validations
+            metricsKey <- save (vs ^. typed @RawMetric)  $ metricStore ^. #metrics
             
             -- The keys may refer to nonexistent entries
             pure (taName, ValidationVersion {..})
@@ -787,15 +786,14 @@ saveValidationVersion tx db@DB { ..}
         VersionMeta { perTa = toPerTA $ addedResults <> earlierResults, .. }
 
   where
-    -- TODO: Does it really save LOC?
     save :: forall what mapName . 
             (AsStorable what, Monoid what, Eq what) 
             => what 
-            -> ArtificialKey 
-            -> SMap mapName s ArtificialKey (Compressed what) -> IO ()
-    save what key whereTo = do 
-        unless (what == mempty) $ 
-            M.put tx whereTo key (Compressed what)
+            -> SMap mapName s ArtificialKey (Compressed what) -> IO ArtificialKey
+    save what whereTo = do                 
+        key <- ArtificialKey . unSequenceValue <$> nextValue tx keys
+        M.put tx whereTo key (Compressed what)
+        pure key
 
     fillUpEarlierTAData [] _ accPerTa = accPerTa
     fillUpEarlierTAData _ [] accPerTa = accPerTa
@@ -1087,17 +1085,29 @@ deleteOldestVersionsIfNeeded :: (MonadIO m, Storage s) =>
                             -> m [WorldVersion]
 deleteOldestVersionsIfNeeded tx db@DB {..} versionNumberToKeep =  
     mapException (AppException . storageError) <$> liftIO $ do
-        versions <- M.keys tx (versionStore ^. typed)
+        versions <- versionsBackwards tx db
         -- Keep at least 2 versions (current and previous)
         let reallyToKeep = max 2 (fromIntegral versionNumberToKeep)
         if length versions > reallyToKeep
-            then do                     
-                let versionsToDelete = drop reallyToKeep $ List.sortOn Down versions
+            then do           
+                let versionsToDelete = map fst $ findEnoughForEachTA reallyToKeep versions mempty                          
                 forM_ versionsToDelete $ deleteValidationVersion tx db
                 let toDeleteSet = Set.fromList versionsToDelete 
                 void $ cleanupValidatedByVersionMap tx db (`Set.member` toDeleteSet)
                 pure versionsToDelete
             else pure []        
+  where    
+    -- There should be at least `numberToKeep` versions for each TA, 
+    -- only after that we can delete the older versions.
+    findEnoughForEachTA numberToKeep [] acc = []
+
+    findEnoughForEachTA numberToKeep ((version, meta) : versions) acc = 
+        let 
+            acc' = acc <> mconcat [ MonoidalMap.singleton ta (Set.singleton v) | (ta, v) <- perTA $ meta ^. #perTa ]
+        in if any (\v -> Set.size v < fromIntegral numberToKeep) $ MonoidalMap.elems acc'
+            then findEnoughForEachTA numberToKeep versions acc'
+            else versions
+                
 
 
 deleteStaleContent :: (MonadIO m, Storage s) => 
