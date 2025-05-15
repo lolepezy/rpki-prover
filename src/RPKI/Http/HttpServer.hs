@@ -192,11 +192,9 @@ getRoasValidatedRaw appContext version =
                 forM (MonoidalMap.toList r) $ \(roaKey, vrps) ->                             
                     DB.getLocationsByKey tx db roaKey >>= \case 
                         Nothing   -> pure []
-                        Just locs -> 
-                            pure $! [ VrpExtDto { 
-                                            uri = toText $ pickLocation locs,
-                                            vrp = toVrpDto vrp taName
-                                        } | vrp <- V.toList vrps ] 
+                        Just locs -> do 
+                            let uri = toText $ pickLocation locs
+                            pure $! [ VrpExtDto { vrp = toVrpDto vrp taName, .. } | vrp <- V.toList vrps ] 
 
 asMaybe :: (Eq a, Monoid a) => a -> Maybe a
 asMaybe a = if mempty == a then Nothing else Just a
