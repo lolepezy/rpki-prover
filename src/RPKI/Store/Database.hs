@@ -600,7 +600,7 @@ getVrpsForTA tx DB {..} version taName =
         VersionMeta {..} <- MaybeT $ M.get tx (versionStore ^. typed) version
         ValidationVersion {..} <- MaybeT $ pure $ getForTA perTa taName
         MaybeT (M.get tx (roaStore ^. typed) roasKey)
-            
+
             
 getRoas :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (PerTA Roas)

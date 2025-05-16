@@ -868,7 +868,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                 $ map (\(ta, r) -> (ta, (r ^. typed, r ^. typed))) 
                 $ Map.toList results
 
-        vrps <- fmap toPerTA $ forM allTaNames $ \taName -> do 
+        !vrps <- fmap toPerTA $ forM allTaNames $ \taName -> do 
             case getForTA resultsToSave taName of 
                 Just (p, _) -> pure (taName, toVrps $ p ^. typed)
                 Nothing     -> case previousVersion of 
@@ -886,7 +886,10 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
         deleted <- DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
         pure (deleted, updatedValidation)
 
-    logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deleted} oldest versions(s) in #{elapsed}ms.|]
+    let deletedStr = case deleted of
+            [] -> "none"
+            _  -> show deleted
+    logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deletedStr} oldest version(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, 
         Map.map (\r -> r ^. #discoveredRepositories) results, 
