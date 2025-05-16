@@ -29,6 +29,7 @@ import qualified Data.Text                       as Text
 import qualified Data.List                       as List
 import           Data.Map.Strict                 (Map)
 import qualified Data.Map.Strict                 as Map
+import           Data.Map.Monoidal.Strict        (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import           Data.Set                        (Set)
 import qualified Data.Set                        as Set
@@ -74,6 +75,7 @@ import           RPKI.SLURM.Types
 import           RPKI.Http.Dto
 import           RPKI.Http.Types
 import           UnliftIO (pooledForConcurrentlyN)
+import RPKI.Store.Database (previousVersion)
 
 {- 
     Fully asynchronous execution.
@@ -235,7 +237,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                         let pauseSeconds = pause `div` 1_000_000
                         logDebug logger $ 
                             [i|Fetcher for #{url} finished at #{lastFetch}, now is #{now}, |] <> 
-                            [i|interval is #{interval}s, first fetch will be paused by #{pauseSeconds}s.|]
+                            [i|interval is #{interval}, first fetch will be paused by #{pauseSeconds}s.|]
                         threadDelay $ fromIntegral pause
 
 
@@ -261,8 +263,12 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 case r of
                     Right (repository', stats) -> do 
                         let repo = updateMeta' repository' (#status .~ FetchedAt (versionToMoment worldVersion))
-                        saveFetchOutcome repo validations                        
-                        when (hasUpdates validations) triggerTaRevalidation
+                        saveFetchOutcome repo validations                          
+                        when (hasUpdates validations) $ do 
+                            triggered <- triggerTaRevalidation
+                            -- logDebug logger [i|Triggered TA revalidation for #{triggered} TAs.|]
+                            pure ()
+
                         pure $ Just $ refreshInterval repository stats
                     Left _ -> do
                         let repo = updateMeta' repository (#status .~ FailedAt (versionToMoment worldVersion))
@@ -302,7 +308,10 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 DB.saveRepositories tx db (map fst repositories)
                 DB.saveRepositoryValidationStates tx db repositories
 
-            when (any (hasUpdates . snd) repositories) triggerTaRevalidation
+            when (any (hasUpdates . snd) repositories) $ do 
+                triggered <- triggerTaRevalidation
+                -- logDebug logger [i|Triggered TA revalidation for #{triggered} TAs.|]
+                pure ()
         
     getFetchable = do 
         Fetcheables fs <- readTVarIO fetcheables
@@ -334,6 +343,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         ut <- readTVar uriByTa        
         let tas = Set.fromList $ IxSet.indexKeys $ IxSet.getEQ url ut
         modifyTVar' tasToValidate $ (<>) tas
+        pure tas
 
 
 
@@ -453,6 +463,8 @@ runWorkflow appContext@AppContext {..} tals = do
                             runRtrIfConfigured            
         )
   where
+    allTaNames = map getTaName tals
+    
     revalidate workflowShared = do 
         canValidateAgain <- newTVarIO True
         concurrently_ 
@@ -460,8 +472,8 @@ runWorkflow appContext@AppContext {..} tals = do
             (let interval = config ^. typed @ValidationConfig . #revalidationInterval
              in forever $ do                 
                 threadDelay (toMicroseconds interval)
-                atomically $ writeTVar 
-                    (workflowShared ^. #tasToValidate) (Set.fromList $ map getTaName tals))
+                atomically $ writeTVar
+                    (workflowShared ^. #tasToValidate) (Set.fromList allTaNames))
       where
         go canValidateAgain run = do 
             talsToValidate <- atomically $ do
@@ -491,13 +503,13 @@ runWorkflow appContext@AppContext {..} tals = do
     oneOffRun workflowShared vrpOutputFile = do 
         worldVersion <- createWorldVersion
         void $ validateTAs workflowShared worldVersion tals
-        vrps <- roTxT database $ \tx db -> 
-                DB.getLastValidationVersion db tx >>= \case 
-                    Nothing            -> pure Nothing  
-                    Just latestVersion -> DB.getVrps tx db latestVersion
-        case vrps of 
-            Nothing -> logWarn logger [i|Don't have any VRPs.|]
-            _       -> LBS.writeFile vrpOutputFile $ unRawCSV $ vrpDtosToCSV $ toVrpDtos vrps
+        -- vrps <- roTxT database $ \tx db -> 
+        --         DB.getLastValidationVersion db tx >>= \case 
+        --             Nothing            -> pure Nothing  
+        --             Just latestVersion -> DB.getVrps tx db latestVersion
+        -- case vrps of 
+        --     Nothing -> logWarn logger [i|Don't have any VRPs.|]
+        --     _       -> LBS.writeFile vrpOutputFile $ unRawCSV $ vrpDtosToCSV $ toVrpDtos vrps
 
     schedules workflowShared = [            
             Scheduling {                 
@@ -595,14 +607,12 @@ runWorkflow appContext@AppContext {..} tals = do
                     [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
       where
         processTALs = do
-            ((z, workerVS), workerId) <- runValidationWorker worldVersion talsToValidate                   
+            ((z, workerVS), workerId) <- runValidationWorker worldVersion talsToValidate                  
             case z of 
                 Left e -> do 
                     logError logger [i|Validator process failed: #{e}.|]
                     rwTxT database $ \tx db -> do
-                        DB.saveValidations tx db worldVersion (workerVS ^. typed)
-                        DB.saveMetrics tx db worldVersion (workerVS ^. typed)
-                        DB.completeValidationWorldVersion tx db worldVersion                            
+                        DB.saveValidationVersion tx db worldVersion allTaNames mempty workerVS
                     updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
                     pure (mempty, mempty)
 
@@ -628,10 +638,10 @@ runWorkflow appContext@AppContext {..} tals = do
                         logError logger [i|Something weird happened, could not re-read VRPs.|]
                         pure (mempty, mempty)
                     Just rtrPayloads -> atomically $ do                                                    
-                            slurmedPayloads <- completeVersion appState worldVersion rtrPayloads maybeSlurm 
-                            when (config ^. #withValidityApi) $
-                                updatePrefixIndex appState slurmedPayloads
-                            pure (rtrPayloads, slurmedPayloads)
+                        slurmedPayloads <- completeVersion appState worldVersion rtrPayloads maybeSlurm 
+                        when (config ^. #withValidityApi) $
+                            updatePrefixIndex appState slurmedPayloads
+                        pure (rtrPayloads, slurmedPayloads)
                           
     -- Delete objects in the store that were read by top-down validation 
     -- longer than `cacheLifeTime` hours ago.
@@ -684,10 +694,16 @@ runWorkflow appContext@AppContext {..} tals = do
 
         forM_ files $ \file -> do 
             let fullPath = tmpDir </> file
-            ageInSeconds <- diffUTCTime now <$> getModificationTime fullPath            
-            when (ageInSeconds > maxTimeout) $
-                removePathForcibly fullPath
-        
+            (do 
+                ageInSeconds <- diffUTCTime now <$> getModificationTime fullPath            
+                when (ageInSeconds > maxTimeout) $
+                    removePathForcibly fullPath
+                )
+                `catch` 
+                (\(_ :: SomeException) -> 
+                    -- the file can disappear in the meantime
+                    pure ())
+
         -- Cleanup reader table of LMDB cache, it may get littered by 
         -- dead processes, unfinished/killed transaction, etc.
         -- All these stale transactions are essentially bugs, but it's 
@@ -791,7 +807,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 (newScopes "validator") $ do 
                     workerInput <- 
                         makeWorkerInput appContext workerId
-                            (ValidationParams worldVersion talsToValidate)                        
+                            ValidationParams {..}
                             (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
                             Nothing
                     runWorker logger workerInput arguments
@@ -823,12 +839,12 @@ runValidation :: Storage s =>
                 AppContext s
             -> WorldVersion
             -> [TAL]
+            -> [TaName]
             -> IO (ValidationState, Map TaName Fetcheables, Maybe Slurm)
-runValidation appContext@AppContext {..} worldVersion tals = do           
+runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames = do           
 
-    TopDownResult {..} <- addUniqueVRPCount . mconcat <$>
-                validateMutlipleTAs appContext worldVersion tals
-
+    results <- validateMutlipleTAs appContext worldVersion talsToValidate
+        
     -- Apply SLURM if it is set in the appState
     (slurmValidations, maybeSlurm) <-
         case appState ^. #readSlurm of
@@ -843,28 +859,40 @@ runValidation appContext@AppContext {..} worldVersion tals = do
                     Right slurm ->
                         pure (vs, Just slurm)        
 
-    -- Save all the results into LMDB
-    let updatedValidation = slurmValidations <> topDownValidations ^. typed
-    (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do        
-        DB.saveMetrics tx db worldVersion (topDownValidations ^. typed)
-        DB.saveValidations tx db worldVersion (updatedValidation ^. typed)
-        DB.saveRoas tx db roas worldVersion
-        DB.saveSpls tx db (payloads ^. typed) worldVersion
-        DB.saveAspas tx db (payloads ^. typed) worldVersion
-        DB.saveGbrs tx db (payloads ^. typed) worldVersion
-        DB.saveBgps tx db (payloads ^. typed) worldVersion        
-        for_ maybeSlurm $ DB.saveSlurm tx db worldVersion        
-        DB.saveTaValidationVersion tx db worldVersion (map getTaName tals)       
-        DB.completeValidationWorldVersion tx db worldVersion        
+    -- Save all the results into LMDB    
+    ((deleted, updatedValidation), elapsed) <- timedMS $ rwTxT database $ \tx db -> do              
+    
+        previousVersion <- DB.previousVersion tx db worldVersion
 
+        let resultsToSave = toPerTA 
+                $ map (\(ta, r) -> (ta, (r ^. typed, r ^. typed))) 
+                $ Map.toList results
+
+        !vrps <- fmap toPerTA $ forM allTaNames $ \taName -> do 
+            case getForTA resultsToSave taName of 
+                Just (p, _) -> pure (taName, toVrps $ p ^. typed)
+                Nothing     -> case previousVersion of 
+                                Nothing -> pure (taName, mempty) 
+                                Just pv -> (taName, ) <$> DB.getVrpsForTA tx db pv taName
+
+        let updatedValidation = addUniqueVRPCount vrps slurmValidations 
+        DB.saveValidationVersion tx db worldVersion 
+            allTaNames resultsToSave updatedValidation                            
+     
+        for_ maybeSlurm $ DB.saveSlurm tx db worldVersion        
+ 
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.
-        DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
+        deleted <- DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
+        pure (deleted, updatedValidation)
 
-    logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deleted} oldest versions(s) in #{elapsed}ms.|]
+    let deletedStr = case deleted of
+            [] -> "none"
+            _  -> show deleted
+    logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deletedStr} oldest version(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, 
-        MonoidalMap.getMonoidalMap discoveredRepositories, 
+        Map.map (\r -> r ^. #discoveredRepositories) results, 
         maybeSlurm)
 
 
@@ -880,7 +908,7 @@ runCacheCleanup AppContext {..} worldVersion = do
     -- This is to prevent cleaning up objects if they were untouched 
     -- because prover wasn't running for too long.
     cutOffVersion <- roTx db $ \tx -> 
-        fromMaybe worldVersion <$> DB.getLastValidationVersion db tx
+        fromMaybe worldVersion <$> DB.getLatestVersion db tx
 
     DB.deleteStaleContent db (versionIsOld (versionToMoment cutOffVersion) (config ^. #cacheLifeTime))
 
@@ -892,7 +920,7 @@ loadStoredAppState AppContext {..} = do
     Now now' <- thisInstant
     let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval    
     roTxT database $ \tx db ->
-        DB.getLastValidationVersion db tx >>= \case
+        DB.getLatestVersion db tx >>= \case
             Nothing  -> pure Nothing
 
             Just lastVersion
@@ -902,7 +930,7 @@ loadStoredAppState AppContext {..} = do
 
                 | otherwise -> do
                     (payloads, elapsed) <- timedMS $ do                                            
-                        slurm    <- DB.slurmForVersion tx db lastVersion
+                        slurm    <- DB.getSlurm tx db lastVersion
                         payloads <- DB.getRtrPayloads tx db lastVersion                        
                         for_ payloads $ \payloads' -> do 
                             slurmedPayloads <- atomically $ completeVersion appState lastVersion payloads' slurm                            

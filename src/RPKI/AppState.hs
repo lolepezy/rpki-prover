@@ -69,11 +69,11 @@ data AppState = AppState {
 
 uniqVrps :: Vrps -> V.Vector AscOrderedVrp 
 uniqVrps vrps = let 
-        s = Set.fromList $ concatMap V.toList $ allVrps vrps
+        s = Set.fromList $ V.toList $ unVrps vrps
     in V.fromListN (Set.size s) $ Prelude.map AscOrderedVrp $ Set.toList s
 
-mkRtrPayloads :: Vrps -> Set BGPSecPayload -> RtrPayloads
-mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrps vrps, .. }
+mkRtrPayloads :: PerTA Vrps -> Set BGPSecPayload -> RtrPayloads
+mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrps $ allTAs vrps, .. }
 
 -- 
 newAppState :: IO AppState
@@ -83,12 +83,12 @@ newAppState = do
         world       <- newTVar Nothing
         validated   <- newTVar mempty
         filtered    <- newTVar mempty        
-        rtrState    <- newTVar Nothing
-        readSlurm   <- pure Nothing
+        rtrState    <- newTVar Nothing        
         system      <- newTVar (newSystemInfo now)        
         prefixIndex <- newTVar Nothing
         cachedBinaryRtrPdus <- newTVar mempty
         runningRsyncClients <- newTVar mempty
+        let readSlurm = Nothing
         pure AppState {..}
                     
 
@@ -140,7 +140,7 @@ waitForAnyVersion AppState {..} =
 
 mergeSystemMetrics :: MonadIO m => SystemMetrics -> AppState -> m ()           
 mergeSystemMetrics sm AppState {..} = 
-    liftIO $ atomically $ modifyTVar' system (& #metrics %~ (<> sm))
+    liftIO $ atomically $ modifyTVar' system (#metrics %~ (<> sm))
 
 updateRsyncClient :: MonadIO m => WorkerMessage -> AppState -> m ()           
 updateRsyncClient message AppState {..} =     

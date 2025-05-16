@@ -16,7 +16,6 @@ import           Control.Monad
 import           Control.Lens                ((^.))
 
 import           Data.Ord
-import           Data.Foldable               (for_)
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 
@@ -212,8 +211,8 @@ rrdpMetricsHtml rrdpMetricMap =
                 htmlRow index $ do 
                     genTd $ toHtml $ focusToText repository                        
                     td ! A.class_ "gen-t no-wrap" $ toHtml $ rm ^. #rrdpSource                    
-                    genTd $ toHtml $ show $ totalCount $ rm ^. #added
-                    genTd $ toHtml $ show $ totalCount $ rm ^. #deleted
+                    genTd $ toHtml $ show $ totalMapCount $ rm ^. #added
+                    genTd $ toHtml $ show $ totalMapCount $ rm ^. #deleted
                     genTd $ toHtml $ rm ^. #lastHttpStatus
                     genTd $ toHtml $ rm ^. #downloadTimeMs                                
                     genTd $ toHtml $ rm ^. #saveTimeMs
@@ -243,7 +242,7 @@ rsyncMetricsHtml rsyncMetricMap =
                 htmlRow index $ do
                     genTd $ toHtml $ focusToText repository                                                        
                     genTd ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness            
-                    genTd $ toHtml $ show $ totalCount $ rm ^. #processed            
+                    genTd $ toHtml $ show $ totalMapCount $ rm ^. #processed            
                     genTd $ toHtml $ rm ^. #totalTimeMs            
 
 

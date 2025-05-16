@@ -184,7 +184,8 @@ executeWorkerProcess = do
                             CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
 
                         ValidationParams {..} -> exec resultHandler $ do 
-                            (vs, discoveredRepositories, slurm) <- runValidation appContext worldVersion tals
+                            (vs, discoveredRepositories, slurm) <- 
+                                runValidation appContext worldVersion talsToValidate allTaNames
                             pure $ ValidationResult vs discoveredRepositories slurm
 
                         CacheCleanupParams {..} -> exec resultHandler $
@@ -203,7 +204,7 @@ readTALs :: (Storage s, MaintainableStorage s) => AppContext s -> IO [TAL]
 readTALs AppContext {..} = do
     
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
-    worldVersion  <- newWorldVersion
+    -- worldVersion  <- newWorldVersion
 
     -- Check that TAL names are unique
     let talSourcesDirs = (configValue $ config ^. #talDirectory) 
@@ -219,11 +220,7 @@ readTALs AppContext {..} = do
         forM talNames $ \(talFilePath, taName) ->
             vFocusOn TAFocus (convert taName) $
                 parseTalFromFile talFilePath (Text.pack taName)    
-
-    db <- readTVarIO database
-    rwTx db $ \tx -> do 
-        DB.generalWorldVersion tx db worldVersion
-        DB.saveValidations tx db worldVersion (vs ^. typed)
+    
     case tals of
         Left e -> do
             logError logger [i|Error reading some of the TALs, e = #{e}.|]

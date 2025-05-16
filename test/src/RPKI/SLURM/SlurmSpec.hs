@@ -20,6 +20,7 @@ import           Data.String
 import           Data.Aeson as Json
 
 import qualified Data.Set                 as Set
+import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Data.String.Interpolate.IsString
 
 import           RPKI.Domain
@@ -32,7 +33,6 @@ import           RPKI.Resources.Types
 import           RPKI.Resources.Resources
 import           RPKI.AppState
 import           RPKI.Util 
-
 
 slurmGroup :: TestTree
 slurmGroup = testGroup "Slurm" [
@@ -174,7 +174,7 @@ test_apply_slurm :: HU.Assertion
 test_apply_slurm = do    
     let rtrPayloads = 
             mkRtrPayloads 
-                (createVrps (TaName "ta") [
+                (asPerTA $ createVrps [
                     mkVrp4 123 "192.168.0.0/16" 16,
                     mkVrp4 124 "192.0.2.0/24" 24,
                     mkVrp4 64496 "10.1.1.0/24" 24,
@@ -193,11 +193,11 @@ test_apply_slurm = do
 
     let expected = 
             mkRtrPayloads 
-                (createVrps (TaName "ta") [
+                (asPerTA $ createVrps [
                     mkVrp4 123 "192.168.0.0/16" 16,
                     mkVrp4 64497 "198.51.101.0/24" 24                    
                 ] <>
-                createVrps (TaName "slurm") [
+                createVrps [
                     mkVrp4 64496 "198.51.100.0/24" 24,
                     mkVrp6 64496 "2001:db8::/32" 48
                 ]) 
@@ -210,10 +210,10 @@ test_apply_slurm = do
     HU.assertEqual "Wrong VRPs:" (expected ^. #vrps) (filtered ^. #vrps)
     HU.assertEqual "Wrong BGPSecs:" (expected ^. #bgpSec) (filtered ^. #bgpSec)
   where
-    mkVrp4 asn prefix length = 
-        Vrp (ASN asn) (Ipv4P $ readIp4 prefix) (PrefixLength length)
-    mkVrp6 asn prefix length = 
-        Vrp (ASN asn) (Ipv6P $ readIp6 prefix) (PrefixLength length)
+    mkVrp4 asn prefix length_ = 
+        Vrp (ASN asn) (Ipv4P $ readIp4 prefix) (PrefixLength length_)
+    mkVrp6 asn prefix length_ = 
+        Vrp (ASN asn) (Ipv6P $ readIp6 prefix) (PrefixLength length_)
 
     mkBgpSec ski asns spki = let 
             bgpSecSki  = SKI $ mkKI ski
@@ -357,3 +357,6 @@ assertNotParsed errorMessage t = let
         (Left errorMessage) 
         decoded
 
+
+asPerTA :: Vrps -> PerTA Vrps
+asPerTA vrps = PerTA $ MonoidalMap.singleton (TaName "default") vrps

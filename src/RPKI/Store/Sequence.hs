@@ -17,8 +17,8 @@ import qualified RPKI.Store.Base.Map     as M
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Serialisation
 
-newtype SequenceValue = SequenceValue Int64
-    deriving stock (Show, Eq, Generic)
+newtype SequenceValue = SequenceValue { unSequenceValue :: Int64 }
+    deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (TheBinary)
 
 type SequenceMap s = SMap "sequences" s Text SequenceValue

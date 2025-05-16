@@ -523,8 +523,8 @@ focusToText = \case
 scopeList :: Scope a -> [Focus]
 scopeList (Scope s) = NonEmpty.toList s
 
-totalCount :: Map a Count -> Count
-totalCount m = sum $ Map.elems m
+totalMapCount :: Map a Count -> Count
+totalMapCount m = sum $ Map.elems m
 
 rrdpRepoHasUpdates :: RrdpMetric -> Bool
 rrdpRepoHasUpdates RrdpMetric {..} = anyPositive added || anyPositive deleted   
