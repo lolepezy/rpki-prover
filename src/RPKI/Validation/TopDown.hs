@@ -43,6 +43,7 @@ import           Data.Monoid.Generic
 import qualified Data.List                        as List
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
+import qualified Data.HashSet                     as HashSet
 import qualified Data.Vector                      as V
 import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
@@ -1674,8 +1675,8 @@ moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
 addUniqueVRPCount :: PerTA Vrps -> ValidationState -> ValidationState
 addUniqueVRPCount vrps !vs = let
         vrpCountLens = typed @RawMetric . #vrpCounts
-        totalUnique = Count (fromIntegral $ uniqueVrpCount vrps)        
-        perTaUnique = MonoidalMap.map (Count . fromIntegral . Set.size . Set.fromList . V.toList . unVrps) (unPerTA vrps)   
+        totalUnique = Count (fromIntegral $ uniqueVrpCountGlobal vrps)        
+        perTaUnique = MonoidalMap.map (Count . fromIntegral . uniqueVrpCount) (unPerTA vrps)   
     in vs & vrpCountLens . #totalUnique .~ totalUnique                
          & vrpCountLens . #perTaUnique .~ perTaUnique
 

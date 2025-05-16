@@ -16,6 +16,7 @@ import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
 import qualified Data.Vector              as V
+import           Data.Word
 
 import           Data.ByteString.Base16   as Hex
 import qualified Data.String.Conversions  as SC
@@ -28,6 +29,8 @@ import qualified Data.Set.NonEmpty        as NESet
 import qualified Data.List.NonEmpty       as NonEmpty
 import qualified Data.List                as List
 import qualified Data.Set                 as Set
+import qualified Data.HashSet             as HashSet
+import qualified Data.IntMap.Strict       as IntMap
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Data.Hashable hiding (hash)
@@ -480,7 +483,7 @@ newtype ResourceCertificate = ResourceCertificate RawResourceCertificate
 
 data Vrp = Vrp ASN IpPrefix PrefixLength
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary, NFData, Hashable)
 
 -- Signed Prefix List normalised payload
 data SplN = SplN ASN IpPrefix
@@ -513,7 +516,7 @@ data SignCRL = SignCRL {
         nextUpdateTime     :: Maybe Instant,
         signatureAlgorithm :: SignatureAlgorithmIdentifier,
         signatureValue     :: SignatureValue,
-        encodedValue       :: BSS.ShortByteString,
+        encodedValue       :: {-# UNPACK #-} BSS.ShortByteString,
         crlNumber          :: Serial,
         revokedSerials     :: Set Serial
     } 
@@ -556,7 +559,7 @@ data CertificateWithSignature = CertificateWithSignature {
         cwsX509certificate    :: X509.Certificate,
         cwsSignatureAlgorithm :: SignatureAlgorithmIdentifier,
         cwsSignature          :: SignatureValue,
-        cwsEncoded            :: BSS.ShortByteString
+        cwsEncoded            :: {-# UNPACK #-} BSS.ShortByteString
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
@@ -665,12 +668,12 @@ newtype SignatureValue = SignatureValue BSS.ShortByteString
 
 -- | According to https://tools.ietf.org/html/rfc5652#page-16
 -- there has to be DER encoded signedAttribute set
-data SignedAttributes = SignedAttributes [Attribute] BSS.ShortByteString
+data SignedAttributes = SignedAttributes [Attribute] {-# UNPACK #-} BSS.ShortByteString
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
 data Attribute = ContentTypeAttr ContentType 
-            | MessageDigest BSS.ShortByteString
+            | MessageDigest {-# UNPACK #-} BSS.ShortByteString
             | SigningTime DateTime (Maybe TimezoneOffset)
             | BinarySigningTime Integer 
             | UnknownAttribute OID [ASN1]
@@ -903,9 +906,34 @@ estimateVrpCountRoas :: Roas -> Int
 estimateVrpCountRoas = sum . map V.length . MonoidalMap.elems . unRoas
 
 -- Precise but much more expensive
-uniqueVrpCount :: PerTA Vrps -> Int 
-uniqueVrpCount = Set.size . Set.fromList . concatMap (V.toList . unVrps . snd) . perTA
--- uniqueVrpCount _ = 0 
+uniqueVrpCountGlobal :: PerTA Vrps -> Int 
+-- uniqueVrpCountGlobal = HashSet.size . HashSet.fromList . concatMap (V.toList . unVrps . snd) . perTA
+uniqueVrpCountGlobal = uniqueVrpCount_ . concatMap (V.toList . unVrps . snd) . perTA
+
+uniqueVrpCount :: Vrps -> Int 
+uniqueVrpCount = uniqueVrpCount_ . V.toList . unVrps
+
+uniqueVrpCount_ :: [Vrp] -> Int 
+uniqueVrpCount_ vrps = totalCount4 + totalCount6
+  where    
+    totalCount4 = sum $ map HashSet.size $ IntMap.elems newIntMapV4
+    totalCount6 = sum $ map HashSet.size $ IntMap.elems newIntMapV6
+    newIntMapV4 = 
+        IntMap.fromListWith (<>) [ 
+            (fromIntegral a :: Int, HashSet.singleton $ PrefixAndMaxLen4 p ml) 
+            | Vrp (ASN a) (Ipv4P p) ml <- vrps]
+    newIntMapV6 = 
+        IntMap.fromListWith (<>) [ 
+            (fromIntegral a :: Int, HashSet.singleton $ PrefixAndMaxLen6 p ml) 
+            | Vrp (ASN a) (Ipv6P p) ml <- vrps]
+
+data PrefixAndMaxLen4 = PrefixAndMaxLen4 {-# UNPACK #-} Ipv4Prefix {-# UNPACK #-} PrefixLength
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData, Hashable) 
+
+data PrefixAndMaxLen6 = PrefixAndMaxLen6 {-# UNPACK #-} Ipv6Prefix {-# UNPACK #-} PrefixLength
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData, Hashable) 
 
 createVrps :: Foldable f => f Vrp -> Vrps
 createVrps vrps = Vrps $ V.fromList $ toList vrps

@@ -18,6 +18,7 @@ import           Data.Kind
 import           Data.Store
 import           Data.Vector                           (Vector)
 import           Data.Word                             (Word8, Word32)
+import           Data.Hashable hiding (hash)
 import           GHC.Generics
 
 import qualified HaskellWorks.Data.Network.Ip.Ipv4     as V4
@@ -34,24 +35,24 @@ data AddrFamily = Ipv4F | Ipv6F
 
 newtype Ipv4Prefix = Ipv4Prefix (V4.IpBlock Canonical) 
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary, NFData, Hashable)
 
 newtype Ipv6Prefix = Ipv6Prefix (V6.IpBlock Canonical)
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary, NFData, Hashable)
 
 data IpPrefix = Ipv4P Ipv4Prefix | Ipv6P Ipv6Prefix
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary, NFData, Hashable)
 
 newtype ASN = ASN Word32
     deriving stock (Show, Eq, Ord, Generic) 
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary, NFData, Hashable)
     deriving newtype Enum
 
 newtype PrefixLength = PrefixLength Word8
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary, NFData, Hashable)
 
 data AsResource = AS ASN
                 | ASRange ASN ASN
@@ -141,6 +142,13 @@ deriving anyclass instance NFData V4.IpNetMask
 deriving anyclass instance NFData (V6.IpBlock Canonical) 
 deriving anyclass instance NFData V6.IpAddress 
 deriving anyclass instance NFData V6.IpNetMask
+
+deriving anyclass instance Hashable (V4.IpBlock Canonical) 
+deriving anyclass instance Hashable V4.IpAddress 
+deriving anyclass instance Hashable V4.IpNetMask
+deriving anyclass instance Hashable (V6.IpBlock Canonical) 
+deriving anyclass instance Hashable V6.IpAddress 
+deriving anyclass instance Hashable V6.IpNetMask
 
 instance Show PrefixesAndAsns where
     show (PrefixesAndAsns v4 v6 asn) = 

@@ -333,21 +333,28 @@ rightPad n a = go 0
 
 
 prefixV4ToBytes :: Ipv4Prefix -> (Word8, Word8, Word8, Word8)
-prefixV4ToBytes (Ipv4Prefix (V4.IpBlock p _)) = V4.ipAddressToWords p        
+prefixV4ToBytes (Ipv4Prefix (V4.IpBlock p _)) = V4.ipAddressToWords p       
+{-# INLINE prefixV4ToBytes #-} 
 
 prefixV6ToBytes :: Ipv6Prefix -> (Word32, Word32, Word32, Word32)
 prefixV6ToBytes (Ipv6Prefix (V6.IpBlock (V6.IpAddress i) _)) = i
+{-# INLINE prefixV6ToBytes #-}
 
 ipv4PrefixLen :: Ipv4Prefix -> PrefixLength       
 ipv4PrefixLen (Ipv4Prefix (V4.IpBlock _ (V4.IpNetMask mask))) = PrefixLength mask
+{-# INLINE ipv4PrefixLen #-}
 
 ipv6PrefixLen :: Ipv6Prefix -> PrefixLength      
 ipv6PrefixLen (Ipv6Prefix (V6.IpBlock _ (V6.IpNetMask mask))) = PrefixLength mask
+{-# INLINE ipv6PrefixLen #-}
 
+{-# INLINE prefixLen #-}
 prefixLen :: IpPrefix -> PrefixLength 
 prefixLen = \case 
     Ipv4P p -> ipv4PrefixLen p
     Ipv6P p -> ipv6PrefixLen p
+
+
  
 -- These are mainly for statically known values in tests
 -- 

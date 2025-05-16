@@ -860,15 +860,14 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                         pure (vs, Just slurm)        
 
     -- Save all the results into LMDB    
-    ((deleted, updatedValidation), elapsed) <- timedMS $ rwTxT database $ \tx db -> do              
-    
-        previousVersion <- DB.previousVersion tx db worldVersion
+    ((deleted, updatedValidation), elapsed) <- timedMS $ rwTxT database $ \tx db -> do                      
 
         let resultsToSave = toPerTA 
                 $ map (\(ta, r) -> (ta, (r ^. typed, r ^. typed))) 
                 $ Map.toList results
 
-        !vrps <- fmap toPerTA $ forM allTaNames $ \taName -> do 
+        previousVersion <- DB.previousVersion tx db worldVersion
+        vrps <- fmap toPerTA $ forM allTaNames $ \taName -> do 
             case getForTA resultsToSave taName of 
                 Just (p, _) -> pure (taName, toVrps $ p ^. typed)
                 Nothing     -> case previousVersion of 
