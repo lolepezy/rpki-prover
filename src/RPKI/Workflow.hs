@@ -75,6 +75,7 @@ import           RPKI.SLURM.Types
 import           RPKI.Http.Dto
 import           RPKI.Http.Types
 import           UnliftIO (pooledForConcurrentlyN)
+import RPKI.Store.Database (previousVersion)
 
 {- 
     Fully asynchronous execution.
@@ -865,34 +866,32 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                     Right slurm ->
                         pure (vs, Just slurm)        
 
-    -- Calculate metrics common for all TAs
-    -- TODO It is expensive to build a unique set of VRPs, 
-    -- can we do something about it?
-    let vrps = fmap (\(p, _) -> toVrps (p ^. #roas)) resultsToSave 
-    let updatedValidation = addUniqueVRPCount vrps slurmValidations 
+    -- Calculate metrics common for all TAs    
 
     -- Save all the results into LMDB    
-    (deleted, elapsed) <- timedMS $ rwTxT database $ \tx db -> do              
+    ((deleted, updatedValidation), elapsed) <- timedMS $ rwTxT database $ \tx db -> do              
 
-        -- FIXME: This is wrong, unique VRP set must be reassembled every time for each TA
+        -- Previous version
+        previousVersion <- DB.previousVersion tx db worldVersion
+
+        vrps <- fmap toPerTA $ forM allTaNames $ \taName -> do 
+            case getForTA resultsToSave taName of 
+                Just (p, _) -> pure (taName, toVrps $ p ^. typed)
+                Nothing     -> case previousVersion of 
+                                Nothing -> pure (taName, mempty) 
+                                Just pv -> (taName, ) <$> DB.getVrpsForTA tx db pv taName
+
+        let updatedValidation = addUniqueVRPCount vrps slurmValidations 
         DB.saveValidationVersion tx db worldVersion 
-            allTaNames resultsToSave updatedValidation                    
-        
-
-        -- DB.saveMetrics tx db worldVersion (topDownValidations ^. typed)
-        -- DB.saveValidations tx db worldVersion (updatedValidation ^. typed)
-        -- DB.saveRoas tx db roas worldVersion
-        -- DB.saveSpls tx db (payloads ^. typed) worldVersion
-        -- DB.saveAspas tx db (payloads ^. typed) worldVersion
-        -- DB.saveGbrs tx db (payloads ^. typed) worldVersion
-        -- DB.saveBgps tx db (payloads ^. typed) worldVersion        
+            allTaNames resultsToSave updatedValidation                            
+     
         for_ maybeSlurm $ DB.saveSlurm tx db worldVersion        
-        -- DB.saveTaValidationVersion tx db worldVersion (map getTaName tals)       
-        -- DB.completeValidationWorldVersion tx db worldVersion        
-
+ 
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.
-        DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
+        deleted <- DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
+        pure (deleted, updatedValidation)
+       
 
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deleted} oldest versions(s) in #{elapsed}ms.|]
 

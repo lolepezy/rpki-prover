@@ -592,6 +592,15 @@ getValidationOutcomes tx db@DB {..} version = liftIO $ do
 getVrps :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (PerTA Vrps)
 getVrps tx db version = fmap toVrps <$> getRoas tx db version 
+
+getVrpsForTA :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> WorldVersion -> TaName -> m Vrps
+getVrpsForTA tx db@DB {..} version taName = 
+    liftIO $ fmap (toVrps . maybe mempty unCompressed) $ runMaybeT $ do 
+        VersionMeta {..} <- MaybeT $ M.get tx (versionStore ^. typed) version
+        ValidationVersion {..} <- MaybeT $ pure $ getForTA perTa taName
+        MaybeT (M.get tx (roaStore ^. typed) roasKey)
+            
             
 getRoas :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (PerTA Roas)
@@ -639,6 +648,14 @@ deleteSpls tx DB { splStore = SplStore m } key = liftIO $ M.delete tx m key
 versionsBackwards :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(WorldVersion, VersionMeta)]
 versionsBackwards tx DB { versionStore = VersionStore s } = 
     liftIO $ List.sortOn (Down . fst) <$> M.all tx s
+
+previousVersion :: (MonadIO m, Storage s) => 
+                    Tx s mode -> DB s -> WorldVersion -> m (Maybe WorldVersion)
+previousVersion tx DB { versionStore = VersionStore s } version = liftIO $ do 
+    versions <- M.all tx s    
+    case List.filter (\(v, _) -> v < version) versions of 
+        [] -> pure Nothing
+        v  -> pure $ Just $ maximum $ map fst v
 
 
 getPayloadsForTas :: (MonadIO m, Storage s, Monoid payload)
