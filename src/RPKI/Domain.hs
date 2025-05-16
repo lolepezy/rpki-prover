@@ -903,8 +903,8 @@ estimateVrpCountRoas :: Roas -> Int
 estimateVrpCountRoas = sum . map V.length . MonoidalMap.elems . unRoas
 
 -- Precise but much more expensive
-uniqueVrpCount :: Vrps -> Int 
-uniqueVrpCount (Vrps vrps) = Set.size $ Set.fromList $ V.toList vrps
+uniqueVrpCount :: PerTA Vrps -> Int 
+uniqueVrpCount = Set.size . Set.fromList . concatMap (V.toList . unVrps . snd) . perTA
 
 createVrps :: Foldable f => f Vrp -> Vrps
 createVrps vrps = Vrps $ V.fromList $ toList vrps

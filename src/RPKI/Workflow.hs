@@ -843,15 +843,8 @@ runValidation :: Storage s =>
             -> IO (ValidationState, Map TaName Fetcheables, Maybe Slurm)
 runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames = do           
 
-    -- TopDownResult {..} <- addUniqueVRPCount . mconcat <$>
-    --             validateMutlipleTAs appContext worldVersion tals
-
     results <- validateMutlipleTAs appContext worldVersion talsToValidate
-    
-    let resultsToSave = toPerTA 
-            $ map (\(ta, r) -> (ta, (r ^. typed, r ^. typed))) 
-            $ Map.toList results
-    
+        
     -- Apply SLURM if it is set in the appState
     (slurmValidations, maybeSlurm) <-
         case appState ^. #readSlurm of
@@ -866,13 +859,14 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                     Right slurm ->
                         pure (vs, Just slurm)        
 
-    -- Calculate metrics common for all TAs    
-
     -- Save all the results into LMDB    
     ((deleted, updatedValidation), elapsed) <- timedMS $ rwTxT database $ \tx db -> do              
-
-        -- Previous version
+    
         previousVersion <- DB.previousVersion tx db worldVersion
+
+        let resultsToSave = toPerTA 
+                $ map (\(ta, r) -> (ta, (r ^. typed, r ^. typed))) 
+                $ Map.toList results
 
         vrps <- fmap toPerTA $ forM allTaNames $ \taName -> do 
             case getForTA resultsToSave taName of 
@@ -891,7 +885,6 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
         -- so after adding one, check if the oldest one(s) should be deleted.
         deleted <- DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
         pure (deleted, updatedValidation)
-       
 
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deleted} oldest versions(s) in #{elapsed}ms.|]
 

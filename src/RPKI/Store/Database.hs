@@ -595,7 +595,7 @@ getVrps tx db version = fmap toVrps <$> getRoas tx db version
 
 getVrpsForTA :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> TaName -> m Vrps
-getVrpsForTA tx db@DB {..} version taName = 
+getVrpsForTA tx DB {..} version taName = 
     liftIO $ fmap (toVrps . maybe mempty unCompressed) $ runMaybeT $ do 
         VersionMeta {..} <- MaybeT $ M.get tx (versionStore ^. typed) version
         ValidationVersion {..} <- MaybeT $ pure $ getForTA perTa taName
@@ -1012,11 +1012,11 @@ deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
     findEnoughForEachTA _ [] _ = []
 
     findEnoughForEachTA numberToKeep ((_, meta) : versions) acc = 
-        let 
-            acc' = acc <> mconcat [ MonoidalMap.singleton ta (Set.singleton v) | (ta, v) <- perTA $ meta ^. #perTa ]
-        in if any (\v -> Set.size v < fromIntegral numberToKeep) $ MonoidalMap.elems acc'
+        if any (\v -> Set.size v < fromIntegral numberToKeep) $ MonoidalMap.elems acc'
             then findEnoughForEachTA numberToKeep versions acc'
             else versions
+      where         
+        acc' = acc <> mconcat [ MonoidalMap.singleton ta (Set.singleton v) | (ta, v) <- perTA $ meta ^. #perTa ]        
                 
 
 

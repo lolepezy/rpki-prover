@@ -1674,7 +1674,7 @@ moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
 addUniqueVRPCount :: PerTA Vrps -> ValidationState -> ValidationState
 addUniqueVRPCount vrps !vs = let
         vrpCountLens = typed @RawMetric . #vrpCounts
-        totalUnique = Count (fromIntegral $ uniqueVrpCount $ allTAs vrps)        
+        totalUnique = Count (fromIntegral $ uniqueVrpCount vrps)        
         perTaUnique = MonoidalMap.map (Count . fromIntegral . Set.size . Set.fromList . V.toList . unVrps) (unPerTA vrps)   
     in vs & vrpCountLens . #totalUnique .~ totalUnique                
          & vrpCountLens . #perTaUnique .~ perTaUnique
