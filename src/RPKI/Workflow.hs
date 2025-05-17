@@ -246,7 +246,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
             Just _ -> do 
                 let fetchConfig = asyncFetchConfig config
-                worldVersion <- getOrCreateWorldVerion appState            
+                worldVersion <- createWorldVersion appContext
                 repository <- fromMaybe (newRepository url) <$> 
                                 roTxT database (\tx db -> DB.getRepository tx db url) 
                                 
@@ -337,12 +337,10 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         in any (\m -> rrdpRepoHasSignificantUpdates (m ^. typed)) rrdps ||
            any (\m -> rsyncRepoHasSignificantUpdates (m ^. typed)) rsyncs
             
-    triggerTaRevalidation = atomically $ do 
-        ut <- readTVar uriByTa        
-        let tas = Set.fromList $ IxSet.indexKeys $ IxSet.getEQ url ut
+    triggerTaRevalidation = atomically $ do         
+        tas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVar uriByTa
         modifyTVar' tasToValidate $ (<>) tas
         pure tas
-
 
 
 
@@ -467,9 +465,9 @@ runWorkflow appContext@AppContext {..} tals = do
         canValidateAgain <- newTVarIO True
         concurrently_ 
             (go canValidateAgain FirstRun)
-            (let interval = config ^. typed @ValidationConfig . #revalidationInterval
+            (let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
              in forever $ do                 
-                threadDelay (toMicroseconds interval)
+                threadDelay $ toMicroseconds revalidationInterval
                 atomically $ writeTVar
                     (workflowShared ^. #tasToValidate) (Set.fromList allTaNames))
       where
@@ -487,7 +485,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         reset
                         pure $ filter (\tal -> getTaName tal `Set.member` tas) tals 
 
-            worldVersion <- createWorldVersion
+            worldVersion <- createWorldVersion appContext
             
             void $ do 
                 validateTAs workflowShared worldVersion talsToValidate
@@ -499,7 +497,7 @@ runWorkflow appContext@AppContext {..} tals = do
             go canValidateAgain RanBefore
 
     oneOffRun workflowShared vrpOutputFile = do 
-        worldVersion <- createWorldVersion
+        worldVersion <- createWorldVersion appContext
         void $ validateTAs workflowShared worldVersion tals
         -- vrps <- roTxT database $ \tx db -> 
         --         DB.getLastValidationVersion db tx >>= \case 
@@ -570,7 +568,7 @@ runWorkflow appContext@AppContext {..} tals = do
             let makeTask jobRun = do 
                     Task task $ do
                         logDebug logger [i|Running task '#{name}'.|]
-                        worldVersion <- createWorldVersion
+                        worldVersion <- createWorldVersion appContext
                         action worldVersion jobRun 
                             `finally` (do  
                                 when persistent $ do                       
@@ -764,17 +762,6 @@ runWorkflow appContext@AppContext {..} tals = do
                 (r, elapsed) <- timedMS f
                 onRight r elapsed        
 
-    createWorldVersion = do
-        newVersion      <- newWorldVersion        
-        existingVersion <- getWorldVerionIO appState
-        logDebug logger $ 
-            case existingVersion of
-                Nothing ->
-                    [i|Generated new world version #{newVersion}.|]
-                Just oldWorldVersion ->
-                    [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]
-        pure newVersion
-
     runRtrIfConfigured = 
         for_ (config ^. #rtrConfig) $ runRtrServer appContext
 
@@ -942,6 +929,18 @@ loadStoredAppState AppContext {..} = do
                                          [i|current state (#{estimateVrpCount vrps} VRPs), took #{elapsed}ms.|]
                     pure $ Just lastVersion
 
+
+createWorldVersion :: AppContext s -> IO WorldVersion
+createWorldVersion AppContext {..} = do
+    newVersion      <- newWorldVersion        
+    existingVersion <- getWorldVerionIO appState
+    logDebug logger $ 
+        case existingVersion of
+            Nothing ->
+                [i|Generated new world version #{newVersion}.|]
+            Just oldWorldVersion ->
+                [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]
+    pure newVersion
 
 {- 
     Run periodic fetches for slow repositories asychronously to the validation process.
