@@ -75,7 +75,6 @@ import           RPKI.SLURM.Types
 import           RPKI.Http.Dto
 import           RPKI.Http.Types
 import           UnliftIO (pooledForConcurrentlyN)
-import RPKI.Store.Database (previousVersion)
 
 {- 
     Fully asynchronous execution.
@@ -239,7 +238,6 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                             [i|Fetcher for #{url} finished at #{lastFetch}, now is #{now}, |] <> 
                             [i|interval is #{interval}, first fetch will be paused by #{pauseSeconds}s.|]
                         threadDelay $ fromIntegral pause
-
 
     actuallyFetch = do 
         getFetchable >>= \case        
@@ -868,7 +866,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                 $ map (\(ta, r) -> (ta, (r ^. typed, r ^. typed))) 
                 $ Map.toList results
 
-        !vrps <- fmap toPerTA $ forM allTaNames $ \taName -> do 
+        vrps <- fmap toPerTA $ forM allTaNames $ \taName -> do 
             case getForTA resultsToSave taName of 
                 Just (p, _) -> pure (taName, toVrps $ p ^. typed)
                 Nothing     -> case previousVersion of 

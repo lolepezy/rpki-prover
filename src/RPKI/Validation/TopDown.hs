@@ -168,14 +168,14 @@ fromValidations vs = TopDownResult mempty mempty vs mempty
 
 newTopDownContext :: MonadIO m =>
                     TaName
-                    -> CaCerObject
                     -> AllTasTopDownContext
                     -> m TopDownContext
-newTopDownContext taName certificate allTas = 
+newTopDownContext taName allTas = 
     liftIO $ do 
         payloadBuilder <- newPayloadBuilder
         atomically $ do
-            let verifiedResources = Just $ createVerifiedResources certificate
+            -- let verifiedResources = Just $ createVerifiedResources certificate
+            let verifiedResources = Nothing
                 currentPathDepth = 0
                 overclaimingHappened = False       
             startingRepositoryCount <- fmap repositoryCount $ readTVar $ allTas ^. #repositoryProcessing . #publicationPoints
@@ -309,16 +309,20 @@ validateTA :: Storage s =>
             -> IO TopDownResult
 validateTA appContext@AppContext{..} tal worldVersion allTas = do
     let maxDuration = config ^. typed @ValidationConfig . #topDownTimeout
+    topDownContext <- newTopDownContext taName allTas
     (r, vs) <- runValidatorT taContext $
             timeoutVT
                 maxDuration
-                validateFromTAL
+                (validateFromTAL topDownContext)
                 (do
                     logError logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
                     appError $ ValidationE $ ValidationTimeout maxDuration)    
+
+    newRepos <- readTVarIO $ topDownContext ^. #fetcheables
     case r of
-        Left _                    -> pure $ fromValidations vs 
-        Right (topDownContext, _) -> do     
+        Left _ -> 
+            pure $ fromValidations vs & #discoveredRepositories .~ newRepos
+        Right _ -> do     
             let builder = topDownContext ^. #payloadBuilder
             vrps     <- readIORef $ builder ^. #vrps 
             aspas    <- fmap Set.fromList $ readIORef $ builder ^. #aspas 
@@ -333,21 +337,21 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
                             map (\(T2 vrp k) -> (k, V.fromList vrp)) vrps 
 
             let payloads = Payloads {..}        
-
-            newRepos <- readTVarIO $ topDownContext ^. #fetcheables
+            
             pure $ TopDownResult payloads roas vs newRepos
 
   where
     taName = getTaName tal
     taContext = newScopes' TAFocus $ unTaName taName
 
-    validateFromTAL = do
+    validateFromTAL topDownContext = do
         timedMetric (Proxy :: Proxy ValidationMetric) $
             vFocusOn LocationFocus (getURL $ getTaCertURL tal) $ do
-                ((taCert, repos), _) <- timedMS $ validateTACertificateFromTAL appContext tal worldVersion
-                -- this will be used as the "now" in all subsequent time and period validations                 
-                topDownContext <- newTopDownContext taName (taCert ^. #payload) allTas
-                (topDownContext, ) <$> validateFromTACert appContext topDownContext repos taCert
+                (taCert, repos) <- validateTACertificateFromTAL appContext tal worldVersion    
+                -- This clumsy code is to make it possible to construct topDownContext
+                -- before getting and validating the TA certificate
+                let topDownContext' = topDownContext & #verifiedResources ?~ createVerifiedResources (taCert ^. #payload)
+                validateFromTACert appContext topDownContext' repos taCert
 
         
 
@@ -541,10 +545,10 @@ validateCaNoLimitChecks
             -- Do not validate if nothing was fetched for this CA
             -- otherwise we'll have a lot of useless errors about 
             -- missing manifests, so just don't go there
-            unless (all ((== Pending) . snd) caFetcheables) $ do   
-                let primaryUrl = getPrimaryRepositoryUrl pps ppAccess
-                metricFocusOn PPFocus primaryUrl $
-                    validateCaNoFetch appContext topDownContext ca
+            -- unless (all ((== Pending) . snd) caFetcheables) $ do   
+            let primaryUrl = getPrimaryRepositoryUrl pps ppAccess
+            metricFocusOn PPFocus primaryUrl $
+                validateCaNoFetch appContext topDownContext ca
   where
     mergeFetcheables caFetcheables =
         case map fst caFetcheables of 
@@ -721,11 +725,10 @@ validateCaNoFetch
             -- Manifest-specific location validation
             validateMftLocation locatedMft fullCa
 
-            -- TODO Add fiddling with shortcut version of CRL here                    
             keyedValidCrl@(Keyed validCrl crlKey) <- findAndValidateCrl fullCa keyedMft childrenAki                
 
             -- MFT can be revoked by the CRL that is on this MFT -- detect 
-            -- revocation as well, this is clearly and error                               
+            -- revocation as well, this is clearly an error                               
             validMft <- vHoist $ validateMft (config ^. #validationConfig . typed) 
                                     now mft fullCa validCrl verifiedResources
 

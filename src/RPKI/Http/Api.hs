@@ -74,10 +74,15 @@ data API api = API {
         tals :: api :- "tals" :> Get '[JSON] [TalDto],
                 
         minimalValidationResults  :: api :- "validations"      
+                                    :> QueryParam "version" Text 
                                     :> Get '[JSON] (ValidationsDto (MinimalVDto FocusResolvedDto)),
+
         fullValidationResults     :: api :- "validations-full" 
+                                    :> QueryParam "version" Text 
                                     :> Get '[JSON] (ValidationsDto ResolvedVDto),
+
         originalValidationResults :: api :- "validations-original" 
+                                    :> QueryParam "version" Text 
                                     :> Get '[JSON] (ValidationsDto OriginalVDto),
 
         metrics :: api   :- "metrics" :> Get '[JSON] MetricsDto,                
