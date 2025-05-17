@@ -85,7 +85,9 @@ data API api = API {
                                     :> QueryParam "version" Text 
                                     :> Get '[JSON] (ValidationsDto OriginalVDto),
 
-        metrics :: api   :- "metrics" :> Get '[JSON] MetricsDto,                
+        metrics :: api   :- "metrics" 
+                            :> QueryParam "version" Text 
+                            :> Get '[JSON] MetricsDto,                
 
         lmdbStats :: api :- "lmdb-stats" :> Get '[JSON] TotalDBStats,
         jobs :: api      :- "jobs" :> Get '[JSON] JobsDto,

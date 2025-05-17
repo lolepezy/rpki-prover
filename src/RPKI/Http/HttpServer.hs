@@ -97,7 +97,7 @@ httpServer appContext tals = genericServe HttpApi {
         fullValidationResults     = getValidationsDto appContext,
         minimalValidationResults  = fmap toMinimalValidations . getValidationsDto appContext,
         originalValidationResults = getValidationsOriginalDto appContext,
-        metrics = snd <$> getMetricsPerTA appContext,
+        metrics = getMetrics appContext,
         repositories = getPPs appContext,
         lmdbStats = getStats appContext,
         jobs = getJobs appContext,
@@ -310,24 +310,16 @@ getValidationsDto appContext versionText =
             Just <$> resolveVDto tx db originalDtos)
         fromJust
 
-getMetricsPerTA :: (MonadIO m, Storage s, MonadError ServerError m) =>
-            AppContext s -> m (RawMetric, MetricsDto)
-getMetricsPerTA appContext = getMetricsImpl appContext DB.getLatestVersion    
-
-
-getMetricsImpl :: (MonadIO m, Storage s, MonadError ServerError m) =>
-                AppContext s 
-            -> (DB s -> Tx s 'RO -> IO (Maybe WorldVersion))
-            -> m (RawMetric, MetricsDto)
-getMetricsImpl AppContext {..} getVersionF = do
-    db <- liftIO $ readTVarIO database
-    metrics <- liftIO $ roTx db $ \tx ->
-        runMaybeT $ do
-            version    <- MaybeT $ getVersionF db tx
-            rawMetrics <- MaybeT $ Just . allTAs <$> DB.getMetricsPerTA tx db version
-            pure (rawMetrics, toMetricsDto rawMetrics)
-    maybe notFoundException pure metrics
-
+getMetrics :: (MonadIO m, Storage s, MonadError ServerError m) =>
+            AppContext s 
+        -> Maybe Text 
+        -> m MetricsDto
+getMetrics appContext versionText = 
+    getValuesByVersion appContext versionText
+        (\_ -> pure Nothing) 
+        (\tx db version -> 
+            Just . toMetricsDto . allTAs <$> DB.getMetricsPerTA tx db version)
+        fromJust
 
 notFoundException :: MonadError ServerError m => m a
 notFoundException = throwError err404 {
