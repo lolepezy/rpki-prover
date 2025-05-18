@@ -519,10 +519,10 @@ validateCaNoLimitChecks
             -- Do not validate if nothing was fetched for this CA
             -- otherwise we'll have a lot of useless errors about 
             -- missing manifests, so just don't go there
-            -- unless (all ((== Pending) . snd) caFetcheables) $ do   
-            let primaryUrl = getPrimaryRepositoryUrl publicationPoints ppAccess
-            metricFocusOn PPFocus primaryUrl $
-                validateCaNoFetch appContext topDownContext ca
+            unless (all ((== Pending) . snd) caFetcheables) $ do   
+                let primaryUrl = getPrimaryRepositoryUrl publicationPoints ppAccess
+                metricFocusOn PPFocus primaryUrl $
+                    validateCaNoFetch appContext topDownContext ca
   where
     mergeFetcheables caFetcheables =
         case map fst caFetcheables of 

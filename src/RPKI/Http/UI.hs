@@ -56,27 +56,35 @@ mainPage version systemInfo validation fetchValidation rawMetric@RawMetric {..} 
             H.div ! A.class_ "side-navigation" $ do  
                 H.a ! A.href "#overall"            $ H.text "Overall"
                 H.a ! A.href "#validation-metrics" $ H.text "Validation metrics"
-                H.a ! A.href "#rrdp-metrics"       $ H.text "RRDP metrics"
-                H.a ! A.href "#rsync-metrics"      $ H.text "Rsync metrics"
                 H.a ! A.href "#validation-details" $ H.text "Validation details"
-                
+                H.a ! A.href "#rrdp-metrics"       $ H.text "RRDP metrics"
+                H.a ! A.href "#rsync-metrics"      $ H.text "Rsync metrics"                
+                H.a ! A.href "#fetch-details"      $ H.text "Fetch details"
+
         H.div ! A.class_ "main" $ do
             H.a ! A.id "overall" $ ""                 
             H.section $ H.h4 "Overall"                
-            overallHtml systemInfo version                      
+            overallHtml systemInfo version                    
+
             H.a ! A.id "validation-metrics" $ "" 
-            H.section $ H.h4 "Validation metrics"
-            let metricsDto = toMetricsDto rawMetric
-            validationMetricsHtml $ metricsDto ^. #groupedValidations
+            H.section $ H.h4 "Validation metrics"            
+            validationMetricsHtml $ toMetricsDto rawMetric ^. #groupedValidations
+            H.a ! A.id "validation-details" $ ""
+            H.section $ H.h4 "Validation details"
+            validaionDetailsHtml $ validation ^. #validations            
+
             H.a ! A.id "rrdp-metrics" $ ""
             H.section $ H.h4 "RRDP metrics"
             rrdpMetricsHtml rrdpMetrics
+
             H.a ! A.id "rsync-metrics" $ ""
             H.section $ H.h4 "Rsync metrics"
             rsyncMetricsHtml rsyncMetrics
-            H.a ! A.id "validation-details" $ ""
-            H.section $ H.h4 "Validation details"
-            validaionDetailsHtml $ validation ^. #validations
+
+            H.a ! A.id "fetch-details" $ ""
+            H.section $ H.h4 "Fetch details"
+            validaionDetailsHtml fetchValidation
+
 
 
 overallHtml :: SystemInfo -> WorldVersion -> Html
@@ -375,7 +383,7 @@ instance ToMarkup HttpStatus where
 
 instance ToMarkup FetchFreshness where 
     toMarkup = \case 
-        NoFetchNeeded -> toMarkup ("Up-to-date" :: Text)
+        NoFetchNeeded -> toMarkup ("Not yet" :: Text)
         FetchFailed   -> toMarkup ("Failed" :: Text)
         NoUpdates     -> toMarkup ("No updates" :: Text)
         Updated       -> toMarkup ("Updated" :: Text)
