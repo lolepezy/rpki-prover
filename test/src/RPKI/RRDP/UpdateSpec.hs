@@ -87,7 +87,6 @@ testNonConsecutive =
                         rrdpMeta = Just $ RrdpMeta sessionId serial (RrdpIntegrity []),
                         meta = RepositoryMeta {
                                 status = Pending,
-                                fetchType = Unknown,
                                 lastFetchDuration = Nothing,
                                 refreshInterval = Nothing
                             },
@@ -159,7 +158,6 @@ defaultRepo = RrdpRepository {
     rrdpMeta = Nothing,
     meta = RepositoryMeta {
             status = Pending,
-            fetchType = Unknown,
             lastFetchDuration = Nothing,
             refreshInterval = Nothing
         },

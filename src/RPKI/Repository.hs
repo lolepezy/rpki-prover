@@ -43,13 +43,6 @@ import           RPKI.Util
 import           RPKI.Store.Base.Serialisation
 
    
-data FetchType = Unknown 
-               | ForSyncFetch Instant 
-               | ForAsyncFetch Instant
-    deriving stock (Show, Eq, Generic)    
-    deriving anyclass (TheBinary)
-    deriving Semigroup via Max FetchType
-
 data FetchStatus = Pending
                  | FetchedAt Instant
                  | FailedAt Instant  
@@ -111,7 +104,6 @@ data PublicationPoints = PublicationPoints {
 
 data RepositoryMeta = RepositoryMeta {
         status            :: FetchStatus,
-        fetchType         :: FetchType,
         lastFetchDuration :: Maybe TimeMs,
         refreshInterval   :: Maybe Seconds
     } 
@@ -122,7 +114,6 @@ data RepositoryMeta = RepositoryMeta {
 instance Semigroup RepositoryMeta where
     rm1 <> rm2 = RepositoryMeta { 
         status    = rm1 ^. #status <> rm2 ^. #status,
-        fetchType = rm1 ^. #fetchType <> rm2 ^. #fetchType,
         lastFetchDuration = rm2 ^. #lastFetchDuration,
         refreshInterval = rm2 ^. #refreshInterval
     }
@@ -130,7 +121,6 @@ instance Semigroup RepositoryMeta where
 instance Monoid RepositoryMeta where
     mempty = RepositoryMeta { 
         status = mempty,
-        fetchType = mempty,
         lastFetchDuration = Nothing,
         refreshInterval = Nothing
     }
@@ -148,14 +138,6 @@ data FetchResult =
 data FetchTask a = Stub 
                 | Fetching (Async a)                 
     deriving stock (Eq, Ord, Generic)                    
-
-data RepositoryProcessing = RepositoryProcessing {
-        fetchRuns              :: StmMap.Map RpkiURL (FetchTask FetchResult),
-        indivudualFetchResults :: StmMap.Map RpkiURL ValidationState,
-        publicationPoints      :: TVar PublicationPoints,
-        fetchSemaphore         :: Semaphore
-    }
-    deriving stock (Generic)
 
 newtype Fetcheables = Fetcheables { unFetcheables :: MonoidalMap RpkiURL (Set.Set RpkiURL) }    
     deriving stock (Show, Eq, Ord, Generic)  
@@ -196,33 +178,16 @@ instance Ord FetchStatus where
 instance Monoid FetchStatus where    
     mempty = Pending
     
-instance Monoid FetchType where    
-    mempty = Unknown
-
-instance Ord FetchType where
-    compare = comparing time
-      where             
-        time Unknown   = Nothing
-        time (ForSyncFetch t) = Just t
-        time (ForAsyncFetch t)  = Just t  
-
 instance Semigroup RrdpMap where
     RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2             
 
 getFetchStatus :: Repository -> FetchStatus
 getFetchStatus r = getMeta r ^. #status
 
-getFetchType :: Repository -> FetchType
-getFetchType r = getMeta r ^. #fetchType
-
 getMeta :: Repository -> RepositoryMeta
 getMeta (RrdpR r)   = r ^. #meta
 getMeta (RsyncR r)  = r ^. #meta
 
-isForAsync :: FetchType -> Bool
-isForAsync = \case    
-    ForAsyncFetch _ -> True
-    _               -> False
 
 newPPs :: PublicationPoints
 newPPs = PublicationPoints mempty newRsyncForest
@@ -250,13 +215,6 @@ updateMeta' :: Repository -> (RepositoryMeta -> RepositoryMeta) -> Repository
 updateMeta' (RrdpR r) newMeta = RrdpR $ r & #meta %~ newMeta
 updateMeta' (RsyncR r) newMeta = RsyncR $ r & #meta %~ newMeta
 
-newRepositoryProcessing :: Config -> STM RepositoryProcessing
-newRepositoryProcessing Config {..} = RepositoryProcessing <$> 
-        StmMap.new <*>               
-        StmMap.new <*>
-        newTVar newPPs <*>
-        newSemaphore (fromIntegral $ parallelism ^. #fetchParallelism)  
-
 newFetcheables :: RpkiURL -> Maybe RpkiURL -> Fetcheables
 newFetcheables primary fallback = Fetcheables $ 
     MonoidalMap.singleton primary (maybe Set.empty Set.singleton fallback)
@@ -264,9 +222,6 @@ newFetcheables primary fallback = Fetcheables $
 addRsyncPrefetchUrls :: Config -> PublicationPoints -> PublicationPoints
 addRsyncPrefetchUrls Config {..} pps =     
     foldr (mergePP . rsyncPP) pps (rsyncConf ^. #rsyncPrefetchUrls)
-
-newRepositoryProcessingIO :: Config -> IO RepositoryProcessing
-newRepositoryProcessingIO = atomically . newRepositoryProcessing
 
 rsyncPP :: RsyncURL -> PublicationPoint
 rrdpPP  :: RrdpURL  -> PublicationPoint
@@ -439,20 +394,6 @@ filterPPAccess Config {..} ppAccess =
     filter_ = \case
         RrdpPP _  -> rrdpConf ^. #enabled
         RsyncPP _ -> rsyncConf ^. #enabled        
-
-
-findRepositoriesForAsyncFetch :: PublicationPoints -> [(RpkiURL, Repository)]
-findRepositoriesForAsyncFetch (PublicationPoints (RrdpMap rrdps) rsyncTree) = 
-    rrdpSpeedProblem <> rsyncSpeedProblem
-  where
-    rrdpSpeedProblem  = [ (RrdpU u, RrdpR r) 
-        | (u, r) <- Map.toList rrdps, isForAsync $ r ^. #meta . #fetchType ]
-
-    rsyncSpeedProblem = [ (RsyncU u, rsyncRepo u meta)
-        | (u, meta@RepositoryMeta {..}) 
-            <- flattenRsyncTree rsyncTree, isForAsync fetchType ]
-      where 
-        rsyncRepo (RsyncPublicationPoint -> repoPP) meta = RsyncR $ RsyncRepository {..}
 
 
 type RsyncNodeNormal = RsyncTree RepositoryMeta

@@ -8,16 +8,10 @@
 
 module RPKI.Fetch where
 
-import           Control.Concurrent.Async
-import           Control.Concurrent.STM
-import           Control.Monad.IO.Class
 
 import           Control.Lens
 import           Data.Generics.Product.Typed
 
-import           Control.Exception
-
-import           Control.Monad
 import           Control.Monad.Except
 
 import qualified Data.List.NonEmpty          as NonEmpty
@@ -25,8 +19,6 @@ import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.String.Interpolate.IsString
 import           Data.Maybe                  
 import qualified Data.Set                    as Set
-import qualified StmContainers.Map           as StmMap
-import qualified ListT
 
 import           Time.Types
 
@@ -46,315 +38,9 @@ import           RPKI.Rsync
 import           RPKI.RRDP.Http
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
-import           RPKI.Parallel 
-
-    
-{- 
-  Fetch repositories in the sync mode (i.e. during top-down validation
-  with blocking until function returns).
-
-  For a given list of publication points
-    * Download the first one in the list
-    * If download failed, timed out or took time above "slow threshold"
-    * mark all publication points in the list as ForAsyncFetch
-    
-  Essentially, to keep ForSyncFetch status a publication point needs to
-  response successfully and be fast.
-
-  Fall-back is disabled in the sync mode, so if primary repoistory doesn't 
-  respond, we skip all the fall-backs and mark them all as ForAsyncFetch.
--}
-fetchQuickly :: (MonadIO m, Storage s) => 
-            AppContext s                       
-        -> RepositoryProcessing
-        -> WorldVersion
-        -> PublicationPointAccess  
-        -> ValidatorT m [FetchResult]
-fetchQuickly appContext@AppContext {..}     
-    repositoryProcessing@RepositoryProcessing {..}
-    worldVersion
-    ppa = do 
-        pps <- readPublicationPoints repositoryProcessing
-        case config ^. #validationConfig . #fetchMethod of 
-
-            SyncOnly -> do 
-                -- It is a bit artificial case, because in "sync-only" mode
-                -- we only fetch the primary repository (i.e. RRDP one).
-                -- It exists mainly for comparisons and measurements and 
-                -- not very useful in practice.
-                let primaryRepo = getPrimaryRepository ppa
-                (:[]) <$>  
-                    fetchOnePp appContext (syncFetchConfig config) 
-                        repositoryProcessing worldVersion primaryRepo
-                        (\meta _ -> pure meta)
-                
-            SyncAndAsync -> do 
-                let (syncPp, asyncRepos) = onlyForSyncFetch pps ppa
-                case syncPp of 
-                    Nothing -> do 
-                        -- There's nothing to be fetched in the sync mode, 
-                        -- so just mark all of them for async fetching.                
-                        -- markForAsyncFetch repositoryProcessing asyncRepos     
-                        pure []           
-                    Just syncPp_ -> do  
-                        -- In sync mode fetch only the first PP
-                        fetchResult <-                     
-                            fetchOnePp appContext (syncFetchConfig config) 
-                                repositoryProcessing worldVersion syncPp_ 
-                                (newMetaCallback syncPp_ pps)
-
-                        -- case fetchResult of 
-                        --     FetchSuccess _ _ -> pure ()
-                        --     FetchFailure _ _ -> do 
-                        --         -- In case of failure mark all repositories ForAsyncFetch
-                        --         ppsAfter <- readPublicationPoints repositoryProcessing
-                        --         let toMarkAsync = mapMaybe (repositoryFromPP ppsAfter) 
-                        --                             $ NonEmpty.toList $ unPublicationPointAccess ppa
-                                -- markForAsyncFetch repositoryProcessing toMarkAsync
-                    
-                        pure $! [fetchResult]
-  where
-    newMetaCallback syncPp_ pps newMeta fetchMoment = do
-        -- Set fetchType to ForAsyncFetch to all fall-back URLs, 
-        -- do not try them synchronously anymore
-        let urlToSkip = getRpkiURL syncPp_
-        case newMeta ^. #fetchType of     
-            ForAsyncFetch _ -> 
-                modifyTVar' publicationPoints $ \currentPps -> 
-                    foldr 
-                        (\pp pps_ -> 
-                            if urlToSkip == getRpkiURL pp 
-                                then pps_ 
-                            else 
-                                case repositoryFromPP pps pp of 
-                                    Nothing   -> pps_
-                                    Just repo -> let 
-                                        newMeta_ = getMeta repo & #fetchType .~ ForAsyncFetch fetchMoment
-                                        in updateMeta (pps_ ^. typed) [(repo, newMeta_)]
-                            )
-                        currentPps
-                        (unPublicationPointAccess ppa)
-            _ -> pure ()
-
-        pure newMeta
-                                                
-
-{- 
-  Fetch with fallback going through all (both RRDP and rsync) options.
--}
-fetchWithFallback :: (MonadIO m, Storage s) => 
-                    AppContext s       
-                -> RepositoryProcessing
-                -> WorldVersion
-                -> FetchConfig
-                -> PublicationPointAccess  
-                -> ValidatorT m [FetchResult]
-fetchWithFallback   
-    appContext@AppContext {..}                  
-    repositoryProcessing
-    worldVersion
-    fetchConfig
-    ppa
-    = go True $ NonEmpty.toList $ unPublicationPointAccess ppa        
-  where
-    go _ [] = pure []
-    go isPrimary (pp : rest) = do     
-        fetchResult <- fetchOnePp appContext fetchConfig 
-                            repositoryProcessing worldVersion pp (newMetaCallback isPrimary)
-        case fetchResult of     
-            FetchFailure _ _ -> do 
-                -- try the next one
-                case rest of 
-                    []            -> pure []
-                    (ppNext : _ ) -> do                             
-                        pps <- readPublicationPoints repositoryProcessing
-                        case repositoryFromPP pps pp of     
-                            Nothing -> do
-                                logError logger [i|Internal error: #{pp} doesn't have corresponding repository, it should never happen.|]
-                                pure []
-                            Just repo -> do 
-                                now' <- thisInstant
-                                -- CHeck this only for more meaningful logging    
-                                let nextOneNeedAFetch = needsFetching pp 
-                                        (getMeta repo ^. #refreshInterval) 
-                                        (getFetchStatus repo) 
-                                        (config ^. #validationConfig) 
-                                        now'
-                                logWarn logger $ if nextOneNeedAFetch
-                                    then [i|Failed to fetch #{getURL pp}, will fall-back to the next one: #{getURL $ getRpkiURL ppNext}.|]
-                                    else [i|Failed to fetch #{getURL pp}, next one (#{getURL $ getRpkiURL ppNext}) is up-to-date.|]
-
-                                (fetchResult :) <$> go False rest
-
-            _ -> pure [fetchResult]
-  
-    newMetaCallback isPrimary newMeta fetchMoment = 
-        case config ^. #proverRunMode of 
-            OneOffMode {} -> pure newMeta
-            ServerMode    ->
-                -- We are doing async fetch here, so we are not going to promote fall-back 
-                -- repositories back to ForSyncFetch type. I.e. if a CA has publication 
-                -- points as "repo_a - fall-back-to -> repo_b", repo_b is never going to 
-                -- become ForSyncFetch, only repo_a can become sync and only after it is 
-                -- back to normal state.                
-                pure $ if isPrimary 
-                    then newMeta
-                    else newMeta & #fetchType .~ ForAsyncFetch fetchMoment        
 
 
-fetchOnePp :: (MonadIO m, Storage s) => 
-                AppContext s       
-            -> FetchConfig                  
-            -> RepositoryProcessing
-            -> WorldVersion
-            -> PublicationPoint  
-            -> (RepositoryMeta -> Instant -> STM RepositoryMeta)
-            -> ValidatorT m FetchResult
-fetchOnePp 
-    appContext@AppContext {..}     
-    fetchConfig
-    repositoryProcessing@RepositoryProcessing {..}
-    worldVersion
-    pp 
-    newMetaCallback
-    = do 
-        parentScope <- askScopes        
-        fetchResult <- liftIO $ fetchOnce parentScope
-        setFetchValidationState repositoryProcessing fetchResult
-        pure fetchResult
-  where
-
-    fetchOnce parentScope = 
-        join $ atomically $ do      
-            ppsKey <- ppSeqKey 
-            StmMap.lookup ppsKey fetchRuns >>= \case            
-                Just Stub         -> retry
-                Just (Fetching a) -> pure $ wait a
-                Nothing -> do                                         
-                    StmMap.insert Stub ppsKey fetchRuns
-                    pure $ bracketOnError 
-                            (async $ evaluate =<< fetchPPOnce parentScope)
-                            (stopAndDrop fetchRuns ppsKey) 
-                            (rememberAndWait fetchRuns ppsKey)
-    ppSeqKey = do         
-        case pp of
-            RrdpPP _  -> pure $ getRpkiURL pp
-            RsyncPP _ -> do  
-                pps <- readTVar publicationPoints
-                pure $ getRpkiURL $ getFetchablePP pps pp                
-    
-    fetchPPOnce parentScope = do 
-        ((repoUrl, initialFreshness, (r, validations)), elapsed) <- timedMS doFetch      
-        let validations' = updateFetchMetric repoUrl initialFreshness validations r elapsed       
-        pure $ case r of
-            Left _     -> FetchFailure repoUrl validations'                
-            Right repo -> FetchSuccess repo validations'      
-      where        
-        doFetch = do 
-            fetchMoment <- thisInstant
-            join $ atomically $ do                                     
-                (repoNeedAFetch, repo) <- needsAFetch fetchMoment
-                let rpkiUrl = getRpkiURL repo
-                pure $ if repoNeedAFetch then 
-                    (rpkiUrl, Nothing, ) <$> fetchPP parentScope repo fetchMoment  
-                else
-                    pure (rpkiUrl, Just NoFetchNeeded, (Right repo, mempty))
-
-        -- This is hacky but basically setting the "fetched/up-to-date" metric
-        -- without ValidatorT/PureValidatorT (we can only run it in IO).
-        updateFetchMetric repoUrl initialFreshness validations r elapsed = 
-            case repoUrl of 
-                RrdpU _ -> 
-                    let 
-                        updatedFreshness = rrdpMetricUpdate validations rrdpFreshness
-                    in case r of 
-                        Left _  -> rrdpMetricUpdate updatedFreshness (#totalTimeMs %~ updateTime)
-                        Right _ -> updatedFreshness
-                RsyncU _ -> let 
-                        updatedFreshness = rsyncMetricUpdate validations rsyncFreshness
-                    in case r of 
-                        Left _  -> rsyncMetricUpdate updatedFreshness (#totalTimeMs %~ updateTime)
-                        Right _ -> updatedFreshness           
-          where
-            rrdpFreshness metrics = 
-                metrics & #fetchFreshness .~ g (rrdpRepoHasUpdates metrics)
-
-            rsyncFreshness metrics = 
-                metrics & #fetchFreshness .~ g (rsyncRepoHasUpdates metrics)
-            
-            g condition = flip fromMaybe initialFreshness $ case r of 
-                            Left _ -> FetchFailed
-                            Right _ 
-                                | condition -> Updated
-                                | otherwise -> NoUpdates
-
-            repoScope = validatorSubScope' RepositoryFocus repoUrl parentScope     
-            rrdpMetricUpdate v f  = v & typed @RawMetric . #rrdpMetrics  %~ updateMetricInMap (repoScope ^. typed) f
-            rsyncMetricUpdate v f = v & typed @RawMetric . #rsyncMetrics %~ updateMetricInMap (repoScope ^. typed) f
-            -- this is also a hack to make sure time is updated if the fetch has failed 
-            -- and we probably don't have time at all if the worker timed out                                       
-            updateTime t = if t == mempty then elapsed else t
-
-      
-    -- Do fetch the publication point and update the #publicationPoints
-    -- 
-    -- A fetcher can proceed if either
-    --   - there's a free slot in the semaphore
-    --   - we are waiting for a free slot for more than N seconds
-    --
-    -- In practice that means hanging timing out fetchers cannot 
-    -- block the pool for too long and new fetchers will get through anyway.
-    -- Fetching processes hanging on a connection don't take resources, 
-    -- so it's safer to risk overloading the system with a lot of processes
-    -- that blocking fetch entirely.
-    --     
-    fetchPP parentScope repo (Now fetchMoment) = do 
-        let Seconds (fromIntegral . (*1000_000) -> intervalMicroSeconds) = fetchConfig ^. #fetchLaunchWaitDuration
-        withSemaphoreOrTimeout fetchSemaphore intervalMicroSeconds $ do         
-            let rpkiUrl = getRpkiURL repo                    
-            let repoScope = validatorSubScope' RepositoryFocus rpkiUrl parentScope
-            
-            ((r, validations), duratioMs) <- timedMS 
-                                            $ runValidatorT repoScope 
-                                            $ fetchRepository appContext fetchConfig worldVersion repo
-            newMeta_ <- atomically $ do
-                let (newRepo, newStatus, rrdpStats) = case r of                             
-                        Left _               -> (repo, FailedAt fetchMoment, Nothing)
-                        Right (repo', stats) -> (repo', FetchedAt fetchMoment, stats)
-
-                let newMeta = deriveNewMeta config fetchConfig newRepo validations 
-                                            rrdpStats duratioMs newStatus fetchMoment
-
-                -- `Call externally passed callback
-                newMeta' <- newMetaCallback newMeta fetchMoment
-
-                modifyTVar' publicationPoints $ \pps -> 
-                        updateMeta (pps ^. typed) [(newRepo, newMeta')]
-
-                pure newMeta'
-
-            logDebug logger [i|New meta for #{rpkiUrl}: #{newMeta_}|]
-            pure (fmap fst r, validations)
-
-    stopAndDrop stubs key asyncR = liftIO $ do         
-        cancel asyncR
-        atomically $ StmMap.delete key stubs        
-
-    rememberAndWait stubs key asyncR = liftIO $ do 
-        atomically $ StmMap.insert (Fetching asyncR) key stubs
-        wait asyncR
-
-    needsAFetch now' = do 
-        pps <- readTVar publicationPoints        
-        let Just repo = repositoryFromPP pps pp
-        let needsFetching' = needsFetching pp 
-                (getMeta repo ^. #refreshInterval) 
-                (getFetchStatus repo) 
-                (config ^. #validationConfig) 
-                now'
-        pure (needsFetching', repo)
-
-
+-- This type is way too long
 deriveNewMeta config fetchConfig repo validations rrdpStats 
               duration@(TimeMs duratioMs) status fetchMoment = 
     RepositoryMeta {..}
@@ -403,29 +89,7 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
                                         FetchDeltas {..} 
                                             | moreThanOne sortedDeltas -> trimInterval $ decreaseInterval ri 
                                             | otherwise                -> ri                                    
-                                        FetchSnapshot _ _ -> ri                    
-
-    fetchType =
-        -- If the fetch timed out then it's definitely for async fetch
-        -- otherwise, check how long did it take to download
-        if WorkerTimeoutTrace `Set.member` (validations ^. #traces)
-            then ForAsyncFetch fetchMoment
-            else 
-                case status of                                         
-                    FailedAt _ -> ForAsyncFetch fetchMoment
-                    _          -> speedByTiming        
-      where
-        Seconds rrdpSlowSec  = fetchConfig ^. #rrdpSlowThreshold
-        Seconds rsyncSlowSec = fetchConfig ^. #rsyncSlowThreshold        
-        speedByTiming = 
-            case repo of
-                RrdpR _  -> deriveFetchType $ duratioMs > 1000 * rrdpSlowSec
-                RsyncR _ -> deriveFetchType $ duratioMs > 1000 * rsyncSlowSec
-
-        deriveFetchType condition = 
-            if condition 
-                then ForAsyncFetch fetchMoment
-                else ForSyncFetch fetchMoment       
+                                        FetchSnapshot _ _ -> ri                      
 
 
 deriveNextTimeout :: Config -> Seconds -> RepositoryMeta -> Seconds
@@ -561,34 +225,6 @@ needsFetching r fetchInterval status ValidationConfig {..} (Now now) =
         defaultInterval (RsyncU _) = rsyncRepositoryRefreshInterval          
 
 
-
-validationStateOfFetches :: MonadIO m => RepositoryProcessing -> m ValidationState 
-validationStateOfFetches repositoryProcessing = liftIO $ 
-    atomically $ 
-        fmap (mconcat . map snd) $ 
-            ListT.toList $ StmMap.listT $ 
-                repositoryProcessing ^. #indivudualFetchResults    
-
-setFetchValidationState :: MonadIO m => RepositoryProcessing -> FetchResult -> m ()
-setFetchValidationState repositoryProcessing fr = liftIO $ do        
-    let (u, vs) = case fr of
-            FetchFailure r vs'    -> (r, vs')
-            FetchSuccess repo vs' -> (getRpkiURL repo, vs')
-        
-    atomically $ StmMap.insert vs u (repositoryProcessing ^. #indivudualFetchResults)
-    
-
-cancelFetchTasks :: RepositoryProcessing -> IO ()    
-cancelFetchTasks RepositoryProcessing {..} = do 
-    fetches <- atomically $ ListT.toList $ StmMap.listT fetchRuns     
-    mapM_ cancel [ a | (_, Fetching a) <- fetches ]    
-
-readPublicationPoints :: MonadIO m => 
-                        RepositoryProcessing                         
-                        -> m PublicationPoints
-readPublicationPoints repositoryProcessing = liftIO $ 
-    readTVarIO $ repositoryProcessing ^. #publicationPoints    
-
 getPrimaryRepositoryUrl :: PublicationPoints 
                          -> PublicationPointAccess 
                          -> RpkiURL
@@ -627,25 +263,7 @@ getFetchables pps ppAccess =
         | pp <- NonEmpty.toList $ unPublicationPointAccess ppAccess,                
           repo <- maybeToList $ repositoryFromPP pps pp ]
 
-onlyForSyncFetch :: PublicationPoints 
-                -> PublicationPointAccess 
-                -> (Maybe PublicationPoint, [Repository])
-onlyForSyncFetch pps ppAccess = let
-        
-    ppaList = NonEmpty.toList $ unPublicationPointAccess ppAccess
-
-    asyncOnes = [ r  | (isAsyncRepo, Just r) <- map checkAsync ppaList, isAsyncRepo ]
-    syncOnes  = [ pp | (pp, (isAsync, _)) <- map (\pp -> (pp, checkAsync pp)) ppaList, not isAsync ]
-    
-    in (listToMaybe syncOnes, asyncOnes)
-
-  where   
-    checkAsync pp = 
-        case repositoryFromPP pps pp of 
-            Nothing -> (False, Nothing)
-            Just r  -> (isForAsync $ getFetchType r, Just r)                        
-
-
+                
 syncFetchConfig :: Config -> FetchConfig
 syncFetchConfig config = let 
         rsyncConfig = config ^. typed @RsyncConf

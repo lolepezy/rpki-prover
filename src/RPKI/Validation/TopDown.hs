@@ -12,7 +12,6 @@
 module RPKI.Validation.TopDown (
     TopDownResult(..),
     validateMutlipleTAs,    
-    withRepositoriesProcessing,
     addUniqueVRPCount
 )
 where
@@ -117,7 +116,7 @@ data AllTasTopDownContext = AllTasTopDownContext {
         now                  :: Now,
         worldVersion         :: WorldVersion,
         visitedKeys          :: TVar (Set ObjectKey),        
-        repositoryProcessing :: RepositoryProcessing,
+        publicationPoints    :: PublicationPoints,
         shortcutQueue        :: ClosableQueue MftShortcutOp,
         topDownCounters      :: TopDownCounters IORef        
     }
@@ -178,17 +177,17 @@ newTopDownContext taName allTas =
             let verifiedResources = Nothing
                 currentPathDepth = 0
                 overclaimingHappened = False       
-            startingRepositoryCount <- fmap repositoryCount $ readTVar $ allTas ^. #repositoryProcessing . #publicationPoints
+            let startingRepositoryCount = repositoryCount $ allTas ^. #publicationPoints
             interruptedByLimit      <- newTVar CanProceed                 
             fetcheables             <- newTVar mempty                 
             pure $! TopDownContext {..}
 
 newAllTasTopDownContext :: MonadIO m =>
                         WorldVersion
-                        -> RepositoryProcessing
+                        -> PublicationPoints 
                         -> ClosableQueue MftShortcutOp
                         -> m AllTasTopDownContext
-newAllTasTopDownContext worldVersion repositoryProcessing shortcutQueue = liftIO $ do 
+newAllTasTopDownContext worldVersion publicationPoints shortcutQueue = liftIO $ do 
     let now = Now $ versionToMoment worldVersion
     topDownCounters <- newTopDownCounters
     atomically $ do        
@@ -240,33 +239,6 @@ verifyLimit hitTheLimit limit =
 
 
 
--- Do something within the bracket of RepositoryProcessing instance
--- 
-withRepositoriesProcessing :: Storage s =>
-                            AppContext s 
-                        -> (RepositoryProcessing -> IO a) 
-                        -> IO a
-withRepositoriesProcessing AppContext {..} f = 
-    bracket
-        (newRepositoryProcessingIO config)
-        cancelFetchTasks
-        $ \rp -> do 
-            db <- readTVarIO database
-
-            mapException (AppException . storageError) $ do
-                pps <- roTx db $ \tx -> DB.getPublicationPoints tx db
-                let pps' = addRsyncPrefetchUrls config pps
-                atomically $ writeTVar (rp ^. #publicationPoints) pps'
-
-            a <- f rp
-
-            -- save publication points state    
-            mapException (AppException . storageError) $ do
-                pps <- readTVarIO $ rp ^. #publicationPoints
-                rwTx db $ \tx -> DB.savePublicationPoints tx db pps          
-
-            pure a
-
 -- | It is the main entry point for the top-down validation. 
 -- Validates a bunch of TAs starting from their TALs.  
 validateMutlipleTAs :: Storage s =>
@@ -284,12 +256,11 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
 
   where
     validateMutlipleTAs' queue = do 
-        withRepositoriesProcessing appContext $ \repositoryProcessing -> do 
-            allTas <- newAllTasTopDownContext worldVersion repositoryProcessing queue
-            -- resetForAsyncFetch repositoryProcessing
-            validateThem allTas
-                `finally` 
-                applyValidationSideEffects appContext allTas
+        publicationPoints <- roTxT database DB.getPublicationPoints            
+        allTas <- newAllTasTopDownContext worldVersion publicationPoints queue
+        validateThem allTas
+            `finally` 
+            applyValidationSideEffects appContext allTas
 
     
     validateThem allTas =
@@ -453,15 +424,17 @@ validateFromTACert
     initialRepos
     taCert
   = do
-    for_ (filterPPAccess config initialRepos) $ \filteredRepos -> do
-        liftIO $ atomically $ modifyTVar'
-                    (repositoryProcessing ^. #publicationPoints)
-                    (\pubPoints -> foldr mergePP pubPoints $ unPublicationPointAccess filteredRepos)
-
-    -- Do the tree descend, gather validation results and VRPs                
     fromTryM
         (UnspecifiedE (unTaName taName) . fmtEx)
-        (validateCa appContext topDownContext (CaFull taCert))
+        (do
+            -- TODO That might not be necessary
+            let publicationPoints' = 
+                    case filterPPAccess config initialRepos of 
+                        Just filteredRepos -> foldr mergePP publicationPoints $ unPublicationPointAccess filteredRepos
+                        Nothing            -> publicationPoints
+            validateCa appContext 
+                (topDownContext & #allTas . #publicationPoints .~ publicationPoints') 
+                (CaFull taCert))
 
 
 validateCa :: Storage s =>
@@ -498,8 +471,10 @@ validateCa
     -- Check and report for the maximal increase in the repository number
     repositoryCountLimit = (
         do
-            pps <- readTVar $ repositoryProcessing ^. #publicationPoints
-            pure $! repositoryCount pps - startingRepositoryCount > validationConfig ^. #maxTaRepositories,
+            -- pps <- readTVar $ repositoryProcessing ^. #publicationPoints
+            -- pure $! repositoryCount pps - startingRepositoryCount > validationConfig ^. #maxTaRepositories
+            pure False
+            ,
         logCheck
             (TooManyRepositories $ validationConfig ^. #maxTaRepositories)
             (\loc -> [i|Interrupting validation on #{fmtLocations loc}, maximum total new repository count is reached.|])
@@ -534,9 +509,8 @@ validateCaNoLimitChecks
     ca = 
     case extractPPAs ca of        
         Left e         -> vError e
-        Right ppAccess -> do 
-            pps <- readPublicationPoints repositoryProcessing     
-            let caFetcheables = getFetchables pps ppAccess
+        Right ppAccess -> do                
+            let caFetcheables = getFetchables publicationPoints ppAccess
 
             -- Add these PPs to the validation-wide set of fetcheables, 
             -- i.e. all newly discovered publication points/repositories                        
@@ -546,7 +520,7 @@ validateCaNoLimitChecks
             -- otherwise we'll have a lot of useless errors about 
             -- missing manifests, so just don't go there
             -- unless (all ((== Pending) . snd) caFetcheables) $ do   
-            let primaryUrl = getPrimaryRepositoryUrl pps ppAccess
+            let primaryUrl = getPrimaryRepositoryUrl publicationPoints ppAccess
             metricFocusOn PPFocus primaryUrl $
                 validateCaNoFetch appContext topDownContext ca
   where

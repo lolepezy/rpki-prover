@@ -14,7 +14,6 @@ import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set                         as Set
 import qualified Data.Vector                      as V
 import qualified Data.Map.Strict                  as Map
-import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict

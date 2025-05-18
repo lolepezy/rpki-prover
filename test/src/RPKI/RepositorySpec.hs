@@ -69,7 +69,7 @@ prop_rsync_tree_commutative =
 
 prop_rsync_tree_update :: QC.Property
 prop_rsync_tree_update =
-    QC.forAll arbitrary $ \(newStatus :: FetchStatus, newSpeed :: FetchType) ->
+    QC.forAll arbitrary $ \(newStatus :: FetchStatus) ->
         QC.forAll (replicateM 100 generateRsyncUrl) $ \urls ->
             QC.forAll (QC.sublistOf urls) $ \toUpdate -> let
                 tree = convertToRepos urls Pending
@@ -84,18 +84,18 @@ prop_rsync_tree_update =
                                 []   -> original
                                 s :_ -> s)) 
                         toUpdate allShorter
-                updatedTree = foldr (\u t -> toRsyncForest u (newMeta newStatus newSpeed) t) tree sameOrShorter
+                updatedTree = foldr (\u t -> toRsyncForest u (newMeta newStatus) t) tree sameOrShorter
                 sameOrLonger = filter (\(RsyncURL h p) -> 
                                     any (\(RsyncURL h' p') -> 
                                         h == h' && (p == p' || p' `isPrefixOf` p)) toUpdate) urls
                 in all (\url -> 
                     fmap snd (lookupInRsyncForest url updatedTree) == 
-                        Just (newMeta newStatus newSpeed)) sameOrLonger
+                        Just (newMeta newStatus)) sameOrLonger
     
 
 convertToRepos :: [RsyncURL] -> FetchStatus -> RsyncForest
 convertToRepos urls status = 
-    foldr (\u t -> toRsyncForest u (newMeta status Unknown) t) newRsyncForest urls  
+    foldr (\u t -> toRsyncForest u (newMeta status) t) newRsyncForest urls
 
 
 generateRsyncUrl :: Gen RsyncURL
@@ -112,8 +112,8 @@ generateRsyncUrl = do
     pure $ RsyncURL rsyncHost path
 
 
-newMeta :: FetchStatus -> FetchType -> RepositoryMeta
-newMeta status fetchType = let  
+newMeta :: FetchStatus -> RepositoryMeta
+newMeta status = let  
     lastFetchDuration = Nothing
     refreshInterval = Nothing
     in RepositoryMeta {..}

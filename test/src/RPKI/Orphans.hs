@@ -444,10 +444,6 @@ instance Arbitrary ETag where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary FetchType where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
 instance Arbitrary FetchStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink

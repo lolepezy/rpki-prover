@@ -605,7 +605,6 @@ instance ToJSON MetricsDto
 instance ToJSON RrdpURL
 instance ToJSON FetchStatus
 instance ToJSON ETag
-instance ToJSON FetchType
 instance ToJSON DeltaInfo
 instance ToJSON RrdpIntegrity
 instance ToJSON RrdpMeta
@@ -617,8 +616,6 @@ instance ToSchema MetricsDto
 instance ToSchema FetchStatus where     
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ETag where     
-    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema FetchType where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema DeltaInfo
 instance ToSchema RrdpIntegrity
