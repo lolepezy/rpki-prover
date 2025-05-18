@@ -151,9 +151,10 @@ tr:has(> td details:not([open])):hover {
 }
 
 .side-navigation a {
-    padding: 6px 6px 6px 32px;
+    padding: 8px 6px 8px 32px;
+    margin-bottom: 4px;
     text-decoration: none;
-    color: #cccccc; /* Darkened from #d8d8d8 */
+    color: #cccccc;
     display: block;
 }
 
