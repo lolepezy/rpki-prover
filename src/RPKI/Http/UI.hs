@@ -383,7 +383,7 @@ instance ToMarkup HttpStatus where
 
 instance ToMarkup FetchFreshness where 
     toMarkup = \case 
-        NoFetchNeeded -> toMarkup ("Up-to-date" :: Text)
+        NoFetchNeeded -> toMarkup ("Not yet" :: Text)
         FetchFailed   -> toMarkup ("Failed" :: Text)
         NoUpdates     -> toMarkup ("No updates" :: Text)
         Updated       -> toMarkup ("Updated" :: Text)
