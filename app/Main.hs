@@ -59,7 +59,6 @@ import           RPKI.RRDP.Http (downloadToFile)
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
 import           RPKI.Store.Base.Storage
-import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.AppStorage
 import           RPKI.Store.AppLmdbStorage
 import qualified RPKI.Store.MakeLmdb as Lmdb
@@ -296,11 +295,9 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & #rsyncConf . #enabled .~ not noRsync
             & #rsyncConf . #rsyncPrefetchUrls .~ rsyncPrefetchUrls
             & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
-            & maybeSet (#rsyncConf . #asyncRsyncTimeout) (Seconds <$> asyncRsyncTimeout)
             & #rrdpConf . #tmpRoot .~ apiSecured tmpd
             & #rrdpConf . #enabled .~ not noRrdp
             & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
-            & maybeSet (#rrdpConf . #asyncRrdpTimeout) (Seconds <$> asyncRrdpTimeout)
             & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
             & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
             & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
@@ -319,9 +316,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & #validationConfig . #fetchIntervalCalculation .~ 
                 (if noAdaptiveFetchIntervals then Constant else Adaptive)
             & #validationConfig . #fetchTimeoutCalculation .~ 
-                (if noAdaptiveFetchTimeouts then Constant else Adaptive)        
-            & #validationConfig . #fetchMethod .~ 
-                (if noAsyncFetch then SyncOnly else SyncAndAsync)        
+                (if noAdaptiveFetchTimeouts then Constant else Adaptive)                    
             & maybeSet (#httpApiConf . #port) httpApiPort
             & #rtrConfig .~ rtrConfig
             & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
@@ -705,18 +700,10 @@ data CLIOptions wrapped = CLIOptions {
     rrdpTimeout :: wrapped ::: Maybe Int64 <?>
         ("Timebox for RRDP repositories, in seconds. If fetching of a repository does not " +++ 
          "finish within this timeout, the repository is considered unavailable and fetching process is interrupted"),
-
-    asyncRrdpTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timebox for RRDP repositories when fetched asynchronously, in seconds. If fetching of a repository does not "
-       +++ "finish within this timeout, the repository is considered unavailable and fetching process is interrupted"),
-
+    
     rsyncTimeout :: wrapped ::: Maybe Int64 <?>
         ("Timebox for rsync repositories, in seconds. If fetching of a repository does not "
        +++ "finish within this timeout, the repository is considered unavailable and fetching process is interrupted."),
-
-    asyncRsyncTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timebox for rsync repositories when fetched asynchronously, in seconds. If fetching of a repository does not "
-       +++ "finish within this timeout, the repository is considered unavailable and fetching process is interrupted"),
 
     rsyncClientPath :: wrapped ::: Maybe String <?>
         ("Path to rsync client executable. By default rsync client is expected to be in the $PATH."),
@@ -821,11 +808,7 @@ data CLIOptions wrapped = CLIOptions {
     noAdaptiveFetchTimeouts :: wrapped ::: Bool <?>
         ("Do not use adaptive fetch timeouts for repositories (adaptive fetch timeouts is the default " +++ 
          "so default for this option is false)."),
-
-    noAsyncFetch :: wrapped ::: Bool <?>
-        ("Do not fetch repositories asynchronously, i.e. only fetch them while validating the RPKI tree " +++ 
-        "(default is false, i.e. asynchronous fetches are used by default)."),
-
+    
     showHiddenConfig :: wrapped ::: Bool <?>
         ("Reveal all config values in the HTTP API call to `/api/system`. " +++ 
          "This is a potential security issue since some of the config values include " +++ 

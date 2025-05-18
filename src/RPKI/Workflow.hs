@@ -694,9 +694,7 @@ runWorkflow appContext@AppContext {..} tals = do
 
         -- Temporary RRDP files cannot meaningfully live longer than that
         let Seconds (fromIntegral -> maxTimeout :: NominalDiffTime) = 
-                10 + max
-                    (config ^. #rrdpConf . #rrdpTimeout)
-                    (config ^. #rrdpConf . #asyncRrdpTimeout)
+                10 + config ^. #rrdpConf . #rrdpTimeout
 
         forM_ files $ \file -> do 
             let fullPath = tmpDir </> file

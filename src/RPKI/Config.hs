@@ -86,7 +86,6 @@ data RsyncConf = RsyncConf {
         rsyncClientPath   :: Maybe (ApiSecured FilePath),
         rsyncRoot         :: ApiSecured FilePath,
         rsyncTimeout      :: Seconds,
-        asyncRsyncTimeout :: Seconds,
         cpuLimit          :: Seconds,
         enabled           :: Bool,
         rsyncPrefetchUrls :: [RsyncURL]
@@ -95,12 +94,11 @@ data RsyncConf = RsyncConf {
     deriving anyclass (TheBinary)
 
 data RrdpConf = RrdpConf {
-        tmpRoot          :: ApiSecured FilePath,
-        maxSize          :: Size,
-        rrdpTimeout      :: Seconds,
-        asyncRrdpTimeout :: Seconds,
-        cpuLimit         :: Seconds,
-        enabled          :: Bool
+        tmpRoot     :: ApiSecured FilePath,
+        maxSize     :: Size,
+        rrdpTimeout :: Seconds,
+        cpuLimit    :: Seconds,
+        enabled     :: Bool
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -115,10 +113,6 @@ data ValidationAlgorithm = FullEveryIteration | Incremental
     deriving anyclass (TheBinary)
 
 data FetchTimingCalculation = Constant | Adaptive
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
-
-data FetchMethod = SyncOnly | SyncAndAsync
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -165,10 +159,7 @@ data ValidationConfig = ValidationConfig {
         fetchTimeoutCalculation        :: FetchTimingCalculation,
 
         minFetchInterval               :: Seconds,
-        maxFetchInterval               :: Seconds,
-
-        -- Categorise reposaitories into sync and async or always use only sync
-        fetchMethod                    :: FetchMethod
+        maxFetchInterval               :: Seconds
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -231,7 +222,6 @@ defaultConfig = Config {
         rsyncClientPath = Nothing,
         rsyncRoot    = Hidden "",
         rsyncTimeout = 2 * 60,
-        asyncRsyncTimeout = 15 * 60,
         cpuLimit = 30 * 60,    
         enabled = True,
         rsyncPrefetchUrls = []
@@ -240,7 +230,6 @@ defaultConfig = Config {
         tmpRoot = Hidden "",
         maxSize = Size $ 1024 * 1024 * 1024,
         rrdpTimeout = 2 * 60,
-        asyncRrdpTimeout = 10 * 60,
         cpuLimit = 30 * 60,
         enabled = True
     },
@@ -263,8 +252,7 @@ defaultConfig = Config {
         fetchIntervalCalculation       = Adaptive,
         fetchTimeoutCalculation        = Adaptive,
         minFetchInterval               = Seconds 60,
-        maxFetchInterval               = Seconds 600,
-        fetchMethod                    = SyncAndAsync        
+        maxFetchInterval               = Seconds 600
     },
     httpApiConf = HttpApiConfig {
         port = 9999

@@ -72,9 +72,8 @@ currentDatabaseVersion :: Integer
 currentDatabaseVersion = 38
 
 -- Some constant keys
-databaseVersionKey, forAsyncFetchKey, validatedByVersionKey :: Text
+databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey = "database-version"
-forAsyncFetchKey  = "for-async-fetch"
 validatedByVersionKey  = "validated-by-version-map"
 
 -- All of the stores of the application in one place
@@ -233,6 +232,7 @@ newtype MetadataStore s = MetadataStore {
     }
     deriving stock (Generic)
 
+-- Some DTOs for storing MFT shortcuts
 data MftShortcutMeta = MftShortcutMeta {
         key            :: ObjectKey,        
         notValidBefore :: Instant,
@@ -252,7 +252,7 @@ newtype MftShortcutChildren = MftShortcutChildren {
 
 
 data MftShortcutStore s = MftShortcutStore {
-        mftMetas :: SMap "mfts-shortcut-meta" s AKI (Verbatim (Compressed MftShortcutMeta)),
+        mftMetas    :: SMap "mfts-shortcut-meta" s AKI (Verbatim (Compressed MftShortcutMeta)),
         mftChildren :: SMap "mfts-shortcut-children" s AKI (Verbatim (Compressed MftShortcutChildren))
     }
     deriving stock (Generic)

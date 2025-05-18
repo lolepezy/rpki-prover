@@ -280,8 +280,8 @@ asyncFetchConfig :: Config -> FetchConfig
 asyncFetchConfig config = let 
         rsyncConfig = config ^. typed @RsyncConf
         rrdpConfig = config ^. typed @RrdpConf
-        rsyncTimeout = rsyncConfig ^. #asyncRsyncTimeout
-        rrdpTimeout  = rrdpConfig ^. #asyncRrdpTimeout
+        rsyncTimeout = rsyncConfig ^. #rsyncTimeout
+        rrdpTimeout  = rrdpConfig ^. #rrdpTimeout
         rsyncSlowThreshold = slowThreshold rsyncTimeout
         rrdpSlowThreshold = slowThreshold rrdpTimeout
         fetchLaunchWaitDuration = Seconds 60
