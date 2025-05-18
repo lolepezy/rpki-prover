@@ -91,8 +91,6 @@ objectStoreGroup = testGroup "Object storage test"
 repositoryStoreGroup :: TestTree
 repositoryStoreGroup = testGroup "Repository LMDB storage test"
     [
-        dbTestCase "Should insert and get a repository" shouldInsertAndGetAllBackFromRepositoryStore,
-        dbTestCase "Should insert and get back a buynch of repositories" shouldGetAndSaveRepositories,
         dbTestCase "Should insert and get an rsync repository" shouldSaveAndGetRsyncRepositories
     ]        
 
@@ -252,53 +250,6 @@ shouldOrderManifests io = do
 --     HU.assertEqual "Not the same Validations" (Just vrs) vrs'
 
 
-shouldInsertAndGetAllBackFromRepositoryStore :: Storage s => IO (DB s) -> HU.Assertion
-shouldInsertAndGetAllBackFromRepositoryStore io = do  
-    db <- io
-
-    createdPPs <- generateRepositories
-
-    storedPps1 <- roTx db $ \tx -> DB.getPublicationPoints tx db
-
-    let changeSet1 = changeSet storedPps1 createdPPs
-
-    rwTx db $ \tx -> DB.applyChangeSet tx db changeSet1
-    storedPps2 <- roTx db $ \tx -> DB.getPublicationPoints tx db
-
-    HU.assertEqual "Not the same publication points" createdPPs storedPps2
-
-    rsyncPPs2 <- QC.generate (QC.sublistOf repositoriesURIs)    
-    rrdpMap2  <- rrdpSubMap createdPPs
-
-    let shrunkPPs = List.foldr mergeRsyncPP (PublicationPoints rrdpMap2 newRsyncForest) rsyncPPs2
-
-    let changeSet2 = changeSet storedPps2 shrunkPPs
-
-    rwTx db $ \tx -> DB.applyChangeSet tx db changeSet2
-    storedPps3 <- roTx db $ \tx -> DB.getPublicationPoints tx db
-
-    HU.assertEqual "Not the same publication points after shrinking" shrunkPPs storedPps3
-
-
-shouldGetAndSaveRepositories :: Storage s => IO (DB s) -> HU.Assertion
-shouldGetAndSaveRepositories io = do  
-    db <- io
-
-    pps1 <- generateRepositories
-    rwTx db $ \tx -> DB.savePublicationPoints tx db pps1
-    pps1' <- roTx db $ \tx -> DB.getPublicationPoints tx db       
-
-    HU.assertEqual "Not the same publication points first" pps1 pps1'
-    
-    rsyncPPs2 <- QC.generate (QC.sublistOf repositoriesURIs)    
-    rrdpMap2  <- rrdpSubMap pps1
-
-    let pps2 = List.foldr mergeRsyncPP (PublicationPoints rrdpMap2 newRsyncForest) rsyncPPs2
-
-    rwTx db $ \tx -> DB.savePublicationPoints tx db pps2
-    pps2' <- roTx db $ \tx -> DB.getPublicationPoints tx db       
-
-    HU.assertEqual "Not the same publication points second" pps2 pps2'
 
 shouldSaveAndGetRsyncRepositories :: Storage s => IO (DB s) -> HU.Assertion
 shouldSaveAndGetRsyncRepositories io = do  

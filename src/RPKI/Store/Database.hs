@@ -921,12 +921,6 @@ getRepositories tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
                         ]
     pure $ rrpdRepos <> rsyncRepos
 
-savePublicationPoints :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PublicationPoints -> m ()
-savePublicationPoints tx db newPPs' = do
-    ppsInDb <- getPublicationPoints tx db
-    let changes = changeSet ppsInDb newPPs'
-    applyChangeSet tx db changes
-
 
 setJobCompletionTime :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Text -> Instant -> m ()
 setJobCompletionTime tx DB { jobStore = JobStore s } job t = liftIO $ M.put tx s job t

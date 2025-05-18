@@ -8,11 +8,9 @@
 module RPKI.Repository where
 
 import           Control.Lens
-import           Control.Concurrent.STM
 import           Control.Concurrent.Async
 import           Data.Generics.Product.Typed
 import           Data.Ord
-import           Data.Monoid.Generic
 import           Data.Semigroup
 
 import           Data.X509                   (Certificate)
@@ -27,8 +25,6 @@ import           Data.Map.Monoidal.Strict    (MonoidalMap(..))
 import qualified Data.Map.Monoidal.Strict    as MonoidalMap
 import qualified Data.Set                    as Set
 
-import qualified StmContainers.Map           as StmMap
-
 import           GHC.Generics
 
 import           RPKI.Domain
@@ -38,7 +34,6 @@ import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Time
 import           RPKI.TAL
-import           RPKI.Parallel
 import           RPKI.Util
 import           RPKI.Store.Base.Serialisation
 
@@ -189,9 +184,6 @@ getMeta (RrdpR r)   = r ^. #meta
 getMeta (RsyncR r)  = r ^. #meta
 
 
-newPPs :: PublicationPoints
-newPPs = PublicationPoints mempty newRsyncForest
-
 newRepository :: RpkiURL -> Repository
 newRepository = \case   
     RrdpU u -> RrdpR $ newRrdpRepository u
@@ -218,10 +210,6 @@ updateMeta' (RsyncR r) newMeta = RsyncR $ r & #meta %~ newMeta
 newFetcheables :: RpkiURL -> Maybe RpkiURL -> Fetcheables
 newFetcheables primary fallback = Fetcheables $ 
     MonoidalMap.singleton primary (maybe Set.empty Set.singleton fallback)
-
-addRsyncPrefetchUrls :: Config -> PublicationPoints -> PublicationPoints
-addRsyncPrefetchUrls Config {..} pps =     
-    foldr (mergePP . rsyncPP) pps (rsyncConf ^. #rsyncPrefetchUrls)
 
 rsyncPP :: RsyncURL -> PublicationPoint
 rrdpPP  :: RrdpURL  -> PublicationPoint
@@ -326,32 +314,6 @@ data Change a = Put a | Remove a
 data ChangeSet = ChangeSet
     [Change RrdpRepository]    
     [Change (RsyncHost, RsyncNodeNormal)]    
-
-
--- | Derive a diff between two states of publication points
-changeSet :: PublicationPoints -> PublicationPoints -> ChangeSet
-changeSet 
-    (PublicationPoints (RrdpMap rrdpDb) (RsyncForestGen rsyncDb)) 
-    (PublicationPoints (RrdpMap rrdpNew) (RsyncForestGen rsyncNew)) = 
-    ChangeSet 
-        (mergedRrdp <> newRrdp <> rrdpToDelete) 
-        (putNewRsyncs <> removeOldRsyncs)                
-    where
-        rrdps' = map (\(u, new) -> (new, Map.lookup u rrdpDb)) $ Map.toList rrdpNew
-
-        newRrdp  = map Put [ new | (new, Nothing) <- rrdps' ]
-
-        -- We trust RRDP meta from the DB more -- it has been updated by the 
-        -- delta/snapshot fetchers in the same transactions as the data
-        mergedRrdp = map Put [ new { rrdpMeta = dbRrdpMeta } | 
-                                (new, Just (RrdpRepository { rrdpMeta = dbRrdpMeta })) <- rrdps' ]
-
-        rrdpToDelete = map Remove [ r | (u, r) <- Map.toList rrdpDb, not (u `Map.member` rrdpNew) ]
-
-        rsyncOldList = Map.toList rsyncDb
-        rsyncNewList = Map.toList rsyncNew
-        putNewRsyncs    = map Put    $ filter (not . (\(u, p) -> Map.lookup u rsyncDb == Just p)) rsyncNewList        
-        removeOldRsyncs = map Remove $ filter (not . (\(u, p) -> Map.lookup u rsyncNew == Just p)) rsyncOldList                
 
 
 -- Update statuses of the repositories and last successful fetch times for them
