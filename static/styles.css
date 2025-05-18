@@ -1,38 +1,63 @@
 body {
     font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,Noto Sans,sans-serif;
+    background-color: #f5f5f5; /* Darkened from #fcfcfc */
 }
 
 table.gen-t { 
-	width: 1100px; 
-	border-collapse: collapse; 
-	margin:50px auto;
+    width: 1100px; 
+    border-collapse: collapse; 
+    margin:50px auto;
 }
 
 th.gen-t { 	
-    background-color: #ebebeb;
-	color: rgb(52, 52, 52); 
-	font-weight: bold; 
+    background-color: #dedede; /* Darkened from #e8e8e8 */
+    color: #333333; /* Darkened from #444444 */
+    font-weight: bold; 
 }
 
 td.gen-t, th.gen-t { 
-	padding: 8px; 
-	border: 1px solid rgb(153, 153, 153); 	
-	text-align: left; 
-	font-size: 15px;
+    padding: 8px; 
+    border: 1px solid #b0b0b0; /* Darkened from #c0c0c0 */
+    text-align: left; 
+    font-size: 15px;
 }
 
 table.sub-t { 
-	width: 1000px; 	
+    width: 1000px; 	
     border-collapse: collapse;
     margin-top: 8px;
     margin-bottom: 8px;
 }
 
 td.sub-t, th.sub-t { 
-	padding: 8px; 	
+    padding: 8px; 	
     border-collapse: collapse;
-	text-align: left; 
-	font-size: 14px;
+    text-align: left; 
+    font-size: 14px;
+}
+
+tr:hover {
+  background-color: #e8e8e8; /* Darkened from #f2f2f2 */
+}
+
+/* Override hover effect for rows inside open details */
+details[open] tr:hover {
+  background-color: transparent;
+}
+
+/* Or if your structure is different and the rows contain the details */
+tr:has(details[open]) {
+  background-color: initial !important;
+}
+
+/* If you need to target specific rows */
+tr:has(> td details[open]):hover {
+  background-color: initial;
+}
+
+/* Ensure summary row still gets hover effect when closed */
+tr:has(> td details:not([open])):hover {
+  background-color: #e8e8e8; /* Darkened from #f2f2f2 */
 }
 
 .no-wrap {
@@ -41,6 +66,7 @@ td.sub-t, th.sub-t {
 
 .error-message {
     margin-bottom: 3px;
+    color: #d13046; /* Darkened from #e44258 */
 }
 
 .red-dot, .yellow-dot {    
@@ -48,30 +74,32 @@ td.sub-t, th.sub-t {
     width: 12px;    
     border-radius: 50%;
     display: inline-block;
-  }
+}
 
 .red-dot {
-    background-color: #ff000c;
+    background-color: #d13046; /* Darkened from #e44258 */
 }
 
 .yellow-dot {
-    background-color: #ffa700;
+    background-color: #e69d31; /* Darkened from #f5ad41 */
 }
 
 .even-row {
-    background-color: #ebebeb;
+    background-color: #efefef; /* Darkened from #f7f7f7 */
 }
 
 .pointer-right {
     cursor: pointer;
     float: left;
     width: 20px;
+    color: #555555; /* Darkened from #666666 */
 }
 
 .pointer-up {
     cursor: pointer;
     float: left;
     width: 20px;
+    color: #555555; /* Darkened from #666666 */
 }
 
 .full-path {
@@ -82,11 +110,13 @@ td.sub-t, th.sub-t {
 .pointer-right-header {    
     float: right;
     width: 20px;
+    color: #555555; /* Darkened from #666666 */
 }
 
 .pointer-up-header {    
     float: right;
     width: 20px;
+    color: #555555; /* Darkened from #666666 */
 }
 
 .ta-header {
@@ -96,32 +126,40 @@ td.sub-t, th.sub-t {
 
 .switch {
     cursor: pointer;
+    color: #555555; /* Darkened from #666666 */
 }
 
 .path-elem {
-    margin: 4px;    
+    margin: 4px;
+    background-color: #e6e6e6; /* Darkened from #f0f0f0 */
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid #cccccc; /* Darkened from #d8d8d8 */
+    color: #333333; /* Darkened from #444444 */
 }
 
 .side-navigation {
     height: 100%;
-    width: 200px;
+    width: 190px;
     position: fixed;
     z-index: 1;
     top: 0;
     left: 0;
     overflow-x: hidden;
     padding-top: 20px;
+    background-color: #333333; /* Darkened from #444444 */
 }
 
 .side-navigation a {
     padding: 6px 6px 6px 32px;
     text-decoration: none;
-    color: #6b6b6b;
+    color: #cccccc; /* Darkened from #d8d8d8 */
     display: block;
 }
 
 .side-navigation a:hover {
-    color: #222222;
+    color: #ffffff;
+    background-color: #555555; /* Darkened from #666666 */
 }
 
 .main {
@@ -129,20 +167,20 @@ td.sub-t, th.sub-t {
 }
 
 .overall { 		
-	margin-left: 7%;
+    margin-left: 7%;
     margin-top: 10px;
 }
 
 .tooltip {
     position: relative;
     display: inline-block;
-    border-bottom: 1px dotted black;
-  }
+    border-bottom: 1px dotted #555555; /* Darkened from #666666 */
+}
   
-  .tooltip .tooltiptext {
+.tooltip .tooltiptext {
     visibility: hidden;
     width: 600px;
-    background-color: rgb(100, 105, 105);
+    background-color: #333333; /* Darkened from #444444 */
     color: #fff;
     text-align: center;
     border-radius: 6px;
@@ -155,9 +193,9 @@ td.sub-t, th.sub-t {
     opacity: 0;
     transition: opacity 0.3s;
     font-weight: normal;    
-  }
+}
   
-  .tooltip .tooltiptext::after {
+.tooltip .tooltiptext::after {
     content: "";
     position: absolute;
     top: 100%;
@@ -165,10 +203,10 @@ td.sub-t, th.sub-t {
     margin-left: -5px;
     border-width: 5px;
     border-style: solid;
-    border-color: #555 transparent transparent transparent;
-  }
+    border-color: #333333 transparent transparent transparent; /* Darkened from #444444 */
+}
   
-  .tooltip:hover .tooltiptext {
+.tooltip:hover .tooltiptext {
     visibility: visible;
     opacity: 1;
-  }
+}
