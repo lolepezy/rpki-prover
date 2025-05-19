@@ -99,7 +99,7 @@ validationsToDto :: WorldVersion -> Validations -> ValidationsDto OriginalVDto
 validationsToDto version validations =
     ValidationsDto {
             worldVersion = version,
-            timestamp    = versionToMoment version,
+            timestamp    = versionToInstant version,
             validations  = toVDtos validations
         }              
 

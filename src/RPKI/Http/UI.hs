@@ -63,33 +63,33 @@ mainPage version systemInfo validation fetchValidation rawMetric@RawMetric {..} 
 
         H.div ! A.class_ "main" $ do
             H.a ! A.id "overall" $ ""                 
-            H.section $ H.h4 "Overall"                
+            H.section $ H.h3 "Overall"                
             overallHtml systemInfo version                    
 
             H.a ! A.id "validation-metrics" $ "" 
-            H.section $ H.h4 "Validation metrics"            
+            H.section $ H.h3 "Validation metrics"                        
             validationMetricsHtml $ toMetricsDto rawMetric ^. #groupedValidations
             H.a ! A.id "validation-details" $ ""
-            H.section $ H.h4 "Validation details"
+            H.section $ H.h3 "Validation details"
             validaionDetailsHtml $ validation ^. #validations            
 
             H.a ! A.id "rrdp-metrics" $ ""
-            H.section $ H.h4 "RRDP metrics"
+            H.section $ H.h3 "RRDP metrics"
             rrdpMetricsHtml rrdpMetrics
 
             H.a ! A.id "rsync-metrics" $ ""
-            H.section $ H.h4 "Rsync metrics"
+            H.section $ H.h3 "Rsync metrics"
             rsyncMetricsHtml rsyncMetrics
 
             H.a ! A.id "fetch-details" $ ""
-            H.section $ H.h4 "Fetch details"
+            H.section $ H.h3 "Fetch details"
             validaionDetailsHtml fetchValidation
 
 
 
 overallHtml :: SystemInfo -> WorldVersion -> Html
 overallHtml SystemInfo {..} worldVersion = do 
-    let t = versionToMoment worldVersion
+    let t = versionToInstant worldVersion
     H.table ! A.class_ "gen-t" $ H.tbody $ do
         htmlRow 0 $ do 
             genTd $ H.text "Version"
@@ -108,7 +108,7 @@ validationMetricsHtml grouped = do
     
     let repoMetrics = MonoidalMap.toList $ grouped ^. #byRepository
     let taMetrics   = MonoidalMap.toList $ grouped ^. #byTa        
-
+    
     -- this is for per-TA metrics
     H.table ! A.class_ "gen-t" $ do         
         H.thead $ tr $ do 
@@ -116,6 +116,7 @@ validationMetricsHtml grouped = do
                 H.text "Trust Anchor ("
                 toHtml $ length taMetrics
                 H.text " in total)"
+            genTh $ H.text "Validated at"
             genTh $ H.text "Validation time"
             genTh $ H.text "Original VRPs"      
             genTh $ H.text "Unique VRPs"      
@@ -150,6 +151,7 @@ validationMetricsHtml grouped = do
                 toHtml $ length repoMetrics
                 H.text " in total)" 
                 H.span ! A.class_ "tooltiptext" $ primaryRepoTooltip
+            genTh $ H.text "Validated at"      
             genTh $ H.text "Original VRPs"      
             genTh $ H.text "Objects"
             genTh $ H.text "ROAs"
@@ -179,7 +181,8 @@ validationMetricsHtml grouped = do
                          vm ^. #validBgpNumber + 
                          vm ^. #validSplNumber 
         htmlRow index $ do 
-            genTd $ toHtml ta                                    
+            genTd $ toHtml ta       
+            genTd $ toHtml $ vm ^. #validatedBy                                         
             void $ validationTime vm
             genTd $ toHtml $ show $ vm ^. #vrpCounter
             void $ uniqueVrps vm 
@@ -209,7 +212,6 @@ rrdpMetricsHtml rrdpMetricMap =
             genTh $ H.text "Deleted objects"
             genTh $ H.text "Last HTTP status"
             genTh $ H.text "Download time"
-            genTh $ H.text "Save time"
             genTh $ H.text "Total time"                    
 
         H.tbody $ do 
@@ -223,7 +225,6 @@ rrdpMetricsHtml rrdpMetricMap =
                     genTd $ toHtml $ show $ totalMapCount $ rm ^. #deleted
                     genTd $ toHtml $ rm ^. #lastHttpStatus
                     genTd $ toHtml $ rm ^. #downloadTimeMs                                
-                    genTd $ toHtml $ rm ^. #saveTimeMs
                     genTd $ toHtml $ rm ^. #totalTimeMs     
 
 
@@ -387,6 +388,13 @@ instance ToMarkup FetchFreshness where
         FetchFailed   -> toMarkup ("Failed" :: Text)
         NoUpdates     -> toMarkup ("No updates" :: Text)
         Updated       -> toMarkup ("Updated" :: Text)
+
+instance ToMarkup ValidatedBy where 
+    toMarkup vb@(ValidatedBy v) = 
+        -- TODO That's a hack, but will do
+        if vb == mempty 
+            then toMarkup ("-" :: Text)
+            else toMarkup $ instantDateFormat $ versionToInstant v
 
 instance ToMarkup RrdpSource where 
     toMarkup = \case 

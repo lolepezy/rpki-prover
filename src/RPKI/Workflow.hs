@@ -33,6 +33,7 @@ import qualified Data.Map.Strict                 as Map
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import           Data.Set                        (Set)
 import qualified Data.Set                        as Set
+import qualified Data.Vector                     as V
 import           Data.Maybe                      (fromMaybe)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
@@ -141,7 +142,7 @@ adjustFetchers :: Storage s => AppContext s -> Map TaName Fetcheables -> Workflo
 adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@WorkflowShared { fetchers = Fetchers {..} } = do
     (currentFetchers, toStop, toStart) <- atomically $ do            
 
-        -- All the URLs that were discovered by the recent validations of every TA
+        -- All the URLs that were discovered by the recent validations of all TAs
         relevantUrls :: Set RpkiURL <- do 
                 uriByTa_ <- updateUriPerTa discoveredFetcheables <$> readTVar uriByTa
                 writeTVar uriByTa uriByTa_
@@ -161,7 +162,7 @@ adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@W
               Set.difference runningFetcherUrls relevantUrls,
               Set.difference relevantUrls runningFetcherUrls)        
 
-    logDebug logger [i|Adjusting fetchers: toStop = #{toStop}, toStart = #{toStart}, currentFetchers = #{Map.keys currentFetchers}|]
+    -- logDebug logger [i|Adjusting fetchers: toStop = #{toStop}, toStart = #{toStart}, currentFetchers = #{Map.keys currentFetchers}|]
 
     mask_ $ do
         -- Stop and remove fetchers for URLs that are no longer needed    
@@ -261,7 +262,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 case r of
                     Right (repository', stats) -> do                         
                         let (updateRepo, interval) = updateRepository fetchConfig
-                                repository' (FetchedAt (versionToMoment worldVersion)) stats
+                                repository' (FetchedAt (versionToInstant worldVersion)) stats
 
                         saveFetchOutcome updateRepo validations                          
                         when (hasUpdates validations) $ do 
@@ -271,7 +272,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                         pure $ Just interval
                     Left _ -> do
-                        let newStatus = FailedAt $ versionToMoment worldVersion
+                        let newStatus = FailedAt $ versionToInstant worldVersion
                         let (updateRepo, interval) = updateRepository fetchConfig repository newStatus Nothing
 
                         saveFetchOutcome updateRepo validations
@@ -300,9 +301,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 let repo = case r of
                         Right (repository', stats) -> 
                             -- TODO Do something with RRDP stats
-                            updateMeta' repository' (#status .~ FetchedAt (versionToMoment worldVersion))
+                            updateMeta' repository' (#status .~ FetchedAt (versionToInstant worldVersion))
                         Left _ -> do
-                            updateMeta' repository (#status .~ FailedAt (versionToMoment worldVersion))
+                            updateMeta' repository (#status .~ FailedAt (versionToInstant worldVersion))
             
                 pure (repo, validations)            
 
@@ -384,22 +385,6 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         tas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVar uriByTa
         modifyTVar' tasToValidate $ (<>) tas
         pure tas
-
-    -- TODO Start from here
-
-    --             let newMeta = deriveNewMeta config fetchConfig newRepo validations 
-    --                                         rrdpStats duratioMs newStatus fetchMoment
-
-    --             -- `Call externally passed callback
-    --             newMeta' <- newMetaCallback newMeta fetchMoment
-
-    --             modifyTVar' publicationPoints $ \pps -> 
-    --                     updateMeta (pps ^. typed) [(newRepo, newMeta')]
-
-    --             pure newMeta'        
-
-
-
 
 -- A job run can be the first one or not and 
 -- sometimes we need this information.
@@ -886,36 +871,18 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     results <- validateMutlipleTAs appContext worldVersion talsToValidate
         
     -- Apply SLURM if it is set in the appState
-    (slurmValidations, maybeSlurm) <-
-        case appState ^. #readSlurm of
-            Nothing       -> pure (mempty, Nothing)
-            Just readFunc -> do
-                logInfo logger [i|Re-reading and re-validating SLURM files.|]
-                (z, vs) <- runValidatorT (newScopes "read-slurm") readFunc
-                case z of
-                    Left e -> do
-                        logError logger [i|Failed to read SLURM files: #{e}|]
-                        pure (vs, Nothing)
-                    Right slurm ->
-                        pure (vs, Just slurm)        
+    (slurmValidations, maybeSlurm) <- reReadSlurm        
 
     -- Save all the results into LMDB    
     ((deleted, updatedValidation), elapsed) <- timedMS $ rwTxT database $ \tx db -> do              
-    
-        previousVersion <- DB.previousVersion tx db worldVersion
+                            
+        let results' = addTimingPerTA results
+        updatedValidation <- addUniqueVrpCountsToMetrics tx db worldVersion results' slurmValidations                
 
         let resultsToSave = toPerTA 
                 $ map (\(ta, r) -> (ta, (r ^. typed, r ^. typed))) 
-                $ Map.toList results
+                $ Map.toList results'
 
-        vrps <- fmap toPerTA $ forM allTaNames $ \taName -> do 
-            case getForTA resultsToSave taName of 
-                Just (p, _) -> pure (taName, toVrps $ p ^. typed)
-                Nothing     -> case previousVersion of 
-                                Nothing -> pure (taName, mempty) 
-                                Just pv -> (taName, ) <$> DB.getVrpsForTA tx db pv taName
-
-        let updatedValidation = addUniqueVRPCount vrps slurmValidations 
         DB.saveValidationVersion tx db worldVersion 
             allTaNames resultsToSave updatedValidation                            
      
@@ -934,6 +901,47 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     pure (updatedValidation, 
         Map.map (\r -> r ^. #discoveredRepositories) results, 
         maybeSlurm)
+  where
+    reReadSlurm =
+        case appState ^. #readSlurm of
+            Nothing       -> pure (mempty, Nothing)
+            Just readFunc -> do
+                logInfo logger [i|Re-reading and re-validating SLURM files.|]
+                (z, vs) <- runValidatorT (newScopes "read-slurm") readFunc
+                case z of
+                    Left e -> do
+                        logError logger [i|Failed to read SLURM files: #{e}|]
+                        pure (vs, Nothing)
+                    Right slurm ->
+                        pure (vs, Just slurm)     
+    
+    addUniqueVrpCountsToMetrics tx db worldVersion results slurmValidations = do 
+
+        previousVersion <- DB.previousVersion tx db worldVersion        
+
+        vrps <- forM allTaNames $ \taName -> do 
+            case Map.lookup taName results of 
+                Just p  -> pure (taName, toVrps $ p ^. typed)
+                Nothing -> case previousVersion of 
+                        Nothing -> pure (taName, mempty) 
+                        Just pv -> (taName, ) <$> DB.getVrpsForTA tx db pv taName    
+   
+        pure $ addUniqueVRPCount (toPerTA vrps) slurmValidations
+      where
+        -- TODO This is very expensive and _probably_ there's a faster 
+        -- way to do it then Set.fromList
+        addUniqueVRPCount vrps !vs = let
+                vrpCountLens = typed @RawMetric . #vrpCounts
+                totalUnique = Count (fromIntegral $ uniqueVrpCount vrps)        
+                perTaUnique = fmap (Count . fromIntegral . Set.size . Set.fromList . V.toList . unVrps) (unPerTA vrps)   
+            in vs & vrpCountLens . #totalUnique .~ totalUnique                
+                & vrpCountLens . #perTaUnique .~ perTaUnique
+
+    addTimingPerTA :: Map TaName TopDownResult -> Map TaName TopDownResult
+    addTimingPerTA = 
+            fmap $ #topDownValidations . #topDownMetric . #validationMetrics 
+                    %~ fmap (#validatedBy .~ ValidatedBy worldVersion)         
+
 
 
 -- To be called from the cache cleanup worker
@@ -950,7 +958,7 @@ runCacheCleanup AppContext {..} worldVersion = do
     cutOffVersion <- roTx db $ \tx -> 
         fromMaybe worldVersion <$> DB.getLatestVersion db tx
 
-    DB.deleteStaleContent db (versionIsOld (versionToMoment cutOffVersion) (config ^. #cacheLifeTime))
+    DB.deleteStaleContent db (versionIsOld (versionToInstant cutOffVersion) (config ^. #cacheLifeTime))
 
 
 -- | Load the state corresponding to the last completed validation version.

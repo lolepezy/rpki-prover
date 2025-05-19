@@ -37,12 +37,14 @@ import           Data.ASN1.Types (OID)
 
 import           GHC.Generics
 
+import           RPKI.AppTypes
 import           RPKI.Domain
 import           RPKI.RRDP.Types
 import           RPKI.Resources.Types
 import           RPKI.Time
 import           RPKI.Util (fmtGen)
 import           RPKI.Store.Base.Serialisation
+import Test.QuickCheck (Fun)
 
 newtype ParseError s = ParseError s
     deriving stock (Show, Eq, Ord, Generic)
@@ -420,6 +422,16 @@ data RsyncMetric = RsyncMetric {
     deriving Semigroup via GenericSemigroup RsyncMetric   
     deriving Monoid    via GenericMonoid RsyncMetric
 
+newtype ValidatedBy = ValidatedBy { unValidatedBy :: WorldVersion }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+    
+instance Monoid ValidatedBy where
+    mempty = ValidatedBy $ WorldVersion $ 2 ^ (63 :: Int)
+
+instance Semigroup ValidatedBy where
+    (<>) = min
+
 data ValidationMetric = ValidationMetric {
         vrpCounter      :: Count,        
         uniqueVrpNumber :: Count,        
@@ -432,7 +444,8 @@ data ValidationMetric = ValidationMetric {
         validAspaNumber :: Count,
         validBgpNumber  :: Count,
         mftShortcutNumber :: Count,                
-        totalTimeMs     :: TimeMs
+        totalTimeMs     :: TimeMs,
+        validatedBy     :: ValidatedBy
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -451,6 +464,7 @@ instance MetricC ValidationMetric where
 newtype MetricMap a = MetricMap { unMetricMap :: MonoidalMap MetricScope a }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
+    deriving newtype Functor
     deriving newtype Monoid    
     deriving newtype Semigroup
 

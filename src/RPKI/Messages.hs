@@ -337,6 +337,9 @@ toValidationMessage = \case
       SplNotIpResources prefixes -> 
         [i|Prefix list must not have IP resources on its EE certificate, but has #{prefixes}.|]
 
+      WeirdCaPublicationPoints urls -> 
+        [i|Invalid CA publication points found: #{fmtUrlList urls}.|]
+
   where
     fmtUrlList = mconcat . 
                  List.intersperse "," . map (show . getURL)

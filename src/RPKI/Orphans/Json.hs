@@ -4,6 +4,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE QuasiQuotes                #-}
 {-# LANGUAGE TemplateHaskell            #-}
+{-# LANGUAGE InstanceSigs #-}
 
 module RPKI.Orphans.Json where
 
@@ -209,6 +210,9 @@ instance ToJSON RpkiObjectType
 
 instance ToJSONKey (Maybe RpkiObjectType) where
     toJSONKey = toJSONKeyText U.fmtGen
+
+instance ToJSON ValidatedBy where    
+    toJSON (ValidatedBy v) = toJSON v
 
 $(deriveToJSON defaultOptions ''ValidationMetric)
 

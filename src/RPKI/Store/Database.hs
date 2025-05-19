@@ -69,7 +69,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 38
+currentDatabaseVersion = 39
 
 -- Some constant keys
 databaseVersionKey, validatedByVersionKey :: Text
@@ -697,7 +697,7 @@ saveValidationVersion tx db@DB { ..}
             bgpCertsKey <- save bgpCerts $ bgpStore ^. typed
 
             validationsKey <- save (vs ^. typed @Validations) $ validationsStore ^. #validations
-            metricsKey <- save (vs ^. typed @RawMetric)  $ metricStore ^. #metrics
+            metricsKey <- save (vs ^. typed @RawMetric) $ metricStore ^. #metrics
             
             -- The keys may refer to nonexistent entries
             pure (taName, ValidationVersion {..})
@@ -907,7 +907,7 @@ getRepositories tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
         forM rrdps $ \(url, r) -> do 
             M.get tx rrdpVState url >>= \case 
                 Nothing              -> pure []
-                Just (Compressed vs) -> pure [(RrdpR r, vs)]            
+                Just (Compressed vs) -> pure [(RrdpR r, vs)]
 
     rsyncRepos <- fmap mconcat $ 
         forM rsyncs $ \(host, metas) -> do 

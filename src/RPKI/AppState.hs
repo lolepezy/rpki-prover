@@ -37,14 +37,14 @@ data AppState = AppState {
         -- current world version
         world     :: TVar (Maybe WorldVersion),
 
-        -- Sunset of the last validated payloads that 
+        -- Subset of the last validated payloads that 
         -- is feasible for RTR (VRPs, BGPSec certificates)
         validated :: TVar RtrPayloads,
 
         -- The same but filtered through SLURM 
         filtered  :: TVar RtrPayloads,
 
-        -- Full RTR state sent to every RTR client.
+        -- Full binary RTR state sent to every RTR client.
         -- It is serialised once per RTR protocol version 
         -- and sent to every new client requesting the full state
         cachedBinaryRtrPdus :: TVar (Map.Map ProtocolVersion BS.ByteString),
@@ -119,8 +119,8 @@ getOrCreateWorldVerion AppState {..} =
     join $ atomically $ 
         maybe newWorldVersion pure <$> readTVar world
 
-versionToMoment :: WorldVersion -> Instant
-versionToMoment (WorldVersion nanos) = fromNanoseconds nanos
+versionToInstant :: WorldVersion -> Instant
+versionToInstant (WorldVersion nanos) = fromNanoseconds nanos
 
 instantToVersion :: Instant -> WorldVersion
 instantToVersion = WorldVersion . toNanoseconds

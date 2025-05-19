@@ -4,9 +4,11 @@ body {
 }
 
 table.gen-t { 
-    width: 1100px; 
+    width: auto;          /* Allow table to size to its content */
+    min-width: min-content; /* Ensure minimal width based on content */
+    max-width: 2000px;    /* Set maximum width to 1500px */
     border-collapse: collapse; 
-    margin:50px auto;
+    margin: 50px 0; /* Change from "margin: 50px auto" to left-align */
 }
 
 th.gen-t { 	
@@ -135,20 +137,9 @@ tr:has(> td details:not([open])):hover {
     padding: 2px 6px;
     border-radius: 4px;
     border: 1px solid #cccccc; /* Darkened from #d8d8d8 */
-    color: #333333; /* Darkened from #444444 */
+    color: #333333;
 }
 
-.side-navigation {
-    height: 100%;
-    width: 190px;
-    position: fixed;
-    z-index: 1;
-    top: 0;
-    left: 0;
-    overflow-x: hidden;
-    padding-top: 20px;
-    background-color: #333333; /* Darkened from #444444 */
-}
 
 .side-navigation a {
     padding: 8px 6px 8px 32px;
@@ -158,13 +149,21 @@ tr:has(> td details:not([open])):hover {
     display: block;
 }
 
-.side-navigation a:hover {
-    color: #ffffff;
-    background-color: #555555; /* Darkened from #666666 */
+
+.side-navigation {
+    position: fixed;
+    width: 200px; 
+    top: 0;
+    left: 0;
+    height: 100%;
+    overflow-y: auto;
+    background-color: #2b2b2b; /* Darkened from #666666 */
+    padding: 20px 0;
 }
 
 .main {
-    margin-left: 200px;
+    margin-left: 200px; /* Width of side navigation */
+    padding: 20px 20px 20px 100px; /* Additional 100px padding from side nav */
 }
 
 .overall { 		

@@ -93,6 +93,7 @@ instance ToSchema TaName where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema a => ToSchema (MetricMap a)
+instance ToSchema ValidatedBy
 instance ToSchema ValidationMetric
 instance ToSchema RpkiObjectType
 instance ToSchema RsyncMetric

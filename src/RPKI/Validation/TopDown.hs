@@ -11,8 +11,7 @@
 
 module RPKI.Validation.TopDown (
     TopDownResult(..),
-    validateMutlipleTAs,    
-    addUniqueVRPCount
+    validateMutlipleTAs
 )
 where
 
@@ -188,7 +187,7 @@ newAllTasTopDownContext :: MonadIO m =>
                         -> ClosableQueue MftShortcutOp
                         -> m AllTasTopDownContext
 newAllTasTopDownContext worldVersion publicationPoints shortcutQueue = liftIO $ do 
-    let now = Now $ versionToMoment worldVersion
+    let now = Now $ versionToInstant worldVersion
     topDownCounters <- newTopDownCounters
     atomically $ do        
         visitedKeys    <- newTVar mempty
@@ -337,7 +336,7 @@ validateTACertificateFromTAL :: Storage s =>
                                 -> WorldVersion
                                 -> ValidatorT IO (Located CaCerObject, PublicationPointAccess)
 validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
-    let now = Now $ versionToMoment worldVersion
+    let now = Now $ versionToInstant worldVersion
     let validationConfig = config ^. typed
 
     db <- liftIO $ readTVarIO database
@@ -1645,16 +1644,6 @@ oneMoreMftShort = updateMetric @ValidationMetric @_ (& #mftShortcutNumber %~ (+1
 moreVrps :: Monad m => Count -> ValidatorT m ()
 moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
 
-
--- Number of unique VRPs requires explicit counting of the VRP set sizes, 
--- so just counting the number of VRPs in ROAs in not enough
-addUniqueVRPCount :: PerTA Vrps -> ValidationState -> ValidationState
-addUniqueVRPCount vrps !vs = let
-        vrpCountLens = typed @RawMetric . #vrpCounts
-        totalUnique = Count (fromIntegral $ uniqueVrpCount vrps)        
-        perTaUnique = MonoidalMap.map (Count . fromIntegral . Set.size . Set.fromList . V.toList . unVrps) (unPerTA vrps)   
-    in vs & vrpCountLens . #totalUnique .~ totalUnique                
-         & vrpCountLens . #perTaUnique .~ perTaUnique
 
 extractPPAs :: Ca -> Either ValidationError PublicationPointAccess
 extractPPAs = \case 

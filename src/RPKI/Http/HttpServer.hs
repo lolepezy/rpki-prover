@@ -119,20 +119,23 @@ httpServer appContext tals = genericServe HttpApi {
             Nothing                      -> notFoundException
             Just latestValidationVersion -> do                      
                 liftIO $ roTx db $ \tx -> do                    
-                    (validations, validationMetrics) <- DB.getValidationOutcomes tx db latestValidationVersion
-                    repoValidationState              <- mconcat . map snd <$> DB.getRepositories tx db
+                    ((validations, validationMetrics), outcomesMs) <- timedMS $ DB.getValidationOutcomes tx db latestValidationVersion
+                    (repoValidationState, reposMe)                 <- timedMS $ mconcat . map snd <$> DB.getRepositories tx db
 
-                    resolvedValidations <- resolveVDto tx db $
+                    (resolvedValidations, resolveMs) <- timedMS $ resolveVDto tx db $
                             validationsToDto latestValidationVersion validations
 
-                    resolvedRepoVDtos <- mapM (resolveDto tx db) $ toVDtos $ repoValidationState ^. typed
-                    
-                    systemInfo <- readTVarIO $ appContext ^. #appState . #system
-                    pure $ mainPage latestValidationVersion systemInfo  
-                            resolvedValidations
-                            resolvedRepoVDtos
-                            (validationMetrics <> repoValidationState ^. typed)
+                    (resolvedRepoVDtos, resolve2Ms) <- timedMS $ mapM (resolveDto tx db) $ toVDtos $ repoValidationState ^. typed                    
 
+                    systemInfo <- readTVarIO $ appContext ^. #appState . #system
+                    (page, pageMs) <- timedMS $ pure $ mainPage latestValidationVersion systemInfo  
+                                        resolvedValidations
+                                        resolvedRepoVDtos
+                                        (validationMetrics <> repoValidationState ^. typed)
+
+                    logDebug logger [i|Data timing: outcomesMs=#{outcomesMs}, reposMe=#{reposMe}, resolveMs=#{resolveMs}, resolve2Ms=#{resolve2Ms}, pageMs=#{pageMs}|]
+
+                    pure page
 
 getVRPValidated :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s -> Maybe Text -> m [VrpDto]
