@@ -43,12 +43,13 @@ data Parallelism = Parallelism {
     deriving anyclass (TheBinary)
 
 data FetchConfig = FetchConfig {
-        rsyncTimeout       :: Seconds,
-        rsyncSlowThreshold :: Seconds,
-        rrdpTimeout        :: Seconds,
-        rrdpSlowThreshold  :: Seconds,
-        fetchLaunchWaitDuration :: Seconds,
-        cpuLimit           :: Seconds
+        rsyncTimeout             :: Seconds,
+        rrdpTimeout              :: Seconds,
+        fetchLaunchWaitDuration  :: Seconds,
+        cpuLimit                 :: Seconds,
+        minFetchInterval         :: Seconds,
+        maxFetchInterval         :: Seconds,
+        maxFailedBackoffInterval :: Seconds
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -156,10 +157,7 @@ data ValidationConfig = ValidationConfig {
         validationAlgorithm            :: ValidationAlgorithm,
 
         fetchIntervalCalculation       :: FetchTimingCalculation,
-        fetchTimeoutCalculation        :: FetchTimingCalculation,
-
-        minFetchInterval               :: Seconds,
-        maxFetchInterval               :: Seconds
+        fetchTimeoutCalculation        :: FetchTimingCalculation        
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -206,7 +204,7 @@ makeParallelism :: Natural -> Parallelism
 makeParallelism cpus = Parallelism cpus (2 * cpus) (3 * cpus)
 
 makeParallelismF :: Natural -> Natural -> Parallelism
-makeParallelismF cpus fetcherCount = Parallelism cpus (2 * cpus) fetcherCount
+makeParallelismF cpus = Parallelism cpus (2 * cpus)
 
 defaultConfig :: Config
 defaultConfig = Config {    
@@ -250,9 +248,7 @@ defaultConfig = Config {
         validationRFC                  = StrictRFC,
         validationAlgorithm            = FullEveryIteration,
         fetchIntervalCalculation       = Adaptive,
-        fetchTimeoutCalculation        = Adaptive,
-        minFetchInterval               = Seconds 60,
-        maxFetchInterval               = Seconds 600
+        fetchTimeoutCalculation        = Adaptive        
     },
     httpApiConf = HttpApiConfig {
         port = 9999

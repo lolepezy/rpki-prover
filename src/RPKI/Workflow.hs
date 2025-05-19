@@ -196,7 +196,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
     go `finally` dropFetcher fetchers url
     `catch` 
         (\(_ :: SomeException) -> 
-            -- Complain any something else then AsyncCancelled
+            -- TODO Complain about something else then AsyncCancelled
             pure ())
   where
     go = do 
@@ -222,14 +222,15 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         for_ f $ \_ -> do 
             r <- roTxT database (\tx db -> DB.getRepository tx db url)
             for_ r $ \repository -> do          
+                let status = getMeta repository ^. #status
                 let lastFetchMoment = 
-                        case getMeta repository ^. #status of
+                        case status of
                             FetchedAt t -> Just t
                             FailedAt t  -> Just t
                             _           -> Nothing
 
                 for_ lastFetchMoment $ \lastFetch -> do 
-                    let interval :: Seconds = refreshInterval repository Nothing
+                    let interval = refreshInterval (newFetchConfig config) repository status Nothing
                     let pause = leftToWait lastFetch now interval                                        
                     when (pause > 0) $ do  
                         let pauseSeconds = pause `div` 1_000_000
@@ -244,7 +245,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 pure Nothing
 
             Just _ -> do 
-                let fetchConfig = asyncFetchConfig config
+                let fetchConfig = newFetchConfig config
                 worldVersion <- createWorldVersion appContext
                 repository <- fromMaybe (newRepository url) <$> 
                                 roTxT database (\tx db -> DB.getRepository tx db url) 
@@ -258,11 +259,11 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                 -- TODO Use duratioMs, it is the only time metric for failed and killed fetches 
                 case r of
-                    Right (repository', stats) -> do 
-                        let repo = updateMeta' repository' (#status .~ FetchedAt (versionToMoment worldVersion))
-                        let interval = refreshInterval repo stats
+                    Right (repository', stats) -> do                         
+                        let (updateRepo, interval) = updateRepository fetchConfig
+                                repository' (FetchedAt (versionToMoment worldVersion)) stats
 
-                        saveFetchOutcome repo validations                          
+                        saveFetchOutcome updateRepo validations                          
                         when (hasUpdates validations) $ do 
                             triggered <- triggerTaRevalidation
                             -- logDebug logger [i|Triggered TA revalidation for #{triggered} TAs.|]
@@ -270,8 +271,10 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                         pure $ Just interval
                     Left _ -> do
-                        let repo = updateMeta' repository (#status .~ FailedAt (versionToMoment worldVersion))
-                        saveFetchOutcome repo validations
+                        let newStatus = FailedAt $ versionToMoment worldVersion
+                        let (updateRepo, interval) = updateRepository fetchConfig repository newStatus Nothing
+
+                        saveFetchOutcome updateRepo validations
                         getFetchable >>= \case
                             Nothing -> 
                                 -- this whole fetcheable is gone
@@ -279,7 +282,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                             Just fallbacks -> do  
                                 fetchFallbacks fetchConfig worldVersion fallbacks
                                 -- TODO It must be much longer?
-                                pure $ Just $ 5 * refreshInterval repository Nothing 
+                                pure $ Just $ 5 * interval
       where
         fetchFallbacks fetchConfig worldVersion fallbacks = do 
             -- TODO Make it a bit smarter based on the overal number and overall load
@@ -316,32 +319,44 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         Fetcheables fs <- readTVarIO fetcheables
         pure $ MonoidalMap.lookup url fs
 
-    -- TODO Include all the adaptive logic here
-    refreshInterval repository rrdpStats = 
-        defaultInterval
+    updateRepository fetchConfig repo newStatus stats = (updateRepository, interval)
       where
-        vConfig = config ^. #validationConfig
+        interval = refreshInterval fetchConfig repo newStatus stats
+        updateRepository = updateMeta' repo 
+            (\meta -> meta 
+                & #status .~ newStatus 
+                & #refreshInterval ?~ interval)
+
+    -- TODO Include all the adaptive logic here
+    refreshInterval fetchConfig repository newStatus rrdpStats = 
+        interval'
+      where        
         
         trimInterval interval = 
-            max (vConfig ^. #minFetchInterval) 
-                (min (vConfig ^. #maxFetchInterval) interval)  
+            max (fetchConfig ^. #minFetchInterval) 
+                (min (fetchConfig ^. #maxFetchInterval) interval)  
 
         interval' = 
-            case getMeta repository ^. #refreshInterval of 
-                Nothing       -> defaultInterval
-                Just interval ->             
+            case newStatus of                 
+                FailedAt _ -> exponentialBackoff currentInterval
+                _ ->       
                     case rrdpStats of 
                         Nothing                 -> defaultInterval
                         Just RrdpFetchStat {..} -> 
                             case action of 
-                                NothingToFetch _ -> trimInterval $ increaseInterval interval 
+                                NothingToFetch _ -> trimInterval $ increaseInterval currentInterval 
                                 FetchDeltas {..} 
-                                    | moreThanOne sortedDeltas -> trimInterval $ decreaseInterval interval
-                                    | otherwise                -> interval
-                                FetchSnapshot _ _ -> interval
+                                    | moreThanOne sortedDeltas -> trimInterval $ decreaseInterval currentInterval
+                                    | otherwise                -> currentInterval
+                                FetchSnapshot _ _ -> currentInterval
+          where
+            currentInterval = 
+                fromMaybe defaultInterval (getMeta repository ^. #refreshInterval)
 
         increaseInterval (Seconds s) = Seconds $ s + 1 + s `div` 10        
         decreaseInterval (Seconds s) = Seconds $ s - s `div` 3 - 1
+
+        exponentialBackoff (Seconds s) = min (Seconds $ s + s `div` 2 + 1) (fetchConfig ^. #maxFailedBackoffInterval)
 
         moreThanOne = ( > 1) . length . NonEmpty.take 2
 

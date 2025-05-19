@@ -246,29 +246,15 @@ getFetchables pps ppAccess =
           repo <- maybeToList $ repositoryFromPP pps pp ]
 
                 
-syncFetchConfig :: Config -> FetchConfig
-syncFetchConfig config = let 
+newFetchConfig :: Config -> FetchConfig
+newFetchConfig config = let 
         rsyncConfig = config ^. typed @RsyncConf
         rrdpConfig = config ^. typed @RrdpConf
         rsyncTimeout = rsyncConfig ^. #rsyncTimeout
-        rrdpTimeout  = rrdpConfig ^. #rrdpTimeout
-        rsyncSlowThreshold = slowThreshold rsyncTimeout
-        rrdpSlowThreshold = slowThreshold rrdpTimeout
-        fetchLaunchWaitDuration = Seconds 30 
-        cpuLimit = max (rrdpConfig ^. #cpuLimit) (rsyncConfig ^. #cpuLimit)
+        rrdpTimeout  = rrdpConfig ^. #rrdpTimeout        
+        fetchLaunchWaitDuration = Seconds 30         
+        cpuLimit = max (rrdpConfig ^. #cpuLimit) (rsyncConfig ^. #cpuLimit)        
+        minFetchInterval = Seconds 30
+        maxFetchInterval = Seconds 600
+        maxFailedBackoffInterval = Seconds $ 30 * 60
     in FetchConfig {..}
-
-asyncFetchConfig :: Config -> FetchConfig
-asyncFetchConfig config = let 
-        rsyncConfig = config ^. typed @RsyncConf
-        rrdpConfig = config ^. typed @RrdpConf
-        rsyncTimeout = rsyncConfig ^. #rsyncTimeout
-        rrdpTimeout  = rrdpConfig ^. #rrdpTimeout
-        rsyncSlowThreshold = slowThreshold rsyncTimeout
-        rrdpSlowThreshold = slowThreshold rrdpTimeout
-        fetchLaunchWaitDuration = Seconds 60
-        cpuLimit = max (rrdpConfig ^. #cpuLimit) (rsyncConfig ^. #cpuLimit)
-    in FetchConfig {..}
-
-slowThreshold :: Seconds -> Seconds
-slowThreshold t = min t (Seconds 60)

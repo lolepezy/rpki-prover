@@ -355,7 +355,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
   where
     fetchValidateAndStore db (Now moment) storableTa = do
         z <- (do 
-                (u, ro) <- fetchTACertificate appContext (syncFetchConfig config) tal
+                (u, ro) <- fetchTACertificate appContext (newFetchConfig config) tal
                 pure $ FetchedTA u ro)
             `catchError`
                 tryToFallbackToCachedCopy
