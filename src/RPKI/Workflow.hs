@@ -246,7 +246,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
             Just _ -> do 
                 let fetchConfig = newFetchConfig config
-                worldVersion <- createWorldVersion appContext
+                worldVersion <- newWorldVersion
                 repository <- fromMaybe (newRepository url) <$> 
                                 roTxT database (\tx db -> DB.getRepository tx db url) 
                                 
@@ -541,7 +541,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         reset
                         pure $ filter (\tal -> getTaName tal `Set.member` tas) tals 
 
-            worldVersion <- createWorldVersion appContext
+            worldVersion <- newWorldVersion
             
             void $ do 
                 validateTAs workflowShared worldVersion talsToValidate
@@ -553,7 +553,7 @@ runWorkflow appContext@AppContext {..} tals = do
             go canValidateAgain RanBefore
 
     oneOffRun workflowShared vrpOutputFile = do 
-        worldVersion <- createWorldVersion appContext
+        worldVersion <- newWorldVersion
         void $ validateTAs workflowShared worldVersion tals
         -- vrps <- roTxT database $ \tx db -> 
         --         DB.getLastValidationVersion db tx >>= \case 
@@ -624,7 +624,7 @@ runWorkflow appContext@AppContext {..} tals = do
             let makeTask jobRun = do 
                     Task task $ do
                         logDebug logger [i|Running task '#{name}'.|]
-                        worldVersion <- createWorldVersion appContext
+                        worldVersion <- newWorldVersion
                         action worldVersion jobRun 
                             `finally` (do  
                                 when persistent $ do                       
@@ -984,18 +984,6 @@ loadStoredAppState AppContext {..} = do
                                          [i|current state (#{estimateVrpCount vrps} VRPs), took #{elapsed}ms.|]
                     pure $ Just lastVersion
 
-
-createWorldVersion :: AppContext s -> IO WorldVersion
-createWorldVersion AppContext {..} = do
-    newVersion      <- newWorldVersion        
-    existingVersion <- getWorldVerionIO appState
-    logDebug logger $ 
-        case existingVersion of
-            Nothing ->
-                [i|Generated new world version #{newVersion}.|]
-            Just oldWorldVersion ->
-                [i|Generated new world version, #{oldWorldVersion} ==> #{newVersion}.|]
-    pure newVersion
 
 
 isMaintenance :: TaskType -> Bool
