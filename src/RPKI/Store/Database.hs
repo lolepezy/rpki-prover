@@ -682,7 +682,7 @@ saveValidationVersion :: forall m s . (MonadIO m, Storage s) =>
                     -> ValidationState
                     -> m ()
 saveValidationVersion tx db@DB { ..} 
-    worldVersion allTaNames results@(PerTA perTAResults) commonVS = liftIO $ do         
+    validatedBy allTaNames results@(PerTA perTAResults) commonVS = liftIO $ do         
 
     commonValidationKey <- save (commonVS ^. typed @Validations) $ validationsStore ^. #validations
     commonMetricsKey <- save (commonVS ^. typed @RawMetric) $ metricStore ^. #metrics
@@ -713,7 +713,7 @@ saveValidationVersion tx db@DB { ..}
                 versions <- versionsBackwards tx db 
                 pure [ (ta, r) | (ta, Just r) <- fillUpEarlierTAData versions notPresentTAs mempty ]
 
-    M.put tx (versionStore ^. typed) worldVersion $ 
+    M.put tx (versionStore ^. typed) validatedBy $ 
         VersionMeta { perTa = toPerTA $ addedResults <> earlierResults, .. }
 
   where

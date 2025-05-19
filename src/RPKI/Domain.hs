@@ -51,6 +51,7 @@ import           RPKI.Resources.Types
 import           RPKI.Time
 
 import           RPKI.Store.Base.Serialisation
+import RPKI.AppTypes (WorldVersion)
 
 
 -- There are two validation algorithms for RPKI tree
@@ -770,13 +771,14 @@ data ObjectIdentity = KeyIdentity ObjectKey
     deriving anyclass (TheBinary, NFData)
 
 data ValidationVersion = ValidationVersion { 
+        validatedBy    :: WorldVersion,
         validationsKey :: ArtificialKey,
-        metricsKey  :: ArtificialKey,
-        roasKey     :: ArtificialKey,
-        aspasKey    :: ArtificialKey,
-        splsKey     :: ArtificialKey,            
-        gbrsKey     :: ArtificialKey,
-        bgpCertsKey :: ArtificialKey
+        metricsKey     :: ArtificialKey,
+        roasKey        :: ArtificialKey,
+        aspasKey       :: ArtificialKey,
+        splsKey        :: ArtificialKey,            
+        gbrsKey        :: ArtificialKey,
+        bgpCertsKey    :: ArtificialKey
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)    
