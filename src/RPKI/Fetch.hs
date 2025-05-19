@@ -18,7 +18,6 @@ import qualified Data.List.NonEmpty          as NonEmpty
 
 import           Data.String.Interpolate.IsString
 import           Data.Maybe                  
-import qualified Data.Set                    as Set
 
 import           Time.Types
 
@@ -92,23 +91,6 @@ deriveNewMeta config fetchConfig repo validations rrdpStats
                                         FetchSnapshot _ _ -> ri                      
 
 
-deriveNextTimeout :: Config -> Seconds -> RepositoryMeta -> Seconds
-deriveNextTimeout config absoluteMaxDuration RepositoryMeta {..} = 
-    case config ^. #validationConfig . #fetchTimeoutCalculation of 
-        Constant -> absoluteMaxDuration
-        Adaptive -> 
-            case lastFetchDuration of
-                Nothing       -> absoluteMaxDuration
-                Just duration -> let
-                    previousDuration = Seconds 1 + Seconds (unTimeMs duration `div` 1000)
-                    heuristicalNextTimeout = 
-                        if | previousDuration < Seconds 3  -> Seconds 10
-                           | previousDuration < Seconds 10 -> Seconds 20
-                           | previousDuration < Seconds 30 -> previousDuration + Seconds 30
-                           | otherwise                     -> previousDuration + Seconds 60             
-                    in min absoluteMaxDuration heuristicalNextTimeout
-
-
 -- Fetch one individual repository. 
 -- 
 -- Returned repository has all the metadata updated (in case of RRDP session and serial).
@@ -140,7 +122,7 @@ fetchRepository
     timeToKillItself = Seconds 5
     
     fetchRrdpRepository r = do 
-        let fetcherTimeout = deriveNextTimeout config (fetchConfig ^. #rrdpTimeout) (r ^. #meta)        
+        let fetcherTimeout = fetchConfig ^. #rrdpTimeout
         let totalTimeout = fetcherTimeout + timeToKillItself
         timeoutVT totalTimeout
             (do
@@ -156,7 +138,7 @@ fetchRepository
                 appError $ RrdpE $ RrdpDownloadTimeout totalTimeout)
 
     fetchRsyncRepository r = do 
-        let fetcherTimeout = deriveNextTimeout config (fetchConfig ^. #rsyncTimeout) (r ^. #meta)        
+        let fetcherTimeout = fetchConfig ^. #rsyncTimeout
         let totalTimeout = fetcherTimeout + timeToKillItself
         timeoutVT 
             totalTimeout

@@ -27,6 +27,7 @@ import           Data.Data
 import           Data.Foldable                   (for_)
 import qualified Data.Text                       as Text
 import qualified Data.List                       as List
+import qualified Data.List.NonEmpty              as NonEmpty
 import           Data.Map.Strict                 (Map)
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
@@ -65,6 +66,7 @@ import           RPKI.Metrics.Prometheus
 import           RPKI.RTR.RtrServer
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.AppStorage
+import           RPKI.RRDP.Types
 import           RPKI.TAL
 import           RPKI.Parallel
 import           RPKI.Util                     
@@ -258,13 +260,15 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 case r of
                     Right (repository', stats) -> do 
                         let repo = updateMeta' repository' (#status .~ FetchedAt (versionToMoment worldVersion))
+                        let interval = refreshInterval repo stats
+
                         saveFetchOutcome repo validations                          
                         when (hasUpdates validations) $ do 
                             triggered <- triggerTaRevalidation
                             -- logDebug logger [i|Triggered TA revalidation for #{triggered} TAs.|]
                             pure ()
 
-                        pure $ Just $ refreshInterval repository stats
+                        pure $ Just interval
                     Left _ -> do
                         let repo = updateMeta' repository (#status .~ FailedAt (versionToMoment worldVersion))
                         saveFetchOutcome repo validations
@@ -314,7 +318,34 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
     -- TODO Include all the adaptive logic here
     refreshInterval repository rrdpStats = 
-        case repository of 
+        defaultInterval
+      where
+        vConfig = config ^. #validationConfig
+        
+        trimInterval interval = 
+            max (vConfig ^. #minFetchInterval) 
+                (min (vConfig ^. #maxFetchInterval) interval)  
+
+        interval' = 
+            case getMeta repository ^. #refreshInterval of 
+                Nothing       -> defaultInterval
+                Just interval ->             
+                    case rrdpStats of 
+                        Nothing                 -> defaultInterval
+                        Just RrdpFetchStat {..} -> 
+                            case action of 
+                                NothingToFetch _ -> trimInterval $ increaseInterval interval 
+                                FetchDeltas {..} 
+                                    | moreThanOne sortedDeltas -> trimInterval $ decreaseInterval interval
+                                    | otherwise                -> interval
+                                FetchSnapshot _ _ -> interval
+
+        increaseInterval (Seconds s) = Seconds $ s + 1 + s `div` 10        
+        decreaseInterval (Seconds s) = Seconds $ s - s `div` 3 - 1
+
+        moreThanOne = ( > 1) . length . NonEmpty.take 2
+
+        defaultInterval = case repository of 
             RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
             RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
 
@@ -705,7 +736,8 @@ runWorkflow appContext@AppContext {..} tals = do
                 )
                 `catch` 
                 (\(_ :: SomeException) -> 
-                    -- the file can disappear in the meantime
+                    -- the file can disappear in the meantime, 
+                    -- so getModificationTime may throw an exception
                     pure ())
 
         -- Cleanup reader table of LMDB cache, it may get littered by 
