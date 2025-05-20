@@ -141,6 +141,13 @@ tr:has(> td details:not([open])):hover {
 }
 
 
+.side-navigation a {
+    padding: 8px 6px 8px 32px;
+    margin-bottom: 4px;
+    text-decoration: none;
+    color: #cccccc;
+    display: block;
+}
 
 .side-navigation {
     position: fixed;
