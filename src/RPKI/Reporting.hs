@@ -251,7 +251,7 @@ instance Exception AppException
 newtype Validations = Validations (Map VScope (Set VIssue))
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
-    deriving newtype Monoid
+    deriving newtype Monoid    
 
 instance Semigroup Validations where
     (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2

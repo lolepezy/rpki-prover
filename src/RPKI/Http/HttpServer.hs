@@ -120,22 +120,25 @@ httpServer appContext tals = genericServe HttpApi {
             Just latestValidationVersion -> do                      
                 liftIO $ roTx db $ \tx -> do                    
                     ((validations, validationMetrics), outcomesMs) <- timedMS $ DB.getValidationOutcomes tx db latestValidationVersion
-                    (repoValidationState, reposMe)                 <- timedMS $ mconcat . map snd <$> DB.getRepositories tx db
+                    (fetchVS, reposMe)                 <- timedMS $ mconcat . map snd <$> DB.getRepositories tx db
 
                     (resolvedValidations, resolveMs) <- timedMS $ resolveVDto tx db $
                             validationsToDto latestValidationVersion validations
 
-                    (resolvedRepoVDtos, resolve2Ms) <- timedMS $ mapM (resolveDto tx db) $ toVDtos $ repoValidationState ^. typed                    
+                    (resolvedRepoVDtos, resolve2Ms) <- timedMS $ mapM (resolveDto tx db) $ toVDtos $ fetchVS ^. typed                    
 
                     systemInfo <- readTVarIO $ appContext ^. #appState . #system
                     (page, pageMs) <- timedMS $ pure $ mainPage latestValidationVersion systemInfo  
                                         resolvedValidations
                                         resolvedRepoVDtos
-                                        (validationMetrics <> repoValidationState ^. typed)
+                                        (validationMetrics <> fetchVS ^. typed)
 
                     logDebug logger [i|Data timing: outcomesMs=#{outcomesMs}, reposMe=#{reposMe}, resolveMs=#{resolveMs}, resolve2Ms=#{resolve2Ms}, pageMs=#{pageMs}|]
 
-                    pure page
+                    pure page      
+        
+
+
 
 getVRPValidated :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s -> Maybe Text -> m [VrpDto]
@@ -569,6 +572,37 @@ withPrefixIndex AppContext {..} f = do
     liftIO (readTVarIO $ appState ^. #prefixIndex) >>= \case     
         Nothing          -> throwError $ err404 { errBody = [i|Prefix index is not (yet) built.|] }
         Just prefixIndex -> f prefixIndex                
+
+
+-- toRepositoryUIDtos :: [(Repository, ValidationState)] -> IO [RepositoryUIDDto] 
+-- toRepositoryUIDtos inputs = do 
+--     let rrdps = [(r, s) | (RrdpR r, s) <- inputs]
+--     let rsyncs = [(r, s) | (RsyncR r, s) <- inputs]
+
+--     forM rrdps $ \(repository, state) -> do
+--         validations <- resolveVDto (filterRepositoryValidations (repository ^. #url) $ state ^. typed)
+--         pure ()
+        
+--     pure $ RrdpUIDto $ RrdpRepositoryUIDto { 
+--         url = repo ^. #url, 
+--         repository = rrdpRepo,             
+--         ..
+--     }
+
+    
+--   where
+--     rrdps = [ RrdpUIDto $ RrdpRepositoryUIDto {..} | 
+--                 (repo@(RrdpR RrdpRepository {..}), state) <- r ]
+
+--     rsyncs = [ RsyncUIDto $ RsyncRepositoryUIDto uri meta state (state ^. typed) | 
+--                 (RsyncR RsyncRepository { repoPP = RsyncPublicationPoint {..}, ..}, state) <- r ]
+
+--     filterRepositoryValidations :: RpkiURL -> Validations -> Validations
+--     filterRepositoryValidations url (Validations vs) = 
+--         Validations $ Map.filterWithKey (\scope _ -> relevantToRepository scope) vs
+--       where
+--         relevantToRepository (Scope scope) = 
+--             not $ null [ () | RepositoryFocus u <- NonEmpty.toList scope, u == url ]        
 
 
 resolveDto :: (MonadIO m, Storage s) 

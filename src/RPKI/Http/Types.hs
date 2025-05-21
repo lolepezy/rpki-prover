@@ -18,6 +18,7 @@ import qualified Data.ByteString.Base16      as Hex
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 import           Data.Text.Encoding          (encodeUtf8)
+import           Data.Generics.Product.Typed
 
 import           Data.Aeson.Types
 import           Data.Proxy
@@ -246,7 +247,7 @@ data RoaPrefixDto = RoaPrefixDto {
     }
     deriving stock (Eq, Show, Generic)
 
-data GbrDto = GbrDto {
+newtype GbrDto = GbrDto {
         vcard :: Map Text Text
     }  
     deriving stock (Eq, Show, Generic)
@@ -276,6 +277,25 @@ data PublicationPointsDto = PublicationPointsDto {
         rrdp  :: [(RrdpURL, RrdpRepository)],
         rsync :: [(RsyncURL, RepositoryMeta)]        
     } 
+    deriving stock (Eq, Show, Generic)
+
+data RepositoryUIDDto = RsyncUIDto RsyncRepositoryUIDto
+                      | RrdpUIDto RrdpRepositoryUIDto
+    deriving stock (Eq, Show, Generic) 
+
+data RsyncRepositoryUIDto = RsyncRepositoryUIDto {
+        url         :: RsyncURL,
+        meta        :: RepositoryMeta,
+        state       :: RsyncMetric,
+        validations :: [ResolvedVDto]
+    }
+    deriving stock (Eq, Show, Generic)
+data RrdpRepositoryUIDto = RrdpRepositoryUIDto {
+        url         :: RrdpURL,
+        repository  :: RrdpRepository,
+        state       :: RrdpMetric,
+        validations :: [ResolvedVDto]
+    }
     deriving stock (Eq, Show, Generic)
 
 newtype JobsDto = JobsDto {
@@ -611,6 +631,10 @@ instance ToJSON RrdpMeta
 instance ToJSON RrdpRepository
 instance ToJSON RepositoryMeta
 instance ToJSON PublicationPointsDto
+instance ToJSON RepositoryUIDDto
+instance ToJSON RrdpRepositoryUIDto
+instance ToJSON RsyncRepositoryUIDto
+
 
 instance ToSchema MetricsDto
 instance ToSchema FetchStatus where     
@@ -649,6 +673,7 @@ toPublicationPointDto PublicationPoints {..} = PublicationPointsDto {
         rrdp  = Map.toList $ unRrdpMap rrdps,
         rsync = flattenRsyncTree rsyncs
     }
+
 
 parseHash :: Text -> Either Text Hash
 parseHash hashText = bimap 
