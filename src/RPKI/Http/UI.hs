@@ -33,6 +33,7 @@ import           Data.String.Interpolate.IsString
 
 import           Text.Blaze.Html5            as H hiding (i)
 import           Text.Blaze.Html5.Attributes as A
+import           Text.Blaze.Internal         as BlazeI
 
 import           RPKI.AppTypes
 import           RPKI.AppState
@@ -54,8 +55,9 @@ mainPage :: WorldVersion
         -> Html
 mainPage version systemInfo validation fetchValidation fetchDtos rawMetric =     
     H.docTypeHtml $ do
-        H.head $ 
+        H.head $ do
             link ! rel "stylesheet" ! href "/static/styles.css"
+            H.script ! src "/static/script.js" $ ""
         H.body $
             H.div ! A.class_ "side-navigation" $ do  
                 H.a ! A.href "#overall"            $ H.text "Overall"
@@ -219,39 +221,74 @@ rrdpMetricsHtml rrdpMetrics =
             genTh $ H.text "Total time"                    
 
         H.tbody $ do 
-            let slowestFirst = List.sortOn ordering rrdpMetrics
+            let slowestFirst = List.sortOn (\m -> ordering $ m ^. #repository . #meta . #status) rrdpMetrics
             forM_ (zip slowestFirst [1 :: Int ..]) $ \(m, index) -> do 
-                htmlRow index $ do 
-                    genTd $ do 
-                        let URI u_ = getURL $ m ^. #uri
-                        H.a ! A.href (textValue u_) $ H.text u_
-                    td ! A.class_ "gen-t no-wrap" $ do 
-                        let (statusHtml, dot) = 
-                                case m ^. #repository . #meta . #status of 
-                                    Pending     -> 
-                                        ("Pending" :: Text, Nothing)
-                                    FetchedAt t -> 
-                                        ([i|Fetched at #{instantTimeFormat t}|], 
-                                        Just (H.span ! A.class_ "green-dot" $ ""))
-                                    FailedAt t  -> 
-                                        ([i|Failed at #{instantTimeFormat t}|], 
-                                        Just (H.span ! A.class_ "red-dot" $ ""))
+                htmlClickableRow index $ do 
+                    let URI u_ = getURL $ m ^. #uri
+                        (statusHtml, dot) = 
+                            case m ^. #repository . #meta . #status of 
+                                Pending     -> 
+                                    ("Pending" :: Text, Nothing)
+                                FetchedAt t -> 
+                                    ([i|Fetched at #{instantTimeFormat t}|], 
+                                    Just (H.span ! A.class_ "green-dot" $ ""))
+                                FailedAt t  -> 
+                                    ([i|Failed at #{instantTimeFormat t}|], 
+                                    Just (H.span ! A.class_ "red-dot" $ ""))
 
-                        forM_ dot Prelude.id >> toHtml statusHtml
-                                                
+                    genTd $ H.a ! A.href (textValue u_) $ H.text u_
+                    td ! A.class_ "gen-t no-wrap" $ forM_ dot Prelude.id >> toHtml statusHtml                                                
                     td ! A.class_ "gen-t no-wrap" $ toHtml $ m ^. #metrics . #rrdpSource                                                                    
                     genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #added
                     genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #deleted
                     genTd $ toHtml $ m ^. #metrics . #lastHttpStatus
                     genTd $ toHtml $ m ^. #metrics . #downloadTimeMs                                
-                    genTd $ toHtml $ m ^. #metrics . #totalTimeMs     
-  where
-    ordering m = 
-        Down $ case m ^. #repository . #meta . #status of     
-            FetchedAt t -> Just t 
-            FailedAt t  -> Just t 
-            _           -> Nothing
+                    genTd $ toHtml $ m ^. #metrics . #totalTimeMs                    
 
+                detailRow index
+  where
+    detailRow :: Int -> H.Html
+    detailRow index = H.tr ! A.id (H.toValue $ "detail-row-" ++ show index)
+                        ! A.class_ "detail-row"
+                        ! A.style "display: none;" $ do
+        H.td ! A.colspan "8"
+            ! A.class_ "gen-t detail-content" $ do
+            detailPanel
+
+    detailPanel :: H.Html
+    detailPanel = H.div ! A.class_ "detail-panel" $ do
+        H.h4 "Repository Details"
+        detailGrid
+        detailLogs
+
+    detailGrid :: H.Html
+    detailGrid = H.div ! A.class_ "detail-grid" $ do
+        detailItem "Last Session ID:" "12345-abcde-67890"
+        detailItem "Serial Number:" "98765"
+        detailItem "Last Modified:" "2025-05-22 22:15:29 UTC"
+        detailItem "Repository Size:" "2.3 MB"
+        detailItem "Objects Count:" "143 certificates, 67 ROAs, 12 manifests"
+        detailItem "Error Rate:" "0.2% (last 24h)"
+        detailItem "Average Response Time:" "145ms"
+        detailItem "Update Frequency:" "Every 6 hours"
+
+    detailItem :: String -> String -> H.Html
+    detailItem label value = H.div ! A.class_ "d-i" $ do
+        H.strong (H.toHtml label)
+        " "
+        H.toHtml value
+
+    detailLogs :: H.Html
+    detailLogs = H.div ! A.class_ "detail-logs" $ do
+        H.h5 "Recent Activity Log"
+        H.pre $ H.toHtml logContent
+      where
+        logContent = unlines
+            [ "2025-05-22 22:15:29 - RRDP update check completed successfully"
+            , "2025-05-22 16:12:15 - Delta update applied (serial 98764 → 98765)"
+            , "2025-05-22 10:08:42 - Repository health check passed"
+            , "2025-05-22 04:05:18 - RRDP notification fetched (no changes)"
+            ]
     
 rsyncMetricsHtml :: [RsyncRepositoryUIDto] -> Html
 rsyncMetricsHtml rsyncMetrics =
@@ -266,20 +303,20 @@ rsyncMetricsHtml rsyncMetrics =
             genTh $ H.text "Total time"                    
 
         H.tbody $ do 
-            let slowestFirst = List.sortOn ordering rsyncMetrics
+            let slowestFirst = List.sortOn (\m -> ordering $ m ^. #meta . #status) rsyncMetrics
             forM_ (zip slowestFirst [1 :: Int ..]) $ \(m, index) -> do                 
                 htmlRow index $ do
                     genTd $ toHtml $ let URI u_ = getURL (m ^. #uri) in u_
                     genTd ! A.class_ "no-wrap" $ toHtml $ m ^. #metrics . #fetchFreshness            
                     genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #processed            
                     genTd $ toHtml $ m ^. #metrics . #totalTimeMs         
-  where
-    ordering m = 
-        Down $ case m ^. #meta . #status of     
-            FetchedAt t -> Just t 
-            FailedAt t  -> Just t 
-            _           -> Nothing                       
 
+ordering :: FetchStatus -> Down (Maybe (Instant, Int))
+ordering status = 
+    Down $ case status of     
+        FetchedAt t -> Just (t, 1) 
+        FailedAt t  -> Just (t, 0) 
+        _           -> Nothing        
 
 validaionDetailsHtml :: [ResolvedVDto] -> Html
 validaionDetailsHtml result = 
@@ -385,6 +422,15 @@ htmlRow index =
     case index `mod` 2 of 
         0 -> tr ! A.class_ "even-row"
         _ -> tr 
+
+htmlClickableRow :: Int -> Html -> Html
+htmlClickableRow index = 
+    tr ! A.class_ (evenRow <> "clickable-row") ! BlazeI.dataAttribute ("target" :: Tag) ([i|detail-row-#{index}|] :: AttributeValue)
+  where
+    evenRow = 
+        case index `mod` 2 of 
+            0 -> "even-row "
+            _ -> ""
 
 genTd, genTh :: Html -> Html
 genTd = td ! A.class_ "gen-t" 

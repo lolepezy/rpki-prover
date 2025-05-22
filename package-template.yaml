@@ -39,6 +39,7 @@ dependencies:
 - base64
 - binary
 - blaze-html
+- blaze-markup
 - bytestring
 - bytestring-mmap
 - cborg

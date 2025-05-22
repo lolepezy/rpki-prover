@@ -230,3 +230,87 @@ summary::-moz-list-bullet {
     visibility: visible;
     opacity: 1;
 }
+
+/* Clickable table rows */
+.clickable-row {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.clickable-row:hover {
+    background-color: #d8d8d8 !important; /* Slightly darker hover for clickable rows */
+}
+
+/* Detail rows */
+.detail-row {
+    transition: all 0.3s ease;
+}
+
+.detail-content {
+    padding: 0 !important;
+    background-color: #f8f8f8;
+    border-top: 2px solid #b0b0b0;
+}
+
+.detail-panel {
+    padding: 20px;
+    margin: 0;
+}
+
+.detail-panel h4 {
+    margin: 0 0 15px 0;
+    color: #333333;
+    font-size: 16px;
+    border-bottom: 1px solid #cccccc;
+    padding-bottom: 8px;
+}
+
+.detail-panel h5 {
+    margin: 15px 0 8px 0;
+    color: #555555;
+    font-size: 14px;
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 12px;
+    margin-bottom: 15px;
+}
+
+.d-i {
+    padding: 8px 12px;
+    background-color: #ffffff;
+    border: 1px solid #dddddd;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+/* detail-item */
+.d-i strong {
+    color: #333333;
+    display: block;
+    margin-bottom: 2px;
+}
+
+.detail-logs {
+    margin-top: 15px;
+}
+
+.detail-logs pre {
+    background-color: #ffffff;
+    border: 1px solid #dddddd;
+    border-radius: 4px;
+    padding: 12px;
+    font-size: 12px;
+    color: #555555;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+/* Ensure detail rows don't get the striped background */
+/* .detail-row.even-row {
+    background-color: #f8f8f8 !important;
+} */
