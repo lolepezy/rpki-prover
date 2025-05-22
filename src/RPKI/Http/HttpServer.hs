@@ -22,7 +22,7 @@ import           Servant.Server.Generic
 import           Servant hiding (contentType, URI)
 import           Servant.Swagger.UI
 
-import           Data.Maybe                       (maybeToList, fromMaybe, fromJust)
+import           Data.Maybe                       (maybeToList, fromMaybe, fromJust, catMaybes)
 import qualified Data.Set                         as Set
 import qualified Data.List                        as List
 import qualified Data.Map.Strict                  as Map
@@ -122,10 +122,10 @@ httpServer appContext tals = genericServe HttpApi {
                     ((validations, validationMetrics), outcomesMs) <- timedMS $ DB.getValidationOutcomes tx db latestValidationVersion
                     (fetchVS, reposMe)                 <- timedMS $ mconcat . map snd <$> DB.getRepositories tx db
 
-                    (resolvedValidations, resolveMs) <- timedMS $ resolveVDto tx db $
+                    (resolvedValidations, resolveMs) <- timedMS $ resolveValidationDto tx db $
                             validationsToDto latestValidationVersion validations
 
-                    (resolvedRepoVDtos, resolve2Ms) <- timedMS $ mapM (resolveDto tx db) $ toVDtos $ fetchVS ^. typed                    
+                    (resolvedRepoVDtos, resolve2Ms) <- timedMS $ mapM (resolveOriginalDto tx db) $ toVDtos $ fetchVS ^. typed                    
 
                     systemInfo <- readTVarIO $ appContext ^. #appState . #system
                     (page, pageMs) <- timedMS $ pure $ mainPage latestValidationVersion systemInfo  
@@ -313,7 +313,7 @@ getValidationsDto appContext versionText =
         (\_ -> pure Nothing) 
         (\tx db version -> do 
             originalDtos <- validationsToDto version . allTAs <$> DB.getValidationsPerTA tx db version            
-            Just <$> resolveVDto tx db originalDtos)
+            Just <$> resolveValidationDto tx db originalDtos)
         fromJust
 
 getMetrics :: (MonadIO m, Storage s, MonadError ServerError m) =>
@@ -574,57 +574,70 @@ withPrefixIndex AppContext {..} f = do
         Just prefixIndex -> f prefixIndex                
 
 
--- toRepositoryUIDtos :: [(Repository, ValidationState)] -> IO [RepositoryUIDDto] 
--- toRepositoryUIDtos inputs = do 
---     let rrdps = [(r, s) | (RrdpR r, s) <- inputs]
---     let rsyncs = [(r, s) | (RsyncR r, s) <- inputs]
+toRepositoryUIDtos :: Storage s => AppContext s -> [(Repository, ValidationState)] -> IO [RepositoryUIDDto] 
+toRepositoryUIDtos AppContext {..} inputs = do
+    let rrdps = [(r, s) | (RrdpR r, s) <- inputs]
+    let rsyncs = [(r, s) | (RsyncR r, s) <- inputs]
 
---     forM rrdps $ \(repository, state) -> do
---         validations <- resolveVDto (filterRepositoryValidations (repository ^. #url) $ state ^. typed)
---         pure ()
-        
---     pure $ RrdpUIDto $ RrdpRepositoryUIDto { 
---         url = repo ^. #url, 
---         repository = rrdpRepo,             
---         ..
---     }
+    roTxT database $ \tx db -> do
+        rrdpRepos <- 
+            fmap (fmap RrdpUIDto . catMaybes)
+            $ forM rrdps $ \(repository@RrdpRepository {..}, state) -> do
+                let validationDtos = toVDtos $ filterRepositoryValidations (RrdpU uri) $ state ^. typed
+                resolved <- forM validationDtos $ resolveOriginalDto tx db 
 
-    
---   where
---     rrdps = [ RrdpUIDto $ RrdpRepositoryUIDto {..} | 
---                 (repo@(RrdpR RrdpRepository {..}), state) <- r ]
+                case filterRepositoryMetrics (RrdpU uri) $ state ^. typed @RawMetric . #rrdpMetrics of
+                    Nothing      -> pure Nothing
+                    Just metrics -> pure $ Just $ RrdpRepositoryUIDto { 
+                                        url = uri,    
+                                        validations = resolved,                                                     
+                                        ..
+                                    }
+        rsyncRepos <- 
+            fmap (fmap RsyncUIDto . catMaybes)
+            $ forM rsyncs $ \(repository@RsyncRepository { repoPP = RsyncPublicationPoint {..}, ..}, state) -> do
+                let validationDtos = toVDtos $ filterRepositoryValidations (RsyncU uri) $ state ^. typed
+                resolved <- forM validationDtos $ resolveOriginalDto tx db
 
---     rsyncs = [ RsyncUIDto $ RsyncRepositoryUIDto uri meta state (state ^. typed) | 
---                 (RsyncR RsyncRepository { repoPP = RsyncPublicationPoint {..}, ..}, state) <- r ]
+                case filterRepositoryMetrics (RsyncU uri) $ state ^. typed @RawMetric . #rsyncMetrics of
+                    Nothing      -> pure Nothing
+                    Just metrics -> pure $ Just $ RsyncRepositoryUIDto {
+                                        url = uri,
+                                        validations = resolved,
+                                        ..
+                                    }
 
---     filterRepositoryValidations :: RpkiURL -> Validations -> Validations
---     filterRepositoryValidations url (Validations vs) = 
---         Validations $ Map.filterWithKey (\scope _ -> relevantToRepository scope) vs
---       where
---         relevantToRepository (Scope scope) = 
---             not $ null [ () | RepositoryFocus u <- NonEmpty.toList scope, u == url ]        
+        pure $ rrdpRepos <> rsyncRepos            
+  where
+
+    filterRepositoryValidations url (Validations vs) = 
+        Validations $ Map.filterWithKey (\scope _ -> relevantToRepository url scope) vs
+
+    filterRepositoryMetrics url (MetricMap m) = 
+        case [ metric | (scope, metric) <- MonoidalMap.toList m, relevantToRepository url scope ] of 
+            []        -> Nothing
+            metric: _ -> Just metric
+
+    relevantToRepository url (Scope scope) = 
+        not $ null [ () | RepositoryFocus u <- NonEmpty.toList scope, u == url ]        
 
 
-resolveDto :: (MonadIO m, Storage s) 
-            => Tx s 'RO
-            -> DB s 
-            -> OriginalVDto 
-            -> m ResolvedVDto
-resolveDto tx db (OriginalVDto fd) = liftIO $ 
+resolveOriginalDto :: (MonadIO m, Storage s) 
+                    => Tx s 'RO
+                    -> DB s 
+                    -> OriginalVDto 
+                    -> m ResolvedVDto
+resolveOriginalDto tx db (OriginalVDto fd) = liftIO $ 
     ResolvedVDto <$> 
         #path (mapM (resolveLocations tx db)) fd
   
-
-resolveVDto :: (MonadIO m, Storage s) => 
-                Tx s 'RO
-                -> DB s 
-                -> ValidationsDto OriginalVDto
-                -> m (ValidationsDto ResolvedVDto)
-resolveVDto tx db vs = liftIO $ 
-    #validations (mapM resolveOrigDto) vs
-  where
-    resolveOrigDto (OriginalVDto fd) = 
-        fmap ResolvedVDto $ #path (mapM (resolveLocations tx db)) fd
+resolveValidationDto :: (MonadIO m, Storage s) => 
+                        Tx s 'RO
+                        -> DB s 
+                        -> ValidationsDto OriginalVDto
+                        -> m (ValidationsDto ResolvedVDto)
+resolveValidationDto tx db vs = liftIO $ 
+    #validations (mapM (resolveOriginalDto tx db)) vs
     
 
 resolveLocations :: Storage s => 

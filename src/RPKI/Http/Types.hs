@@ -286,14 +286,15 @@ data RepositoryUIDDto = RsyncUIDto RsyncRepositoryUIDto
 data RsyncRepositoryUIDto = RsyncRepositoryUIDto {
         url         :: RsyncURL,
         meta        :: RepositoryMeta,
-        state       :: RsyncMetric,
+        metrics     :: RsyncMetric,
         validations :: [ResolvedVDto]
     }
     deriving stock (Eq, Show, Generic)
+
 data RrdpRepositoryUIDto = RrdpRepositoryUIDto {
         url         :: RrdpURL,
         repository  :: RrdpRepository,
-        state       :: RrdpMetric,
+        metrics     :: RrdpMetric,
         validations :: [ResolvedVDto]
     }
     deriving stock (Eq, Show, Generic)
