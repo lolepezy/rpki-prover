@@ -125,12 +125,16 @@ httpServer appContext tals = genericServe HttpApi {
                     (resolvedValidations, resolveMs) <- timedMS $ resolveValidationDto tx db $
                             validationsToDto latestValidationVersion validations
 
-                    (resolvedRepoVDtos, resolve2Ms) <- timedMS $ mapM (resolveOriginalDto tx db) $ toVDtos $ fetchVS ^. typed                    
+                    (resolvedRepoVDtos, resolve2Ms) <- timedMS $ mapM (resolveOriginalDto tx db) $ toVDtos $ fetchVS ^. typed
+
+                    (fetches, reposMe) <- timedMS $ DB.getRepositories tx db
+                    fechesDtos <- toRepositoryUIDtos appContext fetches
 
                     systemInfo <- readTVarIO $ appContext ^. #appState . #system
                     (page, pageMs) <- timedMS $ pure $ mainPage latestValidationVersion systemInfo  
                                         resolvedValidations
                                         resolvedRepoVDtos
+                                        fechesDtos
                                         (validationMetrics <> fetchVS ^. typed)
 
                     logDebug logger [i|Data timing: outcomesMs=#{outcomesMs}, reposMe=#{reposMe}, resolveMs=#{resolveMs}, resolve2Ms=#{resolve2Ms}, pageMs=#{pageMs}|]
@@ -584,7 +588,8 @@ toRepositoryUIDtos AppContext {..} inputs = do
             fmap (fmap RrdpUIDto . catMaybes)
             $ forM rrdps $ \(repository@RrdpRepository {..}, state) -> do
                 let validationDtos = toVDtos $ filterRepositoryValidations (RrdpU uri) $ state ^. typed
-                resolved <- forM validationDtos $ resolveOriginalDto tx db 
+                -- TODO That is probably not needed at all, there's nothing to resolve?
+                resolved <- forM validationDtos $ resolveOriginalDto tx db                 
 
                 pure $ fmap (\metrics -> RrdpRepositoryUIDto { validations = resolved, .. }) 
                         $ filterRepositoryMetrics (RrdpU uri) $ state ^. typed @RawMetric . #rrdpMetrics

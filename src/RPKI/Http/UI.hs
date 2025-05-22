@@ -29,7 +29,9 @@ import qualified Data.List                   as List
 import           Data.Map.Monoidal.Strict    (getMonoidalMap)
 import qualified Data.Map.Monoidal.Strict    as MonoidalMap
 
-import           Text.Blaze.Html5            as H
+import           Data.String.Interpolate.IsString
+
+import           Text.Blaze.Html5            as H hiding (i)
 import           Text.Blaze.Html5.Attributes as A
 
 import           RPKI.AppTypes
@@ -38,6 +40,7 @@ import           RPKI.Domain
 import           RPKI.Http.Types
 import           RPKI.Metrics.Metrics
 import           RPKI.Metrics.System
+import           RPKI.Repository
 import           RPKI.Reporting
 import           RPKI.Time
 import           RPKI.Version
@@ -46,9 +49,10 @@ mainPage :: WorldVersion
         -> SystemInfo 
         -> ValidationsDto ResolvedVDto
         -> [ResolvedVDto]
+        -> [RepositoryUIDDto]
         -> RawMetric
         -> Html
-mainPage version systemInfo validation fetchValidation rawMetric@RawMetric {..} =     
+mainPage version systemInfo validation fetchValidation fetchDtos rawMetric =     
     H.docTypeHtml $ do
         H.head $ 
             link ! rel "stylesheet" ! href "/static/styles.css"
@@ -75,11 +79,11 @@ mainPage version systemInfo validation fetchValidation rawMetric@RawMetric {..} 
 
             H.a ! A.id "rrdp-metrics" $ ""
             H.section $ H.h3 "RRDP metrics"
-            rrdpMetricsHtml rrdpMetrics
+            rrdpMetricsHtml [ d | RrdpUIDto d <- fetchDtos ]
 
             H.a ! A.id "rsync-metrics" $ ""
             H.section $ H.h3 "Rsync metrics"
-            rsyncMetricsHtml rsyncMetrics
+            rsyncMetricsHtml [ d | RsyncUIDto d <- fetchDtos ]
 
             H.a ! A.id "fetch-details" $ ""
             H.section $ H.h3 "Fetch details"
@@ -196,18 +200,18 @@ validationMetricsHtml grouped = do
             genTd $ toHtml $ show $ vm ^. #validBgpNumber
             genTd $ toHtml $ show $ vm ^. #validSplNumber
 
-rrdpMetricsHtml :: MetricMap RrdpMetric -> Html
-rrdpMetricsHtml rrdpMetricMap =
+rrdpMetricsHtml :: [RrdpRepositoryUIDto] -> Html
+rrdpMetricsHtml rrdpMetrics =
     H.table ! A.class_ "gen-t" $ do 
-        let rrdpMap = unMetricMap rrdpMetricMap
         H.thead $ tr $ do                         
             genTh $ do 
                 H.text "Repository (" 
-                toHtml $ MonoidalMap.size rrdpMap
-                H.text " in total)"                                         
+                toHtml $ length rrdpMetrics
+                H.text " in total)"                                
+            genTh $ H.text "Updated at"         
             genTh $ H.div ! A.class_ "tooltip" $ do 
                 H.text "RRDP Update"            
-                H.span ! A.class_ "tooltiptext" $ rrdpUpdateTooltip
+                H.span ! A.class_ "tooltiptext" $ rrdpUpdateTooltip            
             genTh $ H.text "Added objects"
             genTh $ H.text "Deleted objects"
             genTh $ H.text "Last HTTP status"
@@ -215,29 +219,46 @@ rrdpMetricsHtml rrdpMetricMap =
             genTh $ H.text "Total time"                    
 
         H.tbody $ do 
-            let slowestFirst = List.sortOn (Down . (^. #totalTimeMs) . snd) $ MonoidalMap.toList rrdpMap
-            forM_ (zip slowestFirst [1 :: Int ..]) $ \((Scope scope', rm), index) -> do 
-                let repository = NonEmpty.head scope'
+            let slowestFirst = List.sortOn ordering rrdpMetrics
+            forM_ (zip slowestFirst [1 :: Int ..]) $ \(m, index) -> do 
                 htmlRow index $ do 
-                    genTd $ toHtml $ focusToText repository                        
-                    td ! A.class_ "gen-t no-wrap" $ toHtml $ rm ^. #rrdpSource                    
-                    genTd $ toHtml $ show $ totalMapCount $ rm ^. #added
-                    genTd $ toHtml $ show $ totalMapCount $ rm ^. #deleted
-                    genTd $ toHtml $ rm ^. #lastHttpStatus
-                    genTd $ toHtml $ rm ^. #downloadTimeMs                                
-                    genTd $ toHtml $ rm ^. #totalTimeMs     
+                    genTd $ do 
+                        let URI u_ = getURL $ m ^. #uri
+                        H.a ! A.href (textValue u_) $ H.text u_
+                    td ! A.class_ "gen-t no-wrap" $ do 
+                        let (statusHtml, dot) = 
+                                case m ^. #repository . #meta . #status of 
+                                    Pending     -> 
+                                        ("Pending" :: Text, Nothing)
+                                    FetchedAt t -> 
+                                        ([i|Fetched at #{instantTimeFormat t}|], 
+                                        Just (H.span ! A.class_ "green-dot" $ ""))
+                                    FailedAt t  -> 
+                                        ([i|Failed at #{instantTimeFormat t}|], 
+                                        Just (H.span ! A.class_ "red-dot" $ ""))
 
+                        forM_ dot Prelude.id >> toHtml statusHtml
+                                                
+                    td ! A.class_ "gen-t no-wrap" $ toHtml $ m ^. #metrics . #rrdpSource                                                                    
+                    genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #added
+                    genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #deleted
+                    genTd $ toHtml $ m ^. #metrics . #lastHttpStatus
+                    genTd $ toHtml $ m ^. #metrics . #downloadTimeMs                                
+                    genTd $ toHtml $ m ^. #metrics . #totalTimeMs     
+  where
+    ordering m = 
+        Down $ case m ^. #repository . #meta . #status of     
+            FetchedAt t -> Just t 
+            FailedAt t  -> Just t 
+            _           -> Nothing
 
-rsyncMetricsHtml :: MetricMap RsyncMetric -> Html
-rsyncMetricsHtml rsyncMetricMap =
-    H.table ! A.class_ "gen-t" $ do 
-        let rsyncMap = getMonoidalMap $ unMetricMap rsyncMetricMap        
-
+    
+rsyncMetricsHtml :: [RsyncRepositoryUIDto] -> Html
+rsyncMetricsHtml rsyncMetrics =
+    H.table ! A.class_ "gen-t" $ do  
         H.thead $ tr $ do 
             genTh $ do 
-                H.text "Repository ("
-                toHtml $ Map.size rsyncMap
-                H.text " in total)" 
+                H.text "Repository (" >> toHtml (length rsyncMetrics) >> H.text " in total)" 
             genTh $ H.div ! A.class_ "tooltip" $ do
                 H.text "Fetching"
                 H.span ! A.class_ "tooltiptext" $ rsyncFetchTooltip            
@@ -245,14 +266,19 @@ rsyncMetricsHtml rsyncMetricMap =
             genTh $ H.text "Total time"                    
 
         H.tbody $ do 
-            let slowestFirst = List.sortOn (Down . (^. #totalTimeMs) . snd) $ Map.toList rsyncMap
-            forM_ (zip slowestFirst [1 :: Int ..]) $ \((Scope scope', rm), index) -> do 
-                let repository = NonEmpty.head scope'
+            let slowestFirst = List.sortOn ordering rsyncMetrics
+            forM_ (zip slowestFirst [1 :: Int ..]) $ \(m, index) -> do                 
                 htmlRow index $ do
-                    genTd $ toHtml $ focusToText repository                                                        
-                    genTd ! A.class_ "no-wrap" $ toHtml $ rm ^. #fetchFreshness            
-                    genTd $ toHtml $ show $ totalMapCount $ rm ^. #processed            
-                    genTd $ toHtml $ rm ^. #totalTimeMs            
+                    genTd $ toHtml $ let URI u_ = getURL (m ^. #uri) in u_
+                    genTd ! A.class_ "no-wrap" $ toHtml $ m ^. #metrics . #fetchFreshness            
+                    genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #processed            
+                    genTd $ toHtml $ m ^. #metrics . #totalTimeMs         
+  where
+    ordering m = 
+        Down $ case m ^. #meta . #status of     
+            FetchedAt t -> Just t 
+            FailedAt t  -> Just t 
+            _           -> Nothing                       
 
 
 validaionDetailsHtml :: [ResolvedVDto] -> Html
@@ -287,8 +313,7 @@ validaionDetailsHtml result =
                             ErrorDto err -> ("red-dot",  err)                                        
                             WarningDto w -> ("yellow-dot", w)
                 td ! A.class_ "sub-t" $ H.span $ do 
-                    H.span ! A.class_ marker $ ""
-                    space 
+                    H.span ! A.class_ marker $ ""                    
                     mapM_ (\z -> H.text z >> H.br) $ Text.lines problem
                 td ! A.class_ "sub-t" $ H.details $ do 
                     H.summary $ focusLink1 objectUrl
@@ -304,7 +329,7 @@ validaionDetailsHtml result =
 
 primaryRepoTooltip :: Html
 primaryRepoTooltip = 
-    H.text $ "For metrics puposes objects are associated with a repository they are downloaded from. " <> 
+    H.text $ "For metrics purposes objects are associated with a repository they are downloaded from. " <> 
             "Fallback from RRDP to rsync does not change this association, so a valid object is attributed " <> 
             "to the RRDP repository even if it was downloaded from the rsync one because of the fall-back."
 
@@ -340,7 +365,7 @@ validationPathTootip = do
         
 
 groupByTa :: [ResolvedVDto] -> Map Text [ResolvedVDto]
-groupByTa vrs = 
+groupByTa vrs =
     Map.fromListWith (<>) 
     $ [ (resolvedFocusToText ta, [vr]) 
             | vr@(ResolvedVDto FullVDto {..}) <- vrs, 

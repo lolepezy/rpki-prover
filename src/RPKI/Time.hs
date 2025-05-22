@@ -139,6 +139,16 @@ instantDateFormat (Instant d) = timePrint format d
     dash = Format_Text '-'
     colon = Format_Text ':'   
 
+instantTimeFormat :: Instant -> String
+instantTimeFormat (Instant d) = timePrint format d
+  where 
+    format = TimeFormatString [            
+            Format_Hour, colon, Format_Minute, colon, Format_Second,
+            Format_TimezoneName
+        ]
+    dash = Format_Text '-'
+    colon = Format_Text ':'   
+
 secondsToInt :: Seconds -> Int
 secondsToInt (Seconds s) = fromIntegral s
 

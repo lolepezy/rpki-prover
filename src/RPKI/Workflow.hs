@@ -40,6 +40,7 @@ import           Data.Hourglass
 import           Data.Time.Clock                 (NominalDiffTime, diffUTCTime, getCurrentTime)
 import           Data.IxSet.Typed                (IxSet, Indexable, IsIndexOf, ixFun, ixList)
 import qualified Data.IxSet.Typed                as IxSet
+import qualified Data.Hashable                   as Hashable
 
 import           Data.String.Interpolate.IsString
 import           Numeric.Natural
@@ -229,9 +230,10 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                             FetchedAt t -> Just t
                             FailedAt t  -> Just t
                             _           -> Nothing
-
+                
                 for_ lastFetchMoment $ \lastFetch -> do 
-                    let interval = refreshInterval (newFetchConfig config) repository status Nothing
+                    worldVersion <- newWorldVersion
+                    let interval = refreshInterval (newFetchConfig config) repository worldVersion status Nothing
                     let pause = leftToWait lastFetch now interval                                        
                     when (pause > 0) $ do  
                         let pauseSeconds = pause `div` 1_000_000
@@ -262,7 +264,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 case r of
                     Right (repository', stats) -> do                         
                         let (updateRepo, interval) = updateRepository fetchConfig
-                                repository' (FetchedAt (versionToInstant worldVersion)) stats
+                                repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats
 
                         saveFetchOutcome updateRepo validations                          
                         when (hasUpdates validations) $ do 
@@ -273,7 +275,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                         pure $ Just interval
                     Left _ -> do
                         let newStatus = FailedAt $ versionToInstant worldVersion
-                        let (updateRepo, interval) = updateRepository fetchConfig repository newStatus Nothing
+                        let (updateRepo, interval) = updateRepository fetchConfig repository worldVersion newStatus Nothing
 
                         saveFetchOutcome updateRepo validations
                         getFetchable >>= \case
@@ -320,42 +322,32 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         Fetcheables fs <- readTVarIO fetcheables
         pure $ MonoidalMap.lookup url fs
 
-    updateRepository fetchConfig repo newStatus stats = (updateRepository, interval)
+    updateRepository fetchConfig repo worldVersion newStatus stats = (updateRepository, interval)
       where
-        interval = refreshInterval fetchConfig repo newStatus stats
+        interval = refreshInterval fetchConfig repo worldVersion newStatus stats
         updateRepository = updateMeta' repo 
             (\meta -> meta 
                 & #status .~ newStatus 
                 & #refreshInterval ?~ interval)
 
     -- TODO Include all the adaptive logic here
-    refreshInterval fetchConfig repository newStatus rrdpStats = 
-        interval'
-      where        
-        
-        trimInterval interval = 
-            max (fetchConfig ^. #minFetchInterval) 
-                (min (fetchConfig ^. #maxFetchInterval) interval)  
-
-        interval' = 
-            case newStatus of                 
+    refreshInterval fetchConfig repository worldVersion newStatus rrdpStats = 
+        case newStatus of                 
                 FailedAt _ -> exponentialBackoff currentInterval
                 _ ->       
                     case rrdpStats of 
                         Nothing                 -> defaultInterval
                         Just RrdpFetchStat {..} -> 
                             case action of 
-                                NothingToFetch _ -> trimInterval $ increaseInterval currentInterval 
+                                NothingToFetch _ -> increaseInterval currentInterval 
                                 FetchDeltas {..} 
-                                    | moreThanOne sortedDeltas -> trimInterval $ decreaseInterval currentInterval
+                                    | moreThanOne sortedDeltas -> decreaseInterval currentInterval
                                     | otherwise                -> currentInterval
                                 FetchSnapshot _ _ -> currentInterval
-          where
-            currentInterval = 
-                fromMaybe defaultInterval (getMeta repository ^. #refreshInterval)
 
-        increaseInterval (Seconds s) = Seconds $ s + 1 + s `div` 10        
-        decreaseInterval (Seconds s) = Seconds $ s - s `div` 3 - 1
+      where                                    
+        currentInterval = 
+            fromMaybe defaultInterval (getMeta repository ^. #refreshInterval)
 
         exponentialBackoff (Seconds s) = min (Seconds $ s + s `div` 2 + 1) (fetchConfig ^. #maxFailedBackoffInterval)
 
@@ -364,6 +356,23 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         defaultInterval = case repository of 
             RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
             RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
+
+        increaseInterval (Seconds s) = trimInterval $ Seconds $ s + 1 + s `div` 10 + kindaRandomness
+        decreaseInterval (Seconds s) = trimInterval $ Seconds $ s - s `div` 3 - 1 - kindaRandomness
+
+        trimInterval interval = 
+            max (fetchConfig ^. #minFetchInterval) 
+                (min (fetchConfig ^. #maxFetchInterval) interval)  
+
+        -- Pseudorandom stuff is added to spread repositories over time more of less 
+        -- uniformly and avoid having peaks of activity. It's just something relatively 
+        -- random without IO
+        kindaRandomness = let 
+            h :: Integer = fromIntegral $ Hashable.hash url
+            w :: Integer = fromIntegral $ let (WorldVersion w_) = worldVersion in w_
+            r = (w + h) `mod` 10
+            in fromIntegral r :: Int64            
+
 
     saveFetchOutcome r validations =
         rwTxT database $ \tx db -> do

@@ -621,7 +621,7 @@ validateCaNoFetch
                                 markAsRead topDownContext crlKey
                                 let message = [i|Internal error, there is a manifest shortcut, but no manifest for the key #{mftShortKey}.|]
                                 logError logger message
-                                collectPayloadsFromShortcuts mftShortcut Nothing 
+                                collectPayloads mftShortcut Nothing 
                                     (getFullCa appContext topDownContext ca)
                                     -- getCrlByKey is the best we can have
                                     (getCrlByKey appContext crlKey)
@@ -634,7 +634,7 @@ validateCaNoFetch
                                     let crlKey = mftShortcut ^. #crlShortcut . #key                                    
                                     pure $! do 
                                         markAsRead topDownContext crlKey
-                                        collectPayloadsFromShortcuts mftShortcut Nothing 
+                                        collectPayloads mftShortcut Nothing 
                                                 (getFullCa appContext topDownContext ca)
                                                 (getCrlByKey appContext crlKey)
                                                 (getResources ca)
@@ -649,20 +649,20 @@ validateCaNoFetch
                                             fullCa <- getFullCa appContext topDownContext ca
                                             let crlKey = mftShortcut ^. #crlShortcut . #key
                                             markAsRead topDownContext crlKey
-                                            let combineShortcutAndNewMft = do                                                     
+                                            let combineMftShortcutAndNewMft = do                                                     
                                                     overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
-                                                    collectPayloadsFromShortcuts mftShortcut (Just overlappingChildren) 
+                                                    collectPayloads mftShortcut (Just overlappingChildren) 
                                                                 (pure fullCa)
                                                                 (findAndValidateCrl fullCa mft childrenAki)   
                                                                 (getResources ca)
 
                                             let useShortcutOnly =                                                    
-                                                    collectPayloadsFromShortcuts mftShortcut Nothing 
+                                                    collectPayloads mftShortcut Nothing 
                                                             (getFullCa appContext topDownContext ca)
                                                             (getCrlByKey appContext crlKey)
                                                             (getResources ca)
                                             
-                                            combineShortcutAndNewMft
+                                            combineMftShortcutAndNewMft
                                                 `catchError`
                                                 (\e -> do 
                                                     vFocusOn ObjectFocus mftKey $ vWarn $ MftFallback e
@@ -1215,13 +1215,13 @@ validateCaNoFetch
             getIssues (scopes ^. typed) (vs ^. typed)
 
 
-    collectPayloadsFromShortcuts :: MftShortcut 
-                                -> Maybe [T3 Text Hash ObjectKey] 
-                                -> ValidatorT IO (Located CaCerObject)
-                                -> ValidatorT IO (Keyed (Validated CrlObject))             
-                                -> AllResources
-                                -> ValidatorT IO ()
-    collectPayloadsFromShortcuts mftShortcut childrenToCheck findFullCa findValidCrl parentCaResources = do      
+    collectPayloads :: MftShortcut 
+                    -> Maybe [T3 Text Hash ObjectKey] 
+                    -> ValidatorT IO (Located CaCerObject)
+                    -> ValidatorT IO (Keyed (Validated CrlObject))             
+                    -> AllResources
+                    -> ValidatorT IO ()
+    collectPayloads mftShortcut childrenToCheck findFullCa findValidCrl parentCaResources = do      
         
         let nonCrlEntries = mftShortcut ^. #nonCrlEntries
 
