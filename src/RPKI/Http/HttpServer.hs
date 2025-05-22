@@ -588,10 +588,10 @@ toRepositoryUIDtos AppContext {..} inputs = do
 
                 pure $ fmap (\metrics -> RrdpRepositoryUIDto { validations = resolved, .. }) 
                         $ filterRepositoryMetrics (RrdpU uri) $ state ^. typed @RawMetric . #rrdpMetrics
-                    
+
         rsyncRepos <- 
             fmap (fmap RsyncUIDto . catMaybes)
-            $ forM rsyncs $ \(repository@RsyncRepository { repoPP = RsyncPublicationPoint {..}, ..}, state) -> do
+            $ forM rsyncs $ \(RsyncRepository { repoPP = RsyncPublicationPoint {..}, ..}, state) -> do
                 let validationDtos = toVDtos $ filterRepositoryValidations (RsyncU uri) $ state ^. typed
                 resolved <- forM validationDtos $ resolveOriginalDto tx db
 
@@ -601,16 +601,16 @@ toRepositoryUIDtos AppContext {..} inputs = do
         pure $ rrdpRepos <> rsyncRepos            
   where
 
-    filterRepositoryValidations url (Validations vs) = 
-        Validations $ Map.filterWithKey (\scope _ -> relevantToRepository url scope) vs
+    filterRepositoryValidations uri (Validations vs) = 
+        Validations $ Map.filterWithKey (\scope _ -> relevantToRepository uri scope) vs
 
-    filterRepositoryMetrics url (MetricMap m) = 
-        case [ metric | (scope, metric) <- MonoidalMap.toList m, relevantToRepository url scope ] of 
+    filterRepositoryMetrics uri (MetricMap m) = 
+        case [ metric | (scope, metric) <- MonoidalMap.toList m, relevantToRepository uri scope ] of 
             []        -> Nothing
             metric: _ -> Just metric
 
-    relevantToRepository url (Scope scope) = 
-        not $ null [ () | RepositoryFocus u <- NonEmpty.toList scope, u == url ]        
+    relevantToRepository uri (Scope scope) = 
+        uri `elem` [ u | RepositoryFocus u <- NonEmpty.toList scope ]
 
 
 resolveOriginalDto :: (MonadIO m, Storage s) 
