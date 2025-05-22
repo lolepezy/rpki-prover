@@ -586,26 +586,17 @@ toRepositoryUIDtos AppContext {..} inputs = do
                 let validationDtos = toVDtos $ filterRepositoryValidations (RrdpU uri) $ state ^. typed
                 resolved <- forM validationDtos $ resolveOriginalDto tx db 
 
-                case filterRepositoryMetrics (RrdpU uri) $ state ^. typed @RawMetric . #rrdpMetrics of
-                    Nothing      -> pure Nothing
-                    Just metrics -> pure $ Just $ RrdpRepositoryUIDto { 
-                                        url = uri,    
-                                        validations = resolved,                                                     
-                                        ..
-                                    }
+                pure $ fmap (\metrics -> RrdpRepositoryUIDto { validations = resolved, .. }) 
+                        $ filterRepositoryMetrics (RrdpU uri) $ state ^. typed @RawMetric . #rrdpMetrics
+                    
         rsyncRepos <- 
             fmap (fmap RsyncUIDto . catMaybes)
             $ forM rsyncs $ \(repository@RsyncRepository { repoPP = RsyncPublicationPoint {..}, ..}, state) -> do
                 let validationDtos = toVDtos $ filterRepositoryValidations (RsyncU uri) $ state ^. typed
                 resolved <- forM validationDtos $ resolveOriginalDto tx db
 
-                case filterRepositoryMetrics (RsyncU uri) $ state ^. typed @RawMetric . #rsyncMetrics of
-                    Nothing      -> pure Nothing
-                    Just metrics -> pure $ Just $ RsyncRepositoryUIDto {
-                                        url = uri,
-                                        validations = resolved,
-                                        ..
-                                    }
+                pure $ fmap (\metrics -> RsyncRepositoryUIDto { validations = resolved, .. }) 
+                        $ filterRepositoryMetrics (RsyncU uri) $ state ^. typed @RawMetric . #rsyncMetrics
 
         pure $ rrdpRepos <> rsyncRepos            
   where
