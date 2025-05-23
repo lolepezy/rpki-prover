@@ -233,36 +233,30 @@ summary::-moz-list-bullet {
 
 /* Clickable table rows */
 .clickable-row {
+    border-bottom: 1px solid #dee2e6;
     cursor: pointer;
-    transition: background-color 0.2s ease;
+    transition: border-color 0.2s ease;
 }
 
 .clickable-row:hover {
-    background-color: #d8d8d8 !important; /* Slightly darker hover for clickable rows */
+    border-bottom-color: #007bff;
+    background-color: rgba(51, 51, 51, 0.139);
 }
 
-/* Detail rows */
+/* Detail rows with no border, creating visual separation */
 .detail-row {
-    transition: all 0.3s ease;
+    border: none !important;
+    background-color: #f8f9fa !important;
+}
+
+.detail-row td {
+    border: none !important;
 }
 
 .detail-content {
     padding: 0 !important;
     background-color: #f8f8f8;
     border-top: 2px solid #b0b0b0;
-}
-
-.detail-panel {
-    padding: 20px;
-    margin: 0;
-}
-
-.detail-panel h4 {
-    margin: 0 0 15px 0;
-    color: #333333;
-    font-size: 16px;
-    border-bottom: 1px solid #cccccc;
-    padding-bottom: 8px;
 }
 
 .detail-panel {

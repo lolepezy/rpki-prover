@@ -265,7 +265,7 @@ rrdpMetricsHtml rrdpMetrics =
             detailItem "Refresh interval:" (maybe "-" show $ m ^. #repository . #meta . #refreshInterval)
             detailItem "Last HTTP status:" (show $ m ^. #metrics . #lastHttpStatus)
             detailItem "Uses E-Tag:" $ 
-                case m ^? #repository . #eTag of 
+                case m ^. #repository . #eTag of 
                     Just _ -> "Yes" :: Text
                     _      -> "No"
 
