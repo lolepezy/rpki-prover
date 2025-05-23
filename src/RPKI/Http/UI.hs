@@ -13,7 +13,7 @@
 module RPKI.Http.UI where
 
 import           Control.Monad
-import           Control.Lens                ((^.))
+import           Control.Lens 
 
 import           Data.Ord
 import           Data.Text                   (Text)
@@ -28,6 +28,8 @@ import qualified Data.List.NonEmpty          as NonEmpty
 import qualified Data.List                   as List
 import           Data.Map.Monoidal.Strict    (getMonoidalMap)
 import qualified Data.Map.Monoidal.Strict    as MonoidalMap
+import           Data.Maybe                  (fromMaybe)
+import           Data.String                 (IsString)
 
 import           Data.String.Interpolate.IsString
 
@@ -49,11 +51,10 @@ import           RPKI.Version
 mainPage :: WorldVersion
         -> SystemInfo 
         -> ValidationsDto ResolvedVDto
-        -> [ResolvedVDto]
         -> [RepositoryUIDDto]
         -> RawMetric
         -> Html
-mainPage version systemInfo validation fetchValidation fetchDtos rawMetric =     
+mainPage version systemInfo validation fetchDtos rawMetric =     
     H.docTypeHtml $ do
         H.head $ do
             link ! rel "stylesheet" ! href "/static/styles.css"
@@ -87,9 +88,9 @@ mainPage version systemInfo validation fetchValidation fetchDtos rawMetric =
             H.section $ H.h3 "Rsync metrics"
             rsyncMetricsHtml [ d | RsyncUIDto d <- fetchDtos ]
 
-            H.a ! A.id "fetch-details" $ ""
-            H.section $ H.h3 "Fetch details"
-            validaionDetailsHtml fetchValidation
+            -- H.a ! A.id "fetch-details" $ ""
+            -- H.section $ H.h3 "Fetch details"
+            -- validaionDetailsHtml fetchValidation
 
 
 
@@ -245,50 +246,44 @@ rrdpMetricsHtml rrdpMetrics =
                     genTd $ toHtml $ m ^. #metrics . #downloadTimeMs                                
                     genTd $ toHtml $ m ^. #metrics . #totalTimeMs                    
 
-                detailRow index
+                detailRow m index
   where
-    detailRow :: Int -> H.Html
-    detailRow index = H.tr ! A.id (H.toValue $ "detail-row-" ++ show index)
+    detailRow :: RrdpRepositoryUIDto -> Int -> H.Html
+    detailRow m index = H.tr ! A.id (H.toValue $ "detail-row-" <> show index)
                         ! A.class_ "detail-row"
                         ! A.style "display: none;" $ do
-        H.td ! A.colspan "8"
-            ! A.class_ "gen-t detail-content" $ do
-            detailPanel
+        H.td ! A.colspan "8" ! A.class_ "gen-t detail-content" $ 
+            H.div ! A.class_ "detail-panel" $ do
+                H.h4 "Repository Details"
+                detailGrid
+      where    
+        detailGrid = H.div ! A.class_ "detail-grid" $ do
+            detailItem "Last Session ID:" (maybe "-" unSessionId $ m ^? #repository . #rrdpMeta . _Just . #sessionId)
+            detailItem "Serial Number:" (maybe "-" show $ m ^? #repository . #rrdpMeta . _Just . #serial)
+            detailItem "Refresh interval:" (maybe "-" show $ m ^. #repository . #meta . #refreshInterval)
+            -- detailItem "Repository Size:" "2.3 MB"
+            -- detailItem "Objects Count:" "143 certificates, 67 ROAs, 12 manifests"
+            -- detailItem "Error Rate:" "0.2% (last 24h)"
+            -- detailItem "Average Response Time:" "145ms"
+            -- detailItem "Update Frequency:" "Every 6 hours"
 
-    detailPanel :: H.Html
-    detailPanel = H.div ! A.class_ "detail-panel" $ do
-        H.h4 "Repository Details"
-        detailGrid
-        detailLogs
+        detailItem :: (ToMarkup a, IsString a) => a -> a -> H.Html
+        detailItem label value = H.div ! A.class_ "d-i" $ do
+            H.strong (H.toHtml label)
+            " "
+            H.toHtml value
 
-    detailGrid :: H.Html
-    detailGrid = H.div ! A.class_ "detail-grid" $ do
-        detailItem "Last Session ID:" "12345-abcde-67890"
-        detailItem "Serial Number:" "98765"
-        detailItem "Last Modified:" "2025-05-22 22:15:29 UTC"
-        detailItem "Repository Size:" "2.3 MB"
-        detailItem "Objects Count:" "143 certificates, 67 ROAs, 12 manifests"
-        detailItem "Error Rate:" "0.2% (last 24h)"
-        detailItem "Average Response Time:" "145ms"
-        detailItem "Update Frequency:" "Every 6 hours"
-
-    detailItem :: String -> String -> H.Html
-    detailItem label value = H.div ! A.class_ "d-i" $ do
-        H.strong (H.toHtml label)
-        " "
-        H.toHtml value
-
-    detailLogs :: H.Html
-    detailLogs = H.div ! A.class_ "detail-logs" $ do
-        H.h5 "Recent Activity Log"
-        H.pre $ H.toHtml logContent
-      where
-        logContent = unlines
-            [ "2025-05-22 22:15:29 - RRDP update check completed successfully"
-            , "2025-05-22 16:12:15 - Delta update applied (serial 98764 → 98765)"
-            , "2025-05-22 10:08:42 - Repository health check passed"
-            , "2025-05-22 04:05:18 - RRDP notification fetched (no changes)"
-            ]
+    -- detailLogs :: H.Html
+    -- detailLogs = H.div ! A.class_ "detail-logs" $ do
+    --     H.h5 "Recent Activity Log"
+    --     H.pre $ H.toHtml logContent
+    --   where
+    --     logContent = unlines
+    --         [ "2025-05-22 22:15:29 - RRDP update check completed successfully"
+    --         , "2025-05-22 16:12:15 - Delta update applied (serial 98764 → 98765)"
+    --         , "2025-05-22 10:08:42 - Repository health check passed"
+    --         , "2025-05-22 04:05:18 - RRDP notification fetched (no changes)"
+    --         ]
     
 rsyncMetricsHtml :: [RsyncRepositoryUIDto] -> Html
 rsyncMetricsHtml rsyncMetrics =
@@ -425,7 +420,8 @@ htmlRow index =
 
 htmlClickableRow :: Int -> Html -> Html
 htmlClickableRow index = 
-    tr ! A.class_ (evenRow <> "clickable-row") ! BlazeI.dataAttribute ("target" :: Tag) ([i|detail-row-#{index}|] :: AttributeValue)
+    tr ! A.class_ (evenRow <> "clickable-row") 
+       ! BlazeI.dataAttribute ("target" :: Tag) (H.toValue $ "detail-row-" <> show index)
   where
     evenRow = 
         case index `mod` 2 of 

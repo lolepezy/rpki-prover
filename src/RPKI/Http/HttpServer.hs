@@ -120,28 +120,23 @@ httpServer appContext tals = genericServe HttpApi {
             Just latestValidationVersion -> do                      
                 liftIO $ roTx db $ \tx -> do                    
                     ((validations, validationMetrics), outcomesMs) <- timedMS $ DB.getValidationOutcomes tx db latestValidationVersion
-                    (fetchVS, reposMe)                 <- timedMS $ mconcat . map snd <$> DB.getRepositories tx db
 
                     (resolvedValidations, resolveMs) <- timedMS $ resolveValidationDto tx db $
-                            validationsToDto latestValidationVersion validations
-
-                    (resolvedRepoVDtos, resolve2Ms) <- timedMS $ mapM (resolveOriginalDto tx db) $ toVDtos $ fetchVS ^. typed
+                            validationsToDto latestValidationVersion validations                    
 
                     (fetches, reposMe) <- timedMS $ DB.getRepositories tx db
                     fechesDtos <- toRepositoryUIDtos appContext fetches
 
                     systemInfo <- readTVarIO $ appContext ^. #appState . #system
                     (page, pageMs) <- timedMS $ pure $ mainPage latestValidationVersion systemInfo  
-                                        resolvedValidations
-                                        resolvedRepoVDtos
+                                        resolvedValidations                                        
                                         fechesDtos
-                                        (validationMetrics <> fetchVS ^. typed)
+                                        validationMetrics
 
-                    logDebug logger [i|Data timing: outcomesMs=#{outcomesMs}, reposMe=#{reposMe}, resolveMs=#{resolveMs}, resolve2Ms=#{resolve2Ms}, pageMs=#{pageMs}|]
+                    logDebug logger [i|Data timing: outcomesMs=#{outcomesMs}, reposMe=#{reposMe}, resolveMs=#{resolveMs}, pageMs=#{pageMs}|]
 
                     pure page      
         
-
 
 
 getVRPValidated :: (MonadIO m, Storage s, MonadError ServerError m)
