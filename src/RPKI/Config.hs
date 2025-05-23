@@ -1,10 +1,13 @@
-{-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DerivingVia       #-}
+{-# LANGUAGE DeriveAnyClass    #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE StrictData #-}
+{-# LANGUAGE StrictData        #-}
+{-# LANGUAGE OverloadedLabels  #-}
+{-# LANGUAGE RecordWildCards   #-}
 
 module RPKI.Config where
 
+import Control.Lens
 import GHC.Conc
 import Numeric.Natural
 import Data.Int
@@ -13,6 +16,7 @@ import Data.Word ( Word16 )
 
 import Data.Hourglass
 import Data.Maybe (fromMaybe)
+import Data.Generics.Product.Typed
 
 import RPKI.Domain
 import RPKI.Logging
@@ -306,3 +310,15 @@ defaultTalUrls = [
         ("ripe.tal", "https://tal.rpki.ripe.net/ripe-ncc.tal")
     ]        
     
+newFetchConfig :: Config -> FetchConfig
+newFetchConfig config = let 
+        rsyncConfig = config ^. typed @RsyncConf
+        rrdpConfig = config ^. typed @RrdpConf
+        rsyncTimeout = rsyncConfig ^. #rsyncTimeout
+        rrdpTimeout  = rrdpConfig ^. #rrdpTimeout        
+        fetchLaunchWaitDuration = Seconds 30         
+        cpuLimit = max (rrdpConfig ^. #cpuLimit) (rsyncConfig ^. #cpuLimit)        
+        minFetchInterval = Seconds 30
+        maxFetchInterval = Seconds 300
+        maxFailedBackoffInterval = Seconds $ 30 * 60
+    in FetchConfig {..}    

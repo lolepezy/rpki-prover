@@ -225,20 +225,22 @@ rrdpMetricsHtml rrdpMetrics =
             forM_ (zip slowestFirst [1 :: Int ..]) $ \(m, index) -> do 
                 htmlClickableRow index $ do 
                     let URI u_ = getURL $ m ^. #uri
-                        (statusHtml, dot) = 
+                        (statusHtml, dot, rrdpSource) = 
                             case m ^. #repository . #meta . #status of 
                                 Pending     -> 
-                                    ("Pending" :: Text, Nothing)
+                                    ("Pending" :: Text, Nothing, "-")
                                 FetchedAt t -> 
                                     ([i|Fetched at #{instantTimeFormat t}|], 
-                                    Just (H.span ! A.class_ "green-dot" $ ""))
+                                    Just (H.span ! A.class_ "green-dot" $ ""), 
+                                    toHtml (m ^. #metrics . #rrdpSource))
                                 FailedAt t  -> 
                                     ([i|Failed at #{instantTimeFormat t}|], 
-                                    Just (H.span ! A.class_ "red-dot" $ ""))
+                                    Just (H.span ! A.class_ "red-dot" $ ""),
+                                    "-")
 
                     genTd $ H.a ! A.href (textValue u_) $ H.text u_
                     td ! A.class_ "gen-t no-wrap" $ forM_ dot Prelude.id >> toHtml statusHtml                                                
-                    td ! A.class_ "gen-t no-wrap" $ toHtml $ m ^. #metrics . #rrdpSource                                                                    
+                    td ! A.class_ "gen-t no-wrap" $ rrdpSource
                     genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #added
                     genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #deleted
                     genTd $ toHtml $ m ^. #metrics . #downloadTimeMs                                
@@ -253,7 +255,6 @@ rrdpMetricsHtml rrdpMetrics =
 
         H.td ! A.colspan "8" ! A.class_ "gen-t detail-content" $ 
             H.div ! A.class_ "detail-panel" $ do
-                H.h4 "Repository Details"
                 detailGrid
                 unless (Prelude.null $ m ^. #validations) $ do 
                     issuesList m
@@ -263,6 +264,10 @@ rrdpMetricsHtml rrdpMetrics =
             detailItem "Serial Number:" (maybe "-" show $ m ^? #repository . #rrdpMeta . _Just . #serial)
             detailItem "Refresh interval:" (maybe "-" show $ m ^. #repository . #meta . #refreshInterval)
             detailItem "Last HTTP status:" (show $ m ^. #metrics . #lastHttpStatus)
+            detailItem "Uses E-Tag:" $ 
+                case m ^? #repository . #eTag of 
+                    Just _ -> "Yes" :: Text
+                    _      -> "No"
 
         issuesList m =             
             H.div ! A.class_ "d-i issues-container" $ do
@@ -270,18 +275,19 @@ rrdpMetricsHtml rrdpMetrics =
                 H.ul ! A.class_ "issues-list" $ do
                     forM_ (m ^. #validations) $ \(ResolvedVDto (FullVDto{..})) ->
                         forM_ issues $ \issue -> do
-                            let (dotClass, issueText) = case issue of
-                                    ErrorDto err -> ("red-dot", err)
-                                    WarningDto w -> ("yellow-dot", w)
-                            H.li ! A.class_ "issue-item error" $ do
+                            let (dotClass, issueText, itemClass) = case issue of
+                                    ErrorDto err -> ("red-dot", err, "error")
+                                    WarningDto w -> ("yellow-dot", w, "warning")
+                            H.li ! A.class_ ("issue-item " <> itemClass) $ do
                                 H.span ! A.class_ dotClass $ ""
                                 H.span ! A.class_ "issue-text" $ H.text issueText
             
         detailItem :: (ToMarkup a, IsString a) => a -> a -> H.Html
-        detailItem label value = H.div ! A.class_ "d-i" $ do
-            H.strong (H.toHtml label)
-            " "
-            H.toHtml value
+        detailItem label value = 
+            H.div ! A.class_ "d-i" $ do
+                H.strong (H.toHtml label)
+                space
+                H.span ! A.class_ "no-wrap" $ H.toHtml value
 
 rsyncMetricsHtml :: [RsyncRepositoryUIDto] -> Html
 rsyncMetricsHtml rsyncMetrics =

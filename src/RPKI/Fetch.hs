@@ -245,16 +245,4 @@ getFetchables pps ppAccess =
         | pp <- NonEmpty.toList $ unPublicationPointAccess ppAccess,                
           repo <- maybeToList $ repositoryFromPP pps pp ]
 
-                
-newFetchConfig :: Config -> FetchConfig
-newFetchConfig config = let 
-        rsyncConfig = config ^. typed @RsyncConf
-        rrdpConfig = config ^. typed @RrdpConf
-        rsyncTimeout = rsyncConfig ^. #rsyncTimeout
-        rrdpTimeout  = rrdpConfig ^. #rrdpTimeout        
-        fetchLaunchWaitDuration = Seconds 30         
-        cpuLimit = max (rrdpConfig ^. #cpuLimit) (rsyncConfig ^. #cpuLimit)        
-        minFetchInterval = Seconds 30
-        maxFetchInterval = Seconds 600
-        maxFailedBackoffInterval = Seconds $ 30 * 60
-    in FetchConfig {..}
+            

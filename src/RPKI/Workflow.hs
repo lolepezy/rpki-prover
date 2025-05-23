@@ -360,8 +360,13 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         increaseInterval (Seconds s) = trimInterval $ Seconds $ s + 1 + s `div` 10 + kindaRandomness
         decreaseInterval (Seconds s) = trimInterval $ Seconds $ s - s `div` 3 - 1 - kindaRandomness
 
+        minInterval = 
+            case repository of                
+                RrdpR (RrdpRepository { eTag = Just _ }) -> fetchConfig ^. #minFetchInterval
+                _                                        -> 2 * fetchConfig ^. #minFetchInterval
+
         trimInterval interval = 
-            max (fetchConfig ^. #minFetchInterval) 
+            max minInterval 
                 (min (fetchConfig ^. #maxFetchInterval) interval)  
 
         -- Pseudorandom stuff is added to spread repositories over time more of less 
@@ -370,7 +375,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         kindaRandomness = let 
             h :: Integer = fromIntegral $ Hashable.hash url
             w :: Integer = fromIntegral $ let (WorldVersion w_) = worldVersion in w_
-            r = (w + h) `mod` 10
+            r = (w + h) `mod` 20
             in fromIntegral r :: Int64            
 
 
