@@ -217,7 +217,6 @@ rrdpMetricsHtml rrdpMetrics =
                 H.span ! A.class_ "tooltiptext" $ rrdpUpdateTooltip            
             genTh $ H.text "Added objects"
             genTh $ H.text "Deleted objects"
-            genTh $ H.text "Last HTTP status"
             genTh $ H.text "Download time"
             genTh $ H.text "Total time"                    
 
@@ -242,7 +241,6 @@ rrdpMetricsHtml rrdpMetrics =
                     td ! A.class_ "gen-t no-wrap" $ toHtml $ m ^. #metrics . #rrdpSource                                                                    
                     genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #added
                     genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #deleted
-                    genTd $ toHtml $ m ^. #metrics . #lastHttpStatus
                     genTd $ toHtml $ m ^. #metrics . #downloadTimeMs                                
                     genTd $ toHtml $ m ^. #metrics . #totalTimeMs                    
 
@@ -264,6 +262,7 @@ rrdpMetricsHtml rrdpMetrics =
             detailItem "Last Session ID:" (maybe "-" unSessionId $ m ^? #repository . #rrdpMeta . _Just . #sessionId)
             detailItem "Serial Number:" (maybe "-" show $ m ^? #repository . #rrdpMeta . _Just . #serial)
             detailItem "Refresh interval:" (maybe "-" show $ m ^. #repository . #meta . #refreshInterval)
+            detailItem "Last HTTP status:" (show $ m ^. #metrics . #lastHttpStatus)
 
         issuesList m =             
             H.div ! A.class_ "d-i issues-container" $ do
