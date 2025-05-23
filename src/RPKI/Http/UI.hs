@@ -252,39 +252,38 @@ rrdpMetricsHtml rrdpMetrics =
     detailRow m index = H.tr ! A.id (H.toValue $ "detail-row-" <> show index)
                         ! A.class_ "detail-row"
                         ! A.style "display: none;" $ do
+
         H.td ! A.colspan "8" ! A.class_ "gen-t detail-content" $ 
             H.div ! A.class_ "detail-panel" $ do
                 H.h4 "Repository Details"
                 detailGrid
+                unless (Prelude.null $ m ^. #validations) $ do 
+                    issuesList m
       where    
         detailGrid = H.div ! A.class_ "detail-grid" $ do
             detailItem "Last Session ID:" (maybe "-" unSessionId $ m ^? #repository . #rrdpMeta . _Just . #sessionId)
             detailItem "Serial Number:" (maybe "-" show $ m ^? #repository . #rrdpMeta . _Just . #serial)
             detailItem "Refresh interval:" (maybe "-" show $ m ^. #repository . #meta . #refreshInterval)
-            -- detailItem "Repository Size:" "2.3 MB"
-            -- detailItem "Objects Count:" "143 certificates, 67 ROAs, 12 manifests"
-            -- detailItem "Error Rate:" "0.2% (last 24h)"
-            -- detailItem "Average Response Time:" "145ms"
-            -- detailItem "Update Frequency:" "Every 6 hours"
 
+        issuesList m =             
+            H.div ! A.class_ "d-i issues-container" $ do
+                H.strong "Issues:"
+                H.ul ! A.class_ "issues-list" $ do
+                    forM_ (m ^. #validations) $ \(ResolvedVDto (FullVDto{..})) ->
+                        forM_ issues $ \issue -> do
+                            let (dotClass, issueText) = case issue of
+                                    ErrorDto err -> ("red-dot", err)
+                                    WarningDto w -> ("yellow-dot", w)
+                            H.li ! A.class_ "issue-item error" $ do
+                                H.span ! A.class_ dotClass $ ""
+                                H.span ! A.class_ "issue-text" $ H.text issueText
+            
         detailItem :: (ToMarkup a, IsString a) => a -> a -> H.Html
         detailItem label value = H.div ! A.class_ "d-i" $ do
             H.strong (H.toHtml label)
             " "
             H.toHtml value
 
-    -- detailLogs :: H.Html
-    -- detailLogs = H.div ! A.class_ "detail-logs" $ do
-    --     H.h5 "Recent Activity Log"
-    --     H.pre $ H.toHtml logContent
-    --   where
-    --     logContent = unlines
-    --         [ "2025-05-22 22:15:29 - RRDP update check completed successfully"
-    --         , "2025-05-22 16:12:15 - Delta update applied (serial 98764 → 98765)"
-    --         , "2025-05-22 10:08:42 - Repository health check passed"
-    --         , "2025-05-22 04:05:18 - RRDP notification fetched (no changes)"
-    --         ]
-    
 rsyncMetricsHtml :: [RsyncRepositoryUIDto] -> Html
 rsyncMetricsHtml rsyncMetrics =
     H.table ! A.class_ "gen-t" $ do  

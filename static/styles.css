@@ -314,3 +314,55 @@ summary::-moz-list-bullet {
 /* .detail-row.even-row {
     background-color: #f8f8f8 !important;
 } */
+
+
+.issues-container {
+    grid-column: 1 / -1; /* Span full width if using CSS Grid */
+}
+
+.issues-list {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0 0 0;
+}
+
+.issue-item {
+    display: flex;
+    align-items: flex-start;
+    padding: 8px;
+    margin-bottom: 4px;
+    background-color: #f8f9fa;
+    border-left: 3px solid #dc3545;
+    border-radius: 4px;
+}
+
+.issue-item.error {
+    border-left-color: #dc3545;
+    background-color: #fdf2f2;
+}
+
+.issue-item .red-dot {
+    margin-right: 8px;
+    margin-top: 2px;
+    flex-shrink: 0;
+}
+
+.issue-text {
+    font-family: monospace;
+    font-size: 0.85em;
+    word-break: break-all;
+    line-height: 1.4;
+    white-space: pre-wrap;
+}
+
+.issues-section {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid #e9ecef;
+}
+
+.issues-section h5 {
+    margin: 0 0 12px 0;
+    font-size: 1em;
+    font-weight: 600;
+}
