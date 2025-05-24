@@ -480,14 +480,15 @@ getSystem AppContext {..} = do
     let proverVersion = rpkiProverVersion    
     
     let z = MonoidalMap.toList $ unMetricMap $ metrics ^. #resources
-    resources <- forM z $ \(scope, resourceUsage) -> do  
-                    let AggregatedCPUTime aggregatedCpuTime = resourceUsage ^. #aggregatedCpuTime
-                    let LatestCPUTime latestCpuTime = resourceUsage ^. #latestCpuTime
-                    let aggregatedClockTime = resourceUsage ^. #aggregatedClockTime
-                    let maxMemory = resourceUsage ^. #maxMemory
-                    let avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime startUpTime now
-                    tag <- fmtScope scope
-                    pure ResourcesDto {..}
+    resources <- 
+        forM z $ \(scope, resourceUsage) -> do  
+            let AggregatedCPUTime aggregatedCpuTime = resourceUsage ^. #aggregatedCpuTime
+            let LatestCPUTime latestCpuTime = resourceUsage ^. #latestCpuTime
+            let aggregatedClockTime = resourceUsage ^. #aggregatedClockTime
+            let maxMemory = resourceUsage ^. #maxMemory
+            let avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime (Earlier startUpTime) (Later now)
+            tag <- fmtScope scope
+            pure ResourcesDto {..}
     
     let wiToDto WorkerInfo {..} = let pid = fromIntegral workerPid in WorkerInfoDto {..}
 

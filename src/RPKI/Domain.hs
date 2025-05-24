@@ -31,9 +31,9 @@ import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Data.Hashable hiding (hash)
+import           Data.Semigroup
 
 import           Data.Bifunctor
-import           Data.Monoid
 import           Data.Monoid.Generic
 import           Data.Tuple.Strict
 
@@ -791,6 +791,16 @@ data VersionMeta = VersionMeta {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+
+newtype EarliestToExpire = EarliestToExpire Instant
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass (TheBinary)
+    deriving Semigroup via Min EarliestToExpire
+
+
+instance Monoid EarliestToExpire where
+    -- It is in the year 2128, far enough to set it as "later that anything else"
+    mempty = EarliestToExpire $ fromNanoseconds $ 1000_000_000 * 5_000_000_000
 
 -- Small utility functions that don't have anywhere else to go
 

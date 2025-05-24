@@ -116,13 +116,16 @@ fromNanoseconds totalNanos =
         elapsed = ElapsedP (Elapsed (Seconds seconds)) (NanoSeconds nanos)
         (seconds, nanos) = totalNanos `divMod` nanosPerSecond     
 
-closeEnoughMoments :: Instant -> Instant -> Seconds -> Bool
-closeEnoughMoments firstMoment secondMoment intervalSeconds = 
-    instantDiff secondMoment firstMoment < intervalSeconds
+closeEnoughMoments :: Earlier -> Later -> Seconds -> Bool
+closeEnoughMoments earlierInstant laterInstant intervalSeconds = 
+    instantDiff earlierInstant laterInstant < intervalSeconds
 
-instantDiff :: Instant -> Instant -> Seconds
-instantDiff (Instant firstMoment) (Instant secondMoment) = 
-    timeDiff firstMoment secondMoment 
+newtype Earlier = Earlier Instant
+newtype Later = Later Instant
+
+instantDiff :: Earlier -> Later -> Seconds
+instantDiff (Earlier (Instant earlierInstant)) (Later (Instant laterInstant)) = 
+    timeDiff laterInstant earlierInstant  
 
 momentAfter :: Instant -> Seconds -> Instant
 momentAfter (Instant moment) seconds = Instant $ timeAdd moment seconds
@@ -155,9 +158,9 @@ secondsToInt (Seconds s) = fromIntegral s
 toMicroseconds :: Seconds -> Int
 toMicroseconds (Seconds s) = fromIntegral $ 1_000_000 * s
 
-cpuTimePerSecond :: CPUTime -> Instant -> Instant -> Double
+cpuTimePerSecond :: CPUTime -> Earlier -> Later -> Double
 cpuTimePerSecond (CPUTime t) from to = let
-    Seconds duration = instantDiff to from
+    Seconds duration = instantDiff from to
     in (fromInteger t :: Double) / (fromIntegral duration :: Double)
 
 asCpuTime :: Seconds -> CPUTime 

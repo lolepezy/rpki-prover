@@ -145,7 +145,7 @@ newtype CompactionResult = CompactionResult ()
 
 data ValidationResult = ValidationResult 
             ValidationState 
-            (Map.Map TaName Fetcheables)
+            (Map.Map TaName (Fetcheables, EarliestToExpire))
             (Maybe Slurm) 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)

@@ -168,7 +168,7 @@ runRtrServer appContext RtrConfig {..} = do
                 -- https://datatracker.ietf.org/doc/html/rfc8210#section-8.2
                 -- "The cache MUST rate-limit Serial Notifies to no more frequently than one per minute."
                 -- 
-                let moreThanMinuteAgo lastTime = not $ closeEnoughMoments lastTime now (Seconds 60)
+                let moreThanMinuteAgo lastTime = not $ closeEnoughMoments (Earlier lastTime) (Later now) (Seconds 60)
                 sendNotify <- maybe True moreThanMinuteAgo <$> readTVar lastTimeNotified                 
 
                 when (sendNotify && thereAreRtrUpdates) $ do                    
