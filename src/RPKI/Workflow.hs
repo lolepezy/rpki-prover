@@ -140,7 +140,7 @@ dropFetcher Fetchers {..} url = mask_ $ do
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
 adjustFetchers :: Storage s => AppContext s -> Map TaName Fetcheables -> WorkflowShared -> IO ()
-adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@WorkflowShared { fetchers = Fetchers {..} } = do
+adjustFetchers appContext discoveredFetcheables workflowShared@WorkflowShared { fetchers = Fetchers {..} } = do
     (currentFetchers, toStop, toStart) <- atomically $ do            
 
         -- All the URLs that were discovered by the recent validations of all TAs
@@ -668,8 +668,9 @@ runWorkflow appContext@AppContext {..} tals = do
                     pure (mempty, mempty)
 
                 Right wr@WorkerResult {..} -> do                              
-                    let ValidationResult vs discoveredRepositories maybeSlurm = payload
-                    adjustFetchers appContext discoveredRepositories workflowShared
+                    let ValidationResult vs discovered maybeSlurm = payload
+                    adjustFetchers appContext (fmap fst discovered) workflowShared
+                    scheduleValidationOnExpiry appContext (fmap snd discovered) workflowShared
                     
                     logWorkerDone logger workerId wr
                     pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory
@@ -879,7 +880,7 @@ runValidation :: Storage s =>
             -> WorldVersion
             -> [TAL]
             -> [TaName]
-            -> IO (ValidationState, Map TaName Fetcheables, Maybe Slurm)
+            -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire), Maybe Slurm)
 runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames = do           
 
     results <- validateMutlipleTAs appContext worldVersion talsToValidate
@@ -913,7 +914,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deletedStr} oldest version(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, 
-        Map.map (\r -> r ^. #discoveredRepositories) results, 
+        Map.map (\r -> (r ^. #discoveredRepositories, r ^. #earliestNotValidAfter)) results, 
         maybeSlurm)
   where
     reReadSlurm =
@@ -956,6 +957,20 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
             fmap $ #topDownValidations . #topDownMetric . #validationMetrics 
                     %~ fmap (#validatedBy .~ ValidatedBy worldVersion)         
 
+
+scheduleValidationOnExpiry :: Storage s => AppContext s -> Map TaName EarliestToExpire -> WorkflowShared -> IO ()
+scheduleValidationOnExpiry AppContext {..} expirationTimes workflowShared@WorkflowShared {..} = do
+    Now start <- thisInstant
+    for_ (Map.toList expirationTimes) $ \(taName, expiration@(EarliestToExpire end)) -> do                
+        let timeToWait = instantDiff (Earlier start) (Later end)
+        let expiresSoonEnough = timeToWait < config ^. #validationConfig . #revalidationInterval
+        when (expiration /= mempty && expiresSoonEnough) $ do 
+            logDebug logger [i|The first object for #{taName} will expire at #{end}, will schedule re-validation right after.|]
+            void $ forkFinally 
+                    (do                
+                        threadDelay $ toMicroseconds timeToWait
+                        atomically $ modifyTVar' tasToValidate $ Set.insert taName)
+                    (const $ pure ())
 
 
 -- To be called from the cache cleanup worker
@@ -1077,7 +1092,7 @@ runConcurrentlyIfPossible logger (Task taskType action) Tasks {..} = do
 versionIsOld :: Instant -> Seconds -> WorldVersion -> Bool
 versionIsOld now period (WorldVersion nanos) =
     let validatedAt = fromNanoseconds nanos
-    in not $ closeEnoughMoments validatedAt now period
+    in not $ closeEnoughMoments (Earlier validatedAt) (Later now) period
 
 
 periodically :: Seconds -> a -> (a -> IO a) -> IO a

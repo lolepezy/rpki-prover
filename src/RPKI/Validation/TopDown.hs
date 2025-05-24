@@ -47,6 +47,7 @@ import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
+import           Data.Semigroup
 
 import           UnliftIO.Async                   (pooledForConcurrentlyN)
 
@@ -95,6 +96,7 @@ newPayloadBuilder = PayloadBuilder <$>
             newIORef mempty <*>
             newIORef mempty
     
+
 -- Auxiliarry structure used in top-down validation. It has a lot of global variables 
 -- but it's lifetime is limited to one top-down validation run.
 data TopDownContext = TopDownContext {
@@ -106,7 +108,8 @@ data TopDownContext = TopDownContext {
         interruptedByLimit      :: TVar Limited,
         payloadBuilder          :: PayloadBuilder,
         overclaimingHappened    :: Bool,
-        fetcheables             :: TVar Fetcheables
+        fetcheables             :: TVar Fetcheables,
+        earliestNotValidAfter   :: TVar EarliestToExpire
     }
     deriving stock (Generic)
 
@@ -155,14 +158,15 @@ data TopDownResult = TopDownResult {
         payloads               :: Payloads,
         roas                   :: Roas,
         topDownValidations     :: ValidationState,
-        discoveredRepositories :: Fetcheables
+        discoveredRepositories :: Fetcheables,
+        earliestNotValidAfter  :: EarliestToExpire
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving Semigroup via GenericSemigroup TopDownResult
     deriving Monoid    via GenericMonoid TopDownResult
 
 fromValidations :: ValidationState -> TopDownResult
-fromValidations vs = TopDownResult mempty mempty vs mempty
+fromValidations vs = TopDownResult mempty mempty vs mempty mempty
 
 newTopDownContext :: MonadIO m =>
                     TaName
@@ -179,6 +183,7 @@ newTopDownContext taName allTas =
             let startingRepositoryCount = repositoryCount $ allTas ^. #publicationPoints
             interruptedByLimit      <- newTVar CanProceed                 
             fetcheables             <- newTVar mempty                 
+            earliestNotValidAfter   <- newTVar mempty
             pure $! TopDownContext {..}
 
 newAllTasTopDownContext :: MonadIO m =>
@@ -190,8 +195,9 @@ newAllTasTopDownContext worldVersion publicationPoints shortcutQueue = liftIO $ 
     let now = Now $ versionToInstant worldVersion
     topDownCounters <- newTopDownCounters
     atomically $ do        
-        visitedKeys    <- newTVar mempty
+        visitedKeys    <- newTVar mempty 
         pure $! AllTasTopDownContext {..}
+
 
 newTopDownCounters :: IO (TopDownCounters IORef)
 newTopDownCounters = do 
@@ -252,7 +258,6 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
                 validateMutlipleTAs'
                 (storeShortcuts appContext)
                 (\_ -> pure ())
-
   where
     validateMutlipleTAs' queue = do 
         publicationPoints <- roTxT database DB.getPublicationPoints            
@@ -260,7 +265,6 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         validateThem allTas
             `finally` 
             applyValidationSideEffects appContext allTas
-
     
     validateThem allTas =
         fmap Map.fromList $ 
@@ -280,7 +284,7 @@ validateTA :: Storage s =>
 validateTA appContext@AppContext{..} tal worldVersion allTas = do
     let maxDuration = config ^. typed @ValidationConfig . #topDownTimeout
     topDownContext <- newTopDownContext taName allTas
-    (r, vs) <- runValidatorT taContext $
+    (r, topDownValidations) <- runValidatorT taContext $
             timeoutVT
                 maxDuration
                 (validateFromTAL topDownContext)
@@ -288,10 +292,16 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
                     logError logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
                     appError $ ValidationE $ ValidationTimeout maxDuration)    
 
-    newRepos <- readTVarIO $ topDownContext ^. #fetcheables
+    (discoveredRepositories, earliestNotValidAfter) <- 
+        atomically $ (,) <$>
+            readTVar (topDownContext ^. #fetcheables) <*>
+            readTVar (topDownContext ^. #earliestNotValidAfter)
+
+    logDebug logger [i|Earliest #{taName}, earliestNotValidAfter=#{earliestNotValidAfter}|]
+
     case r of
         Left _ -> 
-            pure $ fromValidations vs & #discoveredRepositories .~ newRepos
+            pure $ fromValidations topDownValidations & #discoveredRepositories .~ discoveredRepositories
         Right _ -> do     
             let builder = topDownContext ^. #payloadBuilder
             vrps     <- readIORef $ builder ^. #vrps 
@@ -306,9 +316,9 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
             let roas = Roas $ MonoidalMap.fromList $ 
                             map (\(T2 vrp k) -> (k, V.fromList vrp)) vrps 
 
-            let payloads = Payloads {..}        
+            let payloads = Payloads {..}                    
             
-            pure $ TopDownResult payloads roas vs newRepos
+            pure $ TopDownResult {..}
 
   where
     taName = getTaName tal
@@ -549,7 +559,8 @@ validateCaNoFetch
                 increment $ topDownCounters ^. #originalCa
                 markAsReadByHash appContext topDownContext (getHash c)                         
                 validateObjectLocations c
-                vHoist $ validateObjectValidityPeriod c now
+                (_, notValidAfter) <- vHoist $ validateObjectValidityPeriod c now
+                rememberNotValidAfter topDownContext notValidAfter
                 oneMoreCert
                 join $! nextAction $ toAKI $ getSKI c
         CaShort c -> 
@@ -557,7 +568,8 @@ validateCaNoFetch
                 increment $ topDownCounters ^. #shortcutCa 
                 markAsRead topDownContext (c ^. #key) 
                 validateLocationForShortcut (c ^. #key)
-                vHoist $ validateObjectValidityPeriod c now
+                (_, notValidAfter) <- vHoist $ validateObjectValidityPeriod c now
+                rememberNotValidAfter topDownContext notValidAfter
                 oneMoreCert
                 join $! nextAction $ toAKI (c ^. #ski)
   where    
@@ -1241,9 +1253,11 @@ validateCaNoFetch
 
         vFocusOn ObjectFocus (mftShortcut ^. #key) $ do
             validateLocationForShortcut (mftShortcut ^. #key)
-            vHoist $ validateObjectValidityPeriod mftShortcut now
-            vFocusOn ObjectFocus (mftShortcut ^. #crlShortcut . #key) $
-                vHoist $ validateObjectValidityPeriod (mftShortcut ^. #crlShortcut) now    
+            (_, notValidAfter) <- vHoist $ validateObjectValidityPeriod mftShortcut now
+            rememberNotValidAfter topDownContext notValidAfter
+            vFocusOn ObjectFocus (mftShortcut ^. #crlShortcut . #key) $ do                
+                (_, notValidAfterCrl) <- vHoist $ validateObjectValidityPeriod (mftShortcut ^. #crlShortcut) now
+                rememberNotValidAfter topDownContext notValidAfterCrl
 
             -- For children that are problematic we'll have to fall back 
             -- to full validation, for that we beed the parent CA and a valid CRL.
@@ -1341,23 +1355,22 @@ validateCaNoFetch
     
         validateShortcut :: (WithValidityPeriod s, HasField' "resources" s AllResources) => s -> ObjectKey -> ValidatorT IO ()
         validateShortcut r key = do
-            validateLocationForShortcut key
-            vHoist $ do                 
-                validateObjectValidityPeriod r now
-                case validationRFC of
-                    StrictRFC       -> pure ()
-                    ReconsideredRFC 
-                        | overclaimingHappened -> 
-                            void $ validateChildParentResources validationRFC 
-                                (r ^. #resources) parentCaResources verifiedResources
-                        | otherwise -> pure ()
+            validateLocationForShortcut key            
+            (_, notValidAfter) <- vHoist $ validateObjectValidityPeriod r now
+            rememberNotValidAfter topDownContext notValidAfter
+            vHoist $ case validationRFC of
+                StrictRFC       -> pure ()
+                ReconsideredRFC 
+                    | overclaimingHappened -> 
+                        void $ validateChildParentResources validationRFC 
+                            (r ^. #resources) parentCaResources verifiedResources
+                    | otherwise -> pure ()
             
 
 
     -- TODO This is pretty bad, it's easy to forget to do it
     rememberPayloads :: forall m a . MonadIO m => Getting (IORef a) PayloadBuilder (IORef a) -> (a -> a) -> m ()
     rememberPayloads lens_ f = do
-        pure ()
         let builder = topDownContext ^. #payloadBuilder . lens_        
         liftIO $! atomicModifyIORef' builder $ \b -> let !z = f b in (z, ())
 
@@ -1671,3 +1684,8 @@ bumpCounterBy :: (MonadIO m, Num a) =>
                 s -> Getting (IORef a) s (IORef a) -> a -> m ()
 bumpCounterBy counters counterLens n = liftIO $     
     atomicModifyIORef' (counters ^. counterLens) $ \c -> (c + n, ())        
+
+
+rememberNotValidAfter :: MonadIO m => TopDownContext -> Instant -> m ()
+rememberNotValidAfter TopDownContext {..} notValidAfter = 
+    liftIO $ atomically $ modifyTVar' earliestNotValidAfter (<> EarliestToExpire notValidAfter)
