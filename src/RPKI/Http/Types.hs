@@ -18,7 +18,6 @@ import qualified Data.ByteString.Base16      as Hex
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 import           Data.Text.Encoding          (encodeUtf8)
-import           Data.Generics.Product.Typed
 
 import           Data.Aeson.Types
 import           Data.Proxy

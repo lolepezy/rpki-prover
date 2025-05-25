@@ -19,7 +19,6 @@ import           Conduit
 import           Data.Text
 import qualified Data.ByteString.Lazy       as LBS
 import qualified Data.Map.Strict            as Map
-import qualified Data.Set                   as Set
 
 import           Data.String.Interpolate.IsString
 import           Data.Hourglass

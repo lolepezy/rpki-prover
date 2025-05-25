@@ -10,7 +10,6 @@ module RPKI.Fetch where
 
 
 import           Control.Lens
-import           Data.Generics.Product.Typed
 
 import           Control.Monad.Except
 
@@ -37,58 +36,6 @@ import           RPKI.Rsync
 import           RPKI.RRDP.Http
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
-
-
--- This type is way too long
-deriveNewMeta config fetchConfig repo validations rrdpStats 
-              duration@(TimeMs duratioMs) status fetchMoment = 
-    RepositoryMeta {..}
-  where    
-    lastFetchDuration = Just duration
-
-    refreshInterval = let 
-        -- For RRDP: 
-        --   * Increase refresh interval if we know that are no updates
-        --   * Decrease refresh interval if there are more that 1 delta in the update
-        --   * Keep the same if there's exacty one delta            
-        --   * Do not decrease further than 1 minute and don't increase for more than 10 minutes
-        -- 
-        -- For rsync keep refresh interval the same.
-        --   
-        vConfig = config ^. #validationConfig
-
-        defaultRefreshInterval = 
-            case repo of
-                RrdpR _  -> vConfig ^. #rrdpRepositoryRefreshInterval
-                RsyncR _ -> vConfig ^. #rsyncRepositoryRefreshInterval
-
-        trimInterval interval = 
-            max (vConfig ^. #minFetchInterval) 
-                (min (vConfig ^. #maxFetchInterval) interval)            
-
-        -- Extra seconds are to increase or decrese even very small values
-        -- Increase by ~10% each time, decrease by ~30%
-        increaseInterval (Seconds s) = Seconds $ s + 1 + s `div` 10        
-        decreaseInterval (Seconds s) = Seconds $ s - s `div` 3 - 1
-
-        moreThanOne = ( > 1) . length . NonEmpty.take 2
-
-        in Just $ 
-            case vConfig ^. #fetchIntervalCalculation of 
-                Constant -> defaultRefreshInterval
-                Adaptive -> 
-                    case getMeta repo ^. #refreshInterval of 
-                        Nothing -> defaultRefreshInterval
-                        Just ri -> 
-                            case rrdpStats of 
-                                Nothing                 -> defaultRefreshInterval
-                                Just RrdpFetchStat {..} -> 
-                                    case action of 
-                                        NothingToFetch _ -> trimInterval $ increaseInterval ri 
-                                        FetchDeltas {..} 
-                                            | moreThanOne sortedDeltas -> trimInterval $ decreaseInterval ri 
-                                            | otherwise                -> ri                                    
-                                        FetchSnapshot _ _ -> ri                      
 
 
 -- Fetch one individual repository. 
