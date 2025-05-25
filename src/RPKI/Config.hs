@@ -286,8 +286,8 @@ defaultRtrConfig = RtrConfig {
         rtrLogFile = Nothing
     }
     
-defaulPrefetchURLs :: [String]
-defaulPrefetchURLs = [
+defaultPrefetchURLs :: [String]
+defaultPrefetchURLs = [
         "rsync://rpki.afrinic.net/repository",
         "rsync://rpki.apnic.net/member_repository",
         "rsync://rpki-repo.registro.br/repo/",

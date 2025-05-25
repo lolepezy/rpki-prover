@@ -524,7 +524,7 @@ rsyncPrefetches :: CLIOptions Unwrapped -> ValidatorT IO [RsyncURL]
 rsyncPrefetches CLIOptions {..} = do
     let urlsToParse =
             case rsyncPrefetchUrl of
-                [] -> defaulPrefetchURLs
+                [] -> defaultPrefetchURLs
                 _  -> rsyncPrefetchUrl
 
     forM urlsToParse $ \u ->
