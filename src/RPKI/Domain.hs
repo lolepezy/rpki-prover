@@ -374,8 +374,8 @@ instance WithSKI (CMSBasedObject a) where
 instance WithRawResourceCertificate a => WithValidityPeriod a where
     getValidityPeriod cert = 
         bimap Instant Instant $ X509.certValidity 
-            $ cwsX509certificate $ getCertWithSignature $ getRawCert cert    
-            
+            $ cwsX509certificate $ getCertWithSignature $ getRawCert cert
+
 instance {-# OVERLAPPING #-} WithRawResourceCertificate a => WithSerial a where
     getSerial = Serial . X509.certSerial . cwsX509certificate . certX509 . getRawCert
 

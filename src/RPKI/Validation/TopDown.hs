@@ -47,7 +47,6 @@ import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
-import           Data.Semigroup
 
 import           UnliftIO.Async                   (pooledForConcurrentlyN)
 
@@ -716,6 +715,9 @@ validateCaNoFetch
             -- revocation as well, this is clearly an error                               
             validMft <- vHoist $ validateMft (config ^. #validationConfig . typed) 
                                     now mft fullCa validCrl verifiedResources
+            
+            rememberNotValidAfter topDownContext (snd $ getValidityPeriod mft)
+            rememberCrlNextUpdate topDownContext validCrl
 
             -- Validate entry list and filter out CRL itself
             nonCrlChildren <- validateMftEntries mft (getHash validCrl)
@@ -1558,6 +1560,10 @@ makeMftShortcut key
             notValidAfter = nextUpdateTime'
         }            
     in MftShortcut { .. }  
+
+rememberCrlNextUpdate :: MonadIO m => TopDownContext -> Validated CrlObject -> m ()
+rememberCrlNextUpdate topDownContext (Validated (CrlObject { signCrl = SignCRL {..}})) = liftIO $ 
+    for_ nextUpdateTime $ rememberNotValidAfter topDownContext
 
 -- Same as vFocusOn but it checks that there are no duplicates in the scope focuses, 
 -- i.e. we are not returning to the same object again. That would mean we have detected

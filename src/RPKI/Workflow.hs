@@ -964,7 +964,7 @@ scheduleValidationOnExpiry AppContext {..} expirationTimes workflowShared@Workfl
     for_ (Map.toList expirationTimes) $ \(taName, expiration@(EarliestToExpire end)) -> do                
         let timeToWait = instantDiff (Earlier start) (Later end)
         let expiresSoonEnough = timeToWait < config ^. #validationConfig . #revalidationInterval
-        when (expiration /= mempty && expiresSoonEnough) $ do 
+        when (start < end && expiration /= mempty && expiresSoonEnough) $ do 
             logDebug logger [i|The first object for #{taName} will expire at #{end}, will schedule re-validation right after.|]
             void $ forkFinally 
                     (do                
