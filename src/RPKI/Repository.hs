@@ -176,6 +176,9 @@ instance Monoid FetchStatus where
 instance Semigroup RrdpMap where
     RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2             
 
+getRsyncURL :: RsyncRepository -> RsyncURL
+getRsyncURL RsyncRepository { repoPP = RsyncPublicationPoint { uri = url } } = url
+
 getFetchStatus :: Repository -> FetchStatus
 getFetchStatus r = getMeta r ^. #status
 

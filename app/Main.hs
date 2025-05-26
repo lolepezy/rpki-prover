@@ -203,19 +203,19 @@ readTALs :: (Storage s, MaintainableStorage s) => AppContext s -> IO [TAL]
 readTALs AppContext {..} = do
     
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
-    -- worldVersion  <- newWorldVersion
 
     -- Check that TAL names are unique
-    let talSourcesDirs = (configValue $ config ^. #talDirectory) 
-                       : (configValue $ config ^. #extraTalsDirectories)
-    talNames <- fmap mconcat $ mapM listTalFiles talSourcesDirs    
+    let talSourcesDirs = configValue (config ^. #talDirectory) 
+                       : configValue (config ^. #extraTalsDirectories)
+    talNames <- mconcat <$> mapM listTalFiles talSourcesDirs
+    
     when (Set.size (Set.fromList talNames) < length talNames) $ do
         let message = [i|TAL names are not unique #{talNames}, |] <> 
                       [i|TAL are from directories #{talSourcesDirs}.|]
         logError logger message
         throwIO $ AppException $ TAL_E $ TALError message
 
-    (tals, vs) <- runValidatorT (newScopes "validation-root") $
+    (tals, _) <- runValidatorT (newScopes "validation-root") $
         forM talNames $ \(talFilePath, taName) ->
             vFocusOn TAFocus (convert taName) $
                 parseTalFromFile talFilePath (Text.pack taName)    

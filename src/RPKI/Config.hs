@@ -93,7 +93,8 @@ data RsyncConf = RsyncConf {
         rsyncTimeout      :: Seconds,
         cpuLimit          :: Seconds,
         enabled           :: Bool,
-        rsyncPrefetchUrls :: [RsyncURL]
+        rsyncPrefetchUrls :: [RsyncURL],
+        rsyncPerHostLimit :: Int
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -205,7 +206,7 @@ setCpuCount = setNumCapabilities . fromIntegral
 --
 -- TODO There should be distinction between network operations and file/LMDB IO.
 makeParallelism :: Natural -> Parallelism
-makeParallelism cpus = Parallelism cpus (2 * cpus) (3 * cpus)
+makeParallelism cpus = Parallelism cpus (2 * cpus) (2 * cpus)
 
 makeParallelismF :: Natural -> Natural -> Parallelism
 makeParallelismF cpus = Parallelism cpus (2 * cpus)
@@ -226,7 +227,8 @@ defaultConfig = Config {
         rsyncTimeout = 2 * 60,
         cpuLimit = 30 * 60,    
         enabled = True,
-        rsyncPrefetchUrls = []
+        rsyncPrefetchUrls = [],
+        rsyncPerHostLimit = 5
     },
     rrdpConf = RrdpConf {
         tmpRoot = Hidden "",

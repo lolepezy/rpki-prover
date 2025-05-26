@@ -64,9 +64,8 @@ mainPage version systemInfo validation fetchDtos rawMetric =
                 H.a ! A.href "#overall"            $ H.text "Overall"
                 H.a ! A.href "#validation-metrics" $ H.text "Validation metrics"
                 H.a ! A.href "#validation-details" $ H.text "Validation details"
-                H.a ! A.href "#rrdp-metrics"       $ H.text "RRDP metrics"
-                H.a ! A.href "#rsync-metrics"      $ H.text "Rsync metrics"                
-                H.a ! A.href "#fetch-details"      $ H.text "Fetch details"
+                H.a ! A.href "#rrdp-fetches"       $ H.text "RRDP fetches"
+                H.a ! A.href "#rsync-fetches"      $ H.text "Rsync fetches"                
 
         H.div ! A.class_ "main" $ do
             H.a ! A.id "overall" $ ""                 
@@ -80,18 +79,13 @@ mainPage version systemInfo validation fetchDtos rawMetric =
             H.section $ H.h3 "Validation details"
             validaionDetailsHtml $ validation ^. #validations            
 
-            H.a ! A.id "rrdp-metrics" $ ""
-            H.section $ H.h3 "RRDP metrics"
+            H.a ! A.id "rrdp-fetches" $ ""
+            H.section $ H.h3 "RRDP fetches"
             rrdpMetricsHtml [ d | RrdpUIDto d <- fetchDtos ]
 
-            H.a ! A.id "rsync-metrics" $ ""
-            H.section $ H.h3 "Rsync metrics"
+            H.a ! A.id "rsync-fetches" $ ""
+            H.section $ H.h3 "Rsync fetches"
             rsyncMetricsHtml [ d | RsyncUIDto d <- fetchDtos ]
-
-            -- H.a ! A.id "fetch-details" $ ""
-            -- H.section $ H.h3 "Fetch details"
-            -- validaionDetailsHtml fetchValidation
-
 
 
 overallHtml :: SystemInfo -> WorldVersion -> Html

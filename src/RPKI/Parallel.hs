@@ -15,6 +15,7 @@ import           Control.Monad
 import           Control.Monad.Reader
 import           Control.Monad.Trans.Control
 
+import           Data.Hourglass
 import           Data.Foldable (for_)
 
 import           Numeric.Natural
@@ -250,15 +251,15 @@ getSemaphoreState Semaphore {..} = (,) <$> readTVar current <*> readTVar highest
 
 -- Execute using a semaphore as a barrier, but if the sempahore 
 -- is not allowing execution, execute after a timeout anyway
-withSemaphoreOrTimeout :: Semaphore -> Int -> IO a -> IO a
-withSemaphoreOrTimeout Semaphore {..} timeoutMs f =     
+withSemaphoreOrTimeout :: Semaphore -> Seconds -> IO a -> IO a
+withSemaphoreOrTimeout Semaphore {..} timeout f =     
     bracket aquireSlot releaseSlot (const f)
   where  
     aquireSlot = 
         either (const True) (const False) <$> 
             race 
                 (atomically thereIsSpaceToRun)
-                (threadDelay timeoutMs)
+                (threadDelay $ let Seconds s = timeout in fromIntegral $ s * 1000_000)
 
     thereIsSpaceToRun = do 
         c <- readTVar current
