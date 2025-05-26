@@ -13,7 +13,7 @@
 module RPKI.Http.UI where
 
 import           Control.Monad
-import           Control.Lens 
+import           Control.Lens hiding (index) 
 
 import           Data.Ord
 import           Data.Text                   (Text)
@@ -24,11 +24,8 @@ import qualified Data.String.Interpolate.IsString as T
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 
-import qualified Data.List.NonEmpty          as NonEmpty
 import qualified Data.List                   as List
-import           Data.Map.Monoidal.Strict    (getMonoidalMap)
 import qualified Data.Map.Monoidal.Strict    as MonoidalMap
-import           Data.Maybe                  (fromMaybe)
 import           Data.String                 (IsString)
 
 import           Data.String.Interpolate.IsString
@@ -215,8 +212,8 @@ rrdpMetricsHtml rrdpMetrics =
             genTh $ H.text "Total time"                    
 
         H.tbody $ do 
-            let slowestFirst = List.sortOn (\m -> ordering $ m ^. #repository . #meta . #status) rrdpMetrics
-            forM_ (zip slowestFirst [1 :: Int ..]) $ \(m, index) -> do 
+            let recentFirst = List.sortOn (\m -> ordering $ m ^. #repository . #meta . #status) rrdpMetrics
+            forM_ (zip recentFirst [1 :: Int ..]) $ \(m, index) -> do 
                 htmlClickableRow index $ do 
                     let URI u_ = getURL $ m ^. #uri
                         (statusHtml, dot, rrdpSource) = 
@@ -233,7 +230,7 @@ rrdpMetricsHtml rrdpMetrics =
                                     "-")
 
                     genTd $ H.a ! A.href (textValue u_) $ H.text u_
-                    td ! A.class_ "gen-t no-wrap" $ forM_ dot Prelude.id >> toHtml statusHtml                                                
+                    td ! A.class_ "gen-t no-wrap" $ forM_ dot Prelude.id >> toHtml statusHtml
                     td ! A.class_ "gen-t no-wrap" $ rrdpSource
                     genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #added
                     genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #deleted
@@ -251,7 +248,7 @@ rrdpMetricsHtml rrdpMetrics =
             H.div ! A.class_ "detail-panel" $ do
                 detailGrid
                 unless (Prelude.null $ m ^. #validations) $ do 
-                    issuesList m
+                    issuesList
       where    
         detailGrid = H.div ! A.class_ "detail-grid" $ do
             detailItem "Last Session ID:" (maybe "-" unSessionId $ m ^? #repository . #rrdpMeta . _Just . #sessionId)
@@ -263,7 +260,7 @@ rrdpMetricsHtml rrdpMetrics =
                     Just _ -> "Yes" :: Text
                     _      -> "No"
 
-        issuesList m =             
+        issuesList =             
             H.div ! A.class_ "d-i issues-container" $ do
                 H.strong "Issues:"
                 H.ul ! A.class_ "issues-list" $ do
@@ -283,8 +280,9 @@ rrdpMetricsHtml rrdpMetrics =
                 space
                 H.span ! A.class_ "no-wrap" $ H.toHtml value
 
-rsyncMetricsHtml :: [RsyncRepositoryUIDto] -> Html
-rsyncMetricsHtml rsyncMetrics =
+
+rsyncMetricsHtml1 :: [RsyncRepositoryUIDto] -> Html
+rsyncMetricsHtml1 rsyncMetrics =
     H.table ! A.class_ "gen-t" $ do  
         H.thead $ tr $ do 
             genTh $ do 
@@ -303,6 +301,41 @@ rsyncMetricsHtml rsyncMetrics =
                     genTd ! A.class_ "no-wrap" $ toHtml $ m ^. #metrics . #fetchFreshness            
                     genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #processed            
                     genTd $ toHtml $ m ^. #metrics . #totalTimeMs         
+
+
+rsyncMetricsHtml :: [RsyncRepositoryUIDto] -> Html
+rsyncMetricsHtml rsyncMetrics =
+    H.table ! A.class_ "gen-t" $ do  
+        H.thead $ tr $ do 
+            genTh $ do 
+                H.text "Repository (" >> toHtml (length rsyncMetrics) >> H.text " in total)" 
+            genTh $ H.div ! A.class_ "tooltip" $ do
+                H.text "Updated at"
+                H.span ! A.class_ "tooltiptext" $ rsyncFetchTooltip            
+            genTh $ H.text "Processed objects"
+            genTh $ H.text "Total time"                    
+
+        H.tbody $ do 
+            let slowestFirst = List.sortOn (\m -> ordering $ m ^. #meta . #status) rsyncMetrics
+            forM_ (zip slowestFirst [1 :: Int ..]) $ \(m, index) -> do          
+                htmlClickableRow index $ do 
+                    let URI u_ = getURL $ m ^. #uri
+                        (statusHtml, dot) = 
+                            case m ^. #meta . #status of 
+                                Pending     -> 
+                                    ("Pending" :: Text, Nothing)
+                                FetchedAt t -> 
+                                    ([i|Fetched at #{instantTimeFormat t}|], 
+                                    Just (H.span ! A.class_ "green-dot" $ ""))
+                                FailedAt t  -> 
+                                    ([i|Failed at #{instantTimeFormat t}|], 
+                                    Just (H.span ! A.class_ "red-dot" $ ""))
+                
+                    genTd $ toHtml $ let URI u_ = getURL (m ^. #uri) in u_
+                    td ! A.class_ "gen-t no-wrap" $ forM_ dot Prelude.id >> toHtml statusHtml
+                    genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #processed            
+                    genTd $ toHtml $ m ^. #metrics . #totalTimeMs         
+
 
 ordering :: FetchStatus -> Down (Maybe (Instant, Int))
 ordering status = 
