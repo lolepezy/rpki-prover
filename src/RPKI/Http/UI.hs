@@ -19,14 +19,13 @@ import           Data.Ord
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 
-import qualified Data.String.Interpolate.IsString as T
-
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 
 import qualified Data.List                   as List
 import qualified Data.Map.Monoidal.Strict    as MonoidalMap
 import           Data.String                 (IsString)
+import           Data.Generics.Product.Fields
 
 import           Data.String.Interpolate.IsString
 
@@ -214,7 +213,7 @@ rrdpMetricsHtml rrdpMetrics =
         H.tbody $ do 
             let recentFirst = List.sortOn (\m -> ordering $ m ^. #repository . #meta . #status) rrdpMetrics
             forM_ (zip recentFirst [1 :: Int ..]) $ \(m, index) -> do 
-                htmlClickableRow index $ do 
+                htmlClickableRow index rrdpDetailRow $ do 
                     let URI u_ = getURL $ m ^. #uri
                         (statusHtml, dot, rrdpSource) = 
                             case m ^. #repository . #meta . #status of 
@@ -240,15 +239,15 @@ rrdpMetricsHtml rrdpMetrics =
                 detailRow m index
   where
     detailRow :: RrdpRepositoryUIDto -> Int -> H.Html
-    detailRow m index = H.tr ! A.id (H.toValue $ "detail-row-" <> show index)
+    detailRow m index = H.tr ! A.id (H.toValue $ rrdpDetailRow index)
                         ! A.class_ "detail-row"
                         ! A.style "display: none;" $ do
 
-        H.td ! A.colspan "8" ! A.class_ "gen-t detail-content" $ 
+        H.td ! A.colspan "7" ! A.class_ "gen-t detail-content" $ 
             H.div ! A.class_ "detail-panel" $ do
                 detailGrid
                 unless (Prelude.null $ m ^. #validations) $ do 
-                    issuesList
+                    issuesList m
       where    
         detailGrid = H.div ! A.class_ "detail-grid" $ do
             detailItem "Last Session ID:" (maybe "-" unSessionId $ m ^? #repository . #rrdpMeta . _Just . #sessionId)
@@ -259,49 +258,13 @@ rrdpMetricsHtml rrdpMetrics =
                 case m ^. #repository . #eTag of 
                     Just _ -> "Yes" :: Text
                     _      -> "No"
-
-        issuesList =             
-            H.div ! A.class_ "d-i issues-container" $ do
-                H.strong "Issues:"
-                H.ul ! A.class_ "issues-list" $ do
-                    forM_ (m ^. #validations) $ \(ResolvedVDto (FullVDto{..})) ->
-                        forM_ issues $ \issue -> do
-                            let (dotClass, issueText, itemClass) = case issue of
-                                    ErrorDto err -> ("red-dot", err, "error")
-                                    WarningDto w -> ("yellow-dot", w, "warning")
-                            H.li ! A.class_ ("issue-item " <> itemClass) $ do
-                                H.span ! A.class_ dotClass $ ""
-                                H.span ! A.class_ "issue-text" $ H.text issueText
             
         detailItem :: (ToMarkup a, IsString a) => a -> a -> H.Html
-        detailItem label value = 
+        detailItem label_ value_ = 
             H.div ! A.class_ "d-i" $ do
-                H.strong (H.toHtml label)
+                H.strong (H.toHtml label_)
                 space
-                H.span ! A.class_ "no-wrap" $ H.toHtml value
-
-
-rsyncMetricsHtml1 :: [RsyncRepositoryUIDto] -> Html
-rsyncMetricsHtml1 rsyncMetrics =
-    H.table ! A.class_ "gen-t" $ do  
-        H.thead $ tr $ do 
-            genTh $ do 
-                H.text "Repository (" >> toHtml (length rsyncMetrics) >> H.text " in total)" 
-            genTh $ H.div ! A.class_ "tooltip" $ do
-                H.text "Fetching"
-                H.span ! A.class_ "tooltiptext" $ rsyncFetchTooltip            
-            genTh $ H.text "Processed objects"
-            genTh $ H.text "Total time"                    
-
-        H.tbody $ do 
-            let slowestFirst = List.sortOn (\m -> ordering $ m ^. #meta . #status) rsyncMetrics
-            forM_ (zip slowestFirst [1 :: Int ..]) $ \(m, index) -> do                 
-                htmlRow index $ do
-                    genTd $ toHtml $ let URI u_ = getURL (m ^. #uri) in u_
-                    genTd ! A.class_ "no-wrap" $ toHtml $ m ^. #metrics . #fetchFreshness            
-                    genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #processed            
-                    genTd $ toHtml $ m ^. #metrics . #totalTimeMs         
-
+                H.span ! A.class_ "no-wrap" $ H.toHtml value_
 
 rsyncMetricsHtml :: [RsyncRepositoryUIDto] -> Html
 rsyncMetricsHtml rsyncMetrics =
@@ -318,9 +281,8 @@ rsyncMetricsHtml rsyncMetrics =
         H.tbody $ do 
             let slowestFirst = List.sortOn (\m -> ordering $ m ^. #meta . #status) rsyncMetrics
             forM_ (zip slowestFirst [1 :: Int ..]) $ \(m, index) -> do          
-                htmlClickableRow index $ do 
-                    let URI u_ = getURL $ m ^. #uri
-                        (statusHtml, dot) = 
+                htmlClickableRow index rsyncDetailRow $ do 
+                    let (statusHtml, dot) = 
                             case m ^. #meta . #status of 
                                 Pending     -> 
                                     ("Pending" :: Text, Nothing)
@@ -335,7 +297,34 @@ rsyncMetricsHtml rsyncMetrics =
                     td ! A.class_ "gen-t no-wrap" $ forM_ dot Prelude.id >> toHtml statusHtml
                     genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #processed            
                     genTd $ toHtml $ m ^. #metrics . #totalTimeMs         
+                
+                unless (Prelude.null $ m ^. #validations) $ 
+                    detailRow m index
+  where
+    detailRow :: RsyncRepositoryUIDto -> Int -> H.Html
+    detailRow m index = H.tr ! A.id (H.toValue $ rsyncDetailRow index)
+                        ! A.class_ "detail-row"
+                        ! A.style "display: none;" $ do
 
+        H.td ! A.colspan "4" ! A.class_ "gen-t detail-content" $ 
+            H.div ! A.class_ "detail-panel" 
+                  ! A.style "padding-top: 0px;" $                     
+                        issuesList m                        
+
+
+issuesList :: (Foldable t,  HasField' "validations" s (t ResolvedVDto)) => s -> Html
+issuesList m =             
+    H.div ! A.class_ "d-i issues-container" $ do
+        H.strong "Issues:"
+        H.ul ! A.class_ "issues-list" $ do
+            forM_ (m ^. #validations) $ \(ResolvedVDto (FullVDto{..})) ->
+                forM_ issues $ \issue -> do
+                    let (dotClass, issueText, itemClass) = case issue of
+                            ErrorDto err -> ("red-dot", err, "error")
+                            WarningDto w -> ("yellow-dot", w, "warning")
+                    H.li ! A.class_ ("issue-item " <> itemClass) $ do
+                        H.span ! A.class_ dotClass $ ""
+                        H.span ! A.class_ "issue-text" $ H.text issueText
 
 ordering :: FetchStatus -> Down (Maybe (Instant, Int))
 ordering status = 
@@ -397,11 +386,11 @@ primaryRepoTooltip =
             "to the RRDP repository even if it was downloaded from the rsync one because of the fall-back."
 
 fetchTooltip :: Text -> Text -> Html
-fetchTooltip repoType setting =               
+fetchTooltip repoType setting_ =               
     H.div ! A.style "text-align: left;" $ do 
         space >> space >> H.text "Used values" >> H.br
         H.ul $ do 
-            H.li $ H.text [T.i|'Up-to-date' - no fetch is needed, #{repoType} repository was fetched less than '#{setting}' seconds ago.|]
+            H.li $ H.text [i|'Up-to-date' - no fetch is needed, #{repoType} repository was fetched less than '#{setting_}' seconds ago.|]
             H.li $ H.text $ "'No updates' - there are not updates to fetch. In case of RRDP repository it " <> 
                             "means its serial didn't change since the last fetch, in case of rsync -- no new objects found after fetch."
             H.li $ H.text "'Updated' and 'Failed' are self-explanatory"
@@ -449,10 +438,16 @@ htmlRow index =
         0 -> tr ! A.class_ "even-row"
         _ -> tr 
 
-htmlClickableRow :: Int -> Html -> Html
-htmlClickableRow index = 
+rrdpDetailRow :: Int -> String
+rrdpDetailRow index = "detail-row-rrdp-" <> show index
+
+rsyncDetailRow :: Int -> String
+rsyncDetailRow index = "detail-row-rsync-" <> show index
+
+htmlClickableRow :: (Integral t, ToValue a) => t -> (t -> a) -> Html -> Html
+htmlClickableRow index dataTarget = 
     tr ! A.class_ (evenRow <> "clickable-row") 
-       ! BlazeI.dataAttribute ("target" :: Tag) (H.toValue $ "detail-row-" <> show index)
+       ! BlazeI.dataAttribute ("target" :: Tag) (H.toValue $ dataTarget index)
   where
     evenRow = 
         case index `mod` 2 of 
@@ -497,11 +492,11 @@ instance ToMarkup ValidatedBy where
 instance ToMarkup RrdpSource where 
     toMarkup = \case 
         RrdpNoUpdate -> toMarkup ("Up-to-date" :: Text)
-        RrdpDelta from to 
-            | from == to -> [T.i|Delta #{from}|]
-            | otherwise  -> [T.i|Deltas #{from} to #{to}|]                
+        RrdpDelta from_ to_ 
+            | from_ == to_ -> [i|Delta #{from_}|]
+            | otherwise    -> [i|Deltas #{from_} to #{to_}|]
         RrdpSnapshot serial -> let 
-            message :: Text = [T.i|Snapshot #{serial}|]
+            message :: Text = [i|Snapshot #{serial}|]
             in toMarkup message
         
 focusLink1 :: FocusResolvedDto -> Html
