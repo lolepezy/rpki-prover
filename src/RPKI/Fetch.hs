@@ -16,7 +16,6 @@ import           Control.Exception
 import           Control.Lens hiding (indices, Indexable)
 import           Control.Monad.Except
 
-import           Data.Generics.Product.Typed
 import qualified Data.List.NonEmpty          as NonEmpty
 
 import           Data.Data
@@ -28,7 +27,6 @@ import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import           Data.String.Interpolate.IsString
 import           Data.IxSet.Typed                (IxSet, Indexable, IsIndexOf, ixFun, ixList)
 import qualified Data.IxSet.Typed                as IxSet
-import qualified Data.Hashable                   as Hashable
 
 import           GHC.Generics
 
@@ -99,59 +97,6 @@ updateUriPerTa fetcheablesPerTa uriTa = uriTa'
                 (ta, Fetcheables fs) <- Map.toList fetcheablesPerTa,
                 url <- MonoidalMap.keys fs
             ] cleanedUpPerTa 
-
-
--- This type is way too long
-deriveNewMeta config fetchConfig repo validations rrdpStats 
-              duration@(TimeMs duratioMs) status fetchMoment = 
-    RepositoryMeta {..}
-  where    
-    lastFetchDuration = Just duration
-
-    refreshInterval = let 
-        -- For RRDP: 
-        --   * Increase refresh interval if we know that are no updates
-        --   * Decrease refresh interval if there are more that 1 delta in the update
-        --   * Keep the same if there's exacty one delta            
-        --   * Do not decrease further than 1 minute and don't increase for more than 10 minutes
-        -- 
-        -- For rsync keep refresh interval the same.
-        --   
-        vConfig = config ^. #validationConfig
-
-        defaultRefreshInterval = 
-            case repo of
-                RrdpR _  -> vConfig ^. #rrdpRepositoryRefreshInterval
-                RsyncR _ -> vConfig ^. #rsyncRepositoryRefreshInterval
-
-        trimInterval interval = 
-            max (vConfig ^. #minFetchInterval) 
-                (min (vConfig ^. #maxFetchInterval) interval)            
-
-        -- Extra seconds are to increase or decrese even very small values
-        -- Increase by ~10% each time, decrease by ~30%
-        increaseInterval (Seconds s) = Seconds $ s + 1 + s `div` 10        
-        decreaseInterval (Seconds s) = Seconds $ s - s `div` 3 - 1
-
-        moreThanOne = ( > 1) . length . NonEmpty.take 2
-
-        in Just $ 
-            case vConfig ^. #fetchIntervalCalculation of 
-                Constant -> defaultRefreshInterval
-                Adaptive -> 
-                    case getMeta repo ^. #refreshInterval of 
-                        Nothing -> defaultRefreshInterval
-                        Just ri -> 
-                            case rrdpStats of 
-                                Nothing                 -> defaultRefreshInterval
-                                Just RrdpFetchStat {..} -> 
-                                    case action of 
-                                        NothingToFetch _ -> trimInterval $ increaseInterval ri 
-                                        FetchDeltas {..} 
-                                            | moreThanOne sortedDeltas -> trimInterval $ decreaseInterval ri 
-                                            | otherwise                -> ri                                    
-                                        FetchSnapshot _ _ -> ri                      
-
 
 -- Fetch one individual repository. 
 -- 
@@ -280,26 +225,6 @@ getPrimaryRepository :: PublicationPointAccess -> PublicationPoint
 getPrimaryRepository ppAccess = 
     NonEmpty.head $ unPublicationPointAccess ppAccess    
 
-getFetchablePP :: PublicationPoints -> PublicationPoint -> PublicationPoint
-getFetchablePP pps = \case 
-    r@(RrdpPP _) -> r
-    r@(RsyncPP rpp@(RsyncPublicationPoint rsyncUrl)) -> 
-        case rsyncRepository (mergeRsyncPP rpp pps) rsyncUrl of 
-            Nothing   -> r
-            Just repo -> RsyncPP $ repo ^. #repoPP            
-
-getFetchableUrls :: PublicationPoints -> PublicationPointAccess -> [RpkiURL]
-getFetchableUrls pps ppAccess = 
-    [ getRpkiURL fetchablePP
-    | pp <- NonEmpty.toList $ unPublicationPointAccess ppAccess
-    , let fetchablePP = getFetchablePP pps pp
-    , isPendingRepository pps fetchablePP
-    ]
-  where
-    isPendingRepository publicationPoints pubPoint = 
-        case repositoryFromPP publicationPoints pubPoint of
-            Just repo -> getFetchStatus repo == Pending
-            Nothing   -> False
 
 getFetchables :: PublicationPoints -> PublicationPointAccess -> [(RpkiURL, FetchStatus)]
 getFetchables pps ppAccess = 
