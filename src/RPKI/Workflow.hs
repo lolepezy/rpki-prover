@@ -295,7 +295,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         currentInterval = 
             fromMaybe defaultInterval (getMeta repository ^. #refreshInterval)
 
-        exponentialBackoff (Seconds s) = min (Seconds $ s + s `div` 2 + 1) (fetchConfig ^. #maxFailedBackoffInterval)
+        exponentialBackoff (Seconds s) = min 
+            (Seconds $ s + s `div` 2 + 2 * kindaRandomness) 
+            (fetchConfig ^. #maxFailedBackoffInterval)
 
         moreThanOne = ( > 1) . length . NonEmpty.take 2
 
@@ -303,8 +305,8 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
             RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
 
-        increaseInterval (Seconds s) = trimInterval $ Seconds $ s + 1 + s `div` 10 + kindaRandomness
-        decreaseInterval (Seconds s) = trimInterval $ Seconds $ s - s `div` 3 - 1 - kindaRandomness
+        increaseInterval (Seconds s) = trimInterval $ Seconds $ s + s `div` 5 + kindaRandomness
+        decreaseInterval (Seconds s) = trimInterval $ Seconds $ s - s `div` 3 - kindaRandomness
 
         minInterval = 
             case repository of                
@@ -316,12 +318,12 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 (min (fetchConfig ^. #maxFetchInterval) interval)  
 
         -- Pseudorandom stuff is added to spread repositories over time more of less 
-        -- uniformly and avoid having peaks of activity. It's just something relatively 
-        -- random without IO
+        -- uniformly and avoid having peaks of activity. It's just something looking 
+        -- relatively random without IO
         kindaRandomness = let 
             h :: Integer = fromIntegral $ Hashable.hash url
-            w :: Integer = fromIntegral $ let (WorldVersion w_) = worldVersion in w_
-            r = (w `mod` 20 + h `mod` 20) `mod` 20 
+            w :: Integer = fromIntegral $ let (WorldVersion w_) = worldVersion in Hashable.hash w_
+            r = (w `mod` 83 + h `mod` 77) `mod` 20 
             in fromIntegral r :: Int64            
 
     saveFetchOutcome r validations =
