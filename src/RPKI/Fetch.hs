@@ -1,5 +1,6 @@
 {-# LANGUAGE DerivingVia        #-}
 {-# LANGUAGE FlexibleContexts   #-}
+{-# LANGUAGE FlexibleInstances  #-}
 {-# LANGUAGE OverloadedLabels   #-}
 {-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE QuasiQuotes        #-}
@@ -8,16 +9,28 @@
 
 module RPKI.Fetch where
 
-
-import           Control.Lens
-import           Data.Generics.Product.Typed
-
+import           Control.Concurrent              as Conc
+import           Control.Concurrent.Async
+import           Control.Concurrent.STM
+import           Control.Exception
+import           Control.Lens hiding (indices, Indexable)
 import           Control.Monad.Except
 
+import           Data.Generics.Product.Typed
 import qualified Data.List.NonEmpty          as NonEmpty
 
+import           Data.Data
+import           Data.Foldable                   (for_)
+import           Data.Maybe 
+import           Data.Map.Strict                 (Map)
+import qualified Data.Map.Strict                 as Map            
+import qualified Data.Map.Monoidal.Strict        as MonoidalMap     
 import           Data.String.Interpolate.IsString
-import           Data.Maybe                  
+import           Data.IxSet.Typed                (IxSet, Indexable, IsIndexOf, ixFun, ixList)
+import qualified Data.IxSet.Typed                as IxSet
+import qualified Data.Hashable                   as Hashable
+
+import           GHC.Generics
 
 import           Time.Types
 
@@ -32,11 +45,60 @@ import           RPKI.Repository
 import           RPKI.RRDP.Types
 import           RPKI.Store.Base.Storage
 import           RPKI.Time
+import           RPKI.Parallel
 import           RPKI.Util                       
 import           RPKI.Rsync
 import           RPKI.RRDP.Http
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
+
+
+data Fetchers = Fetchers {
+        -- Fetchers that are currently running
+        fetcheables             :: TVar Fetcheables,
+        runningFetchers         :: TVar (Map RpkiURL ThreadId),        
+        untrustedFetchSemaphore :: Semaphore,        
+        trustedFetchSemaphore   :: Semaphore,        
+        rsyncPerHostSemaphores  :: TVar (Map RsyncHost Semaphore),
+        uriByTa                 :: TVar UriTaIxSet
+    }
+    deriving stock (Generic)
+
+type UriTaIxSet = IxSet Indexes UrlTA
+
+data UrlTA = UrlTA RpkiURL TaName
+    deriving stock (Show, Eq, Ord, Generic, Data, Typeable)    
+
+type Indexes = '[RpkiURL, TaName]
+
+instance Indexable Indexes UrlTA where
+    indices = ixList
+        (ixFun (\(UrlTA url _) -> [url]))
+        (ixFun (\(UrlTA _ ta)  -> [ta]))        
+
+deleteByIx :: (Indexable ixs a, IsIndexOf ix ixs) => ix -> IxSet ixs a -> IxSet ixs a
+deleteByIx ix_ s = foldr IxSet.delete s $ IxSet.getEQ ix_ s
+
+dropFetcher :: Fetchers -> RpkiURL -> IO ()
+dropFetcher Fetchers {..} url = mask_ $ do
+    readTVarIO runningFetchers >>= \running -> do
+        for_ (Map.lookup url running) $ \thread -> do
+            Conc.throwTo thread AsyncCancelled
+            atomically $ do
+                modifyTVar' runningFetchers $ Map.delete url
+                modifyTVar' uriByTa $ deleteByIx url
+
+updateUriPerTa :: Map TaName Fetcheables -> UriTaIxSet -> UriTaIxSet
+updateUriPerTa fetcheablesPerTa uriTa = uriTa'
+  where 
+    -- TODO Optimise it
+    cleanedUpPerTa = foldr deleteByIx uriTa $ Map.keys fetcheablesPerTa        
+
+    uriTa' = 
+        IxSet.insertList [ UrlTA url ta | 
+                (ta, Fetcheables fs) <- Map.toList fetcheablesPerTa,
+                url <- MonoidalMap.keys fs
+            ] cleanedUpPerTa 
 
 
 -- This type is way too long

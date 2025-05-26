@@ -24,7 +24,6 @@ import           GHC.Generics
 
 import qualified Data.ByteString.Lazy            as LBS
 
-import           Data.Data
 import           Data.Foldable                   (for_)
 import qualified Data.Text                       as Text
 import qualified Data.List                       as List
@@ -39,7 +38,6 @@ import           Data.Maybe                      (fromMaybe)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
 import           Data.Time.Clock                 (NominalDiffTime, diffUTCTime, getCurrentTime)
-import           Data.IxSet.Typed                (IxSet, Indexable, IsIndexOf, ixFun, ixList)
 import qualified Data.IxSet.Typed                as IxSet
 import qualified Data.Hashable                   as Hashable
 
@@ -96,41 +94,6 @@ import           UnliftIO (pooledForConcurrentlyN)
     - 
 -}
 
-data Fetchers = Fetchers {
-        -- Fetchers that are currently running
-        fetcheables             :: TVar Fetcheables,
-        runningFetchers         :: TVar (Map RpkiURL ThreadId),        
-        untrustedFetchSemaphore :: Semaphore,        
-        trustedFetchSemaphore   :: Semaphore,        
-        rsyncPerHostSemaphores  :: TVar (Map RsyncHost Semaphore),
-        uriByTa                 :: TVar UriTaIxSet
-    }
-    deriving stock (Generic)
-
-type UriTaIxSet = IxSet Indexes UrlTA
-
-data UrlTA = UrlTA RpkiURL TaName
-    deriving stock (Show, Eq, Ord, Generic, Data, Typeable)    
-
-type Indexes = '[RpkiURL, TaName]
-
-instance Indexable Indexes UrlTA where
-    indices = ixList
-        (ixFun (\(UrlTA url _) -> [url]))
-        (ixFun (\(UrlTA _ ta)  -> [ta]))        
-
-deleteByIx :: (Indexable ixs a, IsIndexOf ix ixs) => ix -> IxSet ixs a -> IxSet ixs a
-deleteByIx ix_ s = foldr IxSet.delete s $ IxSet.getEQ ix_ s
-
-dropFetcher :: Fetchers -> RpkiURL -> IO ()
-dropFetcher Fetchers {..} url = mask_ $ do
-    readTVarIO runningFetchers >>= \running -> do
-        for_ (Map.lookup url running) $ \thread -> do
-            Conc.throwTo thread AsyncCancelled
-            atomically $ do
-                modifyTVar' runningFetchers $ Map.delete url
-                modifyTVar' uriByTa $ deleteByIx url
-
 -- | Adjust running fetchers to the latest discovered repositories
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
@@ -174,18 +137,6 @@ adjustFetchers appContext discoveredFetcheables workflowShared@WorkflowShared { 
                 let addedNewAsyncs = foldr (uncurry Map.insert) r threads
                 foldr Map.delete addedNewAsyncs $ Set.toList toStop
                         
-
-updateUriPerTa :: Map TaName Fetcheables -> UriTaIxSet -> UriTaIxSet
-updateUriPerTa fetcheablesPerTa uriTa = uriTa'
-  where 
-    -- TODO Optimise it
-    cleanedUpPerTa = foldr deleteByIx uriTa $ Map.keys fetcheablesPerTa        
-
-    uriTa' = 
-        IxSet.insertList [ UrlTA url ta | 
-                (ta, Fetcheables fs) <- Map.toList fetcheablesPerTa,
-                url <- MonoidalMap.keys fs
-            ] cleanedUpPerTa 
     
 
 newFetcher :: Storage s => AppContext s -> WorkflowShared -> RpkiURL -> IO ()
