@@ -48,7 +48,6 @@ import           RPKI.SLURM.Types
 import           RPKI.Store.Base.Serialisation
 import qualified RPKI.Store.Database    as DB
 import           RPKI.UniqueId
-import Data.Map.Monoidal (MonoidalMap)
 
 
 {- | This is to run worker processes for some code that is better to be executed in an isolated process.

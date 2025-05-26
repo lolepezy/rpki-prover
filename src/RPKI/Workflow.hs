@@ -1,5 +1,6 @@
 {-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE DeriveAnyClass       #-}
+{-# LANGUAGE StrictData           #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE OverloadedLabels     #-}
 {-# LANGUAGE QuasiQuotes          #-}
@@ -23,7 +24,6 @@ import           GHC.Generics
 
 import qualified Data.ByteString.Lazy            as LBS
 
-import           Data.Data
 import           Data.Foldable                   (for_)
 import qualified Data.Text                       as Text
 import qualified Data.List                       as List
@@ -38,7 +38,6 @@ import           Data.Maybe                      (fromMaybe)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
 import           Data.Time.Clock                 (NominalDiffTime, diffUTCTime, getCurrentTime)
-import           Data.IxSet.Typed                (IxSet, Indexable, IsIndexOf, ixFun, ixList)
 import qualified Data.IxSet.Typed                as IxSet
 import qualified Data.Hashable                   as Hashable
 
@@ -92,49 +91,8 @@ import           UnliftIO (pooledForConcurrentlyN)
     
     - Fetches must always happen atomically, including snapshot fetches
 
-    - This architecture assumes that we can get into a situation with a running 
-      fetcher at any given moment. Therefore we need a locking mechanism that would allow 
-        * maintenance jobs (cleanup, compaction) to be able to block launches 
-          of new fetchers and run exclusively
-        * validations to be blocked only by running maintenance jobs, 
-          but not by waiting maintenance jobs
-        * temp/tx cleanups to be able blocked only by maintenance jobs
-
     - 
 -}
-
-data Fetchers = Fetchers {
-        -- Fetchers that are currently running
-        fetcheables     :: TVar Fetcheables,
-        runningFetchers :: TVar (Map RpkiURL ThreadId),        
-        fetchSemaphore  :: Semaphore,
-        uriByTa         :: TVar UriTaIxSet
-    }
-    deriving stock (Generic)
-
-type UriTaIxSet = IxSet Indexes UrlTA
-
-data UrlTA = UrlTA RpkiURL TaName
-    deriving stock (Show, Eq, Ord, Generic, Data, Typeable)    
-
-type Indexes = '[RpkiURL, TaName]
-
-instance Indexable Indexes UrlTA where
-    indices = ixList
-        (ixFun (\(UrlTA url _) -> [url]))
-        (ixFun (\(UrlTA _ ta)  -> [ta]))        
-
-deleteByIx :: (Indexable ixs a, IsIndexOf ix ixs) => ix -> IxSet ixs a -> IxSet ixs a
-deleteByIx ix_ s = foldr IxSet.delete s $ IxSet.getEQ ix_ s
-
-dropFetcher :: Fetchers -> RpkiURL -> IO ()
-dropFetcher Fetchers {..} url = mask_ $ do
-    readTVarIO runningFetchers >>= \running -> do
-        for_ (Map.lookup url running) $ \thread -> do
-            Conc.throwTo thread AsyncCancelled
-            atomically $ do
-                modifyTVar' runningFetchers $ Map.delete url
-                modifyTVar' uriByTa $ deleteByIx url
 
 -- | Adjust running fetchers to the latest discovered repositories
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
@@ -179,18 +137,6 @@ adjustFetchers appContext discoveredFetcheables workflowShared@WorkflowShared { 
                 let addedNewAsyncs = foldr (uncurry Map.insert) r threads
                 foldr Map.delete addedNewAsyncs $ Set.toList toStop
                         
-
-updateUriPerTa :: Map TaName Fetcheables -> UriTaIxSet -> UriTaIxSet
-updateUriPerTa fetcheablesPerTa uriTa = uriTa'
-  where 
-    -- TODO Optimise it
-    cleanedUpPerTa = foldr deleteByIx uriTa $ Map.keys fetcheablesPerTa        
-
-    uriTa' = 
-        IxSet.insertList [ UrlTA url ta | 
-                (ta, Fetcheables fs) <- Map.toList fetcheablesPerTa,
-                url <- MonoidalMap.keys fs
-            ] cleanedUpPerTa 
     
 
 newFetcher :: Storage s => AppContext s -> WorkflowShared -> RpkiURL -> IO ()
@@ -256,7 +202,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 -- TODO Do not fetch before some minimal period after the previous fetch
 
                 ((r, validations), duratioMs) <-                 
-                        withFetchLimits fetchConfig $ timedMS $ 
+                        withFetchLimits fetchConfig repository $ timedMS $ 
                             runValidatorT (newScopes' RepositoryFocus url) $ 
                                 fetchRepository appContext fetchConfig worldVersion repository
 
@@ -296,7 +242,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                 roTxT database (\tx db -> DB.getRepository tx db fallbackUrl)
                                 
                 ((r, validations), duratioMs) <- 
-                        withFetchLimits fetchConfig $ timedMS $ 
+                        withFetchLimits fetchConfig repository $ timedMS $ 
                             runValidatorT (newScopes' RepositoryFocus fallbackUrl) $ 
                                 fetchRepository appContext fetchConfig worldVersion repository                
 
@@ -322,10 +268,10 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         Fetcheables fs <- readTVarIO fetcheables
         pure $ MonoidalMap.lookup url fs
 
-    updateRepository fetchConfig repo worldVersion newStatus stats = (updateRepository, interval)
+    updateRepository fetchConfig repo worldVersion newStatus stats = (updated, interval)
       where
         interval = refreshInterval fetchConfig repo worldVersion newStatus stats
-        updateRepository = updateMeta' repo 
+        updated = updateMeta' repo 
             (\meta -> meta 
                 & #status .~ newStatus 
                 & #refreshInterval ?~ interval)
@@ -375,18 +321,48 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         kindaRandomness = let 
             h :: Integer = fromIntegral $ Hashable.hash url
             w :: Integer = fromIntegral $ let (WorldVersion w_) = worldVersion in w_
-            r = (w + h) `mod` 20
+            r = (w `mod` 20 + h `mod` 20) `mod` 20 
             in fromIntegral r :: Int64            
-
 
     saveFetchOutcome r validations =
         rwTxT database $ \tx db -> do
             DB.saveRepositories tx db [r]
             DB.saveRepositoryValidationStates tx db [(r, validations)]
 
-    withFetchLimits fetchConfig f = do
-        let Seconds (fromIntegral . (*1000_000) -> intervalMicroSeconds) = fetchConfig ^. #fetchLaunchWaitDuration
-        withSemaphoreOrTimeout (fetchers ^. #fetchSemaphore) intervalMicroSeconds f
+    withFetchLimits fetchConfig repository f = do
+        case repository of 
+            RrdpR _                   -> rrdpFetch
+            RsyncR (getRsyncURL -> r) -> rsyncFetch r
+      where
+        timeToWait = fetchConfig ^. #fetchLaunchWaitDuration
+
+        semaphoreToUse = 
+            case getMeta repository ^. #status of  
+                -- TODO Add logic "if succeeded more than N times"
+                FetchedAt _ -> fetchers ^. #trustedFetchSemaphore
+                _           -> fetchers ^. #untrustedFetchSemaphore
+
+        rrdpFetch = withSemaphoreOrTimeout semaphoreToUse timeToWait f
+
+        rsyncFetch (RsyncURL host _) = 
+            withPerRsyncHostSemapahore $                 
+                withSemaphoreOrTimeout semaphoreToUse timeToWait f
+          where
+            -- Some hosts limit the number of connections, so we need to limit
+            -- the number of concurrent rsync fetches per host.
+            withPerRsyncHostSemapahore f = do 
+                s <- atomically $ do     
+                    rsyncS <- readTVar rsyncPerHostSemaphores
+                    case Map.lookup host rsyncS of 
+                        Nothing -> do 
+                            s <- newSemaphore $ config ^. #rsyncConf . #rsyncPerHostLimit
+                            writeTVar rsyncPerHostSemaphores $ Map.insert host s rsyncS
+                            pure s
+                        Just s -> 
+                            pure s
+
+                withSemaphore s f
+
 
     hasUpdates validations = let 
             metrics = validations ^. #topDownMetric
@@ -438,11 +414,14 @@ withWorkflowShared AppContext {..} prometheusMetrics f = do
     shared <- liftIO $ atomically $ do 
         deletedAnythingFromDb <- newTVar False
         runningTasks          <- newRunningTasks
-        fetchers <- Fetchers <$>
-                        newTVar mempty <*>
-                        newTVar mempty <*>                        
-                        newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism) <*>
-                        newTVar mempty
+        fetchers <- do 
+                fetcheables     <- newTVar mempty
+                runningFetchers <- newTVar mempty
+                uriByTa         <- newTVar mempty
+                untrustedFetchSemaphore <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)
+                trustedFetchSemaphore   <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)                            
+                rsyncPerHostSemaphores  <- newTVar mempty
+                pure $ Fetchers {..}                        
 
         tasToValidate <- newTVar mempty
         pure WorkflowShared {..}
@@ -451,6 +430,7 @@ withWorkflowShared AppContext {..} prometheusMetrics f = do
         liftIO (mask_ $ do
             fs <- atomically $ Map.elems <$> readTVar (shared ^. #fetchers . #runningFetchers)
             for_ fs $ \thread -> Conc.throwTo thread AsyncCancelled)
+
 
 -- Different types of periodic tasks that may run 
 data TaskType =
@@ -892,7 +872,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     ((deleted, updatedValidation), elapsed) <- timedMS $ rwTxT database $ \tx db -> do              
                             
         let results' = addTimingPerTA results
-        updatedValidation <- addUniqueVrpCountsToMetrics tx db worldVersion results' slurmValidations                
+        updatedValidation <- addUniqueVrpCountsToMetrics tx db results' slurmValidations                
 
         let resultsToSave = toPerTA 
                 $ map (\(ta, r) -> (ta, (r ^. typed, r ^. typed))) 
@@ -930,7 +910,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                     Right slurm ->
                         pure (vs, Just slurm)     
     
-    addUniqueVrpCountsToMetrics tx db worldVersion results slurmValidations = do 
+    addUniqueVrpCountsToMetrics tx db results slurmValidations = do 
 
         previousVersion <- DB.previousVersion tx db worldVersion        
 

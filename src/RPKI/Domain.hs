@@ -199,8 +199,11 @@ newtype AKI  = AKI { unAKI :: KI }
     deriving anyclass (TheBinary, NFData)
 
 newtype SessionId = SessionId { unSessionId :: Text }
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
+
+instance Show SessionId where
+    show (SessionId s) = show s
 
 newtype Serial = Serial Integer     
     deriving stock (Eq, Ord, Generic)

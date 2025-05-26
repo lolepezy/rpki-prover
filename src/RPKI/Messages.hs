@@ -50,7 +50,7 @@ toMessage = \case
 toRsyncMessage :: RsyncError -> Text
 toRsyncMessage = \case 
     RsyncProcessError errorCode e ->
-        [i|Rsync client returned code #{errorCode}, error = #{e}.|]
+        [i|Rsync client returned code #{errorCode}, error = #{e}|]
 
     FileReadError e                -> [i|Can't read local file created by rsync client #{e}.|]
     RsyncRunningError e            -> [i|Error running rsync client #{e}.|]
@@ -67,7 +67,7 @@ toRrdpMessage = \case
     NoSerial       -> [i|Serial number is not set.|]
     NoSnapshotHash -> [i|Snapshot hash is not set.|]
     NoSnapshotURI  -> [i|Snapshot URL is not set.|]
-
+    
     BrokenSnapshotUri u -> 
         [i|Snapshot URL in notification url is malformed #{u}.|]
 
