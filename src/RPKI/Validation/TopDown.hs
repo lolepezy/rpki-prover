@@ -1564,10 +1564,6 @@ makeMftShortcut key
         }            
     in MftShortcut { .. }  
 
-rememberCrlNextUpdate :: MonadIO m => TopDownContext -> Validated CrlObject -> m ()
-rememberCrlNextUpdate topDownContext (Validated (CrlObject { signCrl = SignCRL {..}})) = liftIO $ 
-    for_ nextUpdateTime $ rememberNotValidAfter topDownContext
-
 -- Same as vFocusOn but it checks that there are no duplicates in the scope focuses, 
 -- i.e. we are not returning to the same object again. That would mean we have detected
 -- a loop in references.
@@ -1698,3 +1694,7 @@ bumpCounterBy counters counterLens n = liftIO $
 rememberNotValidAfter :: MonadIO m => TopDownContext -> Instant -> m ()
 rememberNotValidAfter TopDownContext {..} notValidAfter = 
     liftIO $ atomically $ modifyTVar' earliestNotValidAfter (<> EarliestToExpire notValidAfter)
+
+rememberCrlNextUpdate :: MonadIO m => TopDownContext -> Validated CrlObject -> m ()
+rememberCrlNextUpdate topDownContext (Validated (CrlObject { signCrl = SignCRL {..}})) = liftIO $ 
+    for_ nextUpdateTime $ rememberNotValidAfter topDownContext    
