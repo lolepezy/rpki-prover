@@ -402,7 +402,10 @@ data WorkflowShared = WorkflowShared {
 
         -- TAs that need to be revalidated because repositories 
         -- associated with these TAs have been fetched.
-        tasToValidate :: TVar (Set TaName)
+        tasToValidate :: TVar (Set TaName),
+
+        -- Earliest expiration time for any object for a TA
+        earliestToExpire :: TVar (Map TaName EarliestToExpire)
     }
     deriving stock (Generic)
 
@@ -426,6 +429,7 @@ withWorkflowShared AppContext {..} prometheusMetrics f = do
                 pure $ Fetchers {..}                        
 
         tasToValidate <- newTVar mempty
+        earliestToExpire <- newTVar mempty
         pure WorkflowShared {..}
 
     f shared `finally`
@@ -652,7 +656,7 @@ runWorkflow appContext@AppContext {..} tals = do
                 Right wr@WorkerResult {..} -> do                              
                     let ValidationResult vs discovered maybeSlurm = payload
                     adjustFetchers appContext (fmap fst discovered) workflowShared
-                    scheduleValidationOnExpiry appContext (fmap snd discovered) workflowShared
+                    scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
                     
                     logWorkerDone logger workerId wr
                     pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory
@@ -940,9 +944,14 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                     %~ fmap (#validatedBy .~ ValidatedBy worldVersion)         
 
 
-scheduleValidationOnExpiry :: Storage s => AppContext s -> Map TaName EarliestToExpire -> WorkflowShared -> IO ()
-scheduleValidationOnExpiry AppContext {..} expirationTimes workflowShared@WorkflowShared {..} = do
+scheduleRevalidationOnExpiry :: Storage s => AppContext s -> Map TaName EarliestToExpire -> WorkflowShared -> IO ()
+scheduleRevalidationOnExpiry AppContext {..} expirationTimes workflowShared@WorkflowShared {..} = do
     Now start <- thisInstant
+
+    atomically $ do 
+        for_ (Map.toList expirationTimes) $ \(taName, expiration) -> 
+            modifyTVar' earliestToExpire $ Map.insert taName expiration
+
     for_ (Map.toList expirationTimes) $ \(taName, expiration@(EarliestToExpire end)) -> do                
         let timeToWait = instantDiff (Earlier start) (Later end)
         let expiresSoonEnough = timeToWait < config ^. #validationConfig . #revalidationInterval
@@ -951,7 +960,17 @@ scheduleValidationOnExpiry AppContext {..} expirationTimes workflowShared@Workfl
             void $ forkFinally 
                     (do                
                         threadDelay $ toMicroseconds timeToWait
-                        atomically $ modifyTVar' tasToValidate $ Set.insert taName)
+                        let triggerRevalidation = atomically $ modifyTVar' tasToValidate $ Set.insert taName
+                        join $ atomically $ do 
+                            e <- readTVar earliestToExpire
+                            pure $ case Map.lookup taName e of 
+                                Just t 
+                                    -- expirattion time changed since the trigger was 
+                                    -- scheduled, so don't do anything
+                                    | t > expiration -> pure ()
+                                    | otherwise      -> triggerRevalidation
+                                Nothing              -> triggerRevalidation
+                    )                        
                     (const $ pure ())
 
 
