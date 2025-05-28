@@ -967,7 +967,9 @@ scheduleRevalidationOnExpiry AppContext {..} expirationTimes workflowShared@Work
                                 Just t 
                                     -- expirattion time changed since the trigger was 
                                     -- scheduled, so don't do anything
-                                    | t > expiration -> pure ()
+                                    | t > expiration -> do 
+                                        logDebug logger [i|Will cancel the re-validation for #{taName} scheduled after expiration at #{end}, new expiration time is #{t}.|]
+                                        pure ()
                                     | otherwise      -> triggerRevalidation
                                 Nothing              -> triggerRevalidation
                     )                        
