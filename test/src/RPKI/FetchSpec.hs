@@ -42,7 +42,7 @@ ta2 = "TA2"
 ta3 = "TA3"
 
 workflowSpec :: TestTree
-workflowSpec = testGroup "Workflow" [ 
+workflowSpec = testGroup "Fetching" [ 
 
     HU.testCase "Adds entries to empty IxSet" $
         updateUriPerTa 

@@ -189,17 +189,19 @@ test_apply_slurm = do
                     mkBgpSec "1122" [ASN 234] "112233"
                 ])
 
-    let filtered = filterWithSLURM rtrPayloads bigTestSlurm
+    let filtered_ = filterWithSLURM rtrPayloads bigTestSlurm
 
     let expected = 
             mkRtrPayloads 
-                (asPerTA $ createVrps [
-                    mkVrp4 123 "192.168.0.0/16" 16,
-                    mkVrp4 64497 "198.51.101.0/24" 24                    
-                ] <>
-                createVrps [
-                    mkVrp4 64496 "198.51.100.0/24" 24,
-                    mkVrp6 64496 "2001:db8::/32" 48
+                (toPerTA [
+                    (TaName "default", createVrps [
+                        mkVrp4 123 "192.168.0.0/16" 16,
+                        mkVrp4 64497 "198.51.101.0/24" 24                    
+                    ]),
+                    (TaName "slurm", createVrps [
+                        mkVrp4 64496 "198.51.100.0/24" 24,
+                        mkVrp6 64496 "2001:db8::/32" 48
+                    ])
                 ]) 
                 (Set.fromList [                                        
                     mkBgpSec "1122" [ASN 234] "112233",
@@ -207,8 +209,31 @@ test_apply_slurm = do
                     mkBgpSec "<some base64 SKI>"
                         [ASN 64496] "PHNvbWUgYmFzZTY0IHB1YmxpYyBrZXk+"
                 ])
-    HU.assertEqual "Wrong VRPs:" (expected ^. #vrps) (filtered ^. #vrps)
-    HU.assertEqual "Wrong BGPSecs:" (expected ^. #bgpSec) (filtered ^. #bgpSec)
+    HU.assertEqual "Wrong BGPSecs:" (expected ^. #bgpSec) (filtered_ ^. #bgpSec)
+    HU.assertEqual "Wrong VRPs:" (expected ^. #vrps) (filtered_ ^. #vrps)
+    
+{- 
+PerTA {unPerTA = MonoidalMap {getMonoidalMap = fromList [
+    ("default",
+        Vrps {unVrps = [
+            Vrp (ASN 123) (Ipv4P (Ipv4Prefix 192.168.0.0/16)) (PrefixLength 16),
+            Vrp (ASN 64497) (Ipv4P (Ipv4Prefix 198.51.101.0/24)) (PrefixLength 24)
+        ]}),
+    ("slurm",
+        Vrps {unVrps = [
+            Vrp (ASN 64496) (Ipv4P (Ipv4Prefix 198.51.100.0/24)) (PrefixLength 24),
+            Vrp (ASN 64496) (Ipv6P (Ipv6Prefix 2001:db8::/32)) (PrefixLength 48)]})
+        ]}}
+PerTA {unPerTA = MonoidalMap {getMonoidalMap = fromList [
+    ("default",
+        Vrps {unVrps = [
+            Vrp (ASN 123) (Ipv4P (Ipv4Prefix 192.168.0.0/16)) (PrefixLength 16),
+            Vrp (ASN 64497) (Ipv4P (Ipv4Prefix 198.51.101.0/24)) (PrefixLength 24),
+            Vrp (ASN 64496) (Ipv4P (Ipv4Prefix 198.51.100.0/24)) (PrefixLength 24),
+            Vrp (ASN 64496) (Ipv6P (Ipv6Prefix 2001:db8::/32)) (PrefixLength 48)]})]}}
+
+-}
+
   where
     mkVrp4 asn prefix length_ = 
         Vrp (ASN asn) (Ipv4P $ readIp4 prefix) (PrefixLength length_)
