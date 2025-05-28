@@ -892,7 +892,9 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.
         deleted <- DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
-        pure (deleted, updatedValidation)
+
+        let validations = snd $ allTAs resultsToSave
+        pure (deleted, updatedValidation <> validations)
 
     let deletedStr = case deleted of
             [] -> "none"
