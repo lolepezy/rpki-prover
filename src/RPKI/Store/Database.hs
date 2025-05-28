@@ -769,31 +769,6 @@ updateRrdpMeta tx DB { repositoryStore = RepositoryStore {..} } meta url = liftI
     z <- M.get tx rrdpS url
     for_ z $ \r -> M.put tx rrdpS url (r { rrdpMeta = Just meta })
 
-
-applyChangeSet :: (MonadIO m, Storage s) =>
-                Tx s 'RW ->
-                DB s ->
-                ChangeSet ->
-                m ()
-applyChangeSet tx DB { repositoryStore = RepositoryStore {..}} 
-                  (ChangeSet rrdpChanges rsyncChanges) = liftIO $ do
-    -- Do the Remove first and only then Put
-    let (rrdpPuts, rrdpRemoves) = separate rrdpChanges
-
-    for_ rrdpRemoves $ \RrdpRepository{..} -> M.delete tx rrdpS uri
-    for_ rrdpPuts $ \r@RrdpRepository{..}  -> M.put tx rrdpS uri r
-
-    let (rsyncPuts, rsyncRemoves) = separate rsyncChanges
-
-    for_ rsyncRemoves $ \(uri', _) -> M.delete tx rsyncS uri'
-    for_ rsyncPuts $ uncurry (M.put tx rsyncS)    
-    
-  where
-    separate = foldr f ([], [])
-      where
-        f (Put r)    (ps, rs) = (r : ps, rs)
-        f (Remove r) (ps, rs) = (ps, r : rs)
-
 getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m PublicationPoints
 getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
     rrdps <- M.all tx rrdpS
