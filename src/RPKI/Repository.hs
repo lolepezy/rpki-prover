@@ -43,7 +43,7 @@ data FetchStatus = Pending
                  | FailedAt Instant  
     deriving stock (Show, Eq, Generic)    
     deriving anyclass (TheBinary)
-    deriving Semigroup via Max FetchStatus
+    -- deriving Semigroup via Max FetchStatus
 
 newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL } 
     deriving stock (Show, Eq, Ord, Generic)    
@@ -105,20 +105,27 @@ data RepositoryMeta = RepositoryMeta {
     deriving stock (Show, Eq, Ord, Generic)   
     deriving anyclass (TheBinary)
 
-
-instance Semigroup RepositoryMeta where
-    rm1 <> rm2 = RepositoryMeta { 
-        status    = rm1 ^. #status <> rm2 ^. #status,
-        lastFetchDuration = rm2 ^. #lastFetchDuration,
-        refreshInterval = rm2 ^. #refreshInterval
-    }
-
-instance Monoid RepositoryMeta where
-    mempty = RepositoryMeta { 
-        status = mempty,
+newRepositoryMeta :: RepositoryMeta
+newRepositoryMeta = RepositoryMeta {
+        status            = Pending,
         lastFetchDuration = Nothing,
-        refreshInterval = Nothing
+        refreshInterval   = Nothing
     }
+
+
+-- instance Semigroup RepositoryMeta where
+--     rm1 <> rm2 = RepositoryMeta { 
+--         status    = rm1 ^. #status <> rm2 ^. #status,
+--         lastFetchDuration = rm2 ^. #lastFetchDuration,
+--         refreshInterval = rm2 ^. #refreshInterval
+--     }
+
+-- instance Monoid RepositoryMeta where
+--     mempty = RepositoryMeta { 
+--         status = mempty,
+--         lastFetchDuration = Nothing,
+--         refreshInterval = Nothing
+--     }
 
 newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository } 
     deriving stock (Show, Eq, Ord, Generic)
@@ -170,8 +177,8 @@ instance Ord FetchStatus where
             FailedAt t  -> (Just t,  0)
             FetchedAt t -> (Just t,  1) 
 
-instance Monoid FetchStatus where    
-    mempty = Pending
+-- instance Monoid FetchStatus where    
+--     mempty = Pending
     
 instance Semigroup RrdpMap where
     RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2             
@@ -196,14 +203,14 @@ newRrdpRepository :: RrdpURL -> RrdpRepository
 newRrdpRepository uri = RrdpRepository {    
         rrdpMeta = Nothing,
         eTag     = Nothing,
-        meta     = mempty,
+        meta     = newRepositoryMeta,
         uri      = uri
     }
 
 newRsyncRepository :: RsyncURL -> RsyncRepository
 newRsyncRepository url = RsyncRepository {
         repoPP = RsyncPublicationPoint url,
-        meta   = mempty
+        meta   = newRepositoryMeta
     }
 
 updateMeta' :: Repository -> (RepositoryMeta -> RepositoryMeta) -> Repository
@@ -238,7 +245,7 @@ repositoryFromPP pps pp =
 
 mergeRsyncPP :: RsyncPublicationPoint -> PublicationPoints -> PublicationPoints
 mergeRsyncPP (RsyncPublicationPoint u) pps = 
-    pps & typed @RsyncForest %~ toRsyncForest u mempty
+    pps & typed @RsyncForest %~ toRsyncForest u newRepositoryMeta
 
 mergeRrdp :: RrdpRepository -> PublicationPoints -> PublicationPoints
 mergeRrdp r@RrdpRepository {..} pps =
@@ -388,15 +395,15 @@ newRsyncForest = newRsyncForestGen
 newRsyncForestGen :: RsyncForestGen a
 newRsyncForestGen = RsyncForestGen Map.empty
 
-toRsyncForest :: Semigroup a => RsyncURL -> a -> RsyncForestGen a -> RsyncForestGen a
+toRsyncForest :: RsyncURL -> a -> RsyncForestGen a -> RsyncForestGen a
 toRsyncForest (RsyncURL host path) a (RsyncForestGen byHost) = 
     RsyncForestGen $ Map.alter (Just . maybe 
         (buildRsyncTree path a) 
         (pathToRsyncTree path a)) host byHost      
 
-pathToRsyncTree :: Semigroup a => [RsyncPathChunk] -> a -> RsyncTree a -> RsyncTree a
+pathToRsyncTree :: [RsyncPathChunk] -> a -> RsyncTree a -> RsyncTree a
 
-pathToRsyncTree [] a (Leaf existingA) = Leaf $ existingA <> a
+pathToRsyncTree [] a (Leaf _) = Leaf a
 pathToRsyncTree [] a SubTree {} = Leaf a
 
 -- Strange case when we by some reason decide to merge

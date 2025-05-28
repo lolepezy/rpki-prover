@@ -22,7 +22,7 @@ main = defaultMain $ testGroup "All tests" [
         appMonadSpec,        
         rrdpXmlLazyParsingGroup,
         rrdpUpdateSpec,
-        dbGroup,
+        databaseGroup,
         resourceGroup,        
         validityGroup,
         repositoryGroup,

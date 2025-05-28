@@ -857,7 +857,7 @@ saveRsyncValidationStates tx DB { repositoryStore = RepositoryStore {..}} reposi
         (fmap (fmap unCompressed) . M.get tx rsyncVState)
         (\host tree -> M.put tx rsyncVState host (Compressed tree))        
 
-saveRsyncAnything :: (MonadIO m, Semigroup a) 
+saveRsyncAnything :: MonadIO m
                     => [(RsyncRepository, a)] 
                     -> (RsyncHost -> IO (Maybe (RsyncTree a)))
                     -> (RsyncHost -> RsyncTree a -> IO ())
