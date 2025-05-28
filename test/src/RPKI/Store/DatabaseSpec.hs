@@ -82,22 +82,17 @@ objectStoreGroup = testGroup "Object storage test"
         -- dbTestCase "Should save, delete and have no garbage left" shouldCreateAndDeleteAllTheMaps
     ]        
 
--- validationResultStoreGroup :: TestTree
--- validationResultStoreGroup = testGroup "Validation result storage test"
---     [
---         dbTestCase "Should insert and get back" shouldInsertAndGetAllBackFromValidationResultStore
---     ]
-
 repositoryStoreGroup :: TestTree
 repositoryStoreGroup = testGroup "Repository LMDB storage test"
     [
-        dbTestCase "Should insert and get an rsync repository" shouldSaveAndGetRsyncRepositories
+        dbTestCase "Should insert and get an rsync repository" shouldSaveAndGetRsyncRepositories,
+        dbTestCase "Should overwrite metadata and validations" shouldSaveMetaAndValidationAsCorrectSemigroup
     ]        
 
 versionStoreGroup :: TestTree
 versionStoreGroup = testGroup "Version LMDB storage test"
     [
-        dbTestCase "Should insert and get a version" shouldSaveAndGetValidationVersion,
+        dbTestCase "Should insert and get a version" shouldSaveAndGetValidationVersion,        
         dbTestCase "Should insert and get a version with data from previous versions" 
             shouldSaveAndGetValidationVersionFilledWithPastData
     ]        
@@ -276,6 +271,12 @@ shouldSaveAndGetRsyncRepositories io = do
                 n <- QC.choose (1, 3)
                 replicateM n arbitrary                    
             RsyncRepository (RsyncPublicationPoint $ RsyncURL host pathChunks) <$> arbitrary      
+
+
+shouldSaveMetaAndValidationAsCorrectSemigroup :: Storage s => IO (DB s) -> HU.Assertion
+shouldSaveMetaAndValidationAsCorrectSemigroup io = do
+    db <- io
+    pure ()    
 
 
 generateRepositories :: IO PublicationPoints

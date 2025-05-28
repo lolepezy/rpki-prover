@@ -29,22 +29,22 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
 testSnapshot :: TestTree
 testSnapshot = 
     HU.testCase "Should generate update snapshot action" $ do
-        let repo = defaultRepo & typed .~ Just (RrdpMeta (SessionId "whatever") (RrdpSerial 50) (RrdpIntegrity []))                    
+        let repo = defaultRepo & typed ?~ RrdpMeta (SessionId "whatever") (RrdpSerial 50) (RrdpIntegrity [])
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo (makeNotification (SessionId "something else") (RrdpSerial 120))
         HU.assertEqual "It's a bummer" nextStep
                 (Right $ FetchSnapshot (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
-                            "Resetting RRDP session from SessionId \"whatever\" to SessionId \"something else\"")
+                            "Resetting RRDP session from whatever to something else")
 
 testNoUpdates :: TestTree
 testNoUpdates = 
     HU.testCase "Should generate nothing when the session id and serial are the same" $ do
         let sessionId = SessionId "something"
         let serial = RrdpSerial 13
-        let repo = defaultRepo & typed .~ Just (RrdpMeta sessionId serial (RrdpIntegrity []))                      
+        let repo = defaultRepo & typed ?~ RrdpMeta sessionId serial (RrdpIntegrity [])
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo $ makeNotification sessionId serial
-        HU.assertEqual "It's a bummer" nextStep (Right $ NothingToFetch "up-to-date, SessionId \"something\", serial 13")
+        HU.assertEqual "It's a bummer" nextStep (Right $ NothingToFetch "up-to-date, something, serial 13")
 
 testDeltaUpdate :: TestTree
 testDeltaUpdate = 
@@ -54,14 +54,14 @@ testDeltaUpdate =
         let nextSerial' = nextSerial serial
         let delta = makeDelta nextSerial'
 
-        let repo = defaultRepo & typed .~ Just (RrdpMeta sessionId serial (RrdpIntegrity []))
+        let repo = defaultRepo & typed ?~ RrdpMeta sessionId serial (RrdpIntegrity [])
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo $ (makeNotification sessionId nextSerial') {      
                                     deltas = [delta]
                                 }
         HU.assertEqual "It's a bummer" nextStep 
             (Right $ FetchDeltas (delta :| []) (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
-            "SessionId \"something\", deltas look good.")
+            "something, deltas look good.")
 
 testNoDeltaLocalTooOld :: TestTree
 testNoDeltaLocalTooOld = 
@@ -75,7 +75,7 @@ testNoDeltaLocalTooOld =
                                 }
         HU.assertEqual "It's a bummer" nextStep (Right $ FetchSnapshot 
             (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
-                         "SessionId \"something\", local serial 13 is too far behind remote 15.")
+                         "something, local serial 13 is too far behind remote 15.")
 
 testNonConsecutive :: TestTree
 testNonConsecutive = 
@@ -105,7 +105,7 @@ testNonConsecutive =
                     }
         HU.assertEqual "It's a bummer" nextStep 
             (Right (FetchSnapshot (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
-                "SessionId \"something\", there are non-consecutive delta serials: [(13,18),(18,20)]."))
+                "something, there are non-consecutive delta serials: [(13,18),(18,20)]."))
     
 testIntegrity :: TestTree
 testIntegrity = 
@@ -123,7 +123,7 @@ testIntegrity =
 
         let snapshotInfo = SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")
 
-        let repo = defaultRepo & typed .~ Just (RrdpMeta sessionId serial13 (RrdpIntegrity previousDeltas))
+        let repo = defaultRepo & typed ?~ RrdpMeta sessionId serial13 (RrdpIntegrity previousDeltas)
 
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                     rrdpNextStep repo $ (makeNotification sessionId serial14) {       
@@ -135,9 +135,9 @@ testIntegrity =
                     }
         HU.assertEqual "It's a bummer" nextStep 
             (Right $ FetchDeltas {
-                message = "SessionId \"something\", deltas look good.",
+                message = "something, deltas look good.",
                 snapshotInfo = snapshotInfo,
-                sortedDeltas = (DeltaInfo (URI "http://rrdp.ripe.net/delta14.xml") (Hash "hash14") serial14 :| []) 
+                sortedDeltas = DeltaInfo (URI "http://rrdp.ripe.net/delta14.xml") (Hash "hash14") serial14 :| []
             })
         
         let (nextStep1, _) = runPureValidator (newScopes "test") $ 
@@ -153,6 +153,7 @@ testIntegrity =
                 "These deltas have integrity issues: serial 12, used to have hash 686173683132 and now 6861736831322d62726f6b656e.")
 
 
+defaultRepo :: RrdpRepository
 defaultRepo = RrdpRepository { 
     uri = RrdpURL $ URI "http://rrdp.ripe.net/notification.xml",
     rrdpMeta = Nothing,

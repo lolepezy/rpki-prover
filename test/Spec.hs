@@ -12,7 +12,7 @@ import RPKI.Resources.ValiditySpec
 import RPKI.AppMonadSpec
 import RPKI.LoggingSpec
 import RPKI.RepositorySpec
-import RPKI.WorkflowSpec
+import RPKI.FetchSpec
 import RPKI.RTR.RtrSpec
 import RPKI.SLURM.SlurmSpec
 
