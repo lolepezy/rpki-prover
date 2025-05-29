@@ -849,9 +849,6 @@ toLocations = Locations . NESet.singleton
 
 pickLocation :: Locations -> RpkiURL
 pickLocation = NonEmpty.head . sortRrdpFirstNE . NESet.toList . unLocations
-
-locationsToText :: Locations -> Text
-locationsToText = F.fold . NonEmpty.intersperse ", " . locationsToNEList
     
 locationsToList :: Locations -> [Text]
 locationsToList = toList . locationsToNEList    

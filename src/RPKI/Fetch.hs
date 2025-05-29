@@ -218,12 +218,8 @@ getPrimaryRepositoryUrl :: PublicationPoints
                          -> PublicationPointAccess 
                          -> RpkiURL
 getPrimaryRepositoryUrl pps ppAccess = 
-    let primary = getPrimaryRepository ppAccess
+    let primary = NonEmpty.head $ unPublicationPointAccess ppAccess
     in maybe (getRpkiURL primary) getRpkiURL $ repositoryFromPP pps primary
-
-getPrimaryRepository :: PublicationPointAccess -> PublicationPoint
-getPrimaryRepository ppAccess = 
-    NonEmpty.head $ unPublicationPointAccess ppAccess    
 
 
 getFetchables :: PublicationPoints -> PublicationPointAccess -> [(RpkiURL, FetchStatus)]

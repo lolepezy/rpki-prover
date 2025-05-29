@@ -640,10 +640,6 @@ getSpls tx db@DB { splStore = SplStore m } version =
             \_ _ ValidationVersion {..} -> 
                 fmap unCompressed <$> M.get tx m splsKey
 
-deleteSpls :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> ArtificialKey -> m ()
-deleteSpls tx DB { splStore = SplStore m } key = liftIO $ M.delete tx m key    
-
 
 versionsBackwards :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(WorldVersion, VersionMeta)]
 versionsBackwards tx DB { versionStore = VersionStore s } = 
@@ -795,12 +791,6 @@ getRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} urls =
         (M.get tx rsyncS) 
         (\url meta -> RsyncRepository { repoPP = RsyncPublicationPoint url, .. })  
 
-getRsyncValidationState :: (MonadIO m, Storage s) => Tx s mode -> DB s -> [RsyncURL] -> m (Map.Map RsyncURL ValidationState)
-getRsyncValidationState tx DB { repositoryStore = RepositoryStore {..}} urls = do 
-    getRsyncAnything urls 
-        (fmap (fmap unCompressed) . M.get tx rsyncVState)
-        (\_ validationState -> validationState)
-
 getRsyncAnything :: MonadIO m 
                 => [RsyncURL] 
                 -> (RsyncHost -> IO (Maybe (RsyncTree a)))
@@ -946,16 +936,6 @@ data CleanUpResult = CleanUpResult {
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-deleteOldNonValidationVersions :: (MonadIO m, Storage s) =>                                     
-                                   Tx s 'RW 
-                                -> DB s 
-                                -> (WorldVersion -> Bool) 
-                                -> m Int
-deleteOldNonValidationVersions tx db tooOld = do    
-    toDelete <- filter tooOld . map fst <$> versionsBackwards tx db    
-    forM_ toDelete $ deleteValidationVersion tx db
-    pure $ List.length toDelete
-
 
 deleteOldestVersionsIfNeeded :: (MonadIO m, Storage s) => 
                                Tx s 'RW 
@@ -1059,11 +1039,6 @@ deleteDanglingUrls DB { objectStore = RpkiObjectStore {..} } tx = do
     pure $ length urlsToDelete
 
 
-
--- | Find the latest completed world version 
--- 
--- getLastValidationVersion :: (Storage s) => DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
--- getLastValidationVersion db tx = getLastVersionOfKind db tx validationKind        
 
 -- TODO implement min and max in maps?
 getLatestVersion :: (Storage s) => DB s -> Tx s 'RO -> IO (Maybe WorldVersion)

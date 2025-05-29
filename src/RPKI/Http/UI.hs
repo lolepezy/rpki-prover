@@ -273,8 +273,7 @@ rsyncMetricsHtml rsyncMetrics =
             genTh $ do 
                 H.text "Repository (" >> toHtml (length rsyncMetrics) >> H.text " in total)" 
             genTh $ H.div ! A.class_ "tooltip" $ do
-                H.text "Updated at"
-                H.span ! A.class_ "tooltiptext" $ rsyncFetchTooltip            
+                H.text "Updated at"                
             genTh $ H.text "Processed objects"
             genTh $ H.text "Total time"                    
 
@@ -385,20 +384,6 @@ primaryRepoTooltip =
             "Fallback from RRDP to rsync does not change this association, so a valid object is attributed " <> 
             "to the RRDP repository even if it was downloaded from the rsync one because of the fall-back."
 
-fetchTooltip :: Text -> Text -> Html
-fetchTooltip repoType setting_ =               
-    H.div ! A.style "text-align: left;" $ do 
-        space >> space >> H.text "Used values" >> H.br
-        H.ul $ do 
-            H.li $ H.text [i|'Up-to-date' - no fetch is needed, #{repoType} repository was fetched less than '#{setting_}' seconds ago.|]
-            H.li $ H.text $ "'No updates' - there are not updates to fetch. In case of RRDP repository it " <> 
-                            "means its serial didn't change since the last fetch, in case of rsync -- no new objects found after fetch."
-            H.li $ H.text "'Updated' and 'Failed' are self-explanatory"
-
-rrdpFetchTooltip, rsyncFetchTooltip :: Html
-rrdpFetchTooltip  = fetchTooltip "RRDP" "rrdp-refresh-interval"
-rsyncFetchTooltip = fetchTooltip "rsync" "rsync-refresh-interval"
-
 rrdpUpdateTooltip :: Html
 rrdpUpdateTooltip =
     H.div ! A.style "text-align: left;" $ do 
@@ -463,11 +448,6 @@ space      = preEscapedToMarkup ("&nbsp;" :: Text)
 arrowUp    = preEscapedToMarkup ("&#9650;" :: Text)
 arrowRight = preEscapedToMarkup ("&#10095;" :: Text)
 
-
--- | Very crude formatting of a text to avoid using <pre> and screwing up the style.
---
-htmlMessage :: Text -> Html
-htmlMessage message = mapM_ (\z -> H.text z >> H.br) $ Text.lines message
 
 instance ToMarkup TimeMs where 
     toMarkup (TimeMs ms) = toMarkup $ show ms <> "ms"

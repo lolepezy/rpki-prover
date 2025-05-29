@@ -8,10 +8,8 @@
 module RPKI.Repository where
 
 import           Control.Lens
-import           Control.Concurrent.Async
 import           Data.Generics.Product.Typed
 import           Data.Ord
-import           Data.Semigroup
 
 import           Data.X509                   (Certificate)
 
@@ -43,7 +41,6 @@ data FetchStatus = Pending
                  | FailedAt Instant  
     deriving stock (Show, Eq, Generic)    
     deriving anyclass (TheBinary)
-    -- deriving Semigroup via Max FetchStatus
 
 newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL } 
     deriving stock (Show, Eq, Ord, Generic)    
@@ -112,34 +109,9 @@ newRepositoryMeta = RepositoryMeta {
         refreshInterval   = Nothing
     }
 
-
--- instance Semigroup RepositoryMeta where
---     rm1 <> rm2 = RepositoryMeta { 
---         status    = rm1 ^. #status <> rm2 ^. #status,
---         lastFetchDuration = rm2 ^. #lastFetchDuration,
---         refreshInterval = rm2 ^. #refreshInterval
---     }
-
--- instance Monoid RepositoryMeta where
---     mempty = RepositoryMeta { 
---         status = mempty,
---         lastFetchDuration = Nothing,
---         refreshInterval = Nothing
---     }
-
 newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
-    deriving newtype (Monoid)
-
-data FetchResult = 
-    FetchSuccess Repository ValidationState | 
-    FetchFailure RpkiURL ValidationState    
-    deriving stock (Show, Eq, Generic)
-
-data FetchTask a = Stub 
-                | Fetching (Async a)                 
-    deriving stock (Eq, Ord, Generic)                    
 
 newtype Fetcheables = Fetcheables { unFetcheables :: MonoidalMap RpkiURL (Set.Set RpkiURL) }    
     deriving stock (Show, Eq, Ord, Generic)  
@@ -176,9 +148,6 @@ instance Ord FetchStatus where
             Pending     -> (Nothing, 0 :: Int)
             FailedAt t  -> (Just t,  0)
             FetchedAt t -> (Just t,  1) 
-
--- instance Monoid FetchStatus where    
---     mempty = Pending
     
 instance Semigroup RrdpMap where
     RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2             
@@ -316,36 +285,7 @@ getPublicationPointsFromCert cert = do
     case nonEmpty (rrdp <> rsync) of 
         Nothing -> Left CertificateDoesntHaveSIA
         Just ne -> Right $ PublicationPointAccess ne
-    
-
-data Change a = Put a | Remove a 
-    deriving stock (Show, Eq, Ord, Generic)
-
-data ChangeSet = ChangeSet
-    [Change RrdpRepository]    
-    [Change (RsyncHost, RsyncNodeNormal)]    
-
-
--- Update statuses of the repositories and last successful fetch times for them
-updateMeta :: Foldable t => PublicationPoints -> t (Repository, RepositoryMeta) -> PublicationPoints
-updateMeta 
-    (PublicationPoints rrdps rsyncs) newMetas = 
-        PublicationPoints 
-            (rrdps <> RrdpMap (Map.fromList rrdps_))
-            rsyncs_ 
-    where
-        (rrdps_, rsyncs_) = 
-            foldr foldRepos ([], rsyncs) newMetas
-
-        foldRepos 
-            (RrdpR r@RrdpRepository {..}, newMeta) 
-            (rrdps', rsyncs') = 
-                ((uri, r & #meta .~ newMeta) : rrdps', rsyncs')
-
-        foldRepos 
-            (RsyncR (RsyncRepository (RsyncPublicationPoint uri) _), newMeta) 
-            (rrdps', rsyncs') = 
-                (rrdps', toRsyncForest uri newMeta rsyncs')            
+          
 
 -- Number of repositories
 repositoryCount :: PublicationPoints -> Int

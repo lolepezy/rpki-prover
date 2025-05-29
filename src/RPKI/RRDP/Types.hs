@@ -94,8 +94,5 @@ data RrdpIntegrity = RrdpIntegrity {
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary, NFData)            
 
-newRrdpIntegrity :: Notification -> RrdpIntegrity
-newRrdpIntegrity Notification {..} = RrdpIntegrity deltas
-
 fromNotification :: Notification -> RrdpMeta
 fromNotification Notification {..} = RrdpMeta { integrity = RrdpIntegrity {..}, .. }

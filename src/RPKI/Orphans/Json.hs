@@ -431,7 +431,6 @@ instance ToJSON RrdpConf
 instance ToJSON RsyncConf    
 instance ToJSON Config
 
-instance ToJSON VersionKind
 instance ToJSON VIssue
 instance ToJSON VWarning
 instance ToJSON AppError

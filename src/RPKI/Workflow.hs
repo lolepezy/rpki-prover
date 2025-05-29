@@ -986,16 +986,6 @@ loadStoredAppState AppContext {..} = do
                                          [i|current state (#{estimateVrpCount vrps} VRPs), took #{elapsed}ms.|]
                     pure $ Just lastVersion
 
-
-
-isMaintenance :: TaskType -> Bool
-isMaintenance = \case    
-    CacheCleanupTask      -> True
-    LmdbCompactTask       -> True
-    LeftoversCleanupTask  -> True
-    RsyncCleanupTask      -> True
-    _                     -> False       
-
 canRunInParallel :: TaskType -> TaskType -> Bool
 canRunInParallel t1 t2 = 
     t2 `elem` canRunWith t1 || t1 `elem` canRunWith t2

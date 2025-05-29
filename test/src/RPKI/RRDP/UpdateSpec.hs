@@ -23,8 +23,10 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
     testSnapshot, 
     testNoUpdates, 
     testNoDeltaLocalTooOld, 
+    testDeltaUpdate,
     testNonConsecutive, 
-    testIntegrity ]
+    testIntegrity 
+    ]
 
 testSnapshot :: TestTree
 testSnapshot = 

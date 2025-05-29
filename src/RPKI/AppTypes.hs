@@ -29,12 +29,6 @@ newtype WorldVersion = WorldVersion Int64
 instance Show WorldVersion where 
     show (WorldVersion v) = show v
 
--- Keep it just text for now since we don't
--- know what may be needed there in the future.
-data VersionKind = VersionKind Text
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
-
 -- Version of the executable, ideally it is supposed to 
 -- be different for every build of the program where 
 -- source or library versions are different.
@@ -53,9 +47,3 @@ newtype MaxMemory = MaxMemory Int
 
 instance Show MaxMemory where 
     show (MaxMemory m) = show (m `div` (1024*1024)) <> "mb"
-
-
-validationKind, generalKind, asyncFetchKind :: VersionKind
-validationKind = VersionKind "validation"
-generalKind = VersionKind "general"
-asyncFetchKind = VersionKind "async-fetch"

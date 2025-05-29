@@ -54,7 +54,6 @@ instance ToSchema URI where
      declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema WorldVersion     
-instance ToSchema VersionKind
 instance ToSchema Instant where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema DateTime     

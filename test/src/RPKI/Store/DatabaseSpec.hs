@@ -255,7 +255,7 @@ shouldSaveMetaAndValidationAsCorrectSemigroup io = do
     [rsync1] <- rsyncReposWithCommonHosts 1
 
     testOneRepository db rsync1
-        
+
     -- update meta
     Now now <- thisInstant    
     testOneRepository db $ rsync1 & #meta . #status .~ FetchedAt now
@@ -474,7 +474,7 @@ shouldPreserveStateInAppTx io = do
 
     HU.assertEqual "Nested metric should count 1 object" 
         Nothing
-        (stripTime <$> lookupMetric (subScope "metric-nested-1" (newScope "root"))
+        (stripTime <$> lookupMetric (subScope TextFocus "metric-nested-1" (newScope "root"))
                             (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Root validations should have 1 warning"     
@@ -485,7 +485,7 @@ shouldPreserveStateInAppTx io = do
             VWarn (VWarning (UnspecifiedE "Error4" "text 4"))])
 
     HU.assertEqual "Nested validations should have 1 warning" 
-        (Map.lookup (subScope "nested-1" (newScope "root")) validationMap)
+        (Map.lookup (subScope TextFocus "nested-1" (newScope "root")) validationMap)
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
 
 
