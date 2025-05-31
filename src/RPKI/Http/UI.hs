@@ -23,7 +23,6 @@ import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 
 import qualified Data.List                   as List
-import           Data.Map.Monoidal.Strict    (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict    as MonoidalMap
 import           Data.String                 (IsString)
 import           Data.Generics.Product.Fields
@@ -47,11 +46,12 @@ import           RPKI.Version
 
 mainPage :: WorldVersion
         -> SystemInfo 
-        -> ValidationsDto ResolvedVDto
-        -> [RepositoryUIDDto]
+        -> PerTA [ResolvedVDto]
+        -> [ResolvedVDto]
+        -> [RepositoryDto]
         -> MetricsDto
         -> Html
-mainPage version systemInfo validation fetchDtos validationMetricsDto =     
+mainPage version systemInfo perTaValidations generalValidations fetchDtos metricsDto =     
     H.docTypeHtml $ do
         H.head $ do
             link ! rel "stylesheet" ! href "/static/styles.css"
@@ -60,7 +60,7 @@ mainPage version systemInfo validation fetchDtos validationMetricsDto =
             H.div ! A.class_ "side-navigation" $ do  
                 H.a ! A.href "#overall"            $ H.text "Overall"
                 H.a ! A.href "#validation-metrics" $ H.text "Validation metrics"
-                H.a ! A.href "#validation-details" $ H.text "Validation details"
+                H.a ! A.href "#validation-issues" $ H.text "Validation details"
                 H.a ! A.href "#rrdp-fetches"       $ H.text "RRDP fetches"
                 H.a ! A.href "#rsync-fetches"      $ H.text "Rsync fetches"                
 
@@ -71,18 +71,29 @@ mainPage version systemInfo validation fetchDtos validationMetricsDto =
 
             H.a ! A.id "validation-metrics" $ "" 
             H.section $ H.h3 "Validation metrics"                        
-            validationMetricsHtml $ validationMetricsDto ^. #groupedValidations
-            H.a ! A.id "validation-details" $ ""
-            H.section $ H.h3 "Validation details"
-            validaionDetailsHtml $ validation ^. #validations            
+            validationMetricsHtml $ metricsDto ^. #groupedValidations
 
-            H.a ! A.id "rrdp-fetches" $ ""
-            H.section $ H.h3 "RRDP fetches"
-            rrdpMetricsHtml [ d | RrdpUIDto d <- fetchDtos ]
+            unless (perTaValidations == mempty) $ do
+                H.a ! A.id "validation-issues" $ ""
+                H.section $ H.h3 "Validation issues"
+                validaionIssuesHtml perTaValidations 
 
-            H.a ! A.id "rsync-fetches" $ ""
-            H.section $ H.h3 "Rsync fetches"
-            rsyncMetricsHtml [ d | RsyncUIDto d <- fetchDtos ]
+            unless (generalValidations == mempty) $ do
+                H.a ! A.id "general-issues" $ ""
+                H.section $ H.h3 "General issues"
+                generalIssuesHtml generalValidations 
+
+            let rrdpMetrics = [ d | RrdpDto d <- fetchDtos ]
+            unless (Prelude.null rrdpMetrics) $ do
+                H.a ! A.id "rrdp-fetches" $ ""
+                H.section $ H.h3 "RRDP fetches"
+                rrdpMetricsHtml rrdpMetrics
+
+            let rsyncMetrics = [ d | RsyncDto d <- fetchDtos ]
+            unless (Prelude.null rsyncMetrics) $ do 
+                H.a ! A.id "rsync-fetches" $ ""
+                H.section $ H.h3 "Rsync fetches"
+                rsyncMetricsHtml rsyncMetrics
 
 
 overallHtml :: SystemInfo -> WorldVersion -> Html
@@ -101,7 +112,7 @@ overallHtml SystemInfo {..} worldVersion = do
                     
 
 
-validationMetricsHtml :: GroupedValidationMetric ValidationMetric -> Html
+validationMetricsHtml :: GroupedMetric ValidationMetric -> Html
 validationMetricsHtml grouped = do 
     
     let repoMetrics = MonoidalMap.toList $ grouped ^. #byRepository
@@ -194,7 +205,8 @@ validationMetricsHtml grouped = do
             genTd $ toHtml $ show $ vm ^. #validBgpNumber
             genTd $ toHtml $ show $ vm ^. #validSplNumber
 
-rrdpMetricsHtml :: [RrdpRepositoryUIDto] -> Html
+
+rrdpMetricsHtml :: [RrdpRepositoryDto] -> Html
 rrdpMetricsHtml rrdpMetrics =
     H.table ! A.class_ "gen-t" $ do 
         H.thead $ tr $ do                         
@@ -239,7 +251,7 @@ rrdpMetricsHtml rrdpMetrics =
 
                 detailRow m index
   where
-    detailRow :: RrdpRepositoryUIDto -> Int -> H.Html
+    detailRow :: RrdpRepositoryDto -> Int -> H.Html
     detailRow m index = H.tr ! A.id (H.toValue $ rrdpDetailRow index)
                         ! A.class_ "detail-row"
                         ! A.style "display: none;" $ do
@@ -267,7 +279,8 @@ rrdpMetricsHtml rrdpMetrics =
                 space
                 H.span ! A.class_ "no-wrap" $ H.toHtml value_
 
-rsyncMetricsHtml :: [RsyncRepositoryUIDto] -> Html
+
+rsyncMetricsHtml :: [RsyncRepositoryDto] -> Html
 rsyncMetricsHtml rsyncMetrics =
     H.table ! A.class_ "gen-t" $ do  
         H.thead $ tr $ do 
@@ -301,7 +314,7 @@ rsyncMetricsHtml rsyncMetrics =
                 unless (Prelude.null $ m ^. #validations) $ 
                     detailRow m index
   where
-    detailRow :: RsyncRepositoryUIDto -> Int -> H.Html
+    detailRow :: RsyncRepositoryDto -> Int -> H.Html
     detailRow m index = H.tr ! A.id (H.toValue $ rsyncDetailRow index)
                         ! A.class_ "detail-row"
                         ! A.style "display: none;" $ do
@@ -317,7 +330,7 @@ issuesList m =
     H.div ! A.class_ "d-i issues-container" $ do
         H.strong "Issues:"
         H.ul ! A.class_ "issues-list" $ do
-            forM_ (m ^. #validations) $ \(ResolvedVDto (FullVDto{..})) ->
+            forM_ (m ^. #validations) $ \(ResolvedVDto (ValidationDto{..})) ->
                 forM_ issues $ \issue -> do
                     let (dotClass, issueText, itemClass) = case issue of
                             ErrorDto err -> ("red-dot", err, "error")
@@ -333,15 +346,15 @@ ordering status =
         FailedAt t  -> Just (t, 0) 
         _           -> Nothing        
 
-validaionDetailsHtml :: [ResolvedVDto] -> Html
-validaionDetailsHtml result = 
+validaionIssuesHtml :: PerTA [ResolvedVDto] -> Html
+validaionIssuesHtml dtos = 
     H.table ! A.class_ "gen-t" $ do 
         H.thead $ tr $ do 
             genTh $ H.span $ H.text "Issue"            
             genTh $ H.div ! A.class_ "tooltip" $ do
                 H.text "URL/Scope"
                 H.span ! A.class_ "tooltiptext" $ validationPathTootip               
-        forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> 
+        forM_ (perTA dtos) $ \(TaName ta, vrs) -> 
             H.tbody $ tr $ td ! A.class_ "even-row, gen-t" ! colspan "2" $ do 
                 -- Open the small ones
                 let detailElem = if length vrs < 10 then H.details ! A.open "" else H.details
@@ -356,7 +369,7 @@ validaionDetailsHtml result =
                         H.tbody $ forM_ (zip vrs [1 :: Int ..]) vrHtml
             
   where      
-    vrHtml (ResolvedVDto (FullVDto{..}), index) = do 
+    vrHtml (ResolvedVDto (ValidationDto{..}), index) = do 
         let objectUrl = Prelude.head path         
         forM_ (zip issues [1 :: Int ..]) $ \(pr, jndex) ->                     
             htmlRow (index + jndex) $ do 
@@ -374,7 +387,40 @@ validaionDetailsHtml result =
     countProblems = 
         List.foldl' countP (0 :: Int, 0 :: Int)
       where
-        countP z (ResolvedVDto FullVDto {..}) = List.foldl' countEW z issues
+        countP z (ResolvedVDto ValidationDto {..}) = List.foldl' countEW z issues
+        countEW (!e, !w) (ErrorDto _)   = (e + 1, w)
+        countEW (!e, !w) (WarningDto _) = (e, w + 1)
+
+
+generalIssuesHtml :: [ResolvedVDto] -> Html
+generalIssuesHtml dtos = 
+    H.table ! A.class_ "gen-t" $ do 
+        H.thead $ tr $ do 
+            genTh $ H.span $ H.text "Issue"            
+            genTh $ H.div ! A.class_ "tooltip" $ do
+                H.text "URL/Scope"
+                H.span ! A.class_ "tooltiptext" $ validationPathTootip               
+        H.tbody $
+            forM_ (zip dtos [1 :: Int ..]) $ \(ResolvedVDto (ValidationDto{..}), index) -> do 
+                let objectUrl = Prelude.head path         
+                forM_ (zip issues [1 :: Int ..]) $ \(pr, jndex) ->                     
+                    htmlRow (index + jndex) $ do 
+                        let (marker, problem) = 
+                                case pr of 
+                                    ErrorDto err -> ("red-dot",  err)                                        
+                                    WarningDto w -> ("yellow-dot", w)
+                        td ! A.class_ "sub-t" $ H.span $ do 
+                            H.span ! A.class_ marker $ ""                    
+                            mapM_ (\z -> H.text z >> H.br) $ Text.lines problem
+                        td ! A.class_ "sub-t" $ H.details $ do 
+                            H.summary $ focusLink1 objectUrl
+                            forM_ (Prelude.tail path) $ \f -> 
+                                focusLink1 f >> H.br
+  where
+    countProblems = 
+        List.foldl' countP (0 :: Int, 0 :: Int)
+      where
+        countP z (ResolvedVDto ValidationDto {..}) = List.foldl' countEW z issues
         countEW (!e, !w) (ErrorDto _)   = (e + 1, w)
         countEW (!e, !w) (WarningDto _) = (e, w + 1)
 
@@ -396,8 +442,7 @@ rrdpUpdateTooltip =
 
 validationPathTootip :: Html
 validationPathTootip = do   
-    space >> space
-    H.text "Signs " >> arrowRight >> H.text " and " >> arrowUp >> H.text " are clickable. "
+    space >> space    
     H.text "'Scope' here shows the full sequence of objects from the TA to the object in question."
     space >> space
         
@@ -406,7 +451,7 @@ groupByTa :: [ResolvedVDto] -> Map Text [ResolvedVDto]
 groupByTa vrs =
     Map.fromListWith (<>) 
     $ [ (resolvedFocusToText ta, [vr]) 
-            | vr@(ResolvedVDto FullVDto {..}) <- vrs, 
+            | vr@(ResolvedVDto ValidationDto {..}) <- vrs, 
               ta <- lastOne path ]    
   where
     lastOne [] = []
@@ -480,7 +525,7 @@ instance ToMarkup RrdpSource where
             message :: Text = [i|Snapshot #{serial}|]
             in toMarkup message
         
-focusLink1 :: FocusResolvedDto -> Html
+focusLink1 :: ResolvedFocusDto -> Html
 focusLink1 = \case 
     TextDto txt     -> toHtml txt
     TA_UI txt       -> toHtml txt

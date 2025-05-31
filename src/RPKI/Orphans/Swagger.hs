@@ -83,7 +83,7 @@ instance (ToSchema a, ToSchema b) => ToSchema (These a b)
 instance (ToSchema a, ToJSONKey a, ToSchema b) => ToSchema (MonoidalMap a b) where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy (Map a b))
 
-instance ToSchema a => ToSchema (GroupedValidationMetric a)
+instance ToSchema a => ToSchema (GroupedMetric a)
 
 instance ToSchema SessionId
 instance ToSchema Serial

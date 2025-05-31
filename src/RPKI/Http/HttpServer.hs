@@ -47,7 +47,6 @@ import           RPKI.Time
 import           RPKI.TAL
 import           RPKI.Reporting
 import           RPKI.Repository
-import           RPKI.Metrics.Metrics
 import           RPKI.Http.Api
 import           RPKI.Http.Types
 import           RPKI.Http.Dto
@@ -120,22 +119,25 @@ httpServer appContext tals = genericServe HttpApi {
             Nothing                      -> notFoundException
             Just latestValidationVersion -> do                      
                 liftIO $ roTx db $ \tx -> do                    
-                    ((commonValidations, commonMetrics, perTa), outcomesMs) <- timedMS $ DB.getValidationOutcomes tx db latestValidationVersion
+                    ((commonValidations, commonMetrics, perTaOutcomes), outcomesMs) <- 
+                            timedMS $ DB.getValidationOutcomes tx db latestValidationVersion
 
-                    let (validations, validationMetrics) = allTAs perTa
-                    let groupedValidationMetrics = toMetricsDto $ fmap snd perTa
+                    let (validations, _) = allTAs perTaOutcomes
+                    let metricsDto = toMetricsDto $ fmap snd perTaOutcomes
 
-                    (resolvedValidations, resolveMs) <- timedMS $ resolveValidationDto tx db $
-                            validationsToDto latestValidationVersion validations                    
+                    resolvedValidations <- traverse (mapM (resolveOriginalDto tx db) . toVDtos . fst) perTaOutcomes
+
+                    (resolvedCommons, resolveMs) <- timedMS $ mapM (resolveOriginalDto tx db) $ toVDtos commonValidations                    
 
                     (fetches, reposMe) <- timedMS $ DB.getRepositories tx db
-                    fechesDtos <- toRepositoryUIDtos appContext fetches
+                    fechesDtos <- toRepositoryDtos appContext fetches
 
                     systemInfo <- readTVarIO $ appContext ^. #appState . #system
                     (page, pageMs) <- timedMS $ pure $ mainPage latestValidationVersion systemInfo  
-                                        resolvedValidations                                        
+                                        resolvedValidations       
+                                        resolvedCommons                                 
                                         fechesDtos
-                                        groupedValidationMetrics
+                                        metricsDto
 
                     logDebug logger [i|Data timing: outcomesMs=#{outcomesMs}, reposMe=#{reposMe}, resolveMs=#{resolveMs}, pageMs=#{pageMs}|]
 
@@ -327,7 +329,7 @@ getMetrics appContext versionText =
     getValuesByVersion appContext versionText
         (\_ -> pure Nothing) 
         (\tx db version -> 
-            Just . toMetricsDto . allTAs <$> DB.getMetricsPerTA tx db version)
+            Just . toMetricsDto <$> DB.getMetricsPerTA tx db version)
         fromJust
 
 notFoundException :: MonadError ServerError m => m a
@@ -577,30 +579,30 @@ withPrefixIndex AppContext {..} f = do
         Just prefixIndex -> f prefixIndex                
 
 
-toRepositoryUIDtos :: Storage s => AppContext s -> [(Repository, ValidationState)] -> IO [RepositoryUIDDto] 
-toRepositoryUIDtos AppContext {..} inputs = do
+toRepositoryDtos :: Storage s => AppContext s -> [(Repository, ValidationState)] -> IO [RepositoryDto] 
+toRepositoryDtos AppContext {..} inputs = do
     let rrdps = [(r, s) | (RrdpR r, s) <- inputs]
     let rsyncs = [(r, s) | (RsyncR r, s) <- inputs]
 
     roTxT database $ \tx db -> do
         rrdpRepos <- 
-            fmap (fmap RrdpUIDto . catMaybes)
+            fmap (fmap RrdpDto . catMaybes)
             $ forM rrdps $ \(repository@RrdpRepository {..}, state) -> do
                 let validationDtos = toVDtos $ filterRepositoryValidations (RrdpU uri) $ state ^. typed
                 -- TODO That is probably not needed at all, there's nothing to resolve?
                 resolved <- forM validationDtos $ resolveOriginalDto tx db                 
 
-                pure $ fmap (\metrics -> RrdpRepositoryUIDto { validations = resolved, .. }) 
-                        $ filterRepositoryMetrics (RrdpU uri) $ state ^. typed @RawMetric . #rrdpMetrics
+                pure $ fmap (\metrics -> RrdpRepositoryDto { validations = resolved, .. }) 
+                        $ filterRepositoryMetrics (RrdpU uri) $ state ^. typed @Metrics . #rrdpMetrics
 
         rsyncRepos <- 
-            fmap (fmap RsyncUIDto . catMaybes)
+            fmap (fmap RsyncDto . catMaybes)
             $ forM rsyncs $ \(RsyncRepository { repoPP = RsyncPublicationPoint {..}, ..}, state) -> do
                 let validationDtos = toVDtos $ filterRepositoryValidations (RsyncU uri) $ state ^. typed
                 resolved <- forM validationDtos $ resolveOriginalDto tx db
 
-                pure $ fmap (\metrics -> RsyncRepositoryUIDto { validations = resolved, .. }) 
-                        $ filterRepositoryMetrics (RsyncU uri) $ state ^. typed @RawMetric . #rsyncMetrics
+                pure $ fmap (\metrics -> RsyncRepositoryDto { validations = resolved, .. }) 
+                        $ filterRepositoryMetrics (RsyncU uri) $ state ^. typed @Metrics . #rsyncMetrics
 
         pure $ rrdpRepos <> rsyncRepos            
   where
@@ -639,7 +641,7 @@ resolveLocations :: Storage s =>
                    Tx s 'RO
                 -> DB s 
                 -> Focus 
-                -> IO FocusResolvedDto
+                -> IO ResolvedFocusDto
 resolveLocations tx db = \case 
     TAFocus t               -> pure $ TextDto t
     TextFocus t             -> pure $ TextDto t

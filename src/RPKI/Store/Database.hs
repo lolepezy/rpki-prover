@@ -155,7 +155,7 @@ instance Storage s => WithStorage s (ValidationsStore s) where
     storage (ValidationsStore s) = storage s
 
 newtype MetricStore s = MetricStore {
-        metrics :: SMap "metrics" s ArtificialKey (Compressed RawMetric)
+        metrics :: SMap "metrics" s ArtificialKey (Compressed Metrics)
     }    
     deriving stock (Generic)
 
@@ -563,7 +563,7 @@ getValidationsPerTA tx db@DB {..} version =
             fmap unCompressed <$> M.get tx (validationsStore ^. #validations) validationsKey
 
 getMetricsPerTA :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> WorldVersion -> m (PerTA RawMetric)
+            Tx s mode -> DB s -> WorldVersion -> m (PerTA Metrics)
 getMetricsPerTA tx db@DB {..} version = 
     liftIO $ getPayloadsForTas tx db version $ 
         \_ _ ValidationVersion {..} -> 
@@ -573,7 +573,7 @@ getValidationOutcomes :: (MonadIO m, Storage s) =>
                         Tx s mode 
                         -> DB s 
                         -> WorldVersion 
-                        -> m (Validations, RawMetric, PerTA (Validations, RawMetric))
+                        -> m (Validations, Metrics, PerTA (Validations, Metrics))
 getValidationOutcomes tx db@DB {..} version = liftIO $ do 
     (commonV, commonM) <- 
         fmap (fromMaybe mempty) $ runMaybeT $ do
@@ -685,7 +685,7 @@ saveValidationVersion tx db@DB { ..}
     validatedBy allTaNames results@(PerTA perTAResults) commonVS = liftIO $ do         
 
     commonValidationKey <- save (commonVS ^. typed @Validations) $ validationsStore ^. #validations
-    commonMetricsKey <- save (commonVS ^. typed @RawMetric) $ metricStore ^. #metrics
+    commonMetricsKey <- save (commonVS ^. typed @Metrics) $ metricStore ^. #metrics
 
     -- For the TAs present in results save the results
     addedResults <- 
@@ -697,7 +697,7 @@ saveValidationVersion tx db@DB { ..}
             bgpCertsKey <- save bgpCerts $ bgpStore ^. typed
 
             validationsKey <- save (vs ^. typed @Validations) $ validationsStore ^. #validations
-            metricsKey <- save (vs ^. typed @RawMetric) $ metricStore ^. #metrics
+            metricsKey <- save (vs ^. typed @Metrics) $ metricStore ^. #metrics
             
             -- The keys may refer to nonexistent entries
             pure (taName, ValidationVersion {..})

@@ -216,7 +216,7 @@ instance ToJSON ValidatedBy where
 
 $(deriveToJSON defaultOptions ''ValidationMetric)
 
-instance ToJSON a => ToJSON (GroupedValidationMetric a)
+instance ToJSON a => ToJSON (GroupedMetric a)
 
 $(deriveToJSON defaultOptions ''FetchFreshness)
 $(deriveToJSON defaultOptions ''RsyncMetric)
@@ -230,7 +230,7 @@ $(deriveToJSON defaultOptions ''DBFileStats)
 $(deriveToJSON defaultOptions ''StorageStats)
 $(deriveToJSON defaultOptions ''TotalDBStats)
 $(deriveToJSON defaultOptions ''VrpCounts)
-$(deriveToJSON defaultOptions ''RawMetric)
+$(deriveToJSON defaultOptions ''Metrics)
     
 
 $(deriveToJSON defaultOptions ''PrefixLength)

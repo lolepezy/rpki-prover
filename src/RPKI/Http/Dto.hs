@@ -106,7 +106,7 @@ validationsToDto version validations =
 toVDtos :: Validations -> [OriginalVDto]
 toVDtos (Validations vMap) = 
     flip map (Map.toList vMap) $ \(Scope scope, issues) ->        
-        OriginalVDto $ FullVDto {
+        OriginalVDto $ ValidationDto {
             issues = map toDto $ Set.toList issues,
             path   = NonEmpty.toList scope,
             url    = NonEmpty.head scope

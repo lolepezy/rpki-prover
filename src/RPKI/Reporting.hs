@@ -337,7 +337,7 @@ getIssues s (Validations vs) = fromMaybe mempty $ Map.lookup s vs
 
 class Monoid metric => MetricC metric where
     -- lens to access the specific metric map in the total metric record    
-    metricLens :: Lens' RawMetric (MetricMap metric)
+    metricLens :: Lens' Metrics (MetricMap metric)
 
 newtype Count = Count { unCount :: Int64 }
     deriving stock (Eq, Ord, Generic)
@@ -467,7 +467,7 @@ data VrpCounts = VrpCounts {
     deriving Semigroup via GenericSemigroup VrpCounts   
     deriving Monoid    via GenericMonoid VrpCounts
 
-data RawMetric = RawMetric {
+data Metrics = Metrics {
         rsyncMetrics      :: MetricMap RsyncMetric,
         rrdpMetrics       :: MetricMap RrdpMetric,
         validationMetrics :: MetricMap ValidationMetric,
@@ -475,8 +475,8 @@ data RawMetric = RawMetric {
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
-    deriving Semigroup via GenericSemigroup RawMetric   
-    deriving Monoid    via GenericMonoid RawMetric
+    deriving Semigroup via GenericSemigroup Metrics   
+    deriving Monoid    via GenericMonoid Metrics
 
 
 -- Misc
@@ -488,7 +488,7 @@ data Trace = WorkerTimeoutTrace
 
 data ValidationState = ValidationState {
         validations   :: Validations,
-        topDownMetric :: RawMetric,
+        topDownMetric :: Metrics,
         traces        :: Set Trace
     }
     deriving stock (Show, Eq, Ord, Generic)
