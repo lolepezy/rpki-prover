@@ -23,6 +23,7 @@ import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 
 import qualified Data.List                   as List
+import           Data.Map.Monoidal.Strict    (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict    as MonoidalMap
 import           Data.String                 (IsString)
 import           Data.Generics.Product.Fields
@@ -48,9 +49,9 @@ mainPage :: WorldVersion
         -> SystemInfo 
         -> ValidationsDto ResolvedVDto
         -> [RepositoryUIDDto]
-        -> RawMetric
+        -> MetricsDto
         -> Html
-mainPage version systemInfo validation fetchDtos rawMetric =     
+mainPage version systemInfo validation fetchDtos validationMetricsDto =     
     H.docTypeHtml $ do
         H.head $ do
             link ! rel "stylesheet" ! href "/static/styles.css"
@@ -70,7 +71,7 @@ mainPage version systemInfo validation fetchDtos rawMetric =
 
             H.a ! A.id "validation-metrics" $ "" 
             H.section $ H.h3 "Validation metrics"                        
-            validationMetricsHtml $ toMetricsDto rawMetric ^. #groupedValidations
+            validationMetricsHtml $ validationMetricsDto ^. #groupedValidations
             H.a ! A.id "validation-details" $ ""
             H.section $ H.h3 "Validation details"
             validaionDetailsHtml $ validation ^. #validations            

@@ -47,6 +47,7 @@ import           RPKI.Time
 import           RPKI.TAL
 import           RPKI.Reporting
 import           RPKI.Repository
+import           RPKI.Metrics.Metrics
 import           RPKI.Http.Api
 import           RPKI.Http.Types
 import           RPKI.Http.Dto
@@ -119,7 +120,10 @@ httpServer appContext tals = genericServe HttpApi {
             Nothing                      -> notFoundException
             Just latestValidationVersion -> do                      
                 liftIO $ roTx db $ \tx -> do                    
-                    ((validations, validationMetrics), outcomesMs) <- timedMS $ DB.getValidationOutcomes tx db latestValidationVersion
+                    ((commonValidations, commonMetrics, perTa), outcomesMs) <- timedMS $ DB.getValidationOutcomes tx db latestValidationVersion
+
+                    let (validations, validationMetrics) = allTAs perTa
+                    let groupedValidationMetrics = toMetricsDto $ fmap snd perTa
 
                     (resolvedValidations, resolveMs) <- timedMS $ resolveValidationDto tx db $
                             validationsToDto latestValidationVersion validations                    
@@ -131,7 +135,7 @@ httpServer appContext tals = genericServe HttpApi {
                     (page, pageMs) <- timedMS $ pure $ mainPage latestValidationVersion systemInfo  
                                         resolvedValidations                                        
                                         fechesDtos
-                                        validationMetrics
+                                        groupedValidationMetrics
 
                     logDebug logger [i|Data timing: outcomesMs=#{outcomesMs}, reposMe=#{reposMe}, resolveMs=#{resolveMs}, pageMs=#{pageMs}|]
 

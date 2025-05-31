@@ -570,9 +570,13 @@ getMetricsPerTA tx db@DB {..} version =
             fmap unCompressed <$> M.get tx (metricStore ^. #metrics) metricsKey                   
 
 getValidationOutcomes :: (MonadIO m, Storage s) => 
-                        Tx s mode -> DB s -> WorldVersion -> m (Validations, RawMetric)
+                        Tx s mode 
+                        -> DB s 
+                        -> WorldVersion 
+                        -> m (Validations, RawMetric, PerTA (Validations, RawMetric))
 getValidationOutcomes tx db@DB {..} version = liftIO $ do 
-    commons <- fmap (fromMaybe mempty) $ runMaybeT $ do
+    (commonV, commonM) <- 
+        fmap (fromMaybe mempty) $ runMaybeT $ do
                     VersionMeta {..} <- MaybeT $ M.get tx (versionStore ^. typed) version            
                     getOutcomes commonValidationKey commonMetricsKey                    
 
@@ -581,7 +585,7 @@ getValidationOutcomes tx db@DB {..} version = liftIO $ do
             \_ _ ValidationVersion {..} -> 
                 runMaybeT $ getOutcomes validationsKey metricsKey                    
 
-    pure $ commons <> allTAs perTAOutcomes
+    pure (commonV, commonM, perTAOutcomes)
   where
     getOutcomes validationsKey metricsKey = do 
         v <- MaybeT $ fmap unCompressed <$> M.get tx (validationsStore ^. #validations) validationsKey   

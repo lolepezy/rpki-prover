@@ -51,3 +51,13 @@ groupedValidationMetric rm@RawMetric {..} = GroupedValidationMetric {..}
             case [ pp | PPFocus pp <- scopeList metricScope ] of
                 []      -> perRepo
                 uri : _ -> MonoidalMap.singleton uri metric <> perRepo        
+
+
+validationMetricsByRepository :: RawMetric -> MonoidalMap RpkiURL ValidationMetric
+validationMetricsByRepository rm@RawMetric {..} = 
+    MonoidalMap.foldrWithKey combineMetrics mempty $ unMetricMap validationMetrics
+  where    
+    combineMetrics metricScope metric perRepo = 
+        case [ pp | PPFocus pp <- scopeList metricScope ] of
+            []      -> perRepo
+            uri : _ -> MonoidalMap.singleton uri metric <> perRepo  
