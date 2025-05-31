@@ -119,30 +119,27 @@ httpServer appContext tals = genericServe HttpApi {
             Nothing                      -> notFoundException
             Just latestValidationVersion -> do                      
                 liftIO $ roTx db $ \tx -> do                    
-                    ((commonValidations, commonMetrics, perTaOutcomes), outcomesMs) <- 
-                            timedMS $ DB.getValidationOutcomes tx db latestValidationVersion
+                    (commonValidations, commonMetrics, perTaOutcomes) <- 
+                        DB.getValidationOutcomes tx db latestValidationVersion
 
-                    let (validations, _) = allTAs perTaOutcomes
                     let metricsDto = toMetricsDto $ fmap snd perTaOutcomes
 
                     resolvedValidations <- traverse (mapM (resolveOriginalDto tx db) . toVDtos . fst) perTaOutcomes
+                    resolvedCommons     <- mapM (resolveOriginalDto tx db) $ toVDtos commonValidations                    
+                    fetchesDtos         <- toRepositoryDtos appContext =<< DB.getRepositories tx db
+                    systemInfo          <- readTVarIO $ appContext ^. #appState . #system
 
-                    (resolvedCommons, resolveMs) <- timedMS $ mapM (resolveOriginalDto tx db) $ toVDtos commonValidations                    
+                    pure $ mainPage
+                            latestValidationVersion
+                            systemInfo
+                            resolvedValidations
+                            resolvedCommons
+                            fetchesDtos
+                            metricsDto
 
-                    (fetches, reposMe) <- timedMS $ DB.getRepositories tx db
-                    fechesDtos <- toRepositoryDtos appContext fetches
+                    -- logDebug logger [i|Data timing: outcomesMs=#{outcomesMs}, reposMe=#{reposMe}, resolveMs=#{resolveMs}, pageMs=#{pageMs}|]
 
-                    systemInfo <- readTVarIO $ appContext ^. #appState . #system
-                    (page, pageMs) <- timedMS $ pure $ mainPage latestValidationVersion systemInfo  
-                                        resolvedValidations       
-                                        resolvedCommons                                 
-                                        fechesDtos
-                                        metricsDto
-
-                    logDebug logger [i|Data timing: outcomesMs=#{outcomesMs}, reposMe=#{reposMe}, resolveMs=#{resolveMs}, pageMs=#{pageMs}|]
-
-                    pure page      
-        
+                    -- pure page
 
 
 getVRPValidated :: (MonadIO m, Storage s, MonadError ServerError m)
