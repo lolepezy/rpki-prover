@@ -146,10 +146,12 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
     & paths .~ IOMap.fromList 
         [ 
             ("/vrps.csv", mempty & get ?~ csvOn200 
-                "CSV-formatted list of VRPs from the latest validation run without SLURM filtering applied"),
+                "CSV-formatted list of VRPs from the latest validation run(s) without SLURM filtering applied"),
+            ("/vrps.csvext", mempty & get ?~ csvOn200 
+                "CSV-formatted list of VRPs from the latest validation run(s) without SLURM filtering applied"),
             ("/vrps", mempty & get ?~ jsonOn200 
-                "List of VRPs from the latest validation run without SLURM filtering applied"),
-            
+                "List of VRPs from the latest validation run(s) without SLURM filtering applied"),
+
             ("/vrps-filtered.csv", mempty & get ?~ csvOn200 
                 "CSV-formatted list of VRPs with SLURM filtering applied to it"),
             ("/vrps-filtered", mempty & get ?~ jsonOn200 

@@ -31,9 +31,9 @@ import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Data.Hashable hiding (hash)
+import           Data.Semigroup
 
 import           Data.Bifunctor
-import           Data.Monoid
 import           Data.Monoid.Generic
 import           Data.Tuple.Strict
 
@@ -377,8 +377,8 @@ instance WithSKI (CMSBasedObject a) where
 instance WithRawResourceCertificate a => WithValidityPeriod a where
     getValidityPeriod cert = 
         bimap Instant Instant $ X509.certValidity 
-            $ cwsX509certificate $ getCertWithSignature $ getRawCert cert    
-            
+            $ cwsX509certificate $ getCertWithSignature $ getRawCert cert
+
 instance {-# OVERLAPPING #-} WithRawResourceCertificate a => WithSerial a where
     getSerial = Serial . X509.certSerial . cwsX509certificate . certX509 . getRawCert
 
@@ -800,6 +800,18 @@ data VersionMeta = VersionMeta {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+
+newtype EarliestToExpire = EarliestToExpire Instant
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass (TheBinary)
+    deriving Semigroup via Min EarliestToExpire
+
+
+instance Monoid EarliestToExpire where
+    -- It is 2262-04-11 23:47:16.000Z, it's 
+    -- 1) far enough to set it as "later that anything else"
+    -- 2) Anything bigger than that wraps around to the year 1677
+    mempty = EarliestToExpire $ fromNanoseconds $ 1000_000_000 * 9_223_372_036
 
 -- Small utility functions that don't have anywhere else to go
 

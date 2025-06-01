@@ -19,7 +19,6 @@ import           Conduit
 import           Data.Text
 import qualified Data.ByteString.Lazy       as LBS
 import qualified Data.Map.Strict            as Map
-import qualified Data.Set                   as Set
 
 import           Data.String.Interpolate.IsString
 import           Data.Hourglass
@@ -49,7 +48,6 @@ import           RPKI.SLURM.Types
 import           RPKI.Store.Base.Serialisation
 import qualified RPKI.Store.Database    as DB
 import           RPKI.UniqueId
-import Data.Map.Monoidal (MonoidalMap)
 
 
 {- | This is to run worker processes for some code that is better to be executed in an isolated process.
@@ -145,7 +143,7 @@ newtype CompactionResult = CompactionResult ()
 
 data ValidationResult = ValidationResult 
             ValidationState 
-            (Map.Map TaName Fetcheables)
+            (Map.Map TaName (Fetcheables, EarliestToExpire))
             (Maybe Slurm) 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)

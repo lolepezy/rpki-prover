@@ -204,10 +204,10 @@ needsFetching r fetchInterval status ValidationConfig {..} (Now now) =
     case status of
         Pending         -> True
         FetchedAt time  -> tooLongAgo time
-        FailedAt time   -> not $ closeEnoughMoments time now minimalRepositoryRetryInterval
+        FailedAt time   -> not $ closeEnoughMoments (Earlier time) (Later now) minimalRepositoryRetryInterval
   where
     tooLongAgo momendTnThePast =      
-        not $ closeEnoughMoments momendTnThePast now (interval $ getRpkiURL r)
+        not $ closeEnoughMoments (Earlier momendTnThePast) (Later now) (interval $ getRpkiURL r)
       where 
         interval url = fromMaybe (defaultInterval url) fetchInterval            
         defaultInterval (RrdpU _)  = rrdpRepositoryRefreshInterval

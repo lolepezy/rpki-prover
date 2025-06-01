@@ -295,7 +295,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         currentInterval = 
             fromMaybe defaultInterval (getMeta repository ^. #refreshInterval)
 
-        exponentialBackoff (Seconds s) = min (Seconds $ s + s `div` 2 + 1) (fetchConfig ^. #maxFailedBackoffInterval)
+        exponentialBackoff (Seconds s) = min 
+            (Seconds $ s + s `div` 2 + 2 * kindaRandomness) 
+            (fetchConfig ^. #maxFailedBackoffInterval)
 
         moreThanOne = ( > 1) . length . NonEmpty.take 2
 
@@ -303,8 +305,8 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
             RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
 
-        increaseInterval (Seconds s) = trimInterval $ Seconds $ s + 1 + s `div` 10 + kindaRandomness
-        decreaseInterval (Seconds s) = trimInterval $ Seconds $ s - s `div` 3 - 1 - kindaRandomness
+        increaseInterval (Seconds s) = trimInterval $ Seconds $ s + s `div` 5 + kindaRandomness
+        decreaseInterval (Seconds s) = trimInterval $ Seconds $ s - s `div` 3 - kindaRandomness
 
         minInterval = 
             case repository of                
@@ -316,12 +318,12 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 (min (fetchConfig ^. #maxFetchInterval) interval)  
 
         -- Pseudorandom stuff is added to spread repositories over time more of less 
-        -- uniformly and avoid having peaks of activity. It's just something relatively 
-        -- random without IO
+        -- uniformly and avoid having peaks of activity. It's just something looking 
+        -- relatively random without IO
         kindaRandomness = let 
             h :: Integer = fromIntegral $ Hashable.hash url
-            w :: Integer = fromIntegral $ let (WorldVersion w_) = worldVersion in w_
-            r = (w `mod` 20 + h `mod` 20) `mod` 20 
+            w :: Integer = fromIntegral $ let (WorldVersion w_) = worldVersion in Hashable.hash w_
+            r = (w `mod` 83 + h `mod` 77) `mod` 20 
             in fromIntegral r :: Int64            
 
     saveFetchOutcome r validations =
@@ -400,7 +402,10 @@ data WorkflowShared = WorkflowShared {
 
         -- TAs that need to be revalidated because repositories 
         -- associated with these TAs have been fetched.
-        tasToValidate :: TVar (Set TaName)
+        tasToValidate :: TVar (Set TaName),
+
+        -- Earliest expiration time for any object for a TA
+        earliestToExpire :: TVar (Map TaName EarliestToExpire)
     }
     deriving stock (Generic)
 
@@ -424,6 +429,7 @@ withWorkflowShared AppContext {..} prometheusMetrics f = do
                 pure $ Fetchers {..}                        
 
         tasToValidate <- newTVar mempty
+        earliestToExpire <- newTVar mempty
         pure WorkflowShared {..}
 
     f shared `finally`
@@ -648,8 +654,9 @@ runWorkflow appContext@AppContext {..} tals = do
                     pure (mempty, mempty)
 
                 Right wr@WorkerResult {..} -> do                              
-                    let ValidationResult vs discoveredRepositories maybeSlurm = payload
-                    adjustFetchers appContext discoveredRepositories workflowShared
+                    let ValidationResult vs discovered maybeSlurm = payload
+                    adjustFetchers appContext (fmap fst discovered) workflowShared
+                    scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
                     
                     logWorkerDone logger workerId wr
                     pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory
@@ -859,7 +866,7 @@ runValidation :: Storage s =>
             -> WorldVersion
             -> [TAL]
             -> [TaName]
-            -> IO (ValidationState, Map TaName Fetcheables, Maybe Slurm)
+            -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire), Maybe Slurm)
 runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames = do           
 
     results <- validateMutlipleTAs appContext worldVersion talsToValidate
@@ -885,7 +892,9 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.
         deleted <- DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
-        pure (deleted, updatedValidation)
+
+        let validations = snd $ allTAs resultsToSave
+        pure (deleted, updatedValidation <> validations)
 
     let deletedStr = case deleted of
             [] -> "none"
@@ -893,7 +902,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deletedStr} oldest version(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, 
-        Map.map (\r -> r ^. #discoveredRepositories) results, 
+        Map.map (\r -> (r ^. #discoveredRepositories, r ^. #earliestNotValidAfter)) results, 
         maybeSlurm)
   where
     reReadSlurm =
@@ -936,6 +945,41 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
             fmap $ #topDownValidations . #topDownMetric . #validationMetrics 
                     %~ fmap (#validatedBy .~ ValidatedBy worldVersion)         
 
+
+-- Keep track of the earliest expiration time for each TA (i.e. the earlist time when some object of the TA will expire).
+-- Reschedule revalidation of the TA at the moment right after its earliest expiration time. Since this expiration time
+-- in practice keeps receding to the future as new objects are added, the revalidation is most likely not needed at all, 
+-- that's why we double-check it once again before revalidation.
+scheduleRevalidationOnExpiry :: Storage s => AppContext s -> Map TaName EarliestToExpire -> WorkflowShared -> IO ()
+scheduleRevalidationOnExpiry AppContext {..} expirationTimes workflowShared@WorkflowShared {..} = do
+    Now now <- thisInstant
+
+    atomically $ do         
+        for_ (Map.toList expirationTimes) $ \(taName, expiration) -> 
+            modifyTVar' earliestToExpire $ Map.insert taName expiration
+
+    for_ (Map.toList expirationTimes) $ \(taName, expiration@(EarliestToExpire expiresAt)) -> do
+        let timeToWait = instantDiff (Earlier now) (Later expiresAt)
+        let expiresSoonEnough = timeToWait < config ^. #validationConfig . #revalidationInterval
+        when (now < expiresAt && expiration /= mempty && expiresSoonEnough) $ do
+            logDebug logger [i|The first object for #{taName} will expire at #{expiresAt}, will schedule re-validation right after.|]
+            void $ forkFinally
+                    (do
+                        threadDelay $ toMicroseconds timeToWait
+                        let triggerRevalidation = atomically $ modifyTVar' tasToValidate $ Set.insert taName
+                        join $ atomically $ do 
+                            e <- readTVar earliestToExpire
+                            pure $ case Map.lookup taName e of 
+                                Just t 
+                                    -- expiration time changed since the trigger was scheduled, 
+                                    -- so don't do anything, there're a later trigger for this TA
+                                    | t > expiration -> do
+                                        logDebug logger [i|Will cancel the re-validation for #{taName} scheduled after expiration at #{expiresAt}, new expiration time is #{t}.|]
+                                        pure ()
+                                    | otherwise      -> triggerRevalidation
+                                Nothing              -> triggerRevalidation
+                    )                        
+                    (const $ pure ())
 
 
 -- To be called from the cache cleanup worker
@@ -1047,7 +1091,7 @@ runConcurrentlyIfPossible logger (Task taskType action) Tasks {..} = do
 versionIsOld :: Instant -> Seconds -> WorldVersion -> Bool
 versionIsOld now period (WorldVersion nanos) =
     let validatedAt = fromNanoseconds nanos
-    in not $ closeEnoughMoments validatedAt now period
+    in not $ closeEnoughMoments (Earlier validatedAt) (Later now) period
 
 
 periodically :: Seconds -> a -> (a -> IO a) -> IO a
