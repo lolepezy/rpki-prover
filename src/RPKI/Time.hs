@@ -149,15 +149,14 @@ instantTimeFormat (Instant d) = timePrint format d
             Format_Hour, colon, Format_Minute, colon, Format_Second,
             Format_TimezoneName
         ]
-    dash = Format_Text '-'
     colon = Format_Text ':'   
 
 toMicroseconds :: Seconds -> Int
 toMicroseconds (Seconds s) = fromIntegral $ 1_000_000 * s
 
 cpuTimePerSecond :: CPUTime -> Earlier -> Later -> Double
-cpuTimePerSecond (CPUTime t) from to = let
-    Seconds duration = instantDiff from to
+cpuTimePerSecond (CPUTime t) earlier later = let
+    Seconds duration = instantDiff earlier later
     in (fromInteger t :: Double) / (fromIntegral duration :: Double)
 
 asCpuTime :: Seconds -> CPUTime 
