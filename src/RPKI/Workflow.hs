@@ -952,19 +952,19 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
 -- that's why we double-check it once again before revalidation.
 scheduleRevalidationOnExpiry :: Storage s => AppContext s -> Map TaName EarliestToExpire -> WorkflowShared -> IO ()
 scheduleRevalidationOnExpiry AppContext {..} expirationTimes workflowShared@WorkflowShared {..} = do
-    Now start <- thisInstant
+    Now now <- thisInstant
 
     atomically $ do         
         for_ (Map.toList expirationTimes) $ \(taName, expiration) -> 
             modifyTVar' earliestToExpire $ Map.insert taName expiration
 
-    for_ (Map.toList expirationTimes) $ \(taName, expiration@(EarliestToExpire end)) -> do                
-        let timeToWait = instantDiff (Earlier start) (Later end)
+    for_ (Map.toList expirationTimes) $ \(taName, expiration@(EarliestToExpire expiresAt)) -> do
+        let timeToWait = instantDiff (Earlier now) (Later expiresAt)
         let expiresSoonEnough = timeToWait < config ^. #validationConfig . #revalidationInterval
-        when (start < end && expiration /= mempty && expiresSoonEnough) $ do 
-            logDebug logger [i|The first object for #{taName} will expire at #{end}, will schedule re-validation right after.|]
-            void $ forkFinally 
-                    (do                
+        when (now < expiresAt && expiration /= mempty && expiresSoonEnough) $ do
+            logDebug logger [i|The first object for #{taName} will expire at #{expiresAt}, will schedule re-validation right after.|]
+            void $ forkFinally
+                    (do
                         threadDelay $ toMicroseconds timeToWait
                         let triggerRevalidation = atomically $ modifyTVar' tasToValidate $ Set.insert taName
                         join $ atomically $ do 
@@ -973,8 +973,8 @@ scheduleRevalidationOnExpiry AppContext {..} expirationTimes workflowShared@Work
                                 Just t 
                                     -- expiration time changed since the trigger was scheduled, 
                                     -- so don't do anything, there're a later trigger for this TA
-                                    | t > expiration -> do 
-                                        logDebug logger [i|Will cancel the re-validation for #{taName} scheduled after expiration at #{end}, new expiration time is #{t}.|]
+                                    | t > expiration -> do
+                                        logDebug logger [i|Will cancel the re-validation for #{taName} scheduled after expiration at #{expiresAt}, new expiration time is #{t}.|]
                                         pure ()
                                     | otherwise      -> triggerRevalidation
                                 Nothing              -> triggerRevalidation
