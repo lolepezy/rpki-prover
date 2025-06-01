@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module RPKI.WorkflowSpec where
+module RPKI.FetchSpec where
 
 import           Data.Text (Text)
 
@@ -14,7 +14,7 @@ import qualified Data.IxSet.Typed                as IxSet
 
 import           RPKI.Domain
 import           RPKI.Repository
-import           RPKI.Workflow
+import           RPKI.Fetch
 
 
 uriTaSet :: [(Text, Text)] -> UriTaIxSet
@@ -42,7 +42,7 @@ ta2 = "TA2"
 ta3 = "TA3"
 
 workflowSpec :: TestTree
-workflowSpec = testGroup "Workflow" [ 
+workflowSpec = testGroup "Fetching" [ 
 
     HU.testCase "Adds entries to empty IxSet" $
         updateUriPerTa 

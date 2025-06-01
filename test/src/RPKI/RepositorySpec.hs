@@ -32,9 +32,9 @@ repositoryGroup = testGroup "PublicationPoints" [
             "RsyncTree gets properly updated"
             prop_rsync_tree_update,
     
-        QC.testProperty "FetchStatus is a semigroup" $ isASemigroup @FetchStatus,
-        QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RrdpRepository,
-        QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RepositoryMeta,
+        -- QC.testProperty "FetchStatus is a semigroup" $ isASemigroup @FetchStatus,
+        -- QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RrdpRepository,
+        -- QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RepositoryMeta,
         QC.testProperty "RrdpMap is a semigroup" $ isASemigroup @RrdpMap        
     ]
 

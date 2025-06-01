@@ -1000,7 +1000,9 @@ validateCaNoFetch
                 k <- DB.roAppTx db $ \tx -> DB.getKeyByHash tx db hash            
                 case k of 
                     Nothing  -> vError $ ManifestEntryDoesn'tExist hash fileName
-                    Just key -> pure $! T3 fileName hash key        
+                    Just key -> do 
+                        validateMftFileName fileName
+                        pure $! T3 fileName hash key        
         where
             longerThanOne = \case 
                 _:_:_ -> True

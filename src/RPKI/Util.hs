@@ -13,7 +13,6 @@ import qualified Crypto.Hash.SHA256          as S256
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Base16      as Hex
-import qualified Data.ByteString.Base16.Lazy as HexLazy
 import qualified Data.ByteString.Char8       as C
 import qualified Data.ByteString.Short       as BSS
 import qualified Data.ByteString.Base64      as B64
@@ -58,10 +57,6 @@ hex :: BS.ByteString -> BS.ByteString
 hex = Hex.encode    
 {-# INLINE hex #-}
 
-hexL :: LBS.ByteString -> LBS.ByteString
-hexL = HexLazy.encode    
-{-# INLINE hexL #-}
-
 class ConvertibleAsSomethingString s1 s2 where
     convert :: s1 -> s2
 
@@ -89,9 +84,6 @@ normalizeUri = Text.map (\c -> if isOkForAFile c then c else '_')
 {-# INLINE isValidFileNameCharacter #-}
 isValidFileNameCharacter :: Char -> Bool
 isValidFileNameCharacter c = isAsciiLower c || isAsciiUpper c || isDigit c || c == '-' || c == '_'
-
-trim :: BS.ByteString -> BS.ByteString
-trim = C.dropWhile isSpace . fst . C.breakEnd (not . isSpace)
 
 trimmed :: Show a => a -> Text
 trimmed = Text.strip . Text.pack . show
@@ -125,10 +117,6 @@ isRrdpURI u = isHttpURI u || isHttpsURI u
 {-# INLINE isHttpURI #-}
 {-# INLINE isRrdpURI #-}
 
-isParentOf :: WithURL u => u -> u -> Bool
-isParentOf (getURL -> URI parent) (getURL -> URI child) = 
-    parent `Text.isPrefixOf` child
-
 parseRpkiURL :: Text -> Either Text RpkiURL
 parseRpkiURL t
     | isRrdpURI u  = Right $ RrdpU $ RrdpURL u
@@ -161,10 +149,7 @@ getHostname t =
                 Right a -> Just $ a ^. authHost . unRText
 
 increment :: (MonadIO m, Num a) => IORef a -> m ()
-increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())        
-
-decrement :: (MonadIO m, Num a) => IORef a -> m ()
-decrement counter = liftIO $ atomicModifyIORef' counter $ \c -> (c - 1, ())        
+increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())            
 
 ifJustM :: Monad m => m (Maybe a) -> (a -> m ()) -> m ()
 ifJustM a f = maybe (pure ()) f =<< a

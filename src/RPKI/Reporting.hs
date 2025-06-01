@@ -15,7 +15,6 @@ import           Control.Exception.Lifted
 import           Control.Lens
 
 import           Data.Generics.Labels
-import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString             as BS
 import           Data.Int                    (Int64)
@@ -44,7 +43,6 @@ import           RPKI.Resources.Types
 import           RPKI.Time
 import           RPKI.Util (fmtGen)
 import           RPKI.Store.Base.Serialisation
-import Test.QuickCheck (Fun)
 
 newtype ParseError s = ParseError s
     deriving stock (Show, Eq, Ord, Generic)
@@ -301,22 +299,14 @@ newScopes' c t = Scopes {
         metricScope     = newScope' c t
     }    
 
-subScope :: Text -> Scope t -> Scope t
-subScope = subScope' TextFocus        
-
-subScope' :: (a -> Focus) -> a -> Scope t -> Scope t
-subScope' constructor a ps@(Scope parentScope) = let
+subScope :: (a -> Focus) -> a -> Scope t -> Scope t
+subScope constructor a ps@(Scope parentScope) = let
         focus = constructor a
     in case NonEmpty.filter (== focus) parentScope of 
         [] -> Scope $ NonEmpty.cons focus parentScope 
         _  -> ps     
 
-validatorSubScope' :: forall a . (a -> Focus) -> a -> Scopes -> Scopes
-validatorSubScope' constructor t vc = 
-    vc & typed @VScope      %~ subScope' constructor t
-       & typed @MetricScope %~ subScope' constructor t  
    
-
 mError :: VScope -> AppError -> Validations
 mError vc w = mProblem vc (VErr w)
 
@@ -347,7 +337,7 @@ getIssues s (Validations vs) = fromMaybe mempty $ Map.lookup s vs
 
 class Monoid metric => MetricC metric where
     -- lens to access the specific metric map in the total metric record    
-    metricLens :: Lens' RawMetric (MetricMap metric)
+    metricLens :: Lens' Metrics (MetricMap metric)
 
 newtype Count = Count { unCount :: Int64 }
     deriving stock (Eq, Ord, Generic)
@@ -477,7 +467,7 @@ data VrpCounts = VrpCounts {
     deriving Semigroup via GenericSemigroup VrpCounts   
     deriving Monoid    via GenericMonoid VrpCounts
 
-data RawMetric = RawMetric {
+data Metrics = Metrics {
         rsyncMetrics      :: MetricMap RsyncMetric,
         rrdpMetrics       :: MetricMap RrdpMetric,
         validationMetrics :: MetricMap ValidationMetric,
@@ -485,8 +475,8 @@ data RawMetric = RawMetric {
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
-    deriving Semigroup via GenericSemigroup RawMetric   
-    deriving Monoid    via GenericMonoid RawMetric
+    deriving Semigroup via GenericSemigroup Metrics   
+    deriving Monoid    via GenericMonoid Metrics
 
 
 -- Misc
@@ -498,7 +488,7 @@ data Trace = WorkerTimeoutTrace
 
 data ValidationState = ValidationState {
         validations   :: Validations,
-        topDownMetric :: RawMetric,
+        topDownMetric :: Metrics,
         traces        :: Set Trace
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -508,9 +498,6 @@ data ValidationState = ValidationState {
 
 mTrace :: Trace -> Set Trace
 mTrace = Set.singleton
-    
-vState :: Validations -> ValidationState
-vState vs = ValidationState vs mempty mempty
 
 updateMetricInMap :: Monoid a => 
                     MetricScope -> (a -> a) -> MetricMap a -> MetricMap a

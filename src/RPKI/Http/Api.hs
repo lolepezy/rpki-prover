@@ -75,7 +75,7 @@ data API api = API {
                 
         minimalValidationResults  :: api :- "validations"      
                                     :> QueryParam "version" Text 
-                                    :> Get '[JSON] (ValidationsDto (MinimalVDto FocusResolvedDto)),
+                                    :> Get '[JSON] (ValidationsDto (MinimalVDto ResolvedFocusDto)),
 
         fullValidationResults     :: api :- "validations-full" 
                                     :> QueryParam "version" Text 

@@ -8,10 +8,8 @@
 module RPKI.Repository where
 
 import           Control.Lens
-import           Control.Concurrent.Async
 import           Data.Generics.Product.Typed
 import           Data.Ord
-import           Data.Semigroup
 
 import           Data.X509                   (Certificate)
 
@@ -43,7 +41,6 @@ data FetchStatus = Pending
                  | FailedAt Instant  
     deriving stock (Show, Eq, Generic)    
     deriving anyclass (TheBinary)
-    deriving Semigroup via Max FetchStatus
 
 newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL } 
     deriving stock (Show, Eq, Ord, Generic)    
@@ -105,34 +102,16 @@ data RepositoryMeta = RepositoryMeta {
     deriving stock (Show, Eq, Ord, Generic)   
     deriving anyclass (TheBinary)
 
-
-instance Semigroup RepositoryMeta where
-    rm1 <> rm2 = RepositoryMeta { 
-        status    = rm1 ^. #status <> rm2 ^. #status,
-        lastFetchDuration = rm2 ^. #lastFetchDuration,
-        refreshInterval = rm2 ^. #refreshInterval
-    }
-
-instance Monoid RepositoryMeta where
-    mempty = RepositoryMeta { 
-        status = mempty,
+newRepositoryMeta :: RepositoryMeta
+newRepositoryMeta = RepositoryMeta {
+        status            = Pending,
         lastFetchDuration = Nothing,
-        refreshInterval = Nothing
+        refreshInterval   = Nothing
     }
 
 newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
-    deriving newtype (Monoid)
-
-data FetchResult = 
-    FetchSuccess Repository ValidationState | 
-    FetchFailure RpkiURL ValidationState    
-    deriving stock (Show, Eq, Generic)
-
-data FetchTask a = Stub 
-                | Fetching (Async a)                 
-    deriving stock (Eq, Ord, Generic)                    
 
 newtype Fetcheables = Fetcheables { unFetcheables :: MonoidalMap RpkiURL (Set.Set RpkiURL) }    
     deriving stock (Show, Eq, Ord, Generic)  
@@ -169,9 +148,6 @@ instance Ord FetchStatus where
             Pending     -> (Nothing, 0 :: Int)
             FailedAt t  -> (Just t,  0)
             FetchedAt t -> (Just t,  1) 
-
-instance Monoid FetchStatus where    
-    mempty = Pending
     
 instance Semigroup RrdpMap where
     RrdpMap rs1 <> RrdpMap rs2 = RrdpMap $ Map.unionWith (<>) rs1 rs2             
@@ -196,14 +172,14 @@ newRrdpRepository :: RrdpURL -> RrdpRepository
 newRrdpRepository uri = RrdpRepository {    
         rrdpMeta = Nothing,
         eTag     = Nothing,
-        meta     = mempty,
+        meta     = newRepositoryMeta,
         uri      = uri
     }
 
 newRsyncRepository :: RsyncURL -> RsyncRepository
 newRsyncRepository url = RsyncRepository {
         repoPP = RsyncPublicationPoint url,
-        meta   = mempty
+        meta   = newRepositoryMeta
     }
 
 updateMeta' :: Repository -> (RepositoryMeta -> RepositoryMeta) -> Repository
@@ -238,7 +214,7 @@ repositoryFromPP pps pp =
 
 mergeRsyncPP :: RsyncPublicationPoint -> PublicationPoints -> PublicationPoints
 mergeRsyncPP (RsyncPublicationPoint u) pps = 
-    pps & typed @RsyncForest %~ toRsyncForest u mempty
+    pps & typed @RsyncForest %~ toRsyncForest u newRepositoryMeta
 
 mergeRrdp :: RrdpRepository -> PublicationPoints -> PublicationPoints
 mergeRrdp r@RrdpRepository {..} pps =
@@ -309,36 +285,7 @@ getPublicationPointsFromCert cert = do
     case nonEmpty (rrdp <> rsync) of 
         Nothing -> Left CertificateDoesntHaveSIA
         Just ne -> Right $ PublicationPointAccess ne
-    
-
-data Change a = Put a | Remove a 
-    deriving stock (Show, Eq, Ord, Generic)
-
-data ChangeSet = ChangeSet
-    [Change RrdpRepository]    
-    [Change (RsyncHost, RsyncNodeNormal)]    
-
-
--- Update statuses of the repositories and last successful fetch times for them
-updateMeta :: Foldable t => PublicationPoints -> t (Repository, RepositoryMeta) -> PublicationPoints
-updateMeta 
-    (PublicationPoints rrdps rsyncs) newMetas = 
-        PublicationPoints 
-            (rrdps <> RrdpMap (Map.fromList rrdps_))
-            rsyncs_ 
-    where
-        (rrdps_, rsyncs_) = 
-            foldr foldRepos ([], rsyncs) newMetas
-
-        foldRepos 
-            (RrdpR r@RrdpRepository {..}, newMeta) 
-            (rrdps', rsyncs') = 
-                ((uri, r & #meta .~ newMeta) : rrdps', rsyncs')
-
-        foldRepos 
-            (RsyncR (RsyncRepository (RsyncPublicationPoint uri) _), newMeta) 
-            (rrdps', rsyncs') = 
-                (rrdps', toRsyncForest uri newMeta rsyncs')            
+          
 
 -- Number of repositories
 repositoryCount :: PublicationPoints -> Int
@@ -388,15 +335,15 @@ newRsyncForest = newRsyncForestGen
 newRsyncForestGen :: RsyncForestGen a
 newRsyncForestGen = RsyncForestGen Map.empty
 
-toRsyncForest :: Semigroup a => RsyncURL -> a -> RsyncForestGen a -> RsyncForestGen a
+toRsyncForest :: RsyncURL -> a -> RsyncForestGen a -> RsyncForestGen a
 toRsyncForest (RsyncURL host path) a (RsyncForestGen byHost) = 
     RsyncForestGen $ Map.alter (Just . maybe 
         (buildRsyncTree path a) 
         (pathToRsyncTree path a)) host byHost      
 
-pathToRsyncTree :: Semigroup a => [RsyncPathChunk] -> a -> RsyncTree a -> RsyncTree a
+pathToRsyncTree :: [RsyncPathChunk] -> a -> RsyncTree a -> RsyncTree a
 
-pathToRsyncTree [] a (Leaf existingA) = Leaf $ existingA <> a
+pathToRsyncTree [] a (Leaf _) = Leaf a
 pathToRsyncTree [] a SubTree {} = Leaf a
 
 -- Strange case when we by some reason decide to merge

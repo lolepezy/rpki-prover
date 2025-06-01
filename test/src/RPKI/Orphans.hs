@@ -57,11 +57,16 @@ import qualified Data.Map.Strict as Map
 import System.Posix.Types
 
 import           Data.Map.Monoidal.Strict
+import           RPKI.AppTypes
 import           RPKI.Logging
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
 import           RPKI.Util       (convert, mkHash)
 
+
+instance Arbitrary WorldVersion where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary URI where
     arbitrary = urlByProtocol =<< elements ["rsync", "https"]          
@@ -562,7 +567,7 @@ instance Arbitrary ValidationState where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RawMetric where
+instance Arbitrary Metrics where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -579,6 +584,10 @@ instance Arbitrary VrpCounts where
     shrink = genericShrink
 
 instance Arbitrary ValidationMetric where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary ValidatedBy where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

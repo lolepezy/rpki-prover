@@ -934,7 +934,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
         -- TODO This is very expensive and _probably_ there's a faster 
         -- way to do it then Set.fromList
         addUniqueVRPCount vrps !vs = let
-                vrpCountLens = typed @RawMetric . #vrpCounts
+                vrpCountLens = typed @Metrics . #vrpCounts
                 totalUnique = Count (fromIntegral $ uniqueVrpCount vrps)        
                 perTaUnique = fmap (Count . fromIntegral . Set.size . Set.fromList . V.toList . unVrps) (unPerTA vrps)   
             in vs & vrpCountLens . #totalUnique .~ totalUnique                
@@ -1025,16 +1025,6 @@ loadStoredAppState AppContext {..} = do
                         logInfo logger $ [i|Last cached version #{lastVersion} used to initialise |] <>
                                          [i|current state (#{estimateVrpCount vrps} VRPs), took #{elapsed}ms.|]
                     pure $ Just lastVersion
-
-
-
-isMaintenance :: TaskType -> Bool
-isMaintenance = \case    
-    CacheCleanupTask      -> True
-    LmdbCompactTask       -> True
-    LeftoversCleanupTask  -> True
-    RsyncCleanupTask      -> True
-    _                     -> False       
 
 canRunInParallel :: TaskType -> TaskType -> Bool
 canRunInParallel t1 t2 = 

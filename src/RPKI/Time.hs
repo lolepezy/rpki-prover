@@ -152,9 +152,6 @@ instantTimeFormat (Instant d) = timePrint format d
     dash = Format_Text '-'
     colon = Format_Text ':'   
 
-secondsToInt :: Seconds -> Int
-secondsToInt (Seconds s) = fromIntegral s
-
 toMicroseconds :: Seconds -> Int
 toMicroseconds (Seconds s) = fromIntegral $ 1_000_000 * s
 

@@ -16,7 +16,7 @@ import           RPKI.Reporting
 import           RPKI.Store.Base.Serialisation
 
 
-data GroupedValidationMetric a = GroupedValidationMetric {
+data GroupedMetric a = GroupedMetric {
         byTa         :: MonoidalMap TaName a,
         byRepository :: MonoidalMap RpkiURL a,
         total        :: a
@@ -24,17 +24,18 @@ data GroupedValidationMetric a = GroupedValidationMetric {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)    
 
-groupedValidationMetric :: RawMetric -> GroupedValidationMetric ValidationMetric
-groupedValidationMetric rm@RawMetric {..} = GroupedValidationMetric {..}
+
+groupedValidationMetric :: Metrics -> GroupedMetric ValidationMetric
+groupedValidationMetric m@Metrics {..} = GroupedMetric {..}
   where    
     total = mconcat (MonoidalMap.elems byTa) 
-                & #uniqueVrpNumber .~ rm ^. #vrpCounts . #totalUnique
+                & #uniqueVrpNumber .~ m ^. #vrpCounts . #totalUnique
 
     byTa = MonoidalMap.mapWithKey calculateUniqueVrps byTa'
 
     calculateUniqueVrps taName vm = 
         maybe vm (\uniqCount -> vm & #uniqueVrpNumber .~ uniqCount) $
-            MonoidalMap.lookup taName (rm ^. #vrpCounts . #perTaUnique)
+            MonoidalMap.lookup taName (m ^. #vrpCounts . #perTaUnique)
 
     (byTa', byRepository) = 
         MonoidalMap.foldrWithKey combineMetrics mempty $ unMetricMap validationMetrics

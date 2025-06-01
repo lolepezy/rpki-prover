@@ -63,11 +63,10 @@ import Data.Generics.Product (HasField)
 import Control.Concurrent (threadDelay)
 
 
-dbGroup :: TestTree
-dbGroup = testGroup "LMDB storage tests"
+databaseGroup :: TestTree
+databaseGroup = testGroup "LMDB storage tests"
     [
         objectStoreGroup,
-        -- validationResultStoreGroup,
         repositoryStoreGroup,
         versionStoreGroup,
         txGroup
@@ -79,25 +78,19 @@ objectStoreGroup = testGroup "Object storage test"
         dbTestCase "Should insert and get back" shouldInsertAndGetAllBackFromObjectStore,        
         dbTestCase "Should order manifests accoring to their dates" shouldOrderManifests,
         dbTestCase "Should merge locations" shouldMergeObjectLocations
-        -- dbTestCase "Should save, delete and have no garbage left" shouldCreateAndDeleteAllTheMaps
     ]        
-
--- validationResultStoreGroup :: TestTree
--- validationResultStoreGroup = testGroup "Validation result storage test"
---     [
---         dbTestCase "Should insert and get back" shouldInsertAndGetAllBackFromValidationResultStore
---     ]
 
 repositoryStoreGroup :: TestTree
 repositoryStoreGroup = testGroup "Repository LMDB storage test"
     [
-        dbTestCase "Should insert and get an rsync repository" shouldSaveAndGetRsyncRepositories
+        dbTestCase "Should insert and get an rsync repository" shouldSaveAndGetRsyncRepositories,
+        dbTestCase "Should overwrite metadata and validations" shouldSaveMetaAndValidationAsCorrectSemigroup
     ]        
 
 versionStoreGroup :: TestTree
 versionStoreGroup = testGroup "Version LMDB storage test"
     [
-        dbTestCase "Should insert and get a version" shouldSaveAndGetValidationVersion,
+        dbTestCase "Should insert and get a version" shouldSaveAndGetValidationVersion,        
         dbTestCase "Should insert and get a version with data from previous versions" 
             shouldSaveAndGetValidationVersionFilledWithPastData
     ]        
@@ -237,45 +230,58 @@ shouldOrderManifests io = do
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) mft2
 
 
--- shouldInsertAndGetAllBackFromValidationResultStore :: Storage s => IO (DB s) -> HU.Assertion
--- shouldInsertAndGetAllBackFromValidationResultStore io = do  
---     db@DB {..} <- io
---     vrs :: Validations <- QC.generate arbitrary      
-
---     world <- getOrCreateWorldVerion =<< newAppState
-
---     rwTx validationsStore $ \tx -> DB.saveValidations tx db world vrs
---     vrs' <- roTx validationsStore $ \tx -> DB.validationsForVersion tx db world
-
---     HU.assertEqual "Not the same Validations" (Just vrs) vrs'
-
-
-
 shouldSaveAndGetRsyncRepositories :: Storage s => IO (DB s) -> HU.Assertion
 shouldSaveAndGetRsyncRepositories io = do  
     db <- io
 
     repositories <- (<>) <$> 
             replicateM 100 (QC.generate arbitrary) <*>
-            rsyncReposWithCommonHosts
-
-    let urls = [ u | r <- repositories, RsyncU u <- [ getRpkiURL $ RsyncR r]]
+            rsyncReposWithCommonHosts 100
+    
     rwTx db $ \tx -> DB.saveRsyncRepositories tx db repositories
 
+    let urls = [ u | r <- repositories, RsyncU u <- [ getRpkiURL $ RsyncR r]]
     repositories' <- roTx db $ \tx -> DB.getRsyncRepositories tx db urls
 
     HU.assertEqual "Not the same set of rsync repositories" 
         (Set.fromList repositories) 
         (Set.fromList $ Map.elems repositories')
-  where    
-    rsyncReposWithCommonHosts = do
-        replicateM 100 $ QC.generate $ do 
-            hostName  <- RsyncHostName <$> QC.elements [ "host1", "host2", "host3" ]        
-            let host = RsyncHost hostName Nothing
-            pathChunks <- do 
-                n <- QC.choose (1, 3)
-                replicateM n arbitrary                    
-            RsyncRepository (RsyncPublicationPoint $ RsyncURL host pathChunks) <$> arbitrary      
+    
+
+
+shouldSaveMetaAndValidationAsCorrectSemigroup :: Storage s => IO (DB s) -> HU.Assertion
+shouldSaveMetaAndValidationAsCorrectSemigroup io = do
+    db <- io
+    [rsync1] <- rsyncReposWithCommonHosts 1
+
+    testOneRepository db rsync1
+
+    -- update meta
+    Now now <- thisInstant    
+    testOneRepository db $ rsync1 & #meta . #status .~ FetchedAt now
+    testOneRepository db $ rsync1 & #meta . #status .~ FailedAt now
+    testOneRepository db $ rsync1 & #meta . #status .~ Pending
+
+    pure ()
+  where
+    testOneRepository db rsync = do
+        rwTx db $ \tx -> DB.saveRsyncRepositories tx db [rsync]
+        let RsyncU url = getRpkiURL $ RsyncR rsync
+        rs <- roTx db $ \tx -> DB.getRsyncRepositories tx db [url]
+        let Just r = Map.lookup url rs
+        HU.assertEqual "Same repository" r rsync
+
+
+
+rsyncReposWithCommonHosts :: Int -> IO [RsyncRepository]
+rsyncReposWithCommonHosts n = do
+    replicateM n $ QC.generate $ do 
+        hostName  <- RsyncHostName <$> QC.elements [ "host1", "host2", "host3" ]        
+        let host = RsyncHost hostName Nothing
+        pathChunks <- do 
+            n <- QC.choose (1, 3)
+            replicateM n arbitrary                    
+        RsyncRepository (RsyncPublicationPoint $ RsyncURL host pathChunks) <$> arbitrary      
 
 
 generateRepositories :: IO PublicationPoints
@@ -468,7 +474,7 @@ shouldPreserveStateInAppTx io = do
 
     HU.assertEqual "Nested metric should count 1 object" 
         Nothing
-        (stripTime <$> lookupMetric (subScope "metric-nested-1" (newScope "root"))
+        (stripTime <$> lookupMetric (subScope TextFocus "metric-nested-1" (newScope "root"))
                             (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Root validations should have 1 warning"     
@@ -479,7 +485,7 @@ shouldPreserveStateInAppTx io = do
             VWarn (VWarning (UnspecifiedE "Error4" "text 4"))])
 
     HU.assertEqual "Nested validations should have 1 warning" 
-        (Map.lookup (subScope "nested-1" (newScope "root")) validationMap)
+        (Map.lookup (subScope TextFocus "nested-1" (newScope "root")) validationMap)
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
 
 

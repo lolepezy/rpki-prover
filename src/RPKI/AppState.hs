@@ -111,9 +111,6 @@ updatePrefixIndex AppState {..} rtrPayloads =
     writeTVar prefixIndex $! 
         force $ Just $ createPrefixIndex $ rtrPayloads ^. #uniqueVrps
 
-getWorldVerionIO :: AppState -> IO (Maybe WorldVersion)
-getWorldVerionIO AppState {..} = readTVarIO world
-
 getOrCreateWorldVerion :: AppState -> IO WorldVersion
 getOrCreateWorldVerion AppState {..} = 
     join $ atomically $ 

@@ -116,27 +116,30 @@ httpServer appContext tals = genericServe HttpApi {
         db <- liftIO $ readTVarIO database
         version <- liftIO $ roTx db $ \tx -> DB.getLatestVersion db tx 
         case version of 
-            Nothing                      -> notFoundException
+            Nothing                      -> throwError err404 { errBody = "No finished validations yet." }
             Just latestValidationVersion -> do                      
                 liftIO $ roTx db $ \tx -> do                    
-                    ((validations, validationMetrics), outcomesMs) <- timedMS $ DB.getValidationOutcomes tx db latestValidationVersion
+                    (commonValidations, commonMetrics, perTaOutcomes) <- 
+                        DB.getValidationOutcomes tx db latestValidationVersion
 
-                    (resolvedValidations, resolveMs) <- timedMS $ resolveValidationDto tx db $
-                            validationsToDto latestValidationVersion validations                    
+                    let metricsDto = toMetricsDto commonMetrics (fmap snd perTaOutcomes)
 
-                    (fetches, reposMe) <- timedMS $ DB.getRepositories tx db
-                    fechesDtos <- toRepositoryUIDtos appContext fetches
+                    resolvedValidations <- traverse (mapM (resolveOriginalDto tx db) . toVDtos . fst) perTaOutcomes
+                    resolvedCommons     <- mapM (resolveOriginalDto tx db) $ toVDtos commonValidations                    
+                    fetchesDtos         <- toRepositoryDtos appContext =<< DB.getRepositories tx db
+                    systemInfo          <- readTVarIO $ appContext ^. #appState . #system
 
-                    systemInfo <- readTVarIO $ appContext ^. #appState . #system
-                    (page, pageMs) <- timedMS $ pure $ mainPage latestValidationVersion systemInfo  
-                                        resolvedValidations                                        
-                                        fechesDtos
-                                        validationMetrics
+                    pure $ mainPage
+                            latestValidationVersion
+                            systemInfo
+                            resolvedValidations
+                            resolvedCommons
+                            fetchesDtos
+                            metricsDto
 
-                    logDebug logger [i|Data timing: outcomesMs=#{outcomesMs}, reposMe=#{reposMe}, resolveMs=#{resolveMs}, pageMs=#{pageMs}|]
+                    -- logDebug logger [i|Data timing: outcomesMs=#{outcomesMs}, reposMe=#{reposMe}, resolveMs=#{resolveMs}, pageMs=#{pageMs}|]
 
-                    pure page      
-        
+                    -- pure page
 
 
 getVRPValidated :: (MonadIO m, Storage s, MonadError ServerError m)
@@ -323,13 +326,10 @@ getMetrics appContext versionText =
     getValuesByVersion appContext versionText
         (\_ -> pure Nothing) 
         (\tx db version -> 
-            Just . toMetricsDto . allTAs <$> DB.getMetricsPerTA tx db version)
+            fmap Just $ toMetricsDto <$> 
+                            DB.getCommonMetrics tx db version <*> 
+                            DB.getMetricsPerTA tx db version)
         fromJust
-
-notFoundException :: MonadError ServerError m => m a
-notFoundException = throwError err404 {
-    errBody = "No finished validations yet."
-}
 
 getSlurm :: (MonadIO m, Storage s, MonadError ServerError m) =>
             AppContext s -> m Slurm
@@ -574,30 +574,30 @@ withPrefixIndex AppContext {..} f = do
         Just prefixIndex -> f prefixIndex                
 
 
-toRepositoryUIDtos :: Storage s => AppContext s -> [(Repository, ValidationState)] -> IO [RepositoryUIDDto] 
-toRepositoryUIDtos AppContext {..} inputs = do
+toRepositoryDtos :: Storage s => AppContext s -> [(Repository, ValidationState)] -> IO [RepositoryDto] 
+toRepositoryDtos AppContext {..} inputs = do
     let rrdps = [(r, s) | (RrdpR r, s) <- inputs]
     let rsyncs = [(r, s) | (RsyncR r, s) <- inputs]
 
     roTxT database $ \tx db -> do
         rrdpRepos <- 
-            fmap (fmap RrdpUIDto . catMaybes)
+            fmap (fmap RrdpDto . catMaybes)
             $ forM rrdps $ \(repository@RrdpRepository {..}, state) -> do
                 let validationDtos = toVDtos $ filterRepositoryValidations (RrdpU uri) $ state ^. typed
                 -- TODO That is probably not needed at all, there's nothing to resolve?
                 resolved <- forM validationDtos $ resolveOriginalDto tx db                 
 
-                pure $ fmap (\metrics -> RrdpRepositoryUIDto { validations = resolved, .. }) 
-                        $ filterRepositoryMetrics (RrdpU uri) $ state ^. typed @RawMetric . #rrdpMetrics
+                pure $ fmap (\metrics -> RrdpRepositoryDto { validations = resolved, .. }) 
+                        $ filterRepositoryMetrics (RrdpU uri) $ state ^. typed @Metrics . #rrdpMetrics
 
         rsyncRepos <- 
-            fmap (fmap RsyncUIDto . catMaybes)
+            fmap (fmap RsyncDto . catMaybes)
             $ forM rsyncs $ \(RsyncRepository { repoPP = RsyncPublicationPoint {..}, ..}, state) -> do
                 let validationDtos = toVDtos $ filterRepositoryValidations (RsyncU uri) $ state ^. typed
                 resolved <- forM validationDtos $ resolveOriginalDto tx db
 
-                pure $ fmap (\metrics -> RsyncRepositoryUIDto { validations = resolved, .. }) 
-                        $ filterRepositoryMetrics (RsyncU uri) $ state ^. typed @RawMetric . #rsyncMetrics
+                pure $ fmap (\metrics -> RsyncRepositoryDto { validations = resolved, .. }) 
+                        $ filterRepositoryMetrics (RsyncU uri) $ state ^. typed @Metrics . #rsyncMetrics
 
         pure $ rrdpRepos <> rsyncRepos            
   where
@@ -636,7 +636,7 @@ resolveLocations :: Storage s =>
                    Tx s 'RO
                 -> DB s 
                 -> Focus 
-                -> IO FocusResolvedDto
+                -> IO ResolvedFocusDto
 resolveLocations tx db = \case 
     TAFocus t               -> pure $ TextDto t
     TextFocus t             -> pure $ TextDto t

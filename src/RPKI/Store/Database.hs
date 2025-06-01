@@ -155,7 +155,7 @@ instance Storage s => WithStorage s (ValidationsStore s) where
     storage (ValidationsStore s) = storage s
 
 newtype MetricStore s = MetricStore {
-        metrics :: SMap "metrics" s ArtificialKey (Compressed RawMetric)
+        metrics :: SMap "metrics" s ArtificialKey (Compressed Metrics)
     }    
     deriving stock (Generic)
 
@@ -563,16 +563,28 @@ getValidationsPerTA tx db@DB {..} version =
             fmap unCompressed <$> M.get tx (validationsStore ^. #validations) validationsKey
 
 getMetricsPerTA :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> WorldVersion -> m (PerTA RawMetric)
+            Tx s mode -> DB s -> WorldVersion -> m (PerTA Metrics)
 getMetricsPerTA tx db@DB {..} version = 
     liftIO $ getPayloadsForTas tx db version $ 
         \_ _ ValidationVersion {..} -> 
             fmap unCompressed <$> M.get tx (metricStore ^. #metrics) metricsKey                   
 
+getCommonMetrics :: (MonadIO m, Storage s) => 
+                    Tx s mode -> DB s -> WorldVersion -> m Metrics
+getCommonMetrics tx DB {..} version = 
+    liftIO $ do 
+        fmap (fromMaybe mempty) $ runMaybeT $ do
+            VersionMeta {..} <- MaybeT $ M.get tx (versionStore ^. typed) version            
+            MaybeT $ fmap unCompressed <$> M.get tx (metricStore ^. #metrics) commonMetricsKey           
+
 getValidationOutcomes :: (MonadIO m, Storage s) => 
-                        Tx s mode -> DB s -> WorldVersion -> m (Validations, RawMetric)
+                        Tx s mode 
+                        -> DB s 
+                        -> WorldVersion 
+                        -> m (Validations, Metrics, PerTA (Validations, Metrics))
 getValidationOutcomes tx db@DB {..} version = liftIO $ do 
-    commons <- fmap (fromMaybe mempty) $ runMaybeT $ do
+    (commonV, commonM) <- 
+        fmap (fromMaybe mempty) $ runMaybeT $ do
                     VersionMeta {..} <- MaybeT $ M.get tx (versionStore ^. typed) version            
                     getOutcomes commonValidationKey commonMetricsKey                    
 
@@ -581,7 +593,7 @@ getValidationOutcomes tx db@DB {..} version = liftIO $ do
             \_ _ ValidationVersion {..} -> 
                 runMaybeT $ getOutcomes validationsKey metricsKey                    
 
-    pure $ commons <> allTAs perTAOutcomes
+    pure (commonV, commonM, perTAOutcomes)
   where
     getOutcomes validationsKey metricsKey = do 
         v <- MaybeT $ fmap unCompressed <$> M.get tx (validationsStore ^. #validations) validationsKey   
@@ -640,10 +652,6 @@ getSpls tx db@DB { splStore = SplStore m } version =
             \_ _ ValidationVersion {..} -> 
                 fmap unCompressed <$> M.get tx m splsKey
 
-deleteSpls :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> ArtificialKey -> m ()
-deleteSpls tx DB { splStore = SplStore m } key = liftIO $ M.delete tx m key    
-
 
 versionsBackwards :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(WorldVersion, VersionMeta)]
 versionsBackwards tx DB { versionStore = VersionStore s } = 
@@ -685,7 +693,7 @@ saveValidationVersion tx db@DB { ..}
     validatedBy allTaNames results@(PerTA perTAResults) commonVS = liftIO $ do         
 
     commonValidationKey <- save (commonVS ^. typed @Validations) $ validationsStore ^. #validations
-    commonMetricsKey <- save (commonVS ^. typed @RawMetric) $ metricStore ^. #metrics
+    commonMetricsKey <- save (commonVS ^. typed @Metrics) $ metricStore ^. #metrics
 
     -- For the TAs present in results save the results
     addedResults <- 
@@ -697,7 +705,7 @@ saveValidationVersion tx db@DB { ..}
             bgpCertsKey <- save bgpCerts $ bgpStore ^. typed
 
             validationsKey <- save (vs ^. typed @Validations) $ validationsStore ^. #validations
-            metricsKey <- save (vs ^. typed @RawMetric) $ metricStore ^. #metrics
+            metricsKey <- save (vs ^. typed @Metrics) $ metricStore ^. #metrics
             
             -- The keys may refer to nonexistent entries
             pure (taName, ValidationVersion {..})
@@ -769,31 +777,6 @@ updateRrdpMeta tx DB { repositoryStore = RepositoryStore {..} } meta url = liftI
     z <- M.get tx rrdpS url
     for_ z $ \r -> M.put tx rrdpS url (r { rrdpMeta = Just meta })
 
-
-applyChangeSet :: (MonadIO m, Storage s) =>
-                Tx s 'RW ->
-                DB s ->
-                ChangeSet ->
-                m ()
-applyChangeSet tx DB { repositoryStore = RepositoryStore {..}} 
-                  (ChangeSet rrdpChanges rsyncChanges) = liftIO $ do
-    -- Do the Remove first and only then Put
-    let (rrdpPuts, rrdpRemoves) = separate rrdpChanges
-
-    for_ rrdpRemoves $ \RrdpRepository{..} -> M.delete tx rrdpS uri
-    for_ rrdpPuts $ \r@RrdpRepository{..}  -> M.put tx rrdpS uri r
-
-    let (rsyncPuts, rsyncRemoves) = separate rsyncChanges
-
-    for_ rsyncRemoves $ \(uri', _) -> M.delete tx rsyncS uri'
-    for_ rsyncPuts $ uncurry (M.put tx rsyncS)    
-    
-  where
-    separate = foldr f ([], [])
-      where
-        f (Put r)    (ps, rs) = (r : ps, rs)
-        f (Remove r) (ps, rs) = (ps, r : rs)
-
 getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m PublicationPoints
 getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
     rrdps <- M.all tx rrdpS
@@ -819,12 +802,6 @@ getRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} urls =
     getRsyncAnything urls 
         (M.get tx rsyncS) 
         (\url meta -> RsyncRepository { repoPP = RsyncPublicationPoint url, .. })  
-
-getRsyncValidationState :: (MonadIO m, Storage s) => Tx s mode -> DB s -> [RsyncURL] -> m (Map.Map RsyncURL ValidationState)
-getRsyncValidationState tx DB { repositoryStore = RepositoryStore {..}} urls = do 
-    getRsyncAnything urls 
-        (fmap (fmap unCompressed) . M.get tx rsyncVState)
-        (\_ validationState -> validationState)
 
 getRsyncAnything :: MonadIO m 
                 => [RsyncURL] 
@@ -882,7 +859,7 @@ saveRsyncValidationStates tx DB { repositoryStore = RepositoryStore {..}} reposi
         (fmap (fmap unCompressed) . M.get tx rsyncVState)
         (\host tree -> M.put tx rsyncVState host (Compressed tree))        
 
-saveRsyncAnything :: (MonadIO m, Semigroup a) 
+saveRsyncAnything :: MonadIO m
                     => [(RsyncRepository, a)] 
                     -> (RsyncHost -> IO (Maybe (RsyncTree a)))
                     -> (RsyncHost -> RsyncTree a -> IO ())
@@ -970,16 +947,6 @@ data CleanUpResult = CleanUpResult {
     }
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
-
-deleteOldNonValidationVersions :: (MonadIO m, Storage s) =>                                     
-                                   Tx s 'RW 
-                                -> DB s 
-                                -> (WorldVersion -> Bool) 
-                                -> m Int
-deleteOldNonValidationVersions tx db tooOld = do    
-    toDelete <- filter tooOld . map fst <$> versionsBackwards tx db    
-    forM_ toDelete $ deleteValidationVersion tx db
-    pure $ List.length toDelete
 
 
 deleteOldestVersionsIfNeeded :: (MonadIO m, Storage s) => 
@@ -1084,11 +1051,6 @@ deleteDanglingUrls DB { objectStore = RpkiObjectStore {..} } tx = do
     pure $ length urlsToDelete
 
 
-
--- | Find the latest completed world version 
--- 
--- getLastValidationVersion :: (Storage s) => DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
--- getLastValidationVersion db tx = getLastVersionOfKind db tx validationKind        
 
 -- TODO implement min and max in maps?
 getLatestVersion :: (Storage s) => DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
