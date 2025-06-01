@@ -946,11 +946,15 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                     %~ fmap (#validatedBy .~ ValidatedBy worldVersion)         
 
 
+-- Keep track of the earliest expiration time for each TA (i.e. the earlist time when some object of the TA will expire).
+-- Reschedule revalidation of the TA at the moment right after its earliest expiration time. Since this expiration time
+-- in practice keeps receding to the future as new objects are added, the revalidation is most likely not needed at all, 
+-- that's why we double-check it once again before revalidation.
 scheduleRevalidationOnExpiry :: Storage s => AppContext s -> Map TaName EarliestToExpire -> WorkflowShared -> IO ()
 scheduleRevalidationOnExpiry AppContext {..} expirationTimes workflowShared@WorkflowShared {..} = do
     Now start <- thisInstant
 
-    atomically $ do 
+    atomically $ do         
         for_ (Map.toList expirationTimes) $ \(taName, expiration) -> 
             modifyTVar' earliestToExpire $ Map.insert taName expiration
 
@@ -967,8 +971,8 @@ scheduleRevalidationOnExpiry AppContext {..} expirationTimes workflowShared@Work
                             e <- readTVar earliestToExpire
                             pure $ case Map.lookup taName e of 
                                 Just t 
-                                    -- expirattion time changed since the trigger was 
-                                    -- scheduled, so don't do anything
+                                    -- expiration time changed since the trigger was scheduled, 
+                                    -- so don't do anything, there're a later trigger for this TA
                                     | t > expiration -> do 
                                         logDebug logger [i|Will cancel the re-validation for #{taName} scheduled after expiration at #{end}, new expiration time is #{t}.|]
                                         pure ()
