@@ -747,6 +747,12 @@ newtype PerTA a = PerTA { unPerTA :: MonoidalMap TaName a }
 instance Functor PerTA where
     fmap f (PerTA m) = PerTA $ fmap f m 
 
+instance Traversable PerTA where
+    traverse f (PerTA m) = PerTA <$> traverse f m 
+
+instance Foldable PerTA where
+    foldMap f (PerTA m) = foldMap f m
+
 -- Some auxiliary types
 newtype Size = Size { unSize :: Int64 }
     deriving stock (Show, Eq, Ord, Generic)

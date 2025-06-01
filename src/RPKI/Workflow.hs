@@ -925,7 +925,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
         -- TODO This is very expensive and _probably_ there's a faster 
         -- way to do it then Set.fromList
         addUniqueVRPCount vrps !vs = let
-                vrpCountLens = typed @RawMetric . #vrpCounts
+                vrpCountLens = typed @Metrics . #vrpCounts
                 totalUnique = Count (fromIntegral $ uniqueVrpCount vrps)        
                 perTaUnique = fmap (Count . fromIntegral . Set.size . Set.fromList . V.toList . unVrps) (unPerTA vrps)   
             in vs & vrpCountLens . #totalUnique .~ totalUnique                

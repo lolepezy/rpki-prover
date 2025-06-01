@@ -85,8 +85,8 @@ createPrometheusMetrics Config {..} = do
 textualMetrics :: MonadIO m => m LBS.ByteString
 textualMetrics = exportMetricsAsText
 
-updatePrometheus :: (MonadIO m, MonadMonitor m) => RawMetric -> PrometheusMetrics -> WorldVersion -> m ()
-updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} _ = do    
+updatePrometheus :: (MonadIO m, MonadMonitor m) => Metrics -> PrometheusMetrics -> WorldVersion -> m ()
+updatePrometheus rm@Metrics {..} PrometheusMetrics {..} _ = do    
     forM_ (MonoidalMap.toList $ unMetricMap rsyncMetrics) $ \(metricScope, metric) -> do
         let url = focusToText $ NonEmpty.head $ metricScope ^. coerced
         withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #totalTimeMs

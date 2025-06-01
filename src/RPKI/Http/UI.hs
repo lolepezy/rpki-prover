@@ -19,9 +19,6 @@ import           Data.Ord
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 
-import           Data.Map.Strict             (Map)
-import qualified Data.Map.Strict             as Map
-
 import qualified Data.List                   as List
 import qualified Data.Map.Monoidal.Strict    as MonoidalMap
 import           Data.String                 (IsString)
@@ -46,11 +43,12 @@ import           RPKI.Version
 
 mainPage :: WorldVersion
         -> SystemInfo 
-        -> ValidationsDto ResolvedVDto
-        -> [RepositoryUIDDto]
-        -> RawMetric
+        -> PerTA [ResolvedVDto]
+        -> [ResolvedVDto]
+        -> [RepositoryDto]
+        -> MetricsDto
         -> Html
-mainPage version systemInfo validation fetchDtos rawMetric =     
+mainPage version systemInfo perTaValidations generalValidations fetchDtos metricsDto =     
     H.docTypeHtml $ do
         H.head $ do
             link ! rel "stylesheet" ! href "/static/styles.css"
@@ -58,8 +56,14 @@ mainPage version systemInfo validation fetchDtos rawMetric =
         H.body $
             H.div ! A.class_ "side-navigation" $ do  
                 H.a ! A.href "#overall"            $ H.text "Overall"
-                H.a ! A.href "#validation-metrics" $ H.text "Validation metrics"
-                H.a ! A.href "#validation-details" $ H.text "Validation details"
+
+                unless (perTaValidations == mempty) $ do
+                    H.a ! A.href "#validation-metrics" $ H.text "Validation metrics"
+                    H.a ! A.href "#validation-issues"  $ H.text "Validation issues"
+
+                unless (generalValidations == mempty) $ 
+                    H.a ! A.href "#general-issues" $ H.text "General issues"
+
                 H.a ! A.href "#rrdp-fetches"       $ H.text "RRDP fetches"
                 H.a ! A.href "#rsync-fetches"      $ H.text "Rsync fetches"                
 
@@ -70,18 +74,29 @@ mainPage version systemInfo validation fetchDtos rawMetric =
 
             H.a ! A.id "validation-metrics" $ "" 
             H.section $ H.h3 "Validation metrics"                        
-            validationMetricsHtml $ toMetricsDto rawMetric ^. #groupedValidations
-            H.a ! A.id "validation-details" $ ""
-            H.section $ H.h3 "Validation details"
-            validaionDetailsHtml $ validation ^. #validations            
+            validationMetricsHtml $ metricsDto ^. #groupedValidations
 
-            H.a ! A.id "rrdp-fetches" $ ""
-            H.section $ H.h3 "RRDP fetches"
-            rrdpMetricsHtml [ d | RrdpUIDto d <- fetchDtos ]
+            unless (perTaValidations == mempty) $ do
+                H.a ! A.id "validation-issues" $ ""
+                H.section $ H.h3 "Validation issues"
+                validaionIssuesHtml perTaValidations 
 
-            H.a ! A.id "rsync-fetches" $ ""
-            H.section $ H.h3 "Rsync fetches"
-            rsyncMetricsHtml [ d | RsyncUIDto d <- fetchDtos ]
+            unless (generalValidations == mempty) $ do
+                H.a ! A.id "general-issues" $ ""
+                H.section $ H.h3 "General issues"
+                generalIssuesHtml generalValidations 
+
+            let rrdpMetrics = [ d | RrdpDto d <- fetchDtos ]
+            unless (Prelude.null rrdpMetrics) $ do
+                H.a ! A.id "rrdp-fetches" $ ""
+                H.section $ H.h3 "RRDP fetches"
+                rrdpMetricsHtml rrdpMetrics
+
+            let rsyncMetrics = [ d | RsyncDto d <- fetchDtos ]
+            unless (Prelude.null rsyncMetrics) $ do 
+                H.a ! A.id "rsync-fetches" $ ""
+                H.section $ H.h3 "Rsync fetches"
+                rsyncMetricsHtml rsyncMetrics
 
 
 overallHtml :: SystemInfo -> WorldVersion -> Html
@@ -100,7 +115,7 @@ overallHtml SystemInfo {..} worldVersion = do
                     
 
 
-validationMetricsHtml :: GroupedValidationMetric ValidationMetric -> Html
+validationMetricsHtml :: GroupedMetric ValidationMetric -> Html
 validationMetricsHtml grouped = do 
     
     let repoMetrics = MonoidalMap.toList $ grouped ^. #byRepository
@@ -141,32 +156,33 @@ validationMetricsHtml grouped = do
                         (grouped ^. #total)
 
     -- this is for per-repository metrics        
-    H.table ! A.class_ "gen-t" $ do         
-        H.thead $ tr $ do 
-            genTh $ H.div ! A.class_ "tooltip" $ do 
-                H.text "Primary repository ("
-                toHtml $ length repoMetrics
-                H.text " in total)" 
-                H.span ! A.class_ "tooltiptext" $ primaryRepoTooltip
-            genTh $ H.text "Validated at"      
-            genTh $ H.text "Original VRPs"      
-            genTh $ H.text "Objects"
-            genTh $ H.text "ROAs"
-            genTh $ H.text "Certificates"
-            genTh $ H.text "Manifests"
-            genTh $ H.text "CRLs"
-            genTh $ H.text "GBRs"                
-            genTh $ H.text "ASPAs"                
-            genTh $ H.text "BGP Certificates"
-            genTh $ H.text "Prefix Lists"
+    unless (repoMetrics == mempty) $ 
+        H.table ! A.class_ "gen-t" $ do         
+            H.thead $ tr $ do 
+                genTh $ H.div ! A.class_ "tooltip" $ do 
+                    H.text "Primary repository ("
+                    toHtml $ length repoMetrics
+                    H.text " in total)" 
+                    H.span ! A.class_ "tooltiptext" $ primaryRepoTooltip
+                genTh $ H.text "Validated at"      
+                genTh $ H.text "Original VRPs"      
+                genTh $ H.text "Objects"
+                genTh $ H.text "ROAs"
+                genTh $ H.text "Certificates"
+                genTh $ H.text "Manifests"
+                genTh $ H.text "CRLs"
+                genTh $ H.text "GBRs"                
+                genTh $ H.text "ASPAs"                
+                genTh $ H.text "BGP Certificates"
+                genTh $ H.text "Prefix Lists"
 
-        H.tbody $ do 
-            let sortedRepos = List.sortOn fst $ 
-                    Prelude.map (\(u', z) -> (unURI $ getURL u', z)) repoMetrics
-            forM_ (zip sortedRepos [1 :: Int ..]) $ \((url, vm), index) ->                
-                metricRow index url 
-                    (const $ pure ()) 
-                    (const $ pure ()) vm                  
+            H.tbody $ do 
+                let sortedRepos = List.sortOn fst $ 
+                        Prelude.map (\(u', z) -> (unURI $ getURL u', z)) repoMetrics
+                forM_ (zip sortedRepos [1 :: Int ..]) $ \((url, vm), index) ->                
+                    metricRow index url 
+                        (const $ pure ()) 
+                        (const $ pure ()) vm                  
   where
     metricRow index ta validationTime uniqueVrps vm = do 
         let totalCount_ = vm ^. #validCertNumber + 
@@ -193,52 +209,54 @@ validationMetricsHtml grouped = do
             genTd $ toHtml $ show $ vm ^. #validBgpNumber
             genTd $ toHtml $ show $ vm ^. #validSplNumber
 
-rrdpMetricsHtml :: [RrdpRepositoryUIDto] -> Html
+
+rrdpMetricsHtml :: [RrdpRepositoryDto] -> Html
 rrdpMetricsHtml rrdpMetrics =
-    H.table ! A.class_ "gen-t" $ do 
-        H.thead $ tr $ do                         
-            genTh $ do 
-                H.text "Repository (" 
-                toHtml $ length rrdpMetrics
-                H.text " in total)"                                
-            genTh $ H.text "Updated at"         
-            genTh $ H.div ! A.class_ "tooltip" $ do 
-                H.text "RRDP Update"            
-                H.span ! A.class_ "tooltiptext" $ rrdpUpdateTooltip            
-            genTh $ H.text "Added objects"
-            genTh $ H.text "Deleted objects"
-            genTh $ H.text "Download time"
-            genTh $ H.text "Total time"                    
+    unless (rrdpMetrics == mempty) $ do
+        H.table ! A.class_ "gen-t" $ do 
+            H.thead $ tr $ do                         
+                genTh $ do 
+                    H.text "Repository (" 
+                    toHtml $ length rrdpMetrics
+                    H.text " in total)"                                
+                genTh $ H.text "Updated at"         
+                genTh $ H.div ! A.class_ "tooltip" $ do 
+                    H.text "RRDP Update"            
+                    H.span ! A.class_ "tooltiptext" $ rrdpUpdateTooltip            
+                genTh $ H.text "Added objects"
+                genTh $ H.text "Deleted objects"
+                genTh $ H.text "Download time"
+                genTh $ H.text "Total time"                    
 
-        H.tbody $ do 
-            let recentFirst = List.sortOn (\m -> ordering $ m ^. #repository . #meta . #status) rrdpMetrics
-            forM_ (zip recentFirst [1 :: Int ..]) $ \(m, index) -> do 
-                htmlClickableRow index rrdpDetailRow $ do 
-                    let URI u_ = getURL $ m ^. #uri
-                        (statusHtml, dot, rrdpSource) = 
-                            case m ^. #repository . #meta . #status of 
-                                Pending     -> 
-                                    ("Pending" :: Text, Nothing, "-")
-                                FetchedAt t -> 
-                                    ([i|Fetched at #{instantTimeFormat t}|], 
-                                    Just (H.span ! A.class_ "green-dot" $ ""), 
-                                    toHtml (m ^. #metrics . #rrdpSource))
-                                FailedAt t  -> 
-                                    ([i|Failed at #{instantTimeFormat t}|], 
-                                    Just (H.span ! A.class_ "red-dot" $ ""),
-                                    "-")
+            H.tbody $ do 
+                let recentFirst = List.sortOn (\m -> ordering $ m ^. #repository . #meta . #status) rrdpMetrics
+                forM_ (zip recentFirst [1 :: Int ..]) $ \(m, index) -> do 
+                    htmlClickableRow index rrdpDetailRow $ do 
+                        let URI u_ = getURL $ m ^. #uri
+                            (statusHtml, dot, rrdpSource) = 
+                                case m ^. #repository . #meta . #status of 
+                                    Pending     -> 
+                                        ("Pending" :: Text, Nothing, "-")
+                                    FetchedAt t -> 
+                                        ([i|Fetched at #{instantTimeFormat t}|], 
+                                        Just (H.span ! A.class_ "green-dot" $ ""), 
+                                        toHtml (m ^. #metrics . #rrdpSource))
+                                    FailedAt t  -> 
+                                        ([i|Failed at #{instantTimeFormat t}|], 
+                                        Just (H.span ! A.class_ "red-dot" $ ""),
+                                        "-")
 
-                    genTd $ H.a ! A.href (textValue u_) $ H.text u_
-                    td ! A.class_ "gen-t no-wrap" $ forM_ dot Prelude.id >> toHtml statusHtml
-                    td ! A.class_ "gen-t no-wrap" $ rrdpSource
-                    genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #added
-                    genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #deleted
-                    genTd $ toHtml $ m ^. #metrics . #downloadTimeMs                                
-                    genTd $ toHtml $ m ^. #metrics . #totalTimeMs                    
+                        genTd $ H.a ! A.href (textValue u_) $ H.text u_
+                        td ! A.class_ "gen-t no-wrap" $ forM_ dot Prelude.id >> toHtml statusHtml
+                        td ! A.class_ "gen-t no-wrap" $ rrdpSource
+                        genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #added
+                        genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #deleted
+                        genTd $ toHtml $ m ^. #metrics . #downloadTimeMs                                
+                        genTd $ toHtml $ m ^. #metrics . #totalTimeMs                    
 
-                detailRow m index
+                    detailRow m index
   where
-    detailRow :: RrdpRepositoryUIDto -> Int -> H.Html
+    detailRow :: RrdpRepositoryDto -> Int -> H.Html
     detailRow m index = H.tr ! A.id (H.toValue $ rrdpDetailRow index)
                         ! A.class_ "detail-row"
                         ! A.style "display: none;" $ do
@@ -266,41 +284,43 @@ rrdpMetricsHtml rrdpMetrics =
                 space
                 H.span ! A.class_ "no-wrap" $ H.toHtml value_
 
-rsyncMetricsHtml :: [RsyncRepositoryUIDto] -> Html
-rsyncMetricsHtml rsyncMetrics =
-    H.table ! A.class_ "gen-t" $ do  
-        H.thead $ tr $ do 
-            genTh $ do 
-                H.text "Repository (" >> toHtml (length rsyncMetrics) >> H.text " in total)" 
-            genTh $ H.div ! A.class_ "tooltip" $ do
-                H.text "Updated at"                
-            genTh $ H.text "Processed objects"
-            genTh $ H.text "Total time"                    
 
-        H.tbody $ do 
-            let slowestFirst = List.sortOn (\m -> ordering $ m ^. #meta . #status) rsyncMetrics
-            forM_ (zip slowestFirst [1 :: Int ..]) $ \(m, index) -> do          
-                htmlClickableRow index rsyncDetailRow $ do 
-                    let (statusHtml, dot) = 
-                            case m ^. #meta . #status of 
-                                Pending     -> 
-                                    ("Pending" :: Text, Nothing)
-                                FetchedAt t -> 
-                                    ([i|Fetched at #{instantTimeFormat t}|], 
-                                    Just (H.span ! A.class_ "green-dot" $ ""))
-                                FailedAt t  -> 
-                                    ([i|Failed at #{instantTimeFormat t}|], 
-                                    Just (H.span ! A.class_ "red-dot" $ ""))
-                
-                    genTd $ toHtml $ let URI u_ = getURL (m ^. #uri) in u_
-                    td ! A.class_ "gen-t no-wrap" $ forM_ dot Prelude.id >> toHtml statusHtml
-                    genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #processed            
-                    genTd $ toHtml $ m ^. #metrics . #totalTimeMs         
-                
-                unless (Prelude.null $ m ^. #validations) $ 
-                    detailRow m index
+rsyncMetricsHtml :: [RsyncRepositoryDto] -> Html
+rsyncMetricsHtml rsyncMetrics =
+    unless (rsyncMetrics == mempty) $ do    
+        H.table ! A.class_ "gen-t" $ do  
+            H.thead $ tr $ do 
+                genTh $ do 
+                    H.text "Repository (" >> toHtml (length rsyncMetrics) >> H.text " in total)" 
+                genTh $ H.div ! A.class_ "tooltip" $ do
+                    H.text "Updated at"                
+                genTh $ H.text "Processed objects"
+                genTh $ H.text "Total time"                    
+
+            H.tbody $ do 
+                let slowestFirst = List.sortOn (\m -> ordering $ m ^. #meta . #status) rsyncMetrics
+                forM_ (zip slowestFirst [1 :: Int ..]) $ \(m, index) -> do          
+                    htmlClickableRow index rsyncDetailRow $ do 
+                        let (statusHtml, dot) = 
+                                case m ^. #meta . #status of 
+                                    Pending     -> 
+                                        ("Pending" :: Text, Nothing)
+                                    FetchedAt t -> 
+                                        ([i|Fetched at #{instantTimeFormat t}|], 
+                                        Just (H.span ! A.class_ "green-dot" $ ""))
+                                    FailedAt t  -> 
+                                        ([i|Failed at #{instantTimeFormat t}|], 
+                                        Just (H.span ! A.class_ "red-dot" $ ""))
+                    
+                        genTd $ toHtml $ let URI u_ = getURL (m ^. #uri) in u_
+                        td ! A.class_ "gen-t no-wrap" $ forM_ dot Prelude.id >> toHtml statusHtml
+                        genTd $ toHtml $ show $ totalMapCount $ m ^. #metrics . #processed            
+                        genTd $ toHtml $ m ^. #metrics . #totalTimeMs         
+                    
+                    unless (Prelude.null $ m ^. #validations) $ 
+                        detailRow m index
   where
-    detailRow :: RsyncRepositoryUIDto -> Int -> H.Html
+    detailRow :: RsyncRepositoryDto -> Int -> H.Html
     detailRow m index = H.tr ! A.id (H.toValue $ rsyncDetailRow index)
                         ! A.class_ "detail-row"
                         ! A.style "display: none;" $ do
@@ -316,7 +336,7 @@ issuesList m =
     H.div ! A.class_ "d-i issues-container" $ do
         H.strong "Issues:"
         H.ul ! A.class_ "issues-list" $ do
-            forM_ (m ^. #validations) $ \(ResolvedVDto (FullVDto{..})) ->
+            forM_ (m ^. #validations) $ \(ResolvedVDto (ValidationDto{..})) ->
                 forM_ issues $ \issue -> do
                     let (dotClass, issueText, itemClass) = case issue of
                             ErrorDto err -> ("red-dot", err, "error")
@@ -332,30 +352,32 @@ ordering status =
         FailedAt t  -> Just (t, 0) 
         _           -> Nothing        
 
-validaionDetailsHtml :: [ResolvedVDto] -> Html
-validaionDetailsHtml result = 
-    H.table ! A.class_ "gen-t" $ do 
-        H.thead $ tr $ do 
-            genTh $ H.span $ H.text "Issue"            
-            genTh $ H.div ! A.class_ "tooltip" $ do
-                H.text "URL/Scope"
-                H.span ! A.class_ "tooltiptext" $ validationPathTootip               
-        forM_ (Map.toList $ groupByTa result) $ \(ta, vrs) -> 
-            H.tbody $ tr $ td ! A.class_ "even-row, gen-t" ! colspan "2" $ do 
-                -- Open the small ones
-                let detailElem = if length vrs < 10 then H.details ! A.open "" else H.details
-                detailElem $ do 
-                    H.summary $ H.strong $ do 
-                        toHtml ta >> ":"
-                        space >> space >> space
-                        let (e, w) = countProblems vrs
-                        toHtml e >> " errors, "
-                        toHtml w >> " warnings"                    
-                    H.table ! A.class_ "sub-t" $ 
-                        H.tbody $ forM_ (zip vrs [1 :: Int ..]) vrHtml
-            
+
+validaionIssuesHtml :: PerTA [ResolvedVDto] -> Html
+validaionIssuesHtml dtos = 
+    unless (dtos == mempty) $ do
+        H.table ! A.class_ "gen-t" $ do 
+            H.thead $ tr $ do 
+                genTh $ H.span $ H.text "Issue"            
+                genTh $ H.div ! A.class_ "tooltip" $ do
+                    H.text "URL/Scope"
+                    H.span ! A.class_ "tooltiptext" $ validationPathTootip               
+            forM_ (perTA dtos) $ \(TaName ta, vrs) -> 
+                unless (vrs == mempty) $ do                 
+                    H.tbody $ tr $ td ! A.class_ "even-row, gen-t" ! colspan "2" $ do 
+                        -- Open the small ones
+                        let detailElem = if length vrs < 10 then H.details ! A.open "" else H.details
+                        detailElem $ do 
+                            H.summary $ H.strong $ do 
+                                toHtml ta >> ":"
+                                space >> space >> space
+                                let (e, w) = countProblems vrs
+                                toHtml e >> " errors, "
+                                toHtml w >> " warnings"                    
+                            H.table ! A.class_ "sub-t" $ 
+                                H.tbody $ forM_ (zip vrs [1 :: Int ..]) vrHtml            
   where      
-    vrHtml (ResolvedVDto (FullVDto{..}), index) = do 
+    vrHtml (ResolvedVDto (ValidationDto{..}), index) = do 
         let objectUrl = Prelude.head path         
         forM_ (zip issues [1 :: Int ..]) $ \(pr, jndex) ->                     
             htmlRow (index + jndex) $ do 
@@ -373,10 +395,35 @@ validaionDetailsHtml result =
     countProblems = 
         List.foldl' countP (0 :: Int, 0 :: Int)
       where
-        countP z (ResolvedVDto FullVDto {..}) = List.foldl' countEW z issues
+        countP z (ResolvedVDto ValidationDto {..}) = List.foldl' countEW z issues
         countEW (!e, !w) (ErrorDto _)   = (e + 1, w)
         countEW (!e, !w) (WarningDto _) = (e, w + 1)
 
+
+generalIssuesHtml :: [ResolvedVDto] -> Html
+generalIssuesHtml dtos = 
+    H.table ! A.class_ "gen-t" $ do 
+        H.thead $ tr $ do 
+            genTh $ H.span $ H.text "Issue"            
+            genTh $ H.div ! A.class_ "tooltip" $ do
+                H.text "URL/Scope"
+                H.span ! A.class_ "tooltiptext" $ validationPathTootip               
+        H.tbody $
+            forM_ (zip dtos [1 :: Int ..]) $ \(ResolvedVDto (ValidationDto{..}), index) -> do 
+                let objectUrl = Prelude.head path         
+                forM_ (zip issues [1 :: Int ..]) $ \(pr, jndex) ->                     
+                    htmlRow (index + jndex) $ do 
+                        let (marker, problem) = 
+                                case pr of 
+                                    ErrorDto err -> ("red-dot",  err)                                        
+                                    WarningDto w -> ("yellow-dot", w)
+                        td ! A.class_ "sub-t" $ H.span $ do 
+                            H.span ! A.class_ marker $ ""                    
+                            mapM_ (\z -> H.text z >> H.br) $ Text.lines problem
+                        td ! A.class_ "sub-t" $ H.details $ do 
+                            H.summary $ focusLink1 objectUrl
+                            forM_ (Prelude.tail path) $ \f -> 
+                                focusLink1 f >> H.br
 
 primaryRepoTooltip :: Html
 primaryRepoTooltip = 
@@ -395,21 +442,10 @@ rrdpUpdateTooltip =
 
 validationPathTootip :: Html
 validationPathTootip = do   
-    space >> space
-    H.text "Signs " >> arrowRight >> H.text " and " >> arrowUp >> H.text " are clickable. "
+    space >> space    
     H.text "'Scope' here shows the full sequence of objects from the TA to the object in question."
     space >> space
         
-
-groupByTa :: [ResolvedVDto] -> Map Text [ResolvedVDto]
-groupByTa vrs =
-    Map.fromListWith (<>) 
-    $ [ (resolvedFocusToText ta, [vr]) 
-            | vr@(ResolvedVDto FullVDto {..}) <- vrs, 
-              ta <- lastOne path ]    
-  where
-    lastOne [] = []
-    lastOne xs = [last xs]
 
 
 -- TODO This is quite ugly, find a better way to get a proper URL (using servant maybe)
@@ -479,7 +515,7 @@ instance ToMarkup RrdpSource where
             message :: Text = [i|Snapshot #{serial}|]
             in toMarkup message
         
-focusLink1 :: FocusResolvedDto -> Html
+focusLink1 :: ResolvedFocusDto -> Html
 focusLink1 = \case 
     TextDto txt     -> toHtml txt
     TA_UI txt       -> toHtml txt
