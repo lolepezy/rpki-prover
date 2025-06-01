@@ -116,7 +116,7 @@ httpServer appContext tals = genericServe HttpApi {
         db <- liftIO $ readTVarIO database
         version <- liftIO $ roTx db $ \tx -> DB.getLatestVersion db tx 
         case version of 
-            Nothing                      -> notFoundException
+            Nothing                      -> throwError err404 { errBody = "No finished validations yet." }
             Just latestValidationVersion -> do                      
                 liftIO $ roTx db $ \tx -> do                    
                     (commonValidations, commonMetrics, perTaOutcomes) <- 
@@ -330,11 +330,6 @@ getMetrics appContext versionText =
                             DB.getCommonMetrics tx db version <*> 
                             DB.getMetricsPerTA tx db version)
         fromJust
-
-notFoundException :: MonadError ServerError m => m a
-notFoundException = throwError err404 {
-    errBody = "No finished validations yet."
-}
 
 getSlurm :: (MonadIO m, Storage s, MonadError ServerError m) =>
             AppContext s -> m Slurm
