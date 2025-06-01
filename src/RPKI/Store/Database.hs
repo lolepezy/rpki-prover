@@ -569,6 +569,14 @@ getMetricsPerTA tx db@DB {..} version =
         \_ _ ValidationVersion {..} -> 
             fmap unCompressed <$> M.get tx (metricStore ^. #metrics) metricsKey                   
 
+getCommonMetrics :: (MonadIO m, Storage s) => 
+                    Tx s mode -> DB s -> WorldVersion -> m Metrics
+getCommonMetrics tx DB {..} version = 
+    liftIO $ do 
+        fmap (fromMaybe mempty) $ runMaybeT $ do
+            VersionMeta {..} <- MaybeT $ M.get tx (versionStore ^. typed) version            
+            MaybeT $ fmap unCompressed <$> M.get tx (metricStore ^. #metrics) commonMetricsKey           
+
 getValidationOutcomes :: (MonadIO m, Storage s) => 
                         Tx s mode 
                         -> DB s 

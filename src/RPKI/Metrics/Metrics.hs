@@ -24,6 +24,7 @@ data GroupedMetric a = GroupedMetric {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)    
 
+
 groupedValidationMetric :: Metrics -> GroupedMetric ValidationMetric
 groupedValidationMetric m@Metrics {..} = GroupedMetric {..}
   where    

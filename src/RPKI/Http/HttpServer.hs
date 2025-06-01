@@ -122,7 +122,7 @@ httpServer appContext tals = genericServe HttpApi {
                     (commonValidations, commonMetrics, perTaOutcomes) <- 
                         DB.getValidationOutcomes tx db latestValidationVersion
 
-                    let metricsDto = toMetricsDto $ fmap snd perTaOutcomes
+                    let metricsDto = toMetricsDto commonMetrics (fmap snd perTaOutcomes)
 
                     resolvedValidations <- traverse (mapM (resolveOriginalDto tx db) . toVDtos . fst) perTaOutcomes
                     resolvedCommons     <- mapM (resolveOriginalDto tx db) $ toVDtos commonValidations                    
@@ -326,7 +326,9 @@ getMetrics appContext versionText =
     getValuesByVersion appContext versionText
         (\_ -> pure Nothing) 
         (\tx db version -> 
-            Just . toMetricsDto <$> DB.getMetricsPerTA tx db version)
+            fmap Just $ toMetricsDto <$> 
+                            DB.getCommonMetrics tx db version <*> 
+                            DB.getMetricsPerTA tx db version)
         fromJust
 
 notFoundException :: MonadError ServerError m => m a

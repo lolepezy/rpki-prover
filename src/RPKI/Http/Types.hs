@@ -656,12 +656,12 @@ toMinimalValidations :: Coercible dto (ValidationDto f) =>
                      -> ValidationsDto (MinimalVDto f)
 toMinimalValidations = #validations %~ coerce
 
-toMetricsDto :: PerTA Metrics -> MetricsDto
-toMetricsDto perTa = MetricsDto {..}
+toMetricsDto :: Metrics -> PerTA Metrics -> MetricsDto
+toMetricsDto common perTa = MetricsDto {..}
   where
     -- TODO This is temporary -- grouping should take into account
     -- that metrics are already grouped by TA
-    groupedValidations = groupedValidationMetric $ allTAs perTa
+    groupedValidations = groupedValidationMetric $ allTAs perTa <> common
 
 toPublicationPointDto :: PublicationPoints -> PublicationPointsDto
 toPublicationPointDto PublicationPoints {..} = PublicationPointsDto {
