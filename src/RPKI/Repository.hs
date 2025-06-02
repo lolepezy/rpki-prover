@@ -120,7 +120,7 @@ newtype Fetcheables = Fetcheables { unFetcheables :: MonoidalMap RpkiURL (Set.Se
     deriving newtype Semigroup
 
 instance WithRpkiURL PublicationPoint where
-    getRpkiURL (RrdpPP RrdpRepository {..})          = RrdpU uri
+    getRpkiURL (RrdpPP RrdpRepository {..}) = RrdpU uri
     getRpkiURL (RsyncPP (RsyncPublicationPoint uri)) = RsyncU uri    
 
 instance WithRpkiURL Repository where
@@ -288,13 +288,8 @@ getPublicationPointsFromCert cert = do
           
 
 -- Number of repositories
-repositoryCount :: PublicationPoints -> Int
-repositoryCount (PublicationPoints (RrdpMap rrdps) (RsyncForestGen rsyncs)) =     
-    Map.size rrdps + 
-    sum (map rsyncCounts $ Map.elems rsyncs)
-  where
-    rsyncCounts (Leaf _) = 1
-    rsyncCounts SubTree {..} = sum $ map rsyncCounts $ Map.elems rsyncChildren
+repositoryCount :: Fetcheables -> Int
+repositoryCount (Fetcheables fs) = MonoidalMap.size fs
 
 
 filterPPAccess :: Config -> PublicationPointAccess -> Maybe PublicationPointAccess    

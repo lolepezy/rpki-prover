@@ -250,7 +250,7 @@ defaultConfig = Config {
         -- every object contains at least 256 bytes of RSA key, 
         -- couple of dates and a few extensions
         minObjectSize                  = 300,
-        maxTaRepositories              = 3000,
+        maxTaRepositories              = 1000,
         validationRFC                  = StrictRFC,
         validationAlgorithm            = FullEveryIteration,
         fetchIntervalCalculation       = Adaptive,

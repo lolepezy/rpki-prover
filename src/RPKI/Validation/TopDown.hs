@@ -103,7 +103,6 @@ data TopDownContext = TopDownContext {
         taName                  :: TaName,
         allTas                  :: AllTasTopDownContext,
         currentPathDepth        :: Int,
-        startingRepositoryCount :: Int,
         interruptedByLimit      :: TVar Limited,
         payloadBuilder          :: PayloadBuilder,
         overclaimingHappened    :: Bool,
@@ -179,7 +178,6 @@ newTopDownContext taName allTas =
             let verifiedResources = Nothing
                 currentPathDepth = 0
                 overclaimingHappened = False       
-            let startingRepositoryCount = repositoryCount $ allTas ^. #publicationPoints
             interruptedByLimit      <- newTVar CanProceed                 
             fetcheables             <- newTVar mempty                 
             earliestNotValidAfter   <- newTVar mempty
@@ -480,15 +478,13 @@ validateCa
         )
 
     -- Check and report for the maximal increase in the repository number
-    repositoryCountLimit = (
-        do
-            -- pps <- readTVar $ repositoryProcessing ^. #publicationPoints
-            -- pure $! repositoryCount pps - startingRepositoryCount > validationConfig ^. #maxTaRepositories
-            pure False
-            ,
+    repositoryCountLimit = let 
+            maxRepositories = validationConfig ^. #maxTaRepositories in 
+        (do
+            (\fs -> repositoryCount fs > maxRepositories) <$> readTVar fetcheables,
         logCheck
-            (TooManyRepositories $ validationConfig ^. #maxTaRepositories)
-            (\loc -> [i|Interrupting validation on #{fmtLocations loc}, maximum total new repository count is reached.|])
+            (TooManyRepositories maxRepositories)
+            (\loc -> [i|Interrupting validation on #{fmtLocations loc}, maximum total new repository count per TA #{maxRepositories} is reached.|])
         )                
 
     logCheck validationError errorText = do 
