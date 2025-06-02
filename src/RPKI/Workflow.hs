@@ -752,7 +752,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 
                 for_ lastFetchMoment $ \lastFetch -> do 
                     worldVersion <- newWorldVersion
-                    let interval = refreshInterval (newFetchConfig config) repository worldVersion status Nothing
+                    let interval = refreshInterval (newFetchConfig config) repository worldVersion status Nothing 0
                     let pause = leftToWait lastFetch now interval                                        
                     when (pause > 0) $ do  
                         let pauseSeconds = pause `div` 1_000_000
@@ -785,7 +785,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 case r of
                     Right (repository', stats) -> do                         
                         let (updateRepo, interval) = updateRepository fetchConfig
-                                repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats
+                                repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duratioMs
 
                         saveFetchOutcome updateRepo validations                          
                         when (hasUpdates validations) $ do 
@@ -796,7 +796,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                         pure $ Just interval
                     Left _ -> do
                         let newStatus = FailedAt $ versionToInstant worldVersion
-                        let (updateRepo, interval) = updateRepository fetchConfig repository worldVersion newStatus Nothing
+                        let (updateRepo, interval) = updateRepository fetchConfig repository worldVersion newStatus Nothing duratioMs
 
                         saveFetchOutcome updateRepo validations
                         getFetchable >>= \case
@@ -819,7 +819,8 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 ((r, validations), duratioMs) <- 
                         withFetchLimits fetchConfig repository $ timedMS $ 
                             runValidatorT (newScopes' RepositoryFocus fallbackUrl) $ 
-                                fetchRepository appContext fetchConfig worldVersion repository                
+                                runConcurrentlyIfPossible logger FetchTask runningTasks $ 
+                                    fetchRepository appContext fetchConfig worldVersion repository                
 
                 let repo = case r of
                         Right (repository', stats) -> 
@@ -843,16 +844,15 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         Fetcheables fs <- readTVarIO fetcheables
         pure $ MonoidalMap.lookup url fs
 
-    updateRepository fetchConfig repo worldVersion newStatus stats = (updated, interval)
+    updateRepository fetchConfig repo worldVersion newStatus stats durationMs = (updated, interval)
       where
-        interval = refreshInterval fetchConfig repo worldVersion newStatus stats
+        interval = refreshInterval fetchConfig repo worldVersion newStatus stats durationMs
         updated = updateMeta' repo 
             (\meta -> meta 
                 & #status .~ newStatus 
                 & #refreshInterval ?~ interval)
 
-    -- TODO Include all the adaptive logic here
-    refreshInterval fetchConfig repository worldVersion newStatus rrdpStats = 
+    refreshInterval fetchConfig repository worldVersion newStatus rrdpStats durationMs = 
         case newStatus of                 
                 FailedAt _ -> exponentialBackoff currentInterval
                 _ ->       
@@ -898,8 +898,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         kindaRandomness = let 
             h :: Integer = fromIntegral $ Hashable.hash url
             w :: Integer = fromIntegral $ let (WorldVersion w_) = worldVersion in Hashable.hash w_
-            r = (w `mod` 83 + h `mod` 77) `mod` 20 
-            in fromIntegral r :: Int64            
+            d :: Integer = fromIntegral $ unTimeMs durationMs
+            r = (w `mod` 83 + h `mod` 77 + d `mod` 37) `mod` 20
+            in fromIntegral r :: Int64
 
     saveFetchOutcome r validations =
         rwTxT database $ \tx db -> do
