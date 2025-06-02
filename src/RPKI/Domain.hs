@@ -1,5 +1,6 @@
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DeriveTraversable          #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings          #-}
@@ -739,19 +740,11 @@ data Payloads = Payloads {
     deriving Monoid    via GenericMonoid Payloads
 
 newtype PerTA a = PerTA { unPerTA :: MonoidalMap TaName a }
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic, Functor, Traversable, Foldable)
     deriving anyclass (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup (PerTA a)
     deriving Monoid    via GenericMonoid (PerTA a)
 
-instance Functor PerTA where
-    fmap f (PerTA m) = PerTA $ fmap f m 
-
-instance Traversable PerTA where
-    traverse f (PerTA m) = PerTA <$> traverse f m 
-
-instance Foldable PerTA where
-    foldMap f (PerTA m) = foldMap f m
 
 -- Some auxiliary types
 newtype Size = Size { unSize :: Int64 }
