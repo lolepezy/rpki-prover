@@ -883,7 +883,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
         exponentialBackoff (Seconds s) = min 
             (Seconds $ s + s `div` 2 + 2 * kindaRandomness) 
-            (fetchConfig ^. #maxFailedBackoffInterval)
+            ((fetchConfig ^. #maxFailedBackoffInterval) + 3 * Seconds kindaRandomness)
 
         moreThanOne = ( > 1) . length . NonEmpty.take 2
 
@@ -903,7 +903,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
         trimInterval interval = 
             max minInterval 
-                (min (fetchConfig ^. #maxFetchInterval) interval)  
+                (min ((fetchConfig ^. #maxFetchInterval) + Seconds kindaRandomness) interval)  
 
         -- Pseudorandom stuff is added to spread repositories over time more of less 
         -- uniformly and avoid having peaks of activity. It's just something looking 
