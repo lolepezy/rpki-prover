@@ -34,7 +34,7 @@ import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import           Data.Set                        (Set)
 import qualified Data.Set                        as Set
 import qualified Data.Vector                     as V
-import           Data.Maybe                      (fromMaybe)
+import           Data.Maybe                      (fromMaybe, catMaybes)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
 import           Data.Time.Clock                 (NominalDiffTime, diffUTCTime, getCurrentTime)
@@ -974,11 +974,22 @@ scheduleRevalidationOnExpiry :: Storage s => AppContext s -> Map TaName Earliest
 scheduleRevalidationOnExpiry AppContext {..} expirationTimes WorkflowShared {..} = do
     Now now <- thisInstant
 
-    atomically $ do         
-        for_ (Map.toList expirationTimes) $ \(taName, expiration) -> 
-            modifyTVar' earliestToExpire $ Map.insert taName expiration
+    -- Filter out TAs for which expiration time hasn't changed
+    onlyUpdatedExpirations <- 
+        fmap catMaybes $ atomically $ do         
+            forM (Map.toList expirationTimes) $ \(taName, expiration) -> do 
+                let updateIt = do 
+                        modifyTVar' earliestToExpire $ Map.insert taName expiration
+                        pure $ Just (taName, expiration)
 
-    for_ (Map.toList expirationTimes) $ \(taName, expiration@(EarliestToExpire expiresAt)) -> do
+                m <- readTVar earliestToExpire
+                case Map.lookup taName m of
+                    Nothing -> updateIt
+                    Just e
+                        | e == expiration -> pure Nothing
+                        | otherwise       -> updateIt
+
+    for_ onlyUpdatedExpirations $ \(taName, expiration@(EarliestToExpire expiresAt)) -> do
         let timeToWait = instantDiff (Earlier now) (Later expiresAt)
         let expiresSoonEnough = timeToWait < config ^. #validationConfig . #revalidationInterval
         when (now < expiresAt && expiration /= mempty && expiresSoonEnough) $ do
@@ -996,7 +1007,9 @@ scheduleRevalidationOnExpiry AppContext {..} expirationTimes WorkflowShared {..}
                                     | t > expiration -> do
                                         logDebug logger [i|Will cancel the re-validation for #{taName} scheduled after expiration at #{expiresAt}, new expiration time is #{t}.|]
                                         pure ()
-                                    | otherwise      -> triggerRevalidation
+                                    | otherwise      -> do 
+                                        logDebug logger [i|Will not cancel re-validation for #{taName} scheduled after expiration at #{expiresAt}, new expiration time is #{t}.|]
+                                        triggerRevalidation
                                 Nothing              -> triggerRevalidation
                     )                        
                     (const $ pure ())
