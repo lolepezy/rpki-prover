@@ -29,35 +29,54 @@ import           HaskellWorks.Data.Network.Ip.Validity
 import           RPKI.Store.Base.Serialisation
 
 data AddrFamily = Ipv4F | Ipv6F
-    deriving stock (Show, Eq, Ord, Generic) 
+    deriving stock (Eq, Ord, Generic) 
     deriving anyclass (TheBinary, NFData)
 
 newtype Ipv4Prefix = Ipv4Prefix (V4.IpBlock Canonical) 
-    deriving stock (Show, Eq, Ord, Generic) 
+    deriving stock (Eq, Ord, Generic) 
     deriving anyclass (TheBinary, NFData)
 
 newtype Ipv6Prefix = Ipv6Prefix (V6.IpBlock Canonical)
-    deriving stock (Show, Eq, Ord, Generic) 
+    deriving stock (Eq, Ord, Generic) 
     deriving anyclass (TheBinary, NFData)
 
 data IpPrefix = Ipv4P Ipv4Prefix | Ipv6P Ipv6Prefix
-    deriving stock (Show, Eq, Ord, Generic) 
+    deriving stock (Eq, Ord, Generic) 
     deriving anyclass (TheBinary, NFData)
 
 newtype ASN = ASN Word32
-    deriving stock (Show, Eq, Ord, Generic) 
+    deriving stock (Eq, Ord, Generic) 
     deriving anyclass (TheBinary, NFData)
     deriving newtype Enum
 
 newtype PrefixLength = PrefixLength Word8
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
 data AsResource = AS ASN
                 | ASRange ASN ASN
-    deriving stock (Show, Eq, Ord, Generic) 
+    deriving stock (Eq, Ord, Generic) 
     deriving anyclass (TheBinary, NFData)
 
+instance Show Ipv4Prefix where
+    show (Ipv4Prefix block) = show block
+
+instance Show Ipv6Prefix where
+    show (Ipv6Prefix block) = show block
+
+instance Show IpPrefix where
+    show (Ipv4P block) = show block
+    show (Ipv6P block) = show block
+
+instance Show ASN where
+    show (ASN asn) = "AS" <> show asn
+
+instance Show PrefixLength where
+    show (PrefixLength len) = show len
+
+instance Show AsResource where
+    show (AS asn) = show asn
+    show (ASRange asn1 asn2) = show asn1 <> " - " <> show asn2
 
 class WithSetOps p where
     contains :: p -> p -> Bool

@@ -98,9 +98,9 @@ test_reject_full_duplicates = do
         ("Wrong validation message " <> show z) 
         (Left (SlurmE (SlurmValidationError 
             $ "File Foo has prefix overlaps with file Bar: " <> 
-              "[(Ipv4P (Ipv4Prefix 198.51.100.0/24),Ipv4P (Ipv4Prefix 198.51.100.0/24))," <> 
-              "(Ipv6P (Ipv6Prefix 2001:db8::/32),Ipv6P (Ipv6Prefix 2001:db8::/32))," <> 
-              "(Ipv4P (Ipv4Prefix 192.0.2.0/24),Ipv4P (Ipv4Prefix 192.0.2.0/24))]"))) 
+              "[(198.51.100.0/24,198.51.100.0/24)," <> 
+              "(2001:db8::/32,2001:db8::/32)," <> 
+              "(192.0.2.0/24,192.0.2.0/24)]"))) 
         z    
 
 test_reject_partial_prefix_duplicates :: HU.Assertion
@@ -133,7 +133,7 @@ test_reject_partial_prefix_duplicates = do
         ("Wrong validation message " <> show z) 
         (Left (SlurmE (SlurmValidationError $
             "File Foo has prefix overlaps with file Bar: " <> 
-            "[(Ipv4P (Ipv4Prefix 192.0.0.0/16),Ipv4P (Ipv4Prefix 192.0.2.0/24))]"))) 
+            "[(192.0.0.0/16,192.0.2.0/24)]"))) 
         z    
 
 
@@ -166,7 +166,7 @@ test_reject_partial_asn_duplicates = do
     HU.assertEqual 
         ("Wrong validation message " <> show z) 
         (Left (SlurmE (SlurmValidationError
-            "File Foo has ASN overlaps with file Bar: [ASN 64496]"))) 
+            "File Foo has ASN overlaps with file Bar: [AS64496]"))) 
         z    
 
 

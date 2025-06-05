@@ -252,10 +252,16 @@ runWorkflow appContext@AppContext {..} tals = do
             
             void $ do 
                 validateTAs workflowShared worldVersion talsToValidate
-                forkIO $ do                         
-                    Conc.threadDelay $ toMicroseconds 
-                            $ config ^. #validationConfig . #minimalRevalidationInterval
-                    atomically $ writeTVar canValidateAgain True
+                let scheduleNextRun = void $ forkIO $ do                         
+                        Conc.threadDelay $ toMicroseconds 
+                                $ config ^. #validationConfig . #minimalRevalidationInterval
+                        atomically $ writeTVar canValidateAgain True
+
+                case config ^. #proverRunMode of     
+                    OneOffMode vrpOutputFile -> do
+                        pure ()
+                    ServerMode -> scheduleNextRun           
+                
             
             go canValidateAgain RanBefore
 

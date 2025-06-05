@@ -118,8 +118,8 @@ overallHtml SystemInfo {..} worldVersion = do
 validationMetricsHtml :: GroupedMetric ValidationMetric -> Html
 validationMetricsHtml grouped = do 
     
-    let repoMetrics = MonoidalMap.toList $ grouped ^. #byRepository
-    let taMetrics   = MonoidalMap.toList $ grouped ^. #byTa        
+    let repoMetrics = MonoidalMap.toAscList $ grouped ^. #byRepository
+    let taMetrics   = MonoidalMap.toAscList $ grouped ^. #byTa        
     
     -- this is for per-TA metrics
     H.table ! A.class_ "gen-t" $ do         

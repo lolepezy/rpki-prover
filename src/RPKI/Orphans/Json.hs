@@ -64,14 +64,13 @@ import           RPKI.Time
 import qualified RPKI.Util                   as U
 
 instance ToJSON ASN where
-    toJSON (ASN as) = toJSON $ "AS" <> show as
+    toJSON = toJSON . show
 
 instance ToJSON IpPrefix where
-    toJSON (Ipv4P (Ipv4Prefix p)) = toJSON $ show p
-    toJSON (Ipv6P (Ipv6Prefix p)) = toJSON $ show p
+    toJSON = toJSON . show
 
 instance ToJSON WorldVersion where
-    toJSON (WorldVersion v) = toJSON $ show $ toInteger v
+    toJSON (WorldVersion v) = toJSON $ show v
 
 instance (ToJSON a, ToJSON b) => ToJSON (T2 a b) where
     toJSON (T2 a b) = toJSON (a, b)

@@ -123,11 +123,10 @@ vrpDtosToCSV vrpDtos =
         (str "ASN,IP Prefix,Max Length,Trust Anchor\n")
         (mconcat $ map toBS vrpDtos)
   where
-    toBS VrpDto {
-            asn = ASN as,
+    toBS VrpDto {            
             maxLength = PrefixLength ml,
             ..
-        } = str "AS" <> str (show as) <> ch ',' <>
+        } = str (show asn) <> ch ',' <>
             text (prefixStr prefix) <> ch ',' <>
             str (show ml) <> ch ',' <>
             str (convert ta) <> ch '\n'
@@ -140,13 +139,12 @@ vrpExtDtosToCSV vrpDtos =
   where
     toBS VrpExtDto {        
             vrp = VrpDto {
-                asn = ASN as,
                 maxLength = PrefixLength ml,
                 ..
             },
             ..
         } = str (Text.unpack uri) <> ch ',' <>
-            str "AS" <> str (show as) <> ch ',' <>
+            str (show asn) <> ch ',' <>
             text (prefixStr prefix) <> ch ',' <>
             str (show ml) <> ch ',' <>
             str (convert ta) <> ch '\n'
@@ -158,8 +156,8 @@ vrpSetToCSV vrpDtos =
         (str "ASN,IP Prefix,Max Length\n")
         (mconcat $ map toBS $ toList vrpDtos)
   where
-    toBS (AscOrderedVrp (Vrp (ASN asn) prefix (PrefixLength maxLength))) =
-        str "AS" <> str (show asn) <> ch ',' <>
+    toBS (AscOrderedVrp (Vrp asn prefix (PrefixLength maxLength))) =
+        str (show asn) <> ch ',' <>
         text (prefixStr prefix) <> ch ',' <>
         str (show maxLength) <> ch '\n'
  
