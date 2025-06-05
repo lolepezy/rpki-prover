@@ -59,6 +59,8 @@ import           RPKI.Repository
 import           RPKI.Fetch
 import           RPKI.Logging
 import           RPKI.Metrics.System
+import           RPKI.Http.Types
+import           RPKI.Http.Dto
 import qualified RPKI.Store.Database               as DB
 import           RPKI.Validation.TopDown
 
@@ -138,7 +140,7 @@ withWorkflowShared AppContext {..} prometheusMetrics f = do
         fetchers <- do 
                 fetcheables        <- newTVar mempty
                 runningFetchers    <- newTVar mempty
-                firstFinishedFetch <- newTVar mempty
+                firstFinishedFetchBy <- newTVar mempty
                 uriByTa            <- newTVar mempty
                 untrustedFetchSemaphore <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)
                 trustedFetchSemaphore   <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)                            
@@ -207,20 +209,12 @@ runWorkflow appContext@AppContext {..} tals = do
             prometheusMetrics <- createPrometheusMetrics config
 
             -- Shared state between the threads for simplicity.
-            withWorkflowShared appContext prometheusMetrics $ \workflowShared ->             
-                case config ^. #proverRunMode of     
-                    -- TODO This one can be implemented the same as server mode, but
-                    -- it should stop when 
-                    --  1) no pending repositories exist anymore
-                    --  2) one more validation run happened after that
-                    OneOffMode vrpOutputFile -> oneOffRun workflowShared vrpOutputFile
-                    ServerMode ->             
-                        void $ concurrently
-                            -- Run the main scheduler and RTR server if RTR is configured    
-                            (concurrently
-                                (runScheduledTasks workflowShared)
-                                (revalidate workflowShared))
-                            runRtrIfConfigured            
+            withWorkflowShared appContext prometheusMetrics $ \workflowShared ->                             
+                concurrently                    
+                    (concurrently
+                        (runScheduledTasks workflowShared)
+                        (revalidate workflowShared))
+                    runRtrIfConfigured            
         )
   where
     allTaNames = map getTaName tals
@@ -228,14 +222,19 @@ runWorkflow appContext@AppContext {..} tals = do
     revalidate workflowShared = do 
         canValidateAgain <- newTVarIO True
         concurrently_ 
-            (go canValidateAgain FirstRun)
-            (let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
-             in forever $ do                 
+            (validationLoop canValidateAgain FirstRun)
+            periodicallyRevalidateAllTAs
+
+      where
+
+        periodicallyRevalidateAllTAs = do 
+            let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
+            forever $ do       
                 threadDelay $ toMicroseconds revalidationInterval
                 atomically $ writeTVar
-                    (workflowShared ^. #tasToValidate) (Set.fromList allTaNames))
-      where
-        go canValidateAgain run = do 
+                    (workflowShared ^. #tasToValidate) (Set.fromList allTaNames)
+
+        validationLoop canValidateAgain run = do 
             talsToValidate <- atomically $ do
                 (`unless` retry) =<< readTVar canValidateAgain
                 let reset = do 
@@ -254,31 +253,50 @@ runWorkflow appContext@AppContext {..} tals = do
             void $ do 
                 validateTAs workflowShared worldVersion talsToValidate
 
-                let scheduleNextRun = void $ forkIO $ do                         
-                        Conc.threadDelay $ toMicroseconds $ config ^. #validationConfig . #minimalRevalidationInterval
-                        atomically $ writeTVar canValidateAgain True
-
                 case config ^. #proverRunMode of     
-                    OneOffMode vrpOutputFile -> do
-                        -- check if 
-                        -- * there are no more repositories in pending state
-                        -- * for every TA the last validation time is later than 
-                        -- all of the 
-                        pure ()
-                    ServerMode -> do 
-                        scheduleNextRun                        
-                        go canValidateAgain RanBefore
+                    ServerMode -> scheduleNextAndLoop
+                    OneOffMode vrpOutputFile -> do                        
+                        canStop <- hasValidatedEverythingForEveryTA workflowShared
+                        if canStop then 
+                            outputVrps vrpOutputFile
+                        else
+                            scheduleNextAndLoop
+          where
+            scheduleNextAndLoop = do 
+                void $ forkIO $ do                         
+                    Conc.threadDelay $ toMicroseconds $ config ^. #validationConfig . #minimalRevalidationInterval
+                    atomically $ writeTVar canValidateAgain True
+                validationLoop canValidateAgain RanBefore                    
+                    
 
-    oneOffRun workflowShared vrpOutputFile = do 
-        worldVersion <- newWorldVersion
-        void $ validateTAs workflowShared worldVersion tals
-        -- vrps <- roTxT database $ \tx db -> 
-        --         DB.getLastValidationVersion db tx >>= \case 
-        --             Nothing            -> pure Nothing  
-        --             Just latestVersion -> DB.getVrps tx db latestVersion
-        -- case vrps of 
-        --     Nothing -> logWarn logger [i|Don't have any VRPs.|]
-        --     _       -> LBS.writeFile vrpOutputFile $ unRawCSV $ vrpDtosToCSV $ toVrpDtos vrps
+    outputVrps vrpOutputFile = do 
+        vrps <- roTxT database $ \tx db -> 
+                DB.getLatestVersion tx db >>= \case 
+                    Nothing            -> pure Nothing
+                    Just latestVersion -> Just <$> DB.getVrps tx db latestVersion
+        case vrps of
+            Nothing -> do
+                logWarn logger [i|Don't have any VRPs, exiting.|]                
+            Just vrps' ->                 
+                LBS.writeFile vrpOutputFile $ unRawCSV $ vrpDtosToCSV $ toVrpDtos vrps'
+
+    hasValidatedEverythingForEveryTA WorkflowShared { fetchers = Fetchers {..}} = do 
+        -- check if for every TA the last validation time is later than 
+        -- all of the first fetching dates for the repositories
+        versions  <- roTxT database DB.getLatestVersions
+        fetchedBy <- readTVarIO firstFinishedFetchBy                
+        urisByTA  <- readTVarIO uriByTa
+        
+        let allValidationsLaterThanFetches = 
+                all (\(ta, validatedBy) -> 
+                    case [ fetched | uri <- IxSet.indexKeys $ IxSet.getEQ ta urisByTA, 
+                                     Just fetched <- [Map.lookup uri fetchedBy] ] of 
+                        [] -> False
+                        z  -> validatedBy > maximum z
+                    ) $ perTA versions
+
+        pure allValidationsLaterThanFetches                    
+
 
     schedules workflowShared = [            
             Scheduling {                 
@@ -729,24 +747,26 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         (\(_ :: SomeException) -> 
             -- TODO Complain about something else then AsyncCancelled
             pure ())
-  where
-    go = do 
-        Now start <- thisInstant        
-        pauseIfNeeded start
-        fetchLoop
-      where
-        fetchLoop = do 
-            Now start <- thisInstant
-            actuallyFetch >>= \case        
-                Nothing -> do                
-                    logInfo logger [i|Fetcher for #{url} is not needed and will be deleted.|]
-                Just interval -> do 
-                    Now end <- thisInstant
-                    let pause = leftToWaitMicros (Earlier start) (Later end) interval
-                    when (pause > 0) $
-                        threadDelay $ fromIntegral pause
+  where    
+    go = case config ^. #proverRunMode of         
+        OneOffMode _ -> void fetchOnce
+        ServerMode   -> do 
+            Now start <- thisInstant        
+            pauseIfNeeded start
+            fetchLoop
+    
+    fetchLoop = do 
+        Now start <- thisInstant
+        fetchOnce >>= \case        
+            Nothing -> do                
+                logInfo logger [i|Fetcher for #{url} is not needed and will be deleted.|]
+            Just interval -> do 
+                Now end <- thisInstant
+                let pause = leftToWaitMicros (Earlier start) (Later end) interval
+                when (pause > 0) $
+                    threadDelay $ fromIntegral pause
 
-                    fetchLoop 
+                fetchLoop 
 
     pauseIfNeeded now = do 
         f <- fetchableForUrl 
@@ -771,7 +791,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                             [i|interval is #{interval}, first fetch will be paused by #{pauseSeconds}s.|]
                         threadDelay $ fromIntegral pause
 
-    actuallyFetch = do 
+    fetchOnce = do 
         fetchableForUrl >>= \case        
             Nothing -> 
                 pure Nothing
@@ -790,8 +810,8 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                 runConcurrentlyIfPossible logger FetchTask runningTasks 
                                     $ fetchRepository appContext fetchConfig worldVersion repository
 
-                -- Remember that we tried to fetch it at this version
-                updateFirstFetch worldVersion
+                -- Remember that we tried to fetch it
+                rememberFirstFetchBy worldVersion
 
                 -- TODO Use duratioMs, it is the only time metric for failed and killed fetches 
                 case r of
@@ -977,8 +997,8 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         tas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVar uriByTa
         modifyTVar' tasToValidate $ (<>) tas        
 
-    updateFirstFetch version = atomically $ 
-        modifyTVar' firstFinishedFetch $ \fff -> 
+    rememberFirstFetchBy version = atomically $ 
+        modifyTVar' firstFinishedFetchBy $ \fff -> 
             case Map.lookup url fff of 
                 Nothing -> Map.insert url version fff
                 Just _  -> fff
@@ -1045,7 +1065,7 @@ runCacheCleanup AppContext {..} worldVersion = do
     -- This is to prevent cleaning up objects if they were untouched 
     -- because prover wasn't running for too long.
     cutOffVersion <- roTx db $ \tx -> 
-        fromMaybe worldVersion <$> DB.getLatestVersion db tx
+        fromMaybe worldVersion <$> DB.getLatestVersion tx db
 
     DB.deleteStaleContent db (versionIsOld (versionToInstant cutOffVersion) (config ^. #cacheLifeTime))
 
@@ -1057,7 +1077,7 @@ loadStoredAppState AppContext {..} = do
     Now now' <- thisInstant
     let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval    
     roTxT database $ \tx db ->
-        DB.getLatestVersion db tx >>= \case
+        DB.getLatestVersion tx db >>= \case
             Nothing  -> pure Nothing
 
             Just lastVersion

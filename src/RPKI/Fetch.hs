@@ -59,9 +59,9 @@ data Fetchers = Fetchers {
         -- Fetchers that are currently running
         runningFetchers :: TVar (Map RpkiURL ThreadId),        
 
-        -- Timestamp for the first fetch that was finished for every repository.
-        -- We want to track this to decide when it is enough in the "one-off" mode.
-        firstFinishedFetch :: TVar (Map RpkiURL WorldVersion),        
+        -- Version for the first fetch that was finished for every repository.
+        -- We want to track this to for the "one-off" mode.
+        firstFinishedFetchBy :: TVar (Map RpkiURL WorldVersion),        
 
         -- Semaphore for untrusted fetches, i.e fetches that have 
         -- no decent history of being successful 

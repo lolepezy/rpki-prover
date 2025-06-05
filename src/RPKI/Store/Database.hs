@@ -666,7 +666,7 @@ previousVersion tx DB { versionStore = VersionStore s } version = liftIO $ do
         v  -> pure $ Just $ maximum $ map fst v
 
 
-getPayloadsForTas :: (MonadIO m, Storage s, Monoid payload)
+getPayloadsForTas :: (MonadIO m, Storage s)
                 => Tx s mode 
                 -> DB s 
                 -> WorldVersion
@@ -679,7 +679,17 @@ getPayloadsForTas tx db@DB {..} version f = liftIO $ do
             Just versionMeta -> 
                 forM (perTA $ versionMeta ^. typed) $ \(ta, vv) -> 
                     fmap (ta,) <$> f tx db vv
-                 
+
+
+getLatestVersions :: (MonadIO m, Storage s) => 
+                    Tx s mode -> DB s -> m (PerTA WorldVersion)
+getLatestVersions tx db@DB { .. } = liftIO $ do
+    z <- getLatestVersion tx db
+    case z of 
+        Nothing            -> pure $ PerTA MonoidalMap.empty
+        Just latestVersion -> 
+            getPayloadsForTas tx db latestVersion $ 
+                    \_ _ ValidationVersion {..} -> pure $ Just validatedBy
 
 saveValidationVersion :: forall m s . (MonadIO m, Storage s) => 
                         Tx s 'RW 
@@ -1053,9 +1063,9 @@ deleteDanglingUrls DB { objectStore = RpkiObjectStore {..} } tx = do
 
 
 -- TODO implement min and max in maps?
-getLatestVersion :: (Storage s) => DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
-getLatestVersion db tx = do
-    listToMaybe . List.sortOn Down . map fst <$> versionsBackwards tx db
+getLatestVersion :: (Storage s) => Tx s mode -> DB s -> IO (Maybe WorldVersion)
+getLatestVersion tx db = do
+    listToMaybe . map fst <$> versionsBackwards tx db
         
                     
 getGbrObjects :: (MonadIO m, Storage s) => 

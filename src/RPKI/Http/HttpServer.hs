@@ -114,7 +114,7 @@ httpServer appContext tals = genericServe HttpApi {
 
     uiServer AppContext {..} = do
         db <- liftIO $ readTVarIO database
-        version <- liftIO $ roTx db $ \tx -> DB.getLatestVersion db tx 
+        version <- liftIO $ roTx db $ \tx -> DB.getLatestVersion tx db 
         case version of 
             Nothing                      -> throwError err404 { errBody = "No finished validations yet." }
             Just latestValidationVersion -> do                      
@@ -227,7 +227,7 @@ getValuesByVersion AppContext {..} version readFromState readForVersion convertT
         atomically (readFromState appState) >>= \case   
             Nothing -> 
                 roTxT database $ \tx db -> 
-                    DB.getLatestVersion db tx >>= \case 
+                    DB.getLatestVersion tx db >>= \case 
                         Nothing            -> pure Nothing
                         Just latestVersion -> readForVersion tx db latestVersion                    
             Just values -> 
@@ -337,7 +337,7 @@ getSlurm AppContext {..} = do
     db <- liftIO $ readTVarIO database
     z  <- liftIO $ roTx db $ \tx ->
         runMaybeT $ do
-                lastVersion <- MaybeT $ DB.getLatestVersion db tx
+                lastVersion <- MaybeT $ DB.getLatestVersion tx db
                 MaybeT $ DB.getSlurm tx db lastVersion
     case z of
         Nothing -> throwError err404 { errBody = "No SLURM for this version" }
