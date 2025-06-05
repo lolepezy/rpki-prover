@@ -52,13 +52,31 @@ import           RPKI.RRDP.RrdpFetch
 
 
 data Fetchers = Fetchers {
+        -- All fetchables after the last validation, i.e. repositories
+        -- with their fallbacks
+        fetcheables :: TVar Fetcheables,
+
         -- Fetchers that are currently running
-        fetcheables             :: TVar Fetcheables,
-        runningFetchers         :: TVar (Map RpkiURL ThreadId),        
+        runningFetchers :: TVar (Map RpkiURL ThreadId),        
+
+        -- Timestamp for the first fetch that was finished for every repository.
+        -- We want to track this to decide when it is enough in the "one-off" mode.
+        firstFinishedFetch :: TVar (Map RpkiURL WorldVersion),        
+
+        -- Semaphore for untrusted fetches, i.e fetches that have 
+        -- no decent history of being successful 
         untrustedFetchSemaphore :: Semaphore,        
-        trustedFetchSemaphore   :: Semaphore,        
+
+        -- Semaphore for trusted fetches, i.e. fetches 
+        -- that have already succeeded
+        trustedFetchSemaphore :: Semaphore,        
+
+        -- Semaphore for rsync fetches per host, used to no exceed 
+        -- the limit of connections per rsync host
         rsyncPerHostSemaphores  :: TVar (Map RsyncHost Semaphore),
-        uriByTa                 :: TVar UriTaIxSet
+
+        -- Mapping of repositories to the TAs they are mentioned in
+        uriByTa :: TVar UriTaIxSet
     }
     deriving stock (Generic)
 

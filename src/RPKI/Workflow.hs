@@ -136,12 +136,13 @@ withWorkflowShared AppContext {..} prometheusMetrics f = do
         deletedAnythingFromDb <- newTVar False
         runningTasks          <- newRunningTasks
         fetchers <- do 
-                fetcheables     <- newTVar mempty
-                runningFetchers <- newTVar mempty
-                uriByTa         <- newTVar mempty
+                fetcheables        <- newTVar mempty
+                runningFetchers    <- newTVar mempty
+                firstFinishedFetch <- newTVar mempty
+                uriByTa            <- newTVar mempty
                 untrustedFetchSemaphore <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)
                 trustedFetchSemaphore   <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)                            
-                rsyncPerHostSemaphores  <- newTVar mempty
+                rsyncPerHostSemaphores  <- newTVar mempty                
                 pure $ Fetchers {..}                        
 
         tasToValidate <- newTVar mempty
@@ -252,18 +253,21 @@ runWorkflow appContext@AppContext {..} tals = do
             
             void $ do 
                 validateTAs workflowShared worldVersion talsToValidate
+
                 let scheduleNextRun = void $ forkIO $ do                         
-                        Conc.threadDelay $ toMicroseconds 
-                                $ config ^. #validationConfig . #minimalRevalidationInterval
+                        Conc.threadDelay $ toMicroseconds $ config ^. #validationConfig . #minimalRevalidationInterval
                         atomically $ writeTVar canValidateAgain True
 
                 case config ^. #proverRunMode of     
                     OneOffMode vrpOutputFile -> do
+                        -- check if 
+                        -- * there are no more repositories in pending state
+                        -- * for every TA the last validation time is later than 
+                        -- all of the 
                         pure ()
-                    ServerMode -> scheduleNextRun           
-                
-            
-            go canValidateAgain RanBefore
+                    ServerMode -> do 
+                        scheduleNextRun                        
+                        go canValidateAgain RanBefore
 
     oneOffRun workflowShared vrpOutputFile = do 
         worldVersion <- newWorldVersion
