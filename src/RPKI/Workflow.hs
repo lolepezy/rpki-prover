@@ -789,7 +789,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                             runValidatorT (newScopes' RepositoryFocus url) $ do                                 
                                 runConcurrentlyIfPossible logger FetchTask runningTasks 
                                     $ fetchRepository appContext fetchConfig worldVersion repository
-                                                                
+
+                -- Remember that we tried to fetch it at this version
+                updateFirstFetch worldVersion
 
                 -- TODO Use duratioMs, it is the only time metric for failed and killed fetches 
                 case r of
@@ -797,9 +799,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                         let (updateRepo, interval) = updateRepository fetchConfig
                                 repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duratioMs
 
-                        saveFetchOutcome updateRepo validations                          
+                        saveFetchOutcome updateRepo validations                        
                         when (hasUpdates validations)
-                            triggerTaRevalidation                            
+                            triggerTaRevalidation                                                    
 
                         pure $ Just interval
 
@@ -974,6 +976,12 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
     triggerTaRevalidation = atomically $ do         
         tas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVar uriByTa
         modifyTVar' tasToValidate $ (<>) tas        
+
+    updateFirstFetch version = atomically $ 
+        modifyTVar' firstFinishedFetch $ \fff -> 
+            case Map.lookup url fff of 
+                Nothing -> Map.insert url version fff
+                Just _  -> fff
 
 
 -- Keep track of the earliest expiration time for each TA (i.e. the earlist time when some object of the TA will expire).
