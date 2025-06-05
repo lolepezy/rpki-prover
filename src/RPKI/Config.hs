@@ -226,7 +226,7 @@ defaultConfig = Config {
     rsyncConf = RsyncConf {
         rsyncClientPath = Nothing,
         rsyncRoot    = Hidden "",
-        rsyncTimeout = 2 * 60,
+        rsyncTimeout = 11 * 60,
         cpuLimit = 30 * 60,    
         enabled = True,
         rsyncPrefetchUrls = [],
@@ -235,7 +235,7 @@ defaultConfig = Config {
     rrdpConf = RrdpConf {
         tmpRoot = Hidden "",
         maxSize = Size $ 1024 * 1024 * 1024,
-        rrdpTimeout = 2 * 60,
+        rrdpTimeout = 7 * 60,
         cpuLimit = 30 * 60,
         enabled = True
     },
