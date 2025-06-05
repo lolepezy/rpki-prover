@@ -162,7 +162,9 @@ data ValidationConfig = ValidationConfig {
         validationAlgorithm            :: ValidationAlgorithm,
 
         fetchIntervalCalculation       :: FetchTimingCalculation,
-        fetchTimeoutCalculation        :: FetchTimingCalculation        
+        fetchTimeoutCalculation        :: FetchTimingCalculation,
+
+        minimalRevalidationInterval :: Seconds
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -254,7 +256,8 @@ defaultConfig = Config {
         validationRFC                  = StrictRFC,
         validationAlgorithm            = FullEveryIteration,
         fetchIntervalCalculation       = Adaptive,
-        fetchTimeoutCalculation        = Adaptive        
+        fetchTimeoutCalculation        = Adaptive,
+        minimalRevalidationInterval    = Seconds 30
     },
     httpApiConf = HttpApiConfig {
         port = 9999

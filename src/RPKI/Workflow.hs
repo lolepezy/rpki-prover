@@ -252,9 +252,9 @@ runWorkflow appContext@AppContext {..} tals = do
             
             void $ do 
                 validateTAs workflowShared worldVersion talsToValidate
-                forkIO $ do     
-                    let minimalPeriodBetweenRevalidations = 30_000_000
-                    Conc.threadDelay minimalPeriodBetweenRevalidations
+                forkIO $ do                         
+                    Conc.threadDelay $ toMicroseconds 
+                            $ config ^. #validationConfig . #minimalRevalidationInterval
                     atomically $ writeTVar canValidateAgain True
             
             go canValidateAgain RanBefore
