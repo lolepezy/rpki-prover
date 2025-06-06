@@ -34,7 +34,7 @@ import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import           Data.Set                        (Set)
 import qualified Data.Set                        as Set
 import qualified Data.Vector                     as V
-import           Data.Maybe                      (fromMaybe, catMaybes)
+import           Data.Maybe                      (fromMaybe, catMaybes, isJust)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
 import           Data.Time.Clock                 (NominalDiffTime, diffUTCTime, getCurrentTime)
@@ -123,7 +123,9 @@ data WorkflowShared = WorkflowShared {
         tasToValidate :: TVar (Set TaName),
 
         -- Earliest expiration time for any object for a TA
-        earliestToExpire :: TVar (Map TaName EarliestToExpire)
+        earliestToExpire :: TVar (Map TaName EarliestToExpire),
+
+        tals :: [TAL]
     }
     deriving stock (Generic)
 
@@ -131,9 +133,10 @@ data WorkflowShared = WorkflowShared {
 withWorkflowShared :: (MonadBaseControl IO m, MonadIO m, Storage s) 
                     => AppContext s
                     -> PrometheusMetrics 
+                    -> [TAL]
                     -> (WorkflowShared -> m b) 
                     -> m b
-withWorkflowShared AppContext {..} prometheusMetrics f = do
+withWorkflowShared AppContext {..} prometheusMetrics tals f = do
     shared <- liftIO $ atomically $ do 
         deletedAnythingFromDb <- newTVar False
         runningTasks          <- newRunningTasks
@@ -209,20 +212,25 @@ runWorkflow appContext@AppContext {..} tals = do
             prometheusMetrics <- createPrometheusMetrics config
 
             -- Shared state between the threads for simplicity.
-            withWorkflowShared appContext prometheusMetrics $ \workflowShared ->                             
-                concurrently                    
-                    (concurrently
-                        (runScheduledTasks workflowShared)
-                        (revalidate workflowShared))
-                    runRtrIfConfigured            
+            withWorkflowShared appContext prometheusMetrics tals $ \workflowShared ->           
+                case config ^. #proverRunMode of     
+                    ServerMode -> 
+                        void $ concurrently                    
+                            (concurrently
+                                (runScheduledTasks workflowShared)
+                                (revalidate workflowShared))
+                            runRtrIfConfigured            
+
+                    OneOffMode _ -> 
+                        void $ revalidate workflowShared                                  
         )
   where
     allTaNames = map getTaName tals
     
     revalidate workflowShared = do 
         canValidateAgain <- newTVarIO True
-        concurrently_ 
-            (validationLoop canValidateAgain FirstRun)
+        race_ 
+            (triggeredValidationLoop canValidateAgain FirstRun)
             periodicallyRevalidateAllTAs
 
       where
@@ -234,23 +242,10 @@ runWorkflow appContext@AppContext {..} tals = do
                 atomically $ writeTVar
                     (workflowShared ^. #tasToValidate) (Set.fromList allTaNames)
 
-        validationLoop canValidateAgain run = do 
-            talsToValidate <- atomically $ do
-                (`unless` retry) =<< readTVar canValidateAgain
-                let reset = do 
-                        writeTVar (workflowShared ^. #tasToValidate) mempty
-                        writeTVar canValidateAgain False
-                case run of
-                    FirstRun -> reset >> pure tals
-                    RanBefore -> do 
-                        tas <- readTVar (workflowShared ^. #tasToValidate)
-                        when (Set.null tas) retry
-                        reset
-                        pure $ filter (\tal -> getTaName tal `Set.member` tas) tals 
-
-            worldVersion <- newWorldVersion
-            
+        triggeredValidationLoop canValidateAgain run = do 
+            talsToValidate <- waitForTasToValidate            
             void $ do 
+                worldVersion <- newWorldVersion            
                 validateTAs workflowShared worldVersion talsToValidate
 
                 case config ^. #proverRunMode of     
@@ -266,7 +261,21 @@ runWorkflow appContext@AppContext {..} tals = do
                 void $ forkIO $ do                         
                     Conc.threadDelay $ toMicroseconds $ config ^. #validationConfig . #minimalRevalidationInterval
                     atomically $ writeTVar canValidateAgain True
-                validationLoop canValidateAgain RanBefore                    
+                triggeredValidationLoop canValidateAgain RanBefore           
+
+            waitForTasToValidate = atomically $ do
+                (`unless` retry) =<< readTVar canValidateAgain                
+                case run of
+                    FirstRun -> reset >> pure tals
+                    RanBefore -> do 
+                        tas <- readTVar (workflowShared ^. #tasToValidate)
+                        when (Set.null tas) retry
+                        reset
+                        pure $ filter (\tal -> getTaName tal `Set.member` tas) tals                           
+              where
+                reset = do 
+                    writeTVar (workflowShared ^. #tasToValidate) mempty
+                    writeTVar canValidateAgain False
                     
 
     outputVrps vrpOutputFile = do 
@@ -287,15 +296,31 @@ runWorkflow appContext@AppContext {..} tals = do
         fetchedBy <- readTVarIO firstFinishedFetchBy                
         urisByTA  <- readTVarIO uriByTa
         
-        let allValidationsLaterThanFetches = 
-                all (\(ta, validatedBy) -> 
-                    case [ fetched | uri <- IxSet.indexKeys $ IxSet.getEQ ta urisByTA, 
-                                     Just fetched <- [Map.lookup uri fetchedBy] ] of 
-                        [] -> False
-                        z  -> validatedBy > maximum z
+        let zz = 
+             map (\(ta, validatedBy) -> 
+                    case [ Map.lookup uri fetchedBy | uri <- IxSet.indexKeys $ IxSet.getEQ ta urisByTA ] of 
+                        [] -> (ta, False)
+                        z  -> let 
+                            (fetchedAtLeastOnce, notFetched) = List.partition isJust z
+                            in case notFetched of 
+                                [] -> (ta, all (validatedBy >) $ catMaybes fetchedAtLeastOnce)
+                                _  -> (ta, False)         
                     ) $ perTA versions
 
-        pure allValidationsLaterThanFetches                    
+        let qq = 
+             map (\(ta, validatedBy) -> 
+                    case [ (uri, versionToInstant fetched) | uri <- IxSet.indexKeys $ IxSet.getEQ ta urisByTA, 
+                                     Just fetched <- [Map.lookup uri fetchedBy] ] of 
+                        [] -> (ta, versionToInstant validatedBy, [])
+                        z  -> (ta, versionToInstant validatedBy, z)
+                    ) $ perTA versions
+
+
+        logDebug logger [i|Last validation times for TAs:#{qq}, zz = #{zz}|]
+
+        let allValidationsLaterThanFetches = all snd zz
+
+        pure allValidationsLaterThanFetches
 
 
     schedules workflowShared = [            
@@ -330,7 +355,7 @@ runWorkflow appContext@AppContext {..} tals = do
     --   * run a thread that would try to run the task periodically 
     --   * run tasks using `runConcurrentlyIfPossible` to make sure 
     --     there is no data races between different tasks
-    runScheduledTasks workflowShared@WorkflowShared {..} = do                
+    runScheduledTasks workflowShared = do                
         persistedJobs <- roTxT database $ \tx db -> Map.fromList <$> DB.allJobs tx db        
 
         Now now <- thisInstant
@@ -370,7 +395,7 @@ runWorkflow appContext@AppContext {..} tals = do
                             logDebug logger [i|Done with task '#{name}'.|])    
 
             periodically interval jobRun0 $ \jobRun -> do                 
-                runConcurrentlyIfPossible logger task runningTasks (actualAction jobRun) 
+                runConcurrentlyIfPossible logger task (workflowShared ^. #runningTasks) (actualAction jobRun) 
                 pure RanBefore
 
     updateMainResourcesStat = do 
@@ -380,7 +405,7 @@ runWorkflow appContext@AppContext {..} tals = do
         let clockTime = durationMs startUpTime now
         pushSystem logger $ cpuMemMetric "root" cpuTime clockTime maxMemory        
 
-    validateTAs workflowShared@WorkflowShared {..} worldVersion talsToValidate = do  
+    validateTAs workflowShared worldVersion talsToValidate = do  
         let taNames = map getTaName talsToValidate
         logInfo logger [i|Validating TAs #{taNames}, world version #{worldVersion} |]
         executeOrDie
@@ -399,7 +424,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     logError logger [i|Validator process failed: #{e}.|]
                     rwTxT database $ \tx db -> do
                         DB.saveValidationVersion tx db worldVersion allTaNames mempty workerVS
-                    updatePrometheus (workerVS ^. typed) prometheusMetrics worldVersion
+                    updatePrometheus (workerVS ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion
                     pure (mempty, mempty)
 
                 Right wr@WorkerResult {..} -> do                              
@@ -413,7 +438,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     let topDownState = workerVS <> vs
                     logDebug logger [i|Validation result: 
 #{formatValidations (topDownState ^. typed)}.|]
-                    updatePrometheus (topDownState ^. typed) prometheusMetrics worldVersion                        
+                    updatePrometheus (topDownState ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion                        
                     
                     (!q, elapsed) <- timedMS $ reReadAndUpdatePayloads maybeSlurm
                     logDebug logger [i|Re-read payloads, took #{elapsed}ms.|]
@@ -432,7 +457,7 @@ runWorkflow appContext@AppContext {..} tals = do
                           
     -- Delete objects in the store that were read by top-down validation 
     -- longer than `cacheLifeTime` hours ago.
-    cacheCleanup WorkflowShared {..} worldVersion _ = do            
+    cacheCleanup workflowShared worldVersion _ = do            
         executeOrDie
             cleanupOldObjects
             (\z elapsed -> 
@@ -440,7 +465,7 @@ runWorkflow appContext@AppContext {..} tals = do
                     Left message -> logError logger message
                     Right DB.CleanUpResult {..} -> do 
                         when (deletedObjects > 0) $ do
-                            atomically $ writeTVar deletedAnythingFromDb True
+                            atomically $ writeTVar (workflowShared ^. #deletedAnythingFromDb) True
                         logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
                                          [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|])
       where
@@ -454,11 +479,11 @@ runWorkflow appContext@AppContext {..} tals = do
                     pure $ Right payload                                       
 
     -- Do LMDB compaction
-    compact WorkflowShared {..} worldVersion _ = do
+    compact workflowShared worldVersion _ = do
         -- Some heuristics first to see if it's obvisouly too early to run compaction:
         -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
-        deletedAnything <- readTVarIO deletedAnythingFromDb
-        if deletedAnything then do 
+        deletedAnything <- readTVarIO $ workflowShared ^. #deletedAnythingFromDb
+        if deletedAnything then do
             (_, elapsed) <- timedMS $ runMaintenance appContext
             logInfo logger [i|Done with compacting the storage, version #{worldVersion}, took #{elapsed}ms.|]
         else 
@@ -801,8 +826,6 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 worldVersion <- newWorldVersion
                 repository <- fromMaybe (newRepository url) <$> 
                                 roTxT database (\tx db -> DB.getRepository tx db url) 
-                                
-                -- TODO Do not fetch before some minimal period after the previous fetch
 
                 ((r, validations), duratioMs) <-                 
                         withFetchLimits fetchConfig repository $ timedMS $ 
@@ -993,9 +1016,13 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         in any (\m -> rrdpRepoHasSignificantUpdates (m ^. typed)) rrdps ||
            any (\m -> rsyncRepoHasSignificantUpdates (m ^. typed)) rsyncs
             
-    triggerTaRevalidation = atomically $ do         
-        tas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVar uriByTa
-        modifyTVar' tasToValidate $ (<>) tas        
+    triggerTaRevalidation = atomically $ do 
+        case config ^. #proverRunMode of         
+            OneOffMode _ -> 
+                writeTVar tasToValidate $ Set.fromList $ map getTaName tals
+            ServerMode   -> do         
+                relevantTas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVar uriByTa
+                modifyTVar' tasToValidate $ (<>) relevantTas
 
     rememberFirstFetchBy version = atomically $ 
         modifyTVar' firstFinishedFetchBy $ \fff -> 
