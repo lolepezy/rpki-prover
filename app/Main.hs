@@ -312,11 +312,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
             & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
             & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
-            & maybeSet (#validationConfig . #minObjectSize) minObjectSize
-            & #validationConfig . #fetchIntervalCalculation .~ 
-                (if noAdaptiveFetchIntervals then Constant else Adaptive)
-            & #validationConfig . #fetchTimeoutCalculation .~ 
-                (if noAdaptiveFetchTimeouts then Constant else Adaptive)                    
+            & maybeSet (#validationConfig . #minObjectSize) minObjectSize            
             & maybeSet (#httpApiConf . #port) httpApiPort
             & #rtrConfig .~ rtrConfig
             & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
@@ -799,14 +795,6 @@ data CLIOptions wrapped = CLIOptions {
 
     noIncrementalValidation :: wrapped ::: Bool <?>
         ("Do not use incremental validation algorithm (incremental validation is the default " +++ 
-         "so default for this option is false)."),
-
-    noAdaptiveFetchIntervals :: wrapped ::: Bool <?>
-        ("Do not use adaptive fetch intervals for repositories (adaptive fetch intervals is the default " +++ 
-         "so default for this option is false)."),
-
-    noAdaptiveFetchTimeouts :: wrapped ::: Bool <?>
-        ("Do not use adaptive fetch timeouts for repositories (adaptive fetch timeouts is the default " +++ 
          "so default for this option is false)."),
     
     showHiddenConfig :: wrapped ::: Bool <?>

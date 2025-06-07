@@ -141,7 +141,6 @@ instance ToSchema LogLevel
 instance ToSchema ManifestProcessing
 instance ToSchema ValidationRFC
 instance ToSchema ValidationAlgorithm
-instance ToSchema FetchTimingCalculation
 instance ToSchema ProverRunMode where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 

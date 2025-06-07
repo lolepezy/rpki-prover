@@ -113,12 +113,7 @@ data ManifestProcessing = RFC6486_Strict | RFC9286
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-
 data ValidationAlgorithm = FullEveryIteration | Incremental
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
-
-data FetchTimingCalculation = Constant | Adaptive
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -160,9 +155,6 @@ data ValidationConfig = ValidationConfig {
 
         validationRFC                  :: ValidationRFC,
         validationAlgorithm            :: ValidationAlgorithm,
-
-        fetchIntervalCalculation       :: FetchTimingCalculation,
-        fetchTimeoutCalculation        :: FetchTimingCalculation,
 
         minimalRevalidationInterval :: Seconds
     } 
@@ -254,9 +246,7 @@ defaultConfig = Config {
         minObjectSize                  = 300,
         maxTaRepositories              = 1000,
         validationRFC                  = StrictRFC,
-        validationAlgorithm            = FullEveryIteration,
-        fetchIntervalCalculation       = Adaptive,
-        fetchTimeoutCalculation        = Adaptive,
+        validationAlgorithm            = FullEveryIteration,        
         minimalRevalidationInterval    = Seconds 30
     },
     httpApiConf = HttpApiConfig {

@@ -419,7 +419,6 @@ instance ToJSON Parallelism
 instance ToJSON ManifestProcessing
 instance ToJSON ValidationRFC
 instance ToJSON ValidationAlgorithm
-instance ToJSON FetchTimingCalculation
 instance ToJSON ProverRunMode
 instance ToJSON TAL
 instance ToJSON HttpApiConfig
