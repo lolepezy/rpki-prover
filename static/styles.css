@@ -371,3 +371,75 @@ summary::-moz-list-bullet {
     font-size: 1em;
     font-weight: 600;
 }
+
+
+.system-info-section, .quick-links-section, .nav-section {
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #444444;
+}
+
+.nav-section {
+    border-bottom: none; /* Remove border from last section */
+}
+
+.system-info-title {
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0 0 15px 0;
+    padding: 0 8px 0 32px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.info-item {
+    margin-bottom: 12px;
+    padding: 8px 8px 8px 32px;
+}
+
+.info-label {
+    display: block;
+    color: #999999;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-bottom: 3px;
+}
+
+.info-value {
+    display: block;
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 400;
+    font-family: monospace;
+}
+
+.quick-link {
+    display: block;
+    padding: 10px 8px 10px 32px;
+    margin-bottom: 6px;
+    text-decoration: none;
+    color: #cccccc;
+    border-radius: 4px;
+    transition: background-color 0.2s ease;
+    letter-spacing: 0.3px;
+}
+
+.quick-link:hover {
+    background-color: #404040;
+    color: #ffffff;
+}
+
+.link-label {
+    display: block;
+    color: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 2px;
+}
+
+details br {
+    line-height: 1.9;
+}

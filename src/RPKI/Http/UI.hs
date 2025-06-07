@@ -53,25 +53,12 @@ mainPage version systemInfo perTaValidations generalValidations fetchDtos metric
         H.head $ do
             link ! rel "stylesheet" ! href "/static/styles.css"
             H.script ! src "/static/script.js" $ ""
-        H.body $
-            H.div ! A.class_ "side-navigation" $ do  
-                H.a ! A.href "#overall"            $ H.text "Overall"
-
-                unless (perTaValidations == mempty) $ do
-                    H.a ! A.href "#validation-metrics" $ H.text "Validation metrics"
-                    H.a ! A.href "#validation-issues"  $ H.text "Validation issues"
-
-                unless (generalValidations == mempty) $ 
-                    H.a ! A.href "#general-issues" $ H.text "General issues"
-
-                H.a ! A.href "#rrdp-fetches"       $ H.text "RRDP fetches"
-                H.a ! A.href "#rsync-fetches"      $ H.text "Rsync fetches"                
-
-        H.div ! A.class_ "main" $ do
-            H.a ! A.id "overall" $ ""                 
-            H.section $ H.h3 "Overall"                
-            overallHtml systemInfo version                    
-
+        H.body $ do        
+            sideBar
+            mainContent
+  where
+    mainContent = do 
+        H.div ! A.class_ "main" $ do            
             H.a ! A.id "validation-metrics" $ "" 
             H.section $ H.h3 "Validation metrics"                        
             validationMetricsHtml $ metricsDto ^. #groupedValidations
@@ -83,7 +70,7 @@ mainPage version systemInfo perTaValidations generalValidations fetchDtos metric
 
             unless (generalValidations == mempty) $ do
                 H.a ! A.id "general-issues" $ ""
-                H.section $ H.h3 "General issues"
+                H.section $ H.h3 "Other issues"
                 generalIssuesHtml generalValidations 
 
             let rrdpMetrics = [ d | RrdpDto d <- fetchDtos ]
@@ -96,23 +83,50 @@ mainPage version systemInfo perTaValidations generalValidations fetchDtos metric
             unless (Prelude.null rsyncMetrics) $ do 
                 H.a ! A.id "rsync-fetches" $ ""
                 H.section $ H.h3 "Rsync fetches"
-                rsyncMetricsHtml rsyncMetrics
+                rsyncMetricsHtml rsyncMetrics        
 
+    sideBar = do
+        H.div ! A.class_ "side-navigation" $ do
+            navigation
+            systemInfoHtml        
+            linksHtml
+      where 
+        systemInfoHtml = do 
+            let SystemInfo {..} = systemInfo
+            H.div ! A.class_ "system-info-section" $ do                
+                H.div ! A.class_ "info-item" $ do
+                    H.span ! A.class_ "info-label" $ H.text "Version"
+                    H.span ! A.class_ "info-value" $ H.text rpkiProverVersion
+                
+                H.div ! A.class_ "info-item" $ do
+                    H.span ! A.class_ "info-label" $ H.text "Last validation"
+                    H.span ! A.class_ "info-value" $ H.text $ Text.pack $ instantDateFormat $ versionToInstant version
+                
+                H.div ! A.class_ "info-item" $ do
+                    H.span ! A.class_ "info-label" $ H.text "Startup time"
+                    H.span ! A.class_ "info-value" $ H.text $ Text.pack $ instantDateFormat startUpTime
 
-overallHtml :: SystemInfo -> WorldVersion -> Html
-overallHtml SystemInfo {..} worldVersion = do 
-    let t = versionToInstant worldVersion
-    H.table ! A.class_ "gen-t" $ H.tbody $ do
-        htmlRow 0 $ do 
-            genTd $ H.text "Version"
-            genTd $ H.text rpkiProverVersion
-        htmlRow 1 $ do 
-            genTd $ H.text "Last validation"
-            genTd $ H.text $ Text.pack $ instantDateFormat t
-        htmlRow 2 $ do 
-            genTd $ H.text "Startup time"
-            genTd $ H.text $ Text.pack $ instantDateFormat startUpTime
-                    
+        linksHtml = do 
+            H.div ! A.class_ "quick-links-section" $ do
+                H.h3 ! A.class_ "system-info-title" $ H.text "Links"
+
+                link_ "/swagger-ui" "Swagger API Documentation"
+                link_ "/api/system" "Configuration & Metrics"
+
+        navigation = do
+            H.div ! A.class_ "nav-section" $ do
+                H.h3 ! A.class_ "system-info-title" $ H.text "Validation"
+
+                unless (perTaValidations == mempty) $ do
+                    link_ "#validation-metrics" "Metrics"
+                    link_ "#validation-issues" "Issues"                
+
+                link_ "#rrdp-fetches" "RRDP fetches"
+                link_ "#rsync-fetches" "Rsync fetches"
+
+        link_ url linkText = do
+            H.a ! A.href url ! A.class_ "quick-link" $ do
+                H.span ! A.class_ "link-desc" $ H.text linkText
 
 
 validationMetricsHtml :: GroupedMetric ValidationMetric -> Html
