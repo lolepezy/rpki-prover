@@ -88,7 +88,7 @@ data RrdpMeta = RrdpMeta {
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary, NFData)            
 
-data RrdpIntegrity = RrdpIntegrity {
+newtype RrdpIntegrity = RrdpIntegrity {
         deltas :: [DeltaInfo]    
     }
     deriving stock (Show, Eq, Ord, Generic)    
@@ -96,3 +96,6 @@ data RrdpIntegrity = RrdpIntegrity {
 
 fromNotification :: Notification -> RrdpMeta
 fromNotification Notification {..} = RrdpMeta { integrity = RrdpIntegrity {..}, .. }
+
+previousSerial :: RrdpSerial -> RrdpSerial
+previousSerial (RrdpSerial s) = RrdpSerial $ s - 1

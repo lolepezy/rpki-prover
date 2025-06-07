@@ -429,18 +429,3 @@ instance ToJSON SystemConfig
 instance ToJSON RrdpConf
 instance ToJSON RsyncConf    
 instance ToJSON Config
-
-instance ToJSON VIssue
-instance ToJSON VWarning
-instance ToJSON AppError
-instance ToJSON InitError
-instance ToJSON InternalError
-instance ToJSON SlurmError
-instance ToJSON a => ToJSON (ParseError a)
-instance ToJSON TACertValidities
-instance ToJSON ValidationError
-instance ToJSON ObjectIdentity
-instance ToJSON StorageError
-instance ToJSON RsyncError
-instance ToJSON RrdpError
-instance ToJSON TALError

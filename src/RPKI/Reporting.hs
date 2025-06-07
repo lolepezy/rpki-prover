@@ -15,7 +15,6 @@ import           Control.Exception.Lifted
 import           Control.Lens
 
 import           Data.Generics.Labels
-
 import qualified Data.ByteString             as BS
 import           Data.Int                    (Int64)
 import           Data.Hourglass
@@ -174,6 +173,7 @@ data RrdpError = BrokenXml Text |
                 DeltaSerialMismatch { actualSerial :: RrdpSerial, expectedSerial :: RrdpSerial } |
                 DeltaSerialTooHigh { actualSerial :: RrdpSerial, expectedSerial :: RrdpSerial } |
                 DeltaHashMismatch { actualHash :: Hash, expectedHash :: Hash, serial :: RrdpSerial } |
+                RrdpMetaMismatch { actualSessionId  :: SessionId, actualSerial :: RrdpSerial, assumedSessionId :: SessionId, assumedSerial :: RrdpSerial } |
                 NoObjectToReplace URI Hash |
                 NoObjectToWithdraw URI Hash |
                 ObjectExistsWhenReplacing URI Hash |

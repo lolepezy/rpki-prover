@@ -296,31 +296,18 @@ runWorkflow appContext@AppContext {..} tals = do
         fetchedBy <- readTVarIO firstFinishedFetchBy                
         urisByTA  <- readTVarIO uriByTa
         
-        let zz = 
-             map (\(ta, validatedBy) -> 
+        let allValidationsAreLaterThanFetches = 
+                all (\(ta, validatedBy) -> 
                     case [ Map.lookup uri fetchedBy | uri <- IxSet.indexKeys $ IxSet.getEQ ta urisByTA ] of 
-                        [] -> (ta, False)
+                        [] -> False
                         z  -> let 
                             (fetchedAtLeastOnce, notFetched) = List.partition isJust z
                             in case notFetched of 
-                                [] -> (ta, all (validatedBy >) $ catMaybes fetchedAtLeastOnce)
-                                _  -> (ta, False)         
+                                [] -> all (validatedBy >) $ catMaybes fetchedAtLeastOnce
+                                _  -> False
                     ) $ perTA versions
 
-        let qq = 
-             map (\(ta, validatedBy) -> 
-                    case [ (uri, versionToInstant fetched) | uri <- IxSet.indexKeys $ IxSet.getEQ ta urisByTA, 
-                                     Just fetched <- [Map.lookup uri fetchedBy] ] of 
-                        [] -> (ta, versionToInstant validatedBy, [])
-                        z  -> (ta, versionToInstant validatedBy, z)
-                    ) $ perTA versions
-
-
-        logDebug logger [i|Last validation times for TAs:#{qq}, zz = #{zz}|]
-
-        let allValidationsLaterThanFetches = all snd zz
-
-        pure allValidationsLaterThanFetches
+        pure allValidationsAreLaterThanFetches
 
 
     schedules workflowShared = [            

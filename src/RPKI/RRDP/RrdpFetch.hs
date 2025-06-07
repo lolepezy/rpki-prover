@@ -57,7 +57,6 @@ import qualified RPKI.Store.Database    as DB
 import qualified RPKI.Util              as U
 
 
-
 runRrdpFetchWorker :: AppContext s 
             -> FetchConfig
             -> WorldVersion
@@ -410,8 +409,10 @@ saveSnapshot
         appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
          
     let savingTx f = 
-            DB.rwAppTx db $ \tx -> 
-                f tx >> DB.updateRrdpMeta tx db (fromNotification notification) repoUri 
+            DB.rwAppTx db $ \tx -> do 
+                verifyRrdpMeta tx db repoUri sessionId serial
+                f tx
+                DB.updateRrdpMeta tx db (fromNotification notification) repoUri 
     
     txFoldPipeline 
             cpuParallelism
@@ -553,10 +554,12 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
         appError $ RrdpE $ DeltaSerialMismatch serial notificationSerial
     
     let savingTx f = 
-            DB.rwAppTx db $ \tx -> 
-                f tx >> DB.updateRrdpMeta tx db (fromNotification notification) repoUri 
-    
-    txFoldPipeline 
+            DB.rwAppTx db $ \tx -> do 
+                verifyRrdpMeta tx db repoUri sessionId (previousSerial serial)
+                f tx
+                DB.updateRrdpMeta tx db (fromNotification notification) repoUri
+
+    txFoldPipeline
             cpuParallelism
             (S.mapM newStorable $ S.each deltaItems)
             savingTx
@@ -725,3 +728,24 @@ data DeltaOp m a = Delete URI Hash
                 | Add URI (Async a) 
                 | Replace URI (Async a) Hash
 
+
+verifyRrdpMeta :: Storage s
+            => Tx s mode 
+            -> DB.DB s 
+            -> RrdpURL 
+            -> SessionId 
+            -> RrdpSerial 
+            -> ValidatorT IO ()
+verifyRrdpMeta tx db repoUri expectedSessionId expectedSerial = do     
+    r <- DB.getRrdpRepository tx db repoUri
+    for_ r $ \RrdpRepository {..} ->
+        for_ rrdpMeta $ \rm -> do                    
+            when (rm ^. #sessionId /= expectedSessionId || rm ^. #serial /= expectedSerial) $
+                -- That means another RRDP fetch for the same repository is running and updating it. 
+                -- This is very rare and weird case, so the only thing we need to do is bail out
+                -- and let the other fetch finish.
+                appError $ RrdpE $ RrdpMetaMismatch { 
+                                actualSessionId = rm ^. #sessionId, 
+                                actualSerial    = rm ^. #serial, 
+                                assumedSessionId = expectedSessionId, 
+                                assumedSerial    = expectedSerial }

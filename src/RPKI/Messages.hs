@@ -134,6 +134,10 @@ toRrdpMessage = \case
     DeltaSerialTooHigh {..} -> 
         [i|Delta serial #{actualSerial} is larger than maximal expected #{expectedSerial}.|]        
     
+    RrdpMetaMismatch {..} -> 
+        [i|RRDP metadata mismatch while saving data, expected session #{assumedSessionId} and serial #{assumedSerial} |] <> 
+        [i|but got session #{actualSessionId} and serial #{actualSerial}.|]
+
     NoObjectToReplace url hash -> 
         [i|No object with url #{url} and hash #{hash} to replace.|]        
 
