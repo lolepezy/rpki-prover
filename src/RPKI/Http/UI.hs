@@ -96,7 +96,7 @@ mainPage version systemInfo perTaValidations generalValidations fetchDtos metric
             H.div ! A.class_ "system-info-section" $ do                
                 H.div ! A.class_ "info-item" $ do
                     H.span ! A.class_ "info-label" $ H.text "Version"
-                    H.span ! A.class_ "info-value" $ H.text rpkiProverVersion
+                    H.span ! A.class_ "info-value" $ H.text rpkiProverVersion                    
                 
                 H.div ! A.class_ "info-item" $ do
                     H.span ! A.class_ "info-label" $ H.text "Last validation"
@@ -112,6 +112,7 @@ mainPage version systemInfo perTaValidations generalValidations fetchDtos metric
 
                 link_ "/swagger-ui" "Swagger API Documentation"
                 link_ "/api/system" "Configuration & Metrics"
+                link_ "https://github.com/lolepezy/rpki-prover" "GitHub Repository"
 
         navigation = do
             H.div ! A.class_ "nav-section" $ do

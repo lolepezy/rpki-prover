@@ -59,6 +59,7 @@ dependencies:
 - file-embed-lzma
 - generic-lens
 - generic-monoid
+- githash
 - hashable
 - hourglass
 - http-client

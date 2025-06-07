@@ -317,6 +317,7 @@ data WorkerInfoDto = WorkerInfoDto {
 
 data SystemDto = SystemDto {
         proverVersion :: Text,
+        gitInfo       :: Text,
         config        :: Config,
         startUpTime   :: Instant,
         resources     :: [ResourcesDto],
