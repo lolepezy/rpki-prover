@@ -13,7 +13,7 @@ rpkiProverVersion :: Text
 rpkiProverVersion = [i|rpki-prover-#{showVersion Autogen.version}|]
 
 getGitInfo :: Text
-getGitInfo = [i|#{giBranch gi}@#{giHash gi}, (#{giCommitDate gi}), (#{giCommitCount gi} commits in HEAD), #{dirty}|]
+getGitInfo = [i|#{giBranch gi}@#{giHash gi}, at #{giCommitDate gi}, #{giCommitCount gi} commits in HEAD, #{dirty}|]
   where
     dirty | giDirty gi = "(uncommitted files present)"
           | otherwise  = ""
