@@ -211,7 +211,6 @@ runWorkflow appContext@AppContext {..} tals = do
         (do 
             prometheusMetrics <- createPrometheusMetrics config
 
-            -- Shared state between the threads for simplicity.
             withWorkflowShared appContext prometheusMetrics tals $ \workflowShared ->           
                 case config ^. #proverRunMode of     
                     ServerMode -> 
@@ -234,7 +233,6 @@ runWorkflow appContext@AppContext {..} tals = do
             periodicallyRevalidateAllTAs
 
       where
-
         periodicallyRevalidateAllTAs = do 
             let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
             forever $ do       
@@ -258,9 +256,11 @@ runWorkflow appContext@AppContext {..} tals = do
                             scheduleNextAndLoop
           where
             scheduleNextAndLoop = do 
-                void $ forkIO $ do                         
-                    Conc.threadDelay $ toMicroseconds $ config ^. #validationConfig . #minimalRevalidationInterval
-                    atomically $ writeTVar canValidateAgain True
+                void $ forkFinally 
+                    (do                         
+                        Conc.threadDelay $ toMicroseconds $ config ^. #validationConfig . #minimalRevalidationInterval
+                        atomically $ writeTVar canValidateAgain True)
+                    (logException logger "Exception in revalidation delay thread")
                 triggeredValidationLoop canValidateAgain RanBefore           
 
             waitForTasToValidate = atomically $ do
@@ -527,15 +527,16 @@ runWorkflow appContext@AppContext {..} tals = do
         -- Kill all orphan rsync processes that are still running and refusing to die
         -- Sometimes and rsync process can leak and linger, kill the expired ones
         removeExpiredRsyncProcesses appState >>=
-            mapM_ (\(pid, WorkerInfo {..}) ->  
+            mapM_ (\(pid, WorkerInfo {..}) -> do 
                 -- Run it in a separate thread, if sending the signal fails
                 -- the thread gets killed without no impact on anything else 
                 -- ever. If it's successful, we'll log a message about it
-                forkIO $ (do
-                    signalProcess killProcess pid
-                    logInfo logger [i|Killed rsync client process with PID #{pid}, #{cli}, it expired at #{endOfLife}.|])
-                    `catch` 
-                    (\(_ :: SomeException) -> pure ()))         
+                forkFinally 
+                    (do
+                        signalProcess killProcess pid
+                        logInfo logger [i|Killed rsync client process with PID #{pid}, #{cli}, it expired at #{endOfLife}.|])             
+                    (logException logger [i|Exception in rsync process killer thread|])
+                )                
 
     -- Delete local rsync mirror. The assumption here is that over time there
     -- be a lot of local copies of rsync repositories that are so old that 
@@ -594,7 +595,7 @@ runWorkflow appContext@AppContext {..} tals = do
             profilingFlags = [ ]
 
             arguments = 
-                [ worderIdS workerId ] <>
+                [ workerIdStr workerId ] <>
                 rtsArguments ( 
                     profilingFlags <> [ 
                         rtsN maxCpuAvailable, 
@@ -618,7 +619,7 @@ runWorkflow appContext@AppContext {..} tals = do
         let workerId = WorkerId [i|version:#{worldVersion}:cache-clean-up|]
         
         let arguments = 
-                [ worderIdS workerId ] <>
+                [ workerIdStr workerId ] <>
                 rtsArguments [ 
                     rtsN 2, 
                     rtsA "24m", 
@@ -724,7 +725,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
 adjustFetchers :: Storage s => AppContext s -> Map TaName Fetcheables -> WorkflowShared -> IO ()
-adjustFetchers appContext discoveredFetcheables workflowShared@WorkflowShared { fetchers = Fetchers {..} } = do
+adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@WorkflowShared { fetchers = Fetchers {..} } = do
     (currentFetchers, toStop, toStart) <- atomically $ do            
 
         -- All the URLs that were discovered by the recent validations of all TAs
@@ -756,7 +757,9 @@ adjustFetchers appContext discoveredFetcheables workflowShared@WorkflowShared { 
                 Conc.throwTo thread AsyncCancelled
 
         threads <- forM (Set.toList toStart) $ \url ->
-            (url, ) <$> forkIO (newFetcher appContext workflowShared url)
+            (url, ) <$> forkFinally 
+                            (newFetcher appContext workflowShared url)
+                            (logException logger [i|Exception in fetcher thread for #{url}|])
 
         atomically $ do
             modifyTVar' runningFetchers $ \r -> do 
@@ -843,8 +846,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                 repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duratioMs
 
                         saveFetchOutcome updateRepo validations                        
-                        when (hasUpdates validations)
-                            triggerTaRevalidation                                                    
+                        triggerTaRevalidationIf $ hasUpdates validations                                                         
 
                         pure $ Just interval
 
@@ -859,7 +861,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                 pure Nothing
                             Just fallbacks -> do  
                                 anyUpdates <- fetchFallbacks fetchConfig worldVersion fallbacks                                                            
-                                when anyUpdates triggerTaRevalidation
+                                triggerTaRevalidationIf anyUpdates
                                 if anyUpdates 
                                     then do                                        
                                         pure $ Just $ 
@@ -962,7 +964,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
         -- Pseudorandom stuff is added to spread repositories over time more of less 
         -- uniformly and avoid having peaks of activity. It's just something looking 
-        -- relatively random without IO
+        -- relatively random without IO. This one will return a number from 0 to 19.
         kindaRandomness = let 
             h :: Integer = fromIntegral $ Hashable.hash url
             w :: Integer = fromIntegral $ let (WorldVersion w_) = worldVersion in Hashable.hash w_
@@ -1015,20 +1017,20 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             rsyncs = MonoidalMap.elems $ unMetricMap $ metrics ^. #rsyncMetrics                
         in any (\m -> rrdpRepoHasSignificantUpdates (m ^. typed)) rrdps ||
            any (\m -> rsyncRepoHasSignificantUpdates (m ^. typed)) rsyncs
-            
-    triggerTaRevalidation = atomically $ do 
-        case config ^. #proverRunMode of         
-            OneOffMode _ -> 
-                writeTVar tasToValidate $ Set.fromList $ map getTaName tals
-            ServerMode   -> do         
-                relevantTas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVar uriByTa
-                modifyTVar' tasToValidate $ (<>) relevantTas
 
-    rememberFirstFetchBy version = atomically $ 
-        modifyTVar' firstFinishedFetchBy $ \fff -> 
-            case Map.lookup url fff of 
-                Nothing -> Map.insert url version fff
-                Just _  -> fff
+    triggerTaRevalidationIf condition = atomically $ do 
+        case config ^. #proverRunMode of         
+            OneOffMode _ -> trigger
+            ServerMode   -> when condition trigger                
+      where
+        trigger = do 
+            relevantTas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVar uriByTa
+            modifyTVar' tasToValidate $ (<>) relevantTas            
+    
+    rememberFirstFetchBy version = atomically $ do 
+        fff <- readTVar firstFinishedFetchBy
+        when (Map.notMember url fff) $ 
+            writeTVar firstFinishedFetchBy $ Map.insert url version fff                   
 
 
 -- Keep track of the earliest expiration time for each TA (i.e. the earlist time when some object of the TA will expire).
@@ -1120,7 +1122,9 @@ loadStoredAppState AppContext {..} = do
                             slurmedPayloads <- atomically $ completeVersion appState lastVersion payloads' slurm                            
                             when (config ^. #withValidityApi) $                                
                                 -- do it in a separate thread to speed up the startup
-                                void $ forkIO $ atomically $ updatePrefixIndex appState slurmedPayloads
+                                void $ forkFinally 
+                                        (atomically $ updatePrefixIndex appState slurmedPayloads) 
+                                        (logException logger [i|Exception in updating prefix index for #{lastVersion}|])
                         pure payloads
                     for_ payloads $ \p -> do 
                         let vrps = p ^. #vrps
@@ -1207,3 +1211,9 @@ leftToWaitMicros (Earlier earlier) (Later later) (Seconds interval) =
   where
     executionTimeNs = toNanoseconds later - toNanoseconds earlier
     timeToWaitNs = nanosPerSecond * interval - executionTimeNs    
+
+logException :: MonadIO m =>AppLogger -> Text.Text -> Either SomeException a -> m ()
+logException logger logText result = 
+    case result of
+        Left ex -> logDebug logger [i|logException: #{logText}: #{ex}|]
+        Right _ -> pure ()

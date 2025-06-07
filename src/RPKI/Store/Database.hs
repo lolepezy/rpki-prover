@@ -683,9 +683,8 @@ getPayloadsForTas tx db@DB {..} version f = liftIO $ do
 
 getLatestVersions :: (MonadIO m, Storage s) => 
                     Tx s mode -> DB s -> m (PerTA WorldVersion)
-getLatestVersions tx db@DB { .. } = liftIO $ do
-    z <- getLatestVersion tx db
-    case z of 
+getLatestVersions tx db = liftIO $
+    getLatestVersion tx db >>= \case    
         Nothing            -> pure $ PerTA MonoidalMap.empty
         Just latestVersion -> 
             getPayloadsForTas tx db latestVersion $ 

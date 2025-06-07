@@ -71,7 +71,7 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
     let workerId = WorkerId [i|version:#{worldVersion}:rrdp-fetch:#{u}|]
 
     let arguments = 
-            [ worderIdS workerId ] <>
+            [ workerIdStr workerId ] <>
             rtsArguments [ 
                 rtsN 1, 
                 rtsA "20m", 

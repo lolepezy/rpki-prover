@@ -177,7 +177,7 @@ executeWork input actualWork =
             exitCode <- newEmptyTMVarIO            
             let done = atomically . putTMVar exitCode 
 
-            mapM_ forkIO [
+            mapM_ (\w -> forkFinally w (const $ pure ())) [
                     (actualWork input writeWorkerOutput >> done ExitSuccess) 
                         `onException` 
                     done exceptionExitCode,
@@ -269,8 +269,8 @@ replacedExecutableExitCode = ExitFailure 123
 outOfMemoryExitCode  = ExitFailure 251
 exitKillByTypedProcess = ExitFailure (-2)
 
-worderIdS :: WorkerId -> String
-worderIdS (WorkerId w) = unpack w
+workerIdStr :: WorkerId -> String
+workerIdStr (WorkerId w) = unpack w
 
 -- Main entry point to start a worker
 -- 

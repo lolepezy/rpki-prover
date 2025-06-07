@@ -100,7 +100,7 @@ runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion reposito
 
     let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
     let arguments = 
-            [ worderIdS workerId ] <> 
+            [ workerIdStr workerId ] <> 
             rtsArguments [ 
                 rtsN maxCpuAvailable, 
                 rtsA "20m", 
