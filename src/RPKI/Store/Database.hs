@@ -782,9 +782,21 @@ getSlurm tx DB { slurmStore = SlurmStore s } version =
 
 updateRrdpMeta :: (MonadIO m, Storage s) =>
                 Tx s 'RW -> DB s -> RrdpMeta -> RrdpURL -> m ()
-updateRrdpMeta tx DB { repositoryStore = RepositoryStore {..} } meta url = liftIO $ do
-    z <- M.get tx rrdpS url
-    for_ z $ \r -> M.put tx rrdpS url (r { rrdpMeta = Just meta })
+updateRrdpMeta tx db meta url = liftIO $ do
+    updateRrdpMetaM tx db url $ \_ -> pure $ Just meta    
+
+updateRrdpMetaM :: (MonadIO m, Storage s) =>
+                    Tx s 'RW 
+                -> DB s
+                -> RrdpURL                  
+                -> (Maybe RrdpMeta -> IO (Maybe RrdpMeta))                
+                -> m ()
+updateRrdpMetaM tx DB { repositoryStore = RepositoryStore {..} } url f = liftIO $ do
+    maybeRepo <- M.get tx rrdpS url
+    for_ maybeRepo $ \repo -> do        
+        maybeNewMeta <- f $ repo ^. #rrdpMeta
+        for_ maybeNewMeta $ \newMeta -> 
+            M.put tx rrdpS url (repo { rrdpMeta = Just newMeta })
 
 getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m PublicationPoints
 getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do

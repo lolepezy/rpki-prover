@@ -173,7 +173,7 @@ data RrdpError = BrokenXml Text |
                 DeltaSerialMismatch { actualSerial :: RrdpSerial, expectedSerial :: RrdpSerial } |
                 DeltaSerialTooHigh { actualSerial :: RrdpSerial, expectedSerial :: RrdpSerial } |
                 DeltaHashMismatch { actualHash :: Hash, expectedHash :: Hash, serial :: RrdpSerial } |
-                RrdpMetaMismatch { actualSessionId  :: SessionId, actualSerial :: RrdpSerial, assumedSessionId :: SessionId, assumedSerial :: RrdpSerial } |
+                RrdpMetaMismatch { actualSessionId  :: SessionId, actualSerial :: RrdpSerial, expectedSessionId :: SessionId, expectedSerial :: RrdpSerial } |
                 NoObjectToReplace URI Hash |
                 NoObjectToWithdraw URI Hash |
                 ObjectExistsWhenReplacing URI Hash |

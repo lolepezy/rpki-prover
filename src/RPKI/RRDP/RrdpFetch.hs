@@ -410,9 +410,8 @@ saveSnapshot
          
     let savingTx f = 
             DB.rwAppTx db $ \tx -> do 
-                verifyRrdpMeta tx db repoUri sessionId serial
                 f tx
-                DB.updateRrdpMeta tx db (fromNotification notification) repoUri 
+                DB.updateRrdpMeta tx db (fromNotification notification) repoUri
     
     txFoldPipeline 
             cpuParallelism
@@ -557,7 +556,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
             DB.rwAppTx db $ \tx -> do 
                 verifyRrdpMeta tx db repoUri sessionId (previousSerial serial)
                 f tx
-                DB.updateRrdpMeta tx db (fromNotification notification) repoUri
+                DB.updateRrdpMetaM tx db repoUri $ pure . fmap (#serial .~ serial)                
 
     txFoldPipeline
             cpuParallelism
@@ -747,5 +746,5 @@ verifyRrdpMeta tx db repoUri expectedSessionId expectedSerial = do
                 appError $ RrdpE $ RrdpMetaMismatch { 
                                 actualSessionId = rm ^. #sessionId, 
                                 actualSerial    = rm ^. #serial, 
-                                assumedSessionId = expectedSessionId, 
-                                assumedSerial    = expectedSerial }
+                                expectedSessionId = expectedSessionId, 
+                                expectedSerial    = expectedSerial }
