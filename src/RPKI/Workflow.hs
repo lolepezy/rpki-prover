@@ -880,7 +880,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                 $ runValidatorT (newScopes' RepositoryFocus fallbackUrl) 
                                     $ fetchRepository appContext fetchConfig worldVersion repository                
 
-                updatePrometheusForRepository url duration prometheusMetrics
+                updatePrometheusForRepository fallbackUrl duration prometheusMetrics
                 let repo = case r of
                         Right (repository', _noRrdpStats) -> 
                             -- realistically at this time the only fallback repositories are rsync, so 
