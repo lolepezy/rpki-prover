@@ -137,10 +137,6 @@ httpServer appContext tals = genericServe HttpApi {
                             fetchesDtos
                             metricsDto
 
-                    -- logDebug logger [i|Data timing: outcomesMs=#{outcomesMs}, reposMe=#{reposMe}, resolveMs=#{resolveMs}, pageMs=#{pageMs}|]
-
-                    -- pure page
-
 
 getVRPValidated :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s -> Maybe Text -> m [VrpDto]

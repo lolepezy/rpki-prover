@@ -817,7 +817,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 repository <- fromMaybe (newRepository url) <$> 
                                 roTxT database (\tx db -> DB.getRepository tx db url) 
 
-                ((r, validations), duratioMs) <-                 
+                ((r, validations), duration) <-                 
                         withFetchLimits fetchConfig repository $ timedMS $ 
                             runValidatorT (newScopes' RepositoryFocus url) $ do                                 
                                 runConcurrentlyIfPossible logger FetchTask runningTasks 
@@ -825,12 +825,13 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                 -- Remember that we tried to fetch it
                 rememberFirstFetchBy worldVersion
+                updatePrometheusForRepository url duration prometheusMetrics
 
-                -- TODO Use duratioMs, it is the only time metric for failed and killed fetches 
+                -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
                 case r of
                     Right (repository', stats) -> do                         
                         let (updateRepo, interval) = updateRepository fetchConfig
-                                repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duratioMs
+                                repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duration
 
                         saveFetchOutcome updateRepo validations                        
                         triggerTaRevalidationIf $ hasUpdates validations                                                         
@@ -839,7 +840,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                     Left _ -> do
                         let newStatus = FailedAt $ versionToInstant worldVersion
-                        let (updatedRepo, interval) = updateRepository fetchConfig repository worldVersion newStatus Nothing duratioMs
+                        let (updatedRepo, interval) = updateRepository fetchConfig repository worldVersion newStatus Nothing duration
                         saveFetchOutcome updatedRepo validations
 
                         fetchableForUrl >>= \case
@@ -872,12 +873,14 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 repository <- fromMaybe (newRepository fallbackUrl) <$> 
                                 roTxT database (\tx db -> DB.getRepository tx db fallbackUrl)
                                 
-                (r, validations) <- 
+                ((r, validations), duration) <- 
                         withFetchLimits fetchConfig repository 
                             $ runConcurrentlyIfPossible logger FetchTask runningTasks                                 
+                                $ timedMS
                                 $ runValidatorT (newScopes' RepositoryFocus fallbackUrl) 
                                     $ fetchRepository appContext fetchConfig worldVersion repository                
 
+                updatePrometheusForRepository url duration prometheusMetrics
                 let repo = case r of
                         Right (repository', _noRrdpStats) -> 
                             -- realistically at this time the only fallback repositories are rsync, so 
