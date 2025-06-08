@@ -1,5 +1,5 @@
 name:                rpki-prover
-version:             0.9.10
+version:             0.10.0
 github:              "lolepezy/rpki-prover"
 license:             BSD3
 author:              "Mikhail Puzanov"

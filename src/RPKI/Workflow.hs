@@ -1112,6 +1112,7 @@ loadStoredAppState AppContext {..} = do
                     pure $ Just lastVersion
 
 
+canRunInParallel :: Task -> Task -> Bool
 canRunInParallel t1 t2 = 
     t2 `elem` canRunWith t1 || t1 `elem` canRunWith t2
   where    
