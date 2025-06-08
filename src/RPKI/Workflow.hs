@@ -489,18 +489,12 @@ runWorkflow appContext@AppContext {..} tals = do
         let Seconds (fromIntegral -> maxTimeout :: NominalDiffTime) = 
                 10 + config ^. #rrdpConf . #rrdpTimeout
 
-        forM_ files $ \file -> do 
-            let fullPath = tmpDir </> file
-            (do 
+        forM_ files $ \file -> 
+            ignoreSync $ do 
+                let fullPath = tmpDir </> file
                 ageInSeconds <- diffUTCTime now <$> getModificationTime fullPath            
                 when (ageInSeconds > maxTimeout) $
-                    removePathForcibly fullPath
-                )
-                `catch` 
-                (\(_ :: SomeException) -> 
-                    -- the file can disappear in the meantime, 
-                    -- so getModificationTime may throw an exception
-                    pure ())
+                    removePathForcibly fullPath                
 
         -- Cleanup reader table of LMDB cache, it may get littered by 
         -- dead processes, unfinished/killed transaction, etc.
@@ -757,54 +751,50 @@ adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@W
 -- | Create a new fetcher for the given URL and run it.
 newFetcher :: Storage s => AppContext s -> WorkflowShared -> RpkiURL -> IO ()
 newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetchers {..}, ..} url = do
-    go `finally` dropFetcher fetchers url
-    `catch` 
-        (\(_ :: SomeException) -> 
-            -- TODO Complain about something else then AsyncCancelled
-            pure ())
-  where    
+    ignoreSync $ go `finally` dropFetcher fetchers url    
+  where
     go = case config ^. #proverRunMode of         
         OneOffMode _ -> void fetchOnce
         ServerMode   -> do 
             Now start <- thisInstant        
             pauseIfNeeded start
             fetchLoop
-    
-    fetchLoop = do 
-        Now start <- thisInstant
-        fetchOnce >>= \case        
-            Nothing -> do                
-                logInfo logger [i|Fetcher for #{url} is not needed and will be deleted.|]
-            Just interval -> do 
-                Now end <- thisInstant
-                let pause = leftToWaitMicros (Earlier start) (Later end) interval
-                when (pause > 0) $
-                    threadDelay $ fromIntegral pause
-
-                fetchLoop 
-
-    pauseIfNeeded now = do 
-        f <- fetchableForUrl 
-        for_ f $ \_ -> do 
-            r <- roTxT database (\tx db -> DB.getRepository tx db url)
-            for_ r $ \repository -> do          
-                let status = getMeta repository ^. #status
-                let lastFetchMoment = 
-                        case status of
-                            FetchedAt t -> Just t
-                            FailedAt t  -> Just t
-                            _           -> Nothing
-                
-                for_ lastFetchMoment $ \lastFetch -> do 
-                    worldVersion <- newWorldVersion
-                    let interval = refreshInterval (newFetchConfig config) repository worldVersion status Nothing 0
-                    let pause = leftToWaitMicros (Earlier lastFetch) (Later now) interval                                        
-                    when (pause > 0) $ do  
-                        let pauseSeconds = pause `div` 1_000_000
-                        logDebug logger $ 
-                            [i|Fetcher for #{url} finished at #{lastFetch}, now is #{now}, |] <> 
-                            [i|interval is #{interval}, first fetch will be paused by #{pauseSeconds}s.|]
+      where    
+        fetchLoop = do 
+            Now start <- thisInstant
+            fetchOnce >>= \case        
+                Nothing -> do                
+                    logInfo logger [i|Fetcher for #{url} is not needed and will be deleted.|]
+                Just interval -> do 
+                    Now end <- thisInstant
+                    let pause = leftToWaitMicros (Earlier start) (Later end) interval
+                    when (pause > 0) $
                         threadDelay $ fromIntegral pause
+
+                    fetchLoop 
+
+        pauseIfNeeded now = do 
+            f <- fetchableForUrl 
+            for_ f $ \_ -> do 
+                r <- roTxT database (\tx db -> DB.getRepository tx db url)
+                for_ r $ \repository -> do          
+                    let status = getMeta repository ^. #status
+                    let lastFetchMoment = 
+                            case status of
+                                FetchedAt t -> Just t
+                                FailedAt t  -> Just t
+                                _           -> Nothing
+                    
+                    for_ lastFetchMoment $ \lastFetch -> do 
+                        worldVersion <- newWorldVersion
+                        let interval = refreshInterval (newFetchConfig config) repository worldVersion status Nothing 0
+                        let pause = leftToWaitMicros (Earlier lastFetch) (Later now) interval                                        
+                        when (pause > 0) $ do  
+                            let pauseSeconds = pause `div` 1_000_000
+                            logDebug logger $ 
+                                [i|Fetcher for #{url} finished at #{lastFetch}, now is #{now}, |] <> 
+                                [i|interval is #{interval}, first fetch will be paused by #{pauseSeconds}s.|]
+                            threadDelay $ fromIntegral pause
 
     fetchOnce = do 
         fetchableForUrl >>= \case        
@@ -823,7 +813,6 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                 runConcurrentlyIfPossible logger FetchTask runningTasks 
                                     $ fetchRepository appContext fetchConfig worldVersion repository
 
-                -- Remember that we tried to fetch it
                 rememberFirstFetchBy worldVersion
                 updatePrometheusForRepository url duration prometheusMetrics
 
@@ -1202,8 +1191,15 @@ leftToWaitMicros (Earlier earlier) (Later later) (Seconds interval) =
     executionTimeNs = toNanoseconds later - toNanoseconds earlier
     timeToWaitNs = nanosPerSecond * interval - executionTimeNs    
 
-logException :: MonadIO m =>AppLogger -> Text.Text -> Either SomeException a -> m ()
+logException :: MonadIO m => AppLogger -> Text.Text -> Either SomeException a -> m ()
 logException logger logText result = 
     case result of
         Left ex -> logDebug logger [i|logException: #{logText}: #{ex}|]
         Right _ -> pure ()
+
+ignoreSync :: MonadBaseControl IO m => m () -> m ()
+ignoreSync f =     
+    catch f $ \(e :: SomeException) -> 
+        case fromException e of
+            Just (_ :: SomeAsyncException) -> throwIO e
+            Nothing -> pure ()
