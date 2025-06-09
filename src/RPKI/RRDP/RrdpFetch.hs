@@ -162,7 +162,7 @@ updateRrdpRepository
                         logDebug logger [i|Going to use snapshot for #{repoUri}: #{message}|]
                         useSnapshot notification nextStep                       
 
-                    FetchDeltas sortedDeltas snapshotInfo message ->                  
+                    FetchDeltas {..} ->                  
                             (do 
                                 usedSource $ RrdpDelta 
                                     (NonEmpty.head sortedDeltas ^. typed) 
@@ -435,8 +435,8 @@ saveSnapshot
     let savingTx f = 
             DB.rwAppTx db $ \tx -> do 
                 f tx
-                updateRepositoryMeta tx db repoUri notification
-    
+                updateRepositoryMeta tx db repoUri sessionId serial
+
     txFoldPipeline 
             cpuParallelism
             (S.mapM (newStorable db) $ S.each snapshotItems)
@@ -580,8 +580,8 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
             DB.rwAppTx db $ \tx -> do 
                 verifyRrdpMeta tx db repoUri sessionId (previousSerial serial)
                 f tx
-                updateRepositoryMeta tx db repoUri notification
-                -- DB.updateRrdpMetaM tx db repoUri $ pure . fmap (#serial .~ serial)                
+                updateRepositoryMeta tx db repoUri sessionId serial
+                -- DB.updateRrdpMetaM tx db repoUri $ pure . fmap (#serial .~ serial)
 
     txFoldPipeline
             cpuParallelism
@@ -778,12 +778,13 @@ updateRepositoryMeta :: Storage s =>
                         Tx s 'RW 
                     -> DB.DB s
                     -> RrdpURL 
-                    -> Notification 
+                    -> SessionId
+                    -> RrdpSerial
                     -> ValidatorT IO ()
-updateRepositoryMeta tx db repoUri notification = do                            
+updateRepositoryMeta tx db repoUri sessionsId serial = do                            
     DB.updateRrdpMetaM tx db repoUri $ \case 
-        Nothing -> pure $ Just $ newRrdpMeta (notification ^. #sessionId) (notification ^. #serial)
+        Nothing         -> pure $ Just $ newRrdpMeta sessionsId serial
         Just currentMeta -> 
             pure $ Just $ currentMeta
-                & #sessionId .~ notification ^. #sessionId
-                & #serial .~ notification ^. #serial
+                & #sessionId .~ sessionsId
+                & #serial .~ serial
