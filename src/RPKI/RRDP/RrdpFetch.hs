@@ -119,7 +119,7 @@ updateRrdpRepository
         logDebug logger [i|New eTag for #{repoUri} is #{et}.|]
 
     let enforcement = 
-            case repo ^. #rrdpMeta of 
+            case rrdpMeta of 
                 Nothing -> Nothing
                 Just r  -> r ^. #enforcement
             
