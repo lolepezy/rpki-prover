@@ -162,7 +162,7 @@ data ValidationConfig = ValidationConfig {
     deriving anyclass (TheBinary)
 
 
-data HttpApiConfig = HttpApiConfig {
+newtype HttpApiConfig = HttpApiConfig {
         port :: Word16    
     } 
     deriving stock (Show, Eq, Ord, Generic)
@@ -293,7 +293,8 @@ defaultPrefetchURLs = [
         "rsync://rpki-repository.nic.ad.jp/ap/",
         "rsync://rsync.paas.rpki.ripe.net/repository/",
         "rsync://rpki.sub.apnic.net/repository/",
-        "rsync://rpki.cnnic.cn/rpki/A9162E3D0000/"
+        "rsync://rpki.cnnic.cn/rpki/A9162E3D0000/",
+        "rsync://rpki-repo.as207960.net/repo/"
     ]    
 
 defaultTalUrls :: [(String, String)]
