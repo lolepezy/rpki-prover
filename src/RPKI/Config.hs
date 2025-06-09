@@ -232,7 +232,7 @@ defaultConfig = Config {
         enabled = True
     },
     validationConfig = ValidationConfig {
-        revalidationInterval           = Seconds $ 7 * 60,
+        revalidationInterval           = Seconds $ 15 * 60,
         rrdpRepositoryRefreshInterval  = Seconds 120,
         rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
         minimalRepositoryRetryInterval = Seconds 10,    

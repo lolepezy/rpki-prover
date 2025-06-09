@@ -316,11 +316,10 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & maybeSet (#httpApiConf . #port) httpApiPort
             & #rtrConfig .~ rtrConfig
             & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
-            & maybeSet #versionNumberToKeep versionNumberToKeep
             & #lmdbSizeMb .~ lmdbRealSize
             & #localExceptions .~ apiSecured localExceptions
             & #logLevel .~ derivedLogLevel
-            & #withValidityApi .~ not noValidityApi
+            & #withValidityApi .~ not withValidityApi
             & maybeSet #metricsPrefix (convert <$> metricsPrefix)
             & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
             & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
@@ -625,36 +624,37 @@ data CLIOptions wrapped = CLIOptions {
 
     version :: wrapped ::: Bool <?> "Program version.",
 
-    initialise :: wrapped ::: Bool <?>
-        "Deprecated. This option does nothing and was previously used to initialize the filesystem layout before the first launch.",
-
     once :: wrapped ::: Bool <?>
-        ("If set, runs a single validation cycle and exits. The HTTP API will not start, and " +++
-        "the result will be written to the file specified by the --vrp-output option (which must also be set)."),
+        ("If set, runs a single validation cycle and exits." +++
+         " The HTTP API will not start, and the result will be written to the file" +++
+         " specified by the --vrp-output option (which must also be set)."),
 
     vrpOutput :: wrapped ::: Maybe FilePath <?> 
-        ("Path to the file where VRPs will be written. This is only used when the --once option is set. " +++
-        "VRPs are written in CSV format with TA names and are included 'as is', " +++
-        "i.e., without removing duplicates within or between TAs."),
+        ("Path to the file where VRPs will be written." +++
+         " This is only used when the --once option is set." +++
+         " VRPs are written in CSV format with TA names and included 'as is'," +++
+         " meaning duplicates within or between TAs are not removed."),
 
     noRirTals :: wrapped ::: Bool <?> 
         "If set, RIR TAL files will not be downloaded.",
 
     refetchRirTals :: wrapped ::: Bool <?> 
-        "If set, RIR TAL files will be re-downloaded.",        
+        "If set, RIR TAL files will be forced to re-download.",
 
     rpkiRootDirectory :: wrapped ::: [FilePath] <?>
-        ("Root directory (default is ${HOME}/.rpki/). This option can be passed multiple times, " +++
-        "but only the last value is used. This allows for easy overriding, e.g., in Docker."),
+        ("Root directory (default is ${HOME}/.rpki/)." +++
+         " This option can be passed multiple times, but only the last value is used." +++
+         " This allows for easy overriding, for example, in Docker."),
 
     extraTalsDirectory :: wrapped ::: [FilePath] <?>
-        ("Additional directories to search for TAL files. By default, no extra directories are used—" +++ 
-        "TALs are only loaded from the $rpkiRootDirectory/tals directory."),
+        ("Additional directories to search for TAL files." +++
+         " By default, no extra directories are used;" +++
+         " TALs are only loaded from the $rpkiRootDirectory/tals directory."),
 
     verifySignature :: wrapped ::: Bool <?>
-        ("Runs as a one-off RSC signature file verifier instead of a server. Requires the cache " +++
-        "of validated RPKI objects and VRPs to be present. This should be run alongside " +++
-        "a running daemon instance of rpki-prover."),
+        ("Runs as a one-off RSC signature file verifier instead of a server." +++
+         " Requires the cache of validated RPKI objects and VRPs to be present." +++
+         " This should be run alongside a running daemon instance of rpki-prover."),
 
     signatureFile :: wrapped ::: Maybe FilePath <?>
         "Path to the RSC signature file.",
@@ -674,33 +674,32 @@ data CLIOptions wrapped = CLIOptions {
         "Maximum number of concurrent fetchers (default is --cpu-count * 3).",
 
     resetCache :: wrapped ::: Bool <?>
-        "Reset the LMDB cache, i.e., remove ~/.rpki/cache/*.mdb files.",
+        "Reset the LMDB cache, that is, remove ~/.rpki/cache/*.mdb files.",
 
     revalidationInterval :: wrapped ::: Maybe Int64 <?>
-        ("Interval between validation cycles in seconds. Each cycle traverses the RPKI tree for each TA " +++ 
-        "and fetches repositories. Default is 7 minutes (560 seconds)."),
+        ("Interval between validation cycles in seconds. " +++
+         "Each cycle traverses the RPKI tree and gathers payloads (VRPs, ASPAs, BGPSec certificates). " +++
+         "Default is 15 minutes (900 seconds). Note that revalidations are also triggered by repository " +++ 
+         "updates and object expirations, so this interval is the maximum time between validation cycles."),
 
     cacheLifetimeHours :: wrapped ::: Maybe Int64 <?>
         "Lifetime of objects in the local cache, in hours (default is 72).",
-
-    versionNumberToKeep :: wrapped ::: Maybe Natural <?>
-        ("Number of versions to keep in the local cache (default is 100). " +++
-        "Each re-validation creates a new version along with its data " +++
-        "(validation results, metrics, VRPs, etc.)."),
 
     rrdpRefreshInterval :: wrapped ::: Maybe Int64 <?>
         "Time interval for updating RRDP repositories in seconds (default is 120).",
 
     rsyncRefreshInterval :: wrapped ::: Maybe Int64 <?>
-        "Time interval for updating rsync repositories in seconds (default is 11 minutes, i.e., 660 seconds).",
+        "Time interval for updating rsync repositories in seconds (default is 11 minutes, that is, 660 seconds).",
 
     rrdpTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timeout for RRDP repository fetching, in seconds. If a repository cannot be fetched within this period, " +++
-        "it is considered unavailable and the fetch is aborted."),
+        ("Timeout for RRDP repository fetching in seconds." +++
+         " If a repository cannot be fetched within this period," +++
+         " it is considered unavailable and the fetch is aborted."),
 
     rsyncTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timeout for rsync repository fetching, in seconds. If a repository cannot be fetched within this period, " +++
-        "it is considered unavailable and the fetch is aborted."),
+        ("Timeout for rsync repository fetching in seconds." +++
+         " If a repository cannot be fetched within this period," +++
+         " it is considered unavailable and the fetch is aborted."),
 
     rsyncClientPath :: wrapped ::: Maybe String <?>
         "Path to the rsync executable. Defaults to whatever is found in $PATH.",
@@ -709,9 +708,9 @@ data CLIOptions wrapped = CLIOptions {
         "Port for the HTTP API (default is 9999).",
 
     lmdbSize :: wrapped ::: Maybe Int64 <?>
-        ("Maximum LMDB cache size in MB (default is 32768, i.e., 32GB). Note that: " +++ 
-        "(a) this is the upper limit; actual space usage may be less; " +++ 
-        "(b) approximately 1GB of cache is needed for each additional 24 hours of cache lifetime."),
+        ("Maximum LMDB cache size in MB (default is 32768, that is, 32GB)." +++
+         " Note: (a) this is the upper limit; actual usage may be less;" +++
+         " (b) about 1GB of cache is needed for each additional 24 hours of cache lifetime."),
 
     withRtr :: wrapped ::: Bool <?>
         "Start the RTR server (default is false).",
@@ -730,17 +729,16 @@ data CLIOptions wrapped = CLIOptions {
 
     strictManifestValidation :: wrapped ::: Bool <?>
         ("Use strict RFC 6486 (https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/, section 6.4) " +++ 
-        "for manifest validation (default is false). The modern default is defined in " +++
+        "for manifest validation (default is false). The currently used default is defined in " +++
         "RFC 9286 (https://www.rfc-editor.org/rfc/rfc9286.html#name-relying-party-processing-of)."),
 
     allowOverclaiming :: wrapped ::: Bool <?>
-        ("Use the 'validation reconsidered' algorithm for validating certificate resource sets " +++ 
-        "(https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-validation-update/) instead of the strict version " +++ 
-        "(https://www.rfc-editor.org/rfc/rfc6487.html#section-7). Default is false (i.e., strict version)."),
+        ("Use the 'validation reconsidered' algorithm to validate certificate resource sets " +++
+         "instead of the strict version. Default is false, meaning the strict version is used."),
 
     localExceptions :: wrapped ::: [String] <?>
-        ("Paths to local exception files in SLURM format (RFC 8416). " +++ 
-        "Multiple files can be specified, and their contents are merged internally before application."),
+        ("Paths to local exception files in SLURM format (RFC 8416)." +++
+         " Multiple files can be specified and their contents are merged internally before application."),
 
     maxTaRepositories :: wrapped ::: Maybe Int <?>
         "Maximum number of new repositories per TA added during a validation run (default is 1000).",
@@ -753,14 +751,14 @@ data CLIOptions wrapped = CLIOptions {
         "(default is 5,000,000)."),
 
     maxObjectSize :: wrapped ::: Maybe Integer <?>
-        ("Maximum size of any object (certificate, CRL, MFT, GBR, ROA, ASPA), in bytes " +++
-        "(default is 32MB, i.e., 33,554,432 bytes)."),
+        ("Maximum size of any object (certificate, CRL, MFT, GBR, ROA, ASPA), in bytes" +++
+         " (default is 32MB, that is, 33554432 bytes)."),
 
     minObjectSize :: wrapped ::: Maybe Integer <?>
         "Minimum size of any object, in bytes (default is 300).",
 
     topDownTimeout :: wrapped ::: Maybe Int64 <?>
-        "Timeout for validating a single TA, in seconds (default is 1 hour, i.e., 3600 seconds).",
+        ("Timeout for validating a single TA, in seconds (default is 1 hour, that is, 3600 seconds)."),
 
     noRrdp :: wrapped ::: Bool <?>
         "Disable fetching RRDP repositories (default is false).",
@@ -769,19 +767,8 @@ data CLIOptions wrapped = CLIOptions {
         "Disable fetching rsync repositories (default is false).",
 
     rsyncPrefetchUrl :: wrapped ::: [String] <?>
-        ("rsync repositories to fetch instead of their children (defaults include: " +++
-        "'rsync://rpki.afrinic.net/repository', " +++
-        "'rsync://rpki.apnic.net/member_repository', " +++
-        "'rsync://rpki-repo.registro.br/repo/', " +++
-        "'rsync://repo-rpki.idnic.net/repo/', " +++
-        "'rsync://0.sb/repo/', " +++
-        "'rsync://rpki.co/repo/', " +++
-        "'rsync://rpki-rps.arin.net/repository/', " +++
-        "'rsync://rpki-repository.nic.ad.jp/ap/', " +++
-        "'rsync://rsync.paas.rpki.ripe.net/repository/', " +++
-        "'rsync://rpki.sub.apnic.net/repository/', " +++
-        "'rsync://rpki.cnnic.cn/rpki/A9162E3D0000/'). " +++
-        "This is an optimization and is rarely needed."),
+        ("rsync repositories to fetch instead of their children. " +++
+         "Defaults include common RPKI rsync URLs. This is an optimization and is rarely needed."),
 
     metricsPrefix :: wrapped ::: Maybe String <?>
         "Prefix for Prometheus metrics (default is 'rpki_prover').",
@@ -796,19 +783,21 @@ data CLIOptions wrapped = CLIOptions {
         "Maximum memory allocation (in MB) for the validation process (default is 2048).",
 
     noIncrementalValidation :: wrapped ::: Bool <?>
-        ("Disable the incremental validation algorithm (incremental validation is enabled by default, " +++
-        "so the default for this option is false)."),
+        ("Disable the incremental validation algorithm." +++
+         " Incremental validation is enabled by default, so the default for this option is false."),
 
     showHiddenConfig :: wrapped ::: Bool <?>
-        ("Show all configuration values in the `/api/system` HTTP API call. " +++
-        "This may pose a security risk, as some values may contain local filesystem paths (default is false)."),
+        ("Show all configuration values in the /api/system HTTP API call. " +++
+         "This may pose a security risk, as some values may contain local filesystem paths. " +++
+         "Default is false."),
 
-    noValidityApi :: wrapped ::: Bool <?>
-        ("Disable the VRP index used by the `/api/validity` REST API endpoint (default is false, i.e., the index is built). " +++
-        "Disabling it can save memory and CPU when the index is not needed.")  
+    withValidityApi :: wrapped ::: Bool <?>
+        ("Enable the VRP index used by the REST API endpoint at /api/validity (default is false). " +++
+         "Note: Enabling this option increases memory usage (about 200-300MB in the main process) " +++
+         "and CPU usage (about 2 seconds per validation cycle).")
 
-
-} deriving (Generic)
+    }
+    deriving (Generic)
 
 instance ParseRecord (CLIOptions Wrapped) where
     parseRecord = parseRecordWithModifiers lispCaseModifiers
