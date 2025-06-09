@@ -731,7 +731,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
 
                         Just (ForcedSnaphotAt processedAt)
                             -- If the last forced fetch was less than N hours ago, don't do it again
-                            | closeEnoughMoments processedAt now 
+                            | closeEnoughMoments (Earlier processedAt) (Later now)
                                 (config ^. #validationConfig . #rrdpForcedSnapshotMinInterval) -> 
                                     pure $ Just meta
 
@@ -762,7 +762,365 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                     _                                   -> False
 
             mostNarrowPPScope (Scope s) = 
-                take 1 [ url | PPFocus (RrdpU url) <- NE.toList s ]
+                take 1 [ url | PPFocus (RrdpU url) <- NonEmpty.toList s ]
+
+
+-- | Adjust running fetchers to the latest discovered repositories
+-- Updates fetcheables with new ones, creates fetchers for new URLs,
+-- and stops fetchers that are no longer needed.
+adjustFetchers :: Storage s => AppContext s -> Map TaName Fetcheables -> WorkflowShared -> IO ()
+adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@WorkflowShared { fetchers = Fetchers {..} } = do
+    (currentFetchers, toStop, toStart) <- atomically $ do            
+
+        -- All the URLs that were discovered by the recent validations of all TAs
+        relevantUrls :: Set RpkiURL <- do 
+                uriByTa_ <- updateUriPerTa discoveredFetcheables <$> readTVar uriByTa
+                writeTVar uriByTa uriByTa_
+                pure $ Set.fromList $ IxSet.indexKeys uriByTa_
+            
+        -- This basically means that we filter all the fetcheables 
+        -- (new or current) by being amongst the relevant URLs. 
+        modifyTVar' fetcheables $ \currentFetcheables -> 
+                Fetcheables $ MonoidalMap.filterWithKey 
+                    (\url _ -> url `Set.member` relevantUrls) $ 
+                    unFetcheables $ currentFetcheables <> mconcat (Map.elems discoveredFetcheables)
+
+        running <- readTVar runningFetchers
+        let runningFetcherUrls = Map.keysSet running
+
+        pure (running, 
+              Set.difference runningFetcherUrls relevantUrls,
+              Set.difference relevantUrls runningFetcherUrls)        
+
+    -- logDebug logger [i|Adjusting fetchers: toStop = #{toStop}, toStart = #{toStart}, currentFetchers = #{Map.keys currentFetchers}|]
+
+    mask_ $ do
+        -- Stop and remove fetchers for URLs that are no longer needed    
+        for_ (Set.toList toStop) $ \url ->
+            for_ (Map.lookup url currentFetchers) $ \thread -> do
+                Conc.throwTo thread AsyncCancelled
+
+        threads <- forM (Set.toList toStart) $ \url ->
+            (url, ) <$> forkFinally 
+                            (newFetcher appContext workflowShared url)
+                            (logException logger [i|Exception in fetcher thread for #{url}|])
+
+        atomically $ do
+            modifyTVar' runningFetchers $ \r -> do 
+                let addedNewAsyncs = foldr (uncurry Map.insert) r threads
+                foldr Map.delete addedNewAsyncs $ Set.toList toStop
+                        
+-- | Create a new fetcher for the given URL and run it.
+newFetcher :: Storage s => AppContext s -> WorkflowShared -> RpkiURL -> IO ()
+newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetchers {..}, ..} url = do
+    ignoreSync $ go `finally` dropFetcher fetchers url    
+  where
+    go = case config ^. #proverRunMode of         
+        OneOffMode _ -> void fetchOnce
+        ServerMode   -> do 
+            Now start <- thisInstant        
+            pauseIfNeeded start
+            fetchLoop
+      where    
+        fetchLoop = do 
+            Now start <- thisInstant
+            fetchOnce >>= \case        
+                Nothing -> do                
+                    logInfo logger [i|Fetcher for #{url} is not needed and will be deleted.|]
+                Just interval -> do 
+                    Now end <- thisInstant
+                    let pause = leftToWaitMicros (Earlier start) (Later end) interval
+                    when (pause > 0) $
+                        threadDelay $ fromIntegral pause
+
+                    fetchLoop 
+
+        pauseIfNeeded now = do 
+            f <- fetchableForUrl 
+            for_ f $ \_ -> do 
+                r <- roTxT database (\tx db -> DB.getRepository tx db url)
+                for_ r $ \repository -> do          
+                    let status = getMeta repository ^. #status
+                    let lastFetchMoment = 
+                            case status of
+                                FetchedAt t -> Just t
+                                FailedAt t  -> Just t
+                                _           -> Nothing
+                    
+                    for_ lastFetchMoment $ \lastFetch -> do 
+                        worldVersion <- newWorldVersion
+                        let interval = refreshInterval (newFetchConfig config) repository worldVersion status Nothing 0
+                        let pause = leftToWaitMicros (Earlier lastFetch) (Later now) interval                                        
+                        when (pause > 0) $ do  
+                            let pauseSeconds = pause `div` 1_000_000
+                            logDebug logger $ 
+                                [i|Fetcher for #{url} finished at #{lastFetch}, now is #{now}, |] <> 
+                                [i|interval is #{interval}, first fetch will be paused by #{pauseSeconds}s.|]
+                            threadDelay $ fromIntegral pause
+
+    fetchOnce = do 
+        fetchableForUrl >>= \case        
+            Nothing -> 
+                pure Nothing
+
+            Just _ -> do 
+                let fetchConfig = newFetchConfig config
+                worldVersion <- newWorldVersion
+                repository <- fromMaybe (newRepository url) <$> 
+                                roTxT database (\tx db -> DB.getRepository tx db url) 
+
+                ((r, validations), duration) <-                 
+                        withFetchLimits fetchConfig repository $ timedMS $ 
+                            runValidatorT (newScopes' RepositoryFocus url) $ do                                 
+                                runConcurrentlyIfPossible logger FetchTask runningTasks 
+                                    $ fetchRepository appContext fetchConfig worldVersion repository
+
+                rememberFirstFetchBy worldVersion
+                updatePrometheusForRepository url duration prometheusMetrics
+
+                -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
+                case r of
+                    Right (repository', stats) -> do                         
+                        let (updateRepo, interval) = updateRepository fetchConfig
+                                repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duration
+
+                        saveFetchOutcome updateRepo validations                        
+                        triggerTaRevalidationIf $ hasUpdates validations                                                         
+
+                        pure $ Just interval
+
+                    Left _ -> do
+                        let newStatus = FailedAt $ versionToInstant worldVersion
+                        let (updatedRepo, interval) = updateRepository fetchConfig repository worldVersion newStatus Nothing duration
+                        saveFetchOutcome updatedRepo validations
+
+                        fetchableForUrl >>= \case
+                            Nothing -> 
+                                -- this whole fetcheable is gone
+                                pure Nothing
+                            Just fallbacks -> do  
+                                anyUpdates <- fetchFallbacks fetchConfig worldVersion fallbacks                                                            
+                                triggerTaRevalidationIf anyUpdates
+                                if anyUpdates 
+                                    then do                                        
+                                        pure $ Just $ 
+                                                case [ () | RsyncU _ <- Set.toList fallbacks ] of                                                     
+                                                    -- Not implemented yet, in reality it should never happen, 
+                                                    -- fallbacks can only be rsync in forseable future
+                                                    [] -> interval
+                                                    -- fallbacks managed to get through and it was rsync (duh), 
+                                                    -- so it should be a normal rsync interval then                                                    
+                                                    _  -> max interval (config ^. #validationConfig . #rsyncRepositoryRefreshInterval)
+                                    else 
+                                        -- nothing responded, so just go with the normal exponential backoff thing
+                                        pure $ Just interval                                        
+                                
+      where
+        fetchFallbacks fetchConfig worldVersion fallbacks = do 
+            -- TODO Make it a bit smarter based on the overal number and overall load
+            let maxThreads = 32
+            repositories <- pooledForConcurrentlyN maxThreads (Set.toList fallbacks) $ \fallbackUrl -> do 
+
+                repository <- fromMaybe (newRepository fallbackUrl) <$> 
+                                roTxT database (\tx db -> DB.getRepository tx db fallbackUrl)
+                                
+                ((r, validations), duration) <- 
+                        withFetchLimits fetchConfig repository 
+                            $ runConcurrentlyIfPossible logger FetchTask runningTasks                                 
+                                $ timedMS
+                                $ runValidatorT (newScopes' RepositoryFocus fallbackUrl) 
+                                    $ fetchRepository appContext fetchConfig worldVersion repository                
+
+                updatePrometheusForRepository fallbackUrl duration prometheusMetrics
+                let repo = case r of
+                        Right (repository', _noRrdpStats) -> 
+                            -- realistically at this time the only fallback repositories are rsync, so 
+                            -- there's no RrdpFetchStat ever
+                            updateMeta' repository' (#status .~ FetchedAt (versionToInstant worldVersion))
+                        Left _ -> do
+                            updateMeta' repository (#status .~ FailedAt (versionToInstant worldVersion))
+            
+                pure (repo, validations)            
+
+            rwTxT database $ \tx db -> do
+                DB.saveRepositories tx db (map fst repositories)
+                DB.saveRepositoryValidationStates tx db repositories
+
+            pure $ any (hasUpdates . snd) repositories
+        
+
+    fetchableForUrl = do 
+        Fetcheables fs <- readTVarIO fetcheables
+        pure $ MonoidalMap.lookup url fs
+
+
+    updateRepository fetchConfig repo worldVersion newStatus stats duration = (updated, interval)
+      where
+        interval = refreshInterval fetchConfig repo worldVersion newStatus stats duration
+        updated = updateMeta' repo 
+            (\meta -> meta 
+                & #status .~ newStatus 
+                & #refreshInterval ?~ interval)
+
+    refreshInterval fetchConfig repository worldVersion newStatus rrdpStats duration = 
+        case newStatus of                 
+            FailedAt _ -> exponentialBackoff currentInterval
+            _ ->       
+                case rrdpStats of 
+                    Nothing                  -> defaultInterval
+                    Just RrdpFetchStat {..} -> 
+                        case action of 
+                            NothingToFetch _ -> increaseInterval currentInterval 
+                            FetchDeltas {..} 
+                                | moreThanOne sortedDeltas -> decreaseInterval currentInterval
+                                | otherwise                -> currentInterval
+                            FetchSnapshot _ _       -> currentInterval
+                            ForcedFetchSnapshot _ _ -> currentInterval
+      where                                    
+        currentInterval = 
+            fromMaybe defaultInterval (getMeta repository ^. #refreshInterval)
+
+        exponentialBackoff (Seconds s) = min 
+            (Seconds $ s + s `div` 2 + 2 * kindaRandomness) 
+            ((fetchConfig ^. #maxFailedBackoffInterval) + 3 * Seconds kindaRandomness)
+
+        moreThanOne = ( > 1) . length . NonEmpty.take 2
+
+        defaultInterval = case repository of 
+            RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
+            RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
+
+        increaseInterval (Seconds s) = trimInterval $ Seconds $ s + s `div` 5 + kindaRandomness
+        decreaseInterval (Seconds s) = trimInterval $ Seconds $ s - s `div` 3 - kindaRandomness
+
+        minInterval = 
+            case repository of                
+                -- it's signifantly cheaper to use E-Tag and If_No-Mobified-Since, 
+                -- so the interval can be smaller
+                RrdpR (RrdpRepository { eTag = Just _ }) -> fetchConfig ^. #minFetchInterval
+                _                                        -> 2 * fetchConfig ^. #minFetchInterval
+
+        trimInterval interval = 
+            max minInterval 
+                (min ((fetchConfig ^. #maxFetchInterval) + Seconds kindaRandomness) interval)  
+
+        -- Pseudorandom stuff is added to spread repositories over time more of less 
+        -- uniformly and avoid having peaks of activity. It's just something looking 
+        -- relatively random without IO. This one will return a number from 0 to 19.
+        kindaRandomness = let 
+            h :: Integer = fromIntegral $ Hashable.hash url
+            w :: Integer = fromIntegral $ let (WorldVersion w_) = worldVersion in Hashable.hash w_
+            d :: Integer = fromIntegral $ unTimeMs duration
+            r = (w `mod` 83 + h `mod` 77 + d `mod` 37) `mod` 20
+            in fromIntegral r :: Int64
+
+    saveFetchOutcome r validations =
+        rwTxT database $ \tx db -> do
+            DB.saveRepositories tx db [r]
+            DB.saveRepositoryValidationStates tx db [(r, validations)]
+
+    
+    withFetchLimits :: FetchConfig -> Repository -> IO a -> IO a
+    withFetchLimits fetchConfig repository f = do
+        case repository of 
+            RrdpR _                   -> rrdpFetch
+            RsyncR (getRsyncURL -> r) -> rsyncFetch r
+      where
+        timeToWait = fetchConfig ^. #fetchLaunchWaitDuration
+
+        semaphoreToUse = 
+            case getMeta repository ^. #status of  
+                -- TODO Add logic "if succeeded more than N times"
+                FetchedAt _ -> fetchers ^. #trustedFetchSemaphore
+                _           -> fetchers ^. #untrustedFetchSemaphore
+
+        rrdpFetch = withSemaphoreOrTimeout semaphoreToUse timeToWait f
+
+        rsyncFetch (RsyncURL host _) = do 
+            -- Some hosts limit the number of connections, so we need to limit
+            -- the number of concurrent rsync fetches per host.            
+            rsyncHostSempahore <- atomically $ do        
+                    rsyncS <- readTVar rsyncPerHostSemaphores
+                    case Map.lookup host rsyncS of 
+                        Nothing -> do 
+                            s <- newSemaphore $ config ^. #rsyncConf . #rsyncPerHostLimit
+                            writeTVar rsyncPerHostSemaphores $ Map.insert host s rsyncS
+                            pure s
+                        Just s -> 
+                            pure s            
+            
+            withSemaphore rsyncHostSempahore 
+                $ withSemaphoreOrTimeout semaphoreToUse timeToWait f
+          
+
+    hasUpdates validations = let 
+            metrics = validations ^. #topDownMetric
+            rrdps = MonoidalMap.elems $ unMetricMap $ metrics ^. #rrdpMetrics
+            rsyncs = MonoidalMap.elems $ unMetricMap $ metrics ^. #rsyncMetrics                
+        in any (\m -> rrdpRepoHasSignificantUpdates (m ^. typed)) rrdps ||
+           any (\m -> rsyncRepoHasSignificantUpdates (m ^. typed)) rsyncs
+
+    triggerTaRevalidationIf condition = atomically $ do 
+        case config ^. #proverRunMode of         
+            OneOffMode _ -> trigger
+            ServerMode   -> when condition trigger                
+      where
+        trigger = do 
+            relevantTas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVar uriByTa
+            modifyTVar' tasToValidate $ (<>) relevantTas            
+    
+    rememberFirstFetchBy version = atomically $ do 
+        fff <- readTVar firstFinishedFetchBy
+        when (Map.notMember url fff) $ 
+            writeTVar firstFinishedFetchBy $ Map.insert url version fff                   
+
+-- Keep track of the earliest expiration time for each TA (i.e. the earlist time when some object of the TA will expire).
+-- Reschedule revalidation of the TA at the moment right after its earliest expiration time. Since this expiration time
+-- in practice keeps receding to the future as new objects are added, the revalidation is most likely not needed at all, 
+-- that's why we double-check it once again before revalidation.
+scheduleRevalidationOnExpiry :: Storage s => AppContext s -> Map TaName EarliestToExpire -> WorkflowShared -> IO ()
+scheduleRevalidationOnExpiry AppContext {..} expirationTimes WorkflowShared {..} = do
+    Now now <- thisInstant
+
+    -- Filter out TAs for which expiration time hasn't changed
+    onlyUpdatedExpirations <- 
+        fmap catMaybes $ atomically $ do         
+            forM (Map.toList expirationTimes) $ \(taName, expiration) -> do 
+                let updateIt = do 
+                        modifyTVar' earliestToExpire $ Map.insert taName expiration
+                        pure $ Just (taName, expiration)
+
+                m <- readTVar earliestToExpire
+                case Map.lookup taName m of
+                    Nothing -> updateIt
+                    Just e
+                        | e == expiration -> pure Nothing
+                        | otherwise       -> updateIt
+
+    for_ onlyUpdatedExpirations $ \(taName, expiration@(EarliestToExpire expiresAt)) -> do
+        let timeToWait = instantDiff (Earlier now) (Later expiresAt)
+        let expiresSoonEnough = timeToWait < config ^. #validationConfig . #revalidationInterval
+        when (now < expiresAt && expiration /= mempty && expiresSoonEnough) $ do
+            logDebug logger [i|The first object for #{taName} will expire at #{expiresAt}, will schedule re-validation right after.|]
+            void $ forkFinally
+                    (do
+                        threadDelay $ toMicroseconds timeToWait
+                        let triggerRevalidation = atomically $ modifyTVar' tasToValidate $ Set.insert taName
+                        join $ atomically $ do 
+                            e <- readTVar earliestToExpire
+                            pure $ case Map.lookup taName e of 
+                                Just t 
+                                    -- expiration time changed since the trigger was scheduled, 
+                                    -- so don't do anything, there're a later trigger for this TA
+                                    | t > expiration -> do
+                                        logDebug logger [i|Will cancel the re-validation for #{taName} scheduled after expiration at #{expiresAt}, new expiration time is #{t}.|]
+                                        pure ()
+                                    | otherwise      -> do 
+                                        logDebug logger [i|Will not cancel re-validation for #{taName} scheduled after expiration at #{expiresAt}, new expiration time is #{t}.|]
+                                        triggerRevalidation
+                                Nothing              -> triggerRevalidation
+                    )                        
+                    (const $ pure ())
 
 
 -- To be called from the cache cleanup worker
