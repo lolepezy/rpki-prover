@@ -166,7 +166,7 @@ data ValidationConfig = ValidationConfig {
     deriving anyclass (TheBinary)
 
 
-data HttpApiConfig = HttpApiConfig {
+newtype HttpApiConfig = HttpApiConfig {
         port :: Word16    
     } 
     deriving stock (Show, Eq, Ord, Generic)
@@ -236,7 +236,7 @@ defaultConfig = Config {
         enabled = True
     },
     validationConfig = ValidationConfig {
-        revalidationInterval           = Seconds $ 7 * 60,
+        revalidationInterval           = Seconds $ 15 * 60,
         rrdpRepositoryRefreshInterval  = Seconds 120,
         rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
         minimalRepositoryRetryInterval = Seconds 10,    
@@ -298,7 +298,8 @@ defaultPrefetchURLs = [
         "rsync://rpki-repository.nic.ad.jp/ap/",
         "rsync://rsync.paas.rpki.ripe.net/repository/",
         "rsync://rpki.sub.apnic.net/repository/",
-        "rsync://rpki.cnnic.cn/rpki/A9162E3D0000/"
+        "rsync://rpki.cnnic.cn/rpki/A9162E3D0000/",
+        "rsync://rpki-repo.as207960.net/repo/"
     ]    
 
 defaultTalUrls :: [(String, String)]
