@@ -633,7 +633,9 @@ data CLIOptions wrapped = CLIOptions {
          "result will be written to the file set by --vrp-output option (which must also be set)."),
 
     vrpOutput :: wrapped ::: Maybe FilePath <?> 
-        "Path of the file to write VRPs to. Only effectful when --once option is set.",
+        ("Path of the file to write VRPs to. Only effectful when --once option is set. " +++ 
+         "The VRPs are written in CSV format with TA names and they are written 'as is', " +++ 
+         "i.e. without excluding the duplicates within each TA or between them."),
 
     noRirTals :: wrapped ::: Bool <?> 
         "If set, RIR TAL files will not be downloaded.",
