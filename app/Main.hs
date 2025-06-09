@@ -59,7 +59,6 @@ import           RPKI.RRDP.Http (downloadToFile)
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
 import           RPKI.Store.Base.Storage
-import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.AppStorage
 import           RPKI.Store.AppLmdbStorage
 import qualified RPKI.Store.MakeLmdb as Lmdb
@@ -146,11 +145,13 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                 Right appContext' -> do 
                     -- now we have the appState, set appStateHolder
                     atomically $ writeTVar appStateHolder $ Just $ appContext' ^. #appState
+                    tals <- readTALs appContext'
                     if once 
-                        then runValidatorServer appContext'
-                        else void $ race
-                                (runHttpApi appContext')
-                                (runValidatorServer appContext')
+                        then runValidatorServer appContext' tals
+                        else do                             
+                            void $ race
+                                (runHttpApi appContext' tals)
+                                (runValidatorServer appContext' tals)
 
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
@@ -181,8 +182,10 @@ executeWorkerProcess = do
                         CompactionParams {..} -> exec resultHandler $
                             CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
 
-                        ValidationParams {..} -> exec resultHandler $
-                            uncurry ValidationResult <$> runValidation appContext worldVersion tals
+                        ValidationParams {..} -> exec resultHandler $ do 
+                            (vs, discoveredRepositories, slurm) <- 
+                                runValidation appContext worldVersion talsToValidate allTaNames
+                            pure $ ValidationResult vs discoveredRepositories slurm
 
                         CacheCleanupParams {..} -> exec resultHandler $
                             CacheCleanupResult <$> runCacheCleanup appContext worldVersion
@@ -196,51 +199,51 @@ turnOffTlsValidation = do
     setGlobalManager manager    
 
 
-runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
-runValidatorServer appContext@AppContext {..} = do
+readTALs :: (Storage s, MaintainableStorage s) => AppContext s -> IO [TAL]
+readTALs AppContext {..} = do
     
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
-    worldVersion  <- newWorldVersion
 
     -- Check that TAL names are unique
-    let talSourcesDirs = (configValue $ config ^. #talDirectory) 
-                       : (configValue $ config ^. #extraTalsDirectories)
-    talNames <- fmap mconcat $ mapM listTalFiles talSourcesDirs    
+    let talSourcesDirs = configValue (config ^. #talDirectory) 
+                       : configValue (config ^. #extraTalsDirectories)
+    talNames <- mconcat <$> mapM listTalFiles talSourcesDirs
+    
     when (Set.size (Set.fromList talNames) < length talNames) $ do
         let message = [i|TAL names are not unique #{talNames}, |] <> 
                       [i|TAL are from directories #{talSourcesDirs}.|]
         logError logger message
         throwIO $ AppException $ TAL_E $ TALError message
 
-    (tals, vs) <- runValidatorT (newScopes "validation-root") $
+    (tals, _) <- runValidatorT (newScopes "validation-root") $
         forM talNames $ \(talFilePath, taName) ->
             vFocusOn TAFocus (convert taName) $
                 parseTalFromFile talFilePath (Text.pack taName)    
-
-    db <- readTVarIO database
-    rwTx db $ \tx -> do 
-        DB.generalWorldVersion tx db worldVersion
-        DB.saveValidations tx db worldVersion (vs ^. typed)
+    
     case tals of
         Left e -> do
             logError logger [i|Error reading some of the TALs, e = #{e}.|]
             throwIO $ AppException e
         Right tals' -> do
-            logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]
-            -- here it blocks and loops in never-ending re-validation
-            runWorkflow appContext tals'
-                `finally`
-                closeStorage appContext
+            logInfo logger [i|Successfully loaded #{length talNames} TALs: #{map snd talNames}|]            
+            pure tals'
   where
     parseTalFromFile talFileName taName = do
         talContent <- fromTry (TAL_E . TALError . fmtEx) $ LBS.readFile talFileName
-        vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName
+        vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName            
 
 
-runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
-runHttpApi appContext@AppContext {..} = do 
+runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> IO ()
+runValidatorServer appContext tals =     
+    runWorkflow appContext tals
+        `finally`
+        closeStorage appContext
+
+
+runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> IO ()
+runHttpApi appContext@AppContext {..} tals = do 
     let httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
-    (Warp.run httpPort $ httpServer appContext) 
+    (Warp.run httpPort $ httpServer appContext tals) 
         `catch` 
         (\(e :: SomeException) -> logError logger [i|Could not start HTTP server: #{e}.|])
 
@@ -292,11 +295,9 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & #rsyncConf . #enabled .~ not noRsync
             & #rsyncConf . #rsyncPrefetchUrls .~ rsyncPrefetchUrls
             & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
-            & maybeSet (#rsyncConf . #asyncRsyncTimeout) (Seconds <$> asyncRsyncTimeout)
             & #rrdpConf . #tmpRoot .~ apiSecured tmpd
             & #rrdpConf . #enabled .~ not noRrdp
             & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
-            & maybeSet (#rrdpConf . #asyncRrdpTimeout) (Seconds <$> asyncRrdpTimeout)
             & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
             & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
             & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
@@ -311,13 +312,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
             & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
             & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
-            & maybeSet (#validationConfig . #minObjectSize) minObjectSize
-            & #validationConfig . #fetchIntervalCalculation .~ 
-                (if noAdaptiveFetchIntervals then Constant else Adaptive)
-            & #validationConfig . #fetchTimeoutCalculation .~ 
-                (if noAdaptiveFetchTimeouts then Constant else Adaptive)        
-            & #validationConfig . #fetchMethod .~ 
-                (if noAsyncFetch then SyncOnly else SyncAndAsync)        
+            & maybeSet (#validationConfig . #minObjectSize) minObjectSize            
             & maybeSet (#httpApiConf . #port) httpApiPort
             & #rtrConfig .~ rtrConfig
             & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
@@ -525,7 +520,7 @@ rsyncPrefetches :: CLIOptions Unwrapped -> ValidatorT IO [RsyncURL]
 rsyncPrefetches CLIOptions {..} = do
     let urlsToParse =
             case rsyncPrefetchUrl of
-                [] -> defaulPrefetchURLs
+                [] -> defaultPrefetchURLs
                 _  -> rsyncPrefetchUrl
 
     forM urlsToParse $ \u ->
@@ -701,18 +696,10 @@ data CLIOptions wrapped = CLIOptions {
     rrdpTimeout :: wrapped ::: Maybe Int64 <?>
         ("Timebox for RRDP repositories, in seconds. If fetching of a repository does not " +++ 
          "finish within this timeout, the repository is considered unavailable and fetching process is interrupted"),
-
-    asyncRrdpTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timebox for RRDP repositories when fetched asynchronously, in seconds. If fetching of a repository does not "
-       +++ "finish within this timeout, the repository is considered unavailable and fetching process is interrupted"),
-
+    
     rsyncTimeout :: wrapped ::: Maybe Int64 <?>
         ("Timebox for rsync repositories, in seconds. If fetching of a repository does not "
        +++ "finish within this timeout, the repository is considered unavailable and fetching process is interrupted."),
-
-    asyncRsyncTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timebox for rsync repositories when fetched asynchronously, in seconds. If fetching of a repository does not "
-       +++ "finish within this timeout, the repository is considered unavailable and fetching process is interrupted"),
 
     rsyncClientPath :: wrapped ::: Maybe String <?>
         ("Path to rsync client executable. By default rsync client is expected to be in the $PATH."),
@@ -809,19 +796,7 @@ data CLIOptions wrapped = CLIOptions {
     noIncrementalValidation :: wrapped ::: Bool <?>
         ("Do not use incremental validation algorithm (incremental validation is the default " +++ 
          "so default for this option is false)."),
-
-    noAdaptiveFetchIntervals :: wrapped ::: Bool <?>
-        ("Do not use adaptive fetch intervals for repositories (adaptive fetch intervals is the default " +++ 
-         "so default for this option is false)."),
-
-    noAdaptiveFetchTimeouts :: wrapped ::: Bool <?>
-        ("Do not use adaptive fetch timeouts for repositories (adaptive fetch timeouts is the default " +++ 
-         "so default for this option is false)."),
-
-    noAsyncFetch :: wrapped ::: Bool <?>
-        ("Do not fetch repositories asynchronously, i.e. only fetch them while validating the RPKI tree " +++ 
-        "(default is false, i.e. asynchronous fetches are used by default)."),
-
+    
     showHiddenConfig :: wrapped ::: Bool <?>
         ("Reveal all config values in the HTTP API call to `/api/system`. " +++ 
          "This is a potential security issue since some of the config values include " +++ 

@@ -168,7 +168,7 @@ runRtrServer appContext RtrConfig {..} = do
                 -- https://datatracker.ietf.org/doc/html/rfc8210#section-8.2
                 -- "The cache MUST rate-limit Serial Notifies to no more frequently than one per minute."
                 -- 
-                let moreThanMinuteAgo lastTime = not $ closeEnoughMoments lastTime now (Seconds 60)
+                let moreThanMinuteAgo lastTime = not $ closeEnoughMoments (Earlier lastTime) (Later now) (Seconds 60)
                 sendNotify <- maybe True moreThanMinuteAgo <$> readTVar lastTimeNotified                 
 
                 when (sendNotify && thereAreRtrUpdates) $ do                    
@@ -278,10 +278,10 @@ readRtrPayload AppContext {..} worldVersion = do
     db <- readTVarIO database
 
     (vrps, bgpSec) <- roTx db $ \tx -> do 
-                slurm <- DB.slurmForVersion tx db worldVersion
-                vrps <- DB.getVrps tx db worldVersion >>= \case 
-                            Nothing   -> pure mempty
-                            Just vrps -> pure $ maybe vrps (`applySlurmToVrps` vrps) slurm
+                slurm <- DB.getSlurm tx db worldVersion
+                vrps <- do 
+                        vrps_ <- DB.getVrps tx db worldVersion
+                        pure $ maybe vrps_ (`applySlurmToVrps` vrps_) slurm
 
                 bgpSec <- DB.getBgps tx db worldVersion >>= \case 
                             Nothing   -> pure mempty

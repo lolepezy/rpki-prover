@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE StrictData         #-}
 {-# LANGUAGE RecordWildCards    #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module RPKI.RRDP.Types where
 
@@ -63,7 +64,7 @@ newtype ETag = ETag BS.ByteString
     deriving anyclass (TheBinary, NFData)        
 
 
-data RrdpFetchStat = RrdpFetchStat {
+newtype RrdpFetchStat = RrdpFetchStat {
         action :: RrdpAction
     } 
     deriving stock (Show, Eq, Ord, Generic)   
@@ -95,7 +96,7 @@ data RrdpMeta = RrdpMeta {
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary, NFData)            
 
-data RrdpIntegrity = RrdpIntegrity {
+newtype RrdpIntegrity = RrdpIntegrity {
         deltas :: [DeltaInfo]    
     }
     deriving stock (Show, Eq, Ord, Generic)    
@@ -108,3 +109,5 @@ newRrdpMeta sessionId serial =
 newRrdpIntegrity :: Notification -> RrdpIntegrity
 newRrdpIntegrity Notification {..} = RrdpIntegrity deltas
 
+previousSerial :: RrdpSerial -> RrdpSerial
+previousSerial (RrdpSerial s) = RrdpSerial $ s - 1

@@ -50,7 +50,7 @@ toMessage = \case
 toRsyncMessage :: RsyncError -> Text
 toRsyncMessage = \case 
     RsyncProcessError errorCode e ->
-        [i|Rsync client returned code #{errorCode}, error = #{e}.|]
+        [i|Rsync client returned code #{errorCode}, error = #{e}|]
 
     FileReadError e                -> [i|Can't read local file created by rsync client #{e}.|]
     RsyncRunningError e            -> [i|Error running rsync client #{e}.|]
@@ -67,7 +67,7 @@ toRrdpMessage = \case
     NoSerial       -> [i|Serial number is not set.|]
     NoSnapshotHash -> [i|Snapshot hash is not set.|]
     NoSnapshotURI  -> [i|Snapshot URL is not set.|]
-
+    
     BrokenSnapshotUri u -> 
         [i|Snapshot URL in notification url is malformed #{u}.|]
 
@@ -134,6 +134,10 @@ toRrdpMessage = \case
     DeltaSerialTooHigh {..} -> 
         [i|Delta serial #{actualSerial} is larger than maximal expected #{expectedSerial}.|]        
     
+    RrdpMetaMismatch {..} -> 
+        [i|RRDP metadata mismatch while saving data, expected session #{expectedSessionId} and serial #{expectedSerial} |] <> 
+        [i|but got session #{actualSessionId} and serial #{actualSerial}.|]
+
     NoObjectToReplace url hash -> 
         [i|No object with url #{url} and hash #{hash} to replace.|]        
 
@@ -338,6 +342,9 @@ toValidationMessage = \case
         [i|Prefix list must not have IP resources on its EE certificate, but has #{prefixes}.|]
 
       ReferentialIntegrityError message -> [i|Referential integrity problem: #{message}.|]
+
+      WeirdCaPublicationPoints urls -> 
+        [i|Invalid CA publication points found: #{fmtUrlList urls}.|]
 
   where
     fmtUrlList = mconcat . 
