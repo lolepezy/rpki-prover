@@ -116,8 +116,8 @@ data RpkiObjectStore s = RpkiObjectStore {
         hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
         mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
+        objectMetas    :: SMap "object-meta" s ObjectKey ObjectMeta,
 
-        objectMetas   :: SMap "object-meta" s ObjectKey ObjectMeta,
         validatedByVersion :: SMap "validated-by-version" s Text (Compressed (Map.Map ObjectKey WorldVersion)),
 
         -- Object URL mapping
