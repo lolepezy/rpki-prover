@@ -152,7 +152,9 @@ data RrdpError = BrokenXml Text |
                 DeltaUriHostname Text Text | 
                 NoDeltaHash |
                 BadHash Text |
-                NoVersion | 
+                NoVersionInNotification | 
+                NoVersionInSnapshot | 
+                NoVersionInDelta | 
                 BadVersion Text | 
                 NoPublishURI |
                 BadBase64 Text Text |

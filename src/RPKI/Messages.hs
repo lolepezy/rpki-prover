@@ -85,7 +85,9 @@ toRrdpMessage = \case
         [i|Delta URL hostname #{deltaHost} is not the same as repository hostname #{repoHost}.|]
 
     BadHash h      -> [i|String #{h} is not a valid SHA256 hash.|]
-    NoVersion      -> [i|RRDP version is not set.|]  
+    NoVersionInNotification -> [i|RRDP version is not set in the notification.xml file.|]  
+    NoVersionInSnapshot     -> [i|RRDP version is not set in snapshot.|]  
+    NoVersionInDelta        -> [i|RRDP version is not set in delta.|]  
     BadVersion v   -> [i|String #{v} is not a valid RRDP version.|]  
     NoPublishURI   -> [i|An "publish" element doesn't have URL attribute.|]  
 

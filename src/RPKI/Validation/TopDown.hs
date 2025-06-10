@@ -528,8 +528,9 @@ validateCaNoLimitChecks
             -- missing manifests, so just don't go there
             unless (all ((== Pending) . snd) caFetcheables) $ do   
                 let primaryUrl = getPrimaryRepositoryUrl publicationPoints ppAccess
-                metricFocusOn PPFocus primaryUrl $
-                    validateCaNoFetch appContext topDownContext ca
+                vFocusOn PPFocus primaryUrl $
+                    metricFocusOn PPFocus primaryUrl $
+                        validateCaNoFetch appContext topDownContext ca
   where
     mergeFetcheables caFetcheables =
         case map fst caFetcheables of 

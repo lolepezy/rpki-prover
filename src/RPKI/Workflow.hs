@@ -633,7 +633,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     -- Save all the results into LMDB    
     ((deleted, updatedValidation), elapsed) <- timedMS $ rwTxT database $ \tx db -> do              
                             
-        let results' = addTimingPerTA results
+        let results' = addVersionPerTA results
         updatedValidation <- addUniqueVrpCountsToMetrics tx db results' slurmValidations                
 
         let resultsToSave = toPerTA 
@@ -648,12 +648,12 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.
         deleted <- DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
-        
-        let validations = snd $ allTAs resultsToSave
+
+        let validations = updatedValidation <> snd (allTAs resultsToSave)
 
         handleValidations tx db (validations ^. typed)        
 
-        pure (deleted, updatedValidation <> validations)
+        pure (deleted, validations)
 
     let deletedStr = case deleted of
             [] -> "none"
@@ -663,7 +663,9 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     pure (updatedValidation, 
         Map.map (\r -> (r ^. #discoveredRepositories, r ^. #earliestNotValidAfter)) results, 
         maybeSlurm)
+
   where
+
     reReadSlurm =
         case appState ^. #readSlurm of
             Nothing       -> pure (mempty, Nothing)
@@ -697,16 +699,16 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                 totalUnique = Count (fromIntegral $ uniqueVrpCount vrps)        
                 perTaUnique = fmap (Count . fromIntegral . Set.size . Set.fromList . V.toList . unVrps) (unPerTA vrps)   
             in vs & vrpCountLens . #totalUnique .~ totalUnique                
-                & vrpCountLens . #perTaUnique .~ perTaUnique
+                  & vrpCountLens . #perTaUnique .~ perTaUnique
 
-    addTimingPerTA :: Map TaName TopDownResult -> Map TaName TopDownResult
-    addTimingPerTA = 
-            fmap $ #topDownValidations . #topDownMetric . #validationMetrics 
-                    %~ fmap (#validatedBy .~ ValidatedBy worldVersion)         
+    addVersionPerTA :: Map TaName TopDownResult -> Map TaName TopDownResult
+    addVersionPerTA = 
+        fmap $ #topDownValidations . #topDownMetric . #validationMetrics 
+                %~ fmap (#validatedBy .~ ValidatedBy worldVersion)         
 
     -- Here we do anything that needs to be done in case of specific 
     -- fetch/validation issues are present    
-    handleValidations tx db (Validations validations) = do 
+    handleValidations tx db (Validations validations) = do         
         Now now <- thisInstant
         unless (Map.null repositoriesWithManifestIntegrityIssues) $ 
             logDebug logger [i|Repositories with integrity issues #{repositoriesWithManifestIntegrityIssues}.|]
@@ -715,19 +717,17 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
             DB.updateRrdpMetaM tx db rrdpUrl $ \case 
                 Nothing   -> pure Nothing
                 Just meta -> do 
-                    let enforcedSnapshot = meta { 
-                            enforcement = Just $ NextTimeFetchSnapshot now [i|Manifest integrity issues: #{issues}|] 
-                        }                    
+                    let enforcedSnapshot = meta & #enforcement ?~ 
+                             NextTimeFetchSnapshot now [i|Manifest integrity issues: #{issues}|]       
                     case meta ^. #enforcement of    
                         Nothing -> do
-                            logInfo logger 
-                                [i|Repository #{rrdpUrl} has integrity issues #{issues}, will force it to re-fetch snapshot.|]
+                            logInfo logger [i|Repository #{rrdpUrl} has integrity issues #{issues}, will force it to re-fetch snapshot.|]
                             pure $ Just enforcedSnapshot
 
                         -- Don't update the enforcement if it's already set to fetch the snapshot
                         Just n@(NextTimeFetchSnapshot _ _) -> do 
-                                logDebug logger [i|Repository #{rrdpUrl} has integrity issues, not changing #{n}.|]
-                                pure $ Just meta
+                            logDebug logger [i|Repository #{rrdpUrl} has integrity issues, not changing #{n}.|]
+                            pure $ Just meta
 
                         Just (ForcedSnaphotAt processedAt)
                             -- If the last forced fetch was less than N hours ago, don't do it again
@@ -746,7 +746,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                     (scope, issues) <- Map.toList validations,                    
                     let relevantIssues = filter manifestIntegrityError (Set.toList issues),
                     not (null relevantIssues),
-                    relevantRepo    <- mostNarrowPPScope scope
+                    relevantRepo <- mostNarrowPPScope scope
                 ]        
           where
             manifestIntegrityError = \case
