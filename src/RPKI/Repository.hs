@@ -96,7 +96,6 @@ data PublicationPoints = PublicationPoints {
 
 data RepositoryMeta = RepositoryMeta {
         status            :: FetchStatus,
-        lastFetchDuration :: Maybe TimeMs,
         refreshInterval   :: Maybe Seconds
     } 
     deriving stock (Show, Eq, Ord, Generic)   
@@ -105,7 +104,6 @@ data RepositoryMeta = RepositoryMeta {
 newRepositoryMeta :: RepositoryMeta
 newRepositoryMeta = RepositoryMeta {
         status            = Pending,
-        lastFetchDuration = Nothing,
         refreshInterval   = Nothing
     }
 

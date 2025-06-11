@@ -30,8 +30,8 @@ rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [
 
 testSnapshot :: TestTree
 testSnapshot = 
-    HU.testCase "Should generate update snapshot action" $ do
-        let repo = defaultRepo & typed ?~ RrdpMeta (SessionId "whatever") (RrdpSerial 50) (RrdpIntegrity [])
+    HU.testCase "Should generate update snapshot action" $ do             
+        let repo = defaultRepo & typed ?~ newRrdpMeta (SessionId "whatever") (RrdpSerial 50)
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo (makeNotification (SessionId "something else") (RrdpSerial 120))
         HU.assertEqual "It's a bummer" nextStep
@@ -43,7 +43,7 @@ testNoUpdates =
     HU.testCase "Should generate nothing when the session id and serial are the same" $ do
         let sessionId = SessionId "something"
         let serial = RrdpSerial 13
-        let repo = defaultRepo & typed .~ Just (RrdpMeta sessionId serial (RrdpIntegrity []))                      
+        let repo = defaultRepo & typed ?~ newRrdpMeta sessionId serial
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo $ makeNotification sessionId serial
         HU.assertEqual "It's a bummer" nextStep (Right $ NothingToFetch "up-to-date, something, serial 13")
@@ -56,7 +56,7 @@ testDeltaUpdate =
         let nextSerial' = nextSerial serial
         let delta = makeDelta nextSerial'
 
-        let repo = defaultRepo & typed .~ Just (RrdpMeta sessionId serial (RrdpIntegrity []))
+        let repo = defaultRepo & typed ?~ newRrdpMeta sessionId serial
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo $ (makeNotification sessionId nextSerial') {      
                                     deltas = [delta]
@@ -70,7 +70,7 @@ testNoDeltaLocalTooOld =
     HU.testCase "Should generate snapshot update when we are too far behind" $ do
         let sessionId = SessionId "something"
         let serial = RrdpSerial 13
-        let repo = defaultRepo & typed .~ Just (newRrdpMeta sessionId serial)
+        let repo = defaultRepo & typed ?~ newRrdpMeta sessionId serial
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo $ (makeNotification sessionId (RrdpSerial 15)) {       
                                   deltas = [DeltaInfo (URI "http://host/delta15.xml") (Hash "BBCC") (RrdpSerial 15)]
@@ -89,13 +89,12 @@ testNonConsecutive =
                         rrdpMeta = Just $ newRrdpMeta sessionId serial,
                         meta = RepositoryMeta {
                                 status = Pending,
-                                lastFetchDuration = Nothing,
                                 refreshInterval = Nothing
                             },
                         eTag = Nothing
                     } 
 
-        let repo = defaultRepo & typed .~ Just (newRrdpMeta sessionId serial)
+        let repo = defaultRepo & typed ?~ newRrdpMeta sessionId serial
 
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                     rrdpNextStep repo $ (makeNotification sessionId (RrdpSerial 20)) {       
@@ -125,7 +124,7 @@ testIntegrity =
 
         let snapshotInfo = SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")
 
-        let repo = defaultRepo & typed .~ Just (RrdpMeta sessionId serial13 (RrdpIntegrity previousDeltas))
+        let repo = defaultRepo & typed ?~ RrdpMeta sessionId serial13 (RrdpIntegrity previousDeltas) Nothing
 
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                     rrdpNextStep repo $ (makeNotification sessionId serial14) {       
@@ -161,7 +160,6 @@ defaultRepo = RrdpRepository {
     rrdpMeta = Nothing,
     meta = RepositoryMeta {
             status = Pending,
-            lastFetchDuration = Nothing,
             refreshInterval = Nothing
         },
     eTag = Nothing
