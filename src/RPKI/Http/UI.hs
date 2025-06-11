@@ -23,6 +23,7 @@ import qualified Data.List                   as List
 import qualified Data.Map.Monoidal.Strict    as MonoidalMap
 import           Data.String                 (IsString)
 import           Data.Generics.Product.Fields
+import           Data.Foldable               (for_)
 
 import           Data.String.Interpolate.IsString
 
@@ -34,6 +35,7 @@ import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Http.Types
+import           RPKI.RRDP.Types
 import           RPKI.Metrics.Metrics
 import           RPKI.Metrics.System
 import           RPKI.Repository
@@ -290,14 +292,20 @@ rrdpMetricsHtml rrdpMetrics =
             detailItem "Uses E-Tag:" $ 
                 case m ^. #repository . #eTag of 
                     Just _ -> "Yes" :: Text
-                    _      -> "No"
-            
+                    _      -> "No"            
+
+            for_ (m ^? #repository . #rrdpMeta . _Just . #enforcement . _Just) $ \enforcement ->                
+                detailItem "Enforcement:" $ 
+                    case enforcement of 
+                        NextTimeFetchSnapshot t _ -> [i|Next time fetch snapshot (marked at #{instantTimeFormat t}, see logs for details)|]
+                        ForcedSnaphotAt t         -> [i|Forced snapshot at #{instantTimeFormat t}|] :: Text            
+                                    
         detailItem :: (ToMarkup a, IsString a) => a -> a -> H.Html
         detailItem label_ value_ = 
             H.div ! A.class_ "d-i" $ do
                 H.strong (H.toHtml label_)
                 space
-                H.span ! A.class_ "no-wrap" $ H.toHtml value_
+                H.toHtml value_
 
 
 rsyncMetricsHtml :: [RsyncRepositoryDto] -> Html

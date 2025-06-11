@@ -106,32 +106,42 @@ updateRrdpRepository
         
   timedMetric (Proxy :: Proxy RrdpMetric) $ do                                   
     
-    for_ eTag $ \et -> 
-        logDebug logger [i|Existing eTag for #{repoUri} is #{et}.|]
-
-    (notificationXml, _, httpStatus, newETag) <- 
+    let fetchNotification eTag_ = do 
             timedMetric' (Proxy :: Proxy RrdpMetric) 
                 (\t -> #downloadTimeMs %~ (<> t)) $
                 fromTry (RrdpE . CantDownloadNotification . U.fmtEx)
-                    $ downloadToBS (appContext ^. typed) (getURL repoUri) eTag
-    
-    for_ newETag $ \et -> 
-        logDebug logger [i|New eTag for #{repoUri} is #{et}.|]
+                    $ downloadToBS (appContext ^. typed) (getURL repoUri) eTag_
 
     let enforcement = 
             case rrdpMeta of 
                 Nothing -> Nothing
                 Just r  -> r ^. #enforcement
-            
-    case (httpStatus, enforcement) of 
-        (_, Just (NextTimeFetchSnapshot _ reason)) -> do            
-            notification <- validatedNotification =<< hoistHere (parseNotification notificationXml)
+
+    for_ eTag $ \et -> 
+        logDebug logger [i|Existing eTag for #{repoUri} is #{et}.|]
+
+    (notificationXml, _, httpStatus, newETag) <- fetchNotification eTag
+    
+    for_ newETag $ \et -> 
+        logDebug logger [i|New eTag for #{repoUri} is #{et}.|]
+
+    let forceSnapshot reason notificationXml_ = do 
+            notification <- validatedNotification =<< hoistHere (parseNotification notificationXml_)
             nextStep     <- vHoist $ rrdpNextStep repo notification
             repo' <- bumpETag newETag $ do
                 usedSource $ RrdpSnapshot $ notification ^. #serial
                 logDebug logger [i|Forced to use snapshot for #{repoUri}, because #{reason}.|]
                 useSnapshot notification nextStep         
-            pure (repo', RrdpFetchStat nextStep)            
+            pure (repo', RrdpFetchStat nextStep)       
+
+    case (httpStatus, enforcement) of 
+        (HttpStatus 304, Just (NextTimeFetchSnapshot _ reason)) -> do                        
+            -- notification.xml wasn't actually downloaded, so we need to do it first
+            (notificationXml_, _, _, _) <- fetchNotification Nothing            
+            forceSnapshot reason notificationXml_           
+
+        (_, Just (NextTimeFetchSnapshot _ reason)) -> do                        
+            forceSnapshot reason notificationXml
 
         (HttpStatus 304, _) -> do 
             repo' <- bumpETag newETag $ do
