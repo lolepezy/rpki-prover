@@ -110,6 +110,9 @@ httpServer appContext tals = genericServe HttpApi {
         validity = getPrefixValidity appContext,
         validityAsnPrefix = getQueryPrefixValidity appContext,
         validityBulk = getBulkPrefixValidity appContext
+
+        -- TODO Remove it after testing
+        -- delete = deleteObject appContext
     }
 
     uiServer AppContext {..} = do
@@ -447,7 +450,6 @@ getOriginal AppContext {..} hashText =
                     case z of 
                         Nothing -> throwError err404
                         Just b  -> pure b
-
 
 getManifests :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s

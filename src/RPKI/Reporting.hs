@@ -133,7 +133,8 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BGPCertIPv6Present | 
                         BGPCertBrokenASNs  | 
                         SplAsnNotInResourceSet ASN [AsResource] | 
-                        SplNotIpResources [IpPrefix]
+                        SplNotIpResources [IpPrefix] |
+                        ReferentialIntegrityError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     
@@ -151,7 +152,9 @@ data RrdpError = BrokenXml Text |
                 DeltaUriHostname Text Text | 
                 NoDeltaHash |
                 BadHash Text |
-                NoVersion | 
+                NoVersionInNotification | 
+                NoVersionInSnapshot | 
+                NoVersionInDelta | 
                 BadVersion Text | 
                 NoPublishURI |
                 BadBase64 Text Text |

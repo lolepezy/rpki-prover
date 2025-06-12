@@ -113,7 +113,6 @@ generateRsyncUrl = do
 
 
 newMeta :: FetchStatus -> RepositoryMeta
-newMeta status = let  
-    lastFetchDuration = Nothing
+newMeta status = let      
     refreshInterval = Nothing
     in RepositoryMeta {..}

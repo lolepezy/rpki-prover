@@ -119,7 +119,7 @@ data API api = API {
                                        :> Get '[JSON] ValidityResultDto,
 
         validityBulk :: api :- "validity" :> ReqBody '[JSON] [ValidityBulkInputDto] 
-                                          :> Post '[JSON] ValidityBulkResultDto 
+                                          :> Post '[JSON] ValidityBulkResultDto        
     }
     deriving (Generic)
 

@@ -12,6 +12,7 @@ import           Data.List.NonEmpty               (NonEmpty (..))
 import           Data.Text                        (Text)
 import           GHC.Generics
 import           RPKI.Domain
+import           RPKI.Time
 import           RPKI.Store.Base.Serialisation
 
 
@@ -63,7 +64,7 @@ newtype ETag = ETag BS.ByteString
     deriving anyclass (TheBinary, NFData)        
 
 
-data RrdpFetchStat = RrdpFetchStat {
+newtype RrdpFetchStat = RrdpFetchStat {
         action :: RrdpAction
     } 
     deriving stock (Show, Eq, Ord, Generic)   
@@ -71,6 +72,7 @@ data RrdpFetchStat = RrdpFetchStat {
 
 data RrdpAction
   = FetchSnapshot SnapshotInfo Text
+  | ForcedFetchSnapshot SnapshotInfo Text
   | FetchDeltas
       { sortedDeltas :: NonEmpty DeltaInfo
       , snapshotInfo :: SnapshotInfo
@@ -80,10 +82,16 @@ data RrdpAction
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (TheBinary, NFData)     
 
+data RrdpEnforcement = NextTimeFetchSnapshot Instant Text
+                     | ForcedSnaphotAt Instant
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass (TheBinary, NFData)                                
+
 data RrdpMeta = RrdpMeta {
-        sessionId :: SessionId,
-        serial    :: RrdpSerial,
-        integrity :: RrdpIntegrity
+        sessionId   :: SessionId,
+        serial      :: RrdpSerial,
+        integrity   :: RrdpIntegrity,
+        enforcement :: Maybe RrdpEnforcement
     }    
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary, NFData)            
@@ -94,8 +102,12 @@ newtype RrdpIntegrity = RrdpIntegrity {
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary, NFData)            
 
-fromNotification :: Notification -> RrdpMeta
-fromNotification Notification {..} = RrdpMeta { integrity = RrdpIntegrity {..}, .. }
+newRrdpMeta :: SessionId -> RrdpSerial -> RrdpMeta
+newRrdpMeta sessionId serial = 
+    RrdpMeta sessionId serial (RrdpIntegrity []) Nothing 
+
+newRrdpIntegrity :: Notification -> RrdpIntegrity
+newRrdpIntegrity Notification {..} = RrdpIntegrity deltas
 
 previousSerial :: RrdpSerial -> RrdpSerial
 previousSerial (RrdpSerial s) = RrdpSerial $ s - 1

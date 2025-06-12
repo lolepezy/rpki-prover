@@ -173,7 +173,7 @@ executeWorkerProcess = do
                     case input ^. #params of
                         RrdpFetchParams {..} -> exec resultHandler $
                             fmap RrdpFetchResult $ runValidatorT scopes $ 
-                                updateObjectForRrdpRepository appContext worldVersion rrdpRepository
+                                updateRrdpRepository appContext worldVersion rrdpRepository
 
                         RsyncFetchParams {..} -> exec resultHandler $
                             fmap RsyncFetchResult $ runValidatorT scopes $ 

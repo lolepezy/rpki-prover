@@ -623,6 +623,7 @@ instance ToJSON FetchStatus
 instance ToJSON ETag
 instance ToJSON DeltaInfo
 instance ToJSON RrdpIntegrity
+instance ToJSON RrdpEnforcement
 instance ToJSON RrdpMeta
 instance ToJSON RrdpRepository
 instance ToJSON RepositoryMeta
@@ -639,6 +640,8 @@ instance ToSchema ETag where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema DeltaInfo
 instance ToSchema RrdpIntegrity
+instance ToSchema RrdpEnforcement where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema RrdpMeta
 instance ToSchema RrdpRepository
 instance ToSchema RepositoryMeta

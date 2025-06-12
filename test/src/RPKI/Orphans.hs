@@ -433,6 +433,10 @@ instance Arbitrary RrdpIntegrity where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary RrdpEnforcement where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary RrdpMeta where
     arbitrary = genericArbitrary
     shrink = genericShrink

@@ -130,6 +130,10 @@ data ValidationConfig = ValidationConfig {
         -- less than this many seconds ago
         minimalRepositoryRetryInterval :: Seconds,
 
+        -- Minimal interval between forced snapshot fetches --
+        -- we don't want to overload repositories
+        rrdpForcedSnapshotMinInterval :: Seconds,
+
         -- Maximum time for top-down validation for one TA
         topDownTimeout                 :: Seconds,
         
@@ -236,6 +240,7 @@ defaultConfig = Config {
         rrdpRepositoryRefreshInterval  = Seconds 120,
         rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
         minimalRepositoryRetryInterval = Seconds 10,    
+        rrdpForcedSnapshotMinInterval  = Seconds $ 12 * 60 * 60,
         topDownTimeout                 = Seconds $ 60 * 60,    
         manifestProcessing             = RFC9286,
         maxCertificatePathDepth        = 32,

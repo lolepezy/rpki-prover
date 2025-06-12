@@ -69,7 +69,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 40
+currentDatabaseVersion = 43
 
 -- Some constant keys
 databaseVersionKey, validatedByVersionKey :: Text
@@ -429,7 +429,7 @@ deleteObject tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $
                 _       -> pure ()
             ifJustM (M.get tx objectKeyToUrlKeys objectKey) $ \urlKeys -> do 
                 M.delete tx objectKeyToUrlKeys objectKey            
-                forM_ urlKeys $ \urlKey ->
+                for_ urlKeys $ \urlKey ->
                     MM.delete tx urlKeyToObjectKey urlKey objectKey                
             
             for_ (getAKI ro) $ \aki' -> 
@@ -1046,7 +1046,7 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld =
                     then pure $! allHashes
                     else pure $! hash `Set.insert` allHashes) mempty 
         
-        forM_ hashesToDelete $ deleteObject tx db        
+        for_ hashesToDelete $ deleteObject tx db        
         pure (Set.size hashesToDelete, Set.size keysToKeep)
 
 
@@ -1065,7 +1065,7 @@ deleteDanglingUrls DB { objectStore = RpkiObjectStore {..} } tx = do
             mempty
 
 
-    forM_ urlsToDelete $ \(urlKey, url) -> do 
+    for_ urlsToDelete $ \(urlKey, url) -> do 
         M.delete tx uriKeyToUri urlKey
         M.delete tx uriToUriKey (makeSafeUrl url)           
 
