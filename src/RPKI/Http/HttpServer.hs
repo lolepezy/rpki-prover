@@ -110,9 +110,6 @@ httpServer appContext tals = genericServe HttpApi {
         validity = getPrefixValidity appContext,
         validityAsnPrefix = getQueryPrefixValidity appContext,
         validityBulk = getBulkPrefixValidity appContext
-
-        -- TODO Remove it after testing
-        -- delete = deleteObject appContext
     }
 
     uiServer AppContext {..} = do

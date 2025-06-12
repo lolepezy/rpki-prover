@@ -591,7 +591,6 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 verifyRrdpMeta tx db repoUri sessionId (previousSerial serial)
                 f tx
                 updateRepositoryMeta tx db repoUri sessionId serial
-                -- DB.updateRrdpMetaM tx db repoUri $ pure . fmap (#serial .~ serial)
 
     txFoldPipeline
             cpuParallelism
