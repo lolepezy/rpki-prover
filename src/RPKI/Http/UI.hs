@@ -285,27 +285,35 @@ rrdpMetricsHtml rrdpMetrics =
                     issuesList m
       where    
         detailGrid = H.div ! A.class_ "detail-grid" $ do
-            detailItem "Last Session ID:" (maybe "-" unSessionId $ m ^? #repository . #rrdpMeta . _Just . #sessionId)
-            detailItem "Serial Number:" (maybe "-" show $ m ^? #repository . #rrdpMeta . _Just . #serial)
-            detailItem "Refresh interval:" (maybe "-" show $ m ^. #repository . #meta . #refreshInterval)
-            detailItem "Last HTTP status:" (show $ m ^. #metrics . #lastHttpStatus)
-            detailItem "Uses E-Tag:" $ 
+            detailItemNoWrap "Last Session ID:" (maybe "-" unSessionId $ m ^? #repository . #rrdpMeta . _Just . #sessionId)
+            detailItemNoWrap "Serial Number:" (maybe "-" show $ m ^? #repository . #rrdpMeta . _Just . #serial)
+            detailItemNoWrap "Refresh interval:" (maybe "-" show $ m ^. #repository . #meta . #refreshInterval)
+            detailItemNoWrap "Last HTTP status:" (show $ m ^. #metrics . #lastHttpStatus)
+            detailItemNoWrap "Uses E-Tag:" $ 
                 case m ^. #repository . #eTag of 
                     Just _ -> "Yes" :: Text
                     _      -> "No"            
 
             for_ (m ^? #repository . #rrdpMeta . _Just . #enforcement . _Just) $ \enforcement ->                
-                detailItem "Enforcement:" $ 
+                detailItemWrap "Enforcement:" $ 
                     case enforcement of 
                         NextTimeFetchSnapshot t _ -> [i|Next time fetch snapshot (marked at #{instantTimeFormat t}, see logs for details)|]
-                        ForcedSnaphotAt t         -> [i|Forced snapshot at #{instantTimeFormat t}|] :: Text            
-                                    
-        detailItem :: (ToMarkup a, IsString a) => a -> a -> H.Html
-        detailItem label_ value_ = 
+                        ForcedSnaphotAt t         -> [i|Forced snapshot at #{instantTimeFormat t}|] :: Text                                            
+
+        detailItemWrap :: (ToMarkup a, IsString a) => a -> a -> H.Html
+        detailItemWrap label_ value_ = 
+            detailItem label_ value_ Prelude.id
+
+        detailItemNoWrap :: (ToMarkup a, IsString a) => a -> a -> H.Html
+        detailItemNoWrap label_ value_ = 
+            detailItem label_ value_ $ \v -> 
+                H.span ! A.class_ "no-wrap" $ v
+
+        detailItem label_ value_ wrap_ = 
             H.div ! A.class_ "d-i" $ do
                 H.strong (H.toHtml label_)
                 space
-                H.toHtml value_
+                wrap_ $ H.toHtml value_                
 
 
 rsyncMetricsHtml :: [RsyncRepositoryDto] -> Html
