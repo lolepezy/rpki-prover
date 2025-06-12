@@ -828,6 +828,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 Nothing -> do                
                     logInfo logger [i|Fetcher for #{url} is not needed and will be deleted.|]
                 Just interval -> do 
+                    logDebug logger [i|Fetcher for #{url} finished, next fetch in #{interval}.|]
                     Now end <- thisInstant
                     let pause = leftToWaitMicros (Earlier start) (Later end) interval
                     when (pause > 0) $
