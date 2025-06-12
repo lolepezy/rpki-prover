@@ -119,10 +119,7 @@ data API api = API {
                                        :> Get '[JSON] ValidityResultDto,
 
         validityBulk :: api :- "validity" :> ReqBody '[JSON] [ValidityBulkInputDto] 
-                                          :> Post '[JSON] ValidityBulkResultDto,
-
-        delete :: api :- "delete-object" :> QueryParam "hash" Text 
-                                         :> Post '[JSON] Bool
+                                          :> Post '[JSON] ValidityBulkResultDto        
     }
     deriving (Generic)
 
