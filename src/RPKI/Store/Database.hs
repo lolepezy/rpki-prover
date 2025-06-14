@@ -1014,27 +1014,6 @@ deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
       where         
         acc' = acc <> mconcat [ MonoidalMap.singleton ta (Set.singleton v) | (ta, v) <- perTA $ meta ^. #perTa ]        
                 
-{-
-deleteStaleContent :: (MonadIO m, Storage s) => 
-                    DB s -> 
-                    (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
-                    m CleanUpResult
-deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld = 
-    mapException (AppException . storageError) <$> liftIO $ do    
-        rwTx db $ \tx -> do            
-            toDelete <- filter tooOld . map fst <$> versionsBackwards tx db
-            forM_ toDelete $ deleteValidationVersion tx db    
-                                
-            validatedByRecentVersions <- cleanupValidatedByVersionMap tx db tooOld   
-
-            (deletedObjects, deletedPerType, keptObjects) <- deleteStaleObjects tx
-
-            -- Delete URLs that are now not referred by any object
-            deletedURLs <- deleteDanglingUrls db tx
-
-            let deletedVersions = length toDelete
-            pure CleanUpResult {..}            
--}
 
 deleteStaleContent :: (MonadIO m, Storage s, Logger logger) => 
                 logger
