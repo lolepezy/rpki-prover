@@ -70,8 +70,6 @@ data API api = API {
 
         slurm :: api :- "slurm" :> Get '[JSON] Slurm,
         slurms :: api :- "slurms" :> Get '[JSON] [(WorldVersion, Slurm)],
-
-        tals :: api :- "tals" :> Get '[JSON] [TalDto],
                 
         minimalValidationResults  :: api :- "validations"      
                                     :> QueryParam "version" Text 
@@ -236,7 +234,6 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
 
             ("/slurms", mempty & get ?~ jsonOn200 
                         "Returns all SLURMs (RFC 8416) for every version"),
-            ("/tals", mempty & get ?~ jsonOn200 "Returns all TALs"),
 
             ("/lmdb-stats", mempty & get ?~ jsonOn200 "LMDB cache statistics per key-value map"),
             ("/jobs", mempty & get ?~ jsonOn200 "List of latest job runs"),
