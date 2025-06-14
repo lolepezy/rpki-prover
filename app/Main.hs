@@ -319,7 +319,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & #lmdbSizeMb .~ lmdbRealSize
             & #localExceptions .~ apiSecured localExceptions
             & #logLevel .~ derivedLogLevel
-            & #withValidityApi .~ not withValidityApi
+            & #withValidityApi .~ withValidityApi
             & maybeSet #metricsPrefix (convert <$> metricsPrefix)
             & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
             & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
