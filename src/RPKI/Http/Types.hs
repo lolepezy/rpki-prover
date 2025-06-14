@@ -29,9 +29,6 @@ import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 
-import           Data.Map.Monoidal.Strict (MonoidalMap)
-import qualified Data.Map.Monoidal.Strict as MonoidalMap
-
 import           Servant.API
 import           Data.Swagger hiding (url)
 import           Network.HTTP.Media ((//))
@@ -67,28 +64,28 @@ data IssueDto = ErrorDto Text | WarningDto Text
     deriving stock (Eq, Show, Generic)
     deriving anyclass (ToJSON, ToSchema)
 
-data FocusResolvedDto = TextDto Text 
+data ResolvedFocusDto = TextDto Text 
                     | ObjectLink Text
                     | DirectLink Text
                     | TA_UI Text
     deriving stock (Show, Eq, Ord, Generic)      
 
-data FullVDto focus = FullVDto {
+data ValidationDto focus = ValidationDto {
         issues  :: [IssueDto],
         path    :: [focus],
         url     :: Focus
     } 
     deriving stock (Eq, Show, Generic)
 
-newtype OriginalVDto = OriginalVDto (FullVDto Focus)
+newtype OriginalVDto = OriginalVDto (ValidationDto Focus)
     deriving stock (Eq, Show, Generic)
 
 newtype ResolvedVDto = ResolvedVDto  { 
-        unResolvedVDto :: FullVDto FocusResolvedDto
+        unResolvedVDto :: ValidationDto ResolvedFocusDto
     }
     deriving stock (Eq, Show, Generic)
 
-newtype MinimalVDto focus = MinimalVDto (FullVDto focus)
+newtype MinimalVDto focus = MinimalVDto (ValidationDto focus)
     deriving stock (Eq, Show, Generic)
 
 data VrpDto = VrpDto {
@@ -246,7 +243,7 @@ data RoaPrefixDto = RoaPrefixDto {
     }
     deriving stock (Eq, Show, Generic)
 
-data GbrDto = GbrDto {
+newtype GbrDto = GbrDto {
         vcard :: Map Text Text
     }  
     deriving stock (Eq, Show, Generic)
@@ -265,10 +262,8 @@ data CheckListDto = CheckListDto {
     deriving stock (Eq, Show, Generic)
 
 
-data MetricsDto = MetricsDto {
-        groupedValidations :: GroupedValidationMetric ValidationMetric,      
-        rsync              :: MonoidalMap (DtoScope 'Metric) RsyncMetric,
-        rrdp               :: MonoidalMap (DtoScope 'Metric) RrdpMetric
+newtype MetricsDto = MetricsDto {
+        groupedValidations :: GroupedMetric ValidationMetric        
     } 
     deriving stock (Eq, Show, Generic)
 
@@ -276,6 +271,26 @@ data PublicationPointsDto = PublicationPointsDto {
         rrdp  :: [(RrdpURL, RrdpRepository)],
         rsync :: [(RsyncURL, RepositoryMeta)]        
     } 
+    deriving stock (Eq, Show, Generic)
+
+data RepositoryDto = RsyncDto RsyncRepositoryDto
+                   | RrdpDto RrdpRepositoryDto
+    deriving stock (Eq, Show, Generic) 
+
+data RsyncRepositoryDto = RsyncRepositoryDto {
+        uri         :: RsyncURL,
+        meta        :: RepositoryMeta,
+        metrics     :: RsyncMetric,
+        validations :: [ResolvedVDto]
+    }
+    deriving stock (Eq, Show, Generic)
+
+data RrdpRepositoryDto = RrdpRepositoryDto {
+        uri         :: RrdpURL,
+        repository  :: RrdpRepository,
+        metrics     :: RrdpMetric,
+        validations :: [ResolvedVDto]
+    }
     deriving stock (Eq, Show, Generic)
 
 newtype JobsDto = JobsDto {
@@ -302,6 +317,7 @@ data WorkerInfoDto = WorkerInfoDto {
 
 data SystemDto = SystemDto {
         proverVersion :: Text,
+        gitInfo       :: Text,
         config        :: Config,
         startUpTime   :: Instant,
         resources     :: [ResourcesDto],
@@ -569,23 +585,23 @@ instance ToJSON a => ToJSON (ValidationsDto a)
 instance ToSchema a => ToSchema (ValidationsDto a)
 
 instance ToSchema OriginalVDto
-instance ToSchema t => ToSchema (FullVDto t)
-instance ToJSON f => ToJSON (FullVDto f) where
-    toJSON FullVDto {..} = object [         
+instance ToSchema t => ToSchema (ValidationDto t)
+instance ToJSON f => ToJSON (ValidationDto f) where
+    toJSON ValidationDto {..} = object [         
             "url"       .= url,
             "full-path" .= path,
             "issues"    .= Array (V.fromList $ issuesJson issues)
         ]      
 
-instance ToSchema FocusResolvedDto where
+instance ToSchema ResolvedFocusDto where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema ResolvedVDto
-instance ToJSON FocusResolvedDto
+instance ToJSON ResolvedFocusDto
 instance ToJSON ResolvedVDto
 instance ToSchema f => ToSchema (MinimalVDto f)
 instance ToJSON (MinimalVDto t) where
-    toJSON (MinimalVDto FullVDto {..}) = object [         
+    toJSON (MinimalVDto ValidationDto {..}) = object [         
             "url"       .= url,
             "issues"    .= Array (V.fromList $ issuesJson issues)
         ]      
@@ -605,23 +621,27 @@ instance ToJSON MetricsDto
 instance ToJSON RrdpURL
 instance ToJSON FetchStatus
 instance ToJSON ETag
-instance ToJSON FetchType
 instance ToJSON DeltaInfo
 instance ToJSON RrdpIntegrity
+instance ToJSON RrdpEnforcement
 instance ToJSON RrdpMeta
 instance ToJSON RrdpRepository
 instance ToJSON RepositoryMeta
 instance ToJSON PublicationPointsDto
+instance ToJSON RepositoryDto
+instance ToJSON RrdpRepositoryDto
+instance ToJSON RsyncRepositoryDto
+
 
 instance ToSchema MetricsDto
 instance ToSchema FetchStatus where     
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ETag where     
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema FetchType where
-    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema DeltaInfo
 instance ToSchema RrdpIntegrity
+instance ToSchema RrdpEnforcement where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema RrdpMeta
 instance ToSchema RrdpRepository
 instance ToSchema RepositoryMeta
@@ -635,23 +655,24 @@ instance ToJSON (DtoScope s) where
 
 instance ToSchema (DtoScope 'Metric)
 
-toMinimalValidations :: Coercible dto (FullVDto f) => 
+toMinimalValidations :: Coercible dto (ValidationDto f) => 
                         ValidationsDto dto 
                      -> ValidationsDto (MinimalVDto f)
-toMinimalValidations = (& #validations %~ coerce)
+toMinimalValidations = #validations %~ coerce
 
-toMetricsDto :: RawMetric -> MetricsDto
-toMetricsDto rawMetrics = MetricsDto {
-        groupedValidations = groupedValidationMetric rawMetrics,
-        rsync    = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #rsyncMetrics,
-        rrdp     = MonoidalMap.mapKeys DtoScope $ unMetricMap $ rawMetrics ^. #rrdpMetrics
-    }
+toMetricsDto :: Metrics -> PerTA Metrics -> MetricsDto
+toMetricsDto common perTa = MetricsDto {..}
+  where
+    -- TODO This is temporary -- grouping should take into account
+    -- that metrics are already grouped by TA
+    groupedValidations = groupedValidationMetric $ allTAs perTa <> common
 
 toPublicationPointDto :: PublicationPoints -> PublicationPointsDto
 toPublicationPointDto PublicationPoints {..} = PublicationPointsDto {
         rrdp  = Map.toList $ unRrdpMap rrdps,
         rsync = flattenRsyncTree rsyncs
     }
+
 
 parseHash :: Text -> Either Text Hash
 parseHash hashText = bimap 
@@ -666,7 +687,7 @@ parseAki akiText = bimap
     $ Hex.decode $ encodeUtf8 akiText
 
 
-resolvedFocusToText :: FocusResolvedDto -> Text
+resolvedFocusToText :: ResolvedFocusDto -> Text
 resolvedFocusToText = \case  
     TextDto t    -> t 
     ObjectLink t -> t

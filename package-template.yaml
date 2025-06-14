@@ -1,5 +1,5 @@
 name:                rpki-prover
-version:             0.9.10
+version:             0.10.0
 github:              "lolepezy/rpki-prover"
 license:             BSD3
 author:              "Mikhail Puzanov"
@@ -39,6 +39,7 @@ dependencies:
 - base64
 - binary
 - blaze-html
+- blaze-markup
 - bytestring
 - bytestring-mmap
 - cborg
@@ -58,6 +59,7 @@ dependencies:
 - file-embed-lzma
 - generic-lens
 - generic-monoid
+- githash
 - hashable
 - hourglass
 - http-client
@@ -68,6 +70,7 @@ dependencies:
 - hw-ip
 - interpolate
 - insert-ordered-containers
+- ixset-typed
 - lens
 - lmdb-high-level
 - lifted-async
@@ -112,6 +115,7 @@ dependencies:
 - tasty-hunit
 - tasty-quickcheck    
 - th-utilities
+- time
 - generic-arbitrary
 - quickcheck-instances
 - unix

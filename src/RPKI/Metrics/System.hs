@@ -68,9 +68,9 @@ cpuMemMetric :: Text -> CPUTime -> TimeMs -> MaxMemory -> SystemMetrics
 cpuMemMetric scope cpuTime clockTime maxMemory' = SystemMetrics {
         resources = updateMetricInMap 
                         (newScope scope) 
-                        ((& #latestCpuTime %~ (<> LatestCPUTime cpuTime)) . 
-                         (& #aggregatedCpuTime %~ (<> AggregatedCPUTime cpuTime)) . 
-                         (& #aggregatedClockTime %~ (<> clockTime)) .  
-                         (& #maxMemory %~ (<> maxMemory')))
+                        ((#latestCpuTime %~ (<> LatestCPUTime cpuTime)) . 
+                         (#aggregatedCpuTime %~ (<> AggregatedCPUTime cpuTime)) . 
+                         (#aggregatedClockTime %~ (<> clockTime)) .  
+                         (#maxMemory %~ (<> maxMemory')))
                         mempty
     }

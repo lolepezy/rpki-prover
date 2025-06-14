@@ -6,7 +6,7 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE OverloadedLabels      #-}
 {-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE QuasiQuotes           #-}
+{-# LANGUAGE QuasiQuotes        #-}
 
 module RPKI.Store.Database where
 
@@ -22,7 +22,7 @@ import           Data.Foldable            (for_)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as C8
 import qualified Data.List                as List
-import           Data.Maybe               (catMaybes, fromMaybe)
+import           Data.Maybe               (catMaybes, fromMaybe, isJust, listToMaybe)
 import qualified Data.Set                 as Set
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
@@ -34,6 +34,7 @@ import           Data.Text.Encoding       (encodeUtf8)
 import           Data.Tuple.Strict
 
 import           Data.String.Interpolate.IsString
+import           Data.Generics.Product.Typed
 
 import           GHC.Generics
 import           GHC.Natural
@@ -66,27 +67,28 @@ import           RPKI.Logging
 import           RPKI.RTR.Types
 import           RPKI.Time
 
+
 -- This one is to be changed manually whenever 
 -- any of the serialisable/serialized types become incompatible.
 -- 
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 37
+currentDatabaseVersion = 43
 
 -- Some constant keys
-databaseVersionKey, forAsyncFetchKey, validatedByVersionKey :: Text
+databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey = "database-version"
-forAsyncFetchKey  = "for-async-fetch"
 validatedByVersionKey  = "validated-by-version-map"
 
 -- All of the stores of the application in one place
 data DB s = DB {
+    keys             :: Sequence s,
     taStore          :: TAStore s, 
     repositoryStore  :: RepositoryStore s, 
     objectStore      :: RpkiObjectStore s,    
     validationsStore :: ValidationsStore s,    
-    vrpStore         :: VRPStore s,
+    roaStore         :: RoaStore s,
     splStore         :: SplStore s,
     aspaStore        :: AspaStore s,
     gbrStore         :: GbrStore s,
@@ -114,14 +116,13 @@ instance Storage s => WithStorage s (DB s) where
 -- Also, since URLs are relativly long, there's a separate mapping between 
 -- URLs and artificial UrlKeys.
 -- 
-data RpkiObjectStore s = RpkiObjectStore {
-        keys           :: Sequence s,
+data RpkiObjectStore s = RpkiObjectStore {        
         objects        :: SMap "objects" s ObjectKey (Compressed (StorableObject RpkiObject)),
         hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
         mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
+        objectMetas    :: SMap "object-meta" s ObjectKey ObjectMeta,
 
-        objectMetas   :: SMap "object-meta" s ObjectKey ObjectMeta,
         validatedByVersion :: SMap "validated-by-version" s Text (Compressed (Map.Map ObjectKey WorldVersion)),
 
         -- Object URL mapping
@@ -150,8 +151,8 @@ newtype TAStore s = TAStore {
 instance Storage s => WithStorage s (TAStore s) where
     storage (TAStore s) = storage s
 
-newtype ValidationsStore s = ValidationsStore { 
-        results :: SMap "validations" s WorldVersion (Compressed Validations) 
+newtype ValidationsStore s = ValidationsStore {         
+        validations :: SMap "validations" s ArtificialKey (Compressed Validations)
     }
     deriving stock (Generic)
 
@@ -159,7 +160,7 @@ instance Storage s => WithStorage s (ValidationsStore s) where
     storage (ValidationsStore s) = storage s
 
 newtype MetricStore s = MetricStore {
-        metrics :: SMap "metrics" s WorldVersion (Compressed RawMetric)
+        metrics :: SMap "metrics" s ArtificialKey (Compressed Metrics)
     }    
     deriving stock (Generic)
 
@@ -167,42 +168,42 @@ instance Storage s => WithStorage s (MetricStore s) where
     storage (MetricStore s) = storage s
 
 
--- | VRP store
-newtype VRPStore s = VRPStore {    
-        roas :: SMap "roas" s WorldVersion (Compressed Roas)
+-- | ROA/VRP store
+newtype RoaStore s = RoaStore {    
+        roas :: SMap "roas" s ArtificialKey (Compressed Roas)
     }
     deriving stock (Generic)
 
 newtype SplStore s = SplStore {    
-        spls :: SMap "spls" s WorldVersion (Compressed (Set.Set SplN))
+        spls :: SMap "spls" s ArtificialKey (Compressed (Set.Set SplN))
     }
     deriving stock (Generic)
 
 -- | ASPA store
 newtype AspaStore s = AspaStore {    
-        aspas :: SMap "aspas" s WorldVersion (Compressed (Set.Set Aspa))
+        aspas :: SMap "aspas" s ArtificialKey (Compressed (Set.Set Aspa))
     } 
     deriving stock (Generic)
 
 -- | GBR store
 newtype GbrStore s = GbrStore {    
-        gbrs :: SMap "gbrs" s WorldVersion (Compressed (Set.Set (T2 Hash Gbr)))
+        gbrs :: SMap "gbrs" s ArtificialKey (Compressed (Set.Set (T2 Hash Gbr)))
     } 
     deriving stock (Generic)
 
 -- | BGP certificate store
 newtype BgpStore s = BgpStore {    
-        bgps :: SMap "bgps" s WorldVersion (Compressed (Set.Set BGPSecPayload))
+        bgps :: SMap "bgps" s ArtificialKey (Compressed (Set.Set BGPSecPayload))
     }
     deriving stock (Generic)
 
-instance Storage s => WithStorage s (VRPStore s) where
-    storage (VRPStore s) = storage s
+instance Storage s => WithStorage s (RoaStore s) where
+    storage (RoaStore s) = storage s
 
 
 -- Version store
 newtype VersionStore s = VersionStore {
-        versions :: SMap "versions" s WorldVersion VersionKind
+        versions :: SMap "versions" s WorldVersion VersionMeta
     }
     deriving stock (Generic)
 
@@ -216,14 +217,15 @@ newtype SlurmStore s = SlurmStore {
     deriving stock (Generic)
 
 data RepositoryStore s = RepositoryStore {
-        rrdpS     :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
-        rsyncS    :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,        
-        forAsyncS :: SMap "for-async-fetch" s Text (Compressed (Set.Set [RpkiURL]))
+        rrdpS       :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
+        rsyncS      :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
+        rrdpVState  :: SMap "rrdp-validation-state" s RrdpURL (Compressed ValidationState),
+        rsyncVState :: SMap "rsync-validation-state" s RsyncHost (Compressed (RsyncTree ValidationState))
     }
     deriving stock (Generic)
 
 instance Storage s => WithStorage s (RepositoryStore s) where
-    storage (RepositoryStore s _ _) = storage s
+    storage (RepositoryStore s _ _ _) = storage s
 
 newtype JobStore s = JobStore {
         jobs :: SMap "jobs" s Text Instant
@@ -235,6 +237,7 @@ newtype MetadataStore s = MetadataStore {
     }
     deriving stock (Generic)
 
+-- Some DTOs for storing MFT shortcuts
 data MftShortcutMeta = MftShortcutMeta {
         key            :: ObjectKey,        
         notValidBefore :: Instant,
@@ -254,7 +257,7 @@ newtype MftShortcutChildren = MftShortcutChildren {
 
 
 data MftShortcutStore s = MftShortcutStore {
-        mftMetas :: SMap "mfts-shortcut-meta" s AKI (Verbatim (Compressed MftShortcutMeta)),
+        mftMetas    :: SMap "mfts-shortcut-meta" s AKI (Verbatim (Compressed MftShortcutMeta)),
         mftChildren :: SMap "mfts-shortcut-children" s AKI (Verbatim (Compressed MftShortcutChildren))
     }
     deriving stock (Generic)
@@ -280,7 +283,7 @@ getByUri :: (MonadIO m, Storage s) =>
             Tx s mode -> DB s -> RpkiURL -> m [Located RpkiObject]
 getByUri tx db uri = liftIO $ do
     keys' <- getKeysByUri tx db uri
-    fmap catMaybes $ mapM (getLocatedByKey tx db) keys'
+    catMaybes <$> mapM (getLocatedByKey tx db) keys'
 
 getKeysByUri :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> RpkiURL -> m [ObjectKey]
@@ -324,7 +327,7 @@ saveObject :: (MonadIO m, Storage s) =>
             -> DB s 
             -> StorableObject RpkiObject
             -> WorldVersion -> m ()
-saveObject tx DB { objectStore = RpkiObjectStore {..} } so@StorableObject {..} wv = liftIO $ do
+saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } so@StorableObject {..} wv = liftIO $ do
     let h = getHash object
     exists <- M.exists tx hashToKey h    
     unless exists $ do          
@@ -348,7 +351,7 @@ saveOriginal :: (MonadIO m, Storage s) =>
                 -> Hash          
                 -> ObjectMeta  
                 -> m ()
-saveOriginal tx DB { objectStore = RpkiObjectStore {..} } (ObjectOriginal blob) hash objectMeta = liftIO $ do    
+saveOriginal tx DB { objectStore = RpkiObjectStore {..}, .. } (ObjectOriginal blob) hash objectMeta = liftIO $ do    
     exists <- M.exists tx hashToKey hash    
     unless exists $ do          
         SequenceValue k <- nextValue tx keys
@@ -390,7 +393,7 @@ linkObjectToUrl :: (MonadIO m, Storage s) =>
                 -> RpkiURL
                 -> Hash
                 -> m ()
-linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..} } rpkiURL hash = liftIO $ do    
+linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL hash = liftIO $ do    
     let safeUrl = makeSafeUrl rpkiURL
     ifJustM (M.get tx hashToKey hash) $ \objectKey -> do        
         z <- M.get tx uriToUriKey safeUrl 
@@ -520,7 +523,7 @@ markAsValidated :: (MonadIO m, Storage s) =>
                 -> WorldVersion -> m ()
 markAsValidated tx db allKeys worldVersion = 
     liftIO $ void $ updateValidatedByVersionMap tx db $ \m -> 
-        foldr (\k -> Map.insert k worldVersion) (fromMaybe mempty m) allKeys
+        foldr (`Map.insert` worldVersion) (fromMaybe mempty m) allKeys
 
 
 -- This is for testing purposes mostly
@@ -558,201 +561,362 @@ getTA tx DB { taStore = TAStore s } name = liftIO $ M.get tx s name
 getTAs :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(TaName, StorableTA)]
 getTAs tx DB { taStore = TAStore s } = liftIO $ M.all tx s
 
-saveValidations :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> WorldVersion -> Validations -> m ()
-saveValidations tx DB { validationsStore = ValidationsStore s } wv validations = 
-    liftIO $ M.put tx s wv (Compressed validations)
 
-validationsForVersion :: (MonadIO m, Storage s) => 
-                        Tx s mode -> DB s -> WorldVersion -> m (Maybe Validations)
-validationsForVersion tx DB { validationsStore = ValidationsStore {..} } wv = 
-    liftIO $ fmap unCompressed <$> M.get tx results wv
+getValidationsPerTA :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> WorldVersion -> m (PerTA Validations)
+getValidationsPerTA tx db@DB {..} version = 
+    liftIO $ getPayloadsForTas tx db version $ 
+        \_ _ ValidationVersion {..} -> 
+            fmap unCompressed <$> M.get tx (validationsStore ^. #validations) validationsKey
 
-deleteValidations :: (MonadIO m, Storage s) => 
-                Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteValidations tx DB { validationsStore = ValidationsStore {..} } wv = 
-    liftIO $ M.delete tx results wv
-                 
+getMetricsPerTA :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> WorldVersion -> m (PerTA Metrics)
+getMetricsPerTA tx db@DB {..} version = 
+    liftIO $ getPayloadsForTas tx db version $ 
+        \_ _ ValidationVersion {..} -> 
+            fmap unCompressed <$> M.get tx (metricStore ^. #metrics) metricsKey                   
+
+getCommonMetrics :: (MonadIO m, Storage s) => 
+                    Tx s mode -> DB s -> WorldVersion -> m Metrics
+getCommonMetrics tx DB {..} version = 
+    liftIO $ do 
+        fmap (fromMaybe mempty) $ runMaybeT $ do
+            VersionMeta {..} <- MaybeT $ M.get tx (versionStore ^. typed) version            
+            MaybeT $ fmap unCompressed <$> M.get tx (metricStore ^. #metrics) commonMetricsKey           
+
+getValidationOutcomes :: (MonadIO m, Storage s) => 
+                        Tx s mode 
+                        -> DB s 
+                        -> WorldVersion 
+                        -> m (Validations, Metrics, PerTA (Validations, Metrics))
+getValidationOutcomes tx db@DB {..} version = liftIO $ do 
+    (commonV, commonM) <- 
+        fmap (fromMaybe mempty) $ runMaybeT $ do
+                    VersionMeta {..} <- MaybeT $ M.get tx (versionStore ^. typed) version            
+                    getOutcomes commonValidationKey commonMetricsKey                    
+
+    perTAOutcomes <- 
+        getPayloadsForTas tx db version $ 
+            \_ _ ValidationVersion {..} -> 
+                runMaybeT $ getOutcomes validationsKey metricsKey                    
+
+    pure (commonV, commonM, perTAOutcomes)
+  where
+    getOutcomes validationsKey metricsKey = do 
+        v <- MaybeT $ fmap unCompressed <$> M.get tx (validationsStore ^. #validations) validationsKey   
+        m <- MaybeT $ fmap unCompressed <$> M.get tx (metricStore ^. #metrics) metricsKey   
+        pure (v, m)        
+
 
 getVrps :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> WorldVersion -> m (Maybe Vrps)
-getVrps tx DB { vrpStore = VRPStore m } wv = liftIO $ do
-    fmap (fmap unCompressed) (M.get tx m wv) >>= \case     
-        Nothing          -> pure Nothing
-        Just (Roas roas) -> do 
-            pure $ Just $ Vrps $ MonoidalMap.fromList 
-                $ map (\(ta, r) -> (ta, mconcat $ Map.elems $ MonoidalMap.getMonoidalMap r)) 
-                $ MonoidalMap.toList roas            
+            Tx s mode -> DB s -> WorldVersion -> m (PerTA Vrps)
+getVrps tx db version = fmap toVrps <$> getRoas tx db version 
 
+getVrpsForTA :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> WorldVersion -> TaName -> m Vrps
+getVrpsForTA tx DB {..} version taName = 
+    liftIO $ fmap (toVrps . maybe mempty unCompressed) $ runMaybeT $ do 
+        VersionMeta {..} <- MaybeT $ M.get tx (versionStore ^. typed) version
+        ValidationVersion {..} <- MaybeT $ pure $ getForTA perTa taName
+        MaybeT (M.get tx (roaStore ^. typed) roasKey)
+
+            
 getRoas :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> WorldVersion -> m (Maybe Roas)
-getRoas tx DB { vrpStore = VRPStore m } wv = liftIO $ fmap unCompressed <$> M.get tx m wv
-
-deleteRoas :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteRoas tx DB { vrpStore = VRPStore r } wv = liftIO $ M.delete tx r wv
+            Tx s mode -> DB s -> WorldVersion -> m (PerTA Roas)
+getRoas tx db@DB { roaStore = RoaStore m } version = liftIO 
+    $ getPayloadsForTas tx db version $ \_ _ ValidationVersion {..} -> 
+        fmap unCompressed <$> M.get tx m roasKey    
 
 getAspas :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set Aspa))
-getAspas tx DB { aspaStore = AspaStore m } wv = 
-    liftIO $ fmap unCompressed <$> M.get tx m wv    
-
-deleteAspas :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteAspas tx DB { aspaStore = AspaStore m } wv = liftIO $ M.delete tx m wv
-
-saveAspas :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> Set.Set Aspa -> WorldVersion -> m ()
-saveAspas tx DB { aspaStore = AspaStore m } aspas worldVersion = 
-    liftIO $ M.put tx m worldVersion (Compressed aspas)
+getAspas tx db@DB { aspaStore = AspaStore m } version = 
+    liftIO $ fmap (Just . allTAs)
+        $ getPayloadsForTas tx db version $ 
+            \_ _ ValidationVersion {..} -> 
+                fmap unCompressed <$> M.get tx m aspasKey    
 
 getGbrs :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set (T2 Hash Gbr)))
-getGbrs tx DB { gbrStore = GbrStore m } wv = 
-    liftIO $ fmap unCompressed <$> M.get tx m wv        
-
-deleteGbrs :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteGbrs tx DB { gbrStore = GbrStore m } wv = liftIO $ M.delete tx m wv
-
-saveGbrs :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> Set.Set (T2 Hash Gbr) -> WorldVersion -> m ()
-saveGbrs tx DB { gbrStore = GbrStore m } gbrs worldVersion = 
-    liftIO $ M.put tx m worldVersion (Compressed gbrs)
-
-saveRoas :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> Roas -> WorldVersion -> m ()
-saveRoas tx DB { vrpStore = VRPStore roaMap } roas worldVersion = 
-    liftIO $ M.put tx roaMap worldVersion (Compressed roas)
-
-saveBgps :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> Set.Set BGPSecPayload -> WorldVersion -> m ()
-saveBgps tx DB { bgpStore = BgpStore bgpMap } bgps worldVersion = 
-    liftIO $ M.put tx bgpMap worldVersion (Compressed bgps)
-
-deleteBgps :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteBgps tx DB { bgpStore = BgpStore bgpMap } wv = liftIO $ M.delete tx bgpMap wv
+getGbrs tx db@DB { gbrStore = GbrStore m } version = 
+    liftIO $ fmap (Just . allTAs)
+        $ getPayloadsForTas tx db version $ 
+            \_ _ ValidationVersion {..} -> 
+                fmap unCompressed <$> M.get tx m gbrsKey
 
 getBgps :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set BGPSecPayload))
-getBgps tx DB { bgpStore = BgpStore m } wv = 
-    liftIO $ fmap unCompressed <$> M.get tx m wv    
+getBgps tx db@DB { bgpStore = BgpStore m } version = 
+    liftIO $ fmap (Just . allTAs)
+        $ getPayloadsForTas tx db version $ 
+            \_ _ ValidationVersion {..} -> 
+                fmap unCompressed <$> M.get tx m bgpCertsKey
 
 getSpls :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> WorldVersion -> m (Maybe (Set.Set SplN))
-getSpls tx DB { splStore = SplStore m } wv = 
-    liftIO $ fmap unCompressed <$> M.get tx m wv  
+getSpls tx db@DB { splStore = SplStore m } version = 
+    liftIO $ fmap (Just . allTAs)
+        $ getPayloadsForTas tx db version $ 
+            \_ _ ValidationVersion {..} -> 
+                fmap unCompressed <$> M.get tx m splsKey
 
-deleteSpls :: (MonadIO m, Storage s) => 
+
+versionsBackwards :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(WorldVersion, VersionMeta)]
+versionsBackwards tx DB { versionStore = VersionStore s } = 
+    liftIO $ List.sortOn (Down . fst) <$> M.all tx s
+
+previousVersion :: (MonadIO m, Storage s) => 
+                    Tx s mode -> DB s -> WorldVersion -> m (Maybe WorldVersion)
+previousVersion tx DB { versionStore = VersionStore s } version = liftIO $ do 
+    versions <- M.all tx s    
+    case List.filter (\(v, _) -> v < version) versions of 
+        [] -> pure Nothing
+        v  -> pure $ Just $ maximum $ map fst v
+
+
+getPayloadsForTas :: (MonadIO m, Storage s)
+                => Tx s mode 
+                -> DB s 
+                -> WorldVersion
+                -> (Tx s mode -> DB s -> ValidationVersion -> IO (Maybe payload)) 
+                -> m (PerTA payload)
+getPayloadsForTas tx db@DB {..} version f = liftIO $ do
+    fmap (toPerTA . catMaybes) $ 
+        M.get tx (versionStore ^. typed) version >>= \case
+            Nothing          -> pure []
+            Just versionMeta -> 
+                forM (perTA $ versionMeta ^. typed) $ \(ta, vv) -> 
+                    fmap (ta,) <$> f tx db vv
+
+
+getLatestVersions :: (MonadIO m, Storage s) => 
+                    Tx s mode -> DB s -> m (PerTA WorldVersion)
+getLatestVersions tx db = liftIO $
+    getLatestVersion tx db >>= \case    
+        Nothing            -> pure $ PerTA MonoidalMap.empty
+        Just latestVersion -> 
+            getPayloadsForTas tx db latestVersion $ 
+                    \_ _ ValidationVersion {..} -> pure $ Just validatedBy
+
+saveValidationVersion :: forall m s . (MonadIO m, Storage s) => 
+                        Tx s 'RW 
+                    -> DB s 
+                    -> WorldVersion                     
+                    -> [TaName]
+                    -> PerTA (Payloads, ValidationState)                    
+                    -> ValidationState
+                    -> m ()
+saveValidationVersion tx db@DB { ..} 
+    validatedBy allTaNames results@(PerTA perTAResults) commonVS = liftIO $ do         
+
+    commonValidationKey <- save (commonVS ^. typed @Validations) $ validationsStore ^. #validations
+    commonMetricsKey <- save (commonVS ^. typed @Metrics) $ metricStore ^. #metrics
+
+    -- For the TAs present in results save the results
+    addedResults <- 
+        forM (perTA results) $ \(taName, (Payloads {..}, vs)) -> do                         
+            roasKey  <- save roas $ roaStore ^. typed
+            aspasKey <- save aspas $ aspaStore ^. typed
+            splsKey  <- save spls $ splStore ^. typed
+            gbrsKey  <- save gbrs $ gbrStore ^. typed
+            bgpCertsKey <- save bgpCerts $ bgpStore ^. typed
+
+            validationsKey <- save (vs ^. typed @Validations) $ validationsStore ^. #validations
+            metricsKey <- save (vs ^. typed @Metrics) $ metricStore ^. #metrics
+            
+            -- The keys may refer to nonexistent entries
+            pure (taName, ValidationVersion {..})
+
+    -- For the TAs not present in results find the latest metas that has 
+    -- result for the TA and add to the current version
+    let notPresentTAs = filter (`MonoidalMap.notMember` perTAResults) allTaNames 
+
+    earlierResults <- 
+        case notPresentTAs of 
+            [] -> pure []
+            _  -> do     
+                versions <- versionsBackwards tx db 
+                pure [ (ta, r) | (ta, Just r) <- fillUpEarlierTAData versions notPresentTAs mempty ]
+
+    M.put tx (versionStore ^. typed) validatedBy $ 
+        VersionMeta { perTa = toPerTA $ addedResults <> earlierResults, .. }
+
+  where
+    save :: forall what mapName . 
+            (AsStorable what, Monoid what, Eq what) 
+            => what 
+            -> SMap mapName s ArtificialKey (Compressed what) -> IO ArtificialKey
+    save what whereTo = do                 
+        key <- ArtificialKey . unSequenceValue <$> nextValue tx keys
+        M.put tx whereTo key (Compressed what)
+        pure key
+
+    fillUpEarlierTAData [] _ accPerTa = accPerTa
+    fillUpEarlierTAData _ [] accPerTa = accPerTa
+
+    fillUpEarlierTAData ((_, versionMeta) : versions) tasToFind accPerTa = do 
+        let (found, notFound) = List.partition (isJust . snd) 
+                [ (ta, MonoidalMap.lookup ta (unPerTA $ versionMeta ^. typed)) | ta <- tasToFind ]        
+        
+        fillUpEarlierTAData versions (map fst notFound) (accPerTa <> found)          
+
+
+deleteValidationVersion :: (MonadIO m, Storage s) => 
             Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteSpls tx DB { splStore = SplStore m } wv = liftIO $ M.delete tx m wv    
+deleteValidationVersion tx DB {..} worldVersion = liftIO $ do  
+    ifJustM (M.get tx (versionStore ^. typed) worldVersion) $ \versionMeta -> do
+        M.delete tx (validationsStore ^. typed) (versionMeta ^. #commonValidationKey)                
+        M.delete tx (metricStore ^. typed) (versionMeta ^. #commonMetricsKey)
+        for_ (perTA $ versionMeta ^. typed) $ \(_, ValidationVersion {..}) -> do
+            M.delete tx (roaStore ^. typed) roasKey
+            M.delete tx (aspaStore ^. typed) aspasKey
+            M.delete tx (splStore ^. typed) splsKey
+            M.delete tx (gbrStore ^. typed) gbrsKey
+            M.delete tx (bgpStore ^. typed) bgpCertsKey
+            M.delete tx (metricStore ^. typed) metricsKey
+            M.delete tx (validationsStore ^. typed) validationsKey        
+        
+    M.delete tx (slurmStore ^. typed) worldVersion
+    M.delete tx (versionStore ^. typed) worldVersion
 
-saveSpls :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> Set.Set SplN -> WorldVersion -> m ()
-saveSpls tx DB { splStore = SplStore m } spls worldVersion = 
-    liftIO $ M.put tx m worldVersion (Compressed spls)
-
-
-saveVersion :: (MonadIO m, Storage s) => 
-        Tx s 'RW -> DB s -> WorldVersion -> VersionKind -> m ()
-saveVersion tx DB { versionStore = VersionStore s } wv versionState = 
-    liftIO $ M.put tx s wv versionState
-
-allVersions :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(WorldVersion, VersionKind)]
-allVersions tx DB { versionStore = VersionStore s } = liftIO $ M.all tx s
-
-validationVersions :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [WorldVersion]
-validationVersions tx DB { versionStore = VersionStore s } = liftIO $ do 
-    z <- M.all tx s
-    pure [ wv | (wv, vk) <- z, vk == validationKind ]
-
-deleteVersion :: (MonadIO m, Storage s) => 
-        Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteVersion tx DB { versionStore = VersionStore s } wv = liftIO $ M.delete tx s wv
-
-completeValidationWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
-completeValidationWorldVersion tx database worldVersion =    
-    saveVersion tx database worldVersion validationKind
-
-generalWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
-generalWorldVersion tx database worldVersion =    
-    saveVersion tx database worldVersion generalKind
-
-asyncFetchWorldVersion :: Storage s => Tx s 'RW -> DB s -> WorldVersion -> IO ()
-asyncFetchWorldVersion tx database worldVersion =    
-    saveVersion tx database worldVersion asyncFetchKind
-
-
-saveMetrics :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> WorldVersion -> RawMetric -> m ()
-saveMetrics tx DB { metricStore = MetricStore s } wv appMetric = 
-    liftIO $ M.put tx s wv (Compressed appMetric)
-
-metricsForVersion :: (MonadIO m, Storage s) => Tx s mode -> DB s  -> WorldVersion -> m (Maybe RawMetric)
-metricsForVersion tx DB { metricStore = MetricStore {..} } wv = 
-    liftIO $ fmap unCompressed <$> M.get tx metrics wv    
-
-deleteMetrics :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteMetrics tx DB { metricStore = MetricStore s } wv = liftIO $ M.delete tx s wv
 
 saveSlurm :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> WorldVersion -> Slurm -> m ()
-saveSlurm tx DB { slurmStore = SlurmStore s } wv slurm = liftIO $ M.put tx s wv (Compressed slurm)
+saveSlurm tx DB { slurmStore = SlurmStore s } version slurm = 
+    liftIO $ M.put tx s version (Compressed slurm)
 
-slurmForVersion :: (MonadIO m, Storage s) => Tx s mode -> DB s -> WorldVersion -> m (Maybe Slurm)
-slurmForVersion tx DB { slurmStore = SlurmStore s } wv = 
-    liftIO $ fmap unCompressed <$> M.get tx s wv    
-
-deleteSlurms :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> WorldVersion -> m ()
-deleteSlurms tx DB { slurmStore = SlurmStore s } wv = liftIO $ M.delete tx s wv
+getSlurm :: (MonadIO m, Storage s) => Tx s mode -> DB s -> WorldVersion -> m (Maybe Slurm)
+getSlurm tx DB { slurmStore = SlurmStore s } version = 
+    liftIO $ fmap unCompressed <$> M.get tx s version    
 
 updateRrdpMeta :: (MonadIO m, Storage s) =>
                 Tx s 'RW -> DB s -> RrdpMeta -> RrdpURL -> m ()
-updateRrdpMeta tx DB { repositoryStore = RepositoryStore {..} } meta url = liftIO $ do
-    z <- M.get tx rrdpS url
-    for_ z $ \r -> M.put tx rrdpS url (r { rrdpMeta = Just meta })
+updateRrdpMeta tx db meta url = liftIO $ do
+    updateRrdpMetaM tx db url $ \_ -> pure $ Just meta    
 
+updateRrdpMetaM :: (MonadIO m, Storage s) =>
+                    Tx s 'RW 
+                -> DB s
+                -> RrdpURL                  
+                -> (Maybe RrdpMeta -> IO (Maybe RrdpMeta))                
+                -> m ()
+updateRrdpMetaM tx DB { repositoryStore = RepositoryStore {..} } url f = liftIO $ do
+    maybeRepo <- M.get tx rrdpS url
+    for_ maybeRepo $ \repo -> do        
+        maybeNewMeta <- f $ repo ^. #rrdpMeta
+        for_ maybeNewMeta $ \newMeta -> 
+            M.put tx rrdpS url (repo { rrdpMeta = Just newMeta })
+ 
+getRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RpkiURL -> m (Maybe Repository)
+getRepository tx db = \case
+        RrdpU u  -> fmap RrdpR <$> getRrdpRepository tx db u
+        RsyncU u -> fmap RsyncR <$> getRsyncRepository tx db u
 
-applyChangeSet :: (MonadIO m, Storage s) =>
-                Tx s 'RW ->
-                DB s ->
-                ChangeSet ->
-                m ()
-applyChangeSet tx DB { repositoryStore = RepositoryStore {..}} 
-                  (ChangeSet rrdpChanges rsyncChanges usedForAsync) = liftIO $ do
-    -- Do the Remove first and only then Put
-    let (rrdpPuts, rrdpRemoves) = separate rrdpChanges
+getRrdpRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RrdpURL -> m (Maybe RrdpRepository)
+getRrdpRepository tx DB { repositoryStore = RepositoryStore {..}} url = 
+    liftIO $ M.get tx rrdpS url
 
-    for_ rrdpRemoves $ \RrdpRepository{..} -> M.delete tx rrdpS uri
-    for_ rrdpPuts $ \r@RrdpRepository{..}  -> M.put tx rrdpS uri r
+getRsyncRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RsyncURL -> m (Maybe RsyncRepository)
+getRsyncRepository tx db url = Map.lookup url <$> getRsyncRepositories tx db [url]        
 
-    let (rsyncPuts, rsyncRemoves) = separate rsyncChanges
+getRsyncRepositories :: (MonadIO m, Storage s) => Tx s mode -> DB s -> [RsyncURL] -> m (Map.Map RsyncURL RsyncRepository)
+getRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} urls = 
+    getRsyncAnything urls 
+        (M.get tx rsyncS) 
+        (\url meta -> RsyncRepository { repoPP = RsyncPublicationPoint url, .. })  
 
-    for_ rsyncRemoves $ \(uri', _) -> M.delete tx rsyncS uri'
-    for_ rsyncPuts $ uncurry (M.put tx rsyncS)    
+getRsyncAnything :: MonadIO m 
+                => [RsyncURL] 
+                -> (RsyncHost -> IO (Maybe (RsyncTree a)))
+                -> (RsyncURL -> a -> b)
+                -> m (Map.Map RsyncURL b)
+getRsyncAnything urls extractTree create = liftIO $ do 
 
-    let (lastSPuts, _) = separate [usedForAsync]    
-    for_ lastSPuts $ \rr -> M.put tx forAsyncS forAsyncFetchKey (Compressed rr)
+    let groupedByHost = Map.fromListWith (<>) [ (host, [u]) | u@(RsyncURL host _) <- urls ]    
+
+    fmap (Map.fromList . mconcat)
+        $ forM (Map.toList groupedByHost) 
+        $ \(host, thisHostUrls) -> do        
+            z <- extractTree host
+            pure $ case z of
+                Nothing   -> []
+                Just tree -> 
+                    [ (u, create url' content) |
+                        u@(RsyncURL _ path) <- thisHostUrls,
+                        Just (path', content ) <- [ lookupInRsyncTree path tree ],
+                        let url' = RsyncURL host path'
+                    ] 
+
+saveRepositories :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [Repository] -> m ()
+saveRepositories tx db@DB { repositoryStore = RepositoryStore {..}} repositories = liftIO $ do    
+    let (rrdps, rsyncs) = separate repositories
+    forM_ rrdps $ \r -> M.put tx rrdpS (r ^. #uri) r
+    saveRsyncRepositories tx db rsyncs
   where
     separate = foldr f ([], [])
       where
-        f (Put r)    (ps, rs) = (r : ps, rs)
-        f (Remove r) (ps, rs) = (ps, r : rs)
+        f (RrdpR r)  (rrdps, rsyncs) = (r : rrdps, rsyncs)
+        f (RsyncR r) (rrdps, rsyncs) = (rrdps, r : rsyncs)
 
-getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m PublicationPoints
-getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
+saveRepositoryValidationStates :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [(Repository, ValidationState)] -> m ()
+saveRepositoryValidationStates tx db@DB { repositoryStore = RepositoryStore {..}} repositories = liftIO $ do    
+    let (rrdps, rsyncs) = separate repositories
+    forM_ rrdps $ \(r, vs) -> M.put tx rrdpVState (r ^. #uri) (Compressed vs)
+    saveRsyncValidationStates tx db rsyncs
+  where
+    separate = foldr f ([], [])
+      where
+        f (RrdpR r, a)  (rrdps, rsyncs) = ((r, a) : rrdps, rsyncs)
+        f (RsyncR r, a) (rrdps, rsyncs) = (rrdps, (r, a) : rsyncs)
+
+saveRsyncRepositories :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [RsyncRepository] -> m ()
+saveRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} repositories = liftIO $ do
+    saveRsyncAnything (map (\r -> (r, r ^. #meta)) repositories)
+        (M.get tx rsyncS)
+        (M.put tx rsyncS)        
+
+saveRsyncValidationStates :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [(RsyncRepository, ValidationState)] -> m ()
+saveRsyncValidationStates tx DB { repositoryStore = RepositoryStore {..}} repositories = liftIO $ do
+    saveRsyncAnything repositories
+        (fmap (fmap unCompressed) . M.get tx rsyncVState)
+        (\host tree -> M.put tx rsyncVState host (Compressed tree))        
+
+saveRsyncAnything :: MonadIO m
+                    => [(RsyncRepository, a)] 
+                    -> (RsyncHost -> IO (Maybe (RsyncTree a)))
+                    -> (RsyncHost -> RsyncTree a -> IO ())
+                    -> m ()
+saveRsyncAnything repositories extractTree saveTree = liftIO $ do 
+
+    let groupedByHost = Map.fromListWith (<>) [ (host, [(path, a)]) | 
+            (RsyncRepository { repoPP = RsyncPublicationPoint (RsyncURL host path) }, a) <- repositories ] 
+        
+    for_ (Map.toList groupedByHost) $ \(host, pathAndA) -> do
+        startTree <- fromMaybe newRsyncTree <$> extractTree host
+        let tree' = foldr (uncurry pathToRsyncTree) startTree pathAndA
+        saveTree host tree'
+
+
+getRepositories :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(Repository, ValidationState)]
+getRepositories tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
     rrdps <- M.all tx rrdpS
-    rsyns <- M.all tx rsyncS    
-    forAsyncS' <- maybe mempty unCompressed <$> M.get tx forAsyncS forAsyncFetchKey
-    pure $ PublicationPoints
-            (RrdpMap $ Map.fromList rrdps)
-            (RsyncTree $ Map.fromList rsyns)           
-            forAsyncS'
+    rsyncs <- M.all tx rsyncS    
 
-savePublicationPoints :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> PublicationPoints -> m ()
-savePublicationPoints tx db newPPs' = do
-    ppsInDb <- getPublicationPoints tx db
-    let changes = changeSet ppsInDb newPPs'
-    applyChangeSet tx db changes
+    rrpdRepos <- fmap mconcat $ 
+        forM rrdps $ \(url, r) -> do 
+            M.get tx rrdpVState url >>= \case 
+                Nothing              -> pure []
+                Just (Compressed vs) -> pure [(RrdpR r, vs)]
+
+    rsyncRepos <- fmap mconcat $ 
+        forM rsyncs $ \(host, metas) -> do 
+            M.get tx rsyncVState host >>= \case 
+                Nothing               -> pure []
+                Just (Compressed vss) -> 
+                    pure [ (RsyncR repo, vs) | 
+                            (RsyncURL _ path, meta) <- flattenTree host metas,
+                            let repo = RsyncRepository { repoPP = RsyncPublicationPoint (RsyncURL host path), .. },
+                            Just (_, vs) <- [lookupInRsyncTree path vss]      
+                        ]
+    pure $ rrpdRepos <> rsyncRepos
 
 
 setJobCompletionTime :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Text -> Instant -> m ()
@@ -796,34 +960,20 @@ cleanupValidatedByVersionMap tx db toDelete = liftIO $ do
 -- More complicated operations
 
 data CleanUpResult = CleanUpResult {
-        deletedObjects :: Int,
-        deletedPerType :: Map.Map RpkiObjectType Integer,
-        keptObjects    :: Int,
-        deletedURLs    :: Int,
+        deletedObjects  :: Int,
+        deletedPerType  :: Map.Map RpkiObjectType Integer,
+        keptObjects     :: Int,
+        deletedURLs     :: Int,
         deletedVersions :: Int
     }
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
-
 
 data DeletionCriteria = DeletionCriteria {
         versionIsTooOld :: WorldVersion -> Bool,
         objectIsTooOld  :: WorldVersion -> RpkiObjectType -> Bool
     }
     deriving (Generic)
-
-deleteOldNonValidationVersions :: (MonadIO m, Storage s) =>                                     
-                                   Tx s 'RW 
-                                -> DB s 
-                                -> (WorldVersion -> Bool) 
-                                -> m Int
-deleteOldNonValidationVersions tx db tooOld = do    
-    versions <- allVersions tx db
-    let toDelete = [ version | (version, vk) <- versions, vk /= validationKind, tooOld version ]
-    forM_ toDelete $ \v -> do 
-        deletePayloads tx db v
-        deleteVersion tx db v
-    pure $! List.length toDelete
 
 
 deleteOldestVersionsIfNeeded :: (MonadIO m, Storage s) => 
@@ -833,20 +983,50 @@ deleteOldestVersionsIfNeeded :: (MonadIO m, Storage s) =>
                             -> m [WorldVersion]
 deleteOldestVersionsIfNeeded tx db versionNumberToKeep =  
     mapException (AppException . storageError) <$> liftIO $ do
-        versions <- validationVersions tx db
+        versions <- versionsBackwards tx db
         -- Keep at least 2 versions (current and previous)
         let reallyToKeep = max 2 (fromIntegral versionNumberToKeep)
         if length versions > reallyToKeep
-            then do                     
-                let versionsToDelete = drop reallyToKeep $ List.sortOn Down versions
-                forM_ versionsToDelete $ \v -> do 
-                    deletePayloads tx db v
-                    deleteVersion tx db v                   
+            then do           
+                let versionsToDelete = map fst $ findEnoughForEachTA reallyToKeep versions mempty                          
+                forM_ versionsToDelete $ deleteValidationVersion tx db
                 let toDeleteSet = Set.fromList versionsToDelete 
                 void $ cleanupValidatedByVersionMap tx db (`Set.member` toDeleteSet)
                 pure versionsToDelete
             else pure []        
+  where    
+    -- There should be at least `numberToKeep` versions for each TA, 
+    -- only after that we can delete the older versions.
+    findEnoughForEachTA _ [] _ = []
 
+    findEnoughForEachTA numberToKeep ((_, meta) : versions) acc = 
+        if any (\v -> Set.size v < fromIntegral numberToKeep) $ MonoidalMap.elems acc'
+            then findEnoughForEachTA numberToKeep versions acc'
+            else versions
+      where         
+        acc' = acc <> mconcat [ MonoidalMap.singleton ta (Set.singleton v) | (ta, v) <- perTA $ meta ^. #perTa ]        
+                
+{-
+deleteStaleContent :: (MonadIO m, Storage s) => 
+                    DB s -> 
+                    (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
+                    m CleanUpResult
+deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld = 
+    mapException (AppException . storageError) <$> liftIO $ do    
+        rwTx db $ \tx -> do            
+            toDelete <- filter tooOld . map fst <$> versionsBackwards tx db
+            forM_ toDelete $ deleteValidationVersion tx db    
+                                
+            validatedByRecentVersions <- cleanupValidatedByVersionMap tx db tooOld   
+
+            (deletedObjects, deletedPerType, keptObjects) <- deleteStaleObjects tx
+
+            -- Delete URLs that are now not referred by any object
+            deletedURLs <- deleteDanglingUrls db tx
+
+            let deletedVersions = length toDelete
+            pure CleanUpResult {..}            
+-}
 
 deleteStaleContent :: (MonadIO m, Storage s, Logger logger) => 
                 logger
@@ -858,8 +1038,7 @@ deleteStaleContent logger db@DB { objectStore = RpkiObjectStore {..} } DeletionC
         
         -- Delete old versions associated with async fetches and 
         -- other non-validation related stuff        
-        rwTx db $ \tx -> do
-            -- First delete the oldest versions            
+        rwTx db $ \tx -> do            
             deletedVersions <- deleteOldVersions tx
 
             -- Now delete objects that are last used by the deleted versions
@@ -871,15 +1050,10 @@ deleteStaleContent logger db@DB { objectStore = RpkiObjectStore {..} } DeletionC
             pure CleanUpResult {..}
   where
 
-    deleteOldVersions tx = do 
-        deletedNotValidationVersions <- deleteOldNonValidationVersions tx db versionIsTooOld        
-        validationVersionsToDelete   <- filter versionIsTooOld <$> validationVersions tx db
-
-        for_ validationVersionsToDelete $ \version -> do 
-            deletePayloads tx db version
-            deleteVersion tx db version                                
-
-        pure $ deletedNotValidationVersions + List.length validationVersionsToDelete
+    deleteOldVersions tx = do
+        toDelete <- filter versionIsTooOld . map fst <$> versionsBackwards tx db
+        forM_ toDelete $ deleteValidationVersion tx db
+        pure $ List.length toDelete
 
     deleteStaleObjects tx = do 
 
@@ -920,7 +1094,7 @@ deleteStaleContent logger db@DB { objectStore = RpkiObjectStore {..} } DeletionC
             z <- getLocationsByKey tx db key
             forM_ z $ \location -> do 
                 forM_ (Map.lookup key hashes) $ \hash -> 
-                    logDebug logger [i||Deleted object #{pickLocation location} with hash #{hash} to the database.|]
+                    logDebug logger [i||Deleted #{pickLocation location}, #{hash}.|]
 
             deleteObjectByKey tx db key
 
@@ -946,37 +1120,19 @@ deleteDanglingUrls DB { objectStore = RpkiObjectStore {..} } tx = do
             mempty
 
 
-    forM_ urlsToDelete $ \(urlKey, url) -> do 
+    for_ urlsToDelete $ \(urlKey, url) -> do 
         M.delete tx uriKeyToUri urlKey
         M.delete tx uriToUriKey (makeSafeUrl url)           
 
     pure $ length urlsToDelete
 
 
-deletePayloads :: (MonadIO m, Storage s) => 
-            Tx s 'RW -> DB s -> WorldVersion -> m ()
-deletePayloads tx db worldVersion = do    
-    deleteValidations tx db worldVersion
-    deleteAspas tx db worldVersion            
-    deleteGbrs tx db worldVersion            
-    deleteBgps tx db worldVersion                
-    deleteRoas tx db worldVersion            
-    deleteSpls tx db worldVersion            
-    deleteMetrics tx db worldVersion
-    deleteSlurms tx db worldVersion
 
-
--- | Find the latest completed world version 
--- 
-getLastValidationVersion :: (Storage s) => DB s -> Tx s 'RO -> IO (Maybe WorldVersion)
-getLastValidationVersion db tx = getLastVersionOfKind db tx validationKind        
-
-getLastVersionOfKind :: (Storage s) => DB s -> Tx s 'RO -> VersionKind -> IO (Maybe WorldVersion)
-getLastVersionOfKind database tx versionKind = do 
-        versions <- allVersions tx database        
-        pure $ case [ v | (v, k) <- versions, k == versionKind ] of         
-                []  -> Nothing
-                vs' -> Just $ maximum vs'
+-- TODO implement min and max in maps?
+getLatestVersion :: (Storage s) => Tx s mode -> DB s -> IO (Maybe WorldVersion)
+getLatestVersion tx db = do
+    listToMaybe . map fst <$> versionsBackwards tx db
+        
                     
 getGbrObjects :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> WorldVersion -> m [Located RpkiObject]
@@ -988,9 +1144,9 @@ getGbrObjects tx db version = do
 getRtrPayloads :: (MonadIO m, Storage s) => Tx s 'RO -> DB s -> WorldVersion -> m (Maybe RtrPayloads)
 getRtrPayloads tx db worldVersion = 
     liftIO $ runMaybeT $ do 
-            vrps <- MaybeT $ getVrps tx db worldVersion
-            bgps <- MaybeT $ getBgps tx db worldVersion
-            pure $ mkRtrPayloads vrps bgps                       
+        vrps <- MaybeT $ Just <$> getVrps tx db worldVersion
+        bgps <- MaybeT $ getBgps tx db worldVersion
+        pure $ mkRtrPayloads vrps bgps                       
 
 -- Get all SStats and `<>` them
 totalStats :: StorageStats -> SStats

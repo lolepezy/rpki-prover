@@ -1,5 +1,5 @@
 # resolver:  nightly-2025-01-23
-resolver: lts-22.43
+resolver: lts-22.44
 # for static builds for now
 # resolver: lts-22.20
 

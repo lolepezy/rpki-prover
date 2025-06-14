@@ -280,7 +280,7 @@ runCopyWorker appContext@AppContext {..} dbtats targetLmdbPath = do
             in max (maxMemory `div` 1024 `div` 1024) 64
 
     let arguments = 
-            [ worderIdS workerId ] <>
+            [ workerIdStr workerId ] <>
             rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory (show maxMemoryMb <> "m") ]
 
     (z, vs) <- runValidatorT 
