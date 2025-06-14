@@ -92,7 +92,6 @@ httpServer appContext tals = genericServe HttpApi {
 
         slurm = getSlurm appContext,
         slurms = getAllSlurms appContext,
-        tals = getAllTALs appContext,
 
         fullValidationResults     = getValidationsDto appContext,
         minimalValidationResults  = fmap toMinimalValidations . getValidationsDto appContext,
@@ -347,17 +346,7 @@ getAllSlurms AppContext {..} =
         slurms   <- mapM (\(wv, _) -> (wv, ) <$> DB.getSlurm tx db wv) versions        
         pure [ (w, s) | (w, Just s) <- slurms ]
 
-getAllTALs :: (MonadIO m, Storage s, MonadError ServerError m) =>
-                AppContext s -> m [TalDto]
-getAllTALs AppContext {..} = do
-    db <- liftIO $ readTVarIO database
-    liftIO $ roTx db $ \tx -> do        
-        tas <- DB.getTAs tx db     
-        pure [ TalDto {..} | (_, StorableTA {..}) <- tas, 
-                let repositories = map (toText . getRpkiURL) 
-                        $ NonEmpty.toList 
-                        $ unPublicationPointAccess initialRepositories ]           
-
+    
 
 getStats :: (MonadIO m, MaintainableStorage s, Storage s) => AppContext s -> m TotalDBStats
 getStats appContext = liftIO $ do 
@@ -490,6 +479,7 @@ getSystem AppContext {..} = do
 
     rsyncClients <- map (wiToDto . snd) . Map.toList <$> readTVarIO (appState ^. #runningRsyncClients)
 
+    tals <- getTALs
     pure SystemDto {..}  
   where
     fmtScope scope =
@@ -498,6 +488,14 @@ getSystem AppContext {..} = do
                 forM (scopeList scope) $ \s -> 
                     resolvedFocusToText <$> resolveLocations tx db s 
 
+    getTALs = do
+        db <- liftIO $ readTVarIO database
+        liftIO $ roTx db $ \tx -> do        
+            tas <- DB.getTAs tx db     
+            pure [ TalDto {..} | (_, StorableTA {..}) <- tas, 
+                    let repositories = map (toText . getRpkiURL) 
+                            $ NonEmpty.toList 
+                            $ unPublicationPointAccess initialRepositories ]                     
 
 
 getRtr :: (MonadIO m, Storage s, MonadError ServerError m) =>
