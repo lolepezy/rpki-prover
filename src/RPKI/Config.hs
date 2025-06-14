@@ -232,8 +232,8 @@ defaultConfig = Config {
     rrdpConf = RrdpConf {
         tmpRoot = Hidden "",
         maxSize = Size $ 1024 * 1024 * 1024,
-        rrdpTimeout = 7 * 60,
-        cpuLimit = 30 * 60,
+        rrdpTimeout = 7 * minutes,
+        cpuLimit = 30 * minutes,
         enabled = True
     },
     validationConfig = ValidationConfig {
@@ -305,6 +305,8 @@ defaultRtrConfig = RtrConfig {
         rtrLogFile = Nothing
     }
     
+-- This is a heuristic list of rsync repositories that is currently out there
+-- and not using them will result in too many small fetches from the same repository.
 defaultPrefetchURLs :: [String]
 defaultPrefetchURLs = [
         "rsync://rpki.afrinic.net/repository",
