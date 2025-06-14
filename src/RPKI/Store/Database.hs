@@ -805,6 +805,14 @@ updateRrdpMetaM tx DB { repositoryStore = RepositoryStore {..} } url f = liftIO 
         for_ maybeNewMeta $ \newMeta -> 
             M.put tx rrdpS url (repo { rrdpMeta = Just newMeta })
  
+getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m PublicationPoints
+getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
+    rrdps <- M.all tx rrdpS
+    rsyns <- M.all tx rsyncS    
+    pure $ PublicationPoints
+            (RrdpMap $ Map.fromList rrdps)
+            (RsyncForestGen $ Map.fromList rsyns)  
+
 getRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RpkiURL -> m (Maybe Repository)
 getRepository tx db = \case
         RrdpU u  -> fmap RrdpR <$> getRrdpRepository tx db u
