@@ -12,7 +12,7 @@ module RPKI.Store.DatabaseSpec where
 
 import           Control.Exception.Lifted
 
-import           Control.Lens                     ((.~), (%~), (&), (^.))
+import           Control.Lens                     
 import           Control.Monad
 import           Control.Monad.Reader
 import           Data.Generics.Product.Typed
@@ -36,6 +36,7 @@ import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
 
 import           RPKI.AppMonad
+import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Config
@@ -47,7 +48,8 @@ import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Map               as M
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database
+import           RPKI.Store.Database    (DB(..))
+import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 
 import qualified RPKI.Store.MakeLmdb as Lmdb
@@ -58,14 +60,15 @@ import           RPKI.Util
 import           RPKI.RepositorySpec
 
 import Data.Generics.Product (HasField)
+import Control.Concurrent (threadDelay)
 
 
-storeGroup :: TestTree
-storeGroup = testGroup "LMDB storage tests"
+databaseGroup :: TestTree
+databaseGroup = testGroup "LMDB storage tests"
     [
         objectStoreGroup,
-        validationResultStoreGroup,
         repositoryStoreGroup,
+        versionStoreGroup,
         txGroup
     ]
 
@@ -75,20 +78,21 @@ objectStoreGroup = testGroup "Object storage test"
         dbTestCase "Should insert and get back" shouldInsertAndGetAllBackFromObjectStore,        
         dbTestCase "Should order manifests accoring to their dates" shouldOrderManifests,
         dbTestCase "Should merge locations" shouldMergeObjectLocations
-        -- dbTestCase "Should save, delete and have no garbage left" shouldCreateAndDeleteAllTheMaps
     ]        
-
-validationResultStoreGroup :: TestTree
-validationResultStoreGroup = testGroup "Validation result storage test"
-    [
-        dbTestCase "Should insert and get back" shouldInsertAndGetAllBackFromValidationResultStore,
-        dbTestCase "Should insert and get back" shouldGetAndSaveRepositories
-    ]
 
 repositoryStoreGroup :: TestTree
 repositoryStoreGroup = testGroup "Repository LMDB storage test"
     [
-        dbTestCase "Should insert and get a repository" shouldInsertAndGetAllBackFromRepositoryStore
+        dbTestCase "Should insert and get an rsync repository" shouldSaveAndGetRsyncRepositories,
+        dbTestCase "Should overwrite metadata and validations" shouldSaveMetaAndValidationAsCorrectSemigroup
+    ]        
+
+versionStoreGroup :: TestTree
+versionStoreGroup = testGroup "Version LMDB storage test"
+    [
+        dbTestCase "Should insert and get a version" shouldSaveAndGetValidationVersion,        
+        dbTestCase "Should insert and get a version with data from previous versions" 
+            shouldSaveAndGetValidationVersionFilledWithPastData
     ]        
 
 txGroup :: TestTree
@@ -109,13 +113,12 @@ shouldMergeObjectLocations io = do
 
     ro1 :: RpkiObject <- QC.generate arbitrary    
     ro2 :: RpkiObject <- QC.generate arbitrary        
-    extraLocations :: Locations <- QC.generate arbitrary    
-
+    
     let storeIt obj url = rwTx db $ \tx -> do        
-            saveObject tx db (toStorableObject obj) (instantToVersion now)
-            linkObjectToUrl tx db url (getHash obj)
+            DB.saveObject tx db (toStorableObject obj) (instantToVersion now)
+            DB.linkObjectToUrl tx db url (getHash obj)
 
-    let getIt hash = roTx db $ \tx -> getByHash tx db hash    
+    let getIt hash = roTx db $ \tx -> DB.getByHash tx db hash    
 
     storeIt ro1 url1
     storeIt ro1 url2
@@ -131,12 +134,12 @@ shouldMergeObjectLocations io = do
 
     verifyUrlCount db "case 1" 3    
 
-    rwTx db $ \tx -> deleteObject tx db (getHash ro1)    
+    rwTx db $ \tx -> DB.deleteObject tx db (getHash ro1)    
 
     verifyUrlCount db "case 2" 3
 
     -- should only clean up URLs
-    deletedUrls <- rwTx db $ deleteDanglingUrls db
+    deletedUrls <- rwTx db $ DB.deleteDanglingUrls db
     HU.assertEqual "Should have deleted 2 URLs" 2 deletedUrls
 
     verifyUrlCount db "case 3" 1
@@ -145,32 +148,10 @@ shouldMergeObjectLocations io = do
     HU.assertEqual "Wrong locations 3" loc2 (toLocations url3)
     where 
         verifyUrlCount db@DB {..} s count = do 
-            uriToUriKey <- roTx db $ \tx -> M.all tx (uriToUriKey objectStore)
-            uriKeyToUri <- roTx db $ \tx -> M.all tx (uriKeyToUri objectStore)
+            uriToUriKey <- roTx db $ \tx -> M.all tx (DB.uriToUriKey objectStore)
+            uriKeyToUri <- roTx db $ \tx -> M.all tx (DB.uriKeyToUri objectStore)
             HU.assertEqual ("Not all URLs one way " <> s) count (length uriToUriKey)
             HU.assertEqual ("Not all URLs backwards " <> s) count (length uriKeyToUri)        
-
-
-shouldCreateAndDeleteAllTheMaps :: Storage s => IO (DB s) -> HU.Assertion
-shouldCreateAndDeleteAllTheMaps io = do 
-    
-    db <- io
-    Now now <- thisInstant 
-
-    url :: RpkiURL <- QC.generate arbitrary    
-    ros :: [RpkiObject] <- generateSome
-
-    rwTx db $ \tx -> 
-        for_ ros $ \ro -> 
-            saveObject tx db (toStorableObject ro) (instantToVersion now)
-
-    -- roTx objectStore $ \tx -> 
-    --     forM ros $ \ro -> do 
-    --         Just ro' <- getByHash tx objectStore (getHash ro)
-    --         HU.assertEqual "Not the same objects" ro ro'
-    
-
-    pure ()
 
 
 shouldInsertAndGetAllBackFromObjectStore :: Storage s => IO (DB s) -> HU.Assertion
@@ -182,19 +163,19 @@ shouldInsertAndGetAllBackFromObjectStore io = do
 
     let (firstHalf, secondHalf) = List.splitAt (List.length ros `div` 2) ros
 
-    let ros1 = List.map (& typed @RpkiObject %~ replaceAKI aki1) firstHalf
-    let ros2 = List.map (& typed @RpkiObject %~ replaceAKI aki2) secondHalf
+    let ros1 = List.map (typed @RpkiObject %~ replaceAKI aki1) firstHalf
+    let ros2 = List.map (typed @RpkiObject %~ replaceAKI aki2) secondHalf
     let ros' = ros1 <> ros2 
 
     Now now <- thisInstant     
 
     rwTx db $ \tx -> 
         for_ ros' $ \(Located (Locations locations) ro) -> do             
-            saveObject tx db (toStorableObject ro) (instantToVersion now)
+            DB.saveObject tx db (toStorableObject ro) (instantToVersion now)
             forM_ locations $ \url -> 
-                linkObjectToUrl tx db url (getHash ro)
+                DB.linkObjectToUrl tx db url (getHash ro)
 
-    allObjects <- roTx db $ \tx -> getAll tx db
+    allObjects <- roTx db $ \tx -> DB.getAll tx db
     HU.assertEqual 
         "Not the same objects" 
         (List.sortOn (getHash . (^. #payload)) allObjects) 
@@ -207,7 +188,7 @@ shouldInsertAndGetAllBackFromObjectStore io = do
 
     rwTx db $ \tx -> 
         forM_ toDelete $ \(Located _ ro) -> 
-            deleteObject tx db (getHash ro)
+            DB.deleteObject tx db (getHash ro)
     
     compareLatestMfts db ros2 aki2      
     compareLatestMfts db toKeep aki1
@@ -216,13 +197,13 @@ shouldInsertAndGetAllBackFromObjectStore io = do
     removeMftNumberDuplicates = List.nubBy $ \ro1 ro2 ->
             case (ro1, ro2) of
                 (Located _ (MftRO mft1), Located _ (MftRO mft2)) -> 
-                    getMftTimingMark mft1 == getMftTimingMark mft2
+                    DB.getMftTimingMark mft1 == DB.getMftTimingMark mft2
                 _ -> False
 
     compareLatestMfts db ros a = do
-        mftLatest <- roTx db $ \tx -> findLatestMftByAKI tx db a         
+        mftLatest <- roTx db $ \tx -> DB.findLatestMftByAKI tx db a         
         
-        let mftLatest' = listToMaybe $ List.sortOn (Down . getMftTimingMark)
+        let mftLatest' = listToMaybe $ List.sortOn (Down . DB.getMftTimingMark)
                 [ mft | Located _ (MftRO mft) <- ros, getAKI mft == Just a ]                                    
         
         HU.assertEqual "Not the same manifests" ((^. #object . #payload) <$> mftLatest) mftLatest'                    
@@ -233,89 +214,80 @@ shouldOrderManifests io = do
     db@DB {..} <- io
     (Right (url1, mft1), _) <- runValidatorT (newScopes "read1") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
     (Right (url2, mft2), _) <- runValidatorT (newScopes "read2") $ readObjectFromFile "./test/data/afrinic_mft2.mft"
-
-    Now now <- thisInstant 
-    let worldVersion = instantToVersion now
+    
+    worldVersion <- newVersion
 
     rwTx objectStore $ \tx -> do        
-            saveObject tx db (toStorableObject mft1) worldVersion
-            saveObject tx db (toStorableObject mft2) worldVersion
-            linkObjectToUrl tx db url1 (getHash mft1)
-            linkObjectToUrl tx db url2 (getHash mft2)
+            DB.saveObject tx db (toStorableObject mft1) worldVersion
+            DB.saveObject tx db (toStorableObject mft2) worldVersion
+            DB.linkObjectToUrl tx db url1 (getHash mft1)
+            DB.linkObjectToUrl tx db url2 (getHash mft2)
 
     -- they have the same AKIs
     let Just aki1 = getAKI mft1
-    Just (Keyed (Located _ mftLatest) _) <- roTx objectStore $ \tx -> findLatestMftByAKI tx db aki1
+    Just (Keyed (Located _ mftLatest) _) <- roTx objectStore $ \tx -> DB.findLatestMftByAKI tx db aki1
 
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) mft2
 
 
-shouldInsertAndGetAllBackFromValidationResultStore :: Storage s => IO (DB s) -> HU.Assertion
-shouldInsertAndGetAllBackFromValidationResultStore io = do  
-    db@DB {..} <- io
-    vrs :: Validations <- QC.generate arbitrary      
-
-    world <- getOrCreateWorldVerion =<< newAppState
-
-    rwTx validationsStore $ \tx -> saveValidations tx db world vrs
-    vrs' <- roTx validationsStore $ \tx -> validationsForVersion tx db world
-
-    HU.assertEqual "Not the same Validations" (Just vrs) vrs'
-
-
-shouldInsertAndGetAllBackFromRepositoryStore :: Storage s => IO (DB s) -> HU.Assertion
-shouldInsertAndGetAllBackFromRepositoryStore io = do  
+shouldSaveAndGetRsyncRepositories :: Storage s => IO (DB s) -> HU.Assertion
+shouldSaveAndGetRsyncRepositories io = do  
     db <- io
 
-    createdPPs <- generateRepositories
+    repositories <- (<>) <$> 
+            replicateM 100 (QC.generate arbitrary) <*>
+            rsyncReposWithCommonHosts 100
+    
+    rwTx db $ \tx -> DB.saveRsyncRepositories tx db repositories
 
-    storedPps1 <- roTx db $ \tx -> getPublicationPoints tx db
+    let urls = [ u | r <- repositories, RsyncU u <- [ getRpkiURL $ RsyncR r]]
+    repositories' <- roTx db $ \tx -> DB.getRsyncRepositories tx db urls
 
-    let changeSet1 = changeSet storedPps1 createdPPs
-
-    rwTx db $ \tx -> applyChangeSet tx db changeSet1
-    storedPps2 <- roTx db $ \tx -> getPublicationPoints tx db
-
-    HU.assertEqual "Not the same publication points" createdPPs storedPps2
-
-    rsyncPPs2 <- QC.generate (QC.sublistOf repositoriesURIs)    
-    rrdpMap2  <- rrdpSubMap createdPPs
-
-    let shrunkPPs = List.foldr mergeRsyncPP (PublicationPoints rrdpMap2 newRsyncTree mempty) rsyncPPs2
-
-    let changeSet2 = changeSet storedPps2 shrunkPPs
-
-    rwTx db $ \tx -> applyChangeSet tx db changeSet2
-    storedPps3 <- roTx db $ \tx -> getPublicationPoints tx db
-
-    HU.assertEqual "Not the same publication points after shrinking" shrunkPPs storedPps3
+    HU.assertEqual "Not the same set of rsync repositories" 
+        (Set.fromList repositories) 
+        (Set.fromList $ Map.elems repositories')
+    
 
 
-shouldGetAndSaveRepositories :: Storage s => IO (DB s) -> HU.Assertion
-shouldGetAndSaveRepositories io = do  
+shouldSaveMetaAndValidationAsCorrectSemigroup :: Storage s => IO (DB s) -> HU.Assertion
+shouldSaveMetaAndValidationAsCorrectSemigroup io = do
     db <- io
+    [rsync1] <- rsyncReposWithCommonHosts 1
 
-    pps1 <- generateRepositories
-    rwTx db $ \tx -> savePublicationPoints tx db pps1
-    pps1' <- roTx db $ \tx -> getPublicationPoints tx db       
+    testOneRepository db rsync1
 
-    HU.assertEqual "Not the same publication points first" pps1 pps1'
-    
-    rsyncPPs2 <- QC.generate (QC.sublistOf repositoriesURIs)    
-    rrdpMap2  <- rrdpSubMap pps1
+    -- update meta
+    Now now <- thisInstant    
+    testOneRepository db $ rsync1 & #meta . #status .~ FetchedAt now
+    testOneRepository db $ rsync1 & #meta . #status .~ FailedAt now
+    testOneRepository db $ rsync1 & #meta . #status .~ Pending
 
-    let pps2 = List.foldr mergeRsyncPP (PublicationPoints rrdpMap2 newRsyncTree mempty) rsyncPPs2
+    pure ()
+  where
+    testOneRepository db rsync = do
+        rwTx db $ \tx -> DB.saveRsyncRepositories tx db [rsync]
+        let RsyncU url = getRpkiURL $ RsyncR rsync
+        rs <- roTx db $ \tx -> DB.getRsyncRepositories tx db [url]
+        let Just r = Map.lookup url rs
+        HU.assertEqual "Same repository" r rsync
 
-    rwTx db $ \tx -> savePublicationPoints tx db pps2
-    pps2' <- roTx db $ \tx -> getPublicationPoints tx db       
 
-    HU.assertEqual "Not the same publication points second" pps2 pps2'
-    
+
+rsyncReposWithCommonHosts :: Int -> IO [RsyncRepository]
+rsyncReposWithCommonHosts n = do
+    replicateM n $ QC.generate $ do 
+        hostName  <- RsyncHostName <$> QC.elements [ "host1", "host2", "host3" ]        
+        let host = RsyncHost hostName Nothing
+        pathChunks <- do 
+            n <- QC.choose (1, 3)
+            replicateM n arbitrary                    
+        RsyncRepository (RsyncPublicationPoint $ RsyncURL host pathChunks) <$> arbitrary      
+
 
 generateRepositories :: IO PublicationPoints
 generateRepositories = do     
     rrdpMap :: RrdpMap <- QC.generate arbitrary        
-    let pps = PublicationPoints rrdpMap newRsyncTree mempty
+    let pps = PublicationPoints rrdpMap newRsyncForest
     pure $ List.foldr mergeRsyncPP pps repositoriesURIs    
     
 
@@ -326,6 +298,119 @@ rrdpSubMap pps = do
     pure $ RrdpMap $ Map.filterWithKey (\u _ -> u `elem` keys_) rrdpsM
 
 
+shouldSaveAndGetValidationVersion :: Storage s => IO (DB s) -> HU.Assertion
+shouldSaveAndGetValidationVersion io = do
+    db <- io
+
+    worldVersion <- newVersion 
+    let taNames = map TaName [ "ripe", "apnic", "afrinic" ]
+
+    perTaResults <- QC.generate $ do
+        taCount <- QC.choose (1, length taNames)
+        let selectedTAs = take taCount taNames
+        perTaMap <- QC.vectorOf taCount $ do
+            payloads <- arbitrary
+            validationState <- arbitrary
+            pure (payloads, validationState)
+        pure $ toPerTA $ zip selectedTAs perTaMap
+    
+    commonVS <- QC.generate arbitrary
+
+    rwTx db $ \tx -> 
+        DB.saveValidationVersion tx db worldVersion taNames perTaResults commonVS
+
+    storedValidations <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion
+    storedMetrics <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion
+
+    HU.assertEqual "Validations don't match" (fmap (\(_, vs) -> vs ^. typed) perTaResults) storedValidations
+    HU.assertEqual "Metrics don't match" (fmap (\(_, vs) -> vs ^. typed) perTaResults) storedMetrics
+
+
+shouldSaveAndGetValidationVersionFilledWithPastData :: Storage s => IO (DB s) -> HU.Assertion
+shouldSaveAndGetValidationVersionFilledWithPastData io = do
+    db <- io
+
+    worldVersion1 <- newVersion        
+    threadDelay 10_000
+    worldVersion2 <- newVersion    
+    threadDelay 10_000
+    worldVersion3 <- newVersion    
+
+    let ripe = TaName "ripe"
+    let apnic = TaName "apnic"
+    let afrinic = TaName "afrinic"
+    let taNames = [ ripe, apnic, afrinic ]
+
+    perTa1 <- QC.generate $ generatePerTa taNames
+    perTa2 <- QC.generate $ generatePerTa [ ripe ]
+    perTa3 <- QC.generate $ generatePerTa [ afrinic ]
+    
+    rwTx db $ \tx -> do 
+        commonVS <- QC.generate arbitrary
+        DB.saveValidationVersion tx db worldVersion1 taNames perTa1 commonVS
+
+    rwTx db $ \tx -> do 
+        commonVS <- QC.generate arbitrary
+        DB.saveValidationVersion tx db worldVersion2 taNames perTa2 commonVS        
+
+    rwTx db $ \tx -> do 
+        commonVS <- QC.generate arbitrary
+        DB.saveValidationVersion tx db worldVersion3 taNames perTa3 commonVS
+
+    v1 <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion1
+    m1 <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion1    
+
+    v2 <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion2
+    m2 <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion2
+
+    v3 <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion3
+    m3 <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion3
+
+    let extract (_, vs) = vs ^. typed
+
+    HU.assertEqual "1" (extract <$> perTa1 `getForTA` ripe) (v1 `getForTA` ripe)
+    HU.assertEqual "2" (extract <$> perTa1 `getForTA` apnic) (v1 `getForTA` apnic)
+    HU.assertEqual "3" (extract <$> perTa1 `getForTA` afrinic) (v1 `getForTA` afrinic)
+
+    HU.assertEqual "1" (extract <$> perTa2 `getForTA` ripe) (v2 `getForTA` ripe)
+    HU.assertEqual "2" (extract <$> perTa1 `getForTA` apnic) (v2 `getForTA` apnic)
+    HU.assertEqual "3" (extract <$> perTa1 `getForTA` afrinic) (v2 `getForTA` afrinic)
+
+    HU.assertEqual "1" (extract <$> perTa2 `getForTA` ripe) (v3 `getForTA` ripe)
+    HU.assertEqual "2" (extract <$> perTa1 `getForTA` apnic) (v3 `getForTA` apnic)
+    HU.assertEqual "3" (extract <$> perTa3 `getForTA` afrinic) (v3 `getForTA` afrinic)
+
+    HU.assertEqual "RIPE data in version 1 doesn't match original input" 
+        (extract <$> perTa1 `getForTA` ripe) (v1 `getForTA` ripe)
+    HU.assertEqual "APNIC data in version 1 doesn't match original input" 
+        (extract <$> perTa1 `getForTA` apnic) (v1 `getForTA` apnic)
+    HU.assertEqual "AFRINIC data in version 1 doesn't match original input" 
+        (extract <$> perTa1 `getForTA` afrinic) (v1 `getForTA` afrinic)
+
+    HU.assertEqual "RIPE data in version 2 doesn't match updated input" 
+        (extract <$> perTa2 `getForTA` ripe) (v2 `getForTA` ripe)
+    HU.assertEqual "APNIC data in version 2 doesn't match inherited data from version 1" 
+        (extract <$> perTa1 `getForTA` apnic) (v2 `getForTA` apnic)
+    HU.assertEqual "AFRINIC data in version 2 doesn't match inherited data from version 1" 
+        (extract <$> perTa1 `getForTA` afrinic) (v2 `getForTA` afrinic)
+
+    HU.assertEqual "RIPE data in version 3 doesn't match inherited data from version 2" 
+        (extract <$> perTa2 `getForTA` ripe) (v3 `getForTA` ripe)
+    HU.assertEqual "APNIC data in version 3 doesn't match inherited data from version 1" 
+        (extract <$> perTa1 `getForTA` apnic) (v3 `getForTA` apnic)
+    HU.assertEqual "AFRINIC data in version 3 doesn't match updated input" 
+        (extract <$> perTa3 `getForTA` afrinic) (v3 `getForTA` afrinic)
+
+
+generatePerTa :: (Arbitrary a, Arbitrary b) => [TaName] -> QC.Gen (PerTA (a, b))
+generatePerTa taNames = do        
+    perTaMap <- QC.vectorOf (length taNames) $ do
+        payloads <- arbitrary
+        validationState <- arbitrary
+        pure (payloads, validationState)
+    pure $ toPerTA $ zip taNames perTaMap
+
+
 shouldRollbackAppTx :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
 shouldRollbackAppTx io = do  
     ((_, env), _) <- io
@@ -333,15 +418,15 @@ shouldRollbackAppTx io = do
     let storage' = LmdbStorage env
     z :: SMap "test" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
 
-    void $ runValidatorT (newScopes "bla") $ rwAppTx storage' $ \tx -> do
+    void $ runValidatorT (newScopes "bla") $ DB.rwAppTx storage' $ \tx -> do
         liftIO $ M.put tx z 1 "aa"
         appError $ UnspecifiedE "Test" "Test problem"
 
-    void $ runValidatorT (newScopes "bla") $ rwAppTx storage' $ \tx ->
+    void $ runValidatorT (newScopes "bla") $ DB.rwAppTx storage' $ \tx ->
         liftIO $ M.put tx z 2 "bb"        
 
     let throwFromTx =
-            void $ runValidatorT (newScopes "bla") $ rwAppTx storage' $ \tx -> liftIO $ do
+            void $ runValidatorT (newScopes "bla") $ DB.rwAppTx storage' $ \tx -> liftIO $ do
                     M.put tx z 3 "cc"        
                     throwIO RatioZeroDenominator
 
@@ -350,7 +435,7 @@ shouldRollbackAppTx io = do
             (fromException (toException e)) 
             (Just RatioZeroDenominator)
 
-    void $ runValidatorT (newScopes "bla") $ roAppTx storage' $ \tx -> liftIO $ do         
+    void $ runValidatorT (newScopes "bla") $ DB.roAppTx storage' $ \tx -> liftIO $ do         
          v1 <- M.get tx z 1  
          HU.assertEqual "Must not be there" v1 Nothing
          v2 <- M.get tx z 2  
@@ -366,13 +451,13 @@ shouldPreserveStateInAppTx io = do
     let storage' = LmdbStorage env
     z :: SMap "test-state" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
 
-    let addedObject = updateMetric @RrdpMetric @_ (& #added %~ (+1))    
+    let addedObject = updateMetric @RrdpMetric @_ (#added %~ Map.unionWith (+) (Map.singleton (Just CER) 1))
 
     (_, ValidationState { validations = Validations validationMap, .. }) 
         <- runValidatorT (newScopes "root") $ 
             timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                 appWarn $ UnspecifiedE "Error0" "text 0"
-                void $ rwAppTx storage' $ \tx -> do                             
+                void $ DB.rwAppTx storage' $ \tx -> do                             
                     addedObject        
                     appWarn $ UnspecifiedE "Error1" "text 1"
                     inSubVScope "nested-1" $ 
@@ -384,12 +469,12 @@ shouldPreserveStateInAppTx io = do
                 addedObject
 
     HU.assertEqual "Root metric should count 2 objects" 
-        (Just $ mempty { added = 2, deleted = 0 })
+        (Just $ mempty { added = Map.fromList [(Just CER, Count 2)], deleted = Map.fromList [] })
         (stripTime <$> lookupMetric (newScope "root") (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Nested metric should count 1 object" 
         Nothing
-        (stripTime <$> lookupMetric (subScope "metric-nested-1" (newScope "root"))
+        (stripTime <$> lookupMetric (subScope TextFocus "metric-nested-1" (newScope "root"))
                             (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Root validations should have 1 warning"     
@@ -400,12 +485,12 @@ shouldPreserveStateInAppTx io = do
             VWarn (VWarning (UnspecifiedE "Error4" "text 4"))])
 
     HU.assertEqual "Nested validations should have 1 warning" 
-        (Map.lookup (subScope "nested-1" (newScope "root")) validationMap)
+        (Map.lookup (subScope TextFocus "nested-1" (newScope "root")) validationMap)
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
 
 
 stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> metric
-stripTime = (& #totalTimeMs .~ TimeMs 0)
+stripTime = #totalTimeMs .~ TimeMs 0
 
 generateSome :: Arbitrary a => IO [a]
 generateSome = replicateM 1000 $ QC.generate arbitrary      
@@ -414,7 +499,7 @@ withDB :: (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> TestTree) -> TestTree
 withDB = withResource (makeLmdbStuff createLmdb) releaseLmdb
   where
     createLmdb lmdbEnv = 
-        withLogger (LogConfig defaultsLogLevel MainLog) (\_ -> pure ()) $ \logger -> 
+        withLogger (makeLogConfig defaultsLogLevel MainLog) $ \logger -> 
             fst <$> Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
 
 
@@ -439,14 +524,14 @@ releaseLmdb ((dir, e), _) = do
 readObjectFromFile :: FilePath -> ValidatorT IO (RpkiURL, RpkiObject)
 readObjectFromFile path = do 
     bs <- liftIO $ BS.readFile path
-    let url = let Right u = parseRpkiURL ("rsync://host/" <> Text.pack path) in u
+    let Right url = parseRpkiURL $ "rsync://host/" <> Text.pack path
     o <- vHoist $ readObject url bs
     pure (url, o)
 
 replaceAKI :: AKI -> RpkiObject -> RpkiObject
 replaceAKI a = \case 
-    CerRO c  -> CerRO $ c & #aki .~ Just a
-    BgpRO c  -> BgpRO $ c & #aki .~ Just a    
+    CerRO c  -> CerRO $ c & #aki ?~ a
+    BgpRO c  -> BgpRO $ c & #aki ?~ a    
     CrlRO c  -> CrlRO $ c & #aki .~ a
     MftRO c  -> MftRO $ c & #cmsPayload %~ mapCms
     RoaRO c  -> RoaRO $ c & #cmsPayload %~ mapCms
@@ -457,3 +542,6 @@ replaceAKI a = \case
     where
         mapCms :: CMS a -> CMS a
         mapCms (CMS so) = CMS $ so & #soContent . #scCertificate . #aki .~ a
+
+newVersion :: MonadIO m => m WorldVersion
+newVersion = instantToVersion . unNow <$> thisInstant     

@@ -7,13 +7,12 @@ module RPKI.Util where
 
 import           Control.Exception
 import           Control.Lens
-import           Numeric.Natural
+import           Control.Monad.IO.Class
 
 import qualified Crypto.Hash.SHA256          as S256
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Base16      as Hex
-import qualified Data.ByteString.Base16.Lazy as HexLazy
 import qualified Data.ByteString.Char8       as C
 import qualified Data.ByteString.Short       as BSS
 import qualified Data.ByteString.Base64      as B64
@@ -30,10 +29,10 @@ import           Data.Bifunctor
 import           Data.Word
 import           RPKI.Domain
 import           RPKI.AppTypes
--- import           RPKI.Reporting
 
-import           Control.Monad.IO.Class
 import           Data.IORef.Lifted
+
+import           Numeric.Natural
 
 import qualified Text.URI as MURI
 import           Text.URI.Lens
@@ -41,48 +40,50 @@ import           Text.URI.Lens
 
 sha256 :: LBS.ByteString -> Hash
 sha256 = mkHash . S256.hashlazy
+{-# INLINE sha256 #-}
 
 sha256s :: BS.ByteString -> Hash
 sha256s = mkHash . S256.hash
+{-# INLINE sha256s #-}
 
 mkHash :: BS.ByteString -> Hash
 mkHash = Hash . BSS.toShort
+{-# INLINE mkHash #-}
 
 unhex :: BS.ByteString -> Maybe BS.ByteString
 unhex hexed = either (const Nothing) Just $ Hex.decode hexed    
 
 hex :: BS.ByteString -> BS.ByteString
 hex = Hex.encode    
+{-# INLINE hex #-}
 
-hexL :: LBS.ByteString -> LBS.ByteString
-hexL = HexLazy.encode    
-
-class ConvertibleAsSomethigString s1 s2 where
+class ConvertibleAsSomethingString s1 s2 where
     convert :: s1 -> s2
 
-instance SC.ConvertibleStrings s1 s2 => ConvertibleAsSomethigString s1 s2 where
+instance SC.ConvertibleStrings s1 s2 => ConvertibleAsSomethingString s1 s2 where
     convert = SC.cs
 
-instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAsSomethigString URI s where
+instance {-# OVERLAPPING #-} ConvertibleAsSomethingString Text s => ConvertibleAsSomethingString URI s where
     convert (URI u) = convert u
 
-instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAsSomethigString RsyncURL s where
+instance {-# OVERLAPPING #-} ConvertibleAsSomethingString Text s => ConvertibleAsSomethingString RsyncURL s where
     convert = convert . getURL
 
-instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAsSomethigString RrdpURL s where
+instance {-# OVERLAPPING #-} ConvertibleAsSomethingString Text s => ConvertibleAsSomethingString RrdpURL s where
     convert (RrdpURL u) = convert u
 
-instance {-# OVERLAPPING #-} ConvertibleAsSomethigString Text s => ConvertibleAsSomethigString RpkiURL s where
+instance {-# OVERLAPPING #-} ConvertibleAsSomethingString Text s => ConvertibleAsSomethingString RpkiURL s where
     convert (RsyncU u) = convert u
     convert (RrdpU u) = convert u
 
-normalizeUri :: Text.Text -> Text.Text
+normalizeUri :: Text -> Text
 normalizeUri = Text.map (\c -> if isOkForAFile c then c else '_')
   where
-    isOkForAFile c = isAlpha c || isDigit c || c `elem` ("-._" :: String)
+    isOkForAFile c = isValidFileNameCharacter c || c == '.'
 
-trim :: BS.ByteString -> BS.ByteString
-trim = C.dropWhile isSpace . fst . C.breakEnd (not . isSpace)
+{-# INLINE isValidFileNameCharacter #-}
+isValidFileNameCharacter :: Char -> Bool
+isValidFileNameCharacter c = isAsciiLower c || isAsciiUpper c || isDigit c || c == '-' || c == '_'
 
 trimmed :: Show a => a -> Text
 trimmed = Text.strip . Text.pack . show
@@ -90,19 +91,19 @@ trimmed = Text.strip . Text.pack . show
 removeSpaces :: BS.ByteString -> BS.ByteString
 removeSpaces = C.filter (not . isSpace)
 
+{-# INLINE isSpace_ #-}
 isSpace_ :: Word8 -> Bool
 isSpace_ = isSpace . chr . fromEnum
 
-fmtEx :: SomeException -> Text.Text
+fmtEx :: SomeException -> Text
 fmtEx = Text.pack . show
 
-fmtGen :: Show a => a -> Text.Text
+fmtGen :: Show a => a -> Text
 fmtGen = Text.pack . show
 
 toNatural :: Int -> Maybe Natural 
 toNatural i | i > 0     = Just (fromIntegral i :: Natural)
             | otherwise = Nothing
-
 
 -- Some URL utilities 
 isRsyncURI, isRrdpURI, isHttpsURI, isHttpURI :: URI -> Bool
@@ -111,9 +112,10 @@ isHttpsURI (URI u) = "https://" `Text.isPrefixOf` u
 isHttpURI (URI u)  = "http://" `Text.isPrefixOf` u
 isRrdpURI u = isHttpURI u || isHttpsURI u
 
-isParentOf :: WithURL u => u -> u -> Bool
-isParentOf (getURL -> URI parent) (getURL -> URI child) = 
-    parent `Text.isPrefixOf` child
+{-# INLINE isRsyncURI #-}
+{-# INLINE isHttpsURI #-}
+{-# INLINE isHttpURI #-}
+{-# INLINE isRrdpURI #-}
 
 parseRpkiURL :: Text -> Either Text RpkiURL
 parseRpkiURL t
@@ -147,10 +149,7 @@ getHostname t =
                 Right a -> Just $ a ^. authHost . unRText
 
 increment :: (MonadIO m, Num a) => IORef a -> m ()
-increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())        
-
-decrement :: (MonadIO m, Num a) => IORef a -> m ()
-decrement counter = liftIO $ atomicModifyIORef' counter $ \c -> (c - 1, ())        
+increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())            
 
 ifJustM :: Monad m => m (Maybe a) -> (a -> m ()) -> m ()
 ifJustM a f = maybe (pure ()) f =<< a

@@ -4,6 +4,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE QuasiQuotes                #-}
 {-# LANGUAGE TemplateHaskell            #-}
+{-# LANGUAGE InstanceSigs #-}
 
 module RPKI.Orphans.Json where
 
@@ -63,14 +64,13 @@ import           RPKI.Time
 import qualified RPKI.Util                   as U
 
 instance ToJSON ASN where
-    toJSON (ASN as) = toJSON $ "AS" <> show as
+    toJSON = toJSON . show
 
 instance ToJSON IpPrefix where
-    toJSON (Ipv4P (Ipv4Prefix p)) = toJSON $ show p
-    toJSON (Ipv6P (Ipv6Prefix p)) = toJSON $ show p
+    toJSON = toJSON . show
 
 instance ToJSON WorldVersion where
-    toJSON (WorldVersion v) = toJSON $ show $ toInteger v
+    toJSON (WorldVersion v) = toJSON $ show v
 
 instance (ToJSON a, ToJSON b) => ToJSON (T2 a b) where
     toJSON (T2 a b) = toJSON (a, b)
@@ -182,11 +182,20 @@ instance ToJSON TimeMs where
 instance ToJSON CPUTime where 
     toJSON (CPUTime s) = toJSON s
 
+instance ToJSON AggregatedCPUTime where 
+    toJSON (AggregatedCPUTime (CPUTime s)) = toJSON s
+
+instance ToJSON LatestCPUTime where 
+    toJSON (LatestCPUTime (CPUTime s)) = toJSON s
+
 instance ToJSON MaxMemory where 
     toJSON (MaxMemory s) = toJSON s
 
 instance ToJSON HttpStatus where
     toJSON (HttpStatus s) = toJSON s
+
+instance ToJSON RrdpSerial where
+    toJSON (RrdpSerial s) = toJSON s
     
 $(deriveToJSON defaultOptions ''RrdpSource)
 
@@ -196,9 +205,17 @@ instance ToJSONKey TaName where
 instance ToJSONKey RpkiURL where
     toJSONKey = toJSONKeyText $ unURI . getURL
 
+instance ToJSON RpkiObjectType
+
+instance ToJSONKey (Maybe RpkiObjectType) where
+    toJSONKey = toJSONKeyText U.fmtGen
+
+instance ToJSON ValidatedBy where    
+    toJSON (ValidatedBy v) = toJSON v
+
 $(deriveToJSON defaultOptions ''ValidationMetric)
 
-instance ToJSON a => ToJSON (GroupedValidationMetric a)
+instance ToJSON a => ToJSON (GroupedMetric a)
 
 $(deriveToJSON defaultOptions ''FetchFreshness)
 $(deriveToJSON defaultOptions ''RsyncMetric)
@@ -212,7 +229,7 @@ $(deriveToJSON defaultOptions ''DBFileStats)
 $(deriveToJSON defaultOptions ''StorageStats)
 $(deriveToJSON defaultOptions ''TotalDBStats)
 $(deriveToJSON defaultOptions ''VrpCounts)
-$(deriveToJSON defaultOptions ''RawMetric)
+$(deriveToJSON defaultOptions ''Metrics)
     
 
 $(deriveToJSON defaultOptions ''PrefixLength)
@@ -295,7 +312,7 @@ instance ToJSON Attribute where
             ]            
         SigningTime dt _ -> Json.object [
                 "type" .= ("SigningTime" :: Text),
-                "value" .= (instantDateFormat $ Instant dt)                
+                "value" .= instantDateFormat (Instant dt)                
             ]
         BinarySigningTime bst -> Json.object [
                 "type" .= ("BinarySigningTime" :: Text),
@@ -338,9 +355,6 @@ instance ToJSON a => ToJSON (TypedCert a t)
 
 $(deriveToJSON defaultOptions ''EECerObject)
 
-instance ToJSON a => ToJSON (X509.SignedExact a)    
-instance ToJSON a => ToJSON (X509.Signed a) 
-
 instance ToJSON Locations where
     toJSON = toJSON . locationsToList
 instance ToJSON a => ToJSON (Located a)
@@ -355,7 +369,6 @@ instance ToJSON SPKI
 instance ToJSON SessionId where
     toJSON (SessionId s) = toJSON s
 
-instance ToJSON RrdpSerial
 instance ToJSON RtrState
 instance ToJSON BGPSecPayload
 instance ToJSON SerialNumber
@@ -406,8 +419,6 @@ instance ToJSON Parallelism
 instance ToJSON ManifestProcessing
 instance ToJSON ValidationRFC
 instance ToJSON ValidationAlgorithm
-instance ToJSON FetchTimingCalculation
-instance ToJSON FetchMethod
 instance ToJSON ProverRunMode
 instance ToJSON TAL
 instance ToJSON HttpApiConfig
@@ -417,20 +428,3 @@ instance ToJSON SystemConfig
 instance ToJSON RrdpConf
 instance ToJSON RsyncConf    
 instance ToJSON Config
-
-instance ToJSON VersionKind
-instance ToJSON VIssue
-instance ToJSON VWarning
-instance ToJSON AppError
-instance ToJSON InitError
-instance ToJSON InternalError
-instance ToJSON SlurmError
-instance ToJSON a => ToJSON (ParseError a)
-instance ToJSON RpkiObjectType
-instance ToJSON TACertValidities
-instance ToJSON ValidationError
-instance ToJSON ObjectIdentity
-instance ToJSON StorageError
-instance ToJSON RsyncError
-instance ToJSON RrdpError
-instance ToJSON TALError

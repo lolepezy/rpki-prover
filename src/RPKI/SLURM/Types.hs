@@ -9,18 +9,13 @@
 
 module RPKI.SLURM.Types where
 
-import           Control.DeepSeq
 import           Data.Text (Text)
 import           Data.These
 import           Data.Aeson as Json
 import           Data.Aeson.Types
 import           Data.Swagger
 
-#if MIN_VERSION_aeson(2,0,0)
 import qualified Data.Aeson.KeyMap as KM
-#else
-import qualified Data.HashMap.Strict as KM
-#endif
 
 import           Data.String.Interpolate.IsString
 
@@ -35,18 +30,9 @@ import           RPKI.Resources.Types
 import           RPKI.Orphans.Swagger
 import           RPKI.Store.Base.Serialisation
 
-
--- Older aeson has key of type Text
-#if MIN_VERSION_aeson(2,0,0)
-#else
-type Key = Text
-#endif
-
--- NOTE: All the data here is strict
-
 newtype SlurmVersion = SlurmVersion Int
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
     deriving Semigroup via Max SlurmVersion    
 
 instance Monoid SlurmVersion where
@@ -54,7 +40,7 @@ instance Monoid SlurmVersion where
 
 newtype NumericASN = NumericASN Word32
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data Slurm = Slurm {
         slurmVersion :: SlurmVersion,
@@ -62,7 +48,7 @@ data Slurm = Slurm {
         locallyAddedAssertions :: LocallyAddedAssertions
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup Slurm
     deriving Monoid    via GenericMonoid Slurm
 
@@ -71,7 +57,7 @@ data ValidationOutputFilters = ValidationOutputFilters {
         bgpsecFilters :: [BgpsecFilter]
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup ValidationOutputFilters
     deriving Monoid    via GenericMonoid ValidationOutputFilters    
 
@@ -80,7 +66,7 @@ data LocallyAddedAssertions = LocallyAddedAssertions {
        bgpsecAssertions :: [BgpsecAssertion]
     }    
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup LocallyAddedAssertions
     deriving Monoid    via GenericMonoid LocallyAddedAssertions    
 
@@ -89,14 +75,14 @@ data PrefixFilter = PrefixFilter {
         comment      :: Maybe Text      
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)    
+    deriving anyclass (TheBinary)    
 
 data BgpsecFilter = BgpsecFilter {
         asnAndSKI :: These NumericASN DecodedBase64,  
         comment   :: Maybe Text      
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)    
+    deriving anyclass (TheBinary)    
 
 data PrefixAssertion = PrefixAssertion {
         asn    :: NumericASN,
@@ -105,7 +91,7 @@ data PrefixAssertion = PrefixAssertion {
         comment :: Maybe Text      
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData) 
+    deriving anyclass (TheBinary) 
 
 data BgpsecAssertion = BgpsecAssertion {
         asn :: NumericASN,
@@ -114,7 +100,7 @@ data BgpsecAssertion = BgpsecAssertion {
         comment :: Maybe Text      
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)       
+    deriving anyclass (TheBinary)       
 
 instance FromJSON Slurm
 instance FromJSON SlurmVersion

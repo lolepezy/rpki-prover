@@ -88,32 +88,32 @@ parseCrl bs = do
             extensions      <- onNextContainer (Container Context 0) $ 
                                     onNextContainer Sequence $ getMany getObject             
             pure (thisUpdate, nextUpdate, extensions, revoked)
-            where 
-                getVersion (IntVal v) = pure $! fromIntegral v
-                getVersion _          = throwParseError "Unexpected type for version"
+          where 
+            getVersion (IntVal v) = pure $! fromIntegral v
+            getVersion _          = throwParseError "Unexpected type for version"
 
-                getThisUpdate (ASN1Time _ t _) = pure t
-                getThisUpdate t                = throwParseError $ "Bad this update format, expecting time: " <> show t
+            getThisUpdate (ASN1Time _ t _) = pure t
+            getThisUpdate t                = throwParseError $ "Bad this update format, expecting time: " <> show t
 
-                getNextUpdate = getNextMaybe $ \case 
-                    (ASN1Time _ tnext _) -> Just tnext
-                    _                    -> Nothing
+            getNextUpdate = getNextMaybe $ \case 
+                (ASN1Time _ tnext _) -> Just tnext
+                _                    -> Nothing
 
-                -- TODO This is heavy and eats a lot of heap for long revocation lists
-                getRevokedSerials = 
-                    maybe Set.empty Set.fromList <$> 
-                        onNextContainerMaybe Sequence (getMany getCrlSerial)
-                    where
-                        getCrlSerial = onNextContainer Sequence $ 
-                            replicateM 2 getNext >>= \case 
-                                [IntVal serial', _] -> 
-                                    case makeSerial serial' of 
-                                        Left e  -> throwParseError e
-                                        Right s -> pure s
-                                s                  -> throwParseError $ "That's not a serial: " <> show s
-                                
-                                
+            -- TODO This is heavy and eats a lot of heap for long revocation lists
+            getRevokedSerials = 
+                maybe Set.empty Set.fromList <$> 
+                    onNextContainerMaybe Sequence (getMany getCrlSerial)
+                where
+                    getCrlSerial = onNextContainer Sequence $ 
+                        replicateM 2 getNext >>= \case 
+                            [IntVal serial', _] -> 
+                                case makeSerial serial' of 
+                                    Left e  -> throwParseError e
+                                    Right s -> pure s
+                            s                  -> throwParseError $ "That's not a serial: " <> show s
                             
+                            
+                        
 
 
                     

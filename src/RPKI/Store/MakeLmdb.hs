@@ -25,7 +25,7 @@ import           RPKI.Parallel
 import           RPKI.Logging
 import           RPKI.Time
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database
+import           RPKI.Store.Database    
 import           RPKI.Store.Sequence
 
 
@@ -75,9 +75,10 @@ createDatabase env logger checkAction = do
 
     doCreateDb = do 
         sequences        <- createMap
+        let keys = Sequence "object-key" sequences
         taStore          <- TAStore <$> createMap        
         validationsStore <- ValidationsStore <$> createMap
-        vrpStore         <- VRPStore <$> createMap
+        roaStore         <- RoaStore <$> createMap
         splStore         <- SplStore <$> createMap
         aspaStore        <- AspaStore <$> createMap    
         gbrStore         <- GbrStore <$> createMap 
@@ -88,12 +89,11 @@ createDatabase env logger checkAction = do
         jobStore         <- JobStore <$> createMap        
         metadataStore    <- MetadataStore <$> createMap          
         repositoryStore  <- createRepositoryStore
-        objectStore      <- createObjectStore sequences
+        objectStore      <- createObjectStore
         pure DB {..}
       where
 
-        createObjectStore seqMap = do 
-            let keys = Sequence "object-key" seqMap
+        createObjectStore = do             
             objects          <- createMap
             mftByAKI         <- createMultiMap
             objectMetas      <- createMap        
@@ -109,7 +109,7 @@ createDatabase env logger checkAction = do
             pure RpkiObjectStore {..}
             
         createRepositoryStore = 
-            RepositoryStore <$> createMap <*> createMap <*> createMap
+            RepositoryStore <$> createMap <*> createMap <*> createMap <*> createMap
         
         lmdb = LmdbStorage env
 

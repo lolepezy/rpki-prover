@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP             #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=18 #-}
@@ -51,17 +50,23 @@ import           Crypto.PubKey.ECC.Types
 import qualified Crypto.PubKey.Ed25519                as Ed25519
 import qualified Crypto.PubKey.Ed448                  as Ed448
 import qualified Crypto.PubKey.RSA                    as RSA
+
 import           Data.Map        (Map)
 import qualified Data.Map.Strict as Map
 
 import System.Posix.Types
 
 import           Data.Map.Monoidal.Strict
+import           RPKI.AppTypes
 import           RPKI.Logging
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
 import           RPKI.Util       (convert, mkHash)
 
+
+instance Arbitrary WorldVersion where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary URI where
     arbitrary = urlByProtocol =<< elements ["rsync", "https"]          
@@ -190,32 +195,10 @@ instance Arbitrary LogMessage where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
-instance (Arg (X509.SignedExact a) (X509.Signed a), 
-          Arg (X509.Signed a) a, 
-          Arbitrary a) => Arbitrary (X509.SignedExact a) where
-#else
-instance Arbitrary a => Arbitrary (X509.SignedExact a) where    
-#endif
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
-#if MIN_VERSION_generic_arbitrary(1,0,0)
-instance (Arg (X509.Signed a) a, Arbitrary a) => Arbitrary (X509.Signed a) where
-#else
-instance Arbitrary a => Arbitrary (X509.Signed a) where    
-#endif    
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
 instance Arbitrary SignatureALG where    
     arbitrary = pure $ SignatureALG HashSHA256 PubKeyALG_RSA
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (NESet.NESet a) a, Arbitrary a, Ord a) => Arbitrary (NESet.NESet a) where
-#else
-instance (Arbitrary a, Ord a) => Arbitrary (NESet.NESet a) where
-#endif    
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -279,25 +262,17 @@ instance Arbitrary ASN where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (CMS a) (SignedObject a), 
           Arg (SignedObject a) a,           
           Arg (EncapsulatedContentInfo a) a, 
           Arbitrary a) => Arbitrary (CMS a) where
-#else
-instance (Arbitrary a) => Arbitrary (CMS a) where    
-#endif            
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (CMSBasedObject a) a, 
           Arg (SignedObject a) a, 
           Arg (EncapsulatedContentInfo a) a, 
           Arbitrary a) => Arbitrary (CMSBasedObject a) where
-#else
-instance (Arbitrary a) => Arbitrary (CMSBasedObject a) where    
-#endif            
     arbitrary = genericArbitrary
     shrink = genericShrink    
 
@@ -313,11 +288,7 @@ instance Arbitrary RpkiObject where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (Located a) a, Arbitrary a) => Arbitrary (Located a) where
-#else
-instance Arbitrary a => Arbitrary (Located a) where
-#endif      
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -345,27 +316,15 @@ instance Arbitrary RawResourceCertificate where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (TypedCert r 'CACert) r, Arbitrary r) => Arbitrary (TypedCert r 'CACert) where
-#else
-instance Arbitrary r => Arbitrary (TypedCert r 'CACert) where
-#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (TypedCert r 'EECert) r, Arbitrary r) => Arbitrary (TypedCert r 'EECert) where
-#else
-instance Arbitrary r => Arbitrary (TypedCert r 'EECert) where
-#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (TypedCert r 'BGPCert) r, Arbitrary r) => Arbitrary (TypedCert r 'BGPCert) where
-#else
-instance Arbitrary r => Arbitrary (TypedCert r 'BGPCert) where
-#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -390,11 +349,7 @@ instance Arbitrary AsResource where
             e <- suchThat arbitrary (>s)
             pure $ ASRange (ASN s) (ASN e)
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (RSet a) a, Arbitrary a) => Arbitrary (RSet a) where
-#else
-instance Arbitrary a => Arbitrary (RSet a) where
-#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -410,31 +365,19 @@ instance Arbitrary ContentType where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (EncapsulatedContentInfo a) a, Arbitrary a) => Arbitrary (EncapsulatedContentInfo a) where
-#else
-instance Arbitrary a => Arbitrary (EncapsulatedContentInfo a) where
-#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (SignedObject a) (SignedData a),
           Arg (EncapsulatedContentInfo a) a, 
           Arbitrary a) => Arbitrary (SignedObject a) where
-#else
-instance Arbitrary a => Arbitrary (SignedObject a) where
-#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (SignedData a) (EncapsulatedContentInfo a), 
           Arg (EncapsulatedContentInfo a) a, 
           Arbitrary a) => Arbitrary (SignedData a) where
-#else
-instance Arbitrary a => Arbitrary (SignedData a) where
-#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -490,6 +433,10 @@ instance Arbitrary RrdpIntegrity where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary RrdpEnforcement where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary RrdpMeta where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -506,15 +453,11 @@ instance Arbitrary ETag where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary FetchType where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
 instance Arbitrary FetchStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RsyncTree where
+instance Arbitrary RsyncForest where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -628,7 +571,7 @@ instance Arbitrary ValidationState where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RawMetric where
+instance Arbitrary Metrics where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -648,8 +591,12 @@ instance Arbitrary ValidationMetric where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary ValidatedBy where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary TaName where
-    arbitrary = TaName <$> arbitrary
+    arbitrary = TaName <$> elements [ "apnic", "arin", "ripe", "lacnic", "afrinic" ]
     shrink = genericShrink
 
 instance Arbitrary RpkiObjectType where
@@ -693,23 +640,29 @@ instance Arbitrary HttpStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (T2 a b) a, Arg (T2 a b) b, 
          Arbitrary a, Arbitrary b) => Arbitrary (T2 a b) where
-#else
-instance (Arbitrary a, Arbitrary b) => Arbitrary (T2 a b) where
-#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-#if MIN_VERSION_generic_arbitrary(1,0,0)
 instance (Arg (T3 a b c) a, Arg (T3 a b c) b, Arg (T3 a b c) c, 
          Arbitrary a, Arbitrary b, Arbitrary c) => Arbitrary (T3 a b c) where
-#else
-instance (Arbitrary a, Arbitrary b, Arbitrary c) => Arbitrary (T3 a b c) where
-#endif
     arbitrary = genericArbitrary
     shrink = genericShrink
+
+-- Domain
+instance Arbitrary Payloads where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary Roas where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary SplN where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 
 -- IPs
 
@@ -800,10 +753,6 @@ instance Arbitrary ASN1ConstructionType where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary SerializedPoint where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
 instance Arbitrary Crypto.PubKey.ECC.Types.CurveName where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -846,24 +795,8 @@ instance Arbitrary ASN1 where
     
 instance Arbitrary PubKey where
     arbitrary = PubKeyRSA <$> arbitrary
-
-instance Arbitrary PubKeyEC where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
   
-instance Arbitrary PubKeyALG where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-  
-instance Arbitrary ExtensionRaw where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-  
-instance Arbitrary HashALG where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-  
-  
+   
 instance Arbitrary RSA.PublicKey where
     arbitrary = do
         bytes <- elements [64,128,256]
@@ -895,9 +828,6 @@ instance Arbitrary Ed448.PublicKey where
 instance Arbitrary DSA.PrivateKey where
     arbitrary = DSA.PrivateKey <$> arbitrary <*> arbitrary
 
-instance Arbitrary X25519.SecretKey where
-    arbitrary = throwCryptoError . X25519.secretKey <$> arbitraryBS 32 32
-
 instance Arbitrary X448.SecretKey where
     arbitrary = throwCryptoError . X448.secretKey <$> arbitraryBS 56 56
 
@@ -913,10 +843,6 @@ instance Arbitrary ASN1StringEncoding where
 
 instance Arbitrary ASN1CharacterString where
     arbitrary = ASN1CharacterString <$> arbitrary <*> arbitraryBS 2 36
-
-instance Arbitrary DistinguishedName where
-    arbitrary = DistinguishedName <$> (choose (1,5) >>= \l -> replicateM l arbitraryDE)
-        where arbitraryDE = (,) <$> arbitrary <*> arbitrary
 
 instance Arbitrary DateTime where
     arbitrary = timeConvert <$> (arbitrary :: Gen Elapsed)
@@ -943,6 +869,7 @@ instance Arbitrary ExtKeyUsagePurpose where
                           , KeyUsagePurpose_EmailProtection
                           , KeyUsagePurpose_TimeStamping
                           , KeyUsagePurpose_OCSPSigning ]
+
 instance Arbitrary ExtExtendedKeyUsage where
     arbitrary = ExtExtendedKeyUsage . List.nub <$> listOf1 arbitrary
 
@@ -968,5 +895,42 @@ instance Arbitrary X509.CRL where
                     <*> arbitrary
                     <*> arbitrary
 
+instance Arbitrary RSA.PrivateKey where
+    arbitrary =
+        RSA.PrivateKey
+            <$> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+            <*> arbitrary
+
+instance Arbitrary X25519.SecretKey where
+    arbitrary = throwCryptoError . X25519.secretKey <$> arbitraryBS 32 32
+
+instance Arbitrary PrivKey where
+    arbitrary =
+        oneof
+            [ PrivKeyRSA <$> arbitrary
+            , PrivKeyDSA <$> arbitrary
+            , -- , PrivKeyECDSA ECDSA_Hash_SHA384 <$> (B.pack <$> replicateM 384 arbitrary)
+              PrivKeyX25519 <$> arbitrary
+            , PrivKeyX448 <$> arbitrary
+            , PrivKeyEd25519 <$> arbitrary
+            , PrivKeyEd448 <$> arbitrary
+            ]
+
+instance Arbitrary HashALG where
+    arbitrary = pure HashSHA256
+
+instance Arbitrary PubKeyALG where
+    arbitrary = pure PubKeyALG_RSA
+
 arbitraryBS :: Int -> Int -> Gen BS.ByteString
-arbitraryBS r1 r2 = choose (r1,r2) >>= \l -> BS.pack <$> replicateM l arbitrary
+arbitraryBS r1 r2 = choose (r1, r2) >>= \l -> (BS.pack <$> replicateM l arbitrary)
+
+instance Arbitrary DistinguishedName where
+    arbitrary = DistinguishedName <$> (choose (1, 5) >>= \l -> replicateM l arbitraryDE)
+      where
+        arbitraryDE = (,) <$> arbitrary <*> arbitrary

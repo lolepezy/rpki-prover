@@ -9,6 +9,7 @@ import Control.Monad
 import Data.Bits
 
 import qualified Data.ByteString as BS  
+import           Data.Text   (Text)
 import qualified Data.Text as Text  
 import Data.Text.Encoding (decodeUtf8')
 
@@ -97,7 +98,7 @@ allowedCriticalOIDs = [
         id_pe_autonomousSysIds 
     ]
 
-parseErr :: Text.Text -> AppError
+parseErr :: Text -> AppError
 parseErr = ParseE . ParseError
 
 mapParseErr :: Either String a -> PureValidatorT a       
@@ -239,7 +240,7 @@ getRepositoryUri c = toMaybe . extractURI =<< getSiaValue c id_ad_rpki_repositor
 getManifestUri :: Certificate -> Maybe URI
 getManifestUri c = toMaybe . extractURI =<< getSiaValue c id_ad_rpkiManifest
 
-extractURI :: BS.ByteString -> Either Text.Text URI
+extractURI :: BS.ByteString -> Either Text URI
 extractURI u =  fmap URI $ first fmtGen $ decodeUtf8' u
 
 getCrlDistributionPoint :: Certificate -> Maybe URI
@@ -260,7 +261,7 @@ extractCrlDistributionPoint crlDP = do
                             _   -> 
                                 pure Nothing
 
-certificatePoliciesToText :: BS.ByteString -> Text.Text
+certificatePoliciesToText :: BS.ByteString -> Text
 certificatePoliciesToText bs =
     either fmtGen fmtGen $ decodeASN1' BER bs
 

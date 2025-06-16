@@ -14,10 +14,10 @@ import           Control.Lens                     ((^.))
 import           Control.Monad
 
 import qualified Data.List                        as List
-import           Data.List.NonEmpty               (NonEmpty(..))
 import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set.NonEmpty                as NESet
 import           Data.String.Interpolate.IsString
+import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Text.Encoding               (encodeUtf8)
 import qualified Data.ByteString                  as BS
@@ -38,7 +38,7 @@ import           RPKI.Store.Base.Serialisation
 -- | (I couldn't find any formal definiteion of the "RIPE format")
 -- | 
 data TAL = PropertiesTAL {
-        caName              :: Maybe Text.Text,
+        caName              :: Maybe Text,
         certificateLocation :: Locations,
         publicKeyInfo       :: EncodedBase64,
         prefetchUris        :: [RpkiURL],
@@ -63,20 +63,15 @@ getTaCertURL :: TAL -> RpkiURL
 getTaCertURL PropertiesTAL {..} = pickLocation certificateLocation
 getTaCertURL RFC_TAL {..}       = pickLocation certificateLocations
 
-newLocation :: Text.Text -> NonEmpty RpkiURL
-newLocation t =  RrdpU (RrdpURL $ URI t) :| []
-
 -- | Parse TAL object from raw text
-parseTAL :: Text.Text -> Text.Text -> Either TALError TAL
-parseTAL bs taName = 
-    case validTaName taName of 
-        Left e -> Left e
-        Right taName' -> 
-            case (parseAsProperties taName', parseRFC taName') of
-                (Right t, _)       -> Right t
-                (Left _,  Right t) -> Right t
-                (Left (TALError e1), Left (TALError e2)) -> 
-                    Left $ TALError $ e1 <> " | " <> e2    
+parseTAL :: Text -> Text -> Either TALError TAL
+parseTAL bs taName = do 
+    taName' <- validTaName taName    
+    case (parseAsProperties taName', parseRFC taName') of
+        (Right t, _)       -> Right t
+        (Left _,  Right t) -> Right t
+        (Left (TALError e1), Left (TALError e2)) -> 
+            Left $ TALError $ e1 <> " | " <> e2    
     where
         parseAsProperties taName' = 
             case Text.lines bs of 
@@ -94,10 +89,7 @@ parseTAL bs taName =
                         getPublicKeyInfo properties <*>
                         getPrefetchUris properties <*>     
                         pure taName'
-            where 
-                -- Lines that are not comments are the ones not startig with '#'
-                nonComments = List.filter $ not . ("#" `Text.isPrefixOf`) . Text.stripStart 
-
+            where                 
                 getCaName ps              = Right $ lookup "ca.name" ps                
                 getPublicKeyInfo       ps = EncodedBase64 . convert <$> getMandatory "public.key.info" ps
                 getPrefetchUris ps        = first TALError $ 
@@ -114,7 +106,7 @@ parseTAL bs taName =
                                 Nothing    -> Left $ TALError [i|Empty list of TA certificate URLs in #{propertyName}|]
                                 Just uris' -> bimap TALError (Locations . NESet.fromList) $ mapM parseRpkiURL uris'
                     where
-                        propertyName = "certificate.location" :: Text.Text
+                        propertyName = "certificate.location" :: Text
 
                 getMandatory name ps =
                     case lookup name ps of
@@ -122,26 +114,27 @@ parseTAL bs taName =
                         Just cl -> Right cl
 
         parseRFC taName' =      
-            case List.span looksLikeUri $ Text.lines bs of        
+            case List.span looksLikeUri $ nonComments $ Text.lines bs of        
                 (_, [])        -> Left $ TALError "Empty public key info"
                 (uris, base64) ->
                     case NonEmpty.nonEmpty uris of
                         Nothing    -> Left $ TALError "Empty list of URIs"
                         Just uris' -> do 
-                            locations <- first TALError 
-                                            $ mapM parseRpkiURL 
-                                            $ NonEmpty.map Text.strip uris'
+                            locations <- first TALError $ mapM (parseRpkiURL . Text.strip) uris'
                             pure $ RFC_TAL {
                                 certificateLocations = Locations $ NESet.fromList locations,
                                 publicKeyInfo = EncodedBase64 $ convert $ 
                                     Text.concat $ filter (not . Text.null) $ map Text.strip base64,
                                 taName = taName'
                             }
-            where 
+            where                 
                 looksLikeUri s = any (`Text.isPrefixOf` s) ["rsync://", "http://", "https://"]
 
+        -- Lines that are not comments are the ones not startig with '#'
+        nonComments = List.filter $ not . ("#" `Text.isPrefixOf`) . Text.stripStart 
 
-validTaName :: Text.Text -> Either TALError TaName
+
+validTaName :: Text -> Either TALError TaName
 validTaName taName = 
     if BS.length (encodeUtf8 taName) > 512
         then 

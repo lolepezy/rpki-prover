@@ -4,7 +4,7 @@ module RPKI.Store.Base.Serialisation where
 import Data.Bifunctor
 import Data.Store
 
-import qualified  Data.Text as Text
+import qualified Data.Text                        as Text
 
 import qualified Data.ByteString as BS
 

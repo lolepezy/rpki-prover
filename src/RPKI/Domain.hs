@@ -1,5 +1,6 @@
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DeriveTraversable          #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings          #-}
@@ -21,6 +22,7 @@ import           Data.ByteString.Base16   as Hex
 import qualified Data.String.Conversions  as SC
 
 import           Data.Hourglass
+import           Data.Data
 import           Data.Foldable            as F
 import           Data.Set.NonEmpty        (NESet)
 import qualified Data.Set.NonEmpty        as NESet
@@ -30,9 +32,9 @@ import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Data.Hashable hiding (hash)
+import           Data.Semigroup
 
 import           Data.Bifunctor
-import           Data.Monoid
 import           Data.Monoid.Generic
 import           Data.Tuple.Strict
 
@@ -50,7 +52,7 @@ import           RPKI.Resources.Types
 import           RPKI.Time
 
 import           RPKI.Store.Base.Serialisation
-import           RPKI.Orphans.NFData
+import RPKI.AppTypes (WorldVersion)
 
 
 -- There are two validation algorithms for RPKI tree
@@ -78,44 +80,44 @@ newtype Hash = Hash BSS.ShortByteString
     deriving anyclass (TheBinary, NFData)
 
 newtype URI = URI { unURI :: Text } 
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
 data RsyncHost = RsyncHost RsyncHostName (Maybe RsyncPort)
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
 newtype RsyncHostName = RsyncHostName { unRsyncHostName :: Text }
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
 newtype RsyncPort = RsyncPort { unRsyncPort :: Int }
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
 newtype RsyncPathChunk = RsyncPathChunk { unRsyncPathChunk :: Text }
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving newtype Monoid    
     deriving newtype Semigroup
     deriving anyclass Hashable
 
 data RsyncURL = RsyncURL RsyncHost [RsyncPathChunk]
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
 newtype RrdpURL = RrdpURL URI
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
 data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
-    deriving  (Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic, Data, Typeable)
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
@@ -197,9 +199,12 @@ newtype AKI  = AKI { unAKI :: KI }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-newtype SessionId = SessionId Text 
-    deriving stock (Show, Eq, Ord, Generic)
+newtype SessionId = SessionId { unSessionId :: Text }
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
+
+instance Show SessionId where
+    show (SessionId s) = show s
 
 newtype Serial = Serial Integer     
     deriving stock (Eq, Ord, Generic)
@@ -239,7 +244,7 @@ hexShow = SC.cs . Hex.encode . BSS.fromShort
 
 newtype CMS a = CMS { unCMS :: SignedObject a } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data CrlObject = CrlObject {
         hash    :: {-# UNPACK #-} Hash,
@@ -247,7 +252,7 @@ data CrlObject = CrlObject {
         signCrl :: SignCRL
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data CaCerObject = CaCerObject {
         hash        :: {-# UNPACK #-} Hash,
@@ -256,7 +261,7 @@ data CaCerObject = CaCerObject {
         certificate :: TypedCert ResourceCertificate 'CACert
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data EECerObject = EECerObject {
         ski         :: {-# UNPACK #-} SKI,
@@ -264,7 +269,7 @@ data EECerObject = EECerObject {
         certificate :: TypedCert ResourceCertificate 'EECert
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)   
+    deriving anyclass (TheBinary)   
 
 data BgpCerObject = BgpCerObject {
         hash        :: {-# UNPACK #-} Hash,
@@ -273,14 +278,14 @@ data BgpCerObject = BgpCerObject {
         certificate :: TypedCert RawResourceCertificate 'BGPCert
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data CMSBasedObject a = CMSBasedObject {
         hash       :: {-# UNPACK #-} Hash,
         cmsPayload :: CMS a
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 -- https://datatracker.ietf.org/doc/rfc9286/
 type MftObject = CMSBasedObject Manifest
@@ -311,7 +316,7 @@ data RpkiObject = CerRO CaCerObject
                 | BgpRO BgpCerObject
                 | CrlRO CrlObject
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData) 
+    deriving anyclass (TheBinary) 
 
 data RpkiObjectType = CER | MFT | CRL | ROA | ASPA | GBR | SPL | BGPSec | RSC
     deriving (Show, Eq, Ord, Generic)    
@@ -373,8 +378,8 @@ instance WithSKI (CMSBasedObject a) where
 instance WithRawResourceCertificate a => WithValidityPeriod a where
     getValidityPeriod cert = 
         bimap Instant Instant $ X509.certValidity 
-            $ cwsX509certificate $ getCertWithSignature $ getRawCert cert    
-            
+            $ cwsX509certificate $ getCertWithSignature $ getRawCert cert
+
 instance {-# OVERLAPPING #-} WithRawResourceCertificate a => WithSerial a where
     getSerial = Serial . X509.certSerial . cwsX509certificate . certX509 . getRawCert
 
@@ -438,7 +443,7 @@ data Located a = Located {
         payload   :: a
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 
 instance WithLocations (Located a) where
@@ -472,11 +477,11 @@ data RawResourceCertificate = RawResourceCertificate {
         resources :: AllResources
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 newtype ResourceCertificate = ResourceCertificate RawResourceCertificate
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data Vrp = Vrp ASN IpPrefix PrefixLength
     deriving stock (Show, Eq, Ord, Generic)
@@ -489,7 +494,7 @@ data SplN = SplN ASN IpPrefix
 
 data SplPayload = SplPayload ASN [IpPrefix]     
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data MftPair = MftPair {
         fileName :: Text,
@@ -506,7 +511,7 @@ data Manifest = Manifest {
         mftEntries  :: [MftPair]
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data SignCRL = SignCRL {
         thisUpdateTime     :: Instant,
@@ -518,7 +523,7 @@ data SignCRL = SignCRL {
         revokedSerials     :: Set Serial
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 
 data Gbr = Gbr BSS.ShortByteString
@@ -559,7 +564,7 @@ data CertificateWithSignature = CertificateWithSignature {
         cwsEncoded            :: BSS.ShortByteString
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 
 -- | Types for the signed object template 
@@ -570,7 +575,7 @@ data SignedObject a = SignedObject {
         soContent     :: SignedData a
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 -- deriving instance NFData ASN1
 
@@ -595,7 +600,7 @@ data SignedData a = SignedData {
         scSignerInfos      :: SignerInfos
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 {- 
     EncapsulatedContentInfo ::= SEQUENCE {
@@ -607,7 +612,7 @@ data EncapsulatedContentInfo a = EncapsulatedContentInfo {
         cContent     :: a    
     } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 {-
     SignerInfo ::= SEQUENCE {
@@ -628,23 +633,23 @@ data SignerInfos = SignerInfos {
         signature          :: SignatureValue
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 newtype IssuerAndSerialNumber = IssuerAndSerialNumber Text 
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 newtype SignerIdentifier = SignerIdentifier BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 newtype ContentType = ContentType OID 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 newtype CMSVersion = CMSVersion Int 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] 
     deriving stock (Show, Eq, Ord, Generic)
@@ -656,7 +661,7 @@ newtype DigestAlgorithmIdentifier = DigestAlgorithmIdentifier OID
 
 newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier X509.SignatureALG  
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 newtype SignatureValue = SignatureValue BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)  
@@ -667,7 +672,7 @@ newtype SignatureValue = SignatureValue BSS.ShortByteString
 -- there has to be DER encoded signedAttribute set
 data SignedAttributes = SignedAttributes [Attribute] BSS.ShortByteString
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 data Attribute = ContentTypeAttr ContentType 
             | MessageDigest BSS.ShortByteString
@@ -675,7 +680,7 @@ data Attribute = ContentTypeAttr ContentType
             | BinarySigningTime Integer 
             | UnknownAttribute OID [ASN1]
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
 
 
 -- Subject Public Key Info
@@ -694,19 +699,19 @@ newtype DecodedBase64 = DecodedBase64 BS.ByteString
     deriving newtype (Monoid, Semigroup)
 
 newtype TaName = TaName { unTaName :: Text }
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic, Typeable, Data)
     deriving anyclass (TheBinary, NFData)
 
 instance Show TaName where
     show = show . unTaName
 
-newtype Vrps = Vrps { unVrps :: MonoidalMap TaName (V.Vector Vrp) }
+newtype Vrps = Vrps { unVrps :: V.Vector Vrp }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup Vrps
     deriving Monoid    via GenericMonoid Vrps
 
-newtype Roas = Roas { unRoas :: MonoidalMap TaName (MonoidalMap ObjectKey (V.Vector Vrp)) }
+newtype Roas = Roas { unRoas :: MonoidalMap ObjectKey (V.Vector Vrp) }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup Roas
@@ -719,11 +724,11 @@ data TA = TA {
         taSpki        :: SPKI
     } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary)
   
 
-data Payloads a = Payloads {
-        vrps     :: a,
+data Payloads = Payloads {
+        roas     :: Roas,
         spls     :: Set.Set SplN,
         aspas    :: Set.Set Aspa,
         gbrs     :: Set.Set (T2 Hash Gbr),
@@ -731,8 +736,15 @@ data Payloads a = Payloads {
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
-    deriving Semigroup via GenericSemigroup (Payloads a)
-    deriving Monoid    via GenericMonoid (Payloads a)
+    deriving Semigroup via GenericSemigroup Payloads
+    deriving Monoid    via GenericMonoid Payloads
+
+newtype PerTA a = PerTA { unPerTA :: MonoidalMap TaName a }
+    deriving stock (Show, Eq, Ord, Generic, Functor, Traversable, Foldable)
+    deriving anyclass (TheBinary, NFData)
+    deriving Semigroup via GenericSemigroup (PerTA a)
+    deriving Monoid    via GenericMonoid (PerTA a)
+
 
 -- Some auxiliary types
 newtype Size = Size { unSize :: Int64 }
@@ -754,12 +766,45 @@ newtype ArtificialKey = ArtificialKey Int64
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-
 data ObjectIdentity = KeyIdentity ObjectKey
                     | HashIdentity Hash
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
+data ValidationVersion = ValidationVersion { 
+        validatedBy    :: WorldVersion,
+        validationsKey :: ArtificialKey,
+        metricsKey     :: ArtificialKey,
+        roasKey        :: ArtificialKey,
+        aspasKey       :: ArtificialKey,
+        splsKey        :: ArtificialKey,            
+        gbrsKey        :: ArtificialKey,
+        bgpCertsKey    :: ArtificialKey
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)    
+
+
+data VersionMeta = VersionMeta { 
+        perTa               :: PerTA ValidationVersion,
+        commonValidationKey :: ArtificialKey,
+        commonMetricsKey    :: ArtificialKey
+    }      
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+
+newtype EarliestToExpire = EarliestToExpire Instant
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass (TheBinary)
+    deriving Semigroup via Min EarliestToExpire
+
+
+instance Monoid EarliestToExpire where
+    -- It is 2262-04-11 23:47:16.000Z, it's 
+    -- 1) far enough to set it as "later that anything else"
+    -- 2) Anything bigger than that wraps around to the year 1677
+    mempty = EarliestToExpire $ fromNanoseconds $ 1000_000_000 * 9_223_372_036
 
 -- Small utility functions that don't have anywhere else to go
 
@@ -815,9 +860,6 @@ toLocations = Locations . NESet.singleton
 
 pickLocation :: Locations -> RpkiURL
 pickLocation = NonEmpty.head . sortRrdpFirstNE . NESet.toList . unLocations
-
-locationsToText :: Locations -> Text
-locationsToText = F.fold . NonEmpty.intersperse ", " . locationsToNEList
     
 locationsToList :: Locations -> [Text]
 locationsToList = toList . locationsToNEList    
@@ -846,7 +888,7 @@ sortRrdpFirstNE :: NonEmpty.NonEmpty RpkiURL -> NonEmpty.NonEmpty RpkiURL
 sortRrdpFirstNE = NonEmpty.fromList . sortRrdpFirst . NonEmpty.toList
 
 oneOfLocations :: Locations -> RpkiURL -> Bool
-oneOfLocations (Locations urls) url = not $ null $ filter (==url) $ neSetToList urls
+oneOfLocations (Locations urls) url = url `elem` neSetToList urls
 
 {- 
 https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.2
@@ -866,21 +908,31 @@ makeSerial i =
           | otherwise      -> Right $ Serial i
 
 
-estimateVrpCount :: Vrps -> Int 
-estimateVrpCount (Vrps vrps) = sum $ map V.length $ MonoidalMap.elems vrps
+estimateVrpCount :: PerTA Vrps -> Int 
+estimateVrpCount = sum . map (V.length . unVrps . snd) . perTA
+
+estimateVrpCountRoas :: Roas -> Int 
+estimateVrpCountRoas = sum . map V.length . MonoidalMap.elems . unRoas
 
 -- Precise but much more expensive
-uniqueVrpCount :: Vrps -> Int 
-uniqueVrpCount (Vrps vrps) = Set.size $ Set.fromList $ concatMap V.toList $ MonoidalMap.elems vrps
+uniqueVrpCount :: PerTA Vrps -> Int 
+uniqueVrpCount = Set.size . Set.fromList . concatMap (V.toList . unVrps . snd) . perTA
+-- uniqueVrpCount _ = 0 
 
-newVrps :: TaName -> V.Vector Vrp -> Vrps
-newVrps taName vrps = Vrps $ MonoidalMap.singleton taName vrps
+createVrps :: Foldable f => f Vrp -> Vrps
+createVrps vrps = Vrps $ V.fromList $ toList vrps
 
-newRoas :: TaName -> MonoidalMap ObjectKey (V.Vector Vrp) -> Roas
-newRoas taName vrps = Roas $ MonoidalMap.singleton taName vrps
+toVrps :: Roas -> Vrps
+toVrps (Roas roas) = Vrps $ V.concat $ MonoidalMap.elems roas
 
-allVrps :: Vrps -> [V.Vector Vrp] 
-allVrps (Vrps vrps) = MonoidalMap.elems vrps          
+perTA :: PerTA a -> [(TaName, a)]
+perTA (PerTA a) = MonoidalMap.toList a
 
-createVrps :: Foldable f => TaName -> f Vrp -> Vrps
-createVrps taName vrps = Vrps $ MonoidalMap.fromList [(taName, V.fromList $ toList vrps)]
+toPerTA :: [(TaName, a)] -> PerTA a
+toPerTA = PerTA . MonoidalMap.fromList
+
+allTAs :: Monoid a => PerTA a -> a
+allTAs (PerTA a) = mconcat $ MonoidalMap.elems a
+
+getForTA :: PerTA a -> TaName -> Maybe a
+getForTA (PerTA a) taName = MonoidalMap.lookup taName a

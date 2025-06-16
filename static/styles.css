@@ -1,38 +1,81 @@
 body {
     font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,Noto Sans,sans-serif;
+    background-color: #f5f5f5; /* Darkened from #fcfcfc */
 }
 
 table.gen-t { 
-	width: 1100px; 
-	border-collapse: collapse; 
-	margin:50px auto;
+    width: auto;          /* Allow table to size to its content */
+    min-width: min-content; /* Ensure minimal width based on content */
+    max-width: 2000px;    /* Set maximum width to 1500px */
+    border-collapse: collapse; 
+    margin: 50px 0; /* Change from "margin: 50px auto" to left-align */
 }
 
 th.gen-t { 	
-    background-color: #ebebeb;
-	color: rgb(52, 52, 52); 
-	font-weight: bold; 
+    background-color: #dedede; /* Darkened from #e8e8e8 */
+    color: #333333; /* Darkened from #444444 */
+    font-weight: bold; 
 }
 
 td.gen-t, th.gen-t { 
-	padding: 8px; 
-	border: 1px solid rgb(153, 153, 153); 	
-	text-align: left; 
-	font-size: 15px;
+    padding: 8px; 
+    border: 1px solid #b0b0b0; /* Darkened from #c0c0c0 */
+    text-align: left; 
+    font-size: 15px;
 }
 
 table.sub-t { 
-	width: 1000px; 	
+    width: 1000px; 	
     border-collapse: collapse;
     margin-top: 8px;
     margin-bottom: 8px;
 }
 
 td.sub-t, th.sub-t { 
-	padding: 8px; 	
+    padding: 8px; 	
     border-collapse: collapse;
-	text-align: left; 
-	font-size: 14px;
+    text-align: left; 
+    font-size: 14px;
+}
+
+tr:hover {
+  background-color: #e8e8e8; /* Darkened from #f2f2f2 */
+}
+
+/* Override hover effect for rows inside open details */
+details[open] tr:hover {
+  background-color: transparent;
+}
+
+/* Or if your structure is different and the rows contain the details */
+tr:has(details[open]) {
+  background-color: initial !important;
+}
+
+/* If you need to target specific rows */
+tr:has(> td details[open]):hover {
+  background-color: initial;
+}
+
+/* Ensure summary row still gets hover effect when closed */
+tr:has(> td details:not([open])):hover {
+  background-color: #e8e8e8; /* Darkened from #f2f2f2 */
+}
+
+
+/* Make summary elements appear clickable */
+summary {
+    cursor: pointer;
+}
+
+/* Ensure the triangle/disclosure marker also appears clickable */
+summary::-webkit-details-marker {
+    cursor: pointer;
+}
+
+/* For Firefox */
+summary::-moz-list-bullet {
+    cursor: pointer;
 }
 
 .no-wrap {
@@ -41,37 +84,45 @@ td.sub-t, th.sub-t {
 
 .error-message {
     margin-bottom: 3px;
+    color: #d13046; /* Darkened from #e44258 */
 }
 
-.red-dot, .yellow-dot {    
+.red-dot, .yellow-dot, .green-dot {    
     height: 12px;
-    width: 12px;    
+    width: 12px; 
+    margin-right: 7px;    
     border-radius: 50%;
     display: inline-block;
-  }
+}
+
+.green-dot {
+    background-color: #47952d; /* Darkened from #e44258 */
+}
 
 .red-dot {
-    background-color: #ff000c;
+    background-color: #d13046; /* Darkened from #e44258 */
 }
 
 .yellow-dot {
-    background-color: #ffa700;
+    background-color: #e69d31; /* Darkened from #f5ad41 */
 }
 
 .even-row {
-    background-color: #ebebeb;
+    background-color: #efefef; /* Darkened from #f7f7f7 */
 }
 
 .pointer-right {
     cursor: pointer;
     float: left;
     width: 20px;
+    color: #555555; /* Darkened from #666666 */
 }
 
 .pointer-up {
     cursor: pointer;
     float: left;
     width: 20px;
+    color: #555555; /* Darkened from #666666 */
 }
 
 .full-path {
@@ -82,11 +133,13 @@ td.sub-t, th.sub-t {
 .pointer-right-header {    
     float: right;
     width: 20px;
+    color: #555555; /* Darkened from #666666 */
 }
 
 .pointer-up-header {    
     float: right;
     width: 20px;
+    color: #555555; /* Darkened from #666666 */
 }
 
 .ta-header {
@@ -96,53 +149,58 @@ td.sub-t, th.sub-t {
 
 .switch {
     cursor: pointer;
+    color: #555555; /* Darkened from #666666 */
 }
 
 .path-elem {
-    margin: 4px;    
+    margin: 4px;
+    background-color: #e6e6e6; /* Darkened from #f0f0f0 */
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid #cccccc; /* Darkened from #d8d8d8 */
+    color: #333333;
 }
 
-.side-navigation {
-    height: 100%;
-    width: 200px;
-    position: fixed;
-    z-index: 1;
-    top: 0;
-    left: 0;
-    overflow-x: hidden;
-    padding-top: 20px;
-}
 
 .side-navigation a {
-    padding: 6px 6px 6px 32px;
+    padding: 8px 6px 8px 32px;
+    margin-bottom: 4px;
     text-decoration: none;
-    color: #6b6b6b;
+    color: #cccccc;
     display: block;
 }
 
-.side-navigation a:hover {
-    color: #222222;
+.side-navigation {
+    position: fixed;
+    width: 208px; 
+    top: 0;
+    left: 0;
+    height: 100%;
+    overflow-y: auto;
+    background-color: #2b2b2b; /* Darkened from #666666 */
+    padding: 20px 0;
 }
 
 .main {
-    margin-left: 200px;
+    margin-left: 200px; /* Width of side navigation */
+    padding: 20px 20px 20px 100px; /* Additional 100px padding from side nav */
 }
 
 .overall { 		
-	margin-left: 7%;
+    margin-left: 7%;
     margin-top: 10px;
 }
 
 .tooltip {
     position: relative;
     display: inline-block;
-    border-bottom: 1px dotted black;
-  }
+    border-bottom: 1px dotted #555555; /* Darkened from #666666 */
+}
   
-  .tooltip .tooltiptext {
+.tooltip .tooltiptext {
     visibility: hidden;
     width: 600px;
-    background-color: rgb(100, 105, 105);
+    background-color: #333333; /* Darkened from #444444 */
     color: #fff;
     text-align: center;
     border-radius: 6px;
@@ -155,9 +213,9 @@ td.sub-t, th.sub-t {
     opacity: 0;
     transition: opacity 0.3s;
     font-weight: normal;    
-  }
+}
   
-  .tooltip .tooltiptext::after {
+.tooltip .tooltiptext::after {
     content: "";
     position: absolute;
     top: 100%;
@@ -165,10 +223,223 @@ td.sub-t, th.sub-t {
     margin-left: -5px;
     border-width: 5px;
     border-style: solid;
-    border-color: #555 transparent transparent transparent;
-  }
+    border-color: #333333 transparent transparent transparent; /* Darkened from #444444 */
+}
   
-  .tooltip:hover .tooltiptext {
+.tooltip:hover .tooltiptext {
     visibility: visible;
     opacity: 1;
-  }
+}
+
+/* Clickable table rows */
+.clickable-row {
+    border-bottom: 1px solid #dee2e6;
+    cursor: pointer;
+    transition: border-color 0.2s ease;
+}
+
+.clickable-row:hover {
+    border-bottom-color: #007bff;
+    background-color: rgba(51, 51, 51, 0.139);
+}
+
+/* Detail rows with no border, creating visual separation */
+.detail-row {
+    border: none !important;
+    background-color: #f8f9fa !important;
+}
+
+.detail-row td {
+    border: none !important;
+}
+
+.detail-content {
+    padding: 0 !important;
+    background-color: #f8f8f8;
+    border-top: 2px solid #b0b0b0;
+}
+
+.detail-panel {
+    padding: 20px 20px 20px 20px; /* top right bottom left */
+    margin: 0;
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 12px;
+    /* margin-bottom: 15px; */
+    margin-bottom: 0;
+}
+
+.d-i {
+    padding: 8px 12px;
+    background-color: #ffffff;
+    border: 1px solid #dddddd;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+/* detail-item */
+.d-i strong {
+    color: #333333;
+    display: block;
+    margin-bottom: 2px;
+}
+
+.detail-logs {
+    margin-top: 15px;
+}
+
+.detail-logs pre {
+    background-color: #ffffff;
+    border: 1px solid #dddddd;
+    border-radius: 4px;
+    padding: 12px;
+    font-size: 12px;
+    color: #555555;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+/* Ensure detail rows don't get the striped background */
+/* .detail-row.even-row {
+    background-color: #f8f8f8 !important;
+} */
+
+
+.issues-container {
+    grid-column: 1 / -1;
+    margin-bottom: 0; /* Prevent extra bottom spacing */
+    margin-top: 20px; /* Prevent extra bottom spacing */
+}
+
+.issues-list {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0 0 0;
+}
+
+.issue-item {
+    display: flex;
+    align-items: flex-start;
+    padding: 8px;
+    margin-bottom: 4px;
+    background-color: #f8f9fa;
+    /* border-left: 3px solid #dc3545; */
+    border-radius: 4px;
+}
+
+.issue-item:last-child {
+    margin-bottom: 10;
+}
+
+.issue-item.error {
+    border-left-color: #dc3545;
+    background-color: #fdf2f2;
+}
+
+.issue-item.warning {
+    border-left-color: #dca235;
+    background-color: #fdf8f2;
+}
+
+.issue-item .red-dot {
+    margin-right: 8px;
+    margin-top: 2px;
+    flex-shrink: 0;
+}
+
+.issue-text {
+    font-family: monospace;
+    font-size: 0.90em;
+    word-break: break-all;
+    line-height: 1.3;
+    white-space: pre-wrap;
+}
+
+.issues-section {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid #e9ecef;
+}
+
+.issues-section h5 {
+    margin: 0 0 12px 0;
+    font-size: 1em;
+    font-weight: 600;
+}
+
+
+.system-info-section, .quick-links-section, .nav-section {
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #444444;
+}
+
+.nav-section {
+    border-bottom: none; /* Remove border from last section */
+}
+
+.system-info-title {
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0 0 15px 0;
+    padding: 0 8px 0 32px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.info-item {
+    margin-bottom: 12px;
+    padding: 8px 8px 8px 32px;
+}
+
+.info-label {
+    display: block;
+    color: #999999;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-bottom: 3px;
+}
+
+.info-value {
+    display: block;
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 400;
+    font-family: monospace;
+}
+
+.quick-link {
+    display: block;
+    padding: 10px 8px 10px 32px;
+    margin-bottom: 6px;
+    text-decoration: none;
+    color: #cccccc;
+    border-radius: 4px;
+    transition: background-color 0.2s ease;
+    letter-spacing: 0.3px;
+}
+
+.quick-link:hover {
+    background-color: #404040;
+    color: #ffffff;
+}
+
+.link-label {
+    display: block;
+    color: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 2px;
+}
+
+details br {
+    line-height: 1.9;
+}

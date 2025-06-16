@@ -215,7 +215,7 @@ validateResourceCert now cert parentCert vcrl = do
     when (isRevoked cert vcrl) $ 
         vPureError RevokedResourceCertificate
 
-    validateObjectValidityPeriod cert now    
+    void $ validateObjectValidityPeriod cert now    
 
     unless (correctSkiAki cert parentCert) $
         vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
@@ -226,13 +226,14 @@ validateResourceCert now cert parentCert vcrl = do
         maybe False (\(AKI a) -> a == s) $ getAKI c
 
 
-validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT ()
+validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT (Instant, Instant)
 validateObjectValidityPeriod c (Now now) = do 
     let (notBefore, notAfter) = getValidityPeriod c
     when (now < notBefore) $ 
         vPureError $ ObjectValidityIsInTheFuture notBefore notAfter
     when (now > notAfter) $ 
         vPureError $ ObjectIsExpired notBefore notAfter
+    pure (notBefore, notAfter)
 
 
 validateResources ::
@@ -310,10 +311,10 @@ resourceSetMustBeEmpty ips errConstructor =
 
 -- | Validate CRL object with the parent certificate
 validateCrl ::    
-    (WithRawResourceCertificate c, WithSKI c) =>
+    (WithRawResourceCertificate parent, WithSKI parent) =>
     Now ->
     CrlObject ->
-    c ->
+    parent ->
     PureValidatorT (Validated CrlObject)
 validateCrl now crlObject@CrlObject {..} parentCert = do
     let SignCRL {..} = signCrl
@@ -513,7 +514,7 @@ validateCms validationRFC now cms parentCert crl verifiedResources extraValidati
     let eeCert = getEEResourceCert $ unCMS cms
     let certWSign = getCertWithSignature eeCert
     let SignatureAlgorithmIdentifier eeCertSigAlg = certWSign ^. #cwsSignatureAlgorithm
-    let attributeSigAlg = certWSign ^. #cwsX509certificate . #certSignatureAlg
+    let attributeSigAlg = certSignatureAlg $ certWSign ^. #cwsX509certificate
 
     -- That can be a problem:
     -- http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt

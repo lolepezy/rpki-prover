@@ -24,7 +24,7 @@ import qualified Crypto.Hash.SHA512        as S512
 
 import qualified Data.ByteString as BS
 
-import           GHC.Generics (Generic)
+import           GHC.Generics
 
 import           Data.Maybe
 import           Data.Foldable (for_)
@@ -42,7 +42,7 @@ import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
-import           RPKI.Store.Database
+import qualified RPKI.Store.Database    as DB
 import           RPKI.Parse.Parse
 
 import           RPKI.AppContext
@@ -66,7 +66,7 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
     db <- liftIO $ readTVarIO database
 
     -- First check that there's some validated data
-    lastVersion <- liftIO $ roTx db $ getLastValidationVersion db    
+    lastVersion <- liftIO $ roTx db $ \tx -> DB.getLatestVersion tx db    
     when (isNothing lastVersion) $ appError $ ValidationE NoValidatedVersion    
 
     bs        <- fromTry (ParseE . ParseError . fmtEx) $ BS.readFile rscFile

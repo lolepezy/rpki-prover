@@ -9,7 +9,6 @@
 module RPKI.Rsync where
     
 import           Control.Lens
-import           Control.DeepSeq
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
@@ -18,10 +17,12 @@ import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Monad
-import           Control.Monad.IO.Class           (liftIO)
+import           Control.Monad.IO.Class           
 
 import qualified Data.ByteString                  as BS
+import qualified Data.ByteString.Lazy             as LBS
 import           Data.Maybe (fromMaybe)
+import qualified Data.Map.Strict                  as Map
 import           Data.Proxy
 import           Data.List (stripPrefix)
 import           Data.String.Interpolate.IsString
@@ -31,7 +32,7 @@ import qualified Data.List.NonEmpty               as NonEmpty
 
 import           Data.Hourglass
 
-import           GHC.Generics (Generic)
+import           GHC.Generics
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -47,7 +48,7 @@ import           RPKI.Repository
 import           RPKI.Store.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database
+import qualified RPKI.Store.Database    as DB
 import           RPKI.Time
 import qualified RPKI.Util                        as U
 import           RPKI.Validation.ObjectValidation
@@ -99,7 +100,7 @@ runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion reposito
 
     let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
     let arguments = 
-            [ worderIdS workerId ] <> 
+            [ workerIdStr workerId ] <> 
             rtsArguments [ 
                 rtsN maxCpuAvailable, 
                 rtsA "20m", 
@@ -130,7 +131,7 @@ rsyncRpkiObject AppContext{..} fetchConfig uri = do
     let RsyncConf {..} = rsyncConf config
     destination <- liftIO $ rsyncDestination RsyncOneFile (configValue rsyncRoot) uri
     let rsync = rsyncProcess config fetchConfig uri destination RsyncOneFile
-    (exitCode, out, err) <- readProcess rsync      
+    (exitCode, out, err) <- readRsyncProcess logger fetchConfig rsync [i|rsync for #{uri}|]
     case exitCode of  
         ExitFailure errorCode -> do
             logError logger [i|Rsync process failed: #rsync 
@@ -166,9 +167,19 @@ updateObjectForRsyncRepository
         let rsync = rsyncProcess config fetchConfig uri destination RsyncDirectory
             
         logDebug logger [i|Runnning #{U.trimmed rsync}|]
-        (exitCode, out, err) <- fromTry 
-                (RsyncE . RsyncRunningError . U.fmtEx) $ 
-                readProcess rsync
+
+        -- The timeout we are getting here includes the extra timeout for the rsync fetcher 
+        -- process to kill itself. So reserve less time specifically for the rsync client.
+        let timeout = fetchConfig ^. #rsyncTimeout - Seconds 2
+
+        (exitCode, out, err) <- timeoutVT 
+                timeout
+                (fromTry  
+                    (RsyncE . RsyncRunningError . U.fmtEx) $ 
+                    readRsyncProcess logger fetchConfig rsync [i|rsync for #{uri}|])
+                (do 
+                    logError logger [i|rsync client timed out after #{timeout}}.|]
+                    appError $ RsyncE $ RsyncDownloadTimeout timeout)
         logInfo logger [i|Finished rsynching #{getURL uri} to #{destination}.|]
         case exitCode of  
             ExitSuccess -> do                 
@@ -180,6 +191,36 @@ updateObjectForRsyncRepository
                                             stderr = #{err}, 
                                             stdout = #{out}|]
                 appError $ RsyncE $ RsyncProcessError errorCode $ U.convert err 
+  
+-- Repeat the readProcess but register PID of the launched rsync process
+-- together with its maximal lifetime
+readRsyncProcess :: MonadIO m =>
+                    AppLogger
+                    -> FetchConfig
+                    -> ProcessConfig stdin stdout0 stderr0
+                    -> Text.Text
+                    -> m (ExitCode, LBS.ByteString, LBS.ByteString)
+readRsyncProcess logger fetchConfig pc textual = do 
+    Now now <- thisInstant
+    let endOfLife = momentAfter now (fetchConfig ^. #rsyncTimeout)
+    liftIO $ withProcessTerm pc' $ \p -> do 
+        pid <- getPid p
+        forM_ pid $ \pid_ -> 
+            registerhWorker logger $ 
+                WorkerInfo pid_ endOfLife textual
+
+        z <- atomically $ (,,)
+            <$> waitExitCodeSTM p
+            <*> getStdout p
+            <*> getStderr p
+
+        forM_ pid $ deregisterhWorker logger
+
+        pure z
+  where
+    pc' = setStdout byteStringOutput
+        $ setStderr byteStringOutput pc
+
 
 
 -- | Recursively traverse given directory and save all the parseable 
@@ -191,13 +232,13 @@ loadRsyncRepository :: Storage s =>
                     -> WorldVersion 
                     -> RsyncURL 
                     -> FilePath 
-                    -> DB s 
+                    -> DB.DB s 
                     -> ValidatorT IO ()
 loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =    
     txFoldPipeline 
             (2 * cpuParallelism)
             traverseFS
-            (rwAppTx db)
+            (DB.rwAppTx db)
             saveStorable   
   where        
     cpuParallelism = config ^. typed @Parallelism . #cpuParallelism
@@ -230,7 +271,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                             -- Check if the object is already in the storage
                             -- before parsing ASN1 and serialising it.
                             let hash = U.sha256s blob  
-                            exists <- liftIO $ roTx db $ \tx -> hashExists tx db hash
+                            exists <- liftIO $ roTx db $ \tx -> DB.hashExists tx db hash
                             if exists 
                                 then pure $! HashExists rpkiURL hash
                                 else tryToParse hash blob type_                                    
@@ -239,15 +280,16 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
 
           where
             tryToParse hash blob type_ = do            
-                z <- liftIO $ runValidatorT (newScopes $ unURI $ getURL rpkiURL) $ vHoist $ readObject rpkiURL blob
-                (evaluate $ force $
+                let scopes = newScopes $ unURI $ getURL rpkiURL
+                z <- liftIO $ runValidatorT scopes $ vHoist $ readObjectOfType type_ blob
+                (evaluate $! 
                     case z of 
                         (Left e, _) -> 
                             ObjectParsingProblem rpkiURL (VErr e) 
                                 (ObjectOriginal blob) hash
                                 (ObjectMeta worldVersion type_)                        
                         (Right ro, _) ->                                     
-                            SuccessParsed rpkiURL (toStorableObject ro)                            
+                            SuccessParsed rpkiURL (toStorableObject ro) type_                    
                     ) `catch` 
                     (\(e :: SomeException) -> 
                         pure $! ObjectParsingProblem rpkiURL (VErr $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e) 
@@ -262,7 +304,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
             Left e  -> appWarn e
             Right z -> case z of 
                 HashExists rpkiURL hash ->
-                    linkObjectToUrl tx db rpkiURL hash
+                    DB.linkObjectToUrl tx db rpkiURL hash
                 CantReadFile rpkiUrl filePath (VErr e) -> do                    
                     logError logger [i|Cannot read file #{filePath}, error #{e} |]
                     inSubLocationScope (getURL rpkiUrl) $ appWarn e                 
@@ -273,12 +315,12 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                 ObjectParsingProblem rpkiUrl (VErr e) original hash objectMeta -> do
                     logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
                     inSubLocationScope (getURL rpkiUrl) $ appWarn e                   
-                    saveOriginal tx db original hash objectMeta
-                    linkObjectToUrl tx db rpkiUrl hash                                  
-                SuccessParsed rpkiUrl so@StorableObject {..} -> do 
-                    saveObject tx db so worldVersion                    
-                    linkObjectToUrl tx db rpkiUrl (getHash object)
-                    updateMetric @RsyncMetric @_ (& #processed %~ (+1))
+                    DB.saveOriginal tx db original hash objectMeta
+                    DB.linkObjectToUrl tx db rpkiUrl hash                                  
+                SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do 
+                    DB.saveObject tx db so worldVersion                    
+                    DB.linkObjectToUrl tx db rpkiUrl (getHash object)
+                    updateMetric @RsyncMetric @_ (#processed %~ Map.unionWith (+) (Map.singleton (Just type_) 1))
                 other -> 
                     logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                    
                   
@@ -290,7 +332,7 @@ rsyncProcess Config {..} fetchConfig rsyncURL destination rsyncMode =
     proc "rsync" $ 
         [ "--update",  "--times" ] <> 
         [ "--timeout=" <> show timeout' ] <>         
-        [ "--contimeout=" <> show timeout' ] <>         
+        [ "--contimeout=60" ] <>         
         [ "--max-size=" <> show (validationConfig ^. #maxObjectSize) ] <> 
         [ "--min-size=" <> show (validationConfig ^. #minObjectSize) ] <> 
         extraOptions <> 
@@ -351,6 +393,5 @@ data RsyncObjectProcessingResult =
         | HashExists RpkiURL Hash
         | UknownObjectType RpkiURL String
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
-        | SuccessParsed RpkiURL (StorableObject RpkiObject) 
+        | SuccessParsed RpkiURL (StorableObject RpkiObject) RpkiObjectType
     deriving stock (Show, Eq, Generic)
-    deriving anyclass NFData

@@ -1,5 +1,5 @@
 name:                rpki-prover
-version:             0.9.9
+version:             0.10.0
 github:              "lolepezy/rpki-prover"
 license:             BSD3
 author:              "Mikhail Puzanov"
@@ -39,13 +39,16 @@ dependencies:
 - base64
 - binary
 - blaze-html
+- blaze-markup
 - bytestring
 - bytestring-mmap
 - cborg
 - containers
 - conduit
 - conduit-extra
-- cryptonite
+- crypton
+- crypton-x509
+- crypton-x509-validation
 - cryptohash-sha256
 - cryptohash-sha512
 - crypton-connection
@@ -56,6 +59,7 @@ dependencies:
 - file-embed-lzma
 - generic-lens
 - generic-monoid
+- githash
 - hashable
 - hourglass
 - http-client
@@ -66,6 +70,7 @@ dependencies:
 - hw-ip
 - interpolate
 - insert-ordered-containers
+- ixset-typed
 - lens
 - lmdb-high-level
 - lifted-async
@@ -104,14 +109,13 @@ dependencies:
 - typed-process
 - transformers
 - temporary
-- x509
-- x509-validation
 - QuickCheck
 - quickcheck-instances
 - tasty
 - tasty-hunit
 - tasty-quickcheck    
 - th-utilities
+- time
 - generic-arbitrary
 - quickcheck-instances
 - unix
@@ -133,6 +137,19 @@ executables:
   rpki-prover:
     main:                Main.hs
     source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -O2
+    - -Wall    
+    - -rtsopts
+    - -funbox-strict-fields
+    - '"-with-rtsopts=-A16m -AL64m -N2 -qg -T -I0 --disable-delayed-os-memory-return"'
+    dependencies:
+    - rpki-prover  
+
+  profiler:
+    main:                Profile.hs
+    source-dirs:         perf
     ghc-options:
     - -threaded
     - -O2

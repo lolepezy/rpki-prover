@@ -2,14 +2,17 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE StrictData         #-}
 {-# LANGUAGE RecordWildCards    #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module RPKI.RRDP.Types where
 
 import           Control.DeepSeq
-import qualified Data.ByteString as BS
+import qualified Data.ByteString                  as BS
+import           Data.List.NonEmpty               (NonEmpty (..))
 import           Data.Text                        (Text)
 import           GHC.Generics
 import           RPKI.Domain
+import           RPKI.Time
 import           RPKI.Store.Base.Serialisation
 
 
@@ -17,7 +20,7 @@ import           RPKI.Store.Base.Serialisation
 
 newtype RrdpSerial = RrdpSerial Integer
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary, NFData)     
 
 instance Show RrdpSerial where
     show (RrdpSerial s) = show s
@@ -61,7 +64,7 @@ newtype ETag = ETag BS.ByteString
     deriving anyclass (TheBinary, NFData)        
 
 
-data RrdpFetchStat = RrdpFetchStat {
+newtype RrdpFetchStat = RrdpFetchStat {
         action :: RrdpAction
     } 
     deriving stock (Show, Eq, Ord, Generic)   
@@ -69,8 +72,9 @@ data RrdpFetchStat = RrdpFetchStat {
 
 data RrdpAction
   = FetchSnapshot SnapshotInfo Text
+  | ForcedFetchSnapshot SnapshotInfo Text
   | FetchDeltas
-      { sortedDeltas :: [DeltaInfo]
+      { sortedDeltas :: NonEmpty DeltaInfo
       , snapshotInfo :: SnapshotInfo
       , message :: Text
       }
@@ -78,22 +82,32 @@ data RrdpAction
   deriving (Show, Eq, Ord, Generic)
   deriving anyclass (TheBinary, NFData)     
 
+data RrdpEnforcement = NextTimeFetchSnapshot Instant Text
+                     | ForcedSnaphotAt Instant
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass (TheBinary, NFData)                                
+
 data RrdpMeta = RrdpMeta {
-        sessionId :: SessionId,
-        serial    :: RrdpSerial,
-        integrity :: RrdpIntegrity
+        sessionId   :: SessionId,
+        serial      :: RrdpSerial,
+        integrity   :: RrdpIntegrity,
+        enforcement :: Maybe RrdpEnforcement
     }    
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary, NFData)            
 
-data RrdpIntegrity = RrdpIntegrity {
+newtype RrdpIntegrity = RrdpIntegrity {
         deltas :: [DeltaInfo]    
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary, NFData)            
 
+newRrdpMeta :: SessionId -> RrdpSerial -> RrdpMeta
+newRrdpMeta sessionId serial = 
+    RrdpMeta sessionId serial (RrdpIntegrity []) Nothing 
+
 newRrdpIntegrity :: Notification -> RrdpIntegrity
 newRrdpIntegrity Notification {..} = RrdpIntegrity deltas
 
-fromNotification :: Notification -> RrdpMeta
-fromNotification Notification {..} = RrdpMeta { integrity = RrdpIntegrity {..}, .. }
+previousSerial :: RrdpSerial -> RrdpSerial
+previousSerial (RrdpSerial s) = RrdpSerial $ s - 1

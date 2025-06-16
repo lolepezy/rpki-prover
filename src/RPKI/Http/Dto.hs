@@ -14,7 +14,7 @@ import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set                         as Set
 import qualified Data.Vector                      as V
 import qualified Data.Map.Strict                  as Map
-import qualified Data.Map.Monoidal.Strict         as MonoidalMap
+import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
@@ -38,17 +38,17 @@ import           RPKI.Resources.Validity
 import           RPKI.RTR.Types
 import           RPKI.Validation.Types
 import           RPKI.Util
+import          RPKI.AppTypes (WorldVersion)
 
 {-
     Mainly domain objects -> DTO convertions. 
 -}
 
-toVrpDtos :: Maybe Vrps -> [VrpDto]
-toVrpDtos = \case
-    Nothing   -> []
-    Just vrps -> [ VrpDto a p len (unTaName ta) |
-                    (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
-                    Vrp a p len  <- V.toList vrpSet ]
+toVrpDtos :: PerTA Vrps -> [VrpDto]
+toVrpDtos vrpsPerTa =     
+    [ VrpDto {..} | 
+        (TaName ta, Vrps vrps) <- perTA vrpsPerTa,
+        Vrp asn prefix maxLength <- V.toList vrps ]
 
 toVrpDto :: Vrp -> TaName -> VrpDto
 toVrpDto (Vrp a p len) (TaName ta) = VrpDto a p len ta
@@ -74,7 +74,7 @@ aspaToDto aspa =
     AspaDto {
         customer = aspa ^. #customer,
         providers = Set.toList $ aspa ^. #providers
-    }
+}
 
 gbrObjectToDto :: GbrObject -> GbrDto
 gbrObjectToDto g = gbrToDto $ getCMSContent $ g ^. #cmsPayload
@@ -95,12 +95,22 @@ gbrToDto (Gbr vcardBS) = let
     in GbrDto {..}
 
 
-toVDto :: (Scope a, Set.Set VIssue) -> OriginalVDto
-toVDto (Scope scope, issues) = OriginalVDto $ FullVDto {
-        issues = map toDto $ Set.toList issues,
-        path   = NonEmpty.toList scope,
-        url    = NonEmpty.head scope
-    }
+validationsToDto :: WorldVersion -> Validations -> ValidationsDto OriginalVDto
+validationsToDto version validations =
+    ValidationsDto {
+            worldVersion = version,
+            timestamp    = versionToInstant version,
+            validations  = toVDtos validations
+        }              
+
+toVDtos :: Validations -> [OriginalVDto]
+toVDtos (Validations vMap) = 
+    flip map (Map.toList vMap) $ \(Scope scope, issues) ->        
+        OriginalVDto $ ValidationDto {
+            issues = map toDto $ Set.toList issues,
+            path   = NonEmpty.toList scope,
+            url    = NonEmpty.head scope
+        }
   where
     toDto = \case
         VErr e               -> ErrorDto $ toMessage e
@@ -113,11 +123,10 @@ vrpDtosToCSV vrpDtos =
         (str "ASN,IP Prefix,Max Length,Trust Anchor\n")
         (mconcat $ map toBS vrpDtos)
   where
-    toBS VrpDto {
-            asn = ASN as,
+    toBS VrpDto {            
             maxLength = PrefixLength ml,
             ..
-        } = str "AS" <> str (show as) <> ch ',' <>
+        } = str (show asn) <> ch ',' <>
             text (prefixStr prefix) <> ch ',' <>
             str (show ml) <> ch ',' <>
             str (convert ta) <> ch '\n'
@@ -130,13 +139,12 @@ vrpExtDtosToCSV vrpDtos =
   where
     toBS VrpExtDto {        
             vrp = VrpDto {
-                asn = ASN as,
                 maxLength = PrefixLength ml,
                 ..
             },
             ..
         } = str (Text.unpack uri) <> ch ',' <>
-            str "AS" <> str (show as) <> ch ',' <>
+            str (show asn) <> ch ',' <>
             text (prefixStr prefix) <> ch ',' <>
             str (show ml) <> ch ',' <>
             str (convert ta) <> ch '\n'
@@ -148,8 +156,8 @@ vrpSetToCSV vrpDtos =
         (str "ASN,IP Prefix,Max Length\n")
         (mconcat $ map toBS $ toList vrpDtos)
   where
-    toBS (AscOrderedVrp (Vrp (ASN asn) prefix (PrefixLength maxLength))) =
-        str "AS" <> str (show asn) <> ch ',' <>
+    toBS (AscOrderedVrp (Vrp asn prefix (PrefixLength maxLength))) =
+        str (show asn) <> ch ',' <>
         text (prefixStr prefix) <> ch ',' <>
         str (show maxLength) <> ch '\n'
  
@@ -219,24 +227,24 @@ objectToDto = \case
             AllResources (asRS -> ipv4) (asRS -> ipv6) (asRS -> asn) = rawCert ^. #resources
             x509cert = rawCert ^. #certX509 . #cwsX509certificate
 
-            certVersion = Version $ fromIntegral $ x509cert ^. #certVersion
-            certSerial  = Serial $ x509cert ^. #certSerial
+            certVersion = Version $ fromIntegral $ X509.certVersion x509cert
+            certSerial  = Serial $ X509.certSerial x509cert
 
-            certIssuerDN = Text.pack $ show $ x509cert ^. #certSignatureAlg
-            certSubjectDN = Text.pack $ show $ x509cert ^. #certSubjectDN
+            certIssuerDN = Text.pack $ show $ X509.certSignatureAlg x509cert
+            certSubjectDN = Text.pack $ show $ X509.certSubjectDN x509cert
 
-            certSignatureAlg = Text.pack $ show $ x509cert ^. #certSignatureAlg
+            certSignatureAlg = Text.pack $ show $ X509.certSignatureAlg x509cert
 
-            notValidBefore = Instant $ fst $ x509cert ^. #certValidity
-            notValidAfter  = Instant $ snd $ x509cert ^. #certValidity
+            notValidBefore = Instant $ fst $ X509.certValidity x509cert
+            notValidAfter  = Instant $ snd $ X509.certValidity x509cert
 
-            pubKey = case x509cert ^. #certPubKey of
+            pubKey = case X509.certPubKey x509cert of
                         X509.PubKeyRSA RSA.PublicKey {..} -> Right $ let
                                 pubKeySize = public_size
                                 pubKeyPQ   = public_n
                                 pubKeyExp  = public_e
                             in PubKeyDto {..}
-                        _ -> Left $ Text.pack $ show $ x509cert ^. #certPubKey
+                        _ -> Left $ Text.pack $ show $ X509.certPubKey x509cert
 
             extensions = getExtensions $ rawCert ^. #certX509
 
@@ -288,10 +296,10 @@ objectToDto = \case
 
                 in ExtensionDto {..}
 
-            strExt :: forall a . (Show a, X509.Extension a) => Proxy a -> BS.ByteString -> Text.Text
+            strExt :: forall a . (Show a, X509.Extension a) => Proxy a -> BS.ByteString -> Text
             strExt _ bytes = Text.pack $ show (X509.extDecodeBs bytes :: Either String a)
 
-            urlText :: Maybe BS.ByteString -> Text.Text
+            urlText :: Maybe BS.ByteString -> Text
             urlText = \case 
                 Nothing -> "undefined"
                 Just bs -> either id unURI $ extractURI bs
@@ -368,14 +376,14 @@ toBulkResultDto
 rawCSV :: BB.Builder -> BB.Builder -> RawCSV
 rawCSV header body = RawCSV $ BB.toLazyByteString $ header <> body
 
-prefixStr :: IpPrefix -> Text.Text
+prefixStr :: IpPrefix -> Text
 prefixStr (Ipv4P (Ipv4Prefix p)) = Text.pack $ show p
 prefixStr (Ipv6P (Ipv6Prefix p)) = Text.pack $ show p
 
 str :: String -> BB.Builder
 str = BB.stringUtf8
 
-text :: Text.Text -> BB.Builder
+text :: Text -> BB.Builder
 text = str . Text.unpack
 
 ch :: Char -> BB.Builder

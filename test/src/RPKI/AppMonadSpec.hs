@@ -59,13 +59,13 @@ scopesShouldBeProperlyNested = do
                             appError $ UnspecifiedE "Crash" "Crash it"                                                                    
 
     HU.assertEqual "Deepest scope should have 1 error"     
-        (Map.lookup (subScope' TextFocus "broken.roa" 
-                        $ subScope' TextFocus "snapshot.xml" 
+        (Map.lookup (subScope TextFocus "broken.roa" 
+                        $ subScope TextFocus "snapshot.xml" 
                         $ newScope "root") validationMap)
         (Just $ Set.fromList [VErr (UnspecifiedE "Crash" "Crash it")])
 
     HU.assertEqual "Nested scope should have 1 warning"         
-        (Map.lookup (subScope' TextFocus "snapshot.xml" $ newScope "root") validationMap)
+        (Map.lookup (subScope TextFocus "snapshot.xml" $ newScope "root") validationMap)
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error1" "text 1"))])
 
     HU.assertEqual "Nested validations should have 1 warning"         

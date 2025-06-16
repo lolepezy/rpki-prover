@@ -27,7 +27,7 @@ import           RPKI.Worker
 import           RPKI.Reporting
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Storage
-import qualified RPKI.Store.Database              as DB
+import qualified RPKI.Store.Database             as DB
 import           RPKI.Store.MakeLmdb
 import           RPKI.Store.Base.Storable
 import           RPKI.Time
@@ -281,7 +281,7 @@ runCopyWorker appContext@AppContext {..} dbtats targetLmdbPath = do
             in max (maxMemory `div` 1024 `div` 1024) 64
 
     let arguments = 
-            [ worderIdS workerId ] <>
+            [ workerIdStr workerId ] <>
             rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory (show maxMemoryMb <> "m") ]
 
     (z, vs) <- runValidatorT 

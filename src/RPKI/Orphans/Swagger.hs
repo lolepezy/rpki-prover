@@ -54,7 +54,6 @@ instance ToSchema URI where
      declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema WorldVersion     
-instance ToSchema VersionKind
 instance ToSchema Instant where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema DateTime     
@@ -84,7 +83,7 @@ instance (ToSchema a, ToSchema b) => ToSchema (These a b)
 instance (ToSchema a, ToJSONKey a, ToSchema b) => ToSchema (MonoidalMap a b) where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy (Map a b))
 
-instance ToSchema a => ToSchema (GroupedValidationMetric a)
+instance ToSchema a => ToSchema (GroupedMetric a)
 
 instance ToSchema SessionId
 instance ToSchema Serial
@@ -93,7 +92,9 @@ instance ToSchema TaName where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema a => ToSchema (MetricMap a)
+instance ToSchema ValidatedBy
 instance ToSchema ValidationMetric
+instance ToSchema RpkiObjectType
 instance ToSchema RsyncMetric
 instance ToSchema RrdpMetric
 instance ToSchema ResourceUsage
@@ -101,7 +102,8 @@ instance ToSchema SystemMetrics
 instance ToSchema ScopeKind
 instance ToSchema FetchFreshness
 instance ToSchema HttpStatus
-instance ToSchema RrdpSource
+instance ToSchema RrdpSource where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 
 instance ToSchema (Scope 'Metric)
 instance ToSchema Count where
@@ -109,6 +111,10 @@ instance ToSchema Count where
 instance ToSchema TimeMs where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 instance ToSchema CPUTime where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
+instance ToSchema AggregatedCPUTime where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
+instance ToSchema LatestCPUTime where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 instance ToSchema MaxMemory where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
@@ -135,8 +141,6 @@ instance ToSchema LogLevel
 instance ToSchema ManifestProcessing
 instance ToSchema ValidationRFC
 instance ToSchema ValidationAlgorithm
-instance ToSchema FetchTimingCalculation
-instance ToSchema FetchMethod
 instance ToSchema ProverRunMode where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
@@ -145,32 +149,10 @@ instance ToSchema a => ToSchema (Located a)
 instance ToSchema Locations where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
-
-instance ToSchema RpkiObject
-instance ToSchema CaCerObject
-instance ToSchema BgpCerObject
-instance ToSchema CrlObject
-instance ToSchema EECerObject
-
-instance ToSchema a => ToSchema (CMSBasedObject a)
-instance ToSchema a => ToSchema (CMS a)
-instance ToSchema a => ToSchema (SignedObject a)
-instance ToSchema a => ToSchema (SignedData a)
-instance ToSchema a => ToSchema (EncapsulatedContentInfo a)
-
 instance ToSchema Vrp
 instance ToSchema SplPayload
 instance ToSchema Gbr where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema Rsc
-instance ToSchema Aspa
-instance ToSchema MftPair
-instance ToSchema Manifest
-instance ToSchema CertificateWithSignature  where
-    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema ResourceCertificate
-instance ToSchema RawResourceCertificate
-instance ToSchema r => ToSchema (TypedCert r t)
 
 instance ToSchema Hash where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
@@ -204,30 +186,24 @@ instance ToSchema IpResourceSet
 instance ToSchema SignCRL where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ContentType
-instance ToSchema SignerInfos
+-- instance ToSchema SignerInfos
 instance ToSchema SignerIdentifier where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema SignatureValue where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema SignatureAlgorithmIdentifier
+
+instance ToSchema SignatureAlgorithmIdentifier where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
 instance ToSchema SignedAttributes where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema Attribute where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
 instance ToSchema DigestAlgorithmIdentifier
 instance ToSchema DigestAlgorithmIdentifiers
 instance ToSchema Version
 instance ToSchema CMSVersion
-
-instance ToSchema X509.Certificate
-instance ToSchema X509.CRL
-instance ToSchema X509.RevokedCertificate
-instance ToSchema a => ToSchema (X509.SignedExact a) where
-    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema a => ToSchema (X509.Signed a) where
-    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-    
-instance ToSchema SignatureALG
 
 instance ToSchema ASN1 where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
@@ -243,7 +219,8 @@ instance ToSchema Extensions where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ExtensionRaw where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
-instance ToSchema HashALG
+instance ToSchema HashALG where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema AsResource
 

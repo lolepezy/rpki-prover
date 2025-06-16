@@ -36,7 +36,7 @@ import qualified Crypto.PubKey.Ed25519 as E25519
 import qualified Crypto.PubKey.Curve448 as C448
 import qualified Crypto.PubKey.Ed448 as E448
 
-import Crypto.PubKey.ECC.Types
+import qualified Crypto.PubKey.ECC.Types as ECC
 
 
 peekPK :: (BS.ByteString -> CryptoFailable b) -> Peek b
@@ -60,7 +60,7 @@ $($(derive [d|instance Deriving (Store DateTime)|]))
 $($(derive [d|instance Deriving (Store Crypto.PubKey.DSA.Params)|]))
 $($(derive [d|instance Deriving (Store Crypto.PubKey.RSA.Types.PublicKey)|]))
 $($(derive [d|instance Deriving (Store Crypto.PubKey.DSA.PublicKey)|]))
-
+$($(derive [d|instance Deriving (Store ECC.CurveName)|]))
 
 instance Store C25519.PublicKey where    
     size = ConstSize 32
@@ -90,7 +90,6 @@ $($(derive [d|instance Deriving (Store ASN1TimeType)|]))
 $($(derive [d|instance Deriving (Store ASN1Class)|]))
 $($(derive [d|instance Deriving (Store ASN1ConstructionType)|]))
 $($(derive [d|instance Deriving (Store SerializedPoint)|]))
-$($(derive [d|instance Deriving (Store Crypto.PubKey.ECC.Types.CurveName)|]))
 $($(derive [d|instance Deriving (Store ASN1)|]))
 $($(derive [d|instance Deriving (Store DistinguishedName)|]))
 
@@ -104,8 +103,8 @@ $($(derive [d|instance Deriving (Store SignatureALG)|]))
 $($(derive [d|instance Deriving (Store X509.Certificate)|]))
 $($(derive [d|instance Deriving (Store X509.RevokedCertificate)|]))
 $($(derive [d|instance Deriving (Store X509.CRL)|]))
-$($(derive [d|instance Store a => Deriving (Store (X509.Signed a))|]))
-$($(derive [d|instance Store a => Deriving (Store (X509.SignedExact a))|]))
+$($(derive [d|instance (ASN1Object a, Eq a, Show a, Store a) => Deriving (Store (X509.Signed a))|]))
+$($(derive [d|instance (ASN1Object a, Eq a, Show a, Store a) => Deriving (Store (X509.SignedExact a))|]))
 
 
 $($(derive [d|instance (Store a, Store b) => Deriving (Store (T2 a b))|]))

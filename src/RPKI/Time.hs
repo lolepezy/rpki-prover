@@ -10,7 +10,7 @@ import           Data.Int
 import           Data.Semigroup
 import           Control.Monad.IO.Class (MonadIO, liftIO)
 
-import           GHC.Generics (Generic)
+import           GHC.Generics
 
 import           Data.Hourglass         
 import           System.Hourglass       (dateCurrent)
@@ -56,8 +56,6 @@ newtype CPUTime = CPUTime { unCPUTime :: Integer }
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving newtype (Num)
-    deriving Semigroup via Sum CPUTime
-    deriving Monoid via Sum CPUTime
 
 instance Show TimeMs where 
     show (TimeMs ms) = show ms
@@ -73,6 +71,12 @@ getCpuTime = do
     picos <- liftIO getCPUTime
     pure $! CPUTime $ picos `div` 1000_000_000
 
+durationMs :: Instant -> Instant -> TimeMs
+durationMs (Instant begin) (Instant end) = let 
+    (Seconds s, NanoSeconds ns) = timeDiffP end begin    
+    totalNanos = s * nanosPerSecond + ns
+    in fromIntegral $! totalNanos `div` nanosPerMicrosecond 
+    
 timed :: MonadIO m => m a -> m (a, Int64)
 timed action = do 
     Now (Instant begin) <- thisInstant
@@ -84,17 +88,15 @@ timed action = do
 timedMS :: MonadIO m => m a -> m (a, TimeMs)
 timedMS action = do 
     (!z, ns) <- timed action   
-    pure $! (z, fromIntegral $! ns `div` microsecondsPerSecond)
-
--- cpuTime :: 
+    pure $! (z, fromIntegral $! ns `div` nanosPerMicrosecond)
 
 nanosPerSecond :: Num p => p
 nanosPerSecond = 1000_000_000
 {-# INLINE nanosPerSecond #-}
 
-microsecondsPerSecond :: Num p => p
-microsecondsPerSecond = 1000_000
-{-# INLINE microsecondsPerSecond #-}
+nanosPerMicrosecond :: Num p => p
+nanosPerMicrosecond = 1000_000
+{-# INLINE nanosPerMicrosecond #-}
 
 toNanoseconds :: Instant -> Int64
 toNanoseconds (Instant instant) = 
@@ -114,13 +116,19 @@ fromNanoseconds totalNanos =
         elapsed = ElapsedP (Elapsed (Seconds seconds)) (NanoSeconds nanos)
         (seconds, nanos) = totalNanos `divMod` nanosPerSecond     
 
-closeEnoughMoments :: Instant -> Instant -> Seconds -> Bool
-closeEnoughMoments firstMoment secondMoment intervalSeconds = 
-    instantDiff secondMoment firstMoment < intervalSeconds
+closeEnoughMoments :: Earlier -> Later -> Seconds -> Bool
+closeEnoughMoments earlierInstant laterInstant intervalSeconds = 
+    instantDiff earlierInstant laterInstant < intervalSeconds
 
-instantDiff :: Instant -> Instant -> Seconds
-instantDiff (Instant firstMoment) (Instant secondMoment) = 
-    timeDiff firstMoment secondMoment 
+newtype Earlier = Earlier Instant
+newtype Later = Later Instant
+
+instantDiff :: Earlier -> Later -> Seconds
+instantDiff (Earlier (Instant earlierInstant)) (Later (Instant laterInstant)) = 
+    timeDiff laterInstant earlierInstant  
+
+momentAfter :: Instant -> Seconds -> Instant
+momentAfter (Instant moment) seconds = Instant $ timeAdd moment seconds
 
 instantDateFormat :: Instant -> String
 instantDateFormat (Instant d) = timePrint format d
@@ -134,12 +142,21 @@ instantDateFormat (Instant d) = timePrint format d
     dash = Format_Text '-'
     colon = Format_Text ':'   
 
-secondsToInt :: Seconds -> Int
-secondsToInt (Seconds s) = fromIntegral s
+instantTimeFormat :: Instant -> String
+instantTimeFormat (Instant d) = timePrint format d
+  where 
+    format = TimeFormatString [            
+            Format_Hour, colon, Format_Minute, colon, Format_Second,
+            Format_TimezoneName
+        ]
+    colon = Format_Text ':'   
 
-cpuTimePerSecond :: CPUTime -> Instant -> Instant -> Double
-cpuTimePerSecond (CPUTime t) from to = let
-    Seconds duration = instantDiff to from
+toMicroseconds :: Seconds -> Int
+toMicroseconds (Seconds s) = fromIntegral $ 1_000_000 * s
+
+cpuTimePerSecond :: CPUTime -> Earlier -> Later -> Double
+cpuTimePerSecond (CPUTime t) earlier later = let
+    Seconds duration = instantDiff earlier later
     in (fromInteger t :: Double) / (fromIntegral duration :: Double)
 
 asCpuTime :: Seconds -> CPUTime 
