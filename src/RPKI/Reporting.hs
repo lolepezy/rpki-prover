@@ -5,7 +5,6 @@
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE OverloadedLabels           #-}
-{-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
 
 
@@ -16,8 +15,6 @@ import           Control.Exception.Lifted
 import           Control.Lens
 
 import           Data.Generics.Labels
-import           Data.Generics.Product.Typed
-
 import qualified Data.ByteString             as BS
 import           Data.Int                    (Int64)
 import           Data.Hourglass
@@ -38,6 +35,7 @@ import           Data.ASN1.Types (OID)
 
 import           GHC.Generics
 
+import           RPKI.AppTypes
 import           RPKI.Domain
 import           RPKI.RRDP.Types
 import           RPKI.Resources.Types
@@ -80,6 +78,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         UnknownCriticalCertificateExtension OID BS.ByteString |
                         MissingCriticalExtension OID |
                         BrokenKeyUsage Text |
+                        WeirdCaPublicationPoints [RpkiURL] | 
                         ObjectHasMultipleLocations [RpkiURL] |
                         NoMFT AKI |
                         NoMFTButCachedMft AKI |
@@ -134,7 +133,8 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BGPCertIPv6Present | 
                         BGPCertBrokenASNs  | 
                         SplAsnNotInResourceSet ASN [AsResource] | 
-                        SplNotIpResources [IpPrefix]
+                        SplNotIpResources [IpPrefix] |
+                        ReferentialIntegrityError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     
@@ -152,7 +152,9 @@ data RrdpError = BrokenXml Text |
                 DeltaUriHostname Text Text | 
                 NoDeltaHash |
                 BadHash Text |
-                NoVersion | 
+                NoVersionInNotification | 
+                NoVersionInSnapshot | 
+                NoVersionInDelta | 
                 BadVersion Text | 
                 NoPublishURI |
                 BadBase64 Text Text |
@@ -174,6 +176,7 @@ data RrdpError = BrokenXml Text |
                 DeltaSerialMismatch { actualSerial :: RrdpSerial, expectedSerial :: RrdpSerial } |
                 DeltaSerialTooHigh { actualSerial :: RrdpSerial, expectedSerial :: RrdpSerial } |
                 DeltaHashMismatch { actualHash :: Hash, expectedHash :: Hash, serial :: RrdpSerial } |
+                RrdpMetaMismatch { actualSessionId  :: SessionId, actualSerial :: RrdpSerial, expectedSessionId :: SessionId, expectedSerial :: RrdpSerial } |
                 NoObjectToReplace URI Hash |
                 NoObjectToWithdraw URI Hash |
                 ObjectExistsWhenReplacing URI Hash |
@@ -249,7 +252,7 @@ instance Exception AppException
 newtype Validations = Validations (Map VScope (Set VIssue))
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
-    deriving newtype Monoid
+    deriving newtype Monoid    
 
 instance Semigroup Validations where
     (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2
@@ -299,22 +302,14 @@ newScopes' c t = Scopes {
         metricScope     = newScope' c t
     }    
 
-subScope :: Text -> Scope t -> Scope t
-subScope = subScope' TextFocus        
-
-subScope' :: (a -> Focus) -> a -> Scope t -> Scope t
-subScope' constructor a ps@(Scope parentScope) = let
+subScope :: (a -> Focus) -> a -> Scope t -> Scope t
+subScope constructor a ps@(Scope parentScope) = let
         focus = constructor a
     in case NonEmpty.filter (== focus) parentScope of 
         [] -> Scope $ NonEmpty.cons focus parentScope 
         _  -> ps     
 
-validatorSubScope' :: forall a . (a -> Focus) -> a -> Scopes -> Scopes
-validatorSubScope' constructor t vc = 
-    vc & typed @VScope      %~ subScope' constructor t
-       & typed @MetricScope %~ subScope' constructor t  
    
-
 mError :: VScope -> AppError -> Validations
 mError vc w = mProblem vc (VErr w)
 
@@ -345,7 +340,7 @@ getIssues s (Validations vs) = fromMaybe mempty $ Map.lookup s vs
 
 class Monoid metric => MetricC metric where
     -- lens to access the specific metric map in the total metric record    
-    metricLens :: Lens' RawMetric (MetricMap metric)
+    metricLens :: Lens' Metrics (MetricMap metric)
 
 newtype Count = Count { unCount :: Int64 }
     deriving stock (Eq, Ord, Generic)
@@ -396,8 +391,8 @@ instance Semigroup FetchFreshness where
     (<>) = max    
 
 data RrdpMetric = RrdpMetric {
-        added           :: Count,
-        deleted         :: Count,        
+        added           :: Map (Maybe RpkiObjectType) Count,
+        deleted         :: Map (Maybe RpkiObjectType) Count,        
         rrdpSource      :: RrdpSource,        
         lastHttpStatus  :: HttpStatus,        
         downloadTimeMs  :: TimeMs,
@@ -411,7 +406,7 @@ data RrdpMetric = RrdpMetric {
     deriving Monoid    via GenericMonoid RrdpMetric
 
 data RsyncMetric = RsyncMetric {
-        processed      :: Count,        
+        processed      :: Map (Maybe RpkiObjectType) Count,        
         totalTimeMs    :: TimeMs,
         fetchFreshness :: FetchFreshness
     }
@@ -419,6 +414,16 @@ data RsyncMetric = RsyncMetric {
     deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup RsyncMetric   
     deriving Monoid    via GenericMonoid RsyncMetric
+
+newtype ValidatedBy = ValidatedBy { unValidatedBy :: WorldVersion }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+    
+instance Monoid ValidatedBy where
+    mempty = ValidatedBy $ WorldVersion $ 2 ^ (63 :: Int)
+
+instance Semigroup ValidatedBy where
+    (<>) = min
 
 data ValidationMetric = ValidationMetric {
         vrpCounter      :: Count,        
@@ -432,7 +437,8 @@ data ValidationMetric = ValidationMetric {
         validAspaNumber :: Count,
         validBgpNumber  :: Count,
         mftShortcutNumber :: Count,                
-        totalTimeMs     :: TimeMs
+        totalTimeMs     :: TimeMs,
+        validatedBy     :: ValidatedBy
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -451,6 +457,7 @@ instance MetricC ValidationMetric where
 newtype MetricMap a = MetricMap { unMetricMap :: MonoidalMap MetricScope a }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
+    deriving newtype Functor
     deriving newtype Monoid    
     deriving newtype Semigroup
 
@@ -463,7 +470,7 @@ data VrpCounts = VrpCounts {
     deriving Semigroup via GenericSemigroup VrpCounts   
     deriving Monoid    via GenericMonoid VrpCounts
 
-data RawMetric = RawMetric {
+data Metrics = Metrics {
         rsyncMetrics      :: MetricMap RsyncMetric,
         rrdpMetrics       :: MetricMap RrdpMetric,
         validationMetrics :: MetricMap ValidationMetric,
@@ -471,8 +478,8 @@ data RawMetric = RawMetric {
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
-    deriving Semigroup via GenericSemigroup RawMetric   
-    deriving Monoid    via GenericMonoid RawMetric
+    deriving Semigroup via GenericSemigroup Metrics   
+    deriving Monoid    via GenericMonoid Metrics
 
 
 -- Misc
@@ -484,7 +491,7 @@ data Trace = WorkerTimeoutTrace
 
 data ValidationState = ValidationState {
         validations   :: Validations,
-        topDownMetric :: RawMetric,
+        topDownMetric :: Metrics,
         traces        :: Set Trace
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -493,10 +500,7 @@ data ValidationState = ValidationState {
     deriving Monoid    via GenericMonoid ValidationState
 
 mTrace :: Trace -> Set Trace
-mTrace t = Set.singleton t
-    
-vState :: Validations -> ValidationState
-vState vs = ValidationState vs mempty mempty
+mTrace = Set.singleton
 
 updateMetricInMap :: Monoid a => 
                     MetricScope -> (a -> a) -> MetricMap a -> MetricMap a
@@ -523,8 +527,30 @@ focusToText = \case
 scopeList :: Scope a -> [Focus]
 scopeList (Scope s) = NonEmpty.toList s
 
+totalMapCount :: Map a Count -> Count
+totalMapCount m = sum $ Map.elems m
+
 rrdpRepoHasUpdates :: RrdpMetric -> Bool
-rrdpRepoHasUpdates RrdpMetric {..} = added > 0 || deleted > 0
+rrdpRepoHasUpdates RrdpMetric {..} = anyPositive added || anyPositive deleted   
 
 rsyncRepoHasUpdates :: RsyncMetric -> Bool
-rsyncRepoHasUpdates RsyncMetric {..} = processed > 0
+rsyncRepoHasUpdates RsyncMetric {..} = anyPositive processed
+
+rrdpRepoHasSignificantUpdates :: RrdpMetric -> Bool
+rrdpRepoHasSignificantUpdates RrdpMetric {..} = 
+    anySignificantPositive added || anySignificantPositive deleted   
+
+rsyncRepoHasSignificantUpdates :: RsyncMetric -> Bool
+rsyncRepoHasSignificantUpdates RsyncMetric {..} = anySignificantPositive processed
+
+anyPositive :: (Ord b, Num b) => Map a b -> Bool
+anyPositive m = Prelude.any ((> 0) . snd) $ Map.toList m    
+
+anySignificantPositive :: (Ord b, Num b) => Map (Maybe RpkiObjectType) b -> Bool
+anySignificantPositive m = Prelude.any f $ Map.toList m    
+  where
+    f (type_, c) = 
+        case type_ of 
+            Just MFT -> False
+            Just CRL -> False
+            _        -> c > 0

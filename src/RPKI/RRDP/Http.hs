@@ -150,9 +150,6 @@ downloadToFile uri file limit = liftIO $ do
 lazyFsRead :: FilePath -> IO LBS.ByteString
 lazyFsRead = LBS.readFile
 
-fsRead :: FilePath -> IO BS.ByteString
-fsRead = BS.readFile 
-
 mapFile :: FilePath -> IO BS.ByteString
 mapFile = unsafeMMapFile
 

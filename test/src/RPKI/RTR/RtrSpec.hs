@@ -162,28 +162,6 @@ mkNewGenDiff added deleted = Diff {
     }
 
 
--- testRespond :: TestTree
--- testRespond = HU.testCase "Should insert and get a repository" $ do    
---     appState <- newAppState
---     z <- newRtrState =<< getWorldVerionIO appState
-
---     let rtrState = z
-    
---     vrps :: [Vrp] <- replicateM 5 $ QC.generate arbitrary
-
---     let pdu = SerialQueryPdu (currentSessionId rtrState) (currentSerial rtrState)
-
---     let response = respondToPdu 
---                         (Just rtrState) 
---                         vrps 
---                         (VersionedPdu pdu V1)
---                         (pduToBytes pdu V1)
---                         (Session V1)
-
---     putStrLn $ "response = " <> show response 
-
---     pure ()
-
 
 testGenerateDiffs :: TestTree
 testGenerateDiffs = HU.testCase "Should generate correct VRP diffs" $ do                

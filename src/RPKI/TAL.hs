@@ -14,7 +14,6 @@ import           Control.Lens                     ((^.))
 import           Control.Monad
 
 import qualified Data.List                        as List
-import           Data.List.NonEmpty               (NonEmpty(..))
 import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set.NonEmpty                as NESet
 import           Data.String.Interpolate.IsString
@@ -63,9 +62,6 @@ getTaName = (^. #taName)
 getTaCertURL :: TAL -> RpkiURL
 getTaCertURL PropertiesTAL {..} = pickLocation certificateLocation
 getTaCertURL RFC_TAL {..}       = pickLocation certificateLocations
-
-newLocation :: Text -> NonEmpty RpkiURL
-newLocation t =  RrdpU (RrdpURL $ URI t) :| []
 
 -- | Parse TAL object from raw text
 parseTAL :: Text -> Text -> Either TALError TAL
@@ -124,9 +120,7 @@ parseTAL bs taName = do
                     case NonEmpty.nonEmpty uris of
                         Nothing    -> Left $ TALError "Empty list of URIs"
                         Just uris' -> do 
-                            locations <- first TALError 
-                                            $ mapM parseRpkiURL 
-                                            $ NonEmpty.map Text.strip uris'
+                            locations <- first TALError $ mapM (parseRpkiURL . Text.strip) uris'
                             pure $ RFC_TAL {
                                 certificateLocations = Locations $ NESet.fromList locations,
                                 publicKeyInfo = EncodedBase64 $ convert $ 

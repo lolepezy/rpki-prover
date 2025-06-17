@@ -22,9 +22,6 @@ delete :: (AsStorable k, AsStorable v) =>
             Tx s 'RW -> SMultiMap name s k v -> k -> v -> IO ()
 delete tx (SMultiMap _ s) k v = S.deleteMu tx s (storableKey k) (storableValue v)
 
-deleteAll :: (AsStorable k, AsStorable v) =>
-            Tx s 'RW -> SMultiMap name s k v -> k -> IO ()
-deleteAll tx (SMultiMap _ s) k = S.deleteAllMu tx s (storableKey k)
 
 fold :: (AsStorable k, AsStorable v) =>
         Tx s m -> SMultiMap name s k v -> (a -> k -> v -> IO a) -> a -> IO a

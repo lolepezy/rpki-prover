@@ -116,13 +116,16 @@ fromNanoseconds totalNanos =
         elapsed = ElapsedP (Elapsed (Seconds seconds)) (NanoSeconds nanos)
         (seconds, nanos) = totalNanos `divMod` nanosPerSecond     
 
-closeEnoughMoments :: Instant -> Instant -> Seconds -> Bool
-closeEnoughMoments firstMoment secondMoment intervalSeconds = 
-    instantDiff secondMoment firstMoment < intervalSeconds
+closeEnoughMoments :: Earlier -> Later -> Seconds -> Bool
+closeEnoughMoments earlierInstant laterInstant intervalSeconds = 
+    instantDiff earlierInstant laterInstant < intervalSeconds
 
-instantDiff :: Instant -> Instant -> Seconds
-instantDiff (Instant firstMoment) (Instant secondMoment) = 
-    timeDiff firstMoment secondMoment 
+newtype Earlier = Earlier Instant
+newtype Later = Later Instant
+
+instantDiff :: Earlier -> Later -> Seconds
+instantDiff (Earlier (Instant earlierInstant)) (Later (Instant laterInstant)) = 
+    timeDiff laterInstant earlierInstant  
 
 momentAfter :: Instant -> Seconds -> Instant
 momentAfter (Instant moment) seconds = Instant $ timeAdd moment seconds
@@ -139,15 +142,21 @@ instantDateFormat (Instant d) = timePrint format d
     dash = Format_Text '-'
     colon = Format_Text ':'   
 
-secondsToInt :: Seconds -> Int
-secondsToInt (Seconds s) = fromIntegral s
+instantTimeFormat :: Instant -> String
+instantTimeFormat (Instant d) = timePrint format d
+  where 
+    format = TimeFormatString [            
+            Format_Hour, colon, Format_Minute, colon, Format_Second,
+            Format_TimezoneName
+        ]
+    colon = Format_Text ':'   
 
 toMicroseconds :: Seconds -> Int
-toMicroseconds (Seconds s) = fromIntegral $ 1000_000 * s
+toMicroseconds (Seconds s) = fromIntegral $ 1_000_000 * s
 
-cpuTimePerSecond :: CPUTime -> Instant -> Instant -> Double
-cpuTimePerSecond (CPUTime t) from to = let
-    Seconds duration = instantDiff to from
+cpuTimePerSecond :: CPUTime -> Earlier -> Later -> Double
+cpuTimePerSecond (CPUTime t) earlier later = let
+    Seconds duration = instantDiff earlier later
     in (fromInteger t :: Double) / (fromIntegral duration :: Double)
 
 asCpuTime :: Seconds -> CPUTime 

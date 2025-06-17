@@ -1,0 +1,32 @@
+[Unit]
+Description=RPKI Prover
+Documentation=man:rpki-prover(1)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/rpki-prover --rpki-root-directory /var/lib/rpki-prover
+Type=exec
+Restart=on-failure
+User=rpki-prover
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rpki-prover/
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+StateDirectory=rpki-prover
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target
+

@@ -3,9 +3,7 @@
 {-# LANGUAGE ConstraintKinds            #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE DerivingVia                #-}
@@ -21,7 +19,6 @@ import           GHC.Generics
 import           Data.Proxy
 import           Data.Swagger hiding (url)
 
-import           RPKI.Orphans.Json
 import           RPKI.Orphans.Swagger
 import           RPKI.Time
 import           RPKI.Domain

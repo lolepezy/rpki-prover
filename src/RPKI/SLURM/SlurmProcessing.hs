@@ -47,13 +47,18 @@ slurmVrpName :: TaName
 slurmVrpName = TaName "slurm"
 
 
-applySlurmToVrps :: Slurm -> Vrps -> Vrps
-applySlurmToVrps slurm (Vrps vrps) = 
-    Vrps $ filteredVrps vrps <> MonoidalMap.singleton slurmVrpName assertedVrps
-  where     
-    filteredVrps = MonoidalMap.map (V.filter filterFunc)
+applySlurmToVrps :: Slurm -> PerTA Vrps -> PerTA Vrps
+applySlurmToVrps slurm (PerTA vrps) = 
+    -- Vrps $ V.filter filterFunc vrps <> assertedVrps
 
-    assertedVrps = V.fromList 
+    PerTA (MonoidalMap.map filteredVrps vrps) <> 
+    PerTA (MonoidalMap.singleton slurmVrpName assertedVrps)
+
+  where     
+    filteredVrps = Vrps . V.filter filterFunc . unVrps
+
+    assertedVrps = Vrps 
+        $ V.fromList 
         $ map toVrp 
         $ slurm ^. #locallyAddedAssertions . #prefixAssertions
       where
@@ -65,7 +70,7 @@ applySlurmToVrps slurm (Vrps vrps) =
             $ any matchesFilter 
             $ slurm ^. #validationOutputFilters . #prefixFilters
       where
-        matchesFilter z = case z ^. #asnAndPrefix of
+        matchesFilter f = case f ^. #asnAndPrefix of
             This asn         -> coerce asn == vAsn
             That prefix      -> vPrefix `isInsideOf` prefix
             These asn prefix -> coerce asn == vAsn && vPrefix `isInsideOf` prefix

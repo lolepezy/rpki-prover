@@ -54,7 +54,6 @@ instance ToSchema URI where
      declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema WorldVersion     
-instance ToSchema VersionKind
 instance ToSchema Instant where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema DateTime     
@@ -84,7 +83,7 @@ instance (ToSchema a, ToSchema b) => ToSchema (These a b)
 instance (ToSchema a, ToJSONKey a, ToSchema b) => ToSchema (MonoidalMap a b) where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy (Map a b))
 
-instance ToSchema a => ToSchema (GroupedValidationMetric a)
+instance ToSchema a => ToSchema (GroupedMetric a)
 
 instance ToSchema SessionId
 instance ToSchema Serial
@@ -93,7 +92,9 @@ instance ToSchema TaName where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema a => ToSchema (MetricMap a)
+instance ToSchema ValidatedBy
 instance ToSchema ValidationMetric
+instance ToSchema RpkiObjectType
 instance ToSchema RsyncMetric
 instance ToSchema RrdpMetric
 instance ToSchema ResourceUsage
@@ -140,8 +141,6 @@ instance ToSchema LogLevel
 instance ToSchema ManifestProcessing
 instance ToSchema ValidationRFC
 instance ToSchema ValidationAlgorithm
-instance ToSchema FetchTimingCalculation
-instance ToSchema FetchMethod
 instance ToSchema ProverRunMode where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 

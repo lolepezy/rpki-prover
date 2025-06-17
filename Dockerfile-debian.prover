@@ -1,0 +1,23 @@
+FROM debian:stable-slim as builder
+
+RUN mkdir /opt/build
+WORKDIR /opt/build
+
+# GHC dynamically links its compilation targets to lib gmp
+RUN apt-get update && apt-get download libgmp10
+RUN mv libgmp*.deb libgmp.deb
+RUN apt-get install -y bash libexpat1-dev liblmdb-dev liblzma-dev libz-dev pkg-config git haskell-stack g++ locales
+
+# Set the locale
+RUN sed -i '/en_GB.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
+ENV LANG en_GB.UTF-8  
+ENV LANGUAGE en_US:en  
+ENV LC_ALL en_GB.UTF-8 
+
+# Docker build should not use cached layer if any of these is modified
+RUN export LC_ALL=en_GB.UTF-8 && \
+    cd /opt/build && \ 
+    git clone https://github.com/lolepezy/rpki-prover.git && \
+    cd rpki-prover && \
+    git checkout v0.9.9 && \
+    ./build-local.sh

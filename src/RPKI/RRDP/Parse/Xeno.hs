@@ -54,10 +54,10 @@ parseNotification bs = catchExceptions $ runST $ do
                         \v -> lift $ writeSTRef sessionIdRef $ Just $ SessionId $ convert v
                     forAttribute attributes "serial" NoSerial $
                         \v -> parseSerial v (lift . writeSTRef serialRef . Just)
-                    forAttribute attributes "version" NoVersion $
+                    forAttribute attributes "version" NoVersionInNotification $
                         \v -> case parseInteger v of
-                            Nothing -> throwE NoVersion
-                            Just v' -> lift $ writeSTRef versionRef  (Just $ Version v')
+                            Nothing -> throwE NoVersionInNotification
+                            Just v' -> lift $ writeSTRef versionRef $ Just $ Version v'
                 ("snapshot", attributes) -> do
                     forAttribute attributes "hash" NoSnapshotHash $
                         \v  -> case makeHash v of
@@ -79,7 +79,7 @@ parseNotification bs = catchExceptions $ runST $ do
             (\_ -> pure ())
 
     let notification = Notification <$>
-                        valuesOrError versionRef NoVersion <*>
+                        valuesOrError versionRef NoVersionInNotification <*>
                         valuesOrError sessionIdRef NoSessionId <*>
                         valuesOrError serialRef NoSerial <*>
                         (SnapshotInfo <$> 
@@ -107,9 +107,9 @@ parseSnapshot bs = catchExceptions $ runST $ do
                         \v -> lift $ writeSTRef sessionIdRef $ Just $ SessionId $ convert v
                     forAttribute attributes "serial" NoSerial $
                         \v -> parseSerial v (lift . writeSTRef serialRef . Just)
-                    forAttribute attributes "version" NoSerial $
+                    forAttribute attributes "version" NoVersionInSnapshot $
                         \v -> case parseInteger v of
-                            Nothing -> throwE NoVersion
+                            Nothing -> throwE NoVersionInSnapshot
                             Just v' -> lift $ writeSTRef versionRef  (Just $ Version v')
                 ("publish", attributes) -> do
                     uri <- forAttribute attributes "uri" NoPublishURI (lift . pure)
@@ -131,7 +131,7 @@ parseSnapshot bs = catchExceptions $ runST $ do
                         $ reverse ps
 
     let snapshot = Snapshot <$>
-                        valuesOrError versionRef NoVersion <*>
+                        valuesOrError versionRef NoVersionInSnapshot <*>
                         valuesOrError sessionIdRef NoSessionId <*>
                         valuesOrError serialRef NoSerial <*>
                         snapshotPublishes
@@ -155,9 +155,9 @@ parseDelta bs = catchExceptions $ runST $ do
                     \v -> lift $ writeSTRef sessionIdRef $ Just $ SessionId $ convert v
                 forAttribute attributes "serial" NoSerial $
                     \v -> parseSerial v (lift . writeSTRef serialRef . Just)
-                forAttribute attributes "version" NoSerial $
+                forAttribute attributes "version" NoVersionInDelta $
                     \v -> case parseInteger v of
-                        Nothing -> throwE NoVersion
+                        Nothing -> throwE NoVersionInDelta
                         Just v' -> lift $ writeSTRef versionRef  (Just $ Version v')
 
             ("publish", attributes) -> do
@@ -205,7 +205,7 @@ parseDelta bs = catchExceptions $ runST $ do
 
 
     let delta = Delta <$>
-                    valuesOrError versionRef NoVersion <*>
+                    valuesOrError versionRef NoVersionInDelta <*>
                     valuesOrError sessionIdRef NoSessionId <*>
                     valuesOrError serialRef NoSerial <*>
                     deltaItemsRef'
