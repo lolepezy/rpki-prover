@@ -955,16 +955,6 @@ updateValidatedByVersionMap tx DB { objectStore = RpkiObjectStore {..} } f = lif
     M.put tx validatedByVersion validatedByVersionKey $ Compressed validatedBy'
     pure validatedBy'
 
-
-cleanupValidatedByVersionMap :: (MonadIO m, Storage s) =>
-                                Tx s RW
-                                -> DB s
-                                -> (WorldVersion -> Bool)
-                                -> m (Map.Map ObjectKey WorldVersion)
-cleanupValidatedByVersionMap tx db toDelete = liftIO $ do     
-    updateValidatedByVersionMap tx db $ 
-        maybe mempty $ Map.filter (not . toDelete)
-
 -- More complicated operations
 
 data CleanUpResult = CleanUpResult {
@@ -999,7 +989,6 @@ deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
                 let versionsToDelete = map fst $ findEnoughForEachTA reallyToKeep versions mempty                          
                 forM_ versionsToDelete $ deleteValidationVersion tx db
                 let toDeleteSet = Set.fromList versionsToDelete 
-                void $ cleanupValidatedByVersionMap tx db (`Set.member` toDeleteSet)
                 pure versionsToDelete
             else pure []        
   where    
