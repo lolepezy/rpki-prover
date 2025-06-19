@@ -345,6 +345,8 @@ runWorkflow appContext@AppContext {..} tals = do
     runScheduledTasks workflowShared = do                
         persistedJobs <- roTxT database $ \tx db -> Map.fromList <$> DB.allJobs tx db        
 
+        logDebug logger [i|Starting scheduled tasks with persisted jobs: #{persistedJobs}.|]
+
         Now now <- thisInstant
         forConcurrently (schedules workflowShared) $ \Scheduling { taskDef = (task, action), ..} -> do                        
             let name = fmtGen task
@@ -355,9 +357,9 @@ runWorkflow appContext@AppContext {..} tals = do
                             (initialDelay, FirstRun)
                         Just lastExecuted -> 
                             (fromIntegral $ leftToWaitMicros (Earlier lastExecuted) (Later now) interval, RanBefore)
-                    else (initialDelay, FirstRun)            
+                    else (initialDelay, FirstRun)
 
-            let delayInSeconds = initialDelay `div` 1_000_000
+            let delayInSeconds = delay `div` 1_000_000
             let delayText :: Text.Text = 
                     case () of 
                       _ | delay == 0 -> [i|for ASAP execution|] 
