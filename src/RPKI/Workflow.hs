@@ -343,9 +343,7 @@ runWorkflow appContext@AppContext {..} tals = do
     --   * run tasks using `runConcurrentlyIfPossible` to make sure 
     --     there is no data races between different tasks
     runScheduledTasks workflowShared = do                
-        persistedJobs <- roTxT database $ \tx db -> Map.fromList <$> DB.allJobs tx db        
-
-        logDebug logger [i|Starting scheduled tasks with persisted jobs: #{persistedJobs}.|]
+        persistedJobs <- roTxT database $ \tx db -> Map.fromList <$> DB.allJobs tx db
 
         Now now <- thisInstant
         forConcurrently (schedules workflowShared) $ \Scheduling { taskDef = (task, action), ..} -> do                        
