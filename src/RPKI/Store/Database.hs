@@ -988,7 +988,6 @@ deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
             then do           
                 let versionsToDelete = map fst $ findEnoughForEachTA reallyToKeep versions mempty                          
                 forM_ versionsToDelete $ deleteValidationVersion tx db
-                let toDeleteSet = Set.fromList versionsToDelete 
                 pure versionsToDelete
             else pure []        
   where    
