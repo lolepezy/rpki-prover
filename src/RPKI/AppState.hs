@@ -26,6 +26,7 @@ import           RPKI.AppTypes
 import           RPKI.Logging
 import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
+import           RPKI.Repository
 import           RPKI.Time
 import           RPKI.Metrics.System
 import           RPKI.RTR.Protocol
@@ -62,7 +63,9 @@ data AppState = AppState {
         -- by the validity check
         prefixIndex :: TVar (Maybe PrefixIndex),
 
-        runningRsyncClients :: TVar (Map.Map Pid WorkerInfo)
+        runningRsyncClients :: TVar (Map.Map Pid WorkerInfo),
+
+        fetcheables :: TVar Fetcheables
         
     } deriving stock (Generic)
 
@@ -88,6 +91,7 @@ newAppState = do
         prefixIndex <- newTVar Nothing
         cachedBinaryRtrPdus <- newTVar mempty
         runningRsyncClients <- newTVar mempty
+        fetcheables <- newTVar mempty
         let readSlurm = Nothing
         pure AppState {..}
                     

@@ -141,7 +141,9 @@ withWorkflowShared AppContext {..} prometheusMetrics tals f = do
         deletedAnythingFromDb <- newTVar False
         runningTasks          <- newRunningTasks
         fetchers <- do 
-                fetcheables        <- newTVar mempty
+                -- We want to share the fetcheables that are already defined in the appState
+                -- to have it gloabally available (in particular available to the REST API)
+                let fetcheables = appState ^. #fetcheables
                 runningFetchers    <- newTVar mempty
                 firstFinishedFetchBy <- newTVar mempty
                 uriByTa            <- newTVar mempty

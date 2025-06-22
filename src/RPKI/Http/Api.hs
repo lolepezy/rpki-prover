@@ -30,6 +30,7 @@ import           RPKI.Http.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util (convert)
 import           RPKI.Version
+import RPKI.Repository (Fetcheables)
 
 
 data API api = API {        
@@ -109,6 +110,8 @@ data API api = API {
         rtr :: api :- "rtr" :> Get '[JSON] RtrDto,
 
         versions :: api :- "versions" :> Get '[JSON] [WorldVersion],
+
+        fetcheables :: api :- "fetcheables" :> Get '[JSON] Fetcheables,
 
         validity :: api :- "validity" :> Capture "asn" String 
                                       :> CaptureAll "prefix" String 
