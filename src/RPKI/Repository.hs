@@ -111,6 +111,9 @@ newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
+-- | A set of URLs that can be fetched with their fallbacks.
+-- | The key is the URL that should be fetched first, and the 
+-- | value is a set of fallback URLs.
 newtype Fetcheables = Fetcheables { unFetcheables :: MonoidalMap RpkiURL (Set.Set RpkiURL) }    
     deriving stock (Show, Eq, Ord, Generic)  
     deriving anyclass (TheBinary)    

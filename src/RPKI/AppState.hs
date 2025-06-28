@@ -47,7 +47,9 @@ data AppState = AppState {
 
         -- Full binary RTR state sent to every RTR client.
         -- It is serialised once per RTR protocol version 
-        -- and sent to every new client requesting the full state
+        -- and sent to every new client requesting the full state.
+        -- It is an optimisation to avoid serialising the same 
+        -- RTR state for every new client.
         cachedBinaryRtrPdus :: TVar (Map.Map ProtocolVersion BS.ByteString),
 
         -- Function that re-reads SLURM file(s) after every re-validation
