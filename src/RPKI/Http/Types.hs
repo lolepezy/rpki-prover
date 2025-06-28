@@ -320,6 +320,7 @@ data SystemDto = SystemDto {
         gitInfo       :: Text,
         config        :: Config,
         startUpTime   :: Instant,
+        tals          :: [TalDto],
         resources     :: [ResourcesDto],
         rsyncClients  :: [WorkerInfoDto]
     }
