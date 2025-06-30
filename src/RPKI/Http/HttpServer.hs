@@ -132,7 +132,7 @@ httpServer appContext tals = genericServe HttpApi {
                             fetcheables <- readTVarIO $ appState ^. #fetcheables
                             pure $ mconcat $ map (uncurry Set.insert) $ MonoidalMap.toList $ unFetcheables fetcheables
                             
-                    fetchesDtos         <- toRepositoryDtos appContext =<< DB.getRepositoriesFiltered tx db (`Set.member` allFetcheables)
+                    fetchesDtos         <- toRepositoryDtos appContext =<< DB.getRepositories tx db (`Set.member` allFetcheables)
                     systemInfo          <- readTVarIO $ appContext ^. #appState . #system
 
                     pure $ mainPage

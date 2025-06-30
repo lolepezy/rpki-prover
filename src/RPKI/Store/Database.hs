@@ -895,12 +895,12 @@ saveRsyncAnything repositories extractTree saveTree = liftIO $ do
         let tree' = foldr (uncurry pathToRsyncTree) startTree pathAndA
         saveTree host tree'
 
-getRepositoriesFiltered :: (MonadIO m, Storage s) 
+getRepositories :: (MonadIO m, Storage s) 
                         => Tx s mode 
                         -> DB s 
                         -> (RpkiURL -> Bool)
                         -> m [(Repository, ValidationState)]
-getRepositoriesFiltered tx DB { repositoryStore = RepositoryStore {..}} filterF = liftIO $ do
+getRepositories tx DB { repositoryStore = RepositoryStore {..}} filterF = liftIO $ do
     rrdps <- M.all tx rrdpS
     rsyncs <- M.all tx rsyncS    
 
@@ -925,9 +925,6 @@ getRepositoriesFiltered tx DB { repositoryStore = RepositoryStore {..}} filterF 
                             Just (_, vs) <- [lookupInRsyncTree path vss]
                         ]
     pure $ rrpdRepos <> rsyncRepos
-
-getRepositories :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(Repository, ValidationState)]
-getRepositories tx db = getRepositoriesFiltered tx db (const True)
 
 setJobCompletionTime :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Text -> Instant -> m ()
 setJobCompletionTime tx DB { jobStore = JobStore s } job t = liftIO $ M.put tx s job t
