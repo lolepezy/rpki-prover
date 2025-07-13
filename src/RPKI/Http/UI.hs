@@ -114,6 +114,7 @@ mainPage version systemInfo perTaValidations generalValidations fetchDtos metric
 
                 link_ "/swagger-ui" "Swagger API Documentation"
                 link_ "/api/system" "Configuration & Metrics"
+                link_ "/api/lmdb-stats" "Cache Statistics"
                 link_ "https://github.com/lolepezy/rpki-prover" "GitHub Repository"
 
         navigation = do

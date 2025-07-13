@@ -106,6 +106,7 @@ httpServer appContext tals = genericServe HttpApi {
         system = liftIO $ getSystem appContext,
         rtr = getRtr appContext,
         versions = getVersions appContext,
+        fetcheables = getFetcheables appContext,
         validity = getPrefixValidity appContext,
         validityAsnPrefix = getQueryPrefixValidity appContext,
         validityBulk = getBulkPrefixValidity appContext
@@ -125,7 +126,13 @@ httpServer appContext tals = genericServe HttpApi {
 
                     resolvedValidations <- traverse (mapM (resolveOriginalDto tx db) . toVDtos . fst) perTaOutcomes
                     resolvedCommons     <- mapM (resolveOriginalDto tx db) $ toVDtos commonValidations                    
-                    fetchesDtos         <- toRepositoryDtos appContext =<< DB.getRepositories tx db
+
+                    
+                    allFetcheables      <- do 
+                            fetcheables <- readTVarIO $ appState ^. #fetcheables
+                            pure $ mconcat $ map (uncurry Set.insert) $ MonoidalMap.toList $ unFetcheables fetcheables
+                            
+                    fetchesDtos         <- toRepositoryDtos appContext =<< DB.getRepositories tx db (`Set.member` allFetcheables)
                     systemInfo          <- readTVarIO $ appContext ^. #appState . #system
 
                     pure $ mainPage
@@ -510,6 +517,11 @@ getVersions :: (MonadIO m, Storage s, MonadError ServerError m) =>
                 AppContext s -> m [WorldVersion]
 getVersions AppContext {..} = 
     liftIO $ map fst <$> roTxT database DB.versionsBackwards
+
+getFetcheables :: (MonadIO m, Storage s, MonadError ServerError m) =>
+                  AppContext s -> m Fetcheables
+getFetcheables AppContext {..} = 
+    liftIO $ readTVarIO $ appState ^. #fetcheables
 
 
 getQueryPrefixValidity :: (MonadIO m, Storage s, MonadError ServerError m)

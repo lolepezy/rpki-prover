@@ -26,6 +26,7 @@ import           RPKI.AppTypes
 import           RPKI.Logging
 import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
+import           RPKI.Repository
 import           RPKI.Time
 import           RPKI.Metrics.System
 import           RPKI.RTR.Protocol
@@ -46,7 +47,9 @@ data AppState = AppState {
 
         -- Full binary RTR state sent to every RTR client.
         -- It is serialised once per RTR protocol version 
-        -- and sent to every new client requesting the full state
+        -- and sent to every new client requesting the full state.
+        -- It is an optimisation to avoid serialising the same 
+        -- RTR state for every new client.
         cachedBinaryRtrPdus :: TVar (Map.Map ProtocolVersion BS.ByteString),
 
         -- Function that re-reads SLURM file(s) after every re-validation
@@ -62,7 +65,9 @@ data AppState = AppState {
         -- by the validity check
         prefixIndex :: TVar (Maybe PrefixIndex),
 
-        runningRsyncClients :: TVar (Map.Map Pid WorkerInfo)
+        runningRsyncClients :: TVar (Map.Map Pid WorkerInfo),
+
+        fetcheables :: TVar Fetcheables
         
     } deriving stock (Generic)
 
@@ -88,6 +93,7 @@ newAppState = do
         prefixIndex <- newTVar Nothing
         cachedBinaryRtrPdus <- newTVar mempty
         runningRsyncClients <- newTVar mempty
+        fetcheables <- newTVar mempty
         let readSlurm = Nothing
         pure AppState {..}
                     

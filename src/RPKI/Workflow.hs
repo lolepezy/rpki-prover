@@ -141,7 +141,9 @@ withWorkflowShared AppContext {..} prometheusMetrics tals f = do
         deletedAnythingFromDb <- newTVar False
         runningTasks          <- newRunningTasks
         fetchers <- do 
-                fetcheables        <- newTVar mempty
+                -- We want to share the fetcheables that are already defined in the appState
+                -- to have it gloabally available (in particular available to the REST API)
+                let fetcheables = appState ^. #fetcheables
                 runningFetchers    <- newTVar mempty
                 firstFinishedFetchBy <- newTVar mempty
                 uriByTa            <- newTVar mempty
@@ -708,11 +710,19 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
 
     -- Here we do anything that needs to be done in case of specific 
     -- fetch/validation issues are present    
-    handleValidations tx db (Validations validations) = do         
-        Now now <- thisInstant
-        unless (Map.null repositoriesWithManifestIntegrityIssues) $ 
-            logDebug logger [i|Repositories with integrity issues #{repositoriesWithManifestIntegrityIssues}.|]
+    handleValidations tx db validations = do
+        forceSnapshotForReferencialIssues tx db validations
+        -- other processings if needed
 
+    -- https://github.com/lolepezy/rpki-prover/issues/249
+    -- This is to handle referential integrity issues, i.e. manifests referring to 
+    -- objects that are not found in the cache. That might be caused by
+    -- either a bug in the code, e.g. we GC-ed the referred object too early 
+    -- or a problem in the repository. In either case we force snapshot fetch 
+    -- to recover repository integrity. This is hacky and should be reconsidered 
+    -- in the future, but it works well for now.
+    forceSnapshotForReferencialIssues tx db (Validations validations) = do
+        Now now <- thisInstant
         for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) ->
             DB.updateRrdpMetaM tx db rrdpUrl $ \case 
                 Nothing   -> pure Nothing
