@@ -1,26 +1,36 @@
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE RecordWildCards            #-}
 
 module RPKI.Validation.Common where
 
 import           Control.Monad
 
-import           Control.Lens
+import           Control.Lens ((^.))
 import           Data.Generics.Product.Typed
 
 import           Data.Foldable
 import qualified Data.Set.NonEmpty                as NESet
+import           Data.List.NonEmpty               ((<|))
+import qualified Data.List.NonEmpty               as NonEmpty
+import qualified Data.List                        as List
 import qualified Data.Set                         as Set
 import qualified Data.Text                        as Text
+import           Data.Ord
+
 
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Resources
+import           RPKI.Store.Types
 import           RPKI.Resources.Types
 import qualified RPKI.Util as U
+import           RPKI.Time
+
 
 
 createVerifiedResources :: CaCerObject -> VerifiedRS PrefixesAndAsns
@@ -82,3 +92,18 @@ checkCrlLocation crl parentCertificate =
         when (Set.null $ NESet.filter ((crlDP ==) . getURL) $ unLocations crlLocations) $ 
             vError $ CRLOnDifferentLocation crlDP crlLocations
 
+
+updateMfts :: AnMft -> Now -> Mfts -> Maybe Mfts 
+updateMfts anMft (Now now) (Mfts mfts) = Mfts <$> mfts' 
+  where 
+    mfts' = NonEmpty.nonEmpty 
+            $ List.sortOn (\a -> Down $ a ^. #nextUpdate) 
+            $ NonEmpty.filter stillMightBeValid 
+            $ anMft <| mfts
+    stillMightBeValid AnMft {..} = 
+        nextUpdate < now
+
+    sortedMfts [] = [anMft]
+    sortedMfts (mft: otherMfts) 
+        | anMft ^. #nextUpdate < mft ^. #nextUpdate = anMft : mft : otherMfts
+        | otherwise = mft : sortedMfts otherMfts
