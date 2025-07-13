@@ -1,16 +1,13 @@
 {-# LANGUAGE DerivingStrategies    #-}
 {-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE StrictData            #-}
-{-# LANGUAGE OverloadedStrings     #-}
 
 module RPKI.Store.Types where
 
 import           Control.DeepSeq
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
+import           Data.List.NonEmpty          (NonEmpty (..))
 
 import           GHC.Generics
 import           RPKI.TAL
@@ -43,6 +40,24 @@ data MftTimingMark = MftTimingMark Instant Instant
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+data MftRef = MftRealRef ObjectKey
+            | MftShortcutRef ObjectKey
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary) 
+
+data AnMft = AnMft { 
+        ref        :: MftRef,
+        thisUpdate :: {-# UNPACK #-} Instant,
+        nextUpdate :: {-# UNPACK #-} Instant
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+newtype Mfts = Mfts (NonEmpty AnMft)
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+
 newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)        
@@ -58,7 +73,7 @@ newtype ObjectOriginal = ObjectOriginal BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)        
 
-data DBFileStats = DBFileStats {
+newtype DBFileStats = DBFileStats {
     fileSize :: Size
 } deriving stock (Show, Eq, Generic)
 
