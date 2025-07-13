@@ -718,8 +718,9 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     -- This is to handle referential integrity issues, i.e. manifests referring to 
     -- objects that are not found in the cache. That might be caused by
     -- either a bug in the code, e.g. we GC-ed the referred object too early 
-    -- or a problem in the repository. In either case of the former, we force 
-    -- snapshot fetch. This is hacky and should be reconsidered in the future.
+    -- or a problem in the repository. In either case we force snapshot fetch 
+    -- to recover repository integrity. This is hacky and should be reconsidered 
+    -- in the future, but it works well for now.
     forceSnapshotForReferencialIssues tx db (Validations validations) = do
         Now now <- thisInstant
         for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) ->
