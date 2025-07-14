@@ -109,8 +109,8 @@ toNanos d = nanosPerSecond * seconds + nanos
   where 
     ElapsedP (Elapsed (Seconds seconds)) (NanoSeconds nanos) = timeGetElapsedP d
 
-asSeconds :: Instant -> Seconds
-asSeconds (Instant instant) = Seconds $ fromIntegral $ instant `div` nanosPerSecond
+asSeconds :: Instant -> Int64
+asSeconds (Instant instant) = fromIntegral $ instant `div` nanosPerSecond
 
 fromNanoseconds :: Int64 -> DateTime
 fromNanoseconds totalNanos =    

@@ -8,4 +8,4 @@ thisExecutableVersion :: ExecutableVersion
 thisExecutableVersion = ExecutableVersion $ rpkiProverVersion <> " " <> 
     -- The content is to be updated by the 'src-hash' script 
     -- that calculates hash of the source tree and configuration/build files     
-    "srcHash#a3371045a05f63c04877517a50f7223b120828a76da80e8b5c6121db5faf8898#srcHash"
+    "srcHash#7dd29097ce5875a90660fe55f17f9fee798522f80ff4e54a5bfda5e8db601caf#srcHash"
