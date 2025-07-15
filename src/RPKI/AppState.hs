@@ -123,10 +123,10 @@ getOrCreateWorldVerion AppState {..} =
         maybe newWorldVersion pure <$> readTVar world
 
 versionToInstant :: WorldVersion -> Instant
-versionToInstant (WorldVersion nanos) = fromNanoseconds nanos
+versionToInstant (WorldVersion nanos) = Instant nanos
 
 instantToVersion :: Instant -> WorldVersion
-instantToVersion = WorldVersion . toNanoseconds
+instantToVersion (Instant nanos) = WorldVersion nanos
 
 -- Block on version updates
 waitForNewVersion :: AppState -> WorldVersion -> STM (WorldVersion, RtrPayloads)

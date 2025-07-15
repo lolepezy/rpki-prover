@@ -345,7 +345,7 @@ instance WithHash (CMSBasedObject a) where
 
 instance {-# OVERLAPPING #-} WithValidityPeriod (CMSBasedObject a) where
     getValidityPeriod CMSBasedObject {..} = 
-        bimap Instant Instant $ X509.certValidity 
+        bimap newInstant newInstant $ X509.certValidity 
             $ cwsX509certificate $ getCertWithSignature 
             $ getEEResourceCert $ unCMS cmsPayload 
 
@@ -377,7 +377,7 @@ instance WithSKI (CMSBasedObject a) where
 
 instance WithRawResourceCertificate a => WithValidityPeriod a where
     getValidityPeriod cert = 
-        bimap Instant Instant $ X509.certValidity 
+        bimap newInstant newInstant $ X509.certValidity 
             $ cwsX509certificate $ getCertWithSignature $ getRawCert cert
 
 instance {-# OVERLAPPING #-} WithRawResourceCertificate a => WithSerial a where
@@ -804,7 +804,7 @@ instance Monoid EarliestToExpire where
     -- It is 2262-04-11 23:47:16.000Z, it's 
     -- 1) far enough to set it as "later that anything else"
     -- 2) Anything bigger than that wraps around to the year 1677
-    mempty = EarliestToExpire $ fromNanoseconds $ 1000_000_000 * 9_223_372_036
+    mempty = EarliestToExpire $ Instant $ 1000_000_000 * 9_223_372_036
 
 -- Small utility functions that don't have anywhere else to go
 

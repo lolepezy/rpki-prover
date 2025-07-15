@@ -95,7 +95,7 @@ instance ToJSON Instant where
 
 -- TODO Maybe it's not the best thing to do 
 instance ToJSON DateTime where
-    toJSON = toJSON . show . Instant
+    toJSON = toJSON . logPrint
 
 instance ToJSON RpkiURL where
     toJSON = toJSON . getURL
@@ -312,7 +312,7 @@ instance ToJSON Attribute where
             ]            
         SigningTime dt _ -> Json.object [
                 "type" .= ("SigningTime" :: Text),
-                "value" .= instantDateFormat (Instant dt)                
+                "value" .= instantDateFormat (newInstant dt)                
             ]
         BinarySigningTime bst -> Json.object [
                 "type" .= ("BinarySigningTime" :: Text),

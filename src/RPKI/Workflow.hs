@@ -1237,8 +1237,8 @@ runConcurrentlyIfPossible logger taskType Tasks {..} action = do
 
 
 versionIsOld :: Instant -> Seconds -> WorldVersion -> Bool
-versionIsOld now period (WorldVersion nanos) =
-    let validatedAt = fromNanoseconds nanos
+versionIsOld now period version =
+    let validatedAt = versionToInstant version
     in not $ closeEnoughMoments (Earlier validatedAt) (Later now) period
 
 

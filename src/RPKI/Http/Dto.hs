@@ -235,8 +235,8 @@ objectToDto = \case
 
             certSignatureAlg = Text.pack $ show $ X509.certSignatureAlg x509cert
 
-            notValidBefore = Instant $ fst $ X509.certValidity x509cert
-            notValidAfter  = Instant $ snd $ X509.certValidity x509cert
+            notValidBefore = newInstant $ fst $ X509.certValidity x509cert
+            notValidAfter  = newInstant $ snd $ X509.certValidity x509cert
 
             pubKey = case X509.certPubKey x509cert of
                         X509.PubKeyRSA RSA.PublicKey {..} -> Right $ let
