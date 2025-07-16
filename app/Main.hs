@@ -5,7 +5,6 @@
 {-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TemplateHaskell   #-}
 
 module Main where
 
@@ -243,7 +242,7 @@ runValidatorServer appContext tals =
 runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> IO ()
 runHttpApi appContext@AppContext {..} tals = do 
     let httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
-    (Warp.run httpPort $ httpServer appContext tals) 
+    Warp.run httpPort (httpServer appContext tals) 
         `catch` 
         (\(e :: SomeException) -> logError logger [i|Could not start HTTP server: #{e}.|])
 
@@ -447,7 +446,7 @@ fsLayout cliOptions@CLIOptions {..} logger = do
                 let anyFailures = any (\(_, _, s) -> either (const True) (not . isHttpSuccess) s) httpStatuses
                 when anyFailures $  
                     appError $ InitE $ InitError $ 
-                        Text.intercalate "\n" $ catMaybes $ map talText httpStatuses                                        
+                        Text.intercalate "\n" $ mapMaybe talText httpStatuses                                        
 
 
 getRoot :: CLIOptions Unwrapped -> ValidatorT IO (Either FilePath FilePath)

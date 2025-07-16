@@ -628,6 +628,7 @@ instance ToJSON RrdpEnforcement
 instance ToJSON RrdpMeta
 instance ToJSON RrdpRepository
 instance ToJSON RepositoryMeta
+instance ToJSON Fetcheables
 instance ToJSON PublicationPointsDto
 instance ToJSON RepositoryDto
 instance ToJSON RrdpRepositoryDto

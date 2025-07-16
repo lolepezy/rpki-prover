@@ -74,7 +74,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 43
+currentDatabaseVersion = 44
 
 -- Some constant keys
 databaseVersionKey, validatedByVersionKey :: Text
@@ -902,17 +902,22 @@ saveRsyncAnything repositories extractTree saveTree = liftIO $ do
         let tree' = foldr (uncurry pathToRsyncTree) startTree pathAndA
         saveTree host tree'
 
-
-getRepositories :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(Repository, ValidationState)]
-getRepositories tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
+getRepositories :: (MonadIO m, Storage s) 
+                        => Tx s mode 
+                        -> DB s 
+                        -> (RpkiURL -> Bool)
+                        -> m [(Repository, ValidationState)]
+getRepositories tx DB { repositoryStore = RepositoryStore {..}} filterF = liftIO $ do
     rrdps <- M.all tx rrdpS
     rsyncs <- M.all tx rsyncS    
 
     rrpdRepos <- fmap mconcat $ 
         forM rrdps $ \(url, r) -> do 
-            M.get tx rrdpVState url >>= \case 
-                Nothing              -> pure []
-                Just (Compressed vs) -> pure [(RrdpR r, vs)]
+            if filterF (RrdpU url) then 
+                M.get tx rrdpVState url >>= \case 
+                    Nothing              -> pure []
+                    Just (Compressed vs) -> pure [(RrdpR r, vs)]
+            else pure []
 
     rsyncRepos <- fmap mconcat $ 
         forM rsyncs $ \(host, metas) -> do 
@@ -921,11 +926,12 @@ getRepositories tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
                 Just (Compressed vss) -> 
                     pure [ (RsyncR repo, vs) | 
                             (RsyncURL _ path, meta) <- flattenTree host metas,
-                            let repo = RsyncRepository { repoPP = RsyncPublicationPoint (RsyncURL host path), .. },
-                            Just (_, vs) <- [lookupInRsyncTree path vss]      
+                            let uri = RsyncURL host path,
+                            let repo = RsyncRepository { repoPP = RsyncPublicationPoint uri, .. },
+                            filterF (RsyncU uri),
+                            Just (_, vs) <- [lookupInRsyncTree path vss]
                         ]
     pure $ rrpdRepos <> rsyncRepos
-
 
 setJobCompletionTime :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Text -> Instant -> m ()
 setJobCompletionTime tx DB { jobStore = JobStore s } job t = liftIO $ M.put tx s job t

@@ -67,8 +67,8 @@ parseCrl bs = do
             let encoded = encodeASN1' DER $ [Start Sequence] <> asns <> [End Sequence]
 
             let mkSignCRL crlNumber' = SignCRL 
-                        (Instant thisUpdate)
-                        (Instant <$> nextUpdate)
+                        (newInstant thisUpdate)
+                        (newInstant <$> nextUpdate)
                         (SignatureAlgorithmIdentifier signatureId) 
                         signatureVal (toShortBS encoded) 
                         crlNumber' 
