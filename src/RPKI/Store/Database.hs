@@ -33,7 +33,6 @@ import           Data.Ord
 import           Data.Text.Encoding       (encodeUtf8)
 import           Data.Tuple.Strict
 
-import           Data.String.Interpolate.IsString
 import           Data.Generics.Product.Typed
 
 import           GHC.Generics
@@ -63,7 +62,6 @@ import           RPKI.Util                (ifJustM)
 import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.AppTypes
-import           RPKI.Logging
 import           RPKI.RTR.Types
 import           RPKI.Time
 
@@ -1009,12 +1007,11 @@ deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
         acc' = acc <> mconcat [ MonoidalMap.singleton ta (Set.singleton v) | (ta, v) <- perTA $ meta ^. #perTa ]        
                 
 
-deleteStaleContent :: (MonadIO m, Storage s, Logger logger) => 
-                logger
-                -> DB s                 
+deleteStaleContent :: (MonadIO m, Storage s) => 
+                DB s                 
                 -> DeletionCriteria                                       
                 -> m CleanUpResult
-deleteStaleContent logger db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria {..} = 
+deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria {..} = 
     mapException (AppException . storageError) <$> liftIO $ do                
         
         -- Delete old versions associated with async fetches and 
@@ -1067,17 +1064,9 @@ deleteStaleContent logger db@DB { objectStore = RpkiObjectStore {..} } DeletionC
             mempty
                         
         let validatedBy' = foldr Map.delete validatedBy keysToDelete        
-        M.put tx validatedByVersion validatedByVersionKey $ Compressed validatedBy'
+        M.put tx validatedByVersion validatedByVersionKey $ Compressed validatedBy'        
 
-        hashes <- Map.fromList . map (\(h, k) -> (k, h)) <$> M.all tx hashToKey 
-
-        forM_ keysToDelete $ \key -> do 
-            z <- getLocationsByKey tx db key
-            forM_ z $ \location -> do 
-                forM_ (Map.lookup key hashes) $ \hash -> 
-                    logDebug logger [i||Deleted #{pickLocation location}, #{hash}.|]
-
-            deleteObjectByKey tx db key
+        forM_ keysToDelete $ deleteObjectByKey tx db
 
         atomically $ do             
             deleted <- readTVar deletedPerType

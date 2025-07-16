@@ -1155,7 +1155,7 @@ runCacheCleanup AppContext {..} worldVersion = do
         tooOldLongLived  = versionIsOld cutOffMoment (config ^. #longLivedCacheLifeTime)
         tooOldShortLived = versionIsOld cutOffMoment (config ^. #shortLivedCacheLifeTime)
 
-    DB.deleteStaleContent logger db DB.DeletionCriteria {
+    DB.deleteStaleContent db DB.DeletionCriteria {
             versionIsTooOld  = tooOldLongLived,
             objectIsTooOld = \version type_ -> 
                 case type_ of 

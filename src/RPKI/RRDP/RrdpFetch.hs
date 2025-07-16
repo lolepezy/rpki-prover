@@ -546,7 +546,6 @@ saveSnapshot
                         DB.saveObject tx db so worldVersion                    
                         DB.linkObjectToUrl tx db rpkiUrl (getHash object)
                         addedObject $ Just type_
-                        logDebug logger [i|Added object #{rpkiUrl} with hash #{getHash object} to the database.|]
 
                     other -> 
                         logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
@@ -692,7 +691,6 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 unless newOneIsAlreadyThere $ do 
                     DB.saveObject tx db so worldVersion                        
                     addedObject $ Just type_
-                    logDebug logger [i|Added object #{rpkiUrl} with hash #{newHash} to the database.|]
                 DB.linkObjectToUrl tx db rpkiUrl newHash            
 
             other -> 
@@ -734,7 +732,6 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 unless newOneIsAlreadyThere $ do 
                     DB.saveObject tx db so worldVersion                        
                     addedObject $ Just type_
-                    logDebug logger [i|Added object #{rpkiUrl} with hash #{newHash} to the database.|]
                 DB.linkObjectToUrl tx db rpkiUrl newHash 
 
             other -> 
