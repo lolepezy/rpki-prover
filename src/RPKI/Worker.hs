@@ -27,7 +27,6 @@ import           Data.Conduit.Process.Typed
 import           GHC.Generics
 import           GHC.Stats
 
-import           System.Exit
 import           System.IO (stdin, stdout)
 import           System.Posix.Types
 import           System.Posix.Process
@@ -165,14 +164,15 @@ data WorkerResult r = WorkerResult {
 -- and do the actual work.
 -- 
 executeWork :: WorkerInput 
-            -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                
+            -> (ExitCode -> IO ())
+            -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                            
             -> IO ()
-executeWork input actualWork = 
+executeWork input exitWith_ actualWork = 
     -- Check if version of the executable has changed compared to the parent.
     -- If that's the case, bail out, it's likely we can do more harm then good
     if input ^. #parentExecutableVersion /= thisExecutableVersion
         then 
-            exitWith replacedExecutableExitCode
+            exitWith_ replacedExecutableExitCode
         else do 
             exitCode <- newEmptyTMVarIO            
             let done = atomically . putTMVar exitCode 
@@ -185,7 +185,7 @@ executeWork input actualWork =
                     dieOfTiming done
                 ]
                 
-            exitWith =<< atomically (takeTMVar exitCode)
+            exitWith_ =<< atomically (takeTMVar exitCode)
   where        
     whicheverHappensFirst a b = either id id <$> race a b
 

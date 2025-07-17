@@ -24,6 +24,7 @@ import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
 import qualified Data.ByteString.Lazy             as LBS
+import           Data.IORef
 import qualified Data.Text                        as Text
 import qualified Data.Set                         as Set
 
@@ -105,14 +106,14 @@ main = do
 executeMainProcess :: CLIOptions Unwrapped -> IO ()
 executeMainProcess cliOptions@CLIOptions{..} = do     
     -- TODO This doesn't look pretty, come up with something better.
-    appStateHolder <- newTVarIO Nothing
+    appStateHolder <- newIORef Nothing
 
     let bumpSysMetric sm = do 
-            z <- readTVarIO appStateHolder
+            z <- readIORef appStateHolder
             for_ z $ mergeSystemMetrics sm
 
     let updateWorkers wi = do 
-            z <- readTVarIO appStateHolder
+            z <- readIORef appStateHolder
             -- We only keep track of running rsync clients
             for_ z $ updateRsyncClient wi
 
@@ -141,16 +142,18 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     hFlush stderr
                     threadDelay 100_000
                     exitFailure
-                Right appContext' -> do 
-                    -- now we have the appState, set appStateHolder
-                    atomically $ writeTVar appStateHolder $ Just $ appContext' ^. #appState
-                    tals <- readTALs appContext'
-                    if once 
-                        then runValidatorServer appContext' tals
-                        else do                             
-                            void $ race
-                                (runHttpApi appContext' tals)
-                                (runValidatorServer appContext' tals)
+                Right appContext' -> (do 
+                        -- now we have the appState, set appStateHolder
+                        writeIORef appStateHolder $ Just $ appContext' ^. #appState
+                        tals <- readTALs appContext'
+                        if once 
+                            then runValidatorServer appContext' tals
+                            else do                             
+                                void $ race
+                                    (runHttpApi appContext' tals)
+                                    (runValidatorServer appContext' tals)
+                    ) `finally` 
+                        closeLmdbStorage appContext'
 
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
@@ -160,7 +163,12 @@ executeWorkerProcess = do
                     
     -- turnOffTlsValidation
 
-    executeWork input $ \_ resultHandler -> 
+    appContextRef <- newIORef Nothing
+    let onExit exitCode = do            
+            readIORef appContextRef >>= maybe (pure ()) closeLmdbStorage
+            exitWith exitCode
+
+    executeWork input onExit $ \_ resultHandler -> 
         withLogger logConfig $ \logger -> liftIO $ do
             (z, validations) <- runValidatorT
                                     (newScopes "worker-create-app-context")
@@ -168,7 +176,8 @@ executeWorkerProcess = do
             case z of
                 Left e ->
                     logError logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
-                Right appContext ->                    
+                Right appContext -> do
+                    writeIORef appContextRef $ Just appContext
                     case input ^. #params of
                         RrdpFetchParams {..} -> exec resultHandler $
                             fmap RrdpFetchResult $ runValidatorT scopes $ 

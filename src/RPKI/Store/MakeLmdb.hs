@@ -28,6 +28,8 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database    
 import           RPKI.Store.Sequence
 
+import           System.Posix.Signals (installHandler, Handler(Catch), sigTERM, sigINT)
+
 
 data IncompatibleDbCheck = CheckVersion | DontCheckVersion
 data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion
@@ -124,9 +126,14 @@ mkLmdb :: FilePath -> Config -> IO LmdbEnv
 mkLmdb fileName config = do 
     nativeEnv <- initializeReadWriteEnvironment (fromIntegral mapSize) 
                     maxReaders maxDatabases fileName
-    LmdbEnv <$> 
-        newTVarIO (RWEnv nativeEnv) <*>
-        newSemaphoreIO maxBottleNeck
+    lmdbEnv <- LmdbEnv <$> 
+                newTVarIO (RWEnv nativeEnv) <*>
+                newSemaphoreIO maxBottleNeck
+
+    _ <- installHandler sigTERM (Catch $ closeLmdb lmdbEnv) Nothing
+    _ <- installHandler sigINT (Catch $ closeLmdb lmdbEnv) Nothing
+
+    pure lmdbEnv                
   where    
     mapSize = unSize (config ^. #lmdbSizeMb) * 1024 * 1024
     maxDatabases = 120    
@@ -134,6 +141,7 @@ mkLmdb fileName config = do
     maxReaders = (maxBottleNeck + 1) * maxProcesses
     -- main process + validator + fetchers
     maxProcesses = 2 + fromIntegral (config ^. #parallelism . #fetchParallelism)
+
 
 closeLmdb :: LmdbEnv -> IO ()
 closeLmdb e = closeEnvironment =<< atomically (getNativeEnv e)
