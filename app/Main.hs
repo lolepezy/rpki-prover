@@ -129,11 +129,11 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     then [i|Starting #{rpkiProverVersion} in one-off mode.|]
                     else [i|Starting #{rpkiProverVersion} as a server.|]
             
-            (appContext, validations) <- do
+            (z, validations) <- do
                         runValidatorT (newScopes "Startup") $ do
                             checkPreconditions cliOptions
                             createAppContext cliOptions logger (logConfig ^. #logLevel)
-            case appContext of
+            case z of
                 Left _ -> do 
                     logError logger [i|Failure:
 #{formatValidations (validations ^. typed)}|]
@@ -142,18 +142,18 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     hFlush stderr
                     threadDelay 100_000
                     exitFailure
-                Right appContext' -> (do 
-                        -- now we have the appState, set appStateHolder
-                        writeIORef appStateHolder $ Just $ appContext' ^. #appState
-                        tals <- readTALs appContext'
+                Right appContext -> do 
+                    writeIORef appStateHolder $ Just $ appContext ^. #appState
+                    runMainProcess `finally` closeLmdbStorage appContext
+                  where
+                    runMainProcess = do                                          
+                        tals <- readTALs appContext
                         if once 
-                            then runValidatorServer appContext' tals
+                            then runValidatorServer appContext tals
                             else do                             
                                 void $ race
-                                    (runHttpApi appContext' tals)
-                                    (runValidatorServer appContext' tals)
-                    ) `finally` 
-                        closeLmdbStorage appContext'
+                                    (runHttpApi appContext tals)
+                                    (runValidatorServer appContext tals)
 
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
