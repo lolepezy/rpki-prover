@@ -442,6 +442,9 @@ deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore {..} } objectKey = li
             case ro of
                 MftRO mft -> do 
                     MM.delete tx mftByAKI aki' (objectKey, getMftTimingMark mft)
+                    -- TODO This one will delete a good valid shortcut for every 
+                    -- deletion of every manifest with the same AKI. Fix it, it hits
+                    -- the performance (not much, but still).
                     deleteMftShortcut tx db aki'
                 _  -> pure ()   
 
