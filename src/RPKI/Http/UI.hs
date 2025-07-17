@@ -299,7 +299,7 @@ rrdpMetricsHtml rrdpMetrics =
                 detailItemWrap "Enforcement:" $ 
                     case enforcement of 
                         NextTimeFetchSnapshot t _ -> [i|Next time fetch snapshot (marked at #{instantTimeFormat t}, see logs for details)|]
-                        ForcedSnaphotAt t         -> [i|Forced snapshot at #{instantTimeFormat t}|] :: Text                                            
+                        ForcedSnaphotAt t         -> [i|Forced snapshot at #{instantDateFormat t}|] :: Text                                            
 
         detailItemWrap :: (ToMarkup a, IsString a) => a -> a -> H.Html
         detailItemWrap label_ value_ = 

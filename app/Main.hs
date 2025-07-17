@@ -280,7 +280,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     let apiSecured :: a -> ApiSecured a
         apiSecured a = if showHiddenConfig then Public a else Hidden a
 
-    let config = defaults
+    let config = adjustConfig $ defaults
             & #programBinaryPath .~ apiSecured programPath
             & #rootDirectory .~ apiSecured root
             & #talDirectory .~ apiSecured tald
@@ -314,7 +314,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & maybeSet (#validationConfig . #minObjectSize) minObjectSize            
             & maybeSet (#httpApiConf . #port) httpApiPort
             & #rtrConfig .~ rtrConfig
-            & maybeSet #cacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
+            & maybeSet #longLivedCacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
             & #lmdbSizeMb .~ lmdbRealSize
             & #localExceptions .~ apiSecured localExceptions
             & #logLevel .~ derivedLogLevel
@@ -324,12 +324,6 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
             & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory            
         
-    -- Do some "common sense" adjustmnents to the config for correctness
-    let adjustedConfig = config 
-            -- Cache must be cleaned up at least as often as the 
-            -- lifetime of the objects in it    
-            & #cacheCleanupInterval %~ (`min` (config ^. #cacheLifeTime))
-
     let readSlurms files = do
             logDebug logger [i|Reading SLURM files: #{files}.|]
             readSlurmFiles files
@@ -344,7 +338,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                     (if resetCache then Reset else UseExisting)
                     logger
                     cached
-                    adjustedConfig
+                    config
 
     (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
     database <- liftIO $ newTVarIO db    
@@ -368,11 +362,11 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
         -- a week or so. So don't compact,
         Lmdb.DidntHaveVersion -> pure ()
 
-        -- Nothing special, the cache is totally normal
+        -- Nothing special, the cache has the version as expected
         Lmdb.WasCompatible    -> pure ()
 
     logInfo logger [i|Created application context with configuration: 
-#{shower (adjustedConfig)}|]
+#{shower (config)}|]
     pure appContext
 
       

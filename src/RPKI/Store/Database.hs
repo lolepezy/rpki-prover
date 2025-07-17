@@ -9,6 +9,7 @@
 
 module RPKI.Store.Database where
 
+import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Lens
 import           Control.Monad.Trans.Maybe
@@ -30,6 +31,7 @@ import qualified Data.Hashable            as H
 import           Data.Ord
 import           Data.Text.Encoding       (encodeUtf8)
 import           Data.Tuple.Strict
+
 import           Data.Generics.Product.Typed
 
 import           GHC.Generics
@@ -417,28 +419,33 @@ hashExists tx DB { objectStore = RpkiObjectStore {..} } h =
     liftIO $ M.exists tx hashToKey h
 
 
-deleteObject :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Hash -> m ()
-deleteObject tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $
-    ifJustM (M.get tx hashToKey h) $ \objectKey ->             
-        ifJustM (getObjectByKey tx db objectKey) $ \ro -> do 
-            M.delete tx objects objectKey
-            M.delete tx objectMetas objectKey        
-            M.delete tx hashToKey h        
-            case ro of 
-                CerRO c -> M.delete tx certBySKI (getSKI c)
-                _       -> pure ()
-            ifJustM (M.get tx objectKeyToUrlKeys objectKey) $ \urlKeys -> do 
-                M.delete tx objectKeyToUrlKeys objectKey            
-                for_ urlKeys $ \urlKey ->
-                    MM.delete tx urlKeyToObjectKey urlKey objectKey                
-            
-            for_ (getAKI ro) $ \aki' -> 
-                case ro of
-                    MftRO mft -> do 
-                        MM.delete tx mftByAKI aki' (objectKey, getMftTimingMark mft)
-                        deleteMftShortcut tx db aki'
-                    _  -> pure ()        
+deleteObjectByHash :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Hash -> m ()
+deleteObjectByHash tx db@DB { objectStore = RpkiObjectStore {..} } hash = liftIO $ 
+    ifJustM (M.get tx hashToKey hash) $ deleteObjectByKey tx db
 
+deleteObjectByKey :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> ObjectKey -> m ()
+deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore {..} } objectKey = liftIO $ do 
+    ifJustM (getObjectByKey tx db objectKey) $ \ro -> do 
+        M.delete tx objects objectKey
+        M.delete tx objectMetas objectKey        
+        M.delete tx hashToKey (getHash ro)
+        case ro of 
+            CerRO c -> M.delete tx certBySKI (getSKI c)
+            _       -> pure ()
+        ifJustM (M.get tx objectKeyToUrlKeys objectKey) $ \urlKeys -> do 
+            M.delete tx objectKeyToUrlKeys objectKey            
+            forM_ urlKeys $ \urlKey ->
+                MM.delete tx urlKeyToObjectKey urlKey objectKey                
+        
+        for_ (getAKI ro) $ \aki' -> 
+            case ro of
+                MftRO mft -> do 
+                    MM.delete tx mftByAKI aki' (objectKey, getMftTimingMark mft)
+                    -- TODO This one will delete a good valid shortcut for every 
+                    -- deletion of every manifest with the same AKI. Fix it, it hits
+                    -- the performance (not much, but still).
+                    deleteMftShortcut tx db aki'
+                _  -> pure ()   
 
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
                     Tx s mode -> DB s -> AKI -> m (Maybe (Keyed (Located MftObject)))
@@ -797,14 +804,14 @@ updateRrdpMetaM tx DB { repositoryStore = RepositoryStore {..} } url f = liftIO 
         maybeNewMeta <- f $ repo ^. #rrdpMeta
         for_ maybeNewMeta $ \newMeta -> 
             M.put tx rrdpS url (repo { rrdpMeta = Just newMeta })
-
+ 
 getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m PublicationPoints
 getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
     rrdps <- M.all tx rrdpS
     rsyns <- M.all tx rsyncS    
     pure $ PublicationPoints
             (RrdpMap $ Map.fromList rrdps)
-            (RsyncForestGen $ Map.fromList rsyns)           
+            (RsyncForestGen $ Map.fromList rsyns)  
 
 getRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RpkiURL -> m (Maybe Repository)
 getRepository tx db = \case
@@ -950,30 +957,27 @@ updateValidatedByVersionMap :: (MonadIO m, Storage s)
                             -> m (Map.Map ObjectKey WorldVersion)
 updateValidatedByVersionMap tx DB { objectStore = RpkiObjectStore {..} } f = liftIO $ do
     validatedBy <- M.get tx validatedByVersion validatedByVersionKey    
-    let validatedBy' = f $ fmap unCompressed validatedBy
+    let validatedBy' = f $ unCompressed <$> validatedBy
     M.put tx validatedByVersion validatedByVersionKey $ Compressed validatedBy'
     pure validatedBy'
-
-
-cleanupValidatedByVersionMap :: (MonadIO m, Storage s) =>
-                                Tx s RW
-                                -> DB s
-                                -> (WorldVersion -> Bool)
-                                -> m (Map.Map ObjectKey WorldVersion)
-cleanupValidatedByVersionMap tx db toDelete = liftIO $ do     
-    updateValidatedByVersionMap tx db $ 
-        maybe mempty $ Map.filter (not . toDelete)
 
 -- More complicated operations
 
 data CleanUpResult = CleanUpResult {
-        deletedObjects :: Int,
-        keptObjects :: Int,
-        deletedURLs :: Int,
+        deletedObjects  :: Int,
+        deletedPerType  :: Map.Map RpkiObjectType Integer,
+        keptObjects     :: Int,
+        deletedURLs     :: Int,
         deletedVersions :: Int
     }
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
+
+data DeletionCriteria = DeletionCriteria {
+        versionIsTooOld :: WorldVersion -> Bool,
+        objectIsTooOld  :: WorldVersion -> RpkiObjectType -> Bool
+    }
+    deriving (Generic)
 
 
 deleteOldestVersionsIfNeeded :: (MonadIO m, Storage s) => 
@@ -990,8 +994,6 @@ deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
             then do           
                 let versionsToDelete = map fst $ findEnoughForEachTA reallyToKeep versions mempty                          
                 forM_ versionsToDelete $ deleteValidationVersion tx db
-                let toDeleteSet = Set.fromList versionsToDelete 
-                void $ cleanupValidatedByVersionMap tx db (`Set.member` toDeleteSet)
                 pure versionsToDelete
             else pure []        
   where    
@@ -1007,53 +1009,72 @@ deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
         acc' = acc <> mconcat [ MonoidalMap.singleton ta (Set.singleton v) | (ta, v) <- perTA $ meta ^. #perTa ]        
                 
 
-
 deleteStaleContent :: (MonadIO m, Storage s) => 
-                    DB s -> 
-                    (WorldVersion -> Bool) -> -- ^ function that determines if an object is too old to be in cache
-                    m CleanUpResult
-deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } tooOld = 
-    mapException (AppException . storageError) <$> liftIO $ do    
+                DB s                 
+                -> DeletionCriteria                                       
+                -> m CleanUpResult
+deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria {..} = 
+    mapException (AppException . storageError) <$> liftIO $ do                
+        
+        -- Delete old versions associated with async fetches and 
+        -- other non-validation related stuff        
         rwTx db $ \tx -> do            
-            toDelete <- filter tooOld . map fst <$> versionsBackwards tx db
-            forM_ toDelete $ deleteValidationVersion tx db    
-                                
-            validatedByRecentVersions <- cleanupValidatedByVersionMap tx db tooOld                
+            deletedVersions <- deleteOldVersions tx
 
-            (deletedObjects, keptObjects) <- deleteStaleObjects tx validatedByRecentVersions
+            -- Now delete objects that are last used by the deleted versions
+            (deletedObjects, deletedPerType, keptObjects) <- deleteStaleObjects tx
 
             -- Delete URLs that are now not referred by any object
             deletedURLs <- deleteDanglingUrls db tx
 
-            let deletedVersions = length toDelete
             pure CleanUpResult {..}
   where
-    deleteStaleObjects tx validatedByRecentVersions = do 
-        -- Set of all objects touched by validation with versions
-        -- that are not "too old".
-        let touchedObjectKeys = Map.keysSet validatedByRecentVersions
 
-        -- Objects inserted by validation with version that is not "too old".
-        -- We want to preseve these objects in the cache even if they were 
-        -- never used, they may still be used later. That may happens if
-        -- a repository updates a manifest aftert updating its children.
-        recentlyInsertedObjectKeys <- M.fold tx objectMetas 
-            (\allKeys key (ObjectMeta version _) -> 
-                pure $! if tooOld version 
-                    then allKeys 
-                    else key `Set.insert` allKeys) mempty
+    deleteOldVersions tx = do
+        toDelete <- filter versionIsTooOld . map fst <$> versionsBackwards tx db
+        forM_ toDelete $ deleteValidationVersion tx db
+        pure $ List.length toDelete
 
-        let keysToKeep = touchedObjectKeys <> recentlyInsertedObjectKeys            
+    deleteStaleObjects tx = do 
 
-        -- Everything else must be purged
-        hashesToDelete <- M.fold tx hashToKey 
-            (\allHashes hash key ->
-                if key `Set.member` keysToKeep
-                    then pure $! allHashes
-                    else pure $! hash `Set.insert` allHashes) mempty 
-        
-        for_ hashesToDelete $ deleteObject tx db        
-        pure (Set.size hashesToDelete, Set.size keysToKeep)
+        validatedBy <- maybe mempty unCompressed <$> M.get tx validatedByVersion validatedByVersionKey        
+
+        deletedPerType <- newTVarIO mempty
+        keptTotal      <- newTVarIO 0
+        keysToDelete <- M.fold tx objectMetas 
+            (\toDelete key (ObjectMeta insertedBy type_) -> do 
+                -- Object was inserted by a version that is "too old".
+                let insertedWayBack = objectIsTooOld insertedBy type_                
+
+                -- Object was validated by versions that is "too old" or not validated at all.
+                let validatedWayBack = 
+                        case Map.lookup key validatedBy of 
+                            Just validated -> objectIsTooOld validated type_
+                            Nothing        -> True
+            
+                -- An object can stay in the cache if 
+                -- 1. It was inserted by a recent version or
+                -- 2. It was validated by a recent version
+                if insertedWayBack && validatedWayBack
+                    then do 
+                        atomically $ modifyTVar' deletedPerType $ Map.unionWith (+) (Map.singleton type_ 1)
+                        pure $! key : toDelete
+                    else do 
+                        atomically $ modifyTVar' keptTotal (+1)                            
+                        pure $! toDelete
+            )
+            mempty
+                        
+        let validatedBy' = foldr Map.delete validatedBy keysToDelete        
+        M.put tx validatedByVersion validatedByVersionKey $ Compressed validatedBy'        
+
+        forM_ keysToDelete $ deleteObjectByKey tx db
+
+        atomically $ do             
+            deleted <- readTVar deletedPerType
+            let deletedCount = fromIntegral $ sum $ Map.elems deleted
+            kept    <- readTVar keptTotal
+            pure (deletedCount, deleted, kept)
 
 
 deleteDanglingUrls :: DB s -> Tx s 'RW -> IO Int
@@ -1194,3 +1215,4 @@ makeSafeUrl u =
                         C8.pack hashBytes
                    ]
     in SafeUrlAsKey $ toShortBS bsUrlKey
+

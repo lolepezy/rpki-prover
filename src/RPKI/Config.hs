@@ -74,7 +74,8 @@ data Config = Config {
         httpApiConf               :: HttpApiConfig,
         rtrConfig                 :: Maybe RtrConfig,
         cacheCleanupInterval      :: Seconds,
-        cacheLifeTime             :: Seconds,
+        shortLivedCacheLifeTime   :: Seconds,
+        longLivedCacheLifeTime    :: Seconds,
         versionNumberToKeep       :: Natural,
         storageCompactionInterval :: Seconds,
         rsyncCleanupInterval      :: Seconds,
@@ -231,17 +232,17 @@ defaultConfig = Config {
     rrdpConf = RrdpConf {
         tmpRoot = Hidden "",
         maxSize = Size $ 1024 * 1024 * 1024,
-        rrdpTimeout = 7 * 60,
-        cpuLimit = 30 * 60,
+        rrdpTimeout = 7 * minutes,
+        cpuLimit = 30 * minutes,
         enabled = True
     },
     validationConfig = ValidationConfig {
-        revalidationInterval           = Seconds $ 15 * 60,
-        rrdpRepositoryRefreshInterval  = Seconds 120,
-        rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
+        revalidationInterval           = 15 * minutes,
+        rrdpRepositoryRefreshInterval  = 2 * minutes,
+        rsyncRepositoryRefreshInterval = 11 * minutes,    
         minimalRepositoryRetryInterval = Seconds 10,    
-        rrdpForcedSnapshotMinInterval  = Seconds $ 12 * 60 * 60,
-        topDownTimeout                 = Seconds $ 60 * 60,    
+        rrdpForcedSnapshotMinInterval  = 12 * hours,                
+        topDownTimeout                 = 1 * hour,
         manifestProcessing             = RFC9286,
         maxCertificatePathDepth        = 32,
         maxTotalTreeSize               = 5_000_000,
@@ -264,17 +265,35 @@ defaultConfig = Config {
         cleanupWorkerMemoryMb    = 512
     },
     rtrConfig                 = Nothing,
-    cacheCleanupInterval      = Seconds $ 60 * 60 * 6,
-    cacheLifeTime             = Seconds $ 60 * 60 * 24,
+    cacheCleanupInterval      = 6 * hours,    
     versionNumberToKeep       = 3,
-    storageCompactionInterval = Seconds $ 60 * 60 * 120,
-    rsyncCleanupInterval      = Seconds $ 60 * 60 * 24 * 30,
+    storageCompactionInterval = 5 * days,
+    rsyncCleanupInterval      = 30 * days,
     lmdbSizeMb                = Size $ 32 * 1024,
     localExceptions = Hidden [],
     logLevel = defaultsLogLevel,
     metricsPrefix = "rpki_prover_",
-    withValidityApi = False
+    withValidityApi = False,
+    ..
 }
+  where
+    shortLivedCacheLifeTime = 24 * hours
+    longLivedCacheLifeTime  = 10 * days
+    minutes = Seconds 60
+    hour = hours
+    days = 24 * hours
+    hours = Seconds $ 60 * 60    
+
+
+adjustConfig :: Config -> Config
+adjustConfig config = config 
+        -- Cache must be cleaned up at least as often as the 
+        -- lifetime of the objects in it    
+        & #cacheCleanupInterval %~ (`min` (config ^. #longLivedCacheLifeTime))
+        -- to accomodate for a weird case of longLivedCacheLifeTime < shortLivedCacheLifeTime
+        -- we still want some correctness here, so the "short" one should be shorter
+        & #shortLivedCacheLifeTime %~ (`min` (config ^. #longLivedCacheLifeTime))
+
 
 defaultsLogLevel :: LogLevel
 defaultsLogLevel = InfoL
@@ -286,6 +305,8 @@ defaultRtrConfig = RtrConfig {
         rtrLogFile = Nothing
     }
     
+-- This is a heuristic list of rsync repositories that is currently out there
+-- and not using them will result in too many small fetches from the same repository.
 defaultPrefetchURLs :: [String]
 defaultPrefetchURLs = [
         "rsync://rpki.afrinic.net/repository",
