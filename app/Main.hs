@@ -149,11 +149,11 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     runMainProcess = do                                          
                         tals <- readTALs appContext
                         if once 
-                            then runValidatorServer appContext tals
+                            then runValidatorWorkflow appContext tals
                             else do                             
                                 void $ race
-                                    (runHttpApi appContext tals)
-                                    (runValidatorServer appContext tals)
+                                    (runHttpApi appContext)
+                                    (runValidatorWorkflow appContext tals)
 
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
@@ -165,7 +165,7 @@ executeWorkerProcess = do
 
     appContextRef <- newIORef Nothing
     let onExit exitCode = do            
-            readIORef appContextRef >>= maybe (pure ()) closeLmdbStorage
+            readIORef appContextRef >>= maybe (pure ()) closeStorage
             exitWith exitCode
 
     executeWork input onExit $ \_ resultHandler -> 
@@ -241,17 +241,10 @@ readTALs AppContext {..} = do
         vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName            
 
 
-runValidatorServer :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> IO ()
-runValidatorServer appContext tals =     
-    runWorkflow appContext tals
-        `finally`
-        closeStorage appContext
-
-
-runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> IO ()
-runHttpApi appContext@AppContext {..} tals = do 
+runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
+runHttpApi appContext@AppContext {..} = do 
     let httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
-    Warp.run httpPort (httpServer appContext tals) 
+    Warp.run httpPort (httpServer appContext) 
         `catch` 
         (\(e :: SomeException) -> logError logger [i|Could not start HTTP server: #{e}.|])
 
