@@ -6,7 +6,6 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE OverloadedLabels      #-}
 {-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE QuasiQuotes        #-}
 
 module RPKI.Store.Database where
 
