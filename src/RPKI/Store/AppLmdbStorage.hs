@@ -268,7 +268,7 @@ copyLmdbEnvironment AppContext {..} targetLmdbPath = do
 -- Even though copying key-value pairs is a perfectly streaming-like activity, 
 -- without enough GC pressure it allocates a large heap (because of plenty of 
 -- bytestrings apparently), so to avoid it we run a worker process with limited 
---heap that does the copying.
+-- heap that does the copying.
 -- 
 runCopyWorker :: AppContext LmdbStorage -> SStats -> FilePath -> IO ()
 runCopyWorker appContext@AppContext {..} dbtats targetLmdbPath = do 

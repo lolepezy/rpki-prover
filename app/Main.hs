@@ -24,7 +24,6 @@ import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
 import qualified Data.ByteString.Lazy             as LBS
-import           Data.IORef
 import qualified Data.Text                        as Text
 import qualified Data.Set                         as Set
 
@@ -106,14 +105,14 @@ main = do
 executeMainProcess :: CLIOptions Unwrapped -> IO ()
 executeMainProcess cliOptions@CLIOptions{..} = do     
     -- TODO This doesn't look pretty, come up with something better.
-    appStateHolder <- newIORef Nothing
+    appStateHolder <- newTVarIO Nothing
 
-    let bumpSysMetric sm = do 
-            z <- readIORef appStateHolder
+    let bumpSysMetric sm = do
+            z <- readTVarIO appStateHolder
             for_ z $ mergeSystemMetrics sm
 
-    let updateWorkers wi = do 
-            z <- readIORef appStateHolder
+    let updateWorkers wi = do
+            z <- readTVarIO appStateHolder
             -- We only keep track of running rsync clients
             for_ z $ updateRsyncClient wi
 
@@ -143,7 +142,7 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     threadDelay 100_000
                     exitFailure
                 Right appContext -> do 
-                    writeIORef appStateHolder $ Just $ appContext ^. #appState
+                    atomically $ writeTVar appStateHolder $ Just $ appContext ^. #appState
                     runMainProcess `finally` closeStorage appContext
                   where
                     runMainProcess = do                                          
@@ -163,10 +162,10 @@ executeWorkerProcess = do
                     
     -- turnOffTlsValidation
 
-    appContextRef <- newIORef Nothing
-    let onExit exitCode = do            
-            readIORef appContextRef >>= maybe (pure ()) closeStorage
-            exitWith exitCode    
+    appContextRef <- newTVarIO Nothing
+    let onExit exitCode = do
+            readTVarIO appContextRef >>= maybe (pure ()) closeStorage
+            exitWith exitCode
 
     executeWork input onExit $ \_ resultHandler -> 
         withLogger logConfig $ \logger -> liftIO $ do
@@ -177,7 +176,7 @@ executeWorkerProcess = do
                 Left e ->
                     logError logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
                 Right appContext -> do
-                    writeIORef appContextRef $ Just appContext
+                    atomically $ writeTVar appContextRef $ Just appContext
                     let actuallyExecuteWork = 
                             case input ^. #params of
                                 RrdpFetchParams {..} -> exec resultHandler $
