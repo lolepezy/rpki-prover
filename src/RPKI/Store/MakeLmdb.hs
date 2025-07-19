@@ -7,8 +7,11 @@ module RPKI.Store.MakeLmdb where
 
 import Control.Lens
 import Control.Concurrent.STM
+import Control.Concurrent
+import Control.Concurrent.Async
 
 import           Data.String.Interpolate.IsString
+import           Data.Foldable                   (for_)
 
 import           GHC.TypeLits
 
@@ -16,7 +19,6 @@ import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 
 import           Lmdb.Connection
-import           Lmdb.Types hiding (Size)
 
 import           RPKI.Store.Base.LMDB
 import           RPKI.Config
@@ -28,7 +30,7 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database    
 import           RPKI.Store.Sequence
 
-import           System.Posix.Signals (installHandler, Handler(Catch), sigTERM, sigINT)
+import           System.Posix.Signals (installHandler, Handler(CatchOnce), sigTERM, sigINT)
 
 
 data IncompatibleDbCheck = CheckVersion | DontCheckVersion
@@ -130,11 +132,16 @@ mkLmdb fileName config = do
                 newTVarIO (RWEnv nativeEnv) <*>
                 newSemaphoreIO maxBottleNeck
 
-    _ <- installHandler sigTERM (Catch $ closeLmdb lmdbEnv) Nothing
-    _ <- installHandler sigINT (Catch $ closeLmdb lmdbEnv) Nothing
+    tid <- myThreadId
+    _ <- installHandler sigTERM (CatchOnce $ closeHandler lmdbEnv tid) Nothing
+    _ <- installHandler sigINT (CatchOnce $ closeHandler lmdbEnv tid) Nothing
 
     pure lmdbEnv                
   where    
+    closeHandler lmdbEnv tid = do         
+        closeLmdb lmdbEnv
+        throwTo tid AsyncCancelled
+
     mapSize = unSize (config ^. #lmdbSizeMb) * 1024 * 1024
     maxDatabases = 120    
     maxBottleNeck = 64    
@@ -144,7 +151,11 @@ mkLmdb fileName config = do
 
 
 closeLmdb :: LmdbEnv -> IO ()
-closeLmdb e = closeEnvironment =<< atomically (getNativeEnv e)
-
-closeNativeLmdb :: Environment e -> IO ()
-closeNativeLmdb = closeEnvironment
+closeLmdb e = do
+    env <- atomically $ getNativeEnvAndDisable `orElse` pure Nothing        
+    for_ env closeEnvironment
+ where
+    getNativeEnvAndDisable = do 
+        nativeEnv <- getNativeEnv e
+        disableNativeEnv e
+        pure $ Just nativeEnv

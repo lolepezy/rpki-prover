@@ -200,7 +200,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
                 writeTVar (nativeEnv lmdbEnv) (RWEnv newNative)  
                 writeTVar database newDB
 
-            closeNativeLmdb oldNativeEnv
+            closeEnvironment oldNativeEnv
             removePathForcibly currentLinkTarget
 
             Size lmdbFileSize <- cacheFsSize appContext 
