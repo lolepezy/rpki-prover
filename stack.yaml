@@ -23,8 +23,5 @@ extra-deps:
 
   - hw-ip-2.4.2.1
   - shower-0.2.0.2@sha256:2c2b1cd25e4330f03ba68631b37d4346bf42644bc8e9a7a819ce605acc72bb34,1473
-  - ixset-typed-0.5.1.0@sha256:b3bf8ded64523a78a88acf0cbe4c715e9594033a0861fd454e08cb4ef3c9b59b,2738
-  - optparse-generic-1.5.2@sha256:acdd6557ab1489f26df46c07fab530f92f83cba1da0a15c510e820d8cea516a4,2337
-  - strict-tuple-0.1.5.4@sha256:f687fa918e6199d7788559177374b11c24d37ecd383ff69c9c0a2c9ed9f84417,2170
 
 allow-newer: true
