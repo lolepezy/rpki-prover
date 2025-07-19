@@ -7,8 +7,6 @@ module RPKI.Store.MakeLmdb where
 
 import Control.Lens
 import Control.Concurrent.STM
-import Control.Concurrent
-import Control.Concurrent.Async
 
 import           Data.String.Interpolate.IsString
 import           Data.Foldable                   (for_)
@@ -29,8 +27,6 @@ import           RPKI.Time
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database    
 import           RPKI.Store.Sequence
-
-import           System.Posix.Signals (installHandler, Handler(CatchOnce), sigTERM, sigINT)
 
 
 data IncompatibleDbCheck = CheckVersion | DontCheckVersion
@@ -128,20 +124,10 @@ mkLmdb :: FilePath -> Config -> IO LmdbEnv
 mkLmdb fileName config = do 
     nativeEnv <- initializeReadWriteEnvironment (fromIntegral mapSize) 
                     maxReaders maxDatabases fileName
-    lmdbEnv <- LmdbEnv <$> 
-                newTVarIO (RWEnv nativeEnv) <*>
-                newSemaphoreIO maxBottleNeck
-
-    tid <- myThreadId
-    _ <- installHandler sigTERM (CatchOnce $ closeHandler lmdbEnv tid) Nothing
-    _ <- installHandler sigINT (CatchOnce $ closeHandler lmdbEnv tid) Nothing
-
-    pure lmdbEnv                
-  where    
-    closeHandler lmdbEnv tid = do         
-        closeLmdb lmdbEnv
-        throwTo tid AsyncCancelled
-
+    LmdbEnv <$> 
+        newTVarIO (RWEnv nativeEnv) <*>
+        newSemaphoreIO maxBottleNeck
+  where        
     mapSize = unSize (config ^. #lmdbSizeMb) * 1024 * 1024
     maxDatabases = 120    
     maxBottleNeck = 64    

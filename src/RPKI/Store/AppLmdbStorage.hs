@@ -249,7 +249,7 @@ cleanDir d = cleanDirFiltered d (const True)
 
 
 closeLmdbStorage :: AppContext LmdbStorage -> IO ()
-closeLmdbStorage AppContext {..} =    
+closeLmdbStorage AppContext {..} = do 
     closeLmdb . unEnv . storage =<< readTVarIO database
 
 

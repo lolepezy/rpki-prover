@@ -144,7 +144,7 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     exitFailure
                 Right appContext -> do 
                     writeIORef appStateHolder $ Just $ appContext ^. #appState
-                    runMainProcess `finally` closeLmdbStorage appContext
+                    runMainProcess `finally` closeStorage appContext
                   where
                     runMainProcess = do                                          
                         tals <- readTALs appContext
@@ -166,7 +166,7 @@ executeWorkerProcess = do
     appContextRef <- newIORef Nothing
     let onExit exitCode = do            
             readIORef appContextRef >>= maybe (pure ()) closeStorage
-            exitWith exitCode
+            exitWith exitCode    
 
     executeWork input onExit $ \_ resultHandler -> 
         withLogger logConfig $ \logger -> liftIO $ do
@@ -178,25 +178,32 @@ executeWorkerProcess = do
                     logError logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
                 Right appContext -> do
                     writeIORef appContextRef $ Just appContext
-                    case input ^. #params of
-                        RrdpFetchParams {..} -> exec resultHandler $
-                            fmap RrdpFetchResult $ runValidatorT scopes $ 
-                                updateRrdpRepository appContext worldVersion rrdpRepository
+                    let actuallyExecuteWork = 
+                            case input ^. #params of
+                                RrdpFetchParams {..} -> exec resultHandler $
+                                    fmap RrdpFetchResult $ runValidatorT scopes $ 
+                                        updateRrdpRepository appContext worldVersion rrdpRepository
 
-                        RsyncFetchParams {..} -> exec resultHandler $
-                            fmap RsyncFetchResult $ runValidatorT scopes $ 
-                                updateObjectForRsyncRepository appContext fetchConfig worldVersion rsyncRepository
+                                RsyncFetchParams {..} -> exec resultHandler $
+                                    fmap RsyncFetchResult $ runValidatorT scopes $ 
+                                        updateObjectForRsyncRepository appContext fetchConfig worldVersion rsyncRepository
 
-                        CompactionParams {..} -> exec resultHandler $
-                            CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
+                                CompactionParams {..} -> exec resultHandler $
+                                    CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
 
-                        ValidationParams {..} -> exec resultHandler $ do 
-                            (vs, discoveredRepositories, slurm) <- 
-                                runValidation appContext worldVersion talsToValidate allTaNames
-                            pure $ ValidationResult vs discoveredRepositories slurm
+                                ValidationParams {..} -> exec resultHandler $ do 
+                                    (vs, discoveredRepositories, slurm) <- 
+                                        runValidation appContext worldVersion talsToValidate allTaNames
+                                    pure $ ValidationResult vs discoveredRepositories slurm
 
-                        CacheCleanupParams {..} -> exec resultHandler $
-                            CacheCleanupResult <$> runCacheCleanup appContext worldVersion
+                                CacheCleanupParams {..} -> exec resultHandler $
+                                    CacheCleanupResult <$> runCacheCleanup appContext worldVersion
+                    actuallyExecuteWork
+                        -- There's a short window between opening LMDB and not yet having AppContext 
+                        -- constructed when an exception will no result in the database closed. It is not good, 
+                        -- but we are trying to solve the problem of interrupted RW transactions leaving the DB 
+                        -- in broken/locked state, and no transactions are possible within this window.
+                        `finally` closeLmdbStorage appContext
   where    
     exec resultHandler f = resultHandler =<< execWithStats f                    
 
@@ -246,7 +253,7 @@ runHttpApi appContext@AppContext {..} = do
     let httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
     Warp.run httpPort (httpServer appContext) 
         `catch` 
-        (\(e :: SomeException) -> logError logger [i|Could not start HTTP server: #{e}.|])
+        (\(e :: SomeException) -> logError logger [i|Interrupted HTTP server: #{e}.|])
 
 
 createAppContext :: CLIOptions Unwrapped -> AppLogger -> LogLevel -> ValidatorT IO AppLmdbEnv
