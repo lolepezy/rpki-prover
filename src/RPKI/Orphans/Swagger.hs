@@ -127,6 +127,7 @@ instance ToSchema DBFileStats
 instance ToSchema StorageStats
 instance ToSchema TotalDBStats
 instance ToSchema SStats
+instance ToSchema ObjectStats
 
 instance ToSchema (ApiSecured a) where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)

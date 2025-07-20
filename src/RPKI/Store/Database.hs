@@ -961,6 +961,30 @@ updateValidatedByVersionMap tx DB { objectStore = RpkiObjectStore {..} } f = lif
     M.put tx validatedByVersion validatedByVersionKey $ Compressed validatedBy'
     pure validatedBy'
 
+
+getObjectsStats :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m ObjectStats
+getObjectsStats tx DB { objectStore = RpkiObjectStore {..} } = 
+    liftIO $ do 
+        stats <- M.fold tx objectMetas
+            (\acc key (ObjectMeta _ type_) -> do 
+                objectSize <- M.binarySize tx objects key >>= \case 
+                    Nothing -> pure mempty
+                    Just size -> pure $ Size $ fromIntegral size            
+
+                pure $ acc & #totalObjects %~ (+1) 
+                           & #totalSize %~ (+ objectSize)                
+                           & #countPerType %~ Map.insertWith (+) type_ 1
+                           & #totalSizePerType %~ Map.insertWith (+) type_ objectSize
+                           & #minSizePerType %~ Map.alter (Just . maybe objectSize (min objectSize)) type_
+                           & #maxSizePerType %~ Map.alter (Just . maybe objectSize (max objectSize)) type_
+            )
+            mempty
+
+        pure $ stats & #avgSizePerType .~ 
+            Map.mapWithKey (\k s -> maybe 0 (s `divSize`) $ Map.lookup k (stats ^. #countPerType)) (stats ^. #totalSizePerType)
+  
+    
+
 -- More complicated operations
 
 data CleanUpResult = CleanUpResult {

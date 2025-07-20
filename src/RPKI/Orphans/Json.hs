@@ -224,9 +224,12 @@ $(deriveToJSON defaultOptions ''ResourceUsage)
 $(deriveToJSON defaultOptions ''SystemMetrics)
 $(deriveToJSON defaultOptions ''ScopeKind)
 
+instance ToJSONKey RpkiObjectType
+
 $(deriveToJSON defaultOptions ''SStats)
 $(deriveToJSON defaultOptions ''DBFileStats)
 $(deriveToJSON defaultOptions ''StorageStats)
+$(deriveToJSON defaultOptions ''ObjectStats)
 $(deriveToJSON defaultOptions ''TotalDBStats)
 $(deriveToJSON defaultOptions ''VrpCounts)
 $(deriveToJSON defaultOptions ''Metrics)

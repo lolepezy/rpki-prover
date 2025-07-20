@@ -30,7 +30,8 @@ import           RPKI.Http.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util (convert)
 import           RPKI.Version
-import RPKI.Repository (Fetcheables)
+import           RPKI.Repository (Fetcheables)
+import           RPKI.Store.Base.Storable
 
 
 data API api = API {        
@@ -110,6 +111,8 @@ data API api = API {
         versions :: api :- "versions" :> Get '[JSON] [WorldVersion],
 
         fetcheables :: api :- "fetcheables" :> Get '[JSON] Fetcheables,
+
+        objectStats :: api :- "object-stats" :> Get '[JSON] ObjectStats,
 
         validity :: api :- "validity" :> Capture "asn" String 
                                       :> CaptureAll "prefix" String 

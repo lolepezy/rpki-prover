@@ -59,6 +59,7 @@ import           RPKI.Store.Types
 import           RPKI.SLURM.Types
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Validity
+import           RPKI.Store.Base.Storable
 import           RPKI.Util
 import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 import           RPKI.Version
@@ -107,6 +108,7 @@ httpServer appContext = genericServe HttpApi {
         rtr = getRtr appContext,
         versions = getVersions appContext,
         fetcheables = getFetcheables appContext,
+        objectStats = getObjectStats appContext,
         validity = getPrefixValidity appContext,
         validityAsnPrefix = getQueryPrefixValidity appContext,
         validityBulk = getBulkPrefixValidity appContext
@@ -522,6 +524,11 @@ getFetcheables :: (MonadIO m, Storage s, MonadError ServerError m) =>
                   AppContext s -> m Fetcheables
 getFetcheables AppContext {..} = 
     liftIO $ readTVarIO $ appState ^. #fetcheables
+
+getObjectStats :: (MonadIO m, Storage s, MonadError ServerError m) =>
+                  AppContext s -> m ObjectStats
+getObjectStats AppContext {..} = 
+    roTxT database DB.getObjectsStats
 
 
 getQueryPrefixValidity :: (MonadIO m, Storage s, MonadError ServerError m)
