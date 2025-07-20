@@ -147,7 +147,7 @@ data ValidationResult = ValidationResult
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-data CacheCleanupResult = CacheCleanupResult DB.CleanUpResult
+newtype CacheCleanupResult = CacheCleanupResult DB.CleanUpResult
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)              
 
