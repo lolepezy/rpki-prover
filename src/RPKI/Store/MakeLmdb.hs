@@ -9,6 +9,7 @@ import Control.Lens
 import Control.Concurrent.STM
 
 import           Data.String.Interpolate.IsString
+import           Data.Foldable                   (for_)
 
 import           GHC.TypeLits
 
@@ -16,7 +17,6 @@ import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 
 import           Lmdb.Connection
-import           Lmdb.Types hiding (Size)
 
 import           RPKI.Store.Base.LMDB
 import           RPKI.Config
@@ -127,7 +127,7 @@ mkLmdb fileName config = do
     LmdbEnv <$> 
         newTVarIO (RWEnv nativeEnv) <*>
         newSemaphoreIO maxBottleNeck
-  where    
+  where        
     mapSize = unSize (config ^. #lmdbSizeMb) * 1024 * 1024
     maxDatabases = 120    
     maxBottleNeck = 64    
@@ -135,8 +135,13 @@ mkLmdb fileName config = do
     -- main process + validator + fetchers
     maxProcesses = 2 + fromIntegral (config ^. #parallelism . #fetchParallelism)
 
-closeLmdb :: LmdbEnv -> IO ()
-closeLmdb e = closeEnvironment =<< atomically (getNativeEnv e)
 
-closeNativeLmdb :: Environment e -> IO ()
-closeNativeLmdb = closeEnvironment
+closeLmdb :: LmdbEnv -> IO ()
+closeLmdb e = do
+    env <- atomically $ getNativeEnvAndDisable `orElse` pure Nothing        
+    for_ env closeEnvironment
+ where
+    getNativeEnvAndDisable = do 
+        nativeEnv <- getNativeEnv e
+        disableNativeEnv e
+        pure $ Just nativeEnv

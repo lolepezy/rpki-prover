@@ -118,8 +118,8 @@ updateUriPerTa fetcheablesPerTa uriTa = uriTa'
 
 -- Fetch one individual repository. 
 -- 
--- In case of RRDP returned repository has all the metadata updated 
--- (session, serial, etc.), the metadata is also updated in the database.
+-- Returned repository has all the metadata updated (in case of RRDP session and serial).
+-- The metadata is also updated in the database.
 --
 fetchRepository :: (Storage s) => 
                     AppContext s 

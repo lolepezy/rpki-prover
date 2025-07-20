@@ -64,8 +64,8 @@ import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 import           RPKI.Version
 
 
-httpServer :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> Application
-httpServer appContext tals = genericServe HttpApi {
+httpServer :: (Storage s, MaintainableStorage s) => AppContext s -> Application
+httpServer appContext = genericServe HttpApi {
         api     = apiServer,
         metrics = convert <$> textualMetrics,
         ui      = uiServer appContext,

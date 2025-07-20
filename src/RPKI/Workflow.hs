@@ -203,9 +203,9 @@ newRunningTasks = Tasks <$> newTVar mempty
 -- The main entry point for the whole validator workflow. Runs multiple threads, 
 -- running validation, RTR server, cleanups, cache maintenance and async fetches.
 -- 
-runWorkflow :: (Storage s, MaintainableStorage s) =>
-                AppContext s -> [TAL] -> IO ()
-runWorkflow appContext@AppContext {..} tals = do    
+runValidatorWorkflow :: (Storage s, MaintainableStorage s) =>
+                         AppContext s -> [TAL] -> IO ()
+runValidatorWorkflow appContext@AppContext {..} tals = do    
     void $ concurrently (
             -- Fill in the current appState if it's not too old.
             -- It is useful in case of restarts.             
