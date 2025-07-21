@@ -52,7 +52,7 @@ import           RPKI.Resources.Types
 import           RPKI.Time
 
 import           RPKI.Store.Base.Serialisation
-import RPKI.AppTypes (WorldVersion)
+import           RPKI.AppTypes (WorldVersion)
 
 
 -- There are two validation algorithms for RPKI tree
@@ -936,3 +936,6 @@ allTAs (PerTA a) = mconcat $ MonoidalMap.elems a
 
 getForTA :: PerTA a -> TaName -> Maybe a
 getForTA (PerTA a) taName = MonoidalMap.lookup taName a
+
+divSize :: Size -> Size -> Size
+divSize (Size s1) (Size n) = Size $ s1 `div` n

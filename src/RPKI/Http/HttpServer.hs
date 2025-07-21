@@ -107,6 +107,7 @@ httpServer appContext = genericServe HttpApi {
         rtr = getRtr appContext,
         versions = getVersions appContext,
         fetcheables = getFetcheables appContext,
+        objectStats = roTxT (appContext ^. #database) DB.getObjectsStats,
         validity = getPrefixValidity appContext,
         validityAsnPrefix = getQueryPrefixValidity appContext,
         validityBulk = getBulkPrefixValidity appContext

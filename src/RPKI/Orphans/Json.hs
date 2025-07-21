@@ -5,6 +5,7 @@
 {-# LANGUAGE QuasiQuotes                #-}
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module RPKI.Orphans.Json where
 
@@ -21,9 +22,11 @@ import           Data.Foldable               (toList)
 import           Data.Aeson                  
 import qualified Data.Aeson                  as Json
 import           Data.Aeson.Types            (toJSONKeyText)
+import qualified Data.Aeson.Key              as JsonKey
 import           Data.Aeson.TH
 import           Data.Tuple.Strict
 import           Deque.Strict                as Deq
+import qualified Data.Map.Strict             as Map
 
 import           Data.String.Interpolate.IsString
 
@@ -210,6 +213,8 @@ instance ToJSON RpkiObjectType
 instance ToJSONKey (Maybe RpkiObjectType) where
     toJSONKey = toJSONKeyText U.fmtGen
 
+instance ToJSONKey RpkiObjectType
+
 instance ToJSON ValidatedBy where    
     toJSON (ValidatedBy v) = toJSON v
 
@@ -224,13 +229,32 @@ $(deriveToJSON defaultOptions ''ResourceUsage)
 $(deriveToJSON defaultOptions ''SystemMetrics)
 $(deriveToJSON defaultOptions ''ScopeKind)
 
+
 $(deriveToJSON defaultOptions ''SStats)
 $(deriveToJSON defaultOptions ''DBFileStats)
 $(deriveToJSON defaultOptions ''StorageStats)
 $(deriveToJSON defaultOptions ''TotalDBStats)
 $(deriveToJSON defaultOptions ''VrpCounts)
 $(deriveToJSON defaultOptions ''Metrics)
-    
+
+instance ToJSON ObjectStats where
+    toJSON ObjectStats {..} = 
+        Json.object [
+            "totalObjects" .= toJSON totalObjects, 
+            "totalSize" .= toJSON totalSize, 
+            "countPerType" .= mapToObject countPerType,
+            "minSizePerType" .= mapToObject minSizePerType,
+            "maxSizePerType" .= mapToObject maxSizePerType,
+            "totalSizePerType" .= mapToObject totalSizePerType,
+            "avgSizePerType" .= mapToObject avgSizePerType
+        ]
+      where
+        mapToObject m = 
+            Json.object 
+            $ map (\(k, v) -> JsonKey.fromText (U.fmtGen k) .= toJSON v) 
+            $ Map.toList m
+            
+
 
 $(deriveToJSON defaultOptions ''PrefixLength)
 
