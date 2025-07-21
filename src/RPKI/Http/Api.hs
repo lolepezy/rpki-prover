@@ -246,6 +246,12 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             ("/system", mempty & get ?~ jsonOn200 "State of RPKI prover instance itself, some metrics and config"),
             ("/rtr", mempty & get ?~ jsonOn200 "State of the RTR server"),
             ("/versions", mempty & get ?~ jsonOn200 "Return list of all world versions"),
+            
+            ("/fetcheables", mempty & get ?~ jsonOn200 
+                "Return all actual repository links together with their fall-back links"),
+
+            ("/object-stats", mempty & get ?~ jsonOn200 
+                "Return counts and size statistics about all objects in the cache"),
 
             ("/validity/{asn}/{prefix}", mempty & get ?~ jsonOn200 validityDescription),
 
