@@ -1,6 +1,6 @@
 resolver: lts-22.44
 # for static builds for now
-# lts-22.20
+# resolver: lts-22.20
 # resolver: nightly-2025-07-18
 
 packages:
