@@ -22,6 +22,7 @@ import           Control.Monad.IO.Class
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
 import           Data.Maybe (fromMaybe)
+import qualified Data.Map.Strict                  as Map
 import           Data.Proxy
 import           Data.List (stripPrefix)
 import           Data.String.Interpolate.IsString
@@ -99,7 +100,7 @@ runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion reposito
 
     let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
     let arguments = 
-            [ worderIdS workerId ] <> 
+            [ workerIdStr workerId ] <> 
             rtsArguments [ 
                 rtsN maxCpuAvailable, 
                 rtsA "20m", 
@@ -288,7 +289,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                                 (ObjectOriginal blob) hash
                                 (ObjectMeta worldVersion type_)                        
                         (Right ro, _) ->                                     
-                            SuccessParsed rpkiURL (toStorableObject ro)                            
+                            SuccessParsed rpkiURL (toStorableObject ro) type_                    
                     ) `catch` 
                     (\(e :: SomeException) -> 
                         pure $! ObjectParsingProblem rpkiURL (VErr $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e) 
@@ -316,10 +317,10 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                     inSubLocationScope (getURL rpkiUrl) $ appWarn e                   
                     DB.saveOriginal tx db original hash objectMeta
                     DB.linkObjectToUrl tx db rpkiUrl hash                                  
-                SuccessParsed rpkiUrl so@StorableObject {..} -> do 
+                SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do 
                     DB.saveObject tx db so worldVersion                    
                     DB.linkObjectToUrl tx db rpkiUrl (getHash object)
-                    updateMetric @RsyncMetric @_ (& #processed %~ (+1))
+                    updateMetric @RsyncMetric @_ (#processed %~ Map.unionWith (+) (Map.singleton (Just type_) 1))
                 other -> 
                     logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                    
                   
@@ -392,5 +393,5 @@ data RsyncObjectProcessingResult =
         | HashExists RpkiURL Hash
         | UknownObjectType RpkiURL String
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
-        | SuccessParsed RpkiURL (StorableObject RpkiObject) 
+        | SuccessParsed RpkiURL (StorableObject RpkiObject) RpkiObjectType
     deriving stock (Show, Eq, Generic)

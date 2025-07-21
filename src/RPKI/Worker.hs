@@ -17,7 +17,8 @@ import           Control.Lens ((^.))
 
 import           Conduit
 import           Data.Text
-import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Lazy       as LBS
+import qualified Data.Map.Strict            as Map
 
 import           Data.String.Interpolate.IsString
 import           Data.Hourglass
@@ -26,7 +27,6 @@ import           Data.Conduit.Process.Typed
 import           GHC.Generics
 import           GHC.Stats
 
-import           System.Exit
 import           System.IO (stdin, stdout)
 import           System.Posix.Types
 import           System.Posix.Process
@@ -35,6 +35,7 @@ import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.AppContext
 import           RPKI.Config
+import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.RRDP.Types
@@ -87,8 +88,9 @@ data WorkerParams = RrdpFetchParams {
                 targetLmdbEnv :: FilePath 
             } | 
             ValidationParams {                 
-                worldVersion :: WorldVersion,
-                tals         :: [TAL]
+                worldVersion   :: WorldVersion,
+                allTaNames     :: [TaName],
+                talsToValidate :: [TAL]
             } | 
             CacheCleanupParams { 
                 worldVersion :: WorldVersion
@@ -138,11 +140,14 @@ newtype CompactionResult = CompactionResult ()
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-data ValidationResult = ValidationResult ValidationState (Maybe Slurm)
+data ValidationResult = ValidationResult 
+            ValidationState 
+            (Map.Map TaName (Fetcheables, EarliestToExpire))
+            (Maybe Slurm) 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-data CacheCleanupResult = CacheCleanupResult DB.CleanUpResult
+newtype CacheCleanupResult = CacheCleanupResult DB.CleanUpResult
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)              
 
@@ -159,27 +164,28 @@ data WorkerResult r = WorkerResult {
 -- and do the actual work.
 -- 
 executeWork :: WorkerInput 
-            -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                
+            -> (ExitCode -> IO ())
+            -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                            
             -> IO ()
-executeWork input actualWork = 
+executeWork input exitWith_ actualWork = 
     -- Check if version of the executable has changed compared to the parent.
     -- If that's the case, bail out, it's likely we can do more harm then good
     if input ^. #parentExecutableVersion /= thisExecutableVersion
         then 
-            exitWith replacedExecutableExitCode
+            exitWith_ replacedExecutableExitCode
         else do 
             exitCode <- newEmptyTMVarIO            
             let done = atomically . putTMVar exitCode 
 
-            _ <- mapM_ forkIO [
-                    ((actualWork input writeWorkerOutput >> done ExitSuccess) 
+            mapM_ (\w -> forkFinally w (const $ pure ())) [
+                    (actualWork input writeWorkerOutput >> done ExitSuccess) 
                         `onException` 
-                    done exceptionExitCode),                
+                    done exceptionExitCode,
                     dieIfParentDies done,
                     dieOfTiming done
                 ]
                 
-            exitWith =<< atomically (takeTMVar exitCode)
+            exitWith_ =<< atomically (takeTMVar exitCode)
   where        
     whicheverHappensFirst a b = either id id <$> race a b
 
@@ -263,8 +269,8 @@ replacedExecutableExitCode = ExitFailure 123
 outOfMemoryExitCode  = ExitFailure 251
 exitKillByTypedProcess = ExitFailure (-2)
 
-worderIdS :: WorkerId -> String
-worderIdS (WorkerId w) = unpack w
+workerIdStr :: WorkerId -> String
+workerIdStr (WorkerId w) = unpack w
 
 -- Main entry point to start a worker
 -- 
@@ -357,4 +363,4 @@ runWorker logger workerInput extraCli = do
 logWorkerDone :: (Logger logger, MonadIO m) =>
                 logger -> WorkerId -> WorkerResult r -> m ()
 logWorkerDone logger workerId WorkerResult {..} = do    
-    logDebug logger [i|Worker #{workerId} completed, cpuTime: #{cpuTime}ms, clockTime: #{clockTime}ms, maxMemory: #{maxMemory}.|]
+    logDebug logger [i|Worker #{workerId} completed, cpuTime: #{cpuTime}ms, clockTime: #{clockTime}ms, maxMemory: #{maxMemory}.|] 

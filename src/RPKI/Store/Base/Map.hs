@@ -28,6 +28,12 @@ get tx (SMap _ s) k = do
     msv <- S.get tx s (storableKey k)
     pure $! fromStorable . unSValue <$> msv
 
+binarySize :: (AsStorable k, AsStorable v) =>
+            Tx s m -> SMap name s k v -> k -> IO (Maybe Int)
+binarySize tx (SMap _ s) k = do
+    msv <- S.get tx s (storableKey k)
+    pure $! storableSize . unSValue <$> msv
+
 exists :: AsStorable k => Tx s m -> SMap name s k v -> k -> IO Bool
 exists tx (SMap _ s) k = isJust <$> S.get tx s (storableKey k)    
 

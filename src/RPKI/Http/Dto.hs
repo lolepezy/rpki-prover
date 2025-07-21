@@ -14,7 +14,6 @@ import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set                         as Set
 import qualified Data.Vector                      as V
 import qualified Data.Map.Strict                  as Map
-import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
@@ -39,17 +38,17 @@ import           RPKI.Resources.Validity
 import           RPKI.RTR.Types
 import           RPKI.Validation.Types
 import           RPKI.Util
+import          RPKI.AppTypes (WorldVersion)
 
 {-
     Mainly domain objects -> DTO convertions. 
 -}
 
-toVrpDtos :: Maybe Vrps -> [VrpDto]
-toVrpDtos = \case
-    Nothing   -> []
-    Just vrps -> [ VrpDto a p len (unTaName ta) |
-                    (ta, vrpSet) <- MonoidalMap.toList $ unVrps vrps,
-                    Vrp a p len  <- V.toList vrpSet ]
+toVrpDtos :: PerTA Vrps -> [VrpDto]
+toVrpDtos vrpsPerTa =     
+    [ VrpDto {..} | 
+        (TaName ta, Vrps vrps) <- perTA vrpsPerTa,
+        Vrp asn prefix maxLength <- V.toList vrps ]
 
 toVrpDto :: Vrp -> TaName -> VrpDto
 toVrpDto (Vrp a p len) (TaName ta) = VrpDto a p len ta
@@ -75,7 +74,7 @@ aspaToDto aspa =
     AspaDto {
         customer = aspa ^. #customer,
         providers = Set.toList $ aspa ^. #providers
-    }
+}
 
 gbrObjectToDto :: GbrObject -> GbrDto
 gbrObjectToDto g = gbrToDto $ getCMSContent $ g ^. #cmsPayload
@@ -96,12 +95,22 @@ gbrToDto (Gbr vcardBS) = let
     in GbrDto {..}
 
 
-toVDto :: (Scope a, Set.Set VIssue) -> OriginalVDto
-toVDto (Scope scope, issues) = OriginalVDto $ FullVDto {
-        issues = map toDto $ Set.toList issues,
-        path   = NonEmpty.toList scope,
-        url    = NonEmpty.head scope
-    }
+validationsToDto :: WorldVersion -> Validations -> ValidationsDto OriginalVDto
+validationsToDto version validations =
+    ValidationsDto {
+            worldVersion = version,
+            timestamp    = versionToInstant version,
+            validations  = toVDtos validations
+        }              
+
+toVDtos :: Validations -> [OriginalVDto]
+toVDtos (Validations vMap) = 
+    flip map (Map.toList vMap) $ \(Scope scope, issues) ->        
+        OriginalVDto $ ValidationDto {
+            issues = map toDto $ Set.toList issues,
+            path   = NonEmpty.toList scope,
+            url    = NonEmpty.head scope
+        }
   where
     toDto = \case
         VErr e               -> ErrorDto $ toMessage e
@@ -114,11 +123,10 @@ vrpDtosToCSV vrpDtos =
         (str "ASN,IP Prefix,Max Length,Trust Anchor\n")
         (mconcat $ map toBS vrpDtos)
   where
-    toBS VrpDto {
-            asn = ASN as,
+    toBS VrpDto {            
             maxLength = PrefixLength ml,
             ..
-        } = str "AS" <> str (show as) <> ch ',' <>
+        } = str (show asn) <> ch ',' <>
             text (prefixStr prefix) <> ch ',' <>
             str (show ml) <> ch ',' <>
             str (convert ta) <> ch '\n'
@@ -131,13 +139,12 @@ vrpExtDtosToCSV vrpDtos =
   where
     toBS VrpExtDto {        
             vrp = VrpDto {
-                asn = ASN as,
                 maxLength = PrefixLength ml,
                 ..
             },
             ..
         } = str (Text.unpack uri) <> ch ',' <>
-            str "AS" <> str (show as) <> ch ',' <>
+            str (show asn) <> ch ',' <>
             text (prefixStr prefix) <> ch ',' <>
             str (show ml) <> ch ',' <>
             str (convert ta) <> ch '\n'
@@ -149,8 +156,8 @@ vrpSetToCSV vrpDtos =
         (str "ASN,IP Prefix,Max Length\n")
         (mconcat $ map toBS $ toList vrpDtos)
   where
-    toBS (AscOrderedVrp (Vrp (ASN asn) prefix (PrefixLength maxLength))) =
-        str "AS" <> str (show asn) <> ch ',' <>
+    toBS (AscOrderedVrp (Vrp asn prefix (PrefixLength maxLength))) =
+        str (show asn) <> ch ',' <>
         text (prefixStr prefix) <> ch ',' <>
         str (show maxLength) <> ch '\n'
  
@@ -228,8 +235,8 @@ objectToDto = \case
 
             certSignatureAlg = Text.pack $ show $ X509.certSignatureAlg x509cert
 
-            notValidBefore = Instant $ fst $ X509.certValidity x509cert
-            notValidAfter  = Instant $ snd $ X509.certValidity x509cert
+            notValidBefore = newInstant $ fst $ X509.certValidity x509cert
+            notValidAfter  = newInstant $ snd $ X509.certValidity x509cert
 
             pubKey = case X509.certPubKey x509cert of
                         X509.PubKeyRSA RSA.PublicKey {..} -> Right $ let

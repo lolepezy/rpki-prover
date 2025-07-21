@@ -155,7 +155,7 @@ validateTaCertAKI taCert u =
 -- 
 chooseTaCert :: CaCerObject -> CaCerObject -> PureValidatorT CaCerObject
 chooseTaCert cert cachedCert = do
-    let validities = bimap Instant Instant . certValidity . cwsX509certificate . getCertWithSignature
+    let validities = bimap newInstant newInstant . certValidity . cwsX509certificate . getCertWithSignature
     let (notBefore, notAfter) = validities cert
     let (cachedNotBefore, cachedNotAfter) = validities cachedCert
     let bothValidities = TACertValidities {..}
@@ -215,7 +215,7 @@ validateResourceCert now cert parentCert vcrl = do
     when (isRevoked cert vcrl) $ 
         vPureError RevokedResourceCertificate
 
-    validateObjectValidityPeriod cert now    
+    void $ validateObjectValidityPeriod cert now    
 
     unless (correctSkiAki cert parentCert) $
         vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
@@ -226,13 +226,14 @@ validateResourceCert now cert parentCert vcrl = do
         maybe False (\(AKI a) -> a == s) $ getAKI c
 
 
-validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT ()
+validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT (Instant, Instant)
 validateObjectValidityPeriod c (Now now) = do 
     let (notBefore, notAfter) = getValidityPeriod c
     when (now < notBefore) $ 
         vPureError $ ObjectValidityIsInTheFuture notBefore notAfter
     when (now > notAfter) $ 
         vPureError $ ObjectIsExpired notBefore notAfter
+    pure (notBefore, notAfter)
 
 
 validateResources ::
