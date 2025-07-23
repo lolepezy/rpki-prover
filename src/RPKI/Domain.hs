@@ -557,6 +557,44 @@ data BGPSecPayload = BGPSecPayload {
     deriving anyclass (TheBinary, NFData)
 
 
+-- https://datatracker.ietf.org/doc/html/draft-spaghetti-sidrops-rpki-erik-protocol
+
+data ErikIndex = ErikIndex {
+        indexScope    :: Text,
+        indexTime     :: Instant,  
+        previousIndex :: Maybe Hash,
+        partitionList :: [PartitionListEntry]
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)   
+
+newtype PartitionIdentifier = PartitionIdentifier Integer
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+data PartitionListEntry = PartitionListEntry {
+        partitionIdentifier :: PartitionIdentifier,
+        hash                :: Hash
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)   
+
+data ErikPartition = ErikPartition {
+        partitionTime :: Instant,        
+        manifestList  :: [ManifestListEntry]
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+data ManifestListEntry = ManifestListEntry {
+        hash           :: Hash,
+        manifestNumber :: Serial,
+        location       :: URI
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)   
+
+
 data CertificateWithSignature = CertificateWithSignature {
         cwsX509certificate    :: X509.Certificate,
         cwsSignatureAlgorithm :: SignatureAlgorithmIdentifier,
