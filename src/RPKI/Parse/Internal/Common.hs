@@ -18,6 +18,7 @@ import qualified Data.List as List
 import Data.Word
 import Data.Char (chr)
 import Data.Maybe
+import Data.Hourglass (DateTime)
 
 import Data.ASN1.OID
 import Data.ASN1.Types
@@ -162,6 +163,11 @@ getDigest =
         OID oid -> pure $ Just oid
         Null    -> pure Nothing
         s       -> throwParseError $ "DigestAlgorithms is wrong " <> show s
+
+getTime :: [Char] -> ParseASN1 DateTime
+getTime message = getNext >>= \case
+        ASN1Time TimeGeneralized dt _ -> pure dt
+        s  -> throwParseError $ message ++ ", got " ++ show s   
 
 -- Certificate utilities
 extVal :: [ExtensionRaw] -> OID -> Maybe BS.ByteString

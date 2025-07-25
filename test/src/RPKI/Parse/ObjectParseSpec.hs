@@ -27,7 +27,8 @@ import qualified Test.Tasty.HUnit        as HU
 objectParseSpec :: TestTree
 objectParseSpec = testGroup "Unit tests for object parsing" [
     shoudlParseBGPSec,
-    shouldParseAspa,
+    shouldParseAspa1,
+    shouldParseAspa2,
     shouldParseSpl
   ]
 
@@ -45,13 +46,20 @@ shoudlParseBGPSec = HU.testCase "Should parse a BGPSec certificate" $ do
     HU.assertBool "It has AKI" (isJust aki)   
 
 
-shouldParseAspa = HU.testCase "Should parse an ASPA object" $ do        
+shouldParseAspa1 = HU.testCase "Should parse an ASPA object" $ do        
     bs <- BS.readFile "test/data/AS204325.asa"
     let (Right aspaObject, _) = runPureValidator (newScopes "parse") $ parseAspa bs
 
     let Aspa {..} = getCMSContent $ cmsPayload aspaObject
     HU.assertEqual "Wrong customer" customer (ASN 204325)
     HU.assertEqual "Wrong providers" providers (Set.fromList [ASN 65000, ASN 65002, ASN 65003])    
+shouldParseAspa2 = HU.testCase "Should not parse an ASPA object" $ do        
+    bs <- BS.readFile "test/data/aspa-no-explicit-version.asa"
+    let (x, _) = runPureValidator (newScopes "parse") $ parseAspa bs
+    case x of
+        Left (ParseE (ParseError s)) -> 
+             HU.assertEqual "Wrong outcome" s "Couldn't parse embedded ASN1 stream: Wrong provider AS (Start Sequence)"
+        _ -> HU.assertFailure $ "Expected a parse error, but got something else" <> show x
 
 shouldParseSpl = HU.testCase "Should parse an SPL object" $ do        
     bs <- BS.readFile "test/data/9X0AhXWTJDl8lJhfOwvnac-42CA.spl"

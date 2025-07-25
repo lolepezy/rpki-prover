@@ -21,9 +21,9 @@ import qualified RPKI.Util                  as U
 
 parseMft :: BS.ByteString -> PureValidatorT MftObject
 parseMft bs = do
-    asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs
-    signedMft <- fromEither $ first (parseErr . U.fmtGen) $ 
-                    runParseASN1 (parseSignedObject $ parseSignedContent parseManifest) asns
+    asn1s     <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs
+    signedMft <- fromEither $ first (parseErr . U.fmtGen) $
+                    runParseASN1 (parseSignedObject $ parseSignedContent parseManifest) asn1s
     hash' <- getMetaFromSigned signedMft bs
     pure $ newCMSObject hash' (CMS signedMft)
     where
@@ -40,7 +40,6 @@ parseMft bs = do
                             pure $ Manifest mn hashAlg' 
                                 (newInstant thisUpdateTime') (newInstant nextUpdateTime') entries
 
-                    -- TODO Check version?
                     (IntVal version,
                         IntVal manifestNumber,
                         ASN1Time TimeGeneralized thisUpdateTime' _) -> do
@@ -62,9 +61,3 @@ parseMft bs = do
             getMany $ onNextContainer Sequence $
                 MftPair <$> getIA5String (pure . Text.pack) "Wrong file name"
                         <*> getBitString (pure . U.mkHash) "Wrong hash"
-
-        getTime message = getNext >>= \case
-            ASN1Time TimeGeneralized dt _ -> pure dt
-            s  -> throwParseError $ message ++ ", got " ++ show s
-
-
