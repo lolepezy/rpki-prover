@@ -14,7 +14,6 @@ import Data.ASN1.BinaryEncoding
 import Data.ASN1.Parse
 
 import Data.Bifunctor
-import Data.String.Interpolate.IsString
 
 import RPKI.AppMonad
 import RPKI.Domain 
@@ -22,6 +21,7 @@ import RPKI.Parse.Internal.Common
 
 import qualified RPKI.Util as U
 import RPKI.Time
+import Data.ASN1.BitArray
 
 -- | Parse Erik sync protocol objects, 
 -- https://datatracker.ietf.org/doc/html/draft-spaghetti-sidrops-rpki-erik-protocol
@@ -44,19 +44,19 @@ parseErikIndex bs = do
     parseIndexFields = do 
         indexScope    <- getIA5String (pure . Text.pack) "Wrong indexScope"
         indexTime     <- newInstant <$> getTime "No partitionTime"
-        -- TODO Implement optional hash
-        previousIndex <- pure Nothing
+        previousIndex <- getOptionalHash
         partitionList <- getPartitionList
-        pure $ ErikIndex {..}
+        pure $ ErikIndex {..}    
 
-    makeMftNumber n = either throwParseError pure $ makeSerial n
-
+    getOptionalHash = getNextMaybe $ \case            
+        BitString (BitArray _ b) -> Just $ U.mkHash b
+        _                        -> Nothing
+                
     getPartitionList = onNextContainer Sequence $
         getMany $ onNextContainer Sequence $
             PartitionListEntry 
                 <$> getInteger (pure . PartitionIdentifier) "Wrong serial for manifest number"
                 <*> getBitString (pure . U.mkHash) "Wrong hash"
-
 
 parseErikPartition :: BS.ByteString -> PureValidatorT ErikPartition
 parseErikPartition bs = do    
