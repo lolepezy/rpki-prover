@@ -198,6 +198,9 @@ getNativeEnv LmdbEnv {..} = do
         ROEnv native -> pure native
         RWEnv native -> pure native
 
+disableNativeEnv :: LmdbEnv -> STM ()
+disableNativeEnv LmdbEnv {..} = 
+    writeTVar nativeEnv Disabled
 
 data CopyStat = CopyStat { 
         mapName       :: BS.ByteString, 

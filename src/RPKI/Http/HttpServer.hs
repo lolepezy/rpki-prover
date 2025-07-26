@@ -64,8 +64,8 @@ import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 import           RPKI.Version
 
 
-httpServer :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> Application
-httpServer appContext tals = genericServe HttpApi {
+httpServer :: (Storage s, MaintainableStorage s) => AppContext s -> Application
+httpServer appContext = genericServe HttpApi {
         api     = apiServer,
         metrics = convert <$> textualMetrics,
         ui      = uiServer appContext,
@@ -107,6 +107,7 @@ httpServer appContext tals = genericServe HttpApi {
         rtr = getRtr appContext,
         versions = getVersions appContext,
         fetcheables = getFetcheables appContext,
+        objectStats = roTxT (appContext ^. #database) DB.getObjectsStats,
         validity = getPrefixValidity appContext,
         validityAsnPrefix = getQueryPrefixValidity appContext,
         validityBulk = getBulkPrefixValidity appContext

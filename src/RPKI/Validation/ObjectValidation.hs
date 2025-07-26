@@ -155,7 +155,7 @@ validateTaCertAKI taCert u =
 -- 
 chooseTaCert :: CaCerObject -> CaCerObject -> PureValidatorT CaCerObject
 chooseTaCert cert cachedCert = do
-    let validities = bimap Instant Instant . certValidity . cwsX509certificate . getCertWithSignature
+    let validities = bimap newInstant newInstant . certValidity . cwsX509certificate . getCertWithSignature
     let (notBefore, notAfter) = validities cert
     let (cachedNotBefore, cachedNotAfter) = validities cachedCert
     let bothValidities = TACertValidities {..}

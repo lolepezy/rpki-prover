@@ -19,7 +19,7 @@ import qualified Data.Set                         as Set
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Vector                      as V
 import           GHC.Generics
-import           System.Process.Typed
+import           System.Posix.Types
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.AppTypes
@@ -65,7 +65,7 @@ data AppState = AppState {
         -- by the validity check
         prefixIndex :: TVar (Maybe PrefixIndex),
 
-        runningRsyncClients :: TVar (Map.Map Pid WorkerInfo),
+        runningRsyncClients :: TVar (Map.Map CPid WorkerInfo),
 
         fetcheables :: TVar Fetcheables
         
@@ -123,10 +123,10 @@ getOrCreateWorldVerion AppState {..} =
         maybe newWorldVersion pure <$> readTVar world
 
 versionToInstant :: WorldVersion -> Instant
-versionToInstant (WorldVersion nanos) = fromNanoseconds nanos
+versionToInstant (WorldVersion nanos) = Instant nanos
 
 instantToVersion :: Instant -> WorldVersion
-instantToVersion = WorldVersion . toNanoseconds
+instantToVersion (Instant nanos) = WorldVersion nanos
 
 -- Block on version updates
 waitForNewVersion :: AppState -> WorldVersion -> STM (WorldVersion, RtrPayloads)
@@ -153,7 +153,7 @@ updateRsyncClient message AppState {..} =
             RemoveWorker pid -> Map.delete pid
         
 
-removeExpiredRsyncProcesses :: MonadIO m => AppState -> m [(Pid, WorkerInfo)]
+removeExpiredRsyncProcesses :: MonadIO m => AppState -> m [(CPid, WorkerInfo)]
 removeExpiredRsyncProcesses AppState {..} = liftIO $ do 
     Now now <- thisInstant
     atomically $ do 

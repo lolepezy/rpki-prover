@@ -1,25 +1,25 @@
 body {
     font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,Noto Sans,sans-serif;
-    background-color: #f5f5f5; /* Darkened from #fcfcfc */
+    background-color: #f5f5f5; 
 }
 
 table.gen-t { 
-    width: auto;          /* Allow table to size to its content */
-    min-width: min-content; /* Ensure minimal width based on content */
-    max-width: 2000px;    /* Set maximum width to 1500px */
+    width: auto;          
+    min-width: min-content;
+    max-width: 2000px;    
     border-collapse: collapse; 
-    margin: 50px 0; /* Change from "margin: 50px auto" to left-align */
+    margin: 50px 0;
 }
 
 th.gen-t { 	
-    background-color: #dedede; /* Darkened from #e8e8e8 */
-    color: #333333; /* Darkened from #444444 */
+    background-color: #dedede;
+    color: #333333;
     font-weight: bold; 
 }
 
 td.gen-t, th.gen-t { 
     padding: 8px; 
-    border: 1px solid #b0b0b0; /* Darkened from #c0c0c0 */
+    border: 1px solid #b0b0b0;
     text-align: left; 
     font-size: 15px;
 }
@@ -39,7 +39,7 @@ td.sub-t, th.sub-t {
 }
 
 tr:hover {
-  background-color: #e8e8e8; /* Darkened from #f2f2f2 */
+  background-color: #e8e8e8;
 }
 
 /* Override hover effect for rows inside open details */
@@ -52,28 +52,23 @@ tr:has(details[open]) {
   background-color: initial !important;
 }
 
-/* If you need to target specific rows */
 tr:has(> td details[open]):hover {
   background-color: initial;
 }
 
 /* Ensure summary row still gets hover effect when closed */
 tr:has(> td details:not([open])):hover {
-  background-color: #e8e8e8; /* Darkened from #f2f2f2 */
+  background-color: #e8e8e8;
 }
 
-
-/* Make summary elements appear clickable */
 summary {
     cursor: pointer;
 }
 
-/* Ensure the triangle/disclosure marker also appears clickable */
 summary::-webkit-details-marker {
     cursor: pointer;
 }
 
-/* For Firefox */
 summary::-moz-list-bullet {
     cursor: pointer;
 }
@@ -84,7 +79,7 @@ summary::-moz-list-bullet {
 
 .error-message {
     margin-bottom: 3px;
-    color: #d13046; /* Darkened from #e44258 */
+    color: #d13046;
 }
 
 .red-dot, .yellow-dot, .green-dot {    
@@ -96,33 +91,33 @@ summary::-moz-list-bullet {
 }
 
 .green-dot {
-    background-color: #47952d; /* Darkened from #e44258 */
+    background-color: #47952d;
 }
 
 .red-dot {
-    background-color: #d13046; /* Darkened from #e44258 */
+    background-color: #d13046;
 }
 
 .yellow-dot {
-    background-color: #e69d31; /* Darkened from #f5ad41 */
+    background-color: #e69d31;
 }
 
 .even-row {
-    background-color: #efefef; /* Darkened from #f7f7f7 */
+    background-color: #efefef;
 }
 
 .pointer-right {
     cursor: pointer;
     float: left;
     width: 20px;
-    color: #555555; /* Darkened from #666666 */
+    color: #555555;
 }
 
 .pointer-up {
     cursor: pointer;
     float: left;
     width: 20px;
-    color: #555555; /* Darkened from #666666 */
+    color: #555555;
 }
 
 .full-path {
@@ -133,13 +128,13 @@ summary::-moz-list-bullet {
 .pointer-right-header {    
     float: right;
     width: 20px;
-    color: #555555; /* Darkened from #666666 */
+    color: #555555;
 }
 
 .pointer-up-header {    
     float: right;
     width: 20px;
-    color: #555555; /* Darkened from #666666 */
+    color: #555555;
 }
 
 .ta-header {
@@ -149,15 +144,15 @@ summary::-moz-list-bullet {
 
 .switch {
     cursor: pointer;
-    color: #555555; /* Darkened from #666666 */
+    color: #555555;
 }
 
 .path-elem {
     margin: 4px;
-    background-color: #e6e6e6; /* Darkened from #f0f0f0 */
+    background-color: #e6e6e6;
     padding: 2px 6px;
     border-radius: 4px;
-    border: 1px solid #cccccc; /* Darkened from #d8d8d8 */
+    border: 1px solid #cccccc;
     color: #333333;
 }
 
@@ -177,13 +172,13 @@ summary::-moz-list-bullet {
     left: 0;
     height: 100%;
     overflow-y: auto;
-    background-color: #2b2b2b; /* Darkened from #666666 */
+    background-color: #2b2b2b;
     padding: 20px 0;
 }
 
 .main {
-    margin-left: 200px; /* Width of side navigation */
-    padding: 20px 20px 20px 100px; /* Additional 100px padding from side nav */
+    margin-left: 200px;
+    padding: 20px 20px 20px 100px;
 }
 
 .overall { 		
@@ -194,13 +189,13 @@ summary::-moz-list-bullet {
 .tooltip {
     position: relative;
     display: inline-block;
-    border-bottom: 1px dotted #555555; /* Darkened from #666666 */
+    border-bottom: 1px dotted #555555;
 }
   
 .tooltip .tooltiptext {
     visibility: hidden;
     width: 600px;
-    background-color: #333333; /* Darkened from #444444 */
+    background-color: #333333;
     color: #fff;
     text-align: center;
     border-radius: 6px;
@@ -223,7 +218,7 @@ summary::-moz-list-bullet {
     margin-left: -5px;
     border-width: 5px;
     border-style: solid;
-    border-color: #333333 transparent transparent transparent; /* Darkened from #444444 */
+    border-color: #333333 transparent transparent transparent;
 }
   
 .tooltip:hover .tooltiptext {
@@ -231,7 +226,6 @@ summary::-moz-list-bullet {
     opacity: 1;
 }
 
-/* Clickable table rows */
 .clickable-row {
     border-bottom: 1px solid #dee2e6;
     cursor: pointer;
@@ -260,7 +254,7 @@ summary::-moz-list-bullet {
 }
 
 .detail-panel {
-    padding: 20px 20px 20px 20px; /* top right bottom left */
+    padding: 20px 20px 20px 20px;
     margin: 0;
 }
 
@@ -268,7 +262,6 @@ summary::-moz-list-bullet {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 12px;
-    /* margin-bottom: 15px; */
     margin-bottom: 0;
 }
 
@@ -280,7 +273,6 @@ summary::-moz-list-bullet {
     font-size: 13px;
 }
 
-/* detail-item */
 .d-i strong {
     color: #333333;
     display: block;
@@ -304,16 +296,11 @@ summary::-moz-list-bullet {
     overflow-y: auto;
 }
 
-/* Ensure detail rows don't get the striped background */
-/* .detail-row.even-row {
-    background-color: #f8f8f8 !important;
-} */
-
 
 .issues-container {
     grid-column: 1 / -1;
-    margin-bottom: 0; /* Prevent extra bottom spacing */
-    margin-top: 20px; /* Prevent extra bottom spacing */
+    margin-bottom: 0;
+    margin-top: 20px;
 }
 
 .issues-list {
@@ -328,7 +315,6 @@ summary::-moz-list-bullet {
     padding: 8px;
     margin-bottom: 4px;
     background-color: #f8f9fa;
-    /* border-left: 3px solid #dc3545; */
     border-radius: 4px;
 }
 
@@ -380,7 +366,7 @@ summary::-moz-list-bullet {
 }
 
 .nav-section {
-    border-bottom: none; /* Remove border from last section */
+    border-bottom: none;
 }
 
 .system-info-title {

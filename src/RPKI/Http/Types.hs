@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE DeriveAnyClass       #-}
+{-# LANGUAGE DerivingVia        #-}
 {-# LANGUAGE StrictData           #-}
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE OverloadedLabels     #-}
@@ -419,6 +420,7 @@ data ValidityDto = ValidityDto {
         vrps  :: ValidityVrpsDto
     }
     deriving stock (Eq, Show, Generic)
+
 
 data ManualCVS = ManualCVS
 data ObjectBlob = ObjectBlob

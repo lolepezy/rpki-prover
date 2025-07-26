@@ -682,7 +682,8 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
                 inSubLocationScope (getURL rpkiUrl) $ appWarn e
                 DB.saveOriginal tx db original hash objectMeta
-                DB.linkObjectToUrl tx db rpkiUrl hash                          
+                DB.linkObjectToUrl tx db rpkiUrl hash         
+                logDebug logger [i||Added original object #{rpkiUrl} with hash #{hash} to the database.|]                 
 
             SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do            
                 let newHash = getHash object

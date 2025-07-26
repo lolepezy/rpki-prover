@@ -203,9 +203,9 @@ newRunningTasks = Tasks <$> newTVar mempty
 -- The main entry point for the whole validator workflow. Runs multiple threads, 
 -- running validation, RTR server, cleanups, cache maintenance and async fetches.
 -- 
-runWorkflow :: (Storage s, MaintainableStorage s) =>
-                AppContext s -> [TAL] -> IO ()
-runWorkflow appContext@AppContext {..} tals = do    
+runValidatorWorkflow :: (Storage s, MaintainableStorage s) =>
+                         AppContext s -> [TAL] -> IO ()
+runValidatorWorkflow appContext@AppContext {..} tals = do    
     void $ concurrently (
             -- Fill in the current appState if it's not too old.
             -- It is useful in case of restarts.             
@@ -313,20 +313,20 @@ runWorkflow appContext@AppContext {..} tals = do
 
 
     schedules workflowShared = [            
-            Scheduling {                 
-                initialDelay = 600_000_000,                
+            Scheduling {                                 
+                initialDelay = 600 * 1_000_000,
+                interval = config ^. #cacheCleanupInterval,
                 taskDef = (CacheCleanupTask, cacheCleanup workflowShared),
-                persistent = True,
-                interval = config ^. #cacheCleanupInterval
-            },        
+                persistent = True                
+            },       
             Scheduling {                 
-                initialDelay = 900_000_000,
+                initialDelay = 900 * 1_000_000,
                 interval = config ^. #storageCompactionInterval,
                 taskDef = (LmdbCompactTask, compact workflowShared),
                 persistent = True
             },
             Scheduling {             
-                initialDelay = 1200_000_000,
+                initialDelay = 1200 * 1_000_000,
                 interval = config ^. #rsyncCleanupInterval,
                 taskDef = (RsyncCleanupTask, rsyncCleanup),
                 persistent = True
@@ -345,7 +345,7 @@ runWorkflow appContext@AppContext {..} tals = do
     --   * run tasks using `runConcurrentlyIfPossible` to make sure 
     --     there is no data races between different tasks
     runScheduledTasks workflowShared = do                
-        persistedJobs <- roTxT database $ \tx db -> Map.fromList <$> DB.allJobs tx db        
+        persistedJobs <- roTxT database $ \tx db -> Map.fromList <$> DB.allJobs tx db
 
         Now now <- thisInstant
         forConcurrently (schedules workflowShared) $ \Scheduling { taskDef = (task, action), ..} -> do                        
@@ -357,9 +357,9 @@ runWorkflow appContext@AppContext {..} tals = do
                             (initialDelay, FirstRun)
                         Just lastExecuted -> 
                             (fromIntegral $ leftToWaitMicros (Earlier lastExecuted) (Later now) interval, RanBefore)
-                    else (initialDelay, FirstRun)            
+                    else (initialDelay, FirstRun)
 
-            let delayInSeconds = initialDelay `div` 1_000_000
+            let delayInSeconds = delay `div` 1_000_000
             let delayText :: Text.Text = 
                     case () of 
                       _ | delay == 0 -> [i|for ASAP execution|] 
@@ -445,7 +445,7 @@ runWorkflow appContext@AppContext {..} tals = do
                         pure (rtrPayloads, slurmedPayloads)
                           
     -- Delete objects in the store that were read by top-down validation 
-    -- longer than `cacheLifeTime` hours ago.
+    -- longer than `shortLivedCacheLifeTime` hours ago.
     cacheCleanup workflowShared worldVersion _ = do            
         executeOrDie
             cleanupOldObjects
@@ -455,7 +455,10 @@ runWorkflow appContext@AppContext {..} tals = do
                     Right DB.CleanUpResult {..} -> do 
                         when (deletedObjects > 0) $ do
                             atomically $ writeTVar (workflowShared ^. #deletedAnythingFromDb) True
-                        logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, kept #{keptObjects}, |] <>
+                        let perType :: String = if mempty /= deletedPerType 
+                            then [i|in particular #{Map.toList deletedPerType}, |] 
+                            else ""
+                        logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, #{perType}kept #{keptObjects}, |] <>
                                          [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|])
       where
         cleanupOldObjects = do                 
@@ -1143,13 +1146,25 @@ runCacheCleanup :: Storage s =>
 runCacheCleanup AppContext {..} worldVersion = do        
     db <- readTVarIO database
     -- Use the latest completed validation moment as a cutting point.
-    -- This is to prevent cleaning up objects if they were untouched 
-    -- because prover wasn't running for too long.
+    -- This is to prevent cleaning up objects actual object if they were 
+    -- untouched because prover was stopped for a long period.
     cutOffVersion <- roTx db $ \tx -> 
         fromMaybe worldVersion <$> DB.getLatestVersion tx db
+    
+    let cutOffMoment = versionToInstant cutOffVersion
+        tooOldLongLived  = versionIsOld cutOffMoment (config ^. #longLivedCacheLifeTime)
+        tooOldShortLived = versionIsOld cutOffMoment (config ^. #shortLivedCacheLifeTime)
 
-    DB.deleteStaleContent db (versionIsOld (versionToInstant cutOffVersion) (config ^. #cacheLifeTime))
-
+    DB.deleteStaleContent db DB.DeletionCriteria {
+            versionIsTooOld  = tooOldLongLived,
+            objectIsTooOld = \version type_ -> 
+                case type_ of 
+                    -- Most of the object churn happens because of the manifest and CRL updates, 
+                    -- so they should be removed from the cache sooner than more long-lived objects
+                    MFT -> tooOldShortLived version
+                    CRL -> tooOldShortLived version
+                    _   -> tooOldLongLived version
+        }
 
 -- | Load the state corresponding to the last completed validation version.
 -- 
@@ -1237,8 +1252,8 @@ runConcurrentlyIfPossible logger taskType Tasks {..} action = do
 
 
 versionIsOld :: Instant -> Seconds -> WorldVersion -> Bool
-versionIsOld now period (WorldVersion nanos) =
-    let validatedAt = fromNanoseconds nanos
+versionIsOld now period version =
+    let validatedAt = versionToInstant version
     in not $ closeEnoughMoments (Earlier validatedAt) (Later now) period
 
 

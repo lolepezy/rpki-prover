@@ -60,6 +60,7 @@ import           System.Exit
 import           System.IO
 import           System.FilePath
 import           System.Process.Typed
+import           System.Posix.Process
 
 import qualified Streaming.Prelude                as S
 
@@ -204,17 +205,15 @@ readRsyncProcess logger fetchConfig pc textual = do
     Now now <- thisInstant
     let endOfLife = momentAfter now (fetchConfig ^. #rsyncTimeout)
     liftIO $ withProcessTerm pc' $ \p -> do 
-        pid <- getPid p
-        forM_ pid $ \pid_ -> 
-            registerhWorker logger $ 
-                WorkerInfo pid_ endOfLife textual
+        pid <- getProcessID        
+        registerhWorker logger $ WorkerInfo pid endOfLife textual
 
         z <- atomically $ (,,)
             <$> waitExitCodeSTM p
             <*> getStdout p
             <*> getStderr p
 
-        forM_ pid $ deregisterhWorker logger
+        deregisterhWorker logger pid
 
         pure z
   where
