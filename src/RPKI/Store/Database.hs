@@ -117,6 +117,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         objects        :: SMap "objects" s ObjectKey (Compressed (StorableObject RpkiObject)),
         hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
         mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
+        mftMeta        :: SMap "mft-meta" s AKI Mfts,
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
         objectMetas    :: SMap "object-meta" s ObjectKey ObjectMeta,
 
@@ -484,6 +485,15 @@ getMftByKey tx db k = do
         Just (Located loc (MftRO mft)) -> Just $ Keyed (Located loc mft) k
         _                              -> Nothing       
 
+saveMftMeta :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> DB s -> AKI -> Mfts -> m ()
+saveMftMeta tx DB { objectStore = RpkiObjectStore {..} } aki mfts = 
+    liftIO $ M.put tx mftMeta aki mfts
+
+getMftMeta :: (MonadIO m, Storage s) => 
+                Tx s mode -> DB s -> AKI -> m (Maybe Mfts)
+getMftMeta tx DB { objectStore = RpkiObjectStore {..} } aki = 
+    liftIO $ M.get tx mftMeta aki
 
 getMftShorcut :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> AKI -> m (Maybe MftShortcut)

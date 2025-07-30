@@ -174,7 +174,6 @@ newTopDownContext taName allTas =
     liftIO $ do 
         payloadBuilder <- newPayloadBuilder
         atomically $ do
-            -- let verifiedResources = Just $ createVerifiedResources certificate
             let verifiedResources = Nothing
                 currentPathDepth = 0
                 overclaimingHappened = False       
@@ -436,7 +435,6 @@ validateFromTACert
     fromTryM
         (UnspecifiedE (unTaName taName) . fmtEx)
         (do
-            -- TODO That might not be necessary
             let publicationPoints' = 
                     case filterPPAccess config initialRepos of 
                         Just filteredRepos -> foldr mergePP publicationPoints $ unPublicationPointAccess filteredRepos
@@ -519,8 +517,7 @@ validateCaNoLimitChecks
         Right ppAccess -> do                
             let caFetcheables = getFetchables publicationPoints ppAccess
 
-            -- Add these PPs to the validation-wide set of fetcheables, 
-            -- i.e. all newly discovered publication points/repositories                        
+            -- Add these PPs to the set of fetcheables, i.e. all newly discovered publication points/repositories                        
             mergeFetcheables caFetcheables
 
             -- Do not validate if nothing was fetched for this CA

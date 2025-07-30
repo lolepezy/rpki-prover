@@ -142,7 +142,7 @@ testThreeDiffs = HU.testCase "Should squash three diffs properly" $
 
 
 squash :: (Ord a, Ord b) => [GenDiffs a b] -> GenDiffs a b
-squash diffs = squashDiffs $ map (\(i, d) -> (SerialNumber i, d)) $ zip [1..] diffs
+squash diffs = squashDiffs $ zipWith (\i d -> (SerialNumber i, d)) [1..] diffs
 
 mkNewDiff :: (Ord a, Ord b) => [a] -> [a] -> GenDiffs a b
 mkNewDiff added deleted = 
