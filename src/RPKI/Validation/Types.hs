@@ -11,6 +11,7 @@
 module RPKI.Validation.Types where
 
 import           Data.Aeson.Types
+import           Data.List.NonEmpty          (NonEmpty (..))
 import qualified Data.Map.Strict             as Map
 import           Data.Text                   (Text)
 import           Data.Tuple.Strict
@@ -130,6 +131,25 @@ data GbrShortcut = GbrShortcut {
         notValidBefore :: Instant,
         notValidAfter  :: Instant,
         resources      :: AllResources
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+data AnMft = AnMft { 
+        key        :: {-# UNPACK #-} ObjectKey,
+        thisUpdate :: {-# UNPACK #-} Instant,
+        nextUpdate :: {-# UNPACK #-} Instant
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+-- newtype Mfts = Mfts (NonEmpty AnMft)
+--     deriving stock (Show, Eq, Ord, Generic)
+--     deriving anyclass (TheBinary)
+
+data Mfts = Mfts {
+        mfts     :: NonEmpty AnMft,        
+        shortcut :: Maybe MftShortcut
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)

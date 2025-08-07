@@ -117,6 +117,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         objects        :: SMap "objects" s ObjectKey (Compressed (StorableObject RpkiObject)),
         hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
         mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
+        mftMeta        :: SMap "mft-meta" s AKI Mfts,
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
         objectMetas    :: SMap "object-meta" s ObjectKey ObjectMeta,
 
@@ -255,7 +256,10 @@ newtype MftShortcutChildren = MftShortcutChildren {
 
 data MftShortcutStore s = MftShortcutStore {
         mftMetas    :: SMap "mfts-shortcut-meta" s AKI (Verbatim (Compressed MftShortcutMeta)),
-        mftChildren :: SMap "mfts-shortcut-children" s AKI (Verbatim (Compressed MftShortcutChildren))
+        mftChildren :: SMap "mfts-shortcut-children" s AKI (Verbatim (Compressed MftShortcutChildren)),
+
+        mftMetasByKey    :: SMap "mfts-shortcut-meta-by-key" s ObjectKey (Verbatim (Compressed MftShortcutMeta)),
+        mftChildrenByKey :: SMap "mfts-shortcut-children-by-key" s ObjectKey (Verbatim (Compressed MftShortcutChildren))        
     }
     deriving stock (Generic)
 
@@ -288,7 +292,7 @@ getKeysByUri tx DB { objectStore = RpkiObjectStore {..} } uri = liftIO $
     M.get tx uriToUriKey (makeSafeUrl uri) >>= \case 
         Nothing     -> pure []
         Just uriKey -> MM.allForKey tx urlKeyToObjectKey uriKey
-                
+                  
 getObjectByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> ObjectKey -> m (Maybe RpkiObject)
 getObjectByKey tx DB { objectStore = RpkiObjectStore {..} } k = liftIO $
@@ -484,6 +488,15 @@ getMftByKey tx db k = do
         Just (Located loc (MftRO mft)) -> Just $ Keyed (Located loc mft) k
         _                              -> Nothing       
 
+saveMftMeta :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> DB s -> AKI -> Mfts -> m ()
+saveMftMeta tx DB { objectStore = RpkiObjectStore {..} } aki mfts = 
+    liftIO $ M.put tx mftMeta aki mfts
+
+getMftMeta :: (MonadIO m, Storage s) => 
+                Tx s mode -> DB s -> AKI -> m (Maybe Mfts)
+getMftMeta tx DB { objectStore = RpkiObjectStore {..} } aki = 
+    liftIO $ M.get tx mftMeta aki
 
 getMftShorcut :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> AKI -> m (Maybe MftShortcut)
@@ -493,6 +506,17 @@ getMftShorcut tx DB { objectStore = RpkiObjectStore {..} } aki = liftIO $ do
         mftMeta_ <- MaybeT $ M.get tx mftMetas aki
         let MftShortcutMeta {..} = unCompressed $ restoreFromRaw $ mftMeta_
         mftChildren_ <- MaybeT $ M.get tx mftChildren aki
+        let MftShortcutChildren {..} = unCompressed $ restoreFromRaw mftChildren_
+        pure $! MftShortcut {..}
+
+getMftShorcutByKey :: (MonadIO m, Storage s) => 
+                     Tx s mode -> DB s -> ObjectKey -> m (Maybe MftShortcut)
+getMftShorcutByKey tx DB { objectStore = RpkiObjectStore {..} } objectKey = liftIO $ do 
+    let MftShortcutStore {..} = mftShortcuts 
+    runMaybeT $ do 
+        mftMeta_ <- MaybeT $ M.get tx mftMetasByKey objectKey
+        let MftShortcutMeta {..} = unCompressed $ restoreFromRaw $ mftMeta_
+        mftChildren_ <- MaybeT $ M.get tx mftChildrenByKey objectKey
         let MftShortcutChildren {..} = unCompressed $ restoreFromRaw mftChildren_
         pure $! MftShortcut {..}
 
@@ -508,6 +532,18 @@ saveMftShorcutChildren tx
     DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
     aki raw = liftIO $ M.put tx mftChildren aki raw
 
+saveMftShorcutMetaByKey :: (MonadIO m, Storage s) => 
+                          Tx s 'RW -> DB s -> ObjectKey -> Verbatim (Compressed MftShortcutMeta) -> m ()
+saveMftShorcutMetaByKey tx 
+    DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
+    objectKey raw = liftIO $ M.put tx mftMetasByKey objectKey raw
+
+saveMftShorcutChildrenByKey :: (MonadIO m, Storage s) => 
+                              Tx s 'RW -> DB s -> ObjectKey -> Verbatim (Compressed MftShortcutChildren) -> m ()
+saveMftShorcutChildrenByKey tx 
+    DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
+    objectKey raw = liftIO $ M.put tx mftChildrenByKey objectKey raw
+
 
 deleteMftShortcut :: (MonadIO m, Storage s) => 
                     Tx s 'RW -> DB s -> AKI -> m ()
@@ -516,6 +552,14 @@ deleteMftShortcut tx
     aki = liftIO $ do             
         M.delete tx mftMetas aki
         M.delete tx mftChildren aki
+
+deleteMftShortcutByKey :: (MonadIO m, Storage s) => 
+                         Tx s 'RW -> DB s -> ObjectKey -> m ()
+deleteMftShortcutByKey tx 
+    DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
+    objectKey = liftIO $ do             
+        M.delete tx mftMetasByKey objectKey
+        M.delete tx mftChildrenByKey objectKey        
 
 markAsValidated :: (MonadIO m, Storage s) => 
                     Tx s 'RW -> DB s 

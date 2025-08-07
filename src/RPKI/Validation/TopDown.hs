@@ -174,7 +174,6 @@ newTopDownContext taName allTas =
     liftIO $ do 
         payloadBuilder <- newPayloadBuilder
         atomically $ do
-            -- let verifiedResources = Just $ createVerifiedResources certificate
             let verifiedResources = Nothing
                 currentPathDepth = 0
                 overclaimingHappened = False       
@@ -436,7 +435,6 @@ validateFromTACert
     fromTryM
         (UnspecifiedE (unTaName taName) . fmtEx)
         (do
-            -- TODO That might not be necessary
             let publicationPoints' = 
                     case filterPPAccess config initialRepos of 
                         Just filteredRepos -> foldr mergePP publicationPoints $ unPublicationPointAccess filteredRepos
@@ -519,8 +517,7 @@ validateCaNoLimitChecks
         Right ppAccess -> do                
             let caFetcheables = getFetchables publicationPoints ppAccess
 
-            -- Add these PPs to the validation-wide set of fetcheables, 
-            -- i.e. all newly discovered publication points/repositories                        
+            -- Add these PPs to the set of fetcheables, i.e. all newly discovered publication points/repositories                        
             mergeFetcheables caFetcheables
 
             -- Do not validate if nothing was fetched for this CA
@@ -598,6 +595,26 @@ validateCaNoFetch
                         caFull <- getFullCa appContext topDownContext ca
                         void $ manifestFullValidation caFull mft Nothing childrenAki                                   
                         oneMoreMft >> oneMoreCrl                                                    
+
+    makeNextFullValidationAction1 :: AKI -> ValidatorT IO (ValidatorT IO ())
+    makeNextFullValidationAction1 childrenAki = do 
+        roTxT database $ \tx db -> do 
+            DB.getMftMeta tx db childrenAki >>= \case 
+                Nothing ->                        
+                    pure $! vError $ NoMFT childrenAki
+                Just mfts -> 
+                    pure $! do
+                        tryAll $ flip map (pickMft mfts now) $ \AnMft {..} ->
+                            DB.getMftByKey tx db key >>= \case
+                                Just mft -> do                             
+                                    markAsRead topDownContext key
+                                    caFull <- getFullCa appContext topDownContext ca
+                                    void $ manifestFullValidation caFull mft Nothing childrenAki                                   
+                                    oneMoreMft >> oneMoreCrl
+                                _ -> do
+                                    integrityError appContext [i|Could not find MFT for key #{key}.|]
+
+
 
 
     makeNextIncrementalAction :: AKI -> ValidatorT IO (ValidatorT IO ())
@@ -682,8 +699,44 @@ validateCaNoFetch
                                                     useShortcutOnly)                                            
                     pure $! do 
                         markAsRead topDownContext mftShortKey
-                        action `andThen`
-                            (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)          
+                        z <- action
+                        oneMoreMft >> oneMoreCrl >> oneMoreMftShort
+                        pure z
+
+
+    makeNextIncrementalAction1 :: AKI -> ValidatorT IO (ValidatorT IO ())
+    makeNextIncrementalAction1 childrenAki = 
+        roTxT database $ \tx db -> do 
+            DB.getMftMeta tx db childrenAki >>= \case 
+                Nothing -> 
+                    pure $! vError $ NoMFT childrenAki
+                Just mfts -> 
+                    tryAllMfts tx db mfts
+      where
+        tryAllMfts tx db mfts = do            
+            DB.getMftShorcut tx db childrenAki >>= \case
+                Nothing -> do 
+                    pure $ pure ()
+                Just mftShortcut 
+                    | isMostRecentShortcut (mftShortcut ^. #key) -> do
+                        justCollectPayloads mftShortcut                        
+                    | otherwise -> do 
+                        pure $ pure ()
+          where
+            relevantMfts = pickMft mfts now 
+            isMostRecentShortcut mftShortKey = 
+                any (\AnMft {..} -> key == mftShortKey) 
+                $ take 1 relevantMfts
+
+            justCollectPayloads mftShortcut = do 
+                let crlKey = mftShortcut ^. #crlShortcut . #key
+                pure $! do 
+                    markAsRead topDownContext crlKey
+                    collectPayloads mftShortcut Nothing 
+                            (getFullCa appContext topDownContext ca)
+                            (getCrlByKey appContext crlKey)
+                            (getResources ca)                
+
 
     -- Proceed with full validation for children mentioned in the full manifest 
     -- and children mentioned in the manifest shortcut. Create a diff between them,

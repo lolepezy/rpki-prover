@@ -96,6 +96,7 @@ createDatabase env logger checkAction = do
         createObjectStore = do             
             objects          <- createMap
             mftByAKI         <- createMultiMap
+            mftMeta          <- createMap
             objectMetas      <- createMap        
             hashToKey        <- createMap
             uriToUriKey      <- createMap
@@ -104,8 +105,8 @@ createDatabase env logger checkAction = do
             objectKeyToUrlKeys <- createMap
             certBySKI          <- createMap
             validatedByVersion <- createMap                    
-            mftShortcuts       <- MftShortcutStore <$> createMap <*> createMap
-            originals          <- createMap
+            mftShortcuts       <- MftShortcutStore <$> createMap <*> createMap <*> createMap <*> createMap
+            originals          <- createMap            
             pure RpkiObjectStore {..}
             
         createRepositoryStore = 

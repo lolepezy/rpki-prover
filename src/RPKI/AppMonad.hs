@@ -235,9 +235,5 @@ timeoutVT s toDo timedOut = do
     z <- liftIO $ timeout (1_000_000 * fromIntegral t) (runValidatorT scopes toDo)
     maybe timedOut (embedValidatorT . pure) z    
 
-
-andThen :: ValidatorT IO a -> ValidatorT IO () -> ValidatorT IO a
-andThen f action = do
-    !z <- f
-    action
-    pure $! z
+tryAll :: Monad m => [ValidatorT m r] -> ValidatorT m r
+tryAll = foldr1 (\v1 v2 -> v1 `catchError` (\e -> appWarn e >> v2))
