@@ -40,24 +40,6 @@ data MftTimingMark = MftTimingMark Instant Instant
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-data MftRef = MftRealRef ObjectKey
-            | MftShortcutRef ObjectKey
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary) 
-
-data AnMft = AnMft { 
-        ref        :: MftRef,
-        thisUpdate :: {-# UNPACK #-} Instant,
-        nextUpdate :: {-# UNPACK #-} Instant
-    } 
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-newtype Mfts = Mfts (NonEmpty AnMft)
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-
 newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)        

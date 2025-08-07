@@ -22,11 +22,10 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Resources
-import           RPKI.Store.Types
+import           RPKI.Validation.Types
 import           RPKI.Resources.Types
 import qualified RPKI.Util as U
 import           RPKI.Time  
-
 
 
 createVerifiedResources :: CaCerObject -> VerifiedRS PrefixesAndAsns
@@ -90,12 +89,13 @@ checkCrlLocation crl parentCertificate =
 
 
 updateMfts :: AnMft -> Now -> Mfts -> Mfts 
-updateMfts newMft (Now now) (Mfts mfts) = Mfts 
-    $ NonEmpty.fromList 
-    $ filterOutDefinitelyInvalid 
-    $ sortedMfts 
-    $ NonEmpty.toList mfts
+updateMfts newMft (Now now) (Mfts mfts shortcut) = Mfts mfts' shortcut  
   where
+    mfts' = NonEmpty.fromList 
+        $ filterOutDefinitelyInvalid 
+        $ sortedMfts 
+        $ NonEmpty.toList mfts    
+
     -- insert new manifest while keeping the list sorted backwards by nextUpdateTime
     sortedMfts [] = [newMft]
     sortedMfts (mft: otherMfts) 
@@ -119,7 +119,7 @@ updateMfts newMft (Now now) (Mfts mfts) = Mfts
             
 
 pickMft :: Mfts -> Now -> [AnMft]
-pickMft (Mfts mfts) (Now now) = 
+pickMft (Mfts mfts _) (Now now) = 
     -- skip MFTs that are not valid yet but will be in the future
     filter (\m -> m ^. #thisUpdate <= now) 
     $ NonEmpty.toList mfts

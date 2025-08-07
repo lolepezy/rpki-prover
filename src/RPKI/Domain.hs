@@ -483,12 +483,15 @@ newtype ResourceCertificate = ResourceCertificate RawResourceCertificate
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
-data Vrp = Vrp ASN IpPrefix PrefixLength
+data Vrp = Vrp 
+    {-# UNPACK #-} ASN 
+    IpPrefix 
+    {-# UNPACK #-} PrefixLength
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
 -- Signed Prefix List normalised payload
-data SplN = SplN ASN IpPrefix
+data SplN = SplN {-# UNPACK #-} ASN IpPrefix
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
@@ -498,13 +501,13 @@ data SplPayload = SplPayload ASN [IpPrefix]
 
 data MftPair = MftPair {
         fileName :: Text,
-        hash     :: Hash
+        hash     :: {-# UNPACK #-} Hash
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
 data Manifest = Manifest {
-        mftNumber   :: Serial, 
+        mftNumber   :: {-# UNPACK #-} Serial, 
         fileHashAlg :: X509.HashALG, 
         thisTime    :: {-# UNPACK #-} Instant, 
         nextTime    :: {-# UNPACK #-} Instant, 
@@ -514,12 +517,12 @@ data Manifest = Manifest {
     deriving anyclass (TheBinary)
 
 data SignCRL = SignCRL {
-        thisUpdateTime     :: Instant,
+        thisUpdateTime     :: {-# UNPACK #-} Instant,
         nextUpdateTime     :: Maybe Instant,
         signatureAlgorithm :: SignatureAlgorithmIdentifier,
         signatureValue     :: SignatureValue,
         encodedValue       :: BSS.ShortByteString,
-        crlNumber          :: Serial,
+        crlNumber          :: {-# UNPACK #-} Serial,
         revokedSerials     :: Set Serial
     } 
     deriving stock (Show, Eq, Generic)
@@ -541,7 +544,7 @@ data Rsc = Rsc {
 
 -- https://datatracker.ietf.org/doc/draft-ietf-sidrops-aspa-profile/
 data Aspa = Aspa {                
-        customer  :: ASN,
+        customer  :: {-# UNPACK #-} ASN,
         providers :: Set ASN
     } 
     deriving stock (Show, Eq, Ord, Generic)
@@ -593,7 +596,7 @@ data SignedObject a = SignedObject {
     SignerInfos ::= SET OF SignerInfo
 -}
 data SignedData a = SignedData {
-        scVersion          :: CMSVersion, 
+        scVersion          :: {-# UNPACK #-} CMSVersion, 
         scDigestAlgorithms :: DigestAlgorithmIdentifiers, 
         scEncapContentInfo :: EncapsulatedContentInfo a, 
         scCertificate      :: EECerObject, 
@@ -625,7 +628,7 @@ data EncapsulatedContentInfo a = EncapsulatedContentInfo {
             unsignedAttrs [1] IMPLICIT UnsignedAttributes OPTIONAL }
 -}
 data SignerInfos = SignerInfos {
-        siVersion          :: CMSVersion, 
+        siVersion          :: {-# UNPACK #-} CMSVersion, 
         siSid              :: SignerIdentifier, 
         digestAlgorithm    :: DigestAlgorithmIdentifiers, 
         signedAttrs        :: SignedAttributes, 
@@ -766,7 +769,7 @@ newtype ArtificialKey = ArtificialKey Int64
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-data ObjectIdentity = KeyIdentity ObjectKey
+data ObjectIdentity = KeyIdentity {-# UNPACK #-} ObjectKey
                     | HashIdentity Hash
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)

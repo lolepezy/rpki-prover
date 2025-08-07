@@ -21,7 +21,7 @@ import           Test.QuickCheck.Gen
 import           RPKI.Domain
 import           RPKI.Orphans
 import           RPKI.Time
-import           RPKI.Store.Types
+import           RPKI.Validation.Types
 import           RPKI.Validation.Common
 
 
@@ -40,14 +40,14 @@ updateMftsTests = testGroup "updateMfts function" [
   where
     prop_maintains_sorted_order =
         QC.forAll arbitraryMftsAndTime $ \(mfts, newMft, now) ->
-            let Mfts result = updateMfts newMft now mfts
+            let Mfts result _ = updateMfts newMft now mfts
                 resultList = NonEmpty.toList result
             in isSortedByNextUpdate resultList    
 
     prop_preserves_non_expired =
         QC.forAll arbitraryNonExpiredMftsScenario $ \(mfts, newMft, now) ->
-            let Mfts original = mfts
-                Mfts result = updateMfts newMft now mfts
+            let Mfts original _ = mfts
+                Mfts result _ = updateMfts newMft now mfts
                 originalNonExpired = filter (\m -> m ^. #nextUpdate >= unNow now) (NonEmpty.toList original)
                 resultNonExpired = filter (\m -> m ^. #nextUpdate >= unNow now) (NonEmpty.toList result)
             in all (`elem` resultNonExpired) originalNonExpired
@@ -78,7 +78,7 @@ arbitraryAnMft (toDateTime -> baseTime) = do
     pure $ AnMft {
         thisUpdate = newInstant thisUpd,
         nextUpdate = newInstant nextUpd,
-        ref = MftRealRef (ObjectKey $ ArtificialKey 10)
+        key = ObjectKey $ ArtificialKey 10
     }
 
 arbitraryMfts :: Instant -> Gen Mfts
@@ -87,7 +87,7 @@ arbitraryMfts baseTime = do
     mfts <- replicateM count (arbitraryAnMft baseTime)
     -- Sort by nextUpdate descending to maintain invariant
     let sorted = sortOn (Down . (^. #nextUpdate)) mfts
-    pure $ Mfts $ NonEmpty.fromList sorted
+    pure $ Mfts (NonEmpty.fromList sorted) Nothing
 
 arbitraryMftsAndTime :: Gen (Mfts, AnMft, Now)
 arbitraryMftsAndTime = do
@@ -105,4 +105,4 @@ arbitraryNonExpiredMftsScenario = do
     validMfts <- replicateM 3 $ arbitraryAnMft (momentAfter now (3600 * 24))
     newMft <- arbitraryAnMft (momentAfter now (3600 * 12))
     let allMfts = sortOn (Down . (^. #nextUpdate)) validMfts
-    pure (Mfts $ NonEmpty.fromList allMfts, newMft, Now now)
+    pure (Mfts (NonEmpty.fromList allMfts) Nothing, newMft, Now now)

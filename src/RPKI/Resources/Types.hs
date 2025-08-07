@@ -53,8 +53,8 @@ newtype PrefixLength = PrefixLength Word8
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-data AsResource = AS ASN
-                | ASRange ASN ASN
+data AsResource = AS {-# UNPACK #-} ASN
+                | ASRange {-# UNPACK #-} ASN {-# UNPACK #-} ASN
     deriving stock (Eq, Ord, Generic) 
     deriving anyclass (TheBinary, NFData)
 
