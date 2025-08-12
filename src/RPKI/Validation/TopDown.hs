@@ -11,7 +11,7 @@
 
 module RPKI.Validation.TopDown (
     TopDownResult(..),
-    validateMutlipleTAs
+    validateTAs
 )
 where
 
@@ -77,6 +77,34 @@ import           RPKI.Validation.ObjectValidation
 import           RPKI.Validation.ResourceValidation
 import           RPKI.Validation.Common
 
+{-
+This module is responsible for the top-down validation algorithm.
+
+Validation starts from the Trust Anchor (TA) certificate. The process of downloading 
+and selecting the certificate implements the tie-breaking logic described 
+in https://datatracker.ietf.org/doc/draft-spaghetti-sidrops-rpki-ta-tiebreaker/.
+
+After that, validation is recursive for each CA. For each CA:
+
+- Manifests and manifest shortcuts are found.
+- Depending on the freshness of the shortcut and the manifest, we either use 
+  the shortcut data or re-validate using the new manifest.
+- For new manifests, shortcuts are re-created and saved into a separate queue.
+
+The idea behind shortcuts is as follows:
+
+ - We store minimal representations of objects and their payloads to cache their 
+   essential information. This avoids re-validating everything on each run.
+ - Manifest shortcuts contain basic manifest metadata plus a list of their children. 
+   Children are embedded into the manifest shortcut (TODO: They should also be referred 
+   to by ObjectKey for big manifests). This structure avoids re-validating manifest 
+   children that have already been validated.
+ - This is why the logic in validateCa is very long and tedious.
+ 
+
+ Validation is designed to be non-interfering with other processes, so it's safe to run 
+ concurrently with fetching or cleanup operations (both of which are atomic).
+-}
 
 data PayloadBuilder = PayloadBuilder {
         vrps     :: IORef [T2 [Vrp] ObjectKey],        
@@ -242,20 +270,20 @@ verifyLimit hitTheLimit limit =
 
 -- | It is the main entry point for the top-down validation. 
 -- Validates a bunch of TAs starting from their TALs.  
-validateMutlipleTAs :: Storage s =>
+validateTAs :: Storage s =>
                     AppContext s
                     -> WorldVersion
                     -> [TAL]
                     -> IO (Map TaName TopDownResult)
-validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
+validateTAs appContext@AppContext {..} worldVersion tals = do
 
     fst <$> bracketChanClosable
                 5000
-                validateMutlipleTAs'
+                validateTAs'
                 (storeShortcuts appContext)
                 (\_ -> pure ())
   where
-    validateMutlipleTAs' queue = do 
+    validateTAs' queue = do 
         publicationPoints <- addRsyncPrefetchUrls <$> roTxT database DB.getPublicationPoints            
         allTas <- newAllTasTopDownContext worldVersion publicationPoints queue
         validateThem allTas
@@ -704,38 +732,96 @@ validateCaNoFetch
                         pure z
 
 
+    -- Return an action that implements the validation logic with 
+    -- manifest shortcuts.
     makeNextIncrementalAction1 :: AKI -> ValidatorT IO (ValidatorT IO ())
-    makeNextIncrementalAction1 childrenAki = 
-        roTxT database $ \tx db -> do 
-            DB.getMftMeta tx db childrenAki >>= \case 
-                Nothing -> 
-                    pure $! vError $ NoMFT childrenAki
-                Just mfts -> 
-                    tryAllMfts tx db mfts
-      where
-        tryAllMfts tx db mfts = do            
-            DB.getMftShorcut tx db childrenAki >>= \case
+    makeNextIncrementalAction1 childrenAki = do
+        z <- roTxT database $ \tx db -> DB.getMftMeta tx db childrenAki
+        case z of 
+            Nothing   -> pure $ vError $ NoMFT childrenAki
+            Just mfts -> actOnMfts mfts                 
+      where        
+        actOnMfts :: Mfts -> ValidatorT IO (ValidatorT IO ())
+        actOnMfts mfts = do 
+            case mfts ^. #shortcut of 
                 Nothing -> do 
-                    pure $ pure ()
+                    increment $ topDownCounters ^. #originalMft
+                    pure $! tryMfts tryOneMft relevantMfts
                 Just mftShortcut 
                     | isMostRecentShortcut (mftShortcut ^. #key) -> do
-                        justCollectPayloads mftShortcut                        
+                        increment $ topDownCounters ^. #shortcutMft                        
+                        pure $ do 
+                            justCollectPayloads mftShortcut                        
+                            oneMoreMftShort
                     | otherwise -> do 
-                        pure $ pure ()
+                        increment $ topDownCounters ^. #shortcutMft
+                        let action :: ValidatorT IO () =
+                                case take 1 relevantMfts of 
+                                    []    -> vError $ NoMFT childrenAki
+                                    -- only look at the latest one, earlier ones don't matter
+                                    [mftRef] -> do
+                                        withMft (mftRef ^. #key) $ \mft -> do 
+                                            tryOneMftWithShortcut mftShortcut mft
+                                            `catchError` \e -> do
+                                                vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e
+                                                let mftLocation = pickLocation $ getLocations $ mft ^. #object
+                                                logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, error: #{toMessage e}|]
+                                                justCollectPayloads mftShortcut
+                        oneMoreMftShort
+                        pure action
+                            
           where
+
+            tryMfts _ []              = vError $ NoMFT childrenAki
+            tryMfts f (mftRef: mfts_) = 
+                withMft (mftRef ^. #key) $ \mft -> do 
+                    f mft `catchError` \e -> 
+                        case mfts_ of 
+                            [] -> appError e
+                            _  -> do 
+                                vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e
+                                let mftLocation = pickLocation $ getLocations $ mft ^. #object
+                                logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, error: #{toMessage e}|]
+                                tryMfts f mfts_
+            
+            tryOneMft mft = do                 
+                markAsRead topDownContext $ mft ^. #key                
+                caFull <- getFullCa appContext topDownContext ca
+                void $ manifestFullValidation caFull mft Nothing childrenAki                              
+                oneMoreMft >> oneMoreCrl         
+
+            tryOneMftWithShortcut mftShortcut mft = do
+                markAsRead topDownContext (mftShortcut ^. #key)
+                markAsRead topDownContext (mft ^. #key)
+                fullCa <- getFullCa appContext topDownContext ca
+                let crlKey = mftShortcut ^. #crlShortcut . #key
+                markAsRead topDownContext crlKey
+                overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
+                collectPayloads mftShortcut (Just overlappingChildren) 
+                            (pure fullCa)
+                            (findAndValidateCrl fullCa mft childrenAki)   
+                            (getResources ca)                            
+                
+                oneMoreMft >> oneMoreCrl >> oneMoreMftShort
+
+            withMft key f = do 
+                z <- roTxT database $ \tx db -> DB.getMftByKey tx db key
+                case z of 
+                    Nothing  -> integrityError appContext [i|Referential integrity error, can't find a manifest by its key #{key}.|]
+                    Just mft -> f mft
+
             relevantMfts = pickMft mfts now 
             isMostRecentShortcut mftShortKey = 
                 any (\AnMft {..} -> key == mftShortKey) 
                 $ take 1 relevantMfts
 
             justCollectPayloads mftShortcut = do 
-                let crlKey = mftShortcut ^. #crlShortcut . #key
-                pure $! do 
-                    markAsRead topDownContext crlKey
-                    collectPayloads mftShortcut Nothing 
-                            (getFullCa appContext topDownContext ca)
-                            (getCrlByKey appContext crlKey)
-                            (getResources ca)                
+                let crlKey = mftShortcut ^. #crlShortcut . #key                
+                markAsRead topDownContext crlKey
+                collectPayloads mftShortcut Nothing 
+                        (getFullCa appContext topDownContext ca)
+                        (getCrlByKey appContext crlKey)
+                        (getResources ca)                
 
 
     -- Proceed with full validation for children mentioned in the full manifest 
