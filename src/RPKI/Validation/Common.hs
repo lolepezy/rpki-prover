@@ -123,3 +123,13 @@ pickMft (Mfts mfts _) (Now now) =
     -- skip MFTs that are not valid yet but will be in the future
     filter (\m -> m ^. #thisUpdate <= now) 
     $ NonEmpty.toList mfts
+
+newMftMeta :: ObjectKey -> MftObject -> AnMft
+newMftMeta key mftObject = let 
+        (thisUpdate, nextUpdate) = getValidityPeriod mftObject
+    in AnMft {..}
+
+newMfts :: ObjectKey -> MftObject -> Mfts
+newMfts key mftObject = let 
+        (thisUpdate, nextUpdate) = getValidityPeriod mftObject
+    in Mfts (NonEmpty.singleton $ AnMft {..}) Nothing

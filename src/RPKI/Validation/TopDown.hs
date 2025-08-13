@@ -757,7 +757,7 @@ validateCaNoFetch
                         pure $ 
                             case listToMaybe relevantMfts of 
                                 Nothing     -> vError $ NoMFT childrenAki
-                                Just mftRef -> do
+                                Just mftRef -> 
                                     withMft (mftRef ^. #key) $ \mft -> do 
                                         tryOneMftWithShortcut mftShortcut mft
                                         `catchError` \e -> 

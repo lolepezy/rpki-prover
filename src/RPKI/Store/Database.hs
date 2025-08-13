@@ -55,6 +55,7 @@ import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 import           RPKI.Validation.Types
+import           RPKI.Validation.Common
 
 import           RPKI.Util                (ifJustM)
 
@@ -327,7 +328,8 @@ saveObject :: (MonadIO m, Storage s) =>
             Tx s 'RW 
             -> DB s 
             -> StorableObject RpkiObject
-            -> WorldVersion -> m ()
+            -> WorldVersion 
+            -> m ()
 saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } so@StorableObject {..} wv = liftIO $ do
     let h = getHash object
     exists <- M.exists tx hashToKey h    
@@ -341,8 +343,16 @@ saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } so@StorableObject {.
             CerRO c -> 
                 M.put tx certBySKI (getSKI c) objectKey
             MftRO mft -> 
-                for_ (getAKI object) $ \aki' ->
-                    MM.put tx mftByAKI aki' (objectKey, getMftTimingMark mft)
+                for_ (getAKI object) $ \aki_ -> do 
+                    MM.put tx mftByAKI aki_ (objectKey, getMftTimingMark mft)                    
+                    M.get tx mftMeta aki_ >>= \case 
+                        Nothing -> 
+                            M.put tx mftMeta aki_ (newMfts objectKey mft)
+                        Just mftMeta_ -> do
+                            let newMeta = newMftMeta objectKey mft
+                            let now = Now $ versionToInstant wv
+                            M.put tx mftMeta aki_ (updateMfts newMeta now mftMeta_)
+
             _ -> pure ()        
 
 saveOriginal :: (MonadIO m, Storage s) => 
@@ -396,7 +406,7 @@ linkObjectToUrl :: (MonadIO m, Storage s) =>
                 -> m ()
 linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL hash = liftIO $ do    
     let safeUrl = makeSafeUrl rpkiURL
-    ifJustM (M.get tx hashToKey hash) $ \objectKey -> do        
+    ifJustM (M.get tx hashToKey hash) $ \objectKey -> do
         z <- M.get tx uriToUriKey safeUrl 
         urlKey <- maybe (saveUrl safeUrl) pure z                
         
