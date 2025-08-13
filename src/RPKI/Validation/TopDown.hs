@@ -741,12 +741,11 @@ validateCaNoFetch
             Nothing   -> pure $ vError $ NoMFT childrenAki
             Just mfts -> actOnMfts mfts                 
       where        
-        actOnMfts :: Mfts -> ValidatorT IO (ValidatorT IO ())
         actOnMfts mfts = do 
             case mfts ^. #shortcut of 
                 Nothing -> do 
                     increment $ topDownCounters ^. #originalMft
-                    pure $! tryMfts tryOneMft relevantMfts
+                    pure $! tryMfts relevantMfts
                 Just mftShortcut 
                     | isMostRecentShortcut (mftShortcut ^. #key) -> do
                         increment $ topDownCounters ^. #shortcutMft                        
@@ -755,34 +754,37 @@ validateCaNoFetch
                             oneMoreMftShort
                     | otherwise -> do 
                         increment $ topDownCounters ^. #shortcutMft
-                        let action :: ValidatorT IO () =
-                                case take 1 relevantMfts of 
-                                    []    -> vError $ NoMFT childrenAki
-                                    -- only look at the latest one, earlier ones don't matter
-                                    [mftRef] -> do
-                                        withMft (mftRef ^. #key) $ \mft -> do 
-                                            tryOneMftWithShortcut mftShortcut mft
-                                            `catchError` \e -> do
-                                                vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e
-                                                let mftLocation = pickLocation $ getLocations $ mft ^. #object
-                                                logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, error: #{toMessage e}|]
-                                                justCollectPayloads mftShortcut
-                        oneMoreMftShort
-                        pure action
-                            
+                        pure $ 
+                            case listToMaybe relevantMfts of 
+                                Nothing     -> vError $ NoMFT childrenAki
+                                Just mftRef -> do
+                                    withMft (mftRef ^. #key) $ \mft -> do 
+                                        tryOneMftWithShortcut mftShortcut mft
+                                        `catchError` \e -> 
+                                            if isWithinValidityPeriod now mftShortcut                                                                                            
+                                                then do
+                                                    -- shortcut is still valid so fall back to it
+                                                    vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e
+                                                    let mftLocation = pickLocation $ getLocations $ mft ^. #object
+                                                    logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, error: #{toMessage e}|]
+                                                    justCollectPayloads mftShortcut
+                                                    oneMoreMftShort                          
+                                                else 
+                                                    -- shortcut it too old, so just report the error
+                                                    appError e  
           where
 
-            tryMfts _ []              = vError $ NoMFT childrenAki
-            tryMfts f (mftRef: mfts_) = 
+            tryMfts []              = vError $ NoMFT childrenAki
+            tryMfts (mftRef: mfts_) = 
                 withMft (mftRef ^. #key) $ \mft -> do 
-                    f mft `catchError` \e -> 
+                    tryOneMft mft `catchError` \e -> 
                         case mfts_ of 
                             [] -> appError e
                             _  -> do 
                                 vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e
                                 let mftLocation = pickLocation $ getLocations $ mft ^. #object
                                 logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, error: #{toMessage e}|]
-                                tryMfts f mfts_
+                                tryMfts mfts_
             
             tryOneMft mft = do                 
                 markAsRead topDownContext $ mft ^. #key                
