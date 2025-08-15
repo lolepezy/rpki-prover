@@ -133,3 +133,15 @@ newMfts :: ObjectKey -> MftObject -> Mfts
 newMfts key mftObject = let 
         (thisUpdate, nextUpdate) = getValidityPeriod mftObject
     in Mfts (NonEmpty.singleton $ AnMft {..}) Nothing
+
+deleteMft :: ObjectKey -> Mfts -> Maybe Mfts
+deleteMft key (Mfts mfts shortcut) = let 
+    mfts'     = NonEmpty.nonEmpty $ NonEmpty.filter (\m -> m ^. #key /= key) mfts
+    shortcut' = case shortcut of 
+                    Nothing -> Nothing
+                    Just s  -> if s ^. #key == key 
+                               then Nothing 
+                               else Just s
+    in case mfts' of 
+        Nothing     -> Nothing 
+        Just mfts'' -> Just $ Mfts mfts'' shortcut'

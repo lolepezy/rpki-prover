@@ -495,7 +495,7 @@ data SplN = SplN {-# UNPACK #-} ASN IpPrefix
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-data SplPayload = SplPayload ASN [IpPrefix]     
+data SplPayload = SplPayload {-# UNPACK #-} ASN [IpPrefix]     
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
@@ -551,9 +551,9 @@ data Aspa = Aspa {
     deriving anyclass (TheBinary, NFData)
 
 data BGPSecPayload = BGPSecPayload {
-        bgpSecSki  :: SKI,
+        bgpSecSki  :: {-# UNPACK #-} SKI,
         bgpSecAsns :: [ASN],
-        bgpSecSpki :: SPKI
+        bgpSecSpki :: {-# UNPACK #-} SPKI
         -- TODO Possible store the hash of the original BGP certificate?
     } 
     deriving stock (Show, Eq, Ord, Generic)

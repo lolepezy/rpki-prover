@@ -486,7 +486,7 @@ validateAspa validationRFC now aspa parentCert crl verifiedResources = do
 
             let Aspa {..} = getCMSContent aspaCms         
 
-            unless ((AS customer) `IS.isInside` asnSet) $ 
+            unless (AS customer `IS.isInside` asnSet) $
                 vError $ AspaAsNotOnEECert customer (IS.toList asnSet)
 
             when (customer `Set.member` providers) $
@@ -496,14 +496,14 @@ validateAspa validationRFC now aspa parentCert crl verifiedResources = do
     
 
 
-validateCms :: forall a c .
-    (WithRawResourceCertificate c, 
-    WithSKI c, 
-    OfCertType c 'CACert) =>
+validateCms :: forall a parent .
+    (WithRawResourceCertificate parent, 
+    WithSKI parent, 
+    OfCertType parent 'CACert) =>
     ValidationRFC ->
     Now ->
     CMS a ->
-    c ->
+    parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
     (CMS a -> PureValidatorT ()) ->

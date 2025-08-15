@@ -197,13 +197,13 @@ shouldInsertAndGetAllBackFromObjectStore io = do
     removeMftNumberDuplicates = List.nubBy $ \ro1 ro2 ->
             case (ro1, ro2) of
                 (Located _ (MftRO mft1), Located _ (MftRO mft2)) -> 
-                    DB.getMftTimingMark mft1 == DB.getMftTimingMark mft2
+                    getValidityPeriod mft1 == getValidityPeriod mft2
                 _ -> False
 
     compareLatestMfts db ros a = do
         mftLatest <- roTx db $ \tx -> DB.findLatestMftByAKI tx db a         
         
-        let mftLatest' = listToMaybe $ List.sortOn (Down . DB.getMftTimingMark)
+        let mftLatest' = listToMaybe $ List.sortOn (Down . getValidityPeriod)
                 [ mft | Located _ (MftRO mft) <- ros, getAKI mft == Just a ]                                    
         
         HU.assertEqual "Not the same manifests" ((^. #object . #payload) <$> mftLatest) mftLatest'                    
