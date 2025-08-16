@@ -200,11 +200,12 @@ shouldInsertAndGetAllBackFromObjectStore io = do
                     getValidityPeriod mft1 == getValidityPeriod mft2
                 _ -> False
 
-    compareLatestMfts db ros a = do
-        mftLatest <- roTx db $ \tx -> DB.findLatestMftByAKI tx db a         
+    compareLatestMfts db ros aki_ = do
+        mftLatest <- roTx db $ \tx -> DB.findLatestMftByAKI tx db aki_
         
-        let mftLatest' = listToMaybe $ List.sortOn (Down . getValidityPeriod)
-                [ mft | Located _ (MftRO mft) <- ros, getAKI mft == Just a ]                                    
+        -- sort backwards by "nextUpdate"
+        let mftLatest' = listToMaybe $ List.sortOn (Down . (^. _2) . getValidityPeriod)
+                [ mft | Located _ (MftRO mft) <- ros, getAKI mft == Just aki_ ]  
         
         HU.assertEqual "Not the same manifests" ((^. #object . #payload) <$> mftLatest) mftLatest'                    
 
