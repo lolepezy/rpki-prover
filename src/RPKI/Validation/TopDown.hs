@@ -883,10 +883,10 @@ validateCaNoFetch
 
                 -- manifest number must increase 
                 -- https://www.rfc-editor.org/rfc/rfc9286.html#name-manifest
-                let mftNumber = getCMSContent (mft ^. #cmsPayload) ^. #mftNumber 
-                when (mftNumber < mftShort ^. #manifestNumber) $ do 
-                    -- Here we have to do a bit of hackery: 
-                    -- * Calling vError will interrupt this function and call for fall-back to 
+                let mftNumber = getMftNumber mft
+                when (mftNumber < mftShort ^. #manifestNumber) $ do
+                    -- Here we have to do a bit of hackery:
+                    -- * Calling vError will interrupt this function and call for fall-back to
                     --   the "latest valid manifest" which is the shortcut
                     -- * But the shortcut may have expired already and there will no be any options left,
                     --   so we need to be careful and just emit a warning in this case
@@ -1696,7 +1696,7 @@ makeMftShortcut key
   let 
     (notValidBefore, notValidAfter) = getValidityPeriod mftObject        
     serial = getSerial mftObject
-    manifestNumber = getCMSContent (cmsPayload mftObject) ^. #mftNumber
+    manifestNumber = getMftNumber mftObject
     crlShortcut = let 
         SignCRL {..} = validCrl ^. #signCrl
         -- That must always match, since it's a validated CRL

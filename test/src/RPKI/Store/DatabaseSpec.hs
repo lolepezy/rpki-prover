@@ -197,7 +197,7 @@ shouldInsertAndGetAllBackFromObjectStore io = do
     removeMftNumberDuplicates = List.nubBy $ \ro1 ro2 ->
             case (ro1, ro2) of
                 (Located _ (MftRO mft1), Located _ (MftRO mft2)) -> 
-                    getValidityPeriod mft1 == getValidityPeriod mft2
+                    getMftNumber mft1 == getMftNumber mft2
                 _ -> False
 
     compareLatestMfts db ros aki_ = do

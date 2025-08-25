@@ -832,6 +832,11 @@ getCertWithSignature = certX509 . getRawCert
 getEECert :: SignedObject a -> CertificateWithSignature
 getEECert = certX509 . getRawCert . scCertificate . soContent
 
+getMftNumber :: MftObject -> Serial 
+getMftNumber mft = let 
+    Manifest {..} = getCMSContent (cmsPayload mft) 
+    in mftNumber
+
 emptyIpResources :: IpResources
 emptyIpResources = IpResources RS.emptyIpSet 
 
