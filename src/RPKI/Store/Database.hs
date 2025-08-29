@@ -488,7 +488,7 @@ getMftByKey tx db k = do
 getMftsMeta :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> AKI -> m (Maybe MftsMeta)
 getMftsMeta tx DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } aki = 
-    liftIO $ fmap (unCompressed . restoreFromVerbatim) <$> M.get tx mftMeta aki
+    liftIO $ fmap unCompressedVerbatim <$> M.get tx mftMeta aki
 
 saveMftsMeta :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> DB s -> AKI -> Verbatim (Compressed MftsMeta) -> m ()
@@ -511,10 +511,6 @@ deleteMftShortcut tx
         ifJustM (getMftsMeta tx db aki) $ \m ->              
             saveMftsMeta tx db aki (verbatimCompressed $ m { mftShortcut = Nothing })                    
         
-
-verbatimCompressed :: AsStorable a => a -> Verbatim (Compressed a)
-verbatimCompressed = Verbatim . toStorable . Compressed
-
 markAsValidated :: (MonadIO m, Storage s) => 
                     Tx s 'RW -> DB s 
                 -> Set.Set ObjectKey 

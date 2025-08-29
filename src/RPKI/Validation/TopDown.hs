@@ -1751,14 +1751,14 @@ reportCounters AppContext {..} counters = do
 updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftsMeta -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki mftsMeta shortcut = 
     liftIO $ do 
-        let !raw = DB.verbatimCompressed $ mftsMeta & #mftShortcut ?~ shortcut
+        let !raw = verbatimCompressed $ mftsMeta & #mftShortcut ?~ shortcut
         atomically $ writeCQueue shortcutQueue $ UpdateMftShortcut aki raw   
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         -- Pre-serialise the object so that all the heavy-lifting happens in the thread 
-        let !raw = DB.verbatimCompressed DB.MftShortcutChildren {..}        
+        let !raw = verbatimCompressed DB.MftShortcutChildren {..}        
         atomically $ writeCQueue shortcutQueue $ UpdateMftShortcutChildren aki raw
 
 deleteMftShortcut :: MonadIO m => TopDownContext -> AKI -> m ()
