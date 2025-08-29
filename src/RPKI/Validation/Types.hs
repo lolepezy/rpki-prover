@@ -143,13 +143,9 @@ data AnMft = AnMft {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
--- newtype Mfts = Mfts (NonEmpty AnMft)
---     deriving stock (Show, Eq, Ord, Generic)
---     deriving anyclass (TheBinary)
-
-data Mfts = Mfts {
-        mfts     :: NonEmpty AnMft,        
-        shortcut :: Maybe MftShortcut
+data MftsMeta = MftsMeta {
+        mfts        :: NonEmpty AnMft,        
+        mftShortcut :: Maybe MftShortcut
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)

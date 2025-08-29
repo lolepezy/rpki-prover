@@ -7,12 +7,9 @@ module RPKI.Store.Types where
 import           Control.DeepSeq
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
-import           Data.List.NonEmpty          (NonEmpty (..))
 
 import           GHC.Generics
 import           RPKI.TAL
-
-import           RPKI.Time                (Instant)
 
 import           RPKI.Repository
 import           RPKI.AppTypes

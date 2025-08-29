@@ -40,14 +40,14 @@ updateMftsTests = testGroup "updateMfts function" [
   where
     prop_maintains_sorted_order =
         QC.forAll arbitraryMftsAndTime $ \(mfts, newMft, now) ->
-            let Mfts result _ = updateMfts newMft now mfts
+            let MftsMeta result _ = updateMfts newMft now mfts
                 resultList = NonEmpty.toList result
             in isSortedByNextUpdate resultList    
 
     prop_preserves_non_expired =
         QC.forAll arbitraryNonExpiredMftsScenario $ \(mfts, newMft, now) ->
-            let Mfts original _ = mfts
-                Mfts result _ = updateMfts newMft now mfts
+            let MftsMeta original _ = mfts
+                MftsMeta result _ = updateMfts newMft now mfts
                 originalNonExpired = filter (\m -> m ^. #nextUpdate >= unNow now) (NonEmpty.toList original)
                 resultNonExpired = filter (\m -> m ^. #nextUpdate >= unNow now) (NonEmpty.toList result)
             in all (`elem` resultNonExpired) originalNonExpired
@@ -81,15 +81,15 @@ arbitraryAnMft (toDateTime -> baseTime) = do
         key = ObjectKey $ ArtificialKey 10
     }
 
-arbitraryMfts :: Instant -> Gen Mfts
+arbitraryMfts :: Instant -> Gen MftsMeta
 arbitraryMfts baseTime = do
     count <- QC.choose (1, 5)
     mfts <- replicateM count (arbitraryAnMft baseTime)
     -- Sort by nextUpdate descending to maintain invariant
     let sorted = sortOn (Down . (^. #nextUpdate)) mfts
-    pure $ Mfts (NonEmpty.fromList sorted) Nothing
+    pure $ MftsMeta (NonEmpty.fromList sorted) Nothing
 
-arbitraryMftsAndTime :: Gen (Mfts, AnMft, Now)
+arbitraryMftsAndTime :: Gen (MftsMeta, AnMft, Now)
 arbitraryMftsAndTime = do
     baseTime <- arbitraryDateTime
     mfts <- arbitraryMfts baseTime
@@ -98,11 +98,11 @@ arbitraryMftsAndTime = do
     pure (mfts, newMft, now)
 
 -- Generate scenario where manifests are not expired
-arbitraryNonExpiredMftsScenario :: Gen (Mfts, AnMft, Now)
+arbitraryNonExpiredMftsScenario :: Gen (MftsMeta, AnMft, Now)
 arbitraryNonExpiredMftsScenario = do
     now :: Instant <- arbitraryDateTime
     -- Create manifests that are all valid
     validMfts <- replicateM 3 $ arbitraryAnMft (momentAfter now (3600 * 24))
     newMft <- arbitraryAnMft (momentAfter now (3600 * 12))
     let allMfts = sortOn (Down . (^. #nextUpdate)) validMfts
-    pure (Mfts (NonEmpty.fromList allMfts) Nothing, newMft, Now now)
+    pure (MftsMeta (NonEmpty.fromList allMfts) Nothing, newMft, Now now)

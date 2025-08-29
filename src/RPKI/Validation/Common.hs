@@ -88,8 +88,8 @@ checkCrlLocation crl parentCertificate =
             vError $ CRLOnDifferentLocation crlDP crlLocations
 
 
-updateMfts :: AnMft -> Now -> Mfts -> Mfts 
-updateMfts newMft (Now now) (Mfts mfts shortcut) = Mfts mfts' shortcut  
+updateMfts :: AnMft -> Now -> MftsMeta -> MftsMeta 
+updateMfts newMft (Now now) (MftsMeta mfts shortcut) = MftsMeta mfts' shortcut  
   where
     mfts' = NonEmpty.fromList 
         $ filterOutDefinitelyInvalid 
@@ -118,8 +118,8 @@ updateMfts newMft (Now now) (Mfts mfts shortcut) = Mfts mfts' shortcut
                         else mft : go (n + 1) mfts_
             
 
-pickMft :: Mfts -> Now -> [AnMft]
-pickMft (Mfts mfts _) (Now now) = 
+pickMft :: MftsMeta -> Now -> [AnMft]
+pickMft (MftsMeta mfts _) (Now now) = 
     -- skip MFTs that are not valid yet but will be in the future
     filter (\m -> m ^. #thisUpdate <= now) 
     $ NonEmpty.toList mfts
@@ -129,13 +129,13 @@ newMftMeta key mftObject = let
         (thisUpdate, nextUpdate) = getValidityPeriod mftObject
     in AnMft {..}
 
-newMfts :: ObjectKey -> MftObject -> Mfts
+newMfts :: ObjectKey -> MftObject -> MftsMeta
 newMfts key mftObject = let 
         (thisUpdate, nextUpdate) = getValidityPeriod mftObject
-    in Mfts (NonEmpty.singleton $ AnMft {..}) Nothing
+    in MftsMeta (NonEmpty.singleton $ AnMft {..}) Nothing
 
-deleteMft :: ObjectKey -> Mfts -> Maybe Mfts
-deleteMft key (Mfts mfts shortcut) = let 
+deleteMft :: ObjectKey -> MftsMeta -> Maybe MftsMeta
+deleteMft key (MftsMeta mfts shortcut) = let 
     mfts'     = NonEmpty.nonEmpty $ NonEmpty.filter (\m -> m ^. #key /= key) mfts
     shortcut' = case shortcut of 
                     Nothing -> Nothing
@@ -144,4 +144,4 @@ deleteMft key (Mfts mfts shortcut) = let
                                else Just s
     in case mfts' of 
         Nothing     -> Nothing 
-        Just mfts'' -> Just $ Mfts mfts'' shortcut'
+        Just mfts'' -> Just $ MftsMeta mfts'' shortcut'

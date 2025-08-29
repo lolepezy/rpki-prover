@@ -627,7 +627,7 @@ validateCaNoFetch
     makeNextFullValidationAction1 :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextFullValidationAction1 childrenAki = do 
         roTxT database $ \tx db -> do 
-            DB.getMftMeta tx db childrenAki >>= \case 
+            DB.getMftsMeta tx db childrenAki >>= \case 
                 Nothing ->                        
                     pure $! vError $ NoMFT childrenAki
                 Just mfts -> 
@@ -637,7 +637,7 @@ validateCaNoFetch
                                 Just mft -> do                             
                                     markAsRead topDownContext key
                                     caFull <- getFullCa appContext topDownContext ca
-                                    void $ manifestFullValidation caFull mft Nothing childrenAki                                   
+                                    void $ manifestFullValidation caFull mft mfts childrenAki                                   
                                     oneMoreMft >> oneMoreCrl
                                 _ -> do
                                     integrityError appContext [i|Could not find MFT for key #{key}.|]
@@ -736,13 +736,13 @@ validateCaNoFetch
     -- manifest shortcuts.
     makeNextIncrementalAction1 :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextIncrementalAction1 childrenAki = do
-        z <- roTxT database $ \tx db -> DB.getMftMeta tx db childrenAki
+        z <- roTxT database $ \tx db -> DB.getMftsMeta tx db childrenAki
         case z of 
             Nothing   -> pure $ vError $ NoMFT childrenAki
             Just mfts -> actOnMfts mfts                 
       where        
         actOnMfts mfts = do 
-            case mfts ^. #shortcut of 
+            case mfts ^. #mftShortcut of 
                 Nothing -> do 
                     increment $ topDownCounters ^. #originalMft
                     pure $! tryMfts relevantMfts
@@ -789,7 +789,7 @@ validateCaNoFetch
             tryOneMft mft = do                 
                 markAsRead topDownContext $ mft ^. #key                
                 caFull <- getFullCa appContext topDownContext ca
-                void $ manifestFullValidation caFull mft Nothing childrenAki                              
+                void $ manifestFullValidation caFull mft mfts childrenAki                              
                 oneMoreMft >> oneMoreCrl         
 
             tryOneMftWithShortcut mftShortcut mft = do
@@ -798,7 +798,7 @@ validateCaNoFetch
                 fullCa <- getFullCa appContext topDownContext ca
                 let crlKey = mftShortcut ^. #crlShortcut . #key
                 markAsRead topDownContext crlKey
-                overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
+                overlappingChildren <- manifestFullValidation fullCa mft mfts childrenAki
                 collectPayloads mftShortcut (Just overlappingChildren) 
                             (pure fullCa)
                             (findAndValidateCrl fullCa mft childrenAki)   
@@ -833,17 +833,17 @@ validateCaNoFetch
     manifestFullValidation :: 
                     Located CaCerObject
                     -> Keyed (Located MftObject) 
-                    -> Maybe MftShortcut 
+                    -> MftsMeta 
                     -> AKI
                     -> ValidatorT IO [T3 Text Hash ObjectKey]
     manifestFullValidation fullCa 
         keyedMft@(Keyed locatedMft@(Located mftLocations mft) mftKey) 
-        mftShortcut childrenAki = do         
+        mftMeta@MftsMeta {..} childrenAki = do         
         vUniqueFocusOn LocationFocus (getURL $ pickLocation mftLocations)
             doValidate
             (vError $ CircularReference $ KeyIdentity mftKey)
       where
-        doValidate = do 
+        doValidate = do             
             -- General location validation
             validateObjectLocations locatedMft
 
@@ -938,16 +938,16 @@ validateCaNoFetch
                                 let aki = toAKI $ getSKI fullCa                  
 
                                 -- If manifest key is not the same as the shortcut key,
-                                -- we need to replace the shortcut with the new one      
-                                when (maybe True ((/= mftKey) . (^. #key)) mftShortcut) $ do                                
-                                    updateMftShortcut topDownContext aki nextMftShortcut
+                                -- we need to replace the shortcut with the new one
+                                when (maybe True (\ms -> ms ^. #key /= mftKey) mftShortcut) $ do
+                                    updateMftShortcut topDownContext aki mftMeta nextMftShortcut
                                     increment $ topDownCounters ^. #updateMftMeta
 
                                 -- Update manifest shortcut children in case there are new 
                                 -- or deleted children in the new manifest. They are updated
                                 -- separately since changes to non-CRL children are less common
                                 -- then updates to metadata, hence we can save quite some 
-                                -- CPU on serialisation.
+                                -- CPU on serialisation and disk writes.
                                 when (isNothing mftShortcut || not (null newChildren) || isSomethingDeleted) $ do
                                     updateMftShortcutChildren topDownContext aki nextMftShortcut
                                     increment $ topDownCounters ^. #updateMftChildren
@@ -1717,7 +1717,7 @@ vUniqueFocusOn c a f nonUniqueError = do
     let focus = c a
     when (focus `elem` vs) nonUniqueError
     vFocusOn c a f 
-        
+
 
 -- | Mark validated objects in the database, i.e.
 applyValidationSideEffects :: (MonadIO m, Storage s) =>
@@ -1748,17 +1748,17 @@ reportCounters AppContext {..} counters = do
     logDebug logger $ fmtGen c
                        
    
-updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
-updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
+updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftsMeta -> MftShortcut -> m ()
+updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki mftsMeta shortcut = 
     liftIO $ do 
-        let !raw = Verbatim $ toStorable $ Compressed $ DB.MftShortcutMeta {..}
+        let !raw = DB.verbatimCompressed $ mftsMeta & #mftShortcut ?~ shortcut
         atomically $ writeCQueue shortcutQueue $ UpdateMftShortcut aki raw   
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         -- Pre-serialise the object so that all the heavy-lifting happens in the thread 
-        let !raw = Verbatim $ toStorable $ Compressed DB.MftShortcutChildren {..}        
+        let !raw = DB.verbatimCompressed DB.MftShortcutChildren {..}        
         atomically $ writeCQueue shortcutQueue $ UpdateMftShortcutChildren aki raw
 
 deleteMftShortcut :: MonadIO m => TopDownContext -> AKI -> m ()
@@ -1772,12 +1772,12 @@ storeShortcuts AppContext {..} shortcutQueue = liftIO $
     readQueueChunked shortcutQueue 1000 $ \mftShortcuts -> 
         rwTxT database $ \tx db -> 
             for_ mftShortcuts $ \case 
-                UpdateMftShortcut aki s         -> DB.saveMftShorcutMeta tx db aki s                    
+                UpdateMftShortcut aki s         -> DB.saveMftsMeta tx db aki s                    
                 UpdateMftShortcutChildren aki s -> DB.saveMftShorcutChildren tx db aki s
                 DeleteMftShortcut aki           -> DB.deleteMftShortcut tx db aki
                  
 
-data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta))
+data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed MftsMeta))
                    | UpdateMftShortcutChildren AKI (Verbatim (Compressed DB.MftShortcutChildren))            
                    | DeleteMftShortcut AKI            
 
