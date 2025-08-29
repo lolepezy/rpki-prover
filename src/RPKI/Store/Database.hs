@@ -326,7 +326,7 @@ saveObject :: (MonadIO m, Storage s) =>
             -> StorableObject RpkiObject
             -> WorldVersion 
             -> m ()
-saveObject tx DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..}, ..}, .. } so@StorableObject {..} wv = liftIO $ do
+saveObject tx db@DB { objectStore = RpkiObjectStore { ..}, .. } so@StorableObject {..} wv = liftIO $ do
     let h = getHash object
     exists <- M.exists tx hashToKey h    
     unless exists $ do          
@@ -340,16 +340,13 @@ saveObject tx DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutSto
                 M.put tx certBySKI (getSKI c) objectKey
             MftRO mft -> 
                 for_ (getAKI object) $ \aki_ ->
-                    M.get tx mftMeta aki_ >>= \case 
-                        Nothing -> do 
-                            let !raw = Verbatim $ toStorable $ Compressed $ newMfts objectKey mft
-                            M.put tx mftMeta aki_ raw
+                    getMftsMeta tx db aki_ >>= \case 
+                        Nothing -> 
+                            saveMftsMeta tx db aki_ $ verbatimCompressed $ newMfts objectKey mft
                         Just mftMeta_ -> do
                             let newMeta = newMftMeta objectKey mft
-                            let now = Now $ versionToInstant wv
-                            let existingMeta = unCompressed $ restoreFromVerbatim mftMeta_
-                            let !raw = Verbatim $ toStorable $ Compressed $ updateMfts newMeta now existingMeta
-                            M.put tx mftMeta aki_ raw
+                            let now = Now $ versionToInstant wv                            
+                            saveMftsMeta tx db aki_$ verbatimCompressed $ updateMfts newMeta now mftMeta_                            
 
             _ -> pure ()        
 
@@ -452,10 +449,10 @@ deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore { mftShortcuts = MftS
         for_ (getAKI ro) $ \aki_ -> 
             case ro of
                 MftRO _ -> 
-                    ifJustM (M.get tx mftMeta aki_) $ \(unCompressed . restoreFromVerbatim -> mfts) ->
+                    ifJustM (getMftsMeta tx db aki_) $ \mfts ->
                         case deleteMft objectKey mfts of
                             Nothing    -> M.delete tx mftMeta aki_ 
-                            Just mfts' -> M.put tx mftMeta aki_ $ storeVerbatim $ Compressed mfts'                            
+                            Just mfts' -> saveMftsMeta tx db aki_ $ verbatimCompressed mfts'                            
 
                 _  -> pure ()   
 
@@ -464,18 +461,17 @@ findLatestMftByAKI :: (MonadIO m, Storage s) =>
                     Tx s mode -> DB s -> AKI -> m (Maybe (Keyed (Located MftObject)))
 findLatestMftByAKI tx db aki' = liftIO $ do   
     getMftsMeta tx db aki' >>= \case     
-        Nothing                    -> pure Nothing     
+        Nothing                        -> pure Nothing     
         Just (MftsMeta mfts _shortcut) -> do 
             let AnMft {..} = NonEmpty.head mfts
             getMftByKey tx db key
 
 findAllMftsByAKI :: (MonadIO m, Storage s) => 
                     Tx s mode -> DB s -> AKI -> m (Maybe MftShortcut, [Keyed (Located MftObject)])
-findAllMftsByAKI tx db@DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..}} } aki' = liftIO $ do   
-    M.get tx mftMeta aki' >>= \case
-        Nothing -> pure (Nothing, [])
-        Just z  -> do
-            let MftsMeta mfts shortcut = unCompressed $ restoreFromVerbatim z
+findAllMftsByAKI tx db aki' =    
+    getMftsMeta tx db aki' >>= \case
+        Nothing                       -> pure (Nothing, [])
+        Just (MftsMeta mfts shortcut) -> do            
             manifests <- fmap catMaybes $ forM (NonEmpty.toList mfts) $ 
                             \AnMft {..} -> getMftByKey tx db key
             pure (shortcut, manifests)
