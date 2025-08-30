@@ -49,7 +49,7 @@ data MftEntry = MftEntry {
 
 
 data CrlShortcut = CrlShortcut {
-        key            :: ObjectKey,
+        key            :: {-# UNPACK #-} ObjectKey,
         notValidBefore :: {-# UNPACK #-} Instant,
         notValidAfter  :: {-# UNPACK #-} Instant        
     }
@@ -143,9 +143,8 @@ data AnMft = AnMft {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-data MftsMeta = MftsMeta {
-        mfts        :: NonEmpty AnMft,        
-        mftShortcut :: Maybe MftShortcut
+newtype MftsMeta = MftsMeta {
+        mfts :: NonEmpty AnMft        
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)

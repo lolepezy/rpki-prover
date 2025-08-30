@@ -40,14 +40,14 @@ updateMftsTests = testGroup "updateMfts function" [
   where
     prop_maintains_sorted_order =
         QC.forAll arbitraryMftsAndTime $ \(mfts, newMft, now) ->
-            let MftsMeta result _ = updateMfts newMft now mfts
+            let MftsMeta result = updateMfts newMft now mfts
                 resultList = NonEmpty.toList result
             in isSortedByNextUpdate resultList    
 
     prop_preserves_non_expired =
         QC.forAll arbitraryNonExpiredMftsScenario $ \(mfts, newMft, now) ->
-            let MftsMeta original _ = mfts
-                MftsMeta result _ = updateMfts newMft now mfts
+            let MftsMeta original = mfts
+                MftsMeta result = updateMfts newMft now mfts
                 originalNonExpired = filter (\m -> m ^. #nextUpdate >= unNow now) (NonEmpty.toList original)
                 resultNonExpired = filter (\m -> m ^. #nextUpdate >= unNow now) (NonEmpty.toList result)
             in all (`elem` resultNonExpired) originalNonExpired
@@ -87,7 +87,7 @@ arbitraryMfts baseTime = do
     mfts <- replicateM count (arbitraryAnMft baseTime)
     -- Sort by nextUpdate descending to maintain invariant
     let sorted = sortOn (Down . (^. #nextUpdate)) mfts
-    pure $ MftsMeta (NonEmpty.fromList sorted) Nothing
+    pure $ MftsMeta (NonEmpty.fromList sorted)
 
 arbitraryMftsAndTime :: Gen (MftsMeta, AnMft, Now)
 arbitraryMftsAndTime = do
@@ -105,4 +105,4 @@ arbitraryNonExpiredMftsScenario = do
     validMfts <- replicateM 3 $ arbitraryAnMft (momentAfter now (3600 * 24))
     newMft <- arbitraryAnMft (momentAfter now (3600 * 12))
     let allMfts = sortOn (Down . (^. #nextUpdate)) validMfts
-    pure (MftsMeta (NonEmpty.fromList allMfts) Nothing, newMft, Now now)
+    pure (MftsMeta (NonEmpty.fromList allMfts), newMft, Now now)
