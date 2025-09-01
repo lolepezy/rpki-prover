@@ -347,7 +347,7 @@ saveObject tx db@DB { objectStore = RpkiObjectStore { ..}, .. } so@StorableObjec
                         Just mftMeta_ -> do
                             let newMeta = newMftMeta objectKey mft
                             let now = Now $ versionToInstant wv                            
-                            saveMftsMeta tx db aki_$ updateMfts newMeta now mftMeta_                            
+                            saveMftsMeta tx db aki_ $ updateMfts newMeta now mftMeta_                            
 
             _ -> pure ()        
 
@@ -449,14 +449,14 @@ deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore { mftShortcuts = MftS
         
         for_ (getAKI ro) $ \aki_ -> 
             case ro of
-                MftRO _ -> 
+                MftRO _ -> do
                     ifJustM (getMftsMeta tx db aki_) $ \mfts -> do 
                         case deleteMft objectKey mfts of
                             Nothing    -> M.delete tx mftMeta aki_ 
                             Just mfts' -> saveMftsMeta tx db aki_ mfts'                            
 
-                        ifJustM (M.get tx mftShortcut aki_) $ \(unCompressedVerbatim -> m) ->
-                            when (m ^. #key == objectKey) $ deleteMftShortcut tx db aki_                            
+                    ifJustM (M.get tx mftShortcut aki_) $ \(unCompressedVerbatim -> m) ->
+                        when (m ^. #key == objectKey) $ deleteMftShortcut tx db aki_
 
                 _  -> pure ()   
 

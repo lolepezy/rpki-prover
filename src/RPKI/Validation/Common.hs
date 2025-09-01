@@ -101,8 +101,8 @@ updateMfts newMft (Now now) (MftsMeta mfts) = MftsMeta mfts'
     sortedMfts (mft: otherMfts) 
         | newMft `expiresLater` mft = newMft : mft : otherMfts
         | otherwise                 = mft : sortedMfts otherMfts
-      where
-        expiresLater m1 m2 = m1 ^. #nextUpdate > m2 ^. #nextUpdate
+      
+    expiresLater m1 m2 = m1 ^. #nextUpdate > m2 ^. #nextUpdate
     
     -- filter out all MFTs that are already expired and will never be valid,
     -- but keep at least one, so that the list is never empty and we don't
@@ -110,17 +110,16 @@ updateMfts newMft (Now now) (MftsMeta mfts) = MftsMeta mfts'
     filterOutDefinitelyInvalid = go (0 :: Int)
       where
         go _ [] = []
-        go !n (mft: mfts_)
-            | n == 0    = mft : go (n + 1) mfts_
-            | otherwise = 
-                if mft ^. #nextUpdate < now 
-                        then go n mfts_ 
-                        else mft : go (n + 1) mfts_
-            
+        go !n (mft: mfts_) = 
+            if mft ^. #nextUpdate < now 
+                then if n == 0 
+                    then mft : go 1 mfts_ 
+                    else go 0 mfts_ 
+                else mft : go (n + 1) mfts_
 
 pickMft :: MftsMeta -> Now -> [AnMft]
 pickMft (MftsMeta mfts) (Now now) = 
-    -- skip MFTs that are not valid yet but will be in the future
+    -- skip MFTs that are not valid yet
     filter (\m -> m ^. #thisUpdate <= now) 
     $ NonEmpty.toList mfts
 
