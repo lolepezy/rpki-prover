@@ -105,8 +105,8 @@ updateMfts newMft (Now now) (MftsMeta mfts) = MftsMeta mfts'
     expiresLater m1 m2 = m1 ^. #nextUpdate > m2 ^. #nextUpdate
     
     -- filter out all MFTs that are already expired and will never be valid,
-    -- but keep at least one, so that the list is never empty and we don't
-    -- get "no MFT" error instead of "there's a manifest but it's expired"
+    -- but keep at least one, so that the list is never empty, otherwise we are 
+    -- going to get "no MFT" error instead of "there's a manifest but it's expired"
     filterOutDefinitelyInvalid = go (0 :: Int)
       where
         go _ [] = []
@@ -123,15 +123,14 @@ pickMft (MftsMeta mfts) (Now now) =
     filter (\m -> m ^. #thisUpdate <= now) 
     $ NonEmpty.toList mfts
 
-newMftMeta :: ObjectKey -> MftObject -> AnMft
-newMftMeta key mftObject = let 
+newMftEntry :: WithValidityPeriod a => ObjectKey -> a -> AnMft
+newMftEntry key mftObject = let 
         (thisUpdate, nextUpdate) = getValidityPeriod mftObject
     in AnMft {..}
 
-newMfts :: ObjectKey -> MftObject -> MftsMeta
-newMfts key mftObject = let 
-        (thisUpdate, nextUpdate) = getValidityPeriod mftObject
-    in MftsMeta (NonEmpty.singleton $ AnMft {..})
+newMftsMeta :: WithValidityPeriod a => ObjectKey -> a -> MftsMeta
+newMftsMeta key mftObject = 
+    MftsMeta $ NonEmpty.singleton $ newMftEntry key mftObject
 
 deleteMft :: ObjectKey -> MftsMeta -> Maybe MftsMeta
 deleteMft key (MftsMeta mfts) =

@@ -659,12 +659,12 @@ validateCaNoFetch
                                     withMft (mftRef ^. #key) $ \mft -> do 
                                         tryOneMftWithShortcut mftShortcut mft
                                         `catchError` \e -> 
-                                            if isWithinValidityPeriod now mftShortcut                                                                                            
+                                            if isWithinValidityPeriod now mftShortcut 
                                                 then do
                                                     -- shortcut is still valid so fall back to it
                                                     vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e
                                                     let mftLocation = pickLocation $ getLocations $ mft ^. #object
-                                                    logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, error: #{toMessage e}|]
+                                                    logWarn logger [i|Falling back to the last valid manifest for #{mftLocation}, error: #{toMessage e}|]
                                                     justCollectPayloads mftShortcut
                                                     oneMoreMftShort                          
                                                 else 

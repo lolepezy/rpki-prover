@@ -343,11 +343,11 @@ saveObject tx db@DB { objectStore = RpkiObjectStore { ..}, .. } so@StorableObjec
                 for_ (getAKI object) $ \aki_ ->
                     getMftsMeta tx db aki_ >>= \case 
                         Nothing -> 
-                            saveMftsMeta tx db aki_ $ newMfts objectKey mft
+                            saveMftsMeta tx db aki_ $ newMftsMeta objectKey mft
                         Just mftMeta_ -> do
-                            let newMeta = newMftMeta objectKey mft
+                            let newEntry = newMftEntry objectKey mft
                             let now = Now $ versionToInstant wv                            
-                            saveMftsMeta tx db aki_ $ updateMfts newMeta now mftMeta_                            
+                            saveMftsMeta tx db aki_ $ updateMfts newEntry now mftMeta_                            
 
             _ -> pure ()        
 
