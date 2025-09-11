@@ -30,6 +30,9 @@ import           Data.Monoid.Generic
 import           Data.Map.Monoidal.Strict (MonoidalMap(MonoidalMap))
 import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
+import           Data.Hashable
+import           Data.HashMap.Strict         (HashMap)
+import qualified Data.HashMap.Strict         as HashMap
 
 import           Data.ASN1.Types (OID)
 
@@ -267,6 +270,7 @@ data Focus = TAFocus Text
             | RepositoryFocus RpkiURL
             | TextFocus Text
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Hashable)
     deriving anyclass (TheBinary, NFData)
 
 newtype Scope (t :: ScopeKind) = Scope (NonEmpty Focus)
@@ -498,6 +502,20 @@ data ValidationState = ValidationState {
     deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup ValidationState
     deriving Monoid    via GenericMonoid ValidationState
+
+
+
+-- data ScopedTree v = 
+--         ScopedValue v | 
+--         SubScoped (HashMap Focus (ScopedTree v))
+--     deriving stock (Show, Eq, Ord, Generic)
+--     deriving anyclass (TheBinary)
+
+-- insertScoped :: (Ord v, Monoid v) => Scope c -> v -> ScopedTree v -> ScopedTree v
+-- insertScoped scope value (ScopedValue _)    = ScopedValue value
+-- insertScoped scope value (SubScoped nested) = 
+--     SubScoped (HashMap.insertWith (<>) scope (ScopedValue value) nested)
+
 
 mTrace :: Trace -> Set Trace
 mTrace = Set.singleton

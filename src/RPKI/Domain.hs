@@ -76,8 +76,9 @@ data CertType = CACert | EECert | BGPCert
     deriving anyclass (TheBinary, NFData)
 
 newtype Hash = Hash BSS.ShortByteString 
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic)    
     deriving anyclass (TheBinary, NFData)
+    deriving anyclass Hashable
 
 newtype URI = URI { unURI :: Text } 
     deriving stock (Eq, Ord, Generic, Data, Typeable)
@@ -760,15 +761,18 @@ newtype UrlKey = UrlKey ArtificialKey
 
 newtype ObjectKey = ObjectKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Hashable)
     deriving anyclass (TheBinary, NFData)
 
 newtype ArtificialKey = ArtificialKey Int64
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Hashable)
     deriving anyclass (TheBinary, NFData)
 
 data ObjectIdentity = KeyIdentity ObjectKey
                     | HashIdentity Hash
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Hashable)
     deriving anyclass (TheBinary, NFData)
 
 data ValidationVersion = ValidationVersion { 
