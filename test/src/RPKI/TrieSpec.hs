@@ -54,7 +54,15 @@ trieSpec = testGroup "Trie" [
         
     QC.testProperty 
         "Trie is a Semigroup (associativity)" 
-        prop_semigroup_associativity        
+        prop_semigroup_associativity,
+
+    QC.testProperty 
+        "filterWithKey with always-true predicate is identity" 
+        prop_filterWithKey_true_is_identity,
+        
+    QC.testProperty 
+        "filterWithKey with always-false predicate gives empty trie" 
+        prop_filterWithKey_false_gives_empty
     ]
 
 newtype TestKey = TestKey Int
@@ -127,3 +135,13 @@ prop_semigroup_associativity kvl1 kvl2 kvl3 =
         t2 = kvListToTrie kvl2
         t3 = kvListToTrie kvl3
     in (t1 <> t2) <> t3 == t1 <> (t2 <> t3)
+
+prop_filterWithKey_true_is_identity :: KeyValueList -> Bool
+prop_filterWithKey_true_is_identity kvl = let 
+    t = kvListToTrie kvl
+    in t == Trie.filterWithKey (\_ _ -> True) t    
+
+prop_filterWithKey_false_gives_empty :: KeyValueList -> Bool
+prop_filterWithKey_false_gives_empty kvl =
+    let t = kvListToTrie kvl
+    in Trie.null $ Trie.filterWithKey (\_ _ -> False) t

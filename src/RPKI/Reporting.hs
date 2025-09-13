@@ -31,8 +31,8 @@ import           Data.Map.Monoidal.Strict (MonoidalMap(MonoidalMap))
 import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 import           Data.Hashable
-import           Data.HashMap.Strict         (HashMap)
-import qualified Data.HashMap.Strict         as HashMap
+import           RPKI.Trie                   (Trie)
+import qualified RPKI.Trie                   as Trie
 
 import           Data.ASN1.Types (OID)
 
@@ -252,13 +252,13 @@ newtype AppException = AppException AppError
 
 instance Exception AppException
 
-newtype Validations = Validations (Map VScope (Set VIssue))
+newtype Validations = Validations (Trie Focus (Set VIssue))
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
     deriving newtype Monoid    
 
 instance Semigroup Validations where
-    (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2
+    (Validations m1) <> (Validations m2) = Validations $ Trie.unionWith (<>) m1 m2
 
 
 data Focus = TAFocus Text 
@@ -273,7 +273,7 @@ data Focus = TAFocus Text
     deriving anyclass (Hashable)
     deriving anyclass (TheBinary, NFData)
 
-newtype Scope (t :: ScopeKind) = Scope (NonEmpty Focus)
+newtype Scope (t :: ScopeKind) = Scope { unScope :: NonEmpty Focus }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
@@ -313,6 +313,8 @@ subScope constructor a ps@(Scope parentScope) = let
         [] -> Scope $ NonEmpty.cons focus parentScope 
         _  -> ps     
 
+focuses :: Scope a -> [Focus]
+focuses (Scope s) = NonEmpty.toList s
    
 mError :: VScope -> AppError -> Validations
 mError vc w = mProblem vc (VErr w)
@@ -321,21 +323,21 @@ mWarning :: VScope -> VWarning -> Validations
 mWarning vc w = mProblem vc (VWarn w)
 
 mProblem :: VScope -> VIssue -> Validations
-mProblem vc p = Validations $ Map.singleton vc $ Set.singleton p
+mProblem vs p = Validations $ Trie.singleton (focuses vs) $ Set.singleton p
 
 emptyValidations :: Validations -> Bool 
-emptyValidations (Validations m) = List.all Set.null $ Map.elems m  
+emptyValidations (Validations m) = List.all (Set.null . snd) $ Trie.toList m
 
 removeValidation :: VScope -> (AppError -> Bool) -> Validations -> Validations
 removeValidation vScope predicate (Validations vs) =
-    Validations $ Map.adjust removeFromSet vScope vs    
-    where 
-        removeFromSet = Set.filter $ \case 
-            VErr e             -> not $ predicate e
-            VWarn (VWarning e) -> not $ predicate e
+    Validations $ Trie.adjust removeFromSet (focuses vScope) vs    
+  where 
+    removeFromSet = Set.filter $ \case 
+        VErr e             -> not $ predicate e
+        VWarn (VWarning e) -> not $ predicate e
 
 getIssues :: VScope -> Validations -> Set VIssue
-getIssues s (Validations vs) = fromMaybe mempty $ Map.lookup s vs
+getIssues s (Validations vs) = fromMaybe mempty $ Trie.lookup (focuses s) vs
 
 
 ------------------------------------------------
@@ -502,19 +504,6 @@ data ValidationState = ValidationState {
     deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup ValidationState
     deriving Monoid    via GenericMonoid ValidationState
-
-
-
--- data ScopedTree v = 
---         ScopedValue v | 
---         SubScoped (HashMap Focus (ScopedTree v))
---     deriving stock (Show, Eq, Ord, Generic)
---     deriving anyclass (TheBinary)
-
--- insertScoped :: (Ord v, Monoid v) => Scope c -> v -> ScopedTree v -> ScopedTree v
--- insertScoped scope value (ScopedValue _)    = ScopedValue value
--- insertScoped scope value (SubScoped nested) = 
---     SubScoped (HashMap.insertWith (<>) scope (ScopedValue value) nested)
 
 
 mTrace :: Trace -> Set Trace

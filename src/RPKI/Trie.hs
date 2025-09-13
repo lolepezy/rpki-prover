@@ -20,7 +20,7 @@ data Trie k v = Trie {
         value    :: Maybe v, 
         children :: Map k (Trie k v)  
     } 
-    deriving stock (Show, Eq, Functor, Generic)
+    deriving stock (Show, Eq, Ord, Functor, Generic)
     deriving anyclass (TheBinary, NFData)
 
 instance Ord k => Semigroup (Trie k v) where
@@ -34,7 +34,13 @@ instance Ord k => Semigroup (Trie k v) where
         combinedChildren = Map.unionWith (<>) c1 c2
 
 instance Ord k => Monoid (Trie k v) where
-    mempty = Trie Nothing Map.empty    
+    mempty = Trie Nothing Map.empty
+    
+empty :: Trie k v
+empty = Trie Nothing Map.empty
+
+singleton :: Ord k => [k] -> v -> Trie k v
+singleton k v = insert k v empty
 
 null :: Trie k v -> Bool
 null (Trie Nothing children_) = Map.null children_
@@ -72,6 +78,15 @@ alter f (k:ks) (Trie v children) =
         let altered = alter f ks trie
         in if null altered then Nothing else Just altered    
 
+adjust :: Ord k => (v -> v) -> [k] -> Trie k v -> Trie k v
+adjust f [] (Trie v children) = Trie (fmap f v) children
+adjust f (k:ks) t@Trie {..} = 
+    case Map.lookup k children of 
+        Nothing    -> t
+        Just child -> 
+            let adjustedChild = adjust f ks child
+            in Trie value (Map.insert k adjustedChild children)
+
 fromList :: Ord k => [([k], v)] -> Trie k v
 fromList = foldr (uncurry insert) mempty
 
@@ -83,3 +98,35 @@ toList = toList' []
     
     maybeToList p (Just v) = [(p, v)]
     maybeToList _ Nothing = []        
+
+
+unionWith :: Ord k => (v -> v -> v) -> Trie k v -> Trie k v -> Trie k v
+unionWith f (Trie v1 c1) (Trie v2 c2) = Trie combinedValues combinedChildren
+      where
+        combinedValues = case (v1, v2) of
+            (Nothing, Nothing) -> Nothing
+            (Just x, Nothing)  -> Just x
+            (Nothing, Just y)  -> Just y            
+            (Just x, Just y)   -> Just $ f x y            
+        
+        combinedChildren = Map.unionWith (unionWith f) c1 c2    
+
+
+filterWithKey :: Ord k => ([k] -> v -> Bool) -> Trie k v -> Trie k v
+filterWithKey p = go []
+  where
+    go path (Trie mv children) =
+        let 
+            -- Filter the value at this node
+            filteredValue = case mv of
+                Just v | p path v -> Just v
+                _                 -> Nothing
+                
+            -- Recursively filter children, keeping track of the path
+            filteredChildren = Map.mapWithKey 
+                (\k child -> go (path ++ [k]) child) children
+                
+            -- Remove empty children
+            prunedChildren = Map.filter (not . null) filteredChildren
+        in
+            Trie filteredValue prunedChildren

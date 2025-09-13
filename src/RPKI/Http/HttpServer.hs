@@ -62,6 +62,7 @@ import           RPKI.Resources.Validity
 import           RPKI.Util
 import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 import           RPKI.Version
+import qualified RPKI.Trie as Trie
 
 
 httpServer :: (Storage s, MaintainableStorage s) => AppContext s -> Application
@@ -610,15 +611,16 @@ toRepositoryDtos AppContext {..} inputs = do
   where
 
     filterRepositoryValidations uri (Validations vs) = 
-        Validations $ Map.filterWithKey (\scope _ -> relevantToRepository uri scope) vs
+        Validations $ Trie.filterWithKey (\focuses _ -> relevantToRepository uri focuses) vs
 
     filterRepositoryMetrics uri (MetricMap m) = 
-        case [ metric | (scope, metric) <- MonoidalMap.toList m, relevantToRepository uri scope ] of 
+        case [ metric | (scope, metric) <- MonoidalMap.toList m, 
+            relevantToRepository uri (let (Scope f) = scope in NonEmpty.toList f) ] of 
             []        -> Nothing
             metric: _ -> Just metric
 
-    relevantToRepository uri (Scope scope) = 
-        uri `elem` [ u | RepositoryFocus u <- NonEmpty.toList scope ]
+    relevantToRepository uri focuses = 
+        uri `elem` [ u | RepositoryFocus u <- focuses ]
 
 
 resolveOriginalDto :: (MonadIO m, Storage s) 

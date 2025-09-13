@@ -56,6 +56,7 @@ import qualified RPKI.Store.MakeLmdb as Lmdb
 
 import           RPKI.Time
 import           RPKI.Util
+import qualified RPKI.Trie as Trie
 
 import           RPKI.RepositorySpec
 
@@ -453,7 +454,7 @@ shouldPreserveStateInAppTx io = do
 
     let addedObject = updateMetric @RrdpMetric @_ (#added %~ Map.unionWith (+) (Map.singleton (Just CER) 1))
 
-    (_, ValidationState { validations = Validations validationMap, .. }) 
+    (_, ValidationState { validations = Validations validationTrie, .. }) 
         <- runValidatorT (newScopes "root") $ 
             timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                 appWarn $ UnspecifiedE "Error0" "text 0"
@@ -469,7 +470,9 @@ shouldPreserveStateInAppTx io = do
                 addedObject
 
     HU.assertEqual "Root metric should count 2 objects" 
-        (Just $ mempty { added = Map.fromList [(Just CER, Count 2)], deleted = Map.fromList [] })
+        (Just $ mempty { 
+            added = Map.fromList [(Just CER, Count 2)], 
+            deleted = Map.fromList [] })
         (stripTime <$> lookupMetric (newScope "root") (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Nested metric should count 1 object" 
@@ -478,14 +481,14 @@ shouldPreserveStateInAppTx io = do
                             (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Root validations should have 1 warning"     
-        (Map.lookup (newScope "root") validationMap)
+        (Trie.lookup [TextFocus "root"] validationTrie)
         (Just $ Set.fromList [
             VWarn (VWarning (UnspecifiedE "Error0" "text 0")),
             VWarn (VWarning (UnspecifiedE "Error1" "text 1")),            
             VWarn (VWarning (UnspecifiedE "Error4" "text 4"))])
 
     HU.assertEqual "Nested validations should have 1 warning" 
-        (Map.lookup (subScope TextFocus "nested-1" (newScope "root")) validationMap)
+        (Trie.lookup [TextFocus "nested-1", TextFocus "root"] validationTrie)
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
 
 

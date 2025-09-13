@@ -38,7 +38,8 @@ import           RPKI.Resources.Validity
 import           RPKI.RTR.Types
 import           RPKI.Validation.Types
 import           RPKI.Util
-import          RPKI.AppTypes (WorldVersion)
+import           RPKI.AppTypes (WorldVersion)
+import qualified RPKI.Trie as Trie
 
 {-
     Mainly domain objects -> DTO convertions. 
@@ -105,11 +106,11 @@ validationsToDto version validations =
 
 toVDtos :: Validations -> [OriginalVDto]
 toVDtos (Validations vMap) = 
-    flip map (Map.toList vMap) $ \(Scope scope, issues) ->        
+    flip map (Trie.toList vMap) $ \(scope, issues) ->        
         OriginalVDto $ ValidationDto {
             issues = map toDto $ Set.toList issues,
-            path   = NonEmpty.toList scope,
-            url    = NonEmpty.head scope
+            path   = scope,
+            url    = head scope
         }
   where
     toDto = \case

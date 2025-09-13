@@ -62,6 +62,7 @@ import           RPKI.Logging
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
 import           RPKI.Util       (convert, mkHash)
+import qualified RPKI.Trie as Trie
 
 
 instance Arbitrary WorldVersion where
@@ -563,9 +564,16 @@ instance Arbitrary MetricScope where
 instance Arbitrary Focus where
     arbitrary = genericArbitrary
     shrink = genericShrink
-
+    
 instance Arbitrary Validations where
-    arbitrary = generateMap Validations     
+    arbitrary = Validations <$> arbitraryTrie    
+      where
+        arbitraryTrie = 
+            pure Trie.empty
+            -- do 
+            -- size_ <- choose (0, 10)
+            -- es <- replicateM size_ arbitrary
+            -- pure $ fromList es
 
 instance Arbitrary ValidationState where
     arbitrary = genericArbitrary
@@ -613,8 +621,8 @@ instance (Ord k, Arbitrary k, Arbitrary v) => Arbitrary (MonoidalMap k v) where
 generateMap :: (Arbitrary k, Arbitrary a, Ord k) => (Map k a -> b) -> Gen b
 generateMap constructor = do 
     size_ <- choose (0, 10)
-    validations <- replicateM size_ arbitrary
-    pure $ constructor $ Map.fromList validations
+    es <- replicateM size_ arbitrary
+    pure $ constructor $ Map.fromList es
 
 instance Arbitrary TimeMs where
     arbitrary = genericArbitrary

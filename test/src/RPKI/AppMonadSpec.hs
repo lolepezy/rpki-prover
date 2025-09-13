@@ -5,7 +5,6 @@
 module RPKI.AppMonadSpec where
 
 import           Control.Monad
-import qualified Data.Map.Strict         as Map
 import qualified Data.Set                as Set
 import           Data.Proxy
 
@@ -18,6 +17,7 @@ import qualified Test.Tasty.HUnit        as HU
 import           RPKI.AppMonad
 import           RPKI.Orphans
 import           RPKI.Reporting
+import qualified RPKI.Trie as Trie
 
 isSemigroup :: Eq s => Semigroup s => (s, s, s) -> Bool
 isSemigroup (s1, s2, s3) = s1 <> (s2 <> s3) == (s1 <> s2) <> s3
@@ -33,14 +33,14 @@ forMShouldSavesState :: HU.Assertion
 forMShouldSavesState = do
   v <- QC.generate arbitrary  
      
-  (_, ValidationState { validations = Validations validationMap }) 
+  (_, ValidationState { validations = Validations validationTrie }) 
     <- runValidatorT (newScopes "zzz") $ do 
         validatorT $ pure (Right (), v)
         forM ["x", "y", "z"] $ \x ->
             appWarn $ UnspecifiedE x (x <> "-bla") 
   
   HU.assertEqual "Not the same Validations" 
-    (Map.lookup (newScope "zzz") validationMap)
+    (Trie.lookup [TextFocus "zzz"] validationTrie)
      (Just $ Set.fromList [
          VWarn (VWarning (UnspecifiedE "x" "x-bla")),
          VWarn (VWarning (UnspecifiedE "y" "y-bla")),
@@ -48,7 +48,7 @@ forMShouldSavesState = do
 
 scopesShouldBeProperlyNested :: HU.Assertion
 scopesShouldBeProperlyNested = do
-    (_, ValidationState { validations = Validations validationMap }) 
+    (_, ValidationState { validations = Validations validationTrie }) 
         <- runValidatorT (newScopes "root") $ do
             timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                 appWarn $ UnspecifiedE "Error0" "text 0"
@@ -59,17 +59,15 @@ scopesShouldBeProperlyNested = do
                             appError $ UnspecifiedE "Crash" "Crash it"                                                                    
 
     HU.assertEqual "Deepest scope should have 1 error"     
-        (Map.lookup (subScope TextFocus "broken.roa" 
-                        $ subScope TextFocus "snapshot.xml" 
-                        $ newScope "root") validationMap)
+        (Trie.lookup [TextFocus "broken.roa", TextFocus "snapshot.xml", TextFocus "root"] validationTrie)        
         (Just $ Set.fromList [VErr (UnspecifiedE "Crash" "Crash it")])
 
     HU.assertEqual "Nested scope should have 1 warning"         
-        (Map.lookup (subScope TextFocus "snapshot.xml" $ newScope "root") validationMap)
+        (Trie.lookup [TextFocus "snapshot.xml", TextFocus "root"] validationTrie)
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error1" "text 1"))])
 
     HU.assertEqual "Nested validations should have 1 warning"         
-        (Map.lookup (newScope "root") validationMap)
+        (Trie.lookup [TextFocus "root"] validationTrie)
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error0" "text 0"))])
 
 

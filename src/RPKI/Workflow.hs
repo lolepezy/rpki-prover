@@ -72,7 +72,8 @@ import           RPKI.Store.AppStorage
 import           RPKI.RRDP.Types
 import           RPKI.TAL
 import           RPKI.Parallel
-import           RPKI.Util                     
+import           RPKI.Util      
+import qualified RPKI.Trie as Trie               
 import           RPKI.Time
 import           RPKI.Worker
 import           RPKI.SLURM.Types
@@ -756,7 +757,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
         repositoriesWithManifestIntegrityIssues = 
             Map.fromListWith (<>) [ 
                 (relevantRepo, relevantIssues) | 
-                    (scope, issues) <- Map.toList validations,                    
+                    (scope, issues) <- Trie.toList validations,                    
                     let relevantIssues = filter manifestIntegrityError (Set.toList issues),
                     not (null relevantIssues),
                     relevantRepo <- mostNarrowPPScope scope
@@ -774,8 +775,8 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                     ReferentialIntegrityError _         -> True                
                     _                                   -> False
 
-            mostNarrowPPScope (Scope s) = 
-                take 1 [ url | PPFocus (RrdpU url) <- NonEmpty.toList s ]
+            mostNarrowPPScope s = 
+                take 1 [ url | PPFocus (RrdpU url) <- s ]
 
 
 -- | Adjust running fetchers to the latest discovered repositories
