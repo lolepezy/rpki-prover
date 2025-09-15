@@ -566,14 +566,11 @@ instance Arbitrary Focus where
     shrink = genericShrink
     
 instance Arbitrary Validations where
-    arbitrary = Validations <$> arbitraryTrie    
-      where
-        arbitraryTrie = 
-            pure Trie.empty
-            -- do 
-            -- size_ <- choose (0, 10)
-            -- es <- replicateM size_ arbitrary
-            -- pure $ fromList es
+    arbitrary = 
+        Validations <$> do 
+            size_ <- choose (0, 10)
+            es <- replicateM size_ arbitrary
+            pure $ Trie.fromList es
 
 instance Arbitrary ValidationState where
     arbitrary = genericArbitrary

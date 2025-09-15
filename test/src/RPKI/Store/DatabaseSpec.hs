@@ -290,6 +290,26 @@ generateRepositories = do
     rrdpMap :: RrdpMap <- QC.generate arbitrary        
     let pps = PublicationPoints rrdpMap newRsyncForest
     pure $ List.foldr mergeRsyncPP pps repositoriesURIs    
+  where
+    repositoriesURIs = map (RsyncPublicationPoint . toURL) [
+            "a",
+            "a/b",
+            "a/c",
+            "a/z",
+            "a/z/q",
+            "a/z/q/zzz",
+            "a/z/q/aa",
+            "a/z/p/q",
+            "b/a",
+            "b/a/c",
+            "a/z/q",
+            "b/a/d",
+            "b/a/e",
+            "b/z",
+            "different_root"
+        ]
+    
+    toURL path = let Right u = parseRsyncURL ("rsync://host1.com/" <> path) in u
     
 
 rrdpSubMap :: PublicationPoints -> IO RrdpMap

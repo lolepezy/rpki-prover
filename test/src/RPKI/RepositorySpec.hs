@@ -32,35 +32,13 @@ repositoryGroup = testGroup "PublicationPoints" [
             "RsyncTree gets properly updated"
             prop_rsync_tree_update,
     
-        -- QC.testProperty "FetchStatus is a semigroup" $ isASemigroup @FetchStatus,
-        -- QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RrdpRepository,
-        -- QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RepositoryMeta,
+        QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RrdpRepository,        
         QC.testProperty "RrdpMap is a semigroup" $ isASemigroup @RrdpMap        
     ]
 
 isASemigroup :: Eq s => Semigroup s => (s, s, s) -> Bool
 isASemigroup (s1, s2, s3) = s1 <> (s2 <> s3) == (s1 <> s2) <> s3
 
-repositoriesURIs :: [RsyncPublicationPoint]
-repositoriesURIs = map (RsyncPublicationPoint . toURL) [
-        "a",
-        "a/b",
-        "a/c",
-        "a/z",
-        "a/z/q",
-        "a/z/q/zzz",
-        "a/z/q/aa",
-        "a/z/p/q",
-        "b/a",
-        "b/a/c",
-        "a/z/q",
-        "b/a/d",
-        "b/a/e",
-        "b/z",
-        "different_root"
-    ]
-  where
-    toURL path = let Right u = parseRsyncURL ("rsync://host1.com/" <> path) in u
 
 prop_rsync_tree_commutative :: QC.Property
 prop_rsync_tree_commutative =

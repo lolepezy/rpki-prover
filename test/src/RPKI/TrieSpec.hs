@@ -8,6 +8,7 @@ module RPKI.TrieSpec where
 import Control.Monad (replicateM)
 import Data.List (nub)
 import Data.Maybe (isNothing)
+import qualified Data.Set as Set 
 import GHC.Generics (Generic)
 
 import Test.Tasty
@@ -62,7 +63,11 @@ trieSpec = testGroup "Trie" [
         
     QC.testProperty 
         "filterWithKey with always-false predicate gives empty trie" 
-        prop_filterWithKey_false_gives_empty
+        prop_filterWithKey_false_gives_empty,
+
+    QC.testProperty 
+        "filterWithKey behaves as expected" 
+        prop_filterWithKey_returns_subset
     ]
 
 newtype TestKey = TestKey Int
@@ -145,3 +150,19 @@ prop_filterWithKey_false_gives_empty :: KeyValueList -> Bool
 prop_filterWithKey_false_gives_empty kvl =
     let t = kvListToTrie kvl
     in Trie.null $ Trie.filterWithKey (\_ _ -> False) t
+
+
+prop_filterWithKey_returns_subset :: KeyValueList -> Int -> Bool
+prop_filterWithKey_returns_subset (KeyValueList list) count =
+    let 
+        list' = nub list
+        t1 = kvListToTrie $ KeyValueList list'
+        cutOff = count `mod` length list'
+        (toKeep, _) = splitAt cutOff list'
+        keyToKeep = Set.fromList $ map fst toKeep
+        
+        kept' = Trie.filterWithKey (\ks _ -> ks `Set.member` keyToKeep) t1                    
+        kept = kvListToTrie (KeyValueList toKeep)
+
+    in Prelude.null list' || (kept == kept')
+

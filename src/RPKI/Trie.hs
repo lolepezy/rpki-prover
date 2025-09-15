@@ -116,17 +116,14 @@ filterWithKey :: Ord k => ([k] -> v -> Bool) -> Trie k v -> Trie k v
 filterWithKey p = go []
   where
     go path (Trie mv children) =
-        let 
-            -- Filter the value at this node
-            filteredValue = case mv of
-                Just v | p path v -> Just v
-                _                 -> Nothing
-                
-            -- Recursively filter children, keeping track of the path
-            filteredChildren = Map.mapWithKey 
-                (\k child -> go (path ++ [k]) child) children
-                
-            -- Remove empty children
-            prunedChildren = Map.filter (not . null) filteredChildren
-        in
-            Trie filteredValue prunedChildren
+        Trie filteredValue prunedChildren
+      where        
+        filteredValue = case mv of
+            Just v | p path v -> Just v
+            _                 -> Nothing
+            
+        filteredChildren = Map.mapWithKey 
+            (\k child -> go (path ++ [k]) child) children
+            
+        prunedChildren = Map.filter (not . null) filteredChildren
+        
