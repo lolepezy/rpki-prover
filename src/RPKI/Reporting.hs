@@ -27,7 +27,7 @@ import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 import           Data.Monoid.Generic
-import           Data.Map.Monoidal.Strict (MonoidalMap(MonoidalMap))
+import           Data.Map.Monoidal.Strict 
 import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 import           Data.Hashable
@@ -255,10 +255,12 @@ instance Exception AppException
 newtype Validations = Validations (Trie Focus (Set VIssue))
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
-    deriving newtype Monoid    
 
 instance Semigroup Validations where
     (Validations m1) <> (Validations m2) = Validations $ Trie.unionWith (<>) m1 m2
+
+instance Monoid Validations where
+    mempty = Validations Trie.empty    
 
 
 data Focus = TAFocus Text 
@@ -460,12 +462,18 @@ instance MetricC RsyncMetric where
 instance MetricC ValidationMetric where 
     metricLens = #validationMetrics
 
-newtype MetricMap a = MetricMap { unMetricMap :: MonoidalMap MetricScope a }
+newtype MetricMap a = MetricMap { unMetricMap :: Trie Focus a }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
     deriving newtype Functor
-    deriving newtype Monoid    
-    deriving newtype Semigroup
+    
+
+instance Semigroup a => Semigroup (MetricMap a) where
+    (MetricMap m1) <> (MetricMap m2) = MetricMap $ Trie.unionWith (<>) m1 m2
+
+instance Semigroup a => Monoid (MetricMap a) where
+    mempty = MetricMap Trie.empty
+
 
 data VrpCounts = VrpCounts { 
         totalUnique :: Count,        
@@ -511,11 +519,11 @@ mTrace = Set.singleton
 
 updateMetricInMap :: Monoid a => 
                     MetricScope -> (a -> a) -> MetricMap a -> MetricMap a
-updateMetricInMap ms f (MetricMap (MonoidalMap mm)) = 
-    MetricMap $ MonoidalMap $ Map.alter (Just . f . fromMaybe mempty) ms mm
+updateMetricInMap ms f (MetricMap t) = 
+    MetricMap $ Trie.alter (Just . f . fromMaybe mempty) (focuses ms) t
 
 lookupMetric :: MetricScope -> MetricMap a -> Maybe a
-lookupMetric ms (MetricMap (MonoidalMap mm)) = Map.lookup ms mm
+lookupMetric ms (MetricMap t) = Trie.lookup (focuses ms) t
 
 isHttpSuccess :: HttpStatus -> Bool
 isHttpSuccess (HttpStatus s) = s >= 200 && s < 300
@@ -530,9 +538,6 @@ focusToText = \case
     ObjectFocus key   -> fmtGen key
     HashFocus hash_   -> fmtGen hash_    
     TextFocus txt     -> txt    
-
-scopeList :: Scope a -> [Focus]
-scopeList (Scope s) = NonEmpty.toList s
 
 totalMapCount :: Map a Count -> Count
 totalMapCount m = sum $ Map.elems m
@@ -551,7 +556,7 @@ rsyncRepoHasSignificantUpdates :: RsyncMetric -> Bool
 rsyncRepoHasSignificantUpdates RsyncMetric {..} = anySignificantPositive processed
 
 anyPositive :: (Ord b, Num b) => Map a b -> Bool
-anyPositive m = Prelude.any ((> 0) . snd) $ Map.toList m    
+anyPositive m = Prelude.any (> 0) $ Map.elems m    
 
 anySignificantPositive :: (Ord b, Num b) => Map (Maybe RpkiObjectType) b -> Bool
 anySignificantPositive m = Prelude.any f $ Map.toList m    

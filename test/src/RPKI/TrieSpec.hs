@@ -44,18 +44,10 @@ trieSpec = testGroup "Trie" [
     QC.testProperty 
         "size counts key-value pairs correctly" 
         prop_size_counts_correctly,            
-        
-    QC.testProperty 
-        "Trie is a Monoid (left identity)" 
-        prop_monoid_left_identity,
-        
-    QC.testProperty 
-        "Trie is a Monoid (right identity)" 
-        prop_monoid_right_identity,
-        
+                
     QC.testProperty 
         "Trie is a Semigroup (associativity)" 
-        prop_semigroup_associativity,
+        prop_union_associativity,
 
     QC.testProperty 
         "filterWithKey with always-true predicate is identity" 
@@ -106,7 +98,7 @@ prop_lookup_after_insert (KeyPath ks) v kvl =
 
 prop_lookup_nonexistent :: KeyPath -> KeyPath -> String -> QC.Property
 prop_lookup_nonexistent (KeyPath ks1) (KeyPath ks2) v =
-    ks1 /= ks2 QC.==> isNothing (Trie.lookup ks2 (insert ks1 v mempty))
+    ks1 /= ks2 QC.==> isNothing (Trie.lookup ks2 (insert ks1 v Trie.empty))
 
 prop_insert_override :: KeyPath -> String -> String -> KeyValueList -> Bool
 prop_insert_override (KeyPath ks) v1 v2 kvl =
@@ -118,28 +110,18 @@ prop_delete_removes (KeyPath ks) v kvl =
 
 prop_null_after_delete :: KeyPath -> String -> Bool
 prop_null_after_delete (KeyPath ks) v =
-    Trie.null (delete ks (insert ks v mempty))
+    Trie.null (delete ks (insert ks v Trie.empty))
 
 prop_size_counts_correctly :: KeyValueList -> Bool
 prop_size_counts_correctly kvl@(KeyValueList kvs) =
     size (kvListToTrie kvl) == length (nub (map fst kvs))
 
-prop_monoid_left_identity :: KeyValueList -> Bool
-prop_monoid_left_identity kvl =
-    let t = kvListToTrie kvl
-    in mempty <> t == t
-
-prop_monoid_right_identity :: KeyValueList -> Bool
-prop_monoid_right_identity kvl =
-    let t = kvListToTrie kvl
-    in t <> mempty == t
-
-prop_semigroup_associativity :: KeyValueList -> KeyValueList -> KeyValueList -> Bool
-prop_semigroup_associativity kvl1 kvl2 kvl3 =
+prop_union_associativity :: KeyValueList -> KeyValueList -> KeyValueList -> Bool
+prop_union_associativity kvl1 kvl2 kvl3 =
     let t1 = kvListToTrie kvl1
         t2 = kvListToTrie kvl2
         t3 = kvListToTrie kvl3
-    in (t1 <> t2) <> t3 == t1 <> (t2 <> t3)
+    in Trie.unionWith (<>) (Trie.unionWith (<>) t1 t2) t3 == Trie.unionWith (<>) t1 (Trie.unionWith (<>) t2 t3)
 
 prop_filterWithKey_true_is_identity :: KeyValueList -> Bool
 prop_filterWithKey_true_is_identity kvl = let 

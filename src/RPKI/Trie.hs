@@ -9,12 +9,20 @@ import           Control.DeepSeq
 
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (maybeToList)
 
 import           GHC.Generics
 
 import Prelude hiding (lookup, null)
 
 import           RPKI.Store.Base.Serialisation
+
+{- 
+    A simple Trie (prefix tree) implementation.
+
+    The only reason it exists here is to be able to derive TheBinary instance for it.
+    Doing it for library type is pretty cumbersome (or not possible at all).    
+-}
 
 data Trie k v = Trie { 
         value    :: Maybe v, 
@@ -23,18 +31,6 @@ data Trie k v = Trie {
     deriving stock (Show, Eq, Ord, Functor, Generic)
     deriving anyclass (TheBinary, NFData)
 
-instance Ord k => Semigroup (Trie k v) where
-    Trie v1 c1 <> Trie v2 c2 = Trie combinedValues combinedChildren
-      where
-        combinedValues = case (v1, v2) of
-            (Nothing, Nothing) -> Nothing
-            (Just x, Nothing)  -> Just x
-            (_, Just y)  -> Just y            
-        
-        combinedChildren = Map.unionWith (<>) c1 c2
-
-instance Ord k => Monoid (Trie k v) where
-    mempty = Trie Nothing Map.empty
     
 empty :: Trie k v
 empty = Trie Nothing Map.empty
@@ -55,12 +51,15 @@ lookup [] (Trie v _) = v
 lookup (k:ks) Trie {..} = 
     lookup ks =<< Map.lookup k children         
 
+elems :: Trie k v -> [v]
+elems (Trie v children) = maybeToList v ++ concatMap elems (Map.elems children)  
+
 insert :: Ord k => [k] -> v -> Trie k v -> Trie k v
 insert [] v (Trie _ children) = Trie (Just v) children
 insert (k:ks) v (Trie value children) = 
     Trie value (Map.alter updateChild k children)
   where
-    updateChild Nothing = Just (insert ks v mempty)
+    updateChild Nothing = Just (insert ks v empty)
     updateChild (Just trie) = Just (insert ks v trie)
 
 delete :: Ord k => [k] -> Trie k v -> Trie k v
@@ -72,7 +71,7 @@ alter f (k:ks) (Trie v children) =
     Trie v (Map.alter updateChild k children)
   where
     updateChild Nothing = 
-        let altered = alter f ks mempty
+        let altered = alter f ks empty
         in if null altered then Nothing else Just altered
     updateChild (Just trie) = 
         let altered = alter f ks trie
@@ -88,16 +87,16 @@ adjust f (k:ks) t@Trie {..} =
             in Trie value (Map.insert k adjustedChild children)
 
 fromList :: Ord k => [([k], v)] -> Trie k v
-fromList = foldr (uncurry insert) mempty
+fromList = foldr (uncurry insert) empty
 
 toList :: Trie k v -> [([k], v)]
 toList = toList' []
   where
-    toList' p (Trie v children) = 
-        maybeToList p v ++ concatMap (\(k, t) -> toList' (p ++ [k]) t) (Map.toList children)
-    
-    maybeToList p (Just v) = [(p, v)]
-    maybeToList _ Nothing = []        
+    toList' path (Trie v children) = 
+        valueToList path v ++ concatMap (\(k, t) -> toList' (path ++ [k]) t) (Map.toList children)
+
+    valueToList p (Just v) = [(p, v)]
+    valueToList _ Nothing = []
 
 
 unionWith :: Ord k => (v -> v -> v) -> Trie k v -> Trie k v -> Trie k v

@@ -566,11 +566,13 @@ instance Arbitrary Focus where
     shrink = genericShrink
     
 instance Arbitrary Validations where
-    arbitrary = 
-        Validations <$> do 
-            size_ <- choose (0, 10)
-            es <- replicateM size_ arbitrary
-            pure $ Trie.fromList es
+    arbitrary = Validations <$> generateTrie
+    
+generateTrie :: (Arbitrary k, Arbitrary v, Ord k) => Gen (Trie.Trie k v)
+generateTrie = do 
+    size_ <- choose (0, 10)
+    es <- replicateM size_ arbitrary
+    pure $ Trie.fromList es 
 
 instance Arbitrary ValidationState where
     arbitrary = genericArbitrary
@@ -609,17 +611,11 @@ instance Arbitrary RpkiObjectType where
     shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (MetricMap a) where
-    arbitrary = generateMap $ MetricMap . MonoidalMap    
+    arbitrary = MetricMap <$> generateTrie
 
 instance (Ord k, Arbitrary k, Arbitrary v) => Arbitrary (MonoidalMap k v) where
     arbitrary = genericArbitrary
     shrink = genericShrink
-
-generateMap :: (Arbitrary k, Arbitrary a, Ord k) => (Map k a -> b) -> Gen b
-generateMap constructor = do 
-    size_ <- choose (0, 10)
-    es <- replicateM size_ arbitrary
-    pure $ constructor $ Map.fromList es
 
 instance Arbitrary TimeMs where
     arbitrary = genericArbitrary

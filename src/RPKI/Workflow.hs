@@ -1070,8 +1070,8 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
     hasUpdates validations = let 
             metrics = validations ^. #topDownMetric
-            rrdps = MonoidalMap.elems $ unMetricMap $ metrics ^. #rrdpMetrics
-            rsyncs = MonoidalMap.elems $ unMetricMap $ metrics ^. #rsyncMetrics                
+            rrdps = Trie.elems $ unMetricMap $ metrics ^. #rrdpMetrics
+            rsyncs = Trie.elems $ unMetricMap $ metrics ^. #rsyncMetrics                
         in any (\m -> rrdpRepoHasSignificantUpdates (m ^. typed)) rrdps ||
            any (\m -> rsyncRepoHasSignificantUpdates (m ^. typed)) rsyncs
 

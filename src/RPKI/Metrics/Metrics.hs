@@ -14,6 +14,7 @@ import           Data.Map.Monoidal.Strict
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Store.Base.Serialisation
+import           RPKI.Trie as Trie
 
 
 data GroupedMetric a = GroupedMetric {
@@ -38,17 +39,17 @@ groupedValidationMetric m@Metrics {..} = GroupedMetric {..}
             MonoidalMap.lookup taName (m ^. #vrpCounts . #perTaUnique)
 
     (byTa', byRepository) = 
-        MonoidalMap.foldrWithKey combineMetrics mempty $ unMetricMap validationMetrics
+        Prelude.foldr combineMetrics mempty $ Trie.toList $ unMetricMap validationMetrics
 
-    combineMetrics metricScope metric (pTa, perRepo) = (newPerTa, newPerRepo)
+    combineMetrics (scope, metric) (pTa, perRepo) = (newPerTa, newPerRepo)
       where
         newPerTa =
-            case reverse [ TaName uri | TAFocus uri <- scopeList metricScope ] of
+            case reverse [ TaName uri | TAFocus uri <- scope ] of
                 []      -> pTa
                 ta' : _ -> MonoidalMap.singleton ta' metric <> pTa
 
         newPerRepo =
-            -- take the deepest PP
-            case [ pp | PPFocus pp <- scopeList metricScope ] of
+            -- take the deepest publication point
+            case [ pp | PPFocus pp <- scope ] of
                 []      -> perRepo
                 uri : _ -> MonoidalMap.singleton uri metric <> perRepo        

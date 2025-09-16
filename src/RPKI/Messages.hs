@@ -15,7 +15,6 @@ import qualified Data.Text                   as Text
 import qualified Data.List                   as List
 
 import           Data.Hourglass
-import qualified Data.Map.Strict             as Map
 import qualified Data.Set                    as Set
 import           Data.String.Interpolate.IsString
 
@@ -25,7 +24,6 @@ import           RPKI.Domain                 as Domain
 import           RPKI.Reporting
 import           RPKI.Util (fmtLocations, hex)
 import qualified RPKI.Trie as Trie
-
 
 
 toMessage :: AppError -> Text

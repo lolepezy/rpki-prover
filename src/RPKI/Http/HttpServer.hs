@@ -473,15 +473,15 @@ getSystem AppContext {..} = do
     let proverVersion = rpkiProverVersion    
     let gitInfo       = getGitInfo
     
-    let z = MonoidalMap.toList $ unMetricMap $ metrics ^. #resources
+    let z = Trie.toList $ unMetricMap $ metrics ^. #resources
     resources <- 
-        forM z $ \(scope, resourceUsage) -> do  
+        forM z $ \(focuses, resourceUsage) -> do  
             let AggregatedCPUTime aggregatedCpuTime = resourceUsage ^. #aggregatedCpuTime
             let LatestCPUTime latestCpuTime = resourceUsage ^. #latestCpuTime
             let aggregatedClockTime = resourceUsage ^. #aggregatedClockTime
             let maxMemory = resourceUsage ^. #maxMemory
             let avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime (Earlier startUpTime) (Later now)
-            tag <- fmtScope scope
+            tag <- fmtScope focuses
             pure ResourcesDto {..}
     
     let wiToDto WorkerInfo {..} = let pid = fromIntegral workerPid in WorkerInfoDto {..}
@@ -491,10 +491,10 @@ getSystem AppContext {..} = do
     tals <- getTALs
     pure SystemDto {..}  
   where
-    fmtScope scope =
+    fmtScope focuses =
         fmap (Text.intercalate "/") $
             roTxT database $ \tx db -> do         
-                forM (scopeList scope) $ \s -> 
+                forM focuses $ \s -> 
                     resolvedFocusToText <$> resolveLocations tx db s 
 
     getTALs = do
@@ -614,8 +614,7 @@ toRepositoryDtos AppContext {..} inputs = do
         Validations $ Trie.filterWithKey (\focuses _ -> relevantToRepository uri focuses) vs
 
     filterRepositoryMetrics uri (MetricMap m) = 
-        case [ metric | (scope, metric) <- MonoidalMap.toList m, 
-            relevantToRepository uri (let (Scope f) = scope in NonEmpty.toList f) ] of 
+        case [ metric | (focuses, metric) <- Trie.toList m, relevantToRepository uri focuses ] of 
             []        -> Nothing
             metric: _ -> Just metric
 
