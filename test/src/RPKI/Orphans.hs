@@ -51,10 +51,9 @@ import qualified Crypto.PubKey.Ed25519                as Ed25519
 import qualified Crypto.PubKey.Ed448                  as Ed448
 import qualified Crypto.PubKey.RSA                    as RSA
 
-import           Data.Map        (Map)
 import qualified Data.Map.Strict as Map
 
-import System.Posix.Types
+import           System.Posix.Types
 
 import           Data.Map.Monoidal.Strict
 import           RPKI.AppTypes
