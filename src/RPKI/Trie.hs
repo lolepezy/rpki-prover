@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveFunctor      #-}
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE StrictData         #-}
 
 module RPKI.Trie where
 
