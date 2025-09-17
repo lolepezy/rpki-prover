@@ -26,13 +26,14 @@ import           Data.List.NonEmpty          (NonEmpty (..))
 import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
+import           Data.HashMap.Strict         (HashMap)
+import qualified Data.HashMap.Strict         as HashMap
 import           Data.Monoid.Generic
 import           Data.Map.Monoidal.Strict 
 import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 import           Data.Hashable
-import           RPKI.Trie                   (Trie)
-import qualified RPKI.Trie                   as Trie
+
 
 import           Data.ASN1.Types (OID)
 
@@ -252,15 +253,13 @@ newtype AppException = AppException AppError
 
 instance Exception AppException
 
-newtype Validations = Validations (Trie Focus (Set VIssue))
+newtype Validations = Validations (HashMap VScope (Set VIssue))
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
+    deriving newtype (Monoid)
 
 instance Semigroup Validations where
-    (Validations m1) <> (Validations m2) = Validations $ Trie.unionWith (<>) m1 m2
-
-instance Monoid Validations where
-    mempty = Validations Trie.empty    
+    (Validations m1) <> (Validations m2) = Validations $ HashMap.unionWith (<>) m1 m2
 
 
 data Focus = TAFocus Text 
@@ -272,12 +271,11 @@ data Focus = TAFocus Text
             | RepositoryFocus RpkiURL
             | TextFocus Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Hashable)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary, NFData, Hashable)
 
 newtype Scope (t :: ScopeKind) = Scope { unScope :: NonEmpty Focus }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary, NFData, Hashable)
 
 data ScopeKind = Validation | Metric
     deriving stock (Show, Eq, Ord, Generic)
@@ -325,21 +323,21 @@ mWarning :: VScope -> VWarning -> Validations
 mWarning vc w = mProblem vc (VWarn w)
 
 mProblem :: VScope -> VIssue -> Validations
-mProblem vs p = Validations $ Trie.singleton (focuses vs) $ Set.singleton p
+mProblem vs p = Validations $ HashMap.singleton vs $ Set.singleton p
 
 emptyValidations :: Validations -> Bool 
-emptyValidations (Validations m) = List.all (Set.null . snd) $ Trie.toList m
+emptyValidations (Validations m) = List.all (Set.null . snd) $ HashMap.toList m
 
 removeValidation :: VScope -> (AppError -> Bool) -> Validations -> Validations
 removeValidation vScope predicate (Validations vs) =
-    Validations $ Trie.adjust removeFromSet (focuses vScope) vs    
+    Validations $ HashMap.adjust removeFromSet vScope vs    
   where 
     removeFromSet = Set.filter $ \case 
         VErr e             -> not $ predicate e
         VWarn (VWarning e) -> not $ predicate e
 
 getIssues :: VScope -> Validations -> Set VIssue
-getIssues s (Validations vs) = fromMaybe mempty $ Trie.lookup (focuses s) vs
+getIssues s (Validations vs) = fromMaybe mempty $ HashMap.lookup s vs
 
 
 ------------------------------------------------
@@ -462,17 +460,14 @@ instance MetricC RsyncMetric where
 instance MetricC ValidationMetric where 
     metricLens = #validationMetrics
 
-newtype MetricMap a = MetricMap { unMetricMap :: Trie Focus a }
+newtype MetricMap a = MetricMap { unMetricMap :: HashMap MetricScope a }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
     deriving newtype Functor
+    deriving newtype Monoid
     
-
 instance Semigroup a => Semigroup (MetricMap a) where
-    (MetricMap m1) <> (MetricMap m2) = MetricMap $ Trie.unionWith (<>) m1 m2
-
-instance Semigroup a => Monoid (MetricMap a) where
-    mempty = MetricMap Trie.empty
+    (MetricMap m1) <> (MetricMap m2) = MetricMap $ HashMap.unionWith (<>) m1 m2
 
 
 data VrpCounts = VrpCounts { 
@@ -520,10 +515,10 @@ mTrace = Set.singleton
 updateMetricInMap :: Monoid a => 
                     MetricScope -> (a -> a) -> MetricMap a -> MetricMap a
 updateMetricInMap ms f (MetricMap t) = 
-    MetricMap $ Trie.alter (Just . f . fromMaybe mempty) (focuses ms) t
+    MetricMap $ HashMap.alter (Just . f . fromMaybe mempty) ms t
 
 lookupMetric :: MetricScope -> MetricMap a -> Maybe a
-lookupMetric ms (MetricMap t) = Trie.lookup (focuses ms) t
+lookupMetric ms (MetricMap t) = HashMap.lookup ms t
 
 isHttpSuccess :: HttpStatus -> Bool
 isHttpSuccess (HttpStatus s) = s >= 200 && s < 300

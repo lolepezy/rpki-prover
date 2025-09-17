@@ -27,6 +27,7 @@ import qualified Data.Set                         as Set
 import qualified Data.List                        as List
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
+import qualified Data.HashMap.Strict              as HashMap
 import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
@@ -62,7 +63,6 @@ import           RPKI.Resources.Validity
 import           RPKI.Util
 import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 import           RPKI.Version
-import qualified RPKI.Trie as Trie
 
 
 httpServer :: (Storage s, MaintainableStorage s) => AppContext s -> Application
@@ -473,15 +473,15 @@ getSystem AppContext {..} = do
     let proverVersion = rpkiProverVersion    
     let gitInfo       = getGitInfo
     
-    let z = Trie.toList $ unMetricMap $ metrics ^. #resources
+    let z = HashMap.toList $ unMetricMap $ metrics ^. #resources
     resources <- 
-        forM z $ \(focuses, resourceUsage) -> do  
+        forM z $ \(scope, resourceUsage) -> do  
             let AggregatedCPUTime aggregatedCpuTime = resourceUsage ^. #aggregatedCpuTime
             let LatestCPUTime latestCpuTime = resourceUsage ^. #latestCpuTime
             let aggregatedClockTime = resourceUsage ^. #aggregatedClockTime
             let maxMemory = resourceUsage ^. #maxMemory
             let avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime (Earlier startUpTime) (Later now)
-            tag <- fmtScope focuses
+            tag <- fmtScope scope
             pure ResourcesDto {..}
     
     let wiToDto WorkerInfo {..} = let pid = fromIntegral workerPid in WorkerInfoDto {..}
@@ -491,11 +491,11 @@ getSystem AppContext {..} = do
     tals <- getTALs
     pure SystemDto {..}  
   where
-    fmtScope focuses =
+    fmtScope scope =
         fmap (Text.intercalate "/") $
             roTxT database $ \tx db -> do         
-                forM focuses $ \s -> 
-                    resolvedFocusToText <$> resolveLocations tx db s 
+                forM (focuses scope) $ \f -> 
+                    resolvedFocusToText <$> resolveLocations tx db f
 
     getTALs = do
         db <- liftIO $ readTVarIO database
@@ -611,15 +611,15 @@ toRepositoryDtos AppContext {..} inputs = do
   where
 
     filterRepositoryValidations uri (Validations vs) = 
-        Validations $ Trie.filterWithKey (\focuses _ -> relevantToRepository uri focuses) vs
+        Validations $ HashMap.filterWithKey (\scope _ -> relevantToRepository uri scope) vs
 
     filterRepositoryMetrics uri (MetricMap m) = 
-        case [ metric | (focuses, metric) <- Trie.toList m, relevantToRepository uri focuses ] of 
+        case [ metric | (scope, metric) <- HashMap.toList m, relevantToRepository uri scope ] of 
             []        -> Nothing
             metric: _ -> Just metric
 
-    relevantToRepository uri focuses = 
-        uri `elem` [ u | RepositoryFocus u <- focuses ]
+    relevantToRepository uri scope = 
+        uri `elem` [ u | RepositoryFocus u <- focuses scope ]
 
 
 resolveOriginalDto :: (MonadIO m, Storage s) 

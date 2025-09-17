@@ -26,6 +26,7 @@ import Data.ASN1.BitArray
 import Data.Tuple.Strict
 import Data.Set.NonEmpty
 import Data.Map.Monoidal.Strict
+import Data.HashMap.Strict
 
 import Crypto.Error
 import Crypto.PubKey.RSA.Types (PublicKey(..))
@@ -115,3 +116,4 @@ $($(derive [d|instance (Ord a, Store a) => Deriving (Store (NESet a))|]))
 $($(derive [d|instance (Ord a, Store a, Store b) => Deriving (Store (MonoidalMap a b))|]))
 
 $($(derive [d|instance (Store a, Store b) => Deriving (Store (These a b))|]))
+

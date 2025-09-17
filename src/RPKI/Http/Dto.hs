@@ -10,10 +10,10 @@ import           Control.Applicative
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Builder          as BB
 
-import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set                         as Set
 import qualified Data.Vector                      as V
 import qualified Data.Map.Strict                  as Map
+import qualified Data.HashMap.Strict              as HashMap
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
@@ -39,7 +39,6 @@ import           RPKI.RTR.Types
 import           RPKI.Validation.Types
 import           RPKI.Util
 import           RPKI.AppTypes (WorldVersion)
-import qualified RPKI.Trie as Trie
 
 {-
     Mainly domain objects -> DTO convertions. 
@@ -106,11 +105,11 @@ validationsToDto version validations =
 
 toVDtos :: Validations -> [OriginalVDto]
 toVDtos (Validations vMap) = 
-    flip map (Trie.toList vMap) $ \(scope, issues) ->        
+    flip map (HashMap.toList vMap) $ \(scope, issues) ->        
         OriginalVDto $ ValidationDto {
             issues = map toDto $ Set.toList issues,
-            path   = scope,
-            url    = head scope
+            path   = focuses scope,
+            url    = head $ focuses scope
         }
   where
     toDto = \case

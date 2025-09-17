@@ -13,6 +13,7 @@ module RPKI.Messages where
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 import qualified Data.List                   as List
+import qualified Data.HashMap.Strict         as HashMap
 
 import           Data.Hourglass
 import qualified Data.Set                    as Set
@@ -23,8 +24,6 @@ import           Data.ASN1.Types (OID)
 import           RPKI.Domain                 as Domain
 import           RPKI.Reporting
 import           RPKI.Util (fmtLocations, hex)
-import qualified RPKI.Trie as Trie
-
 
 toMessage :: AppError -> Text
 toMessage = \case
@@ -382,10 +381,10 @@ formatValidations :: Validations -> Text
 formatValidations (Validations vs) = 
     mconcat 
     $ List.intersperse "\n"  
-    [ formatForObject s issues | (s, issues) <- Trie.toList vs ]
+    [ formatForObject s issues | (s, issues) <- HashMap.toList vs ]
   where    
     formatForObject s issues = 
-        [i|#{focusToText $ head s}:
+        [i|#{focusToText $ head $ focuses s}:
 #{issuesText}|]
       where
         issuesText :: Text = mconcat 

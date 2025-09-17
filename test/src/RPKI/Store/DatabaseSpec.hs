@@ -12,6 +12,7 @@ module RPKI.Store.DatabaseSpec where
 
 import           Control.Exception.Lifted
 
+import           Control.Concurrent (threadDelay)
 import           Control.Lens                     
 import           Control.Monad
 import           Control.Monad.Reader
@@ -21,11 +22,13 @@ import qualified Data.ByteString                   as BS
 import           Data.Foldable
 import qualified Data.List                         as List
 import qualified Data.Map.Strict                   as Map
+import qualified Data.HashMap.Strict               as HashMap
 import           Data.Maybe
 import           Data.Ord
 import           Data.Proxy
 import qualified Data.Set as Set
 import qualified Data.Text                         as Text
+import           Data.Generics.Product (HasField)
 
 import           System.Directory
 import           System.IO.Temp
@@ -56,12 +59,9 @@ import qualified RPKI.Store.MakeLmdb as Lmdb
 
 import           RPKI.Time
 import           RPKI.Util
-import qualified RPKI.Trie as Trie
 
 import           RPKI.RepositorySpec
 
-import Data.Generics.Product (HasField)
-import Control.Concurrent (threadDelay)
 
 
 databaseGroup :: TestTree
@@ -474,7 +474,7 @@ shouldPreserveStateInAppTx io = do
 
     let addedObject = updateMetric @RrdpMetric @_ (#added %~ Map.unionWith (+) (Map.singleton (Just CER) 1))
 
-    (_, ValidationState { validations = Validations validationTrie, .. }) 
+    (_, ValidationState { validations = Validations validationMap, .. }) 
         <- runValidatorT (newScopes "root") $ 
             timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                 appWarn $ UnspecifiedE "Error0" "text 0"
@@ -501,14 +501,14 @@ shouldPreserveStateInAppTx io = do
                             (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Root validations should have 1 warning"     
-        (Trie.lookup [TextFocus "root"] validationTrie)
+        (HashMap.lookup (newScope "root") validationMap)
         (Just $ Set.fromList [
             VWarn (VWarning (UnspecifiedE "Error0" "text 0")),
             VWarn (VWarning (UnspecifiedE "Error1" "text 1")),            
             VWarn (VWarning (UnspecifiedE "Error4" "text 4"))])
 
     HU.assertEqual "Nested validations should have 1 warning" 
-        (Trie.lookup [TextFocus "nested-1", TextFocus "root"] validationTrie)
+        (HashMap.lookup (subScope TextFocus "nested-1" (newScope "root")) validationMap)
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
 
 

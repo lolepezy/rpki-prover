@@ -65,7 +65,6 @@ import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
 import qualified RPKI.Util                   as U
-import qualified RPKI.Trie                   as Trie
 
 instance ToJSON ASN where
     toJSON = toJSON . show
@@ -178,8 +177,7 @@ instance ToJSONKey ObjectKey where
 instance ToJSON Focus
 instance ToJSONKey (Scope 'Metric)
 instance ToJSON (Scope 'Metric)
-instance ToJSON a => ToJSON (MetricMap a) where
-    toJSON (MetricMap t) = toJSON $ Trie.toList t
+instance ToJSON a => ToJSON (MetricMap a)
 
 instance ToJSON TimeMs where 
     toJSON (TimeMs s) = toJSON s

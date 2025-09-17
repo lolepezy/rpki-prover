@@ -15,6 +15,7 @@ import qualified Data.Text                            as Text
 
 import           Data.List.NonEmpty                   (NonEmpty(..))
 import qualified Data.Set.NonEmpty                    as NESet
+import qualified Data.HashMap.Strict                  as HashMap
 
 import           Test.QuickCheck hiding ((.&.))
 import           Test.QuickCheck.Arbitrary.Generic
@@ -61,8 +62,6 @@ import           RPKI.Logging
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
 import           RPKI.Util       (convert, mkHash)
-import qualified RPKI.Trie as Trie
-
 
 instance Arbitrary WorldVersion where
     arbitrary = genericArbitrary
@@ -565,14 +564,8 @@ instance Arbitrary Focus where
     shrink = genericShrink
     
 instance Arbitrary Validations where
-    arbitrary = Validations <$> generateTrie
+    arbitrary = Validations . HashMap.fromList <$> generatePairs 
     
-generateTrie :: (Arbitrary k, Arbitrary v, Ord k) => Gen (Trie.Trie k v)
-generateTrie = do 
-    size_ <- choose (0, 10)
-    es <- replicateM size_ arbitrary
-    pure $ Trie.fromList es 
-
 instance Arbitrary ValidationState where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -610,7 +603,7 @@ instance Arbitrary RpkiObjectType where
     shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (MetricMap a) where
-    arbitrary = MetricMap <$> generateTrie
+    arbitrary = MetricMap . HashMap.fromList <$> generatePairs
 
 instance (Ord k, Arbitrary k, Arbitrary v) => Arbitrary (MonoidalMap k v) where
     arbitrary = genericArbitrary
@@ -934,3 +927,9 @@ instance Arbitrary DistinguishedName where
     arbitrary = DistinguishedName <$> (choose (1, 5) >>= \l -> replicateM l arbitraryDE)
       where
         arbitraryDE = (,) <$> arbitrary <*> arbitrary
+
+
+generatePairs :: (Arbitrary k, Arbitrary a) => Gen [(k, a)]
+generatePairs = do
+    size_ <- choose (0, 10)
+    replicateM size_ arbitrary    

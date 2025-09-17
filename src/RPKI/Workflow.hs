@@ -31,6 +31,7 @@ import qualified Data.List.NonEmpty              as NonEmpty
 import           Data.Map.Strict                 (Map)
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
+import qualified Data.HashMap.Strict             as HashMap
 import           Data.Set                        (Set)
 import qualified Data.Set                        as Set
 import qualified Data.Vector                     as V
@@ -73,7 +74,6 @@ import           RPKI.RRDP.Types
 import           RPKI.TAL
 import           RPKI.Parallel
 import           RPKI.Util      
-import qualified RPKI.Trie as Trie               
 import           RPKI.Time
 import           RPKI.Worker
 import           RPKI.SLURM.Types
@@ -757,7 +757,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
         repositoriesWithManifestIntegrityIssues = 
             Map.fromListWith (<>) [ 
                 (relevantRepo, relevantIssues) | 
-                    (scope, issues) <- Trie.toList validations,                    
+                    (scope, issues) <- HashMap.toList validations,                    
                     let relevantIssues = filter manifestIntegrityError (Set.toList issues),
                     not (null relevantIssues),
                     relevantRepo <- mostNarrowPPScope scope
@@ -775,8 +775,8 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                     ReferentialIntegrityError _         -> True                
                     _                                   -> False
 
-            mostNarrowPPScope s = 
-                take 1 [ url | PPFocus (RrdpU url) <- s ]
+            mostNarrowPPScope scope = 
+                take 1 [ url | PPFocus (RrdpU url) <- focuses scope ]
 
 
 -- | Adjust running fetchers to the latest discovered repositories
@@ -1070,8 +1070,8 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
     hasUpdates validations = let 
             metrics = validations ^. #topDownMetric
-            rrdps = Trie.elems $ unMetricMap $ metrics ^. #rrdpMetrics
-            rsyncs = Trie.elems $ unMetricMap $ metrics ^. #rsyncMetrics                
+            rrdps = HashMap.elems $ unMetricMap $ metrics ^. #rrdpMetrics
+            rsyncs = HashMap.elems $ unMetricMap $ metrics ^. #rsyncMetrics                
         in any (\m -> rrdpRepoHasSignificantUpdates (m ^. typed)) rrdps ||
            any (\m -> rsyncRepoHasSignificantUpdates (m ^. typed)) rsyncs
 

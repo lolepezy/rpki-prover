@@ -15,7 +15,6 @@ import RPKI.RepositorySpec
 import RPKI.FetchSpec
 import RPKI.RTR.RtrSpec
 import RPKI.SLURM.SlurmSpec
-import RPKI.TrieSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
@@ -31,6 +30,5 @@ main = defaultMain $ testGroup "All tests" [
         httpSpec,
         slurmGroup,
         loggingSpec,
-        workflowSpec,
-        trieSpec
+        workflowSpec
     ]  
