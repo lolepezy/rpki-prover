@@ -26,3 +26,4 @@ extra-deps:
   - shower-0.2.0.2@sha256:2c2b1cd25e4330f03ba68631b37d4346bf42644bc8e9a7a819ce605acc72bb34,1473
 
 allow-newer: true
+
