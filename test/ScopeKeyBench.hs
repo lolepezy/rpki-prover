@@ -8,10 +8,11 @@ import Control.Monad (replicateM)
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Map.Strict as Map
 import qualified Data.HashMap.Strict as HashMap
+import qualified Data.Trie.Map as Trie
 import Data.Text (Text)
 import qualified Data.Text as T
 
-import RPKI.Reporting (Focus(..), Scope(..), VScope)
+import RPKI.Reporting (Focus(..), Scope(..), VScope, focuses)
 
 -- Generator for random URLs of specified length
 genUrl :: Int -> Int -> Gen Text
@@ -60,31 +61,45 @@ main = do
   -- Generate 1000 VScope objects for construction and lookup
   scopes <- generate $ genVScopes 1000
   
+  -- Extract focus lists for trie
+  let scopeFocuses = map focuses scopes
+  
   -- Build the data structures for tests
   let mapDS = Map.fromList $ zip scopes [1..1000 :: Int]
       hashmapDS = HashMap.fromList $ zip scopes [1..1000 :: Int]
+      trieDS = Trie.fromList $ zip scopeFocuses [1..1000 :: Int]
   
   -- Run benchmarks with many repetitions
   defaultMain [
-    bgroup "Map vs HashMap with VScope keys" [
+    bgroup "Map vs HashMap vs Trie with VScope keys" [
       bgroup "Construction (1000 elements)" [
         bench "Map.fromList" $ nf (Map.fromList . flip zip [1..1000 :: Int]) scopes,
-        bench "HashMap.fromList" $ nf (HashMap.fromList . flip zip [1..1000 :: Int]) scopes
+        bench "HashMap.fromList" $ nf (HashMap.fromList . flip zip [1..1000 :: Int]) scopes,
+        bench "Trie.fromList" $ nf (Trie.fromList . flip zip [1..1000 :: Int]) scopeFocuses
       ],
       
       bgroup "Lookup (all 1000 keys)" [
         bench "Map.lookup" $ nf (\keys -> map (`Map.lookup` mapDS) keys) scopes,
-        bench "HashMap.lookup" $ nf (\keys -> map (`HashMap.lookup` hashmapDS) keys) scopes
+        bench "HashMap.lookup" $ nf (\keys -> map (`HashMap.lookup` hashmapDS) keys) scopes,
+        bench "Trie.lookup" $ nf (\keys -> map (`Trie.lookup` trieDS) scopeFocuses) scopeFocuses
       ],
       
       bgroup "Membership Testing (all 1000 keys)" [
         bench "Map.member" $ nf (\keys -> map (`Map.member` mapDS) keys) scopes,
-        bench "HashMap.member" $ nf (\keys -> map (`HashMap.member` hashmapDS) keys) scopes
+        bench "HashMap.member" $ nf (\keys -> map (`HashMap.member` hashmapDS) keys) scopes,
+        bench "Trie.member" $ nf (\keys -> map (`Trie.member` trieDS) keys) scopeFocuses
       ],
       
       bgroup "Iteration (sum of all values)" [
         bench "Map.foldr" $ nf (Map.foldr (+) 0) mapDS,
-        bench "HashMap.foldr" $ nf (HashMap.foldr (+) 0) hashmapDS
+        bench "HashMap.foldr" $ nf (HashMap.foldr (+) 0) hashmapDS,
+        bench "Trie.foldr" $ nf (Trie.foldr (+) 0) trieDS
+      ],
+      
+      bgroup "Prefix lookup (first element)" [
+        -- Can't do prefix lookup with Map/HashMap directly
+        bench "Trie.lookupBy prefix" $ nf (map (\focusList -> 
+          Trie.lookupBy (take 2 focusList) trieDS)) scopeFocuses
       ]
     ]
   ]

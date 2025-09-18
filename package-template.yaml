@@ -124,6 +124,7 @@ dependencies:
 - vector
 - warp
 - xeno
+- trie-simple
 
 
 ghc-options:  
