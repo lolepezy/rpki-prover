@@ -305,6 +305,7 @@ data ResourcesDto = ResourcesDto {
         aggregatedCpuTime   :: CPUTime,
         aggregatedClockTime :: TimeMs,
         maxMemory           :: MaxMemory,        
+        avgMemory           :: MaxMemory,        
         avgCpuTimeMsPerSecond :: Double
     }
     deriving stock (Eq, Show, Generic)

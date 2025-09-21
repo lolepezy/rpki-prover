@@ -206,3 +206,21 @@ tests:
     - quickcheck-instances
     - wreq
 
+
+benchmarks:
+  map-vs-hashmap-bench:
+    main: ScopeKeyBench.hs
+    source-dirs: bench
+    ghc-options:
+    - -threaded
+    - -O2
+    - -Wall
+    - -rtsopts
+    - -funbox-strict-fields
+    - '"-with-rtsopts=-A64m -AL128m -N1 -T"'
+    dependencies:
+    - rpki-prover
+    - criterion
+    - QuickCheck
+    - containers
+    - unordered-containers

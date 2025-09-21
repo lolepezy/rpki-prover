@@ -10,7 +10,6 @@ import           Control.Applicative
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Builder          as BB
 
-import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set                         as Set
 import qualified Data.Vector                      as V
 import qualified Data.Map.Strict                  as Map

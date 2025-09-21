@@ -190,6 +190,9 @@ instance ToJSON CPUTime where
 instance ToJSON AggregatedCPUTime where 
     toJSON (AggregatedCPUTime (CPUTime s)) = toJSON s
 
+instance ToJSON AvgMemory where 
+    toJSON = toJSON . getAvgMemory
+
 instance ToJSON LatestCPUTime where 
     toJSON (LatestCPUTime (CPUTime s)) = toJSON s
 

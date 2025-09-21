@@ -8,6 +8,7 @@ module RPKI.Trie where
 
 import           Control.DeepSeq    
 
+import           Data.Maybe (isJust)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (maybeToList)
@@ -22,7 +23,7 @@ import           RPKI.Store.Base.Serialisation
     A simple Trie (prefix tree) implementation.
 
     The only reason it exists here is to be able to derive TheBinary instance for it.
-    Doing it for library type is pretty cumbersome (or not possible at all).    
+    Doing it for a library type is a PITA.
 -}
 
 data Trie k v = Trie { 
@@ -51,6 +52,9 @@ lookup :: Ord k => [k] -> Trie k v -> Maybe v
 lookup [] (Trie v _) = v
 lookup (k:ks) Trie {..} = 
     lookup ks =<< Map.lookup k children         
+
+member :: Ord k => [k] -> Trie k v -> Bool
+member ks t = isJust (lookup ks t)
 
 elems :: Trie k v -> [v]
 elems (Trie v children) = maybeToList v ++ concatMap elems (Map.elems children)  

@@ -272,12 +272,11 @@ data Focus = TAFocus Text
             | RepositoryFocus RpkiURL
             | TextFocus Text
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Hashable)
-    deriving anyclass (TheBinary, NFData)
+    deriving anyclass (TheBinary, NFData, Hashable)
 
 newtype Scope (t :: ScopeKind) = Scope { unScope :: NonEmpty Focus }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass (TheBinary, NFData, Hashable)
 
 data ScopeKind = Validation | Metric
     deriving stock (Show, Eq, Ord, Generic)

@@ -475,13 +475,14 @@ getSystem AppContext {..} = do
     
     let z = Trie.toList $ unMetricMap $ metrics ^. #resources
     resources <- 
-        forM z $ \(focuses, resourceUsage) -> do  
+        forM z $ \(focuses_, resourceUsage) -> do  
             let AggregatedCPUTime aggregatedCpuTime = resourceUsage ^. #aggregatedCpuTime
             let LatestCPUTime latestCpuTime = resourceUsage ^. #latestCpuTime
             let aggregatedClockTime = resourceUsage ^. #aggregatedClockTime
             let maxMemory = resourceUsage ^. #maxMemory
             let avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime (Earlier startUpTime) (Later now)
-            tag <- fmtScope focuses
+            let avgMemory = getAvgMemory $ resourceUsage ^. #avgMemory
+            tag <- fmtScope focuses_
             pure ResourcesDto {..}
     
     let wiToDto WorkerInfo {..} = let pid = fromIntegral workerPid in WorkerInfoDto {..}
@@ -491,10 +492,10 @@ getSystem AppContext {..} = do
     tals <- getTALs
     pure SystemDto {..}  
   where
-    fmtScope focuses =
+    fmtScope focuses_ =
         fmap (Text.intercalate "/") $
             roTxT database $ \tx db -> do         
-                forM focuses $ \s -> 
+                forM focuses_ $ \s -> 
                     resolvedFocusToText <$> resolveLocations tx db s 
 
     getTALs = do
@@ -611,15 +612,15 @@ toRepositoryDtos AppContext {..} inputs = do
   where
 
     filterRepositoryValidations uri (Validations vs) = 
-        Validations $ Trie.filterWithKey (\focuses _ -> relevantToRepository uri focuses) vs
+        Validations $ Trie.filterWithKey (\focuses_ _ -> relevantToRepository uri focuses_) vs
 
     filterRepositoryMetrics uri (MetricMap m) = 
-        case [ metric | (focuses, metric) <- Trie.toList m, relevantToRepository uri focuses ] of 
+        case [ metric | (focuses_, metric) <- Trie.toList m, relevantToRepository uri focuses_] of 
             []        -> Nothing
             metric: _ -> Just metric
 
-    relevantToRepository uri focuses = 
-        uri `elem` [ u | RepositoryFocus u <- focuses ]
+    relevantToRepository uri focuses_ = 
+        uri `elem` [ u | RepositoryFocus u <- focuses_ ]
 
 
 resolveOriginalDto :: (MonadIO m, Storage s) 

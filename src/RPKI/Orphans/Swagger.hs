@@ -122,6 +122,8 @@ instance ToSchema LatestCPUTime where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 instance ToSchema MaxMemory where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
+instance ToSchema AvgMemory where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 instance ToSchema Size where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 
