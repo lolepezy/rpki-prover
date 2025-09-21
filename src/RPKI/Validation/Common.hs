@@ -1,10 +1,4 @@
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE QuasiQuotes                #-}
-{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE DerivingVia                #-}
 
@@ -30,8 +24,8 @@ import qualified RPKI.Util as U
 
 
 createVerifiedResources :: CaCerObject -> VerifiedRS PrefixesAndAsns
-createVerifiedResources certificate = 
-    VerifiedRS $ toPrefixesAndAsns $ getRawCert certificate ^. typed
+createVerifiedResources certificate_ = 
+    VerifiedRS $ toPrefixesAndAsns $ getRawCert certificate_ ^. typed
 
 validateMftFileName :: Monad m => Text.Text -> ValidatorT m ()
 validateMftFileName filename =                

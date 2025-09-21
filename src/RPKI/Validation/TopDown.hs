@@ -1559,11 +1559,11 @@ makeMftShortcut key
     crlShortcut = let 
         SignCRL {..} = validCrl ^. #signCrl
         -- That must always match, since it's a validated CRL
-        Just nextUpdateTime' = nextUpdateTime            
+        Just nextUpdateTime_ = nextUpdateTime            
         in CrlShortcut {
             key = crlKey,
             notValidBefore = thisUpdateTime,
-            notValidAfter = nextUpdateTime'
+            notValidAfter = nextUpdateTime_
         }            
     in MftShortcut { .. }  
 
