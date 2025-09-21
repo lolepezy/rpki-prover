@@ -8,10 +8,9 @@ module RPKI.Trie where
 
 import           Control.DeepSeq    
 
-import           Data.Maybe (isJust)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (maybeToList)
+import           Data.Maybe
 
 import           GHC.Generics
 
@@ -64,8 +63,7 @@ insert [] v (Trie _ children) = Trie (Just v) children
 insert (k:ks) v (Trie value children) = 
     Trie value (Map.alter updateChild k children)
   where
-    updateChild Nothing = Just (insert ks v empty)
-    updateChild (Just trie) = Just (insert ks v trie)
+    updateChild  = Just . insert ks v . fromMaybe empty
 
 delete :: Ord k => [k] -> Trie k v -> Trie k v
 delete = alter (const Nothing)
@@ -106,14 +104,14 @@ toList = toList' []
 
 unionWith :: Ord k => (v -> v -> v) -> Trie k v -> Trie k v -> Trie k v
 unionWith f (Trie v1 c1) (Trie v2 c2) = Trie combinedValues combinedChildren
-      where
-        combinedValues = case (v1, v2) of
-            (Nothing, Nothing) -> Nothing
-            (Just x, Nothing)  -> Just x
-            (Nothing, Just y)  -> Just y            
-            (Just x, Just y)   -> Just $ f x y            
-        
-        combinedChildren = Map.unionWith (unionWith f) c1 c2    
+  where
+    combinedValues = case (v1, v2) of
+        (Nothing, Nothing) -> Nothing
+        (Just x, Nothing)  -> Just x
+        (Nothing, Just y)  -> Just y            
+        (Just x, Just y)   -> Just $ f x y            
+    
+    combinedChildren = Map.unionWith (unionWith f) c1 c2    
 
 
 filterWithKey :: Ord k => ([k] -> v -> Bool) -> Trie k v -> Trie k v
