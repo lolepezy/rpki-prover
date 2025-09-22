@@ -141,6 +141,7 @@ executables:
     - -threaded
     - -O2
     - -Wall    
+    - -Wunused-packages
     - -rtsopts
     - -funbox-strict-fields
     - '"-with-rtsopts=-A16m -AL64m -N2 -qg -T -I0 --disable-delayed-os-memory-return"'

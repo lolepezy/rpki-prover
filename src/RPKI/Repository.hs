@@ -326,10 +326,7 @@ newRsyncTree :: RsyncTree a
 newRsyncTree = SubTree mempty
 
 newRsyncForest :: RsyncForest
-newRsyncForest = newRsyncForestGen
-
-newRsyncForestGen :: RsyncForestGen a
-newRsyncForestGen = RsyncForestGen Map.empty
+newRsyncForest = RsyncForestGen Map.empty
 
 toRsyncForest :: RsyncURL -> a -> RsyncForestGen a -> RsyncForestGen a
 toRsyncForest (RsyncURL host path) a (RsyncForestGen byHost) = 
@@ -380,3 +377,4 @@ flattenTree host tree = go tree []
     go (Leaf info) realPath  = [(RsyncURL host (reverse realPath), info)]
     go SubTree {..} realPath = 
         concatMap (\(p, n) -> go n (p : realPath)) $ Map.toList rsyncChildren  
+
