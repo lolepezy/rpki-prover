@@ -157,7 +157,7 @@ withWorkflowShared AppContext {..} prometheusMetrics tals f = do
         pure WorkflowShared {..}
 
     f shared `finally`
-        liftIO (mask_ $ do
+        liftIO (do
             fs <- atomically $ Map.elems <$> readTVar (shared ^. #fetchers . #runningFetchers)
             for_ fs $ \thread -> Conc.throwTo thread AsyncCancelled)
 
@@ -630,7 +630,7 @@ runValidation :: Storage s =>
             -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire), Maybe Slurm)
 runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames = do           
 
-    results <- validateMutlipleTAs appContext worldVersion talsToValidate
+    results <- validateTAs appContext worldVersion talsToValidate
         
     -- Apply SLURM if it is set in the appState
     (slurmValidations, maybeSlurm) <- reReadSlurm        

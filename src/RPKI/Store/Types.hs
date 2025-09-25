@@ -1,10 +1,6 @@
 {-# LANGUAGE DerivingStrategies    #-}
 {-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE StrictData            #-}
-{-# LANGUAGE OverloadedStrings     #-}
 
 module RPKI.Store.Types where
 
@@ -14,8 +10,6 @@ import qualified Data.ByteString.Short    as BSS
 
 import           GHC.Generics
 import           RPKI.TAL
-
-import           RPKI.Time                (Instant)
 
 import           RPKI.Repository
 import           RPKI.AppTypes
@@ -39,10 +33,6 @@ data ObjectMeta = ObjectMeta {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary, NFData)
 
-data MftTimingMark = MftTimingMark Instant Instant 
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
 newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)        
@@ -58,7 +48,7 @@ newtype ObjectOriginal = ObjectOriginal BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)        
 
-data DBFileStats = DBFileStats {
+newtype DBFileStats = DBFileStats {
     fileSize :: Size
 } deriving stock (Show, Eq, Generic)
 

@@ -1,22 +1,19 @@
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE QuasiQuotes                #-}
-{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE RecordWildCards            #-}
 
 module RPKI.Validation.Common where
 
 import           Control.Monad
 
-import           Control.Lens
+import           Control.Lens ((^.))
 import           Data.Generics.Product.Typed
 
 import           Data.Foldable
 import qualified Data.Set.NonEmpty                as NESet
+import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set                         as Set
 import qualified Data.Text                        as Text
 
@@ -25,13 +22,15 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Resources
+import           RPKI.Validation.Types
 import           RPKI.Resources.Types
 import qualified RPKI.Util as U
+import           RPKI.Time  
 
 
 createVerifiedResources :: CaCerObject -> VerifiedRS PrefixesAndAsns
-createVerifiedResources certificate = 
-    VerifiedRS $ toPrefixesAndAsns $ getRawCert certificate ^. typed
+createVerifiedResources c = 
+    VerifiedRS $ toPrefixesAndAsns $ getRawCert c ^. typed
 
 validateMftFileName :: Monad m => Text.Text -> ValidatorT m ()
 validateMftFileName filename =                
@@ -88,3 +87,52 @@ checkCrlLocation crl parentCertificate =
         when (Set.null $ NESet.filter ((crlDP ==) . getURL) $ unLocations crlLocations) $ 
             vError $ CRLOnDifferentLocation crlDP crlLocations
 
+
+updateMfts :: AnMft -> Now -> MftsMeta -> MftsMeta 
+updateMfts newMft (Now now) (MftsMeta mfts) = MftsMeta mfts'   
+  where
+    mfts' = NonEmpty.fromList 
+        $ filterOutDefinitelyInvalid 
+        $ sortedMfts 
+        $ NonEmpty.toList mfts    
+
+    -- insert new manifest while keeping the list sorted backwards by nextUpdateTime
+    sortedMfts [] = [newMft]
+    sortedMfts (mft: otherMfts) 
+        | newMft `expiresLater` mft = newMft : mft : otherMfts
+        | otherwise                 = mft : sortedMfts otherMfts
+      
+    expiresLater m1 m2 = m1 ^. #nextUpdate > m2 ^. #nextUpdate
+    
+    -- filter out all MFTs that are already expired and will never be valid,
+    -- but keep at least one, so that the list is never empty, otherwise we are 
+    -- going to get "no MFT" error instead of "there's a manifest but it's expired"
+    filterOutDefinitelyInvalid = go (0 :: Int)
+      where
+        go _ [] = []
+        go !n (mft: mfts_) = 
+            if mft ^. #nextUpdate < now 
+                then if n == 0 
+                    then mft : go 1 mfts_ 
+                    else go 0 mfts_ 
+                else mft : go (n + 1) mfts_
+
+pickMft :: MftsMeta -> Now -> [AnMft]
+pickMft (MftsMeta mfts) (Now now) = 
+    -- skip MFTs that are not valid yet
+    filter (\m -> m ^. #thisUpdate <= now) 
+    $ NonEmpty.toList mfts
+
+newMftEntry :: WithValidityPeriod a => ObjectKey -> a -> AnMft
+newMftEntry key mftObject = let 
+        (thisUpdate, nextUpdate) = getValidityPeriod mftObject
+    in AnMft {..}
+
+newMftsMeta :: WithValidityPeriod a => ObjectKey -> a -> MftsMeta
+newMftsMeta key mftObject = 
+    MftsMeta $ NonEmpty.singleton $ newMftEntry key mftObject
+
+deleteMft :: ObjectKey -> MftsMeta -> Maybe MftsMeta
+deleteMft key (MftsMeta mfts) =
+    fmap MftsMeta $ NonEmpty.nonEmpty $ NonEmpty.filter (\m -> m ^. #key /= key) mfts    
+    

@@ -17,6 +17,7 @@ import           Control.Monad
 import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
 import           Data.Foldable            (for_)
+import qualified Data.List.NonEmpty        as NonEmpty
 
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as C8
@@ -55,6 +56,7 @@ import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 import           RPKI.Validation.Types
+import           RPKI.Validation.Common
 
 import           RPKI.Util                (ifJustM)
 
@@ -71,7 +73,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 44
+currentDatabaseVersion = 47
 
 -- Some constant keys
 databaseVersionKey, validatedByVersionKey :: Text
@@ -115,8 +117,7 @@ instance Storage s => WithStorage s (DB s) where
 -- 
 data RpkiObjectStore s = RpkiObjectStore {        
         objects        :: SMap "objects" s ObjectKey (Compressed (StorableObject RpkiObject)),
-        hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
-        mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
+        hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,            
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
         objectMetas    :: SMap "object-meta" s ObjectKey ObjectMeta,
 
@@ -236,11 +237,11 @@ newtype MetadataStore s = MetadataStore {
 
 -- Some DTOs for storing MFT shortcuts
 data MftShortcutMeta = MftShortcutMeta {
-        key            :: ObjectKey,        
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant,        
-        serial         :: Serial,
-        manifestNumber :: Serial,
+        key            :: {-# UNPACK #-} ObjectKey,        
+        notValidBefore :: {-# UNPACK #-} Instant,
+        notValidAfter  :: {-# UNPACK #-} Instant,        
+        serial         :: {-# UNPACK #-} Serial,
+        manifestNumber :: {-# UNPACK #-} Serial,
         crlShortcut    :: CrlShortcut
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -253,8 +254,9 @@ newtype MftShortcutChildren = MftShortcutChildren {
     deriving anyclass (TheBinary)
 
 
-data MftShortcutStore s = MftShortcutStore {
-        mftMetas    :: SMap "mfts-shortcut-meta" s AKI (Verbatim (Compressed MftShortcutMeta)),
+data MftShortcutStore s = MftShortcutStore {        
+        mftMeta     :: SMap "mft-meta" s AKI (Compressed MftsMeta),
+        mftShortcut :: SMap "mfts-shortcut-meta" s AKI (Verbatim (Compressed MftShortcutMeta)),
         mftChildren :: SMap "mfts-shortcut-children" s AKI (Verbatim (Compressed MftShortcutChildren))
     }
     deriving stock (Generic)
@@ -288,7 +290,7 @@ getKeysByUri tx DB { objectStore = RpkiObjectStore {..} } uri = liftIO $
     M.get tx uriToUriKey (makeSafeUrl uri) >>= \case 
         Nothing     -> pure []
         Just uriKey -> MM.allForKey tx urlKeyToObjectKey uriKey
-                
+                  
 getObjectByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> ObjectKey -> m (Maybe RpkiObject)
 getObjectByKey tx DB { objectStore = RpkiObjectStore {..} } k = liftIO $
@@ -323,8 +325,9 @@ saveObject :: (MonadIO m, Storage s) =>
             Tx s 'RW 
             -> DB s 
             -> StorableObject RpkiObject
-            -> WorldVersion -> m ()
-saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } so@StorableObject {..} wv = liftIO $ do
+            -> WorldVersion 
+            -> m ()
+saveObject tx db@DB { objectStore = RpkiObjectStore { ..}, .. } so@StorableObject {..} wv = liftIO $ do
     let h = getHash object
     exists <- M.exists tx hashToKey h    
     unless exists $ do          
@@ -337,8 +340,15 @@ saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } so@StorableObject {.
             CerRO c -> 
                 M.put tx certBySKI (getSKI c) objectKey
             MftRO mft -> 
-                for_ (getAKI object) $ \aki' ->
-                    MM.put tx mftByAKI aki' (objectKey, getMftTimingMark mft)
+                for_ (getAKI object) $ \aki_ ->
+                    getMftsMeta tx db aki_ >>= \case 
+                        Nothing -> 
+                            saveMftsMeta tx db aki_ $ newMftsMeta objectKey mft
+                        Just mftMeta_ -> do
+                            let newEntry = newMftEntry objectKey mft
+                            let now = Now $ versionToInstant wv                            
+                            saveMftsMeta tx db aki_ $ updateMfts newEntry now mftMeta_                            
+
             _ -> pure ()        
 
 saveOriginal :: (MonadIO m, Storage s) => 
@@ -392,7 +402,7 @@ linkObjectToUrl :: (MonadIO m, Storage s) =>
                 -> m ()
 linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL hash = liftIO $ do    
     let safeUrl = makeSafeUrl rpkiURL
-    ifJustM (M.get tx hashToKey hash) $ \objectKey -> do        
+    ifJustM (M.get tx hashToKey hash) $ \objectKey -> do
         z <- M.get tx uriToUriKey safeUrl 
         urlKey <- maybe (saveUrl safeUrl) pure z                
         
@@ -401,7 +411,7 @@ linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL hash = 
                 M.put tx objectKeyToUrlKeys objectKey [urlKey]
                 MM.put tx urlKeyToObjectKey urlKey objectKey
             Just existingUrlKeys -> 
-                when (urlKey `notElem` existingUrlKeys) $ do 
+                unless (urlKey `elem` existingUrlKeys) $ do 
                     M.put tx objectKeyToUrlKeys objectKey (urlKey : existingUrlKeys)
                     MM.put tx urlKeyToObjectKey urlKey objectKey
   where
@@ -424,7 +434,7 @@ deleteObjectByHash tx db@DB { objectStore = RpkiObjectStore {..} } hash = liftIO
     ifJustM (M.get tx hashToKey hash) $ deleteObjectByKey tx db
 
 deleteObjectByKey :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> ObjectKey -> m ()
-deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore {..} } objectKey = liftIO $ do 
+deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..}, ..} } objectKey = liftIO $ do 
     ifJustM (getObjectByKey tx db objectKey) $ \ro -> do 
         M.delete tx objects objectKey
         M.delete tx objectMetas objectKey        
@@ -437,44 +447,39 @@ deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore {..} } objectKey = li
             forM_ urlKeys $ \urlKey ->
                 MM.delete tx urlKeyToObjectKey urlKey objectKey                
         
-        for_ (getAKI ro) $ \aki' -> 
+        for_ (getAKI ro) $ \aki_ -> 
             case ro of
-                MftRO mft -> do 
-                    MM.delete tx mftByAKI aki' (objectKey, getMftTimingMark mft)
-                    -- TODO This one will delete a good valid shortcut for every 
-                    -- deletion of every manifest with the same AKI. Fix it, it hits
-                    -- the performance (not much, but still).
-                    deleteMftShortcut tx db aki'
+                MftRO _ -> do
+                    ifJustM (getMftsMeta tx db aki_) $ \mfts -> do 
+                        case deleteMft objectKey mfts of
+                            Nothing    -> M.delete tx mftMeta aki_ 
+                            Just mfts' -> saveMftsMeta tx db aki_ mfts'                            
+
+                    ifJustM (M.get tx mftShortcut aki_) $ \(unCompressedVerbatim -> m) ->
+                        when (m ^. #key == objectKey) $ deleteMftShortcut tx db aki_
+
                 _  -> pure ()   
+
 
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
                     Tx s mode -> DB s -> AKI -> m (Maybe (Keyed (Located MftObject)))
 findLatestMftByAKI tx db aki' = liftIO $ do   
-    findLatestMftKeyByAKI tx db aki' >>= \case     
-        Nothing -> pure Nothing     
-        Just k  -> getMftByKey tx db k
-
-findLatestMftKeyByAKI :: (MonadIO m, Storage s) => 
-                         Tx s mode -> DB s -> AKI -> m (Maybe ObjectKey)
-findLatestMftKeyByAKI tx DB { objectStore = RpkiObjectStore {..} } aki' = liftIO $ 
-    MM.foldS tx mftByAKI aki' chooseLatest Nothing >>= \case
-        Nothing     -> pure Nothing
-        Just (k, _) -> pure $ Just k
-  where
-    chooseLatest latest _ (k, timingMark) = 
-        pure $! case latest of 
-            Nothing                       -> Just (k, timingMark)
-            Just (_, latestMark) 
-                | timingMark > latestMark -> Just (k, timingMark)
-                | otherwise               -> latest                                  
-
+    getMftsMeta tx db aki' >>= \case     
+        Nothing                        -> pure Nothing     
+        Just (MftsMeta mfts) -> do 
+            let AnMft {..} = NonEmpty.head mfts
+            getMftByKey tx db key
 
 findAllMftsByAKI :: (MonadIO m, Storage s) => 
-                    Tx s mode -> DB s -> AKI -> m [Keyed (Located MftObject)]
-findAllMftsByAKI tx db@DB { objectStore = RpkiObjectStore {..} } aki' = liftIO $ do   
-    mftKeys <- List.sortOn Down <$> MM.allForKey tx mftByAKI aki'
-    fmap catMaybes $ forM mftKeys $ \(k, _) -> getMftByKey tx db k
-    
+                    Tx s mode -> DB s -> AKI -> m (Maybe MftShortcut, [Keyed (Located MftObject)])
+findAllMftsByAKI tx db aki' =    
+    getMftsMeta tx db aki' >>= \case
+        Nothing                       -> pure (Nothing, [])
+        Just (MftsMeta mfts) -> do            
+            manifests <- fmap catMaybes $ forM (NonEmpty.toList mfts) $ 
+                            \AnMft {..} -> getMftByKey tx db key
+            shortcut <- getMftShorcut tx db aki'
+            pure (shortcut, manifests)
 
 getMftByKey :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> ObjectKey -> m (Maybe (Keyed (Located MftObject)))
@@ -484,23 +489,33 @@ getMftByKey tx db k = do
         Just (Located loc (MftRO mft)) -> Just $ Keyed (Located loc mft) k
         _                              -> Nothing       
 
+getMftsMeta :: (MonadIO m, Storage s) => 
+                Tx s mode -> DB s -> AKI -> m (Maybe MftsMeta)
+getMftsMeta tx DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } aki = 
+    liftIO $ fmap unCompressed <$> M.get tx mftMeta aki
 
 getMftShorcut :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> AKI -> m (Maybe MftShortcut)
 getMftShorcut tx DB { objectStore = RpkiObjectStore {..} } aki = liftIO $ do 
     let MftShortcutStore {..} = mftShortcuts 
     runMaybeT $ do 
-        mftMeta_ <- MaybeT $ M.get tx mftMetas aki
-        let MftShortcutMeta {..} = unCompressed $ restoreFromRaw $ mftMeta_
+        mftShortcutMeta <- MaybeT $ M.get tx mftShortcut aki
+        let MftShortcutMeta {..} = unCompressedVerbatim mftShortcutMeta
         mftChildren_ <- MaybeT $ M.get tx mftChildren aki
-        let MftShortcutChildren {..} = unCompressed $ restoreFromRaw mftChildren_
+        let MftShortcutChildren {..} = unCompressedVerbatim mftChildren_
         pure $! MftShortcut {..}
 
-saveMftShorcutMeta :: (MonadIO m, Storage s) => 
-                    Tx s 'RW -> DB s -> AKI -> Verbatim (Compressed MftShortcutMeta) -> m ()
-saveMftShorcutMeta tx 
-    DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
-    aki raw = liftIO $ M.put tx mftMetas aki raw
+saveMftsMeta :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> DB s -> AKI -> MftsMeta -> m ()
+saveMftsMeta tx 
+    DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } }
+    aki meta = liftIO $ M.put tx mftMeta aki (Compressed meta)
+
+saveMftShortcutMeta :: (MonadIO m, Storage s) => 
+                        Tx s 'RW -> DB s -> AKI -> Verbatim (Compressed MftShortcutMeta) -> m ()
+saveMftShortcutMeta tx 
+    DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } }
+    aki meta = liftIO $ M.put tx mftShortcut aki meta
 
 saveMftShorcutChildren :: (MonadIO m, Storage s) => 
                         Tx s 'RW -> DB s -> AKI -> Verbatim (Compressed MftShortcutChildren) -> m ()
@@ -508,15 +523,14 @@ saveMftShorcutChildren tx
     DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
     aki raw = liftIO $ M.put tx mftChildren aki raw
 
-
 deleteMftShortcut :: (MonadIO m, Storage s) => 
                     Tx s 'RW -> DB s -> AKI -> m ()
 deleteMftShortcut tx 
     DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
-    aki = liftIO $ do             
-        M.delete tx mftMetas aki
-        M.delete tx mftChildren aki
-
+    aki = liftIO $ do 
+        M.delete tx mftShortcut aki    
+        M.delete tx mftChildren aki        
+        
 markAsValidated :: (MonadIO m, Storage s) => 
                     Tx s 'RW -> DB s 
                 -> Set.Set ObjectKey 
@@ -531,15 +545,6 @@ getAll :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [Located RpkiObject]
 getAll tx db@DB { objectStore = RpkiObjectStore {..} } = liftIO $ do 
     allKeys <- M.keys tx objects
     catMaybes <$> forM allKeys (getLocatedByKey tx db)    
-
-
--- | Get something from the manifest that would allow us to judge 
--- which MFT is newer/older.
-getMftTimingMark :: MftObject -> MftTimingMark
-getMftTimingMark mft = let 
-    m = getCMSContent $ cmsPayload mft 
-    in MftTimingMark (thisTime m) (nextTime m)
-
 
 getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m (Maybe (Located CaCerObject))
 getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ runMaybeT $ do 
@@ -971,7 +976,7 @@ getObjectsStats tx DB { objectStore = RpkiObjectStore {..} } =
                     Nothing -> pure mempty
                     Just size -> pure $ Size $ fromIntegral size            
 
-                pure $ acc & #totalObjects %~ (+1) 
+                pure $! acc & #totalObjects %~ (+1) 
                            & #totalSize %~ (+ objectSize)                
                            & #countPerType %~ Map.insertWith (+) type_ 1
                            & #totalSizePerType %~ Map.insertWith (+) type_ objectSize
@@ -981,7 +986,9 @@ getObjectsStats tx DB { objectStore = RpkiObjectStore {..} } =
             mempty
 
         pure $ stats & #avgSizePerType .~ 
-            Map.mapWithKey (\k s -> maybe 0 (s `divSize`) $ Map.lookup k (stats ^. #countPerType)) (stats ^. #totalSizePerType)
+            Map.mapWithKey (\k s -> 
+                maybe 0 (s `divSize`) $ Map.lookup k (stats ^. #countPerType)) 
+                (stats ^. #totalSizePerType)
   
     
 
@@ -1240,3 +1247,4 @@ makeSafeUrl u =
                    ]
     in SafeUrlAsKey $ toShortBS bsUrlKey
 
+ 

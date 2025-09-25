@@ -458,9 +458,9 @@ getManifests AppContext {..} akiText =
             case parseAki akiText' of 
                 Left _    -> throwError err400
                 Right aki -> do
-                    roTxT database $ \tx db -> do 
-                        shortcutMft     <- fmap toMftShortcutDto <$> DB.getMftShorcut tx db aki                        
-                        manifestObjects <- DB.findAllMftsByAKI tx db aki
+                    roTxT database $ \tx db -> do                         
+                        (shortcut, manifestObjects) <- DB.findAllMftsByAKI tx db aki
+                        let shortcutMft = fmap toMftShortcutDto shortcut
                         let manifests = fmap (\(Keyed (Located _ m) _) -> manifestDto m) manifestObjects
                         pure ManifestsDto {..}
             

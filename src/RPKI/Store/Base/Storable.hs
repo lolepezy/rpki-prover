@@ -85,9 +85,11 @@ instance {-# OVERLAPPING #-} AsStorable a => AsStorable (Compressed a) where
     fromStorable (Storable b) = 
         Compressed $ fromStorable $ Storable $ fromMaybe "broken binary" $ decompress b
 
+verbatimCompressed :: AsStorable a => a -> Verbatim (Compressed a)
+verbatimCompressed = Verbatim . toStorable . Compressed
 
-restoreFromRaw :: AsStorable a => Verbatim a -> a
-restoreFromRaw = fromStorable . unVerbatim
+unCompressedVerbatim :: AsStorable a => Verbatim (Compressed a) -> a
+unCompressedVerbatim = unCompressed . fromStorable . unVerbatim
 
 data SStats = SStats {
         statSize          :: Size,

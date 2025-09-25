@@ -112,6 +112,9 @@ toNanos d = nanosPerSecond * seconds + nanos
 asSeconds :: Instant -> Int64
 asSeconds (Instant instant) = fromIntegral $ instant `div` nanosPerSecond
 
+toDateTime :: Instant -> DateTime
+toDateTime (Instant instant) = fromNanoseconds instant
+
 fromNanoseconds :: Int64 -> DateTime
 fromNanoseconds totalNanos =    
     timeConvert elapsed
