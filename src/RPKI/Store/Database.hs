@@ -247,7 +247,7 @@ data MftShortcutMeta = MftShortcutMeta {
     deriving anyclass (TheBinary)
 
 newtype MftShortcutChildren = MftShortcutChildren {
-        nonCrlEntries :: Map.Map ObjectKey MftEntry
+        nonCrlEntries :: MftShortcutEntries
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)

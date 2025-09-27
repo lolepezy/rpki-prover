@@ -1546,7 +1546,8 @@ makeBgpSecShortcut key (Validated bgpCert) bgpSec fileName = let
     in MftEntry {..}    
 
 makeMftShortcut :: ObjectKey 
-                -> Validated MftObject -> [(ObjectKey, MftEntry)] 
+                -> Validated MftObject 
+                -> [(ObjectKey, MftEntry)] 
                 -> Keyed (Validated CrlObject) 
                 -> MftShortcut   
 makeMftShortcut key 

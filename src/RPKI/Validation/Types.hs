@@ -14,6 +14,7 @@ import           Data.Aeson.Types
 import qualified Data.Map.Strict             as Map
 import           Data.Text                   (Text)
 import           Data.Tuple.Strict
+import qualified Data.Vector                 as V
 import           GHC.Generics
 
 import           Data.Proxy
@@ -55,9 +56,15 @@ data CrlShortcut = CrlShortcut {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+
+data MftShortcutEntries = MftShortcutRefs (V.Vector ObjectKey)
+                        | MftShortcutEmbedded (Map.Map ObjectKey MftEntry)
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
 data MftShortcut = MftShortcut { 
         key            :: ObjectKey,
-        nonCrlEntries  :: Map.Map ObjectKey MftEntry,
+        nonCrlEntries  :: MftShortcutEntries,
         notValidBefore :: Instant,
         notValidAfter  :: Instant,        
         serial         :: Serial,
