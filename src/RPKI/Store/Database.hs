@@ -254,6 +254,7 @@ newtype MftShortcutChildren = MftShortcutChildren {
 
 
 data MftShortcutStore s = MftShortcutStore {
+        mftKey      :: SMap "mfts-shortcut-key" s AKI ObjectKey,
         mftMetas    :: SMap "mfts-shortcut-meta" s AKI (Verbatim (Compressed MftShortcutMeta)),
         mftChildren :: SMap "mfts-shortcut-children" s AKI (Verbatim (Compressed MftShortcutChildren))
     }
@@ -337,8 +338,8 @@ saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } so@StorableObject {.
             CerRO c -> 
                 M.put tx certBySKI (getSKI c) objectKey
             MftRO mft -> 
-                for_ (getAKI object) $ \aki' ->
-                    MM.put tx mftByAKI aki' (objectKey, getMftTimingMark mft)
+                for_ (getAKI object) $ \aki_ ->
+                    MM.put tx mftByAKI aki_ (objectKey, getMftTimingMark mft)
             _ -> pure ()        
 
 saveOriginal :: (MonadIO m, Storage s) => 
@@ -424,7 +425,7 @@ deleteObjectByHash tx db@DB { objectStore = RpkiObjectStore {..} } hash = liftIO
     ifJustM (M.get tx hashToKey hash) $ deleteObjectByKey tx db
 
 deleteObjectByKey :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> ObjectKey -> m ()
-deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore {..} } objectKey = liftIO $ do 
+deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..}, ..} } objectKey = liftIO $ do 
     ifJustM (getObjectByKey tx db objectKey) $ \ro -> do 
         M.delete tx objects objectKey
         M.delete tx objectMetas objectKey        
@@ -437,27 +438,26 @@ deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore {..} } objectKey = li
             forM_ urlKeys $ \urlKey ->
                 MM.delete tx urlKeyToObjectKey urlKey objectKey                
         
-        for_ (getAKI ro) $ \aki' -> 
+        for_ (getAKI ro) $ \aki_ -> 
             case ro of
                 MftRO mft -> do 
-                    MM.delete tx mftByAKI aki' (objectKey, getMftTimingMark mft)
-                    -- TODO This one will delete a good valid shortcut for every 
-                    -- deletion of every manifest with the same AKI. Fix it, it hits
-                    -- the performance (not much, but still).
-                    deleteMftShortcut tx db aki'
+                    MM.delete tx mftByAKI aki_ (objectKey, getMftTimingMark mft)                    
+                    ifJustM (M.get tx mftKey aki_) $ \k ->
+                        when (k == objectKey) $
+                            deleteMftShortcut tx db aki_
                 _  -> pure ()   
 
 findLatestMftByAKI :: (MonadIO m, Storage s) => 
                     Tx s mode -> DB s -> AKI -> m (Maybe (Keyed (Located MftObject)))
-findLatestMftByAKI tx db aki' = liftIO $ do   
-    findLatestMftKeyByAKI tx db aki' >>= \case     
+findLatestMftByAKI tx db aki_ = liftIO $ do   
+    findLatestMftKeyByAKI tx db aki_ >>= \case     
         Nothing -> pure Nothing     
         Just k  -> getMftByKey tx db k
 
 findLatestMftKeyByAKI :: (MonadIO m, Storage s) => 
                          Tx s mode -> DB s -> AKI -> m (Maybe ObjectKey)
-findLatestMftKeyByAKI tx DB { objectStore = RpkiObjectStore {..} } aki' = liftIO $ 
-    MM.foldS tx mftByAKI aki' chooseLatest Nothing >>= \case
+findLatestMftKeyByAKI tx DB { objectStore = RpkiObjectStore {..} } aki_ = liftIO $ 
+    MM.foldS tx mftByAKI aki_ chooseLatest Nothing >>= \case
         Nothing     -> pure Nothing
         Just (k, _) -> pure $ Just k
   where
@@ -471,8 +471,8 @@ findLatestMftKeyByAKI tx DB { objectStore = RpkiObjectStore {..} } aki' = liftIO
 
 findAllMftsByAKI :: (MonadIO m, Storage s) => 
                     Tx s mode -> DB s -> AKI -> m [Keyed (Located MftObject)]
-findAllMftsByAKI tx db@DB { objectStore = RpkiObjectStore {..} } aki' = liftIO $ do   
-    mftKeys <- List.sortOn Down <$> MM.allForKey tx mftByAKI aki'
+findAllMftsByAKI tx db@DB { objectStore = RpkiObjectStore {..} } aki_ = liftIO $ do   
+    mftKeys <- List.sortOn Down <$> MM.allForKey tx mftByAKI aki_
     fmap catMaybes $ forM mftKeys $ \(k, _) -> getMftByKey tx db k
     
 
@@ -497,16 +497,20 @@ getMftShorcut tx DB { objectStore = RpkiObjectStore {..} } aki = liftIO $ do
         pure $! MftShortcut {..}
 
 saveMftShorcutMeta :: (MonadIO m, Storage s) => 
-                    Tx s 'RW -> DB s -> AKI -> Verbatim (Compressed MftShortcutMeta) -> m ()
+                    Tx s 'RW -> DB s -> AKI -> ObjectKey -> Verbatim (Compressed MftShortcutMeta) -> m ()
 saveMftShorcutMeta tx 
     DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
-    aki raw = liftIO $ M.put tx mftMetas aki raw
+    aki key raw = liftIO $ do 
+        M.put tx mftKey aki key
+        M.put tx mftMetas aki raw
 
 saveMftShorcutChildren :: (MonadIO m, Storage s) => 
-                        Tx s 'RW -> DB s -> AKI -> Verbatim (Compressed MftShortcutChildren) -> m ()
+                        Tx s 'RW -> DB s -> AKI -> ObjectKey -> Verbatim (Compressed MftShortcutChildren) -> m ()
 saveMftShorcutChildren tx 
     DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
-    aki raw = liftIO $ M.put tx mftChildren aki raw
+    aki key raw = liftIO $ do 
+        M.put tx mftKey aki key
+        M.put tx mftChildren aki raw
 
 
 deleteMftShortcut :: (MonadIO m, Storage s) => 
@@ -514,6 +518,7 @@ deleteMftShortcut :: (MonadIO m, Storage s) =>
 deleteMftShortcut tx 
     DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
     aki = liftIO $ do             
+        M.delete tx mftKey aki
         M.delete tx mftMetas aki
         M.delete tx mftChildren aki
 

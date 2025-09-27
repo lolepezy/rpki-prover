@@ -253,7 +253,8 @@ instance Exception AppException
    Scope keys are pretty long and comparison of them is expensive.
    However, 
    - HashMap is actually slower in benchmarks with long Scope-like keys ('optimise/app-state-hashmap' branch)
-   - using a Trie is much in benchmarks but doesn't cause any measurable improvement ('optimise/app-state' branch)
+   - using a Trie is much faster in benchmarks but doesn't cause any measurable improvement 
+     in real usage ('optimise/app-state' branch). And adds a lot of code.
    - Trying to intern the Scope keys using Symbolize library breaks serialisation ('optimise/focus' branch)
 
    So in reality it's a decent solution. It might also be that the URLs in the scope elements
