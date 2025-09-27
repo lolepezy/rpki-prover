@@ -46,6 +46,9 @@ data AvgMemory = AvgMemory {
 instance Monoid AvgMemory where
     mempty = AvgMemory 0 0
 
+newAvgMemory :: MaxMemory -> AvgMemory
+newAvgMemory mem = AvgMemory (Sum mem) 1
+
 getAvgMemory :: AvgMemory -> MaxMemory
 getAvgMemory (AvgMemory (Sum (MaxMemory total)) (Sum count)) = 
     if count == 0 
@@ -91,6 +94,6 @@ cpuMemMetric scope cpuTime clockTime maxMemory' = SystemMetrics {
                          (#aggregatedCpuTime %~ (<> AggregatedCPUTime cpuTime)) . 
                          (#aggregatedClockTime %~ (<> clockTime)) .  
                          (#maxMemory %~ (<> maxMemory')) .
-                         (#avgMemory %~ (<> AvgMemory (Sum maxMemory') 1)))
+                         (#avgMemory %~ (<> newAvgMemory maxMemory')))
                         mempty
     }
