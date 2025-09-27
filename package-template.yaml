@@ -104,6 +104,7 @@ dependencies:
 - streaming
 - strict-tuple
 - string-conversions
+- symbolize
 - text
 - these
 - typed-process

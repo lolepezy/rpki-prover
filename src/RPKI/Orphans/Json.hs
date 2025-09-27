@@ -29,6 +29,7 @@ import           Deque.Strict                as Deq
 import qualified Data.Map.Strict             as Map
 
 import           Data.String.Interpolate.IsString
+import qualified Symbolize
 
 import qualified Crypto.PubKey.Curve25519    as C25519
 import qualified Crypto.PubKey.Curve448      as C448
@@ -174,6 +175,15 @@ instance ToJSON ObjectKey where
 instance ToJSONKey ObjectKey where
     toJSONKey = toJSONKeyText $ \(ObjectKey (ArtificialKey k)) -> U.fmtGen k
 
+instance ToJSON Symbolize.Symbol where
+    toJSON s = toJSON (Symbolize.unintern s :: Text)
+
+instance ToJSON InternedUrl where
+    toJSON (InternedUrl s)  = toJSON $ urlSmth s    
+
+instance ToJSON TextualUrl where
+    toJSON (TextualUrl u)  = toJSON $ urlSmth u    
+
 instance ToJSON Focus
 instance ToJSONKey (Scope 'Metric)
 instance ToJSON (Scope 'Metric)
@@ -220,6 +230,7 @@ instance ToJSON ValidatedBy where
 
 $(deriveToJSON defaultOptions ''ValidationMetric)
 
+instance ToJSONKey TextualUrl
 instance ToJSON a => ToJSON (GroupedMetric a)
 
 $(deriveToJSON defaultOptions ''FetchFreshness)

@@ -45,7 +45,8 @@ import RPKI.Repository (Fetcheables)
 -- ToSchema insrances for Swagger doc generation
 instance ToSchema ArtificialKey
 instance ToSchema ObjectKey
-instance ToSchema Focus
+instance ToSchema Focus where
+     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema RpkiURL
 instance ToSchema RsyncURL where
      declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
@@ -86,6 +87,8 @@ instance (ToSchema a, ToJSONKey a, ToSchema b) => ToSchema (MonoidalMap a b) whe
 
 instance ToSchema a => ToSchema (GroupedMetric a)
 
+instance ToSchema TextualUrl where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema SessionId
 instance ToSchema Serial
 instance ToSchema RrdpSerial

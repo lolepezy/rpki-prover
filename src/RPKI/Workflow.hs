@@ -48,6 +48,9 @@ import           System.Directory
 import           System.FilePath                  ((</>))
 import           System.Posix.Signals
 
+import qualified Symbolize
+import           UnliftIO (pooledForConcurrentlyN)
+
 import           RPKI.AppState
 import           RPKI.AppMonad
 import           RPKI.AppTypes
@@ -76,7 +79,6 @@ import           RPKI.Util
 import           RPKI.Time
 import           RPKI.Worker
 import           RPKI.SLURM.Types
-import           UnliftIO (pooledForConcurrentlyN)
 
 {- 
     Fully asynchronous execution.
@@ -775,7 +777,8 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                     _                                   -> False
 
             mostNarrowPPScope (Scope s) = 
-                take 1 [ url | PPFocus (RrdpU url) <- NonEmpty.toList s ]
+                take 1 [ RrdpURL $ URI $ Symbolize.unintern url 
+                        | PPFocus (InternedUrl (RrdpTag url)) <- NonEmpty.toList s ]
 
 
 -- | Adjust running fetchers to the latest discovered repositories
@@ -885,7 +888,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                 ((r, validations), duration) <-                 
                         withFetchLimits fetchConfig repository $ timedMS $ 
-                            runValidatorT (newScopes' RepositoryFocus url) $ do                                 
+                            runValidatorT (newScopes' toRepositoryFocus url) $ do                                 
                                 runConcurrentlyIfPossible logger FetchTask runningTasks 
                                     $ fetchRepository appContext fetchConfig worldVersion repository
 
@@ -942,7 +945,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                         withFetchLimits fetchConfig repository 
                             $ runConcurrentlyIfPossible logger FetchTask runningTasks                                 
                                 $ timedMS
-                                $ runValidatorT (newScopes' RepositoryFocus fallbackUrl) 
+                                $ runValidatorT (newScopes' toRepositoryFocus fallbackUrl) 
                                     $ fetchRepository appContext fetchConfig worldVersion repository                
 
                 updatePrometheusForRepository fallbackUrl duration prometheusMetrics

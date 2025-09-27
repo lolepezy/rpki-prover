@@ -212,7 +212,7 @@ updateRrdpRepository
 
     useSnapshot notification nextStep = do         
         let SnapshotInfo uri expectedHash = notification ^. #snapshotInfo
-        vFocusOn LinkFocus uri $ do            
+        vFocusOn toLinkFocus uri $ do            
             logInfo logger [i|#{uri}: downloading snapshot.|] 
             
             (rawContent, _, httpStatus', _) <- 

@@ -34,6 +34,7 @@ import           Data.Tuple.Strict
 import qualified Data.Vector                      as V
 import           Data.String.Interpolate.IsString
 
+import qualified Symbolize
 import           Text.Read                        (readMaybe)
 
 import           RPKI.AppContext
@@ -590,21 +591,20 @@ toRepositoryDtos AppContext {..} inputs = do
         rrdpRepos <- 
             fmap (fmap RrdpDto . catMaybes)
             $ forM rrdps $ \(repository@RrdpRepository {..}, state) -> do
-                let validationDtos = toVDtos $ filterRepositoryValidations (RrdpU uri) $ state ^. typed
-                -- TODO That is probably not needed at all, there's nothing to resolve?
+                let validationDtos = toVDtos $ filterRepositoryValidations (internUrl (RrdpU uri)) $ state ^. typed                
                 resolved <- forM validationDtos $ resolveOriginalDto tx db                 
 
                 pure $ fmap (\metrics -> RrdpRepositoryDto { validations = resolved, .. }) 
-                        $ filterRepositoryMetrics (RrdpU uri) $ state ^. typed @Metrics . #rrdpMetrics
+                        $ filterRepositoryMetrics (internUrl (RrdpU uri)) $ state ^. typed @Metrics . #rrdpMetrics
 
         rsyncRepos <- 
             fmap (fmap RsyncDto . catMaybes)
             $ forM rsyncs $ \(RsyncRepository { repoPP = RsyncPublicationPoint {..}, ..}, state) -> do
-                let validationDtos = toVDtos $ filterRepositoryValidations (RsyncU uri) $ state ^. typed
+                let validationDtos = toVDtos $ filterRepositoryValidations (internUrl (RsyncU uri)) $ state ^. typed
                 resolved <- forM validationDtos $ resolveOriginalDto tx db
 
                 pure $ fmap (\metrics -> RsyncRepositoryDto { validations = resolved, .. }) 
-                        $ filterRepositoryMetrics (RsyncU uri) $ state ^. typed @Metrics . #rsyncMetrics
+                        $ filterRepositoryMetrics (internUrl (RsyncU uri)) $ state ^. typed @Metrics . #rsyncMetrics
 
         pure $ rrdpRepos <> rsyncRepos            
   where
@@ -645,12 +645,12 @@ resolveLocations :: Storage s =>
                 -> Focus 
                 -> IO ResolvedFocusDto
 resolveLocations tx db = \case 
-    TAFocus t               -> pure $ TextDto t
-    TextFocus t             -> pure $ TextDto t
-    PPFocus u               -> pure $ DirectLink $ toText u
-    RepositoryFocus u       -> pure $ DirectLink $ toText u    
-    LocationFocus (URI uri) -> pure $ ObjectLink uri
-    LinkFocus (URI uri)     -> pure $ DirectLink uri
+    TAFocus t               -> pure $ TextDto $ Symbolize.unintern t
+    TextFocus t             -> pure $ TextDto $ Symbolize.unintern t
+    PPFocus u               -> pure $ DirectLink $ urlSmth $ unTextualUrl $ uninternUrl u
+    RepositoryFocus u       -> pure $ DirectLink $ urlSmth $ unTextualUrl $ uninternUrl u    
+    LocationFocus u         -> pure $ ObjectLink $ Symbolize.unintern u
+    LinkFocus u      -> pure $ DirectLink $ Symbolize.unintern u
     ObjectFocus key         -> locations key
     HashFocus hash          -> DB.getKeyByHash tx db hash >>= \case 
                                     Nothing  -> pure $ TextDto [i|Can't find key for hash #{hash}|]

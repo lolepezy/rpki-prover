@@ -7,6 +7,7 @@
 module RPKI.Orphans.Store where
 
 import qualified Data.ByteString as BS
+import qualified Data.Text as Text
 
 import Data.Store
 -- import Data.Store.TH
@@ -38,6 +39,8 @@ import qualified Crypto.PubKey.Ed448 as E448
 
 import qualified Crypto.PubKey.ECC.Types as ECC
 
+import Symbolize (Symbol)
+import qualified Symbolize
 
 peekPK :: (BS.ByteString -> CryptoFailable b) -> Peek b
 peekPK f = do 
@@ -115,3 +118,11 @@ $($(derive [d|instance (Ord a, Store a) => Deriving (Store (NESet a))|]))
 $($(derive [d|instance (Ord a, Store a, Store b) => Deriving (Store (MonoidalMap a b))|]))
 
 $($(derive [d|instance (Store a, Store b) => Deriving (Store (These a b))|]))
+
+
+instance Store Symbol where
+    size = VarSize $ Text.length . Symbolize.unintern
+    poke s = poke (Symbolize.unintern s :: Text.Text)
+    peek = do 
+        t :: Text.Text <- peek
+        pure $ Symbolize.intern t

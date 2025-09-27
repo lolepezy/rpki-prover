@@ -231,7 +231,7 @@ readTALs AppContext {..} = do
 
     (tals, _) <- runValidatorT (newScopes "validation-root") $
         forM talNames $ \(talFilePath, taName) ->
-            vFocusOn TAFocus (convert taName) $
+            vFocusOn toTaFocus (convert taName) $
                 parseTalFromFile talFilePath (Text.pack taName)    
     
     case tals of

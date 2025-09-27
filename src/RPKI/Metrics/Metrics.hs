@@ -14,11 +14,11 @@ import           Data.Map.Monoidal.Strict
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Store.Base.Serialisation
-
+import qualified Symbolize
 
 data GroupedMetric a = GroupedMetric {
         byTa         :: MonoidalMap TaName a,
-        byRepository :: MonoidalMap RpkiURL a,
+        byRepository :: MonoidalMap TextualUrl a,
         total        :: a
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -43,12 +43,12 @@ groupedValidationMetric m@Metrics {..} = GroupedMetric {..}
     combineMetrics metricScope metric (pTa, perRepo) = (newPerTa, newPerRepo)
       where
         newPerTa =
-            case reverse [ TaName uri | TAFocus uri <- scopeList metricScope ] of
+            case reverse [ TaName $ Symbolize.unintern s | TAFocus s <- scopeList metricScope ] of
                 []      -> pTa
                 ta' : _ -> MonoidalMap.singleton ta' metric <> pTa
 
         newPerRepo =
             -- take the deepest PP
-            case [ pp | PPFocus pp <- scopeList metricScope ] of
+            case [ uninternUrl pp | PPFocus pp <- scopeList metricScope ] of
                 []      -> perRepo
                 uri : _ -> MonoidalMap.singleton uri metric <> perRepo        

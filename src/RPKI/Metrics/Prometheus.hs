@@ -94,8 +94,8 @@ updatePrometheus rm PrometheusMetrics {..} _ = do
     forM_ (MonoidalMap.toList $ grouped ^. #byTa) $ \(TaName name, metric) ->
         setObjectMetricsPerUrl validObjectNumberPerTa name 
                 metric True vrpCounter
-    forM_ (MonoidalMap.toList $ grouped ^. #byRepository) $ \(rpkiUrl, metric) -> 
-        setObjectMetricsPerUrl validObjectNumberPerRepo (unURI $ getURL rpkiUrl) 
+    forM_ (MonoidalMap.toList $ grouped ^. #byRepository) $ \(TextualUrl rpkiUrl, metric) -> 
+        setObjectMetricsPerUrl validObjectNumberPerRepo (urlSmth rpkiUrl) 
                 metric False vrpCounterPerRepo
   where      
     setValidObjects prometheusVector url tag count = withLabel prometheusVector (url, tag)

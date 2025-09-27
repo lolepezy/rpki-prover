@@ -322,11 +322,11 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
 
   where
     taName = getTaName tal
-    taContext = newScopes' TAFocus $ unTaName taName
+    taContext = newScopes' toTaFocus $ unTaName taName
 
     validateFromTAL topDownContext = do
         timedMetric (Proxy :: Proxy ValidationMetric) $
-            vFocusOn LocationFocus (getURL $ getTaCertURL tal) $ do
+            vFocusOn toLocationFocus (getURL $ getTaCertURL tal) $ do
                 (taCert, repos) <- validateTACertificateFromTAL appContext tal worldVersion    
                 -- This clumsy code is to make it possible to construct topDownContext
                 -- before getting and validating the TA certificate
@@ -528,8 +528,8 @@ validateCaNoLimitChecks
             -- missing manifests, so just don't go there
             unless (all ((== Pending) . snd) caFetcheables) $ do   
                 let primaryUrl = getPrimaryRepositoryUrl publicationPoints ppAccess
-                vFocusOn PPFocus primaryUrl $
-                    metricFocusOn PPFocus primaryUrl $
+                vFocusOn toPPFocus primaryUrl $
+                    metricFocusOn toPPFocus primaryUrl $
                         validateCaNoFetch appContext topDownContext ca
   where
     mergeFetcheables caFetcheables =
@@ -554,7 +554,7 @@ validateCaNoFetch
     
     case ca of 
         CaFull c -> 
-            vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
+            vFocusOn toLocationFocus (getURL $ pickLocation $ getLocations c) $ do
                 increment $ topDownCounters ^. #originalCa
                 markAsReadByHash appContext topDownContext (getHash c)                         
                 validateObjectLocations c
@@ -698,7 +698,7 @@ validateCaNoFetch
     manifestFullValidation fullCa 
         keyedMft@(Keyed locatedMft@(Located mftLocations mft) mftKey) 
         mftShortcut childrenAki = do         
-        vUniqueFocusOn LocationFocus (getURL $ pickLocation mftLocations)
+        vUniqueFocusOn toLocationFocus (getURL $ pickLocation mftLocations)
             doValidate
             (vError $ CircularReference $ KeyIdentity mftKey)
       where
@@ -1069,7 +1069,7 @@ validateCaNoFetch
                     integrityError appContext 
                         [i|Referential integrity error, can't find locations for the object #{key} with positive location count #{count}.|]
                 Just locations -> 
-                    vFocusOn LocationFocus (getURL $ pickLocation locations) $
+                    vFocusOn toLocationFocus (getURL $ pickLocation locations) $
                         validateObjectLocations locations
 
 
@@ -1086,7 +1086,7 @@ validateCaNoFetch
             -> Validated CrlObject
             -> ValidatorT IO (Maybe MftEntry)
     validateChildObject fullCa (Keyed child@(Located locations childRo) childKey) fileName validCrl = do        
-        let focusOnChild = vFocusOn LocationFocus (getURL $ pickLocation locations)
+        let focusOnChild = vFocusOn toLocationFocus (getURL $ pickLocation locations)
         case childRo of
             CerRO childCert -> do
                 parentScope <- askScopes                
@@ -1097,7 +1097,7 @@ validateCaNoFetch
                     ExceptT's exception logic.
                 -}
                 (r, validationState) <- liftIO $ runValidatorT parentScope $       
-                    vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
+                    vFocusOn toLocationFocus (getURL $ pickLocation locations) $ do
                         -- Check that AIA of the child points to the correct location of the parent
                         -- https://mailarchive.ietf.org/arch/msg/sidrops/wRa88GHsJ8NMvfpuxXsT2_JXQSU/
                         --                             
@@ -1126,7 +1126,7 @@ validateCaNoFetch
                             Left e     -> vError e
                             Right ppas -> do 
                                 -- Look at the issues for the child CA to decide if CA shortcut should be made
-                                shortcut <- vFocusOn LocationFocus (getURL $ pickLocation locations) $ 
+                                shortcut <- vFocusOn toLocationFocus (getURL $ pickLocation locations) $ 
                                                 vHoist $ shortcutIfNoIssues childKey fileName
                                                         (makeCaShortcut childKey (Validated childCert) ppas)
                                 pure $! newShortcut shortcut

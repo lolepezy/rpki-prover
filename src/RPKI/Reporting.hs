@@ -35,6 +35,9 @@ import           Data.ASN1.Types (OID)
 
 import           GHC.Generics
 
+import Symbolize (Symbol)
+import qualified Symbolize
+
 import           RPKI.AppTypes
 import           RPKI.Domain
 import           RPKI.RRDP.Types
@@ -257,15 +260,41 @@ newtype Validations = Validations (Map VScope (Set VIssue))
 instance Semigroup Validations where
     (Validations m1) <> (Validations m2) = Validations $ Map.unionWith (<>) m1 m2
 
+data UrlTag a = RrdpTag a
+              | RsyncTag a
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
 
-data Focus = TAFocus Text 
-            | LocationFocus URI
-            | LinkFocus URI
+newtype InternedUrl = InternedUrl (UrlTag Symbol)                 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+newtype TextualUrl = TextualUrl { unTextualUrl :: UrlTag Text }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+instance Functor UrlTag where
+    fmap f (RrdpTag a)  = RrdpTag (f a)
+    fmap f (RsyncTag a) = RsyncTag (f a)
+
+urlSmth :: UrlTag a -> a
+urlSmth (RrdpTag a)  = a
+urlSmth (RsyncTag a) = a
+
+internUrl :: RpkiURL -> InternedUrl
+internUrl = \case
+    RrdpU u  -> InternedUrl . RrdpTag . Symbolize.intern . unURI . getURL $ u
+    RsyncU u -> InternedUrl . RsyncTag . Symbolize.intern . unURI . getURL $ u
+
+
+data Focus = TAFocus Symbol 
+            | LocationFocus Symbol
+            | LinkFocus Symbol
             | ObjectFocus ObjectKey
             | HashFocus Hash
-            | PPFocus RpkiURL
-            | RepositoryFocus RpkiURL
-            | TextFocus Text
+            | PPFocus InternedUrl
+            | RepositoryFocus InternedUrl
+            | TextFocus Symbol
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
@@ -288,13 +317,13 @@ data Scopes = Scopes {
     deriving anyclass (TheBinary)
 
 newScope :: Text -> Scope c
-newScope = newScope' TextFocus
+newScope = newScope' toTextFocus
 
 newScope' :: (a -> Focus) -> a -> Scope c
 newScope' c u = Scope $ c u :| []
 
 newScopes :: Text -> Scopes
-newScopes = newScopes' TextFocus
+newScopes = newScopes' toTextFocus
 
 newScopes' :: (a -> Focus) -> a -> Scopes
 newScopes' c t = Scopes {
@@ -308,8 +337,25 @@ subScope constructor a ps@(Scope parentScope) = let
     in case NonEmpty.filter (== focus) parentScope of 
         [] -> Scope $ NonEmpty.cons focus parentScope 
         _  -> ps     
-
    
+toTextFocus :: Text -> Focus
+toTextFocus = TextFocus . Symbolize.intern
+
+toTaFocus :: Text -> Focus
+toTaFocus = TAFocus . Symbolize.intern
+
+toLocationFocus :: URI -> Focus
+toLocationFocus (URI uri) = LocationFocus $ Symbolize.intern uri
+
+toRepositoryFocus :: RpkiURL -> Focus
+toRepositoryFocus = RepositoryFocus . internUrl
+
+toLinkFocus :: URI -> Focus
+toLinkFocus (URI uri) = LinkFocus $ Symbolize.intern uri
+
+toPPFocus :: RpkiURL -> Focus
+toPPFocus = PPFocus . internUrl
+
 mError :: VScope -> AppError -> Validations
 mError vc w = mProblem vc (VErr w)
 
@@ -325,10 +371,10 @@ emptyValidations (Validations m) = List.all Set.null $ Map.elems m
 removeValidation :: VScope -> (AppError -> Bool) -> Validations -> Validations
 removeValidation vScope predicate (Validations vs) =
     Validations $ Map.adjust removeFromSet vScope vs    
-    where 
-        removeFromSet = Set.filter $ \case 
-            VErr e             -> not $ predicate e
-            VWarn (VWarning e) -> not $ predicate e
+  where 
+    removeFromSet = Set.filter $ \case 
+        VErr e             -> not $ predicate e
+        VWarn (VWarning e) -> not $ predicate e
 
 getIssues :: VScope -> Validations -> Set VIssue
 getIssues s (Validations vs) = fromMaybe mempty $ Map.lookup s vs
@@ -515,14 +561,19 @@ isHttpSuccess (HttpStatus s) = s >= 200 && s < 300
 
 focusToText :: Focus -> Text
 focusToText = \case    
-    LocationFocus   (getURL -> URI u) -> u
-    PPFocus         (getURL -> URI u) -> u
-    RepositoryFocus (getURL -> URI u) -> u
-    LinkFocus (URI u) -> u
-    TAFocus txt       -> txt
+    LocationFocus   s -> Symbolize.unintern s
+    PPFocus         u -> uninternUrl_ u
+    RepositoryFocus u -> uninternUrl_ u
+    LinkFocus s       -> Symbolize.unintern s
+    TAFocus txt       -> Symbolize.unintern txt
     ObjectFocus key   -> fmtGen key
     HashFocus hash_   -> fmtGen hash_    
-    TextFocus txt     -> txt    
+    TextFocus txt     -> Symbolize.unintern txt      
+  where
+    uninternUrl_ (InternedUrl u) = urlSmth $ Symbolize.unintern <$> u
+
+uninternUrl :: InternedUrl -> TextualUrl
+uninternUrl (InternedUrl u) = TextualUrl $ Symbolize.unintern <$> u
 
 scopeList :: Scope a -> [Focus]
 scopeList (Scope s) = NonEmpty.toList s

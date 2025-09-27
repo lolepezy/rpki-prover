@@ -24,5 +24,7 @@ extra-deps:
 
   - hw-ip-2.4.2.1
   - shower-0.2.0.2@sha256:2c2b1cd25e4330f03ba68631b37d4346bf42644bc8e9a7a819ce605acc72bb34,1473
+  - symbolize-0.1.0.3@sha256:7bc787c23a023f002678511f4af37f6e039a1c31cb479974f0ed9fb4cd0af0bf,4886
+  - text-display-0.0.5.2@sha256:6e6a5bf1c83dfa6c34692ed5d8ea87f1bd385984309b42c302f2156f4d82477b,2670
 
 allow-newer: true

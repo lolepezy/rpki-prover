@@ -65,7 +65,7 @@ validateBottomUp
         -- TODO Make it NonEmpty?
         let taCert = head certPath        
         let location = pickLocation $ getLocations taCert
-        vHoist $ vFocusOn LocationFocus (getURL location) 
+        vHoist $ vFocusOn toLocationFocus (getURL location) 
                $ validateTaCertAKI taCert location
         let verifiedResources = createVerifiedResources $ taCert ^. #payload        
         go verifiedResources certPath
@@ -73,7 +73,7 @@ validateBottomUp
         go _ [] = pure ()
 
         go verifiedResources [bottomCert] = do            
-            vFocusOn LocationFocus (getURL $ pickLocation $ getLocations bottomCert) $ do
+            vFocusOn toLocationFocus (getURL $ pickLocation $ getLocations bottomCert) $ do
                 (mft, crl) <- validateManifest db bottomCert
 
                 -- RSC objects are not supposed to be on a manifest
@@ -84,7 +84,7 @@ validateBottomUp
                 validateObjectItself bottomCert crl verifiedResources
 
         go verifiedResources (cert : certs) = do            
-            vFocusOn LocationFocus (getURL $ pickLocation $ getLocations cert) $ do
+            vFocusOn toLocationFocus (getURL $ pickLocation $ getLocations cert) $ do
                 (mft, crl) <- validateManifest db cert
                 let childCert = head certs                
                 validateOnMft mft childCert                            
@@ -160,7 +160,7 @@ validateBottomUp
                 -- TODO Decide what to do with nested scopes (we go bottom up, 
                 -- so nesting doesn't work the same way).                            
                 let locatedMft@(Located mftLocation mft) = keyedMft ^. #object    
-                vFocusOn LocationFocus (getURL $ pickLocation mftLocation) $ do                
+                vFocusOn toLocationFocus (getURL $ pickLocation mftLocation) $ do                
                     validateObjectLocations locatedMft
                     validateMftLocation locatedMft certificate
                     MftPair _ crlHash <- 
@@ -175,7 +175,7 @@ validateBottomUp
                             vError $ NoCRLExists childrenAki crlHash
 
                         Just foundCrl@(Located crlLocations (CrlRO crl)) -> do      
-                            vFocusOn LocationFocus (getURL $ pickLocation crlLocations) $ do 
+                            vFocusOn toLocationFocus (getURL $ pickLocation crlLocations) $ do 
                                 validateObjectLocations foundCrl
                                 let mftEECert = getEECert $ unCMS $ cmsPayload mft
                                 checkCrlLocation foundCrl mftEECert

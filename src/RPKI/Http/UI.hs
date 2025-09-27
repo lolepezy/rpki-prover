@@ -196,7 +196,7 @@ validationMetricsHtml grouped = do
 
             H.tbody $ do 
                 let sortedRepos = List.sortOn fst $ 
-                        Prelude.map (\(u', z) -> (unURI $ getURL u', z)) repoMetrics
+                        Prelude.map (\(u', z) -> (show u', z)) repoMetrics
                 forM_ (zip sortedRepos [1 :: Int ..]) $ \((url, vm), index) ->                
                     metricRow index url 
                         (const $ pure ()) 

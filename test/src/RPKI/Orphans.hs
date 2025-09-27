@@ -55,6 +55,8 @@ import           Data.Map        (Map)
 import qualified Data.Map.Strict as Map
 
 import System.Posix.Types
+import Symbolize (Symbol)
+import qualified Symbolize
 
 import           Data.Map.Monoidal.Strict
 import           RPKI.AppTypes
@@ -558,6 +560,14 @@ instance Arbitrary VScope where
 
 instance Arbitrary MetricScope where
     arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary Symbol where
+    arbitrary = Symbolize.intern <$> (arbitrary :: Gen Text.Text)
+    shrink = genericShrink
+
+instance Arbitrary InternedUrl where
+    arbitrary = Symbolize.intern <$> (arbitrary :: Gen Text.Text)
     shrink = genericShrink
 
 instance Arbitrary Focus where
