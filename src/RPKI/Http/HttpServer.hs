@@ -481,13 +481,11 @@ getSystem AppContext {..} = do
             let maxMemory = resourceUsage ^. #maxMemory
             let avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime (Earlier startUpTime) (Later now)            
             let avgMemory = getAvgMemory $ resourceUsage ^. #avgMemory
-            let cpuTimePerClockTime = 
-                    if aggregatedClockTime == 0 
-                        then 0 
-                        else let 
-                                CPUTime cpuTime = aggregatedCpuTime 
-                                TimeMs clockTime = aggregatedClockTime
-                            in realToFrac cpuTime / realToFrac clockTime
+            let cpuTimePerClockTime = let 
+                    CPUTime cpuTime = aggregatedCpuTime 
+                    TimeMs clockTime = aggregatedClockTime
+                    in if aggregatedClockTime == 0 then 0 
+                       else realToFrac cpuTime / realToFrac clockTime
 
             tag <- fmtScope scope
             pure ResourcesDto {..}

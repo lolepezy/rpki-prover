@@ -11,7 +11,7 @@ import           Control.Lens
 import           GHC.Generics
 import           Data.Monoid.Generic
 import           Data.Semigroup
-import           Data.Text
+import           Data.Text                 (Text)
 import           RPKI.Time
 import           RPKI.AppTypes
 import           RPKI.Reporting
