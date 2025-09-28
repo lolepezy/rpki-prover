@@ -778,9 +778,9 @@ validateCaNoFetch
                     let nextChildrenShortcuts = 
                             case mftShortcut of 
                                 Nothing               -> newEntries
-                                Just MftShortcut {..} -> 
-                                    newEntries <> makeEntriesWithMap overlappingChildren nonCrlEntries
-                                
+                                Just MftShortcut { nonCrlEntries = MftShortcutEmbedded entries } -> 
+                                    newEntries <> makeEntriesWithMap overlappingChildren entries
+
                     let nextMftShortcut = makeMftShortcut mftKey validMft nextChildrenShortcuts keyedValidCrl
 
                     case validationAlgorithm of 
@@ -862,8 +862,9 @@ validateCaNoFetch
     checkForRevokedChildren mftShortcut (Keyed (Located _ mft) _) children validCrl = do        
         when (isRevoked (getSerial mft) validCrl) $
             vWarn RevokedResourceCertificate   
-        forM_ children $ \(T3 _ _ childKey) ->
-            for_ (Map.lookup childKey (mftShortcut ^. #nonCrlEntries)) $ \MftEntry {..} ->
+        forM_ children $ \(T3 _ _ childKey) -> do 
+            let MftShortcutEmbedded entries = mftShortcut ^. #nonCrlEntries
+            for_ (Map.lookup childKey entries) $ \MftEntry {..} ->
                 for_ (getMftChildSerial child) $ \childSerial ->
                     when (isRevoked childSerial validCrl) $
                         vFocusOn ObjectFocus childKey $
@@ -1239,7 +1240,9 @@ validateCaNoFetch
                     -> ValidatorT IO ()
     collectPayloads mftShortcut childrenToCheck findFullCa findValidCrl parentCaResources = do      
         
-        let nonCrlEntries = mftShortcut ^. #nonCrlEntries
+        -- let entries = mftShortcut ^. #nonCrlEntries
+
+        let MftShortcutEmbedded nonCrlEntries = mftShortcut ^. #nonCrlEntries
 
         -- Filter children that we actually want to go through here
         let filteredChildren = 
@@ -1396,21 +1399,29 @@ manifestDiff mftShortcut newMftChidlren =
 
     -- it's not in the map of shortcut children or it has changed 
     -- its name (very unlikely but can happen in theory)                
-    isNewEntry key_ fileName  = 
-        case Map.lookup key_ (mftShortcut ^. #nonCrlEntries) of
-            Nothing -> True
-            Just e  -> e ^. #fileName /= fileName 
+    isNewEntry key_ fileName = 
+        case mftShortcut ^. #nonCrlEntries of 
+            MftShortcutEmbedded entries ->
+                case Map.lookup key_ entries of
+                    Nothing -> True
+                    Just e  -> e ^. #fileName /= fileName 
+            -- TODO Thist is obviously wrong
+            MftShortcutRefs _ -> True
                     
     deletedEntries = 
         -- If we delete everything from mftShortcut.nonCrlEntries that is present in 
         -- newMftChidlren, we only have the entries that are not present on the new manifest,
         -- i.e. the deleted ones.
         foldr (\(T3 fileName _ key_) entries -> 
-                case Map.lookup key_ (mftShortcut ^. #nonCrlEntries) of 
-                    Nothing -> entries
-                    Just e 
-                        | e ^. #fileName == fileName -> Map.delete key_ entries
-                        | otherwise -> entries) 
+                case mftShortcut ^. #nonCrlEntries of 
+                    MftShortcutEmbedded children ->
+                        case Map.lookup key_ children of 
+                            Nothing -> entries
+                            Just e 
+                                | e ^. #fileName == fileName -> Map.delete key_ entries
+                                | otherwise -> entries
+                    MftShortcutRefs _ -> entries
+                )
                 (mftShortcut ^. #nonCrlEntries)
                 newMftChidlren
 
