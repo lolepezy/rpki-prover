@@ -64,8 +64,8 @@ import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 import           RPKI.Version
 
 
-httpServer :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> Application
-httpServer appContext tals = genericServe HttpApi {
+httpServer :: (Storage s, MaintainableStorage s) => AppContext s -> Application
+httpServer appContext = genericServe HttpApi {
         api     = apiServer,
         metrics = convert <$> textualMetrics,
         ui      = uiServer appContext,
@@ -92,7 +92,6 @@ httpServer appContext tals = genericServe HttpApi {
 
         slurm = getSlurm appContext,
         slurms = getAllSlurms appContext,
-        tals = getAllTALs appContext,
 
         fullValidationResults     = getValidationsDto appContext,
         minimalValidationResults  = fmap toMinimalValidations . getValidationsDto appContext,
@@ -107,6 +106,8 @@ httpServer appContext tals = genericServe HttpApi {
         system = liftIO $ getSystem appContext,
         rtr = getRtr appContext,
         versions = getVersions appContext,
+        fetcheables = getFetcheables appContext,
+        objectStats = roTxT (appContext ^. #database) DB.getObjectsStats,
         validity = getPrefixValidity appContext,
         validityAsnPrefix = getQueryPrefixValidity appContext,
         validityBulk = getBulkPrefixValidity appContext
@@ -126,7 +127,13 @@ httpServer appContext tals = genericServe HttpApi {
 
                     resolvedValidations <- traverse (mapM (resolveOriginalDto tx db) . toVDtos . fst) perTaOutcomes
                     resolvedCommons     <- mapM (resolveOriginalDto tx db) $ toVDtos commonValidations                    
-                    fetchesDtos         <- toRepositoryDtos appContext =<< DB.getRepositories tx db
+
+                    
+                    allFetcheables      <- do 
+                            fetcheables <- readTVarIO $ appState ^. #fetcheables
+                            pure $ mconcat $ map (uncurry Set.insert) $ MonoidalMap.toList $ unFetcheables fetcheables
+                            
+                    fetchesDtos         <- toRepositoryDtos appContext =<< DB.getRepositories tx db (`Set.member` allFetcheables)
                     systemInfo          <- readTVarIO $ appContext ^. #appState . #system
 
                     pure $ mainPage
@@ -347,17 +354,7 @@ getAllSlurms AppContext {..} =
         slurms   <- mapM (\(wv, _) -> (wv, ) <$> DB.getSlurm tx db wv) versions        
         pure [ (w, s) | (w, Just s) <- slurms ]
 
-getAllTALs :: (MonadIO m, Storage s, MonadError ServerError m) =>
-                AppContext s -> m [TalDto]
-getAllTALs AppContext {..} = do
-    db <- liftIO $ readTVarIO database
-    liftIO $ roTx db $ \tx -> do        
-        tas <- DB.getTAs tx db     
-        pure [ TalDto {..} | (_, StorableTA {..}) <- tas, 
-                let repositories = map (toText . getRpkiURL) 
-                        $ NonEmpty.toList 
-                        $ unPublicationPointAccess initialRepositories ]           
-
+    
 
 getStats :: (MonadIO m, MaintainableStorage s, Storage s) => AppContext s -> m TotalDBStats
 getStats appContext = liftIO $ do 
@@ -482,7 +479,14 @@ getSystem AppContext {..} = do
             let LatestCPUTime latestCpuTime = resourceUsage ^. #latestCpuTime
             let aggregatedClockTime = resourceUsage ^. #aggregatedClockTime
             let maxMemory = resourceUsage ^. #maxMemory
-            let avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime (Earlier startUpTime) (Later now)
+            let avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime (Earlier startUpTime) (Later now)            
+            let avgMemory = getAvgMemory $ resourceUsage ^. #avgMemory
+            let cpuTimePerClockTime = let 
+                    CPUTime cpuTime = aggregatedCpuTime 
+                    TimeMs clockTime = aggregatedClockTime
+                    in if aggregatedClockTime == 0 then 0 
+                       else realToFrac cpuTime / realToFrac clockTime
+
             tag <- fmtScope scope
             pure ResourcesDto {..}
     
@@ -490,6 +494,7 @@ getSystem AppContext {..} = do
 
     rsyncClients <- map (wiToDto . snd) . Map.toList <$> readTVarIO (appState ^. #runningRsyncClients)
 
+    tals <- getTALs
     pure SystemDto {..}  
   where
     fmtScope scope =
@@ -498,6 +503,14 @@ getSystem AppContext {..} = do
                 forM (scopeList scope) $ \s -> 
                     resolvedFocusToText <$> resolveLocations tx db s 
 
+    getTALs = do
+        db <- liftIO $ readTVarIO database
+        liftIO $ roTx db $ \tx -> do        
+            tas <- DB.getTAs tx db     
+            pure [ TalDto {..} | (_, StorableTA {..}) <- tas, 
+                    let repositories = map (toText . getRpkiURL) 
+                            $ NonEmpty.toList 
+                            $ unPublicationPointAccess initialRepositories ]                     
 
 
 getRtr :: (MonadIO m, Storage s, MonadError ServerError m) =>
@@ -512,6 +525,11 @@ getVersions :: (MonadIO m, Storage s, MonadError ServerError m) =>
                 AppContext s -> m [WorldVersion]
 getVersions AppContext {..} = 
     liftIO $ map fst <$> roTxT database DB.versionsBackwards
+
+getFetcheables :: (MonadIO m, Storage s, MonadError ServerError m) =>
+                  AppContext s -> m Fetcheables
+getFetcheables AppContext {..} = 
+    liftIO $ readTVarIO $ appState ^. #fetcheables
 
 
 getQueryPrefixValidity :: (MonadIO m, Storage s, MonadError ServerError m)

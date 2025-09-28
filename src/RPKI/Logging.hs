@@ -31,7 +31,6 @@ import GHC.Generics (Generic)
 
 import System.Posix.Types
 import System.Posix.Process
-import System.Process.Typed
 import System.IO
 
 import RPKI.Domain
@@ -80,7 +79,7 @@ data AppLogger = AppLogger {
     }
 
 data WorkerInfo = WorkerInfo {
-        workerPid :: Pid,
+        workerPid :: CPid,
         endOfLife :: Instant,
         cli       :: Text
     }
@@ -88,7 +87,7 @@ data WorkerInfo = WorkerInfo {
     deriving anyclass (TheBinary)
 
 data WorkerMessage = AddWorker WorkerInfo
-                   | RemoveWorker Pid
+                   | RemoveWorker CPid
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)                    
 
@@ -185,7 +184,7 @@ registerhWorker :: MonadIO m => AppLogger -> WorkerInfo -> m ()
 registerhWorker logger wi = 
     liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ WorkerM $ AddWorker wi
 
-deregisterhWorker :: MonadIO m => AppLogger -> Pid -> m ()
+deregisterhWorker :: MonadIO m => AppLogger -> CPid -> m ()
 deregisterhWorker logger pid = 
     liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ WorkerM $ RemoveWorker pid
 

@@ -19,13 +19,14 @@ import qualified Data.Set                         as Set
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Vector                      as V
 import           GHC.Generics
-import           System.Process.Typed
+import           System.Posix.Types
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.AppTypes
 import           RPKI.Logging
 import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
+import           RPKI.Repository
 import           RPKI.Time
 import           RPKI.Metrics.System
 import           RPKI.RTR.Protocol
@@ -46,7 +47,9 @@ data AppState = AppState {
 
         -- Full binary RTR state sent to every RTR client.
         -- It is serialised once per RTR protocol version 
-        -- and sent to every new client requesting the full state
+        -- and sent to every new client requesting the full state.
+        -- It is an optimisation to avoid serialising the same 
+        -- RTR state for every new client.
         cachedBinaryRtrPdus :: TVar (Map.Map ProtocolVersion BS.ByteString),
 
         -- Function that re-reads SLURM file(s) after every re-validation
@@ -62,7 +65,9 @@ data AppState = AppState {
         -- by the validity check
         prefixIndex :: TVar (Maybe PrefixIndex),
 
-        runningRsyncClients :: TVar (Map.Map Pid WorkerInfo)
+        runningRsyncClients :: TVar (Map.Map CPid WorkerInfo),
+
+        fetcheables :: TVar Fetcheables
         
     } deriving stock (Generic)
 
@@ -88,6 +93,7 @@ newAppState = do
         prefixIndex <- newTVar Nothing
         cachedBinaryRtrPdus <- newTVar mempty
         runningRsyncClients <- newTVar mempty
+        fetcheables <- newTVar mempty
         let readSlurm = Nothing
         pure AppState {..}
                     
@@ -117,10 +123,10 @@ getOrCreateWorldVerion AppState {..} =
         maybe newWorldVersion pure <$> readTVar world
 
 versionToInstant :: WorldVersion -> Instant
-versionToInstant (WorldVersion nanos) = fromNanoseconds nanos
+versionToInstant (WorldVersion nanos) = Instant nanos
 
 instantToVersion :: Instant -> WorldVersion
-instantToVersion = WorldVersion . toNanoseconds
+instantToVersion (Instant nanos) = WorldVersion nanos
 
 -- Block on version updates
 waitForNewVersion :: AppState -> WorldVersion -> STM (WorldVersion, RtrPayloads)
@@ -147,7 +153,7 @@ updateRsyncClient message AppState {..} =
             RemoveWorker pid -> Map.delete pid
         
 
-removeExpiredRsyncProcesses :: MonadIO m => AppState -> m [(Pid, WorkerInfo)]
+removeExpiredRsyncProcesses :: MonadIO m => AppState -> m [(CPid, WorkerInfo)]
 removeExpiredRsyncProcesses AppState {..} = liftIO $ do 
     Now now <- thisInstant
     atomically $ do 

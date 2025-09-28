@@ -40,6 +40,7 @@ import           RPKI.Orphans.Generics
 
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
+import RPKI.Repository (Fetcheables)
 
 -- ToSchema insrances for Swagger doc generation
 instance ToSchema ArtificialKey
@@ -102,6 +103,7 @@ instance ToSchema SystemMetrics
 instance ToSchema ScopeKind
 instance ToSchema FetchFreshness
 instance ToSchema HttpStatus
+instance ToSchema Fetcheables where
 instance ToSchema RrdpSource where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 
@@ -118,6 +120,8 @@ instance ToSchema LatestCPUTime where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 instance ToSchema MaxMemory where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
+instance ToSchema AvgMemory where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)    
 instance ToSchema Size where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 
@@ -125,6 +129,7 @@ instance ToSchema DBFileStats
 instance ToSchema StorageStats
 instance ToSchema TotalDBStats
 instance ToSchema SStats
+instance ToSchema ObjectStats
 
 instance ToSchema (ApiSecured a) where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)

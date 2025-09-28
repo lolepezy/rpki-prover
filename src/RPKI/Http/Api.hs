@@ -30,6 +30,8 @@ import           RPKI.Http.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util (convert)
 import           RPKI.Version
+import           RPKI.Repository (Fetcheables)
+import           RPKI.Store.Base.Storable
 
 
 data API api = API {        
@@ -70,8 +72,6 @@ data API api = API {
 
         slurm :: api :- "slurm" :> Get '[JSON] Slurm,
         slurms :: api :- "slurms" :> Get '[JSON] [(WorldVersion, Slurm)],
-
-        tals :: api :- "tals" :> Get '[JSON] [TalDto],
                 
         minimalValidationResults  :: api :- "validations"      
                                     :> QueryParam "version" Text 
@@ -109,6 +109,10 @@ data API api = API {
         rtr :: api :- "rtr" :> Get '[JSON] RtrDto,
 
         versions :: api :- "versions" :> Get '[JSON] [WorldVersion],
+
+        fetcheables :: api :- "fetcheables" :> Get '[JSON] Fetcheables,
+
+        objectStats :: api :- "object-stats" :> Get '[JSON] ObjectStats,
 
         validity :: api :- "validity" :> Capture "asn" String 
                                       :> CaptureAll "prefix" String 
@@ -236,13 +240,18 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
 
             ("/slurms", mempty & get ?~ jsonOn200 
                         "Returns all SLURMs (RFC 8416) for every version"),
-            ("/tals", mempty & get ?~ jsonOn200 "Returns all TALs"),
 
             ("/lmdb-stats", mempty & get ?~ jsonOn200 "LMDB cache statistics per key-value map"),
             ("/jobs", mempty & get ?~ jsonOn200 "List of latest job runs"),
             ("/system", mempty & get ?~ jsonOn200 "State of RPKI prover instance itself, some metrics and config"),
             ("/rtr", mempty & get ?~ jsonOn200 "State of the RTR server"),
             ("/versions", mempty & get ?~ jsonOn200 "Return list of all world versions"),
+            
+            ("/fetcheables", mempty & get ?~ jsonOn200 
+                "Return all actual repository links together with their fall-back links"),
+
+            ("/object-stats", mempty & get ?~ jsonOn200 
+                "Return counts and size statistics about all objects in the cache"),
 
             ("/validity/{asn}/{prefix}", mempty & get ?~ jsonOn200 validityDescription),
 

@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE DeriveAnyClass       #-}
+{-# LANGUAGE DerivingVia        #-}
 {-# LANGUAGE StrictData           #-}
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE OverloadedLabels     #-}
@@ -300,10 +301,12 @@ newtype JobsDto = JobsDto {
 
 data ResourcesDto = ResourcesDto {
         tag                 :: Text,
-        latestCpuTime      :: CPUTime,
+        latestCpuTime       :: CPUTime,
         aggregatedCpuTime   :: CPUTime,
+        cpuTimePerClockTime :: Double,
         aggregatedClockTime :: TimeMs,
         maxMemory           :: MaxMemory,        
+        avgMemory           :: MaxMemory, 
         avgCpuTimeMsPerSecond :: Double
     }
     deriving stock (Eq, Show, Generic)
@@ -320,6 +323,7 @@ data SystemDto = SystemDto {
         gitInfo       :: Text,
         config        :: Config,
         startUpTime   :: Instant,
+        tals          :: [TalDto],
         resources     :: [ResourcesDto],
         rsyncClients  :: [WorkerInfoDto]
     }
@@ -418,6 +422,7 @@ data ValidityDto = ValidityDto {
         vrps  :: ValidityVrpsDto
     }
     deriving stock (Eq, Show, Generic)
+
 
 data ManualCVS = ManualCVS
 data ObjectBlob = ObjectBlob
@@ -627,6 +632,7 @@ instance ToJSON RrdpEnforcement
 instance ToJSON RrdpMeta
 instance ToJSON RrdpRepository
 instance ToJSON RepositoryMeta
+instance ToJSON Fetcheables
 instance ToJSON PublicationPointsDto
 instance ToJSON RepositoryDto
 instance ToJSON RrdpRepositoryDto

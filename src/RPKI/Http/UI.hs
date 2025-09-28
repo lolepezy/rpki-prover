@@ -114,6 +114,7 @@ mainPage version systemInfo perTaValidations generalValidations fetchDtos metric
 
                 link_ "/swagger-ui" "Swagger API Documentation"
                 link_ "/api/system" "Configuration & Metrics"
+                link_ "/api/lmdb-stats" "Cache Statistics"
                 link_ "https://github.com/lolepezy/rpki-prover" "GitHub Repository"
 
         navigation = do
@@ -298,7 +299,7 @@ rrdpMetricsHtml rrdpMetrics =
                 detailItemWrap "Enforcement:" $ 
                     case enforcement of 
                         NextTimeFetchSnapshot t _ -> [i|Next time fetch snapshot (marked at #{instantTimeFormat t}, see logs for details)|]
-                        ForcedSnaphotAt t         -> [i|Forced snapshot at #{instantTimeFormat t}|] :: Text                                            
+                        ForcedSnaphotAt t         -> [i|Forced snapshot at #{instantDateFormat t}|] :: Text                                            
 
         detailItemWrap :: (ToMarkup a, IsString a) => a -> a -> H.Html
         detailItemWrap label_ value_ = 
