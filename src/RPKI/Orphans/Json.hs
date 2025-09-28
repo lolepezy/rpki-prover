@@ -194,6 +194,9 @@ instance ToJSON LatestCPUTime where
 instance ToJSON MaxMemory where 
     toJSON (MaxMemory s) = toJSON s
 
+instance ToJSON AvgMemory where 
+    toJSON = toJSON . getAvgMemory
+
 instance ToJSON HttpStatus where
     toJSON (HttpStatus s) = toJSON s
 
