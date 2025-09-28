@@ -11,7 +11,7 @@ import           Control.Lens
 import           GHC.Generics
 import           Data.Monoid.Generic
 import           Data.Semigroup
-import           Data.Text
+import           Data.Text                 (Text)
 import           RPKI.Time
 import           RPKI.AppTypes
 import           RPKI.Reporting
@@ -34,11 +34,33 @@ newtype LatestCPUTime = LatestCPUTime CPUTime
 instance Monoid LatestCPUTime where
     mempty = LatestCPUTime $ CPUTime 0
 
+
+data AvgMemory = AvgMemory {
+        totalMemory :: Sum MaxMemory,
+        samples     :: Sum Int
+    }
+    deriving stock (Show, Eq, Ord, Generic)    
+    deriving anyclass (TheBinary)
+    deriving Semigroup via GenericSemigroup AvgMemory   
+
+instance Monoid AvgMemory where
+    mempty = AvgMemory 0 0
+
+newAvgMemory :: MaxMemory -> AvgMemory
+newAvgMemory mem = AvgMemory (Sum mem) 1
+
+getAvgMemory :: AvgMemory -> MaxMemory
+getAvgMemory (AvgMemory (Sum (MaxMemory total)) (Sum count)) = 
+    if count == 0 
+        then 0 
+        else MaxMemory (total `div` fromIntegral count)
+
 data ResourceUsage = ResourceUsage {
-        latestCpuTime      :: LatestCPUTime,
+        latestCpuTime       :: LatestCPUTime,
         aggregatedCpuTime   :: AggregatedCPUTime,
         aggregatedClockTime :: TimeMs,
-        maxMemory           :: MaxMemory
+        maxMemory           :: MaxMemory,
+        avgMemory           :: AvgMemory
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary)
@@ -71,6 +93,7 @@ cpuMemMetric scope cpuTime clockTime maxMemory' = SystemMetrics {
                         ((#latestCpuTime %~ (<> LatestCPUTime cpuTime)) . 
                          (#aggregatedCpuTime %~ (<> AggregatedCPUTime cpuTime)) . 
                          (#aggregatedClockTime %~ (<> clockTime)) .  
-                         (#maxMemory %~ (<> maxMemory')))
+                         (#maxMemory %~ (<> maxMemory')) .
+                         (#avgMemory %~ (<> newAvgMemory maxMemory')))
                         mempty
     }
