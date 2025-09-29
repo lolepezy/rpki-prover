@@ -574,13 +574,15 @@ newtype PartitionIdentifier = PartitionIdentifier Integer
 
 data PartitionListEntry = PartitionListEntry {
         partitionIdentifier :: PartitionIdentifier,
-        hash                :: Hash
+        hash                :: Hash,
+        size                :: Size
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)   
 
 data ErikPartition = ErikPartition {
-        partitionTime :: Instant,        
+        partitionTime :: Instant,   
+        hashAlg       :: DigestAlgorithmIdentifier,
         manifestList  :: [ManifestListEntry]
     } 
     deriving stock (Show, Eq, Ord, Generic)
@@ -588,7 +590,10 @@ data ErikPartition = ErikPartition {
 
 data ManifestListEntry = ManifestListEntry {
         hash           :: Hash,
+        size           :: Size,
+        aki            :: AKI,
         manifestNumber :: Serial,
+        thisUpdate     :: Instant,
         location       :: URI
     } 
     deriving stock (Show, Eq, Ord, Generic)
@@ -788,7 +793,7 @@ newtype PerTA a = PerTA { unPerTA :: MonoidalMap TaName a }
 newtype Size = Size { unSize :: Int64 }
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (Num)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
     deriving Semigroup via Sum Size
     deriving Monoid via Sum Size
 

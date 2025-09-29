@@ -41,7 +41,7 @@ parseErikIndex bs = do
             throwParseError $ "Unexpected manifest version: " ++ show version
         parseIndexFields
 
-    parseIndexFields = do 
+    parseIndexFields = do         
         indexScope    <- getIA5String (pure . Text.pack) "Wrong indexScope"
         indexTime     <- newInstant <$> getTime "No partitionTime"
         previousIndex <- getOptionalHash
@@ -55,8 +55,9 @@ parseErikIndex bs = do
     getPartitionList = onNextContainer Sequence $
         getMany $ onNextContainer Sequence $
             PartitionListEntry 
-                <$> getInteger (pure . PartitionIdentifier) "Wrong serial for manifest number"
+                <$> getInteger (pure . PartitionIdentifier) "Wrong serial for partition number"
                 <*> getBitString (pure . U.mkHash) "Wrong hash"
+                <*> getInteger (pure . Size . fromIntegral) "Wrong size for partition size"
 
 parseErikPartition :: BS.ByteString -> PureValidatorT ErikPartition
 parseErikPartition bs = do    
@@ -74,16 +75,19 @@ parseErikPartition bs = do
 
     parsePartitionFields = do 
         partitionTime <- newInstant <$> getTime "No partitionTime"
-        _hashAlg     <- getOID oid2Hash "Wrong hash algorithm OID"
+        hashAlg      <- getOID (pure . DigestAlgorithmIdentifier) "Wrong hash algorithm OID"
         manifestList <- getManifestList
         pure $ ErikPartition {..}
         
     makeMftNumber n = either throwParseError pure $ makeSerial n
 
     getManifestList = onNextContainer Sequence $
-        getMany $ onNextContainer Sequence $
-            ManifestListEntry 
-                <$> getBitString (pure . U.mkHash) "Wrong hash"
-                <*> getInteger makeMftNumber "Wrong serial for manifest number"
-                <*> getIA5String (pure . URI . Text.pack) "Wrong location for manifest URI"
+        getMany $ onNextContainer Sequence $ do 
+            hash           <- getBitString (pure . U.mkHash) "Wrong hash"
+            size           <- getInteger (pure . Size . fromIntegral) "Wrong size for manifest list size"
+            aki            <- getBitString (pure . AKI . mkKI) "Wrong AKI"
+            manifestNumber <- getInteger makeMftNumber "Wrong serial for manifest list number"
+            thisUpdate     <- newInstant <$> getTime "No partitionTime"                
+            location       <- getIA5String (pure . URI . Text.pack) "Wrong location for manifest URI"            
+            pure $ ManifestListEntry {..}                
                     
