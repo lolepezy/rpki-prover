@@ -8,15 +8,13 @@
   * [Static Linux binary](#static-linux-binary)
   * [Docker image](#docker-image)
   * [Building from source](#building-from-source)
-  
-* [RTR server](#rtr-server)
 
-* [HTTP API](#http-api)
-  * [Prometheus metrics](#prometheus-metrics)
-  
-* [Support for RSC](#support-for-rsc)
- 
-* [Resource consumption](#resource-consumption)
+* [Functionality](#functionality)
+  * [RTR server](#rtr-server)
+  * [HTTP API](#http-api)
+  * [Prometheus metrics](#prometheus-metrics)  
+  * [Support for RSC](#support-for-rsc)
+  * [Resource consumption](#resource-consumption)
   
 * [Why Haskell?](#why-haskell)
 
@@ -133,11 +131,13 @@ curl -s http://localhost:9999/api/vrps.csv
 curl -s http://localhost:9999/api/vrps.json
 ```
 
-# RTR server <a name="rtr-server"></a>
+# Functionality
+
+## RTR server <a name="rtr-server"></a>
 
 RPKI Prover can be an [RTR server](https://www.rfc-editor.org/rfc/rfc8210), to enable the feature, add `--with-rtr` CLI option. It may also make sense to add `--rtr-address` and `--rtr-port` to listen on.
 
-# HTTP API <a name="http-api"></a>
+## HTTP API <a name="http-api"></a>
 
 Visit [http://localhost:9999](http://localhost:9999) to view the UI reporting metrics, trust anchors, repositories, and any errors or warnings.
 
@@ -147,7 +147,7 @@ There are multiple API endpoints. The easiest way to explore them is via the `/s
 
 Prometheus metrics are available at the standard `/metrics` path.
 
-# Support for RSC <a name="support-for-rsc"></a>
+## Support for RSC <a name="support-for-rsc"></a>
 
 RPKI Prover supports validating RPKI Signed Checklists ([RSC draft](https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-rsc/)).
 
@@ -165,7 +165,7 @@ To validate all files in a directory:
 rpki-prover --rpki-root-directory /var/prover --verify-signature --signature-file checklist.sig --verify-directory ./dir
 ```
 
-# Resource consumption <a name="resource-consumption"></a>
+## Resource consumption <a name="resource-consumption"></a>
 
 A cold start (no cache) takes at least a few minutes and consumes 3-5 minutes of CPU time. This can be slightly reduced by increasing `--cpu-count` if multiple CPUs are available. CPU-bound tasks scale well up to 8–10 cores, but overall warm-up time is often limited by the slowest RPKI repository. After warm-up, the application is not very CPU-intensive. 
 
