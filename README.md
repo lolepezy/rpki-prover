@@ -43,7 +43,7 @@ Issues are tracked [here](https://github.com/lolepezy/rpki-prover/issues). You c
 * Static binaries for Linux
 * Docker image
 
-# Usage <a name="usage"></a>
+# Installation and usage <a name="usage"></a>
 
 Running `rpki-prover --help` displays a description of CLI options.
 
