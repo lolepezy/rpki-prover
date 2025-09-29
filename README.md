@@ -1,17 +1,23 @@
 # Contents
 
 * [Introduction](#introduction)
-* [Features](#features)
-* [Usage](#usage)
 
+* [Features](#features)
+
+* [Installation and usage](#usage)
   * [Static Linux binary](#static-linux-binary)
   * [Docker image](#docker-image)
   * [Building from source](#building-from-source)
-* [HTTP API](#http-api)
+  
+* [RTR server](#rtr-server)
 
+* [HTTP API](#http-api)
   * [Prometheus metrics](#prometheus-metrics)
+  
 * [Support for RSC](#support-for-rsc)
+ 
 * [Resource consumption](#resource-consumption)
+  
 * [Why Haskell?](#why-haskell)
 
 # Introduction <a name="introduction"></a>
@@ -126,6 +132,10 @@ Validated all TAs, took ...
 curl -s http://localhost:9999/api/vrps.csv
 curl -s http://localhost:9999/api/vrps.json
 ```
+
+# RTR server <a name="rtr-server"></a>
+
+RPKI Prover can be an [RTR server](https://www.rfc-editor.org/rfc/rfc8210), to enable the feature, add `--with-rtr` CLI option. It may also make sense to add `--rtr-address` and `--rtr-port` to listen on.
 
 # HTTP API <a name="http-api"></a>
 
