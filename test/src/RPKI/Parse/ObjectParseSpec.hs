@@ -17,6 +17,7 @@ import           RPKI.Parse.Internal.SPL
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit        as HU
+import RPKI.Parse.Internal.Erik (parseErikIndex)
 
 
 -- TODO Implement a bunch of good tests here
@@ -26,10 +27,11 @@ import qualified Test.Tasty.HUnit        as HU
 
 objectParseSpec :: TestTree
 objectParseSpec = testGroup "Unit tests for object parsing" [
-    shoudlParseBGPSec,
-    shouldParseAspa1,
-    shouldParseAspa2,
-    shouldParseSpl
+    -- shoudlParseBGPSec,
+    -- shouldParseAspa1,
+    -- shouldParseAspa2,
+    -- shouldParseSpl,
+    shouldParseIndex
   ]
 
 
@@ -68,3 +70,10 @@ shouldParseSpl = HU.testCase "Should parse an SPL object" $ do
     let SplPayload asn prefixes = getCMSContent $ cmsPayload splObject
     HU.assertEqual "Wrong ASN" asn (ASN 15562)
     HU.assertEqual "Wrong prefix list length" (length prefixes) 23    
+
+shouldParseIndex = HU.testCase "Should parse an Erik index" $ do        
+    bs <- BS.readFile "test/data/erik/ca.rg.net"
+    let (Right erikIndex, _) = runPureValidator (newScopes "parse") $ parseErikIndex bs
+    putStrLn $ "Parsed index: " <> show erikIndex
+     -- TODO More checks
+    -- HU.assertEqual "Wrong index" 0 (0

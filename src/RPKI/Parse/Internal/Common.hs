@@ -89,6 +89,8 @@ id_ce_basicConstraints      = [2, 5, 29, 19]
 id_ce_CRLDistributionPoints = [2, 5, 29, 31]
 id_ce_certificatePolicies   = [2, 5, 29, 32]
 
+id_ct_rpkiErikIndex :: OID
+id_ct_rpkiErikIndex = [1,3,6,1,4,1,41948,826]
 
 allowedCriticalOIDs :: [OID]
 allowedCriticalOIDs = [ 
@@ -137,6 +139,11 @@ getBitString :: (BS.ByteString -> ParseASN1 a) -> String -> ParseASN1 a
 getBitString f m = getNext >>= \case 
     BitString (BitArray _ bs) -> f bs
     a                         -> parseError m a
+
+getOctetString :: (BS.ByteString -> ParseASN1 a) -> String -> ParseASN1 a
+getOctetString f m = getNext >>= \case 
+    OctetString bs -> f bs
+    a              -> parseError m a
 
 getAddressFamily :: String -> ParseASN1 (Either BS.ByteString AddrFamily)
 getAddressFamily message = getNext >>= \case 

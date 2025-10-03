@@ -562,7 +562,7 @@ data BGPSecPayload = BGPSecPayload {
 data ErikIndex = ErikIndex {
         indexScope    :: Text,
         indexTime     :: Instant,  
-        previousIndex :: Maybe Hash,
+        hashAlg       :: DigestAlgorithmIdentifier,
         partitionList :: [PartitionListEntry]
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -620,7 +620,6 @@ data SignedObject a = SignedObject {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
--- deriving instance NFData ASN1
 
 {- 
     SignedData ::= SEQUENCE {
@@ -879,18 +878,10 @@ emptyAsResources :: AsResources
 emptyAsResources = AsResources RS.emptyRS
 
 newCrl :: AKI -> Hash -> SignCRL -> CrlObject
-newCrl a h sc = CrlObject {
-        hash = h,    
-        aki = a,
-        signCrl = sc
-    } 
+newCrl aki hash signCrl = CrlObject {..}        
 
 newCMSObject :: Hash -> CMS a -> CMSBasedObject a
-newCMSObject h cms = CMSBasedObject {
-        hash = h,    
-        -- locations = loc,
-        cmsPayload = cms
-    }
+newCMSObject hash cmsPayload = CMSBasedObject {..}        
 
 toShortBS :: BS.ByteString -> BSS.ShortByteString
 toShortBS = BSS.toShort
