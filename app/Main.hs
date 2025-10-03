@@ -467,10 +467,11 @@ getRoot cliOptions = do
             Right <$> makeSureRootExists root            
   where
     makeSureRootExists root = do 
-        rootExists <- liftIO $ doesDirectoryExist root
+        absoluteRoot <- liftIO $ makeAbsolute root
+        rootExists <- liftIO $ doesDirectoryExist absoluteRoot
         if rootExists
-            then pure root
-            else appError $ InitE $ InitError [i|Root directory #{root} doesn't exist.|]
+            then pure absoluteRoot
+            else appError $ InitE $ InitError [i|Root directory #{absoluteRoot} doesn't exist.|]
 
 orDefault :: Maybe a -> a -> a
 m `orDefault` d = fromMaybe d m
