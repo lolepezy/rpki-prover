@@ -1,8 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE OverloadedLabels           #-}
 
 module RPKI.Parse.ObjectParseSpec where
 
+import Control.Lens
 import qualified Data.ByteString        as BS
 import           Data.Maybe (isJust)
 import qualified Data.Set               as Set
@@ -18,22 +20,21 @@ import           RPKI.Parse.Internal.SPL
 import           Test.Tasty
 import qualified Test.Tasty.HUnit        as HU
 import RPKI.Parse.Internal.Erik (parseErikIndex)
+import RPKI.Util (hashHex)
 
 
 -- TODO Implement a bunch of good tests here
 -- There should be a test suite with real objects, which is way too long and tedious, 
 -- so far all the testing is happening on the level of comparing VRP lists.
 
-
 objectParseSpec :: TestTree
 objectParseSpec = testGroup "Unit tests for object parsing" [
-    -- shoudlParseBGPSec,
-    -- shouldParseAspa1,
-    -- shouldParseAspa2,
-    -- shouldParseSpl,
+    shoudlParseBGPSec,
+    shouldParseAspa1,
+    shouldParseAspa2,
+    shouldParseSpl,
     shouldParseIndex
   ]
-
 
 
 shoudlParseBGPSec = HU.testCase "Should parse a BGPSec certificate" $ do        
@@ -73,7 +74,10 @@ shouldParseSpl = HU.testCase "Should parse an SPL object" $ do
 
 shouldParseIndex = HU.testCase "Should parse an Erik index" $ do        
     bs <- BS.readFile "test/data/erik/ca.rg.net"
-    let (Right erikIndex, _) = runPureValidator (newScopes "parse") $ parseErikIndex bs
-    putStrLn $ "Parsed index: " <> show erikIndex
-     -- TODO More checks
-    -- HU.assertEqual "Wrong index" 0 (0
+    let (Right ErikIndex {..}, _) = runPureValidator (newScopes "parse") $ parseErikIndex bs
+    
+    HU.assertEqual "Wrong index" indexScope "ca.rg.net"
+    HU.assertEqual "Wrong number of partitions" (length partitionList) 1
+    HU.assertEqual "Wrong hash" 
+        "804cf56cbca81d784a5a5f3d673eff0155f55e1ac3bb7403c55d7f49b18cd64f"
+        (hashHex $ head partitionList ^. #hash)

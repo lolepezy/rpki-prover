@@ -75,7 +75,7 @@ data CertType = CACert | EECert | BGPCert
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-newtype Hash = Hash BSS.ShortByteString 
+newtype Hash = Hash { unHash :: BSS.ShortByteString } 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 

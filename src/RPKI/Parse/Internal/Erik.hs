@@ -21,7 +21,6 @@ import RPKI.Parse.Internal.Common
 
 import qualified RPKI.Util as U
 import RPKI.Time
-import Data.ASN1.BitArray
 
 -- | Parse Erik sync protocol objects, 
 -- https://datatracker.ietf.org/doc/html/draft-spaghetti-sidrops-rpki-erik-protocol
@@ -38,8 +37,6 @@ parseErikIndex bs = do
         when (oid /= id_ct_rpkiErikIndex) $
             throwParseError $ "Unexpected OID for Erik index: " <> show oid
 
-        -- c <- getNext
-        -- throwParseError $ "Next " ++ show c
         onNextContainer (Container Context 0) $ do
             fullContent <- getMany getNext
             let nested = BS.concat [ os | OctetString os <- fullContent ]                        
@@ -49,13 +46,10 @@ parseErikIndex bs = do
 
     parseNested nestedBs = do
         nestedAsn1 <- first U.fmtGen $ decodeASN1' BER nestedBs
-        -- Left $ Text.pack $ "nestedAsn1: " ++ show nestedAsn1
         first Text.pack $ runParseASN1 parseIndex nestedAsn1
 
-    parseIndex = onNextContainer Sequence $ do        
-        parseIndexFields 
-        -- <|> parseIndexFieldsWithVersion 
-        -- <|> parseIndexFields      
+    parseIndex = onNextContainer Sequence $ 
+        parseIndexFields <|> parseIndexFieldsWithVersion         
 
     parseIndexFieldsWithVersion = do
         version :: Int <- getInteger (pure . fromInteger) "Wrong version"
@@ -69,10 +63,6 @@ parseErikIndex bs = do
         hashAlg       <- getOID (pure . DigestAlgorithmIdentifier) "Wrong hash algorithm OID"
         partitionList <- getPartitionList
         pure $ ErikIndex {..}    
-
-    getOptionalHash = getNextMaybe $ \case            
-        BitString (BitArray _ b) -> Just $ U.mkHash b
-        _                        -> Nothing
                 
     getPartitionList = onNextContainer Sequence $
         getMany $ onNextContainer Sequence $
@@ -98,11 +88,11 @@ parseErikPartition bs = do
 
     parsePartitionFields = do 
         partitionTime <- newInstant <$> getTime "No partitionTime"
-        hashAlg      <- getOID (pure . DigestAlgorithmIdentifier) "Wrong hash algorithm OID"
-        manifestList <- getManifestList
+        hashAlg       <- getOID (pure . DigestAlgorithmIdentifier) "Wrong hash algorithm OID"
+        manifestList  <- getManifestList
         pure $ ErikPartition {..}
-        
-    makeMftNumber n = either throwParseError pure $ makeSerial n
+
+    makeMftNumber = either throwParseError pure . makeSerial
 
     getManifestList = onNextContainer Sequence $
         getMany $ onNextContainer Sequence $ do 
