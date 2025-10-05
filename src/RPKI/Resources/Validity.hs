@@ -148,26 +148,26 @@ lookupVrps :: IpPrefix -> PrefixIndex -> [Vrp]
 lookupVrps prefix PrefixIndex {..} =         
     case prefix of
         Ipv4P p@(Ipv4Prefix _) -> let 
-                (start, end) = prefixEdgesV4 p
-            in lookupTree ipv4 start end
+                (start_, end) = prefixEdgesV4 p
+            in lookupTree ipv4 start_ end
 
         Ipv6P p@(Ipv6Prefix _) -> let 
-                (start, end) = prefixEdgesV6 p
-            in map (\(QuickCompVrp _ _ vrp) -> vrp) $ lookupTree ipv6 start end
+                (start_, end) = prefixEdgesV6 p
+            in map (\(QuickCompVrp _ _ vrp) -> vrp) $ lookupTree ipv6 start_ end
   where    
-    lookupTree bucket start end =         
+    lookupTree bucket start_ end =         
         case bucket ^. #subtree of 
             AllTogether vrps -> filter suitable vrps
             Divided {..}     -> let 
                     overlaps = filter suitable overlapping
-                in case checkInterval start end (intervalMiddle bucket) of 
-                    Lower    -> overlaps <> lookupTree lower start end
-                    Higher   -> overlaps <> lookupTree higher start end
+                in case checkInterval start_ end (intervalMiddle bucket) of 
+                    Lower    -> overlaps <> lookupTree lower start_ end
+                    Higher   -> overlaps <> lookupTree higher start_ end
                     Overlaps -> overlaps
       where
         {-# INLINE suitable #-}
         suitable (prefixEgdes -> (vStart, vEnd)) = 
-            vStart <= start && vEnd >= end
+            vStart <= start_ && vEnd >= end
 
 prefixValidity :: ASN -> IpPrefix -> PrefixIndex -> ValidityResult
 prefixValidity asn prefix prefixIndex = 

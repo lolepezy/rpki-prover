@@ -250,14 +250,16 @@ newtype AppException = AppException AppError
 instance Exception AppException
 
 {- 
-   Scope keys are pretty long and comparison of them is expensive.
+   Scope keys are pretty long and comparing them is expensive, so using Map looks a bit stupid at first.
+
    However, 
    - HashMap is actually slower in benchmarks with long Scope-like keys ('optimise/app-state-hashmap' branch)
-   - using a Trie is much in benchmarks but doesn't cause any measurable improvement ('optimise/app-state' branch)
+   - using a Trie is much faster in micro-benchmarks but doesn't cause any measurable 
+     improvement and adds extra code ('optimise/app-state' branch).
    - Trying to intern the Scope keys using Symbolize library breaks serialisation ('optimise/focus' branch)
 
    So in reality it's a decent solution. It might also be that the URLs in the scope elements
-   are physically shared in memory so comparisons are actually fast.
+   are physically shared in memory so comparisons are actually pretty fast.
 -}
 newtype Validations = Validations (Map VScope (Set VIssue))
     deriving stock (Show, Eq, Ord, Generic)
