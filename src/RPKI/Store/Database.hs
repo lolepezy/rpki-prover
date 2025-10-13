@@ -441,8 +441,7 @@ deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore { mftShortcuts = MftS
             case ro of
                 MftRO mft -> do 
                     MM.delete tx mftByAKI aki_ (objectKey, getMftTimingMark mft)                    
-                    ifJustM (M.get tx mftMetas aki_) $ \s -> do
-                        let mftShort = unCompressed $ restoreFromRaw s
+                    ifJustM (M.get tx mftMetas aki_) $ \(unCompressed . restoreFromRaw -> mftShort) ->
                         when (mftShort ^. #key == objectKey) $
                             deleteMftShortcut tx db aki_
                 _  -> pure ()   
