@@ -1611,14 +1611,14 @@ updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         let !raw = Verbatim $ toStorable $ Compressed $ DB.MftShortcutMeta {..}
-        atomically $ writeCQueue shortcutQueue $ UpdateMftShortcut aki key raw  
+        atomically $ writeCQueue shortcutQueue $ UpdateMftShortcut aki raw  
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         -- Pre-serialise the object so that all the heavy-lifting happens in the thread 
         let !raw = Verbatim $ toStorable $ Compressed DB.MftShortcutChildren {..}        
-        atomically $ writeCQueue shortcutQueue $ UpdateMftShortcutChildren aki key raw
+        atomically $ writeCQueue shortcutQueue $ UpdateMftShortcutChildren aki raw
 
 deleteMftShortcut :: MonadIO m => TopDownContext -> AKI -> m ()
 deleteMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki = 
@@ -1631,13 +1631,13 @@ storeShortcuts AppContext {..} shortcutQueue = liftIO $
     readQueueChunked shortcutQueue 1000 $ \mftShortcuts -> 
         rwTxT database $ \tx db -> 
             for_ mftShortcuts $ \case 
-                UpdateMftShortcut aki key s         -> DB.saveMftShorcutMeta tx db aki key s                    
-                UpdateMftShortcutChildren aki key s -> DB.saveMftShorcutChildren tx db aki key s
-                DeleteMftShortcut aki               -> DB.deleteMftShortcut tx db aki
+                UpdateMftShortcut aki s         -> DB.saveMftShorcutMeta tx db aki s                    
+                UpdateMftShortcutChildren aki s -> DB.saveMftShorcutChildren tx db aki s
+                DeleteMftShortcut aki           -> DB.deleteMftShortcut tx db aki
                  
 
-data MftShortcutOp = UpdateMftShortcut AKI ObjectKey (Verbatim (Compressed DB.MftShortcutMeta))
-                   | UpdateMftShortcutChildren AKI ObjectKey (Verbatim (Compressed DB.MftShortcutChildren))            
+data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta))
+                   | UpdateMftShortcutChildren AKI (Verbatim (Compressed DB.MftShortcutChildren))            
                    | DeleteMftShortcut AKI            
 
 -- Do whatever is required to notify other subsystems that the object was touched 
