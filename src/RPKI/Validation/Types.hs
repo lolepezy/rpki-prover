@@ -11,7 +11,6 @@
 module RPKI.Validation.Types where
 
 import           Data.Aeson.Types
-import qualified Data.Map.Strict             as Map
 import           Data.Text                   (Text)
 import           Data.Tuple.Strict
 import           GHC.Generics
@@ -25,6 +24,7 @@ import           RPKI.Domain
 import           RPKI.Repository
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Serialisation
+import qualified RPKI.Util.KeyMap as KeyMap
 
 
 data MftChild = CaChild CaShortcut Serial
@@ -57,7 +57,7 @@ data CrlShortcut = CrlShortcut {
 
 data MftShortcut = MftShortcut { 
         key            :: ObjectKey,
-        nonCrlEntries  :: Map.Map ObjectKey MftEntry,
+        nonCrlEntries  :: KeyMap.KeyMap MftEntry,
         notValidBefore :: Instant,
         notValidAfter  :: Instant,        
         serial         :: Serial,
