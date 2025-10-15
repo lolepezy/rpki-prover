@@ -1,0 +1,628 @@
+{-# LANGUAGE CPP #-}
+
+module RPKI.Util.KeyMap 
+    ( KeyMap
+    , empty
+    , null
+    , size
+    , member
+    , notMember
+    , lookup
+    , findWithDefault
+    , lookupLT
+    , lookupGT
+    , lookupLE
+    , lookupGE
+    , insert
+    , insertWith
+    , delete
+    , adjust
+    , update
+    , alter
+    , union
+    , unionWith
+    , unions
+    , difference
+    , intersection
+    , intersectionWith
+    , map
+    , mapWithKey
+    , traverseWithKey
+    , mapAccum
+    , mapAccumWithKey
+    , foldr
+    , foldl
+    , foldrWithKey
+    , foldlWithKey
+    , foldMapWithKey
+    , foldr'
+    , foldl'
+    , foldrWithKey'
+    , foldlWithKey'
+    , elems
+    , keys
+    , assocs
+    , keysSet
+    , toList
+    , fromList
+    , fromListWith
+    , fromListWithKey
+    , toAscList
+    , toDescList
+    , filter
+    , filterWithKey
+    , partition
+    , partitionWithKey
+    , mapMaybe
+    , mapMaybeWithKey
+    , mapEither
+    , mapEitherWithKey
+    , split
+    , splitLookup
+    , isSubmapOf
+    , isSubmapOfBy
+    , isProperSubmapOf
+    , isProperSubmapOfBy
+    , minView
+    , maxView
+    , minViewWithKey
+    , maxViewWithKey
+    ) where
+
+#include "MachDeps.h"
+
+import Prelude hiding (lookup, map, filter, foldr, foldl, null)
+import qualified Prelude
+
+import RPKI.Domain (ObjectKey(..), ArtificialKey(..))
+
+#if WORD_SIZE_IN_BITS == 64 
+
+-- On 64-bit systems, use IntMap for maximum performance
+import qualified Data.IntMap.Strict as IM
+import Data.IntMap.Strict (IntMap)
+import qualified Data.Set as Set
+
+type KeyMap a = IntMap a
+
+-- Convert ObjectKey to Int (they're both 64-bit on this platform)
+objectKeyToInt :: ObjectKey -> Int
+objectKeyToInt (ObjectKey (ArtificialKey i)) = fromIntegral i
+{-# INLINE objectKeyToInt #-}
+
+intToObjectKey :: Int -> ObjectKey
+intToObjectKey i = ObjectKey $ ArtificialKey $ fromIntegral i
+{-# INLINE intToObjectKey #-}
+
+-- Re-export IntMap operations with ObjectKey conversion
+empty :: KeyMap a
+empty = IM.empty
+{-# INLINE empty #-}
+
+null :: KeyMap a -> Bool
+null = IM.null
+{-# INLINE null #-}
+
+size :: KeyMap a -> Int
+size = IM.size
+{-# INLINE size #-}
+
+member :: ObjectKey -> KeyMap a -> Bool
+member k = IM.member (objectKeyToInt k)
+{-# INLINE member #-}
+
+notMember :: ObjectKey -> KeyMap a -> Bool
+notMember k = IM.notMember (objectKeyToInt k)
+{-# INLINE notMember #-}
+
+lookup :: ObjectKey -> KeyMap a -> Maybe a
+lookup k = IM.lookup (objectKeyToInt k)
+{-# INLINE lookup #-}
+
+findWithDefault :: a -> ObjectKey -> KeyMap a -> a
+findWithDefault def k = IM.findWithDefault def (objectKeyToInt k)
+{-# INLINE findWithDefault #-}
+
+lookupLT :: ObjectKey -> KeyMap a -> Maybe (ObjectKey, a)
+lookupLT k m = fmap (\(i, v) -> (intToObjectKey i, v)) $ IM.lookupLT (objectKeyToInt k) m
+{-# INLINE lookupLT #-}
+
+lookupGT :: ObjectKey -> KeyMap a -> Maybe (ObjectKey, a)
+lookupGT k m = fmap (\(i, v) -> (intToObjectKey i, v)) $ IM.lookupGT (objectKeyToInt k) m
+{-# INLINE lookupGT #-}
+
+lookupLE :: ObjectKey -> KeyMap a -> Maybe (ObjectKey, a)
+lookupLE k m = fmap (\(i, v) -> (intToObjectKey i, v)) $ IM.lookupLE (objectKeyToInt k) m
+{-# INLINE lookupLE #-}
+
+lookupGE :: ObjectKey -> KeyMap a -> Maybe (ObjectKey, a)
+lookupGE k m = fmap (\(i, v) -> (intToObjectKey i, v)) $ IM.lookupGE (objectKeyToInt k) m
+{-# INLINE lookupGE #-}
+
+insert :: ObjectKey -> a -> KeyMap a -> KeyMap a
+insert k = IM.insert (objectKeyToInt k)
+{-# INLINE insert #-}
+
+insertWith :: (a -> a -> a) -> ObjectKey -> a -> KeyMap a -> KeyMap a
+insertWith f k = IM.insertWith f (objectKeyToInt k)
+{-# INLINE insertWith #-}
+
+delete :: ObjectKey -> KeyMap a -> KeyMap a
+delete k = IM.delete (objectKeyToInt k)
+{-# INLINE delete #-}
+
+adjust :: (a -> a) -> ObjectKey -> KeyMap a -> KeyMap a
+adjust f k = IM.adjust f (objectKeyToInt k)
+{-# INLINE adjust #-}
+
+update :: (a -> Maybe a) -> ObjectKey -> KeyMap a -> KeyMap a
+update f k = IM.update f (objectKeyToInt k)
+{-# INLINE update #-}
+
+alter :: (Maybe a -> Maybe a) -> ObjectKey -> KeyMap a -> KeyMap a
+alter f k = IM.alter f (objectKeyToInt k)
+{-# INLINE alter #-}
+
+union :: KeyMap a -> KeyMap a -> KeyMap a
+union = IM.union
+{-# INLINE union #-}
+
+unionWith :: (a -> a -> a) -> KeyMap a -> KeyMap a -> KeyMap a
+unionWith = IM.unionWith
+{-# INLINE unionWith #-}
+
+unions :: [KeyMap a] -> KeyMap a
+unions = IM.unions
+{-# INLINE unions #-}
+
+difference :: KeyMap a -> KeyMap b -> KeyMap a
+difference = IM.difference
+{-# INLINE difference #-}
+
+intersection :: KeyMap a -> KeyMap b -> KeyMap a
+intersection = IM.intersection
+{-# INLINE intersection #-}
+
+intersectionWith :: (a -> b -> c) -> KeyMap a -> KeyMap b -> KeyMap c
+intersectionWith = IM.intersectionWith
+{-# INLINE intersectionWith #-}
+
+map :: (a -> b) -> KeyMap a -> KeyMap b
+map = IM.map
+{-# INLINE map #-}
+
+mapWithKey :: (ObjectKey -> a -> b) -> KeyMap a -> KeyMap b
+mapWithKey f = IM.mapWithKey (\i -> f (intToObjectKey i))
+{-# INLINE mapWithKey #-}
+
+traverseWithKey :: Applicative t => (ObjectKey -> a -> t b) -> KeyMap a -> t (KeyMap b)
+traverseWithKey f = IM.traverseWithKey (\i -> f (intToObjectKey i))
+{-# INLINE traverseWithKey #-}
+
+mapAccum :: (a -> b -> (a, c)) -> a -> KeyMap b -> (a, KeyMap c)
+mapAccum = IM.mapAccum
+{-# INLINE mapAccum #-}
+
+mapAccumWithKey :: (a -> ObjectKey -> b -> (a, c)) -> a -> KeyMap b -> (a, KeyMap c)
+mapAccumWithKey f = IM.mapAccumWithKey (\acc i -> f acc (intToObjectKey i))
+{-# INLINE mapAccumWithKey #-}
+
+foldr :: (a -> b -> b) -> b -> KeyMap a -> b
+foldr = IM.foldr
+{-# INLINE foldr #-}
+
+foldl :: (a -> b -> a) -> a -> KeyMap b -> a
+foldl = IM.foldl
+{-# INLINE foldl #-}
+
+foldrWithKey :: (ObjectKey -> a -> b -> b) -> b -> KeyMap a -> b
+foldrWithKey f = IM.foldrWithKey (\i -> f (intToObjectKey i))
+{-# INLINE foldrWithKey #-}
+
+foldlWithKey :: (a -> ObjectKey -> b -> a) -> a -> KeyMap b -> a
+foldlWithKey f = IM.foldlWithKey (\acc i -> f acc (intToObjectKey i))
+{-# INLINE foldlWithKey #-}
+
+foldMapWithKey :: Monoid m => (ObjectKey -> a -> m) -> KeyMap a -> m
+foldMapWithKey f = IM.foldMapWithKey (\i -> f (intToObjectKey i))
+{-# INLINE foldMapWithKey #-}
+
+foldr' :: (a -> b -> b) -> b -> KeyMap a -> b
+foldr' = IM.foldr'
+{-# INLINE foldr' #-}
+
+foldl' :: (a -> b -> a) -> a -> KeyMap b -> a
+foldl' = IM.foldl'
+{-# INLINE foldl' #-}
+
+foldrWithKey' :: (ObjectKey -> a -> b -> b) -> b -> KeyMap a -> b
+foldrWithKey' f = IM.foldrWithKey' (\i -> f (intToObjectKey i))
+{-# INLINE foldrWithKey' #-}
+
+foldlWithKey' :: (a -> ObjectKey -> b -> a) -> a -> KeyMap b -> a
+foldlWithKey' f = IM.foldlWithKey' (\acc i -> f acc (intToObjectKey i))
+{-# INLINE foldlWithKey' #-}
+
+elems :: KeyMap a -> [a]
+elems = IM.elems
+{-# INLINE elems #-}
+
+keys :: KeyMap a -> [ObjectKey]
+keys = Prelude.map intToObjectKey . IM.keys
+{-# INLINE keys #-}
+
+assocs :: KeyMap a -> [(ObjectKey, a)]
+assocs = Prelude.map (\(i, v) -> (intToObjectKey i, v)) . IM.assocs
+{-# INLINE assocs #-}
+
+keysSet :: KeyMap a -> Set.Set ObjectKey
+keysSet = Set.fromList . keys
+{-# INLINE keysSet #-}
+
+toList :: KeyMap a -> [(ObjectKey, a)]
+toList = assocs
+{-# INLINE toList #-}
+
+fromList :: [(ObjectKey, a)] -> KeyMap a
+fromList = IM.fromList . Prelude.map (\(k, v) -> (objectKeyToInt k, v))
+{-# INLINE fromList #-}
+
+fromListWith :: (a -> a -> a) -> [(ObjectKey, a)] -> KeyMap a
+fromListWith f = IM.fromListWith f . Prelude.map (\(k, v) -> (objectKeyToInt k, v))
+{-# INLINE fromListWith #-}
+
+fromListWithKey :: (ObjectKey -> a -> a -> a) -> [(ObjectKey, a)] -> KeyMap a
+fromListWithKey f = IM.fromListWithKey (\i -> f (intToObjectKey i)) . Prelude.map (\(k, v) -> (objectKeyToInt k, v))
+{-# INLINE fromListWithKey #-}
+
+toAscList :: KeyMap a -> [(ObjectKey, a)]
+toAscList = Prelude.map (\(i, v) -> (intToObjectKey i, v)) . IM.toAscList
+{-# INLINE toAscList #-}
+
+toDescList :: KeyMap a -> [(ObjectKey, a)]
+toDescList = Prelude.map (\(i, v) -> (intToObjectKey i, v)) . IM.toDescList
+{-# INLINE toDescList #-}
+
+filter :: (a -> Bool) -> KeyMap a -> KeyMap a
+filter = IM.filter
+{-# INLINE filter #-}
+
+filterWithKey :: (ObjectKey -> a -> Bool) -> KeyMap a -> KeyMap a
+filterWithKey f = IM.filterWithKey (\i -> f (intToObjectKey i))
+{-# INLINE filterWithKey #-}
+
+partition :: (a -> Bool) -> KeyMap a -> (KeyMap a, KeyMap a)
+partition = IM.partition
+{-# INLINE partition #-}
+
+partitionWithKey :: (ObjectKey -> a -> Bool) -> KeyMap a -> (KeyMap a, KeyMap a)
+partitionWithKey f = IM.partitionWithKey (\i -> f (intToObjectKey i))
+{-# INLINE partitionWithKey #-}
+
+mapMaybe :: (a -> Maybe b) -> KeyMap a -> KeyMap b
+mapMaybe = IM.mapMaybe
+{-# INLINE mapMaybe #-}
+
+mapMaybeWithKey :: (ObjectKey -> a -> Maybe b) -> KeyMap a -> KeyMap b
+mapMaybeWithKey f = IM.mapMaybeWithKey (\i -> f (intToObjectKey i))
+{-# INLINE mapMaybeWithKey #-}
+
+mapEither :: (a -> Either b c) -> KeyMap a -> (KeyMap b, KeyMap c)
+mapEither = IM.mapEither
+{-# INLINE mapEither #-}
+
+mapEitherWithKey :: (ObjectKey -> a -> Either b c) -> KeyMap a -> (KeyMap b, KeyMap c)
+mapEitherWithKey f = IM.mapEitherWithKey (\i -> f (intToObjectKey i))
+{-# INLINE mapEitherWithKey #-}
+
+split :: ObjectKey -> KeyMap a -> (KeyMap a, KeyMap a)
+split k = IM.split (objectKeyToInt k)
+{-# INLINE split #-}
+
+splitLookup :: ObjectKey -> KeyMap a -> (KeyMap a, Maybe a, KeyMap a)
+splitLookup k = IM.splitLookup (objectKeyToInt k)
+{-# INLINE splitLookup #-}
+
+isSubmapOf :: Eq a => KeyMap a -> KeyMap a -> Bool
+isSubmapOf = IM.isSubmapOf
+{-# INLINE isSubmapOf #-}
+
+isSubmapOfBy :: (a -> b -> Bool) -> KeyMap a -> KeyMap b -> Bool
+isSubmapOfBy = IM.isSubmapOfBy
+{-# INLINE isSubmapOfBy #-}
+
+isProperSubmapOf :: Eq a => KeyMap a -> KeyMap a -> Bool
+isProperSubmapOf = IM.isProperSubmapOf
+{-# INLINE isProperSubmapOf #-}
+
+isProperSubmapOfBy :: (a -> b -> Bool) -> KeyMap a -> KeyMap b -> Bool
+isProperSubmapOfBy = IM.isProperSubmapOfBy
+{-# INLINE isProperSubmapOfBy #-}
+
+minView :: KeyMap a -> Maybe (a, KeyMap a)
+minView = IM.minView
+{-# INLINE minView #-}
+
+maxView :: KeyMap a -> Maybe (a, KeyMap a)
+maxView = IM.maxView
+{-# INLINE maxView #-}
+
+minViewWithKey :: KeyMap a -> Maybe ((ObjectKey, a), KeyMap a)
+minViewWithKey m = fmap (\((i, v), m') -> ((intToObjectKey i, v), m')) $ IM.minViewWithKey m
+{-# INLINE minViewWithKey #-}
+
+maxViewWithKey :: KeyMap a -> Maybe ((ObjectKey, a), KeyMap a)
+maxViewWithKey m = fmap (\((i, v), m') -> ((intToObjectKey i, v), m')) $ IM.maxViewWithKey m
+{-# INLINE maxViewWithKey #-}
+
+#else
+
+-- On 32-bit systems (or non-64-bit), use Map ObjectKey
+import qualified Data.Map.Strict as M
+import Data.Map.Strict (Map)
+import qualified Data.Set as Set
+
+type KeyMap a = Map ObjectKey a
+
+-- Direct re-exports from Map (no conversion needed)
+empty :: KeyMap a
+empty = M.empty
+{-# INLINE empty #-}
+
+null :: KeyMap a -> Bool
+null = M.null
+{-# INLINE null #-}
+
+size :: KeyMap a -> Int
+size = M.size
+{-# INLINE size #-}
+
+member :: ObjectKey -> KeyMap a -> Bool
+member = M.member
+{-# INLINE member #-}
+
+notMember :: ObjectKey -> KeyMap a -> Bool
+notMember = M.notMember
+{-# INLINE notMember #-}
+
+lookup :: ObjectKey -> KeyMap a -> Maybe a
+lookup = M.lookup
+{-# INLINE lookup #-}
+
+findWithDefault :: a -> ObjectKey -> KeyMap a -> a
+findWithDefault = M.findWithDefault
+{-# INLINE findWithDefault #-}
+
+lookupLT :: ObjectKey -> KeyMap a -> Maybe (ObjectKey, a)
+lookupLT = M.lookupLT
+{-# INLINE lookupLT #-}
+
+lookupGT :: ObjectKey -> KeyMap a -> Maybe (ObjectKey, a)
+lookupGT = M.lookupGT
+{-# INLINE lookupGT #-}
+
+lookupLE :: ObjectKey -> KeyMap a -> Maybe (ObjectKey, a)
+lookupLE = M.lookupLE
+{-# INLINE lookupLE #-}
+
+lookupGE :: ObjectKey -> KeyMap a -> Maybe (ObjectKey, a)
+lookupGE = M.lookupGE
+{-# INLINE lookupGE #-}
+
+insert :: ObjectKey -> a -> KeyMap a -> KeyMap a
+insert = M.insert
+{-# INLINE insert #-}
+
+insertWith :: (a -> a -> a) -> ObjectKey -> a -> KeyMap a -> KeyMap a
+insertWith = M.insertWith
+{-# INLINE insertWith #-}
+
+delete :: ObjectKey -> KeyMap a -> KeyMap a
+delete = M.delete
+{-# INLINE delete #-}
+
+adjust :: (a -> a) -> ObjectKey -> KeyMap a -> KeyMap a
+adjust = M.adjust
+{-# INLINE adjust #-}
+
+update :: (a -> Maybe a) -> ObjectKey -> KeyMap a -> KeyMap a
+update = M.update
+{-# INLINE update #-}
+
+alter :: (Maybe a -> Maybe a) -> ObjectKey -> KeyMap a -> KeyMap a
+alter = M.alter
+{-# INLINE alter #-}
+
+union :: KeyMap a -> KeyMap a -> KeyMap a
+union = M.union
+{-# INLINE union #-}
+
+unionWith :: (a -> a -> a) -> KeyMap a -> KeyMap a -> KeyMap a
+unionWith = M.unionWith
+{-# INLINE unionWith #-}
+
+unions :: [KeyMap a] -> KeyMap a
+unions = M.unions
+{-# INLINE unions #-}
+
+difference :: KeyMap a -> KeyMap b -> KeyMap a
+difference = M.difference
+{-# INLINE difference #-}
+
+intersection :: KeyMap a -> KeyMap b -> KeyMap a
+intersection = M.intersection
+{-# INLINE intersection #-}
+
+intersectionWith :: (a -> b -> c) -> KeyMap a -> KeyMap b -> KeyMap c
+intersectionWith = M.intersectionWith
+{-# INLINE intersectionWith #-}
+
+map :: (a -> b) -> KeyMap a -> KeyMap b
+map = M.map
+{-# INLINE map #-}
+
+mapWithKey :: (ObjectKey -> a -> b) -> KeyMap a -> KeyMap b
+mapWithKey = M.mapWithKey
+{-# INLINE mapWithKey #-}
+
+traverseWithKey :: Applicative t => (ObjectKey -> a -> t b) -> KeyMap a -> t (KeyMap b)
+traverseWithKey = M.traverseWithKey
+{-# INLINE traverseWithKey #-}
+
+mapAccum :: (a -> b -> (a, c)) -> a -> KeyMap b -> (a, KeyMap c)
+mapAccum = M.mapAccum
+{-# INLINE mapAccum #-}
+
+mapAccumWithKey :: (a -> ObjectKey -> b -> (a, c)) -> a -> KeyMap b -> (a, KeyMap c)
+mapAccumWithKey = M.mapAccumWithKey
+{-# INLINE mapAccumWithKey #-}
+
+foldr :: (a -> b -> b) -> b -> KeyMap a -> b
+foldr = M.foldr
+{-# INLINE foldr #-}
+
+foldl :: (a -> b -> a) -> a -> KeyMap b -> a
+foldl = M.foldl
+{-# INLINE foldl #-}
+
+foldrWithKey :: (ObjectKey -> a -> b -> b) -> b -> KeyMap a -> b
+foldrWithKey = M.foldrWithKey
+{-# INLINE foldrWithKey #-}
+
+foldlWithKey :: (a -> ObjectKey -> b -> a) -> a -> KeyMap b -> a
+foldlWithKey = M.foldlWithKey
+{-# INLINE foldlWithKey #-}
+
+foldMapWithKey :: Monoid m => (ObjectKey -> a -> m) -> KeyMap a -> m
+foldMapWithKey = M.foldMapWithKey
+{-# INLINE foldMapWithKey #-}
+
+foldr' :: (a -> b -> b) -> b -> KeyMap a -> b
+foldr' = M.foldr'
+{-# INLINE foldr' #-}
+
+foldl' :: (a -> b -> a) -> a -> KeyMap b -> a
+foldl' = M.foldl'
+{-# INLINE foldl' #-}
+
+foldrWithKey' :: (ObjectKey -> a -> b -> b) -> b -> KeyMap a -> b
+foldrWithKey' = M.foldrWithKey'
+{-# INLINE foldrWithKey' #-}
+
+foldlWithKey' :: (a -> ObjectKey -> b -> a) -> a -> KeyMap b -> a
+foldlWithKey' = M.foldlWithKey'
+{-# INLINE foldlWithKey' #-}
+
+elems :: KeyMap a -> [a]
+elems = M.elems
+{-# INLINE elems #-}
+
+keys :: KeyMap a -> [ObjectKey]
+keys = M.keys
+{-# INLINE keys #-}
+
+assocs :: KeyMap a -> [(ObjectKey, a)]
+assocs = M.assocs
+{-# INLINE assocs #-}
+
+keysSet :: KeyMap a -> Set.Set ObjectKey
+keysSet = M.keysSet
+{-# INLINE keysSet #-}
+
+toList :: KeyMap a -> [(ObjectKey, a)]
+toList = M.toList
+{-# INLINE toList #-}
+
+fromList :: [(ObjectKey, a)] -> KeyMap a
+fromList = M.fromList
+{-# INLINE fromList #-}
+
+fromListWith :: (a -> a -> a) -> [(ObjectKey, a)] -> KeyMap a
+fromListWith = M.fromListWith
+{-# INLINE fromListWith #-}
+
+fromListWithKey :: (ObjectKey -> a -> a -> a) -> [(ObjectKey, a)] -> KeyMap a
+fromListWithKey = M.fromListWithKey
+{-# INLINE fromListWithKey #-}
+
+toAscList :: KeyMap a -> [(ObjectKey, a)]
+toAscList = M.toAscList
+{-# INLINE toAscList #-}
+
+toDescList :: KeyMap a -> [(ObjectKey, a)]
+toDescList = M.toDescList
+{-# INLINE toDescList #-}
+
+filter :: (a -> Bool) -> KeyMap a -> KeyMap a
+filter = M.filter
+{-# INLINE filter #-}
+
+filterWithKey :: (ObjectKey -> a -> Bool) -> KeyMap a -> KeyMap a
+filterWithKey = M.filterWithKey
+{-# INLINE filterWithKey #-}
+
+partition :: (a -> Bool) -> KeyMap a -> (KeyMap a, KeyMap a)
+partition = M.partition
+{-# INLINE partition #-}
+
+partitionWithKey :: (ObjectKey -> a -> Bool) -> KeyMap a -> (KeyMap a, KeyMap a)
+partitionWithKey = M.partitionWithKey
+{-# INLINE partitionWithKey #-}
+
+mapMaybe :: (a -> Maybe b) -> KeyMap a -> KeyMap b
+mapMaybe = M.mapMaybe
+{-# INLINE mapMaybe #-}
+
+mapMaybeWithKey :: (ObjectKey -> a -> Maybe b) -> KeyMap a -> KeyMap b
+mapMaybeWithKey = M.mapMaybeWithKey
+{-# INLINE mapMaybeWithKey #-}
+
+mapEither :: (a -> Either b c) -> KeyMap a -> (KeyMap b, KeyMap c)
+mapEither = M.mapEither
+{-# INLINE mapEither #-}
+
+mapEitherWithKey :: (ObjectKey -> a -> Either b c) -> KeyMap a -> (KeyMap b, KeyMap c)
+mapEitherWithKey = M.mapEitherWithKey
+{-# INLINE mapEitherWithKey #-}
+
+split :: ObjectKey -> KeyMap a -> (KeyMap a, KeyMap a)
+split = M.split
+{-# INLINE split #-}
+
+splitLookup :: ObjectKey -> KeyMap a -> (KeyMap a, Maybe a, KeyMap a)
+splitLookup = M.splitLookup
+{-# INLINE splitLookup #-}
+
+isSubmapOf :: Eq a => KeyMap a -> KeyMap a -> Bool
+isSubmapOf = M.isSubmapOf
+{-# INLINE isSubmapOf #-}
+
+isSubmapOfBy :: (a -> b -> Bool) -> KeyMap a -> KeyMap b -> Bool
+isSubmapOfBy = M.isSubmapOfBy
+{-# INLINE isSubmapOfBy #-}
+
+isProperSubmapOf :: Eq a => KeyMap a -> KeyMap a -> Bool
+isProperSubmapOf = M.isProperSubmapOf
+{-# INLINE isProperSubmapOf #-}
+
+isProperSubmapOfBy :: (a -> b -> Bool) -> KeyMap a -> KeyMap b -> Bool
+isProperSubmapOfBy = M.isProperSubmapOfBy
+{-# INLINE isProperSubmapOfBy #-}
+
+minView :: KeyMap a -> Maybe (a, KeyMap a)
+minView = M.minView
+{-# INLINE minView #-}
+
+maxView :: KeyMap a -> Maybe (a, KeyMap a)
+maxView = M.maxView
+{-# INLINE maxView #-}
+
+minViewWithKey :: KeyMap a -> Maybe ((ObjectKey, a), KeyMap a)
+minViewWithKey = M.minViewWithKey
+{-# INLINE minViewWithKey #-}
+
+maxViewWithKey :: KeyMap a -> Maybe ((ObjectKey, a), KeyMap a)
+maxViewWithKey = M.maxViewWithKey
+{-# INLINE maxViewWithKey #-}
+
+#endif

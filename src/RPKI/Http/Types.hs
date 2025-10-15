@@ -52,6 +52,7 @@ import           RPKI.Store.Types hiding (object)
 import           RPKI.RTR.Types
 import           RPKI.Time
 import           RPKI.Util (mkHash)
+import qualified RPKI.Util.KeyMap as KeyMap
 
 
 data ValidationsDto a = ValidationsDto {
@@ -348,17 +349,17 @@ data ManifestChildDto = ManifestChildDto {
     deriving stock (Eq, Show, Generic)
 
 data CaShortcutDto = CaShortcutDto { 
-        key            :: ObjectKey,        
-        ski            :: SKI,
+        key               :: ObjectKey,        
+        ski               :: SKI,
         publicationPoints :: [Text],
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notValidBefore    :: Instant,
+        notValidAfter     :: Instant
     }
     deriving stock (Show, Eq, Ord, Generic)
 
 data ManifestShortcutDto = ManifestShortcutDto {
         key            :: ObjectKey,
-        nonCrlChildren :: Map.Map ObjectKey ManifestChildDto,
+        nonCrlChildren :: KeyMap.KeyMap ManifestChildDto,
         notValidBefore :: Instant,
         notValidAfter  :: Instant,        
         serial         :: Serial,
