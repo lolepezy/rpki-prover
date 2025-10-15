@@ -40,7 +40,15 @@ data ObjectMeta = ObjectMeta {
     deriving anyclass (TheBinary, NFData)
 
 data MftTimingMark = MftTimingMark Instant Instant 
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (TheBinary)
+
+data MftMeta = MftMeta { 
+        key        :: {-# UNPACK #-} ObjectKey,
+        thisUpdate :: {-# UNPACK #-} Instant,
+        nextUpdate :: {-# UNPACK #-} Instant 
+    }
+    deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
 newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString 

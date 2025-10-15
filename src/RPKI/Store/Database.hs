@@ -539,6 +539,11 @@ getMftTimingMark mft = let
     m = getCMSContent $ cmsPayload mft 
     in MftTimingMark (thisTime m) (nextTime m)
 
+getMftMeta :: MftObject -> ObjectKey -> MftMeta
+getMftMeta mft key = let 
+    m = getCMSContent $ cmsPayload mft 
+    in MftMeta key (thisTime m) (nextTime m)
+
 
 getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m (Maybe (Located CaCerObject))
 getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ runMaybeT $ do 
