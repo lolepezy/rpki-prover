@@ -5,19 +5,19 @@
 {-# LANGUAGE MultiParamTypeClasses      #-}
 
 module RPKI.Store.Sequence where
-    
+
 import           Data.Text               (Text)
 import           GHC.Generics
-
-import           Data.Int
 
 import           RPKI.Store.Base.Map     (SMap (..))
 
 import qualified RPKI.Store.Base.Map     as M
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Serialisation
+import           RPKI.AppTypes (IntKey)
 
-newtype SequenceValue = SequenceValue { unSequenceValue :: Int64 }
+
+newtype SequenceValue = SequenceValue { unSequenceValue :: IntKey }
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (TheBinary)
 
