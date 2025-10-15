@@ -301,10 +301,12 @@ newtype JobsDto = JobsDto {
 
 data ResourcesDto = ResourcesDto {
         tag                 :: Text,
-        latestCpuTime      :: CPUTime,
+        latestCpuTime       :: CPUTime,
         aggregatedCpuTime   :: CPUTime,
+        cpuTimePerClockTime :: Double,
         aggregatedClockTime :: TimeMs,
         maxMemory           :: MaxMemory,        
+        avgMemory           :: MaxMemory, 
         avgCpuTimeMsPerSecond :: Double
     }
     deriving stock (Eq, Show, Generic)

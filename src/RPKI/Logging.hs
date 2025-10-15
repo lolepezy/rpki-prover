@@ -31,7 +31,6 @@ import GHC.Generics (Generic)
 
 import System.Posix.Types
 import System.Posix.Process
-import System.Process.Typed
 import System.IO
 
 import RPKI.Domain
