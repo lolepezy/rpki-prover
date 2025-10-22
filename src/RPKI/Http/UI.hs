@@ -53,6 +53,7 @@ mainPage :: WorldVersion
 mainPage version systemInfo perTaValidations generalValidations fetchDtos metricsDto =     
     H.docTypeHtml $ do
         H.head $ do
+            H.title $ "RPKI Prover " <> toHtml rpkiProverVersionNumber
             link ! rel "stylesheet" ! href "/static/styles.css"
             H.script ! src "/static/script.js" $ ""
         H.body $ do        
