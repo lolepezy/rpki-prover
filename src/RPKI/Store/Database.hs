@@ -117,6 +117,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         objects        :: SMap "objects" s ObjectKey (Compressed (StorableObject RpkiObject)),
         hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
         mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
+        mftsForKI      :: SMultiMap "mfts-for-ki" s AKI MftMeta,
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
         objectMetas    :: SMap "object-meta" s ObjectKey ObjectMeta,
 
@@ -337,8 +338,9 @@ saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } so@StorableObject {.
             CerRO c -> 
                 M.put tx certBySKI (getSKI c) objectKey
             MftRO mft -> 
-                for_ (getAKI object) $ \aki_ ->
+                for_ (getAKI object) $ \aki_ -> do 
                     MM.put tx mftByAKI aki_ (objectKey, getMftTimingMark mft)
+                    MM.put tx mftsForKI aki_ (getMftMeta mft objectKey)
             _ -> pure ()        
 
 saveOriginal :: (MonadIO m, Storage s) => 
@@ -441,6 +443,7 @@ deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore { mftShortcuts = MftS
             case ro of
                 MftRO mft -> do 
                     MM.delete tx mftByAKI aki_ (objectKey, getMftTimingMark mft)                    
+                    MM.delete tx mftsForKI aki_ (getMftMeta mft objectKey)                    
                     ifJustM (M.get tx mftMetas aki_) $ \(unCompressed . restoreFromRaw -> mftShort) ->
                         when (mftShort ^. #key == objectKey) $
                             deleteMftShortcut tx db aki_
@@ -467,6 +470,10 @@ findLatestMftKeyByAKI tx DB { objectStore = RpkiObjectStore {..} } aki_ = liftIO
                 | timingMark > latestMark -> Just (k, timingMark)
                 | otherwise               -> latest                                  
 
+getMftsForAKI :: (MonadIO m, Storage s) => 
+                Tx s mode -> DB s -> AKI -> m [MftMeta]
+getMftsForAKI tx DB { objectStore = RpkiObjectStore {..} } aki_ = 
+    liftIO $ List.sortOn Down <$> MM.allForKey tx mftsForKI aki_
 
 findAllMftsByAKI :: (MonadIO m, Storage s) => 
                     Tx s mode -> DB s -> AKI -> m [Keyed (Located MftObject)]

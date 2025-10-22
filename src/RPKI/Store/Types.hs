@@ -5,9 +5,11 @@
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE StrictData            #-}
 {-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE OverloadedLabels     #-}
 
 module RPKI.Store.Types where
 
+import           Control.Lens
 import           Control.DeepSeq
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
@@ -40,7 +42,7 @@ data ObjectMeta = ObjectMeta {
     deriving anyclass (TheBinary, NFData)
 
 data MftTimingMark = MftTimingMark Instant Instant 
-    deriving stock (Show, Eq, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
 data MftMeta = MftMeta { 
@@ -50,6 +52,10 @@ data MftMeta = MftMeta {
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
+
+instance Ord MftMeta where
+    compare a b = compare (a ^. #nextUpdate) (b ^. #nextUpdate) <> 
+                  compare (b ^. #thisUpdate) (b ^. #thisUpdate)
 
 newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
