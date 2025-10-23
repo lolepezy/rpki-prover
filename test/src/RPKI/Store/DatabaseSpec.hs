@@ -201,7 +201,10 @@ shouldInsertAndGetAllBackFromObjectStore io = do
                 _ -> False
 
     compareLatestMfts db ros a = do
-        mftLatest <- roTx db $ \tx -> DB.findLatestMftByAKI tx db a         
+        -- mftLatest <- roTx db $ \tx -> DB.findLatestMftByAKI tx db a         
+        mftLatest <- roTx db $ \tx -> do 
+            [MftMeta {..}] <- DB.getMftsForAKI tx db a
+            DB.getMftByKey tx db key
         
         let mftLatest' = listToMaybe $ List.sortOn (Down . DB.getMftTimingMark)
                 [ mft | Located _ (MftRO mft) <- ros, getAKI mft == Just a ]                                    
@@ -225,7 +228,10 @@ shouldOrderManifests io = do
 
     -- they have the same AKIs
     let Just aki1 = getAKI mft1
-    Just (Keyed (Located _ mftLatest) _) <- roTx objectStore $ \tx -> DB.findLatestMftByAKI tx db aki1
+    Just (Keyed (Located _ mftLatest) _) <- roTx objectStore $ \tx -> do 
+            [MftMeta {..}] <- DB.getMftsForAKI tx db aki1
+            DB.getMftByKey tx db key
+
 
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) mft2
 
