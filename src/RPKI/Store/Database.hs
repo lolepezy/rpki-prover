@@ -324,24 +324,29 @@ saveObject :: (MonadIO m, Storage s) =>
             Tx s 'RW 
             -> DB s 
             -> StorableObject RpkiObject
-            -> WorldVersion -> m ()
+            -> WorldVersion 
+            -> m ObjectKey
 saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } so@StorableObject {..} wv = liftIO $ do
     let h = getHash object
-    exists <- M.exists tx hashToKey h    
-    unless exists $ do          
-        SequenceValue k <- nextValue tx keys
-        let objectKey = ObjectKey $ ArtificialKey k
-        M.put tx hashToKey h objectKey
-        M.put tx objects objectKey (Compressed so)
-        M.put tx objectMetas objectKey (ObjectMeta wv (getRpkiObjectType object))
-        case object of
-            CerRO c -> 
-                M.put tx certBySKI (getSKI c) objectKey
-            MftRO mft -> 
-                for_ (getAKI object) $ \aki_ -> do 
-                    -- MM.put tx mftByAKI aki_ (objectKey, getMftTimingMark mft)
-                    MM.put tx mftsForKI aki_ (getMftMeta mft objectKey)
-            _ -> pure ()        
+    existingKey <- M.get tx hashToKey h
+    case existingKey of
+        Just key -> pure key
+        Nothing  -> do
+            SequenceValue k <- nextValue tx keys
+            let objectKey = ObjectKey $ ArtificialKey k
+            M.put tx hashToKey h objectKey
+            M.put tx objects objectKey (Compressed so)
+            M.put tx objectMetas objectKey (ObjectMeta wv (getRpkiObjectType object))
+            case object of
+                CerRO c -> 
+                    M.put tx certBySKI (getSKI c) objectKey
+                MftRO mft -> 
+                    for_ (getAKI object) $ \aki_ -> do 
+                        -- MM.put tx mftByAKI aki_ (objectKey, getMftTimingMark mft)
+                        MM.put tx mftsForKI aki_ (getMftMeta mft objectKey)
+                _ -> pure ()        
+
+            pure objectKey
 
 saveOriginal :: (MonadIO m, Storage s) => 
                 Tx s 'RW 
