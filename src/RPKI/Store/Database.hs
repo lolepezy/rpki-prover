@@ -482,8 +482,8 @@ getMftsForAKI tx DB { objectStore = RpkiObjectStore {..} } aki_ =
 
 findAllMftsByAKI :: (MonadIO m, Storage s) => 
                     Tx s mode -> DB s -> AKI -> m [Keyed (Located MftObject)]
-findAllMftsByAKI tx db@DB { objectStore = RpkiObjectStore {..} } aki_ = liftIO $ do
-    mftKeys <- List.sortOn Down <$> MM.allForKey tx mftsForKI aki_
+findAllMftsByAKI tx db aki_ = liftIO $ do
+    mftKeys <- getMftsForAKI tx db aki_
     fmap catMaybes $ forM mftKeys $ \MftMeta {..} -> getMftByKey tx db key
     
 

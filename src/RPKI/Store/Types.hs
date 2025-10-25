@@ -55,7 +55,8 @@ data MftMeta = MftMeta {
 
 instance Ord MftMeta where
     compare a b = compare (a ^. #nextUpdate) (b ^. #nextUpdate) <> 
-                  compare (b ^. #thisUpdate) (b ^. #thisUpdate)
+                  compare (b ^. #thisUpdate) (b ^. #thisUpdate) <>
+                  compare (b ^. #key) (b ^. #key)
 
 newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
