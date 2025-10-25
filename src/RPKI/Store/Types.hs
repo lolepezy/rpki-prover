@@ -41,10 +41,6 @@ data ObjectMeta = ObjectMeta {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary, NFData)
 
-data MftTimingMark = MftTimingMark Instant Instant 
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
 data MftMeta = MftMeta { 
         key        :: {-# UNPACK #-} ObjectKey,
         thisUpdate :: {-# UNPACK #-} Instant,
@@ -55,8 +51,8 @@ data MftMeta = MftMeta {
 
 instance Ord MftMeta where
     compare a b = compare (a ^. #nextUpdate) (b ^. #nextUpdate) <> 
-                  compare (b ^. #thisUpdate) (b ^. #thisUpdate) <>
-                  compare (b ^. #key) (b ^. #key)
+                  compare (a ^. #thisUpdate) (b ^. #thisUpdate) <>
+                  compare (a ^. #key) (b ^. #key)
 
 newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
