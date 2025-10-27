@@ -582,3 +582,9 @@ validateSize vc s =
             | s < vc ^. #minObjectSize -> Left $ ObjectIsTooSmall s
             | s > vc ^. #maxObjectSize -> Left $ ObjectIsTooBig s
             | otherwise                -> pure s
+
+
+isWithinValidityPeriod :: WithValidityPeriod a => Now -> a -> Bool
+isWithinValidityPeriod (Now now) a = 
+    let (start_, end_) = getValidityPeriod a
+    in start_ <= now && now < end_

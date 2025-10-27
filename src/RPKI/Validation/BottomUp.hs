@@ -152,7 +152,10 @@ validateBottomUp
            and don't track visited object or metrics.
          -}
         let childrenAki = toAKI $ getSKI certificate
-        maybeMft <- liftIO $ roTx db $ \tx -> DB.findLatestMftByAKI tx db childrenAki        
+        maybeMft <- liftIO $ roTx db $ \tx -> do 
+            DB.getMftsForAKI tx db childrenAki >>= \case
+                [] -> pure Nothing
+                (MftMeta {..} : _) -> DB.getMftByKey tx db key
         case maybeMft of 
             Nothing -> 
                 vError $ NoMFT childrenAki

@@ -95,7 +95,8 @@ createDatabase env logger checkAction = do
 
         createObjectStore = do             
             objects          <- createMap
-            mftByAKI         <- createMultiMap
+            -- mftByAKI         <- createMultiMap
+            mftsForKI        <- createMultiMap
             objectMetas      <- createMap        
             hashToKey        <- createMap
             uriToUriKey      <- createMap
