@@ -160,7 +160,7 @@ executeWorkerProcess = do
     let config = input ^. typed @Config    
     let logConfig = makeLogConfig (config ^. #logLevel) WorkerLog
                     
-    -- turnOffTlsValidation
+    turnOffTlsValidation
 
     appContextRef <- newTVarIO Nothing
     let onExit exitCode = do
