@@ -297,7 +297,9 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
         versions  <- roTxT database DB.getLatestVersions
         fetchedBy <- readTVarIO firstFinishedFetchBy                
         urisByTA  <- readTVarIO uriByTa
-        
+
+        logDebug logger [i|Checking if all validations are later than fetches, versions = #{versions}, fetchedBy = #{fetchedBy}, urisByTA = #{urisByTA}|]
+
         let allValidationsAreLaterThanFetches = 
                 all (\(ta, validatedBy) -> 
                     case [ Map.lookup uri fetchedBy | uri <- IxSet.indexKeys $ IxSet.getEQ ta urisByTA ] of 

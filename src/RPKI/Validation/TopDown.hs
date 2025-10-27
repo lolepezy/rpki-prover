@@ -523,6 +523,9 @@ validateCaNoLimitChecks
             -- i.e. all newly discovered publication points/repositories                        
             mergeFetcheables caFetcheables
 
+            caLoc <- getCaLocations appContext ca
+            logDebug logger [i|Validating CA certificate #{caLoc} with publication points: #{map fst caFetcheables}|]
+
             -- Do not validate if nothing was fetched for this CA
             -- otherwise we'll have a lot of useless errors about 
             -- missing manifests, so just don't go there
@@ -747,7 +750,7 @@ validateCaNoFetch
                     -- Here we have to do a bit of hackery: 
                     -- * Calling vError will interrupt this function and call for fall-back to 
                     --   the "latest valid manifest" which is the shortcut
-                    -- * But the shortcut may have expired already and there will no be any options left,
+                    -- * But the shortcut may have expired already and there will no options left,
                     --   so we need to be careful and just emit a warning in this case
                     -- 
                     let (beforeMft, afterMft) = getValidityPeriod mftShort
@@ -1007,12 +1010,12 @@ validateCaNoFetch
 
     -- Given MFT entry with hash and filename, get the object it refers to
     -- 
-    getManifestEntry filename hash' = do
+    getManifestEntry filename hash_ = do
         let objectType = textObjectType filename
         db <- liftIO $ readTVarIO database
-        ro <- DB.roAppTx db $ \tx -> do             
-            DB.getKeyByHash tx db hash' >>= \case                     
-                Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename            
+        ro <- DB.roAppTx db $ \tx -> do
+            DB.getKeyByHash tx db hash_ >>= \case
+                Nothing  -> vError $ ManifestEntryDoesn'tExist hash_ filename
                 Just key -> 
                     vFocusOn ObjectFocus key $
                         case objectType of 
@@ -1024,7 +1027,7 @@ validateCaNoFetch
                                     -- try to get the original blob and (re-)parse 
                                     -- it to at least complain about it at the right place
                                     getLocatedOriginal tx db key type_ $ 
-                                        vError $ ManifestEntryDoesn'tExist hash' filename
+                                        vError $ ManifestEntryDoesn'tExist hash_ filename
                             Nothing -> do
                                 -- If we don't know anything about the type from the manifest, 
                                 -- it may still be possible that the object was parsed based
@@ -1032,13 +1035,13 @@ validateCaNoFetch
                                 -- wrong
                                 increment $ topDownCounters ^. #readParsed
                                 getParsedObject tx db key $ 
-                                    vError $ ManifestEntryDoesn'tExist hash' filename
+                                    vError $ ManifestEntryDoesn'tExist hash_ filename
 
         -- The type of the object that is deserialised doesn't correspond 
         -- to the file extension on the manifest
         let realObjectType = getRpkiObjectType $ ro ^. #object
 
-        let complain = vWarn $ ManifestEntryHasWrongFileType hash' filename realObjectType
+        let complain = vWarn $ ManifestEntryHasWrongFileType hash_ filename realObjectType
         case objectType of 
             Nothing -> complain
             Just ot -> unless (realObjectType `isOfType` ot) complain
@@ -1658,18 +1661,18 @@ markAsReadByHash AppContext {..} topDownContext hash = do
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()
 oneMoreGbr, oneMoreAspa, oneMoreBgp, oneMoreSpl :: Monad m => ValidatorT m ()
 oneMoreMftShort :: Monad m => ValidatorT m ()
-oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
-oneMoreRoa  = updateMetric @ValidationMetric @_ (& #validRoaNumber %~ (+1))
-oneMoreSpl  = updateMetric @ValidationMetric @_ (& #validSplNumber %~ (+1))
-oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
-oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
-oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
-oneMoreAspa = updateMetric @ValidationMetric @_ (& #validAspaNumber %~ (+1))
-oneMoreBgp  = updateMetric @ValidationMetric @_ (& #validBgpNumber %~ (+1))
-oneMoreMftShort = updateMetric @ValidationMetric @_ (& #mftShortcutNumber %~ (+1))
+oneMoreCert = updateMetric @ValidationMetric @_ (#validCertNumber %~ (+1))
+oneMoreRoa  = updateMetric @ValidationMetric @_ (#validRoaNumber %~ (+1))
+oneMoreSpl  = updateMetric @ValidationMetric @_ (#validSplNumber %~ (+1))
+oneMoreMft  = updateMetric @ValidationMetric @_ (#validMftNumber %~ (+1))
+oneMoreCrl  = updateMetric @ValidationMetric @_ (#validCrlNumber %~ (+1))
+oneMoreGbr  = updateMetric @ValidationMetric @_ (#validGbrNumber %~ (+1))
+oneMoreAspa = updateMetric @ValidationMetric @_ (#validAspaNumber %~ (+1))
+oneMoreBgp  = updateMetric @ValidationMetric @_ (#validBgpNumber %~ (+1))
+oneMoreMftShort = updateMetric @ValidationMetric @_ (#mftShortcutNumber %~ (+1))
 
 moreVrps :: Monad m => Count -> ValidatorT m ()
-moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
+moreVrps n = updateMetric @ValidationMetric @_ (#vrpCounter %~ (+n))
 
 
 extractPPAs :: Ca -> Either ValidationError PublicationPointAccess
