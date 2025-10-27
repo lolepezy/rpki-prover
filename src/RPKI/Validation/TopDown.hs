@@ -617,17 +617,8 @@ validateCaNoFetch
 
     makeNextFullValidationAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextFullValidationAction childrenAki = do 
-        allMfts <- roTxT database $ \tx db -> DB.getMftsForAKI tx db childrenAki        
-        case (mftsNotInFuture allMfts, allMfts) of             
-            ([],          []) -> pure $ vError $ NoMFT childrenAki
-            -- if there're only manifest(s) in the future, use them 
-            -- anyway to have a meaningful error message
-            ([], mfts)        -> useThem mfts
-            -- If there're manifests that are not in the future, 
-            -- use only them and skip the future ones
-            (relevantMfts, _) -> useThem relevantMfts
-      where
-        useThem mfts = pure $! tryMfts childrenAki $ mftsNotInFuture mfts
+        allMfts <- roTxT database $ \tx db -> DB.getMftsForAKI tx db childrenAki     
+        pure $! processMfts childrenAki allMfts        
 
 
     makeNextIncrementalAction :: AKI -> ValidatorT IO (ValidatorT IO ())
@@ -641,43 +632,41 @@ validateCaNoFetch
             z <- roTxT database $ \tx db -> DB.getMftShorcut tx db childrenAki
             case z of 
                 Nothing -> do 
-                    increment $ topDownCounters ^. #originalMft
-                    pure $! tryMfts childrenAki $ mftsNotInFuture mfts
-                Just mftShortcut 
-                    | isMostRecentShortcut mfts (mftShortcut ^. #key) -> do
-                        increment $ topDownCounters ^. #shortcutMft                        
+                    increment $ topDownCounters ^. #originalMft                    
+                    pure $! processMfts childrenAki mfts
+                Just mftShortcut -> do 
+                    markAsRead topDownContext (mftShortcut ^. #key)
+                    increment $ topDownCounters ^. #shortcutMft
+                    if isMostRecentShortcut mfts (mftShortcut ^. #key) then 
                         pure $ do 
                             justCollectPayloads mftShortcut                        
                             oneMoreMftShort
-                    | otherwise -> do 
-                        increment $ topDownCounters ^. #shortcutMft
-                        pure $ 
-                            case listToMaybe $ mftsNotInFuture mfts of 
-                                Nothing     -> vError $ NoMFT childrenAki
-                                Just mftRef -> 
-                                    withMft (mftRef ^. #key) $ \mft -> do 
-                                        tryOneMftWithShortcut childrenAki mftShortcut mft
-                                        `catchError` \e -> 
-                                            if isWithinValidityPeriod now mftShortcut 
-                                                then do
-                                                    -- shortcut is still valid so fall back to it
-                                                    vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e
-                                                    let mftLocation = pickLocation $ getLocations $ mft ^. #object
-                                                    logWarn logger [i|Falling back to the last valid manifest for #{mftLocation}, error: #{toMessage e}|]
-                                                    justCollectPayloads mftShortcut
-                                                    oneMoreMftShort                          
-                                                else 
-                                                    -- shortcut it too old, so just report the error
-                                                    appError e                                                      
+                    else pure $ 
+                        case listToMaybe $ mftsNotInFuture mfts of 
+                            Nothing     -> vError $ NoMFT childrenAki
+                            Just mftRef -> 
+                                withMft (mftRef ^. #key) $ \mft -> do 
+                                    markAsRead topDownContext (mft ^. #key)
+                                    tryOneMftWithShortcut childrenAki mftShortcut mft
+                                    `catchError` \e -> 
+                                        if isWithinValidityPeriod now mftShortcut 
+                                            then do
+                                                -- shortcut is still valid so fall back to it
+                                                vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e
+                                                let mftLocation = pickLocation $ getLocations $ mft ^. #object
+                                                logWarn logger [i|Falling back to the last valid manifest for #{mftLocation}, error: #{toMessage e}|]
+                                                justCollectPayloads mftShortcut
+                                                oneMoreMftShort                          
+                                            else 
+                                                -- shortcut it too old, so just report the error
+                                                appError e                                                      
       
         isMostRecentShortcut mfts mftShortKey = 
             any (\MftMeta {..} -> key == mftShortKey) 
             $ take 1 
             $ mftsNotInFuture mfts
 
-        tryOneMftWithShortcut aki mftShortcut mft = do
-            markAsRead topDownContext (mftShortcut ^. #key)
-            markAsRead topDownContext (mft ^. #key)
+        tryOneMftWithShortcut aki mftShortcut mft = do            
             fullCa <- getFullCa appContext topDownContext ca
             let crlKey = mftShortcut ^. #crlShortcut . #key
             markAsRead topDownContext crlKey
@@ -696,6 +685,16 @@ validateCaNoFetch
                     (getCrlByKey appContext crlKey)
                     (getResources ca)             
 
+    processMfts childrenAki mfts = do
+        case (mftsNotInFuture mfts, mfts) of             
+            ([], []) -> vError $ NoMFT childrenAki
+            -- if there're only manifest(s) in the future, use them 
+            -- anyway to have a meaningful error message
+            ([], _) -> tryMfts childrenAki mfts
+            -- If there're manifests that are not in the future, 
+            -- use only them and skip the future ones
+            (relevantMfts, _) -> tryMfts childrenAki relevantMfts
+      
 
     tryMfts aki []              = vError $ NoMFT aki
     tryMfts aki (mftRef: mfts_) = 
