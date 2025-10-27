@@ -171,7 +171,7 @@ shouldMergeObjectLocations io = do
 
 --     rwTx db $ \tx -> 
 --         for_ ros' $ \(Located (Locations locations) ro) -> do             
---             DB.saveObject tx db (toStorableObject ro) (instantToVersion now)
+--             void $ DB.saveObject tx db (toStorableObject ro) (instantToVersion now)
 --             forM_ locations $ \url -> 
 --                 DB.linkObjectToUrl tx db url (getHash ro)
 
@@ -221,17 +221,21 @@ shouldOrderManifests io = do
     worldVersion <- newVersion
 
     rwTx objectStore $ \tx -> do        
-            DB.saveObject tx db (toStorableObject mft1) worldVersion
-            DB.saveObject tx db (toStorableObject mft2) worldVersion
+            void $ DB.saveObject tx db (toStorableObject mft1) worldVersion
+            void $ DB.saveObject tx db (toStorableObject mft2) worldVersion
             DB.linkObjectToUrl tx db url1 (getHash mft1)
             DB.linkObjectToUrl tx db url2 (getHash mft2)
 
+
     -- they have the same AKIs
     let Just aki1 = getAKI mft1
+    [m1, m2] <- roTx objectStore $ \tx -> DB.getMftsForAKI tx db aki1
+
+    HU.assertBool "Bla" (m1 ^. #nextUpdate >= m2 ^. #nextUpdate)
+
     Just (Keyed (Located _ mftLatest) _) <- roTx objectStore $ \tx -> do 
             MftMeta {..} : _ <- DB.getMftsForAKI tx db aki1
             DB.getMftByKey tx db key
-
 
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) mft2
 
@@ -545,9 +549,9 @@ replaceAKI a = \case
     GbrRO c  -> GbrRO $ c & #cmsPayload %~ mapCms
     RscRO c  -> RscRO $ c & #cmsPayload %~ mapCms
     AspaRO c -> AspaRO $ c & #cmsPayload %~ mapCms
-    where
-        mapCms :: CMS a -> CMS a
-        mapCms (CMS so) = CMS $ so & #soContent . #scCertificate . #aki .~ a
+  where
+    mapCms :: CMS a -> CMS a
+    mapCms (CMS so) = CMS $ so & #soContent . #scCertificate . #aki .~ a
 
 newVersion :: MonadIO m => m WorldVersion
 newVersion = instantToVersion . unNow <$> thisInstant     

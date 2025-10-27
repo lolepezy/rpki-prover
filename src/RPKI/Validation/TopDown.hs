@@ -625,7 +625,7 @@ validateCaNoFetch
     makeNextIncrementalAction childrenAki = do
         z <- roTxT database $ \tx db -> DB.getMftsForAKI tx db childrenAki
         case z of 
-            []   -> pure $ vError $ NoMFT childrenAki
+            []   -> pure $! vError $ NoMFT childrenAki
             mfts -> actOnMfts mfts
       where        
         actOnMfts mfts = do 
@@ -638,13 +638,13 @@ validateCaNoFetch
                     markAsRead topDownContext (mftShortcut ^. #key)
                     increment $ topDownCounters ^. #shortcutMft
                     if isMostRecentShortcut mfts (mftShortcut ^. #key) then 
-                        pure $ do 
+                        pure $! do 
                             justCollectPayloads mftShortcut                        
                             oneMoreMftShort
-                    else pure $ 
-                        case listToMaybe $ mftsNotInFuture mfts of 
-                            Nothing     -> vError $ NoMFT childrenAki
-                            Just mftRef -> 
+                    else pure $! 
+                        case mftsNotInFuture mfts of 
+                            []         -> vError $ NoMFT childrenAki
+                            mftRef : _ -> 
                                 withMft (mftRef ^. #key) $ \mft -> do 
                                     markAsRead topDownContext (mft ^. #key)
                                     tryOneMftWithShortcut childrenAki mftShortcut mft
