@@ -48,31 +48,31 @@ data MftEntry = MftEntry {
 
 
 data CrlShortcut = CrlShortcut {
-        key            :: ObjectKey,
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant        
+        key            :: {-# UNPACK #-} ObjectKey,
+        notValidBefore :: {-# UNPACK #-} Instant,
+        notValidAfter  :: {-# UNPACK #-} Instant        
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
 data MftShortcut = MftShortcut { 
-        key            :: ObjectKey,
+        key            :: {-# UNPACK #-} ObjectKey,
         nonCrlEntries  :: Map.Map ObjectKey MftEntry,
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant,        
-        serial         :: Serial,
-        manifestNumber :: Serial,
+        notValidBefore :: {-# UNPACK #-} Instant,
+        notValidAfter  :: {-# UNPACK #-} Instant,        
+        serial         :: {-# UNPACK #-} Serial,
+        manifestNumber :: {-# UNPACK #-} Serial,
         crlShortcut    :: CrlShortcut        
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
 data CaShortcut = CaShortcut { 
-        key            :: ObjectKey,        
+        key            :: {-# UNPACK #-} ObjectKey,
         ski            :: SKI,
         ppas           :: PublicationPointAccess,
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant,
+        notValidBefore :: {-# UNPACK #-} Instant,
+        notValidAfter  :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -85,50 +85,50 @@ data Ca = CaShort CaShortcut
 
 
 data RoaShortcut = RoaShortcut {
-        key            :: ObjectKey,        
+        key            :: {-# UNPACK #-} ObjectKey,        
         vrps           :: [Vrp],
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant,
+        notValidBefore :: {-# UNPACK #-} Instant,
+        notValidAfter  :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
 data SplShortcut = SplShortcut {
-        key            :: ObjectKey,        
+        key            :: {-# UNPACK #-} ObjectKey,        
         splPayload     :: SplPayload,
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant,
+        notValidBefore :: {-# UNPACK #-} Instant,
+        notValidAfter  :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
 data AspaShortcut = AspaShortcut {
-        key            :: ObjectKey,
+        key            :: {-# UNPACK #-} ObjectKey,
         aspa           :: Aspa,
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant,
+        notValidBefore :: {-# UNPACK #-} Instant,
+        notValidAfter  :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
 data BgpSecShortcut = BgpSecShortcut {
-        key            :: ObjectKey,
+        key            :: {-# UNPACK #-} ObjectKey,
         bgpSec         :: BGPSecPayload,
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant,
+        notValidBefore :: {-# UNPACK #-} Instant,
+        notValidAfter  :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
 data GbrShortcut = GbrShortcut {
-        key            :: ObjectKey,    
+        key            :: {-# UNPACK #-} ObjectKey,    
         gbr            :: T2 Hash Gbr,
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant,
+        notValidBefore :: {-# UNPACK #-} Instant,
+        notValidAfter  :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
