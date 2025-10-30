@@ -521,8 +521,8 @@ getAll tx db@DB { objectStore = RpkiObjectStore {..} } = liftIO $ do
 
 getMftMeta :: MftObject -> ObjectKey -> MftMeta
 getMftMeta mft key = let 
-    m = getCMSContent $ cmsPayload mft 
-    in MftMeta key (thisTime m) (nextTime m)
+    Manifest {..} = getCMSContent $ cmsPayload mft 
+    in MftMeta {..}
 
 
 getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m (Maybe (Located CaCerObject))

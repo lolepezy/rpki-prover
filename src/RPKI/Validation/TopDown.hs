@@ -717,7 +717,7 @@ validateCaNoFetch
             Nothing  -> integrityError appContext [i|Referential integrity error, can't find a manifest by its key #{key}.|]
             Just mft -> f mft
 
-    mftsNotInFuture = filter (\MftMeta {..} -> thisUpdate <= unNow now)
+    mftsNotInFuture = filter (\MftMeta {..} -> thisTime <= unNow now)
 
 
     -- Proceed with full validation for children mentioned in the full manifest 

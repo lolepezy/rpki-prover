@@ -231,7 +231,7 @@ shouldOrderManifests io = do
     let Just aki1 = getAKI mft1
     [m1, m2] <- roTx objectStore $ \tx -> DB.getMftsForAKI tx db aki1
 
-    HU.assertBool "Bla" (m1 ^. #nextUpdate >= m2 ^. #nextUpdate)
+    HU.assertBool "Bla" (m1 ^. #nextTime >= m2 ^. #nextTime)
 
     Just (Keyed (Located _ mftLatest) _) <- roTx objectStore $ \tx -> do 
             MftMeta {..} : _ <- DB.getMftsForAKI tx db aki1
