@@ -642,9 +642,7 @@ validateCaNoFetch
                         [] -> vError $ NoMFT childrenAki
                         mft_ : otherMfts 
                             | mft_ ^. #key == mftShortcutKey -> 
-                                pure $! do 
-                                    onlyCollectPayloads mftShortcut                        
-                                    oneMoreMftShort
+                                pure $! onlyCollectPayloads mftShortcut                                    
                             | otherwise -> pure $! do 
                                 let mftKey = mft_ ^. #key
                                 markAsUsed topDownContext mftKey
@@ -657,15 +655,14 @@ validateCaNoFetch
                                                     vFocusOn ObjectFocus mftKey $ vWarn $ MftFallback e
                                                     let mftLocation = pickLocation $ getLocations $ mft ^. #object
                                                     logWarn logger [i|Falling back to the last valid manifest for #{mftLocation}, error: #{toMessage e}|]
-                                                    onlyCollectPayloads mftShortcut
-                                                    oneMoreMftShort                          
+                                                    onlyCollectPayloads mftShortcut                   
                                                 else 
                                                     -- shortcut it too old, so continue with the other manifests
                                                     tryMfts childrenAki otherMfts
                     pure $! action `andThen` 
                            (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)
       
-        tryOneMftWithShortcut aki mftShortcut mft = do            
+        tryOneMftWithShortcut aki mftShortcut mft = do
             fullCa <- getFullCa appContext topDownContext ca
             let crlKey = mftShortcut ^. #crlShortcut . #key
             markAsUsed topDownContext crlKey
@@ -673,8 +670,7 @@ validateCaNoFetch
             collectPayloads mftShortcut (Just overlappingChildren) 
                         (pure fullCa)
                         (findAndValidateCrl fullCa mft aki)   
-                        (getResources ca)            
-            oneMoreMft >> oneMoreCrl >> oneMoreMftShort
+                        (getResources ca)
 
         onlyCollectPayloads mftShortcut = do 
             let crlKey = mftShortcut ^. #crlShortcut . #key                
