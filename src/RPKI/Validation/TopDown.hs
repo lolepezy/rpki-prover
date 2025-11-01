@@ -683,7 +683,7 @@ validateCaNoFetch
     processMfts childrenAki mfts = do
         case (mftsNotInFuture mfts, mfts) of             
             ([], []) -> vError $ NoMFT childrenAki
-            -- if there're only manifest(s) in the future, use them 
+            -- if there are only manifest(s) in the future, use them 
             -- anyway to have a meaningful error message
             ([], _) -> tryMfts childrenAki mfts
             -- If there're manifests that are not in the future, 
