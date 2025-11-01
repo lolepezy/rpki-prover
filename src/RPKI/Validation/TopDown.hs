@@ -638,7 +638,7 @@ validateCaNoFetch
                     let mftShortcutKey = mftShortcut ^. #key
                     markAsUsed topDownContext mftShortcutKey
                     increment $ topDownCounters ^. #shortcutMft
-                    case mftsNotInFuture mfts of 
+                    action <- case mftsNotInFuture mfts of 
                         [] -> vError $ NoMFT childrenAki
                         mft_ : otherMfts 
                             | mft_ ^. #key == mftShortcutKey -> 
@@ -662,6 +662,8 @@ validateCaNoFetch
                                                 else 
                                                     -- shortcut it too old, so continue with the other manifests
                                                     tryMfts childrenAki otherMfts
+                    pure $! action `andThen` 
+                           (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)
       
         tryOneMftWithShortcut aki mftShortcut mft = do            
             fullCa <- getFullCa appContext topDownContext ca
@@ -672,7 +674,7 @@ validateCaNoFetch
                         (pure fullCa)
                         (findAndValidateCrl fullCa mft aki)   
                         (getResources ca)            
-            oneMoreMft >> oneMoreCrl >> oneMoreMftShort            
+            oneMoreMft >> oneMoreCrl >> oneMoreMftShort
 
         onlyCollectPayloads mftShortcut = do 
             let crlKey = mftShortcut ^. #crlShortcut . #key                
