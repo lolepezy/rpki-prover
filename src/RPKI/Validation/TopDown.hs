@@ -657,7 +657,7 @@ validateCaNoFetch
                                                     logWarn logger [i|Falling back to the last valid manifest for #{mftLocation}, error: #{toMessage e}|]
                                                     onlyCollectPayloads mftShortcut                   
                                                 else 
-                                                    -- shortcut it too old, so continue with the other manifests
+                                                    -- shortcut is too old, so continue with the other manifests
                                                     tryMfts childrenAki otherMfts
                     pure $! action `andThen` 
                            (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)
