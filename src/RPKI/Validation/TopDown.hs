@@ -616,30 +616,30 @@ validateCaNoFetch
             Incremental        -> (Just $!)
 
     makeNextFullValidationAction :: AKI -> ValidatorT IO (ValidatorT IO ())
-    makeNextFullValidationAction childrenAki = do 
-        allMfts <- roTxT database $ \tx db -> DB.getMftsForAKI tx db childrenAki     
-        pure $! processMfts childrenAki allMfts        
+    makeNextFullValidationAction aki = do 
+        mfts <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
+        pure $! processMfts aki mfts
 
 
     makeNextIncrementalAction :: AKI -> ValidatorT IO (ValidatorT IO ())
-    makeNextIncrementalAction childrenAki = do
-        z <- roTxT database $ \tx db -> DB.getMftsForAKI tx db childrenAki
-        case z of 
-            []   -> pure $! vError $ NoMFT childrenAki
+    makeNextIncrementalAction aki = do
+        z <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
+        case z of
+            []   -> pure $! vError $ NoMFT aki
             mfts -> actOnMfts mfts
-      where        
-        actOnMfts mfts = do 
-            z <- roTxT database $ \tx db -> DB.getMftShorcut tx db childrenAki
-            case z of 
-                Nothing -> do 
-                    increment $ topDownCounters ^. #originalMft                    
-                    pure $! processMfts childrenAki mfts
-                Just mftShortcut -> do 
+      where
+        actOnMfts mfts = do
+            z <- roTxT database $ \tx db -> DB.getMftShorcut tx db aki
+            case z of
+                Nothing -> do
+                    increment $ topDownCounters ^. #originalMft
+                    pure $! processMfts aki mfts
+                Just mftShortcut -> do
                     let mftShortcutKey = mftShortcut ^. #key
                     markAsUsed topDownContext mftShortcutKey
                     increment $ topDownCounters ^. #shortcutMft
-                    action <- case mftsNotInFuture mfts of 
-                        [] -> vError $ NoMFT childrenAki
+                    action <- case mftsNotInFuture mfts of
+                        [] -> vError $ NoMFT aki
                         mft_ : otherMfts 
                             | mft_ ^. #key == mftShortcutKey -> 
                                 pure $! onlyCollectPayloads mftShortcut                                    
@@ -647,7 +647,7 @@ validateCaNoFetch
                                 let mftKey = mft_ ^. #key
                                 markAsUsed topDownContext mftKey
                                 withMft mftKey $ \mft ->                                                                     
-                                    tryOneMftWithShortcut childrenAki mftShortcut mft
+                                    tryOneMftWithShortcut mftShortcut mft
                                         `catchError` \e -> 
                                             if isWithinValidityPeriod now mftShortcut 
                                                 then do
@@ -657,12 +657,12 @@ validateCaNoFetch
                                                     logWarn logger [i|Falling back to the last valid manifest for #{mftLocation}, error: #{toMessage e}|]
                                                     onlyCollectPayloads mftShortcut                   
                                                 else 
-                                                    -- shortcut is too old, so continue with the other manifests
-                                                    tryMfts childrenAki otherMfts
+                                                    -- shortcut it too old, so continue with the other manifests
+                                                    tryMfts aki otherMfts
                     pure $! action `andThen` 
                            (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)
       
-        tryOneMftWithShortcut aki mftShortcut mft = do
+        tryOneMftWithShortcut mftShortcut mft = do
             fullCa <- getFullCa appContext topDownContext ca
             let crlKey = mftShortcut ^. #crlShortcut . #key
             markAsUsed topDownContext crlKey
