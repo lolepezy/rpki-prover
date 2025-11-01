@@ -76,7 +76,7 @@ objectStoreGroup :: TestTree
 objectStoreGroup = testGroup "Object storage test"
     [                    
         -- dbTestCase "Should insert and get back" shouldInsertAndGetAllBackFromObjectStore,        
-        dbTestCase "Should order manifests accoring to their dates" shouldOrderManifests,
+        dbTestCase "Should order manifests according to their dates" shouldOrderManifests,
         dbTestCase "Should merge locations" shouldMergeObjectLocations
     ]        
 
