@@ -748,7 +748,7 @@ validateCaNoFetch
             -- revocation as well, this is clearly an error                               
             validMft <- vHoist $ validateMft (config ^. #validationConfig . typed) 
                                     now mft fullCa validCrl verifiedResources
-            
+
             rememberNotValidAfter topDownContext (snd $ getValidityPeriod mft)
             rememberCrlNextUpdate topDownContext validCrl
 

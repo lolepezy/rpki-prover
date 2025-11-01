@@ -109,10 +109,14 @@ bracketChanClosable size produce consume kill = do
     queue <- liftIO $ atomically $ newCQueue size
     let closeQ = liftIO $ atomically $ closeCQueue queue
     concurrently
-            (produce queue `finally` closeQ) 
+            (produce queue `finally` closeQ)
             (consume queue `finally` closeQ)
         `finally`
-            killAll queue kill    
+            killAll queue
+  where
+    killAll queue = do
+        a <- liftIO $ atomically $ readCQueue queue    
+        for_ a $ \as -> kill as >> killAll queue
 
 
 data QState = QOperational | QClosed
@@ -142,7 +146,7 @@ isEmptyCQueue (ClosableQueue q _) = isEmptyTBQueue q
 readCQueue :: ClosableQueue a -> STM (Maybe a)
 readCQueue (ClosableQueue q queueState) =
     Q.tryReadTBQueue q >>= \case    
-        Just z' -> pure $ Just z'
+        Just z  -> pure $ Just z
         Nothing -> 
             readTVar queueState >>= \case 
                 QClosed -> pure Nothing
@@ -167,11 +171,6 @@ readQueueChunked cq chunkSize f = go
             []    -> pure ()
             chunk -> f chunk >> go  
 
-killAll :: MonadIO m => ClosableQueue t -> (t -> m a) -> m ()
-killAll queue kill = do
-    a <- liftIO $ atomically $ readCQueue queue    
-    for_ a $ \as -> kill as >> killAll queue kill
-
 -- Auxialliary stuff for limiting the amount of parallel reading LMDB transactions    
 data Semaphore = Semaphore { 
         capacity :: Int,
@@ -190,17 +189,18 @@ newSemaphore n = Semaphore n <$> newTVar 0 <*> newTVar 0
 withSemaphore :: Semaphore -> IO a -> IO a
 withSemaphore Semaphore {..} f = 
     bracket incr decr (const f)
-    where 
-        incr = atomically $ do 
-            c <- readTVar current
-            if c >= capacity 
-                then retry
-                else do 
-                    let c' = c + 1
-                    writeTVar current c'
-                    h <- readTVar highest 
-                    when (c' > h) $ writeTVar highest c'
-        decr _ = atomically $ modifyTVar' current $ \c -> c - 1
+  where 
+    incr = atomically $ do 
+        c <- readTVar current
+        if c >= capacity 
+            then retry
+            else do 
+                let c' = c + 1
+                writeTVar current c'
+                h <- readTVar highest 
+                when (c' > h) $ writeTVar highest c'
+
+    decr _ = atomically $ modifyTVar' current $ \c -> c - 1
 
 getSemaphoreState :: Semaphore -> STM (Int, Int)
 getSemaphoreState Semaphore {..} = (,) <$> readTVar current <*> readTVar highest
