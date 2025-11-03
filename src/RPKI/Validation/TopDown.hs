@@ -620,7 +620,6 @@ validateCaNoFetch
         mfts <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
         pure $! processMfts aki mfts
 
-
     makeNextIncrementalAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextIncrementalAction aki = do
         z <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
@@ -780,21 +779,24 @@ validateCaNoFetch
                     -- Here we have to do a bit of hackery: 
                     -- * Calling vError will interrupt this function and call for fall-back to 
                     --   the "latest valid manifest" which is the shortcut
+                    --
                     -- * But the shortcut may have expired already and there will no be any options left,
                     --   so we need to be careful and just emit a warning in this case
-                    -- 
+                    --
+                    -- * So in case there is nothing to fall back to, we emit a warning and still 
+                    --   use the manifest
                     let (beforeMft, afterMft) = getValidityPeriod mftShort
                     let issue = ManifestNumberDecreased (mftShort ^. #manifestNumber) mftNumber
                     if beforeMft < unNow now && unNow now > afterMft
                         then vError issue
                         else vWarn issue
 
-            -- Mark all manifest entries as read to avoid the situation
+            -- Mark all manifest entries as used to avoid the situation
             -- when some of the children are garbage-collected from the cache 
             -- and some are still there. Do it both in case of successful 
             -- validation or a validation error.
-            let markAllEntriesAsVisited = do                             
-                    forM_ (newChildren <> overlappingChildren) $ 
+            let markAllEntriesAsUsed = do
+                    forM_ (newChildren <> overlappingChildren) $
                         \(T3 _ _ k) -> markAsUsed topDownContext k
 
             let processChildren = do                                              
@@ -848,7 +850,7 @@ validateCaNoFetch
 
                     pure $! overlappingChildren
 
-            processChildren `recover` markAllEntriesAsVisited
+            processChildren `recover` markAllEntriesAsUsed
 
 
     findAndValidateCrl :: Located CaCerObject
