@@ -369,7 +369,7 @@ data ManifestShortcutDto = ManifestShortcutDto {
 
 data ManifestsDto = ManifestsDto {
         shortcutMft :: Maybe ManifestShortcutDto,
-        manifests   :: [ManifestDto]
+        manifests   :: [(MftMeta, ManifestDto)]
     }
     deriving stock (Eq, Show, Generic)
 
@@ -491,6 +491,7 @@ instance ToJSON RtrDto
 instance ToJSON TalDto
 instance ToJSON ManifestShortcutDto
 instance ToJSON ManifestsDto
+instance ToJSON MftMeta
 instance ToJSON CaShortcutDto
 instance ToJSON ValidatedRouteDto
 instance ToJSON ValidityResultDto
@@ -565,6 +566,7 @@ instance ToSchema TalDto
 instance ToSchema ManifestShortcutDto
 instance ToSchema ManifestChildDto
 instance ToSchema ManifestsDto
+instance ToSchema MftMeta
 instance ToSchema ValidatedRouteDto
 instance ToSchema ValidityResultDto
 instance ToSchema ValidityBulkInputDto

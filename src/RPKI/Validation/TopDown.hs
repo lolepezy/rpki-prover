@@ -78,6 +78,35 @@ import           RPKI.Validation.ResourceValidation
 import           RPKI.Validation.Common
 
 
+{-
+This module implements the top-down validation algorithm.
+
+Validation starts from the Trust Anchor (TA) certificate. The process of downloading 
+and selecting the certificate implements the tie-breaking logic described 
+in https://datatracker.ietf.org/doc/draft-spaghetti-sidrops-rpki-ta-tiebreaker/.
+
+After that, validation is recursive for each CA:
+
+- Manifests and manifest shortcuts (see below) are found.
+- Depending on the freshness of the shortcut and the manifest, we either use 
+  the shortcut data or re-validate using the new manifest.
+- For new manifests, shortcuts are re-created and saved into a separate queue.
+
+The idea behind shortcuts is as follows:
+
+ - We store minimal representations of objects and their payloads to cache their 
+   essential information. This avoids re-validating everything on each run.
+ - Manifest shortcuts contain basic manifest metadata plus a list of their children. 
+   Children are embedded into the manifest shortcut (TODO: They should also be referred 
+   to by ObjectKey for big manifests). This structure avoids re-validating manifest 
+   children that have already been validated.
+ - This is why the logic in validateCa is very long and tedious.
+ 
+ Validation is designed to be non-interfering with other processes, so it's safe to run 
+ concurrently with fetching or cleanup operations (both of which are atomic).
+
+-}
+
 data PayloadBuilder = PayloadBuilder {
         vrps     :: IORef [T2 [Vrp] ObjectKey],        
         spls     :: IORef [SplPayload],        
@@ -556,7 +585,7 @@ validateCaNoFetch
         CaFull c -> 
             vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
                 increment $ topDownCounters ^. #originalCa
-                markAsReadByHash appContext topDownContext (getHash c)                         
+                markAsUsedByHash appContext topDownContext (getHash c)                         
                 validateObjectLocations c
                 (_, notValidAfter) <- vHoist $ validateObjectValidityPeriod c now
                 rememberNotValidAfter topDownContext notValidAfter
@@ -565,7 +594,7 @@ validateCaNoFetch
         CaShort c -> 
             vFocusOn ObjectFocus (c ^. #key) $ do            
                 increment $ topDownCounters ^. #shortcutCa 
-                markAsRead topDownContext (c ^. #key) 
+                markAsUsed topDownContext (c ^. #key) 
                 validateLocationForShortcut (c ^. #key)
                 (_, notValidAfter) <- vHoist $ validateObjectValidityPeriod c now
                 rememberNotValidAfter topDownContext notValidAfter
@@ -587,103 +616,106 @@ validateCaNoFetch
             Incremental        -> (Just $!)
 
     makeNextFullValidationAction :: AKI -> ValidatorT IO (ValidatorT IO ())
-    makeNextFullValidationAction childrenAki = do 
-        roTxT database $ \tx db -> do 
-            DB.findLatestMftByAKI tx db childrenAki >>= \case 
-                Nothing ->                        
-                    pure $! vError $ NoMFT childrenAki
-                Just mft ->                        
-                    pure $! do
-                        markAsRead topDownContext (mft ^. typed)
-                        caFull <- getFullCa appContext topDownContext ca
-                        void $ manifestFullValidation caFull mft Nothing childrenAki                                   
-                        oneMoreMft >> oneMoreCrl                                                    
-
+    makeNextFullValidationAction aki = do 
+        mfts <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
+        pure $! processMfts aki mfts
 
     makeNextIncrementalAction :: AKI -> ValidatorT IO (ValidatorT IO ())
-    makeNextIncrementalAction childrenAki = 
-        roTxT database $ \tx db -> do 
-            DB.getMftShorcut tx db childrenAki >>= \case
-                Nothing -> do 
-                    DB.findLatestMftByAKI tx db childrenAki >>= \case 
-                        Nothing -> do 
-                            -- No current manifest and not shortcut as well, bail out 
-                            pure $! vError $ NoMFT childrenAki
-                        Just mft -> do 
-                            increment $ topDownCounters ^. #originalMft
-                            -- No shortcut found, so do the full validation for the manifest
-                            pure $! do                   
-                                markAsRead topDownContext (mft ^. typed)                   
-                                caFull <- getFullCa appContext topDownContext ca
-                                void $ manifestFullValidation caFull mft Nothing childrenAki                              
-                                oneMoreMft >> oneMoreCrl                                                                    
-
+    makeNextIncrementalAction aki = do
+        z <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
+        case z of
+            []   -> pure $! vError $ NoMFT aki
+            mfts -> actOnMfts mfts
+      where
+        actOnMfts mfts = do
+            z <- roTxT database $ \tx db -> DB.getMftShorcut tx db aki
+            case z of
+                Nothing -> do
+                    increment $ topDownCounters ^. #originalMft
+                    pure $! processMfts aki mfts
                 Just mftShortcut -> do
-                    let mftShortKey = mftShortcut ^. #key
+                    let mftShortcutKey = mftShortcut ^. #key
+                    markAsUsed topDownContext mftShortcutKey
                     increment $ topDownCounters ^. #shortcutMft
-                    -- Find the key of the latest real manifest
-                    action <- 
-                        DB.findLatestMftKeyByAKI tx db childrenAki >>= \case 
-                            Nothing -> pure $! do                                             
-                                -- That is really weird and should normally never happen. 
-                                -- Do not interrupt validation here, but complain in the log
-                                vWarn $ NoMFTButCachedMft childrenAki                                    
-                                let crlKey = mftShortcut ^. #crlShortcut . #key
-                                markAsRead topDownContext crlKey
-                                let message = [i|Referential integrity error, there is a manifest shortcut, but no manifest for the key #{mftShortKey}.|]
-                                logError logger message
-                                collectPayloads mftShortcut Nothing 
-                                    (getFullCa appContext topDownContext ca)
-                                    -- getCrlByKey is the best we can have
-                                    (getCrlByKey appContext crlKey)
-                                    (getResources ca)
-
-                            Just mftKey 
-                                | mftShortKey == mftKey -> do
-                                    -- Nothing has changed, the real manifest is the 
-                                    -- same as the shortcut, so use the shortcut
-                                    let crlKey = mftShortcut ^. #crlShortcut . #key                                    
-                                    pure $! do 
-                                        markAsRead topDownContext crlKey
-                                        collectPayloads mftShortcut Nothing 
-                                                (getFullCa appContext topDownContext ca)
-                                                (getCrlByKey appContext crlKey)
-                                                (getResources ca)
-
-                                | otherwise -> do    
-                                    DB.getMftByKey tx db mftKey >>= \case 
-                                        Nothing -> pure $! 
-                                            integrityError appContext [i|Referential integrity error, can't find a manifest by its key #{mftKey}.|]
-                                        Just mft -> pure $! do
-                                            increment $ topDownCounters ^. #shortcutMft
-                                            markAsRead topDownContext mftKey
-                                            fullCa <- getFullCa appContext topDownContext ca
-                                            let crlKey = mftShortcut ^. #crlShortcut . #key
-                                            markAsRead topDownContext crlKey
-                                            let combineMftShortcutAndNewMft = do                                                     
-                                                    overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) childrenAki
-                                                    collectPayloads mftShortcut (Just overlappingChildren) 
-                                                                (pure fullCa)
-                                                                (findAndValidateCrl fullCa mft childrenAki)   
-                                                                (getResources ca)
-
-                                            let useShortcutOnly =                                                    
-                                                    collectPayloads mftShortcut Nothing 
-                                                            (getFullCa appContext topDownContext ca)
-                                                            (getCrlByKey appContext crlKey)
-                                                            (getResources ca)
-                                            
-                                            combineMftShortcutAndNewMft
-                                                `catchError`
-                                                (\e -> do 
+                    action <- case mftsNotInFuture mfts of
+                        [] -> vError $ NoMFT aki
+                        mft_ : otherMfts 
+                            | mft_ ^. #key == mftShortcutKey -> 
+                                pure $! onlyCollectPayloads mftShortcut                                    
+                            | otherwise -> pure $! do 
+                                let mftKey = mft_ ^. #key
+                                markAsUsed topDownContext mftKey
+                                withMft mftKey $ \mft ->                                                                     
+                                    tryOneMftWithShortcut mftShortcut mft
+                                        `catchError` \e -> 
+                                            if isWithinValidityPeriod now mftShortcut 
+                                                then do
+                                                    -- shortcut is still valid so fall back to it
                                                     vFocusOn ObjectFocus mftKey $ vWarn $ MftFallback e
                                                     let mftLocation = pickLocation $ getLocations $ mft ^. #object
-                                                    logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, error: #{toMessage e}|]
-                                                    useShortcutOnly)                                            
-                    pure $! do 
-                        markAsRead topDownContext mftShortKey
-                        action `andThen`
-                            (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)          
+                                                    logWarn logger [i|Falling back to the last valid manifest for #{mftLocation}, error: #{toMessage e}|]
+                                                    onlyCollectPayloads mftShortcut                   
+                                                else 
+                                                    -- shortcut is too old, so continue with the other manifests
+                                                    tryMfts aki otherMfts
+                    pure $! action `andThen` 
+                           (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)
+      
+        tryOneMftWithShortcut mftShortcut mft = do
+            fullCa <- getFullCa appContext topDownContext ca
+            let crlKey = mftShortcut ^. #crlShortcut . #key
+            markAsUsed topDownContext crlKey
+            overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) aki
+            collectPayloads mftShortcut (Just overlappingChildren) 
+                        (pure fullCa)
+                        (findAndValidateCrl fullCa mft aki)   
+                        (getResources ca)
+
+        onlyCollectPayloads mftShortcut = do 
+            let crlKey = mftShortcut ^. #crlShortcut . #key                
+            markAsUsed topDownContext crlKey
+            collectPayloads mftShortcut Nothing 
+                    (getFullCa appContext topDownContext ca)
+                    (getCrlByKey appContext crlKey)
+                    (getResources ca)             
+
+    processMfts childrenAki mfts = do
+        case (mftsNotInFuture mfts, mfts) of             
+            ([], []) -> vError $ NoMFT childrenAki
+            -- if there are only manifest(s) in the future, use them 
+            -- anyway to have a meaningful error message
+            ([], _) -> tryMfts childrenAki mfts
+            -- If there're manifests that are not in the future, 
+            -- use only them and skip the future ones
+            (relevantMfts, _) -> tryMfts childrenAki relevantMfts
+      
+
+    tryMfts aki []              = vError $ NoMFT aki
+    tryMfts aki (mftRef: mfts_) = 
+        withMft (mftRef ^. #key) $ \mft -> do 
+            tryOneMft mft `catchError` \e -> 
+                case mfts_ of 
+                    [] -> appError e
+                    _  -> do 
+                        vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e
+                        let mftLocation = pickLocation $ getLocations $ mft ^. #object
+                        logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, error: #{toMessage e}|]
+                        tryMfts aki mfts_
+      where
+        tryOneMft mft = do                 
+            markAsUsed topDownContext $ mft ^. #key                
+            caFull <- getFullCa appContext topDownContext ca
+            void $ manifestFullValidation caFull mft Nothing aki
+            oneMoreMft >> oneMoreCrl         
+
+    withMft key f = do 
+        z <- roTxT database $ \tx db -> DB.getMftByKey tx db key
+        case z of 
+            Nothing  -> integrityError appContext [i|Referential integrity error, can't find a manifest by its key #{key}.|]
+            Just mft -> f mft
+
+    mftsNotInFuture = filter (\MftMeta {..} -> thisTime <= unNow now)
+
 
     -- Proceed with full validation for children mentioned in the full manifest 
     -- and children mentioned in the manifest shortcut. Create a diff between them,
@@ -715,7 +747,7 @@ validateCaNoFetch
             -- revocation as well, this is clearly an error                               
             validMft <- vHoist $ validateMft (config ^. #validationConfig . typed) 
                                     now mft fullCa validCrl verifiedResources
-            
+
             rememberNotValidAfter topDownContext (snd $ getValidityPeriod mft)
             rememberCrlNextUpdate topDownContext validCrl
 
@@ -747,22 +779,25 @@ validateCaNoFetch
                     -- Here we have to do a bit of hackery: 
                     -- * Calling vError will interrupt this function and call for fall-back to 
                     --   the "latest valid manifest" which is the shortcut
+                    --
                     -- * But the shortcut may have expired already and there will no be any options left,
                     --   so we need to be careful and just emit a warning in this case
-                    -- 
+                    --
+                    -- * So in case there is nothing to fall back to, we emit a warning and still 
+                    --   use the manifest
                     let (beforeMft, afterMft) = getValidityPeriod mftShort
                     let issue = ManifestNumberDecreased (mftShort ^. #manifestNumber) mftNumber
                     if beforeMft < unNow now && unNow now > afterMft
                         then vError issue
                         else vWarn issue
 
-            -- Mark all manifest entries as read to avoid the situation
+            -- Mark all manifest entries as used to avoid the situation
             -- when some of the children are garbage-collected from the cache 
             -- and some are still there. Do it both in case of successful 
             -- validation or a validation error.
-            let markAllEntriesAsVisited = do                             
-                    forM_ (newChildren <> overlappingChildren) $ 
-                        \(T3 _ _ k) -> markAsRead topDownContext k
+            let markAllEntriesAsUsed = do
+                    forM_ (newChildren <> overlappingChildren) $
+                        \(T3 _ _ k) -> markAsUsed topDownContext k
 
             let processChildren = do                                              
                     -- Here we have the payloads for the fully validated MFT children
@@ -815,7 +850,7 @@ validateCaNoFetch
 
                     pure $! overlappingChildren
 
-            processChildren `recover` markAllEntriesAsVisited
+            processChildren `recover` markAllEntriesAsUsed
 
 
     findAndValidateCrl :: Located CaCerObject
@@ -839,7 +874,7 @@ validateCaNoFetch
                     z <- getParsedObject tx db key $ vError $ NoCRLExists aki crlHash
                     case z of 
                         Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey -> do
-                            markAsRead topDownContext crlKey
+                            markAsUsed topDownContext crlKey
                             inSubLocationScope (getURL $ pickLocation crlLocations) $ do 
                                 validateObjectLocations locatedCrl
                                 vHoist $ do
@@ -1318,7 +1353,7 @@ validateCaNoFetch
             void $ validateChildObject caFull childObject fileName validCrl
 
         getChildPayloads troubledValidation (childKey, MftEntry {..}) = do 
-            markAsRead topDownContext childKey            
+            markAsUsed topDownContext childKey            
             case child of 
                 CaChild caShortcut _ ->                     
                     validateCa appContext topDownContext (CaShort caShortcut)
@@ -1645,15 +1680,15 @@ data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutM
 -- we read it from the database and looked at it. It will be used to decide when 
 -- to GC this object from the cache -- if it's not visited for too long, it is 
 -- removed.
-markAsRead :: TopDownContext -> ObjectKey -> ValidatorT IO ()
-markAsRead TopDownContext { allTas = AllTasTopDownContext {..} } k = 
+markAsUsed :: TopDownContext -> ObjectKey -> ValidatorT IO ()
+markAsUsed TopDownContext { allTas = AllTasTopDownContext {..} } k = 
     liftIO $ atomically $ modifyTVar' visitedKeys (Set.insert k)
 
-markAsReadByHash :: Storage s => 
+markAsUsedByHash :: Storage s => 
                     AppContext s -> TopDownContext -> Hash -> ValidatorT IO ()
-markAsReadByHash AppContext {..} topDownContext hash = do
+markAsUsedByHash AppContext {..} topDownContext hash = do
     key <- roTxT database $ \tx db -> DB.getKeyByHash tx db hash
-    for_ key $ markAsRead topDownContext              
+    for_ key $ markAsUsed topDownContext              
 
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()
 oneMoreGbr, oneMoreAspa, oneMoreBgp, oneMoreSpl :: Monad m => ValidatorT m ()
