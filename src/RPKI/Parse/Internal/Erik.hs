@@ -32,14 +32,14 @@ parseErikIndex bs = do
     fromEither $ first (parseErr . U.convert) $ runParseASN1 parseWrapper asn1s
   where     
     parseWrapper = onNextContainer Sequence $ do
-        oid <- getOID pure "Wrong OID for the index"
+        contentType <- getOID pure "Wrong OID for the index"
 
-        when (oid /= id_ct_rpkiErikIndex) $
-            throwParseError $ "Unexpected OID for Erik index: " <> show oid
+        when (contentType /= id_ct_rpkiErikIndex) $
+            throwParseError $ "Unexpected OID for Erik index: " <> show contentType
 
         onNextContainer (Container Context 0) $ do
             fullContent <- getMany getNext
-            let nested = BS.concat [ os | OctetString os <- fullContent ]                        
+            let nested = BS.concat [ os | OctetString os <- fullContent ]
             case parseNested nested of 
                 Left err    -> throwParseError $ "Cannot parse nested Erik index: " ++ show err
                 Right index -> pure index            
@@ -67,8 +67,7 @@ parseErikIndex bs = do
     getPartitionList = onNextContainer Sequence $
         getMany $ onNextContainer Sequence $
             PartitionListEntry 
-                <$> getInteger (pure . PartitionIdentifier) "Wrong partition number"
-                <*> getOctetString (pure . U.mkHash) "Wrong hash"
+                <$> getOctetString (pure . U.mkHash) "Wrong hash"
                 <*> getInteger (pure . Size . fromIntegral) "Wrong size for partition size"
 
 

@@ -19,7 +19,7 @@ import           RPKI.Parse.Internal.SPL
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit        as HU
-import RPKI.Parse.Internal.Erik (parseErikIndex)
+import RPKI.Parse.Internal.Erik
 import RPKI.Util (hashHex)
 
 
@@ -33,10 +33,12 @@ objectParseSpec = testGroup "Unit tests for object parsing" [
     shouldParseAspa1,
     shouldParseAspa2,
     shouldParseSpl,
-    shouldParseIndex
+    shouldParseErikIndex,
+    shouldParseErikPartition
   ]
 
 
+shoudlParseBGPSec :: TestTree
 shoudlParseBGPSec = HU.testCase "Should parse a BGPSec certificate" $ do        
     bs <- BS.readFile "test/data/bgp_router_cert.cer"
     let (Right (rc, ct, ski, aki, hash), _) = 
@@ -49,6 +51,7 @@ shoudlParseBGPSec = HU.testCase "Should parse a BGPSec certificate" $ do
     HU.assertBool "It has AKI" (isJust aki)   
 
 
+shouldParseAspa1 :: TestTree
 shouldParseAspa1 = HU.testCase "Should parse an ASPA object" $ do        
     bs <- BS.readFile "test/data/AS204325.asa"
     let (Right aspaObject, _) = runPureValidator (newScopes "parse") $ parseAspa bs
@@ -56,6 +59,8 @@ shouldParseAspa1 = HU.testCase "Should parse an ASPA object" $ do
     let Aspa {..} = getCMSContent $ cmsPayload aspaObject
     HU.assertEqual "Wrong customer" customer (ASN 204325)
     HU.assertEqual "Wrong providers" providers (Set.fromList [ASN 65000, ASN 65002, ASN 65003])    
+
+shouldParseAspa2 :: TestTree
 shouldParseAspa2 = HU.testCase "Should not parse an ASPA object" $ do        
     bs <- BS.readFile "test/data/aspa-no-explicit-version.asa"
     let (x, _) = runPureValidator (newScopes "parse") $ parseAspa bs
@@ -72,12 +77,22 @@ shouldParseSpl = HU.testCase "Should parse an SPL object" $ do
     HU.assertEqual "Wrong ASN" asn (ASN 15562)
     HU.assertEqual "Wrong prefix list length" (length prefixes) 23    
 
-shouldParseIndex = HU.testCase "Should parse an Erik index" $ do        
+shouldParseErikIndex :: TestTree
+shouldParseErikIndex = HU.testCase "Should parse an Erik index" $ do        
     bs <- BS.readFile "test/data/erik/ca.rg.net"
-    let (Right ErikIndex {..}, _) = runPureValidator (newScopes "parse") $ parseErikIndex bs
+    let (Right ErikIndex {..}, _) = 
+            runPureValidator (newScopes "parse") $ parseErikIndex bs
     
     HU.assertEqual "Wrong index" indexScope "ca.rg.net"
     HU.assertEqual "Wrong number of partitions" (length partitionList) 1
     HU.assertEqual "Wrong hash" 
-        "804cf56cbca81d784a5a5f3d673eff0155f55e1ac3bb7403c55d7f49b18cd64f"
+        "c504bbac23736e418393a18491c08183a2c82f0f1d020badb175dc142d61f7df"
         (hashHex $ head partitionList ^. #hash)
+
+shouldParseErikPartition :: TestTree
+shouldParseErikPartition = HU.testCase "Should parse an Erik partition" $ do
+    bs <- BS.readFile "test/data/erik/7I-e8mmhb4Hx5EcgYvZhRMHBkqsp-fHo1hUvReXcKe4"
+    let (Right p, _) = 
+            runPureValidator (newScopes "parse") $ parseMft bs
+    
+    HU.assertBool "Wrong index" True

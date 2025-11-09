@@ -568,14 +568,9 @@ data ErikIndex = ErikIndex {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)   
 
-newtype PartitionIdentifier = PartitionIdentifier Integer
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
-
 data PartitionListEntry = PartitionListEntry {
-        partitionIdentifier :: PartitionIdentifier,
-        hash                :: Hash,
-        size                :: Size
+        hash :: Hash,
+        size :: Size
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)   
