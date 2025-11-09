@@ -4,13 +4,16 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE UndecidableInstances  #-}
-{-# LANGUAGE OverloadedStrings     #-}
 
 
 module RPKI.Store.Base.LMDB where
 
 import Control.Monad
+import Control.Concurrent.Async
 import Control.Concurrent.STM
+import Control.Concurrent
+import Control.Exception
+
 
 import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
@@ -37,22 +40,26 @@ import qualified Lmdb.Types as Lmdb
 
 import Pipes
 
+
 type Env = Lmdb.Environment 'Lmdb.ReadWrite
 type DBMap = Lmdb.Database BS.ByteString BS.ByteString
 
-data NativeEnv = ROEnv Env | RWEnv Env | Disabled
+data NativeEnv = ROEnv Env
+               | RWEnv Env
+               | Disabled
+               | Timedout
 
 data LmdbEnv = LmdbEnv {
     nativeEnv :: TVar NativeEnv,
     txSem     :: Semaphore
 }
 
-data LmdbStore (name :: Symbol) = LmdbStore {     
+data LmdbStore (name :: Symbol) = LmdbStore {
     db  :: DBMap,
     env :: LmdbEnv
 }
 
-data LmdbMultiStore (name :: Symbol) = LmdbMultiStore { 
+data LmdbMultiStore (name :: Symbol) = LmdbMultiStore {
     db  :: Lmdb.MultiDatabase BS.ByteString BS.ByteString,
     env :: LmdbEnv
 }
@@ -72,61 +79,86 @@ newtype LmdbStorage = LmdbStorage { unEnv :: LmdbEnv }
 instance WithLmdb LmdbStorage where
     getEnv = unEnv
 
-instance WithTx LmdbStorage where    
+instance WithTx LmdbStorage where
     data Tx LmdbStorage (m :: TxMode) = LmdbTx (Lmdb.Transaction (LmdbTxMode m))
 
     readOnlyTx lmdb f = let
         e@LmdbEnv {..} = getEnv lmdb
-        in withSemaphore txSem $ do 
+        in withSemaphore txSem $ do
                 nEnv <- atomically $ getNativeEnv e
-                withROTransaction nEnv (f . LmdbTx)        
+                withROTransaction nEnv (f . LmdbTx)
 
-    readWriteTx lmdb f = withTransactionWrapper (getEnv lmdb) (f . LmdbTx)        
+    readWriteTx lmdb f = withTransactionWrapper (getEnv lmdb) (f . LmdbTx)
+
+
+data TxTimeout = TxTimeout
+    deriving stock (Show, Ord, Eq, Generic)
+
+instance Exception TxTimeout
 
 withTransactionWrapper :: LmdbEnv -> (Lmdb.Transaction 'Lmdb.ReadWrite -> IO b) -> IO b
-withTransactionWrapper LmdbEnv {..} f = do        
-    nEnv <- atomically $ do 
-        readTVar nativeEnv >>= \case         
-            Disabled     -> retry           
+withTransactionWrapper LmdbEnv {..} f = do
+    nEnv <- atomically $ do
+        readTVar nativeEnv >>= \case
+            Disabled     -> retry
+            Timedout     -> retry
             ROEnv _      -> retry
             RWEnv native -> pure native
-    withSemaphore txSem $ withTransaction nEnv f
+    withSemaphore txSem $ do
+        tooLong <- newTVarIO False
+        withAsync (interruptAfterTimeout tooLong) $ \_ ->
+            withTransaction nEnv $ \tx -> do
+                atomically $ writeTVar tooLong True
+                f tx
+  where
+    -- TODO Make it configurable 
+    timeoutDuration = 600_000_000
+
+    interruptAfterTimeout tooLong = do
+        threadDelay timeoutDuration
+        atomically $ do
+            z <- readTVar tooLong
+            if z then do
+                writeTVar nativeEnv Timedout
+                throwSTM TxTimeout
+            else
+                retry
 
 
 -- | Basic storage implemented using LMDB
-instance Storage LmdbStorage where    
+instance Storage LmdbStorage where
     type SMapImpl LmdbStorage = LmdbStore
     type SMultiMapImpl LmdbStorage = LmdbMultiStore
 
-    put (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) (SValue (Storable bs)) = 
+    put (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) (SValue (Storable bs)) =
         LMap.repsert' tx db ks bs
 
-    delete (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) = 
+    delete (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) =
         LMap.delete' tx db ks
 
-    clear (LmdbTx tx) LmdbStore {..} = 
+    clear (LmdbTx tx) LmdbStore {..} =
         LMap.clear tx db
 
     get (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) =
-        (SValue . Storable <$>) <$> LMap.lookup' (toROTx tx) db ks 
+        (SValue . Storable <$>) <$> LMap.lookup' (toROTx tx) db ks
 
     foldS (LmdbTx tx) LmdbStore {..} f a0 =
-        foldGeneric tx db f a0 withCursor LMap.firstForward        
+        foldGeneric tx db f a0 withCursor LMap.firstForward
 
-    putMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable vs)) = 
+    putMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable vs)) =
         withMultiCursor tx db $ \c -> LMMap.insert c ks vs
 
-    deleteMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable vs)) =   
+    deleteMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) (SValue (Storable vs)) =
         LMMap.deleteKV tx db ks vs
 
-    deleteAllMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) = 
+    deleteAllMu (LmdbTx tx) LmdbMultiStore {..} (SKey (Storable ks)) =
         withMultiCursor tx db $ \c ->
             LMMap.lookupFirstValue c ks >>= \case
                 Nothing -> pure ()
                 Just _  -> LMMap.deleteValues c
 
-    clearMu (LmdbTx tx) LmdbMultiStore {..} = 
-        LMMap.clear tx db                
+    clearMu (LmdbTx tx) LmdbMultiStore {..} =
+        LMMap.clear tx db
 
     foldMuForKey (LmdbTx tx) LmdbMultiStore {..} key@(SKey (Storable ks)) f a0 =
         withMultiCursor tx db $ \c -> do
@@ -134,7 +166,7 @@ instance Storage LmdbStorage where
             runEffect $ LMMap.lookupValues c ks >-> do
                 forever $ do
                     v <- await
-                    lift $ do 
+                    lift $ do
                         a <- readIORef z
                         !a' <- f a key (SValue $ Storable v)
                         writeIORef z a'
@@ -143,13 +175,13 @@ instance Storage LmdbStorage where
     foldMu (LmdbTx tx) LmdbMultiStore {..} f a0 =
         foldGeneric tx db f a0 withMultiCursor LMMap.firstForward
 
-foldGeneric :: forall tx db cursor a . 
-            tx 
-        -> db 
+foldGeneric :: forall tx db cursor a .
+            tx
+        -> db
         -> (a -> SKey -> SValue -> IO a)
         -> a
         -> (tx -> db -> (cursor -> IO a) -> IO a)
-        -> (cursor -> Producer' (Lmdb.KeyValue BS.ByteString BS.ByteString) IO ())        
+        -> (cursor -> Producer' (Lmdb.KeyValue BS.ByteString BS.ByteString) IO ())
         -> IO a
 foldGeneric tx db f a0 withCurs makeProducer =
     withCurs tx db $ \c -> do
@@ -157,53 +189,54 @@ foldGeneric tx db f a0 withCurs makeProducer =
         void $ runEffect $ makeProducer c >-> do
             forever $ do
                 Lmdb.KeyValue k v <- await
-                lift $ do 
+                lift $ do
                     a <- readIORef z
                     !a' <- f a (SKey $ Storable k) (SValue $ Storable v)
                     writeIORef z a'
         readIORef z
 
 
-createLmdbStore :: forall name . KnownSymbol name => 
+createLmdbStore :: forall name . KnownSymbol name =>
                     LmdbEnv -> IO (LmdbStore name)
 createLmdbStore env@LmdbEnv {} = do
     let name' = symbolVal (P.Proxy @name)
-    db <- withTransactionWrapper env $ \tx -> openDatabase tx (Just name') defaultDbSettings     
-    pure $ LmdbStore db env    
+    db <- withTransactionWrapper env $ \tx -> openDatabase tx (Just name') defaultDbSettings
+    pure $ LmdbStore db env
 
-createLmdbMultiStore :: forall name . KnownSymbol name =>  
+createLmdbMultiStore :: forall name . KnownSymbol name =>
                         LmdbEnv -> IO (LmdbMultiStore name)
 createLmdbMultiStore env@LmdbEnv {} = do
     let name' = symbolVal (P.Proxy @name)
     db <- withTransactionWrapper env $ \tx -> openMultiDatabase tx (Just name') defaultMultiDbSettngs
-    pure $ LmdbMultiStore db env    
+    pure $ LmdbMultiStore db env
 
 
 defaultDbSettings :: Lmdb.DatabaseSettings BS.ByteString BS.ByteString
-defaultDbSettings = makeSettings 
-    (Lmdb.SortNative Lmdb.NativeSortLexographic) 
+defaultDbSettings = makeSettings
+    (Lmdb.SortNative Lmdb.NativeSortLexographic)
     byteString byteString
 
 defaultMultiDbSettngs :: Lmdb.MultiDatabaseSettings BS.ByteString BS.ByteString
-defaultMultiDbSettngs = makeMultiSettings 
-    (Lmdb.SortNative Lmdb.NativeSortLexographic) 
-    (Lmdb.SortNative Lmdb.NativeSortLexographic) 
+defaultMultiDbSettngs = makeMultiSettings
+    (Lmdb.SortNative Lmdb.NativeSortLexographic)
+    (Lmdb.SortNative Lmdb.NativeSortLexographic)
     byteString byteString
 
 
-getNativeEnv :: LmdbEnv -> STM Env 
-getNativeEnv LmdbEnv {..} = do 
-    readTVar nativeEnv >>= \case        
-        Disabled     -> retry            
+getNativeEnv :: LmdbEnv -> STM Env
+getNativeEnv LmdbEnv {..} = do
+    readTVar nativeEnv >>= \case
+        Disabled     -> retry
+        Timedout     -> retry
         ROEnv native -> pure native
         RWEnv native -> pure native
 
 disableNativeEnv :: LmdbEnv -> STM ()
-disableNativeEnv LmdbEnv {..} = 
+disableNativeEnv LmdbEnv {..} =
     writeTVar nativeEnv Disabled
 
-data CopyStat = CopyStat { 
-        mapName       :: BS.ByteString, 
+data CopyStat = CopyStat {
+        mapName       :: BS.ByteString,
         totalSize     :: Int,
         maxKVPairSize :: Int
     }
@@ -216,124 +249,124 @@ data CopyStat = CopyStat {
 -- `dstN` is supposed to be a completely empty environment.
 --
 copyEnv :: Env -> Env -> IO [CopyStat]
-copyEnv srcN dstN = do        
-    withROTransaction srcN $ \srcTx -> do       
-        withTransaction dstN $ \dstTx -> do                              
-            srcDb <- openDatabase srcTx Nothing defaultDbSettings    
-            mapNames <- getMapNames srcTx srcDb         
-            forM mapNames $ \mapName -> do 
+copyEnv srcN dstN = do
+    withROTransaction srcN $ \srcTx -> do
+        withTransaction dstN $ \dstTx -> do
+            srcDb <- openDatabase srcTx Nothing defaultDbSettings
+            mapNames <- getMapNames srcTx srcDb
+            forM mapNames $ \mapName -> do
                 -- first open it as is
-                srcMap  <- openDatabase srcTx (Just $ convert mapName) defaultDbSettings           
-                isMulti <- isMultiDatabase srcTx srcMap                            
+                srcMap  <- openDatabase srcTx (Just $ convert mapName) defaultDbSettings
+                isMulti <- isMultiDatabase srcTx srcMap
                 if isMulti
-                    then do 
+                    then do
                         -- close and reopen as multi map
                         closeDatabase srcN srcMap
                         srcMap' <- openMultiDatabase srcTx (Just $ convert mapName) defaultMultiDbSettngs
                         dstMap  <- openMultiDatabase dstTx (Just $ convert mapName) defaultMultiDbSettngs
                         (copied, biggest) <- copyMultiMap srcMap' dstMap srcTx dstTx
                         pure $! CopyStat mapName copied biggest
-                    else do 
+                    else do
                         dstMap <- openDatabase dstTx (Just $ convert mapName) defaultDbSettings
-                        (copied, biggest) <- copyMap srcMap dstMap srcTx dstTx                        
+                        (copied, biggest) <- copyMap srcMap dstMap srcTx dstTx
                         pure $! CopyStat mapName copied biggest
-  where           
-    copyMap srcMap dstMap srcTx dstTx = 
-        withKVs $ \bytes maxKV -> do                 
-            withCursor srcTx srcMap $ \c ->                
+  where
+    copyMap srcMap dstMap srcTx dstTx =
+        withKVs $ \bytes maxKV -> do
+            withCursor srcTx srcMap $ \c ->
                 void $ runEffect $ LMap.firstForward c >-> do
                     forever $ do
                         Lmdb.KeyValue name value <- await
                         void $ lift $ LMap.insertSuccess' dstTx dstMap name value
                         let kvSize = BS.length name + BS.length value
-                        lift $ do 
+                        lift $ do
                             modifyIORef' bytes ( + kvSize)
                             modifyIORef' maxKV (max kvSize)
 
     copyMultiMap srcMap dstMap srcTx dstTx =
-        withKVs $ \bytes maxKV -> do 
-            withMultiCursor dstTx dstMap $ \dstC -> 
-                withMultiCursor srcTx srcMap $ \srcC ->                 
+        withKVs $ \bytes maxKV -> do
+            withMultiCursor dstTx dstMap $ \dstC ->
+                withMultiCursor srcTx srcMap $ \srcC ->
                     void $ runEffect $ LMMap.firstForward srcC >-> do
                         forever $ do
                             Lmdb.KeyValue name value <- await
                             lift $ LMMap.insert dstC name value
                             let kvSize = BS.length name + BS.length value
-                            lift $ do 
+                            lift $ do
                                 modifyIORef' bytes ( + kvSize)
                                 modifyIORef' maxKV (max kvSize)
-    
-    withKVs processThem = do 
+
+    withKVs processThem = do
         bytes <- newIORef 0
         maxKV <- newIORef 0
         void $ processThem bytes maxKV
         (,) <$> readIORef bytes <*> readIORef maxKV
 
-        
+
 getEnvStats :: Env -> IO StorageStats
-getEnvStats env = 
-    fmap (StorageStats . Map.fromList) $ 
-        withROTransaction env $ \tx -> do     
-            db <- openDatabase tx Nothing defaultDbSettings    
+getEnvStats env =
+    fmap (StorageStats . Map.fromList) $
+        withROTransaction env $ \tx -> do
+            db <- openDatabase tx Nothing defaultDbSettings
             mapNames <- getMapNames tx db
-            forM mapNames $ \mapName -> do 
+            forM mapNames $ \mapName -> do
                 -- first open it as is
-                m <- openDatabase tx (Just $ convert mapName) defaultDbSettings           
-                isMulti <- isMultiDatabase tx m                            
+                m <- openDatabase tx (Just $ convert mapName) defaultDbSettings
+                isMulti <- isMultiDatabase tx m
                 stat <- if isMulti
-                        then do 
+                        then do
                             -- close and reopen as multi map
                             closeDatabase env m
-                            m' <- openMultiDatabase tx (Just $ convert mapName) defaultMultiDbSettngs                        
-                            gatherStats tx m' withMultiCursor LMMap.firstForward                        
-                        else 
-                            gatherStats tx m withCursor LMap.firstForward           
+                            m' <- openMultiDatabase tx (Just $ convert mapName) defaultMultiDbSettngs
+                            gatherStats tx m' withMultiCursor LMMap.firstForward
+                        else
+                            gatherStats tx m withCursor LMap.firstForward
                 pure (convert mapName, stat)
   where
     gatherStats tx m cursorF forwardF = do
         stats <- newIORef mempty
-        void $ cursorF tx m $ \c -> 
+        void $ cursorF tx m $ \c ->
             void $ runEffect $ forwardF c >-> do
                 forever $ do
                     Lmdb.KeyValue key value <- await
                     let keySize   = Size $ fromIntegral $ BS.length key
                     let valueSize = Size $ fromIntegral $ BS.length value
-                    let stat = SStats { 
-                                    statSize          = Size 1, 
+                    let stat = SStats {
+                                    statSize          = Size 1,
                                     statKeyBytes      = keySize,
                                     statValueBytes    = valueSize,
                                     statMaxKeyBytes   = keySize,
                                     statMaxValueBytes = valueSize
-                                }  
+                                }
                     lift $ modifyIORef' stats (<> stat)
         readIORef stats
 
 
 getMapNames :: Lmdb.Transaction e -> Lmdb.Database a v -> IO [a]
 getMapNames tx db =
-    withCursor tx db $ \c -> do 
+    withCursor tx db $ \c -> do
         maps <- newIORef []
         void $ runEffect $ LMap.firstForward c >-> do
             forever $ do
                 Lmdb.KeyValue name _ <- await
                 lift $ modifyIORef' maps (name :)
-        readIORef maps     
+        readIORef maps
 
 
 eraseEnv :: Env -> Tx LmdbStorage 'RW -> IO [BS.ByteString]
-eraseEnv env (LmdbTx tx) = do     
-    db <- openDatabase tx Nothing defaultDbSettings    
-    mapNames <- getMapNames tx db        
-    forM_ mapNames $ \mapName -> do 
+eraseEnv env (LmdbTx tx) = do
+    db <- openDatabase tx Nothing defaultDbSettings
+    mapNames <- getMapNames tx db
+    forM_ mapNames $ \mapName -> do
         -- first open it as is
         m <- openDatabase tx (Just $ convert mapName) defaultDbSettings
-        isMulti <- isMultiDatabase tx m                            
-        if isMulti 
-            then do 
+        isMulti <- isMultiDatabase tx m
+        if isMulti
+            then do
                 -- close and reopen as multi map
                 closeDatabase env m
-                m' <- openMultiDatabase tx (Just $ convert mapName) defaultMultiDbSettngs                        
+                m' <- openMultiDatabase tx (Just $ convert mapName) defaultMultiDbSettngs
                 LMMap.clear tx m'
-            else 
+            else
                 LMap.clear tx m
     pure mapNames
