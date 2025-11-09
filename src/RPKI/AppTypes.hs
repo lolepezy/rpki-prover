@@ -4,9 +4,12 @@
 {-# LANGUAGE StrictData         #-}
 {-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE CPP #-}
 
 module RPKI.AppTypes where
     
+#include "MachDeps.h"
+
 import           Control.DeepSeq
 import           Data.Int
 import           Data.Text (Text)
@@ -47,3 +50,10 @@ newtype MaxMemory = MaxMemory Int
 
 instance Show MaxMemory where 
     show (MaxMemory m) = show (m `div` (1024*1024)) <> "mb"
+
+
+#if WORD_SIZE_IN_BITS == 64
+type IntKey = Int
+#else
+type IntKey = Int64
+#endif
