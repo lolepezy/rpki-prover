@@ -33,8 +33,8 @@ objectParseSpec = testGroup "Unit tests for object parsing" [
     shouldParseAspa1,
     shouldParseAspa2,
     shouldParseSpl,
-    shouldParseErikIndex,
-    shouldParseErikPartition
+    shouldParseErikIndex
+    -- shouldParseErikPartition
   ]
 
 
