@@ -461,7 +461,7 @@ getManifests AppContext {..} akiText =
                     roTxT database $ \tx db -> do 
                         shortcutMft     <- fmap toMftShortcutDto <$> DB.getMftShorcut tx db aki                        
                         manifestObjects <- DB.findAllMftsByAKI tx db aki
-                        let manifests = fmap (\(Keyed (Located _ m) _) -> manifestDto m) manifestObjects
+                        let manifests = fmap (\(meta, Keyed (Located _ m) _) -> (meta, manifestDto m)) manifestObjects
                         pure ManifestsDto {..}
             
 
