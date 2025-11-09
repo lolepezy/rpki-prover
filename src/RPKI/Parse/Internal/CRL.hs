@@ -110,7 +110,7 @@ parseCrl bs = do
                                 case makeSerial serial' of 
                                     Left e  -> throwParseError e
                                     Right s -> pure s
-                            s                  -> throwParseError $ "That's not a serial: " <> show s
+                            s -> throwParseError $ "That's not a serial: " <> show s
                             
                             
                         
