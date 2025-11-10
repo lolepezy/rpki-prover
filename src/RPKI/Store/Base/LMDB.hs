@@ -47,7 +47,7 @@ type DBMap = Lmdb.Database BS.ByteString BS.ByteString
 data NativeEnv = ROEnv Env
                | RWEnv Env
                | Disabled
-               | Timedout
+               | TimedOut
 
 data LmdbEnv = LmdbEnv {
     nativeEnv :: TVar NativeEnv,
@@ -101,28 +101,39 @@ withTransactionWrapper LmdbEnv {..} f = do
     nEnv <- atomically $ do
         readTVar nativeEnv >>= \case
             Disabled     -> retry
-            Timedout     -> retry
+            TimedOut     -> retry
             ROEnv _      -> retry
             RWEnv native -> pure native
+
     withSemaphore txSem $ do
-        tooLong <- newTVarIO False
-        withAsync (interruptAfterTimeout tooLong) $ \_ ->
-            withTransaction nEnv $ \tx -> do
-                atomically $ writeTVar tooLong True
-                f tx
+        stillWaiting <- newTVarIO True
+        z <- race
+            (interruptAfterTimeout stillWaiting)
+            (runTx nEnv stillWaiting)
+        case z of
+            Left _ -> 
+                -- this will actually never happen,
+                -- so it's just to satisfy the typechecker
+                throwIO TxTimeout
+            Right x -> pure x
   where
     -- TODO Make it configurable 
     timeoutDuration = 600_000_000
 
-    interruptAfterTimeout tooLong = do
+    runTx nEnv stillWaiting =
+        withTransaction nEnv $ \tx -> do
+            atomically $ writeTVar stillWaiting False
+            f tx
+
+    interruptAfterTimeout stillWaiting = do
         threadDelay timeoutDuration
         atomically $ do
-            z <- readTVar tooLong
-            if z then do
-                writeTVar nativeEnv Timedout
+            sw <- readTVar stillWaiting
+            if sw then do
+                writeTVar nativeEnv TimedOut
                 throwSTM TxTimeout
             else
-                retry
+                retry        
 
 
 -- | Basic storage implemented using LMDB
@@ -227,7 +238,7 @@ getNativeEnv :: LmdbEnv -> STM Env
 getNativeEnv LmdbEnv {..} = do
     readTVar nativeEnv >>= \case
         Disabled     -> retry
-        Timedout     -> retry
+        TimedOut     -> retry
         ROEnv native -> pure native
         RWEnv native -> pure native
 
