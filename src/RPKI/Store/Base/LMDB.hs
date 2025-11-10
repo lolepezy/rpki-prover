@@ -23,7 +23,7 @@ import RPKI.Store.Base.Storable
 import RPKI.Store.Base.Storage
 import RPKI.Store.Base.Serialisation
 import RPKI.Parallel
-import RPKI.Domain
+import RPKI.AppTypes
 import RPKI.Util (convert)
 
 import Data.IORef
@@ -127,13 +127,10 @@ withTransactionWrapper LmdbEnv {..} f = do
 
     interruptAfterTimeout stillWaiting = do
         threadDelay timeoutDuration
-        atomically $ do
-            sw <- readTVar stillWaiting
-            if sw then do
-                writeTVar nativeEnv TimedOut
-                throwSTM TxTimeout
-            else
-                retry        
+        sw <- readTVarIO stillWaiting        
+        when sw $ do            
+            atomically $ writeTVar nativeEnv TimedOut
+            throwIO TxTimeout            
 
 
 -- | Basic storage implemented using LMDB

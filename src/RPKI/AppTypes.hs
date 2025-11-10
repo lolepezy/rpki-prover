@@ -37,6 +37,14 @@ newtype ExecutableVersion = ExecutableVersion Text
     deriving anyclass (TheBinary)
 
 
+-- Some auxiliary types
+newtype Size = Size { unSize :: Int64 }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving newtype (Num)
+    deriving anyclass (TheBinary)
+    deriving Semigroup via Sum Size
+    deriving Monoid via Sum Size
+
 -- TODO Probably move it to some other module
 newtype MaxMemory = MaxMemory Int
     deriving stock (Eq, Ord, Generic)

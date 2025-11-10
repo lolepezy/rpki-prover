@@ -19,6 +19,7 @@ import Data.Maybe (fromMaybe)
 import Data.Generics.Product.Typed
 
 import RPKI.Domain
+import RPKI.AppTypes
 import RPKI.Logging
 import RPKI.Util (toNatural)
 import GHC.Generics (Generic)

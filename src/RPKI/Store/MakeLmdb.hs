@@ -20,7 +20,7 @@ import           Lmdb.Connection
 
 import           RPKI.Store.Base.LMDB
 import           RPKI.Config
-import           RPKI.Domain
+import           RPKI.AppTypes
 import           RPKI.Parallel
 import           RPKI.Logging
 import           RPKI.Time

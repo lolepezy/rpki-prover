@@ -6,6 +6,7 @@ import Control.Lens
 
 import qualified Data.ByteString.Lazy    as LBS
 
+import           RPKI.AppTypes
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.RRDP.Types

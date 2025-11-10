@@ -21,7 +21,7 @@ import           Data.Hourglass
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Config
-import           RPKI.Domain
+import           RPKI.AppTypes
 import           RPKI.Logging
 import           RPKI.Worker
 import           RPKI.Reporting

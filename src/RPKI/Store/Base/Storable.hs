@@ -22,6 +22,7 @@ import Data.Maybe (fromMaybe)
 import Data.Monoid.Generic
 
 import RPKI.Domain
+import RPKI.AppTypes
 import RPKI.Store.Base.Serialisation
 
 newtype Storable = Storable { unStorable :: BS.ByteString }    
