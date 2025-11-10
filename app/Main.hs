@@ -47,6 +47,7 @@ import           Options.Generic
 
 import           Shower
 
+import           RPKI.AppTypes
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppState
