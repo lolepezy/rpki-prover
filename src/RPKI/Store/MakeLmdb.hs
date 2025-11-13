@@ -41,7 +41,7 @@ createDatabase env logger checkAction = do
         CheckVersion -> 
             (db, ) <$> verifyDBVersion db            
         DontCheckVersion -> 
-            pure (db, WasCompatible)    
+            pure (db, WasCompatible)
   where    
 
     verifyDBVersion db =

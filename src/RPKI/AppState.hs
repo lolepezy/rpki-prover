@@ -34,6 +34,10 @@ import           RPKI.RTR.Types
 import           RPKI.Resources.Validity
 
 
+data SystemState = SystemState {
+        databaseRwTxTimedOut :: TVar Bool        
+    } deriving stock (Generic)
+
 data AppState = AppState {
         -- current world version
         world     :: TVar (Maybe WorldVersion),
@@ -67,7 +71,9 @@ data AppState = AppState {
 
         runningRsyncClients :: TVar (Map.Map CPid WorkerInfo),
 
-        fetcheables :: TVar Fetcheables
+        fetcheables :: TVar Fetcheables,
+
+        systemState :: SystemState
         
     } deriving stock (Generic)
 
@@ -94,6 +100,7 @@ newAppState = do
         cachedBinaryRtrPdus <- newTVar mempty
         runningRsyncClients <- newTVar mempty
         fetcheables <- newTVar mempty
+        systemState <- SystemState <$> newTVar False
         let readSlurm = Nothing
         pure AppState {..}
                     
