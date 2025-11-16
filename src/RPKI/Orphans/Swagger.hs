@@ -138,6 +138,7 @@ instance ToSchema Config
 instance ToSchema Parallelism
 instance ToSchema RsyncConf
 instance ToSchema RrdpConf
+instance ToSchema ErikConf
 instance ToSchema ValidationConfig
 instance ToSchema SystemConfig
 instance ToSchema HttpApiConfig

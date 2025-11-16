@@ -559,16 +559,20 @@ data BGPSecPayload = BGPSecPayload {
 
 -- https://datatracker.ietf.org/doc/html/draft-spaghetti-sidrops-rpki-erik-protocol
 
+newtype FQDN = FQDN { unFQDN :: Text }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
 data ErikIndex = ErikIndex {
         indexScope    :: Text,
         indexTime     :: Instant,  
         hashAlg       :: DigestAlgorithmIdentifier,
-        partitionList :: [PartitionListEntry]
+        partitionList :: [ErikPartitionListEntry]
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)   
 
-data PartitionListEntry = PartitionListEntry {
+data ErikPartitionListEntry = ErikPartitionListEntry {
         hash :: Hash,
         size :: Size
     }

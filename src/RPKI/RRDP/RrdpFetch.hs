@@ -46,7 +46,7 @@ import           RPKI.Parallel
 import           RPKI.Time
 import           RPKI.Parse.Parse
 import           RPKI.Repository
-import           RPKI.RRDP.Http
+import           RPKI.Fetch.Http
 import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Validation.ObjectValidation
@@ -105,14 +105,16 @@ updateRrdpRepository
         repo@RrdpRepository { uri = repoUri, .. } =
         
   timedMetric (Proxy :: Proxy RrdpMetric) $ do                                   
-    
-    let fetchNotification eTag_ = do 
+        
+    let tmpDir = configValue $ config ^. #tmpDirectory
+        maxSize = config ^. typed @RrdpConf . #maxSize
+        fetchNotification eTag_ = do 
             timedMetric' (Proxy :: Proxy RrdpMetric) 
                 (\t -> #downloadTimeMs %~ (<> t)) $
                 fromTry (RrdpE . CantDownloadNotification . U.fmtEx)
-                    $ downloadToBS (appContext ^. typed) (getURL repoUri) eTag_
+                    $ downloadToBS tmpDir (getURL repoUri) eTag_ maxSize
 
-    let enforcement = 
+        enforcement = 
             case rrdpMeta of 
                 Nothing -> Nothing
                 Just r  -> r ^. #enforcement
@@ -218,8 +220,10 @@ updateRrdpRepository
             (rawContent, _, httpStatus', _) <- 
                 timedMetric' (Proxy :: Proxy RrdpMetric) 
                     (\t -> #downloadTimeMs %~ (<> t)) $ do     
-                    fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
-                        downloadHashedBS (appContext ^. typed @Config) uri Nothing expectedHash                                    
+                    fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ do 
+                        let tmpDir = configValue $ config ^. #tmpDirectory
+                        let maxSize = config ^. typed @RrdpConf . #maxSize
+                        downloadHashedBS tmpDir uri Nothing expectedHash maxSize                            
                             (\actualHash -> 
                                 Left $ RrdpE $ SnapshotHashMismatch { 
                                     expectedHash = expectedHash,
@@ -277,8 +281,10 @@ updateRrdpRepository
             let deltaUri = U.convert uri 
             (rawContent, _, httpStatus', _) <- 
                 inSubVScope deltaUri $ do
-                    fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
-                        downloadHashedBS (appContext ^. typed @Config) uri Nothing hash
+                    fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ do 
+                        let tmpDir = configValue $ config ^. #tmpDirectory
+                        let maxSize = config ^. typed @RrdpConf . #maxSize
+                        downloadHashedBS tmpDir uri Nothing hash maxSize
                             (\actualHash -> 
                                 Left $ RrdpE $ DeltaHashMismatch {
                                     actualHash = actualHash,

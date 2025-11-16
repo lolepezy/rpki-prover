@@ -10,6 +10,7 @@ module RPKI.Parse.Parse (
     module RPKI.Parse.Internal.SignedObject,
     module RPKI.Parse.Internal.GBR,
     module RPKI.Parse.Internal.RSC,
+    module RPKI.Parse.Internal.Erik,
     readObject,
     readObjectOfType,
     supportedExtension,
@@ -38,6 +39,7 @@ import           RPKI.Parse.Internal.ROA
 import           RPKI.Parse.Internal.SPL
 import           RPKI.Parse.Internal.GBR
 import           RPKI.Parse.Internal.RSC
+import           RPKI.Parse.Internal.Erik
 import           RPKI.Parse.Internal.Aspa
 import           RPKI.Parse.Internal.SignedObject
 
@@ -100,14 +102,11 @@ readObjectOfType objectType content =
                 EECert -> 
                     pureError $ parseErr "Cannot have EE certificate as a separate object."
 
-        MFT  -> parse_ parseMft MftRO content
-        ROA  -> parse_ parseRoa RoaRO content
-        SPL  -> parse_ parseSpl SplRO content
-        CRL  -> parse_ parseCrl CrlRO content            
-        GBR  -> parse_ parseGbr GbrRO content            
-        RSC  -> parse_ parseRsc RscRO content            
-        ASPA -> parse_ parseAspa AspaRO content     
-        t    -> pureError $ parseErr $ "Parsing of type " <> fmtGen t <> " is not supported"
-  where
-    parse_ parse constructor bs = 
-        constructor <$> parse bs        
+        MFT  -> MftRO <$> parseMft content
+        ROA  -> RoaRO <$> parseRoa content
+        SPL  -> SplRO <$> parseSpl content
+        CRL  -> CrlRO <$> parseCrl content            
+        GBR  -> GbrRO <$> parseGbr content            
+        RSC  -> RscRO <$> parseRsc content            
+        ASPA -> AspaRO <$> parseAspa content     
+        t    -> pureError $ parseErr $ "Parsing of type " <> fmtGen t <> " is not supported"  

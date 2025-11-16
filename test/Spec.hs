@@ -6,7 +6,7 @@ import RPKI.Parse.ObjectParseSpec
 import RPKI.RRDP.ParseSpec
 import RPKI.Store.DatabaseSpec
 import RPKI.RRDP.UpdateSpec
-import RPKI.RRDP.HttpSpec
+import RPKI.Fetch.HttpSpec
 import RPKI.Resources.ResourcesSpec
 import RPKI.Resources.ValiditySpec
 import RPKI.AppMonadSpec

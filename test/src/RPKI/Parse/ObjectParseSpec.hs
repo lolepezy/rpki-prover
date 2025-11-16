@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE OverloadedLabels           #-}
+{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE OverloadedLabels  #-}
 
 module RPKI.Parse.ObjectParseSpec where
 

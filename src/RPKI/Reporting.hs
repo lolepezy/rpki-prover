@@ -196,6 +196,10 @@ data RsyncError = RsyncProcessError Int Text |
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
+data ErikError = ErikHashMismatchError { actualHash :: Hash, expectedHash :: Hash }                  
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
 data StorageError = StorageError Text |
                     DeserialisationError Text
     deriving stock (Show, Eq, Ord, Generic)
