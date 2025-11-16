@@ -94,6 +94,7 @@ data DB s = DB {
     metricStore      :: MetricStore s,
     slurmStore       :: SlurmStore s,
     jobStore         :: JobStore s,
+    erikStore        :: ErikStore s,
     sequences        :: SequenceMap s,
     metadataStore    :: MetadataStore s
 } deriving stock (Generic)
@@ -226,6 +227,11 @@ instance Storage s => WithStorage s (RepositoryStore s) where
 
 newtype JobStore s = JobStore {
         jobs :: SMap "jobs" s Text Instant
+    }
+    deriving stock (Generic)
+
+newtype ErikStore s = ErikStore {
+        erikPartitions :: SMap "erik-partitions" s Hash ErikPartition
     }
     deriving stock (Generic)
 

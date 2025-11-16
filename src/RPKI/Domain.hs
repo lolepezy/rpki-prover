@@ -573,8 +573,8 @@ data ErikIndex = ErikIndex {
     deriving anyclass (TheBinary, NFData)   
 
 data ErikPartitionListEntry = ErikPartitionListEntry {
-        hash :: Hash,
-        size :: Size
+        hash       :: Hash,
+        size       :: Size
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)   

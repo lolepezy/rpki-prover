@@ -62,6 +62,10 @@ hashHex :: Hash -> BS.ByteString
 hashHex (Hash h) = Hex.encode $ BSS.fromShort h 
 {-# INLINE hashHex #-}
 
+hashAsBase64 :: Hash -> BS.ByteString
+hashAsBase64 (Hash h) = B64.encodeBase64' $ BSS.fromShort h
+{-# INLINE hashAsBase64 #-}
+
 class ConvertibleAsSomethingString s1 s2 where
     convert :: s1 -> s2
 

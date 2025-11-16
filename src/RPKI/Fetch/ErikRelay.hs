@@ -34,6 +34,8 @@ import           GHC.Generics
 
 import           Time.Types
 
+import           UnliftIO (pooledForConcurrentlyN)
+
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppTypes
@@ -47,18 +49,26 @@ import           RPKI.RRDP.Types
 import           RPKI.Store.Base.Storage
 import           RPKI.Time
 import           RPKI.Parallel
-import           RPKI.Util                       
+import qualified RPKI.Util as U                       
 import           RPKI.Rsync
 import           RPKI.Fetch.Http
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
 
 fetchErik :: MonadIO m => Config -> URI -> FQDN -> ValidatorT m ErikIndex
-fetchErik config uri (FQDN fqdn) = do
+fetchErik config relayUri (FQDN fqdn) = do
     (indexBs, _, httpStatus, _ignoreEtag) <- fetchIndex
-    index <- vHoist $ parseErikIndex indexBs
+    ErikIndex {..} <- vHoist $ parseErikIndex indexBs
 
-
+    -- partitionElements <- pooledForConcurrentlyN 4 partitionList $ \ErikPartitionListEntry {..} -> do
+    --     let partUri = partitionUri hash
+    --     (partBs, _, partStatus, _ignoreEtag) <- do
+    --         let tmpDir = configValue $ config ^. #tmpDirectory
+    --         let maxSize = config ^. typed @RrdpConf . #maxSize
+    --         liftIO $ downloadToBS tmpDir partUri Nothing maxSize
+        
+    --     runValidatorT (newScopes' LocationFocus partUri)
+    --         $ vHoist $ parseErikPartition partBs        
 
     appError $ UnspecifiedE "options" "ErikRelay fetcher is not implemented yet"
   where 
@@ -67,5 +77,8 @@ fetchErik config uri (FQDN fqdn) = do
         let maxSize = config ^. typed @RrdpConf . #maxSize
         liftIO $ downloadToBS tmpDir indexUri Nothing maxSize            
 
-    indexUri = URI [i|#{uri}/.well-known/erik/index/#{fqdn}|]
+    indexUri = URI [i|#{relayUri}/.well-known/erik/index/#{fqdn}|]
+
+    partitionUri hash = 
+        URI [i|#{relayUri}/.well-known/ni/sha-256/#{U.hashAsBase64 hash}|]
         
