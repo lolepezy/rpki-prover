@@ -196,7 +196,8 @@ data RsyncError = RsyncProcessError Int Text |
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-data ErikError = ErikHashMismatchError { actualHash :: Hash, expectedHash :: Hash }                  
+data ErikError = Can'tDownloadObject Text |
+                 ErikHashMismatchError { actualHash :: Hash, expectedHash :: Hash }                  
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
@@ -231,6 +232,7 @@ data AppError = ParseE (ParseError Text) |
                 TAL_E TALError | 
                 RrdpE RrdpError |
                 RsyncE RsyncError |
+                ErikE ErikError |
                 StorageE StorageError |                     
                 ValidationE ValidationError |
                 InitE InitError |

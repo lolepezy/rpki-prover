@@ -180,6 +180,7 @@ instance ToSchema StorageError
 instance ToSchema RsyncError
 instance ToSchema RrdpError where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToSchema ErikError
 instance ToSchema TALError
 instance ToSchema PrefixesAndAsns
 

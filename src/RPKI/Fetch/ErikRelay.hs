@@ -55,30 +55,73 @@ import           RPKI.Fetch.Http
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
 
-fetchErik :: MonadIO m => Config -> URI -> FQDN -> ValidatorT m ErikIndex
-fetchErik config relayUri (FQDN fqdn) = do
+
+fetchErik :: MonadIO m => AppContext s -> URI -> FQDN -> ValidatorT m ErikIndex
+fetchErik AppContext {..} relayUri (FQDN fqdn) = do
     (indexBs, _, httpStatus, _ignoreEtag) <- fetchIndex
     ErikIndex {..} <- vHoist $ parseErikIndex indexBs
 
-    -- partitionElements <- pooledForConcurrentlyN 4 partitionList $ \ErikPartitionListEntry {..} -> do
-    --     let partUri = partitionUri hash
-    --     (partBs, _, partStatus, _ignoreEtag) <- do
-    --         let tmpDir = configValue $ config ^. #tmpDirectory
-    --         let maxSize = config ^. typed @RrdpConf . #maxSize
-    --         liftIO $ downloadToBS tmpDir partUri Nothing maxSize
-        
-    --     runValidatorT (newScopes' LocationFocus partUri)
-    --         $ vHoist $ parseErikPartition partBs        
+    partitions <- liftIO $ pooledForConcurrentlyN 4 partitionList fetchPartition    
+
+    for_ partitions $ \case 
+        (uri, Left e, vs) -> do 
+            embedState vs
+            logError logger [i|Failed to download partition #{uri}|]
+
+        (uri, Right partition, vs) -> do
+            embedState vs
+            fetchManifests partition
+                    
 
     appError $ UnspecifiedE "options" "ErikRelay fetcher is not implemented yet"
   where 
     fetchIndex = do 
         let tmpDir = configValue $ config ^. #tmpDirectory
-        let maxSize = config ^. typed @RrdpConf . #maxSize
+        let maxSize = config ^. typed @ErikConf . #maxSize
         liftIO $ downloadToBS tmpDir indexUri Nothing maxSize            
+
+    fetchPartition ErikPartitionListEntry {..} = do 
+        let partUri = objectByHashUri hash
+        let tmpDir = configValue $ config ^. #tmpDirectory
+        let maxSize = config ^. typed @ErikConf . #maxSize
+
+        (r, vs) <- runValidatorT (newScopes' LocationFocus partUri) $ do
+            (partBs, _, partStatus, _ignoreEtag) <-
+                fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
+                    downloadHashedBS tmpDir partUri Nothing hash maxSize
+                        (\actualHash -> 
+                            Left $ ErikE $ ErikHashMismatchError { 
+                                expectedHash = hash,
+                                actualHash = actualHash                                            
+                            })
+
+            vHoist $ parseErikPartition partBs   
+
+        pure (partUri, r, vs)
+
+
+    fetchManifests ErikPartition {..} = do
+        for_ manifestList $ \ManifestListEntry {..} -> do
+            let manUri = objectByHashUri hash
+            (manBs, _, manStatus, _ignoreEtag) <- do
+                let tmpDir = configValue $ config ^. #tmpDirectory
+                let maxSize = config ^. typed @ErikConf . #maxSize
+                liftIO $ downloadToBS tmpDir manUri Nothing maxSize
+            
+            (r, vs) <- runValidatorT (newScopes' LocationFocus manUri)
+                $ vHoist $ parseMft manBs        
+
+            case r of 
+                Left e -> do 
+                    embedState vs
+                    logError logger [i|Failed to download manifest #{manUri}|]
+
+                Right manifest -> do
+                    embedState vs
+                    -- storeManifest manifest manUri
 
     indexUri = URI [i|#{relayUri}/.well-known/erik/index/#{fqdn}|]
 
-    partitionUri hash = 
+    objectByHashUri hash = 
         URI [i|#{relayUri}/.well-known/ni/sha-256/#{U.hashAsBase64 hash}|]
         
