@@ -228,7 +228,7 @@ updateRrdpRepository
                                 Left $ RrdpE $ SnapshotHashMismatch { 
                                     expectedHash = expectedHash,
                                     actualHash = actualHash                                            
-                                })                                            
+                                })
             updateMetric @RrdpMetric @_ (#lastHttpStatus .~ httpStatus') 
 
             void $ timedMetric' (Proxy :: Proxy RrdpMetric) 

@@ -21,7 +21,8 @@ import           Data.Generics.Product.Typed
 
 import qualified Data.List.NonEmpty          as NonEmpty
 
-import           Data.Text                        (Text)
+import qualified Data.ByteString                 as BS
+import           Data.Text                       (Text)
 import           Data.Data
 import           Data.Foldable                   (for_)
 import           Data.Maybe 
@@ -34,7 +35,7 @@ import           GHC.Generics
 
 import           Time.Types
 
-import           UnliftIO (pooledForConcurrentlyN)
+import           UnliftIO (pooledForConcurrentlyN, pooledForConcurrently)
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -66,11 +67,11 @@ fetchErik AppContext {..} relayUri (FQDN fqdn) = do
     for_ partitions $ \case 
         (uri, Left e, vs) -> do 
             embedState vs
-            logError logger [i|Failed to download partition #{uri}|]
+            logError logger [i|Failed to download partition #{uri}.|]
 
         (uri, Right partition, vs) -> do
             embedState vs
-            fetchManifests partition
+            liftIO $ fetchManifests partition
                     
 
     appError $ UnspecifiedE "options" "ErikRelay fetcher is not implemented yet"
@@ -82,43 +83,52 @@ fetchErik AppContext {..} relayUri (FQDN fqdn) = do
 
     fetchPartition ErikPartitionListEntry {..} = do 
         let partUri = objectByHashUri hash
-        let tmpDir = configValue $ config ^. #tmpDirectory
-        let maxSize = config ^. typed @ErikConf . #maxSize
+        let tmpDir = configValue $ config ^. #tmpDirectory        
 
         (r, vs) <- runValidatorT (newScopes' LocationFocus partUri) $ do
             (partBs, _, partStatus, _ignoreEtag) <-
                 fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
-                    downloadHashedBS tmpDir partUri Nothing hash maxSize
+                    downloadHashedBS tmpDir partUri Nothing hash size
                         (\actualHash -> 
                             Left $ ErikE $ ErikHashMismatchError { 
                                 expectedHash = hash,
                                 actualHash = actualHash                                            
                             })
 
-            vHoist $ parseErikPartition partBs   
+            vHoist $ parseErikPartition partBs      
 
         pure (partUri, r, vs)
 
 
-    fetchManifests ErikPartition {..} = do
-        for_ manifestList $ \ManifestListEntry {..} -> do
+    fetchManifestBlobs :: ErikPartition -> IO [(Hash, URI, BS.ByteString)]
+    fetchManifestBlobs ErikPartition {..} = do
+        let tmpDir = configValue $ config ^. #tmpDirectory                
+        pooledForConcurrentlyN 4 manifestList $ \ManifestListEntry {..} -> do
             let manUri = objectByHashUri hash
-            (manBs, _, manStatus, _ignoreEtag) <- do
-                let tmpDir = configValue $ config ^. #tmpDirectory
-                let maxSize = config ^. typed @ErikConf . #maxSize
-                liftIO $ downloadToBS tmpDir manUri Nothing maxSize
+            (manBs, _, manStatus, _ignoreEtag) <- downloadToBS tmpDir manUri Nothing size
+            pure (hash, manUri, manBs)        
+
+    fetchManifests partition@ErikPartition {..} = do
+        -- manifestBlobs <- fetchManifestBlobs partition
+
+        -- for_ manifestList $ \ManifestListEntry {..} -> do
+        --     let manUri = objectByHashUri hash
+        --     (manBs, _, manStatus, _ignoreEtag) <- do
+        --         let tmpDir = configValue $ config ^. #tmpDirectory                
+        --         liftIO $ downloadToBS tmpDir manUri Nothing size
             
-            (r, vs) <- runValidatorT (newScopes' LocationFocus manUri)
-                $ vHoist $ parseMft manBs        
+        --     (r, vs) <- runValidatorT (newScopes' LocationFocus manUri)
+        --         $ vHoist $ parseMft manBs        
 
-            case r of 
-                Left e -> do 
-                    embedState vs
-                    logError logger [i|Failed to download manifest #{manUri}|]
+        --     case r of 
+        --         Left e -> do 
+        --             embedState vs
+        --             logError logger [i|Failed to download manifest #{manUri}|]
 
-                Right manifest -> do
-                    embedState vs
-                    -- storeManifest manifest manUri
+        --         Right manifest -> do
+        --             embedState vs
+        --             -- storeManifest manifest manUri
+        pure ()
 
     indexUri = URI [i|#{relayUri}/.well-known/erik/index/#{fqdn}|]
 
