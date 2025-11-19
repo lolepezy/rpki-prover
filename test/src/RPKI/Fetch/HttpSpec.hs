@@ -1,15 +1,18 @@
-{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedLabels  #-}
 
-module RPKI.RRDP.HttpSpec where
+module RPKI.Fetch.HttpSpec where
 
 import Control.Lens
 
 import qualified Data.ByteString.Lazy    as LBS
+import           Data.Generics.Product.Typed
 
+import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.RRDP.Types
-import           RPKI.RRDP.Http
+import           RPKI.Fetch.Http
 import           RPKI.TestTypes
 import           RPKI.Util
 
@@ -29,14 +32,17 @@ httpSpec = testGroup "Unit tests for Http updates" [
         let hash_ = sha256 body
         let size = LBS.length body
 
+        let tmpDir = configValue $ testConfig ^. #tmpDirectory
+        let maxSize = testConfig ^. typed @RrdpConf . #maxSize
+
         (bs, s, status, _) :: (LBS.ByteString, Size, HttpStatus, Maybe ETag) <- 
-            downloadToBS testConfig (URI uri) Nothing
+                downloadToBS tmpDir (URI uri) Nothing maxSize
 
         HU.assertEqual "Status" status (HttpStatus 200)
         HU.assertEqual "Size" s (Size size)
         HU.assertEqual "Body" body bs
-
-        z <- downloadHashedBS testConfig (URI uri) Nothing hash_
+        
+        z <- downloadHashedBS tmpDir (URI uri) Nothing hash_ maxSize
                 (\actual -> Left $ "Hash was " <> show actual <> " instead of " <> show hash_)
 
         HU.assertBool ("No errors: " <> show z) (isRight z)

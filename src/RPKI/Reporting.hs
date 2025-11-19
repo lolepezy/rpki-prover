@@ -196,6 +196,11 @@ data RsyncError = RsyncProcessError Int Text |
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
+data ErikError = Can'tDownloadObject Text |
+                 ErikHashMismatchError { actualHash :: Hash, expectedHash :: Hash }                  
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
 data StorageError = StorageError Text |
                     DeserialisationError Text
     deriving stock (Show, Eq, Ord, Generic)
@@ -227,6 +232,7 @@ data AppError = ParseE (ParseError Text) |
                 TAL_E TALError | 
                 RrdpE RrdpError |
                 RsyncE RsyncError |
+                ErikE ErikError |
                 StorageE StorageError |                     
                 ValidationE ValidationError |
                 InitE InitError |
@@ -250,7 +256,8 @@ newtype AppException = AppException AppError
 instance Exception AppException
 
 {- 
-   Scope keys are pretty long and comparison of them is expensive.
+   Scope keys are pretty long and comparing them is expensive, so using Map looks a bit stupid at first.
+
    However, 
    - HashMap is actually slower in benchmarks with long Scope-like keys ('optimise/app-state-hashmap' branch)
    - using a Trie is much faster in benchmarks but doesn't cause any measurable improvement 
@@ -258,7 +265,7 @@ instance Exception AppException
    - Trying to intern the Scope keys using Symbolize library breaks serialisation ('optimise/focus' branch)
 
    So in reality it's a decent solution. It might also be that the URLs in the scope elements
-   are physically shared in memory so comparisons are actually fast.
+   are physically shared in memory so comparisons are actually pretty fast.
 -}
 newtype Validations = Validations (Map VScope (Set VIssue))
     deriving stock (Show, Eq, Ord, Generic)

@@ -54,7 +54,7 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Reporting
-import           RPKI.RRDP.Http (downloadToFile)
+import           RPKI.Fetch.Http (downloadToFile)
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
 import           RPKI.Store.Base.Storage

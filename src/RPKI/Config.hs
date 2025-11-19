@@ -69,6 +69,7 @@ data Config = Config {
         parallelism               :: Parallelism, 
         rsyncConf                 :: RsyncConf,
         rrdpConf                  :: RrdpConf,
+        erikConf                  :: ErikConf,
         validationConfig          :: ValidationConfig,
         systemConfig              :: SystemConfig,
         httpApiConf               :: HttpApiConfig,
@@ -98,6 +99,12 @@ data RsyncConf = RsyncConf {
         rsyncPerHostLimit :: Int
     } 
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+data ErikConf = ErikConf {
+        maxSize     :: Size
+    }
+    deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
 data RrdpConf = RrdpConf {
@@ -235,6 +242,9 @@ defaultConfig = Config {
         rrdpTimeout = 7 * minutes,
         cpuLimit = 30 * minutes,
         enabled = True
+    },
+    erikConf = ErikConf {
+        maxSize = Size $ 20 * 1024 * 1024
     },
     validationConfig = ValidationConfig {
         revalidationInterval           = 15 * minutes,

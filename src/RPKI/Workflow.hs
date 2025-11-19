@@ -56,7 +56,7 @@ import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Repository
-import           RPKI.Fetch
+import           RPKI.Fetch.Fetch
 import           RPKI.Logging
 import           RPKI.Metrics.System
 import           RPKI.Http.Types

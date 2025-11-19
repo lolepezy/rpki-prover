@@ -94,6 +94,7 @@ data DB s = DB {
     metricStore      :: MetricStore s,
     slurmStore       :: SlurmStore s,
     jobStore         :: JobStore s,
+    erikStore        :: ErikStore s,
     sequences        :: SequenceMap s,
     metadataStore    :: MetadataStore s
 } deriving stock (Generic)
@@ -226,6 +227,12 @@ instance Storage s => WithStorage s (RepositoryStore s) where
 
 newtype JobStore s = JobStore {
         jobs :: SMap "jobs" s Text Instant
+    }
+    deriving stock (Generic)
+
+data ErikStore s = ErikStore {
+        indexes    :: SMap "erik-indexes" s FQDN ErikIndex,
+        partitions :: SMap "erik-partitions" s Hash ErikPartition
     }
     deriving stock (Generic)
 
@@ -417,12 +424,15 @@ linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL hash = 
         M.put tx uriKeyToUri urlKey rpkiURL            
         pure urlKey
 
-
 hashExists :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> Hash -> m Bool
 hashExists tx DB { objectStore = RpkiObjectStore {..} } h = 
     liftIO $ M.exists tx hashToKey h
 
+partitionExists :: (MonadIO m, Storage s) => 
+                Tx s mode -> DB s -> Hash -> m Bool
+partitionExists tx DB { erikStore = ErikStore {..} } h = 
+    liftIO $ M.exists tx partitions h
 
 deleteObjectByHash :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Hash -> m ()
 deleteObjectByHash tx db@DB { objectStore = RpkiObjectStore {..} } hash = liftIO $ 
