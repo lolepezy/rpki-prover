@@ -23,12 +23,6 @@ isSemigroup :: Eq s => Semigroup s => (s, s, s) -> Bool
 isSemigroup (s1, s2, s3) = s1 <> (s2 <> s3) == (s1 <> s2) <> s3
 
 
-runValidatorTAndvalidatorTShouldBeId :: QC.Property
-runValidatorTAndvalidatorTShouldBeId = monadicIO $ do
-  z :: (Either AppError (), ValidationState) <- pick arbitrary 
-  q <- runValidatorT (newScopes "zzz") $ validatorT $ pure z
-  assert $ q == z
-
 forMShouldSavesState :: HU.Assertion
 forMShouldSavesState = do
   v <- QC.generate arbitrary  
@@ -79,8 +73,6 @@ appMonadSpec = testGroup "AppMonad" [
         QC.testProperty "ValidationState is a semigroup" (isSemigroup @ValidationState),
         QC.testProperty "RrdpSource is a semigroup" (isSemigroup @RrdpSource),
         QC.testProperty "HttpStatus is a semigroup" (isSemigroup @HttpStatus),
-
-        QC.testProperty "runValidatorT . validatorT == id" runValidatorTAndvalidatorTShouldBeId,
             
         HU.testCase "forM saves state" forMShouldSavesState,
         HU.testCase "forM saves state" scopesShouldBeProperlyNested

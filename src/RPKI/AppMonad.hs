@@ -2,7 +2,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedLabels #-}
-{-# LANGUAGE RecordWildCards #-}
 
 module RPKI.AppMonad where
 
@@ -26,7 +25,6 @@ import           System.Timeout
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Time
-
 
 -- Application monad stack
 type ValidatorT m r = ValidatorTCurried m r
@@ -241,3 +239,23 @@ andThen f action = do
     !z <- f
     action
     pure $! z
+
+
+-- applyIO :: (forall x . IO x -> IO x) -> ValidatorT IO a -> ValidatorT IO a
+-- applyIO combinator f = do     
+--     scopes <- askScopes
+--     let zz = runValidatorT scopes f          
+--     z@(_, vs) <- liftIO $ combinator zz
+--     embedState vs    
+--     embedValidatorT $ pure z
+    
+
+bracketVT :: IO a 
+        -> (a -> ValidatorT IO r) 
+        -> (a -> ValidatorT IO b) 
+        -> ValidatorT IO b
+bracketVT acquire release f = do 
+    scopes <- askScopes    
+    z@(_, vs) <- liftIO $ bracket acquire (runValidatorT scopes . release) (runValidatorT scopes . f)  
+    embedState vs    
+    embedValidatorT $ pure z

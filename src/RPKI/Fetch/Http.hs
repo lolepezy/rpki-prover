@@ -141,6 +141,28 @@ downloadToFile uri file limit = liftIO $ do
         downloadConduit uri Nothing fd 
             (sinkGenSize uri limit () (\_ _ -> ()) id) 
 
+-- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
+-- streaming it to the file.
+downloadToFileHashed :: (Blob bs, MonadIO m) => 
+                    URI -> 
+                    FilePath ->                    
+                    Hash -> 
+                    Size -> 
+                    (Hash -> Either e (bs, Size, HttpStatus)) ->
+                    m (Either e (bs, Size, HttpStatus))
+downloadToFileHashed uri file expectedHash maxSize hashMishmatch = liftIO $
+    withFile file WriteMode $ \fd -> do 
+        ((actualHash, size), status, _) <- 
+                downloadConduit uri Nothing fd 
+                    (sinkGenSize uri maxSize S256.init S256.update (U.mkHash . S256.finalize))
+        if actualHash /= expectedHash 
+            then pure $! hashMishmatch actualHash
+            else do
+                hClose fd
+                content <- readB file size
+                pure $ Right (content, size, status)
+                
+
 
 lazyFsRead :: FilePath -> IO LBS.ByteString
 lazyFsRead = LBS.readFile

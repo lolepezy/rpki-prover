@@ -102,7 +102,8 @@ data RsyncConf = RsyncConf {
     deriving anyclass (TheBinary)
 
 data ErikConf = ErikConf {
-        maxSize     :: Size
+        maxSize     :: Size,
+        parallelism :: Natural
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -244,7 +245,8 @@ defaultConfig = Config {
         enabled = True
     },
     erikConf = ErikConf {
-        maxSize = Size $ 20 * 1024 * 1024
+        maxSize = Size $ 20 * 1024 * 1024,
+        parallelism = 10
     },
     validationConfig = ValidationConfig {
         revalidationInterval           = 15 * minutes,

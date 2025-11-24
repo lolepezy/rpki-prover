@@ -189,3 +189,6 @@ fmtLocations = mconcat .
 
 parseWorldVersion :: Text -> Either Text WorldVersion
 parseWorldVersion t = WorldVersion <$> first Text.pack (readEither $ Text.unpack t)
+
+firstByteStr :: ConvertibleAsSomethingString BS.ByteString s => Hash -> s
+firstByteStr (Hash h) = convert $ hex $ BSS.fromShort $ BSS.take 2 h

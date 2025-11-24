@@ -429,10 +429,20 @@ hashExists :: (MonadIO m, Storage s) =>
 hashExists tx DB { objectStore = RpkiObjectStore {..} } h = 
     liftIO $ M.exists tx hashToKey h
 
-partitionExists :: (MonadIO m, Storage s) => 
-                Tx s mode -> DB s -> Hash -> m Bool
-partitionExists tx DB { erikStore = ErikStore {..} } h = 
-    liftIO $ M.exists tx partitions h
+getErikIndex :: (MonadIO m, Storage s) => 
+                       Tx s mode -> DB s -> FQDN -> m (Maybe ErikIndex)
+getErikIndex tx DB { erikStore = ErikStore {..} } fqdn = 
+    liftIO $ M.get tx indexes fqdn
+
+getErikPartition :: (MonadIO m, Storage s) => 
+                       Tx s mode -> DB s -> Hash -> m (Maybe ErikPartition)
+getErikPartition tx DB { erikStore = ErikStore {..} } h = 
+    liftIO $ M.get tx partitions h
+
+saveErikPartition :: (MonadIO m, Storage s) => 
+                    Tx s 'RW -> DB s -> FQDN -> Hash -> ErikPartition -> m ()
+saveErikPartition tx DB { erikStore = ErikStore {..} } fqdn h partition = 
+    liftIO $ M.put tx partitions h partition
 
 deleteObjectByHash :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Hash -> m ()
 deleteObjectByHash tx db@DB { objectStore = RpkiObjectStore {..} } hash = liftIO $ 
