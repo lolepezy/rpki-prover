@@ -972,3 +972,7 @@ getForTA (PerTA a) taName = MonoidalMap.lookup taName a
 
 divSize :: Size -> Size -> Size
 divSize (Size s1) (Size n) = Size $ s1 `div` n
+
+
+getMftChildren :: MftObject -> [MftPair]
+getMftChildren = mftEntries . getCMSContent . cmsPayload

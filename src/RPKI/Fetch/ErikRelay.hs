@@ -95,12 +95,12 @@ fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
                 logDebug logger [i|Found Erik index for #{fqdn_} in the database.|]
                 pure index
 
-    getPartition partitionEntry@ErikPartitionListEntry {..} = do 
+    getPartition ErikPartitionListEntry {..} = do 
         z <- roTxT database $ \tx db -> DB.getErikPartition tx db hash
         case z of 
             Nothing -> do     
                 logDebug logger [i|No Erik partition #{U.hashAsBase64 hash} in the database, downloading from relay #{relayUri}.|]
-                z <- fetchPartition
+                z <- fetchAndParsePartition
                 case z of 
                     (uri, Left e, vs) -> do 
                         logError logger [i|Failed to download Erik partition #{uri}|]
@@ -116,7 +116,7 @@ fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
                 logDebug logger [i|Found Erik partition #{U.hashAsBase64 hash} in the database.|]
                 pure (hash, Right part, mempty)
       where
-        fetchPartition = do 
+        fetchAndParsePartition = do 
             let partUri = objectByHashUri hash
             let partitionDir = indexDir </> U.firstByteStr hash
             -- It will be cleaned up by the top level
@@ -147,22 +147,27 @@ fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
     --         pure (hash, manUri, manBs)        
 
     getManifests partitionHash partition@ErikPartition {..} = do
-        let partitionDir = indexDir </> U.firstByteStr partitionHash
-        -- manifestBlobs <- fetchManifestBlobs partition
+        let partitionDir = indexDir </> U.firstByteStr partitionHash        
 
         for_ manifestList $ \mle@ManifestListEntry {..} -> do
             z <- roTxT database $ \tx db -> DB.getByHash tx db hash
             case z of 
-                Just (Located _ (MftRO mft)) -> 
+                Just (Located _ (MftRO mft)) -> do
                     logDebug logger [i|Manifest #{U.hashAsBase64 hash} already in the database.|]
+                    getManifestChildren (Cached mft)
 
                 Just (Located locations ro) -> 
                     logDebug logger $ [i|Manifest hash #{U.hashAsBase64 hash} points to an existing |] <> 
                                       [i|object that is not a manifest #{pickLocation locations}, |] <> 
-                                      "that almost surely means broken Erik relay."
+                                      "it almost surely means broken Erik relay."
                 Nothing -> do
                     (r, vs) <- fetchAndParseManifest mle
-                    pure ()
+                    case r of 
+                        Left e -> do 
+                            logError logger [i|Could not download/parse manifest #{U.hashAsBase64 hash}.|]
+                        Right mft -> do 
+                            getManifestChildren (Fetched mft)
+                                           
       where
         fetchAndParseManifest ManifestListEntry {..} = do  
             let partitionDir = indexDir </> U.firstByteStr partitionHash
@@ -171,7 +176,7 @@ fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
 
             let manifestUri = objectByHashUri hash
 
-            runValidatorT (newScopes' LocationFocus manifestUri) $ do                                
+            runValidatorT (newScopes' LocationFocus manifestUri) $ do
                 let manifestFile = manifestDir </> show hash
                 (manBs, _, manStatus) <-
                     fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
@@ -183,6 +188,30 @@ fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
                                 })
                 
                 vHoist $ parseMft manBs
+
+
+        getManifestChildren erikMft = do
+            let mft = getErikObject erikMft
+            let mftChildren = getMftChildren mft
+
+            let partitionDir = indexDir </> U.firstByteStr partitionHash
+            let manifestDir = partitionDir </> U.firstByteStr (getHash mft)
+            let childrenDir = manifestDir </> "ch"
+            
+            for_ mftChildren $ \MftPair {..} -> do 
+                let maxSize = Size $ fromIntegral $ config ^. #validationConfig . #maxObjectSize
+                let childFile = childrenDir </> U.firstByteStr hash </> show hash
+                let childUri = objectByHashUri hash
+
+                z <- runValidatorT (newScopes' LocationFocus childUri) $ do                
+                    fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
+                        downloadToFileHashed_ childUri childFile hash maxSize
+                            (\actualHash -> 
+                                Left $ ErikE $ ErikHashMismatchError { 
+                                    expectedHash = hash,
+                                    actualHash = actualHash                                            
+                                })
+                pure ()
 
 
     indexUri = URI [i|#{relayUri}/.well-known/erik/index/#{fqdn_}|]
@@ -202,5 +231,11 @@ fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
             (\_ -> f dir)           
         
 
-        
+data ErikObject a = Fetched a 
+                  | Cached a        
     
+
+getErikObject :: ErikObject a -> a 
+getErikObject = \case 
+    Fetched a -> a
+    Cached a  -> a
