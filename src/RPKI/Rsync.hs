@@ -24,7 +24,7 @@ import qualified Data.ByteString.Lazy             as LBS
 import           Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict                  as Map
 import           Data.Proxy
-import           Data.List (stripPrefix)
+import           Data.List (stripPrefix, foldl')
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 import           Data.List.NonEmpty               (NonEmpty(..))
@@ -347,7 +347,7 @@ rsyncDestination :: RsyncMode -> FilePath -> RsyncURL -> IO FilePath
 rsyncDestination rsyncMode root (RsyncURL (RsyncHost (RsyncHostName host) port) path) = do 
     let portPath = maybe "" (\p -> "_" <> show p) port
     let fullPath = ((U.convert host :: String) <> portPath) :| map (U.convert . unRsyncPathChunk) path
-    let mkPath p = foldl (</>) root p
+    let mkPath = foldl' (</>) root
     let pathWithoutLast = NonEmpty.init fullPath
     let target = mkPath $ NonEmpty.toList fullPath
     case rsyncMode of 
@@ -366,7 +366,7 @@ getSizeAndContent vc path = do
                 (_, Left e)  -> Left e
                 (s, Right b) -> Right (s, b)    
   where    
-    readSizeAndContet = try $ do
+    readSizeAndContet = try $ 
         withFile path ReadMode $ \h -> do
             size <- hFileSize h
             case validateSize vc size of

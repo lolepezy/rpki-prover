@@ -1069,8 +1069,8 @@ validateCaNoFetch
                                 getParsedObject tx db key $ 
                                     vError $ ManifestEntryDoesn'tExist hash' filename
 
-        -- The type of the object that is deserialised doesn't correspond 
-        -- to the file extension on the manifest
+        -- The type of the object that is deserialised must 
+        -- correspond to the file extension on the manifest
         let realObjectType = getRpkiObjectType $ ro ^. #object
 
         let complain = vWarn $ ManifestEntryHasWrongFileType hash' filename realObjectType

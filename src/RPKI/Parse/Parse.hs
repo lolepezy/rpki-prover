@@ -72,8 +72,10 @@ urlObjectType :: RpkiURL -> Maybe RpkiObjectType
 urlObjectType (getURL -> URI u) = textObjectType u
 
 textObjectType :: Text.Text -> Maybe RpkiObjectType
-textObjectType t = rpkiObjectType $ Text.takeEnd 3 t
-
+textObjectType t = 
+    case Text.split (== '.') t of 
+        _ : x@(_ : _) -> rpkiObjectType $ last x
+        _             -> Nothing
 
 isOfType :: RpkiObjectType -> RpkiObjectType -> Bool
 isOfType t1 t2 = t1 == t2 || t1 == BGPSec && t2 == CER

@@ -127,11 +127,7 @@ fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
                 (partBs, _, partStatus) <-
                     fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
                         downloadToFileHashed partUri partitionFile hash size
-                            (\actualHash -> 
-                                Left $ ErikE $ ErikHashMismatchError { 
-                                    expectedHash = hash,
-                                    actualHash = actualHash                                            
-                                })
+                            (\actualHash -> Left $ ErikE $ ErikHashMismatchError { expectedHash = hash, .. })
 
                 vHoist $ parseErikPartition partBs      
 
@@ -181,11 +177,7 @@ fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
                 (manBs, _, manStatus) <-
                     fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
                         downloadToFileHashed manifestUri manifestFile hash size
-                            (\actualHash -> 
-                                Left $ ErikE $ ErikHashMismatchError { 
-                                    expectedHash = hash,
-                                    actualHash = actualHash                                            
-                                })
+                            (\actualHash -> Left $ ErikE $ ErikHashMismatchError { expectedHash = hash, .. })
                 
                 vHoist $ parseMft manBs
 
@@ -198,20 +190,24 @@ fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
             let manifestDir = partitionDir </> U.firstByteStr (getHash mft)
             let childrenDir = manifestDir </> "ch"
             
-            for_ mftChildren $ \MftPair {..} -> do 
+            void $ pooledForConcurrentlyN 4 mftChildren $ \MftPair {..} -> do 
                 let maxSize = Size $ fromIntegral $ config ^. #validationConfig . #maxObjectSize
                 let childFile = childrenDir </> U.firstByteStr hash </> show hash
                 let childUri = objectByHashUri hash
 
-                z <- runValidatorT (newScopes' LocationFocus childUri) $ do                
+                runValidatorT (newScopes' LocationFocus childUri) $ do                
                     fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
                         downloadToFileHashed_ childUri childFile hash maxSize
-                            (\actualHash -> 
-                                Left $ ErikE $ ErikHashMismatchError { 
-                                    expectedHash = hash,
-                                    actualHash = actualHash                                            
-                                })
-                pure ()
+                            (\actualHash -> Left $ ErikE $ ErikHashMismatchError { expectedHash = hash, .. })
+
+            gatherChildren erikMft
+          where
+            gatherChildren (Fetched mft) = do
+                let mftHash = getHash mft
+                -- rwTxT database $ \tx db -> DB.saveLocated tx db (Located [LocationFocus manifestUri] (MftRO mft))
+                logDebug logger [i|Stored manifest #{U.hashAsBase64 mftHash} in the database.|]
+
+            gatherChildren (Cached _) = pure ()
 
 
     indexUri = URI [i|#{relayUri}/.well-known/erik/index/#{fqdn_}|]
@@ -233,7 +229,6 @@ fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
 
 data ErikObject a = Fetched a 
                   | Cached a        
-    
 
 getErikObject :: ErikObject a -> a 
 getErikObject = \case 
