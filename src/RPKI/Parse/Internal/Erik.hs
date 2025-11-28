@@ -54,7 +54,7 @@ parseErikIndex bs = do
     parseIndexFieldsWithVersion = do
         version :: Int <- getInteger (pure . fromInteger) "Wrong version"
         when (version /= 0) $ 
-            throwParseError $ "Unexpected manifest version: " ++ show version
+            throwParseError $ "Unexpected index version: " ++ show version
         parseIndexFields
 
     parseIndexFields = do         
@@ -82,7 +82,7 @@ parseErikPartition bs = do
     parsePartitionFieldsWithVersion = do
         version :: Int <- getInteger (pure . fromInteger) "Wrong version"
         when (version /= 0) $ 
-            throwParseError $ "Unexpected manifest version: " ++ show version
+            throwParseError $ "Unexpected partition version: " ++ show version
         parsePartitionFields
 
     parsePartitionFields = do 
