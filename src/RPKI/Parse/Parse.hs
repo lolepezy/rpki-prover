@@ -18,6 +18,7 @@ module RPKI.Parse.Parse (
     rpkiObjectType,
     urlObjectType,
     textObjectType,
+    nameObjectType,
     isOfType
 )
 where
@@ -25,6 +26,7 @@ where
 import qualified Data.ByteString                  as BS
 import           Data.Char                        (toLower)
 import qualified Data.List                        as List
+import qualified Data.List.Split                  as Split
 import qualified Data.Text                        as Text
 import           Data.String                      (IsString)
 import           Data.Maybe
@@ -74,6 +76,12 @@ urlObjectType (getURL -> URI u) = textObjectType u
 textObjectType :: Text.Text -> Maybe RpkiObjectType
 textObjectType t = 
     case Text.split (== '.') t of 
+        _ : x@(_ : _) -> rpkiObjectType $ last x
+        _             -> Nothing
+
+nameObjectType :: String -> Maybe RpkiObjectType
+nameObjectType s = 
+    case Split.splitOn "." s of 
         _ : x@(_ : _) -> rpkiObjectType $ last x
         _             -> Nothing
 

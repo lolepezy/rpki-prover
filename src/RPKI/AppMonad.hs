@@ -178,7 +178,7 @@ inSubLocationScope :: Monad m => URI -> ValidatorT m r -> ValidatorT m r
 inSubLocationScope = vFocusOn LocationFocus
 
 vFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
-vFocusOn c f = local (typed @VScope %~ subScope c f)
+vFocusOn s a = local (typed @VScope %~ subScope s a)
 
 metricFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
 metricFocusOn c t = local (typed @MetricScope %~ subScope c t)

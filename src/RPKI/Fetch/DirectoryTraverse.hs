@@ -9,12 +9,10 @@
 
 module RPKI.Fetch.DirectoryTraverse where
 
-import           Control.Lens
 import           Data.Generics.Product.Typed
 
 import           Control.Concurrent              as Conc
 import           Control.Concurrent.Async
-import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Lens hiding (indices, Indexable)
 import           Control.Monad
@@ -26,16 +24,11 @@ import qualified Data.List.NonEmpty          as NonEmpty
 import qualified Data.ByteString                  as BS
 
 import           Data.Bifunctor
-import           Data.Data
-import           Data.Foldable                   (for_)
-import           Data.Maybe 
 import           Data.Map.Strict  (Map)
 import qualified Data.Map.Strict as Map
 import           Data.String.Interpolate.IsString
 
 import           GHC.Generics
-
-import           Time.Types
 
 import qualified Streaming.Prelude                as S
 import           System.FilePath
@@ -51,14 +44,11 @@ import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parse.Parse
 import           RPKI.Store.Base.Storage
-import           RPKI.Time
 import           RPKI.Parallel
-import           RPKI.Util                       
-import           RPKI.Fetch.Http
-import           RPKI.TAL
 
 import           RPKI.Store.Types
 import           RPKI.Store.Base.Storable
+import           RPKI.Store.Base.Storage
 import qualified RPKI.Store.Database              as DB
 import qualified RPKI.Util                        as U
 
@@ -67,10 +57,10 @@ import qualified RPKI.Util                        as U
 -- | objects into the storage.
 -- 
 -- | Is not supposed to throw exceptions.
-loadObjectsFromFS :: Storage s =>                         
+loadObjectsFromFS :: forall s . Storage s =>                         
                         AppContext s 
                     -> WorldVersion 
-                    -> (FilePath -> RsyncURL) 
+                    -> (FilePath -> Maybe RsyncURL) 
                     -> FilePath 
                     -> DB.DB s 
                     -> ValidatorT IO ()
@@ -98,15 +88,15 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath db =
                     when (supportedExtension name) $ do         
                         let !uri = restoreUrl path
                         s <- askScopes                     
-                        let task = runValidatorT s $ liftIO $ readAndParseObject path (RsyncU uri)
-                        !a <- liftIO $ async $ evaluate =<< task
+                        let task = runValidatorT s $ liftIO $ readAndParseObject path (RsyncU <$> uri)
+                        a <- liftIO $ async $ evaluate =<< task
                         S.yield (a, uri)
       where
         readAndParseObject filePath rpkiURL = 
             liftIO (getSizeAndContent (config ^. typed) filePath) >>= \case                    
                 Left e          -> pure $! CantReadFile rpkiURL filePath $ VErr e
                 Right (_, blob) ->                     
-                    case urlObjectType rpkiURL of 
+                    case nameObjectType filePath of 
                         Just type_ -> do 
                             -- Check if the object is already in the storage
                             -- before parsing ASN1 and serialising it.
@@ -120,8 +110,11 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath db =
 
           where
             tryToParse hash blob type_ = do            
-                let scopes = newScopes $ unURI $ getURL rpkiURL
-                z <- liftIO $ runValidatorT scopes $ vHoist $ readObjectOfType type_ blob
+                let scopes = case rpkiURL of 
+                        Just u  -> newScopes' LocationFocus $ getURL u
+                        Nothing -> newScopes' HashFocus hash
+
+                z <- runValidatorT scopes $ vHoist $ readObjectOfType type_ blob
                 (evaluate $! 
                     case z of 
                         (Left e, _) -> 
@@ -138,31 +131,42 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath db =
                     )
 
     saveStorable tx (a, _) = do 
-        (r, vs) <- fromTry (UnspecifiedE "Something bad happened in loadRsyncRepository" . U.fmtEx) $ wait a                
+        (r, vs) <- fromTry (UnspecifiedE "Something bad happened in loadObjectsFromFS" . U.fmtEx) $ wait a                
         embedState vs
         case r of 
             Left e  -> appWarn e
             Right z -> case z of 
                 HashExists rpkiURL hash ->
-                    DB.linkObjectToUrl tx db rpkiURL hash
+                    forM_ rpkiURL $ \u -> DB.linkObjectToUrl tx db u hash
+
                 CantReadFile rpkiUrl filePath (VErr e) -> do                    
-                    logError logger [i|Cannot read file #{filePath}, error #{e} |]
-                    inSubLocationScope (getURL rpkiUrl) $ appWarn e                 
-                UknownObjectType rpkiUrl filePath -> do
+                    logError logger [i|Cannot read file #{filePath}, error #{e} |]                    
+                    case rpkiUrl of 
+                        Just u  -> inSubLocationScope (getURL u) $ appWarn e
+                        Nothing -> vFocusOn TextFocus (U.convert filePath) $ appWarn e
+
+                UknownObjectType rpkiUrl filePath -> do 
                     logError logger [i|Unknown object type: url = #{rpkiUrl}, path = #{filePath}.|]
-                    inSubLocationScope (getURL rpkiUrl) $ 
-                        appWarn $ RsyncE $ RsyncUnsupportedObjectType $ U.convert rpkiUrl
+                    let complain = appWarn $ RsyncE $ RsyncUnsupportedObjectType $ U.convert filePath
+                    case rpkiUrl of 
+                        Just u  -> inSubLocationScope (getURL u) complain
+                        Nothing -> vFocusOn TextFocus (U.convert filePath) complain
+
                 ObjectParsingProblem rpkiUrl (VErr e) original hash objectMeta -> do
                     logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
-                    inSubLocationScope (getURL rpkiUrl) $ appWarn e                   
+                    case rpkiUrl of 
+                        Just u  -> inSubLocationScope (getURL u) $ appWarn e
+                        Nothing -> vFocusOn HashFocus hash $ appWarn e
                     DB.saveOriginal tx db original hash objectMeta
-                    DB.linkObjectToUrl tx db rpkiUrl hash                                  
+                    forM_ rpkiUrl $ \u -> DB.linkObjectToUrl tx db u hash                                  
+
                 SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do 
                     DB.saveObject tx db so worldVersion                    
-                    DB.linkObjectToUrl tx db rpkiUrl (getHash object)
+                    forM_ rpkiUrl $ \u -> DB.linkObjectToUrl tx db u (getHash object)
                     updateMetric @RsyncMetric @_ (#processed %~ Map.unionWith (+) (Map.singleton (Just type_) 1))
+
                 other -> 
-                    logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                    
+                    logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                          
                   
 
 getSizeAndContent :: ValidationConfig -> FilePath -> IO (Either AppError (Integer, BS.ByteString))
@@ -190,9 +194,9 @@ validateSize vc s =
             | otherwise                -> pure s
 
 data ObjectProcessingResult =           
-          CantReadFile RpkiURL FilePath VIssue
-        | HashExists RpkiURL Hash
-        | UknownObjectType RpkiURL String
-        | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
-        | SuccessParsed RpkiURL (StorableObject RpkiObject) RpkiObjectType
+          CantReadFile (Maybe RpkiURL) FilePath VIssue
+        | HashExists (Maybe RpkiURL) Hash
+        | UknownObjectType (Maybe RpkiURL) String
+        | ObjectParsingProblem (Maybe RpkiURL) VIssue ObjectOriginal Hash ObjectMeta
+        | SuccessParsed (Maybe RpkiURL) (StorableObject RpkiObject) RpkiObjectType
     deriving stock (Show, Eq, Generic)
