@@ -164,7 +164,6 @@ updateObjectForRsyncRepository
         
     timedMetric (Proxy :: Proxy RsyncMetric) $ do     
         let rsyncRoot = configValue $ appContext ^. typed @Config . typed @RsyncConf . typed
-        db <- liftIO $ readTVarIO database        
         destination <- liftIO $ rsyncDestination RsyncDirectory rsyncRoot uri
         let rsync = rsyncProcess config fetchConfig uri destination RsyncDirectory
             
@@ -185,7 +184,7 @@ updateObjectForRsyncRepository
         logInfo logger [i|Finished rsynching #{getURL uri} to #{destination}.|]
         case exitCode of  
             ExitSuccess -> do                 
-                loadRsyncRepository appContext worldVersion uri destination db                             
+                loadRsyncRepository appContext worldVersion uri destination                        
                 pure repo
             ExitFailure errorCode -> do
                 logError logger [i|Rsync process failed: #{rsync} 
@@ -230,7 +229,6 @@ loadRsyncRepository :: Storage s =>
                     -> WorldVersion 
                     -> RsyncURL 
                     -> FilePath 
-                    -> DB.DB s 
                     -> ValidatorT IO ()
 loadRsyncRepository appContext worldVersion repositoryUrl rootPath =
     loadObjectsFromFS appContext worldVersion 

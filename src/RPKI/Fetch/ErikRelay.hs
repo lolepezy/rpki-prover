@@ -33,6 +33,7 @@ import           Data.Map.Strict                 (Map)
 import qualified Data.Map.Strict                 as Map            
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap     
 import           Data.String.Interpolate.IsString
+import qualified Data.Text                       as Text
 
 import           System.Directory
 import           System.FilePath
@@ -51,30 +52,32 @@ import           RPKI.Repository
 import           RPKI.Store.Base.Storage
 import qualified RPKI.Util as U                       
 import           RPKI.Fetch.Http
+import           RPKI.Fetch.DirectoryTraverse
 import qualified RPKI.Store.Database    as DB
-import Data.ByteArray (create)
 
 fetchErik :: Storage s
             => AppContext s 
+            -> WorldVersion
             -> URI 
             -> FQDN 
             -> ValidatorT IO ()
-fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
+fetchErik appContext@AppContext {..} worldVersion relayUri fqdn@(FQDN fqdn_) = do
             
     withDir indexDir $ \_ -> do 
         ErikIndex {..} <- getIndex
-        partitions <- liftIO $ pooledForConcurrentlyN 4 partitionList getPartition   
+        vs <- fmap mconcat $ liftIO $ pooledForConcurrentlyN 4 partitionList $ \p -> do 
+            getPartition p >>= \case 
+                (hash, Left e, vs) -> do 
+                    logError logger [i|Failed to download partition #{hash}.|]
+                    pure vs
 
-        for_ partitions $ \case 
-            (hash, Left e, vs) -> do 
-                embedState vs
-                logError logger [i|Failed to download partition #{hash}.|]
+                (hash, Right partition, vs) ->                    
+                    getManifests hash partition                            
 
-            (hash, Right partition, vs) -> do
-                embedState vs
-                liftIO $ getManifests hash partition    
-
-    pure ()
+        embedState vs
+        -- Now traverse all downloaded objects and load them into the storage,
+        -- the same way as it happens for rsynced repositories.
+        loadObjectsFromFS appContext worldVersion (const Nothing) indexDir 
 
   where 
 
@@ -89,7 +92,9 @@ fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
                 (indexBs, _, httpStatus, _ignoreEtag) <- 
                         fromTryM (ErikE . Can'tDownloadObject . U.fmtEx) $ 
                             downloadToBS tmpDir indexUri Nothing maxSize
-                vHoist $ parseErikIndex indexBs
+                index <- vHoist $ parseErikIndex indexBs
+                rwTxT database $ \tx db -> DB.saveErikIndex tx db fqdn index
+                pure index
 
             Just index -> do 
                 logDebug logger [i|Found Erik index for #{fqdn_} in the database.|]
@@ -106,8 +111,7 @@ fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
                         logError logger [i|Failed to download Erik partition #{uri}|]
                         pure (hash, Left e, vs)
 
-                    (uri, Right partition, vs) -> do          
-                        -- Move it to a separate thread?              
+                    (uri, Right partition, vs) -> do
                         rwTxT database $ \tx db -> DB.saveErikPartition tx db fqdn hash partition                        
                         logDebug logger [i|Stored Erik partition #{U.hashAsBase64 hash} in the database.|]                        
                         pure (hash, Right partition, mempty)
@@ -131,38 +135,31 @@ fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
 
                 vHoist $ parseErikPartition partBs      
 
-            pure (partUri, r, vs)
-
-
-    -- fetchManifestBlobs :: ErikPartition -> IO [(Hash, URI, BS.ByteString)]
-    -- fetchManifestBlobs ErikPartition {..} = do
-    --     let tmpDir = configValue $ config ^. #tmpDirectory                
-    --     pooledForConcurrentlyN 4 manifestList $ \ManifestListEntry {..} -> do
-    --         let manUri = objectByHashUri hash
-    --         (manBs, _, manStatus, _ignoreEtag) <- downloadToBS tmpDir manUri Nothing size
-    --         pure (hash, manUri, manBs)        
+            pure (partUri, r, vs) 
 
     getManifests partitionHash partition@ErikPartition {..} = do
         let partitionDir = indexDir </> U.firstByteStr partitionHash        
 
-        for_ manifestList $ \mle@ManifestListEntry {..} -> do
+        fmap mconcat $ pooledForConcurrentlyN 4 manifestList $ \mle@ManifestListEntry {..} -> do
             z <- roTxT database $ \tx db -> DB.getByHash tx db hash
             case z of 
                 Just (Located _ (MftRO mft)) -> do
                     logDebug logger [i|Manifest #{U.hashAsBase64 hash} already in the database.|]
                     getManifestChildren (Cached mft)
 
-                Just (Located locations ro) -> 
+                Just (Located locations ro) -> do
                     logDebug logger $ [i|Manifest hash #{U.hashAsBase64 hash} points to an existing |] <> 
                                       [i|object that is not a manifest #{pickLocation locations}, |] <> 
                                       "it almost surely means broken Erik relay."
+                    pure mempty
                 Nothing -> do
                     (r, vs) <- fetchAndParseManifest mle
                     case r of 
                         Left e -> do 
                             logError logger [i|Could not download/parse manifest #{U.hashAsBase64 hash}.|]
+                            pure vs
                         Right mft -> do 
-                            getManifestChildren (Fetched mft)
+                            (vs <>) <$> getManifestChildren (Fetched mft)
                                            
       where
         fetchAndParseManifest ManifestListEntry {..} = do  
@@ -172,8 +169,8 @@ fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
 
             let manifestUri = objectByHashUri hash
 
-            runValidatorT (newScopes' LocationFocus manifestUri) $ do
-                let manifestFile = manifestDir </> show hash
+            runValidatorT (newScopes' LocationFocus manifestUri) $ do                
+                let manifestFile = manifestDir </> show hash <> ".mft"
                 (manBs, _, manStatus) <-
                     fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
                         downloadToFileHashed manifestUri manifestFile hash size
@@ -189,25 +186,22 @@ fetchErik AppContext {..} relayUri fqdn@(FQDN fqdn_) = do
             let partitionDir = indexDir </> U.firstByteStr partitionHash
             let manifestDir = partitionDir </> U.firstByteStr (getHash mft)
             let childrenDir = manifestDir </> "ch"
+            createDirectoryIfMissing True childrenDir
             
-            void $ pooledForConcurrentlyN 4 mftChildren $ \MftPair {..} -> do 
-                let maxSize = Size $ fromIntegral $ config ^. #validationConfig . #maxObjectSize
-                let childFile = childrenDir </> U.firstByteStr hash </> show hash
-                let childUri = objectByHashUri hash
+            fmap mconcat $ pooledForConcurrentlyN 4 mftChildren $ \MftPair {..} -> do 
+                exists <- roTxT database $ \tx db -> DB.hashExists tx db hash
+                if exists then 
+                    pure mempty 
+                else do                     
+                    let maxSize = Size $ fromIntegral $ config ^. #validationConfig . #maxObjectSize
+                    let childFile = childrenDir </> U.firstByteStr hash </> show hash <> "-" <> Text.unpack fileName
+                    let childUri = objectByHashUri hash
 
-                runValidatorT (newScopes' LocationFocus childUri) $ do                
-                    fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
-                        downloadToFileHashed_ childUri childFile hash maxSize
-                            (\actualHash -> Left $ ErikE $ ErikHashMismatchError { expectedHash = hash, .. })
-
-            gatherChildren erikMft
-          where
-            gatherChildren (Fetched mft) = do
-                let mftHash = getHash mft
-                -- rwTxT database $ \tx db -> DB.saveLocated tx db (Located [LocationFocus manifestUri] (MftRO mft))
-                logDebug logger [i|Stored manifest #{U.hashAsBase64 mftHash} in the database.|]
-
-            gatherChildren (Cached _) = pure ()
+                    fmap snd $ runValidatorT (newScopes' LocationFocus childUri) $ do                
+                        fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
+                            downloadToFileHashed_ childUri childFile hash maxSize
+                                (\actualHash -> Left $ ErikE $ ErikHashMismatchError { expectedHash = hash, .. })
+                    
 
 
     indexUri = URI [i|#{relayUri}/.well-known/erik/index/#{fqdn_}|]

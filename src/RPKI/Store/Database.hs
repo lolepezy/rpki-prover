@@ -430,9 +430,14 @@ hashExists tx DB { objectStore = RpkiObjectStore {..} } h =
     liftIO $ M.exists tx hashToKey h
 
 getErikIndex :: (MonadIO m, Storage s) => 
-                       Tx s mode -> DB s -> FQDN -> m (Maybe ErikIndex)
+                Tx s mode -> DB s -> FQDN -> m (Maybe ErikIndex)
 getErikIndex tx DB { erikStore = ErikStore {..} } fqdn = 
     liftIO $ M.get tx indexes fqdn
+
+saveErikIndex :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> DB s -> FQDN -> ErikIndex -> m ()
+saveErikIndex tx DB { erikStore = ErikStore {..} } fqdn index = 
+    liftIO $ M.put tx indexes fqdn index
 
 getErikPartition :: (MonadIO m, Storage s) => 
                        Tx s mode -> DB s -> Hash -> m (Maybe ErikPartition)
