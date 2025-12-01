@@ -179,8 +179,8 @@ data Semaphore = Semaphore {
     }
     deriving (Eq)
 
-newSemaphoreIO :: Int -> IO Semaphore
-newSemaphoreIO = atomically . newSemaphore
+newSemaphoreIO :: MonadIO m => Int -> m Semaphore
+newSemaphoreIO = liftIO . atomically . newSemaphore
 
 newSemaphore :: Int -> STM Semaphore
 newSemaphore n = Semaphore n <$> newTVar 0 <*> newTVar 0

@@ -240,16 +240,6 @@ andThen f action = do
     action
     pure $! z
 
-
--- applyIO :: (forall x . IO x -> IO x) -> ValidatorT IO a -> ValidatorT IO a
--- applyIO combinator f = do     
---     scopes <- askScopes
---     let zz = runValidatorT scopes f          
---     z@(_, vs) <- liftIO $ combinator zz
---     embedState vs    
---     embedValidatorT $ pure z
-    
-
 bracketVT :: IO a 
         -> (a -> ValidatorT IO r) 
         -> (a -> ValidatorT IO b) 
