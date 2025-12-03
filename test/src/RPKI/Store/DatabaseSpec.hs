@@ -18,11 +18,8 @@ import           Control.Monad.Reader
 import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString                   as BS
-import           Data.Foldable
 import qualified Data.List                         as List
 import qualified Data.Map.Strict                   as Map
-import           Data.Maybe
-import           Data.Ord
 import           Data.Proxy
 import qualified Data.Set as Set
 import qualified Data.Text                         as Text

@@ -153,7 +153,7 @@ fetchErik
                 case z of 
                     Just (Located _ (MftRO mft)) -> do
                         logDebug logger [i|Manifest #{U.hashAsBase64 hash} already in the database.|]
-                        getManifestChildren (Cached mft)
+                        getManifestChildren mft
 
                     Just (Located locations ro) -> do
                         logDebug logger $ [i|Manifest hash #{U.hashAsBase64 hash} points to an existing |] <> 
@@ -167,7 +167,7 @@ fetchErik
                                 logError logger [i|Could not download/parse manifest #{U.hashAsBase64 hash}.|]
                                 pure vs
                             Right mft -> do 
-                                (vs <>) <$> getManifestChildren (Fetched mft)                                            
+                                (vs <>) <$> getManifestChildren mft
           where
             fetchAndParseManifest ManifestListEntry {..} = do  
                 let partitionDir = indexDir </> U.firstByteStr partitionHash
@@ -187,8 +187,7 @@ fetchErik
                         vHoist $ parseMft manBs
 
 
-            getManifestChildren erikMft = do
-                let mft = getErikObject erikMft
+            getManifestChildren mft = do                
                 let mftChildren = getMftChildren mft
 
                 let partitionDir = indexDir </> U.firstByteStr partitionHash
@@ -230,11 +229,3 @@ fetchErik
             (\_ -> liftIO $ removeDirectoryRecursive dir) 
             (\_ -> f dir)           
         
-
-data ErikObject a = Fetched a 
-                  | Cached a        
-
-getErikObject :: ErikObject a -> a 
-getErikObject = \case 
-    Fetched a -> a
-    Cached a  -> a

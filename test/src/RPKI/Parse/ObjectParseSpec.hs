@@ -19,7 +19,6 @@ import           RPKI.Parse.Internal.SPL
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit        as HU
-import RPKI.Parse.Internal.Erik
 import RPKI.Util (hashHex)
 
 
