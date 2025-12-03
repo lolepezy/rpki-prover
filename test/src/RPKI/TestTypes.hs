@@ -30,7 +30,6 @@ withTestContext f = do
             }
         f appContext        
   where
-    -- makeLmdb :: IO ((FilePath, LmdbEnv), b)
     makeLmdb logger = do 
         dir <- createTempDirectory "/tmp" "lmdb-test"
         e <- Lmdb.mkLmdb dir testConfig
