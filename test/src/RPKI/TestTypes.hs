@@ -22,8 +22,7 @@ withTestContext :: (forall s . Storage s => AppContext s -> IO b) -> IO b
 withTestContext f = do
     withLogger (makeLogConfig defaultsLogLevel MainLog) $ \logger -> do
         appState <- newAppState
-        (_, db) <- makeLmdb logger
-        database <- newTVarIO db    
+        database <- newTVarIO =<< makeLmdb logger
         let executableVersion = thisExecutableVersion
         let appContext = AppContext {             
                 config = testConfig,
@@ -35,5 +34,4 @@ withTestContext f = do
     makeLmdb logger = do 
         dir <- createTempDirectory "/tmp" "lmdb-test"
         e <- Lmdb.mkLmdb dir testConfig
-        (store, _) <- Lmdb.createDatabase e logger Lmdb.DontCheckVersion
-        pure ((dir, e), store)
+        fst <$> Lmdb.createDatabase e logger Lmdb.DontCheckVersion        
