@@ -13,7 +13,7 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.RRDP.Types
 import           RPKI.Fetch.Http
-import           RPKI.TestTypes
+import           RPKI.TestCommons
 import           RPKI.Util
 
 import           Test.Tasty

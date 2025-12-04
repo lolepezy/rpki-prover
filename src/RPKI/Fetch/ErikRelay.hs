@@ -12,32 +12,15 @@
 
 module RPKI.Fetch.ErikRelay where
 
-import           Control.Concurrent              as Conc
-import           Control.Concurrent.Async
-import           Control.Concurrent.STM
-import           Control.Exception
 import           Control.Lens hiding (indices, Indexable)
-import           Control.Monad
-import           Control.Monad.Except
 import           Control.Monad.IO.Class
 import           Data.Generics.Product.Typed
-
-import qualified Data.List.NonEmpty          as NonEmpty
-
-import qualified Data.ByteString                 as BS
-import           Data.Text                       (Text, index)
-import           Data.Data
-import           Data.Foldable                   (for_)
-import           Data.Maybe 
-import           Data.Map.Strict                 (Map)
-import qualified Data.Map.Strict                 as Map            
-import qualified Data.Map.Monoidal.Strict        as MonoidalMap     
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                       as Text
 
 import           System.Directory
 import           System.FilePath
-import           UnliftIO (pooledForConcurrentlyN, pooledForConcurrently, bracket)
+import           UnliftIO (pooledForConcurrentlyN)
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -48,7 +31,6 @@ import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
-import           RPKI.Repository
 import           RPKI.Store.Base.Storage
 import qualified RPKI.Util as U                       
 import           RPKI.Fetch.Http
@@ -73,7 +55,8 @@ fetchErik
 
     doFetch downloadSemaphore =
         withDir indexDir $ \_ -> do 
-            ErikIndex {..} <- getIndex
+            e@ErikIndex {..} <- getIndex            
+            logDebug logger [i|Index = #{e}|]
             vs <- fmap mconcat $ liftIO $ pooledForConcurrentlyN 4 partitionList $ \p -> do 
                 getPartition p >>= \case 
                     (hash, Left e, vs) -> do 
@@ -98,8 +81,9 @@ fetchErik
                     let maxSize = config ^. typed @ErikConf . #maxSize
                     (indexBs, _, httpStatus, _ignoreEtag) <- 
                             fromTryM (ErikE . Can'tDownloadObject . U.fmtEx) $                                      
-                                downloadToBS tmpDir indexUri Nothing maxSize
-                    index <- vHoist $ parseErikIndex indexBs
+                                downloadToBS tmpDir indexUri Nothing maxSize                    
+                    index <- vHoist $ parseErikIndex indexBs                
+                    logDebug logger [i|Downloaded Erik index #{index}, HTTP status: #{httpStatus}|]
                     rwTxT database $ \tx db -> DB.saveErikIndex tx db fqdn index
                     pure index
 
@@ -213,7 +197,7 @@ fetchErik
                         
 
 
-    indexUri = URI [i|#{relayUri}/.well-known/erik/index/#{fqdn_}|]
+    indexUri = URI [i|#{relayUri}/#{fqdn_}|]
 
     objectByHashUri hash = 
         URI [i|#{relayUri}/.well-known/ni/sha-256/#{U.hashAsBase64 hash}|]
@@ -227,5 +211,6 @@ fetchErik
         bracketVT 
             (createDirectoryIfMissing True dir) 
             (\_ -> liftIO $ removeDirectoryRecursive dir) 
+            -- (\_ -> pure ()) 
             (\_ -> f dir)           
         
