@@ -71,7 +71,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 44
+currentDatabaseVersion = 45
 
 -- Some constant keys
 databaseVersionKey, validatedByVersionKey :: Text
@@ -116,7 +116,7 @@ instance Storage s => WithStorage s (DB s) where
 data RpkiObjectStore s = RpkiObjectStore {        
         objects        :: SMap "objects" s ObjectKey (Compressed (StorableObject RpkiObject)),
         hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
-        mftByAKI       :: SMultiMap "mft-by-aki" s AKI (ObjectKey, MftTimingMark),
+        mftsForKI      :: SMultiMap "mfts-for-ki" s AKI MftMeta,
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
         objectMetas    :: SMap "object-meta" s ObjectKey ObjectMeta,
 
@@ -323,23 +323,28 @@ saveObject :: (MonadIO m, Storage s) =>
             Tx s 'RW 
             -> DB s 
             -> StorableObject RpkiObject
-            -> WorldVersion -> m ()
+            -> WorldVersion 
+            -> m ObjectKey
 saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } so@StorableObject {..} wv = liftIO $ do
     let h = getHash object
-    exists <- M.exists tx hashToKey h    
-    unless exists $ do          
-        SequenceValue k <- nextValue tx keys
-        let objectKey = ObjectKey $ ArtificialKey k
-        M.put tx hashToKey h objectKey
-        M.put tx objects objectKey (Compressed so)
-        M.put tx objectMetas objectKey (ObjectMeta wv (getRpkiObjectType object))
-        case object of
-            CerRO c -> 
-                M.put tx certBySKI (getSKI c) objectKey
-            MftRO mft -> 
-                for_ (getAKI object) $ \aki_ ->
-                    MM.put tx mftByAKI aki_ (objectKey, getMftTimingMark mft)
-            _ -> pure ()        
+    existingKey <- M.get tx hashToKey h
+    case existingKey of
+        Just key -> pure key
+        Nothing  -> do
+            SequenceValue k <- nextValue tx keys
+            let objectKey = ObjectKey $ ArtificialKey k
+            M.put tx hashToKey h objectKey
+            M.put tx objects objectKey (Compressed so)
+            M.put tx objectMetas objectKey (ObjectMeta wv (getRpkiObjectType object))
+            case object of
+                CerRO c -> 
+                    M.put tx certBySKI (getSKI c) objectKey
+                MftRO mft -> 
+                    for_ (getAKI object) $ \aki_ -> 
+                        MM.put tx mftsForKI aki_ (getMftMeta mft objectKey)
+                _ -> pure ()        
+
+            pure objectKey
 
 saveOriginal :: (MonadIO m, Storage s) => 
                 Tx s 'RW 
@@ -440,39 +445,22 @@ deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore { mftShortcuts = MftS
         for_ (getAKI ro) $ \aki_ -> 
             case ro of
                 MftRO mft -> do 
-                    MM.delete tx mftByAKI aki_ (objectKey, getMftTimingMark mft)                    
+                    MM.delete tx mftsForKI aki_ (getMftMeta mft objectKey)                    
                     ifJustM (M.get tx mftMetas aki_) $ \(unCompressed . restoreFromRaw -> mftShort) ->
                         when (mftShort ^. #key == objectKey) $
                             deleteMftShortcut tx db aki_
                 _  -> pure ()   
 
-findLatestMftByAKI :: (MonadIO m, Storage s) => 
-                    Tx s mode -> DB s -> AKI -> m (Maybe (Keyed (Located MftObject)))
-findLatestMftByAKI tx db aki_ = liftIO $ do   
-    findLatestMftKeyByAKI tx db aki_ >>= \case     
-        Nothing -> pure Nothing     
-        Just k  -> getMftByKey tx db k
-
-findLatestMftKeyByAKI :: (MonadIO m, Storage s) => 
-                         Tx s mode -> DB s -> AKI -> m (Maybe ObjectKey)
-findLatestMftKeyByAKI tx DB { objectStore = RpkiObjectStore {..} } aki_ = liftIO $ 
-    MM.foldS tx mftByAKI aki_ chooseLatest Nothing >>= \case
-        Nothing     -> pure Nothing
-        Just (k, _) -> pure $ Just k
-  where
-    chooseLatest latest _ (k, timingMark) = 
-        pure $! case latest of 
-            Nothing                       -> Just (k, timingMark)
-            Just (_, latestMark) 
-                | timingMark > latestMark -> Just (k, timingMark)
-                | otherwise               -> latest                                  
-
+getMftsForAKI :: (MonadIO m, Storage s) => 
+                Tx s mode -> DB s -> AKI -> m [MftMeta]
+getMftsForAKI tx DB { objectStore = RpkiObjectStore {..} } aki_ = 
+    liftIO $ List.sortOn Down <$> MM.allForKey tx mftsForKI aki_
 
 findAllMftsByAKI :: (MonadIO m, Storage s) => 
-                    Tx s mode -> DB s -> AKI -> m [Keyed (Located MftObject)]
-findAllMftsByAKI tx db@DB { objectStore = RpkiObjectStore {..} } aki_ = liftIO $ do   
-    mftKeys <- List.sortOn Down <$> MM.allForKey tx mftByAKI aki_
-    fmap catMaybes $ forM mftKeys $ \(k, _) -> getMftByKey tx db k
+                    Tx s mode -> DB s -> AKI -> m [(MftMeta, Keyed (Located MftObject))]
+findAllMftsByAKI tx db aki_ = liftIO $ do
+    mftMetas <- getMftsForAKI tx db aki_
+    fmap catMaybes $ forM mftMetas $ \meta@MftMeta {..} -> fmap (meta,) <$> getMftByKey tx db key
     
 
 getMftByKey :: (MonadIO m, Storage s) => 
@@ -531,13 +519,10 @@ getAll tx db@DB { objectStore = RpkiObjectStore {..} } = liftIO $ do
     allKeys <- M.keys tx objects
     catMaybes <$> forM allKeys (getLocatedByKey tx db)    
 
-
--- | Get something from the manifest that would allow us to judge 
--- which MFT is newer/older.
-getMftTimingMark :: MftObject -> MftTimingMark
-getMftTimingMark mft = let 
-    m = getCMSContent $ cmsPayload mft 
-    in MftTimingMark (thisTime m) (nextTime m)
+getMftMeta :: MftObject -> ObjectKey -> MftMeta
+getMftMeta mft key = let 
+    Manifest {..} = getCMSContent $ cmsPayload mft 
+    in MftMeta {..}
 
 
 getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m (Maybe (Located CaCerObject))

@@ -1,4 +1,5 @@
-{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE OverloadedStrings #-}
+
 module RPKI.UniqueId where
 
 import RPKI.AppTypes
