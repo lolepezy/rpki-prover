@@ -19,7 +19,6 @@ import           Control.Monad.Reader     (ask)
 import           Data.Foldable            (for_)
 
 import qualified Data.ByteString          as BS
-import qualified Data.ByteString.Char8    as C8
 import qualified Data.List                as List
 import           Data.Maybe               (catMaybes, fromMaybe, isJust, listToMaybe)
 import qualified Data.Set                 as Set
@@ -29,7 +28,6 @@ import qualified Data.Map.Strict          as Map
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import qualified Data.Hashable            as H
 import           Data.Ord
-import           Data.Text.Encoding       (encodeUtf8)
 import           Data.Tuple.Strict
 
 import           Data.Generics.Product.Typed
@@ -71,7 +69,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 45
+currentDatabaseVersion = 46
 
 -- Some constant keys
 databaseVersionKey, validatedByVersionKey :: Text
@@ -123,7 +121,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         validatedByVersion :: SMap "validated-by-version" s Text (Compressed (Map.Map ObjectKey WorldVersion)),
 
         -- Object URL mapping
-        uriToUriKey    :: SMap "uri-to-uri-key" s SafeUrlAsKey UrlKey,
+        uriToUriKey    :: SMap "uri-to-uri-key" s (SafeKey RpkiURL) UrlKey,
         uriKeyToUri    :: SMap "uri-key-to-uri" s UrlKey RpkiURL,
 
         urlKeyToObjectKey  :: SMultiMap "uri-key-to-object-key" s UrlKey ObjectKey,
@@ -141,7 +139,7 @@ instance Storage s => WithStorage s (RpkiObjectStore s) where
 
 -- | TA Store 
 newtype TAStore s = TAStore { 
-        tas :: SMap "trust-anchors" s TaName StorableTA
+        tas :: SMap "trust-anchors" s (SafeKey TaName) StorableTA
     }
     deriving stock (Generic)
 
@@ -285,7 +283,7 @@ getByUri tx db uri = liftIO $ do
 getKeysByUri :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> RpkiURL -> m [ObjectKey]
 getKeysByUri tx DB { objectStore = RpkiObjectStore {..} } uri = liftIO $
-    M.get tx uriToUriKey (makeSafeUrl uri) >>= \case 
+    M.get tx uriToUriKey (safeKey uri) >>= \case 
         Nothing     -> pure []
         Just uriKey -> MM.allForKey tx urlKeyToObjectKey uriKey
                 
@@ -396,7 +394,7 @@ linkObjectToUrl :: (MonadIO m, Storage s) =>
                 -> Hash
                 -> m ()
 linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL hash = liftIO $ do    
-    let safeUrl = makeSafeUrl rpkiURL
+    let safeUrl = safeKey rpkiURL
     ifJustM (M.get tx hashToKey hash) $ \objectKey -> do        
         z <- M.get tx uriToUriKey safeUrl 
         urlKey <- maybe (saveUrl safeUrl) pure z                
@@ -534,16 +532,16 @@ getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ runMaybe
 -- TA store functions
 
 saveTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> StorableTA -> m ()
-saveTA tx DB { taStore = TAStore s } ta = liftIO $ M.put tx s (getTaName $ tal ta) ta
+saveTA tx DB { taStore = TAStore s } ta = liftIO $ M.put tx s (safeKey $ getTaName $ tal ta) ta
 
 deleteTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> TAL -> m ()
-deleteTA tx DB { taStore = TAStore s } tal = liftIO $ M.delete tx s (getTaName tal)
+deleteTA tx DB { taStore = TAStore s } tal = liftIO $ M.delete tx s (safeKey $ getTaName tal)
 
 getTA :: (MonadIO m, Storage s) => Tx s mode -> DB s -> TaName -> m (Maybe StorableTA)
-getTA tx DB { taStore = TAStore s } name = liftIO $ M.get tx s name
+getTA tx DB { taStore = TAStore s } name = liftIO $ M.get tx s (safeKey name)
 
-getTAs :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(TaName, StorableTA)]
-getTAs tx DB { taStore = TAStore s } = liftIO $ M.all tx s
+getTAs :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [StorableTA]
+getTAs tx DB { taStore = TAStore s } = liftIO $ M.values tx s
 
 
 getValidationsPerTA :: (MonadIO m, Storage s) => 
@@ -782,7 +780,7 @@ updateRrdpMetaM :: (MonadIO m, Storage s) =>
                 -> RrdpURL                  
                 -> (Maybe RrdpMeta -> IO (Maybe RrdpMeta))                
                 -> m ()
-updateRrdpMetaM tx DB { repositoryStore = RepositoryStore {..} } url f = liftIO $ do
+updateRrdpMetaM tx DB { repositoryStore = RepositoryStore {..} } url f = liftIO $ do    
     maybeRepo <- M.get tx rrdpS url
     for_ maybeRepo $ \repo -> do        
         maybeNewMeta <- f $ repo ^. #rrdpMeta
@@ -1099,10 +1097,9 @@ deleteDanglingUrls DB { objectStore = RpkiObjectStore {..} } tx = do
                         else result)
             mempty
 
-
     for_ urlsToDelete $ \(urlKey, url) -> do 
         M.delete tx uriKeyToUri urlKey
-        M.delete tx uriToUriKey (makeSafeUrl url)           
+        M.delete tx uriToUriKey (safeKey url)           
 
     pure $ length urlsToDelete
 
@@ -1203,24 +1200,27 @@ data TxRollbackException = TxRollbackException AppError ValidationState
 
 instance Exception TxRollbackException
 
--- | URLs can potentially be much larger than 512 bytes that are allowed as LMDB
--- keys. So we 
+-- | DB keys can potentially be much larger than 512 bytes allowed as LMDB keys. So we 
 --     - calculate hash 
---     - truncate the URL so that that truncated version + hash fit into 512 bytes.
+--     - truncate the serialised values so that that truncated version + hash fit into 512 bytes.
 --     - use "truncated URL + hash" as a key
-makeSafeUrl :: RpkiURL -> SafeUrlAsKey
-makeSafeUrl u = 
-    let         
-        maxLmdbKeyBytes = 512
-        URI urlText = getURL u        
-        hashBytes = show $ H.hash urlText
-        -- We only keep the first "512 - hash bytes" of the URL
-        maxTxtUrlBytes = maxLmdbKeyBytes - length hashBytes
+-- 
+-- NOTE: this is a workaround by not a real fix, 
+safeKey :: TheBinary k => k -> SafeKey a 
+safeKey k = let         
+    maxLmdbKeyBytes = 512
 
-        bsUrlFull = encodeUtf8 urlText
-        bsUrlKey = BS.concat [
-                        BS.take maxTxtUrlBytes bsUrlFull,
-                        C8.pack hashBytes
-                   ]
-    in SafeUrlAsKey $ toShortBS bsUrlKey
+    -- Header for the SafeKey type tags.    
+    -- It is 9 for the Amd64, GHC 9.6 but it depends on compiler version 
+    -- and what store library does, so we make it 20 just in case. 
+    headerBytes = 20
 
+    bs = serialise_ k
+    hash_ = H.hash bs
+
+    bytesLeft = maxLmdbKeyBytes - 8 - headerBytes
+    
+    shortened = BS.take bytesLeft bs
+    in if BS.length bs < bytesLeft
+        then AsIs bs
+        else ExtendedWithHash shortened hash_
