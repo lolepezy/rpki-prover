@@ -36,23 +36,22 @@ withTestContext f = do
         let tmpDir = dir </> "tmp"
         let talDir = dir </> "tals"
 
-        let config = testConfig 
-                & #rootDirectory .~ Public dir
-                & #tmpDirectory .~ Public tmpDir
-                & #talDirectory .~ Public talDir
-                & #cacheDirectory .~ Public cacheDir
-
         createDirectoryIfMissing False cacheDir
         createDirectoryIfMissing False tmpDir
         createDirectoryIfMissing False talDir
 
+        let config = testConfig 
+                & #rootDirectory .~ Public dir
+                & #tmpDirectory .~ Public tmpDir
+                & #talDirectory .~ Public talDir
+                & #cacheDirectory .~ Public cacheDir        
+
         appState <- newAppState
         database <- newTVarIO =<< makeLmdb logger cacheDir
         let executableVersion = thisExecutableVersion
-        let appContext = AppContext {             
+        f AppContext {             
                 ..
-            }
-        f appContext        
+            }        
   where
     makeLmdb logger cachedDir = do                 
         e <- Lmdb.mkLmdb cachedDir testConfig

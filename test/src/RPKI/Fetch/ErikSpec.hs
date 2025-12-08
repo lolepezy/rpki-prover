@@ -23,11 +23,12 @@ testFetchErik :: HU.Assertion
 testFetchErik = do 
     withTestContext $ \testContext -> do
         worldVersion <- newWorldVersion
-        (z, vs) <- runValidatorT (newScopes "erik-test") $ fetchErik 
-            testContext 
-            worldVersion 
-            (URI "https://miso.sobornost.net/rpki/erik/index/")
-            (FQDN "ca.rg.net")
+        (z, vs) <- runValidatorT (newScopes "erik-test") $ 
+            fetchErik 
+                testContext 
+                worldVersion 
+                (URI "https://miso.sobornost.net/rpki/erik/index/")
+                (FQDN "ca.rg.net")
         case z of
             Left err -> HU.assertFailure $ "Failed to fetch Erik index: " <> show err
             Right index -> do

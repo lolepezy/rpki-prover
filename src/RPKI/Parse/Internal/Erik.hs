@@ -23,7 +23,7 @@ import qualified RPKI.Util as U
 import RPKI.Time
 
 -- | Parse Erik sync protocol objects, 
--- https://datatracker.ietf.org/doc/html/draft-spaghetti-sidrops-rpki-erik-protocol
+-- https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-erik-protocol/
 -- 
 
 parseErikIndex :: BS.ByteString -> PureValidatorT ErikIndex
@@ -37,19 +37,9 @@ parseErikIndex bs = do
         when (contentType /= id_ct_rpkiErikIndex) $
             throwParseError $ "Unexpected OID for Erik index: " <> show contentType
 
-        onNextContainer (Container Context 0) $ do
-            fullContent <- getMany getNext
-            let nested = BS.concat [ os | OctetString os <- fullContent ]
-            case parseNested nested of 
-                Left err    -> throwParseError $ "Cannot parse nested Erik index: " ++ show err
-                Right index -> pure index            
-
-    parseNested nestedBs = do
-        nestedAsn1 <- first U.fmtGen $ decodeASN1' BER nestedBs
-        first Text.pack $ runParseASN1 parseIndex nestedAsn1
-
-    parseIndex = onNextContainer Sequence $ 
-        parseIndexFields <|> parseIndexFieldsWithVersion         
+        onNextContainer (Container Context 0) $ 
+            onNextContainer Sequence $ 
+                parseIndexFields <|> parseIndexFieldsWithVersion   
 
     parseIndexFieldsWithVersion = do
         version :: Int <- getInteger (pure . fromInteger) "Wrong version"
@@ -57,10 +47,11 @@ parseErikIndex bs = do
             throwParseError $ "Unexpected index version: " ++ show version
         parseIndexFields
 
-    parseIndexFields = do         
-        indexScope    <- getIA5String (pure . Text.pack) "Wrong indexScope"
-        indexTime     <- newInstant <$> getTime "No partitionTime"
-        hashAlg       <- getOID (pure . DigestAlgorithmIdentifier) "Wrong hash algorithm OID"
+    parseIndexFields = do                    
+        indexScope    <- getIA5String (pure . Text.pack) "Wrong indexScope"        
+        indexTime     <- newInstant <$> getTime "No partitionTime"        
+        hashAlg       <- onNextContainer Sequence $ 
+                            getOID (pure . DigestAlgorithmIdentifier) "Wrong hash algorithm OID"
         partitionList <- getPartitionList
         pure $ ErikIndex {..}    
                 
@@ -82,7 +73,7 @@ parseErikPartition bs = do
     parsePartitionFieldsWithVersion = do
         version :: Int <- getInteger (pure . fromInteger) "Wrong version"
         when (version /= 0) $ 
-            throwParseError $ "Unexpected partition version: " ++ show version
+            throwParseError $ "Unexpected partition version: " <> show version
         parsePartitionFields
 
     parsePartitionFields = do 

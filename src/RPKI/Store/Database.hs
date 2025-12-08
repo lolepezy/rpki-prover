@@ -230,8 +230,14 @@ newtype JobStore s = JobStore {
     }
     deriving stock (Generic)
 
+newtype ErikIndexKey = ErikIndexKey Text
+    deriving (Show, Eq, Ord, Generic, TheBinary)
+
+indexKey :: URI -> FQDN -> ErikIndexKey
+indexKey (URI relayUri) (FQDN fqdn) = ErikIndexKey $ relayUri <> "-" <> fqdn
+
 data ErikStore s = ErikStore {
-        indexes    :: SMap "erik-indexes" s FQDN ErikIndex,
+        indexes    :: SMap "erik-indexes" s ErikIndexKey ErikIndex,
         partitions :: SMap "erik-partitions" s Hash ErikPartition
     }
     deriving stock (Generic)
@@ -430,14 +436,14 @@ hashExists tx DB { objectStore = RpkiObjectStore {..} } h =
     liftIO $ M.exists tx hashToKey h
 
 getErikIndex :: (MonadIO m, Storage s) => 
-                Tx s mode -> DB s -> FQDN -> m (Maybe ErikIndex)
-getErikIndex tx DB { erikStore = ErikStore {..} } fqdn = 
-    liftIO $ M.get tx indexes fqdn
+                Tx s mode -> DB s -> URI -> FQDN -> m (Maybe ErikIndex)
+getErikIndex tx DB { erikStore = ErikStore {..} } relayUri fqdn = 
+    liftIO $ M.get tx indexes (indexKey relayUri fqdn)
 
 saveErikIndex :: (MonadIO m, Storage s) => 
-                Tx s 'RW -> DB s -> FQDN -> ErikIndex -> m ()
-saveErikIndex tx DB { erikStore = ErikStore {..} } fqdn index = 
-    liftIO $ M.put tx indexes fqdn index
+                Tx s 'RW -> DB s -> URI -> FQDN -> ErikIndex -> m ()
+saveErikIndex tx DB { erikStore = ErikStore {..} } relayUri fqdn index_ = 
+    liftIO $ M.put tx indexes (indexKey relayUri fqdn) index_
 
 getErikPartition :: (MonadIO m, Storage s) => 
                        Tx s mode -> DB s -> Hash -> m (Maybe ErikPartition)
@@ -445,8 +451,8 @@ getErikPartition tx DB { erikStore = ErikStore {..} } h =
     liftIO $ M.get tx partitions h
 
 saveErikPartition :: (MonadIO m, Storage s) => 
-                    Tx s 'RW -> DB s -> FQDN -> Hash -> ErikPartition -> m ()
-saveErikPartition tx DB { erikStore = ErikStore {..} } fqdn h partition = 
+                    Tx s 'RW -> DB s -> Hash -> ErikPartition -> m ()
+saveErikPartition tx DB { erikStore = ErikStore {..} } h partition = 
     liftIO $ M.put tx partitions h partition
 
 deleteObjectByHash :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Hash -> m ()

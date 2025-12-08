@@ -12,7 +12,8 @@
 
 module RPKI.Fetch.ErikRelay where
 
-import           Control.Lens hiding (indices, Indexable)
+import           Control.Lens hiding (index, indices, Indexable)
+import           Control.Monad
 import           Control.Monad.IO.Class
 import           Data.Generics.Product.Typed
 import           Data.String.Interpolate.IsString
@@ -37,6 +38,7 @@ import           RPKI.Fetch.Http
 import           RPKI.Fetch.DirectoryTraverse
 import qualified RPKI.Store.Database    as DB
 
+
 fetchErik :: Storage s
             => AppContext s 
             -> WorldVersion
@@ -55,8 +57,7 @@ fetchErik
 
     doFetch downloadSemaphore =
         withDir indexDir $ \_ -> do 
-            e@ErikIndex {..} <- getIndex            
-            logDebug logger [i|Index = #{e}|]
+            ErikIndex {..} <- getIndex            
             vs <- fmap mconcat $ liftIO $ pooledForConcurrentlyN 4 partitionList $ \p -> do 
                 getPartition p >>= \case 
                     (hash, Left e, vs) -> do 
@@ -73,23 +74,30 @@ fetchErik
       where
     
         getIndex = do 
-            z <- roTxT database $ \tx db -> DB.getErikIndex tx db fqdn
-            case z of 
-                Nothing -> do     
-                    logDebug logger [i|No Erik index for #{fqdn_} in the database, downloading from relay #{relayUri}.|]
-                    let tmpDir = configValue $ config ^. #tmpDirectory
-                    let maxSize = config ^. typed @ErikConf . #maxSize
-                    (indexBs, _, httpStatus, _ignoreEtag) <- 
-                            fromTryM (ErikE . Can'tDownloadObject . U.fmtEx) $                                      
-                                downloadToBS tmpDir indexUri Nothing maxSize                    
-                    index <- vHoist $ parseErikIndex indexBs                
-                    logDebug logger [i|Downloaded Erik index #{index}, HTTP status: #{httpStatus}|]
-                    rwTxT database $ \tx db -> DB.saveErikIndex tx db fqdn index
-                    pure index
+            let tmpDir = configValue $ config ^. #tmpDirectory
+            let maxSize = config ^. typed @ErikConf . #maxSize
+            (indexBs, _, httpStatus, _ignoreEtag) <- 
+                    fromTryM (ErikE . Can'tDownloadObject . U.fmtEx) $                                      
+                        downloadToBS tmpDir indexUri Nothing maxSize                    
+            index <- vHoist $ parseErikIndex indexBs                
+            logDebug logger [i|Downloaded Erik index #{index}, HTTP status: #{httpStatus}|]
 
-                Just index -> do 
-                    logDebug logger [i|Found Erik index for #{fqdn_} in the database.|]
-                    pure index
+            join $ rwTxT database $ \tx db -> do 
+                DB.getErikIndex tx db relayUri fqdn >>= \case 
+                    Nothing -> do 
+                        DB.saveErikIndex tx db relayUri fqdn index
+                        pure $ logDebug logger $ 
+                                [i|No Erik index for #{fqdn_} in the database, |] <> 
+                                [i|downloading from relay #{relayUri}.|]
+                    Just existing 
+                        | existing == index -> 
+                            pure $ logDebug logger 
+                                [i|Erik index for #{fqdn_} didn't change since the last synchronisation.|]
+                        | otherwise -> do 
+                            DB.saveErikIndex tx db relayUri fqdn index
+                            pure $ logInfo logger 
+                                [i|Erik index for #{fqdn_} changed, updating from relay #{relayUri}.|]              
+            pure index
 
         getPartition ErikPartitionListEntry {..} = do 
             z <- roTxT database $ \tx db -> DB.getErikPartition tx db hash
@@ -103,7 +111,7 @@ fetchErik
                             pure (hash, Left e, vs)
 
                         (uri, Right partition, vs) -> do
-                            rwTxT database $ \tx db -> DB.saveErikPartition tx db fqdn hash partition                        
+                            rwTxT database $ \tx db -> DB.saveErikPartition tx db hash partition                        
                             logDebug logger [i|Stored Erik partition #{U.hashAsBase64 hash} in the database.|]                        
                             pure (hash, Right partition, mempty)
 
@@ -210,7 +218,7 @@ fetchErik
     withDir dir f = 
         bracketVT 
             (createDirectoryIfMissing True dir) 
-            (\_ -> liftIO $ removeDirectoryRecursive dir) 
-            -- (\_ -> pure ()) 
+            -- (\_ -> liftIO $ removeDirectoryRecursive dir) 
+            (\_ -> pure ()) 
             (\_ -> f dir)           
         
