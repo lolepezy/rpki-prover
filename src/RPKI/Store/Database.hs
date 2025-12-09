@@ -1206,8 +1206,8 @@ instance Exception TxRollbackException
 --     - use "truncated URL + hash" as a key
 -- 
 -- NOTE: this is a workaround by not a real fix, 
-safeKey :: TheBinary k => k -> SafeKey a 
-safeKey k = let         
+safeKey1 :: TheBinary k => k -> (SafeKey a, BS.ByteString)
+safeKey1 k = let         
     maxLmdbKeyBytes = 512
 
     -- Header for the SafeKey type tags.    
@@ -1221,6 +1221,39 @@ safeKey k = let
     bytesLeft = maxLmdbKeyBytes - 8 - headerBytes
     
     shortened = BS.take bytesLeft bs
-    in if BS.length bs < bytesLeft
+    safe_ = if BS.length bs < bytesLeft
         then AsIs bs
         else ExtendedWithHash shortened hash_
+    in (safe_, bs)
+
+safeKey :: TheBinary k => k -> SafeKey a
+safeKey = fst . safeKey1
+
+data SafeValue v = ValueAsIs v
+                 | ValueWithKey BS.ByteString v
+    deriving (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+type SafeMap name s k v = SMap name s (SafeKey k) (SafeValue v)
+
+safePut :: (TheBinary k, TheBinary v) =>
+        Tx s 'RW -> SafeMap name s k v -> k -> v -> IO ()
+safePut tx m k v = do
+    let (sk, serialisedKey) = safeKey1 k
+    case sk of
+        AsIs _               -> M.put tx m sk $ ValueAsIs v
+        ExtendedWithHash _ _ -> M.put tx m sk (ValueWithKey serialisedKey v)
+
+safeGet :: (TheBinary k, TheBinary v) =>
+        Tx s mode -> SafeMap name s k v -> k -> IO (Maybe v)
+safeGet tx m k = do
+    let (sk, serialisedKey) = safeKey1 k
+    M.get tx m sk >>= \case
+        Nothing -> pure Nothing
+        Just sv -> pure $ case sv of
+            ValueAsIs v                   -> Just v
+            ValueWithKey serialisedKey' v ->
+                -- TODO Do we really need to compare the keys here?
+                if serialisedKey == serialisedKey'
+                    then Just v
+                    else Nothing

@@ -1,7 +1,5 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE UndecidableInstances  #-}
-{-# LANGUAGE DeriveDataTypeable    #-}
-{-# LANGUAGE InstanceSigs          #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 module RPKI.Store.Base.Map where
@@ -65,5 +63,3 @@ values :: AsStorable v => Tx s m -> SMap name s k v -> IO [v]
 values tx (SMap _ s) = S.foldS tx s f []
   where
     f z _ (SValue sv) = pure $! fromStorable sv : z
-
-

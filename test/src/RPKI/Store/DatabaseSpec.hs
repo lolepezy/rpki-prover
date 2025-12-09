@@ -69,7 +69,8 @@ databaseGroup = testGroup "LMDB storage tests"
         objectStoreGroup,
         repositoryStoreGroup,
         versionStoreGroup,
-        txGroup
+        txGroup,
+        mapGroup
     ]
 
 objectStoreGroup :: TestTree
@@ -100,6 +101,12 @@ txGroup = testGroup "App transaction test"
     [
         ioTestCase "Should rollback App transactions properly" shouldRollbackAppTx,        
         ioTestCase "Should preserve state from StateT in transactions" shouldPreserveStateInAppTx
+    ]
+
+mapGroup :: TestTree
+mapGroup = testGroup "SafeMap tests"
+    [
+        ioTestCase "Should put and get from SafeMap" shouldSafePutAndGet        
     ]
 
 
@@ -479,7 +486,7 @@ shouldPreserveStateInAppTx io = do
                 addedObject
 
     HU.assertEqual "Root metric should count 2 objects" 
-        (Just $ mempty { added = Map.fromList [(Just CER, Count 2)], deleted = Map.fromList [] })
+        (Just $ mempty { added = Map.fromList [(Just CER, Count 2)], deleted = Map.empty })
         (stripTime <$> lookupMetric (newScope "root") (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Nested metric should count 1 object" 
@@ -497,6 +504,27 @@ shouldPreserveStateInAppTx io = do
     HU.assertEqual "Nested validations should have 1 warning" 
         (Map.lookup (subScope TextFocus "nested-1" (newScope "root")) validationMap)
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
+
+
+
+shouldSafePutAndGet :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldSafePutAndGet io = do    
+    ((_, env), _) <- io
+
+    let storage' = LmdbStorage env
+    z :: DB.SafeMap "test-state" LmdbStorage Text.Text String <- SMap storage' <$> createLmdbStore env
+
+    let short = "short-key" :: Text.Text
+    let long = Text.replicate 600 "long-key-part-" :: Text.Text   
+    rwTx z $ \tx -> do              
+        DB.safePut tx z short "one"
+        DB.safePut tx z long "two"
+
+    s <- roTx z $ \tx -> DB.safeGet tx z short
+    l <- roTx z $ \tx -> DB.safeGet tx z long
+
+    HU.assertEqual "Validations don't match" s  (Just "one")
+    HU.assertEqual "Validations don't match" l  (Just "two")
 
 
 stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> metric
