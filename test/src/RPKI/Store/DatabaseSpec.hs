@@ -43,6 +43,7 @@ import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Map               as M
+import           RPKI.Store.Base.SafeMap           as SM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database    (DB(..))
@@ -510,7 +511,7 @@ shouldSafePutAndGet io = do
     ((_, env), _) <- io
 
     let storage' = LmdbStorage env
-    z :: DB.SafeMap "test-state" LmdbStorage Text.Text String <- SMap storage' <$> createLmdbStore env
+    z :: SM.SafeMap "test-state" LmdbStorage Text.Text String <- SMap storage' <$> createLmdbStore env
 
     let short = "short-key" :: Text.Text
     let long = Text.replicate 600 "long-key-part-" :: Text.Text   
@@ -518,21 +519,21 @@ shouldSafePutAndGet io = do
     HU.assertBool "The long key is very too long" (BS.length (serialise_ long) > 512)
 
     rwTx z $ \tx -> do              
-        DB.safePut tx z short "one"
-        DB.safePut tx z long "two"
+        SM.safePut tx z short "one"
+        SM.safePut tx z long "two"
 
-    s <- roTx z $ \tx -> DB.safeGet tx z short
-    l <- roTx z $ \tx -> DB.safeGet tx z long
+    s <- roTx z $ \tx -> SM.safeGet tx z short
+    l <- roTx z $ \tx -> SM.safeGet tx z long
 
     HU.assertEqual "Validations don't match" s  (Just "one")
     HU.assertEqual "Validations don't match" l  (Just "two")
 
     rwTx z $ \tx -> do              
-        DB.safePut tx z short "one-updated"
-        DB.safePut tx z long "two-updated"    
+        SM.safePut tx z short "one-updated"
+        SM.safePut tx z long "two-updated"    
 
-    ss <- roTx z $ \tx -> DB.safeGet tx z short
-    ll <- roTx z $ \tx -> DB.safeGet tx z long
+    ss <- roTx z $ \tx -> SM.safeGet tx z short
+    ll <- roTx z $ \tx -> SM.safeGet tx z long
 
     HU.assertEqual "Validations don't match" ss  (Just "one-updated")
     HU.assertEqual "Validations don't match" ll  (Just "two-updated")        

@@ -40,6 +40,7 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
+import           RPKI.Store.Base.SafeMap  (SafeMap (..))
 import           RPKI.TAL
 import           RPKI.RRDP.Types
 import           RPKI.SLURM.Types
@@ -47,6 +48,7 @@ import           RPKI.Repository
 
 import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
+import qualified RPKI.Store.Base.SafeMap as SM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Serialisation
@@ -121,7 +123,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         validatedByVersion :: SMap "validated-by-version" s Text (Compressed (Map.Map ObjectKey WorldVersion)),
 
         -- Object URL mapping
-        uriToUriKey    :: SMap "uri-to-uri-key" s (SafeKey RpkiURL) UrlKey,
+        uriToUriKey    :: SafeMap "uri-to-uri-key" s RpkiURL UrlKey,
         uriKeyToUri    :: SMap "uri-key-to-uri" s UrlKey RpkiURL,
 
         urlKeyToObjectKey  :: SMultiMap "uri-key-to-object-key" s UrlKey ObjectKey,
@@ -139,7 +141,7 @@ instance Storage s => WithStorage s (RpkiObjectStore s) where
 
 -- | TA Store 
 newtype TAStore s = TAStore { 
-        tas :: SMap "trust-anchors" s (SafeKey TaName) StorableTA
+        tas :: SafeMap "trust-anchors" s TaName StorableTA
     }
     deriving stock (Generic)
 
@@ -283,7 +285,7 @@ getByUri tx db uri = liftIO $ do
 getKeysByUri :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> RpkiURL -> m [ObjectKey]
 getKeysByUri tx DB { objectStore = RpkiObjectStore {..} } uri = liftIO $
-    M.get tx uriToUriKey (safeKey uri) >>= \case 
+    SM.safeGet tx uriToUriKey uri >>= \case 
         Nothing     -> pure []
         Just uriKey -> MM.allForKey tx urlKeyToObjectKey uriKey
                 
@@ -394,24 +396,23 @@ linkObjectToUrl :: (MonadIO m, Storage s) =>
                 -> Hash
                 -> m ()
 linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL hash = liftIO $ do    
-    let safeUrl = safeKey rpkiURL
     ifJustM (M.get tx hashToKey hash) $ \objectKey -> do        
-        z <- M.get tx uriToUriKey safeUrl 
-        urlKey <- maybe (saveUrl safeUrl) pure z                
+        z <- SM.safeGet tx uriToUriKey rpkiURL 
+        urlKey <- maybe (saveUrl rpkiURL) pure z                
         
         M.get tx objectKeyToUrlKeys objectKey >>= \case 
             Nothing -> do 
                 M.put tx objectKeyToUrlKeys objectKey [urlKey]
                 MM.put tx urlKeyToObjectKey urlKey objectKey
             Just existingUrlKeys -> 
-                when (urlKey `notElem` existingUrlKeys) $ do 
+                unless (urlKey `elem` existingUrlKeys) $ do 
                     M.put tx objectKeyToUrlKeys objectKey (urlKey : existingUrlKeys)
                     MM.put tx urlKeyToObjectKey urlKey objectKey
   where
     saveUrl safeUrl = do 
         SequenceValue k <- nextValue tx keys
         let urlKey = UrlKey $ ArtificialKey k
-        M.put tx uriToUriKey safeUrl urlKey
+        SM.safePut tx uriToUriKey safeUrl urlKey
         M.put tx uriKeyToUri urlKey rpkiURL            
         pure urlKey
 
@@ -532,16 +533,16 @@ getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ runMaybe
 -- TA store functions
 
 saveTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> StorableTA -> m ()
-saveTA tx DB { taStore = TAStore s } ta = liftIO $ M.put tx s (safeKey $ getTaName $ tal ta) ta
+saveTA tx DB { taStore = TAStore s } ta = liftIO $ SM.safePut tx s (getTaName $ tal ta) ta
 
 deleteTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> TAL -> m ()
-deleteTA tx DB { taStore = TAStore s } tal = liftIO $ M.delete tx s (safeKey $ getTaName tal)
+deleteTA tx DB { taStore = TAStore s } tal = liftIO $ SM.safeDelete tx s (getTaName tal)
 
 getTA :: (MonadIO m, Storage s) => Tx s mode -> DB s -> TaName -> m (Maybe StorableTA)
-getTA tx DB { taStore = TAStore s } name = liftIO $ M.get tx s (safeKey name)
+getTA tx DB { taStore = TAStore s } name = liftIO $ SM.safeGet tx s name
 
 getTAs :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [StorableTA]
-getTAs tx DB { taStore = TAStore s } = liftIO $ M.values tx s
+getTAs tx DB { taStore = TAStore s } = liftIO $ SM.safeValues tx s
 
 
 getValidationsPerTA :: (MonadIO m, Storage s) => 
@@ -1099,7 +1100,7 @@ deleteDanglingUrls DB { objectStore = RpkiObjectStore {..} } tx = do
 
     for_ urlsToDelete $ \(urlKey, url) -> do 
         M.delete tx uriKeyToUri urlKey
-        M.delete tx uriToUriKey (safeKey url)           
+        SM.safeDelete tx uriToUriKey url           
 
     pure $ length urlsToDelete
 
@@ -1200,63 +1201,5 @@ data TxRollbackException = TxRollbackException AppError ValidationState
 
 instance Exception TxRollbackException
 
--- | DB keys can potentially be much larger than 512 bytes allowed as LMDB keys. So we 
---     - calculate hash 
---     - truncate the serialised values so that that truncated version + hash fit into 512 bytes.
---     - use "truncated URL + hash" as a key
--- 
--- NOTE: this is a workaround by not a real fix, 
-safeKey1 :: TheBinary k => k -> (SafeKey a, BS.ByteString)
-safeKey1 k = let         
-    maxLmdbKeyBytes = 512
 
-    -- Header for the SafeKey type tags.    
-    -- It is 9 for the Amd64, GHC 9.6 but it depends on compiler version 
-    -- and what store library does, so we make it 20 just in case. 
-    headerBytes = 20
-
-    bs = serialise_ k
-    hash_ = H.hash bs
-
-    bytesLeft = maxLmdbKeyBytes - 8 - headerBytes
-    
-    shortened = BS.take bytesLeft bs
-    safe_ = if BS.length bs < bytesLeft
-        then AsIs bs
-        else ExtendedWithHash shortened hash_
-    in (safe_, bs)
-
-safeKey :: TheBinary k => k -> SafeKey a
-safeKey = fst . safeKey1
-
-data SafeValue v = ValueAsIs v
-                 | ValueWithKey [T2 BS.ByteString v]
-    deriving (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-type SafeMap name s k v = SMap name s (SafeKey k) (SafeValue v)
-
-safePut :: (TheBinary k, TheBinary v) =>
-        Tx s 'RW -> SafeMap name s k v -> k -> v -> IO ()
-safePut tx m k v = do
-    let (sk, serialisedKey) = safeKey1 k
-    case sk of
-        AsIs _               -> M.put tx m sk $ ValueAsIs v
-        ExtendedWithHash _ _ -> do 
-            M.get tx m sk >>= \case
-                Just (ValueWithKey pairs) -> do
-                    let pairs' = map (\(T2 k' v') -> if k' == serialisedKey then T2 k' v else T2 k' v') pairs            
-                    M.put tx m sk (ValueWithKey pairs')
-                _ ->
-                    M.put tx m sk (ValueWithKey [T2 serialisedKey v])
-
-safeGet :: (TheBinary k, TheBinary v) =>
-        Tx s mode -> SafeMap name s k v -> k -> IO (Maybe v)
-safeGet tx m k = do
-    let (sk, serialisedKey) = safeKey1 k
-    M.get tx m sk >>= \case
-        Nothing -> pure Nothing
-        Just sv -> pure $ case sv of
-            ValueAsIs v        -> Just v
-            ValueWithKey pairs -> listToMaybe [ v' | T2 k' v' <- pairs, k' == serialisedKey ]
                 
