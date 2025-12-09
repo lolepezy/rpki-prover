@@ -1230,7 +1230,7 @@ safeKey :: TheBinary k => k -> SafeKey a
 safeKey = fst . safeKey1
 
 data SafeValue v = ValueAsIs v
-                 | ValueWithKey BS.ByteString v
+                 | ValueWithKey [T2 BS.ByteString v]
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
@@ -1242,7 +1242,13 @@ safePut tx m k v = do
     let (sk, serialisedKey) = safeKey1 k
     case sk of
         AsIs _               -> M.put tx m sk $ ValueAsIs v
-        ExtendedWithHash _ _ -> M.put tx m sk (ValueWithKey serialisedKey v)
+        ExtendedWithHash _ _ -> do 
+            M.get tx m sk >>= \case
+                Just (ValueWithKey pairs) -> do
+                    let pairs' = map (\(T2 k' v') -> if k' == serialisedKey then T2 k' v else T2 k' v') pairs            
+                    M.put tx m sk (ValueWithKey pairs')
+                _ ->
+                    M.put tx m sk (ValueWithKey [T2 serialisedKey v])
 
 safeGet :: (TheBinary k, TheBinary v) =>
         Tx s mode -> SafeMap name s k v -> k -> IO (Maybe v)
@@ -1251,9 +1257,6 @@ safeGet tx m k = do
     M.get tx m sk >>= \case
         Nothing -> pure Nothing
         Just sv -> pure $ case sv of
-            ValueAsIs v                   -> Just v
-            ValueWithKey serialisedKey' v ->
-                -- TODO Do we really need to compare the keys here?
-                if serialisedKey == serialisedKey'
-                    then Just v
-                    else Nothing
+            ValueAsIs v        -> Just v
+            ValueWithKey pairs -> listToMaybe [ v' | T2 k' v' <- pairs, k' == serialisedKey ]
+                

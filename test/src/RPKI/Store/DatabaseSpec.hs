@@ -61,6 +61,7 @@ import           RPKI.RepositorySpec
 
 import Data.Generics.Product (HasField)
 import Control.Concurrent (threadDelay)
+import RPKI.Store.Base.Serialisation (serialise_)
 
 
 databaseGroup :: TestTree
@@ -516,6 +517,9 @@ shouldSafePutAndGet io = do
 
     let short = "short-key" :: Text.Text
     let long = Text.replicate 600 "long-key-part-" :: Text.Text   
+
+    HU.assertBool "The long key is very too long" (BS.length (serialise_ long) > 512)
+
     rwTx z $ \tx -> do              
         DB.safePut tx z short "one"
         DB.safePut tx z long "two"
@@ -525,6 +529,16 @@ shouldSafePutAndGet io = do
 
     HU.assertEqual "Validations don't match" s  (Just "one")
     HU.assertEqual "Validations don't match" l  (Just "two")
+
+    rwTx z $ \tx -> do              
+        DB.safePut tx z short "one-updated"
+        DB.safePut tx z long "two-updated"    
+
+    ss <- roTx z $ \tx -> DB.safeGet tx z short
+    ll <- roTx z $ \tx -> DB.safeGet tx z long
+
+    HU.assertEqual "Validations don't match" ss  (Just "one-updated")
+    HU.assertEqual "Validations don't match" ll  (Just "two-updated")        
 
 
 stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> metric
