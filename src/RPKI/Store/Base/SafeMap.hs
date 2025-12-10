@@ -12,7 +12,6 @@ import           GHC.Generics
 
 import RPKI.Store.Types
 import RPKI.Store.Base.Map as M
-import RPKI.Store.Base.Storable
 import RPKI.Store.Base.Storage
 import RPKI.Store.Base.Serialisation
 import RPKI.Util (ifJustM)
@@ -40,7 +39,7 @@ safePut tx m k v = do
         ExtendedWithHash _ _ -> do 
             M.get tx m sk >>= \case
                 Just (ValueWithKey pairs) -> do
-                    let pairs' = map (\(T2 k' v') -> if k' == serialisedKey then T2 k' v else T2 k' v') pairs            
+                    let pairs' = T2 serialisedKey v : filter (\(T2 k' _) -> k' /= serialisedKey) pairs
                     M.put tx m sk (ValueWithKey pairs')
                 _ ->
                     M.put tx m sk (ValueWithKey [T2 serialisedKey v])
@@ -63,10 +62,13 @@ safeDelete tx m k = do
     case sk of
         AsIs _               -> M.delete tx m sk
         ExtendedWithHash _ _ -> do 
-            ifJustM(M.get tx m sk) $ \(ValueWithKey pairs) -> do
-                case filter (\(T2 k' v') -> k' /= serialisedKey) pairs of 
-                    []     -> M.delete tx m sk
-                    pairs' -> M.put tx m sk (ValueWithKey pairs')
+            ifJustM(M.get tx m sk) $ \case
+                -- That should never happen
+                ValueAsIs _        -> M.delete tx m sk
+                ValueWithKey pairs -> do
+                  case filter (\(T2 k' _) -> k' /= serialisedKey) pairs of 
+                      []     -> M.delete tx m sk
+                      pairs' -> M.put tx m sk (ValueWithKey pairs')
 
 safeValues :: (TheBinary k, TheBinary v) =>
              Tx s mode -> SafeMap name s k v -> IO [v]

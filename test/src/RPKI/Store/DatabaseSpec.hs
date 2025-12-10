@@ -105,7 +105,7 @@ txGroup = testGroup "App transaction test"
 mapGroup :: TestTree
 mapGroup = testGroup "SafeMap tests"
     [
-        ioTestCase "Should put and get from SafeMap" shouldSafePutAndGet        
+        ioTestCase "Should put and get from SafeMap" shouldProcessSafeMapProperly        
     ]
 
 
@@ -506,8 +506,8 @@ shouldPreserveStateInAppTx io = do
 
 
 
-shouldSafePutAndGet :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
-shouldSafePutAndGet io = do    
+shouldProcessSafeMapProperly :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldProcessSafeMapProperly io = do    
     ((_, env), _) <- io
 
     let storage' = LmdbStorage env
@@ -537,6 +537,17 @@ shouldSafePutAndGet io = do
 
     HU.assertEqual "Validations don't match" ss  (Just "one-updated")
     HU.assertEqual "Validations don't match" ll  (Just "two-updated")        
+
+    rwTx z $ \tx -> do              
+        SM.safeDelete tx z short
+        SM.safeDelete tx z long
+
+    sss <- roTx z $ \tx -> SM.safeGet tx z short
+    lll <- roTx z $ \tx -> SM.safeGet tx z long
+
+    HU.assertEqual "Validations don't match" sss  Nothing
+    HU.assertEqual "Validations don't match" lll  Nothing                
+
 
 
 stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> metric

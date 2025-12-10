@@ -18,7 +18,6 @@ import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
 import           Data.Foldable            (for_)
 
-import qualified Data.ByteString          as BS
 import qualified Data.List                as List
 import           Data.Maybe               (catMaybes, fromMaybe, isJust, listToMaybe)
 import qualified Data.Set                 as Set
@@ -26,7 +25,6 @@ import           Data.Text                (Text)
 import qualified Data.Text                as Text
 import qualified Data.Map.Strict          as Map
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
-import qualified Data.Hashable            as H
 import           Data.Ord
 import           Data.Tuple.Strict
 
@@ -40,7 +38,7 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
-import           RPKI.Store.Base.SafeMap  (SafeMap (..))
+import           RPKI.Store.Base.SafeMap  (SafeMap)
 import           RPKI.TAL
 import           RPKI.RRDP.Types
 import           RPKI.SLURM.Types
