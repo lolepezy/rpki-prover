@@ -519,31 +519,31 @@ shouldProcessSafeMapProperly io = do
     HU.assertBool "The long key is very too long" (BS.length (serialise_ long) > 512)
 
     rwTx z $ \tx -> do              
-        SM.safePut tx z short "one"
-        SM.safePut tx z long "two"
+        SM.put tx z short "one"
+        SM.put tx z long "two"
 
-    s <- roTx z $ \tx -> SM.safeGet tx z short
-    l <- roTx z $ \tx -> SM.safeGet tx z long
+    s <- roTx z $ \tx -> SM.get tx z short
+    l <- roTx z $ \tx -> SM.get tx z long
 
     HU.assertEqual "Validations don't match" s  (Just "one")
     HU.assertEqual "Validations don't match" l  (Just "two")
 
     rwTx z $ \tx -> do              
-        SM.safePut tx z short "one-updated"
-        SM.safePut tx z long "two-updated"    
+        SM.put tx z short "one-updated"
+        SM.put tx z long "two-updated"    
 
-    ss <- roTx z $ \tx -> SM.safeGet tx z short
-    ll <- roTx z $ \tx -> SM.safeGet tx z long
+    ss <- roTx z $ \tx -> SM.get tx z short
+    ll <- roTx z $ \tx -> SM.get tx z long
 
     HU.assertEqual "Validations don't match" ss  (Just "one-updated")
     HU.assertEqual "Validations don't match" ll  (Just "two-updated")        
 
     rwTx z $ \tx -> do              
-        SM.safeDelete tx z short
-        SM.safeDelete tx z long
+        SM.delete tx z short
+        SM.delete tx z long
 
-    sss <- roTx z $ \tx -> SM.safeGet tx z short
-    lll <- roTx z $ \tx -> SM.safeGet tx z long
+    sss <- roTx z $ \tx -> SM.get tx z short
+    lll <- roTx z $ \tx -> SM.get tx z long
 
     HU.assertEqual "Validations don't match" sss  Nothing
     HU.assertEqual "Validations don't match" lll  Nothing                

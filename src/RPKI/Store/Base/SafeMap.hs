@@ -13,16 +13,19 @@ import           GHC.Generics
 import RPKI.Store.Types
 import RPKI.Store.Base.Map as M
 import RPKI.Store.Base.Storage
+import RPKI.Store.Base.Storable
 import RPKI.Store.Base.Serialisation
 import RPKI.Util (ifJustM)
 
 
--- | DB keys can potentially be much larger than 512 bytes allowed as LMDB keys. So we 
---     - calculate hash 
---     - truncate the serialised values so that that truncated version + hash fit into 512 bytes.
---     - use "truncated URL + hash" as a key
---     - store a list of pairs of the full serialised key along the value
--- 
+{- | DB keys can potentially be much larger than 512 bytes allowed as LMDB keys. So we 
+     - calculate hash 
+     - truncate the serialised values so that that truncated version + hash fit into 512 bytes.
+     - use "truncated URL + hash" as a key
+     - store a list of pairs of the full serialised key along the value
+     - Very long keys are rare in practive and it's astronomically unlikely that the list 
+       ValueWithKey will every be more than one element, but we want to be sure.
+-} 
 data SafeValue v = ValueAsIs v
                  | ValueWithKey [T2 BS.ByteString v]
     deriving (Show, Eq, Ord, Generic)
@@ -30,12 +33,35 @@ data SafeValue v = ValueAsIs v
 
 type SafeMap name s k v = SMap name s (SafeKey k) (SafeValue v)
 
-safePut :: (TheBinary k, TheBinary v) =>
-            Tx s 'RW -> SafeMap name s k v -> k -> v -> IO ()
-safePut tx m k v = do
+data SafeBin a = SafeBinDirect BS.ByteString
+               | SafeBinExtended [T2 BS.ByteString BS.ByteString]
+    deriving (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+-- TODO This creates and intermediate structure and double-serialisation 
+-- which is a serious hit to performance. Do something about it.
+instance {-# OVERLAPPING #-} AsStorable v => AsStorable (SafeValue v) where
+    toStorable   = toStorable . toSafeBin
+
+    fromStorable (Storable a) = fromSafeBin $ deserialise_ a
+
+toSafeBin :: AsStorable v => SafeValue v -> SafeBin v
+toSafeBin (ValueAsIs v) = SafeBinDirect (unStorable $ toStorable v)
+toSafeBin (ValueWithKey pairs) = SafeBinExtended $ 
+    map (\(T2 k v) -> T2 k (unStorable $ toStorable v)) pairs   
+
+fromSafeBin :: AsStorable v => SafeBin v -> SafeValue v
+fromSafeBin (SafeBinDirect bs) = ValueAsIs (fromStorable $ Storable bs)
+fromSafeBin (SafeBinExtended pairs) = ValueWithKey $
+    map (\(T2 k v) -> T2 k (fromStorable $ Storable v)) pairs
+
+
+put :: (AsStorable k, AsStorable v) =>
+      Tx s 'RW -> SafeMap name s k v -> k -> v -> IO ()
+put tx m k v = do
     let (sk, serialisedKey) = safeKey k
     case sk of
-        AsIs _               -> M.put tx m sk $ ValueAsIs v
+        AsIs _               -> M.put tx m sk (ValueAsIs v)
         ExtendedWithHash _ _ -> do 
             M.get tx m sk >>= \case
                 Just (ValueWithKey pairs) -> do
@@ -44,9 +70,9 @@ safePut tx m k v = do
                 _ ->
                     M.put tx m sk (ValueWithKey [T2 serialisedKey v])
 
-safeGet :: (TheBinary k, TheBinary v) =>
-           Tx s mode -> SafeMap name s k v -> k -> IO (Maybe v)
-safeGet tx m k = do
+get :: (AsStorable k, AsStorable v) =>
+      Tx s mode -> SafeMap name s k v -> k -> IO (Maybe v)
+get tx m k = do
     let (sk, serialisedKey) = safeKey k
     M.get tx m sk >>= \case
         Nothing -> pure Nothing
@@ -55,9 +81,9 @@ safeGet tx m k = do
             ValueWithKey pairs -> listToMaybe [ v' | T2 k' v' <- pairs, k' == serialisedKey ]
 
 
-safeDelete :: (TheBinary k, TheBinary v) =>
-             Tx s 'RW -> SafeMap name s k v -> k -> IO ()
-safeDelete tx m k = do
+delete :: (AsStorable k, AsStorable v) =>
+          Tx s 'RW -> SafeMap name s k v -> k -> IO ()
+delete tx m k = do
     let (sk, serialisedKey) = safeKey k
     case sk of
         AsIs _               -> M.delete tx m sk
@@ -70,17 +96,30 @@ safeDelete tx m k = do
                       []     -> M.delete tx m sk
                       pairs' -> M.put tx m sk (ValueWithKey pairs')
 
-safeValues :: (TheBinary k, TheBinary v) =>
-             Tx s mode -> SafeMap name s k v -> IO [v]
-safeValues tx m =
+values :: AsStorable v =>
+          Tx s mode -> SafeMap name s k v -> IO [v]
+values tx m =
     concatMap extract <$> M.values tx m
   where
     extract = \case 
         ValueAsIs v        -> [v]
         ValueWithKey pairs -> map (\(T2 _ v) -> v) pairs
 
+all :: (AsStorable k, AsStorable v) =>
+        Tx s mode -> SafeMap name s k v -> IO [(k, v)]
+all tx m =
+    concatMap extract <$> M.all tx m
+  where
+    extract = \case 
+        (AsIs k, ValueAsIs v)   -> [(unwrap k, v)]
+        (_, ValueWithKey pairs) -> map (\(T2 bs v) -> (unwrap bs, v)) pairs
+        -- this is just to keep the compiler happy
+        _ -> []
 
-safeKey :: TheBinary k => k -> (SafeKey a, BS.ByteString)
+    unwrap = fromStorable . Storable
+
+
+safeKey :: AsStorable k => k -> (SafeKey a, BS.ByteString)
 safeKey k = let         
     maxLmdbKeyBytes = 512
 
@@ -89,7 +128,7 @@ safeKey k = let
     -- and what store library does, so we make it 20 just in case. 
     headerBytes = 20
 
-    bs = serialise_ k
+    Storable bs = toStorable k
     hash_ = H.hash bs
 
     bytesLeft = maxLmdbKeyBytes - 8 - headerBytes

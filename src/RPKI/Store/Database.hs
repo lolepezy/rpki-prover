@@ -212,10 +212,10 @@ newtype SlurmStore s = SlurmStore {
     deriving stock (Generic)
 
 data RepositoryStore s = RepositoryStore {
-        rrdpS       :: SMap "rrdp-repositories" s RrdpURL RrdpRepository,
-        rsyncS      :: SMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
-        rrdpVState  :: SMap "rrdp-validation-state" s RrdpURL (Compressed ValidationState),
-        rsyncVState :: SMap "rsync-validation-state" s RsyncHost (Compressed (RsyncTree ValidationState))
+        rrdpS       :: SafeMap "rrdp-repositories" s RrdpURL RrdpRepository,
+        rsyncS      :: SafeMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
+        rrdpVState  :: SafeMap "rrdp-validation-state" s RrdpURL (Compressed ValidationState),
+        rsyncVState :: SafeMap "rsync-validation-state" s RsyncHost (Compressed (RsyncTree ValidationState))
     }
     deriving stock (Generic)
 
@@ -283,7 +283,7 @@ getByUri tx db uri = liftIO $ do
 getKeysByUri :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> RpkiURL -> m [ObjectKey]
 getKeysByUri tx DB { objectStore = RpkiObjectStore {..} } uri = liftIO $
-    SM.safeGet tx uriToUriKey uri >>= \case 
+    SM.get tx uriToUriKey uri >>= \case 
         Nothing     -> pure []
         Just uriKey -> MM.allForKey tx urlKeyToObjectKey uriKey
                 
@@ -395,7 +395,7 @@ linkObjectToUrl :: (MonadIO m, Storage s) =>
                 -> m ()
 linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL hash = liftIO $ do    
     ifJustM (M.get tx hashToKey hash) $ \objectKey -> do        
-        z <- SM.safeGet tx uriToUriKey rpkiURL 
+        z <- SM.get tx uriToUriKey rpkiURL 
         urlKey <- maybe (saveUrl rpkiURL) pure z                
         
         M.get tx objectKeyToUrlKeys objectKey >>= \case 
@@ -410,7 +410,7 @@ linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL hash = 
     saveUrl safeUrl = do 
         SequenceValue k <- nextValue tx keys
         let urlKey = UrlKey $ ArtificialKey k
-        SM.safePut tx uriToUriKey safeUrl urlKey
+        SM.put tx uriToUriKey safeUrl urlKey
         M.put tx uriKeyToUri urlKey rpkiURL            
         pure urlKey
 
@@ -531,16 +531,16 @@ getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ runMaybe
 -- TA store functions
 
 saveTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> StorableTA -> m ()
-saveTA tx DB { taStore = TAStore s } ta = liftIO $ SM.safePut tx s (getTaName $ tal ta) ta
+saveTA tx DB { taStore = TAStore s } ta = liftIO $ SM.put tx s (getTaName $ tal ta) ta
 
 deleteTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> TAL -> m ()
-deleteTA tx DB { taStore = TAStore s } tal = liftIO $ SM.safeDelete tx s (getTaName tal)
+deleteTA tx DB { taStore = TAStore s } tal = liftIO $ SM.delete tx s (getTaName tal)
 
 getTA :: (MonadIO m, Storage s) => Tx s mode -> DB s -> TaName -> m (Maybe StorableTA)
-getTA tx DB { taStore = TAStore s } name = liftIO $ SM.safeGet tx s name
+getTA tx DB { taStore = TAStore s } name = liftIO $ SM.get tx s name
 
 getTAs :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [StorableTA]
-getTAs tx DB { taStore = TAStore s } = liftIO $ SM.safeValues tx s
+getTAs tx DB { taStore = TAStore s } = liftIO $ SM.values tx s
 
 
 getValidationsPerTA :: (MonadIO m, Storage s) => 
@@ -780,16 +780,16 @@ updateRrdpMetaM :: (MonadIO m, Storage s) =>
                 -> (Maybe RrdpMeta -> IO (Maybe RrdpMeta))                
                 -> m ()
 updateRrdpMetaM tx DB { repositoryStore = RepositoryStore {..} } url f = liftIO $ do    
-    maybeRepo <- M.get tx rrdpS url
+    maybeRepo <- SM.get tx rrdpS url
     for_ maybeRepo $ \repo -> do        
         maybeNewMeta <- f $ repo ^. #rrdpMeta
         for_ maybeNewMeta $ \newMeta -> 
-            M.put tx rrdpS url (repo { rrdpMeta = Just newMeta })
+            SM.put tx rrdpS url (repo { rrdpMeta = Just newMeta })
  
 getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m PublicationPoints
 getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
-    rrdps <- M.all tx rrdpS
-    rsyns <- M.all tx rsyncS    
+    rrdps <- SM.all tx rrdpS
+    rsyns <- SM.all tx rsyncS    
     pure $ PublicationPoints
             (RrdpMap $ Map.fromList rrdps)
             (RsyncForestGen $ Map.fromList rsyns)  
@@ -801,7 +801,7 @@ getRepository tx db = \case
 
 getRrdpRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RrdpURL -> m (Maybe RrdpRepository)
 getRrdpRepository tx DB { repositoryStore = RepositoryStore {..}} url = 
-    liftIO $ M.get tx rrdpS url
+    liftIO $ SM.get tx rrdpS url
 
 getRsyncRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RsyncURL -> m (Maybe RsyncRepository)
 getRsyncRepository tx db url = Map.lookup url <$> getRsyncRepositories tx db [url]        
@@ -809,7 +809,7 @@ getRsyncRepository tx db url = Map.lookup url <$> getRsyncRepositories tx db [ur
 getRsyncRepositories :: (MonadIO m, Storage s) => Tx s mode -> DB s -> [RsyncURL] -> m (Map.Map RsyncURL RsyncRepository)
 getRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} urls = 
     getRsyncAnything urls 
-        (M.get tx rsyncS) 
+        (SM.get tx rsyncS) 
         (\url meta -> RsyncRepository { repoPP = RsyncPublicationPoint url, .. })  
 
 getRsyncAnything :: MonadIO m 
@@ -837,7 +837,7 @@ getRsyncAnything urls extractTree create = liftIO $ do
 saveRepositories :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [Repository] -> m ()
 saveRepositories tx db@DB { repositoryStore = RepositoryStore {..}} repositories = liftIO $ do    
     let (rrdps, rsyncs) = separate repositories
-    forM_ rrdps $ \r -> M.put tx rrdpS (r ^. #uri) r
+    forM_ rrdps $ \r -> SM.put tx rrdpS (r ^. #uri) r
     saveRsyncRepositories tx db rsyncs
   where
     separate = foldr f ([], [])
@@ -848,7 +848,7 @@ saveRepositories tx db@DB { repositoryStore = RepositoryStore {..}} repositories
 saveRepositoryValidationStates :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [(Repository, ValidationState)] -> m ()
 saveRepositoryValidationStates tx db@DB { repositoryStore = RepositoryStore {..}} repositories = liftIO $ do    
     let (rrdps, rsyncs) = separate repositories
-    forM_ rrdps $ \(r, vs) -> M.put tx rrdpVState (r ^. #uri) (Compressed vs)
+    forM_ rrdps $ \(r, vs) -> SM.put tx rrdpVState (r ^. #uri) (Compressed vs)
     saveRsyncValidationStates tx db rsyncs
   where
     separate = foldr f ([], [])
@@ -859,14 +859,14 @@ saveRepositoryValidationStates tx db@DB { repositoryStore = RepositoryStore {..}
 saveRsyncRepositories :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [RsyncRepository] -> m ()
 saveRsyncRepositories tx DB { repositoryStore = RepositoryStore {..}} repositories = liftIO $ do
     saveRsyncAnything (map (\r -> (r, r ^. #meta)) repositories)
-        (M.get tx rsyncS)
-        (M.put tx rsyncS)        
+        (SM.get tx rsyncS)
+        (SM.put tx rsyncS)        
 
 saveRsyncValidationStates :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> [(RsyncRepository, ValidationState)] -> m ()
 saveRsyncValidationStates tx DB { repositoryStore = RepositoryStore {..}} repositories = liftIO $ do
     saveRsyncAnything repositories
-        (fmap (fmap unCompressed) . M.get tx rsyncVState)
-        (\host tree -> M.put tx rsyncVState host (Compressed tree))        
+        (fmap (fmap unCompressed) . SM.get tx rsyncVState)
+        (\host tree -> SM.put tx rsyncVState host (Compressed tree))        
 
 saveRsyncAnything :: MonadIO m
                     => [(RsyncRepository, a)] 
@@ -889,20 +889,20 @@ getRepositories :: (MonadIO m, Storage s)
                         -> (RpkiURL -> Bool)
                         -> m [(Repository, ValidationState)]
 getRepositories tx DB { repositoryStore = RepositoryStore {..}} filterF = liftIO $ do
-    rrdps <- M.all tx rrdpS
-    rsyncs <- M.all tx rsyncS    
+    rrdps <- SM.all tx rrdpS
+    rsyncs <- SM.all tx rsyncS    
 
     rrpdRepos <- fmap mconcat $ 
         forM rrdps $ \(url, r) -> do 
             if filterF (RrdpU url) then 
-                M.get tx rrdpVState url >>= \case 
+                SM.get tx rrdpVState url >>= \case 
                     Nothing              -> pure []
                     Just (Compressed vs) -> pure [(RrdpR r, vs)]
             else pure []
 
     rsyncRepos <- fmap mconcat $ 
         forM rsyncs $ \(host, metas) -> do 
-            M.get tx rsyncVState host >>= \case 
+            SM.get tx rsyncVState host >>= \case 
                 Nothing               -> pure []
                 Just (Compressed vss) -> 
                     pure [ (RsyncR repo, vs) | 
@@ -1098,7 +1098,7 @@ deleteDanglingUrls DB { objectStore = RpkiObjectStore {..} } tx = do
 
     for_ urlsToDelete $ \(urlKey, url) -> do 
         M.delete tx uriKeyToUri urlKey
-        SM.safeDelete tx uriToUriKey url           
+        SM.delete tx uriToUriKey url           
 
     pure $ length urlsToDelete
 
