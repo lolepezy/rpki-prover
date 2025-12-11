@@ -91,7 +91,7 @@ delete tx SafeMap {..} k = do
     case sk of
         AsIs _       -> M.delete tx normals (Verbatim $ Storable serialisedKey)
         Overflow key -> do             
-            ifJustM(M.get tx overflows key) $ \(KeysAndValues pairs) -> do
+            ifJustM (M.get tx overflows key) $ \(KeysAndValues pairs) -> do
                 case filter (\(T2 k' _) -> k' /= serialisedKey) pairs of 
                     []     -> M.delete tx overflows key
                     pairs' -> M.put tx overflows key (KeysAndValues pairs')
