@@ -87,7 +87,7 @@ createDatabase env logger checkAction = do
         versionStore     <- VersionStore <$> newSMap
         metricStore      <- MetricStore <$> newSMap
         slurmStore       <- SlurmStore <$> newSMap
-        erikStore        <- ErikStore <$> newSMap <*> newSMap
+        erikStore        <- ErikStore <$> newSafeMap <*> newSMap
         jobStore         <- JobStore <$> newSMap        
         metadataStore    <- MetadataStore <$> newSMap          
         repositoryStore  <- createRepositoryStore

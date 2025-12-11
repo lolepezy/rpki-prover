@@ -235,7 +235,7 @@ indexKey :: URI -> FQDN -> ErikIndexKey
 indexKey (URI relayUri) (FQDN fqdn) = ErikIndexKey $ relayUri <> "-" <> fqdn
 
 data ErikStore s = ErikStore {
-        indexes    :: SMap "erik-indexes" s ErikIndexKey ErikIndex,
+        indexes    :: SafeMap "erik-indexes" s ErikIndexKey ErikIndex,
         partitions :: SMap "erik-partitions" s Hash ErikPartition
     }
     deriving stock (Generic)
@@ -435,12 +435,12 @@ hashExists tx DB { objectStore = RpkiObjectStore {..} } h =
 getErikIndex :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> URI -> FQDN -> m (Maybe ErikIndex)
 getErikIndex tx DB { erikStore = ErikStore {..} } relayUri fqdn = 
-    liftIO $ M.get tx indexes (indexKey relayUri fqdn)
+    liftIO $ SM.get tx indexes (indexKey relayUri fqdn)
 
 saveErikIndex :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> DB s -> URI -> FQDN -> ErikIndex -> m ()
 saveErikIndex tx DB { erikStore = ErikStore {..} } relayUri fqdn index_ = 
-    liftIO $ M.put tx indexes (indexKey relayUri fqdn) index_
+    liftIO $ SM.put tx indexes (indexKey relayUri fqdn) index_
 
 getErikPartition :: (MonadIO m, Storage s) => 
                        Tx s mode -> DB s -> Hash -> m (Maybe ErikPartition)
