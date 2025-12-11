@@ -23,10 +23,10 @@ import Data.Bifunctor
 
 {- | DB keys can potentially be much larger than 511 bytes allowed as LMDB keys. So we 
      - calculate hash 
-     - truncate the serialised values so that that truncated version + hash fit into 512 bytes.
+     - truncate the serialised values so that that truncated version + hash fit into 511 bytes.
      - use "truncated URL + hash" as a key
      - store a list of pairs of the full serialised key along the value
-     - Very long keys are rare in practive and it's astronomically unlikely that the list 
+     - Very long keys are rare in practice and it's astronomically unlikely that the list 
        in KeysAndValues will ever be more than one element, but we want to be sure.
 
     The whole thing is optimised for the happy path, i.e. when the keys are short enough.
