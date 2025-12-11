@@ -2,17 +2,14 @@
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE StrictData            #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE OverloadedLabels     #-}
+{-# LANGUAGE OverloadedLabels      #-}
 
 module RPKI.Store.Types where
 
 import           Control.Lens
 import           Control.DeepSeq
 import qualified Data.ByteString          as BS
-import qualified Data.ByteString.Short    as BSS
 
 import           GHC.Generics
 import           RPKI.TAL
@@ -54,10 +51,6 @@ instance Ord MftMeta where
     compare a b = compare (a ^. #thisTime) (b ^. #thisTime) <>
                   compare (a ^. #nextTime) (b ^. #nextTime) <> 
                   compare (a ^. #mftNumber) (b ^. #mftNumber)
-
-newtype SafeUrlAsKey = SafeUrlAsKey BSS.ShortByteString 
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)        
 
 data Keyed a = Keyed { 
         object :: a,

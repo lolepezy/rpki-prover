@@ -77,7 +77,7 @@ instance {-# OVERLAPPING #-} TheBinary a => AsStorable a where
 
 instance {-# OVERLAPPING #-} AsStorable a => AsStorable (StorableObject a) where
     toStorable StorableObject {..} = storable
-    fromStorable b = let o = fromStorable b in StorableObject o b
+    fromStorable b = StorableObject (fromStorable b) b
 
 instance {-# OVERLAPPING #-} AsStorable a => AsStorable (Compressed a) where
     toStorable (Compressed a) = 

@@ -43,6 +43,7 @@ import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Map               as M
+import           RPKI.Store.Base.SafeMap           as SM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database    (DB(..))
@@ -58,6 +59,7 @@ import           RPKI.RepositorySpec
 
 import Data.Generics.Product (HasField)
 import Control.Concurrent (threadDelay)
+import RPKI.Store.Base.Serialisation (serialise_)
 
 
 databaseGroup :: TestTree
@@ -66,7 +68,8 @@ databaseGroup = testGroup "LMDB storage tests"
         objectStoreGroup,
         repositoryStoreGroup,
         versionStoreGroup,
-        txGroup
+        txGroup,
+        mapGroup
     ]
 
 objectStoreGroup :: TestTree
@@ -97,6 +100,12 @@ txGroup = testGroup "App transaction test"
     [
         ioTestCase "Should rollback App transactions properly" shouldRollbackAppTx,        
         ioTestCase "Should preserve state from StateT in transactions" shouldPreserveStateInAppTx
+    ]
+
+mapGroup :: TestTree
+mapGroup = testGroup "SafeMap tests"
+    [
+        ioTestCase "Should put and get from SafeMap" shouldProcessSafeMapProperly        
     ]
 
 
@@ -145,7 +154,7 @@ shouldMergeObjectLocations io = do
     HU.assertEqual "Wrong locations 3" loc2 (toLocations url3)
     where 
         verifyUrlCount db@DB {..} s count = do 
-            uriToUriKey <- roTx db $ \tx -> M.all tx (DB.uriToUriKey objectStore)
+            uriToUriKey <- roTx db $ \tx -> SM.all tx (DB.uriToUriKey objectStore)
             uriKeyToUri <- roTx db $ \tx -> M.all tx (DB.uriKeyToUri objectStore)
             HU.assertEqual ("Not all URLs one way " <> s) count (length uriToUriKey)
             HU.assertEqual ("Not all URLs backwards " <> s) count (length uriKeyToUri)        
@@ -476,7 +485,7 @@ shouldPreserveStateInAppTx io = do
                 addedObject
 
     HU.assertEqual "Root metric should count 2 objects" 
-        (Just $ mempty { added = Map.fromList [(Just CER, Count 2)], deleted = Map.fromList [] })
+        (Just $ mempty { added = Map.fromList [(Just CER, Count 2)], deleted = Map.empty })
         (stripTime <$> lookupMetric (newScope "root") (rrdpMetrics topDownMetric))        
 
     HU.assertEqual "Nested metric should count 1 object" 
@@ -495,6 +504,74 @@ shouldPreserveStateInAppTx io = do
         (Map.lookup (subScope TextFocus "nested-1" (newScope "root")) validationMap)
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
 
+
+
+shouldProcessSafeMapProperly :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
+shouldProcessSafeMapProperly io = do    
+    ((_, env), _) <- io
+
+    let storage' = LmdbStorage env
+    z :: SM.SafeMap "test-state" LmdbStorage Text.Text String <- 
+                SafeMap <$> (SMap storage' <$> createLmdbStore env) <*> 
+                            (SMap storage' <$> createLmdbStore env)
+
+    let short = "short-key" :: Text.Text
+    let long = Text.replicate 600 "long-key-part-" :: Text.Text   
+
+    HU.assertBool "The long key must be too long" (BS.length (serialise_ long) > 512)
+
+    rwTx z $ \tx -> do              
+        SM.put tx z short "one"
+        SM.put tx z long "two"
+
+    s <- roTx z $ \tx -> SM.get tx z short
+    l <- roTx z $ \tx -> SM.get tx z long
+
+    HU.assertEqual "SafeMap.get for short is wrong" s  (Just "one")
+    HU.assertEqual "SafeMap.get for long is wrong" l  (Just "two")
+
+    all1 <- roTx z $ \tx -> SM.all tx z
+    HU.assertEqual "SafeMap.all is wrong" 
+        (List.sort all1) (List.sort [(short, "one"), (long, "two")])
+
+    values1 <- roTx z $ \tx -> SM.values tx z
+    HU.assertEqual "SafeMap.values is wrong" 
+        (List.sort values1) (List.sort ["one", "two"])    
+
+    rwTx z $ \tx -> do              
+        SM.put tx z short "one-updated"
+        SM.put tx z long "two-updated"    
+
+    ss <- roTx z $ \tx -> SM.get tx z short
+    ll <- roTx z $ \tx -> SM.get tx z long
+
+    HU.assertEqual "SafeMap.get for short is wrong 2" ss  (Just "one-updated")
+    HU.assertEqual "SafeMap.get for long is wrong 2" ll  (Just "two-updated")        
+
+    all2 <- roTx z $ \tx -> SM.all tx z
+    HU.assertEqual "SafeMap.all is wrong 2" 
+        (List.sort all2) (List.sort [(short, "one-updated"), (long, "two-updated")])
+
+    values2 <- roTx z $ \tx -> SM.values tx z
+    HU.assertEqual "SafeMap.values is wrong 2" 
+        (List.sort values2) (List.sort ["one-updated", "two-updated"])    
+
+    rwTx z $ \tx -> do              
+        SM.delete tx z short
+        SM.delete tx z long
+
+    sss <- roTx z $ \tx -> SM.get tx z short
+    lll <- roTx z $ \tx -> SM.get tx z long
+
+    HU.assertEqual "SafeMap.get for short is wrong 3" sss  Nothing
+    HU.assertEqual "SafeMap.get for long is wrong 3" lll  Nothing    
+
+    all3 <- roTx z $ \tx -> SM.all tx z
+    HU.assertEqual "SafeMap.all is wrong 3" all3 []
+
+    values3 <- roTx z $ \tx -> SM.values tx z
+    HU.assertEqual "SafeMap.values is wrong 3" values3 []    
+    
 
 stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> metric
 stripTime = #totalTimeMs .~ TimeMs 0

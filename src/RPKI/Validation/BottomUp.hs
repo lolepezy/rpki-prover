@@ -125,7 +125,7 @@ validateBottomUp
         tas <- DB.roAppTx db $ \tx -> DB.getTAs tx db         
         let taCerts = Map.fromList [ 
                         (getSKI taCert, Located (talCertLocations tal) taCert) | 
-                        (_, StorableTA {..}) <- tas ]
+                        StorableTA {..} <- tas ]
         go taCerts certificate
       where        
         go taCerts cert = do             
