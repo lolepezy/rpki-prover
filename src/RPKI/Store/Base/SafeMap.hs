@@ -127,7 +127,7 @@ safeKey k = let
     -- and what store library does, so we make it 20 just in case. 
     headerBytes = 20
 
-    -- size if Int
+    -- size of Int
     hashBytes = 8
 
     Storable bs = toStorable k
