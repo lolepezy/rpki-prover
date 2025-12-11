@@ -154,7 +154,7 @@ shouldMergeObjectLocations io = do
     HU.assertEqual "Wrong locations 3" loc2 (toLocations url3)
     where 
         verifyUrlCount db@DB {..} s count = do 
-            uriToUriKey <- roTx db $ \tx -> M.all tx (DB.uriToUriKey objectStore)
+            uriToUriKey <- roTx db $ \tx -> SM.all tx (DB.uriToUriKey objectStore)
             uriKeyToUri <- roTx db $ \tx -> M.all tx (DB.uriKeyToUri objectStore)
             HU.assertEqual ("Not all URLs one way " <> s) count (length uriToUriKey)
             HU.assertEqual ("Not all URLs backwards " <> s) count (length uriKeyToUri)        
@@ -511,7 +511,9 @@ shouldProcessSafeMapProperly io = do
     ((_, env), _) <- io
 
     let storage' = LmdbStorage env
-    z :: SM.SafeMap "test-state" LmdbStorage Text.Text String <- SMap storage' <$> createLmdbStore env
+    z :: SM.SafeMap "test-state" LmdbStorage Text.Text String <- 
+                SafeMap <$> (SMap storage' <$> createLmdbStore env) <*> 
+                            (SMap storage' <$> createLmdbStore env)
 
     let short = "short-key" :: Text.Text
     let long = Text.replicate 600 "long-key-part-" :: Text.Text   
@@ -528,6 +530,12 @@ shouldProcessSafeMapProperly io = do
     HU.assertEqual "Validations don't match" s  (Just "one")
     HU.assertEqual "Validations don't match" l  (Just "two")
 
+    all1 <- roTx z $ \tx -> SM.all tx z
+    HU.assertEqual "Validations don't match" all1 [(short, "one"), (long, "two")]
+
+    values1 <- roTx z $ \tx -> SM.values tx z
+    HU.assertEqual "Validations don't match" values1 ["one", "two"]    
+
     rwTx z $ \tx -> do              
         SM.put tx z short "one-updated"
         SM.put tx z long "two-updated"    
@@ -538,6 +546,12 @@ shouldProcessSafeMapProperly io = do
     HU.assertEqual "Validations don't match" ss  (Just "one-updated")
     HU.assertEqual "Validations don't match" ll  (Just "two-updated")        
 
+    all2 <- roTx z $ \tx -> SM.all tx z
+    HU.assertEqual "Validations don't match" all2 [(short, "one-updated"), (long, "two-updated")]
+
+    values2 <- roTx z $ \tx -> SM.values tx z
+    HU.assertEqual "Validations don't match" values2 ["one-updated", "two-updated"]    
+    
     rwTx z $ \tx -> do              
         SM.delete tx z short
         SM.delete tx z long

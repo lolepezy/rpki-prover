@@ -52,11 +52,6 @@ instance Ord MftMeta where
                   compare (a ^. #nextTime) (b ^. #nextTime) <> 
                   compare (a ^. #mftNumber) (b ^. #mftNumber)
 
-data SafeKey a = AsIs BS.ByteString 
-               | ExtendedWithHash BS.ByteString Int
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)               
-
 data Keyed a = Keyed { 
         object :: a,
         key    :: {-# UNPACK #-} ObjectKey
