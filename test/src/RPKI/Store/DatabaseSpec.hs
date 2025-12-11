@@ -518,7 +518,7 @@ shouldProcessSafeMapProperly io = do
     let short = "short-key" :: Text.Text
     let long = Text.replicate 600 "long-key-part-" :: Text.Text   
 
-    HU.assertBool "The long key is very too long" (BS.length (serialise_ long) > 512)
+    HU.assertBool "The long key must be too long" (BS.length (serialise_ long) > 512)
 
     rwTx z $ \tx -> do              
         SM.put tx z short "one"
@@ -527,14 +527,16 @@ shouldProcessSafeMapProperly io = do
     s <- roTx z $ \tx -> SM.get tx z short
     l <- roTx z $ \tx -> SM.get tx z long
 
-    HU.assertEqual "Validations don't match" s  (Just "one")
-    HU.assertEqual "Validations don't match" l  (Just "two")
+    HU.assertEqual "SafeMap.get for short is wrong" s  (Just "one")
+    HU.assertEqual "SafeMap.get for long is wrong" l  (Just "two")
 
     all1 <- roTx z $ \tx -> SM.all tx z
-    HU.assertEqual "Validations don't match" all1 [(short, "one"), (long, "two")]
+    HU.assertEqual "SafeMap.all is wrong" 
+        (List.sort all1) (List.sort [(short, "one"), (long, "two")])
 
     values1 <- roTx z $ \tx -> SM.values tx z
-    HU.assertEqual "Validations don't match" values1 ["one", "two"]    
+    HU.assertEqual "SafeMap.values is wrong" 
+        (List.sort values1) (List.sort ["one", "two"])    
 
     rwTx z $ \tx -> do              
         SM.put tx z short "one-updated"
@@ -543,15 +545,17 @@ shouldProcessSafeMapProperly io = do
     ss <- roTx z $ \tx -> SM.get tx z short
     ll <- roTx z $ \tx -> SM.get tx z long
 
-    HU.assertEqual "Validations don't match" ss  (Just "one-updated")
-    HU.assertEqual "Validations don't match" ll  (Just "two-updated")        
+    HU.assertEqual "SafeMap.get for short is wrong 2" ss  (Just "one-updated")
+    HU.assertEqual "SafeMap.get for long is wrong 2" ll  (Just "two-updated")        
 
     all2 <- roTx z $ \tx -> SM.all tx z
-    HU.assertEqual "Validations don't match" all2 [(short, "one-updated"), (long, "two-updated")]
+    HU.assertEqual "SafeMap.all is wrong 2" 
+        (List.sort all2) (List.sort [(short, "one-updated"), (long, "two-updated")])
 
     values2 <- roTx z $ \tx -> SM.values tx z
-    HU.assertEqual "Validations don't match" values2 ["one-updated", "two-updated"]    
-    
+    HU.assertEqual "SafeMap.values is wrong 2" 
+        (List.sort values2) (List.sort ["one-updated", "two-updated"])    
+
     rwTx z $ \tx -> do              
         SM.delete tx z short
         SM.delete tx z long
@@ -559,10 +563,15 @@ shouldProcessSafeMapProperly io = do
     sss <- roTx z $ \tx -> SM.get tx z short
     lll <- roTx z $ \tx -> SM.get tx z long
 
-    HU.assertEqual "Validations don't match" sss  Nothing
-    HU.assertEqual "Validations don't match" lll  Nothing                
+    HU.assertEqual "SafeMap.get for short is wrong 3" sss  Nothing
+    HU.assertEqual "SafeMap.get for long is wrong 3" lll  Nothing    
 
+    all3 <- roTx z $ \tx -> SM.all tx z
+    HU.assertEqual "SafeMap.all is wrong 3" all3 []
 
+    values3 <- roTx z $ \tx -> SM.values tx z
+    HU.assertEqual "SafeMap.values is wrong 3" values3 []    
+    
 
 stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> metric
 stripTime = #totalTimeMs .~ TimeMs 0
