@@ -38,7 +38,8 @@ import           RPKI.Resources.Validity
 import           RPKI.RTR.Types
 import           RPKI.Validation.Types
 import           RPKI.Util
-import          RPKI.AppTypes (WorldVersion)
+import           RPKI.AppTypes (WorldVersion)
+import qualified RPKI.Util.KeyMap as KeyMap
 
 {-
     Mainly domain objects -> DTO convertions. 
@@ -165,7 +166,7 @@ vrpSetToCSV vrpDtos =
 toMftShortcutDto :: MftShortcut -> ManifestShortcutDto
 toMftShortcutDto MftShortcut {..} = ManifestShortcutDto {..}
   where
-    nonCrlChildren = Map.map (\MftEntry {..} -> ManifestChildDto {..}) nonCrlEntries
+    nonCrlChildren = KeyMap.map (\MftEntry {..} -> ManifestChildDto {..}) nonCrlEntries
     
 
 objectToDto :: RpkiObject -> ObjectDto

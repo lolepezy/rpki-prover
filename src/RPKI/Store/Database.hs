@@ -61,6 +61,7 @@ import           RPKI.AppState
 import           RPKI.AppTypes
 import           RPKI.RTR.Types
 import           RPKI.Time
+import qualified RPKI.Util.KeyMap as KeyMap
 
 
 -- This one is to be changed manually whenever 
@@ -118,7 +119,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
         objectMetas    :: SMap "object-meta" s ObjectKey ObjectMeta,
 
-        validatedByVersion :: SMap "validated-by-version" s Text (Compressed (Map.Map ObjectKey WorldVersion)),
+        validatedByVersion :: SMap "validated-by-version" s Text (Compressed (KeyMap.KeyMap WorldVersion)),
 
         -- Object URL mapping
         uriToUriKey    :: SafeMap "uri-to-uri-key" s RpkiURL UrlKey,
@@ -245,7 +246,7 @@ data MftShortcutMeta = MftShortcutMeta {
     deriving anyclass (TheBinary)
 
 newtype MftShortcutChildren = MftShortcutChildren {
-        nonCrlEntries :: Map.Map ObjectKey MftEntry
+        nonCrlEntries :: KeyMap.KeyMap MftEntry
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -507,7 +508,7 @@ markAsValidated :: (MonadIO m, Storage s) =>
                 -> WorldVersion -> m ()
 markAsValidated tx db allKeys worldVersion = 
     liftIO $ void $ updateValidatedByVersionMap tx db $ \m -> 
-        foldr (`Map.insert` worldVersion) (fromMaybe mempty m) allKeys
+        foldr (`KeyMap.insert` worldVersion) (fromMaybe mempty m) allKeys
 
 
 -- This is for testing purposes mostly
@@ -934,8 +935,8 @@ saveCurrentDatabaseVersion tx DB { metadataStore = MetadataStore s } =
 updateValidatedByVersionMap :: (MonadIO m, Storage s) 
                             => Tx s 'RW 
                             -> DB s 
-                            -> (Maybe (Map.Map ObjectKey WorldVersion) -> Map.Map ObjectKey WorldVersion)
-                            -> m (Map.Map ObjectKey WorldVersion)
+                            -> (Maybe (KeyMap.KeyMap WorldVersion) -> KeyMap.KeyMap WorldVersion)
+                            -> m (KeyMap.KeyMap WorldVersion)
 updateValidatedByVersionMap tx DB { objectStore = RpkiObjectStore {..} } f = liftIO $ do
     validatedBy <- M.get tx validatedByVersion validatedByVersionKey    
     let validatedBy' = f $ unCompressed <$> validatedBy
@@ -1053,7 +1054,7 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria
 
                 -- Object was validated by versions that is "too old" or not validated at all.
                 let validatedWayBack = 
-                        case Map.lookup key validatedBy of 
+                        case KeyMap.lookup key validatedBy of 
                             Just validated -> objectIsTooOld validated type_
                             Nothing        -> True
             
@@ -1070,7 +1071,7 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria
             )
             mempty
                         
-        let validatedBy' = foldr Map.delete validatedBy keysToDelete        
+        let validatedBy' = foldr KeyMap.delete validatedBy keysToDelete        
         M.put tx validatedByVersion validatedByVersionKey $ Compressed validatedBy'        
 
         forM_ keysToDelete $ deleteObjectByKey tx db

@@ -76,6 +76,7 @@ import           RPKI.Validation.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Validation.ResourceValidation
 import           RPKI.Validation.Common
+import qualified RPKI.Util.KeyMap as KeyMap
 
 
 {-
@@ -808,7 +809,7 @@ validateCaNoFetch
                             gatherMftEntryResults =<< 
                                 gatherMftEntryValidations fullCa newChildren validCrl
 
-                    let newEntries = makeEntriesWithMap newChildren (Map.fromList childrenShortcuts)                            
+                    let newEntries = makeEntriesWithMap newChildren (KeyMap.fromList childrenShortcuts)
 
                     let nextChildrenShortcuts = 
                             case mftShortcut of 
@@ -890,7 +891,7 @@ validateCaNoFetch
     makeEntriesWithMap childrenList entryMap = 
         [ (key, entry) | 
             T3 _ _ key <- childrenList,
-            entry      <- maybeToList $ Map.lookup key entryMap ]
+            entry      <- maybeToList $ KeyMap.lookup key entryMap ]
 
 
     -- Check if shortcut children are revoked
@@ -898,7 +899,7 @@ validateCaNoFetch
         when (isRevoked (getSerial mft) validCrl) $
             vWarn RevokedResourceCertificate   
         forM_ children $ \(T3 _ _ childKey) ->
-            for_ (Map.lookup childKey (mftShortcut ^. #nonCrlEntries)) $ \MftEntry {..} ->
+            for_ (KeyMap.lookup childKey (mftShortcut ^. #nonCrlEntries)) $ \MftEntry {..} ->
                 for_ (getMftChildSerial child) $ \childSerial ->
                     when (isRevoked childSerial validCrl) $
                         vFocusOn ObjectFocus childKey $
@@ -1279,8 +1280,8 @@ validateCaNoFetch
         -- Filter children that we actually want to go through here
         let filteredChildren = 
                 case childrenToCheck of 
-                    Nothing -> Map.toList nonCrlEntries
-                    Just ch -> catMaybes [ (k,) <$> Map.lookup k nonCrlEntries | T3 _ _ k <- ch ]
+                    Nothing -> KeyMap.toList nonCrlEntries
+                    Just ch -> catMaybes [ (k,) <$> KeyMap.lookup k nonCrlEntries | T3 _ _ k <- ch ]
 
         let T3 caCount troubledCount totalCount = 
                 foldr (\(_, MftEntry {..}) (T3 cas troubled total) -> 
@@ -1424,7 +1425,7 @@ manifestDiff :: MftShortcut
             -> [T3 Text a ObjectKey] 
             -> ([T3 Text a ObjectKey], [T3 Text a ObjectKey], Bool)
 manifestDiff mftShortcut newMftChidlren =                
-    (newOnes, overlapping, not $ Map.null deletedEntries)
+    (newOnes, overlapping, not $ KeyMap.null deletedEntries)
   where
     (newOnes, overlapping) = List.partition 
             (\(T3 fileName _  k) -> isNewEntry k fileName) newMftChidlren                
@@ -1432,7 +1433,7 @@ manifestDiff mftShortcut newMftChidlren =
     -- it's not in the map of shortcut children or it has changed 
     -- its name (very unlikely but can happen in theory)                
     isNewEntry key_ fileName  = 
-        case Map.lookup key_ (mftShortcut ^. #nonCrlEntries) of
+        case KeyMap.lookup key_ (mftShortcut ^. #nonCrlEntries) of
             Nothing -> True
             Just e  -> e ^. #fileName /= fileName 
                     
@@ -1441,10 +1442,10 @@ manifestDiff mftShortcut newMftChidlren =
         -- newMftChidlren, we only have the entries that are not present on the new manifest,
         -- i.e. the deleted ones.
         foldr (\(T3 fileName _ key_) entries -> 
-                case Map.lookup key_ (mftShortcut ^. #nonCrlEntries) of 
+                case KeyMap.lookup key_ (mftShortcut ^. #nonCrlEntries) of 
                     Nothing -> entries
                     Just e 
-                        | e ^. #fileName == fileName -> Map.delete key_ entries
+                        | e ^. #fileName == fileName -> KeyMap.delete key_ entries
                         | otherwise -> entries) 
                 (mftShortcut ^. #nonCrlEntries)
                 newMftChidlren
@@ -1585,7 +1586,7 @@ makeMftShortcut :: ObjectKey
                 -> Keyed (Validated CrlObject) 
                 -> MftShortcut   
 makeMftShortcut key 
-    (Validated mftObject) (Map.fromList -> nonCrlEntries) 
+    (Validated mftObject) (KeyMap.fromList -> nonCrlEntries) 
     (Keyed (Validated validCrl) crlKey) = 
   let 
     (notValidBefore, notValidAfter) = getValidityPeriod mftObject        

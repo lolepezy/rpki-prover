@@ -52,7 +52,7 @@ import           RPKI.Resources.Types
 import           RPKI.Time
 
 import           RPKI.Store.Base.Serialisation
-import           RPKI.AppTypes (WorldVersion)
+import           RPKI.AppTypes (WorldVersion, IntKey)
 
 
 -- There are two validation algorithms for RPKI tree
@@ -762,7 +762,7 @@ newtype ObjectKey = ObjectKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-newtype ArtificialKey = ArtificialKey Int64
+newtype ArtificialKey = ArtificialKey IntKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
