@@ -148,7 +148,7 @@ setupWorkerLmdbCache logger cacheDir config = do
 -- 
 compactStorageWithTmpDir :: AppContext LmdbStorage -> IO ()
 compactStorageWithTmpDir appContext@AppContext {..} = do      
-    lmdbEnv <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
+    lmdbEnv <- unEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
     let cacheDir = configValue $ config ^. #cacheDirectory
     let currentCache = cacheDir </> "current"
 
@@ -170,11 +170,14 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
                 RWEnv native -> do 
                     writeTVar n (ROEnv native)                                
                     pure native
+
                 -- this is weird, but lets just wait for it to change 
                 -- and don't make things even more weird
-                Disabled -> retry
-                -- it shouldn't happen as well, but we can work with it in principle
+                Disabled -> retry                
+
+                -- it shouldn't happen as well, but we can work with it in principle                
                 ROEnv nn -> pure nn
+                TimedOut -> retry
 
             
     let copyToNewEnvironmentAndSwap dbStats = do                          
@@ -209,7 +212,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
         
     Size lmdbFileSize <- cacheFsSize appContext 
     
-    dbStats <- fmap DB.totalStats $ lmdbGetStats appContext
+    dbStats <- DB.totalStats <$> lmdbGetStats appContext
     let Size dataSize = dbStats ^. #statKeyBytes + dbStats ^. #statValueBytes    
 
     let fileSizeMb :: Integer = fromIntegral $ lmdbFileSize `div` (1024 * 1024)
@@ -257,7 +260,7 @@ closeLmdbStorage AppContext {..} = do
 -- 
 copyLmdbEnvironment :: AppContext LmdbStorage -> FilePath -> IO ()
 copyLmdbEnvironment AppContext {..} targetLmdbPath = do         
-    currentEnv <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
+    currentEnv <- unEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
     newLmdb    <- mkLmdb targetLmdbPath config
     currentNativeEnv <- atomically $ getNativeEnv currentEnv
     newNativeEnv     <- atomically $ getNativeEnv newLmdb     
@@ -307,13 +310,13 @@ cleanupReaders :: AppContext LmdbStorage -> IO Int
 cleanupReaders AppContext {..} = do 
     -- eventually call `mdb_reader_check` and try to remove 
     -- potentially dead readers from the reader table
-    env <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
+    env <- unEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
     native <- atomically $ getNativeEnv env
     cleanReadersTable native
 
 
 lmdbGetStats :: AppContext LmdbStorage -> IO StorageStats
 lmdbGetStats AppContext {..} = do 
-    lmdbEnv   <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database    
+    lmdbEnv   <- unEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database    
     nativeEnv <- atomically $ getNativeEnv lmdbEnv
     getEnvStats nativeEnv

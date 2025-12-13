@@ -71,24 +71,18 @@ type family LmdbTxMode (m :: TxMode) :: Lmdb.Mode where
 toROTx :: Lmdb.Transaction (m :: Lmdb.Mode) -> Lmdb.Transaction 'Lmdb.ReadOnly
 toROTx = coerce
 
-class WithLmdb lmdb where
-    getEnv :: lmdb -> LmdbEnv
-
 newtype LmdbStorage = LmdbStorage { unEnv :: LmdbEnv }
-
-instance WithLmdb LmdbStorage where
-    getEnv = unEnv
 
 instance WithTx LmdbStorage where
     data Tx LmdbStorage (m :: TxMode) = LmdbTx (Lmdb.Transaction (LmdbTxMode m))
 
     readOnlyTx lmdb f = let
-        e@LmdbEnv {..} = getEnv lmdb
+        e@LmdbEnv {..} = unEnv lmdb
         in withSemaphore txSem $ do
                 nEnv <- atomically $ getNativeEnv e
                 withROTransaction nEnv (f . LmdbTx)
 
-    readWriteTx lmdb f = withTransactionWrapper (getEnv lmdb) (f . LmdbTx)
+    readWriteTx lmdb f = withTransactionWrapper (unEnv lmdb) (f . LmdbTx)
 
 
 data TxTimeout = TxTimeout
