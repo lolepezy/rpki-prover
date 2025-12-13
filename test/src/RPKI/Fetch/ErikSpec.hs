@@ -2,8 +2,6 @@
 
 module RPKI.Fetch.ErikSpec where
 
-import           Control.Monad
-
 import           RPKI.TestCommons
 import           RPKI.Fetch.ErikRelay
 import           Test.Tasty
@@ -27,7 +25,7 @@ testFetchErik = do
             fetchErik 
                 testContext 
                 worldVersion 
-                (URI "https://miso.sobornost.net/rpki/erik/index/")
+                (URI "https://miso.sobornost.net/rpki/erik/index")
                 (FQDN "ca.rg.net")
         case z of
             Left err -> HU.assertFailure $ "Failed to fetch Erik index: " <> show err
