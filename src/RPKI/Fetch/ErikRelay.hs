@@ -57,19 +57,23 @@ fetchErik
 
     doFetch downloadSemaphore =
         withDir indexDir $ \_ -> do 
-            ErikIndex {..} <- getIndex            
+            index@ErikIndex {..} <- getIndex            
+            -- TODO Verify URI is the same as the index scope`
+
+            logDebug logger [i|Erik index from #{indexUri} has #{index}.|]
             vs <- fmap mconcat $ liftIO $ pooledForConcurrentlyN 4 partitionList $ \p -> do 
                 getPartition p >>= \case 
                     (hash, Left e, vs) -> do 
                         logError logger [i|Failed to download partition #{hash}.|]
                         pure vs
 
-                    (hash, Right partition, vs) ->                    
+                    (hash, Right partition, vs) ->
                         getManifests hash partition                            
 
             embedState vs
+
             -- Now traverse all downloaded objects and load them into the storage,
-            -- the same way as it happens for rsynced repositories.
+            -- the same way it happens for rsynced repositories.
             loadObjectsFromFS appContext worldVersion (const Nothing) indexDir 
       where
     
@@ -141,6 +145,13 @@ fetchErik
             let partitionDir = indexDir </> U.firstByteStr partitionHash        
 
             fmap mconcat $ pooledForConcurrentlyN 4 manifestList $ \mle@ManifestListEntry {..} -> do
+
+                {- TODO 
+                    A client can then decide whether or not to fetch a given manifest object, 
+                    by comparing the manifestNumber and thisUpdate with what's locally cached 
+                    and what's offered by the remote relay.
+                 -}
+
                 z <- roTxT database $ \tx db -> DB.getByHash tx db hash
                 case z of 
                     Just (Located _ (MftRO mft)) -> do
