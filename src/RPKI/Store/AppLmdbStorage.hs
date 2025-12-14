@@ -255,6 +255,11 @@ closeLmdbStorage :: AppContext LmdbStorage -> IO ()
 closeLmdbStorage AppContext {..} = do 
     closeLmdb . unEnv . storage =<< readTVarIO database
 
+reopenLmdbStorage :: AppContext LmdbStorage -> IO ()
+reopenLmdbStorage AppContext {..} = do 
+    closeLmdb . unEnv . storage =<< readTVarIO database
+
+
 
 -- This is called from the worker entry point
 -- 

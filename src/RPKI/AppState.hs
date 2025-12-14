@@ -33,11 +33,6 @@ import           RPKI.RTR.Protocol
 import           RPKI.RTR.Types
 import           RPKI.Resources.Validity
 
-
-data SystemState = SystemState {
-        databaseRwTxTimedOut :: TVar Bool        
-    } deriving stock (Generic)
-
 data AppState = AppState {
         -- current world version
         world     :: TVar (Maybe WorldVersion),
@@ -73,7 +68,7 @@ data AppState = AppState {
 
         fetcheables :: TVar Fetcheables,
 
-        systemState :: SystemState
+        systemState :: TVar SystemState
         
     } deriving stock (Generic)
 
@@ -100,7 +95,7 @@ newAppState = do
         cachedBinaryRtrPdus <- newTVar mempty
         runningRsyncClients <- newTVar mempty
         fetcheables <- newTVar mempty
-        systemState <- SystemState <$> newTVar False
+        systemState <- newTVar $ SystemState False
         let readSlurm = Nothing
         pure AppState {..}
                     
@@ -158,7 +153,11 @@ updateRsyncClient message AppState {..} =
         case message of 
             AddWorker wi     -> Map.insert (wi ^. #workerPid) wi
             RemoveWorker pid -> Map.delete pid
-        
+
+updateSystemStatus :: MonadIO m => SystemStatusMessage -> AppState -> m ()           
+updateSystemStatus (SystemStatusMessage ss) AppState {..} =     
+    -- TODO Do something smarter here
+    liftIO $ atomically $ writeTVar systemState ss
 
 removeExpiredRsyncProcesses :: MonadIO m => AppState -> m [(CPid, WorkerInfo)]
 removeExpiredRsyncProcesses AppState {..} = liftIO $ do 

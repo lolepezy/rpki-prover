@@ -85,11 +85,6 @@ instance WithTx LmdbStorage where
     readWriteTx lmdb f = withTransactionWrapper (unEnv lmdb) (f . LmdbTx)
 
 
-data TxTimeout = TxTimeout
-    deriving stock (Show, Ord, Eq, Generic)
-
-instance Exception TxTimeout
-
 withTransactionWrapper :: LmdbEnv -> (Lmdb.Transaction 'Lmdb.ReadWrite -> IO b) -> IO b
 withTransactionWrapper LmdbEnv {..} f = do
     nEnv <- atomically $ do

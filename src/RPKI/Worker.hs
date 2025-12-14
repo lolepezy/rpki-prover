@@ -180,7 +180,7 @@ executeWork input exitWith_ actualWork =
             mapM_ (\w -> forkFinally w (const $ pure ())) [
                     (actualWork input writeWorkerOutput >> done ExitSuccess) 
                         `onException` 
-                    done exceptionExitCode,
+                        done exceptionExitCode,
                     dieIfParentDies done,
                     dieOfTiming done
                 ]
@@ -202,7 +202,9 @@ executeWork input exitWith_ actualWork =
     dieOfTiming done = 
         case input ^. #cpuLimit of
             Nothing       -> dieAfterTimeout done
-            Just cpuLimit -> whicheverHappensFirst (dieAfterTimeout done) (dieOutOfCpuTime cpuLimit done)
+            Just cpuLimit -> whicheverHappensFirst 
+                                (dieAfterTimeout done) 
+                                (dieOutOfCpuTime cpuLimit done)
 
     -- Time bomb. Wait for the certain timeout and then exit.
     dieAfterTimeout done = do
@@ -211,13 +213,13 @@ executeWork input exitWith_ actualWork =
         done timeoutExitCode
 
     -- Exit if the worker consumed too much CPU time
-    dieOutOfCpuTime cpuLimit done = go
+    dieOutOfCpuTime cpuLimit done = loop
       where
-        go = do 
+        loop = do 
             cpuTime <- getCpuTime
             if cpuTime > cpuLimit 
                 then done outOfCpuTimeExitCode
-                else threadDelay 1_000_000 >> go
+                else threadDelay 1_000_000 >> loop
 
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
@@ -271,6 +273,7 @@ exitKillByTypedProcess = ExitFailure (-2)
 
 workerIdStr :: WorkerId -> String
 workerIdStr (WorkerId w) = unpack w
+
 
 -- Main entry point to start a worker
 -- 

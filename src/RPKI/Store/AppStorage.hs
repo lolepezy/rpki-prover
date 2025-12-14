@@ -10,14 +10,16 @@ type AppLmdbEnv = AppContext LmdbStorage
 
 class MaintainableStorage s where
     runMaintenance  :: AppContext s -> IO ()
+    reopenStorage   :: AppContext s -> IO ()
     closeStorage    :: AppContext s -> IO ()
     cleanUpStaleTx  :: AppContext s -> IO Int
     getCacheFsSize  :: AppContext s  -> IO Size
-    getStorageStats :: AppContext s  -> IO StorageStats
+    getStorageStats :: AppContext s  -> IO StorageStats    
 
 instance MaintainableStorage LmdbStorage where
     runMaintenance  = compactStorageWithTmpDir
     closeStorage    = closeLmdbStorage
+    reopenStorage   = reopenLmdbStorage
     cleanUpStaleTx  = cleanupReaders
     getCacheFsSize  = cacheFsSize
     getStorageStats = lmdbGetStats

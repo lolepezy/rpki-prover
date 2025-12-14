@@ -7,6 +7,7 @@
 
 module RPKI.AppTypes where
     
+import           Control.Exception
 import           Control.DeepSeq
 import           Data.Int
 import           Data.Text (Text)
@@ -52,6 +53,18 @@ newtype MaxMemory = MaxMemory Int
     deriving newtype (Num, Bounded)
     deriving Semigroup via Max MaxMemory
     deriving Monoid via Max MaxMemory    
+
+data SystemState = SystemState {
+        databaseRwTxTimedOut :: Bool        
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+
+data TxTimeout = TxTimeout
+    deriving stock (Show, Ord, Eq, Generic)
+
+instance Exception TxTimeout
 
 instance Show MaxMemory where 
     show (MaxMemory m) = show (m `div` (1024*1024)) <> "mb"

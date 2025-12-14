@@ -33,6 +33,7 @@ import System.Posix.Types
 import System.Posix.Process
 import System.IO
 
+import RPKI.AppTypes
 import RPKI.Domain
 import RPKI.Util
 import RPKI.Time
@@ -91,11 +92,16 @@ data WorkerMessage = AddWorker WorkerInfo
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)                    
 
+newtype SystemStatusMessage = SystemStatusMessage SystemState
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)                    
+
 -- Messages in the queue 
 data BusMessage = LogM LogMessage 
                 | RtrLogM LogMessage 
-                | SystemM SystemMetrics
+                | SystemMetricsM SystemMetrics
                 | WorkerM WorkerMessage
+                | SystemStatusM SystemStatusMessage
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -140,10 +146,11 @@ instance Logger AppLogger where
     logLevel_ AppLogger {..}   = logLevel_ commonLogger
 
 data LogConfig = LogConfig {
-        logLevel       :: LogLevel,
-        logType        :: LogType,
-        metricsHandler :: SystemMetrics -> IO (), -- ^ what to do with incoming system metrics messages
-        workerHandler  :: WorkerMessage -> IO () -- ^ what to do with incoming worker messages
+        logLevel            :: LogLevel,
+        logType             :: LogType,
+        metricsHandler      :: SystemMetrics -> IO (), -- ^ what to do with incoming system metrics messages
+        workerHandler       :: WorkerMessage -> IO (), -- ^ what to do with incoming worker messages
+        systemStatusHadnler :: SystemStatusMessage -> IO () -- ^ what to do with incoming system status messages
     }
     deriving stock (Generic)
 
@@ -154,6 +161,7 @@ makeLogConfig :: LogLevel -> LogType -> LogConfig
 makeLogConfig logLevel logType = let 
     metricsHandler = const $ pure ()
     workerHandler = const $ pure ()
+    systemStatusHadnler = const $ pure ()
     in LogConfig {..}
 
 logError, logWarn, logInfo, logDebug :: (Logger log, MonadIO m) => log -> Text -> m ()
@@ -178,7 +186,7 @@ createLogMessage logLevel message = do
 
 pushSystem :: MonadIO m => AppLogger -> SystemMetrics -> m ()
 pushSystem logger sm = 
-    liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ SystemM sm  
+    liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ SystemMetricsM sm  
 
 registerhWorker :: MonadIO m => AppLogger -> WorkerInfo -> m ()
 registerhWorker logger wi = 
@@ -226,10 +234,12 @@ withLogger LogConfig {..} f = do
     -- Process queue messages in the main process, i.e. 
     -- output them to stdout or a separate RTR log
     let processMessageInMainProcess = \case
-            LogM logMessage    -> logRaw $ messageToText logMessage
-            RtrLogM logMessage -> logRtr $ messageToText logMessage
-            SystemM sysMetric  -> metricsHandler sysMetric
-            WorkerM workerInfo -> workerHandler workerInfo
+            LogM logMessage          -> logRaw $ messageToText logMessage
+            RtrLogM logMessage       -> logRtr $ messageToText logMessage
+            WorkerM workerInfo       -> workerHandler workerInfo
+            SystemMetricsM sysMetric -> metricsHandler sysMetric
+            SystemStatusM sysStatus  -> systemStatusHadnler sysStatus
+            
     
     let loopMain = loopReadQueue messageQueue $ \case 
             BinQE b -> 

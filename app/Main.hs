@@ -108,19 +108,15 @@ executeMainProcess cliOptions@CLIOptions{..} = do
     -- TODO This doesn't look pretty, come up with something better.
     appStateHolder <- newTVarIO Nothing
 
-    let bumpSysMetric sm = do
+    let withApp f = do 
             z <- readTVarIO appStateHolder
-            for_ z $ mergeSystemMetrics sm
+            for_ z f    
 
-    let updateWorkers wi = do
-            z <- readTVarIO appStateHolder
-            -- We only keep track of running rsync clients
-            for_ z $ updateRsyncClient wi
-
-    withLogConfig cliOptions $ \lc -> do
-        let logConfig = lc
-                & #metricsHandler .~ bumpSysMetric
-                & #workerHandler .~ updateWorkers
+    withLogConfig cliOptions $ \logConfig_ -> do
+        let logConfig = logConfig_
+                & #metricsHandler .~ withApp . mergeSystemMetrics
+                & #workerHandler .~ withApp . updateRsyncClient
+                & #systemStatusHadnler .~ withApp . updateSystemStatus
 
         -- This one modifies system metrics in AppState
         -- if appState is actually initialised
@@ -203,7 +199,7 @@ executeWorkerProcess = do
                         -- constructed when an exception will not result in the database closed. It is not good, 
                         -- but we are trying to solve the problem of interrupted RW transactions leaving the DB 
                         -- in broken/locked state, and no transactions are possible within this window.
-                        `finally` closeLmdbStorage appContext
+                        `finally` closeStorage appContext
   where    
     exec resultHandler f = resultHandler =<< execWithStats f                    
 
