@@ -140,7 +140,9 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     exitFailure
                 Right appContext -> do 
                     atomically $ writeTVar appStateHolder $ Just $ appContext ^. #appState
-                    runMainProcess `finally` closeStorage appContext
+                    void (concurrently runMainProcess monitorDb) 
+                        `finally` 
+                        closeStorage appContext
                   where
                     runMainProcess = do                                          
                         tals <- readTALs appContext
@@ -150,6 +152,11 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                                 void $ race
                                     (runHttpApi appContext)
                                     (runValidatorWorkflow appContext tals)
+
+                    monitorDb = do 
+                        
+                        pure ()
+        
 
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do

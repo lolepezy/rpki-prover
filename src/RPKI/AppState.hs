@@ -180,7 +180,8 @@ filterWithSLURM RtrPayloads {..} slurm =
 -- and things that are computed on-demand.
 cachedPduBinary :: AppState -> ProtocolVersion -> (RtrPayloads -> BS.ByteString) -> STM BS.ByteString
 cachedPduBinary appState@AppState {..} protocolVersion makeBs = do 
-    (Map.lookup protocolVersion <$> readTVar cachedBinaryRtrPdus) >>= \case
+    cached <- readTVar cachedBinaryRtrPdus
+    case Map.lookup protocolVersion cached of
         Nothing -> do            
             bs <- makeBs <$> readRtrPayloads appState 
             modifyTVar' cachedBinaryRtrPdus $ Map.insert protocolVersion bs
