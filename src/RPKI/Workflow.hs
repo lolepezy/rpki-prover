@@ -511,16 +511,16 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
             logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]
         
         -- Kill all orphan rsync processes that are still running and refusing to die
-        -- Sometimes and rsync process can leak and linger, kill the expired ones
+        -- Sometimes an rsync process can leak and linger, kill the expired ones
         removeExpiredRsyncProcesses appState >>=
-            mapM_ (\(pid, WorkerInfo {..}) -> do 
+            mapM_ (\(WorkerInfo {..}) -> do 
                 -- Run it in a separate thread, if sending the signal fails
                 -- the thread gets killed without no impact on anything else 
                 -- ever. If it's successful, we'll log a message about it
                 forkFinally 
                     (do
-                        signalProcess killProcess pid
-                        logInfo logger [i|Killed rsync client process with PID #{pid}, #{cli}, it expired at #{endOfLife}.|])             
+                        signalProcess killProcess workerPid
+                        logInfo logger [i|Killed rsync client process with PID #{workerPid}, #{cli}, it expired at #{endOfLife}.|])             
                     (logException logger [i|Exception in rsync process killer thread|])
                 )                
 
@@ -1296,3 +1296,8 @@ ignoreSync f =
         case fromException e of
             Just (_ :: SomeAsyncException) -> throwIO e
             Nothing -> pure ()
+
+
+killAllWorkers :: AppContext s -> IO ()
+killAllWorkers AppContext {..} = do
+    pure ()

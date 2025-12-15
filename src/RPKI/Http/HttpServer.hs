@@ -492,7 +492,7 @@ getSystem AppContext {..} = do
     
     let wiToDto WorkerInfo {..} = let pid = fromIntegral workerPid in WorkerInfoDto {..}
 
-    rsyncClients <- map (wiToDto . snd) . Map.toList <$> readTVarIO (appState ^. #runningRsyncClients)
+    rsyncClients <- map wiToDto <$> getRunningRsyncClients appState
 
     tals <- getTALs
     pure SystemDto {..}  

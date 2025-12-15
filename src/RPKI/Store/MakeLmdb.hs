@@ -124,9 +124,9 @@ createDatabase env logger checkAction = do
         
 
 mkLmdb :: FilePath -> Config -> IO LmdbEnv
-mkLmdb fileName config = do 
+mkLmdb directory config = do 
     nativeEnv <- initializeReadWriteEnvironment (fromIntegral mapSize) 
-                    maxReaders maxDatabases fileName
+                    maxReaders maxDatabases directory
     LmdbEnv <$> 
         newTVarIO (RWEnv nativeEnv) <*>
         newSemaphoreIO maxBottleNeck

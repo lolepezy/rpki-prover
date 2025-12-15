@@ -9,7 +9,7 @@ module RPKI.AppState where
 import           Control.Concurrent.STM    
 import           Control.DeepSeq
 import           Control.Lens hiding (filtered)
-import           Control.Monad (join)
+import           Control.Monad (join, unless)
 import           Control.Monad.IO.Class
 
 import qualified Data.ByteString                  as BS
@@ -64,7 +64,7 @@ data AppState = AppState {
         -- by the validity check
         prefixIndex :: TVar (Maybe PrefixIndex),
 
-        runningRsyncClients :: TVar (Map.Map CPid WorkerInfo),
+        runningWorkers :: TVar (Map.Map CPid WorkerInfo),
 
         fetcheables :: TVar Fetcheables,
 
@@ -93,7 +93,7 @@ newAppState = do
         system      <- newTVar (newSystemInfo now)        
         prefixIndex <- newTVar Nothing
         cachedBinaryRtrPdus <- newTVar mempty
-        runningRsyncClients <- newTVar mempty
+        runningWorkers <- newTVar mempty
         fetcheables <- newTVar mempty
         systemState <- newTVar $ SystemState False
         let readSlurm = Nothing
@@ -149,7 +149,7 @@ mergeSystemMetrics sm AppState {..} =
 
 updateRsyncClient :: MonadIO m => WorkerMessage -> AppState -> m ()           
 updateRsyncClient message AppState {..} =     
-    liftIO $ atomically $ modifyTVar' runningRsyncClients $ 
+    liftIO $ atomically $ modifyTVar' runningWorkers $ 
         case message of 
             AddWorker wi     -> Map.insert (wi ^. #workerPid) wi
             RemoveWorker pid -> Map.delete pid
@@ -159,14 +159,31 @@ updateSystemStatus (SystemStatusMessage ss) AppState {..} =
     -- TODO Do something smarter here
     liftIO $ atomically $ writeTVar systemState ss
 
-removeExpiredRsyncProcesses :: MonadIO m => AppState -> m [(CPid, WorkerInfo)]
-removeExpiredRsyncProcesses AppState {..} = liftIO $ do 
+waitForStuckDb :: AppState -> STM ()
+waitForStuckDb AppState {..} = do
+    ss <- readTVar systemState
+    unless (ss ^. #databaseRwTxTimedOut) retry
+        
+removeExpiredRsyncProcesses :: MonadIO m => AppState -> m [WorkerInfo]
+removeExpiredRsyncProcesses appState@AppState {..} = liftIO $ do 
     Now now <- thisInstant
     atomically $ do 
-        clients <- readTVar runningRsyncClients
-        let expired = filter (\(_, WorkerInfo {..}) -> endOfLife < now) $ Map.toList clients        
-        writeTVar runningRsyncClients $ foldr (\(pid, _) m -> Map.delete pid m) clients expired 
+        workers <- readTVar runningWorkers        
+        let expired = filter isRsyncClient $ Map.elems workers        
+        writeTVar runningWorkers $ foldr (\WorkerInfo {..} m -> Map.delete workerPid m) workers expired 
         pure expired  
+
+getRunningRsyncClients :: MonadIO m => AppState -> m [WorkerInfo]
+getRunningRsyncClients AppState {..} = liftIO $ do 
+    atomically $ do 
+        clients <- readTVar runningWorkers
+        pure $ Map.elems clients
+
+isRsyncClient :: WorkerInfo -> Bool
+isRsyncClient WorkerInfo {..} =
+    case workerKind of 
+        RsyncWorker -> True
+        _           -> False
 
 readRtrPayloads :: AppState -> STM RtrPayloads    
 readRtrPayloads AppState {..} = readTVar filtered

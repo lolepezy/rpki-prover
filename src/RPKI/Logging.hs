@@ -79,11 +79,18 @@ data AppLogger = AppLogger {
         rtrLogger    :: RtrLogger        
     }
 
+
 data WorkerInfo = WorkerInfo {
-        workerPid :: CPid,
-        endOfLife :: Instant,
-        cli       :: Text
+        workerPid  :: CPid,
+        endOfLife  :: Instant,
+        cli        :: Text,
+        workerKind :: WorkerKind
     }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+data WorkerKind = RsyncWorker
+                | GenericWorker
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 

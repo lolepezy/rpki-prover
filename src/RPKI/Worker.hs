@@ -169,7 +169,8 @@ executeWork :: WorkerInput
             -> IO ()
 executeWork input exitWith_ actualWork = 
     -- Check if version of the executable has changed compared to the parent.
-    -- If that's the case, bail out, it's likely we can do more harm then good
+    -- If that's the case, it usually means we are in the middle of an upgrade. 
+    -- In this case bail out, it's likely we can do more harm then good
     if input ^. #parentExecutableVersion /= thisExecutableVersion
         then 
             exitWith_ replacedExecutableExitCode

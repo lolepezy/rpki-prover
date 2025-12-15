@@ -255,11 +255,27 @@ closeLmdbStorage :: AppContext LmdbStorage -> IO ()
 closeLmdbStorage AppContext {..} = do 
     closeLmdb . unEnv . storage =<< readTVarIO database
 
+
+-- Close LMDB environment
+-- Delete lock file 
+-- Open LMDB environment again
 reopenLmdbStorage :: AppContext LmdbStorage -> IO ()
-reopenLmdbStorage AppContext {..} = do 
-    closeLmdb . unEnv . storage =<< readTVarIO database
+reopenLmdbStorage appContext@AppContext {..} = do 
 
+    closeLmdbStorage appContext
+    
+    let cacheDir = configValue $ config ^. #cacheDirectory
+    let currentCache = cacheDir </> "current"    
+    currentLinkTarget <- liftIO $ readSymbolicLink currentCache
+    files <- listDirectory currentLinkTarget
+    mapM_ removePathForcibly [ currentLinkTarget </> f | f <- files, f == "lock.mdb"]     
 
+    reopenedLmdb <- mkLmdb currentLinkTarget config
+    (newDB, _) <- createDatabase reopenedLmdb logger DontCheckVersion
+    atomically $ do
+        newNative <- getNativeEnv reopenedLmdb 
+        writeTVar (nativeEnv reopenedLmdb) (RWEnv newNative)  
+        writeTVar database newDB    
 
 -- This is called from the worker entry point
 -- 
