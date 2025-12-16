@@ -76,7 +76,7 @@ import           RPKI.Util
 import           RPKI.Time
 import           RPKI.Worker
 import           RPKI.SLURM.Types
-import           UnliftIO (pooledForConcurrentlyN)
+import           UnliftIO (pooledForConcurrentlyN, forConcurrently_)
 
 {- 
     Fully asynchronous execution.
@@ -510,19 +510,10 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
         when (cleaned > 0) $ 
             logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]
         
-        -- Kill all orphan rsync processes that are still running and refusing to die
-        -- Sometimes an rsync process can leak and linger, kill the expired ones
-        removeExpiredRsyncProcesses appState >>=
-            mapM_ (\(WorkerInfo {..}) -> do 
-                -- Run it in a separate thread, if sending the signal fails
-                -- the thread gets killed without no impact on anything else 
-                -- ever. If it's successful, we'll log a message about it
-                forkFinally 
-                    (do
-                        signalProcess killProcess workerPid
-                        logInfo logger [i|Killed rsync client process with PID #{workerPid}, #{cli}, it expired at #{endOfLife}.|])             
-                    (logException logger [i|Exception in rsync process killer thread|])
-                )                
+        -- Kill all orphan workers (including rsync client processes) that may still
+        -- be running and refusing to die. Sometimes an rsync process can leak and 
+        -- linger, kill the expired ones
+        killWorkers appContext =<< removeExpiredWorkers appState                    
 
     -- Delete local rsync mirror. The assumption here is that over time there
     -- be a lot of local copies of rsync repositories that are so old that 
@@ -1303,5 +1294,13 @@ ignoreSync f =
 
 
 killAllWorkers :: AppContext s -> IO ()
-killAllWorkers AppContext {..} = do
-    pure ()
+killAllWorkers appContext@AppContext {..} = do
+    killWorkers appContext =<< removeAllRunningWorkers appState    
+
+killWorkers :: AppContext s -> [WorkerInfo] -> IO ()
+killWorkers AppContext {..} workers = do
+    UnliftIO.forConcurrently_ workers $ \(WorkerInfo {..}) -> do 
+        r <- try $ do
+                signalProcess killProcess workerPid
+                logInfo logger [i|Killed worker process with PID #{workerPid}, #{cli}, it expired at #{endOfLife}.|]
+        logException logger [i|Exception in worker process killer thread|] r

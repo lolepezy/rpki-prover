@@ -164,26 +164,25 @@ waitForStuckDb AppState {..} = do
     ss <- readTVar systemState
     unless (ss ^. #databaseRwTxTimedOut) retry
         
-removeExpiredRsyncProcesses :: MonadIO m => AppState -> m [WorkerInfo]
-removeExpiredRsyncProcesses appState@AppState {..} = liftIO $ do 
+removeExpiredWorkers :: MonadIO m => AppState -> m [WorkerInfo]
+removeExpiredWorkers AppState {..} = liftIO $ do 
     Now now <- thisInstant
-    atomically $ do 
+    atomically $ do         
         workers <- readTVar runningWorkers        
-        let expired = filter isRsyncClient $ Map.elems workers        
+        let expired = filter (\WorkerInfo {..} -> endOfLife < now) $ Map.elems workers        
         writeTVar runningWorkers $ foldr (\WorkerInfo {..} m -> Map.delete workerPid m) workers expired 
         pure expired  
 
 getRunningWorkers :: MonadIO m => AppState -> m [WorkerInfo]
 getRunningWorkers AppState {..} = liftIO $ do 
-    atomically $ do 
-        clients <- readTVar runningWorkers
-        pure $ Map.elems clients
+    atomically $ Map.elems <$> readTVar runningWorkers
 
-isRsyncClient :: WorkerInfo -> Bool
-isRsyncClient WorkerInfo {..} =
-    case workerKind of 
-        RsyncWorker -> True
-        _           -> False
+removeAllRunningWorkers :: MonadIO m => AppState -> m [WorkerInfo]
+removeAllRunningWorkers AppState {..} = liftIO $ do 
+    atomically $ do 
+        clients <- Map.elems <$> readTVar runningWorkers
+        writeTVar runningWorkers mempty
+        pure clients
 
 readRtrPayloads :: AppState -> STM RtrPayloads    
 readRtrPayloads AppState {..} = readTVar filtered
