@@ -155,6 +155,7 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     
                     monitorDb = forever $ do 
                         atomically $ waitForStuckDb $ appContext ^. #appState
+                        logError logger "Database read-write transaction has timed out, restarting all workers and reopening storage."
                         killAllWorkers appContext
                         reopenStorage appContext
         
