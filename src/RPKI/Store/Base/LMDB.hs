@@ -82,8 +82,15 @@ instance WithTx LmdbStorage where
                 nEnv <- atomically $ getNativeEnv e
                 withROTransaction nEnv (f . LmdbTx)
 
-    readWriteTx lmdb f = withTransactionWrapper (unEnv lmdb) (f . LmdbTx)
-
+    readWriteTx lmdb f = withTransactionWrapper (unEnv lmdb) $ \tx -> do 
+        -- Re-check that the env is not timed out.
+        -- That may happen if multiple threads were waiting 
+        -- to start a writing transaction.
+        env <- readTVarIO $ nativeEnv (unEnv lmdb)
+        case env of 
+            TimedOut -> throwIO TxTimeout
+            _        -> f $ LmdbTx tx
+        
 
 withTransactionWrapper :: LmdbEnv -> (Lmdb.Transaction 'Lmdb.ReadWrite -> IO b) -> IO b
 withTransactionWrapper LmdbEnv {..} f = do
