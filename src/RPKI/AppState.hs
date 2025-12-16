@@ -163,6 +163,10 @@ waitForStuckDb :: AppState -> STM ()
 waitForStuckDb AppState {..} = do
     ss <- readTVar systemState
     unless (ss ^. #databaseRwTxTimedOut) retry
+
+setDbOperational :: AppState -> STM ()
+setDbOperational AppState {..} = do
+    modifyTVar' systemState (#databaseRwTxTimedOut .~ False)    
         
 removeExpiredWorkers :: MonadIO m => AppState -> m [WorkerInfo]
 removeExpiredWorkers AppState {..} = liftIO $ do 
