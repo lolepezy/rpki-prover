@@ -84,7 +84,8 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
                         (Timebox $ fetchConfig ^. #rrdpTimeout)                                
                         (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
 
-    wr@WorkerResult {..} <- runWorker logger workerInput arguments 
+    workerInfo <- newWorkerInfo (GenericWorker "rrdp-fetch") (fetchConfig ^. #rrdpTimeout) (U.convert $ workerIdStr workerId)
+    wr@WorkerResult {..} <- runWorker logger workerInput arguments workerInfo
     let RrdpFetchResult z = payload
     logWorkerDone logger workerId wr
     pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory

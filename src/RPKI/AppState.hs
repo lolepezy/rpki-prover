@@ -173,8 +173,8 @@ removeExpiredRsyncProcesses appState@AppState {..} = liftIO $ do
         writeTVar runningWorkers $ foldr (\WorkerInfo {..} m -> Map.delete workerPid m) workers expired 
         pure expired  
 
-getRunningRsyncClients :: MonadIO m => AppState -> m [WorkerInfo]
-getRunningRsyncClients AppState {..} = liftIO $ do 
+getRunningWorkers :: MonadIO m => AppState -> m [WorkerInfo]
+getRunningWorkers AppState {..} = liftIO $ do 
     atomically $ do 
         clients <- readTVar runningWorkers
         pure $ Map.elems clients

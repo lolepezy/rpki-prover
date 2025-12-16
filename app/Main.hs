@@ -163,7 +163,7 @@ executeWorkerProcess :: IO ()
 executeWorkerProcess = do
     input <- readWorkerInput
     let config = input ^. typed @Config    
-    let logConfig = makeLogConfig (config ^. #logLevel) WorkerLog
+    let logConfig = newLogConfig (config ^. #logLevel) WorkerLog
                     
     -- turnOffTlsValidation
 
@@ -825,7 +825,7 @@ withLogConfig CLIOptions{..} f =
                 "debug" -> run DebugL
                 other   -> hPutStrLn stderr $ "Invalid log level: " <> Text.unpack other
   where
-    run logLev = f $ makeLogConfig logLev logType
+    run logLev = f $ newLogConfig logLev logType
       where
         logType = case (rtrLogFile, worker) of 
             (Just fs, Nothing) -> MainLogWithRtr fs

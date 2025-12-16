@@ -8,12 +8,13 @@
 module RPKI.Worker where
 
 import           Control.Exception.Lifted
+import           Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 
-import           Control.Lens ((^.))
+import           Control.Lens
 
 import           Conduit
 import           Data.Text
@@ -42,7 +43,7 @@ import           RPKI.RRDP.Types
 import           RPKI.TAL
 import           RPKI.Logging
 import           RPKI.Time
-import           RPKI.Util (fmtEx, trimmed)
+import           RPKI.Util (fmtEx, trimmed, ifJustM)
 import           RPKI.SLURM.Types
 import           RPKI.Store.Base.Serialisation
 import qualified RPKI.Store.Database    as DB
@@ -282,8 +283,9 @@ runWorker :: (TheBinary r, Show r)
             => AppLogger 
             -> WorkerInput            
             -> [String] 
+            -> WorkerInfo 
             -> ValidatorT IO r
-runWorker logger workerInput extraCli = do
+runWorker logger workerInput extraCli workerInfo = do
     let executableToRun = configValue $ workerInput ^. #config . #programBinaryPath
     let worker = 
             setStdin (byteStringInput $ LBS.fromStrict $ serialise_ workerInput) $             
@@ -303,14 +305,27 @@ runWorker logger workerInput extraCli = do
     timeout = unTimebox $ workerInput ^. #workerTimeout
     workerId = workerInput ^. #workerId
 
-    waitForProcess conf f = bracket
-        (startProcess conf)
-        stopProcess
-        (\p -> (,) <$> f p <*> waitExitCode p) 
+    waitForProcess conf f = bracket start stop exec
+      where
+        start = do 
+            p <- startProcess conf
+            mpid <- getPid p
+            forM_ mpid $ \pid -> 
+                registerWorker logger $ workerInfo & #workerPid .~ pid
+            pure (mpid, p)           
+
+        stop (mpid, p) = do 
+            stopProcess p
+            forM_ mpid (deregisterhWorker logger)
+
+        exec (_, p) = (,) <$> f p <*> waitExitCode p        
 
     runIt workerConf = do   
         ((_, workerStdout), exitCode) <- 
-            liftIO $ waitForProcess workerConf $ \p -> 
+            liftIO $ waitForProcess workerConf $ \p -> do                 
+                ifJustM (getPid p) $ \pid -> 
+                    registerWorker logger $ workerInfo & #workerPid .~ pid
+
                 concurrently 
                     (runConduitRes $ getStderr p .| sinkLog logger)
                     (atomically $ getStdout p)

@@ -21,6 +21,7 @@ import Data.Bifunctor
 import Data.Foldable
 import Data.Text (Text, justifyLeft)
 
+import Data.Hourglass
 import Data.String.Interpolate.IsString
 
 import Control.Monad
@@ -90,7 +91,7 @@ data WorkerInfo = WorkerInfo {
     deriving anyclass (TheBinary)
 
 data WorkerKind = RsyncWorker
-                | GenericWorker
+                | GenericWorker Text
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -164,12 +165,18 @@ data LogConfig = LogConfig {
 data LogType = WorkerLog | MainLog | MainLogWithRtr String
     deriving stock (Eq, Ord, Show, Generic)
 
-makeLogConfig :: LogLevel -> LogType -> LogConfig
-makeLogConfig logLevel logType = let 
+newLogConfig :: LogLevel -> LogType -> LogConfig
+newLogConfig logLevel logType = let 
     metricsHandler = const $ pure ()
     workerHandler = const $ pure ()
     systemStatusHadnler = const $ pure ()
     in LogConfig {..}
+
+newWorkerInfo :: MonadIO m => WorkerKind -> Seconds -> Text -> m WorkerInfo
+newWorkerInfo workerKind timeout cli = do 
+    Now now <- thisInstant
+    let endOfLife = momentAfter now timeout
+    pure $ WorkerInfo { workerPid = 0, .. }
 
 logError, logWarn, logInfo, logDebug :: (Logger log, MonadIO m) => log -> Text -> m ()
 logError logger t = liftIO $ logMessage_ logger =<< createLogMessage ErrorL t
@@ -195,8 +202,8 @@ pushSystem :: MonadIO m => AppLogger -> SystemMetrics -> m ()
 pushSystem logger sm = 
     liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ SystemMetricsM sm  
 
-registerhWorker :: MonadIO m => AppLogger -> WorkerInfo -> m ()
-registerhWorker logger wi = 
+registerWorker :: MonadIO m => AppLogger -> WorkerInfo -> m ()
+registerWorker logger wi = 
     liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ WorkerM $ AddWorker wi
 
 deregisterhWorker :: MonadIO m => AppLogger -> CPid -> m ()

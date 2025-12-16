@@ -597,12 +597,13 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
         
         r <- runValidatorT 
                 (newScopes "validator") $ do 
-                    workerInput <- 
-                        makeWorkerInput appContext workerId
-                            ValidationParams {..}
-                            (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
-                            Nothing
-                    runWorker logger workerInput arguments
+                    let timeout = config ^. typed @ValidationConfig . #topDownTimeout
+                    workerInput <- makeWorkerInput appContext workerId
+                                    ValidationParams {..}
+                                    (Timebox timeout)
+                                    Nothing
+                    workerInfo <- newWorkerInfo (GenericWorker "validation") timeout (convert $ workerIdStr workerId)
+                    runWorker logger workerInput arguments workerInfo
 
         pure (r, workerId)
 
@@ -618,12 +619,15 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
                     rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerMemoryMb) ]
         
         r <- runValidatorT             
-                (newScopes "cache-clean-up") $ do 
+                (newScopes "cache-clean-up") $ do
+                    let timeout = 300
                     workerInput <- makeWorkerInput appContext workerId
                                         (CacheCleanupParams worldVersion)
-                                        (Timebox 300)
+                                        (Timebox timeout)
                                         Nothing
-                    runWorker logger workerInput arguments                                                                   
+                    
+                    workerInfo <- newWorkerInfo (GenericWorker "cache-clean-up") timeout (convert $ workerIdStr workerId)
+                    runWorker logger workerInput arguments workerInfo
         pure (r, workerId)                            
 
 -- To be called by the validation worker process

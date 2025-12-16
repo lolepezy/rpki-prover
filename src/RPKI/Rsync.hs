@@ -60,7 +60,6 @@ import           System.Exit
 import           System.IO
 import           System.FilePath
 import           System.Process.Typed
-import           System.Posix.Process
 
 import qualified Streaming.Prelude                as S
 
@@ -113,8 +112,11 @@ runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion reposito
                         (RsyncFetchParams vp fetchConfig repository worldVersion)                        
                         (Timebox $ fetchConfig ^. #rsyncTimeout)
                         (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
+    
+    workerInfo <- newWorkerInfo RsyncWorker (fetchConfig ^. #rsyncTimeout) (U.convert $ workerIdStr workerId)
 
-    wr@WorkerResult {..} <- runWorker logger workerInput arguments
+    wr@WorkerResult {..} <- runWorker logger workerInput arguments workerInfo
+
     let RsyncFetchResult z = payload        
     logWorkerDone logger workerId wr    
     pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory
@@ -205,14 +207,17 @@ readRsyncProcess logger fetchConfig pc textual = do
     Now now <- thisInstant
     let endOfLife = momentAfter now (fetchConfig ^. #rsyncTimeout)
     liftIO $ withProcessTerm pc' $ \p -> do 
-        pid <- getProcessID        
-        registerhWorker logger $ WorkerInfo pid endOfLife textual RsyncWorker
+        mPid <- getPid p
+        forM_ mPid $ \pid -> 
+            registerWorker logger $ WorkerInfo pid endOfLife textual RsyncWorker
+
         z <- atomically $ (,,)
             <$> waitExitCodeSTM p
             <*> getStdout p
             <*> getStderr p
 
-        deregisterhWorker logger pid
+        forM_ mPid $ \pid -> 
+            deregisterhWorker logger pid
 
         pure z
   where

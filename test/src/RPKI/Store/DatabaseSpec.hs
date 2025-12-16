@@ -583,7 +583,7 @@ withDB :: (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> TestTree) -> TestTree
 withDB = withResource (makeLmdbStuff createLmdb) releaseLmdb
   where
     createLmdb lmdbEnv = 
-        withLogger (makeLogConfig defaultsLogLevel MainLog) $ \logger -> 
+        withLogger (newLogConfig defaultsLogLevel MainLog) $ \logger -> 
             fst <$> Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
 
 

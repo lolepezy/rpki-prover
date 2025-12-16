@@ -310,13 +310,14 @@ runCopyWorker appContext@AppContext {..} dbtats targetLmdbPath = do
 
     (z, vs) <- runValidatorT 
                 (newScopes "lmdb-compaction-worker") $ do 
+                     -- 30 minutes should be enough even for a huge cache on a very slow disk    
+                    let timeout = Seconds $ 30 * 60
                     workerInput <- makeWorkerInput appContext workerId
-                                        (CompactionParams targetLmdbPath)
-                                        -- timebox it to 30 minutes, it should be enough 
-                                        -- even for a huge cache on a very slow disk
-                                        (Timebox $ Seconds $ 30 * 60)
+                                        (CompactionParams targetLmdbPath)                                        
+                                        (Timebox timeout)
                                         Nothing
-                    runWorker logger workerInput arguments
+                    workerInfo <- newWorkerInfo (GenericWorker "lmdb-compaction") timeout (convert $ workerIdStr workerId)
+                    runWorker logger workerInput arguments workerInfo
     case z of 
         Left e  -> do 
             let message = [i|Failed to run compaction worker: #{e}, validations: #{vs}.|]
