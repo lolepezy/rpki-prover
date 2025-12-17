@@ -11,7 +11,7 @@
 module RPKI.Store.DatabaseSpec where
 
 import           Control.Exception.Lifted
-
+import           Control.Concurrent (threadDelay)
 import           Control.Lens                     
 import           Control.Monad
 import           Control.Monad.Reader
@@ -23,6 +23,7 @@ import qualified Data.Map.Strict                   as Map
 import           Data.Proxy
 import qualified Data.Set as Set
 import qualified Data.Text                         as Text
+import           Data.Generics.Product (HasField)
 
 import           System.Directory
 import           System.IO.Temp
@@ -46,6 +47,7 @@ import           RPKI.Store.Base.Map               as M
 import           RPKI.Store.Base.SafeMap           as SM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
+import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Database    (DB(..))
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
@@ -56,10 +58,9 @@ import           RPKI.Time
 import           RPKI.Util
 
 import           RPKI.RepositorySpec
+import           RPKI.TestCommons
+import           RPKI.Store.AppStorage
 
-import Data.Generics.Product (HasField)
-import Control.Concurrent (threadDelay)
-import RPKI.Store.Base.Serialisation (serialise_)
 
 
 databaseGroup :: TestTree
@@ -69,6 +70,7 @@ databaseGroup = testGroup "LMDB storage tests"
         repositoryStoreGroup,
         versionStoreGroup,
         txGroup,
+        dbGroup,
         mapGroup
     ]
 
@@ -100,6 +102,12 @@ txGroup = testGroup "App transaction test"
     [
         ioTestCase "Should rollback App transactions properly" shouldRollbackAppTx,        
         ioTestCase "Should preserve state from StateT in transactions" shouldPreserveStateInAppTx
+    ]
+
+dbGroup :: TestTree
+dbGroup = testGroup "App database test"
+    [
+        HU.testCase "Should reopen database without issues" shouldReopenDatabase        
     ]
 
 mapGroup :: TestTree
@@ -572,6 +580,12 @@ shouldProcessSafeMapProperly io = do
     values3 <- roTx z $ \tx -> SM.values tx z
     HU.assertEqual "SafeMap.values is wrong 3" values3 []    
     
+
+shouldReopenDatabase :: HU.Assertion
+shouldReopenDatabase = do 
+    withTestContext $ \appConext -> do
+        reopenStorage appConext
+
 
 stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> metric
 stripTime = #totalTimeMs .~ TimeMs 0
