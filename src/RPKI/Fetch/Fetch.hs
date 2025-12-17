@@ -7,7 +7,7 @@
 {-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE StrictData         #-}
 
-module RPKI.Fetch where
+module RPKI.Fetch.Fetch where
 
 import           Control.Concurrent              as Conc
 import           Control.Concurrent.Async
@@ -46,7 +46,7 @@ import           RPKI.Time
 import           RPKI.Parallel
 import           RPKI.Util                       
 import           RPKI.Rsync
-import           RPKI.RRDP.Http
+import           RPKI.Fetch.Http
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
 

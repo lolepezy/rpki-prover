@@ -52,10 +52,19 @@ mkHash = Hash . BSS.toShort
 
 unhex :: BS.ByteString -> Maybe BS.ByteString
 unhex hexed = either (const Nothing) Just $ Hex.decode hexed    
+{-# INLINE unhex #-}
 
 hex :: BS.ByteString -> BS.ByteString
 hex = Hex.encode    
 {-# INLINE hex #-}
+
+hashHex :: Hash -> BS.ByteString
+hashHex (Hash h) = Hex.encode $ BSS.fromShort h 
+{-# INLINE hashHex #-}
+
+hashAsBase64 :: Hash -> BS.ByteString
+hashAsBase64 (Hash h) = B64.encodeBase64' $ BSS.fromShort h
+{-# INLINE hashAsBase64 #-}
 
 class ConvertibleAsSomethingString s1 s2 where
     convert :: s1 -> s2
@@ -95,12 +104,15 @@ removeSpaces = C.filter (not . isSpace)
 isSpace_ :: Word8 -> Bool
 isSpace_ = isSpace . chr . fromEnum
 
+{-# INLINE fmtEx #-}
 fmtEx :: SomeException -> Text
 fmtEx = Text.pack . show
 
+{-# INLINE fmtGen #-}
 fmtGen :: Show a => a -> Text
 fmtGen = Text.pack . show
 
+{-# INLINE toNatural #-}
 toNatural :: Int -> Maybe Natural 
 toNatural i | i > 0     = Just (fromIntegral i :: Natural)
             | otherwise = Nothing
@@ -177,3 +189,6 @@ fmtLocations = mconcat .
 
 parseWorldVersion :: Text -> Either Text WorldVersion
 parseWorldVersion t = WorldVersion <$> first Text.pack (readEither $ Text.unpack t)
+
+firstByteStr :: ConvertibleAsSomethingString BS.ByteString s => Hash -> s
+firstByteStr (Hash h) = convert $ hex $ BSS.fromShort $ BSS.take 2 h

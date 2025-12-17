@@ -138,6 +138,7 @@ instance ToSchema Config
 instance ToSchema Parallelism
 instance ToSchema RsyncConf
 instance ToSchema RrdpConf
+instance ToSchema ErikConf
 instance ToSchema ValidationConfig
 instance ToSchema SystemConfig
 instance ToSchema HttpApiConfig
@@ -179,6 +180,7 @@ instance ToSchema StorageError
 instance ToSchema RsyncError
 instance ToSchema RrdpError where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToSchema ErikError
 instance ToSchema TALError
 instance ToSchema PrefixesAndAsns
 

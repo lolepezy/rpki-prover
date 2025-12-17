@@ -5,7 +5,7 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE QuasiQuotes         #-}
 
-module RPKI.RRDP.Http where
+module RPKI.Fetch.Http where
 
 import Control.Exception.Lifted
 import Control.Lens
@@ -67,22 +67,18 @@ instance Blob BS.ByteString where
 -- so it's safe to use them after returning from this function.
 --
 downloadToBS :: (Blob bs, MonadIO m) => 
-                Config ->
+                FilePath ->
                 URI -> 
                 Maybe ETag ->
+                Size ->
                 m (bs, Size, HttpStatus, Maybe ETag)
-downloadToBS config uri@(URI u) eTag = liftIO $ do    
+downloadToBS tmpDir uri@(URI u) eTag maxSize = liftIO $ do    
     let tmpFileName = U.convert $ U.normalizeUri u
-    let tmpDir = configValue $ config ^. #tmpDirectory
+    -- let tmpDir = configValue $ config ^. #tmpDirectory
     withTempFile tmpDir tmpFileName $ \name fd -> do
         ((_, size), status, newETag) <- 
                 downloadConduit uri eTag fd 
-                    (sinkGenSize 
-                        uri
-                        (config ^. typed @RrdpConf . #maxSize)
-                        ()
-                        (\_ _ -> ()) 
-                        id)
+                    (sinkGenSize uri maxSize () (\_ _ -> ()) id)
         hClose fd                    
         content <- readB name size
         pure (content, size, status, newETag)
@@ -91,27 +87,23 @@ downloadToBS config uri@(URI u) eTag = liftIO $ do
 -- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
 -- streaming it to the file.
 downloadHashedBS :: (Blob bs, MonadIO m) => 
-                    Config ->
+                    FilePath ->
                     URI -> 
                     Maybe ETag ->
                     Hash -> 
+                    Size -> 
                     (Hash -> Either e (bs, Size, HttpStatus, Maybe ETag)) ->
                     m (Either e (bs, Size, HttpStatus, Maybe ETag))
-downloadHashedBS config uri@(URI u) eTag expectedHash hashMishmatch = liftIO $ do
+downloadHashedBS tmpDir uri@(URI u) eTag expectedHash maxSize hashMishmatch = liftIO $ do
     -- Download xml file to a temporary file and read it as a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
     let tmpFileName = U.convert $ U.normalizeUri u
-    let tmpDir = configValue $ config ^. #tmpDirectory  
+    -- let tmpDir = configValue $ config ^. #tmpDirectory      
     withTempFile tmpDir tmpFileName $ \name fd -> do
         ((actualHash, size), status, newETag) <- 
                 downloadConduit uri eTag fd 
-                    (sinkGenSize                     
-                       uri    
-                        (config ^. typed @RrdpConf . #maxSize)
-                        S256.init
-                        S256.update
-                        (U.mkHash . S256.finalize))
+                    (sinkGenSize uri maxSize S256.init S256.update (U.mkHash . S256.finalize))
         if actualHash /= expectedHash 
             then pure $! hashMishmatch actualHash
             else do
@@ -126,12 +118,15 @@ downloadRpkiObject :: AppContext s ->
                     FetchConfig ->             
                     RrdpURL ->             
                     ValidatorT IO RpkiObject
-downloadRpkiObject appContext _ uri = do
+downloadRpkiObject AppContext {..} _ uri = do
+    let tmpDir = configValue $ config ^. #tmpDirectory
+    let maxSize = config ^. typed @RrdpConf . #maxSize
     (content, _, _, _) <- fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
                             downloadToBS 
-                            (appContext ^. typed @Config) 
+                            tmpDir 
                             (getURL uri) 
                             Nothing
+                            maxSize
                         
     vHoist $ readObject (RrdpU uri) content
 
@@ -145,6 +140,46 @@ downloadToFile uri file limit = liftIO $ do
     fmap (\(_, s, _) -> s) $ withFile file WriteMode $ \fd -> do 
         downloadConduit uri Nothing fd 
             (sinkGenSize uri limit () (\_ _ -> ()) id) 
+
+-- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
+-- streaming it to the file.
+downloadToFileHashed :: (Blob bs, MonadIO m) => 
+                    URI -> 
+                    FilePath ->                    
+                    Hash -> 
+                    Size -> 
+                    (Hash -> Either e (bs, Size, HttpStatus)) ->
+                    m (Either e (bs, Size, HttpStatus))
+downloadToFileHashed uri file expectedHash maxSize hashMishmatch = liftIO $
+    withFile file WriteMode $ \fd -> do 
+        ((actualHash, size), status, _) <- 
+                downloadConduit uri Nothing fd 
+                    (sinkGenSize uri maxSize S256.init S256.update (U.mkHash . S256.finalize))
+        if actualHash /= expectedHash 
+            then pure $! hashMishmatch actualHash
+            else do
+                hClose fd
+                content <- readB file size
+                pure $ Right (content, size, status)
+                
+
+downloadToFileHashed_ :: MonadIO m => 
+                        URI -> 
+                        FilePath ->                    
+                        Hash -> 
+                        Size -> 
+                        (Hash -> Either e (Size, HttpStatus)) ->
+                        m (Either e (Size, HttpStatus))
+downloadToFileHashed_ uri file expectedHash maxSize hashMishmatch = liftIO $
+    withFile file WriteMode $ \fd -> do 
+        ((actualHash, size), status, _) <- 
+                downloadConduit uri Nothing fd 
+                    (sinkGenSize uri maxSize S256.init S256.update (U.mkHash . S256.finalize))
+        if actualHash /= expectedHash 
+            then pure $! hashMishmatch actualHash
+            else do
+                hClose fd                
+                pure $ Right (size, status)
 
 
 lazyFsRead :: FilePath -> IO LBS.ByteString

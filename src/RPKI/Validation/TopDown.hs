@@ -56,7 +56,7 @@ import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
-import           RPKI.Fetch
+import           RPKI.Fetch.Fetch
 import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Logging
@@ -1011,7 +1011,7 @@ validateCaNoFetch
     -- Check manifest entries as a whole, without doing anything 
     -- with the objects they are pointing to.    
     validateMftEntries mft crlHash = do
-        let mftChildren = mftEntries $ getCMSContent $ cmsPayload mft
+        let mftChildren = getMftChildren mft
         when (null mftChildren) $
             vError ZeroManifestEntries        
 
@@ -1069,8 +1069,8 @@ validateCaNoFetch
                                 getParsedObject tx db key $ 
                                     vError $ ManifestEntryDoesn'tExist hash' filename
 
-        -- The type of the object that is deserialised doesn't correspond 
-        -- to the file extension on the manifest
+        -- The type of the object that is deserialised must 
+        -- correspond to the file extension on the manifest
         let realObjectType = getRpkiObjectType $ ro ^. #object
 
         let complain = vWarn $ ManifestEntryHasWrongFileType hash' filename realObjectType

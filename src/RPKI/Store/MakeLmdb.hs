@@ -77,7 +77,7 @@ createDatabase env logger checkAction = do
     doCreateDb = do 
         sequences        <- newSMap
         let keys = Sequence "object-key" sequences
-        taStore          <- TAStore <$> newSafeMap        
+        taStore          <- TAStore <$> newSafeMap
         validationsStore <- ValidationsStore <$> newSMap
         roaStore         <- RoaStore <$> newSMap
         splStore         <- SplStore <$> newSMap
@@ -87,6 +87,7 @@ createDatabase env logger checkAction = do
         versionStore     <- VersionStore <$> newSMap
         metricStore      <- MetricStore <$> newSMap
         slurmStore       <- SlurmStore <$> newSMap
+        erikStore        <- ErikStore <$> newSafeMap <*> newSMap
         jobStore         <- JobStore <$> newSMap        
         metadataStore    <- MetadataStore <$> newSMap          
         repositoryStore  <- createRepositoryStore
@@ -109,8 +110,8 @@ createDatabase env logger checkAction = do
             originals          <- newSMap
             pure RpkiObjectStore {..}
             
-        createRepositoryStore = 
-            RepositoryStore <$> newSafeMap <*> newSafeMap <*> newSafeMap <*> newSafeMap
+        createRepositoryStore = RepositoryStore <$> 
+            newSafeMap <*> newSafeMap <*> newSafeMap <*> newSafeMap
         
         lmdb = LmdbStorage env
 
