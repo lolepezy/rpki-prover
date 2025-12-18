@@ -175,7 +175,7 @@ fetchRepository
                 logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)
             (do 
-                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{totalTimeout}s.|]
+                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{totalTimeout}.|]
                 trace WorkerTimeoutTrace
                 appError $ RsyncE $ RsyncDownloadTimeout totalTimeout)        
           
