@@ -217,7 +217,7 @@ readRsyncProcess logger fetchConfig pc textual = do
             <*> getStderr p
 
         forM_ mPid $ \pid -> 
-            deregisterhWorker logger pid
+            deregisterWorker logger pid
 
         pure z
   where

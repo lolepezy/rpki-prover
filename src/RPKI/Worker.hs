@@ -43,7 +43,7 @@ import           RPKI.RRDP.Types
 import           RPKI.TAL
 import           RPKI.Logging
 import           RPKI.Time
-import           RPKI.Util (fmtEx, trimmed, ifJustM)
+import           RPKI.Util (fmtEx, trimmed)
 import           RPKI.SLURM.Types
 import           RPKI.Store.Base.Serialisation
 import qualified RPKI.Store.Database    as DB
@@ -316,16 +316,13 @@ runWorker logger workerInput extraCli workerInfo = do
 
         stop (mpid, p) = do 
             stopProcess p
-            forM_ mpid (deregisterhWorker logger)
+            forM_ mpid (deregisterWorker logger)
 
         exec (_, p) = (,) <$> f p <*> waitExitCode p        
 
     runIt workerConf = do   
         ((_, workerStdout), exitCode) <- 
-            liftIO $ waitForProcess workerConf $ \p -> do                 
-                ifJustM (getPid p) $ \pid -> 
-                    registerWorker logger $ workerInfo & #workerPid .~ pid
-
+            liftIO $ waitForProcess workerConf $ \p ->
                 concurrently 
                     (runConduitRes $ getStderr p .| sinkLog logger)
                     (atomically $ getStdout p)

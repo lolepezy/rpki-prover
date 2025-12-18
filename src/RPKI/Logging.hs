@@ -206,8 +206,8 @@ registerWorker :: MonadIO m => AppLogger -> WorkerInfo -> m ()
 registerWorker logger wi = 
     liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ WorkerM $ AddWorker wi
 
-deregisterhWorker :: MonadIO m => AppLogger -> CPid -> m ()
-deregisterhWorker logger pid = 
+deregisterWorker :: MonadIO m => AppLogger -> CPid -> m ()
+deregisterWorker logger pid = 
     liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ WorkerM $ RemoveWorker pid
 
 logBytes :: AppLogger -> BS.ByteString -> IO ()
