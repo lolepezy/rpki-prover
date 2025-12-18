@@ -583,8 +583,8 @@ shouldProcessSafeMapProperly io = do
 
 shouldReopenDatabase :: HU.Assertion
 shouldReopenDatabase = do 
-    withTestContext $ \appConext -> do
-        reopenStorage appConext
+    withTestContext $ \appContext -> do
+        reopenStorage appContext
 
 
 stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> metric
