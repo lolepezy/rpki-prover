@@ -158,7 +158,7 @@ data LogConfig = LogConfig {
         logType             :: LogType,
         metricsHandler      :: SystemMetrics -> IO (), -- ^ what to do with incoming system metrics messages
         workerHandler       :: WorkerMessage -> IO (), -- ^ what to do with incoming worker messages
-        systemStatusHadnler :: SystemStatusMessage -> IO () -- ^ what to do with incoming system status messages
+        systemStatusHandler :: SystemStatusMessage -> IO () -- ^ what to do with incoming system status messages
     }
     deriving stock (Generic)
 
@@ -169,7 +169,7 @@ newLogConfig :: LogLevel -> LogType -> LogConfig
 newLogConfig logLevel logType = let 
     metricsHandler = const $ pure ()
     workerHandler = const $ pure ()
-    systemStatusHadnler = const $ pure ()
+    systemStatusHandler = const $ pure ()
     in LogConfig {..}
 
 newWorkerInfo :: MonadIO m => WorkerKind -> Seconds -> Text -> m WorkerInfo
@@ -252,7 +252,7 @@ withLogger LogConfig {..} f = do
             RtrLogM logMessage       -> logRtr $ messageToText logMessage
             WorkerM workerInfo       -> workerHandler workerInfo
             SystemMetricsM sysMetric -> metricsHandler sysMetric
-            SystemStatusM sysStatus  -> systemStatusHadnler sysStatus
+            SystemStatusM sysStatus  -> systemStatusHandler sysStatus
             
     
     let loopMain = loopReadQueue messageQueue $ \case 

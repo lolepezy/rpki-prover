@@ -116,7 +116,7 @@ executeMainProcess cliOptions@CLIOptions{..} = do
         let logConfig = logConfig_
                 & #metricsHandler .~ withApp . mergeSystemMetrics
                 & #workerHandler .~ withApp . updateRsyncClient
-                & #systemStatusHadnler .~ withApp . updateSystemStatus
+                & #systemStatusHandler .~ withApp . updateSystemStatus
 
         -- This one modifies system metrics in AppState
         -- if appState is actually initialised
