@@ -1299,7 +1299,7 @@ killAllWorkers appContext@AppContext {..} = do
 
 killWorkers :: AppContext s -> [WorkerInfo] -> IO ()
 killWorkers AppContext {..} workers = do
-    UnliftIO.forConcurrently_ workers $ \(WorkerInfo {..}) -> do 
+    UnliftIO.forConcurrently_ workers $ \WorkerInfo {..} -> do 
         r <- try $ do
                 signalProcess killProcess workerPid
                 logInfo logger [i|Killed worker process with PID #{workerPid}, #{cli}, it expired at #{endOfLife}.|]
