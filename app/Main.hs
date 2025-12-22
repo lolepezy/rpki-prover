@@ -169,7 +169,7 @@ executeWorkerProcess = do
     -- turnOffTlsValidation
 
     appContextRef <- newTVarIO Nothing
-    let onExit exitCode = do
+    let onExit exitCode = do            
             readTVarIO appContextRef >>= maybe (pure ()) closeStorage
             exitWith exitCode
 
@@ -204,11 +204,19 @@ executeWorkerProcess = do
                                 CacheCleanupParams {..} -> exec resultHandler $
                                     CacheCleanupResult <$> runCacheCleanup appContext worldVersion
                     actuallyExecuteWork
-                        -- There's a short window between opening LMDB and not yet having AppContext 
-                        -- constructed when an exception will not result in the database closed. It is not good, 
-                        -- but we are trying to solve the problem of interrupted RW transactions leaving the DB 
-                        -- in broken/locked state, and no transactions are possible within this window.
-                        `finally` closeStorage appContext
+                        `catches` [
+                            Handler (\(_ :: TxTimeout) -> do                    
+                                let databaseRwTxTimedOut = True
+                                pushSystemStatus logger $ SystemStatusMessage $ SystemState {..}
+                            ),
+                            Handler $ \(_ :: SomeException) ->
+                                -- There's a short window between opening LMDB and not yet having AppContext 
+                                -- constructed when an exception will not result in the database closed. It is not good, 
+                                -- but we are trying to solve the problem of interrupted RW transactions leaving the DB 
+                                -- in broken/locked state, and no transactions are possible within this window.                                
+                                closeStorage appContext
+                        ]
+                        
   where    
     exec resultHandler f = resultHandler =<< execWithStats f                    
 

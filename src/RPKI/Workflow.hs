@@ -545,10 +545,9 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
         exec `catches` [
                 Handler $ \(AppException seriousProblem) ->
                     die [i|Something really bad happened: #{seriousProblem}, exiting.|],
-                Handler (\(_ :: TxTimeout) -> do
-                    -- Transaction timeout means we have to 
-                    -- re-open the DB
-                    pure ()
+                Handler (\(_ :: TxTimeout) -> do                    
+                    let databaseRwTxTimedOut = True
+                    pushSystemStatus logger $ SystemStatusMessage $ SystemState {..}
                 ),
                 Handler $ \(_ :: AsyncCancelled) ->
                     die [i|Interrupted with Ctrl-C, exiting.|],

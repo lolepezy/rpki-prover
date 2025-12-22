@@ -210,6 +210,10 @@ deregisterWorker :: MonadIO m => AppLogger -> CPid -> m ()
 deregisterWorker logger pid = 
     liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ WorkerM $ RemoveWorker pid
 
+pushSystemStatus :: MonadIO m => AppLogger -> SystemStatusMessage -> m ()
+pushSystemStatus logger sm = 
+    liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ SystemStatusM sm  
+
 logBytes :: AppLogger -> BS.ByteString -> IO ()
 logBytes logger bytes = 
     atomically $ writeCQueue (getQueue logger) $ BinQE bytes             
