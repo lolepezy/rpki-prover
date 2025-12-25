@@ -461,7 +461,7 @@ instance Arbitrary RsyncForest where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RsyncNodeNormal where
+instance Arbitrary (RsyncTree RepositoryMeta) where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
