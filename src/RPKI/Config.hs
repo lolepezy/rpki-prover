@@ -59,6 +59,12 @@ data FetchConfig = FetchConfig {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+data StorageConfig = StorageConfig {
+        writeTransactionTimeout :: Seconds
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)    
+
 data Config = Config {        
         programBinaryPath         :: ApiSecured FilePath,
         rootDirectory             :: ApiSecured FilePath,
@@ -74,6 +80,7 @@ data Config = Config {
         systemConfig              :: SystemConfig,
         httpApiConf               :: HttpApiConfig,
         rtrConfig                 :: Maybe RtrConfig,
+        storageConfig             :: StorageConfig,
         cacheCleanupInterval      :: Seconds,
         shortLivedCacheLifeTime   :: Seconds,
         longLivedCacheLifeTime    :: Seconds,
@@ -266,6 +273,9 @@ defaultConfig = Config {
         cleanupWorkerMemoryMb    = 512
     },
     rtrConfig                 = Nothing,
+    storageConfig = StorageConfig {
+        writeTransactionTimeout = 5 * minutes
+    },
     cacheCleanupInterval      = 6 * hours,    
     versionNumberToKeep       = 3,
     storageCompactionInterval = 5 * days,

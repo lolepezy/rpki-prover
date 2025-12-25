@@ -55,11 +55,11 @@ withTestContext f = do
                     setupLmdbCache Reset logger cacheDir config
 
         appState <- newAppState
-        database <- newTVarIO =<< makeLmdb logger lmdbEnv
+        database <- newTVarIO =<< makeLmdb logger lmdbEnv config 
         let executableVersion = thisExecutableVersion
         f AppContext {             
                 ..
             }        
   where
-    makeLmdb logger lmdbEnv = do
-        fst <$> Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion 
+    makeLmdb logger lmdbEnv config = do
+        fst <$> Lmdb.createDatabase lmdbEnv logger config Lmdb.DontCheckVersion 

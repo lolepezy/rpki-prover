@@ -362,7 +362,9 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                     cached
                     config
 
-    (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
+    (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ 
+                Lmdb.createDatabase lmdbEnv logger config Lmdb.CheckVersion
+
     database <- liftIO $ newTVarIO db    
     
     let executableVersion = thisExecutableVersion
@@ -551,7 +553,8 @@ createWorkerAppContext config logger = do
                     (configValue $ config ^. #cacheDirectory)
                     config
 
-    (db, _) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
+    (db, _) <- fromTry (InitE . InitError . fmtEx) $ 
+                Lmdb.createDatabase lmdbEnv logger config Lmdb.DontCheckVersion
 
     appState <- createAppState logger (configValue $ config ^. #localExceptions)
     database <- liftIO $ newTVarIO db
@@ -623,7 +626,8 @@ createVerifierContext cliOptions logger = do
     let config = defaultConfig
     lmdbEnv <- setupWorkerLmdbCache logger cached config
 
-    (db, _) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
+    (db, _) <- fromTry (InitE . InitError . fmtEx) $ 
+                Lmdb.createDatabase lmdbEnv logger config Lmdb.DontCheckVersion
 
     appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db

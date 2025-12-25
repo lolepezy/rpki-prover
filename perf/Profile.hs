@@ -91,7 +91,7 @@ createAppContext logger = do
     lmdbEnv <- setupLmdbCache UseExisting logger cached config
 
     (db, _) <- fromTry (InitE . InitError . fmtEx) $
-                        Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
+                        Lmdb.createDatabase lmdbEnv logger config Lmdb.DontCheckVersion
 
     -- clean up tmp directory if it's not empty
     cleanDir tmpd

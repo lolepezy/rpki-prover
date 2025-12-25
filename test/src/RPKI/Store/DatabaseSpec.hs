@@ -24,6 +24,7 @@ import           Data.Proxy
 import qualified Data.Set as Set
 import qualified Data.Text                         as Text
 import           Data.Generics.Product (HasField)
+import           Data.Hourglass
 
 import           System.Directory
 import           System.IO.Temp
@@ -439,8 +440,8 @@ shouldRollbackAppTx :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
 shouldRollbackAppTx io = do  
     ((_, env), _) <- io
 
-    let storage' = LmdbStorage env
-    z :: SMap "test" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
+    let storage' = LmdbStorage env (Seconds 120)
+    z :: SMap "test" LmdbStorage Int String <- SMap storage' <$> createLmdbStore storage'
 
     void $ runValidatorT (newScopes "bla") $ DB.rwAppTx storage' $ \tx -> do
         liftIO $ M.put tx z 1 "aa"
@@ -472,8 +473,8 @@ shouldPreserveStateInAppTx :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Ass
 shouldPreserveStateInAppTx io = do  
     ((_, env), DB {..}) <- io
 
-    let storage' = LmdbStorage env
-    z :: SMap "test-state" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
+    let storage' = LmdbStorage env (Seconds 120)
+    z :: SMap "test-state" LmdbStorage Int String <- SMap storage' <$> createLmdbStore storage'
 
     let addedObject = updateMetric @RrdpMetric @_ (#added %~ Map.unionWith (+) (Map.singleton (Just CER) 1))
 
@@ -518,10 +519,10 @@ shouldProcessSafeMapProperly :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.A
 shouldProcessSafeMapProperly io = do    
     ((_, env), _) <- io
 
-    let storage' = LmdbStorage env
+    let storage' = LmdbStorage env (Seconds 120)
     z :: SM.SafeMap "test-state" LmdbStorage Text.Text String <- 
-                SafeMap <$> (SMap storage' <$> createLmdbStore env) <*> 
-                            (SMap storage' <$> createLmdbStore env)
+                SafeMap <$> (SMap storage' <$> createLmdbStore storage') <*> 
+                            (SMap storage' <$> createLmdbStore storage') <*> pure 511
 
     let short = "short-key" :: Text.Text
     let long = Text.replicate 600 "long-key-part-" :: Text.Text   
@@ -598,7 +599,7 @@ withDB = withResource (makeLmdbStuff createLmdb) releaseLmdb
   where
     createLmdb lmdbEnv = 
         withLogger (newLogConfig defaultsLogLevel MainLog) $ \logger -> 
-            fst <$> Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
+            fst <$> Lmdb.createDatabase lmdbEnv logger defaultConfig Lmdb.DontCheckVersion
 
 
 ioTestCase :: TestName -> (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion) -> TestTree

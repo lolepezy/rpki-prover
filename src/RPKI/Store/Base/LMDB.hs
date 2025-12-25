@@ -18,6 +18,8 @@ import Control.Exception
 import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
 import Data.Coerce (coerce)
+import           Data.Hourglass         
+
 
 import RPKI.Store.Base.Storable
 import RPKI.Store.Base.Storage
@@ -71,29 +73,32 @@ type family LmdbTxMode (m :: TxMode) :: Lmdb.Mode where
 toROTx :: Lmdb.Transaction (m :: Lmdb.Mode) -> Lmdb.Transaction 'Lmdb.ReadOnly
 toROTx = coerce
 
-newtype LmdbStorage = LmdbStorage { unEnv :: LmdbEnv }
+data LmdbStorage = LmdbStorage { 
+        env     :: LmdbEnv,
+        timeout :: Seconds
+    }
 
 instance WithTx LmdbStorage where
     data Tx LmdbStorage (m :: TxMode) = LmdbTx (Lmdb.Transaction (LmdbTxMode m))
 
-    readOnlyTx lmdb f = let
-        e@LmdbEnv {..} = unEnv lmdb
+    readOnlyTx LmdbStorage {..} f = let
+        e@LmdbEnv {..} = env
         in withSemaphore txSem $ do
                 nEnv <- atomically $ getNativeEnv e
                 withROTransaction nEnv (f . LmdbTx)
 
-    readWriteTx lmdb f = withTransactionWrapper (unEnv lmdb) $ \tx -> do 
+    readWriteTx lmdb@LmdbStorage {..} f = withTransactionWrapper lmdb $ \tx -> do 
         -- Re-check that the env is not timed out.
         -- That may happen if multiple threads were waiting 
         -- to start a writing transaction.
-        env <- readTVarIO $ nativeEnv (unEnv lmdb)
-        case env of 
+        e <- readTVarIO $ nativeEnv env
+        case e of 
             TimedOut -> throwIO TxTimeout
             _        -> f $ LmdbTx tx
         
 
-withTransactionWrapper :: LmdbEnv -> (Lmdb.Transaction 'Lmdb.ReadWrite -> IO b) -> IO b
-withTransactionWrapper LmdbEnv {..} f = do
+withTransactionWrapper :: LmdbStorage -> (Lmdb.Transaction 'Lmdb.ReadWrite -> IO b) -> IO b
+withTransactionWrapper LmdbStorage { env = LmdbEnv {..} } f = do
     nEnv <- atomically $ do
         readTVar nativeEnv >>= \case
             Disabled     -> retry
@@ -201,17 +206,17 @@ foldGeneric tx db f a0 withCurs makeProducer =
 
 
 createLmdbStore :: forall name . KnownSymbol name =>
-                    LmdbEnv -> IO (LmdbStore name)
-createLmdbStore env@LmdbEnv {} = do
+                    LmdbStorage -> IO (LmdbStore name)
+createLmdbStore storage_@LmdbStorage {..} = do
     let name' = symbolVal (P.Proxy @name)
-    db <- withTransactionWrapper env $ \tx -> openDatabase tx (Just name') defaultDbSettings
+    db <- withTransactionWrapper storage_ $ \tx -> openDatabase tx (Just name') defaultDbSettings
     pure $ LmdbStore db env
 
 createLmdbMultiStore :: forall name . KnownSymbol name =>
-                        LmdbEnv -> IO (LmdbMultiStore name)
-createLmdbMultiStore env@LmdbEnv {} = do
+                        LmdbStorage -> IO (LmdbMultiStore name)
+createLmdbMultiStore storage_@LmdbStorage {..} = do
     let name' = symbolVal (P.Proxy @name)
-    db <- withTransactionWrapper env $ \tx -> openMultiDatabase tx (Just name') defaultMultiDbSettngs
+    db <- withTransactionWrapper storage_ $ \tx -> openMultiDatabase tx (Just name') defaultMultiDbSettngs
     pure $ LmdbMultiStore db env
 
 

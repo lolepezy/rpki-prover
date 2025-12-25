@@ -21,12 +21,10 @@ import RPKI.Util (ifJustM)
 import Data.Bifunctor
 
 
-{- | DB keys can potentially be much larger than the maximum usable size of 511 bytes allowed as LMDB keys.
-     According to LMDB documentation, the maximum key size is 511 bytes for the key data itself,
-     not including the null terminator that LMDB uses internally. So we:
-     - calculate a hash,
-     - truncate the serialised values so that the truncated version plus the hash fit into 511 bytes,
-     - use "truncated URL + hash" as a key,
+{- | DB keys can potentially be much larger than the underlyimg key-value storage allows.
+     According to LMDB documentation, for instance, the maximum key size is 511 bytes. 
+     So we:
+     - calculate an integer (8 byte) hash and use it as a key     
      - store a list of pairs of the full serialised key along with the value.
      Very long keys are rare in practice and it's astronomically unlikely that the list 
      in KeysAndValues will ever be more than one element, but we want to be sure.
@@ -38,7 +36,7 @@ data SafeKey k = AsIs BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-data OverflowKey k = OverflowKey BS.ByteString Int
+newtype OverflowKey k = OverflowKey Int
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
@@ -47,18 +45,19 @@ newtype KeysAndValues v = KeysAndValues [T2 BS.ByteString BS.ByteString]
     deriving anyclass (TheBinary)
 
 data SafeMap (name :: Symbol) s k v = SafeMap {
-        normals   :: SMap name s (Verbatim k) v,
-        overflows :: SMap (AppendSymbol name "-overflow") s (OverflowKey k) (KeysAndValues v)
+        normals     :: SMap name s (Verbatim k) v,
+        overflows   :: SMap (AppendSymbol name "-overflow") s (OverflowKey k) (KeysAndValues v),
+        maxKeyBytes :: Int
     }            
 
 instance Storage s => WithStorage s (SafeMap name s k v) where
-    storage (SafeMap s _) = storage s
+    storage (SafeMap s _ _) = storage s
 
 
 put :: (AsStorable k, AsStorable v) =>
         Tx s 'RW -> SafeMap name s k v -> k -> v -> IO ()
 put tx SafeMap {..} k v = do
-    let (sk, serialisedKey) = safeKey k
+    let (sk, serialisedKey) = safeKey k maxKeyBytes
     case sk of
         AsIs _       -> M.put tx normals (Verbatim $ Storable serialisedKey) v
         Overflow key -> do             
@@ -74,7 +73,7 @@ put tx SafeMap {..} k v = do
 get :: (AsStorable k, AsStorable v) =>
       Tx s mode -> SafeMap name s k v -> k -> IO (Maybe v)
 get tx SafeMap {..} k = do
-    let (sk, serialisedKey) = safeKey k
+    let (sk, serialisedKey) = safeKey k maxKeyBytes
     case sk of
         AsIs _       -> M.get tx normals (Verbatim $ Storable serialisedKey)
         Overflow key -> do             
@@ -87,7 +86,7 @@ get tx SafeMap {..} k = do
 delete :: (AsStorable k, AsStorable v) =>
           Tx s 'RW -> SafeMap name s k v -> k -> IO ()
 delete tx SafeMap {..} k = do
-    let (sk, serialisedKey) = safeKey k
+    let (sk, serialisedKey) = safeKey k maxKeyBytes
     case sk of
         AsIs _       -> M.delete tx normals (Verbatim $ Storable serialisedKey)
         Overflow key -> do             
@@ -118,25 +117,12 @@ unwrap :: AsStorable c => BS.ByteString -> c
 unwrap = fromStorable . Storable
 
 
-safeKey :: AsStorable k => k -> (SafeKey a, BS.ByteString)
-safeKey k = let         
-    maxLmdbKeyBytes = 511
-
-    -- Header for the OverflowKey type tags.    
-    -- It is 9 for the Amd64, GHC 9.6 but it depends on compiler version 
-    -- and what store library does, so we make it 20 just in case. 
-    headerBytes = 20
-
-    -- size of Int
-    hashBytes = 8
-
-    Storable bs = toStorable k
-    hash_ = H.hash bs
-
-    bytesLeft = maxLmdbKeyBytes - hashBytes - headerBytes
-    
-    shortened = BS.take bytesLeft bs
-    safe_ = if BS.length bs < bytesLeft
+safeKey :: AsStorable k => k -> Int -> (SafeKey a, BS.ByteString)
+safeKey k limit = (safe_, bs)
+  where
+    bs = unStorable $ toStorable k
+    safe_ = 
+        if BS.length bs < limit
         then AsIs bs
-        else Overflow (OverflowKey shortened hash_)
-    in (safe_, bs)
+        else Overflow (OverflowKey $ H.hash bs)    
+    

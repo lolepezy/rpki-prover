@@ -149,7 +149,7 @@ setupWorkerLmdbCache logger cacheDir config = do
 -- 
 compactStorageWithTmpDir :: AppContext LmdbStorage -> IO ()
 compactStorageWithTmpDir appContext@AppContext {..} = do      
-    lmdbEnv <- unEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
+    lmdbEnv <- (\d -> let LmdbStorage {..} = storage d in env) <$> readTVarIO database
     let cacheDir = configValue $ config ^. #cacheDirectory
     let currentCache = cacheDir </> "current"
 
@@ -198,7 +198,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
             renamePath (cacheDir </> "current.new") currentCache
 
             newLmdb <- mkLmdb newLmdbDirName config
-            (newDB, _) <- createDatabase newLmdb logger DontCheckVersion
+            (newDB, _) <- createDatabase newLmdb logger config DontCheckVersion
             atomically $ do
                 newNative <- getNativeEnv newLmdb
                 writeTVar (nativeEnv lmdbEnv) (RWEnv newNative)  
@@ -254,7 +254,7 @@ cleanDir d = cleanDirFiltered d (const True)
 
 closeLmdbStorage :: AppContext LmdbStorage -> IO ()
 closeLmdbStorage AppContext {..} = do 
-    closeLmdb . unEnv . storage =<< readTVarIO database
+    closeLmdb . (\d -> let LmdbStorage {..} = storage d in env) =<< readTVarIO database
 
 
 -- Close LMDB environment
@@ -272,7 +272,7 @@ reopenLmdbStorage appContext@AppContext {..} = do
     mapM_ removePathForcibly [ currentLinkTarget </> f | f <- files, f == "lock.mdb"]     
 
     reopenedLmdb <- mkLmdb currentLinkTarget config
-    (newDB, _) <- createDatabase reopenedLmdb logger DontCheckVersion
+    (newDB, _) <- createDatabase reopenedLmdb logger config DontCheckVersion
     atomically $ do
         newNative <- getNativeEnv reopenedLmdb 
         writeTVar (nativeEnv reopenedLmdb) (RWEnv newNative)  
@@ -283,7 +283,7 @@ reopenLmdbStorage appContext@AppContext {..} = do
 -- 
 copyLmdbEnvironment :: AppContext LmdbStorage -> FilePath -> IO ()
 copyLmdbEnvironment AppContext {..} targetLmdbPath = do         
-    currentEnv <- unEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
+    currentEnv <- (\d -> let LmdbStorage {..} = storage d in env) <$> readTVarIO database
     newLmdb    <- mkLmdb targetLmdbPath config
     currentNativeEnv <- atomically $ getNativeEnv currentEnv
     newNativeEnv     <- atomically $ getNativeEnv newLmdb     
@@ -334,13 +334,13 @@ cleanupReaders :: AppContext LmdbStorage -> IO Int
 cleanupReaders AppContext {..} = do 
     -- eventually call `mdb_reader_check` and try to remove 
     -- potentially dead readers from the reader table
-    env <- unEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
+    env <- (\d -> let LmdbStorage {..} = storage d in env) <$> readTVarIO database
     native <- atomically $ getNativeEnv env
     cleanReadersTable native
 
 
 lmdbGetStats :: AppContext LmdbStorage -> IO StorageStats
 lmdbGetStats AppContext {..} = do 
-    lmdbEnv   <- unEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database    
+    lmdbEnv   <- (\d -> let LmdbStorage {..} = storage d in env) <$> readTVarIO database
     nativeEnv <- atomically $ getNativeEnv lmdbEnv
     getEnvStats nativeEnv

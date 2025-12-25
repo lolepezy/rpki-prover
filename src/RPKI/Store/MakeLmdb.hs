@@ -33,8 +33,8 @@ import           RPKI.Store.Sequence
 data IncompatibleDbCheck = CheckVersion | DontCheckVersion
 data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion
 
-createDatabase :: LmdbEnv -> AppLogger -> IncompatibleDbCheck -> IO (DB LmdbStorage, DbCheckResult)
-createDatabase env logger checkAction = do 
+createDatabase :: LmdbEnv -> AppLogger -> Config -> IncompatibleDbCheck -> IO (DB LmdbStorage, DbCheckResult)
+createDatabase env logger config checkAction = do 
     
     db <- doCreateDb
     
@@ -112,15 +112,18 @@ createDatabase env logger checkAction = do
         createRepositoryStore = 
             RepositoryStore <$> newSafeMap <*> newSafeMap <*> newSafeMap <*> newSafeMap
         
-        lmdb = LmdbStorage env
+        lmdb = LmdbStorage env 
+                (config ^. #storageConfig . #writeTransactionTimeout)
 
         newSMap :: forall k v name . (KnownSymbol name) => IO (SMap name LmdbStorage k v)
-        newSMap = SMap lmdb <$> createLmdbStore env            
+        newSMap = SMap lmdb <$> createLmdbStore lmdb            
 
         newSMultiMap :: forall k v name . (KnownSymbol name) => IO (SMultiMap name LmdbStorage k v)
-        newSMultiMap = SMultiMap lmdb <$> createLmdbMultiStore env            
+        newSMultiMap = SMultiMap lmdb <$> createLmdbMultiStore lmdb            
 
-        newSafeMap = SafeMap <$> newSMap <*> newSMap
+        newSafeMap = SafeMap <$> newSMap <*> newSMap <*> pure maxLmdbKeyBytes
+
+        maxLmdbKeyBytes = 511
         
 
 mkLmdb :: FilePath -> Config -> IO LmdbEnv
