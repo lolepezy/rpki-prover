@@ -275,7 +275,7 @@ defaultConfig = Config {
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {
         -- TODO This one should be adjustable based on the
-        -- expected lifet time of a worker process
+        -- expected lifetime of a worker process
         rwTransactionTimeout = 4 * minutes + Seconds 50
     },
     cacheCleanupInterval      = 6 * hours,    
