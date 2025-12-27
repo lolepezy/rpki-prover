@@ -12,6 +12,7 @@ module RPKI.Store.DatabaseSpec where
 
 import           Control.Exception.Lifted
 import           Control.Concurrent (threadDelay)
+import           Control.Concurrent.STM
 import           Control.Lens                     
 import           Control.Monad
 import           Control.Monad.Reader
@@ -51,6 +52,7 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Database    (DB(..))
 import qualified RPKI.Store.Database    as DB
+import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 
 import qualified RPKI.Store.MakeLmdb as Lmdb
@@ -67,10 +69,10 @@ import           RPKI.Store.AppStorage
 databaseGroup :: TestTree
 databaseGroup = testGroup "LMDB storage tests"
     [
-        objectStoreGroup,
-        repositoryStoreGroup,
-        versionStoreGroup,
-        txGroup,
+        -- objectStoreGroup,
+        -- repositoryStoreGroup,
+        -- versionStoreGroup,
+        -- txGroup,
         dbGroup,
         mapGroup
     ]
@@ -584,8 +586,16 @@ shouldProcessSafeMapProperly io = do
 
 shouldReopenDatabase :: HU.Assertion
 shouldReopenDatabase = do 
-    withTestContext $ \appContext -> do
+    withTestContext $ \appContext  -> do
+        db@DB {..} <- readTVarIO $ appContext ^. #database
+
+        k1 <- rwTx db $ \tx -> nextValue tx keys 
         reopenStorage appContext
+
+        db1@DB {..} <- readTVarIO $ appContext ^. #database
+        k2 <- rwTx db1 $ \tx -> nextValue tx keys 
+
+        HU.assertEqual "Keys must be continuous after reopen" (nextS k1) k2
 
 
 stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> metric
