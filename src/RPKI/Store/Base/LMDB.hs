@@ -126,16 +126,14 @@ withTransactionWrapper LmdbStorage { env = LmdbEnv {..}, .. } f = do
 
     interruptAfterTimeout stillWaiting = do
         threadDelay $ toMicroseconds timeout 
-        didTimeout <- atomically $ do
-            sw <- readTVar stillWaiting
+        join $ atomically $ do
+            sw <- readTVar stillWaiting            
             if sw
                 then do
                     writeTVar nativeEnv TimedOut
-                    pure True
+                    pure $ throwIO TxTimeout
                 else
-                    pure False
-        when didTimeout $
-            throwIO TxTimeout
+                    pure $ pure ()        
 
 
 -- | Basic storage implemented using LMDB
