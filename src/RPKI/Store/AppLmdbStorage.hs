@@ -18,7 +18,6 @@ import           Control.Lens                     ((^.))
 import           Data.String.Interpolate.IsString
 import           Data.Hourglass
 
-import           RPKI.AppState
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Config
@@ -276,8 +275,7 @@ reopenLmdbStorage appContext@AppContext {..} = do
     atomically $ do
         newNative <- getNativeEnv reopenedLmdb 
         writeTVar (nativeEnv reopenedLmdb) (RWEnv newNative)  
-        writeTVar database newDB    
-        setDbOperational $ appContext ^. #appState
+        writeTVar database newDB
 
 -- This is called from the worker entry point
 -- 

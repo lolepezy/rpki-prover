@@ -167,10 +167,6 @@ waitForStuckDb AppState {..} = do
 dbIsStuck :: AppState -> STM Bool 
 dbIsStuck AppState {..} = do
     (== DbStuck) . dbState <$> readTVar systemState
-
-setDbOperational :: AppState -> STM ()
-setDbOperational AppState {..} = do
-    modifyTVar' systemState (#dbState .~ DbOperational)    
         
 removeExpiredWorkers :: MonadIO m => AppState -> m [WorkerInfo]
 removeExpiredWorkers AppState {..} = liftIO $ do 
