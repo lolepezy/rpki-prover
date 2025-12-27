@@ -204,6 +204,9 @@ newRunningTasks :: STM Tasks
 newRunningTasks = Tasks <$> newTVar mempty
 
 
+-- The main entry point for the whole validator workflow. Runs multiple threads, 
+-- running validation, RTR server, cleanups, cache maintenance and async fetches.
+-- 
 runValidatorWorkflow :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> IO ()
 runValidatorWorkflow appContext@AppContext {..} tals = do    
     case config ^. #proverRunMode of     
@@ -249,9 +252,6 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
         ]
 
 
--- The main entry point for the whole validator workflow. Runs multiple threads, 
--- running validation, RTR server, cleanups, cache maintenance and async fetches.
--- 
 runAll :: (Storage s, MaintainableStorage s) =>
                          AppContext s -> [TAL] -> IO ()
 runAll appContext@AppContext {..} tals = do    
