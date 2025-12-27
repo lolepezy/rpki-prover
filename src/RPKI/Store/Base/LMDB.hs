@@ -27,6 +27,7 @@ import RPKI.Store.Base.Serialisation
 import RPKI.Parallel
 import RPKI.AppTypes
 import RPKI.Util (convert)
+import RPKI.Time (toMicroseconds)
 
 import Data.IORef
 
@@ -98,7 +99,7 @@ instance WithTx LmdbStorage where
         
 
 withTransactionWrapper :: LmdbStorage -> (Lmdb.Transaction 'Lmdb.ReadWrite -> IO b) -> IO b
-withTransactionWrapper LmdbStorage { env = LmdbEnv {..} } f = do
+withTransactionWrapper LmdbStorage { env = LmdbEnv {..}, .. } f = do
     nEnv <- atomically $ do
         readTVar nativeEnv >>= \case
             Disabled     -> retry
@@ -117,17 +118,14 @@ withTransactionWrapper LmdbStorage { env = LmdbEnv {..} } f = do
                 -- so it's just to satisfy the typechecker
                 throwIO TxTimeout
             Right x -> pure x
-  where
-    -- TODO Make it configurable 
-    timeoutDuration = 600_000_000
-
+  where    
     runTx nEnv stillWaiting =
         withTransaction nEnv $ \tx -> do
             atomically $ writeTVar stillWaiting False
             f tx
 
     interruptAfterTimeout stillWaiting = do
-        threadDelay timeoutDuration
+        threadDelay $ toMicroseconds timeout 
         sw <- readTVarIO stillWaiting        
         when sw $ do            
             atomically $ writeTVar nativeEnv TimedOut
