@@ -12,7 +12,7 @@ module RPKI.Workflow (
     runValidatorWorkflow,
     runValidation,
     runCacheCleanup
-    ) where
+) where
 
 import           Control.Concurrent              as Conc
 import           Control.Concurrent.Async
@@ -245,9 +245,7 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
             Handler $ \(_ :: TxTimeout) -> 
                 txTimeoutAction,
             Handler $ \(_ :: AsyncCancelled) -> 
-                die [i|Interrupted with Ctrl-C, exiting.|],
-            Handler $ \(weirdShit :: SomeException) ->
-                die [i|Something really bad and also unknown happened: #{weirdShit}, exiting.|]
+                die [i|Interrupted with Ctrl-C, exiting.|]            
         ]
 
 
