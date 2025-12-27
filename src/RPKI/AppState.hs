@@ -147,8 +147,8 @@ mergeSystemMetrics :: MonadIO m => SystemMetrics -> AppState -> m ()
 mergeSystemMetrics sm AppState {..} = 
     liftIO $ atomically $ modifyTVar' system (#metrics %~ (<> sm))
 
-updateRsyncClient :: MonadIO m => WorkerMessage -> AppState -> m ()           
-updateRsyncClient message AppState {..} =     
+updateRunningWorkers :: MonadIO m => WorkerMessage -> AppState -> m ()           
+updateRunningWorkers message AppState {..} =     
     liftIO $ atomically $ modifyTVar' runningWorkers $ 
         case message of 
             AddWorker wi     -> Map.insert (wi ^. #workerPid) wi

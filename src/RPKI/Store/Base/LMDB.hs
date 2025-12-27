@@ -103,7 +103,7 @@ withTransactionWrapper LmdbStorage { env = LmdbEnv {..}, .. } f = do
     nEnv <- atomically $ do
         readTVar nativeEnv >>= \case
             Disabled     -> retry
-            TimedOut     -> retry
+            TimedOut     -> throwSTM TxTimeout
             ROEnv _      -> retry
             RWEnv native -> pure native
 
@@ -238,7 +238,7 @@ getNativeEnv :: LmdbEnv -> STM Env
 getNativeEnv LmdbEnv {..} = do
     readTVar nativeEnv >>= \case
         Disabled     -> retry
-        TimedOut     -> retry
+        TimedOut     -> throwSTM TxTimeout
         ROEnv native -> pure native
         RWEnv native -> pure native
 
