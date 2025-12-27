@@ -95,7 +95,7 @@ newAppState = do
         cachedBinaryRtrPdus <- newTVar mempty
         runningWorkers <- newTVar mempty
         fetcheables <- newTVar mempty
-        systemState <- newTVar $ SystemState False
+        systemState <- newTVar $ SystemState DbOperational
         let readSlurm = Nothing
         pure AppState {..}
                     
@@ -161,12 +161,16 @@ updateSystemStatus (SystemStatusMessage ss) AppState {..} =
 
 waitForStuckDb :: AppState -> STM ()
 waitForStuckDb AppState {..} = do
-    ss <- readTVar systemState
-    unless (ss ^. #databaseRwTxTimedOut) retry
+    SystemState {..} <- readTVar systemState
+    unless (dbState == DbStuck) retry
+
+dbIsStuck :: AppState -> STM Bool 
+dbIsStuck AppState {..} = do
+    (== DbStuck) . dbState <$> readTVar systemState
 
 setDbOperational :: AppState -> STM ()
 setDbOperational AppState {..} = do
-    modifyTVar' systemState (#databaseRwTxTimedOut .~ False)    
+    modifyTVar' systemState (#dbState .~ DbOperational)    
         
 removeExpiredWorkers :: MonadIO m => AppState -> m [WorkerInfo]
 removeExpiredWorkers AppState {..} = liftIO $ do 
@@ -178,12 +182,12 @@ removeExpiredWorkers AppState {..} = liftIO $ do
         pure expired  
 
 getRunningWorkers :: MonadIO m => AppState -> m [WorkerInfo]
-getRunningWorkers AppState {..} = liftIO $ do 
-    atomically $ Map.elems <$> readTVar runningWorkers
+getRunningWorkers AppState {..} = 
+    liftIO $ atomically $ Map.elems <$> readTVar runningWorkers
 
 removeAllRunningWorkers :: MonadIO m => AppState -> m [WorkerInfo]
-removeAllRunningWorkers AppState {..} = liftIO $ do 
-    atomically $ do 
+removeAllRunningWorkers AppState {..} = 
+    liftIO $ atomically $ do 
         clients <- Map.elems <$> readTVar runningWorkers
         writeTVar runningWorkers mempty
         pure clients

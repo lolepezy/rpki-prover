@@ -113,7 +113,7 @@ createDatabase env logger config checkAction = do
             RepositoryStore <$> newSafeMap <*> newSafeMap <*> newSafeMap <*> newSafeMap
         
         lmdb = LmdbStorage env 
-                (config ^. #storageConfig . #writeTransactionTimeout)
+                (config ^. #storageConfig . #rwTransactionTimeout)
 
         newSMap :: forall k v name . (KnownSymbol name) => IO (SMap name LmdbStorage k v)
         newSMap = SMap lmdb <$> createLmdbStore lmdb            

@@ -140,25 +140,19 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     exitFailure
                 Right appContext -> do 
                     atomically $ writeTVar appStateHolder $ Just $ appContext ^. #appState
-                    void (race runMainProcess monitorDb) 
+                    runMainProcess
                         `finally` 
                         closeStorage appContext
                   where
                     runMainProcess = do                                          
                         tals <- readTALs appContext
-                        if once 
-                            then runValidatorWorkflow appContext tals
-                            else do                             
+                        case appContext ^. #config . #proverRunMode of
+                            OneOffMode _ -> 
+                                runValidatorWorkflow appContext tals                                                        
+                            ServerMode -> 
                                 void $ race
                                     (runHttpApi appContext)
                                     (runValidatorWorkflow appContext tals)
-                    
-                    monitorDb = forever $ do 
-                        atomically $ waitForStuckDb $ appContext ^. #appState
-                        logError logger "Database read-write transaction has timed out, restarting all workers and reopening storage."
-                        killAllWorkers appContext
-                        reopenStorage appContext
-        
 
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
@@ -185,30 +179,32 @@ executeWorkerProcess = do
                     atomically $ writeTVar appContextRef $ Just appContext
                     let actuallyExecuteWork = 
                             case input ^. #params of
-                                RrdpFetchParams {..} -> exec resultHandler $
-                                    fmap RrdpFetchResult $ runValidatorT scopes $ 
+                                RrdpFetchParams {..} -> 
+                                    exec resultHandler $ fmap RrdpFetchResult $ runValidatorT scopes $ 
                                         updateRrdpRepository appContext worldVersion rrdpRepository
 
-                                RsyncFetchParams {..} -> exec resultHandler $
-                                    fmap RsyncFetchResult $ runValidatorT scopes $ 
-                                        updateObjectForRsyncRepository appContext fetchConfig worldVersion rsyncRepository
+                                RsyncFetchParams {..} -> 
+                                    exec resultHandler $ fmap RsyncFetchResult $ runValidatorT scopes $                                     
+                                        updateObjectForRsyncRepository appContext fetchConfig 
+                                            worldVersion rsyncRepository
 
-                                CompactionParams {..} -> exec resultHandler $
-                                    CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
+                                CompactionParams {..} -> 
+                                    exec resultHandler $ 
+                                        CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
 
-                                ValidationParams {..} -> exec resultHandler $ do 
-                                    (vs, discoveredRepositories, slurm) <- 
-                                        runValidation appContext worldVersion talsToValidate allTaNames
-                                    pure $ ValidationResult vs discoveredRepositories slurm
+                                ValidationParams {..} -> 
+                                    exec resultHandler $ do 
+                                        (vs, discoveredRepositories, slurm) <- 
+                                            runValidation appContext worldVersion talsToValidate allTaNames
+                                        pure $ ValidationResult vs discoveredRepositories slurm
 
-                                CacheCleanupParams {..} -> exec resultHandler $
-                                    CacheCleanupResult <$> runCacheCleanup appContext worldVersion
+                                CacheCleanupParams {..} -> 
+                                    exec resultHandler $
+                                        CacheCleanupResult <$> runCacheCleanup appContext worldVersion
                     actuallyExecuteWork
                         `catches` [
-                            Handler (\(_ :: TxTimeout) -> do                    
-                                let databaseRwTxTimedOut = True
-                                pushSystemStatus logger $ SystemStatusMessage $ SystemState {..}
-                            ),
+                            Handler $ \(_ :: TxTimeout) -> 
+                                pushSystemStatus logger $ SystemStatusMessage $ SystemState { dbState = DbStuck },
                             Handler $ \(_ :: SomeException) ->
                                 -- There's a short window between opening LMDB and not yet having AppContext 
                                 -- constructed when an exception will not result in the database closed. It is not good, 

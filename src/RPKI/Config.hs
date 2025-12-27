@@ -60,7 +60,7 @@ data FetchConfig = FetchConfig {
     deriving anyclass (TheBinary)
 
 data StorageConfig = StorageConfig {
-        writeTransactionTimeout :: Seconds
+        rwTransactionTimeout :: Seconds
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)    
@@ -213,7 +213,7 @@ setCpuCount = setNumCapabilities . fromIntegral
 --
 -- TODO There should be distinction between network operations and file/LMDB IO.
 makeParallelism :: Natural -> Parallelism
-makeParallelism cpus = Parallelism cpus (2 * cpus) (2 * cpus)
+makeParallelism cpus = makeParallelismF cpus (3 * cpus)
 
 makeParallelismF :: Natural -> Natural -> Parallelism
 makeParallelismF cpus = Parallelism cpus (2 * cpus)
@@ -274,7 +274,9 @@ defaultConfig = Config {
     },
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {
-        writeTransactionTimeout = 5 * minutes
+        -- TODO This one should be adjustable based on the
+        -- expected lifet time of a worker process
+        rwTransactionTimeout = 4 * minutes + Seconds 50
     },
     cacheCleanupInterval      = 6 * hours,    
     versionNumberToKeep       = 3,

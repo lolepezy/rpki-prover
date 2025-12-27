@@ -54,8 +54,12 @@ newtype MaxMemory = MaxMemory Int
     deriving Semigroup via Max MaxMemory
     deriving Monoid via Max MaxMemory    
 
+data DBState = DbOperational | DbStuck | DbTryingToFix
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
 data SystemState = SystemState {
-        databaseRwTxTimedOut :: Bool        
+        dbState :: DBState
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
