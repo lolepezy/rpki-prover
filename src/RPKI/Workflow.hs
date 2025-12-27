@@ -210,16 +210,22 @@ newRunningTasks = Tasks <$> newTVar mempty
 runValidatorWorkflow :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> IO ()
 runValidatorWorkflow appContext@AppContext {..} tals = do    
     case config ^. #proverRunMode of     
-        ServerMode   -> selfRecoveryLoop
+        ServerMode   -> selfRecoveryLoop 0
         OneOffMode _ -> 
             -- Don't try to automatically resolve DB locking issues in the one-off mode
             runAll appContext tals
                 `catches` handlers (die "Database problem: read-write transaction has timed out, exiting.")
   where
-    selfRecoveryLoop = 
+    maxRecoveryAttempts :: Int
+    maxRecoveryAttempts = 5
+
+    selfRecoveryLoop :: Int -> IO ()
+    selfRecoveryLoop recoveryAttempts =
         race_ (runAll appContext tals) monitorDbState
             `catches` 
-            handlers (tryToFixStuckDb >> selfRecoveryLoop) 
+            handlers (if recoveryAttempts >= maxRecoveryAttempts
+                        then die [i|Database problem: read-write transaction has timed out #{recoveryAttempts + 1} times, giving up.|]
+                        else tryToFixStuckDb >> selfRecoveryLoop (recoveryAttempts + 1))
 
     monitorDbState = forever $ do 
         -- We can get a signal from a worker process that the DB is stuck 
