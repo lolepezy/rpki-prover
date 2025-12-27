@@ -213,7 +213,7 @@ setCpuCount = setNumCapabilities . fromIntegral
 --
 -- TODO There should be distinction between network operations and file/LMDB IO.
 makeParallelism :: Natural -> Parallelism
-makeParallelism cpus = makeParallelismF cpus (3 * cpus)
+makeParallelism cpus = makeParallelismF cpus (2 * cpus)
 
 makeParallelismF :: Natural -> Natural -> Parallelism
 makeParallelismF cpus = Parallelism cpus (2 * cpus)

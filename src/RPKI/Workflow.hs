@@ -236,8 +236,9 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
             modifyTVar' systemState (#dbState .~ DbTryingToFix)
             pure $ do 
                 logError logger "Database read-write transaction has timed out, restarting all workers and reopening storage."
-                killAllWorkers appContext
+                killAllWorkers appContext                
                 reopenStorage appContext    
+                logError logger "Database re-opened after deleting the lock file."
                 atomically $ modifyTVar' systemState (#dbState .~ DbOperational)
     
     handlers txTimeoutAction = [
