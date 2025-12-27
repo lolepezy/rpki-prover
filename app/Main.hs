@@ -201,15 +201,15 @@ executeWorkerProcess = do
                                 CacheCleanupParams {..} -> 
                                     exec resultHandler $
                                         CacheCleanupResult <$> runCacheCleanup appContext worldVersion
-                    (actuallyExecuteWork
+                    actuallyExecuteWork
                         `catch` (\(_ :: TxTimeout) -> 
-                                    pushSystemStatus logger $ SystemStatusMessage $ SystemState { dbState = DbStuck }))
-                    `finally` 
-                        -- There's a short window between opening LMDB and not yet having AppContext 
-                        -- constructed when an exception will not result in the database closed. It is not good, 
-                        -- but we are trying to solve the problem of interrupted RW transactions leaving the DB 
-                        -- in broken/locked state, and no transactions are possible within this window.                                
-                        closeStorage appContext                                    
+                                    pushSystemStatus logger $ SystemStatusMessage $ SystemState { dbState = DbStuck })
+                        `finally` 
+                            -- There's a short window between opening LMDB and not yet having AppContext 
+                            -- constructed when an exception will not result in the database closed. It is not good, 
+                            -- but we are trying to solve the problem of interrupted RW transactions leaving the DB 
+                            -- in broken/locked state, and no transactions are possible within this window.                                
+                            closeStorage appContext                                    
                         
   where    
     exec resultHandler f = resultHandler =<< execWithStats f                    
