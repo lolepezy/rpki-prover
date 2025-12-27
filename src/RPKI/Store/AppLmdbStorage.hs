@@ -196,12 +196,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
             createSymbolicLink newLmdbDirName $ cacheDir </> "current.new"
             renamePath (cacheDir </> "current.new") currentCache
 
-            newLmdb <- mkLmdb newLmdbDirName config
-            (newDB, _) <- createDatabase newLmdb logger config DontCheckVersion
-            atomically $ do
-                newNative <- getNativeEnv newLmdb
-                writeTVar (nativeEnv lmdbEnv) (RWEnv newNative)  
-                writeTVar database newDB
+            updateDatabase appContext newLmdbDirName
 
             closeEnvironment oldNativeEnv
             removePathForcibly currentLinkTarget
@@ -256,6 +251,16 @@ closeLmdbStorage AppContext {..} = do
     closeLmdb . (\d -> let LmdbStorage {..} = storage d in env) =<< readTVarIO database
 
 
+updateDatabase :: AppContext LmdbStorage -> FilePath -> IO ()
+updateDatabase AppContext {..} dbDirectory = do
+    reopenedLmdb <- mkLmdb dbDirectory config
+    (newDB, _) <- createDatabase reopenedLmdb logger config DontCheckVersion
+    atomically $ do
+        newNative <- getNativeEnv reopenedLmdb 
+        writeTVar (nativeEnv reopenedLmdb) (RWEnv newNative)  
+        writeTVar database newDB    
+
+
 -- Close LMDB environment
 -- Delete lock file 
 -- Open LMDB environment again
@@ -270,12 +275,8 @@ reopenLmdbStorage appContext@AppContext {..} = do
     files <- listDirectory currentLinkTarget
     mapM_ removePathForcibly [ currentLinkTarget </> f | f <- files, f == "lock.mdb"]     
 
-    reopenedLmdb <- mkLmdb currentLinkTarget config
-    (newDB, _) <- createDatabase reopenedLmdb logger config DontCheckVersion
-    atomically $ do
-        newNative <- getNativeEnv reopenedLmdb 
-        writeTVar (nativeEnv reopenedLmdb) (RWEnv newNative)  
-        writeTVar database newDB
+    updateDatabase appContext currentLinkTarget
+
 
 -- This is called from the worker entry point
 -- 

@@ -216,10 +216,8 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
             runAll appContext tals
                 `catches` handlers (die "Database problem: read-write transaction has timed out, exiting.")
   where
-    maxRecoveryAttempts :: Int
-    maxRecoveryAttempts = 5
+    maxRecoveryAttempts = 5 :: Int
 
-    selfRecoveryLoop :: Int -> IO ()
     selfRecoveryLoop recoveryAttempts =
         race_ (runAll appContext tals) monitorDbState
             `catches` 
@@ -233,20 +231,14 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
         throwIO TxTimeout
     
     tryToFixStuckDb =
-        join $ atomically $ do 
-            -- double-check if the DB is really stuck
-            isStuck <- dbIsStuck appState
-            if isStuck then do 
-                let systemState = appState ^. #systemState
-                writeTVar systemState SystemState { dbState = DbTryingToFix }
-                pure $ do 
-                    logError logger "Database read-write transaction has timed out, restarting all workers and reopening storage."
-                    killAllWorkers appContext
-                    -- This one will return the DB to the "unstuck" state
-                    reopenStorage appContext    
-                    atomically $ writeTVar systemState SystemState { dbState = DbOperational }
-            else 
-                pure $ pure ()
+        join $ atomically $ do             
+            let systemState = appState ^. #systemState
+            modifyTVar' systemState (#dbState .~ DbTryingToFix)
+            pure $ do 
+                logError logger "Database read-write transaction has timed out, restarting all workers and reopening storage."
+                killAllWorkers appContext
+                reopenStorage appContext    
+                atomically $ modifyTVar' systemState (#dbState .~ DbOperational)
     
     handlers txTimeoutAction = [
             Handler $ \(AppException seriousProblem) ->
