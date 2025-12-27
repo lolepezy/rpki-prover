@@ -21,7 +21,7 @@ import RPKI.Util (ifJustM)
 import Data.Bifunctor
 
 
-{- | DB keys can potentially be much larger than the underlyimg key-value storage allows.
+{- | DB keys can potentially be much larger than the underlying key-value storage allows.
      According to LMDB documentation, for instance, the maximum key size is 511 bytes. 
      So we:
      - calculate an integer (8 byte) hash and use it as a key     
