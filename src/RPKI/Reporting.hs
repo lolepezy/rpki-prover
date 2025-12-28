@@ -95,7 +95,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         ManifestNumberDecreased { oldMftNumber :: Serial, newMftNumber :: Serial } |
                         -- This is a bit of a special error to indicate that the 
                         -- "fallback to the last valid MFT" happened
-                        MftFallback AppError |
+                        MftFallback AppError Serial |
                         CRLOnDifferentLocation URI Locations |
                         CRLHashPointsToAnotherObject Hash |
                         CRL_AKI_DifferentFromCertSKI SKI AKI |

@@ -651,8 +651,9 @@ validateCaNoFetch
                                             if isWithinValidityPeriod now mftShortcut 
                                                 then do
                                                     -- shortcut is still valid so fall back to it
-                                                    vFocusOn ObjectFocus mftKey $ vWarn $ MftFallback e
+                                                    let mftNumber = getCMSContent (mft ^. #object . #payload . #cmsPayload) ^. #mftNumber
                                                     let mftLocation = pickLocation $ getLocations $ mft ^. #object
+                                                    vFocusOn ObjectFocus mftKey $ vWarn $ MftFallback e mftNumber
                                                     logWarn logger [i|Falling back to the last valid manifest for #{mftLocation}, error: #{toMessage e}|]
                                                     onlyCollectPayloads mftShortcut                   
                                                 else 
@@ -697,9 +698,10 @@ validateCaNoFetch
                 case mfts_ of 
                     [] -> appError e
                     _  -> do 
-                        vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e
-                        let mftLocation = pickLocation $ getLocations $ mft ^. #object
-                        logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, error: #{toMessage e}|]
+                        let mftLocation = pickLocation $ getLocations $ mft ^. #object        
+                        let mftNumber = getCMSContent (mft ^. #object . #payload . #cmsPayload) ^. #mftNumber
+                        vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e mftNumber
+                        logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, failed manifest number #{mftNumber}, error: #{toMessage e}|]
                         tryMfts aki mfts_
       where
         tryOneMft mft = do                 

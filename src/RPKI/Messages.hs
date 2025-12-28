@@ -242,8 +242,8 @@ toValidationMessage = \case
         [i|Manifest number #{newMftNumber} is smaller than the previous #{oldMftNumber}, |] <> 
         [i|will fall back to the previous one.|]
 
-      MftFallback e -> 
-        [i|Fallback to the last valid manifest happened, with the error: #{toMessage e}|]
+      MftFallback e failedMftNumber -> 
+        [i|Fallback to the last valid manifest happened, manifest #{failedMftNumber} failed with the error: #{toMessage e}|]
 
       CRLOnDifferentLocation crlDP locations -> 
           [i|CRL distribution point #{crlDP} is not the same as CRL location #{fmtLocations locations}.|]
