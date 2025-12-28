@@ -750,7 +750,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     -- in the future, but it works well for now.
     forceSnapshotForReferencialIssues tx db (Validations validations) = do
         Now now <- thisInstant
-        for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) ->
+        for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) -> do 
             DB.updateRrdpMetaM tx db rrdpUrl $ \case 
                 Nothing   -> pure Nothing
                 Just meta -> do 
@@ -786,12 +786,13 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                     relevantRepo <- mostNarrowPPScope scope
                 ]        
           where
-            manifestIntegrityError = \case
+            manifestIntegrityError = \case                
                 VErr (ValidationE e)             -> isRefentialIntegrityError e
                 VWarn (VWarning (ValidationE e)) -> isRefentialIntegrityError e                    
                 _                                -> False
               where
                 isRefentialIntegrityError = \case
+                    MftFallback (ValidationE e) _       -> isRefentialIntegrityError e
                     ManifestEntryDoesn'tExist _ _       -> True
                     NoCRLExists _ _                     -> True                
                     ManifestEntryHasWrongFileType {}    -> True                
