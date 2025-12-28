@@ -649,14 +649,10 @@ validateCaNoFetch
                                     tryOneMftWithShortcut mftShortcut mft
                                         `catchError` \e -> 
                                             if isWithinValidityPeriod now mftShortcut 
-                                                then do
-                                                    -- shortcut is still valid so fall back to it
-                                                    vFocusOn ObjectFocus mftKey $ vWarn $ MftFallback e
-                                                    let mftLocation = pickLocation $ getLocations $ mft ^. #object
-                                                    logWarn logger [i|Falling back to the last valid manifest for #{mftLocation}, error: #{toMessage e}|]
+                                                then do                                                    
+                                                    reportMftFallback e mft                                                                                                    
                                                     onlyCollectPayloads mftShortcut                   
                                                 else 
-                                                    -- shortcut is too old, so continue with the other manifests
                                                     tryMfts aki otherMfts
                     pure $! action `andThen` 
                            (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)
@@ -697,9 +693,7 @@ validateCaNoFetch
                 case mfts_ of 
                     [] -> appError e
                     _  -> do 
-                        vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e
-                        let mftLocation = pickLocation $ getLocations $ mft ^. #object
-                        logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, error: #{toMessage e}|]
+                        reportMftFallback e mft
                         tryMfts aki mfts_
       where
         tryOneMft mft = do                 
@@ -713,6 +707,12 @@ validateCaNoFetch
         case z of 
             Nothing  -> integrityError appContext [i|Referential integrity error, can't find a manifest by its key #{key}.|]
             Just mft -> f mft
+
+    reportMftFallback e mft = do 
+        let mftLocation = pickLocation $ getLocations $ mft ^. #object        
+        let mftNumber = getCMSContent (mft ^. #object . #payload . #cmsPayload) ^. #mftNumber
+        vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e mftNumber
+        logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, failed manifest number #{mftNumber}, error: #{toMessage e}|]        
 
     mftsNotInFuture = filter (\MftMeta {..} -> thisTime <= unNow now)
 
@@ -1693,19 +1693,18 @@ markAsUsedByHash AppContext {..} topDownContext hash = do
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()
 oneMoreGbr, oneMoreAspa, oneMoreBgp, oneMoreSpl :: Monad m => ValidatorT m ()
 oneMoreMftShort :: Monad m => ValidatorT m ()
-oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
-oneMoreRoa  = updateMetric @ValidationMetric @_ (& #validRoaNumber %~ (+1))
-oneMoreSpl  = updateMetric @ValidationMetric @_ (& #validSplNumber %~ (+1))
-oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
-oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
-oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
-oneMoreAspa = updateMetric @ValidationMetric @_ (& #validAspaNumber %~ (+1))
-oneMoreBgp  = updateMetric @ValidationMetric @_ (& #validBgpNumber %~ (+1))
-oneMoreMftShort = updateMetric @ValidationMetric @_ (& #mftShortcutNumber %~ (+1))
+oneMoreCert = updateMetric @ValidationMetric @_ (#validCertNumber %~ (+1))
+oneMoreRoa  = updateMetric @ValidationMetric @_ (#validRoaNumber %~ (+1))
+oneMoreSpl  = updateMetric @ValidationMetric @_ (#validSplNumber %~ (+1))
+oneMoreMft  = updateMetric @ValidationMetric @_ (#validMftNumber %~ (+1))
+oneMoreCrl  = updateMetric @ValidationMetric @_ (#validCrlNumber %~ (+1))
+oneMoreGbr  = updateMetric @ValidationMetric @_ (#validGbrNumber %~ (+1))
+oneMoreAspa = updateMetric @ValidationMetric @_ (#validAspaNumber %~ (+1))
+oneMoreBgp  = updateMetric @ValidationMetric @_ (#validBgpNumber %~ (+1))
+oneMoreMftShort = updateMetric @ValidationMetric @_ (#mftShortcutNumber %~ (+1))
 
 moreVrps :: Monad m => Count -> ValidatorT m ()
-moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
-
+moreVrps n = updateMetric @ValidationMetric @_ (#vrpCounter %~ (+n))
 
 extractPPAs :: Ca -> Either ValidationError PublicationPointAccess
 extractPPAs = \case 

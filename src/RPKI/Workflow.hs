@@ -768,12 +768,12 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                 _                                -> False
               where
                 isRefentialIntegrityError = \case
-                    MftFallback (ValidationE e) _       -> isRefentialIntegrityError e
-                    ManifestEntryDoesn'tExist _ _       -> True
-                    NoCRLExists _ _                     -> True                
-                    ManifestEntryHasWrongFileType {}    -> True                
-                    ReferentialIntegrityError _         -> True                
-                    _                                   -> False
+                    MftFallback (ValidationE e) _    -> isRefentialIntegrityError e
+                    ManifestEntryDoesn'tExist _ _    -> True
+                    NoCRLExists _ _                  -> True                
+                    ManifestEntryHasWrongFileType {} -> True                
+                    ReferentialIntegrityError _      -> True                
+                    _                                -> False
 
             mostNarrowPPScope (Scope s) = 
                 take 1 [ url | PPFocus (RrdpU url) <- NonEmpty.toList s ]
