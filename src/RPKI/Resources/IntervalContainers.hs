@@ -1,7 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Resources.IntervalContainers where
 

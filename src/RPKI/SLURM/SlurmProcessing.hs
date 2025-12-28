@@ -1,14 +1,7 @@
-{-# LANGUAGE DeriveAnyClass     #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE StrictData         #-}
-{-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE OverloadedLabels   #-}
-{-# LANGUAGE QuasiQuotes        #-}
-{-# LANGUAGE RecordWildCards    #-}
 
 module RPKI.SLURM.SlurmProcessing where
-
 
 import Control.Lens hiding (contains)
 import Control.Monad

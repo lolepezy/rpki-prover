@@ -1,10 +1,5 @@
-{-# LANGUAGE DerivingStrategies   #-}
-{-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE StrictData           #-}
 {-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE OverloadedLabels     #-}
-{-# LANGUAGE QuasiQuotes          #-}
-{-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE OverloadedStrings    #-}
 

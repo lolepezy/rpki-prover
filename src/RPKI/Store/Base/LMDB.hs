@@ -1,11 +1,5 @@
-{-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE DerivingStrategies    #-}
-{-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE UndecidableInstances  #-}
-{-# LANGUAGE OverloadedStrings     #-}
-
 
 module RPKI.Store.Base.LMDB where
 

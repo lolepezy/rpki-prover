@@ -1,7 +1,5 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE DerivingStrategies  #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE StrictData          #-}
+{-# LANGUAGE StrictData           #-}
 
 module RPKI.RTR.Protocol where
 

@@ -1,8 +1,4 @@
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module RPKI.Store.Sequence where
     

@@ -1,8 +1,5 @@
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DeriveGeneric      #-}
-{-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE StrictData         #-}
-{-# LANGUAGE QuasiQuotes        #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StrictData        #-}
 
 module RPKI.Http.Api where
 
