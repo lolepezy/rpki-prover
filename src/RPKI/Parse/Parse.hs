@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
 
 module RPKI.Parse.Parse (
     module RPKI.Parse.Internal.Common,

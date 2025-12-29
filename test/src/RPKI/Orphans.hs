@@ -1,4 +1,3 @@
-{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=18 #-}
 {-# LANGUAGE OverloadedStrings #-}

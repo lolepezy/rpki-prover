@@ -1,8 +1,4 @@
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE OverloadedLabels   #-}
-{-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE StrictData         #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.AppState where
     
