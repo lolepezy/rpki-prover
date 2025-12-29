@@ -1,12 +1,4 @@
-{-# LANGUAGE AllowAmbiguousTypes       #-}
-{-# LANGUAGE DerivingStrategies        #-}
-{-# LANGUAGE DuplicateRecordFields     #-}
-{-# LANGUAGE FlexibleContexts          #-}
-{-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE OverloadedLabels          #-}
-{-# LANGUAGE OverloadedStrings         #-}
-{-# LANGUAGE RecordWildCards           #-}
-
+{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.Store.DatabaseSpec where
 

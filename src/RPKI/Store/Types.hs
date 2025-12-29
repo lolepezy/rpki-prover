@@ -1,9 +1,5 @@
-{-# LANGUAGE DerivingStrategies    #-}
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE StrictData            #-}
-{-# LANGUAGE OverloadedLabels      #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE StrictData        #-}
 
 module RPKI.Store.Types where
 

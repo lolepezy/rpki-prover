@@ -1,12 +1,6 @@
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE UndecidableInstances       #-}
-{-# LANGUAGE OverloadedLabels           #-}
-{-# LANGUAGE RecordWildCards            #-}
-
 
 module RPKI.Reporting where
     

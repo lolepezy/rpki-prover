@@ -1,11 +1,6 @@
-{-# LANGUAGE DerivingStrategies    #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RecordWildCards       #-}
-{-# LANGUAGE StrictData            #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE OverloadedLabels      #-}
-{-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE StrictData        #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.Store.Database where
 

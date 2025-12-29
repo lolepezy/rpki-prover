@@ -1,7 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-
 module RPKI.Orphans.Swagger where
 
 import           Data.Text                   (Text)

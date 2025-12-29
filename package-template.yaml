@@ -19,13 +19,29 @@ extra-source-files:
 # common to point users to the README.md file.
 description:         Please see the README on GitHub at <https://github.com/githubuser/rpki-prover#readme>
 
-default-extensions: BangPatterns, ViewPatterns, LambdaCase, ConstraintKinds, DataKinds, 
-                    DeriveDataTypeable, DeriveGeneric, DeriveFunctor,
-                    DuplicateRecordFields, FlexibleContexts, GADTs,
-                    KindSignatures, MultiParamTypeClasses, MultiWayIf, NoMonomorphismRestriction, 
-                    NumericUnderscores, PatternSynonyms, PolyKinds, RankNTypes, QuantifiedConstraints,
-                    StandaloneDeriving, ScopedTypeVariables, TupleSections, TypeApplications, 
-                    TypeFamilies, TypeOperators
+default-extensions: BangPatterns, 
+                    ConstraintKinds, 
+                    DataKinds, 
+                    DeriveDataTypeable, DeriveGeneric, DeriveFunctor, DerivingStrategies, 
+                    DerivingVia, DeriveAnyClass, DeriveTraversable,                    
+                    DuplicateRecordFields, 
+                    FlexibleContexts, 
+                    GADTs,
+                    GeneralizedNewtypeDeriving,                    
+                    InstanceSigs,
+                    KindSignatures, 
+                    LambdaCase, 
+                    MultiParamTypeClasses, MultiWayIf, 
+                    NoMonomorphismRestriction, 
+                    OverloadedLabels,
+                    NamedFieldPuns, NumericUnderscores, 
+                    PatternSynonyms, PolyKinds, RankNTypes, QuantifiedConstraints,
+                    QuasiQuotes,                    
+                    RecordWildCards,
+                    StandaloneDeriving, ScopedTypeVariables, 
+                    TupleSections, TypeApplications, 
+                    TypeFamilies, TypeOperators, TemplateHaskell,
+                    ViewPatterns
 
 dependencies:
 - base
