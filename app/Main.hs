@@ -151,8 +151,8 @@ executeMainProcess cliOptions@CLIOptions{..} = do
 
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
-    input <- readWorkerInput
-    let config = input ^. typed @Config    
+    input <- readWorkerInput    
+    let config = adjustWorkerConfig (input ^. typed @Config) (input ^. #workerTimeout)
     let logConfig = newLogConfig (config ^. #logLevel) WorkerLog
                     
     -- turnOffTlsValidation

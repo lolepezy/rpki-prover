@@ -94,10 +94,6 @@ data WorkerParams = RrdpFetchParams {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-newtype Timebox = Timebox { unTimebox :: Seconds }
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
-
 data WorkerInput = WorkerInput {
         workerId                :: WorkerId,
         params                  :: WorkerParams,

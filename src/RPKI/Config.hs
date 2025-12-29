@@ -18,6 +18,7 @@ import RPKI.Domain
 import RPKI.AppTypes
 import RPKI.Logging
 import RPKI.Util (toNatural)
+import RPKI.Time 
 import GHC.Generics (Generic)
 
 import RPKI.Store.Base.Serialisation
@@ -303,6 +304,9 @@ adjustConfig config = config
         -- we still want some correctness here, so the "short" one should be shorter
         & #shortLivedCacheLifeTime %~ (`min` (config ^. #longLivedCacheLifeTime))
 
+adjustWorkerConfig :: Config -> Timebox -> Config
+adjustWorkerConfig config (Timebox timeout) = config
+        & #storageConfig . #rwTransactionTimeout %~ (`min` (timeout - Seconds 1))
 
 defaultsLogLevel :: LogLevel
 defaultsLogLevel = InfoL
