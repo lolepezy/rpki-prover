@@ -61,10 +61,10 @@ import           RPKI.Store.AppStorage
 databaseGroup :: TestTree
 databaseGroup = testGroup "LMDB storage tests"
     [
-        -- objectStoreGroup,
-        -- repositoryStoreGroup,
-        -- versionStoreGroup,
-        -- txGroup,
+        objectStoreGroup,
+        repositoryStoreGroup,
+        versionStoreGroup,
+        txGroup,
         dbGroup,
         mapGroup
     ]
