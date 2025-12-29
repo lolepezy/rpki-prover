@@ -1,8 +1,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE StrictData           #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE StrictData #-}
 {-# LANGUAGE UndecidableInstances #-}
-
 
 module RPKI.Resources.Types where
 
