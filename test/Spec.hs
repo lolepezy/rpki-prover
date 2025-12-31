@@ -5,6 +5,7 @@ import Test.Tasty
 import RPKI.Parse.ObjectParseSpec
 import RPKI.RRDP.ParseSpec
 import RPKI.Store.DatabaseSpec
+import RPKI.Store.CacheSpec
 import RPKI.RRDP.UpdateSpec
 import RPKI.RRDP.HttpSpec
 import RPKI.Resources.ResourcesSpec
@@ -23,6 +24,7 @@ main = defaultMain $ testGroup "All tests" [
         rrdpXmlLazyParsingGroup,
         rrdpUpdateSpec,
         databaseGroup,
+        cacheGroup,
         resourceGroup,        
         validityGroup,
         repositoryGroup,
