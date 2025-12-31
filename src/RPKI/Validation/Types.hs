@@ -165,6 +165,21 @@ instance ToSchema CrlShortcut
 instance ToSchema MftChild where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
+
+data UpdateHappened = ObjectUpdate AddedObject
+                    | RepositoryUpdate RpkiURL
+                    | TaUpdate TaName
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+data AddedObject = AddedObject {
+        objectKey :: ObjectKey,
+        aki       :: AKI        
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+
 getMftChildSerial :: MftChild -> Maybe Serial     
 getMftChildSerial = \case 
     CaChild _ serial     -> Just serial 
