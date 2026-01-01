@@ -2,13 +2,17 @@
 
 module RPKI.Store.CacheSpec where
 
+import           Control.Exception
 import           Control.Concurrent.Async
+import           Control.Concurrent.STM
 import           Data.IORef
+import           Data.Maybe
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit                  as HU
 
 import qualified RPKI.Store.Cache as Cache
+import qualified StmContainers.Map as StmMap
 
 
 cacheGroup :: TestTree
@@ -60,8 +64,19 @@ shouldDoIOJustOnce = HU.testCase "Cache should cache" $ do
 
 shouldCrashWithoutIssues :: TestTree
 shouldCrashWithoutIssues = HU.testCase "Cache should cache" $ do        
+    cache :: Cache.Cache Int Int <- Cache.new 
+    let i = 3
+    t <- try $ Cache.get cache i (throwIO Overflow)
+
+    let Cache.Cache m = cache
+    z <- atomically $ StmMap.lookup i m
+    HU.assertBool "Should be empty" (isNothing z)
+
+    case t of 
+        Left (_ :: SomeException) -> pure ()
+        Right _ -> HU.assertBool "Shouldn't be here" False    
+
     
-    pure ()
     
 makeValue :: (Num a, Num b) => IORef a -> IO b
 makeValue counter = do 
