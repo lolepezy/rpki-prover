@@ -45,7 +45,7 @@ type DBMap = Lmdb.Database BS.ByteString BS.ByteString
 data NativeEnv = ROEnv Env
                | RWEnv Env
                | Disabled
-               | TimedOut
+               | TimedOut Env
 
 data LmdbEnv = LmdbEnv {
     nativeEnv :: TVar NativeEnv,
@@ -89,8 +89,8 @@ instance WithTx LmdbStorage where
         -- to start a writing transaction.
         e <- readTVarIO $ nativeEnv env
         case e of 
-            TimedOut -> throwIO TxTimeout
-            _        -> f $ LmdbTx tx
+            TimedOut _ -> throwIO TxTimeout
+            _          -> f $ LmdbTx tx
         
 
 withTransactionWrapper :: LmdbStorage -> (Lmdb.Transaction 'Lmdb.ReadWrite -> IO b) -> IO b
@@ -98,14 +98,14 @@ withTransactionWrapper LmdbStorage { env = LmdbEnv {..}, .. } f = do
     nEnv <- atomically $ do
         readTVar nativeEnv >>= \case
             Disabled     -> retry
-            TimedOut     -> throwSTM TxTimeout
+            TimedOut _   -> throwSTM TxTimeout
             ROEnv _      -> retry
             RWEnv native -> pure native
 
     withSemaphore txSem $ do
         stillWaiting <- newTVarIO True
         z <- race
-            (interruptAfterTimeout stillWaiting)
+            (interruptAfterTimeout nEnv stillWaiting)
             (runTx nEnv stillWaiting)
         case z of
             Left _ -> 
@@ -119,13 +119,13 @@ withTransactionWrapper LmdbStorage { env = LmdbEnv {..}, .. } f = do
             atomically $ writeTVar stillWaiting False
             f tx
 
-    interruptAfterTimeout stillWaiting = do
+    interruptAfterTimeout nEnv stillWaiting = do
         threadDelay $ toMicroseconds timeout 
         join $ atomically $ do
             sw <- readTVar stillWaiting            
             if sw
                 then do
-                    writeTVar nativeEnv TimedOut
+                    writeTVar nativeEnv (TimedOut nEnv)
                     pure $ throwIO TxTimeout
                 else
                     pure $ pure ()        
@@ -232,10 +232,10 @@ defaultMultiDbSettngs = makeMultiSettings
 getNativeEnv :: LmdbEnv -> STM Env
 getNativeEnv LmdbEnv {..} = do
     readTVar nativeEnv >>= \case
-        Disabled     -> retry
-        TimedOut     -> throwSTM TxTimeout
-        ROEnv native -> pure native
-        RWEnv native -> pure native
+        Disabled        -> retry
+        TimedOut native -> pure native
+        ROEnv native    -> pure native
+        RWEnv native    -> pure native
 
 disableNativeEnv :: LmdbEnv -> STM ()
 disableNativeEnv LmdbEnv {..} =

@@ -17,7 +17,6 @@ import qualified Data.ByteString.Lazy       as LBS
 import qualified Data.Map.Strict            as Map
 
 import           Data.String.Interpolate.IsString
-import           Data.Hourglass
 import           Data.Conduit.Process.Typed
 
 import           GHC.Generics

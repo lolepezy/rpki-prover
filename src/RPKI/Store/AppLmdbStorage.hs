@@ -172,8 +172,8 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
                 Disabled -> retry                
 
                 -- it shouldn't happen as well, but we can work with it in principle                
-                ROEnv nn -> pure nn
-                TimedOut -> retry
+                ROEnv nn    -> pure nn
+                TimedOut nn -> pure nn
 
             
     let copyToNewEnvironmentAndSwap dbStats = do                          
@@ -235,16 +235,16 @@ generateLmdbDir cacheDir = do
 
 
 cleanDirFiltered :: FilePath -> (FilePath -> Bool) -> ValidatorT IO ()
-cleanDirFiltered d f = fromTry (InitE . InitError . fmtEx) $ 
-                            listDirectory d >>= mapM_ (removePathForcibly . (d </>)) . filter f
+cleanDirFiltered d f = 
+    fromTry (InitE . InitError . fmtEx) $ 
+        mapM_ (removePathForcibly . (d </>)) . filter f =<< listDirectory d
 
 cleanDir :: FilePath -> ValidatorT IO ()
 cleanDir d = cleanDirFiltered d (const True)
 
-
 closeLmdbStorage :: AppContext LmdbStorage -> IO ()
 closeLmdbStorage AppContext {..} = do 
-    closeLmdb . (\d -> let LmdbStorage {..} = storage d in env) =<< readTVarIO database
+    closeLmdb . (\(storage -> LmdbStorage {..}) -> env) =<< readTVarIO database
 
 
 updateDatabase :: AppContext LmdbStorage -> FilePath -> IO ()

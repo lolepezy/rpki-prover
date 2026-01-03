@@ -197,13 +197,13 @@ pushSystem :: MonadIO m => AppLogger -> SystemMetrics -> m ()
 pushSystem logger sm = 
     liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ SystemMetricsM sm  
 
-registerWorker :: MonadIO m => AppLogger -> WorkerInfo -> m ()
+registerWorker :: AppLogger -> WorkerInfo -> IO ()
 registerWorker logger wi = 
-    liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ WorkerM $ AddWorker wi
+    atomically $ writeCQueue (getQueue logger) $ MsgQE $ WorkerM $ AddWorker wi
 
-deregisterWorker :: MonadIO m => AppLogger -> CPid -> m ()
+deregisterWorker :: AppLogger -> CPid -> IO ()
 deregisterWorker logger pid = 
-    liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ WorkerM $ RemoveWorker pid
+    atomically $ writeCQueue (getQueue logger) $ MsgQE $ WorkerM $ RemoveWorker pid
 
 pushSystemStatus :: MonadIO m => AppLogger -> SystemStatusMessage -> m ()
 pushSystemStatus logger sm = 
