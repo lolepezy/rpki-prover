@@ -4,26 +4,15 @@
 
 module RPKI.Validation.Partial where
 
-import           Data.Aeson.Types
-import qualified Data.Map.Strict             as Map
-import           Data.Text                   (Text)
-import           Data.Tuple.Strict
 import           GHC.Generics
 
-import           Data.Proxy
-import           Data.Swagger hiding (url)
-
-import           RPKI.Orphans.Swagger
 import           RPKI.Time
 import           RPKI.Domain
-import           RPKI.Repository
-import           RPKI.Resources.Types
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
-import           RPKI.Store.Base.SafeMap  (SafeMap)
-import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
+import           RPKI.Validation.Types (MftShortcut)
 
 
 
@@ -56,7 +45,9 @@ data KIMeta = KIMeta {
 
 data Store s = Store {
         kiMetas   :: SMap "ki-meta" s KI KIMeta,
-        expiresAt :: SMultiMap "expires-at" s Instant ObjectKey
+        expiresAt :: SMultiMap "expires-at" s Instant ObjectKey,
+        cert2mft  :: SMap "cert-to-mft" s ObjectKey ObjectKey,
+        mftShorts :: SMap "mft-shorts" s ObjectKey MftShortcut
     }
     deriving (Generic)
 
