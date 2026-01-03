@@ -47,7 +47,7 @@ import           RPKI.Resources.Types
 import           RPKI.Time
 
 import           RPKI.Store.Base.Serialisation
-import           RPKI.AppTypes (WorldVersion)
+import           RPKI.AppTypes
 
 
 -- There are two validation algorithms for RPKI tree
@@ -739,15 +739,6 @@ newtype PerTA a = PerTA { unPerTA :: MonoidalMap TaName a }
     deriving anyclass (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup (PerTA a)
     deriving Monoid    via GenericMonoid (PerTA a)
-
-
--- Some auxiliary types
-newtype Size = Size { unSize :: Int64 }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving newtype (Num)
-    deriving anyclass (TheBinary)
-    deriving Semigroup via Sum Size
-    deriving Monoid via Sum Size
 
 newtype UrlKey = UrlKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
