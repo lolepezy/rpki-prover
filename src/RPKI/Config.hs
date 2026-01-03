@@ -306,7 +306,9 @@ adjustWorkerConfig :: Config -> Timebox -> Config
 adjustWorkerConfig config (Timebox timeout) = config
         -- There's no point in having RW-transaction timeout
         -- longer than the worker timeout
-        & #storageConfig . #rwTransactionTimeout %~ (`min` (timeout - Seconds 1))
+        & #storageConfig . #rwTransactionTimeout %~ (`min` safeTimeout)
+  where
+    safeTimeout = max (Seconds 1) (timeout - Seconds 1)
 
 defaultsLogLevel :: LogLevel
 defaultsLogLevel = InfoL
