@@ -798,7 +798,7 @@ newtype EarliestToExpire = EarliestToExpire Instant
 instance Monoid EarliestToExpire where
     -- It is 2262-04-11 23:47:16.000Z, it's 
     -- 1) far enough to set it as "later that anything else"
-    -- 2) Anything bigger than that wraps around to the year 1677
+    -- 2) Anything bigger wraps around to the year 1677
     mempty = EarliestToExpire $ Instant $ 1000_000_000 * 9_223_372_036
 
 -- Small utility functions that don't have anywhere else to go
