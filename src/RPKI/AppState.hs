@@ -5,7 +5,7 @@ module RPKI.AppState where
 import           Control.Concurrent.STM    
 import           Control.DeepSeq
 import           Control.Lens hiding (filtered)
-import           Control.Monad (join)
+import           Control.Monad (join, unless)
 import           Control.Monad.IO.Class
 
 import qualified Data.ByteString                  as BS
@@ -28,7 +28,6 @@ import           RPKI.Metrics.System
 import           RPKI.RTR.Protocol
 import           RPKI.RTR.Types
 import           RPKI.Resources.Validity
-
 
 data AppState = AppState {
         -- current world version
@@ -61,9 +60,11 @@ data AppState = AppState {
         -- by the validity check
         prefixIndex :: TVar (Maybe PrefixIndex),
 
-        runningRsyncClients :: TVar (Map.Map CPid WorkerInfo),
+        runningWorkers :: TVar (Map.Map CPid WorkerInfo),
 
-        fetcheables :: TVar Fetcheables
+        fetcheables :: TVar Fetcheables,
+
+        systemState :: TVar SystemState
         
     } deriving stock (Generic)
 
@@ -88,8 +89,9 @@ newAppState = do
         system      <- newTVar (newSystemInfo now)        
         prefixIndex <- newTVar Nothing
         cachedBinaryRtrPdus <- newTVar mempty
-        runningRsyncClients <- newTVar mempty
+        runningWorkers <- newTVar mempty
         fetcheables <- newTVar mempty
+        systemState <- newTVar $ SystemState DbOperational
         let readSlurm = Nothing
         pure AppState {..}
                     
@@ -141,22 +143,46 @@ mergeSystemMetrics :: MonadIO m => SystemMetrics -> AppState -> m ()
 mergeSystemMetrics sm AppState {..} = 
     liftIO $ atomically $ modifyTVar' system (#metrics %~ (<> sm))
 
-updateRsyncClient :: MonadIO m => WorkerMessage -> AppState -> m ()           
-updateRsyncClient message AppState {..} =     
-    liftIO $ atomically $ modifyTVar' runningRsyncClients $ 
+updateRunningWorkers :: MonadIO m => WorkerMessage -> AppState -> m ()           
+updateRunningWorkers message AppState {..} =     
+    liftIO $ atomically $ modifyTVar' runningWorkers $ 
         case message of 
             AddWorker wi     -> Map.insert (wi ^. #workerPid) wi
             RemoveWorker pid -> Map.delete pid
-        
 
-removeExpiredRsyncProcesses :: MonadIO m => AppState -> m [(CPid, WorkerInfo)]
-removeExpiredRsyncProcesses AppState {..} = liftIO $ do 
+updateSystemStatus :: MonadIO m => SystemStatusMessage -> AppState -> m ()           
+updateSystemStatus (SystemStatusMessage ss) AppState {..} =     
+    -- TODO Do something smarter here
+    liftIO $ atomically $ writeTVar systemState ss
+
+waitForStuckDb :: AppState -> STM ()
+waitForStuckDb AppState {..} = do
+    SystemState {..} <- readTVar systemState
+    unless (dbState == DbStuck) retry
+
+dbIsStuck :: AppState -> STM Bool 
+dbIsStuck AppState {..} = do
+    (== DbStuck) . dbState <$> readTVar systemState
+        
+removeExpiredWorkers :: MonadIO m => AppState -> m [WorkerInfo]
+removeExpiredWorkers AppState {..} = liftIO $ do 
     Now now <- thisInstant
-    atomically $ do 
-        clients <- readTVar runningRsyncClients
-        let expired = filter (\(_, WorkerInfo {..}) -> endOfLife < now) $ Map.toList clients        
-        writeTVar runningRsyncClients $ foldr (\(pid, _) m -> Map.delete pid m) clients expired 
+    atomically $ do         
+        workers <- readTVar runningWorkers        
+        let expired = filter (\WorkerInfo {..} -> endOfLife < now) $ Map.elems workers        
+        writeTVar runningWorkers $ foldr (\WorkerInfo {..} m -> Map.delete workerPid m) workers expired 
         pure expired  
+
+getRunningWorkers :: MonadIO m => AppState -> m [WorkerInfo]
+getRunningWorkers AppState {..} = 
+    liftIO $ atomically $ Map.elems <$> readTVar runningWorkers
+
+removeAllRunningWorkers :: MonadIO m => AppState -> m [WorkerInfo]
+removeAllRunningWorkers AppState {..} = 
+    liftIO $ atomically $ do 
+        clients <- Map.elems <$> readTVar runningWorkers
+        writeTVar runningWorkers mempty
+        pure clients
 
 readRtrPayloads :: AppState -> STM RtrPayloads    
 readRtrPayloads AppState {..} = readTVar filtered
@@ -170,7 +196,8 @@ filterWithSLURM RtrPayloads {..} slurm =
 -- and things that are computed on-demand.
 cachedPduBinary :: AppState -> ProtocolVersion -> (RtrPayloads -> BS.ByteString) -> STM BS.ByteString
 cachedPduBinary appState@AppState {..} protocolVersion makeBs = do 
-    (Map.lookup protocolVersion <$> readTVar cachedBinaryRtrPdus) >>= \case
+    cached <- readTVar cachedBinaryRtrPdus
+    case Map.lookup protocolVersion cached of
         Nothing -> do            
             bs <- makeBs <$> readRtrPayloads appState 
             modifyTVar' cachedBinaryRtrPdus $ Map.insert protocolVersion bs

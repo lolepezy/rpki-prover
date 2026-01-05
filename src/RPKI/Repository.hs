@@ -299,8 +299,6 @@ filterPPAccess Config {..} ppAccess =
         RsyncPP _ -> rsyncConf ^. #enabled        
 
 
-type RsyncNodeNormal = RsyncTree RepositoryMeta
-
 -- Simple tree for representing rsync repositories grouped by host.
 -- Every RsyncTree corresponds to a path chunk in the rsync URL. 
 type RsyncForest = RsyncForestGen RepositoryMeta

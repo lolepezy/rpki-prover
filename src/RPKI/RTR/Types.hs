@@ -3,7 +3,6 @@
 
 module RPKI.RTR.Types where
 
-import           Control.DeepSeq
 import           Data.Set       (Set)
 import           Data.Monoid.Generic
 import           Data.Ord

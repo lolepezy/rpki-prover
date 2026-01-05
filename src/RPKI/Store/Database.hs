@@ -208,7 +208,7 @@ newtype SlurmStore s = SlurmStore {
 
 data RepositoryStore s = RepositoryStore {
         rrdpS       :: SafeMap "rrdp-repositories" s RrdpURL RrdpRepository,
-        rsyncS      :: SafeMap "rsync-repositories" s RsyncHost RsyncNodeNormal,
+        rsyncS      :: SafeMap "rsync-repositories" s RsyncHost (RsyncTree RepositoryMeta),
         rrdpVState  :: SafeMap "rrdp-validation-state" s RrdpURL (Compressed ValidationState),
         rsyncVState :: SafeMap "rsync-validation-state" s RsyncHost (Compressed (RsyncTree ValidationState))
     }

@@ -319,7 +319,7 @@ data SystemDto = SystemDto {
         startUpTime   :: Instant,
         tals          :: [TalDto],
         resources     :: [ResourcesDto],
-        rsyncClients  :: [WorkerInfoDto]
+        workers       :: [WorkerInfoDto]
     }
     deriving stock (Eq, Show, Generic)
 

@@ -3,12 +3,13 @@
 module RPKI.Worker where
 
 import           Control.Exception.Lifted
+import           Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 
-import           Control.Lens ((^.))
+import           Control.Lens
 
 import           Conduit
 import           Data.Text
@@ -16,7 +17,6 @@ import qualified Data.ByteString.Lazy       as LBS
 import qualified Data.Map.Strict            as Map
 
 import           Data.String.Interpolate.IsString
-import           Data.Hourglass
 import           Data.Conduit.Process.Typed
 
 import           GHC.Generics
@@ -93,10 +93,6 @@ data WorkerParams = RrdpFetchParams {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-newtype Timebox = Timebox { unTimebox :: Seconds }
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
-
 data WorkerInput = WorkerInput {
         workerId                :: WorkerId,
         params                  :: WorkerParams,
@@ -164,7 +160,8 @@ executeWork :: WorkerInput
             -> IO ()
 executeWork input exitWith_ actualWork = 
     -- Check if version of the executable has changed compared to the parent.
-    -- If that's the case, bail out, it's likely we can do more harm then good
+    -- If that's the case, it usually means we are in the middle of an upgrade. 
+    -- In this case bail out, it's likely we can do more harm then good
     if input ^. #parentExecutableVersion /= thisExecutableVersion
         then 
             exitWith_ replacedExecutableExitCode
@@ -175,7 +172,7 @@ executeWork input exitWith_ actualWork =
             mapM_ (\w -> forkFinally w (const $ pure ())) [
                     (actualWork input writeWorkerOutput >> done ExitSuccess) 
                         `onException` 
-                    done exceptionExitCode,
+                        done exceptionExitCode,
                     dieIfParentDies done,
                     dieOfTiming done
                 ]
@@ -197,7 +194,9 @@ executeWork input exitWith_ actualWork =
     dieOfTiming done = 
         case input ^. #cpuLimit of
             Nothing       -> dieAfterTimeout done
-            Just cpuLimit -> whicheverHappensFirst (dieAfterTimeout done) (dieOutOfCpuTime cpuLimit done)
+            Just cpuLimit -> whicheverHappensFirst 
+                                (dieAfterTimeout done) 
+                                (dieOutOfCpuTime cpuLimit done)
 
     -- Time bomb. Wait for the certain timeout and then exit.
     dieAfterTimeout done = do
@@ -206,13 +205,13 @@ executeWork input exitWith_ actualWork =
         done timeoutExitCode
 
     -- Exit if the worker consumed too much CPU time
-    dieOutOfCpuTime cpuLimit done = go
+    dieOutOfCpuTime cpuLimit done = loop
       where
-        go = do 
+        loop = do 
             cpuTime <- getCpuTime
             if cpuTime > cpuLimit 
                 then done outOfCpuTimeExitCode
-                else threadDelay 1_000_000 >> go
+                else threadDelay 1_000_000 >> loop
 
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
@@ -267,14 +266,16 @@ exitKillByTypedProcess = ExitFailure (-2)
 workerIdStr :: WorkerId -> String
 workerIdStr (WorkerId w) = unpack w
 
+
 -- Main entry point to start a worker
 -- 
 runWorker :: (TheBinary r, Show r)
             => AppLogger 
             -> WorkerInput            
             -> [String] 
+            -> WorkerInfo 
             -> ValidatorT IO r
-runWorker logger workerInput extraCli = do
+runWorker logger workerInput extraCli workerInfo = do
     let executableToRun = configValue $ workerInput ^. #config . #programBinaryPath
     let worker = 
             setStdin (byteStringInput $ LBS.fromStrict $ serialise_ workerInput) $             
@@ -294,14 +295,24 @@ runWorker logger workerInput extraCli = do
     timeout = unTimebox $ workerInput ^. #workerTimeout
     workerId = workerInput ^. #workerId
 
-    waitForProcess conf f = bracket
-        (startProcess conf)
-        stopProcess
-        (\p -> (,) <$> f p <*> waitExitCode p) 
+    waitForProcess conf f = bracket start stop exec
+      where
+        start = do 
+            p <- startProcess conf
+            mpid <- getPid p
+            forM_ mpid $ \pid -> 
+                registerWorker logger $ workerInfo & #workerPid .~ pid
+            pure (mpid, p)           
+
+        stop (mpid, p) = do 
+            stopProcess p
+            forM_ mpid (deregisterWorker logger)
+
+        exec (_, p) = (,) <$> f p <*> waitExitCode p        
 
     runIt workerConf = do   
         ((_, workerStdout), exitCode) <- 
-            liftIO $ waitForProcess workerConf $ \p -> 
+            liftIO $ waitForProcess workerConf $ \p ->
                 concurrently 
                     (runConduitRes $ getStderr p .| sinkLog logger)
                     (atomically $ getStdout p)
