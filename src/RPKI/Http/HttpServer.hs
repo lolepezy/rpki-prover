@@ -466,7 +466,7 @@ getSystem AppContext {..} = do
     now <- unNow <$> thisInstant
     SystemInfo {..} <- readTVarIO $ appState ^. #system
     let proverVersion = rpkiProverVersion    
-    let gitInfo       = getGitInfo
+    let gitInfo       = makeGitInfo
     
     let z = MonoidalMap.toList $ unMetricMap $ metrics ^. #resources
     resources <- 
