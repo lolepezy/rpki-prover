@@ -741,6 +741,10 @@ newtype PerTA a = PerTA { unPerTA :: MonoidalMap TaName a }
     deriving Semigroup via GenericSemigroup (PerTA a)
     deriving Monoid    via GenericMonoid (PerTA a)
 
+newtype ArtificialKey = ArtificialKey LexOrdKey64
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
 newtype UrlKey = UrlKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -749,9 +753,13 @@ newtype ObjectKey = ObjectKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-newtype ArtificialKey = ArtificialKey LexOrdKey64
+newtype CertKey = CertKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
-    deriving newtype (TheBinary, NFData)
+    deriving anyclass (TheBinary)
+
+newtype MftKey = MftKey ArtificialKey
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
 
 data ObjectIdentity = KeyIdentity ObjectKey
                     | HashIdentity Hash

@@ -494,6 +494,14 @@ instance Arbitrary ObjectKey where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary CertKey where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary MftKey where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary ObjectIdentity where
     arbitrary = genericArbitrary
     shrink = genericShrink
