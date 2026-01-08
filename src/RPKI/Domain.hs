@@ -757,6 +757,14 @@ newtype ObjectKey = ObjectKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
+newtype CertKey = CertKey ArtificialKey
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+newtype MftKey = MftKey ArtificialKey
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
 newtype ArtificialKey = ArtificialKey Int64
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
