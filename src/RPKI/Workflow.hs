@@ -836,10 +836,10 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             fetchOnce >>= \case        
                 Nothing -> do                
                     logInfo logger [i|Fetcher for #{url} is not needed and will be deleted.|]
-                Just interval -> do 
-                    logDebug logger [i|Fetcher for #{url} finished, next fetch in #{interval}.|]
+                Just nextFetchAfter -> do 
+                    logDebug logger [i|Fetcher for #{url} finished, next fetch in #{nextFetchAfter}.|]
                     Now end <- thisInstant
-                    let pause = leftToWaitMicros (Earlier start) (Later end) interval
+                    let pause = leftToWaitMicros (Earlier start) (Later end) nextFetchAfter
                     when (pause > 0) $
                         threadDelay $ fromIntegral pause
 
@@ -878,6 +878,12 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 worldVersion <- newWorldVersion
                 repository <- fromMaybe (newRepository url) <$> 
                                 roTxT database (\tx db -> DB.getRepository tx db url) 
+
+                case toBeUsed repository of 
+                    False -> do                         
+                        pure ()
+                    True -> do
+                        pure ()
 
                 ((r, validations), duration) <-                 
                         withFetchLimits fetchConfig repository $ timedMS $ 
@@ -959,6 +965,10 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             pure $ any (hasUpdates . snd) repositories
         
 
+    toBeUsed = \case 
+        RrdpR _  -> config ^. #rrdpConf . #enabled
+        RsyncR _ -> config ^. #rsyncConf . #enabled
+
     fetchableForUrl = do 
         Fetcheables fs <- readTVarIO fetcheables
         pure $ MonoidalMap.lookup url fs
@@ -1005,7 +1015,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
         minInterval = 
             case repository of                
-                -- it's signifantly cheaper to use E-Tag and If_No-Mobified-Since, 
+                -- it's signifantly cheaper to use E-Tag and If_Not-Modified-Since, 
                 -- so the interval can be smaller
                 RrdpR (RrdpRepository { eTag = Just _ }) -> fetchConfig ^. #minFetchInterval
                 _                                        -> 2 * fetchConfig ^. #minFetchInterval
