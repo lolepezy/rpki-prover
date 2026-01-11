@@ -4,8 +4,11 @@
 
 module RPKI.Validation.Partial where
 
+import           Control.Concurrent.STM
+
 import           GHC.Generics
 
+import           RPKI.AppMonad
 import           RPKI.Time
 import           RPKI.Domain
 import           RPKI.Store.Base.Serialisation
@@ -33,14 +36,15 @@ Create re-validation tasks of the kind
 - Or WholeRepository RepositoryId
 - Or WholeTA TaName
 
-While going down the tree create a diff of payloads, i.e. the result of validation must 
-be Diff Payload.
+While going down the tree create a diff of payloads, i.e. 
+result of validation is Diff Payload.
 
-The whole machinery of shortcuts should be in place, except for refactoring manifest 
-shortcuts into the form where MFT shortcut only stores ObjectKeys of children and not 
-children themselves
+The whole machinery of shortcuts should be in place, probably add to it 
+refactoring manifest shortcuts into the form where they store only ObjectKeys 
+of children and not children themselves (TODO It will make sense only 
+if fileName can also be stored outside of the MFT shortcut).
 
-Do periodic full re-validation of all TAs "just in case"?
+Do periodic full re-validation of all TAs "just in case"? (: No)
 
 Keep track of the objects that are "about to expire" (i.e. a multi-map of 
 (expirationDate, ObjectKey)) and do partial re-validation for them 
@@ -58,20 +62,15 @@ When an update happens, we can find the affected CAs by their KIs and
 then traverse down the tree to re-validate only affected objects.
 
 
-Open questions:
+Ideas:
 
     * How to keep track of which objects are to be deleted and to be kept? 
       Current idea with visited objects wouldn't work (or would it?)
-       - One idea: periodically dump the whole tree. If the union of 
-         last N dumps contains an ObjectKey that means it is still 
-         useful, otherwise it is to be deleted.
 
-    * What happens when the validator is launched after a long time of not running? 
-       Nothing special, but
-        - Updates can be big and hit the threshold of "validate whole repository" 
-          or "validate whole TA"
-        - Run expiration check first?
-        - 
+      Idea: periodically dump the whole tree. If the union of 
+         last N dumps contains an ObjectKey that means it is still 
+         useful, otherwise it is to be deleted.        
+
 
     * What happens if a validation process was interrupted?
         Idea: 
@@ -81,35 +80,27 @@ Open questions:
         - in one transaction 
             + write applied changes to the log
             + update the tree store (KI -> KIMeta, CertKey -> MftKey)
-            + update all manifest shortcuts (or not? they might be written asynchronously)
+        - MFT shortcuts should be written asynchronously as already implemented
 
 
-    Main parts: 
-
-        data Payload = VrpsP [Vrp]                      
-                     | AspaP Aspa
-                     | BgpSecP BgpSec
-                     | SplP Spl
-                     | GbrP Gbr
-            deriving (Show, Eq, Ord, Generic)
-            deriving anyclass (TheBinary)
-
-        -- validate top-down with shortcuts is the function to be called 
-        -- when found payloads
-        validateCA :: Bla -> CertKey -> STM Payload -> ValidatorT IO ()
-        validateCA bla certKey onPayload = do ... pure ()
+    * How to deal expiring objects? Idea:
+      - Keep a mutimap Instant -> ObjectKey for it
+      - Scan expiresAt, expire all the object for the given timestamp
+      - Expire object means deleting all payloads found under that object
+      - Expired objects stay in the tree and are filtered out by their validity 
+        period, they become forever skipped, but it's easier to do that than
+        actually modify MFT shortcuts
 
 
-        traversePayloads :: Bla -> ObjectKey -> STM Payload -> ValidatorT IO ()
-        traversePayloads bla objectKey onPayload = pure ()
+    * What happens when the validator is launched after a long time of not running? 
+       Nothing special, but
+        - Updates can be big and hit the threshold of "validate whole repository" 
+          or "validate whole TA"
+        - Run expiration check first?
 
 
-        -- to delete payloads 
-
-
-
-        ** Bla is the usual "Storage s => AppContext s -> TopDownContext"
-
+    * Pre-group of filter update log? 
+        - Exlude repeated updates of the same repository/TA?
 -}
 
 
@@ -123,11 +114,20 @@ data UpdateHappened = ObjectUpdate AddedObject
 
 data AddedObject = AddedObject {
         objectKey :: ObjectKey,
-        aki       :: AKI        
+        ki        :: KI        
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+
+-- It is to simplify the definition of Payload handlers        
+data Payload = VrpsP [Vrp]                      
+            | AspaP Aspa
+            | BgpSecP BGPSecPayload
+            | SplP SplPayload
+            | GbrP Gbr
+    deriving (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
 
 -- Database
 
@@ -149,9 +149,44 @@ data Store s = Store {
     deriving (Generic)
 
 
--- Actual validation    
 
-xxx :: Storage s => [UpdateHappened] -> Store s -> IO ()
-xxx updates store = do 
-    
+
+-- Validate top-down with shortcuts and the function to be called when found payloads.
+-- Look at the KI -> KIMeta and update it if needed after validation for CA succeeds
+-- 
+validateCA :: CertKey -> STM Payload -> ValidatorT IO ()
+validateCA certKey onPayload = do
+    -- 
     pure ()
+
+-- Filter will be used to 
+--   * Pick up only CAs that are on somebody's path to the top
+--   * Pick up payloads (or their shortcuts) that are in the set up updates
+--    
+validateCAPartially :: CertKey -> STM Payload -> (ObjectKey -> Bool) -> ValidatorT IO ()
+validateCAPartially certKey onPayload filter = do
+    pure ()
+
+
+traversePayloads :: ObjectKey -> STM Payload -> Bool -> ValidatorT IO ()
+traversePayloads objectKey onPayload includeExpired = do     
+    pure ()
+
+
+-- Find all start CAs based on the list of updates happened
+findStartCas :: [UpdateHappened] -> ValidatorT IO [CertKey]
+findStartCas updates = do
+    pure []
+  where         
+    findStartCa = \case 
+        ObjectUpdate AddedObject {..} -> do
+            pure $ Just (objectKey, ki)
+
+        RepositoryUpdate repoUrl -> do
+            -- Get the first from the top CA in the hierarchy 
+            -- that points to this repository
+            pure Nothing
+
+        TaUpdate taName -> do
+            -- Get the TA certificate
+            pure Nothing

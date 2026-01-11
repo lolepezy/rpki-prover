@@ -182,6 +182,7 @@ instance {-# OVERLAPPING #-} WithRpkiURL u => WithURL u where
 toText :: RpkiURL -> Text
 toText = unURI . getURL 
 
+-- Key Identifier
 newtype KI = KI BSS.ShortByteString 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
