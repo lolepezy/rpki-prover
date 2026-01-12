@@ -101,7 +101,21 @@ Ideas:
 
     * Pre-group of filter update log? 
         - Exlude repeated updates of the same repository/TA?
+
+
+    * How to stop updating repositories that are not referred by CAs?
+        Idea: 
+         - store multimaps RepositoryKey -> ObjectKey and ObjectKey -> RepositoryKey
+         - each repository maintaining thread can see if there are any ObjectKeys 
+           referring to its repository, if none, it can stop
+
+    * How to associate repository to a key? 
+      - RRDP - simple
+      - rsync - add key to the leafs of the tree
+      - it might be that we'll never need to have an operation of "find repository by key", 
+        so no need to have indexes for it
 -}
+
 
 
 -- Types
