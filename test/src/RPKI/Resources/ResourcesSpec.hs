@@ -1,8 +1,4 @@
-{-# LANGUAGE AllowAmbiguousTypes       #-}
-{-# LANGUAGE DuplicateRecordFields     #-}
-{-# LANGUAGE FlexibleContexts          #-}
-{-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE OverloadedStrings         #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.Resources.ResourcesSpec where
 

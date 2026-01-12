@@ -1,15 +1,6 @@
-{-# LANGUAGE MultiWayIf          #-}
-{-# LANGUAGE DerivingStrategies  #-}
-{-# LANGUAGE OverloadedLabels    #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE QuasiQuotes         #-}
-{-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE AllowAmbiguousTypes  #-}
 
 module RPKI.Validation.ObjectValidation where
     
@@ -155,7 +146,7 @@ validateTaCertAKI taCert u =
 -- 
 chooseTaCert :: CaCerObject -> CaCerObject -> PureValidatorT CaCerObject
 chooseTaCert cert cachedCert = do
-    let validities = bimap Instant Instant . certValidity . cwsX509certificate . getCertWithSignature
+    let validities = bimap newInstant newInstant . certValidity . cwsX509certificate . getCertWithSignature
     let (notBefore, notAfter) = validities cert
     let (cachedNotBefore, cachedNotAfter) = validities cachedCert
     let bothValidities = TACertValidities {..}
@@ -215,7 +206,7 @@ validateResourceCert now cert parentCert vcrl = do
     when (isRevoked cert vcrl) $ 
         vPureError RevokedResourceCertificate
 
-    validateObjectValidityPeriod cert now    
+    void $ validateObjectValidityPeriod cert now    
 
     unless (correctSkiAki cert parentCert) $
         vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
@@ -226,13 +217,14 @@ validateResourceCert now cert parentCert vcrl = do
         maybe False (\(AKI a) -> a == s) $ getAKI c
 
 
-validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT ()
+validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT (Instant, Instant)
 validateObjectValidityPeriod c (Now now) = do 
     let (notBefore, notAfter) = getValidityPeriod c
     when (now < notBefore) $ 
         vPureError $ ObjectValidityIsInTheFuture notBefore notAfter
     when (now > notAfter) $ 
         vPureError $ ObjectIsExpired notBefore notAfter
+    pure (notBefore, notAfter)
 
 
 validateResources ::
@@ -581,3 +573,9 @@ validateSize vc s =
             | s < vc ^. #minObjectSize -> Left $ ObjectIsTooSmall s
             | s > vc ^. #maxObjectSize -> Left $ ObjectIsTooBig s
             | otherwise                -> pure s
+
+
+isWithinValidityPeriod :: WithValidityPeriod a => Now -> a -> Bool
+isWithinValidityPeriod (Now now) a = 
+    let (start_, end_) = getValidityPeriod a
+    in start_ <= now && now < end_

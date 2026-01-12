@@ -1,5 +1,5 @@
 name:                rpki-prover
-version:             0.9.10
+version:             0.10.0
 github:              "lolepezy/rpki-prover"
 license:             BSD3
 author:              "Mikhail Puzanov"
@@ -19,13 +19,29 @@ extra-source-files:
 # common to point users to the README.md file.
 description:         Please see the README on GitHub at <https://github.com/githubuser/rpki-prover#readme>
 
-default-extensions: BangPatterns, ViewPatterns, LambdaCase, ConstraintKinds, DataKinds, 
-                    DeriveDataTypeable, DeriveGeneric, DeriveFunctor,
-                    DuplicateRecordFields, FlexibleContexts, GADTs,
-                    KindSignatures, MultiParamTypeClasses, MultiWayIf, NoMonomorphismRestriction, 
-                    NumericUnderscores, PatternSynonyms, PolyKinds, RankNTypes, QuantifiedConstraints,
-                    StandaloneDeriving, ScopedTypeVariables, TupleSections, TypeApplications, 
-                    TypeFamilies, TypeOperators
+default-extensions: BangPatterns, 
+                    ConstraintKinds, 
+                    DataKinds, 
+                    DeriveDataTypeable, DeriveGeneric, DeriveFunctor, DerivingStrategies, 
+                    DerivingVia, DeriveAnyClass, DeriveTraversable,                    
+                    DuplicateRecordFields, 
+                    FlexibleContexts, 
+                    GADTs,
+                    GeneralizedNewtypeDeriving,                    
+                    InstanceSigs,
+                    KindSignatures, 
+                    LambdaCase, 
+                    MultiParamTypeClasses, MultiWayIf, 
+                    NoMonomorphismRestriction, 
+                    OverloadedLabels,
+                    NamedFieldPuns, NumericUnderscores, 
+                    PatternSynonyms, PolyKinds, RankNTypes, QuantifiedConstraints,
+                    QuasiQuotes,                    
+                    RecordWildCards,
+                    StandaloneDeriving, ScopedTypeVariables, 
+                    TupleSections, TypeApplications, 
+                    TypeFamilies, TypeOperators, TemplateHaskell,
+                    ViewPatterns
 
 dependencies:
 - base
@@ -39,6 +55,7 @@ dependencies:
 - base64
 - binary
 - blaze-html
+- blaze-markup
 - bytestring
 - bytestring-mmap
 - cborg
@@ -58,6 +75,7 @@ dependencies:
 - file-embed-lzma
 - generic-lens
 - generic-monoid
+- githash
 - hashable
 - hourglass
 - http-client
@@ -68,6 +86,7 @@ dependencies:
 - hw-ip
 - interpolate
 - insert-ordered-containers
+- ixset-typed
 - lens
 - lmdb-high-level
 - lifted-async
@@ -112,6 +131,7 @@ dependencies:
 - tasty-hunit
 - tasty-quickcheck    
 - th-utilities
+- time
 - generic-arbitrary
 - quickcheck-instances
 - unix

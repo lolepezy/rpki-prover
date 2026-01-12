@@ -1,6 +1,4 @@
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE StrictData         #-}
-{-# LANGUAGE RecordWildCards    #-}
 
 module RPKI.AppContext where
     
@@ -10,7 +8,7 @@ import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Config
 import           RPKI.Logging
-import           RPKI.Store.Database
+import           RPKI.Store.Database    (DB)
 
 data AppContext s = AppContext {
         logger            :: AppLogger, 

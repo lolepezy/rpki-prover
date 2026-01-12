@@ -1,13 +1,5 @@
 
-{-# LANGUAGE DerivingStrategies  #-}
-{-# LANGUAGE DeriveAnyClass      #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE StrictData          #-}
--- it is a little faster
-{-# LANGUAGE Strict              #-}
-{-# LANGUAGE OverloadedLabels    #-}
-{-# LANGUAGE MultiWayIf          #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE Strict #-}
 
 module RPKI.Resources.Validity where
 
@@ -76,7 +68,7 @@ instance StoredVrp Word32 where
 
 instance StoredVrp Integer where 
     type ActuallyStored Integer = QuickCompVrp Integer
-    makeStoredVrp s e vrp = QuickCompVrp s e vrp
+    makeStoredVrp = QuickCompVrp
     prefixEgdes (QuickCompVrp s e _) = (s, e)
 
 data PrefixIndex = PrefixIndex {
@@ -94,7 +86,7 @@ makePrefixIndex = let
     in PrefixIndex {..}
 
 createPrefixIndex :: (Foldable f, Coercible v Vrp) => f v -> PrefixIndex
-createPrefixIndex = foldr insertVrp makePrefixIndex . map coerce . toList
+createPrefixIndex = foldr (insertVrp . coerce) makePrefixIndex . toList
 
 insertVrp :: Vrp -> PrefixIndex -> PrefixIndex
 insertVrp vrpToInsert@(Vrp _ pp _) t = 
@@ -201,7 +193,7 @@ prefixEdgesV6 (Ipv6Prefix p) = (v6toInteger (V6.firstIpAddress p), v6toInteger (
 
 {-# INLINE intervalMiddle #-}
 intervalMiddle :: (Bits a, Num a) => Bucket a c -> a
-intervalMiddle bucket = bucket ^. #address + 1 `shiftL` (fromIntegral (bucket ^. #bitSize - 1))
+intervalMiddle bucket = bucket ^. #address + 1 `shiftL` fromIntegral (bucket ^. #bitSize - 1)
 
 data What = Lower | Higher | Overlaps
     deriving stock (Eq, Ord, Generic)     

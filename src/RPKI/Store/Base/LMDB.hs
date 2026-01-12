@@ -1,11 +1,5 @@
-{-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE DerivingStrategies    #-}
-{-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE UndecidableInstances  #-}
-{-# LANGUAGE OverloadedStrings     #-}
-
 
 module RPKI.Store.Base.LMDB where
 
@@ -198,6 +192,9 @@ getNativeEnv LmdbEnv {..} = do
         ROEnv native -> pure native
         RWEnv native -> pure native
 
+disableNativeEnv :: LmdbEnv -> STM ()
+disableNativeEnv LmdbEnv {..} = 
+    writeTVar nativeEnv Disabled
 
 data CopyStat = CopyStat { 
         mapName       :: BS.ByteString, 

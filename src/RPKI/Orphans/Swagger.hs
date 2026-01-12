@@ -1,7 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-
 module RPKI.Orphans.Swagger where
 
 import           Data.Text                   (Text)
@@ -40,6 +39,7 @@ import           RPKI.Orphans.Generics
 
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
+import RPKI.Repository (Fetcheables)
 
 -- ToSchema insrances for Swagger doc generation
 instance ToSchema ArtificialKey
@@ -54,7 +54,6 @@ instance ToSchema URI where
      declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema WorldVersion     
-instance ToSchema VersionKind
 instance ToSchema Instant where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema DateTime     
@@ -84,7 +83,7 @@ instance (ToSchema a, ToSchema b) => ToSchema (These a b)
 instance (ToSchema a, ToJSONKey a, ToSchema b) => ToSchema (MonoidalMap a b) where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy (Map a b))
 
-instance ToSchema a => ToSchema (GroupedValidationMetric a)
+instance ToSchema a => ToSchema (GroupedMetric a)
 
 instance ToSchema SessionId
 instance ToSchema Serial
@@ -93,7 +92,9 @@ instance ToSchema TaName where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToSchema a => ToSchema (MetricMap a)
+instance ToSchema ValidatedBy
 instance ToSchema ValidationMetric
+instance ToSchema RpkiObjectType
 instance ToSchema RsyncMetric
 instance ToSchema RrdpMetric
 instance ToSchema ResourceUsage
@@ -101,6 +102,7 @@ instance ToSchema SystemMetrics
 instance ToSchema ScopeKind
 instance ToSchema FetchFreshness
 instance ToSchema HttpStatus
+instance ToSchema Fetcheables where
 instance ToSchema RrdpSource where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 
@@ -111,8 +113,14 @@ instance ToSchema TimeMs where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 instance ToSchema CPUTime where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
+instance ToSchema AggregatedCPUTime where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
+instance ToSchema LatestCPUTime where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 instance ToSchema MaxMemory where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
+instance ToSchema AvgMemory where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)    
 instance ToSchema Size where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 
@@ -120,6 +128,7 @@ instance ToSchema DBFileStats
 instance ToSchema StorageStats
 instance ToSchema TotalDBStats
 instance ToSchema SStats
+instance ToSchema ObjectStats
 
 instance ToSchema (ApiSecured a) where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
@@ -136,8 +145,6 @@ instance ToSchema LogLevel
 instance ToSchema ManifestProcessing
 instance ToSchema ValidationRFC
 instance ToSchema ValidationAlgorithm
-instance ToSchema FetchTimingCalculation
-instance ToSchema FetchMethod
 instance ToSchema ProverRunMode where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 

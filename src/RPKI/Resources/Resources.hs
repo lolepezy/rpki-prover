@@ -1,10 +1,6 @@
-{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE BangPatterns               #-}
-{-# LANGUAGE MultiWayIf                 #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Resources.Resources where
 
@@ -133,9 +129,6 @@ endsV6 (Ipv6Prefix ip1) (Ipv6Prefix ip2) = (f1, l1, f2, l2)
     l2 = V6.lastIpAddress ip2
 {-# INLINE endsV6 #-}    
 
-between :: Ord a => a -> (a, a) -> Bool
-between a (b, c) = a >= b && a < c
-{-# INLINE between #-}
 
 startV4 :: Ipv4Prefix -> V4.IpAddress
 startV4 (Ipv4Prefix p) = V4.firstIpAddress p
@@ -207,12 +200,6 @@ toRS = RS . IS.fromList
 
 allResources :: IpResources -> AsResources -> AllResources
 allResources (IpResources (IpResourceSet i4 i6)) (AsResources a) = AllResources i4 i6 a
-
-emptyAllRS :: AllResources
-emptyAllRS = AllResources emptyRS emptyRS emptyRS
-
-emptyAll :: PrefixesAndAsns
-emptyAll = PrefixesAndAsns IS.empty IS.empty IS.empty
 
 toPrefixesAndAsns :: AllResources -> PrefixesAndAsns
 toPrefixesAndAsns (AllResources ipv4 ipv6 asn) = 

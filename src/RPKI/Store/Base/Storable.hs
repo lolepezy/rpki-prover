@@ -1,8 +1,5 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -10,6 +7,7 @@ module RPKI.Store.Base.Storable where
 
 import qualified Data.ByteString as BS
 import qualified Data.Text       as Text
+import           Data.Map.Strict  (Map)
 import qualified Data.Map.Strict as Map
 
 import Control.DeepSeq
@@ -42,7 +40,9 @@ data StorableObject a = StorableObject {
 
 newtype Verbatim a = Verbatim { unVerbatim :: Storable }
     deriving stock (Show, Eq, Generic)
-              
+
+storableSize :: Storable -> Int              
+storableSize (Storable bs) = BS.length bs
 
 toStorableObject :: AsStorable a => a -> StorableObject a
 toStorableObject a = StorableObject a (toStorable a)
@@ -74,7 +74,7 @@ instance {-# OVERLAPPING #-} TheBinary a => AsStorable a where
 
 instance {-# OVERLAPPING #-} AsStorable a => AsStorable (StorableObject a) where
     toStorable StorableObject {..} = storable
-    fromStorable b = let o = fromStorable b in StorableObject o b
+    fromStorable b = StorableObject (fromStorable b) b
 
 instance {-# OVERLAPPING #-} AsStorable a => AsStorable (Compressed a) where
     toStorable (Compressed a) = 
@@ -108,3 +108,17 @@ instance Semigroup SStats where
 
 newtype StorageStats = StorageStats (Map.Map Text.Text SStats)
     deriving stock (Show, Eq, Generic)    
+
+
+data ObjectStats = ObjectStats {
+        totalObjects :: Size,
+        totalSize    :: Size,
+        countPerType    :: Map RpkiObjectType Size,
+        minSizePerType   :: Map RpkiObjectType Size,
+        maxSizePerType   :: Map RpkiObjectType Size,
+        totalSizePerType :: Map RpkiObjectType Size,
+        avgSizePerType   :: Map RpkiObjectType Size
+    }
+    deriving stock (Eq, Show, Generic)
+    deriving Semigroup via GenericSemigroup ObjectStats
+    deriving Monoid    via GenericMonoid ObjectStats

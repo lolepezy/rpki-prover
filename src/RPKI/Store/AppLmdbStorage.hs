@@ -1,9 +1,5 @@
-{-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE OverloadedLabels     #-}
 {-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE QuasiQuotes          #-}
-{-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Store.AppLmdbStorage where
@@ -27,13 +23,12 @@ import           RPKI.Worker
 import           RPKI.Reporting
 import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Storage
-import qualified RPKI.Store.Database              as DB
+import qualified RPKI.Store.Database             as DB
 import           RPKI.Store.MakeLmdb
 import           RPKI.Store.Base.Storable
 import           RPKI.Time
 import           RPKI.Metrics.System
 import           RPKI.Util
-
 
 import           System.Directory
 import           System.FilePath                  ((</>))
@@ -201,7 +196,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
                 writeTVar (nativeEnv lmdbEnv) (RWEnv newNative)  
                 writeTVar database newDB
 
-            closeNativeLmdb oldNativeEnv
+            closeEnvironment oldNativeEnv
             removePathForcibly currentLinkTarget
 
             Size lmdbFileSize <- cacheFsSize appContext 
@@ -250,7 +245,7 @@ cleanDir d = cleanDirFiltered d (const True)
 
 
 closeLmdbStorage :: AppContext LmdbStorage -> IO ()
-closeLmdbStorage AppContext {..} =    
+closeLmdbStorage AppContext {..} = do 
     closeLmdb . unEnv . storage =<< readTVarIO database
 
 
@@ -267,8 +262,9 @@ copyLmdbEnvironment AppContext {..} targetLmdbPath = do
 
 -- | The only reason to do LMDB copying as a separate worker process is memory.
 -- Even though copying key-value pairs is a perfectly streaming-like activity, 
--- without enough GC pressure it allocates a large heap, so to avoid it we run 
--- a worker process with limited heap that does the copying.
+-- without enough GC pressure it allocates a large heap (because of plenty of 
+-- bytestrings apparently), so to avoid it we run a worker process with limited 
+-- heap that does the copying.
 -- 
 runCopyWorker :: AppContext LmdbStorage -> SStats -> FilePath -> IO ()
 runCopyWorker appContext@AppContext {..} dbtats targetLmdbPath = do 
@@ -281,7 +277,7 @@ runCopyWorker appContext@AppContext {..} dbtats targetLmdbPath = do
             in max (maxMemory `div` 1024 `div` 1024) 64
 
     let arguments = 
-            [ worderIdS workerId ] <>
+            [ workerIdStr workerId ] <>
             rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory (show maxMemoryMb <> "m") ]
 
     (z, vs) <- runValidatorT 

@@ -1,8 +1,4 @@
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE OverloadedLabels   #-}
-{-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE StrictData         #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.AppState where
     
@@ -19,11 +15,14 @@ import qualified Data.Set                         as Set
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Vector                      as V
 import           GHC.Generics
+import           System.Posix.Types
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.AppTypes
+import           RPKI.Logging
 import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
+import           RPKI.Repository
 import           RPKI.Time
 import           RPKI.Metrics.System
 import           RPKI.RTR.Protocol
@@ -35,17 +34,19 @@ data AppState = AppState {
         -- current world version
         world     :: TVar (Maybe WorldVersion),
 
-        -- Sunset of the last validated payloads that 
+        -- Subset of the last validated payloads that 
         -- is feasible for RTR (VRPs, BGPSec certificates)
         validated :: TVar RtrPayloads,
 
         -- The same but filtered through SLURM 
         filtered  :: TVar RtrPayloads,
 
-        -- Full RTR state sent to every RTR client.
+        -- Full binary RTR state sent to every RTR client.
         -- It is serialised once per RTR protocol version 
-        -- and sent to every new client requesting the full state
-        cachedBinaryPdus :: TVar (Map.Map ProtocolVersion BS.ByteString),
+        -- and sent to every new client requesting the full state.
+        -- It is an optimisation to avoid serialising the same 
+        -- RTR state for every new client.
+        cachedBinaryRtrPdus :: TVar (Map.Map ProtocolVersion BS.ByteString),
 
         -- Function that re-reads SLURM file(s) after every re-validation
         readSlurm   :: Maybe (ValidatorT IO Slurm),
@@ -58,32 +59,38 @@ data AppState = AppState {
 
         -- Index for searching VRPs by a prefix used
         -- by the validity check
-        prefixIndex :: TVar (Maybe PrefixIndex)
+        prefixIndex :: TVar (Maybe PrefixIndex),
+
+        runningRsyncClients :: TVar (Map.Map CPid WorkerInfo),
+
+        fetcheables :: TVar Fetcheables
         
     } deriving stock (Generic)
 
 
 uniqVrps :: Vrps -> V.Vector AscOrderedVrp 
 uniqVrps vrps = let 
-        s = Set.fromList $ concatMap V.toList $ allVrps vrps
+        s = Set.fromList $ V.toList $ unVrps vrps
     in V.fromListN (Set.size s) $ Prelude.map AscOrderedVrp $ Set.toList s
 
-mkRtrPayloads :: Vrps -> Set BGPSecPayload -> RtrPayloads
-mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrps vrps, .. }
+mkRtrPayloads :: PerTA Vrps -> Set BGPSecPayload -> RtrPayloads
+mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrps $ allTAs vrps, .. }
 
 -- 
 newAppState :: IO AppState
 newAppState = do        
     Now now <- thisInstant
     atomically $ do 
-        world            <- newTVar Nothing
-        validated        <- newTVar mempty
-        filtered         <- newTVar mempty        
-        rtrState         <- newTVar Nothing
-        readSlurm        <- pure Nothing
-        system           <- newTVar (newSystemInfo now)        
-        prefixIndex      <- newTVar Nothing
-        cachedBinaryPdus <- newTVar mempty
+        world       <- newTVar Nothing
+        validated   <- newTVar mempty
+        filtered    <- newTVar mempty        
+        rtrState    <- newTVar Nothing        
+        system      <- newTVar (newSystemInfo now)        
+        prefixIndex <- newTVar Nothing
+        cachedBinaryRtrPdus <- newTVar mempty
+        runningRsyncClients <- newTVar mempty
+        fetcheables <- newTVar mempty
+        let readSlurm = Nothing
         pure AppState {..}
                     
 
@@ -98,7 +105,7 @@ completeVersion AppState {..} worldVersion rtrPayloads slurm = do
     writeTVar filtered slurmed        
 
     -- invalidate serialised PDU cache with every new version
-    writeTVar cachedBinaryPdus mempty
+    writeTVar cachedBinaryRtrPdus mempty
     pure $! slurmed
 
 updatePrefixIndex :: AppState -> RtrPayloads -> STM ()
@@ -106,19 +113,16 @@ updatePrefixIndex AppState {..} rtrPayloads =
     writeTVar prefixIndex $! 
         force $ Just $ createPrefixIndex $ rtrPayloads ^. #uniqueVrps
 
-getWorldVerionIO :: AppState -> IO (Maybe WorldVersion)
-getWorldVerionIO AppState {..} = readTVarIO world
-
 getOrCreateWorldVerion :: AppState -> IO WorldVersion
 getOrCreateWorldVerion AppState {..} = 
     join $ atomically $ 
         maybe newWorldVersion pure <$> readTVar world
 
-versionToMoment :: WorldVersion -> Instant
-versionToMoment (WorldVersion nanos) = fromNanoseconds nanos
+versionToInstant :: WorldVersion -> Instant
+versionToInstant (WorldVersion nanos) = Instant nanos
 
 instantToVersion :: Instant -> WorldVersion
-instantToVersion = WorldVersion . toNanoseconds
+instantToVersion (Instant nanos) = WorldVersion nanos
 
 -- Block on version updates
 waitForNewVersion :: AppState -> WorldVersion -> STM (WorldVersion, RtrPayloads)
@@ -135,7 +139,24 @@ waitForAnyVersion AppState {..} =
 
 mergeSystemMetrics :: MonadIO m => SystemMetrics -> AppState -> m ()           
 mergeSystemMetrics sm AppState {..} = 
-    liftIO $ atomically $ modifyTVar' system (& #metrics %~ (<> sm))
+    liftIO $ atomically $ modifyTVar' system (#metrics %~ (<> sm))
+
+updateRsyncClient :: MonadIO m => WorkerMessage -> AppState -> m ()           
+updateRsyncClient message AppState {..} =     
+    liftIO $ atomically $ modifyTVar' runningRsyncClients $ 
+        case message of 
+            AddWorker wi     -> Map.insert (wi ^. #workerPid) wi
+            RemoveWorker pid -> Map.delete pid
+        
+
+removeExpiredRsyncProcesses :: MonadIO m => AppState -> m [(CPid, WorkerInfo)]
+removeExpiredRsyncProcesses AppState {..} = liftIO $ do 
+    Now now <- thisInstant
+    atomically $ do 
+        clients <- readTVar runningRsyncClients
+        let expired = filter (\(_, WorkerInfo {..}) -> endOfLife < now) $ Map.toList clients        
+        writeTVar runningRsyncClients $ foldr (\(pid, _) m -> Map.delete pid m) clients expired 
+        pure expired  
 
 readRtrPayloads :: AppState -> STM RtrPayloads    
 readRtrPayloads AppState {..} = readTVar filtered
@@ -149,9 +170,9 @@ filterWithSLURM RtrPayloads {..} slurm =
 -- and things that are computed on-demand.
 cachedPduBinary :: AppState -> ProtocolVersion -> (RtrPayloads -> BS.ByteString) -> STM BS.ByteString
 cachedPduBinary appState@AppState {..} protocolVersion makeBs = do 
-    (Map.lookup protocolVersion <$> readTVar cachedBinaryPdus) >>= \case
+    (Map.lookup protocolVersion <$> readTVar cachedBinaryRtrPdus) >>= \case
         Nothing -> do            
             bs <- makeBs <$> readRtrPayloads appState 
-            modifyTVar' cachedBinaryPdus $ Map.insert protocolVersion bs
+            modifyTVar' cachedBinaryRtrPdus $ Map.insert protocolVersion bs
             pure bs
         Just bs -> pure bs

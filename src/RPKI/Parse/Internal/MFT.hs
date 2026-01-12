@@ -38,7 +38,7 @@ parseMft bs = do
                             -- TODO translate to UTC       
                             mn <- makeMftNumber manifestNumber        
                             pure $ Manifest mn hashAlg' 
-                                (Instant thisUpdateTime') (Instant nextUpdateTime') entries
+                                (newInstant thisUpdateTime') (newInstant nextUpdateTime') entries
 
                     -- TODO Check version?
                     (IntVal version,
@@ -52,7 +52,7 @@ parseMft bs = do
                             -- TODO translate to UTC
                             mn <- makeMftNumber manifestNumber
                             pure $ Manifest mn hashAlg' 
-                                (Instant thisUpdateTime') (Instant nextUpdateTime') entries
+                                (newInstant thisUpdateTime') (newInstant nextUpdateTime') entries
 
                     s -> throwParseError $ "Unexpected manifest content: " ++ show s
 

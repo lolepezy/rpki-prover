@@ -1,11 +1,6 @@
 {-# LANGUAGE CPP                #-}
-{-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE StrictData         #-}
-{-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE QuasiQuotes        #-}
-{-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module RPKI.SLURM.Types where
 

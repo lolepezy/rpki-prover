@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 
 module RPKI.Util where
 
@@ -13,7 +12,6 @@ import qualified Crypto.Hash.SHA256          as S256
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Base16      as Hex
-import qualified Data.ByteString.Base16.Lazy as HexLazy
 import qualified Data.ByteString.Char8       as C
 import qualified Data.ByteString.Short       as BSS
 import qualified Data.ByteString.Base64      as B64
@@ -42,21 +40,22 @@ import           Text.URI.Lens
 
 sha256 :: LBS.ByteString -> Hash
 sha256 = mkHash . S256.hashlazy
+{-# INLINE sha256 #-}
 
 sha256s :: BS.ByteString -> Hash
 sha256s = mkHash . S256.hash
+{-# INLINE sha256s #-}
 
 mkHash :: BS.ByteString -> Hash
 mkHash = Hash . BSS.toShort
+{-# INLINE mkHash #-}
 
 unhex :: BS.ByteString -> Maybe BS.ByteString
 unhex hexed = either (const Nothing) Just $ Hex.decode hexed    
 
 hex :: BS.ByteString -> BS.ByteString
 hex = Hex.encode    
-
-hexL :: LBS.ByteString -> LBS.ByteString
-hexL = HexLazy.encode    
+{-# INLINE hex #-}
 
 class ConvertibleAsSomethingString s1 s2 where
     convert :: s1 -> s2
@@ -80,10 +79,11 @@ instance {-# OVERLAPPING #-} ConvertibleAsSomethingString Text s => ConvertibleA
 normalizeUri :: Text -> Text
 normalizeUri = Text.map (\c -> if isOkForAFile c then c else '_')
   where
-    isOkForAFile c = isAlpha c || isDigit c || c `elem` ("-._" :: String)
+    isOkForAFile c = isValidFileNameCharacter c || c == '.'
 
-trim :: BS.ByteString -> BS.ByteString
-trim = C.dropWhile isSpace . fst . C.breakEnd (not . isSpace)
+{-# INLINE isValidFileNameCharacter #-}
+isValidFileNameCharacter :: Char -> Bool
+isValidFileNameCharacter c = isAsciiLower c || isAsciiUpper c || isDigit c || c == '-' || c == '_'
 
 trimmed :: Show a => a -> Text
 trimmed = Text.strip . Text.pack . show
@@ -91,6 +91,7 @@ trimmed = Text.strip . Text.pack . show
 removeSpaces :: BS.ByteString -> BS.ByteString
 removeSpaces = C.filter (not . isSpace)
 
+{-# INLINE isSpace_ #-}
 isSpace_ :: Word8 -> Bool
 isSpace_ = isSpace . chr . fromEnum
 
@@ -104,7 +105,6 @@ toNatural :: Int -> Maybe Natural
 toNatural i | i > 0     = Just (fromIntegral i :: Natural)
             | otherwise = Nothing
 
-
 -- Some URL utilities 
 isRsyncURI, isRrdpURI, isHttpsURI, isHttpURI :: URI -> Bool
 isRsyncURI (URI u) = "rsync://" `Text.isPrefixOf` u
@@ -112,9 +112,10 @@ isHttpsURI (URI u) = "https://" `Text.isPrefixOf` u
 isHttpURI (URI u)  = "http://" `Text.isPrefixOf` u
 isRrdpURI u = isHttpURI u || isHttpsURI u
 
-isParentOf :: WithURL u => u -> u -> Bool
-isParentOf (getURL -> URI parent) (getURL -> URI child) = 
-    parent `Text.isPrefixOf` child
+{-# INLINE isRsyncURI #-}
+{-# INLINE isHttpsURI #-}
+{-# INLINE isHttpURI #-}
+{-# INLINE isRrdpURI #-}
 
 parseRpkiURL :: Text -> Either Text RpkiURL
 parseRpkiURL t
@@ -148,10 +149,7 @@ getHostname t =
                 Right a -> Just $ a ^. authHost . unRText
 
 increment :: (MonadIO m, Num a) => IORef a -> m ()
-increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())        
-
-decrement :: (MonadIO m, Num a) => IORef a -> m ()
-decrement counter = liftIO $ atomicModifyIORef' counter $ \c -> (c - 1, ())        
+increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())            
 
 ifJustM :: Monad m => m (Maybe a) -> (a -> m ()) -> m ()
 ifJustM a f = maybe (pure ()) f =<< a

@@ -1,8 +1,5 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE UndecidableInstances  #-}
-{-# LANGUAGE DeriveDataTypeable    #-}
-{-# LANGUAGE InstanceSigs          #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 
 module RPKI.Store.Base.Map where
 
@@ -27,6 +24,12 @@ get :: (AsStorable k, AsStorable v) =>
 get tx (SMap _ s) k = do
     msv <- S.get tx s (storableKey k)
     pure $! fromStorable . unSValue <$> msv
+
+binarySize :: (AsStorable k, AsStorable v) =>
+            Tx s m -> SMap name s k v -> k -> IO (Maybe Int)
+binarySize tx (SMap _ s) k = do
+    msv <- S.get tx s (storableKey k)
+    pure $! storableSize . unSValue <$> msv
 
 exists :: AsStorable k => Tx s m -> SMap name s k v -> k -> IO Bool
 exists tx (SMap _ s) k = isJust <$> S.get tx s (storableKey k)    
@@ -55,4 +58,7 @@ keys tx (SMap _ s) = S.foldS tx s f []
   where
     f z (SKey sk) _ = pure $! fromStorable sk : z
 
-
+values :: AsStorable v => Tx s m -> SMap name s k v -> IO [v]
+values tx (SMap _ s) = S.foldS tx s f []
+  where
+    f z _ (SValue sv) = pure $! fromStorable sv : z

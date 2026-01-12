@@ -1,11 +1,5 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE OverloadedLabels           #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE QuasiQuotes                #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE StrictData                 #-}
-{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Validation.BottomUp where
 
@@ -24,7 +18,7 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database
+import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
@@ -49,7 +43,7 @@ validateBottomUp
     case getAKI object of 
         Nothing  -> appError $ ValidationE NoAKI
         Just (AKI ki) -> do 
-            parentCert <- roAppTx db $ \tx -> getBySKI tx db (SKI ki)            
+            parentCert <- DB.roAppTx db $ \tx -> DB.getBySKI tx db (SKI ki)            
             case parentCert of 
                 Nothing -> appError $ ValidationE ParentCertificateNotFound
                 Just pc  -> do                                        
@@ -122,10 +116,10 @@ validateBottomUp
     -- Given a certificate, find a chain of certificates leading to a TA, 
     -- the chain is build based on the SKI - AKI relations
     findPathToRoot db certificate = do                  
-        tas <- roAppTx db $ \tx -> getTAs tx db         
+        tas <- DB.roAppTx db $ \tx -> DB.getTAs tx db         
         let taCerts = Map.fromList [ 
                         (getSKI taCert, Located (talCertLocations tal) taCert) | 
-                        (_, StorableTA {..}) <- tas ]
+                        StorableTA {..} <- tas ]
         go taCerts certificate
       where        
         go taCerts cert = do             
@@ -136,7 +130,7 @@ validateBottomUp
                         [] -> appError $ ValidationE NoAKI
                         _  -> pure []
                 Just (AKI ki) -> do 
-                    parentCert <- roAppTx db $ \tx -> getBySKI tx db (SKI ki)
+                    parentCert <- DB.roAppTx db $ \tx -> DB.getBySKI tx db (SKI ki)
                     case parentCert of 
                         Nothing -> do                         
                             case Map.lookup (SKI ki) taCerts of 
@@ -152,7 +146,10 @@ validateBottomUp
            and don't track visited object or metrics.
          -}
         let childrenAki = toAKI $ getSKI certificate
-        maybeMft <- liftIO $ roTx db $ \tx -> findLatestMftByAKI tx db childrenAki        
+        maybeMft <- liftIO $ roTx db $ \tx -> do 
+            DB.getMftsForAKI tx db childrenAki >>= \case
+                [] -> pure Nothing
+                (MftMeta {..} : _) -> DB.getMftByKey tx db key
         case maybeMft of 
             Nothing -> 
                 vError $ NoMFT childrenAki
@@ -169,7 +166,7 @@ validateBottomUp
                                 [crl] -> pure crl
                                 crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls
                     
-                    crlObject <- liftIO $ roTx db $ \tx -> getByHash tx db crlHash
+                    crlObject <- liftIO $ roTx db $ \tx -> DB.getByHash tx db crlHash
                     case crlObject of 
                         Nothing -> 
                             vError $ NoCRLExists childrenAki crlHash

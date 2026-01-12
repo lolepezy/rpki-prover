@@ -1,9 +1,4 @@
-{-# LANGUAGE DerivingStrategies   #-}
-{-# LANGUAGE DeriveAnyClass       #-}
-{-# LANGUAGE OverloadedLabels     #-}
-{-# LANGUAGE QuasiQuotes          #-}
-{-# LANGUAGE RecordWildCards      #-}
-{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.Worker where
 
@@ -17,7 +12,8 @@ import           Control.Lens ((^.))
 
 import           Conduit
 import           Data.Text
-import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Lazy       as LBS
+import qualified Data.Map.Strict            as Map
 
 import           Data.String.Interpolate.IsString
 import           Data.Hourglass
@@ -26,7 +22,6 @@ import           Data.Conduit.Process.Typed
 import           GHC.Generics
 import           GHC.Stats
 
-import           System.Exit
 import           System.IO (stdin, stdout)
 import           System.Posix.Types
 import           System.Posix.Process
@@ -35,6 +30,7 @@ import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.AppContext
 import           RPKI.Config
+import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.RRDP.Types
@@ -44,7 +40,7 @@ import           RPKI.Time
 import           RPKI.Util (fmtEx, trimmed)
 import           RPKI.SLURM.Types
 import           RPKI.Store.Base.Serialisation
-import           RPKI.Store.Database
+import qualified RPKI.Store.Database    as DB
 import           RPKI.UniqueId
 
 
@@ -87,8 +83,9 @@ data WorkerParams = RrdpFetchParams {
                 targetLmdbEnv :: FilePath 
             } | 
             ValidationParams {                 
-                worldVersion :: WorldVersion,
-                tals         :: [TAL]
+                worldVersion   :: WorldVersion,
+                allTaNames     :: [TaName],
+                talsToValidate :: [TAL]
             } | 
             CacheCleanupParams { 
                 worldVersion :: WorldVersion
@@ -138,11 +135,14 @@ newtype CompactionResult = CompactionResult ()
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-data ValidationResult = ValidationResult ValidationState (Maybe Slurm)
+data ValidationResult = ValidationResult 
+            ValidationState 
+            (Map.Map TaName (Fetcheables, EarliestToExpire))
+            (Maybe Slurm) 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-data CacheCleanupResult = CacheCleanupResult CleanUpResult
+newtype CacheCleanupResult = CacheCleanupResult DB.CleanUpResult
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)              
 
@@ -159,51 +159,59 @@ data WorkerResult r = WorkerResult {
 -- and do the actual work.
 -- 
 executeWork :: WorkerInput 
-            -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                
+            -> (ExitCode -> IO ())
+            -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                            
             -> IO ()
-executeWork input actualWork = 
+executeWork input exitWith_ actualWork = 
     -- Check if version of the executable has changed compared to the parent.
     -- If that's the case, bail out, it's likely we can do more harm then good
     if input ^. #parentExecutableVersion /= thisExecutableVersion
         then 
-            exitWith replacedExecutableExitCode
+            exitWith_ replacedExecutableExitCode
         else do 
-            exitCode <- whicheverHappensFirst 
-                ((actualWork input writeWorkerOutput >> pure ExitSuccess) `onException` pure exceptionExitCode)
-                (whicheverHappensFirst dieIfParentDies dieOfTiming)
-            
-            exitWith exitCode
+            exitCode <- newEmptyTMVarIO            
+            let done = atomically . putTMVar exitCode 
+
+            mapM_ (\w -> forkFinally w (const $ pure ())) [
+                    (actualWork input writeWorkerOutput >> done ExitSuccess) 
+                        `onException` 
+                    done exceptionExitCode,
+                    dieIfParentDies done,
+                    dieOfTiming done
+                ]
+                
+            exitWith_ =<< atomically (takeTMVar exitCode)
   where        
     whicheverHappensFirst a b = either id id <$> race a b
-    
+
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
     -- there's no point continuing.
-    dieIfParentDies = do 
+    dieIfParentDies done = do 
         parentId <- getParentProcessID                    
         if parentId /= input ^. #initialParentId
-            then pure parentDiedExitCode            
-            else threadDelay 500_000 >> dieIfParentDies
+            then done parentDiedExitCode            
+            else threadDelay 500_000 >> dieIfParentDies done
 
     -- exit either because the time is up or too much CPU is spent
-    dieOfTiming = 
+    dieOfTiming done = 
         case input ^. #cpuLimit of
-            Nothing       -> dieAfterTimeout
-            Just cpuLimit -> whicheverHappensFirst dieAfterTimeout (dieOutOfCpuTime cpuLimit)
+            Nothing       -> dieAfterTimeout done
+            Just cpuLimit -> whicheverHappensFirst (dieAfterTimeout done) (dieOutOfCpuTime cpuLimit done)
 
     -- Time bomb. Wait for the certain timeout and then exit.
-    dieAfterTimeout = do
-        let Timebox (Seconds s) = input ^. #workerTimeout
-        threadDelay $ 1_000_000 * fromIntegral s        
-        pure timeoutExitCode
+    dieAfterTimeout done = do
+        let Timebox timebox = input ^. #workerTimeout
+        threadDelay $ toMicroseconds timebox
+        done timeoutExitCode
 
     -- Exit if the worker consumed too much CPU time
-    dieOutOfCpuTime cpuLimit = go
+    dieOutOfCpuTime cpuLimit done = go
       where
         go = do 
             cpuTime <- getCpuTime
             if cpuTime > cpuLimit 
-                then pure outOfCpuTimeExitCode
+                then done outOfCpuTimeExitCode
                 else threadDelay 1_000_000 >> go
 
 
@@ -213,11 +221,17 @@ readWorkerInput = liftIO $ deserialise_ . LBS.toStrict <$> LBS.hGetContents stdi
 execWithStats :: MonadIO m => m r -> m (WorkerResult r)
 execWithStats f = do        
     (payload, clockTime) <- timedMS f
-    cpuTime <- getCpuTime    
-    RTSStats {..} <- liftIO getRTSStats
-    let maxMemory = MaxMemory $ fromIntegral max_mem_in_use_bytes
+    (cpuTime, maxMemory) <- processStat    
     pure WorkerResult {..}
   
+
+processStat :: MonadIO m => m (CPUTime, MaxMemory)
+processStat = do 
+    cpuTime <- getCpuTime
+    RTSStats {..} <- liftIO getRTSStats
+    let maxMemory = MaxMemory $ fromIntegral max_mem_in_use_bytes
+    pure (cpuTime, maxMemory)
+
 
 writeWorkerOutput :: TheBinary a => a -> IO ()
 writeWorkerOutput = LBS.hPut stdout . LBS.fromStrict . serialise_
@@ -250,8 +264,8 @@ replacedExecutableExitCode = ExitFailure 123
 outOfMemoryExitCode  = ExitFailure 251
 exitKillByTypedProcess = ExitFailure (-2)
 
-worderIdS :: WorkerId -> String
-worderIdS (WorkerId w) = unpack w
+workerIdStr :: WorkerId -> String
+workerIdStr (WorkerId w) = unpack w
 
 -- Main entry point to start a worker
 -- 
@@ -285,9 +299,9 @@ runWorker logger workerInput extraCli = do
         stopProcess
         (\p -> (,) <$> f p <*> waitExitCode p) 
 
-    runIt worker = do   
+    runIt workerConf = do   
         ((_, workerStdout), exitCode) <- 
-            liftIO $ waitForProcess worker $ \p ->
+            liftIO $ waitForProcess workerConf $ \p -> 
                 concurrently 
                     (runConduitRes $ getStderr p .| sinkLog logger)
                     (atomically $ getStdout p)
@@ -344,4 +358,4 @@ runWorker logger workerInput extraCli = do
 logWorkerDone :: (Logger logger, MonadIO m) =>
                 logger -> WorkerId -> WorkerResult r -> m ()
 logWorkerDone logger workerId WorkerResult {..} = do    
-    logDebug logger [i|Worker #{workerId} completed, cpuTime: #{cpuTime}ms, clockTime: #{clockTime}ms, maxMemory: #{maxMemory}.|]
+    logDebug logger [i|Worker #{workerId} completed, cpuTime: #{cpuTime}ms, clockTime: #{clockTime}ms, maxMemory: #{maxMemory}.|] 

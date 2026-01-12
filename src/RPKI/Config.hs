@@ -1,11 +1,9 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE StrictData #-}
+{-# LANGUAGE StrictData        #-}
 
 module RPKI.Config where
 
+import Control.Lens
 import GHC.Conc
 import Numeric.Natural
 import Data.Int
@@ -14,6 +12,7 @@ import Data.Word ( Word16 )
 
 import Data.Hourglass
 import Data.Maybe (fromMaybe)
+import Data.Generics.Product.Typed
 
 import RPKI.Domain
 import RPKI.Logging
@@ -44,12 +43,13 @@ data Parallelism = Parallelism {
     deriving anyclass (TheBinary)
 
 data FetchConfig = FetchConfig {
-        rsyncTimeout       :: Seconds,
-        rsyncSlowThreshold :: Seconds,
-        rrdpTimeout        :: Seconds,
-        rrdpSlowThreshold  :: Seconds,
-        fetchLaunchWaitDuration :: Seconds,
-        cpuLimit           :: Seconds
+        rsyncTimeout             :: Seconds,
+        rrdpTimeout              :: Seconds,
+        fetchLaunchWaitDuration  :: Seconds,
+        cpuLimit                 :: Seconds,
+        minFetchInterval         :: Seconds,
+        maxFetchInterval         :: Seconds,
+        maxFailedBackoffInterval :: Seconds
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -70,7 +70,8 @@ data Config = Config {
         httpApiConf               :: HttpApiConfig,
         rtrConfig                 :: Maybe RtrConfig,
         cacheCleanupInterval      :: Seconds,
-        cacheLifeTime             :: Seconds,
+        shortLivedCacheLifeTime   :: Seconds,
+        longLivedCacheLifeTime    :: Seconds,
         versionNumberToKeep       :: Natural,
         storageCompactionInterval :: Seconds,
         rsyncCleanupInterval      :: Seconds,
@@ -87,21 +88,20 @@ data RsyncConf = RsyncConf {
         rsyncClientPath   :: Maybe (ApiSecured FilePath),
         rsyncRoot         :: ApiSecured FilePath,
         rsyncTimeout      :: Seconds,
-        asyncRsyncTimeout :: Seconds,
         cpuLimit          :: Seconds,
         enabled           :: Bool,
-        rsyncPrefetchUrls :: [RsyncURL]
+        rsyncPrefetchUrls :: [RsyncURL],
+        rsyncPerHostLimit :: Int
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
 data RrdpConf = RrdpConf {
-        tmpRoot          :: ApiSecured FilePath,
-        maxSize          :: Size,
-        rrdpTimeout      :: Seconds,
-        asyncRrdpTimeout :: Seconds,
-        cpuLimit         :: Seconds,
-        enabled          :: Bool
+        tmpRoot     :: ApiSecured FilePath,
+        maxSize     :: Size,
+        rrdpTimeout :: Seconds,
+        cpuLimit    :: Seconds,
+        enabled     :: Bool
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -110,16 +110,7 @@ data ManifestProcessing = RFC6486_Strict | RFC9286
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-
 data ValidationAlgorithm = FullEveryIteration | Incremental
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
-
-data FetchTimingCalculation = Constant | Adaptive
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
-
-data FetchMethod = SyncOnly | SyncAndAsync
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -135,6 +126,10 @@ data ValidationConfig = ValidationConfig {
         -- Do not retry to fetch a repository that failed 
         -- less than this many seconds ago
         minimalRepositoryRetryInterval :: Seconds,
+
+        -- Minimal interval between forced snapshot fetches --
+        -- we don't want to overload repositories
+        rrdpForcedSnapshotMinInterval :: Seconds,
 
         -- Maximum time for top-down validation for one TA
         topDownTimeout                 :: Seconds,
@@ -162,20 +157,13 @@ data ValidationConfig = ValidationConfig {
         validationRFC                  :: ValidationRFC,
         validationAlgorithm            :: ValidationAlgorithm,
 
-        fetchIntervalCalculation       :: FetchTimingCalculation,
-        fetchTimeoutCalculation        :: FetchTimingCalculation,
-
-        minFetchInterval               :: Seconds,
-        maxFetchInterval               :: Seconds,
-
-        -- Categorise reposaitories into sync and async or always use only sync
-        fetchMethod                    :: FetchMethod
+        minimalRevalidationInterval :: Seconds
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
 
-data HttpApiConfig = HttpApiConfig {
+newtype HttpApiConfig = HttpApiConfig {
         port :: Word16    
     } 
     deriving stock (Show, Eq, Ord, Generic)
@@ -213,10 +201,10 @@ setCpuCount = setNumCapabilities . fromIntegral
 --
 -- TODO There should be distinction between network operations and file/LMDB IO.
 makeParallelism :: Natural -> Parallelism
-makeParallelism cpus = Parallelism cpus (2 * cpus) (3 * cpus)
+makeParallelism cpus = Parallelism cpus (2 * cpus) (2 * cpus)
 
 makeParallelismF :: Natural -> Natural -> Parallelism
-makeParallelismF cpus fetcherCount = Parallelism cpus (2 * cpus) fetcherCount
+makeParallelismF cpus = Parallelism cpus (2 * cpus)
 
 defaultConfig :: Config
 defaultConfig = Config {    
@@ -231,26 +219,26 @@ defaultConfig = Config {
     rsyncConf = RsyncConf {
         rsyncClientPath = Nothing,
         rsyncRoot    = Hidden "",
-        rsyncTimeout = 2 * 60,
-        asyncRsyncTimeout = 15 * 60,
+        rsyncTimeout = 11 * 60,
         cpuLimit = 30 * 60,    
         enabled = True,
-        rsyncPrefetchUrls = []
+        rsyncPrefetchUrls = [],
+        rsyncPerHostLimit = 5
     },
     rrdpConf = RrdpConf {
         tmpRoot = Hidden "",
         maxSize = Size $ 1024 * 1024 * 1024,
-        rrdpTimeout = 2 * 60,
-        asyncRrdpTimeout = 10 * 60,
-        cpuLimit = 30 * 60,
+        rrdpTimeout = 7 * minutes,
+        cpuLimit = 30 * minutes,
         enabled = True
     },
     validationConfig = ValidationConfig {
-        revalidationInterval           = Seconds $ 7 * 60,
-        rrdpRepositoryRefreshInterval  = Seconds 120,
-        rsyncRepositoryRefreshInterval = Seconds $ 11 * 60,    
+        revalidationInterval           = 15 * minutes,
+        rrdpRepositoryRefreshInterval  = 2 * minutes,
+        rsyncRepositoryRefreshInterval = 11 * minutes,    
         minimalRepositoryRetryInterval = Seconds 10,    
-        topDownTimeout                 = Seconds $ 60 * 60,    
+        rrdpForcedSnapshotMinInterval  = 12 * hours,                
+        topDownTimeout                 = 1 * hour,
         manifestProcessing             = RFC9286,
         maxCertificatePathDepth        = 32,
         maxTotalTreeSize               = 5_000_000,
@@ -258,14 +246,10 @@ defaultConfig = Config {
         -- every object contains at least 256 bytes of RSA key, 
         -- couple of dates and a few extensions
         minObjectSize                  = 300,
-        maxTaRepositories              = 3000,
+        maxTaRepositories              = 1000,
         validationRFC                  = StrictRFC,
-        validationAlgorithm            = FullEveryIteration,
-        fetchIntervalCalculation       = Adaptive,
-        fetchTimeoutCalculation        = Adaptive,
-        minFetchInterval               = Seconds 60,
-        maxFetchInterval               = Seconds 600,
-        fetchMethod                    = SyncAndAsync        
+        validationAlgorithm            = FullEveryIteration,        
+        minimalRevalidationInterval    = Seconds 30
     },
     httpApiConf = HttpApiConfig {
         port = 9999
@@ -277,17 +261,35 @@ defaultConfig = Config {
         cleanupWorkerMemoryMb    = 512
     },
     rtrConfig                 = Nothing,
-    cacheCleanupInterval      = Seconds $ 60 * 60 * 6,
-    cacheLifeTime             = Seconds $ 60 * 60 * 24,
+    cacheCleanupInterval      = 6 * hours,    
     versionNumberToKeep       = 3,
-    storageCompactionInterval = Seconds $ 60 * 60 * 120,
-    rsyncCleanupInterval      = Seconds $ 60 * 60 * 24 * 30,
+    storageCompactionInterval = 5 * days,
+    rsyncCleanupInterval      = 30 * days,
     lmdbSizeMb                = Size $ 32 * 1024,
     localExceptions = Hidden [],
     logLevel = defaultsLogLevel,
     metricsPrefix = "rpki_prover_",
-    withValidityApi = False
+    withValidityApi = False,
+    ..
 }
+  where
+    shortLivedCacheLifeTime = 24 * hours
+    longLivedCacheLifeTime  = 10 * days
+    minutes = Seconds 60
+    hour = hours
+    days = 24 * hours
+    hours = Seconds $ 60 * 60    
+
+
+adjustConfig :: Config -> Config
+adjustConfig config = config 
+        -- Cache must be cleaned up at least as often as the 
+        -- lifetime of the objects in it    
+        & #cacheCleanupInterval %~ (`min` (config ^. #longLivedCacheLifeTime))
+        -- to accomodate for a weird case of longLivedCacheLifeTime < shortLivedCacheLifeTime
+        -- we still want some correctness here, so the "short" one should be shorter
+        & #shortLivedCacheLifeTime %~ (`min` (config ^. #longLivedCacheLifeTime))
+
 
 defaultsLogLevel :: LogLevel
 defaultsLogLevel = InfoL
@@ -299,8 +301,10 @@ defaultRtrConfig = RtrConfig {
         rtrLogFile = Nothing
     }
     
-defaulPrefetchURLs :: [String]
-defaulPrefetchURLs = [
+-- This is a heuristic list of rsync repositories that is currently out there
+-- and not using them will result in too many small fetches from the same repository.
+defaultPrefetchURLs :: [String]
+defaultPrefetchURLs = [
         "rsync://rpki.afrinic.net/repository",
         "rsync://rpki.apnic.net/member_repository",
         "rsync://rpki-repo.registro.br/repo/",
@@ -311,7 +315,8 @@ defaulPrefetchURLs = [
         "rsync://rpki-repository.nic.ad.jp/ap/",
         "rsync://rsync.paas.rpki.ripe.net/repository/",
         "rsync://rpki.sub.apnic.net/repository/",
-        "rsync://rpki.cnnic.cn/rpki/A9162E3D0000/"
+        "rsync://rpki.cnnic.cn/rpki/A9162E3D0000/",
+        "rsync://rpki-repo.as207960.net/repo/"
     ]    
 
 defaultTalUrls :: [(String, String)]
@@ -323,3 +328,15 @@ defaultTalUrls = [
         ("ripe.tal", "https://tal.rpki.ripe.net/ripe-ncc.tal")
     ]        
     
+newFetchConfig :: Config -> FetchConfig
+newFetchConfig config = let 
+        rsyncConfig = config ^. typed @RsyncConf
+        rrdpConfig = config ^. typed @RrdpConf
+        rsyncTimeout = rsyncConfig ^. #rsyncTimeout
+        rrdpTimeout  = rrdpConfig ^. #rrdpTimeout        
+        fetchLaunchWaitDuration = Seconds 30         
+        cpuLimit = max (rrdpConfig ^. #cpuLimit) (rsyncConfig ^. #cpuLimit)        
+        minFetchInterval = Seconds 30
+        maxFetchInterval = Seconds 300
+        maxFailedBackoffInterval = Seconds $ 30 * 60
+    in FetchConfig {..}    

@@ -1,4 +1,3 @@
-{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=18 #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -56,11 +55,16 @@ import qualified Data.Map.Strict as Map
 import System.Posix.Types
 
 import           Data.Map.Monoidal.Strict
+import           RPKI.AppTypes
 import           RPKI.Logging
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
 import           RPKI.Util       (convert, mkHash, encodeBase64)
 
+
+instance Arbitrary WorldVersion where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary URI where
     arbitrary = urlByProtocol =<< elements ["rsync", "https"]          
@@ -427,6 +431,10 @@ instance Arbitrary RrdpIntegrity where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary RrdpEnforcement where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary RrdpMeta where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -443,15 +451,11 @@ instance Arbitrary ETag where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary FetchType where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
 instance Arbitrary FetchStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RsyncTree where
+instance Arbitrary RsyncForest where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -565,7 +569,7 @@ instance Arbitrary ValidationState where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RawMetric where
+instance Arbitrary Metrics where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -585,8 +589,12 @@ instance Arbitrary ValidationMetric where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary ValidatedBy where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary TaName where
-    arbitrary = TaName <$> arbitrary
+    arbitrary = TaName <$> elements [ "apnic", "arin", "ripe", "lacnic", "afrinic" ]
     shrink = genericShrink
 
 instance Arbitrary RpkiObjectType where
@@ -639,6 +647,20 @@ instance (Arg (T3 a b c) a, Arg (T3 a b c) b, Arg (T3 a b c) c,
          Arbitrary a, Arbitrary b, Arbitrary c) => Arbitrary (T3 a b c) where
     arbitrary = genericArbitrary
     shrink = genericShrink
+
+-- Domain
+instance Arbitrary Payloads where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary Roas where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary SplN where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 
 -- IPs
 

@@ -1,7 +1,4 @@
-{-# LANGUAGE OverloadedLabels  #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes       #-}
-{-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE StrictData        #-}
 
 module RPKI.RTR.RtrServer where
@@ -54,7 +51,7 @@ import           RPKI.Util                        (convert, hex, decodeBase64)
 import           RPKI.AppState
 import           RPKI.AppTypes
 import           RPKI.Store.Base.Storage
-import           RPKI.Store.Database
+import qualified RPKI.Store.Database    as DB
 
 import           System.Timeout                   (timeout)
 import           Time.Types
@@ -168,7 +165,7 @@ runRtrServer appContext RtrConfig {..} = do
                 -- https://datatracker.ietf.org/doc/html/rfc8210#section-8.2
                 -- "The cache MUST rate-limit Serial Notifies to no more frequently than one per minute."
                 -- 
-                let moreThanMinuteAgo lastTime = not $ closeEnoughMoments lastTime now (Seconds 60)
+                let moreThanMinuteAgo lastTime = not $ closeEnoughMoments (Earlier lastTime) (Later now) (Seconds 60)
                 sendNotify <- maybe True moreThanMinuteAgo <$> readTVar lastTimeNotified                 
 
                 when (sendNotify && thereAreRtrUpdates) $ do                    
@@ -278,12 +275,12 @@ readRtrPayload AppContext {..} worldVersion = do
     db <- readTVarIO database
 
     (vrps, bgpSec) <- roTx db $ \tx -> do 
-                slurm <- slurmForVersion tx db worldVersion
-                vrps <- getVrps tx db worldVersion >>= \case 
-                            Nothing   -> pure mempty
-                            Just vrps -> pure $ maybe vrps (`applySlurmToVrps` vrps) slurm
+                slurm <- DB.getSlurm tx db worldVersion
+                vrps <- do 
+                        vrps_ <- DB.getVrps tx db worldVersion
+                        pure $ maybe vrps_ (`applySlurmToVrps` vrps_) slurm
 
-                bgpSec <- getBgps tx db worldVersion >>= \case 
+                bgpSec <- DB.getBgps tx db worldVersion >>= \case 
                             Nothing   -> pure mempty
                             Just bgps -> pure $ maybe bgps (`applySlurmBgpSec` bgps) slurm
                 

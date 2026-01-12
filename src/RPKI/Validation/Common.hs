@@ -1,12 +1,5 @@
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE OverloadedLabels           #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE QuasiQuotes                #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE StrictData                 #-}
-{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Validation.Common where
 
@@ -26,14 +19,12 @@ import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
+import qualified RPKI.Util as U
 
 
 createVerifiedResources :: CaCerObject -> VerifiedRS PrefixesAndAsns
 createVerifiedResources certificate = 
     VerifiedRS $ toPrefixesAndAsns $ getRawCert certificate ^. typed
-
-allowedMftFileNameCharacters :: [Char]
-allowedMftFileNameCharacters = ['a'..'z'] <> ['A'..'Z'] <> ['0'..'9'] <> "-_"
 
 validateMftFileName :: Monad m => Text.Text -> ValidatorT m ()
 validateMftFileName filename =                
@@ -43,12 +34,12 @@ validateMftFileName filename =
                 vError $ BadFileNameOnMFT filename 
                             ("Unsupported filename extension " <> extension)
 
-            unless (Text.all (`elem` allowedMftFileNameCharacters) mainName) $ do 
-                let badChars = Text.filter (`notElem` allowedMftFileNameCharacters) mainName
+            unless (Text.all U.isValidFileNameCharacter mainName) $ do 
+                let badChars = Text.filter (not . U.isValidFileNameCharacter) mainName
                 vError $ BadFileNameOnMFT filename 
                             ("Unsupported characters in filename: '" <> badChars <> "'")
 
-        _somethingElse -> 
+        _ -> 
             vError $ BadFileNameOnMFT filename 
                         "Filename doesn't have exactly one DOT"      
 
@@ -62,8 +53,8 @@ findCrlOnMft mft = filter (\(MftPair name _) -> ".crl" `Text.isSuffixOf` name) $
 -- the manifest was actually fetched from.
 validateMftLocation :: (WithRawResourceCertificate c, Monad m, WithLocations c, WithLocations mft) =>
                         mft -> c -> ValidatorT m ()
-validateMftLocation mft certficate = 
-    case getManifestUri $ cwsX509certificate $ getCertWithSignature certficate of
+validateMftLocation mft parentCertficate = 
+    case getManifestUri $ cwsX509certificate $ getCertWithSignature parentCertficate of
         Nothing     -> vError NoMFTSIA
         Just mftSIA -> do 
             let mftLocations = getLocations mft
@@ -84,8 +75,8 @@ validateObjectLocations (getLocations -> Locations locSet) =
 checkCrlLocation :: (Monad m, WithLocations a) => a
                     -> CertificateWithSignature
                     -> ValidatorT m ()
-checkCrlLocation crl eeCert = 
-    for_ (getCrlDistributionPoint $ cwsX509certificate eeCert) $ \crlDP -> do
+checkCrlLocation crl parentCertificate = 
+    for_ (getCrlDistributionPoint $ cwsX509certificate parentCertificate) $ \crlDP -> do
         let crlLocations = getLocations crl
         when (Set.null $ NESet.filter ((crlDP ==) . getURL) $ unLocations crlLocations) $ 
             vError $ CRLOnDifferentLocation crlDP crlLocations

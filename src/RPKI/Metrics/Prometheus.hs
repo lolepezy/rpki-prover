@@ -1,13 +1,7 @@
-{-# LANGUAGE DerivingStrategies   #-}
-{-# LANGUAGE DeriveAnyClass       #-}
-{-# LANGUAGE DerivingVia          #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE OverloadedLabels     #-}
-{-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE QuasiQuotes          #-}
-{-# LANGUAGE RecordWildCards      #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StrictData #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE StrictData           #-}
 
 module RPKI.Metrics.Prometheus where
 
@@ -17,7 +11,6 @@ import           Control.Monad
 
 import qualified Data.ByteString.Lazy     as LBS
 import           Data.Text                (Text)
-import qualified Data.List.NonEmpty       as NonEmpty
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
 import           GHC.Generics
@@ -38,7 +31,7 @@ data PrometheusMetrics = PrometheusMetrics {
         vrpCounter      :: Vector Text Gauge,        
         vrpCounterPerRepo :: Vector Text Gauge,
         fetchStatus       :: Vector Text Gauge,
-        uniqueVrpNumber   :: Vector Text Gauge,
+        uniqueVrpCounter  :: Vector Text Gauge,
         validObjectNumberPerTa   :: Vector (Text, Text) Gauge,
         validObjectNumberPerRepo :: Vector (Text, Text) Gauge
     }
@@ -62,7 +55,7 @@ createPrometheusMetrics Config {..} = do
     vrpCounterPerRepo <- register
             $ vector ("repository" :: Text)
             $ gauge (Info (metricsPrefix <> "vrp_total") "Number of original VRPs")            
-    uniqueVrpNumber <- register 
+    uniqueVrpCounter <- register 
             $ vector ("trustanchor" :: Text)
             $ gauge (Info (metricsPrefix <> "unique_vrp_total") "Number of unique VRPs")
     fetchStatus <- register 
@@ -85,19 +78,14 @@ createPrometheusMetrics Config {..} = do
 textualMetrics :: MonadIO m => m LBS.ByteString
 textualMetrics = exportMetricsAsText
 
-updatePrometheus :: (MonadIO m, MonadMonitor m) => RawMetric -> PrometheusMetrics -> WorldVersion -> m ()
-updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} _ = do    
-    forM_ (MonoidalMap.toList $ unMetricMap rsyncMetrics) $ \(metricScope, metric) -> do
-        let url = focusToText $ NonEmpty.head $ metricScope ^. coerced
-        withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #totalTimeMs
-        withLabel fetchStatus url $ flip setGauge $ fetchStatusAsNumber $ metric ^. #fetchFreshness
+updatePrometheusForRepository :: (MonadIO m, MonadMonitor m) => RpkiURL -> TimeMs -> PrometheusMetrics -> m ()
+updatePrometheusForRepository rpkiUrl downloadTime_ PrometheusMetrics {..} = do
+    let (URI uri) = getURL rpkiUrl
+    withLabel downloadTime uri $ flip setGauge $ fromIntegral $ unTimeMs downloadTime_
 
-    forM_ (MonoidalMap.toList $ unMetricMap rrdpMetrics) $ \(metricScope, metric) -> do
-        let url = focusToText $ NonEmpty.head $ metricScope ^. coerced
-        withLabel rrdpCode url $ flip setGauge $ fromIntegral $ unHttpStatus $ metric ^. #lastHttpStatus
-        withLabel downloadTime url $ flip setGauge $ fromIntegral $ unTimeMs $ metric ^. #downloadTimeMs
-        withLabel fetchStatus url $ flip setGauge $ fetchStatusAsNumber $ metric ^. #fetchFreshness
 
+updatePrometheus :: (MonadIO m, MonadMonitor m) => Metrics -> PrometheusMetrics -> WorldVersion -> m ()
+updatePrometheus rm PrometheusMetrics {..} _ = do    
     let grouped = groupedValidationMetric rm
     
     forM_ (MonoidalMap.toList $ grouped ^. #byTa) $ \(TaName name, metric) ->
@@ -114,7 +102,7 @@ updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} _ = do
     setObjectMetricsPerUrl prometheusVector url metric setUniqueVRPs vrpCounter' = do
         withLabel vrpCounter' url $ flip setGauge $ fromIntegral $ unCount $ metric ^. #vrpCounter
 
-        when setUniqueVRPs $ withLabel uniqueVrpNumber url $ 
+        when setUniqueVRPs $ withLabel uniqueVrpCounter url $ 
             flip setGauge $ fromIntegral $ unCount $ metric ^. #uniqueVrpNumber
 
         let totalCount = metric ^. #validCertNumber +
@@ -132,9 +120,3 @@ updatePrometheus rm@RawMetric {..} PrometheusMetrics {..} _ = do
         setValidObjects prometheusVector url "aspa" $ metric ^. #validAspaNumber
         setValidObjects prometheusVector url "bgp" $ metric ^. #validBgpNumber
         setValidObjects prometheusVector url "allobjects" totalCount
-
-    fetchStatusAsNumber = \case
-        NoFetchNeeded -> 0
-        FetchFailed   -> 1
-        NoUpdates     -> 2
-        Updated       -> 3

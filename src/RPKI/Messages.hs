@@ -1,12 +1,6 @@
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE StrictData            #-}
-{-# LANGUAGE TypeOperators         #-}
-{-# LANGUAGE QuasiQuotes           #-}
 
 module RPKI.Messages where
 
@@ -50,7 +44,7 @@ toMessage = \case
 toRsyncMessage :: RsyncError -> Text
 toRsyncMessage = \case 
     RsyncProcessError errorCode e ->
-        [i|Rsync client returned code #{errorCode}, error = #{e}.|]
+        [i|Rsync client returned code #{errorCode}, error = #{e}|]
 
     FileReadError e                -> [i|Can't read local file created by rsync client #{e}.|]
     RsyncRunningError e            -> [i|Error running rsync client #{e}.|]
@@ -67,7 +61,7 @@ toRrdpMessage = \case
     NoSerial       -> [i|Serial number is not set.|]
     NoSnapshotHash -> [i|Snapshot hash is not set.|]
     NoSnapshotURI  -> [i|Snapshot URL is not set.|]
-
+    
     BrokenSnapshotUri u -> 
         [i|Snapshot URL in notification url is malformed #{u}.|]
 
@@ -85,7 +79,9 @@ toRrdpMessage = \case
         [i|Delta URL hostname #{deltaHost} is not the same as repository hostname #{repoHost}.|]
 
     BadHash h      -> [i|String #{h} is not a valid SHA256 hash.|]
-    NoVersion      -> [i|RRDP version is not set.|]  
+    NoVersionInNotification -> [i|RRDP version is not set in the notification.xml file.|]  
+    NoVersionInSnapshot     -> [i|RRDP version is not set in snapshot.|]  
+    NoVersionInDelta        -> [i|RRDP version is not set in delta.|]  
     BadVersion v   -> [i|String #{v} is not a valid RRDP version.|]  
     NoPublishURI   -> [i|An "publish" element doesn't have URL attribute.|]  
 
@@ -134,6 +130,10 @@ toRrdpMessage = \case
     DeltaSerialTooHigh {..} -> 
         [i|Delta serial #{actualSerial} is larger than maximal expected #{expectedSerial}.|]        
     
+    RrdpMetaMismatch {..} -> 
+        [i|RRDP metadata mismatch while saving data, expected session #{expectedSessionId} and serial #{expectedSerial} |] <> 
+        [i|but got session #{actualSessionId} and serial #{actualSerial}.|]
+
     NoObjectToReplace url hash -> 
         [i|No object with url #{url} and hash #{hash} to replace.|]        
 
@@ -236,8 +236,8 @@ toValidationMessage = \case
         [i|Manifest number #{newMftNumber} is smaller than the previous #{oldMftNumber}, |] <> 
         [i|will fall back to the previous one.|]
 
-      MftFallback e -> 
-        [i|Fallback to the last valid manifest happened, with the error: #{toMessage e}|]
+      MftFallback e failedMftNNumber -> 
+        [i|Fallback to the last valid manifest happened, manifest #{failedMftNNumber} failed with the error: #{toMessage e}|]
 
       CRLOnDifferentLocation crlDP locations -> 
           [i|CRL distribution point #{crlDP} is not the same as CRL location #{fmtLocations locations}.|]
@@ -336,6 +336,11 @@ toValidationMessage = \case
 
       SplNotIpResources prefixes -> 
         [i|Prefix list must not have IP resources on its EE certificate, but has #{prefixes}.|]
+
+      ReferentialIntegrityError message -> [i|Referential integrity problem: #{message}.|]
+
+      WeirdCaPublicationPoints urls -> 
+        [i|Invalid CA publication points found: #{fmtUrlList urls}.|]
 
   where
     fmtUrlList = mconcat . 

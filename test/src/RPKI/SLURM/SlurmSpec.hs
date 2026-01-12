@@ -1,8 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE OverloadedLabels #-}
-{-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module RPKI.SLURM.SlurmSpec where
 
@@ -20,6 +16,7 @@ import           Data.String
 import           Data.Aeson as Json
 
 import qualified Data.Set                 as Set
+import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Data.String.Interpolate.IsString
 
 import           RPKI.Domain
@@ -32,7 +29,6 @@ import           RPKI.Resources.Types
 import           RPKI.Resources.Resources
 import           RPKI.AppState
 import           RPKI.Util 
-
 
 slurmGroup :: TestTree
 slurmGroup = testGroup "Slurm" [
@@ -98,9 +94,9 @@ test_reject_full_duplicates = do
         ("Wrong validation message " <> show z) 
         (Left (SlurmE (SlurmValidationError 
             $ "File Foo has prefix overlaps with file Bar: " <> 
-              "[(Ipv4P (Ipv4Prefix 198.51.100.0/24),Ipv4P (Ipv4Prefix 198.51.100.0/24))," <> 
-              "(Ipv6P (Ipv6Prefix 2001:db8::/32),Ipv6P (Ipv6Prefix 2001:db8::/32))," <> 
-              "(Ipv4P (Ipv4Prefix 192.0.2.0/24),Ipv4P (Ipv4Prefix 192.0.2.0/24))]"))) 
+              "[(198.51.100.0/24,198.51.100.0/24)," <> 
+              "(2001:db8::/32,2001:db8::/32)," <> 
+              "(192.0.2.0/24,192.0.2.0/24)]"))) 
         z    
 
 test_reject_partial_prefix_duplicates :: HU.Assertion
@@ -133,7 +129,7 @@ test_reject_partial_prefix_duplicates = do
         ("Wrong validation message " <> show z) 
         (Left (SlurmE (SlurmValidationError $
             "File Foo has prefix overlaps with file Bar: " <> 
-            "[(Ipv4P (Ipv4Prefix 192.0.0.0/16),Ipv4P (Ipv4Prefix 192.0.2.0/24))]"))) 
+            "[(192.0.0.0/16,192.0.2.0/24)]"))) 
         z    
 
 
@@ -166,7 +162,7 @@ test_reject_partial_asn_duplicates = do
     HU.assertEqual 
         ("Wrong validation message " <> show z) 
         (Left (SlurmE (SlurmValidationError
-            "File Foo has ASN overlaps with file Bar: [ASN 64496]"))) 
+            "File Foo has ASN overlaps with file Bar: [AS64496]"))) 
         z    
 
 
@@ -174,7 +170,7 @@ test_apply_slurm :: HU.Assertion
 test_apply_slurm = do    
     let rtrPayloads = 
             mkRtrPayloads 
-                (createVrps (TaName "ta") [
+                (asPerTA $ createVrps [
                     mkVrp4 123 "192.168.0.0/16" 16,
                     mkVrp4 124 "192.0.2.0/24" 24,
                     mkVrp4 64496 "10.1.1.0/24" 24,
@@ -189,17 +185,19 @@ test_apply_slurm = do
                     mkBgpSec "1122" [ASN 234] "112233"
                 ])
 
-    let filtered = filterWithSLURM rtrPayloads bigTestSlurm
+    let filtered_ = filterWithSLURM rtrPayloads bigTestSlurm
 
     let expected = 
             mkRtrPayloads 
-                (createVrps (TaName "ta") [
-                    mkVrp4 123 "192.168.0.0/16" 16,
-                    mkVrp4 64497 "198.51.101.0/24" 24                    
-                ] <>
-                createVrps (TaName "slurm") [
-                    mkVrp4 64496 "198.51.100.0/24" 24,
-                    mkVrp6 64496 "2001:db8::/32" 48
+                (toPerTA [
+                    (TaName "default", createVrps [
+                        mkVrp4 123 "192.168.0.0/16" 16,
+                        mkVrp4 64497 "198.51.101.0/24" 24                    
+                    ]),
+                    (TaName "slurm", createVrps [
+                        mkVrp4 64496 "198.51.100.0/24" 24,
+                        mkVrp6 64496 "2001:db8::/32" 48
+                    ])
                 ]) 
                 (Set.fromList [                                        
                     mkBgpSec "1122" [ASN 234] "112233",
@@ -207,13 +205,13 @@ test_apply_slurm = do
                     mkBgpSec "<some base64 SKI>"
                         [ASN 64496] "PHNvbWUgYmFzZTY0IHB1YmxpYyBrZXk+"
                 ])
-    HU.assertEqual "Wrong VRPs:" (expected ^. #vrps) (filtered ^. #vrps)
-    HU.assertEqual "Wrong BGPSecs:" (expected ^. #bgpSec) (filtered ^. #bgpSec)
+    HU.assertEqual "Wrong BGPSecs:" (expected ^. #bgpSec) (filtered_ ^. #bgpSec)
+    HU.assertEqual "Wrong VRPs:" (expected ^. #vrps) (filtered_ ^. #vrps)    
   where
-    mkVrp4 asn prefix length = 
-        Vrp (ASN asn) (Ipv4P $ readIp4 prefix) (PrefixLength length)
-    mkVrp6 asn prefix length = 
-        Vrp (ASN asn) (Ipv6P $ readIp6 prefix) (PrefixLength length)
+    mkVrp4 asn prefix length_ = 
+        Vrp (ASN asn) (Ipv4P $ readIp4 prefix) (PrefixLength length_)
+    mkVrp6 asn prefix length_ = 
+        Vrp (ASN asn) (Ipv6P $ readIp6 prefix) (PrefixLength length_)
 
     mkBgpSec ski asns spki = let 
             bgpSecSki  = SKI $ mkKI ski
@@ -357,3 +355,6 @@ assertNotParsed errorMessage t = let
         (Left errorMessage) 
         decoded
 
+
+asPerTA :: Vrps -> PerTA Vrps
+asPerTA vrps = PerTA $ MonoidalMap.singleton (TaName "default") vrps
