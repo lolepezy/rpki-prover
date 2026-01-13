@@ -1,8 +1,3 @@
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DerivingVia                #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedLabels           #-}
-{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StrictData                 #-}
 
 module RPKI.Repository where

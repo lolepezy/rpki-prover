@@ -1,9 +1,4 @@
-{-# LANGUAGE DerivingStrategies   #-}
-{-# LANGUAGE DeriveAnyClass       #-}
-{-# LANGUAGE OverloadedLabels     #-}
-{-# LANGUAGE QuasiQuotes          #-}
-{-# LANGUAGE RecordWildCards      #-}
-{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.Worker where
 

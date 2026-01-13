@@ -1,11 +1,6 @@
-{-# LANGUAGE FlexibleInstances  #-}
-{-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE OverloadedLabels   #-}
-{-# LANGUAGE DeriveAnyClass     #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE QuasiQuotes        #-}
-{-# LANGUAGE StrictData         #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StrictData        #-}
 
 module RPKI.Logging where
 

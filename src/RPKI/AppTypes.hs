@@ -1,9 +1,5 @@
-{-# LANGUAGE DeriveAnyClass     #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE StrictData         #-}
-{-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StrictData        #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.AppTypes where
     

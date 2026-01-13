@@ -1,9 +1,4 @@
-{-# LANGUAGE DerivingStrategies   #-}
-{-# LANGUAGE DeriveAnyClass       #-}
-{-# LANGUAGE DerivingVia          #-}
-{-# LANGUAGE OverloadedLabels     #-}
-{-# LANGUAGE RecordWildCards      #-}
-{-# LANGUAGE StrictData           #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Metrics.Metrics where
 

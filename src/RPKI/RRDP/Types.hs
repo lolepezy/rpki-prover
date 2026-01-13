@@ -1,7 +1,4 @@
-{-# LANGUAGE DeriveAnyClass     #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE StrictData         #-}
-{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE StrictData #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module RPKI.RRDP.Types where

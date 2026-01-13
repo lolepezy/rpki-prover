@@ -1,14 +1,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE RecordWildCards       #-}
-{-# LANGUAGE DerivingStrategies    #-}
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE OverloadedLabels      #-}
-{-# LANGUAGE QuasiQuotes           #-}
-{-# LANGUAGE StrictData            #-}
-{-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE StrictData           #-}
 
 module RPKI.Http.UI where
 

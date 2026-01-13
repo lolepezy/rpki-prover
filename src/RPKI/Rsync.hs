@@ -1,10 +1,5 @@
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DeriveAnyClass     #-}
-{-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE OverloadedLabels   #-}
-{-# LANGUAGE QuasiQuotes        #-}
-{-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE StrictData         #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StrictData        #-}
 
 module RPKI.Rsync where
     
@@ -60,7 +55,6 @@ import           System.Exit
 import           System.IO
 import           System.FilePath
 import           System.Process.Typed
-import           System.Posix.Process
 
 import qualified Streaming.Prelude                as S
 
@@ -205,15 +199,17 @@ readRsyncProcess logger fetchConfig pc textual = do
     Now now <- thisInstant
     let endOfLife = momentAfter now (fetchConfig ^. #rsyncTimeout)
     liftIO $ withProcessTerm pc' $ \p -> do 
-        pid <- getProcessID        
-        registerhWorker logger $ WorkerInfo pid endOfLife textual
+        mPid <- getPid p
+        forM_ mPid $ \pid -> 
+            registerhWorker logger $ WorkerInfo pid endOfLife textual
 
         z <- atomically $ (,,)
             <$> waitExitCodeSTM p
             <*> getStdout p
             <*> getStderr p
 
-        deregisterhWorker logger pid
+        forM_ mPid $ \pid -> 
+            deregisterhWorker logger pid
 
         pure z
   where

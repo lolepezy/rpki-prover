@@ -1,9 +1,4 @@
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE DerivingStrategies  #-}
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE OverloadedLabels    #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE QuasiQuotes         #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.RRDP.Http where
 

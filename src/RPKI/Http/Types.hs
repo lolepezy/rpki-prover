@@ -1,12 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE DerivingStrategies   #-}
-{-# LANGUAGE DeriveGeneric        #-}
-{-# LANGUAGE DeriveAnyClass       #-}
-{-# LANGUAGE DerivingVia        #-}
 {-# LANGUAGE StrictData           #-}
 {-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE OverloadedLabels     #-}
-{-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE FlexibleInstances    #-}
 
 module RPKI.Http.Types where

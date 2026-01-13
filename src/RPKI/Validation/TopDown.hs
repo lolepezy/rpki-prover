@@ -1,13 +1,6 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE OverloadedLabels           #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE QuasiQuotes                #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE StrictData                 #-}
-{-# LANGUAGE DerivingVia                #-}
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE StrictData           #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Validation.TopDown (
     TopDownResult(..),
@@ -620,8 +613,8 @@ validateCaNoFetch
 
     makeNextFullValidationAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextFullValidationAction aki = do 
-        mfts <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
-        pure $! processMfts aki mfts
+        mftMetas <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
+        pure $! processMfts aki mftMetas
 
     makeNextIncrementalAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextIncrementalAction aki = do
@@ -630,39 +623,46 @@ validateCaNoFetch
             []   -> pure $! vError $ NoMFT aki
             mfts -> actOnMfts mfts
       where
-        actOnMfts mfts = do
+        actOnMfts mftMetas = do
             z <- roTxT database $ \tx db -> DB.getMftShorcut tx db aki
             case z of
                 Nothing -> do
                     increment $ topDownCounters ^. #originalMft
-                    pure $! processMfts aki mfts
-                Just mftShortcut -> do
-                    let mftShortcutKey = mftShortcut ^. #key
-                    markAsUsed topDownContext mftShortcutKey
-                    increment $ topDownCounters ^. #shortcutMft
-                    action <- case mftsNotInFuture mfts of
-                        [] -> vError $ NoMFT aki
-                        mft_ : otherMfts 
-                            | mft_ ^. #key == mftShortcutKey -> 
-                                pure $! onlyCollectPayloads mftShortcut                                    
-                            | otherwise -> pure $! do 
-                                let mftKey = mft_ ^. #key
-                                markAsUsed topDownContext mftKey
-                                withMft mftKey $ \mft ->                                                                     
-                                    tryOneMftWithShortcut mftShortcut mft
-                                        `catchError` \e -> 
-                                            if isWithinValidityPeriod now mftShortcut 
-                                                then do
-                                                    -- shortcut is still valid so fall back to it
-                                                    vFocusOn ObjectFocus mftKey $ vWarn $ MftFallback e
-                                                    let mftLocation = pickLocation $ getLocations $ mft ^. #object
-                                                    logWarn logger [i|Falling back to the last valid manifest for #{mftLocation}, error: #{toMessage e}|]
-                                                    onlyCollectPayloads mftShortcut                   
-                                                else 
-                                                    -- shortcut is too old, so continue with the other manifests
-                                                    tryMfts aki otherMfts
-                    pure $! action `andThen` 
-                           (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)
+                    pure $! processMfts aki mftMetas
+
+                Just mftShortcut -> do 
+                    let shortcutExpired = 
+                            not (isWithinValidityPeriod now mftShortcut) || 
+                            not (isWithinValidityPeriod now (mftShortcut ^. #crlShortcut))
+
+                    if shortcutExpired then do                 
+                        increment $ topDownCounters ^. #originalMft
+                        pure $! processMfts aki mftMetas
+                    else do
+                        let mftShortcutKey = mftShortcut ^. #key
+                        markAsUsed topDownContext mftShortcutKey
+                        increment $ topDownCounters ^. #shortcutMft
+                        action <- case mftsNotInFuture mftMetas of
+                            [] -> vError $ NoMFT aki
+                            mft_ : otherMfts 
+                                | mft_ ^. #key == mftShortcutKey -> 
+                                    pure $! onlyCollectPayloads mftShortcut                                    
+                                | otherwise -> pure $! do 
+                                    let mftKey = mft_ ^. #key
+                                    markAsUsed topDownContext mftKey
+                                    withMft mftKey $ \mft ->                                                                     
+                                        tryOneMftWithShortcut mftShortcut mft
+                                            `catchError` \e -> 
+                                                if shortcutExpired 
+                                                    then 
+                                                        tryMfts aki otherMfts
+                                                    else do                                                    
+                                                        reportMftFallback e mft                                                                                                    
+                                                        onlyCollectPayloads mftShortcut                                                                        
+                                                        
+                        pure $! action `andThen` 
+                                (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)            
+
       
         tryOneMftWithShortcut mftShortcut mft = do
             fullCa <- getFullCa appContext topDownContext ca
@@ -685,25 +685,25 @@ validateCaNoFetch
     processMfts childrenAki mfts = do
         case (mftsNotInFuture mfts, mfts) of             
             ([], []) -> vError $ NoMFT childrenAki
+
             -- if there are only manifest(s) in the future, use them 
             -- anyway to have a meaningful error message
             ([], _) -> tryMfts childrenAki mfts
+
             -- If there're manifests that are not in the future, 
-            -- use only them and skip the future ones
+            -- use only them and ignore the future ones
             (relevantMfts, _) -> tryMfts childrenAki relevantMfts
       
 
     tryMfts aki []              = vError $ NoMFT aki
-    tryMfts aki (mftRef: mfts_) = 
-        withMft (mftRef ^. #key) $ \mft -> do 
+    tryMfts aki (m : mftsMetas_) = 
+        withMft (m ^. #key) $ \mft -> do 
             tryOneMft mft `catchError` \e -> 
-                case mfts_ of 
+                case mftsMetas_ of 
                     [] -> appError e
                     _  -> do 
-                        vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e
-                        let mftLocation = pickLocation $ getLocations $ mft ^. #object
-                        logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, error: #{toMessage e}|]
-                        tryMfts aki mfts_
+                        reportMftFallback e mft
+                        tryMfts aki mftsMetas_
       where
         tryOneMft mft = do                 
             markAsUsed topDownContext $ mft ^. #key                
@@ -716,6 +716,12 @@ validateCaNoFetch
         case z of 
             Nothing  -> integrityError appContext [i|Referential integrity error, can't find a manifest by its key #{key}.|]
             Just mft -> f mft
+
+    reportMftFallback e mft = do 
+        let mftLocation = pickLocation $ getLocations $ mft ^. #object        
+        let mftNumber = getCMSContent (mft ^. #object . #payload . #cmsPayload) ^. #mftNumber
+        vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e mftNumber
+        logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, failed manifest number #{mftNumber}, error: #{toMessage e}|]        
 
     mftsNotInFuture = filter (\MftMeta {..} -> thisTime <= unNow now)
 
@@ -1708,7 +1714,6 @@ oneMoreMftShort = updateMetric @ValidationMetric @_ (#mftShortcutNumber %~ (+1))
 
 moreVrps :: Monad m => Count -> ValidatorT m ()
 moreVrps n = updateMetric @ValidationMetric @_ (#vrpCounter %~ (+n))
-
 
 extractPPAs :: Ca -> Either ValidationError PublicationPointAccess
 extractPPAs = \case 

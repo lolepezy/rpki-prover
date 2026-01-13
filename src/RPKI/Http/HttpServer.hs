@@ -1,8 +1,4 @@
-{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 module RPKI.Http.HttpServer where
 
@@ -400,7 +396,7 @@ getRpkiObject AppContext {..} uri hash key =
                                 -- try TA certificates
                                 tas <- DB.getTAs tx db                                 
                                 pure [ locatedDto (Located locations (CerRO taCert)) | 
-                                        (_, StorableTA {..}) <- tas, 
+                                        StorableTA {..} <- tas, 
                                         let locations = talCertLocations tal, 
                                         oneOfLocations locations rpkiUrl ]                                
                                 
@@ -507,7 +503,7 @@ getSystem AppContext {..} = do
         db <- liftIO $ readTVarIO database
         liftIO $ roTx db $ \tx -> do        
             tas <- DB.getTAs tx db     
-            pure [ TalDto {..} | (_, StorableTA {..}) <- tas, 
+            pure [ TalDto {..} | StorableTA {..} <- tas, 
                     let repositories = map (toText . getRpkiURL) 
                             $ NonEmpty.toList 
                             $ unPublicationPointAccess initialRepositories ]                     

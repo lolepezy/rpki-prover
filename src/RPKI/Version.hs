@@ -1,5 +1,3 @@
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE QuasiQuotes     #-}
 module RPKI.Version where
 
 import Data.Text (Text)

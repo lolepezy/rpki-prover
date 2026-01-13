@@ -1,11 +1,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE StrictData                 #-}
-{-# LANGUAGE UndecidableInstances       #-}
-
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE StrictData #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Resources.Types where
 

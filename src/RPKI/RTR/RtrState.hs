@@ -1,8 +1,5 @@
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedLists #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE StrictData #-}
-{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE StrictData      #-}
 
 module RPKI.RTR.RtrState where
 

@@ -1,7 +1,5 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE StrictData     #-}
-{-# LANGUAGE DerivingVia    #-}
-{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.RTR.Types where
 
