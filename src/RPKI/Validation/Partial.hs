@@ -83,7 +83,7 @@ Ideas:
         - MFT shortcuts should be written asynchronously as already implemented
 
 
-    * How to deal expiring objects? Idea:
+    * How to deal with expiring objects? Idea:
       - Keep a mutimap Instant -> ObjectKey for it
       - Scan expiresAt, expire all the object for the given timestamp
       - Expire object means deleting all payloads found under that object
@@ -100,7 +100,7 @@ Ideas:
 
 
     * Pre-group of filter update log? 
-        - Exlude repeated updates of the same repository/TA?
+        - Exclude repeated updates of the same repository/TA?
 
 
     * How to stop updating repositories that are not referred by CAs?
@@ -158,7 +158,10 @@ data Store s = Store {
         kiMetas   :: SMap "ki-meta" s KI KIMeta,
         expiresAt :: SMultiMap "expires-at" s Instant ObjectKey,
         cert2mft  :: SMap "cert-to-mft" s CertKey MftKey,
-        mftShorts :: SMap "mft-shorts" s MftKey MftShortcut
+        mftShorts :: SMap "mft-shorts" s MftKey MftShortcut,
+
+        -- TODO Might be PP -> object?
+        repository2object :: SMultiMap "repo-key-to-obj-keys" s RepositoryKey ObjectKey
     }
     deriving (Generic)
 
