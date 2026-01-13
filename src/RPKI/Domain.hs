@@ -766,6 +766,10 @@ newtype MftKey = MftKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+newtype RepositoryKey = RepositoryKey ArtificialKey
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
 newtype ArtificialKey = ArtificialKey Int64
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
