@@ -213,12 +213,19 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
   where
     maxRecoveryAttempts = 5 :: Int
 
-    selfRecoveryLoop recoveryAttempts =
+    selfRecoveryLoop recoveryAttempts = do 
+        logDebug logger [i|selfRecoveryLoop #{recoveryAttempts}|]
+
+        let txTimeoutHandler = 
+                if recoveryAttempts >= maxRecoveryAttempts
+                then die [i|Database problem: read-write transaction has timed out #{recoveryAttempts + 1} times, giving up.|]
+                else tryToFixStuckDb
+
         race_ (runAll appContext tals) monitorDbState
             `catches` 
-            handlers (if recoveryAttempts >= maxRecoveryAttempts
-                        then die [i|Database problem: read-write transaction has timed out #{recoveryAttempts + 1} times, giving up.|]
-                        else tryToFixStuckDb >> selfRecoveryLoop (recoveryAttempts + 1))
+            handlers txTimeoutHandler
+
+        selfRecoveryLoop (recoveryAttempts + 1)
 
     monitorDbState = forever $ do 
         -- We can get a signal from a worker process that the DB is stuck 
@@ -233,7 +240,7 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
                 logInfo logger "Database read-write transaction has timed out, restarting all workers and reopening storage."
                 killAllWorkers appContext                                
                 logInfo logger "Killed all worker processes."
-                reopenStorage appContext    
+                reopenStorage appContext 
                 logInfo logger "Database re-opened after deleting the lock file."
                 atomically $ modifyTVar' systemState (#dbState .~ DbOperational)
     

@@ -197,8 +197,10 @@ executeWorkerProcess = do
                                     exec resultHandler $
                                         CacheCleanupResult <$> runCacheCleanup appContext worldVersion
                     actuallyExecuteWork
-                        `catch` (\(_ :: TxTimeout) -> 
-                                    pushSystemStatus logger $ SystemStatusMessage $ SystemState { dbState = DbStuck })
+                        `catch` (\(t :: TxTimeout) -> 
+                                    exec resultHandler $ do
+                                        pushSystemStatus logger $ SystemStatusMessage $ SystemState { dbState = DbStuck }
+                                        pure $ ErrorResult $ fmtGen t)
                         `finally` 
                             -- There's a short window between opening LMDB and not yet having AppContext 
                             -- constructed when an exception will not result in the database closed. It is not good, 
@@ -207,7 +209,7 @@ executeWorkerProcess = do
                             closeStorage appContext                                    
                         
   where    
-    exec resultHandler f = resultHandler =<< execWithStats f                    
+    exec resultHandler f = resultHandler =<< execWithStats f    
 
 
 turnOffTlsValidation :: IO ()

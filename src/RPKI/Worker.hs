@@ -142,6 +142,10 @@ newtype CacheCleanupResult = CacheCleanupResult DB.CleanUpResult
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)              
 
+newtype ErrorResult = ErrorResult Text
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)              
+
 data WorkerResult r = WorkerResult {
         payload   :: r,        
         cpuTime   :: CPUTime,
