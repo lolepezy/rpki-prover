@@ -97,8 +97,8 @@ updateRrdpRepository :: Storage s =>
 updateRrdpRepository     
         appContext@AppContext {..}
         worldVersion 
-        repo@RrdpRepository { uri = repoUri, .. } =
-        
+        repo@RrdpRepository { uri = repoUri, .. } = do
+
   timedMetric (Proxy :: Proxy RrdpMetric) $ do                                   
     
     let fetchNotification eTag_ = do 
