@@ -20,7 +20,7 @@ import Data.Bifunctor
 
 {- | DB keys can potentially be much larger than the underlying key-value storage allows.
      According to LMDB documentation, for instance, the maximum key size is 511 bytes. 
-     So we:
+     So we organise something like a hash map:
      - calculate an integer (8 byte) hash and use it as a key     
      - store a list of pairs of the full serialised key along with the value.
      Very long keys are rare in practice and it's astronomically unlikely that the list 
