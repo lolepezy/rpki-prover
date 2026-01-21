@@ -147,7 +147,7 @@ newtype ErrorResult = ErrorResult Text
     deriving anyclass (TheBinary)              
 
 data WorkerResult r = WorkerResult {
-        payload   :: r,        
+        payload   :: Either ErrorResult r,        
         cpuTime   :: CPUTime,
         clockTime :: TimeMs,
         maxMemory :: MaxMemory
@@ -159,7 +159,7 @@ data WorkerResult r = WorkerResult {
 -- and do the actual work.
 -- 
 executeWork :: WorkerInput 
-            -> (ExitCode -> IO ())
+            -> (ExitCode -> IO ()) -- ^ How to exit the worker process.
             -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                            
             -> IO ()
 executeWork input exitWith_ actualWork = 
@@ -221,7 +221,7 @@ executeWork input exitWith_ actualWork =
 readWorkerInput :: (MonadIO m) => m WorkerInput
 readWorkerInput = liftIO $ deserialise_ . LBS.toStrict <$> LBS.hGetContents stdin
 
-execWithStats :: MonadIO m => m r -> m (WorkerResult r)
+execWithStats :: MonadIO m => m (Either ErrorResult r) -> m (WorkerResult r)
 execWithStats f = do        
     (payload, clockTime) <- timedMS f
     (cpuTime, maxMemory) <- processStat    

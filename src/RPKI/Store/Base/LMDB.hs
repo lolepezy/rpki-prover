@@ -122,7 +122,7 @@ withTransactionWrapper LmdbStorage { env = LmdbEnv {..}, .. } f = do
     interruptAfterTimeout nEnv stillWaiting = do
         threadDelay $ toMicroseconds timeout 
         join $ atomically $ do
-            sw <- readTVar stillWaiting            
+            sw <- readTVar stillWaiting
             if sw
                 then do
                     writeTVar nativeEnv (TimedOut nEnv)

@@ -458,31 +458,38 @@ runAll appContext@AppContext {..} tals = do
             [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|]
       where
         processTALs = do
-            ((z, workerVS), workerId) <- runValidationWorker worldVersion talsToValidate                  
-            case z of 
-                Left e -> do 
-                    logError logger [i|Validator process failed: #{e}.|]
+            ((z, workerVS), workerId) <- runValidationWorker worldVersion talsToValidate            
+            let reportError message = do 
+                    logError logger message
                     rwTxT database $ \tx db -> do
                         DB.saveValidationVersion tx db worldVersion allTaNames mempty workerVS
                     updatePrometheus (workerVS ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion
                     pure (mempty, mempty)
 
-                Right wr@WorkerResult {..} -> do                              
-                    let ValidationResult vs discovered maybeSlurm = payload
-                    adjustFetchers appContext (fmap fst discovered) workflowShared
-                    scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
-                    
-                    logWorkerDone logger workerId wr
-                    pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory
-                
-                    let topDownState = workerVS <> vs
-                    logDebug logger [i|Validation result: 
+            case z of 
+                Left e -> 
+                    reportError [i|Validator process failed: #{e}.|]                    
+
+                Right wr@WorkerResult {..} -> do     
+                    case payload of 
+                        Left (ErrorResult message) ->
+                            reportError [i|Validator process failed: #{message}.|]
+
+                        Right (ValidationResult vs discovered maybeSlurm) -> do                                             
+                            adjustFetchers appContext (fmap fst discovered) workflowShared
+                            scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
+                            
+                            logWorkerDone logger workerId wr
+                            pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory
+                        
+                            let topDownState = workerVS <> vs
+                            logDebug logger [i|Validation result: 
 #{formatValidations (topDownState ^. typed)}.|]
-                    updatePrometheus (topDownState ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion                        
-                    
-                    (!q, elapsed) <- timedMS $ reReadAndUpdatePayloads maybeSlurm
-                    logDebug logger [i|Re-read payloads, took #{elapsed}ms.|]
-                    pure q
+                            updatePrometheus (topDownState ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion                        
+                            
+                            (!q, elapsed) <- timedMS $ reReadAndUpdatePayloads maybeSlurm
+                            logDebug logger [i|Re-read payloads, took #{elapsed}ms.|]
+                            pure q
           where
             reReadAndUpdatePayloads maybeSlurm = do 
                 roTxT database (\tx db -> DB.getRtrPayloads tx db worldVersion) >>= \case                         
@@ -513,11 +520,15 @@ runAll appContext@AppContext {..} tals = do
         cleanupOldObjects = do                 
             ((z, _), workerId) <- runCleanUpWorker worldVersion      
             case z of 
-                Left e                     -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
+                Left e -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
                 Right wr@WorkerResult {..} -> do 
-                    logWorkerDone logger workerId wr
-                    pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxMemory
-                    pure $ Right payload                                       
+                    case payload of 
+                        Left (ErrorResult message) ->
+                            pure $ Left [i|Cache cleanup process failed: #{message}.|]
+                        Right r -> do
+                            logWorkerDone logger workerId wr
+                            pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxMemory
+                            pure $ Right r
 
     -- Do LMDB compaction
     compact workflowShared worldVersion _ = do

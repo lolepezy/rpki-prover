@@ -110,12 +110,14 @@ runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion reposito
     
     workerInfo <- newWorkerInfo RsyncWorker (fetchConfig ^. #rsyncTimeout) (U.convert $ workerIdStr workerId)
 
-    wr@WorkerResult {..} <- runWorker logger workerInput arguments workerInfo
-
-    let RsyncFetchResult z = payload        
-    logWorkerDone logger workerId wr    
-    pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory
-    embedValidatorT $ pure z
+    wr@WorkerResult {..} <- runWorker logger workerInput arguments workerInfo    
+    case payload of 
+        Left (ErrorResult e) -> do 
+            appError $ InternalE $ WorkerError e
+        Right (RsyncFetchResult z) -> do     
+            logWorkerDone logger workerId wr    
+            pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory
+            embedValidatorT $ pure z
     
 
 -- | Download one file using rsync

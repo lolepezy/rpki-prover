@@ -80,10 +80,13 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
 
     workerInfo <- newWorkerInfo (GenericWorker "rrdp-fetch") (fetchConfig ^. #rrdpTimeout) (U.convert $ workerIdStr workerId)
     wr@WorkerResult {..} <- runWorker logger workerInput arguments workerInfo
-    let RrdpFetchResult z = payload
-    logWorkerDone logger workerId wr
-    pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory
-    embedValidatorT $ pure z
+    case payload of 
+        Left (ErrorResult e) -> do 
+            appError $ InternalE $ WorkerError e
+        Right (RrdpFetchResult z) -> do     
+            logWorkerDone logger workerId wr
+            pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory
+            embedValidatorT $ pure z
 
 
 -- | 

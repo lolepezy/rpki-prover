@@ -175,40 +175,36 @@ executeWorkerProcess = do
                     let actuallyExecuteWork = 
                             case input ^. #params of
                                 RrdpFetchParams {..} -> 
-                                    exec resultHandler $ fmap RrdpFetchResult $ runValidatorT scopes $ 
+                                    exec resultHandler $ fmap (Right . RrdpFetchResult) $ runValidatorT scopes $ 
                                         updateRrdpRepository appContext worldVersion rrdpRepository
 
                                 RsyncFetchParams {..} -> 
-                                    exec resultHandler $ fmap RsyncFetchResult $ runValidatorT scopes $                                     
+                                    exec resultHandler $ fmap (Right . RsyncFetchResult) $ runValidatorT scopes $                                     
                                         updateObjectForRsyncRepository appContext fetchConfig 
                                             worldVersion rsyncRepository
 
                                 CompactionParams {..} -> 
                                     exec resultHandler $ 
-                                        CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
+                                        Right . CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
 
                                 ValidationParams {..} -> 
                                     exec resultHandler $ do 
                                         (vs, discoveredRepositories, slurm) <- 
                                             runValidation appContext worldVersion talsToValidate allTaNames
-                                        pure $ ValidationResult vs discoveredRepositories slurm
+                                        pure $ Right $ ValidationResult vs discoveredRepositories slurm
 
                                 CacheCleanupParams {..} -> 
                                     exec resultHandler $
-                                        CacheCleanupResult <$> runCacheCleanup appContext worldVersion
+                                        Right . CacheCleanupResult <$> runCacheCleanup appContext worldVersion
                     actuallyExecuteWork
                         `catch` (\(t :: TxTimeout) -> 
-                                    exec resultHandler $ do
+                                    exec @() resultHandler $ do
                                         pushSystemStatus logger $ SystemStatusMessage $ SystemState { dbState = DbStuck }
-                                        pure $ ErrorResult $ fmtGen t)
-                        `finally` 
-                            -- There's a short window between opening LMDB and not yet having AppContext 
-                            -- constructed when an exception will not result in the database closed. It is not good, 
-                            -- but we are trying to solve the problem of interrupted RW transactions leaving the DB 
-                            -- in broken/locked state, and no transactions are possible within this window.                                
-                            closeStorage appContext                                    
-                        
+                                        pure $ Left $ ErrorResult $ fmtGen t)
+                        `finally`                             
+                            closeStorage appContext
   where    
+    exec :: forall r . (WorkerResult r -> IO ()) -> IO (Either ErrorResult r) -> IO ()
     exec resultHandler f = resultHandler =<< execWithStats f    
 
 
