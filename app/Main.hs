@@ -103,15 +103,15 @@ executeMainProcess cliOptions@CLIOptions{..} = do
     -- TODO This doesn't look pretty, come up with something better.
     appStateHolder <- newTVarIO Nothing
 
-    let withApp f = do 
+    let withAppState f = do 
             z <- readTVarIO appStateHolder
             for_ z f    
 
     withLogConfig cliOptions $ \logConfig_ -> do
         let logConfig = logConfig_
-                & #metricsHandler .~ withApp . mergeSystemMetrics
-                & #workerHandler .~ withApp . updateRunningWorkers
-                & #systemStatusHandler .~ withApp . updateSystemStatus
+                & #metricsHandler .~ withAppState . mergeSystemMetrics
+                & #workerHandler .~ withAppState . updateRunningWorkers
+                & #systemStatusHandler .~ withAppState . updateSystemStatus
 
         -- This one modifies system metrics in AppState
         -- if appState is actually initialised
