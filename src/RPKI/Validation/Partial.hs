@@ -90,17 +90,22 @@ Ideas:
       - Expired objects stay in the tree and are filtered out by their validity 
         period, they become forever skipped, but it's easier to do that than
         actually modify MFT shortcuts
-
+      - Similar applies to object that will be valid in the future (not yet valid). 
+        Store an index for them "maturesAt" and scan it periodically the same way as 
+        expiresAt. Generate object updates for these objects when they mature.
+ 
 
     * What happens when the validator is launched after a long time of not running? 
        Nothing special, but
         - Updates can be big and hit the threshold of "validate whole repository" 
           or "validate whole TA"
-        - Run expiration check first?
+        - Run expiration check first? (No, we skip stuff out of validity period 
+          when traversing anything at all)
 
 
     * Pre-group of filter update log? 
         - Exclude repeated updates of the same repository/TA?
+        - Do not write TA/repository task in the log if there already one?
 
 
     * How to stop updating repositories that are not referred by CAs?
@@ -168,20 +173,26 @@ data Store s = Store {
 
 
 
--- Validate top-down with shortcuts and the function to be called when found payloads.
--- Look at the KI -> KIMeta and update it if needed after validation for CA succeeds
--- 
+{- 
+    - Validate top-down with shortcuts and the function to be called when found payloads.
+    - Look at the KI -> KIMeta and update it if needed after validation for CA succeeds
+    - Generate "Delete Payload" for payloads corresponding to the removed MFT children
+-} 
 validateCA :: CertKey -> STM Payload -> ValidatorT IO ()
 validateCA certKey onPayload = do
     -- 
     pure ()
 
--- Filter will be used to 
---   * Pick up only CAs that are on somebody's path to the top
---   * Pick up payloads (or their shortcuts) that are in the set up updates
---    
+{- 
+    Filter will be used to 
+      * Pick up only CAs that are on somebody's path to the top
+      * Pick up payloads (or their shortcuts) that are in the set up updates
+-}   
 validateCAPartially :: CertKey -> STM Payload -> (ObjectKey -> Bool) -> ValidatorT IO ()
 validateCAPartially certKey onPayload filter = do
+    -- fetch CA by certKey
+
+    -- fetch MFT shortcut
     pure ()
 
 
