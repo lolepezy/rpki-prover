@@ -211,11 +211,9 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
             runAll appContext tals
                 `catches` handlers (die "Database problem: read-write transaction has timed out, exiting.")
   where
-    maxRecoveryAttempts = 5 :: Int
+    maxRecoveryAttempts = 10 :: Int
 
-    selfRecoveryLoop recoveryAttempts = do 
-        logDebug logger [i|selfRecoveryLoop #{recoveryAttempts}|]
-
+    selfRecoveryLoop recoveryAttempts = do
         let txTimeoutHandler = 
                 if recoveryAttempts >= maxRecoveryAttempts
                 then die [i|Database problem: read-write transaction has timed out #{recoveryAttempts + 1} times, giving up.|]
