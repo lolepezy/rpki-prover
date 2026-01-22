@@ -270,8 +270,9 @@ defaultConfig = Config {
         cleanupWorkerMemoryMb    = 512
     },
     rtrConfig                 = Nothing,
-    storageConfig = StorageConfig {        
-        rwTransactionTimeout = 4 * minutes + Seconds 50
+    storageConfig = StorageConfig {       
+        -- There should normally be no transactions longer than that 
+        rwTransactionTimeout = 5 * minutes
     },
     cacheCleanupInterval      = 6 * hours,    
     versionNumberToKeep       = 3,
