@@ -449,4 +449,5 @@ instance ToJSON RtrConfig
 instance ToJSON SystemConfig
 instance ToJSON RrdpConf
 instance ToJSON RsyncConf    
+instance ToJSON StorageConfig
 instance ToJSON Config

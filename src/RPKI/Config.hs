@@ -15,8 +15,10 @@ import Data.Maybe (fromMaybe)
 import Data.Generics.Product.Typed
 
 import RPKI.Domain
+import RPKI.AppTypes
 import RPKI.Logging
 import RPKI.Util (toNatural)
+import RPKI.Time 
 import GHC.Generics (Generic)
 
 import RPKI.Store.Base.Serialisation
@@ -54,6 +56,12 @@ data FetchConfig = FetchConfig {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+data StorageConfig = StorageConfig {
+        rwTransactionTimeout :: Seconds
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)    
+
 data Config = Config {        
         programBinaryPath         :: ApiSecured FilePath,
         rootDirectory             :: ApiSecured FilePath,
@@ -69,6 +77,7 @@ data Config = Config {
         systemConfig              :: SystemConfig,
         httpApiConf               :: HttpApiConfig,
         rtrConfig                 :: Maybe RtrConfig,
+        storageConfig             :: StorageConfig,
         cacheCleanupInterval      :: Seconds,
         shortLivedCacheLifeTime   :: Seconds,
         longLivedCacheLifeTime    :: Seconds,
@@ -201,7 +210,7 @@ setCpuCount = setNumCapabilities . fromIntegral
 --
 -- TODO There should be distinction between network operations and file/LMDB IO.
 makeParallelism :: Natural -> Parallelism
-makeParallelism cpus = Parallelism cpus (2 * cpus) (2 * cpus)
+makeParallelism cpus = makeParallelismF cpus (2 * cpus)
 
 makeParallelismF :: Natural -> Natural -> Parallelism
 makeParallelismF cpus = Parallelism cpus (2 * cpus)
@@ -261,6 +270,10 @@ defaultConfig = Config {
         cleanupWorkerMemoryMb    = 512
     },
     rtrConfig                 = Nothing,
+    storageConfig = StorageConfig {       
+        -- There should normally be no transactions longer than that 
+        rwTransactionTimeout = 5 * minutes
+    },
     cacheCleanupInterval      = 6 * hours,    
     versionNumberToKeep       = 3,
     storageCompactionInterval = 5 * days,
@@ -290,6 +303,13 @@ adjustConfig config = config
         -- we still want some correctness here, so the "short" one should be shorter
         & #shortLivedCacheLifeTime %~ (`min` (config ^. #longLivedCacheLifeTime))
 
+adjustWorkerConfig :: Config -> Timebox -> Config
+adjustWorkerConfig config (Timebox timeout) = config
+        -- There's no point in having RW-transaction timeout
+        -- longer than the worker timeout
+        & #storageConfig . #rwTransactionTimeout %~ (`min` safeTimeout)
+  where
+    safeTimeout = max (Seconds 1) (timeout - Seconds 1)
 
 defaultsLogLevel :: LogLevel
 defaultsLogLevel = InfoL
