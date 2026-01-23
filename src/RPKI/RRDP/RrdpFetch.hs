@@ -466,7 +466,7 @@ saveSnapshot
 
             Right rpkiURL -> do 
                 let decoded = U.decodeBase64 encodedb64 rpkiURL
-                case first (\t -> RrdpE $ BadBase64 t (U.convert rpkiURL)) decoded of
+                case first (RrdpE . BadBase64) decoded of
                     Left e -> pure $! DecodingTrouble rpkiURL (VErr e)
                     Right (DecodedBase64 blob) -> 
                         case validateSizeOfBS validationConfig blob of 

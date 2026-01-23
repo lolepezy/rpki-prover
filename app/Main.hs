@@ -208,10 +208,10 @@ executeWorkerProcess = do
     exec resultHandler f = resultHandler =<< execWithStats f    
 
 
-turnOffTlsValidation :: IO ()
-turnOffTlsValidation = do 
-    manager <- newManager $ mkManagerSettings (TLSSettingsSimple True True True) Nothing 
-    setGlobalManager manager    
+-- turnOffTlsValidation :: IO ()
+-- turnOffTlsValidation = do 
+--     manager <- newManager $ mkManagerSettings (TLSSettingsSimple True True True) Nothing 
+--     setGlobalManager manager    
 
 
 readTALs :: (Storage s, MaintainableStorage s) => AppContext s -> IO [TAL]

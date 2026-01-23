@@ -66,7 +66,7 @@ newtype WorkerId = WorkerId Text
     deriving anyclass (TheBinary)
 
 instance Show WorkerId where
-    show (WorkerId w) = show w
+    show (WorkerId w) = Prelude.show w
 
 data WorkerParams = RrdpFetchParams { 
                 scopes         :: Scopes, 
@@ -248,10 +248,10 @@ rtsA m = "-A" <> m
 rtsAL m = "-AL" <> m
 
 rtsN :: Int -> String
-rtsN n = "-N" <> show n
+rtsN n = "-N" <> Prelude.show n
 
 rtsMemValue :: Int -> String
-rtsMemValue mb = show mb <> "m"
+rtsMemValue mb = Prelude.show mb <> "m"
 
 -- Don't do idle GC, it only spins the CPU without any purpose
 defaultRts :: [String]

@@ -151,7 +151,7 @@ data RrdpError = BrokenXml Text |
                 NoVersionInDelta | 
                 BadVersion Text | 
                 NoPublishURI |
-                BadBase64 Text Text |
+                BadBase64 Text |
                 BadURL Text |
                 NoHashInWithdraw |
                 ContentInWithdraw Text Text |
@@ -356,14 +356,14 @@ newtype Count = Count { unCount :: Int64 }
     deriving Monoid via Sum Count
 
 instance Show Count where 
-    show (Count c) = show c
+    show (Count c) = Prelude.show c
 
 newtype HttpStatus = HttpStatus { unHttpStatus :: Int }
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)        
 
 instance Show HttpStatus where
-    show = show . unHttpStatus
+    show = Prelude.show . unHttpStatus
 
 instance Monoid HttpStatus where
     mempty = HttpStatus 200

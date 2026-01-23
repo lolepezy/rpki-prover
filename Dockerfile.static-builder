@@ -1,6 +1,5 @@
-# FROM utdemir/ghc-musl:v20-ghc8104 as rpki-prover-builder
-# FROM utdemir/ghc-musl:v25-ghc8107 as rpki-prover-builder
-FROM utdemir/ghc-musl:v25-ghc964 as rpki-prover-builder
+# Look there https://gitlab.b-data.ch/ghc/ghc-musl/container_registry/381?after=NTA
+FROM glcr.b-data.ch/ghc/ghc-musl:9.10.3-int-native-linux-amd64 as rpki-prover-builder
 
 RUN apk add --update --no-cache lmdb-dev lmdb xz-static
 

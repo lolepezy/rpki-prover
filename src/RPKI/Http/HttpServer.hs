@@ -10,11 +10,11 @@ import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Error.Class
 
+import           FileEmbedLzma.Untyped
 import           Data.Generics.Product.Typed
 
-import           FileEmbedLzma
-
 import           Servant.Server.Generic
+import           Servant.Server.StaticFiles
 import           Servant hiding (contentType, URI)
 import           Servant.Swagger.UI
 
