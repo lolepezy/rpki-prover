@@ -42,6 +42,7 @@ import           Options.Generic
 
 import           Shower
 
+import           RPKI.AppTypes
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppState
@@ -102,19 +103,15 @@ executeMainProcess cliOptions@CLIOptions{..} = do
     -- TODO This doesn't look pretty, come up with something better.
     appStateHolder <- newTVarIO Nothing
 
-    let bumpSysMetric sm = do
+    let withAppState f = do 
             z <- readTVarIO appStateHolder
-            for_ z $ mergeSystemMetrics sm
+            for_ z f    
 
-    let updateWorkers wi = do
-            z <- readTVarIO appStateHolder
-            -- We only keep track of running rsync clients
-            for_ z $ updateRsyncClient wi
-
-    withLogConfig cliOptions $ \lc -> do
-        let logConfig = lc
-                & #metricsHandler .~ bumpSysMetric
-                & #workerHandler .~ updateWorkers
+    withLogConfig cliOptions $ \logConfig_ -> do
+        let logConfig = logConfig_
+                & #metricsHandler .~ withAppState . mergeSystemMetrics
+                & #workerHandler .~ withAppState . updateRunningWorkers
+                & #systemStatusHandler .~ withAppState . updateSystemStatus
 
         -- This one modifies system metrics in AppState
         -- if appState is actually initialised
@@ -138,27 +135,30 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     exitFailure
                 Right appContext -> do 
                     atomically $ writeTVar appStateHolder $ Just $ appContext ^. #appState
-                    runMainProcess `finally` closeStorage appContext
+                    runMainProcess
+                        `finally` 
+                        closeStorage appContext
                   where
                     runMainProcess = do                                          
                         tals <- readTALs appContext
-                        if once 
-                            then runValidatorWorkflow appContext tals
-                            else do                             
+                        case appContext ^. #config . #proverRunMode of
+                            OneOffMode _ -> 
+                                runValidatorWorkflow appContext tals                                                        
+                            ServerMode -> 
                                 void $ race
                                     (runHttpApi appContext)
                                     (runValidatorWorkflow appContext tals)
 
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
-    input <- readWorkerInput
-    let config = input ^. typed @Config    
-    let logConfig = makeLogConfig (config ^. #logLevel) WorkerLog
+    input <- readWorkerInput    
+    let config = adjustWorkerConfig (input ^. typed @Config) (input ^. #workerTimeout)
+    let logConfig = newLogConfig (config ^. #logLevel) WorkerLog
                     
     -- turnOffTlsValidation
 
     appContextRef <- newTVarIO Nothing
-    let onExit exitCode = do
+    let onExit exitCode = do            
             readTVarIO appContextRef >>= maybe (pure ()) closeStorage
             exitWith exitCode
 
@@ -174,32 +174,38 @@ executeWorkerProcess = do
                     atomically $ writeTVar appContextRef $ Just appContext
                     let actuallyExecuteWork = 
                             case input ^. #params of
-                                RrdpFetchParams {..} -> exec resultHandler $
-                                    fmap RrdpFetchResult $ runValidatorT scopes $ 
+                                RrdpFetchParams {..} -> 
+                                    exec resultHandler $ fmap (Right . RrdpFetchResult) $ runValidatorT scopes $ 
                                         updateRrdpRepository appContext worldVersion rrdpRepository
 
-                                RsyncFetchParams {..} -> exec resultHandler $
-                                    fmap RsyncFetchResult $ runValidatorT scopes $ 
-                                        updateObjectForRsyncRepository appContext fetchConfig worldVersion rsyncRepository
+                                RsyncFetchParams {..} -> 
+                                    exec resultHandler $ fmap (Right . RsyncFetchResult) $ runValidatorT scopes $                                     
+                                        updateObjectForRsyncRepository appContext fetchConfig 
+                                            worldVersion rsyncRepository
 
-                                CompactionParams {..} -> exec resultHandler $
-                                    CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
+                                CompactionParams {..} -> 
+                                    exec resultHandler $ 
+                                        Right . CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
 
-                                ValidationParams {..} -> exec resultHandler $ do 
-                                    (vs, discoveredRepositories, slurm) <- 
-                                        runValidation appContext worldVersion talsToValidate allTaNames
-                                    pure $ ValidationResult vs discoveredRepositories slurm
+                                ValidationParams {..} -> 
+                                    exec resultHandler $ do 
+                                        (vs, discoveredRepositories, slurm) <- 
+                                            runValidation appContext worldVersion talsToValidate allTaNames
+                                        pure $ Right $ ValidationResult vs discoveredRepositories slurm
 
-                                CacheCleanupParams {..} -> exec resultHandler $
-                                    CacheCleanupResult <$> runCacheCleanup appContext worldVersion
+                                CacheCleanupParams {..} -> 
+                                    exec resultHandler $
+                                        Right . CacheCleanupResult <$> runCacheCleanup appContext worldVersion
                     actuallyExecuteWork
-                        -- There's a short window between opening LMDB and not yet having AppContext 
-                        -- constructed when an exception will not result in the database closed. It is not good, 
-                        -- but we are trying to solve the problem of interrupted RW transactions leaving the DB 
-                        -- in broken/locked state, and no transactions are possible within this window.
-                        `finally` closeLmdbStorage appContext
+                        `catch` (\(t :: TxTimeout) -> 
+                                    exec @() resultHandler $ do
+                                        pushSystemStatus logger $ SystemStatusMessage $ SystemState { dbState = DbStuck }
+                                        pure $ Left $ ErrorResult $ fmtGen t)
+                        `finally`                             
+                            closeStorage appContext
   where    
-    exec resultHandler f = resultHandler =<< execWithStats f                    
+    exec :: forall r . (WorkerResult r -> IO ()) -> IO (Either ErrorResult r) -> IO ()
+    exec resultHandler f = resultHandler =<< execWithStats f    
 
 
 -- turnOffTlsValidation :: IO ()
@@ -267,7 +273,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     liftIO $ setCpuCount cpuCount'    
     let parallelism = 
             case fetcherCount of 
-                Nothing -> makeParallelism cpuCount'
+                Nothing -> newParallelism cpuCount'
                 Just fc -> makeParallelismF cpuCount' fc
 
     let rtrConfig = if withRtr
@@ -343,7 +349,9 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
                     cached
                     config
 
-    (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.CheckVersion
+    (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ 
+                Lmdb.createDatabase lmdbEnv logger config Lmdb.CheckVersion
+
     database <- liftIO $ newTVarIO db    
     
     let executableVersion = thisExecutableVersion
@@ -532,7 +540,8 @@ createWorkerAppContext config logger = do
                     (configValue $ config ^. #cacheDirectory)
                     config
 
-    (db, _) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
+    (db, _) <- fromTry (InitE . InitError . fmtEx) $ 
+                Lmdb.createDatabase lmdbEnv logger config Lmdb.DontCheckVersion
 
     appState <- createAppState logger (configValue $ config ^. #localExceptions)
     database <- liftIO $ newTVarIO db
@@ -604,7 +613,8 @@ createVerifierContext cliOptions logger = do
     let config = defaultConfig
     lmdbEnv <- setupWorkerLmdbCache logger cached config
 
-    (db, _) <- fromTry (InitE . InitError . fmtEx) $ Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
+    (db, _) <- fromTry (InitE . InitError . fmtEx) $ 
+                Lmdb.createDatabase lmdbEnv logger config Lmdb.DontCheckVersion
 
     appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db
@@ -815,7 +825,7 @@ withLogConfig CLIOptions{..} f =
                 "debug" -> run DebugL
                 other   -> hPutStrLn stderr $ "Invalid log level: " <> Text.unpack other
   where
-    run logLev = f $ makeLogConfig logLev logType
+    run logLev = f $ newLogConfig logLev logType
       where
         logType = case (rtrLogFile, worker) of 
             (Just fs, Nothing) -> MainLogWithRtr fs

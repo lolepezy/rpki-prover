@@ -207,6 +207,7 @@ data InternalError = WorkerTimeout Text
                    | WorkerOutOfCpuTime Text 
                    | WorkerOutOfMemory Text 
                    | WorkerDetectedDifferentExecutable Text 
+                   | WorkerError Text 
                    | InternalError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)

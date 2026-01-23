@@ -55,6 +55,10 @@ newtype CPUTime = CPUTime { unCPUTime :: Integer }
     deriving anyclass (TheBinary, NFData)
     deriving newtype (Num)
 
+newtype Timebox = Timebox { unTimebox :: Seconds }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
 instance Show TimeMs where 
     show (TimeMs ms) = show ms
 

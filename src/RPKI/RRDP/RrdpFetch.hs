@@ -78,11 +78,15 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
                         (Timebox $ fetchConfig ^. #rrdpTimeout)                                
                         (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
 
-    wr@WorkerResult {..} <- runWorker logger workerInput arguments 
-    let RrdpFetchResult z = payload
-    logWorkerDone logger workerId wr
-    pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory
-    embedValidatorT $ pure z
+    workerInfo <- newWorkerInfo (GenericWorker "rrdp-fetch") (fetchConfig ^. #rrdpTimeout) (U.convert $ workerIdStr workerId)
+    wr@WorkerResult {..} <- runWorker logger workerInput arguments workerInfo
+    case payload of 
+        Left (ErrorResult e) -> do 
+            appError $ InternalE $ WorkerError e
+        Right (RrdpFetchResult z) -> do     
+            logWorkerDone logger workerId wr
+            pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory
+            embedValidatorT $ pure z
 
 
 -- | 
@@ -96,8 +100,8 @@ updateRrdpRepository :: Storage s =>
 updateRrdpRepository     
         appContext@AppContext {..}
         worldVersion 
-        repo@RrdpRepository { uri = repoUri, .. } =
-        
+        repo@RrdpRepository { uri = repoUri, .. } = do
+
   timedMetric (Proxy :: Proxy RrdpMetric) $ do                                   
     
     let fetchNotification eTag_ = do 
@@ -419,7 +423,7 @@ saveSnapshot
     -- time, so bump the number of CPUs to the maximum possible values    
     let maxCpuAvailable = appContext ^. typed @Config . typed @Parallelism . #cpuCount
     liftIO $ setCpuCount maxCpuAvailable
-    let cpuParallelism = makeParallelism maxCpuAvailable ^. #cpuParallelism
+    let cpuParallelism = newParallelism maxCpuAvailable ^. #cpuParallelism
     
     let snapshotUrl = notification ^. #snapshotInfo . typed @URI
     logDebug logger [i|Snapshot #{snapshotUrl} is #{BS.length snapshotContent} bytes.|]   
