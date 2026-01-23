@@ -273,7 +273,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     liftIO $ setCpuCount cpuCount'    
     let parallelism = 
             case fetcherCount of 
-                Nothing -> makeParallelism cpuCount'
+                Nothing -> newParallelism cpuCount'
                 Just fc -> makeParallelismF cpuCount' fc
 
     let rtrConfig = if withRtr

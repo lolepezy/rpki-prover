@@ -70,7 +70,7 @@ createAppContext logger = do
 
     liftIO $ setCpuCount 6
     
-    let parallelism = makeParallelism 8
+    let parallelism = newParallelism 8
 
     let config = defaultConfig & #parallelism .~ parallelism
 

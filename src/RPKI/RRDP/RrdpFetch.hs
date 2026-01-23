@@ -423,7 +423,7 @@ saveSnapshot
     -- time, so bump the number of CPUs to the maximum possible values    
     let maxCpuAvailable = appContext ^. typed @Config . typed @Parallelism . #cpuCount
     liftIO $ setCpuCount maxCpuAvailable
-    let cpuParallelism = makeParallelism maxCpuAvailable ^. #cpuParallelism
+    let cpuParallelism = newParallelism maxCpuAvailable ^. #cpuParallelism
     
     let snapshotUrl = notification ^. #snapshotInfo . typed @URI
     logDebug logger [i|Snapshot #{snapshotUrl} is #{BS.length snapshotContent} bytes.|]   

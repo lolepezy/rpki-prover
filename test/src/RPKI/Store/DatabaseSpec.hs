@@ -513,15 +513,17 @@ shouldProcessSafeMapProperly :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.A
 shouldProcessSafeMapProperly io = do    
     ((_, env), _) <- io
 
+    let maxLmdbKey = 511
+
     let storage' = LmdbStorage env (Seconds 120)
     z :: SM.SafeMap "test-state" LmdbStorage Text.Text String <- 
                 SafeMap <$> (SMap storage' <$> createLmdbStore storage') <*> 
-                            (SMap storage' <$> createLmdbStore storage') <*> pure 511
+                            (SMap storage' <$> createLmdbStore storage') <*> pure maxLmdbKey
 
     let short = "short-key" :: Text.Text
     let long = Text.replicate 600 "long-key-part-" :: Text.Text   
 
-    HU.assertBool "The long key must be too long" (BS.length (serialise_ long) > 512)
+    HU.assertBool "The long key must be too long" (BS.length (serialise_ long) > maxLmdbKey)
 
     rwTx z $ \tx -> do              
         SM.put tx z short "one"
