@@ -9,7 +9,6 @@ import qualified Test.Tasty.HUnit        as HU
 
 import           RPKI.Logging
 
-
 loggingSpec :: TestTree
 loggingSpec = testGroup "Logging" [
         loggingUnitSpec

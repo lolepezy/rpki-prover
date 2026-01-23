@@ -10,11 +10,11 @@ import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Error.Class
 
+import           FileEmbedLzma.Untyped
 import           Data.Generics.Product.Typed
 
-import           FileEmbedLzma
-
 import           Servant.Server.Generic
+import           Servant.Server.StaticFiles
 import           Servant hiding (contentType, URI)
 import           Servant.Swagger.UI
 
@@ -466,7 +466,7 @@ getSystem AppContext {..} = do
     now <- unNow <$> thisInstant
     SystemInfo {..} <- readTVarIO $ appState ^. #system
     let proverVersion = rpkiProverVersion    
-    let gitInfo       = getGitInfo
+    let gitInfo       = makeGitInfo
     
     let z = MonoidalMap.toList $ unMetricMap $ metrics ^. #resources
     resources <- 
@@ -488,7 +488,7 @@ getSystem AppContext {..} = do
     
     let wiToDto WorkerInfo {..} = let pid = fromIntegral workerPid in WorkerInfoDto {..}
 
-    rsyncClients <- map (wiToDto . snd) . Map.toList <$> readTVarIO (appState ^. #runningRsyncClients)
+    workers <- map wiToDto <$> getRunningWorkers appState
 
     tals <- getTALs
     pure SystemDto {..}  

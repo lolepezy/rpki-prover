@@ -19,7 +19,7 @@ import           Text.Read                        (readMaybe)
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.RRDP.Types
-import           RPKI.Util
+import           RPKI.Util                       as U
 
 
 type Element = (BS.ByteString, [(BS.ByteString, BS.ByteString)])
@@ -29,7 +29,7 @@ newtype HexString = HexString BS.ByteString
     deriving (Show, Eq, Ord)
 
 hexString :: BS.ByteString -> Maybe HexString
-hexString bs = HexString <$> unhex bs
+hexString bs = HexString <$> U.unhex bs
 
 toBytes :: HexString -> BS.ByteString
 toBytes (HexString bs) = bs
@@ -65,8 +65,5 @@ makeHash :: BS.ByteString -> Maybe Hash
 makeHash bs = mkHash . toBytes <$> hexString bs
 
 decodeBase64 :: Show c => EncodedBase64 -> c -> Either RrdpError DecodedBase64
-decodeBase64 (EncodedBase64 bs) context = 
-    bimap 
-        (\e -> BadBase64 (e <> " for " <> Text.pack (show context)) $ convert bs)
-        DecodedBase64
-        $ B64.decodeBase64 bs
+decodeBase64 base64 context = 
+    bimap (\e -> BadBase64 e) id $ U.decodeBase64 base64 context 

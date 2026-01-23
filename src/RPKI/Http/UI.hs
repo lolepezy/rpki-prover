@@ -400,11 +400,12 @@ validaionIssuesHtml dtos =
                                 let (e, w) = countProblems vrs
                                 toHtml e >> " errors, "
                                 toHtml w >> " warnings"                    
-                            H.table ! A.class_ "sub-t" $ 
-                                H.tbody $ forM_ (zip vrs [1 :: Int ..]) vrHtml            
+                            H.table ! A.class_ "sub-t" $ do 
+                                let sortedVrs = List.sortBy (comparing (\(ResolvedVDto (ValidationDto{..})) -> Prelude.head path)) vrs
+                                H.tbody $ forM_ (zip sortedVrs [1 :: Int ..]) vrHtml            
   where      
     vrHtml (ResolvedVDto (ValidationDto{..}), index) = do 
-        let objectUrl = Prelude.head path         
+        let objectUrl : details_ = path         
         forM_ (zip issues [1 :: Int ..]) $ \(pr, jndex) ->                     
             htmlRow (index + jndex) $ do 
                 let (marker, problem) = 
@@ -416,7 +417,7 @@ validaionIssuesHtml dtos =
                     mapM_ (\z -> H.text z >> H.br) $ Text.lines problem
                 td ! A.class_ "sub-t" $ H.details $ do 
                     H.summary $ focusLink1 objectUrl
-                    forM_ (Prelude.tail path) $ \f -> 
+                    forM_ details_ $ \f -> 
                         focusLink1 f >> H.br
     countProblems = 
         List.foldl' countP (0 :: Int, 0 :: Int)
