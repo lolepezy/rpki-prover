@@ -17,6 +17,9 @@ import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           RPKI.Store.Base.Storage
 import           RPKI.Validation.Types (MftShortcut)
 
+import qualified RPKI.Store.Base.Map      as M
+import qualified RPKI.Store.Base.MultiMap as MM
+
 
 {- 
 
@@ -123,7 +126,7 @@ data UpdateHappened = ObjectUpdate AddedObject
     deriving anyclass (TheBinary)
 
 data AddedObject = AddedObject {
-        objectKey :: ObjectKey,
+        objectKey :: {-# UNPACK #-} ObjectKey,
         ki        :: KI        
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -175,6 +178,9 @@ data Store s = Store {
 
 
 
+instance Storage s => WithStorage s (Store s) where
+    storage Store {..} = storage kiMetas
+
 
 {- 
     - Validate top-down with shortcuts and the function to be called when found payloads.
@@ -211,13 +217,20 @@ traversePayloads objectKey onPayload includeExpired = do
 
 
 -- Find all start CAs based on the list of updates happened
-findStartCas :: [UpdateHappened] -> ValidatorT IO [CertKey]
-findStartCas updates = do
+findStartCas :: Storage s => [UpdateHappened] -> Store s -> ValidatorT IO [CertKey]
+findStartCas updates store@Store {..} = do
     pure []
   where         
-    findStartCa = \case 
+    findStartCa now = \case 
         ObjectUpdate AddedObject {..} -> do
-            pure $ Just (objectKey, ki)
+            z <- roTx store $ \tx -> M.get tx kiMetas ki
+            pure $ case z of
+                Just KIMeta {..} 
+                    | expiresAt > now -> Just caCertificate
+                    | otherwise       -> Nothing
+                Nothing -> 
+                    -- Orphaned object, no parent CA found
+                    Nothing            
 
         RepositoryUpdate repoUrl -> do
             -- Get the first from the top CA in the hierarchy 
