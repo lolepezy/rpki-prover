@@ -44,12 +44,6 @@ refactoring manifest shortcuts into the form where they store only ObjectKeys
 of children and not children themselves (TODO It will make sense only 
 if fileName can also be stored outside of the MFT shortcut).
 
-Do periodic full re-validation of all TAs "just in case"? (: No)
-
-Keep track of the objects that are "about to expire" (i.e. a multi-map of 
-(expirationDate, ObjectKey)) and do partial re-validation for them 
-specifically, not the whole TA.
-
 Create a tree of CAs and payloads, i.e store
     KI -> KIMeta (parentKI, caCertificate, expiresAt) -- index to find a CA by its KI
     CertKey -> MftKey -- certificate to its current manifest mapping 
@@ -65,17 +59,14 @@ then traverse down the tree to re-validate only affected objects.
 Ideas:
 
     * How to keep track of which objects are to be deleted and to be kept? 
-      Current idea with visited objects wouldn't work (or would it?)
-
-      Idea: periodically dump the whole tree. If the union of 
-         last N dumps contains an ObjectKey that means it is still 
-         useful, otherwise it is to be deleted.        
-
+      Idea: No more "visited object", periodically dump the whole tree. 
+        If the union of last N dumps contains an ObjectKey that means 
+        it is still useful, otherwise it is to be deleted.
 
     * What happens if a validation process was interrupted?
-        Idea: 
+       Idea: 
         - have a persistent log of changes WorldVersion -> [UpdateHappened]
-        - have a persisten log of appled changes WorldVersion -> [Diff Payload]
+        - have a persistenr log of appled changes WorldVersion -> [Diff Payload]
         - on startup compare the two logs and apply missing changes
         - in one transaction 
             + write applied changes to the log
@@ -148,6 +139,9 @@ data Payload = VrpsP [Vrp]
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+data Change a = Added a | Deleted a
+    deriving (Show, Eq, Ord, Generic)    
+
 -- Database
 
 data KIMeta = KIMeta {
@@ -159,11 +153,20 @@ data KIMeta = KIMeta {
     deriving anyclass (TheBinary)
 
 
+data ValidityPeriodIndex = VP_CA CertKey 
+                         | VP_MFT MftKey
+                         | VP_CRL ObjectKey MftKey
+                         | VP_Child ObjectKey MftKey
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
 data Store s = Store {
-        kiMetas   :: SMap "ki-meta" s KI KIMeta,
-        expiresAt :: SMultiMap "expires-at" s Instant ObjectKey,
+        kiMetas   :: SMap "ki-meta" s KI KIMeta,        
         cert2mft  :: SMap "cert-to-mft" s CertKey MftKey,
         mftShorts :: SMap "mft-shorts" s MftKey MftShortcut,
+
+        expiresAt :: SMultiMap "expires-at" s Instant ValidityPeriodIndex,
+        maturesAt :: SMultiMap "matures-at" s Instant ValidityPeriodIndex,
 
         -- TODO Might be PP -> object?
         repository2object :: SMultiMap "repo-key-to-obj-keys" s RepositoryKey ObjectKey
@@ -178,21 +181,27 @@ data Store s = Store {
     - Look at the KI -> KIMeta and update it if needed after validation for CA succeeds
     - Generate "Delete Payload" for payloads corresponding to the removed MFT children
 -} 
-validateCA :: CertKey -> STM Payload -> ValidatorT IO ()
+validateCA :: CertKey -> STM (Change Payload) -> ValidatorT IO ()
 validateCA certKey onPayload = do
-    -- 
-    pure ()
+    validateCAPartially certKey onPayload (const True)
 
 {- 
     Filter will be used to 
       * Pick up only CAs that are on somebody's path to the top
       * Pick up payloads (or their shortcuts) that are in the set up updates
 -}   
-validateCAPartially :: CertKey -> STM Payload -> (ObjectKey -> Bool) -> ValidatorT IO ()
-validateCAPartially certKey onPayload filter = do
-    -- fetch CA by certKey
+validateCAPartially :: CertKey -> STM (Change Payload) -> (ObjectKey -> Bool) -> ValidatorT IO ()
+validateCAPartially certKey onPayload objectFilter = do
+    -- get from cache CA by certKey
 
-    -- fetch MFT shortcut
+    -- get from cache MFT shortcut, do the dance with comparing MFT to its shortcut
+
+    -- Calculate MFT diff
+    -- * for each added payload call onPayload (Added Payload)
+    -- * for each deleted payload call onPayload (Deleted Payload)    
+    -- * for each added CA validateCAPartially recursively
+    -- * for each deleted CA call traversePayloads and delete payloads
+
     pure ()
 
 
