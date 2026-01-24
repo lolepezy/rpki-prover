@@ -1,11 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE OverloadedLabels  #-}
-{-# LANGUAGE BangPatterns      #-}
-{-# LANGUAGE RecordWildCards   #-}
-{-# LANGUAGE QuasiQuotes       #-}
-{-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TemplateHaskell   #-}
 
 module Main where
 
@@ -76,7 +70,7 @@ createAppContext logger = do
 
     liftIO $ setCpuCount 6
     
-    let parallelism = makeParallelism 8
+    let parallelism = newParallelism 8
 
     let config = defaultConfig & #parallelism .~ parallelism
 
@@ -91,7 +85,7 @@ createAppContext logger = do
     lmdbEnv <- setupLmdbCache UseExisting logger cached config
 
     (db, _) <- fromTry (InitE . InitError . fmtEx) $
-                        Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
+                        Lmdb.createDatabase lmdbEnv logger config Lmdb.DontCheckVersion
 
     -- clean up tmp directory if it's not empty
     cleanDir tmpd

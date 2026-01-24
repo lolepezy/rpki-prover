@@ -1,7 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE OverloadedLabels  #-}
-{-# LANGUAGE RecordWildCards   #-}
-{-# LANGUAGE QuasiQuotes       #-}
 
 module RPKI.Store.MakeLmdb where
 
@@ -15,12 +12,13 @@ import           GHC.TypeLits
 
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
+import           RPKI.Store.Base.SafeMap  (SafeMap (..))
 
 import           Lmdb.Connection
 
 import           RPKI.Store.Base.LMDB
 import           RPKI.Config
-import           RPKI.Domain
+import           RPKI.AppTypes
 import           RPKI.Parallel
 import           RPKI.Logging
 import           RPKI.Time
@@ -32,8 +30,8 @@ import           RPKI.Store.Sequence
 data IncompatibleDbCheck = CheckVersion | DontCheckVersion
 data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion
 
-createDatabase :: LmdbEnv -> AppLogger -> IncompatibleDbCheck -> IO (DB LmdbStorage, DbCheckResult)
-createDatabase env logger checkAction = do 
+createDatabase :: LmdbEnv -> AppLogger -> Config -> IncompatibleDbCheck -> IO (DB LmdbStorage, DbCheckResult)
+createDatabase env logger config checkAction = do 
     
     db <- doCreateDb
     
@@ -41,7 +39,7 @@ createDatabase env logger checkAction = do
         CheckVersion -> 
             (db, ) <$> verifyDBVersion db            
         DontCheckVersion -> 
-            pure (db, WasCompatible)    
+            pure (db, WasCompatible)
   where    
 
     verifyDBVersion db =
@@ -74,56 +72,61 @@ createDatabase env logger checkAction = do
         pure ms
 
     doCreateDb = do 
-        sequences        <- createMap
+        sequences        <- newSMap
         let keys = Sequence "object-key" sequences
-        taStore          <- TAStore <$> createMap        
-        validationsStore <- ValidationsStore <$> createMap
-        roaStore         <- RoaStore <$> createMap
-        splStore         <- SplStore <$> createMap
-        aspaStore        <- AspaStore <$> createMap    
-        gbrStore         <- GbrStore <$> createMap 
-        bgpStore         <- BgpStore <$> createMap
-        versionStore     <- VersionStore <$> createMap
-        metricStore      <- MetricStore <$> createMap
-        slurmStore       <- SlurmStore <$> createMap
-        jobStore         <- JobStore <$> createMap        
-        metadataStore    <- MetadataStore <$> createMap          
+        taStore          <- TAStore <$> newSafeMap        
+        validationsStore <- ValidationsStore <$> newSMap
+        roaStore         <- RoaStore <$> newSMap
+        splStore         <- SplStore <$> newSMap
+        aspaStore        <- AspaStore <$> newSMap    
+        gbrStore         <- GbrStore <$> newSMap 
+        bgpStore         <- BgpStore <$> newSMap
+        versionStore     <- VersionStore <$> newSMap
+        metricStore      <- MetricStore <$> newSMap
+        slurmStore       <- SlurmStore <$> newSMap
+        jobStore         <- JobStore <$> newSMap        
+        metadataStore    <- MetadataStore <$> newSMap          
         repositoryStore  <- createRepositoryStore
         objectStore      <- createObjectStore
         pure DB {..}
       where
 
         createObjectStore = do             
-            objects          <- createMap
-            mftsForKI        <- createMultiMap
-            objectMetas      <- createMap        
-            hashToKey        <- createMap
-            uriToUriKey      <- createMap
-            uriKeyToUri      <- createMap
-            urlKeyToObjectKey  <- createMultiMap
-            objectKeyToUrlKeys <- createMap
-            certBySKI          <- createMap
-            validatedByVersion <- createMap                    
-            mftShortcuts       <- MftShortcutStore <$> createMap <*> createMap
-            originals          <- createMap
+            objects          <- newSMap
+            mftsForKI        <- newSMultiMap
+            objectMetas      <- newSMap
+            hashToKey        <- newSMap
+            uriToUriKey      <- newSafeMap
+            uriKeyToUri      <- newSMap
+            urlKeyToObjectKey  <- newSMultiMap
+            objectKeyToUrlKeys <- newSMap
+            certBySKI          <- newSMap
+            validatedByVersion <- newSMap                    
+            mftShortcuts       <- MftShortcutStore <$> newSMap <*> newSMap
+            originals          <- newSMap
             pure RpkiObjectStore {..}
             
         createRepositoryStore = 
-            RepositoryStore <$> createMap <*> createMap <*> createMap <*> createMap
+            RepositoryStore <$> newSafeMap <*> newSafeMap <*> newSafeMap <*> newSafeMap
         
-        lmdb = LmdbStorage env
+        lmdb = LmdbStorage env 
+                (config ^. #storageConfig . #rwTransactionTimeout)
 
-        createMap :: forall k v name . (KnownSymbol name) => IO (SMap name LmdbStorage k v)
-        createMap = SMap lmdb <$> createLmdbStore env            
+        newSMap :: forall k v name . (KnownSymbol name) => IO (SMap name LmdbStorage k v)
+        newSMap = SMap lmdb <$> createLmdbStore lmdb            
 
-        createMultiMap :: forall k v name . (KnownSymbol name) => IO (SMultiMap name LmdbStorage k v)
-        createMultiMap = SMultiMap lmdb <$> createLmdbMultiStore env            
+        newSMultiMap :: forall k v name . (KnownSymbol name) => IO (SMultiMap name LmdbStorage k v)
+        newSMultiMap = SMultiMap lmdb <$> createLmdbMultiStore lmdb            
+
+        newSafeMap = SafeMap <$> newSMap <*> newSMap <*> pure maxLmdbKeyBytes
+
+        maxLmdbKeyBytes = 511
         
 
 mkLmdb :: FilePath -> Config -> IO LmdbEnv
-mkLmdb fileName config = do 
+mkLmdb directory config = do 
     nativeEnv <- initializeReadWriteEnvironment (fromIntegral mapSize) 
-                    maxReaders maxDatabases fileName
+                    maxReaders maxDatabases directory
     LmdbEnv <$> 
         newTVarIO (RWEnv nativeEnv) <*>
         newSemaphoreIO maxBottleNeck

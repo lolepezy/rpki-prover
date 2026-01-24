@@ -6,11 +6,12 @@ import Control.Lens
 
 import qualified Data.ByteString.Lazy    as LBS
 
+import           RPKI.AppTypes
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.RRDP.Types
 import           RPKI.RRDP.Http
-import           RPKI.TestTypes
+import           RPKI.TestCommons
 import           RPKI.Util
 
 import           Test.Tasty

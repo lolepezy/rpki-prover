@@ -1,14 +1,13 @@
-{-# LANGUAGE DerivingStrategies   #-}
-{-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE StrictData           #-}
 {-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE OverloadedLabels     #-}
-{-# LANGUAGE QuasiQuotes          #-}
-{-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE OverloadedStrings    #-}
 
-module RPKI.Workflow where
+module RPKI.Workflow (
+    runValidatorWorkflow,
+    runValidation,
+    runCacheCleanup
+) where
 
 import           Control.Concurrent              as Conc
 import           Control.Concurrent.Async
@@ -203,9 +202,59 @@ newRunningTasks = Tasks <$> newTVar mempty
 -- The main entry point for the whole validator workflow. Runs multiple threads, 
 -- running validation, RTR server, cleanups, cache maintenance and async fetches.
 -- 
-runValidatorWorkflow :: (Storage s, MaintainableStorage s) =>
-                         AppContext s -> [TAL] -> IO ()
+runValidatorWorkflow :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> IO ()
 runValidatorWorkflow appContext@AppContext {..} tals = do    
+    case config ^. #proverRunMode of     
+        ServerMode   -> selfRecoveryLoop 0
+        OneOffMode _ -> 
+            -- Don't try to automatically resolve DB locking issues in the one-off mode
+            runAll appContext tals
+                `catches` handlers (die "Database problem: read-write transaction has timed out, exiting.")
+  where
+    maxRecoveryAttempts = 10 :: Int
+
+    selfRecoveryLoop recoveryAttempts = do
+        let txTimeoutHandler = 
+                if recoveryAttempts >= maxRecoveryAttempts
+                then die [i|Database problem: read-write transaction has timed out #{recoveryAttempts + 1} times, giving up.|]
+                else tryToFixStuckDb
+
+        race_ (runAll appContext tals) monitorDbState
+            `catches` 
+            handlers txTimeoutHandler
+
+        selfRecoveryLoop (recoveryAttempts + 1)
+
+    monitorDbState = forever $ do 
+        -- We can get a signal from a worker process that the DB is stuck 
+        atomically $ waitForStuckDb appState
+        throwIO TxTimeout
+    
+    tryToFixStuckDb =
+        join $ atomically $ do             
+            let systemState = appState ^. #systemState
+            modifyTVar' systemState (#dbState .~ DbTryingToFix)
+            pure $ do 
+                logInfo logger "Database read-write transaction has timed out, restarting all workers and reopening storage."
+                killAllWorkers appContext                                
+                logInfo logger "Killed all worker processes."
+                reopenStorage appContext 
+                logInfo logger "Database re-opened after deleting the lock file."
+                atomically $ modifyTVar' systemState (#dbState .~ DbOperational)
+    
+    handlers txTimeoutAction = [
+            Handler $ \(AppException seriousProblem) ->
+                die [i|Something really bad happened: #{seriousProblem}, exiting.|],
+            Handler $ \(_ :: TxTimeout) -> 
+                txTimeoutAction,
+            Handler $ \(_ :: AsyncCancelled) -> 
+                die [i|Interrupted with Ctrl-C, exiting.|]            
+        ]
+
+
+runAll :: (Storage s, MaintainableStorage s) =>
+                         AppContext s -> [TAL] -> IO ()
+runAll appContext@AppContext {..} tals = do    
     void $ concurrently (
             -- Fill in the current appState if it's not too old.
             -- It is useful in case of restarts.             
@@ -259,7 +308,8 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
           where
             scheduleNextAndLoop = do 
                 void $ forkFinally 
-                    (do                         
+                    (do              
+                        -- If this thread leaks, it's not a biggy, it will exit pretty soon           
                         Conc.threadDelay $ toMicroseconds $ config ^. #validationConfig . #minimalRevalidationInterval
                         atomically $ writeTVar canValidateAgain True)
                     (logException logger "Exception in revalidation delay thread")
@@ -399,41 +449,47 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
     validateTAs workflowShared worldVersion talsToValidate = do  
         let taNames = map getTaName talsToValidate
         logInfo logger [i|Validating TAs #{taNames}, world version #{worldVersion} |]
-        executeOrDie
-            processTALs
-            (\(rtrPayloads, slurmedPayloads) elapsed -> do 
-                let vrps = rtrPayloads ^. #vrps
-                let slurmedVrps = slurmedPayloads ^. #vrps
-                logInfo logger $
-                    [i|Validated TAs #{taNames}, got #{estimateVrpCount vrps} VRPs (probably not unique), |] <>
-                    [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|])
+        
+        ((rtrPayloads, slurmedPayloads), elapsed) <- timedMS processTALs            
+        let vrps = rtrPayloads ^. #vrps
+        let slurmedVrps = slurmedPayloads ^. #vrps
+        logInfo logger $
+            [i|Validated TAs #{taNames}, got #{estimateVrpCount vrps} VRPs (probably not unique), |] <>
+            [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|]
       where
         processTALs = do
-            ((z, workerVS), workerId) <- runValidationWorker worldVersion talsToValidate                  
-            case z of 
-                Left e -> do 
-                    logError logger [i|Validator process failed: #{e}.|]
+            ((z, workerVS), workerId) <- runValidationWorker worldVersion talsToValidate            
+            let reportError message = do 
+                    logError logger message
                     rwTxT database $ \tx db -> do
                         DB.saveValidationVersion tx db worldVersion allTaNames mempty workerVS
                     updatePrometheus (workerVS ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion
                     pure (mempty, mempty)
 
-                Right wr@WorkerResult {..} -> do                              
-                    let ValidationResult vs discovered maybeSlurm = payload
-                    adjustFetchers appContext (fmap fst discovered) workflowShared
-                    scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
-                    
-                    logWorkerDone logger workerId wr
-                    pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory
-                
-                    let topDownState = workerVS <> vs
-                    logDebug logger [i|Validation result: 
+            case z of 
+                Left e -> 
+                    reportError [i|Validator process failed: #{e}.|]                    
+
+                Right wr@WorkerResult {..} -> do     
+                    case payload of 
+                        Left (ErrorResult message) ->
+                            reportError [i|Validator process failed: #{message}.|]
+
+                        Right (ValidationResult vs discovered maybeSlurm) -> do                                             
+                            adjustFetchers appContext (fmap fst discovered) workflowShared
+                            scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
+                            
+                            logWorkerDone logger workerId wr
+                            pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory
+                        
+                            let topDownState = workerVS <> vs
+                            logDebug logger [i|Validation result: 
 #{formatValidations (topDownState ^. typed)}.|]
-                    updatePrometheus (topDownState ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion                        
-                    
-                    (!q, elapsed) <- timedMS $ reReadAndUpdatePayloads maybeSlurm
-                    logDebug logger [i|Re-read payloads, took #{elapsed}ms.|]
-                    pure q
+                            updatePrometheus (topDownState ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion                        
+                            
+                            (!q, elapsed) <- timedMS $ reReadAndUpdatePayloads maybeSlurm
+                            logDebug logger [i|Re-read payloads, took #{elapsed}ms.|]
+                            pure q
           where
             reReadAndUpdatePayloads maybeSlurm = do 
                 roTxT database (\tx db -> DB.getRtrPayloads tx db worldVersion) >>= \case                         
@@ -448,29 +504,31 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
                           
     -- Delete objects in the store that were read by top-down validation 
     -- longer than `shortLivedCacheLifeTime` hours ago.
-    cacheCleanup workflowShared worldVersion _ = do            
-        executeOrDie
-            cleanupOldObjects
-            (\z elapsed -> 
-                case z of 
-                    Left message -> logError logger message
-                    Right DB.CleanUpResult {..} -> do 
-                        when (deletedObjects > 0) $ do
-                            atomically $ writeTVar (workflowShared ^. #deletedAnythingFromDb) True
-                        let perType :: String = if mempty /= deletedPerType 
-                            then [i|in particular #{Map.toList deletedPerType}, |] 
-                            else ""
-                        logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, #{perType}kept #{keptObjects}, |] <>
-                                         [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|])
+    cacheCleanup workflowShared worldVersion _ = do
+        (r, elapsed) <- timedMS cleanupOldObjects
+        case r of 
+            Left message -> logError logger message
+            Right DB.CleanUpResult {..} -> do 
+                when (deletedObjects > 0) $ do
+                    atomically $ writeTVar (workflowShared ^. #deletedAnythingFromDb) True
+                let perType :: String = if mempty /= deletedPerType 
+                    then [i|in particular #{Map.toList deletedPerType}, |] 
+                    else ""
+                logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, #{perType}kept #{keptObjects}, |] <>
+                                 [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|]
       where
         cleanupOldObjects = do                 
             ((z, _), workerId) <- runCleanUpWorker worldVersion      
             case z of 
-                Left e                     -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
+                Left e -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
                 Right wr@WorkerResult {..} -> do 
-                    logWorkerDone logger workerId wr
-                    pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxMemory
-                    pure $ Right payload                                       
+                    case payload of 
+                        Left (ErrorResult message) ->
+                            pure $ Left [i|Cache cleanup process failed: #{message}.|]
+                        Right r -> do
+                            logWorkerDone logger workerId wr
+                            pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxMemory
+                            pure $ Right r
 
     -- Do LMDB compaction
     compact workflowShared worldVersion _ = do
@@ -512,19 +570,10 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
         when (cleaned > 0) $ 
             logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]
         
-        -- Kill all orphan rsync processes that are still running and refusing to die
-        -- Sometimes and rsync process can leak and linger, kill the expired ones
-        removeExpiredRsyncProcesses appState >>=
-            mapM_ (\(pid, WorkerInfo {..}) -> do 
-                -- Run it in a separate thread, if sending the signal fails
-                -- the thread gets killed without no impact on anything else 
-                -- ever. If it's successful, we'll log a message about it
-                forkFinally 
-                    (do
-                        signalProcess killProcess pid
-                        logInfo logger [i|Killed rsync client process with PID #{pid}, #{cli}, it expired at #{endOfLife}.|])             
-                    (logException logger [i|Exception in rsync process killer thread|])
-                )                
+        -- Kill all orphan workers (including rsync client processes) that may still
+        -- be running and refusing to die. Sometimes an rsync process can leak and 
+        -- linger, kill the expired ones
+        killWorkers appContext =<< removeExpiredWorkers appState                    
 
     -- Delete local rsync mirror. The assumption here is that over time there
     -- be a lot of local copies of rsync repositories that are so old that 
@@ -538,33 +587,16 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
             -- just was installed and started working and it's not very likely 
             -- that there's already a lot of garbage in the rsync mirror directory.                                    
             FirstRun  -> pure ()  
-            RanBefore -> 
-                executeOrDie
-                    (do
-                        let rsyncDir = configValue $ config ^. #rsyncConf . #rsyncRoot
-                        logDebug logger [i|Deleting rsync mirrors in #{rsyncDir}.|]
-                        listDirectory rsyncDir >>= mapM_ (removePathForcibly . (rsyncDir </>))
-                    )
-                    (\_ elapsed -> logInfo logger [i|Done cleaning up rsync, took #{elapsed}ms.|])
-
-    -- Give up and die as soon as something serious happends. 
-    -- If disk data is corrupted or we run out of disk or something 
-    -- like that, it doesn't make sense to keep running.
-    -- 
-    executeOrDie :: IO a -> (a -> TimeMs -> IO ()) -> IO ()
-    executeOrDie f onRight =
-        exec `catches` [
-                Handler $ \(AppException seriousProblem) ->
-                    die [i|Something really bad happened: #{seriousProblem}, exiting.|],
-                Handler $ \(_ :: AsyncCancelled) ->
-                    die [i|Interrupted with Ctrl-C, exiting.|],
-                Handler $ \(weirdShit :: SomeException) ->
-                    die [i|Something really bad and also unknown happened: #{weirdShit}, exiting.|]
-            ]
-        where
-            exec = do
-                (r, elapsed) <- timedMS f
-                onRight r elapsed        
+            RanBefore -> do 
+                deleteRsyncMirrors `catch` \(SomeException e) -> 
+                    logError logger [i|Failed to clean up rsync mirrors: #{e}.|]
+      where
+        deleteRsyncMirrors = do
+            (_, elapsed) <- timedMS $ do                             
+                let rsyncDir = configValue $ config ^. #rsyncConf . #rsyncRoot
+                logDebug logger [i|Deleting rsync mirrors in #{rsyncDir}.|]
+                listDirectory rsyncDir >>= mapM_ (removePathForcibly . (rsyncDir </>))
+            logInfo logger [i|Done cleaning up rsync, took #{elapsed}ms.|]
 
     runRtrIfConfigured = 
         for_ (config ^. #rtrConfig) $ runRtrServer appContext
@@ -594,12 +626,13 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
         
         r <- runValidatorT 
                 (newScopes "validator") $ do 
-                    workerInput <- 
-                        makeWorkerInput appContext workerId
-                            ValidationParams {..}
-                            (Timebox $ config ^. typed @ValidationConfig . #topDownTimeout)
-                            Nothing
-                    runWorker logger workerInput arguments
+                    let timeout = config ^. typed @ValidationConfig . #topDownTimeout
+                    workerInput <- makeWorkerInput appContext workerId
+                                    ValidationParams {..}
+                                    (Timebox timeout)
+                                    Nothing
+                    workerInfo <- newWorkerInfo (GenericWorker "validation") timeout (convert $ workerIdStr workerId)
+                    runWorker logger workerInput arguments workerInfo
 
         pure (r, workerId)
 
@@ -615,12 +648,15 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
                     rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerMemoryMb) ]
         
         r <- runValidatorT             
-                (newScopes "cache-clean-up") $ do 
+                (newScopes "cache-clean-up") $ do
+                    let timeout = 300
                     workerInput <- makeWorkerInput appContext workerId
                                         (CacheCleanupParams worldVersion)
-                                        (Timebox 300)
+                                        (Timebox timeout)
                                         Nothing
-                    runWorker logger workerInput arguments                                                                   
+                    
+                    workerInfo <- newWorkerInfo (GenericWorker "cache-clean-up") timeout (convert $ workerIdStr workerId)
+                    runWorker logger workerInput arguments workerInfo
         pure (r, workerId)                            
 
 -- To be called by the validation worker process
@@ -728,7 +764,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     -- in the future, but it works well for now.
     forceSnapshotForReferencialIssues tx db (Validations validations) = do
         Now now <- thisInstant
-        for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) ->
+        for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) -> do 
             DB.updateRrdpMetaM tx db rrdpUrl $ \case 
                 Nothing   -> pure Nothing
                 Just meta -> do 
@@ -764,17 +800,18 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                     relevantRepo <- mostNarrowPPScope scope
                 ]        
           where
-            manifestIntegrityError = \case
+            manifestIntegrityError = \case                
                 VErr (ValidationE e)             -> isRefentialIntegrityError e
                 VWarn (VWarning (ValidationE e)) -> isRefentialIntegrityError e                    
                 _                                -> False
               where
                 isRefentialIntegrityError = \case
-                    ManifestEntryDoesn'tExist _ _       -> True
-                    NoCRLExists _ _                     -> True                
-                    ManifestEntryHasWrongFileType {}    -> True                
-                    ReferentialIntegrityError _         -> True                
-                    _                                   -> False
+                    MftFallback (ValidationE e) _    -> isRefentialIntegrityError e
+                    ManifestEntryDoesn'tExist _ _    -> True
+                    NoCRLExists _ _                  -> True                
+                    ManifestEntryHasWrongFileType {} -> True                
+                    ReferentialIntegrityError _      -> True                
+                    _                                -> False
 
             mostNarrowPPScope (Scope s) = 
                 take 1 [ url | PPFocus (RrdpU url) <- NonEmpty.toList s ]
@@ -1293,3 +1330,16 @@ ignoreSync f =
         case fromException e of
             Just (_ :: SomeAsyncException) -> throwIO e
             Nothing -> pure ()
+
+
+killAllWorkers :: AppContext s -> IO ()
+killAllWorkers appContext@AppContext {..} = do
+    killWorkers appContext =<< removeAllRunningWorkers appState    
+
+killWorkers :: AppContext s -> [WorkerInfo] -> IO ()
+killWorkers AppContext {..} workers = do
+    forConcurrently_ workers $ \WorkerInfo {..} -> do 
+        r <- try $ do
+                signalProcess killProcess workerPid
+                logInfo logger [i|Killed worker process with PID #{workerPid}, #{cli}, it expired at #{endOfLife}.|]
+        logException logger [i|Exception in worker process killer thread|] r

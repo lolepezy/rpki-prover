@@ -1,11 +1,5 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE OverloadedLabels           #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE QuasiQuotes                #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE StrictData                 #-}
-{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Validation.BottomUp where
 
@@ -125,7 +119,7 @@ validateBottomUp
         tas <- DB.roAppTx db $ \tx -> DB.getTAs tx db         
         let taCerts = Map.fromList [ 
                         (getSKI taCert, Located (talCertLocations tal) taCert) | 
-                        (_, StorableTA {..}) <- tas ]
+                        StorableTA {..} <- tas ]
         go taCerts certificate
       where        
         go taCerts cert = do             

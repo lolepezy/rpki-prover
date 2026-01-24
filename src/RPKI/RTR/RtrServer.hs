@@ -1,7 +1,4 @@
-{-# LANGUAGE OverloadedLabels  #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes       #-}
-{-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE StrictData        #-}
 
 module RPKI.RTR.RtrServer where

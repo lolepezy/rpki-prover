@@ -1,9 +1,5 @@
-{-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE OverloadedLabels     #-}
 {-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE QuasiQuotes          #-}
-{-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Store.AppLmdbStorage where
@@ -21,7 +17,7 @@ import           Data.Hourglass
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Config
-import           RPKI.Domain
+import           RPKI.AppTypes
 import           RPKI.Logging
 import           RPKI.Worker
 import           RPKI.Reporting
@@ -148,7 +144,7 @@ setupWorkerLmdbCache logger cacheDir config = do
 -- 
 compactStorageWithTmpDir :: AppContext LmdbStorage -> IO ()
 compactStorageWithTmpDir appContext@AppContext {..} = do      
-    lmdbEnv <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
+    lmdbEnv <- (\d -> let LmdbStorage {..} = storage d in env) <$> readTVarIO database
     let cacheDir = configValue $ config ^. #cacheDirectory
     let currentCache = cacheDir </> "current"
 
@@ -170,11 +166,14 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
                 RWEnv native -> do 
                     writeTVar n (ROEnv native)                                
                     pure native
+
                 -- this is weird, but lets just wait for it to change 
                 -- and don't make things even more weird
-                Disabled -> retry
-                -- it shouldn't happen as well, but we can work with it in principle
-                ROEnv nn -> pure nn
+                Disabled -> retry                
+
+                -- it shouldn't happen as well, but we can work with it in principle                
+                ROEnv nn    -> pure nn
+                TimedOut nn -> pure nn
 
             
     let copyToNewEnvironmentAndSwap dbStats = do                          
@@ -193,12 +192,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
             createSymbolicLink newLmdbDirName $ cacheDir </> "current.new"
             renamePath (cacheDir </> "current.new") currentCache
 
-            newLmdb <- mkLmdb newLmdbDirName config
-            (newDB, _) <- createDatabase newLmdb logger DontCheckVersion
-            atomically $ do
-                newNative <- getNativeEnv newLmdb
-                writeTVar (nativeEnv lmdbEnv) (RWEnv newNative)  
-                writeTVar database newDB
+            updateDatabase appContext newLmdbDirName
 
             closeEnvironment oldNativeEnv
             removePathForcibly currentLinkTarget
@@ -209,7 +203,7 @@ compactStorageWithTmpDir appContext@AppContext {..} = do
         
     Size lmdbFileSize <- cacheFsSize appContext 
     
-    dbStats <- fmap DB.totalStats $ lmdbGetStats appContext
+    dbStats <- DB.totalStats <$> lmdbGetStats appContext
     let Size dataSize = dbStats ^. #statKeyBytes + dbStats ^. #statValueBytes    
 
     let fileSizeMb :: Integer = fromIntegral $ lmdbFileSize `div` (1024 * 1024)
@@ -241,23 +235,53 @@ generateLmdbDir cacheDir = do
 
 
 cleanDirFiltered :: FilePath -> (FilePath -> Bool) -> ValidatorT IO ()
-cleanDirFiltered d f = fromTry (InitE . InitError . fmtEx) $ 
-                            listDirectory d >>= mapM_ (removePathForcibly . (d </>)) . filter f
+cleanDirFiltered d f = 
+    fromTry (InitE . InitError . fmtEx) $ 
+        mapM_ (removePathForcibly . (d </>)) . filter f =<< listDirectory d
 
 cleanDir :: FilePath -> ValidatorT IO ()
 cleanDir d = cleanDirFiltered d (const True)
 
-
 closeLmdbStorage :: AppContext LmdbStorage -> IO ()
 closeLmdbStorage AppContext {..} = do 
-    closeLmdb . unEnv . storage =<< readTVarIO database
+    closeLmdb . (\(storage -> LmdbStorage {..}) -> env) =<< readTVarIO database
+
+
+updateDatabase :: AppContext LmdbStorage -> FilePath -> IO ()
+updateDatabase AppContext {..} dbDirectory = do
+    lmdb <- mkLmdb dbDirectory config
+    (newDB, _) <- createDatabase lmdb logger config DontCheckVersion
+    atomically $ do
+        newNative <- getNativeEnv lmdb 
+        writeTVar (nativeEnv lmdb) (RWEnv newNative)  
+        writeTVar database newDB    
+
+
+-- Close LMDB environment
+-- Delete lock file 
+-- Open LMDB environment again
+reopenLmdbStorage :: AppContext LmdbStorage -> IO ()
+reopenLmdbStorage appContext@AppContext {..} = do 
+    
+    closeLmdbStorage appContext
+    
+    let cacheDir = configValue $ config ^. #cacheDirectory
+    let currentCache = cacheDir </> "current"    
+    currentLinkTarget <- readSymbolicLink currentCache
+    files <- listDirectory currentLinkTarget
+
+    mapM_ removePathForcibly [ currentLinkTarget </> f | f <- files, f == "lock.mdb"]     
+
+    logDebug logger [i|Removed lock files from #{currentLinkTarget}.|]
+
+    updateDatabase appContext currentLinkTarget
 
 
 -- This is called from the worker entry point
 -- 
 copyLmdbEnvironment :: AppContext LmdbStorage -> FilePath -> IO ()
 copyLmdbEnvironment AppContext {..} targetLmdbPath = do         
-    currentEnv <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
+    currentEnv <- (\d -> let LmdbStorage {..} = storage d in env) <$> readTVarIO database
     newLmdb    <- mkLmdb targetLmdbPath config
     currentNativeEnv <- atomically $ getNativeEnv currentEnv
     newNativeEnv     <- atomically $ getNativeEnv newLmdb     
@@ -286,34 +310,41 @@ runCopyWorker appContext@AppContext {..} dbtats targetLmdbPath = do
 
     (z, vs) <- runValidatorT 
                 (newScopes "lmdb-compaction-worker") $ do 
+                     -- 30 minutes should be enough even for a huge cache on a very slow disk    
+                    let timeout = Seconds $ 30 * 60
                     workerInput <- makeWorkerInput appContext workerId
-                                        (CompactionParams targetLmdbPath)
-                                        -- timebox it to 30 minutes, it should be enough 
-                                        -- even for a huge cache on a very slow disk
-                                        (Timebox $ Seconds $ 30 * 60)
+                                        (CompactionParams targetLmdbPath)                                        
+                                        (Timebox timeout)
                                         Nothing
-                    runWorker logger workerInput arguments
+                    workerInfo <- newWorkerInfo (GenericWorker "lmdb-compaction") timeout (convert $ workerIdStr workerId)
+                    runWorker logger workerInput arguments workerInfo
     case z of 
         Left e  -> do 
             let message = [i|Failed to run compaction worker: #{e}, validations: #{vs}.|]
             logError logger message            
             throwIO $ AppException $ InternalE $ InternalError message
-        Right wr@WorkerResult { payload = CompactionResult _, .. } -> do
-            logWorkerDone logger workerId wr
-            pushSystem logger $ cpuMemMetric "compaction" cpuTime clockTime maxMemory                     
+        
+        Right wr@WorkerResult { .. } -> do
+            case payload of 
+                Left (ErrorResult message) -> do
+                    logError logger message    
+                    throwIO $ AppException $ InternalE $ InternalError message
+                Right (CompactionResult _) -> do
+                    logWorkerDone logger workerId wr
+                    pushSystem logger $ cpuMemMetric "compaction" cpuTime clockTime maxMemory                     
             
 -- 
 cleanupReaders :: AppContext LmdbStorage -> IO Int
 cleanupReaders AppContext {..} = do 
     -- eventually call `mdb_reader_check` and try to remove 
     -- potentially dead readers from the reader table
-    env <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database
+    env <- (\d -> let LmdbStorage {..} = storage d in env) <$> readTVarIO database
     native <- atomically $ getNativeEnv env
     cleanReadersTable native
 
 
 lmdbGetStats :: AppContext LmdbStorage -> IO StorageStats
 lmdbGetStats AppContext {..} = do 
-    lmdbEnv   <- getEnv . (\d -> storage d :: LmdbStorage) <$> readTVarIO database    
+    lmdbEnv   <- (\d -> let LmdbStorage {..} = storage d in env) <$> readTVarIO database
     nativeEnv <- atomically $ getNativeEnv lmdbEnv
     getEnvStats nativeEnv

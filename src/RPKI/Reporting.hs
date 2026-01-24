@@ -1,12 +1,6 @@
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StrictData                 #-}
 {-# LANGUAGE UndecidableInstances       #-}
-{-# LANGUAGE OverloadedLabels           #-}
-{-# LANGUAGE RecordWildCards            #-}
-
 
 module RPKI.Reporting where
     
@@ -95,7 +89,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         ManifestNumberDecreased { oldMftNumber :: Serial, newMftNumber :: Serial } |
                         -- This is a bit of a special error to indicate that the 
                         -- "fallback to the last valid MFT" happened
-                        MftFallback AppError |
+                        MftFallback AppError Serial |
                         CRLOnDifferentLocation URI Locations |
                         CRLHashPointsToAnotherObject Hash |
                         CRL_AKI_DifferentFromCertSKI SKI AKI |
@@ -157,7 +151,7 @@ data RrdpError = BrokenXml Text |
                 NoVersionInDelta | 
                 BadVersion Text | 
                 NoPublishURI |
-                BadBase64 Text Text |
+                BadBase64 Text |
                 BadURL Text |
                 NoHashInWithdraw |
                 ContentInWithdraw Text Text |
@@ -213,6 +207,7 @@ data InternalError = WorkerTimeout Text
                    | WorkerOutOfCpuTime Text 
                    | WorkerOutOfMemory Text 
                    | WorkerDetectedDifferentExecutable Text 
+                   | WorkerError Text 
                    | InternalError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -361,14 +356,14 @@ newtype Count = Count { unCount :: Int64 }
     deriving Monoid via Sum Count
 
 instance Show Count where 
-    show (Count c) = show c
+    show (Count c) = Prelude.show c
 
 newtype HttpStatus = HttpStatus { unHttpStatus :: Int }
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)        
 
 instance Show HttpStatus where
-    show = show . unHttpStatus
+    show = Prelude.show . unHttpStatus
 
 instance Monoid HttpStatus where
     mempty = HttpStatus 200

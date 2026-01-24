@@ -1,8 +1,5 @@
--- {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE StrictData          #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE RecordWildCards     #-}
 
 module RPKI.Parallel where
 

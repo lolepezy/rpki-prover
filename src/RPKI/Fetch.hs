@@ -1,11 +1,6 @@
-{-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE FlexibleContexts   #-}
-{-# LANGUAGE FlexibleInstances  #-}
-{-# LANGUAGE OverloadedLabels   #-}
-{-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE QuasiQuotes        #-}
-{-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE StrictData         #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StrictData        #-}
 
 module RPKI.Fetch where
 
@@ -158,7 +153,7 @@ fetchRepository
                 logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)            
             (do 
-                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{totalTimeout}s.|]
+                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{totalTimeout}.|]
                 trace WorkerTimeoutTrace
                 appError $ RrdpE $ RrdpDownloadTimeout totalTimeout)
 
@@ -175,7 +170,7 @@ fetchRepository
                 logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)
             (do 
-                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{totalTimeout}s.|]
+                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{totalTimeout}.|]
                 trace WorkerTimeoutTrace
                 appError $ RsyncE $ RsyncDownloadTimeout totalTimeout)        
           

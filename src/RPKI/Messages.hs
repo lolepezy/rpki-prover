@@ -1,12 +1,6 @@
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE StrictData            #-}
-{-# LANGUAGE TypeOperators         #-}
-{-# LANGUAGE QuasiQuotes           #-}
 
 module RPKI.Messages where
 
@@ -91,7 +85,7 @@ toRrdpMessage = \case
     BadVersion v   -> [i|String #{v} is not a valid RRDP version.|]  
     NoPublishURI   -> [i|An "publish" element doesn't have URL attribute.|]  
 
-    BadBase64 base64 url -> [i|Base64 #{base64} for URL #{url} is invalid.|]  
+    BadBase64 base64 -> [i|Base64 #{base64} is invalid.|]  
 
     BadURL u -> [i|Unsupported or invalid URL #{u}.|]  
 
@@ -242,8 +236,8 @@ toValidationMessage = \case
         [i|Manifest number #{newMftNumber} is smaller than the previous #{oldMftNumber}, |] <> 
         [i|will fall back to the previous one.|]
 
-      MftFallback e -> 
-        [i|Fallback to the last valid manifest happened, with the error: #{toMessage e}|]
+      MftFallback e failedMftNumber -> 
+        [i|Fallback to the last valid manifest happened, manifest #{failedMftNumber} failed with the error: #{toMessage e}|]
 
       CRLOnDifferentLocation crlDP locations -> 
           [i|CRL distribution point #{crlDP} is not the same as CRL location #{fmtLocations locations}.|]

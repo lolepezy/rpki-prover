@@ -1,8 +1,3 @@
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DerivingVia                #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedLabels           #-}
-{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StrictData                 #-}
 
 module RPKI.Repository where
@@ -303,8 +298,6 @@ filterPPAccess Config {..} ppAccess =
         RrdpPP _  -> rrdpConf ^. #enabled
         RsyncPP _ -> rsyncConf ^. #enabled        
 
-
-type RsyncNodeNormal = RsyncTree RepositoryMeta
 
 -- Simple tree for representing rsync repositories grouped by host.
 -- Every RsyncTree corresponds to a path chunk in the rsync URL. 

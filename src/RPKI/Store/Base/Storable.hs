@@ -1,8 +1,5 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -22,6 +19,7 @@ import Data.Maybe (fromMaybe)
 import Data.Monoid.Generic
 
 import RPKI.Domain
+import RPKI.AppTypes
 import RPKI.Store.Base.Serialisation
 
 newtype Storable = Storable { unStorable :: BS.ByteString }    
@@ -77,7 +75,7 @@ instance {-# OVERLAPPING #-} TheBinary a => AsStorable a where
 
 instance {-# OVERLAPPING #-} AsStorable a => AsStorable (StorableObject a) where
     toStorable StorableObject {..} = storable
-    fromStorable b = let o = fromStorable b in StorableObject o b
+    fromStorable b = StorableObject (fromStorable b) b
 
 instance {-# OVERLAPPING #-} AsStorable a => AsStorable (Compressed a) where
     toStorable (Compressed a) = 

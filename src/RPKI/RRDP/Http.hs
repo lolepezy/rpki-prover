@@ -1,9 +1,4 @@
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE DerivingStrategies  #-}
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE OverloadedLabels    #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE QuasiQuotes         #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.RRDP.Http where
 
@@ -28,6 +23,7 @@ import Network.HTTP.Client
 import Network.HTTP.Types.Header
 import Network.HTTP.Simple
 
+import RPKI.AppTypes
 import RPKI.AppContext
 import RPKI.AppMonad
 import RPKI.Config

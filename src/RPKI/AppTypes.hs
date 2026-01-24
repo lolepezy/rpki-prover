@@ -1,12 +1,9 @@
-{-# LANGUAGE DeriveAnyClass     #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE StrictData         #-}
-{-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StrictData        #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.AppTypes where
     
+import           Control.Exception
 import           Control.DeepSeq
 import           Data.Int
 import           Data.Text (Text)
@@ -37,6 +34,14 @@ newtype ExecutableVersion = ExecutableVersion Text
     deriving anyclass (TheBinary)
 
 
+-- Some auxiliary types
+newtype Size = Size { unSize :: Int64 }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving newtype (Num)
+    deriving anyclass (TheBinary)
+    deriving Semigroup via Sum Size
+    deriving Monoid via Sum Size
+
 -- TODO Probably move it to some other module
 newtype MaxMemory = MaxMemory Int
     deriving stock (Eq, Ord, Generic)
@@ -44,6 +49,22 @@ newtype MaxMemory = MaxMemory Int
     deriving newtype (Num, Bounded)
     deriving Semigroup via Max MaxMemory
     deriving Monoid via Max MaxMemory    
+
+data DBState = DbOperational | DbStuck | DbTryingToFix
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+data SystemState = SystemState {
+        dbState :: DBState
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+
+data TxTimeout = TxTimeout
+    deriving stock (Show, Ord, Eq, Generic)
+
+instance Exception TxTimeout
 
 instance Show MaxMemory where 
     show (MaxMemory m) = show (m `div` (1024*1024)) <> "mb"

@@ -1,7 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-
 module RPKI.Orphans.Swagger where
 
 import           Data.Text                   (Text)
@@ -142,6 +141,7 @@ instance ToSchema ValidationConfig
 instance ToSchema SystemConfig
 instance ToSchema HttpApiConfig
 instance ToSchema RtrConfig
+instance ToSchema StorageConfig
 instance ToSchema LogLevel
 instance ToSchema ManifestProcessing
 instance ToSchema ValidationRFC

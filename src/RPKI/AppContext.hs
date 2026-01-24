@@ -1,6 +1,4 @@
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE StrictData         #-}
-{-# LANGUAGE RecordWildCards    #-}
 
 module RPKI.AppContext where
     

@@ -1,8 +1,5 @@
 {-# OPTIONS_GHC -fno-warn-orphans -Wno-type-defaults #-}
 {-# LANGUAGE FlexibleInstances   #-}
-{-# LANGUAGE DeriveAnyClass      #-}
-{-# LANGUAGE TemplateHaskell     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module RPKI.Orphans.Store where
 

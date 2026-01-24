@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 
 module RPKI.Util where
 
@@ -16,6 +15,7 @@ import qualified Data.ByteString.Base16      as Hex
 import qualified Data.ByteString.Char8       as C
 import qualified Data.ByteString.Short       as BSS
 import qualified Data.ByteString.Base64      as B64
+import qualified Data.Base64.Types           as B64T
 import           Data.Char
 import qualified Data.List                   as List
 import           Data.Foldable (toList)
@@ -157,12 +157,12 @@ ifJustM a f = maybe (pure ()) f =<< a
 decodeBase64 :: Show c => EncodedBase64 -> c -> Either Text DecodedBase64
 decodeBase64 (EncodedBase64 bs) context = 
     bimap 
-        (\e -> e <> " for " <> Text.pack (show context) <> convert bs)
+        (\e -> e <> " for " <> Text.pack (show context) <> ": " <> convert bs)
         DecodedBase64
-        $ B64.decodeBase64 bs 
+        $ B64.decodeBase64Untyped bs 
 
 encodeBase64 :: DecodedBase64 -> EncodedBase64
-encodeBase64 (DecodedBase64 bs) = EncodedBase64 $ B64.encodeBase64' bs
+encodeBase64 (DecodedBase64 bs) = EncodedBase64 $ B64T.extractBase64 $ B64.encodeBase64' bs
     
 textual :: LBS.ByteString -> Text
 textual = decodeUtf8 . LBS.toStrict
