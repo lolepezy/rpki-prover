@@ -4,7 +4,14 @@
 
 module RPKI.Validation.Partial where
 
+import           Control.Lens
 import           Control.Concurrent.STM
+import           Control.Monad
+import           Control.Monad.IO.Class
+
+import qualified Data.Map.Strict          as Map
+import qualified Data.Set                 as Set
+import           Data.Maybe (catMaybes)
 
 import           GHC.Generics
 
@@ -217,16 +224,46 @@ traversePayloads objectKey onPayload includeExpired = do
 
 
 -- Find all start CAs based on the list of updates happened
-findStartCas :: Storage s => [UpdateHappened] -> Store s -> ValidatorT IO [CertKey]
+findStartCas :: Storage s => [UpdateHappened] -> Store s -> IO [KIMeta]
 findStartCas updates store@Store {..} = do
+    Now now <- thisInstant
+    startCas <- fmap (Map.fromList . catMaybes) $ forM updates $ findStartCa now
+
+    -- Find paths to the top CAs for each start CA found
+    -- While going up, check that the CA is still valid (not expired)
+
     pure []
-  where         
+  where             
+    stepUp now (ki, kiMeta@KIMeta {..}) cas path actualStartCa = do
+        -- if it's the TA stop        
+        if ki == parentKI then
+            pure (cas, path, actualStartCa)
+        else do
+            z <- roTx store $ \tx -> M.get tx kiMetas parentKI
+            case z of
+                Just parent
+                    | expiresAt > now -> do 
+                        let parentCa = parent ^. #caCertificate
+                        let path' = Set.insert parentCa path 
+                        let actualStartCa' = 
+                                if parentCa `Set.member` cas 
+                                    then Set.delete caCertificate actualStartCa 
+                                    else Set.insert parentCa actualStartCa
+
+                        stepUp now (parentKI, parent) (Set.insert caCertificate cas) path' actualStartCa
+                    | otherwise       -> 
+                        pure (cas, path, actualStartCa)
+                Nothing -> 
+                    -- No parent, stop here
+                    -- TODO Figure out what to do 
+                    pure (cas, path, actualStartCa)
+
     findStartCa now = \case 
         ObjectUpdate AddedObject {..} -> do
             z <- roTx store $ \tx -> M.get tx kiMetas ki
-            pure $ case z of
-                Just KIMeta {..} 
-                    | expiresAt > now -> Just caCertificate
+            pure $! case z of
+                Just km@KIMeta {..}
+                    | expiresAt > now -> Just (ki, km)
                     | otherwise       -> Nothing
                 Nothing -> 
                     -- Orphaned object, no parent CA found
