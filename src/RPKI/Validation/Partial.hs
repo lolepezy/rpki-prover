@@ -23,6 +23,7 @@ import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           RPKI.Store.Base.Storage
 import           RPKI.Validation.Types (MftShortcut)
+import           RPKI.Validation.ObjectValidation
 
 import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
@@ -155,12 +156,16 @@ data Change a = Added a | Deleted a
 -- Database
 
 data KIMeta = KIMeta {
-        caCertificate :: {-# UNPACK #-} CertKey,
-        parentKI      :: {-# UNPACK #-} KI,
-        expiresAt     :: {-# UNPACK #-} Instant        
+        caCertificate  :: {-# UNPACK #-} CertKey,
+        parentKI       :: {-# UNPACK #-} KI,
+        notValidBefore :: {-# UNPACK #-} Instant,
+        notValidAfter  :: {-# UNPACK #-} Instant
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
+
+instance {-# OVERLAPPING #-} WithValidityPeriod KIMeta where 
+    getValidityPeriod KIMeta {..} = (notValidBefore, notValidAfter)
 
 
 data ValidityPeriodIndex = VP_CA CertKey 
@@ -226,7 +231,7 @@ traversePayloads objectKey onPayload includeExpired = do
 -- Find all start CAs based on the list of updates happened
 findStartCas :: Storage s => [UpdateHappened] -> Store s -> IO [KIMeta]
 findStartCas updates store@Store {..} = do
-    Now now <- thisInstant
+    now <- thisInstant
     startCas <- fmap (Map.fromList . catMaybes) $ forM updates $ findStartCa now
 
     -- Find paths to the top CAs for each start CA found
@@ -234,36 +239,12 @@ findStartCas updates store@Store {..} = do
 
     pure []
   where             
-    stepUp now (ki, kiMeta@KIMeta {..}) cas path actualStartCa = do
-        -- if it's the TA stop        
-        if ki == parentKI then
-            pure (cas, path, actualStartCa)
-        else do
-            z <- roTx store $ \tx -> M.get tx kiMetas parentKI
-            case z of
-                Just parent
-                    | expiresAt > now -> do 
-                        let parentCa = parent ^. #caCertificate
-                        let path' = Set.insert parentCa path 
-                        let actualStartCa' = 
-                                if parentCa `Set.member` cas 
-                                    then Set.delete caCertificate actualStartCa 
-                                    else Set.insert parentCa actualStartCa
-
-                        stepUp now (parentKI, parent) (Set.insert caCertificate cas) path' actualStartCa
-                    | otherwise       -> 
-                        pure (cas, path, actualStartCa)
-                Nothing -> 
-                    -- No parent, stop here
-                    -- TODO Figure out what to do 
-                    pure (cas, path, actualStartCa)
-
     findStartCa now = \case 
         ObjectUpdate AddedObject {..} -> do
             z <- roTx store $ \tx -> M.get tx kiMetas ki
             pure $! case z of
-                Just km@KIMeta {..}
-                    | expiresAt > now -> Just (ki, km)
+                Just km
+                    | isWithinValidityPeriod now km -> Just (ki, km)
                     | otherwise       -> Nothing
                 Nothing -> 
                     -- Orphaned object, no parent CA found
@@ -277,3 +258,34 @@ findStartCas updates store@Store {..} = do
         TaUpdate taName -> do
             -- Get the TA certificate
             pure Nothing
+
+stepUp readFromCache accept (ki, kiMeta) startCas path ignore = do
+    let parentKI = kiMeta ^. #parentKI
+
+    -- if it's the TA stop                    
+    if ki == parentKI then
+        pure (startCas, path, ignore)
+    else do
+        z <- readFromCache parentKI
+        case z of
+            Just parent
+                | accept parent -> do 
+                    let parentCa = parent ^. #caCertificate
+                    let path' = Set.insert parentCa path 
+                    let ignore' = 
+                            if parentCa `Set.member` startCas 
+                                then Set.insert (kiMeta ^. #caCertificate) ignore
+                                else ignore
+
+                    stepUp readFromCache accept 
+                        (parentKI, parent) 
+                        (Set.insert (kiMeta ^. #caCertificate) startCas) 
+                        path' ignore'
+
+                | otherwise       -> 
+                    pure (startCas, path, ignore)
+
+            Nothing -> 
+                -- No parent, stop here
+                -- TODO Figure out what to do 
+                pure (startCas, path, ignore)            
