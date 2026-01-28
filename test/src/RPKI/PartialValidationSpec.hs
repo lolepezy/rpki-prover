@@ -5,9 +5,12 @@ module RPKI.PartialValidationSpec where
 import Control.Monad (replicateM)
 
 import Data.Text (Text)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, isJust)
 import Data.List (sort, isPrefixOf, sortOn)
-import qualified Data.Map as Map
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
+
+import GHC.Generics
 
 import           Test.Tasty
 import           Test.QuickCheck.Arbitrary.Generic
@@ -20,26 +23,46 @@ import           RPKI.Domain
 import           RPKI.Repository
 import           RPKI.Util
 import           RPKI.Orphans
+import           RPKI.Validation.Partial
 
 
-partialValidationGroup :: TestTree
-partialValidationGroup = testGroup "Partial validation" [
-        HU.testCase "Find parent simple" shouldFindSimpleParent
+partialValidationSpec :: TestTree
+partialValidationSpec = testGroup "Partial validation" [
+        HU.testCase "Find parent simple" shouldFindParent,
+        HU.testCase "Find only parent" shouldFindParent
     ]
 
 data TestKIMeta = TestKIMeta {
     parentKI      :: Text,
     caCertificate :: Text
-} deriving (Eq, Show)
+} deriving (Eq, Show, Generic)
 
-shouldFindSimpleParent :: HU.Assertion
-shouldFindSimpleParent = do
-    let cache = Map.fromList [
-            ("child", TestKIMeta { parentKI = "parent", caCertificate = "cert1" }),
-            ("parent", TestKIMeta { parentKI = "grandparent", caCertificate = "cert2" })
-            ]
+shouldFindParent :: HU.Assertion
+shouldFindParent = do
+    let kimA = TestKIMeta { parentKI = "p", caCertificate = "cert1" }
+    let kimP = TestKIMeta { parentKI = "p", caCertificate = "cert2" }
+    let cache = Map.fromList [ ("a", kimA), ("p", kimP) ]
                      
-    -- let readFromCache ki = 
+    let readFromCache ki = pure $ Map.lookup ki cache
+    let accept _ = True
+    let startCas = Set.fromList ["cert1"]
 
-    -- findPathUp readFromCache accept (ki, kiMeta) startCas
-    pure ()
+    Just (involved, ignored) <- findPathUp readFromCache accept ("a", kimA) startCas    
+    HU.assertEqual "Involved should contain child only" (Set.fromList ["cert1"]) involved
+    HU.assertBool "Nothing is ignored" (Set.null ignored)
+
+
+shouldFindOnlyParent :: HU.Assertion
+shouldFindOnlyParent = do
+    let kimA = TestKIMeta { parentKI = "p", caCertificate = "cert1" }
+    let kimP = TestKIMeta { parentKI = "p", caCertificate = "cert2" }
+    let cache = Map.fromList [ ("a", kimA), ("p", kimP) ]
+                     
+    let readFromCache ki = pure $ Map.lookup ki cache
+    let accept _ = True
+    let startCas = Set.fromList ["cert1", "cert2"]
+
+    Just (involved, ignored) <- findPathUp readFromCache accept ("a", kimA) startCas    
+    HU.assertEqual "Involved should contain both parent and child" (Set.fromList ["cert1", "cert2"]) involved    
+    HU.assertEqual "Child should be ignored" (Set.fromList ["cert1"]) ignored    
+
