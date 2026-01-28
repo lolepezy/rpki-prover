@@ -29,7 +29,7 @@ import           RPKI.Validation.Partial
 partialValidationSpec :: TestTree
 partialValidationSpec = testGroup "Partial validation" [
         HU.testCase "Find parent simple" shouldFindParent,
-        HU.testCase "Find only parent" shouldFindParent
+        HU.testCase "Find only parent" shouldFindOnlyParent
     ]
 
 data TestKIMeta = TestKIMeta {
@@ -39,30 +39,30 @@ data TestKIMeta = TestKIMeta {
 
 shouldFindParent :: HU.Assertion
 shouldFindParent = do
-    let kimA = TestKIMeta { parentKI = "p", caCertificate = "cert1" }
-    let kimP = TestKIMeta { parentKI = "p", caCertificate = "cert2" }
+    let kimA = TestKIMeta { parentKI = "p", caCertificate = "certC" }
+    let kimP = TestKIMeta { parentKI = "p", caCertificate = "certP" }
     let cache = Map.fromList [ ("a", kimA), ("p", kimP) ]
                      
     let readFromCache ki = pure $ Map.lookup ki cache
     let accept _ = True
-    let startCas = Set.fromList ["cert1"]
+    let startCas = Set.fromList ["certC"]
 
     Just (involved, ignored) <- findPathUp readFromCache accept ("a", kimA) startCas    
-    HU.assertEqual "Involved should contain child only" (Set.fromList ["cert1"]) involved
+    HU.assertEqual "Involved should contain child only" (Set.fromList ["certC"]) involved
     HU.assertBool "Nothing is ignored" (Set.null ignored)
 
 
 shouldFindOnlyParent :: HU.Assertion
 shouldFindOnlyParent = do
-    let kimA = TestKIMeta { parentKI = "p", caCertificate = "cert1" }
-    let kimP = TestKIMeta { parentKI = "p", caCertificate = "cert2" }
+    let kimA = TestKIMeta { parentKI = "p", caCertificate = "certC" }
+    let kimP = TestKIMeta { parentKI = "p", caCertificate = "certP" }
     let cache = Map.fromList [ ("a", kimA), ("p", kimP) ]
                      
     let readFromCache ki = pure $ Map.lookup ki cache
     let accept _ = True
-    let startCas = Set.fromList ["cert1", "cert2"]
+    let startCas = Set.fromList ["certC", "certP"]
 
     Just (involved, ignored) <- findPathUp readFromCache accept ("a", kimA) startCas    
-    HU.assertEqual "Involved should contain both parent and child" (Set.fromList ["cert1", "cert2"]) involved    
-    HU.assertEqual "Child should be ignored" (Set.fromList ["cert1"]) ignored    
+    HU.assertEqual "Involved should contain both parent and child" (Set.fromList ["certC", "certP"]) involved    
+    HU.assertEqual "Child should be ignored" (Set.fromList ["certC"]) ignored    
 
