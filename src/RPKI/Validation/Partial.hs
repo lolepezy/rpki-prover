@@ -259,33 +259,36 @@ findStartCas updates store@Store {..} = do
             -- Get the TA certificate
             pure Nothing
 
-stepUp readFromCache accept (ki, kiMeta) startCas path ignore = do
-    let parentKI = kiMeta ^. #parentKI
 
-    -- if it's the TA stop                    
-    if ki == parentKI then
-        pure (startCas, path, ignore)
-    else do
-        z <- readFromCache parentKI
-        case z of
-            Just parent
-                | accept parent -> do 
-                    let parentCa = parent ^. #caCertificate
-                    let path' = Set.insert parentCa path 
-                    let ignore' = 
-                            if parentCa `Set.member` startCas 
-                                then Set.insert (kiMeta ^. #caCertificate) ignore
-                                else ignore
+findPathUp readFromCache accept (ki, kiMeta) startCas = 
+    go readFromCache accept (ki, kiMeta) startCas mempty mempty 
+  where 
+    go readFromCache accept (ki, kiMeta) startCas involved ignore = do
+        let parentKI = kiMeta ^. #parentKI
+        let certKey = kiMeta ^. #caCertificate
 
-                    stepUp readFromCache accept 
-                        (parentKI, parent) 
-                        (Set.insert (kiMeta ^. #caCertificate) startCas) 
-                        path' ignore'
+        -- if it's the root stop                    
+        if ki == parentKI then
+            pure $ Just (involved, ignore)
+        else do
+            z <- readFromCache parentKI
+            case z of
+                Just parent
+                    | accept parent -> do 
+                        let parentCa = parent ^. #caCertificate
+                        let involved' = Set.insert parentCa involved
+                        let ignore' = 
+                                if parentCa `Set.member` startCas 
+                                    then Set.insert certKey ignore
+                                    else ignore
 
-                | otherwise       -> 
-                    pure (startCas, path, ignore)
+                        go readFromCache accept 
+                            (parentKI, parent) startCas involved' ignore'
 
-            Nothing -> 
-                -- No parent, stop here
-                -- TODO Figure out what to do 
-                pure (startCas, path, ignore)            
+                    | otherwise -> 
+                        -- Parent that is not acceptable (not valid), stop here
+                        pure Nothing
+
+                Nothing -> 
+                    -- No parent, stop here
+                    pure Nothing

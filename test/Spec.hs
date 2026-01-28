@@ -17,6 +17,7 @@ import RPKI.FetchSpec
 import RPKI.RTR.RtrSpec
 import RPKI.SLURM.SlurmSpec
 import RPKI.Store.SerialisationSpec
+import RPKI.PartialValidationSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
@@ -34,5 +35,6 @@ main = defaultMain $ testGroup "All tests" [
         slurmGroup,
         loggingSpec,
         workflowSpec,
-        serialisationSpec
+        serialisationSpec,
+        partialValidationGroup
     ]  
