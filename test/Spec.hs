@@ -36,5 +36,5 @@ main = defaultMain $ testGroup "All tests" [
         loggingSpec,
         workflowSpec,
         serialisationSpec,
-        partialValidationGroup
+        partialValidationSpec
     ]  
