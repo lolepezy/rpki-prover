@@ -39,7 +39,7 @@ data TestKIMeta = TestKIMeta {
 
 shouldFindParent :: HU.Assertion
 shouldFindParent = do    
-    let cache = newCache [ ("a", "p", 1), ("p", "p", 2) ]
+    let cache = newCache [ ("a", "parent", 1), ("parent", "parent", 2) ]
     let Just kimA = Map.lookup "a" cache
 
     let readFromCache ki = pure $ Map.lookup ki cache
@@ -53,7 +53,7 @@ shouldFindParent = do
 
 shouldFindOnlyParent :: HU.Assertion
 shouldFindOnlyParent = do
-    let cache = newCache [ ("a", "p", 1), ("p", "p", 2) ]
+    let cache = newCache [ ("a", "parent", 1), ("parent", "parent", 2) ]
     let Just kimA = Map.lookup "a" cache
                      
     let readFromCache ki = pure $ Map.lookup ki cache
