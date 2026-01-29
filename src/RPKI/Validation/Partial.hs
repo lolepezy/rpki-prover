@@ -262,27 +262,27 @@ findStartCas updates store@Store {..} = do
 findPathUp readFromCache accept (ki, kiMeta) startCas = 
     go readFromCache accept (ki, kiMeta) startCas mempty mempty 
   where 
-    go readFromCache accept (ki, kiMeta) startCas involved ignored = do
+    go readFromCache accept (ki, kiMeta) startCas paths ignored = do
         let parentKI = kiMeta ^. #parentKI
         let certKey = kiMeta ^. #caCertificate
 
         -- if it's the root stop                    
         if ki == parentKI then
-            pure $ Just (involved, ignored)
+            pure $ Just (paths, ignored)
         else do
             z <- readFromCache parentKI
             case z of
                 Just parent
                     | accept parent -> do 
                         let parentCa = parent ^. #caCertificate
-                        let involved' = Set.insert parentCa involved
+                        let paths' = Set.insert parentCa paths
                         let ignored' = 
                                 if parentCa `Set.member` startCas 
                                     then Set.insert certKey ignored
                                     else ignored
 
                         go readFromCache accept 
-                            (parentKI, parent) startCas involved' ignored'
+                            (parentKI, parent) startCas paths' ignored'
 
                     | otherwise -> 
                         -- Parent that is not acceptable (not valid), stop here
