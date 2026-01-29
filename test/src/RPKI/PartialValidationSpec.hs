@@ -34,35 +34,36 @@ partialValidationSpec = testGroup "Partial validation" [
 
 data TestKIMeta = TestKIMeta {
     parentKI      :: Text,
-    caCertificate :: Text
+    caCertificate :: Int
 } deriving (Eq, Show, Generic)
 
 shouldFindParent :: HU.Assertion
-shouldFindParent = do
-    let kimA = TestKIMeta { parentKI = "p", caCertificate = "certC" }
-    let kimP = TestKIMeta { parentKI = "p", caCertificate = "certP" }
-    let cache = Map.fromList [ ("a", kimA), ("p", kimP) ]
-                     
+shouldFindParent = do    
+    let cache = newCache [ ("a", "p", 1), ("p", "p", 2) ]
+    let Just kimA = Map.lookup "a" cache
+
     let readFromCache ki = pure $ Map.lookup ki cache
     let accept _ = True
-    let startCas = Set.fromList ["certC"]
+    let startCas = Set.fromList [1]
 
-    Just (involved, ignored) <- findPathUp readFromCache accept ("a", kimA) startCas    
-    HU.assertEqual "Involved should contain child only" (Set.fromList ["certC"]) involved
+    Just (paths, ignored) <- findPathUp readFromCache accept ("a", kimA) startCas    
+    HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2]) paths
     HU.assertBool "Nothing is ignored" (Set.null ignored)
 
 
 shouldFindOnlyParent :: HU.Assertion
 shouldFindOnlyParent = do
-    let kimA = TestKIMeta { parentKI = "p", caCertificate = "certC" }
-    let kimP = TestKIMeta { parentKI = "p", caCertificate = "certP" }
-    let cache = Map.fromList [ ("a", kimA), ("p", kimP) ]
+    let cache = newCache [ ("a", "p", 1), ("p", "p", 2) ]
+    let Just kimA = Map.lookup "a" cache
                      
     let readFromCache ki = pure $ Map.lookup ki cache
     let accept _ = True
-    let startCas = Set.fromList ["certC", "certP"]
+    let startCas = Set.fromList [1, 2]
 
-    Just (involved, ignored) <- findPathUp readFromCache accept ("a", kimA) startCas    
-    HU.assertEqual "Involved should contain both parent and child" (Set.fromList ["certC", "certP"]) involved    
-    HU.assertEqual "Child should be ignored" (Set.fromList ["certC"]) ignored    
+    Just (paths, ignored) <- findPathUp readFromCache accept ("a", kimA) startCas    
+    HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2]) paths
+    HU.assertEqual "Child should be ignored" (Set.fromList [1]) ignored    
 
+
+newCache :: [(Text, Text, Int)] -> Map.Map Text TestKIMeta
+newCache metas = Map.fromList [ (ki, TestKIMeta { parentKI = pki, caCertificate = ca }) | (ki, pki, ca) <- metas ]
