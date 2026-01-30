@@ -8,6 +8,7 @@ import           Control.Lens
 import           Control.Concurrent.STM
 import           Control.Monad
 import           Control.Monad.IO.Class
+import           Control.Concurrent.Async
 
 import qualified Data.Map.Strict          as Map
 import qualified Data.Set                 as Set
@@ -229,35 +230,56 @@ traversePayloads objectKey onPayload includeExpired = do
 
 
 -- Find all start CAs based on the list of updates happened
-findStartCas :: Storage s => [UpdateHappened] -> Store s -> IO [KIMeta]
-findStartCas updates store@Store {..} = do
-    now <- thisInstant
-    startCas <- fmap (Map.fromList . catMaybes) $ forM updates $ findStartCa now
+-- findStartCas :: Storage s => [UpdateHappened] -> Store s -> IO [KIMeta]
+-- findStartCas updates store@Store {..} = do
+--     now <- thisInstant
+--     startCas <- fmap (Map.fromList . catMaybes) $ forM updates $ findStartCa now
 
-    -- Find paths to the top CAs for each start CA found
-    -- While going up, check that the CA is still valid (not expired)
+--     -- Find paths to the top CAs for each start CA found
+--     -- While going up, check that the CA is still valid (not expired)
 
-    pure []
-  where             
-    findStartCa now = \case 
-        ObjectUpdate AddedObject {..} -> do
-            z <- roTx store $ \tx -> M.get tx kiMetas ki
-            pure $! case z of
-                Just km
-                    | isWithinValidityPeriod now km -> Just (ki, km)
-                    | otherwise       -> Nothing
-                Nothing -> 
-                    -- Orphaned object, no parent CA found
-                    Nothing            
+--     pure []
+--   where             
+--     findStartCa now = \case 
+--         ObjectUpdate AddedObject {..} -> do
+--             z <- roTx store $ \tx -> M.get tx kiMetas ki
+--             pure $! case z of
+--                 Just km
+--                     | isWithinValidityPeriod now km -> Just (ki, km)
+--                     | otherwise       -> Nothing
+--                 Nothing -> 
+--                     -- Orphaned object, no parent CA found
+--                     Nothing            
 
-        RepositoryUpdate repoUrl -> do
-            -- Get the first from the top CA in the hierarchy 
-            -- that points to this repository
-            pure Nothing
+--         RepositoryUpdate repoUrl -> do
+--             -- Get the first from the top CA in the hierarchy 
+--             -- that points to this repository
+--             pure Nothing
 
-        TaUpdate taName -> do
-            -- Get the TA certificate
-            pure Nothing
+--         TaUpdate taName -> do
+--             -- Get the TA certificate
+--             pure Nothing
+
+
+findStartCas readFromCache accept addedObjects = do
+    cas <- fmap catMaybes $ forM addedObjects $ \o -> do
+                mkiMeta <- readFromCache $ o ^. #ki
+                pure $ case mkiMeta of
+                    Just kiMeta
+                        | accept kiMeta -> Just (o ^. #ki, kiMeta)
+                        | otherwise     -> Nothing
+                    Nothing -> Nothing
+
+    let startCas = Set.fromList [ kiMeta ^. #caCertificate | (_, kiMeta) <- cas ]
+    let startObjects = Set.fromList $ map (^. #objectKey) addedObjects
+
+    (paths, ignored) <- 
+        fmap (mconcat . catMaybes) $ forConcurrently cas $ \ca -> do 
+            -- TODO Here we should complain when nothing is found
+            findPathUp readFromCache accept ca startCas
+            
+    pure (Set.difference startCas ignored, paths <> startObjects)
+
 
 findPathUp readFromCache accept (ki, kiMeta) startCas = 
     go readFromCache accept (ki, kiMeta) startCas mempty mempty 

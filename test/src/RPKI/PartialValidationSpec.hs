@@ -29,24 +29,20 @@ import           RPKI.Validation.Partial
 partialValidationSpec :: TestTree
 partialValidationSpec = testGroup "Partial validation" [
         HU.testCase "Find parent simple" shouldFindParent,
-        HU.testCase "Find only parent" shouldFindOnlyParent
+        HU.testCase "Find only parent" shouldFindOnlyParent,
+        HU.testCase "Find parent in longer chain" shouldFindParentLongerChains,
+        HU.testCase "Should find start CAs" shouldFindStartCasSimple
     ]
 
-data TestKIMeta = TestKIMeta {
-    parentKI      :: Text,
-    caCertificate :: Int
-} deriving (Eq, Show, Generic)
 
 shouldFindParent :: HU.Assertion
 shouldFindParent = do    
     let cache = newCache [ ("a", "parent", 1), ("parent", "parent", 2) ]
     let Just kimA = Map.lookup "a" cache
 
-    let readFromCache ki = pure $ Map.lookup ki cache
-    let accept _ = True
-    let startCas = Set.fromList [1]
+    let testIt = findPathUp (\ki -> pure $ Map.lookup ki cache) (const True) ("a", kimA)
 
-    Just (paths, ignored) <- findPathUp readFromCache accept ("a", kimA) startCas    
+    Just (paths, ignored) <- testIt (Set.fromList [1])
     HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2]) paths
     HU.assertBool "Nothing is ignored" (Set.null ignored)
 
@@ -56,14 +52,73 @@ shouldFindOnlyParent = do
     let cache = newCache [ ("a", "parent", 1), ("parent", "parent", 2) ]
     let Just kimA = Map.lookup "a" cache
                      
-    let readFromCache ki = pure $ Map.lookup ki cache
-    let accept _ = True
-    let startCas = Set.fromList [1, 2]
+    let testIt = findPathUp (\ki -> pure $ Map.lookup ki cache) (const True) ("a", kimA)
 
-    Just (paths, ignored) <- findPathUp readFromCache accept ("a", kimA) startCas    
+    Just (paths, ignored) <- testIt (Set.fromList [1, 2])
     HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2]) paths
     HU.assertEqual "Child should be ignored" (Set.fromList [1]) ignored    
 
 
+shouldFindParentLongerChains :: HU.Assertion
+shouldFindParentLongerChains = do
+    let cache = newCache [ ("a", "b", 1), ("b", "parent", 2), ("parent", "parent", 3) ]
+    let Just kimA = Map.lookup "a" cache
+
+    let testIt = findPathUp (\ki -> pure $ Map.lookup ki cache) (const True) ("a", kimA)
+
+    do 
+        Just (paths, ignored) <- testIt (Set.fromList [1])
+        HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3]) paths
+        HU.assertEqual "Children should be ignored" mempty ignored    
+
+    do 
+        Just (paths, ignored) <- testIt (Set.fromList [1, 2])
+        HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3]) paths
+        HU.assertEqual "Children should be ignored" (Set.fromList [1]) ignored    
+
+    do 
+        Just (paths, ignored) <- testIt (Set.fromList [1, 2, 3])
+        HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3]) paths
+        HU.assertEqual "Children should be ignored" (Set.fromList [1, 2]) ignored    
+
+
+shouldFindStartCasSimple :: HU.Assertion
+shouldFindStartCasSimple = do
+    let cache = newCache [ ("a", "b", 1), ("b", "parent", 2), ("parent", "parent", 3) ]    
+    let testIt = findStartCas (\ki -> pure $ Map.lookup ki cache) (const True)
+
+    do 
+        (startCas, paths) <- testIt [TestAdded 5 "a"]
+        HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3, 5]) paths
+        HU.assertEqual "Children should be ignored" (Set.fromList [1]) startCas
+
+    do
+        (startCas, paths) <- testIt [TestAdded 5 "a", TestAdded 10 "b"]
+        HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3, 5, 10]) paths
+        HU.assertEqual "Children should be ignored" (Set.fromList [2]) startCas        
+
+    -- do 
+    --     (paths, ignored) <- testIt [1, 2]
+    --     HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3]) paths
+    --     HU.assertEqual "Children should be ignored" (Set.fromList [1]) ignored    
+
+    -- do 
+    --     (paths, ignored) <- testIt [1, 2, 3]
+    --     HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3]) paths
+    --     HU.assertEqual "Children should be ignored" (Set.fromList [1, 2]) ignored    
+
+
+
 newCache :: [(Text, Text, Int)] -> Map.Map Text TestKIMeta
 newCache metas = Map.fromList [ (ki, TestKIMeta { parentKI = pki, caCertificate = ca }) | (ki, pki, ca) <- metas ]
+
+
+data TestKIMeta = TestKIMeta {
+    parentKI      :: Text,
+    caCertificate :: Int
+} deriving (Eq, Show, Generic)
+
+data TestAdded = TestAdded {
+    objectKey :: Int,
+    ki        :: Text  
+} deriving (Eq, Show, Generic)
