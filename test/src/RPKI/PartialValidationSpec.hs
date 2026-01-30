@@ -90,22 +90,17 @@ shouldFindStartCasSimple = do
     do 
         (startCas, paths) <- testIt [TestAdded 5 "a"]
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3, 5]) paths
-        HU.assertEqual "Children should be ignored" (Set.fromList [1]) startCas
+        HU.assertEqual "CAs to validate" (Set.fromList [1]) startCas
 
     do
         (startCas, paths) <- testIt [TestAdded 5 "a", TestAdded 10 "b"]
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3, 5, 10]) paths
-        HU.assertEqual "Children should be ignored" (Set.fromList [2]) startCas        
+        HU.assertEqual "CAs to validate" (Set.fromList [2]) startCas        
 
-    -- do 
-    --     (paths, ignored) <- testIt [1, 2]
-    --     HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3]) paths
-    --     HU.assertEqual "Children should be ignored" (Set.fromList [1]) ignored    
-
-    -- do 
-    --     (paths, ignored) <- testIt [1, 2, 3]
-    --     HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3]) paths
-    --     HU.assertEqual "Children should be ignored" (Set.fromList [1, 2]) ignored    
+    do
+        (startCas, paths) <- testIt [TestAdded 5 "a", TestAdded 10 "b", TestAdded 20 "parent"]
+        HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3, 5, 10, 20]) paths
+        HU.assertEqual "CAs to validate" (Set.fromList [3]) startCas                    
 
 
 
