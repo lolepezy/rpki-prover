@@ -502,8 +502,8 @@ data MftPair = MftPair {
 data Manifest = Manifest {
         mftNumber   :: Serial, 
         fileHashAlg :: X509.HashALG, 
-        thisTime    :: {-# UNPACK #-} Instant, 
-        nextTime    :: {-# UNPACK #-} Instant, 
+        thisTime    :: Instant, 
+        nextTime    :: Instant, 
         mftEntries  :: [MftPair]
     } 
     deriving stock (Show, Eq, Generic)
