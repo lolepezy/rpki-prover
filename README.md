@@ -99,6 +99,7 @@ The instructions below are for Linux but apply equally to \\\*BSD and macOS. Win
     ```
     sudo apt-get install rsync libz-dev libexpat1-dev liblmdb-dev liblzma-dev libgmp-dev
     ```
+    (on Debian `pkg-config` needs to be installed explictly)
   * On macOS:
 
     ```
