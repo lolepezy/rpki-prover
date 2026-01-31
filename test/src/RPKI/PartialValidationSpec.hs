@@ -31,7 +31,8 @@ partialValidationSpec = testGroup "Partial validation" [
         HU.testCase "Find parent simple" shouldFindParent,
         HU.testCase "Find only parent" shouldFindOnlyParent,
         HU.testCase "Find parent in longer chain" shouldFindParentLongerChains,
-        HU.testCase "Should find start CAs" shouldFindStartCasSimple
+        HU.testCase "Should find start CAs in one branch" shouldFindStartCasSimple,
+        HU.testCase "Should find start CAs in multiple branches" shouldFindStartCasMultipleBranches
     ]
 
 
@@ -102,6 +103,36 @@ shouldFindStartCasSimple = do
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3, 5, 10, 20]) paths
         HU.assertEqual "CAs to validate" (Set.fromList [3]) startCas                    
 
+
+shouldFindStartCasMultipleBranches :: HU.Assertion
+shouldFindStartCasMultipleBranches = do
+    let cache = newCache [ 
+                ("a", "b", 1), ("b", "parent", 2), ("parent", "parent", 3),
+                ("x", "y", 10), ("y", "z", 20), ("z", "parent", 30), 
+                                ("w", "z", 100)
+            ]    
+    let testIt = findStartCas (\ki -> pure $ Map.lookup ki cache) (const True)
+
+    do 
+        (startCas, paths) <- testIt [TestAdded 66 "a"]
+        HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3, 66]) paths
+        HU.assertEqual "CAs to validate" (Set.fromList [1]) startCas
+
+    do
+        (startCas, paths) <- testIt [TestAdded 66 "a", TestAdded 77 "b"]
+        HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3, 66, 77]) paths
+        HU.assertEqual "CAs to validate" (Set.fromList [2]) startCas        
+
+    do
+        (startCas, paths) <- testIt [TestAdded 55 "a", TestAdded 77 "w"]        
+        HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3, 30, 100, 55, 77]) paths
+        HU.assertEqual "CAs to validate" (Set.fromList [1, 100]) startCas  
+
+    do        
+        (startCas, paths) <- testIt [TestAdded 55 "x", TestAdded 77 "z"]        
+        HU.assertEqual "paths should contain lead to the TA" (Set.fromList [55, 77, 10, 20, 30, 3]) paths
+        HU.assertEqual "CAs to validate" (Set.fromList [30]) startCas          
+        
 
 
 newCache :: [(Text, Text, Int)] -> Map.Map Text TestKIMeta

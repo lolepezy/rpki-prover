@@ -293,15 +293,14 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
         -- if it's the root stop                    
         if ki == parentKI then
             pure $ Just (paths', ignored)
-        else do
-            z <- readFromCache parentKI
-            case z of
+        else 
+            readFromCache parentKI >>= \case
                 Just parent
                     | accept parent -> do 
                         let parentCa = parent ^. #caCertificate                        
                         let ignored' = 
                                 if parentCa `Set.member` startCas 
-                                    then Set.insert certKey ignored
+                                    then ignored <> paths'
                                     else ignored
 
                         go readFromCache accept 
