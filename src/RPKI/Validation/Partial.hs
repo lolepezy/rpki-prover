@@ -157,10 +157,10 @@ data Change a = Added a | Deleted a
 -- Database
 
 data KIMeta = KIMeta {
-        caCertificate  :: {-# UNPACK #-} CertKey,
+        caCertificate  :: CertKey,
         parentKI       :: {-# UNPACK #-} KI,
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -229,56 +229,25 @@ traversePayloads objectKey onPayload includeExpired = do
     pure ()
 
 
--- Find all start CAs based on the list of updates happened
--- findStartCas :: Storage s => [UpdateHappened] -> Store s -> IO [KIMeta]
--- findStartCas updates store@Store {..} = do
---     now <- thisInstant
---     startCas <- fmap (Map.fromList . catMaybes) $ forM updates $ findStartCa now
-
---     -- Find paths to the top CAs for each start CA found
---     -- While going up, check that the CA is still valid (not expired)
-
---     pure []
---   where             
---     findStartCa now = \case 
---         ObjectUpdate AddedObject {..} -> do
---             z <- roTx store $ \tx -> M.get tx kiMetas ki
---             pure $! case z of
---                 Just km
---                     | isWithinValidityPeriod now km -> Just (ki, km)
---                     | otherwise       -> Nothing
---                 Nothing -> 
---                     -- Orphaned object, no parent CA found
---                     Nothing            
-
---         RepositoryUpdate repoUrl -> do
---             -- Get the first from the top CA in the hierarchy 
---             -- that points to this repository
---             pure Nothing
-
---         TaUpdate taName -> do
---             -- Get the TA certificate
---             pure Nothing
-
-
-findStartCas readFromCache accept addedObjects = do
-    cas <- fmap catMaybes $ forM addedObjects $ \o -> do
-                mkiMeta <- readFromCache $ o ^. #ki
+findStartCas readFromCache accept newObjects = do
+    cas <- fmap catMaybes $ forM newObjects $ \o -> do
+                let ki = o ^. #ki
+                mkiMeta <- readFromCache ki
                 pure $ case mkiMeta of
                     Just kiMeta
-                        | accept kiMeta -> Just (o ^. #ki, kiMeta)
+                        | accept ki kiMeta -> Just (ki, kiMeta)
                         | otherwise     -> Nothing
                     Nothing -> Nothing
 
     let startCas = Set.fromList [ kiMeta ^. #caCertificate | (_, kiMeta) <- cas ]
-    let startObjects = Set.fromList $ map (^. #objectKey) addedObjects
+    let startObjects = Set.fromList $ map (^. #objectKey) newObjects
 
     (paths, ignored) <- 
-        fmap (mconcat . catMaybes) $ forConcurrently cas $ \ca -> do 
+        fmap mconcat $ forConcurrently cas $ \ca -> do 
             -- TODO Here we should complain when nothing is found
             findPathUp readFromCache accept ca startCas
             
-    pure (Set.difference startCas ignored, paths <> startObjects)
+    pure (Set.difference startCas ignored, paths)
 
 
 findPathUp readFromCache accept (ki, kiMeta) startCas = 
@@ -292,11 +261,11 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
 
         -- if it's the root stop                    
         if ki == parentKI then
-            pure $ Just (paths', ignored)
+            pure (paths', ignored)
         else 
             readFromCache parentKI >>= \case
                 Just parent
-                    | accept parent -> do 
+                    | accept parentKI parent -> do 
                         let parentCa = parent ^. #caCertificate                        
                         let ignored' = 
                                 if parentCa `Set.member` startCas 
@@ -307,9 +276,11 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
                             (parentKI, parent) startCas paths' ignored'
 
                     | otherwise -> 
-                        -- Parent that is not acceptable (not valid), stop here
-                        pure Nothing
+                        -- Parent that is not acceptable (expire or not valid yet)
+                        -- it means no path, so ignore the whole path
+                        pure (mempty, paths')
 
                 Nothing -> 
-                    -- No parent, stop here
-                    pure Nothing
+                    -- No parent, again it means no path, 
+                    -- ignore the whole path
+                    pure (mempty, paths')

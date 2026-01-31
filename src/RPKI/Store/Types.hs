@@ -37,8 +37,8 @@ data ObjectMeta = ObjectMeta {
 data MftMeta = MftMeta { 
         key       :: {-# UNPACK #-} ObjectKey,
         mftNumber :: {-# UNPACK #-} Serial,
-        thisTime  :: {-# UNPACK #-} Instant,
-        nextTime  :: {-# UNPACK #-} Instant 
+        thisTime  :: Instant,
+        nextTime  :: Instant 
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
