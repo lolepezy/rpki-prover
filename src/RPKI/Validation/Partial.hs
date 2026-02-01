@@ -237,16 +237,16 @@ traversePayloads store@Store {..} certKey onPayload includeExpired = do
     
     ifJustM (roTx cert2mft $ \tx -> M.get tx cert2mft certKey) $ \mftKey -> 
         ifJustM (roTx mftShorts $ \tx -> M.get tx mftShorts mftKey) $ \mftShort -> do
-            forM_ (Map.toList (mftShort ^. #nonCrlEntries)) $ \(key, MftEntry {..}) -> do
+            forM_ (Map.elems (mftShort ^. #nonCrlEntries)) $ \MftEntry {..} -> do
                 case child of
                     CaChild s@CaShortcut {..} _ ->                     
                         ifNotExpired s $ traversePayloads store (coerce key) onPayload includeExpired                                            
                     RoaChild r@RoaShortcut {..} _ -> 
                         ifNotExpired r $ atomically $ onPayload $ VrpsP $ vrps
-                    SplChild s@SplShortcut {..} _ -> 
-                        ifNotExpired s $ atomically $ onPayload $ SplP $ splPayload
                     AspaChild a@AspaShortcut {..} _ -> 
-                        ifNotExpired a $ atomically $ onPayload $ AspaP $ aspa
+                        ifNotExpired a $ atomically $ onPayload $ AspaP $ aspa                        
+                    SplChild s@SplShortcut {..} _ -> 
+                        ifNotExpired s $ atomically $ onPayload $ SplP $ splPayload                    
                     BgpSecChild b@BgpSecShortcut {..} _ -> 
                         ifNotExpired b $ atomically $ onPayload $ BgpSecP $ bgpSec
                     GbrChild g@GbrShortcut {..} _ -> 
