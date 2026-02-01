@@ -13,17 +13,20 @@ import           Control.Concurrent.Async
 import qualified Data.Map.Strict          as Map
 import qualified Data.Set                 as Set
 import           Data.Maybe (catMaybes)
+import           Data.Coerce
+import           Data.Tuple.Strict
 
 import           GHC.Generics
 
 import           RPKI.AppMonad
 import           RPKI.Time
 import           RPKI.Domain
+import           RPKI.Util (ifJustM)
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           RPKI.Store.Base.Storage
-import           RPKI.Validation.Types (MftShortcut)
+import           RPKI.Validation.Types
 import           RPKI.Validation.ObjectValidation
 
 import qualified RPKI.Store.Base.Map      as M
@@ -147,7 +150,7 @@ data Payload = VrpsP [Vrp]
             | AspaP Aspa
             | BgpSecP BGPSecPayload
             | SplP SplPayload
-            | GbrP Gbr
+            | GbrP (T2 Hash Gbr)
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
@@ -211,9 +214,9 @@ validateCA certKey onPayload = do
 -}   
 validateCAPartially :: CertKey -> STM (Change Payload) -> (ObjectKey -> Bool) -> ValidatorT IO ()
 validateCAPartially certKey onPayload objectFilter = do
-    -- get from cache CA by certKey
+    -- get CA from cache by certKey 
 
-    -- get from cache MFT shortcut, do the dance with comparing MFT to its shortcut
+    -- get MFT shortcut from cache, do the dance with comparing MFT to its shortcut
 
     -- Calculate MFT diff
     -- * for each added payload call onPayload (Added Payload)
@@ -224,9 +227,33 @@ validateCAPartially certKey onPayload objectFilter = do
     pure ()
 
 
-traversePayloads :: ObjectKey -> STM Payload -> Bool -> ValidatorT IO ()
-traversePayloads objectKey onPayload includeExpired = do     
-    pure ()
+traversePayloads :: Storage s => Store s -> CertKey -> (Payload -> STM ()) -> Bool -> IO ()
+traversePayloads store@Store {..} certKey onPayload includeExpired = do     
+    now <- thisInstant
+    let ifNotExpired :: forall a . WithValidityPeriod a => a -> IO () -> IO ()
+        ifNotExpired object f  = if includeExpired 
+                            then f
+                            else when (isWithinValidityPeriod now object) f
+    
+    ifJustM (roTx cert2mft $ \tx -> M.get tx cert2mft certKey) $ \mftKey -> 
+        ifJustM (roTx mftShorts $ \tx -> M.get tx mftShorts mftKey) $ \mftShort -> do
+            forM_ (Map.toList (mftShort ^. #nonCrlEntries)) $ \(key, MftEntry {..}) -> do
+                case child of
+                    CaChild s@CaShortcut {..} _ ->                     
+                        ifNotExpired s $ traversePayloads store (coerce key) onPayload includeExpired                                            
+                    RoaChild r@RoaShortcut {..} _ -> 
+                        ifNotExpired r $ atomically $ onPayload $ VrpsP $ vrps
+                    SplChild s@SplShortcut {..} _ -> 
+                        ifNotExpired s $ atomically $ onPayload $ SplP $ splPayload
+                    AspaChild a@AspaShortcut {..} _ -> 
+                        ifNotExpired a $ atomically $ onPayload $ AspaP $ aspa
+                    BgpSecChild b@BgpSecShortcut {..} _ -> 
+                        ifNotExpired b $ atomically $ onPayload $ BgpSecP $ bgpSec
+                    GbrChild g@GbrShortcut {..} _ -> 
+                        ifNotExpired g $ atomically $ onPayload $ GbrP $ gbr
+                    _ -> 
+                        pure ()                                
+              
 
 
 findStartCas readFromCache accept newObjects = do
@@ -239,8 +266,7 @@ findStartCas readFromCache accept newObjects = do
                         | otherwise     -> Nothing
                     Nothing -> Nothing
 
-    let startCas = Set.fromList [ kiMeta ^. #caCertificate | (_, kiMeta) <- cas ]
-    let startObjects = Set.fromList $ map (^. #objectKey) newObjects
+    let startCas = Set.fromList [ kiMeta ^. #caCertificate | (_, kiMeta) <- cas ]    
 
     (paths, ignored) <- 
         fmap mconcat $ forConcurrently cas $ \ca -> do 
