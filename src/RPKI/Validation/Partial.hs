@@ -4,7 +4,7 @@
 
 module RPKI.Validation.Partial where
 
-import           Control.Lens
+import           Control.Lens hiding (ignored)
 import           Control.Concurrent.STM
 import           Control.Monad
 import           Control.Monad.IO.Class
@@ -271,14 +271,27 @@ expireObjects db now = do
     expiredObjects <- roTx expiresAt $ \tx -> MM.allForKey tx expiresAt now
     pure ()
 
-findStartCas readFromCache accept newObjects = do
+findStartCas :: Storage s 
+               => Store s 
+               -> [AddedObject] 
+               -> ValidatorT IO (Set.Set CertKey, Set.Set CertKey)
+findStartCas Store {..} newObjects = do
+    now <- thisInstant
+    liftIO $ findStartCasGen readFromCache (\_ -> isWithinValidityPeriod now) newObjects
+  where
+    readFromCache ki = 
+        roTx kiMetas $ \tx -> M.get tx kiMetas ki
+
+
+
+findStartCasGen readFromCache accept newObjects = do
     cas <- fmap catMaybes $ forM newObjects $ \o -> do
                 let ki = o ^. #ki
                 mkiMeta <- readFromCache ki
                 pure $ case mkiMeta of
                     Just kiMeta
                         | accept ki kiMeta -> Just (ki, kiMeta)
-                        | otherwise     -> Nothing
+                        | otherwise        -> Nothing
                     Nothing -> Nothing
 
     let startCas = Set.fromList [ kiMeta ^. #caCertificate | (_, kiMeta) <- cas ]    
