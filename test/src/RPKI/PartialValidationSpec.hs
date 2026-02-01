@@ -88,7 +88,7 @@ shouldFindParentLongerChains = do
 shouldFindStartCasSimple :: HU.Assertion
 shouldFindStartCasSimple = do
     let cache = newCache [ ("a", "b", 1), ("b", "parent", 2), ("parent", "parent", 3) ]    
-    let testIt = findStartCas (\ki -> pure $ Map.lookup ki cache) (\_ _ -> True)
+    let testIt = findStartCasGen (\ki -> pure $ Map.lookup ki cache) (\_ _ -> True)
 
     do 
         (startCas, paths) <- testIt [TestAdded 5 "a"]
@@ -113,7 +113,7 @@ shouldFindStartCasMultipleBranches = do
                 ("x", "y", 10), ("y", "z", 20), ("z", "parent", 30), 
                                 ("w", "z", 100)
             ]    
-    let testIt = findStartCas (\ki -> pure $ Map.lookup ki cache) (\_ _ -> True)
+    let testIt = findStartCasGen (\ki -> pure $ Map.lookup ki cache) (\_ _ -> True)
 
     do 
         (startCas, paths) <- testIt [TestAdded 66 "a"]
@@ -141,13 +141,13 @@ shouldFindStartCasExpired = do
     let cache = newCache [("a", "b", 1), ("b", "parent", 2), ("parent", "parent", 3)]     
 
     do 
-        let testIt = findStartCas (\ki -> pure $ Map.lookup ki cache) (\ki _ -> ki /= "a")
+        let testIt = findStartCasGen (\ki -> pure $ Map.lookup ki cache) (\ki _ -> ki /= "a")
         (startCas, paths) <- testIt [TestAdded 66 "a"]
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList []) paths
         HU.assertEqual "CAs to validate" (Set.fromList []) startCas
 
     do 
-        let testIt = findStartCas (\ki -> pure $ Map.lookup ki cache) (\ki _ -> ki /= "b")
+        let testIt = findStartCasGen (\ki -> pure $ Map.lookup ki cache) (\ki _ -> ki /= "b")
         (startCas, paths) <- testIt [TestAdded 66 "a"]
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList []) paths
         HU.assertEqual "CAs to validate" (Set.fromList []) startCas
