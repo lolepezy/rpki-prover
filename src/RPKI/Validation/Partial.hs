@@ -188,7 +188,9 @@ data Store s = Store {
         maturesAt :: SMultiMap "matures-at" s Instant ValidityPeriodIndex,
 
         -- TODO Might be PP -> object?
-        repository2object :: SMultiMap "repo-key-to-obj-keys" s RepositoryKey ObjectKey
+        repository2object :: SMultiMap "repo-key-to-obj-keys" s RepositoryKey ObjectKey,
+
+        caShortcuts :: SMultiMap "ca-shortcuts" s CertKey CaShortcut
     }
     deriving (Generic)
 
@@ -203,18 +205,23 @@ instance Storage s => WithStorage s (Store s) where
     - Look at the KI -> KIMeta and update it if needed after validation for CA succeeds
     - Generate "Delete Payload" for payloads corresponding to the removed MFT children
 -} 
-validateCA :: CertKey -> STM (Change Payload) -> ValidatorT IO ()
-validateCA certKey onPayload = do
-    validateCAPartially certKey onPayload (const True)
+validateCA :: Store s -> CertKey -> STM (Change Payload) -> ValidatorT IO ()
+validateCA store certKey onPayload = do
+    validateCAPartially store certKey onPayload (const True)
 
 {- 
     Filter will be used to 
       * Pick up only CAs that are on somebody's path to the top
       * Pick up payloads (or their shortcuts) that are in the set up updates
 -}   
-validateCAPartially :: CertKey -> STM (Change Payload) -> (ObjectKey -> Bool) -> ValidatorT IO ()
-validateCAPartially certKey onPayload objectFilter = do
+validateCAPartially :: Store s 
+                    -> CertKey 
+                    -> STM (Change Payload) 
+                    -> (ObjectKey -> Bool) 
+                    -> ValidatorT IO ()
+validateCAPartially store@Store {..} certKey onPayload objectFilter = do
     -- get CA from cache by certKey 
+
 
     -- get MFT shortcut from cache, do the dance with comparing MFT to its shortcut
 
@@ -242,15 +249,15 @@ traversePayloads store@Store {..} certKey onPayload includeExpired = do
                     CaChild s@CaShortcut {..} _ ->                     
                         ifNotExpired s $ traversePayloads store (coerce key) onPayload includeExpired                                            
                     RoaChild r@RoaShortcut {..} _ -> 
-                        ifNotExpired r $ atomically $ onPayload $ VrpsP $ vrps
+                        ifNotExpired r $ atomically $ onPayload $ VrpsP vrps
                     AspaChild a@AspaShortcut {..} _ -> 
-                        ifNotExpired a $ atomically $ onPayload $ AspaP $ aspa                        
+                        ifNotExpired a $ atomically $ onPayload $ AspaP aspa                        
                     SplChild s@SplShortcut {..} _ -> 
-                        ifNotExpired s $ atomically $ onPayload $ SplP $ splPayload                    
+                        ifNotExpired s $ atomically $ onPayload $ SplP splPayload                    
                     BgpSecChild b@BgpSecShortcut {..} _ -> 
-                        ifNotExpired b $ atomically $ onPayload $ BgpSecP $ bgpSec
+                        ifNotExpired b $ atomically $ onPayload $ BgpSecP bgpSec
                     GbrChild g@GbrShortcut {..} _ -> 
-                        ifNotExpired g $ atomically $ onPayload $ GbrP $ gbr
+                        ifNotExpired g $ atomically $ onPayload $ GbrP gbr
                     _ -> 
                         pure ()                                
               

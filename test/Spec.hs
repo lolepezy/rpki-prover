@@ -20,19 +20,19 @@ import RPKI.PartialValidationSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
-        -- objectParseSpec,
-        -- appMonadSpec,        
-        -- rrdpXmlLazyParsingGroup,
-        -- rrdpUpdateSpec,
-        -- databaseGroup,
-        -- cacheGroup,
-        -- resourceGroup,        
-        -- validityGroup,
-        -- repositoryGroup,
-        -- rtrGroup,
-        -- httpSpec,
-        -- slurmGroup,
-        -- loggingSpec,
-        -- workflowSpec,
+        objectParseSpec,
+        appMonadSpec,        
+        rrdpXmlLazyParsingGroup,
+        rrdpUpdateSpec,
+        databaseGroup,
+        cacheGroup,
+        resourceGroup,        
+        validityGroup,
+        repositoryGroup,
+        rtrGroup,
+        httpSpec,
+        slurmGroup,
+        loggingSpec,
+        workflowSpec,
         partialValidationSpec
     ]  
