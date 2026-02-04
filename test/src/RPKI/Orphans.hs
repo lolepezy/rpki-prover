@@ -62,6 +62,7 @@ import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
 import           RPKI.Util       (convert, mkHash, encodeBase64)
 import           RPKI.Validation.Partial
+import           RPKI.Store.Database
 
 instance Arbitrary WorldVersion where
     arbitrary = genericArbitrary
