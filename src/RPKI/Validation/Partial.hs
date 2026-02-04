@@ -22,6 +22,7 @@ import           RPKI.AppMonad
 import           RPKI.Time
 import           RPKI.Domain
 import           RPKI.Util (ifJustM)
+import           RPKI.Store.Database
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
@@ -90,14 +91,14 @@ Ideas:
 
 
     * How to deal with expiring objects? Idea:
-      - Keep a mutimap Instant -> ObjectKey for it
+      - Keep a multimap Instant -> ObjectKey for it
       - Scan expiresAt, expire all the object for the given timestamp
       - Expire object means deleting all payloads found under that object
       - Expired objects stay in the tree and are filtered out by their validity 
         period, they become forever skipped, but it's easier to do that than
         actually modify MFT shortcuts
       - Similar applies to object that will be valid in the future (not yet valid). 
-        Store an index for them "maturesAt" and scan it periodically the same way as 
+        IndexStore an index for them "maturesAt" and scan it periodically the same way as 
         expiresAt. Generate object updates for these objects when they mature.
  
 
@@ -107,6 +108,15 @@ Ideas:
           or "validate whole TA"
         - Run expiration check first? (No, we skip stuff out of validity period 
           when traversing anything at all)
+
+    * How do deal with invalid objects?
+     - Complain when an object is found to be invalid
+       - invalid manifest means going through the manifest selection process again
+       - invalid CRL means the same as invalid manifest
+       - invalid CA?
+     - Wrap it in TroubledChild on the manifest shortcut
+
+    * Is there going to be issues with key rollovers?
 
 
     * Pre-group of filter update log? 
@@ -157,55 +167,13 @@ data Payload = VrpsP [Vrp]
 data Change a = Added a | Deleted a
     deriving (Show, Eq, Ord, Generic)    
 
--- Database
-
-data KIMeta = KIMeta {
-        caCertificate  :: CertKey,
-        parentKI       :: {-# UNPACK #-} KI,
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-instance {-# OVERLAPPING #-} WithValidityPeriod KIMeta where 
-    getValidityPeriod KIMeta {..} = (notValidBefore, notValidAfter)
-
-
-data ValidityPeriodIndex = VP_CA CertKey 
-                         | VP_MFT MftKey
-                         | VP_CRL ObjectKey MftKey
-                         | VP_Child ObjectKey MftKey
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-data Store s = Store {
-        kiMetas   :: SMap "ki-meta" s KI KIMeta,        
-        cert2mft  :: SMap "cert-to-mft" s CertKey MftKey,
-        mftShorts :: SMap "mft-shorts" s MftKey MftShortcut,
-
-        expiresAt :: SMultiMap "expires-at" s Instant ValidityPeriodIndex,
-        maturesAt :: SMultiMap "matures-at" s Instant ValidityPeriodIndex,
-
-        -- TODO Might be PP -> object?
-        repository2object :: SMultiMap "repo-key-to-obj-keys" s RepositoryKey ObjectKey,
-
-        caShortcuts :: SMultiMap "ca-shortcuts" s CertKey CaShortcut
-    }
-    deriving (Generic)
-
-
-
-instance Storage s => WithStorage s (Store s) where
-    storage Store {..} = storage kiMetas
-
 
 {- 
     - Validate top-down with shortcuts and the function to be called when found payloads.
     - Look at the KI -> KIMeta and update it if needed after validation for CA succeeds
     - Generate "Delete Payload" for payloads corresponding to the removed MFT children
 -} 
-validateCA :: Store s -> CertKey -> STM (Change Payload) -> ValidatorT IO ()
+validateCA :: Storage s => IndexStore s -> CertKey -> STM (Change Payload) -> ValidatorT IO ()
 validateCA store certKey onPayload = do
     validateCAPartially store certKey onPayload (const True)
 
@@ -214,14 +182,24 @@ validateCA store certKey onPayload = do
       * Pick up only CAs that are on somebody's path to the top
       * Pick up payloads (or their shortcuts) that are in the set up updates
 -}   
-validateCAPartially :: Store s 
+validateCAPartially :: Storage s 
+                    => IndexStore s 
                     -> CertKey 
                     -> STM (Change Payload) 
                     -> (ObjectKey -> Bool) 
                     -> ValidatorT IO ()
-validateCAPartially store@Store {..} certKey onPayload objectFilter = do
+validateCAPartially store@IndexStore {..} certKey onPayload objectFilter = do
     -- get CA from cache by certKey 
+    caShort <- liftIO $ roTx caShortcuts $ \tx -> M.get tx caShortcuts certKey
+    case caShort of
+        Nothing -> 
+            -- no shortcut, full validation needed
+            -- validateCAFully store certKey onPayload objectFilter
+            -- roTx store $ 
+            pure ()
 
+        Just ca@CaShortcut {..} -> do
+            pure ()
 
     -- get MFT shortcut from cache, do the dance with comparing MFT to its shortcut
 
@@ -234,8 +212,8 @@ validateCAPartially store@Store {..} certKey onPayload objectFilter = do
     pure ()
 
 
-traversePayloads :: Storage s => Store s -> CertKey -> (Payload -> STM ()) -> Bool -> IO ()
-traversePayloads store@Store {..} certKey onPayload includeExpired = do     
+traversePayloads :: Storage s => IndexStore s -> CertKey -> (Payload -> STM ()) -> Bool -> IO ()
+traversePayloads store@IndexStore {..} certKey onPayload includeExpired = do     
     now <- thisInstant
     let ifNotExpired :: forall a . WithValidityPeriod a => a -> IO () -> IO ()
         ifNotExpired object f  = if includeExpired 
