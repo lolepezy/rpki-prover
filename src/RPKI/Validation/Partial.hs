@@ -22,7 +22,8 @@ import           RPKI.AppMonad
 import           RPKI.Time
 import           RPKI.Domain
 import           RPKI.Util (ifJustM)
-import           RPKI.Store.Database
+import           RPKI.Store.Database (DB)
+import qualified RPKI.Store.Database as DB
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Base.Map      (SMap (..))
 import           RPKI.Store.Base.MultiMap (SMultiMap (..))
@@ -116,8 +117,12 @@ Ideas:
        - invalid CA?
      - Wrap it in TroubledChild on the manifest shortcut
 
-    * Is there going to be issues with key rollovers?
+    * How to deal fencing limits?
+     - probably the same as in top-down validation
 
+    * Is there going to be issues with key rollovers?
+     - probably not, there will be a diff on the parent manifest of each
+       CA with changed key, so there will be an empty diff of payloads
 
     * Pre-group of filter update log? 
         - Exclude repeated updates of the same repository/TA?
@@ -173,30 +178,42 @@ data Change a = Added a | Deleted a
     - Look at the KI -> KIMeta and update it if needed after validation for CA succeeds
     - Generate "Delete Payload" for payloads corresponding to the removed MFT children
 -} 
-validateCA :: Storage s => IndexStore s -> CertKey -> STM (Change Payload) -> ValidatorT IO ()
-validateCA store certKey onPayload = do
-    validateCAPartially store certKey onPayload (const True)
+validateCA :: Storage s => DB s -> CertKey -> STM (Change Payload) -> ValidatorT IO ()
+validateCA db certKey onPayload = do
+    validateCAPartially db certKey onPayload (const True)
 
 {- 
     Filter will be used to 
-      * Pick up only CAs that are on somebody's path to the top
+      * Pick up only CAs that are on somebody's path to the top\
       * Pick up payloads (or their shortcuts) that are in the set up updates
 -}   
 validateCAPartially :: Storage s 
-                    => IndexStore s 
+                    => DB s 
                     -> CertKey 
                     -> STM (Change Payload) 
                     -> (ObjectKey -> Bool) 
                     -> ValidatorT IO ()
-validateCAPartially store@IndexStore {..} certKey onPayload objectFilter = do
+validateCAPartially db certKey onPayload objectFilter = do
     -- get CA from cache by certKey 
-    caShort <- liftIO $ roTx caShortcuts $ \tx -> M.get tx caShortcuts certKey
+    let DB.IndexStore {..} = db ^. #objectStore . #indexStore
+    caShort <- liftIO $ roTx db $ \tx -> M.get tx caShortcuts certKey
     case caShort of
-        Nothing -> 
+        Nothing -> do
             -- no shortcut, full validation needed
             -- validateCAFully store certKey onPayload objectFilter
-            -- roTx store $ 
-            pure ()
+            z <- liftIO $ roTx db $ \tx -> DB.getObjectByKey tx db (coerce certKey)
+            case z of 
+                Nothing -> do 
+                    -- complain and bail out, it's an integrity error
+                    pure ()
+
+                Just (CerRO c) -> do
+                    -- validate fully
+                    pure ()
+
+                Just _ -> do 
+                    -- complain, it's an integrity error
+                    pure ()
 
         Just ca@CaShortcut {..} -> do
             pure ()
@@ -212,20 +229,21 @@ validateCAPartially store@IndexStore {..} certKey onPayload objectFilter = do
     pure ()
 
 
-traversePayloads :: Storage s => IndexStore s -> CertKey -> (Payload -> STM ()) -> Bool -> IO ()
-traversePayloads store@IndexStore {..} certKey onPayload includeExpired = do     
+traversePayloads :: Storage s => DB s -> CertKey -> (Payload -> STM ()) -> Bool -> IO ()
+traversePayloads db certKey onPayload includeExpired = do     
     now <- thisInstant
     let ifNotExpired :: forall a . WithValidityPeriod a => a -> IO () -> IO ()
         ifNotExpired object f  = if includeExpired 
                             then f
                             else when (isWithinValidityPeriod now object) f
     
+    let DB.IndexStore {..} = db ^. #objectStore . #indexStore
     ifJustM (roTx cert2mft $ \tx -> M.get tx cert2mft certKey) $ \mftKey -> 
         ifJustM (roTx mftShorts $ \tx -> M.get tx mftShorts mftKey) $ \mftShort -> do
             forM_ (Map.elems (mftShort ^. #nonCrlEntries)) $ \MftEntry {..} -> do
                 case child of
                     CaChild s@CaShortcut {..} _ ->                     
-                        ifNotExpired s $ traversePayloads store (coerce key) onPayload includeExpired                                            
+                        ifNotExpired s $ traversePayloads db (coerce key) onPayload includeExpired                                            
                     RoaChild r@RoaShortcut {..} _ -> 
                         ifNotExpired r $ atomically $ onPayload $ VrpsP vrps
                     AspaChild a@AspaShortcut {..} _ -> 
