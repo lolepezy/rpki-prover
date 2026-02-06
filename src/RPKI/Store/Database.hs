@@ -235,8 +235,8 @@ data IndexStore s = IndexStore {
         cert2mft  :: SMap "cert-to-mft" s CertKey MftKey,
         mftShorts :: SMap "mft-shorts" s MftKey MftShortcut,
 
-        expiresAt :: SMultiMap "expires-at" s Instant ValidityPeriodIndex,
-        maturesAt :: SMultiMap "matures-at" s Instant ValidityPeriodIndex,
+        expiresAt :: SMultiMap "expires-at" s Instant ObjectKey,
+        maturesAt :: SMultiMap "matures-at" s Instant ObjectKey,
 
         -- TODO Might be PP -> object?
         repository2object :: SMultiMap "repo-key-to-obj-keys" s RepositoryKey ObjectKey,
@@ -286,14 +286,6 @@ data KIMeta = KIMeta {
 
 instance {-# OVERLAPPING #-} WithValidityPeriod KIMeta where 
     getValidityPeriod KIMeta {..} = (notValidBefore, notValidAfter)
-
-
-data ValidityPeriodIndex = VP_CA CertKey 
-                         | VP_MFT MftKey
-                         | VP_CRL ObjectKey MftKey
-                         | VP_Child ObjectKey MftKey
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
 
 
 getKeyByHash :: (MonadIO m, Storage s) => 

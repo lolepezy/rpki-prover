@@ -178,7 +178,7 @@ data Change a = Added a | Deleted a
     - Look at the KI -> KIMeta and update it if needed after validation for CA succeeds
     - Generate "Delete Payload" for payloads corresponding to the removed MFT children
 -} 
-validateCA :: Storage s => DB s -> CertKey -> STM (Change Payload) -> ValidatorT IO ()
+validateCA :: Storage s => DB s -> CertKey -> (Change Payload -> STM ()) -> ValidatorT IO ()
 validateCA db certKey onPayload = do
     validateCAPartially db certKey onPayload (const True)
 
@@ -190,17 +190,15 @@ validateCA db certKey onPayload = do
 validateCAPartially :: Storage s 
                     => DB s 
                     -> CertKey 
-                    -> STM (Change Payload) 
+                    -> (Change Payload -> STM ()) 
                     -> (ObjectKey -> Bool) 
                     -> ValidatorT IO ()
 validateCAPartially db certKey onPayload objectFilter = do
-    -- get CA from cache by certKey 
     let DB.IndexStore {..} = db ^. #objectStore . #indexStore
     caShort <- liftIO $ roTx db $ \tx -> M.get tx caShortcuts certKey
     case caShort of
         Nothing -> do
             -- no shortcut, full validation needed
-            -- validateCAFully store certKey onPayload objectFilter
             z <- liftIO $ roTx db $ \tx -> DB.getObjectByKey tx db (coerce certKey)
             case z of 
                 Nothing -> do 
@@ -258,6 +256,11 @@ traversePayloads db certKey onPayload includeExpired = do
                         pure ()                                
               
 
+expireObjects :: Storage s => DB s -> Instant -> IO ()
+expireObjects db now = do
+    let DB.IndexStore {..} = db ^. #objectStore . #indexStore
+    expiredObjects <- roTx expiresAt $ \tx -> MM.allForKey tx expiresAt now
+    pure ()
 
 findStartCas readFromCache accept newObjects = do
     cas <- fmap catMaybes $ forM newObjects $ \o -> do

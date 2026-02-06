@@ -26,8 +26,8 @@ delete tx (SMultiMap _ s) k v = S.deleteMu tx s (storableKey k) (storableValue v
 fold :: (AsStorable k, AsStorable v) =>
         Tx s m -> SMultiMap name s k v -> (a -> k -> v -> IO a) -> a -> IO a
 fold tx (SMultiMap _ s) f a = S.foldMu tx s f' a
-    where
-        f' z (SKey sk) (SValue sv) = f z (fromStorable sk) (fromStorable sv)
+  where
+    f' z (SKey sk) (SValue sv) = f z (fromStorable sk) (fromStorable sv)
 
 foldS :: (AsStorable k, AsStorable v) =>
         Tx s m -> SMultiMap name s k v -> k -> (a -> k -> v -> IO a) -> a -> IO a
@@ -37,7 +37,7 @@ foldS tx (SMultiMap _ s) k f a = S.foldMuForKey tx s (storableKey k) f' a
 
 allForKey :: (AsStorable k, AsStorable v) =>
             Tx s m -> SMultiMap name s k v -> k -> IO [v]
-allForKey tx (SMultiMap _ s) k = reverse <$> S.foldMuForKey tx s (storableKey k) f []
+allForKey tx (SMultiMap _ s) k = S.foldMuForKey tx s (storableKey k) f []
   where
     f z _ (SValue sv) = pure $! let !q = fromStorable sv in q : z
 
