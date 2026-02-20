@@ -101,6 +101,15 @@ Ideas:
       - Similar applies to object that will be valid in the future (not yet valid). 
         IndexStore an index for them "maturesAt" and scan it periodically the same way as 
         expiresAt. Generate object updates for these objects when they mature.
+      - data for expiration: 
+        + timestamp -> objectKey
+        + key -> AKI
+        + AKI -> CA
+        + retire all payloads under CA for the key
+      - data for maturing:
+        + timestamp -> objectKey
+        + objectKey -> AKI
+        + run revalidation for (objectKey, AKI), something simi
  
 
     * What happens when the validator is launched after a long time of not running? 
@@ -154,7 +163,7 @@ data UpdateHappened = ObjectUpdate AddedObject
 
 data AddedObject = AddedObject {
         objectKey :: {-# UNPACK #-} ObjectKey,
-        ki        :: KI        
+        aki       :: AKI        
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
