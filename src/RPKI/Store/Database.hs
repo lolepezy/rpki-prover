@@ -277,7 +277,7 @@ data MftShortcutStore s = MftShortcutStore {
 
 data KIMeta = KIMeta {
         caCertificate  :: CertKey,
-        parentKI       :: {-# UNPACK #-} KI,
+        aki            :: {-# UNPACK #-} AKI,
         notValidBefore :: Instant,
         notValidAfter  :: Instant
     }

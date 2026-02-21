@@ -2,28 +2,15 @@
 
 module RPKI.PartialValidationSpec where
 
-import Control.Lens
-import Control.Monad (replicateM)
-
 import Data.Text (Text)
-import Data.Maybe (catMaybes, isJust)
-import Data.List (sort, isPrefixOf, sortOn)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
 import GHC.Generics
 
 import           Test.Tasty
-import           Test.QuickCheck.Arbitrary.Generic
-import qualified Test.Tasty.QuickCheck             as QC
 import qualified Test.Tasty.HUnit                  as HU
 
-import           Test.QuickCheck.Gen
-
-import           RPKI.Domain
-import           RPKI.Repository
-import           RPKI.Util
-import           RPKI.Orphans
 import           RPKI.Validation.Partial
 
 
@@ -156,15 +143,15 @@ shouldFindStartCasExpired = do
 
 
 newCache :: [(Text, Text, Int)] -> Map.Map Text TestKIMeta
-newCache metas = Map.fromList [ (ki, TestKIMeta { parentKI = pki, caCertificate = ca }) | (ki, pki, ca) <- metas ]
+newCache metas = Map.fromList [ (ki, TestKIMeta { aki = pki, caCertificate = ca }) | (ki, pki, ca) <- metas ]
 
 
 data TestKIMeta = TestKIMeta {
-    parentKI      :: Text,
+    aki      :: Text,
     caCertificate :: Int
 } deriving (Eq, Show, Generic)
 
 data TestAdded = TestAdded {
     objectKey :: Int,
-    ki        :: Text  
+    aki       :: Text  
 } deriving (Eq, Show, Generic)

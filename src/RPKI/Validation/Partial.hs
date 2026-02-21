@@ -16,6 +16,8 @@ import           Data.Maybe (catMaybes)
 import           Data.Coerce
 import           Data.Tuple.Strict
 
+import           Data.Generics.Product.Fields
+
 import           GHC.Generics
 
 import           RPKI.AppMonad
@@ -49,7 +51,7 @@ related to the changed objects:
 
 Create re-validation tasks of the kind
 
-- Added ParentKI ObjectKey
+- Added aki ObjectKey
 - Or WholeRepository RepositoryId
 - Or WholeTA TaName
 
@@ -62,7 +64,7 @@ of children and not children themselves (TODO It will make sense only
 if fileName can also be stored outside of the MFT shortcut).
 
 Create a tree of CAs and payloads, i.e store
-    KI -> KIMeta (parentKI, caCertificate, expiresAt) -- index to find a CA by its KI
+    KI -> KIMeta (aki, caCertificate, expiresAt) -- index to find a CA by its KI
     CertKey -> MftKey -- certificate to its current manifest mapping 
     MftKey -> MftShortcut -- manifest shortcuts
 
@@ -272,26 +274,31 @@ expireObjects db now = do
     pure ()
 
 findStartCas :: Storage s 
-               => Store s 
+               => DB s 
                -> [AddedObject] 
                -> ValidatorT IO (Set.Set CertKey, Set.Set CertKey)
-findStartCas Store {..} newObjects = do
+findStartCas db newObjects = do    
     now <- thisInstant
     liftIO $ findStartCasGen readFromCache (\_ -> isWithinValidityPeriod now) newObjects
   where
-    readFromCache ki = 
+    DB.IndexStore {..} = db ^. #objectStore . #indexStore
+    readFromCache (AKI ki) = 
         roTx kiMetas $ \tx -> M.get tx kiMetas ki
 
 
-
+findStartCasGen :: (Eq a2, Ord a,  HasField' "aki" t a2, HasField' "caCertificate" t2 a, HasField' "aki" t2 a2) 
+                => (a2 -> IO (Maybe t2)) 
+                -> (a2 -> t2 -> Bool) 
+                -> [t]
+                -> IO (Set.Set a, Set.Set a)
 findStartCasGen readFromCache accept newObjects = do
     cas <- fmap catMaybes $ forM newObjects $ \o -> do
-                let ki = o ^. #ki
-                mkiMeta <- readFromCache ki
+                let aki = o ^. #aki
+                mkiMeta <- readFromCache aki 
                 pure $ case mkiMeta of
                     Just kiMeta
-                        | accept ki kiMeta -> Just (ki, kiMeta)
-                        | otherwise        -> Nothing
+                        | accept aki kiMeta -> Just (aki, kiMeta)
+                        | otherwise         -> Nothing
                     Nothing -> Nothing
 
     let startCas = Set.fromList [ kiMeta ^. #caCertificate | (_, kiMeta) <- cas ]    
@@ -308,18 +315,18 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
     go readFromCache accept (ki, kiMeta) startCas mempty mempty 
   where 
     go readFromCache accept (ki, kiMeta) startCas paths ignored = do
-        let parentKI = kiMeta ^. #parentKI
+        let aki = kiMeta ^. #aki
         let certKey = kiMeta ^. #caCertificate
 
         let paths' = Set.insert certKey paths
 
         -- if it's the root stop                    
-        if ki == parentKI then
+        if ki == aki then
             pure (paths', ignored)
         else 
-            readFromCache parentKI >>= \case
+            readFromCache aki >>= \case
                 Just parent
-                    | accept parentKI parent -> do 
+                    | accept aki parent -> do 
                         let parentCa = parent ^. #caCertificate                        
                         let ignored' = 
                                 if parentCa `Set.member` startCas 
@@ -327,7 +334,7 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
                                     else ignored
 
                         go readFromCache accept 
-                            (parentKI, parent) startCas paths' ignored'
+                            (aki, parent) startCas paths' ignored'
 
                     | otherwise -> 
                         -- Parent that is not acceptable (expire or not valid yet)
