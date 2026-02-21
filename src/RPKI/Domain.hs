@@ -182,6 +182,7 @@ instance {-# OVERLAPPING #-} WithRpkiURL u => WithURL u where
 toText :: RpkiURL -> Text
 toText = unURI . getURL 
 
+-- Key Identifier
 newtype KI = KI BSS.ShortByteString 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -501,8 +502,8 @@ data MftPair = MftPair {
 data Manifest = Manifest {
         mftNumber   :: Serial, 
         fileHashAlg :: X509.HashALG, 
-        thisTime    :: {-# UNPACK #-} Instant, 
-        nextTime    :: {-# UNPACK #-} Instant, 
+        thisTime    :: Instant, 
+        nextTime    :: Instant, 
         mftEntries  :: [MftPair]
     } 
     deriving stock (Show, Eq, Generic)
@@ -748,6 +749,18 @@ newtype ObjectKey = ObjectKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
+newtype CertKey = CertKey ArtificialKey
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+newtype MftKey = MftKey ArtificialKey
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+newtype RepositoryKey = RepositoryKey ArtificialKey
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
 newtype ArtificialKey = ArtificialKey Int64
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -789,7 +802,7 @@ newtype EarliestToExpire = EarliestToExpire Instant
 instance Monoid EarliestToExpire where
     -- It is 2262-04-11 23:47:16.000Z, it's 
     -- 1) far enough to set it as "later that anything else"
-    -- 2) Anything bigger than that wraps around to the year 1677
+    -- 2) Anything bigger wraps around to the year 1677
     mempty = EarliestToExpire $ Instant $ 1000_000_000 * 9_223_372_036
 
 -- Small utility functions that don't have anywhere else to go

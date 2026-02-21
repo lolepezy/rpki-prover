@@ -43,8 +43,8 @@ data MftEntry = MftEntry {
 
 data CrlShortcut = CrlShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant        
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant        
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -52,8 +52,8 @@ data CrlShortcut = CrlShortcut {
 data MftShortcut = MftShortcut { 
         key            :: {-# UNPACK #-} ObjectKey,
         nonCrlEntries  :: Map.Map ObjectKey MftEntry,
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant,        
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant,        
         serial         :: {-# UNPACK #-} Serial,
         manifestNumber :: {-# UNPACK #-} Serial,
         crlShortcut    :: CrlShortcut        
@@ -65,8 +65,8 @@ data CaShortcut = CaShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
         ski            :: SKI,
         ppas           :: PublicationPointAccess,
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant,
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -81,8 +81,8 @@ data Ca = CaShort CaShortcut
 data RoaShortcut = RoaShortcut {
         key            :: {-# UNPACK #-} ObjectKey,        
         vrps           :: [Vrp],
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant,
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -91,8 +91,8 @@ data RoaShortcut = RoaShortcut {
 data SplShortcut = SplShortcut {
         key            :: {-# UNPACK #-} ObjectKey,        
         splPayload     :: SplPayload,
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant,
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -101,8 +101,8 @@ data SplShortcut = SplShortcut {
 data AspaShortcut = AspaShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
         aspa           :: Aspa,
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant,
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -111,8 +111,8 @@ data AspaShortcut = AspaShortcut {
 data BgpSecShortcut = BgpSecShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
         bgpSec         :: BGPSecPayload,
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant,
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -121,8 +121,8 @@ data BgpSecShortcut = BgpSecShortcut {
 data GbrShortcut = GbrShortcut {
         key            :: {-# UNPACK #-} ObjectKey,    
         gbr            :: T2 Hash Gbr,
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant,
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -164,6 +164,7 @@ instance ToSchema CrlShortcut
 
 instance ToSchema MftChild where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+
 
 getMftChildSerial :: MftChild -> Maybe Serial     
 getMftChildSerial = \case 

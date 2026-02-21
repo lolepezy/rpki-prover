@@ -203,10 +203,10 @@ allResources (IpResources (IpResourceSet i4 i6)) (AsResources a) = AllResources 
 
 toPrefixesAndAsns :: AllResources -> PrefixesAndAsns
 toPrefixesAndAsns (AllResources ipv4 ipv6 asn) = 
-    PrefixesAndAsns (get ipv4) (get ipv6) (get asn)
+    PrefixesAndAsns (get_ ipv4) (get_ ipv6) (get_ asn)
     where 
-        get (RS r) = r
-        get Inherit = IS.empty
+        get_ (RS r) = r
+        get_ Inherit = IS.empty
 
 
 containsAsn :: AsResource -> AsResource -> Bool
