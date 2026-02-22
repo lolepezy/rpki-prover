@@ -203,10 +203,10 @@ allResources (IpResources (IpResourceSet i4 i6)) (AsResources a) = AllResources 
 
 toPrefixesAndAsns :: AllResources -> PrefixesAndAsns
 toPrefixesAndAsns (AllResources ipv4 ipv6 asn) = 
-    PrefixesAndAsns (get ipv4) (get ipv6) (get asn)
-    where 
-        get (RS r) = r
-        get Inherit = IS.empty
+    PrefixesAndAsns (g ipv4) (g ipv6) (g asn)
+  where 
+    g (RS r) = r
+    g Inherit = IS.empty
 
 
 containsAsn :: AsResource -> AsResource -> Bool
@@ -368,7 +368,7 @@ parseAsnT = parseAsn . Text.unpack
 
 parseAsn :: String -> Maybe ASN
 parseAsn = \case 
-    (a : s : n)
-        | (a == 'a' || a == 'A') && (s == 's' || s == 'S') -> 
-            ASN <$> readMaybe n
+    a : s : n
+        | (a == 'a' || a == 'A') && (s == 's' || s == 'S') -> ASN <$> readMaybe n
+        | otherwise -> Nothing
     n -> ASN <$> readMaybe n
