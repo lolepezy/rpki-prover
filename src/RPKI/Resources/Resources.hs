@@ -370,5 +370,4 @@ parseAsn :: String -> Maybe ASN
 parseAsn = \case 
     a : s : n
         | (a == 'a' || a == 'A') && (s == 's' || s == 'S') -> ASN <$> readMaybe n
-        | otherwise -> Nothing
     n -> ASN <$> readMaybe n
