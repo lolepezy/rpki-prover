@@ -66,7 +66,6 @@ import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Util
-import           RPKI.Resources.Resources
 import           RPKI.Validation.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Validation.ResourceValidation
@@ -1361,9 +1360,16 @@ validateCaNoFetch
             markAsUsed topDownContext childKey            
             case child of 
                 CaChild caShortcut _ -> do 
+                    (childVerifiedResources, _) <- 
+                        vHoist $ validateChildParentResources (config ^. #validationConfig . typed)                                 
+                                    (caShortcut ^. #resources) 
+                                    parentCaResources
+                                    (topDownContext ^. #verifiedResources) 
+                    
                     let childTopDownContext = topDownContext
-                            & #verifiedResources ?~ VerifiedRS (toPrefixesAndAsns $ caShortcut ^. #resources)
-                            & #currentPathDepth %~ (+ 1)                    
+                            & #currentPathDepth %~ (+ 1)                                        
+                            & #verifiedResources ?~ childVerifiedResources
+                            
                     validateCa appContext childTopDownContext (CaShort caShortcut)
                         
                 RoaChild r@RoaShortcut {..} _ -> 
