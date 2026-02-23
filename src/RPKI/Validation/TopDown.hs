@@ -1360,15 +1360,14 @@ validateCaNoFetch
             markAsUsed topDownContext childKey            
             case child of 
                 CaChild caShortcut _ -> do 
-                    (childVerifiedResources, _) <- 
+                    (childVerifiedResources, overlclaiming) <- 
                         vHoist $ validateChildParentResources (config ^. #validationConfig . typed)                                 
-                                    (caShortcut ^. #resources) 
-                                    parentCaResources
-                                    (topDownContext ^. #verifiedResources) 
+                                    (caShortcut ^. #resources) parentCaResources verifiedResources
                     
                     let childTopDownContext = topDownContext
                             & #currentPathDepth %~ (+ 1)                                        
                             & #verifiedResources ?~ childVerifiedResources
+                            & #overclaimingHappened .~ isJust overlclaiming
                             
                     validateCa appContext childTopDownContext (CaShort caShortcut)
                         
