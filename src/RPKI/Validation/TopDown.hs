@@ -1311,7 +1311,7 @@ validateCaNoFetch
                                 -- Should never happen, there are no troubled children
                                 integrityError appContext [i|Impossible happened!|]
                         _  -> do 
-                            caFull   <- either (pure . id) id findFullCa
+                            caFull   <- either pure id findFullCa
                             validCrl <- findValidCrl
                             pure $ \childKey fileName -> 
                                     validateTroubledChild caFull fileName validCrl childKey                        
