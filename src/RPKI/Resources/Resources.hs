@@ -208,16 +208,6 @@ toPrefixesAndAsns (AllResources ipv4 ipv6 asn) =
     g (RS r) = r
     g Inherit = IS.empty
 
-
-shrinkTo :: AllResources -> AllResources -> AllResources
-shrinkTo (AllResources i4 i6 a) (AllResources i4' i6' a') = 
-    AllResources (shrinkTo' i4 i4') (shrinkTo' i6 i6') (shrinkTo' a a')
-  where
-    shrinkTo' Inherit r = r
-    shrinkTo' r Inherit = r
-    shrinkTo' (RS r1) (RS r2) = RS $ IS.fromList $ IS.toList r1 <> IS.toList r2
-
-
 containsAsn :: AsResource -> AsResource -> Bool
 containsAsn (AS a) (AS b) = a == b
 containsAsn (AS a) (ASRange b0 b1) = a == b0 && a == b1
