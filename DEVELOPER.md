@@ -14,6 +14,7 @@ https://github.com/commercialhaskell/stack/issues/1406 and nobody gives a crap. 
 
 So
 - Full build is done by the `./build-local.sh` script, it should normally take 30-40 minutes on an average computer.
+- Static binary is built by `./build-static.sh`.
 - Tests can be run using `./run-tests.sh`.
 - The command for using `ghcid` is 
 
