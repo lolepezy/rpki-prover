@@ -25,6 +25,7 @@ import           GHC.Generics
 
 import           Data.Foldable
 import           Data.IORef
+import           Data.Either
 import           Data.Maybe
 import qualified Data.Set.NonEmpty                as NESet
 import           Data.Map.Strict                  (Map)
@@ -64,7 +65,7 @@ import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
-import           RPKI.Util                        
+import           RPKI.Util
 import           RPKI.Validation.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Validation.ResourceValidation
@@ -457,15 +458,14 @@ validateFromTACert
   = do
     fromTryM
         (UnspecifiedE (unTaName taName) . fmtEx)
-        (do
-            -- TODO That might not be necessary
-            let publicationPoints' = 
-                    case filterPPAccess config initialRepos of 
-                        Just filteredRepos -> foldr mergePP publicationPoints $ unPublicationPointAccess filteredRepos
-                        Nothing            -> publicationPoints
-            validateCa appContext 
-                (topDownContext & #allTas . #publicationPoints .~ publicationPoints') 
-                (CaFull taCert))
+        (validateCa appContext 
+            (topDownContext & #allTas . #publicationPoints .~ publicationPoints') 
+            (CaFull taCert))
+  where
+    publicationPoints' = 
+        case filterPPAccess config initialRepos of 
+            Just filteredRepos -> foldr mergePP publicationPoints $ unPublicationPointAccess filteredRepos
+            Nothing            -> publicationPoints
 
 
 validateCa :: Storage s =>
@@ -670,7 +670,7 @@ validateCaNoFetch
             markAsUsed topDownContext crlKey
             overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) aki
             collectPayloads mftShortcut (Just overlappingChildren) 
-                        (pure fullCa)
+                        (Left fullCa)
                         (findAndValidateCrl fullCa mft aki)   
                         (getResources ca)
 
@@ -678,7 +678,7 @@ validateCaNoFetch
             let crlKey = mftShortcut ^. #crlShortcut . #key                
             markAsUsed topDownContext crlKey
             collectPayloads mftShortcut Nothing 
-                    (getFullCa appContext topDownContext ca)
+                    (Right $ getFullCa appContext topDownContext ca)
                     (getCrlByKey appContext crlKey)
                     (getResources ca)             
 
@@ -879,18 +879,16 @@ validateCaNoFetch
                 Nothing  -> vError $ NoCRLExists aki crlHash
                 Just key -> do           
                     increment $ topDownCounters ^. #readParsed
-                    -- CRLs are not parsed right after fetching, so try to get the blob
                     z <- getParsedObject tx db key $ vError $ NoCRLExists aki crlHash
                     case z of 
                         Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey -> do
                             markAsUsed topDownContext crlKey
                             inSubLocationScope (getURL $ pickLocation crlLocations) $ do 
                                 validateObjectLocations locatedCrl
-                                vHoist $ do
-                                    let mftEECert = getEECert $ unCMS $ cmsPayload mft
-                                    checkCrlLocation locatedCrl mftEECert
-                                    void $ validateCrl now crl fullCa                
-                                    pure $! Keyed (Validated crl) crlKey                                        
+                                vHoist $ do                                    
+                                    checkCrlLocation locatedCrl $ getEECert $ unCMS $ cmsPayload mft
+                                    validatedCrl <- validateCrl now crl fullCa                
+                                    pure $! Keyed validatedCrl crlKey                                        
                         _ -> 
                             vError $ CRLHashPointsToAnotherObject crlHash   
             
@@ -1146,7 +1144,7 @@ validateCaNoFetch
                         -- https://mailarchive.ietf.org/arch/msg/sidrops/wRa88GHsJ8NMvfpuxXsT2_JXQSU/
                         --                             
                         vHoist $ validateAIA @_ @_ @'CACert childCert fullCa
-
+ 
                         (childVerifiedResources, overlclaiming) 
                             <- vHoist $ do
                                 Validated validCert <- validateResourceCert @_ @_ @'CACert
@@ -1277,7 +1275,7 @@ validateCaNoFetch
 
     collectPayloads :: MftShortcut 
                     -> Maybe [T3 Text Hash ObjectKey] 
-                    -> ValidatorT IO (Located CaCerObject)
+                    -> Either (Located CaCerObject) (ValidatorT IO (Located CaCerObject))
                     -> ValidatorT IO (Keyed (Validated CrlObject))             
                     -> AllResources
                     -> ValidatorT IO ()
@@ -1291,7 +1289,7 @@ validateCaNoFetch
                     Nothing -> Map.toList nonCrlEntries
                     Just ch -> catMaybes [ (k,) <$> Map.lookup k nonCrlEntries | T3 _ _ k <- ch ]
 
-        let T3 caCount troubledCount totalCount = 
+        let T3 !caCount !troubledCount !totalCount = 
                 foldr (\(_, MftEntry {..}) (T3 cas troubled total) -> 
                         case child of 
                             CaChild {}       -> T3 (cas + 1) troubled       (total + 1)
@@ -1316,7 +1314,7 @@ validateCaNoFetch
                                 -- Should never happen, there are no troubled children
                                 integrityError appContext [i|Impossible happened!|]
                         _  -> do 
-                            caFull   <- findFullCa
+                            caFull   <- either pure id findFullCa
                             validCrl <- findValidCrl
                             pure $ \childKey fileName -> 
                                     validateTroubledChild caFull fileName validCrl childKey                        
@@ -1364,8 +1362,17 @@ validateCaNoFetch
         getChildPayloads troubledValidation (childKey, MftEntry {..}) = do 
             markAsUsed topDownContext childKey            
             case child of 
-                CaChild caShortcut _ ->                     
-                    validateCa appContext topDownContext (CaShort caShortcut)
+                CaChild caShortcut _ -> do 
+                    (childVerifiedResources, overlclaiming) <- 
+                        vHoist $ validateChildParentResources (config ^. #validationConfig . typed)                                 
+                                    (caShortcut ^. #resources) parentCaResources verifiedResources
+                    
+                    let childTopDownContext = topDownContext
+                            & #currentPathDepth %~ (+ 1)                                        
+                            & #verifiedResources ?~ childVerifiedResources
+                            & #overclaimingHappened .~ isJust overlclaiming
+                            
+                    validateCa appContext childTopDownContext (CaShort caShortcut)
                         
                 RoaChild r@RoaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do                    
@@ -1406,17 +1413,23 @@ validateCaNoFetch
                     troubledValidation childKey_ fileName
     
         validateShortcut :: (WithValidityPeriod s, HasField' "resources" s AllResources) => s -> ObjectKey -> ValidatorT IO ()
-        validateShortcut r key = do
+        validateShortcut shortcut key = do
             validateLocationForShortcut key            
-            (_, notValidAfter) <- vHoist $ validateObjectValidityPeriod r now
-            rememberNotValidAfter topDownContext notValidAfter
-            vHoist $ case validationRFC of
-                StrictRFC       -> pure ()
-                ReconsideredRFC 
-                    | overclaimingHappened -> 
-                        void $ validateChildParentResources validationRFC 
-                            (r ^. #resources) parentCaResources verifiedResources
-                    | otherwise -> pure ()
+            (_, notValidAfter) <- vHoist $ validateObjectValidityPeriod shortcut now
+            rememberNotValidAfter topDownContext notValidAfter            
+            {- We need to revalidate resources if either of the following happens:
+                1) We came here from validating a new CA certificate, and not from a CA shortcut.
+                   That can be determined by checking if `findFullCa` is `Left`.
+                2) There were overclaiming resources on the way from the top to this CA
+            -}
+            let revalidateResources =
+                    let potentiallyNewResources = isLeft findFullCa
+                    in case validationRFC of 
+                        StrictRFC       -> potentiallyNewResources
+                        ReconsideredRFC -> potentiallyNewResources || overclaimingHappened
+            when revalidateResources $             
+                void $ vHoist $ validateChildParentResources validationRFC 
+                    (shortcut ^. #resources) parentCaResources verifiedResources
             
 
 
