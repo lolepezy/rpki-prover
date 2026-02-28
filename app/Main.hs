@@ -73,8 +73,9 @@ import           RPKI.UniqueId
 
 import           Network.HTTP.Client
 import           Network.HTTP.Client.TLS
--- import           Network.HTTP.Simple
+import           Network.HTTP.Simple
 import           Network.Connection
+import           Network.TLS
 
 
 main :: IO ()
@@ -155,7 +156,7 @@ executeWorkerProcess = do
     let config = adjustWorkerConfig (input ^. typed @Config) (input ^. #workerTimeout)
     let logConfig = newLogConfig (config ^. #logLevel) WorkerLog
                     
-    -- turnOffTlsValidation
+    turnOffTlsValidation
 
     appContextRef <- newTVarIO Nothing
     let onExit exitCode = do            
@@ -208,10 +209,10 @@ executeWorkerProcess = do
     exec resultHandler f = resultHandler =<< execWithStats f    
 
 
--- turnOffTlsValidation :: IO ()
--- turnOffTlsValidation = do 
---     manager <- newManager $ mkManagerSettings (TLSSettingsSimple True True True) Nothing 
---     setGlobalManager manager    
+turnOffTlsValidation :: IO ()
+turnOffTlsValidation = do 
+    manager <- newManager $ mkManagerSettings (TLSSettingsSimple True True True defaultSupported) Nothing 
+    setGlobalManager manager    
 
 
 readTALs :: (Storage s, MaintainableStorage s) => AppContext s -> IO [TAL]
