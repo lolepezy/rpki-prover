@@ -270,7 +270,13 @@ traversePayloads db certKey onPayload includeExpired = do
 expireObjects :: Storage s => DB s -> Instant -> IO ()
 expireObjects db now = do
     let DB.IndexStore {..} = db ^. #objectStore . #indexStore
-    expiredObjects <- roTx expiresAt $ \tx -> MM.allForKey tx expiresAt now
+    
+    expired <- roTx expiresAt $ \tx -> 
+        MM.fold tx expiresAt (\z t objectKey -> do        
+            pure $! if t <= now 
+                        then Set.insert objectKey z
+                        else z) 
+            Set.empty
     pure ()
 
 findStartCas :: Storage s 
