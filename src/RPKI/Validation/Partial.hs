@@ -238,7 +238,12 @@ validateCAPartially db certKey onPayload objectFilter = do
     pure ()
 
 
-traversePayloads :: Storage s => DB s -> CertKey -> (Payload -> STM ()) -> Bool -> IO ()
+traversePayloads :: Storage s 
+                => DB s 
+                -> CertKey 
+                -> (ObjectKey -> Payload -> STM ()) 
+                -> Bool 
+                -> IO ()
 traversePayloads db certKey onPayload includeExpired = do     
     now <- thisInstant
     let ifNotExpired :: forall a . WithValidityPeriod a => a -> IO () -> IO ()
@@ -254,30 +259,37 @@ traversePayloads db certKey onPayload includeExpired = do
                     CaChild s@CaShortcut {..} _ ->                     
                         ifNotExpired s $ traversePayloads db (coerce key) onPayload includeExpired                                            
                     RoaChild r@RoaShortcut {..} _ -> 
-                        ifNotExpired r $ atomically $ onPayload $ VrpsP vrps
+                        ifNotExpired r $ atomically $ onPayload key $ VrpsP vrps
                     AspaChild a@AspaShortcut {..} _ -> 
-                        ifNotExpired a $ atomically $ onPayload $ AspaP aspa                        
+                        ifNotExpired a $ atomically $ onPayload key $ AspaP aspa                        
                     SplChild s@SplShortcut {..} _ -> 
-                        ifNotExpired s $ atomically $ onPayload $ SplP splPayload                    
+                        ifNotExpired s $ atomically $ onPayload key $ SplP splPayload                    
                     BgpSecChild b@BgpSecShortcut {..} _ -> 
-                        ifNotExpired b $ atomically $ onPayload $ BgpSecP bgpSec
+                        ifNotExpired b $ atomically $ onPayload key $ BgpSecP bgpSec
                     GbrChild g@GbrShortcut {..} _ -> 
-                        ifNotExpired g $ atomically $ onPayload $ GbrP gbr
+                        ifNotExpired g $ atomically $ onPayload key $ GbrP gbr
                     _ -> 
                         pure ()                                
               
 
-expireObjects :: Storage s => DB s -> Instant -> IO ()
+expireObjects :: Storage s => DB s -> Instant -> IO (Maybe Instant)
 expireObjects db now = do
     let DB.IndexStore {..} = db ^. #objectStore . #indexStore
     
-    expired <- roTx expiresAt $ \tx -> 
-        MM.fold tx expiresAt (\z t objectKey -> do        
-            pure $! if t <= now 
-                        then Set.insert objectKey z
-                        else z) 
-            Set.empty
-    pure ()
+    T2 expired nextToExpire <- 
+        roTx expiresAt $ \tx -> 
+            MM.fold tx expiresAt (\(T2 expired next) t objectKey -> do
+                let next' = 
+                        if t > now then Just $ maybe t (min t) next                        
+                        else next
+                pure $! if t <= now 
+                            then T2 (Set.insert objectKey expired) next'
+                            else T2 expired next') 
+                (T2 mempty Nothing)
+
+    -- traversePayloads db (coerce <$> expired) (\_ _ -> pure ()) False        
+
+    pure nextToExpire
 
 findStartCas :: Storage s 
                => DB s 
