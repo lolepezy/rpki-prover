@@ -155,10 +155,13 @@ withWorkflowShared AppContext {..} prometheusMetrics tals f = do
         earliestToExpire <- newTVar mempty
         pure WorkflowShared {..}
 
-    f shared `finally`
-        liftIO (mask_ $ do
-            fs <- atomically $ Map.elems <$> readTVar (shared ^. #fetchers . #runningFetchers)
-            for_ fs $ \thread -> Conc.throwTo thread AsyncCancelled)
+    f shared `finally` cleanUp shared
+  where 
+    cleanUp shared = liftIO $ mask_ $ do
+        fs <- fmap Map.toList $ atomically $ readTVar $ shared ^. #fetchers . #runningFetchers
+        for_ fs $ \(url, thread) -> do 
+            logInfo logger [i|Cleaning up fetcher for #{url}, cancelling thread #{show thread}.|]
+            Conc.throwTo thread AsyncCancelled
 
 
 -- Different types of periodic tasks that may run 
@@ -213,6 +216,8 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
   where
     maxRecoveryAttempts = 10 :: Int
 
+    {-     
+    -}
     selfRecoveryLoop recoveryAttempts = do
         let txTimeoutHandler = 
                 if recoveryAttempts >= maxRecoveryAttempts
@@ -307,13 +312,13 @@ runAll appContext@AppContext {..} tals = do
                             scheduleNextAndLoop
           where
             scheduleNextAndLoop = do 
-                void $ forkFinally 
-                    (do              
-                        -- If this thread leaks, it's not a biggy, it will exit pretty soon           
-                        Conc.threadDelay $ toMicroseconds $ config ^. #validationConfig . #minimalRevalidationInterval
-                        atomically $ writeTVar canValidateAgain True)
-                    (logException logger "Exception in revalidation delay thread")
+                void $ forkFinally waitUntilNextValidation (logException logger "Exception in revalidation delay thread")
                 triggeredValidationLoop canValidateAgain RanBefore           
+              
+            waitUntilNextValidation = do              
+                -- If this thread leaks, it's not a biggy, it will exit pretty soon           
+                Conc.threadDelay $ toMicroseconds $ config ^. #validationConfig . #minimalRevalidationInterval
+                atomically $ writeTVar canValidateAgain True
 
             waitForTasToValidate = atomically $ do
                 (`unless` retry) =<< readTVar canValidateAgain                
@@ -347,6 +352,7 @@ runAll appContext@AppContext {..} tals = do
         versions  <- roTxT database DB.getLatestVersions
         fetchedBy <- readTVarIO firstFinishedFetchBy                
         urisByTA  <- readTVarIO uriByTa
+        Fetcheables fetcheables_ <- readTVarIO fetcheables
 
         logDebug logger [i|Checking if all validations are later than fetches, versions = #{versions}, fetchedBy = #{fetchedBy}, urisByTA = #{urisByTA}|]
 
@@ -357,7 +363,8 @@ runAll appContext@AppContext {..} tals = do
                         z  -> let 
                             (fetchedAtLeastOnce, notFetched) = List.partition isJust z
                             in case notFetched of 
-                                [] -> all (validatedBy >) $ catMaybes fetchedAtLeastOnce
+                                -- TODO Analyze _fetchStatus as well
+                                [] -> all (\(fetchedVersion, _fetchStatus) -> validatedBy > fetchedVersion) $ catMaybes fetchedAtLeastOnce
                                 _  -> False
                     ) $ perTA versions
 
@@ -753,7 +760,10 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     -- fetch/validation issues are present    
     handleValidations tx db validations = do
         forceSnapshotForReferencialIssues tx db validations
-        -- other processings if needed
+        -- TODO other processings
+        -- Such as 
+        -- * reset the cache in case of serialisation errors
+        -- * TODO Come up with more useful stuff
 
     -- https://github.com/lolepezy/rpki-prover/issues/249
     -- This is to handle referential integrity issues, i.e. manifests referring to 
@@ -844,12 +854,13 @@ adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@W
               Set.difference runningFetcherUrls relevantUrls,
               Set.difference relevantUrls runningFetcherUrls)        
 
-    -- logDebug logger [i|Adjusting fetchers: toStop = #{toStop}, toStart = #{toStart}, currentFetchers = #{Map.keys currentFetchers}|]
+    logDebug logger [i|Adjusting fetchers: discoveredFetcheables = #{discoveredFetcheables} toStop = #{toStop}, toStart = #{toStart}, currentFetchers = #{Map.keys currentFetchers}|]
 
     mask_ $ do
         -- Stop and remove fetchers for URLs that are no longer needed    
         for_ (Set.toList toStop) $ \url ->
             for_ (Map.lookup url currentFetchers) $ \thread -> do
+                logDebug logger [i|Stopping fetcher for #{url}, cancelling thread #{show thread}.|]
                 Conc.throwTo thread AsyncCancelled
 
         threads <- forM (Set.toList toStart) $ \url ->
@@ -928,30 +939,34 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                 runConcurrentlyIfPossible logger FetchTask runningTasks 
                                     $ fetchRepository appContext fetchConfig worldVersion repository
 
-                rememberFirstFetchBy worldVersion
+                -- rememberFirstFetchBy worldVersion url
                 updatePrometheusForRepository url duration prometheusMetrics
 
                 -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
                 case r of
-                    Right (repository', stats) -> do                         
+                    Right (repository', stats) -> do                      
+                        let fetchStatus = FetchedAt (versionToInstant worldVersion)
                         let (updateRepo, interval) = updateRepository fetchConfig
-                                repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duration
+                                repository' worldVersion fetchStatus stats duration    
 
-                        saveFetchOutcome updateRepo validations                        
+                        saveFetchOutcome updateRepo validations                    
+                        rememberFirstFetchBy url worldVersion fetchStatus
                         triggerTaRevalidationIf $ hasUpdates validations                                                         
 
                         pure $ Just interval
 
                     Left _ -> do
-                        let newStatus = FailedAt $ versionToInstant worldVersion
-                        let (updatedRepo, interval) = updateRepository fetchConfig repository worldVersion newStatus Nothing duration
+                        let fetchStatus = FailedAt $ versionToInstant worldVersion
+                        let (updatedRepo, interval) = updateRepository fetchConfig repository worldVersion fetchStatus Nothing duration
                         saveFetchOutcome updatedRepo validations
+                        rememberFirstFetchBy url worldVersion fetchStatus
 
                         fetchableForUrl >>= \case
                             Nothing -> 
                                 -- this whole fetcheable is gone
                                 pure Nothing
                             Just fallbacks -> do  
+                                logDebug logger [i|Fetch for #{url} failed, trying fallbacks #{fallbacks}.|]
                                 anyUpdates <- fetchFallbacks fetchConfig worldVersion fallbacks                                                            
                                 triggerTaRevalidationIf anyUpdates
                                 if anyUpdates 
@@ -984,14 +999,20 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                 $ runValidatorT (newScopes' RepositoryFocus fallbackUrl) 
                                     $ fetchRepository appContext fetchConfig worldVersion repository                
 
+                -- rememberFirstFetchBy worldVersion fallbackUrl
                 updatePrometheusForRepository fallbackUrl duration prometheusMetrics
-                let repo = case r of
-                        Right (repository', _noRrdpStats) -> 
-                            -- realistically at this time the only fallback repositories are rsync, so 
-                            -- there's no RrdpFetchStat ever
-                            updateMeta' repository' (#status .~ FetchedAt (versionToInstant worldVersion))
+                repo <- case r of
+                        Right (repository', _noRrdpStats) -> do
+                            -- realistically at this time the only fallback repositories are rsync, 
+                            -- so there's no RrdpFetchStat ever
+                            let fetchStatus = FetchedAt $ versionToInstant worldVersion
+                            rememberFirstFetchBy url worldVersion fetchStatus
+                            pure $ updateMeta' repository' (#status .~ fetchStatus)
+                            
                         Left _ -> do
-                            updateMeta' repository (#status .~ FailedAt (versionToInstant worldVersion))
+                            let fetchStatus = FailedAt $ versionToInstant worldVersion
+                            rememberFirstFetchBy url worldVersion fetchStatus
+                            pure $ updateMeta' repository (#status .~ fetchStatus)                            
             
                 pure (repo, validations)            
 
@@ -1121,11 +1142,11 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         trigger = do 
             relevantTas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVar uriByTa
             modifyTVar' tasToValidate $ (<>) relevantTas            
-    
-    rememberFirstFetchBy version = atomically $ do 
+                
+    rememberFirstFetchBy fetchUrl version fetchStatus = atomically $ do     
         fff <- readTVar firstFinishedFetchBy
-        when (Map.notMember url fff) $ 
-            writeTVar firstFinishedFetchBy $ Map.insert url version fff                   
+        when (Map.notMember fetchUrl fff) $ 
+            writeTVar firstFinishedFetchBy $ Map.insert fetchUrl (version, fetchStatus) fff                
 
 -- Keep track of the earliest expiration time for each TA (i.e. the earlist time when some object of the TA will expire).
 -- Reschedule revalidation of the TA at the moment right after its earliest expiration time. Since this expiration time
