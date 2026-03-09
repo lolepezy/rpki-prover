@@ -25,6 +25,7 @@ rpkiProverVersion = [i|rpki-prover-#{showVersion_}|]
 makeGitInfo :: Text
 makeGitInfo = [i|#{giBranch gi}@#{giHash gi}, at #{giCommitDate gi}, #{giCommitCount gi} commits in HEAD#{dirty}|]
   where
+    dirty :: String
     dirty | giDirty gi = ", (uncommitted files present)"
           | otherwise  = ""
     gi = $$tGitInfoCwd

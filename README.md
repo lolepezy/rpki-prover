@@ -94,11 +94,12 @@ The instructions below are for Linux but apply equally to \\\*BSD and macOS. Win
 
 * Install prerequisites: `lmdb`, `lzma`, `expat`, `gmp`, and `rsync`.
 
-  * On Linux:
+  * On Debian-based Linux:
 
     ```
-    sudo apt-get install rsync libz-dev libexpat1-dev liblmdb-dev liblzma-dev libgmp-dev
+    sudo apt-get install rsync libz-dev libexpat1-dev liblmdb-dev liblzma-dev libgmp-dev pkg-config
     ```
+    (on RPM-based -- their respective `yum/dnf` versions)
   * On macOS:
 
     ```

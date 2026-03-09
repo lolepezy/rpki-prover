@@ -14,6 +14,7 @@ https://github.com/commercialhaskell/stack/issues/1406 and nobody gives a crap. 
 
 So
 - Full build is done by the `./build-local.sh` script, it should normally take 30-40 minutes on an average computer.
+- Static binary is built by `./build-static.sh`.
 - Tests can be run using `./run-tests.sh`.
 - The command for using `ghcid` is 
 
@@ -43,5 +44,3 @@ For a release version `X.Y.Z` the procedure is this:
 - Build static binary with `./build-static.sh`
 - Create a release in github UI using `vX.Y.Z` tag and upload the the static binary to the artifacts of the release.
 
-For now, the latest LTS for which static binary builds without issues is lts-22.20. And Dockerfile.static-builder should contain 
-`FROM utdemir/ghc-musl:v25-ghc964 as rpki-prover-builder` for the pipeling to work. That will be fixed somewhere in the future after moving to later versions of GHC.
