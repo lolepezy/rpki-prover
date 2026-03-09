@@ -5,6 +5,7 @@ import Control.Monad
 import qualified Data.ByteString          as BS
 import qualified Data.Text                as Text
 
+import qualified Data.X509                as X509
 import           Data.ASN1.Types
 import           Data.Bifunctor (first)
 import           Data.ASN1.BinaryEncoding
@@ -33,11 +34,12 @@ parseMft bs = do
                     (IntVal manifestNumber,
                         ASN1Time TimeGeneralized thisUpdateTime' _,
                         ASN1Time TimeGeneralized nextUpdateTime' _) -> do
-                            hashAlg' <- getOID oid2Hash "Wrong hash algorithm OID"
-                            entries <- getEntries fileHashAlg
+                            hashAlg_ <- getOID oid2Hash "Wrong hash algorithm OID"                            
+                            verifyHash hashAlg_
+                            entries <- getEntries hashAlg_
                             -- TODO translate to UTC       
                             mn <- makeMftNumber manifestNumber        
-                            pure $ Manifest mn hashAlg' 
+                            pure $ Manifest mn hashAlg_ 
                                 (newInstant thisUpdateTime') (newInstant nextUpdateTime') entries
 
                     -- TODO Check version?
@@ -46,12 +48,14 @@ parseMft bs = do
                         ASN1Time TimeGeneralized thisUpdateTime' _) -> do
                             when (version /= 1) $ 
                                 throwParseError $ "Unexpected manifest version: " ++ show version
-                            nextUpdateTime' <- getTime "No NextUpdate time"
-                            hashAlg'        <- getOID oid2Hash "Wrong hash algorithm OID"
-                            entries         <- getEntries fileHashAlg
+                            nextUpdateTime' <- getTime "No NextUpdate time"                            
+                            hashAlg_        <- getOID oid2Hash "Wrong hash algorithm OID"
+                            verifyHash hashAlg_
+                            entries <- getEntries hashAlg_    
+
                             -- TODO translate to UTC
                             mn <- makeMftNumber manifestNumber
-                            pure $ Manifest mn hashAlg' 
+                            pure $ Manifest mn hashAlg_ 
                                 (newInstant thisUpdateTime') (newInstant nextUpdateTime') entries
 
                     s -> throwParseError $ "Unexpected manifest content: " ++ show s
@@ -66,5 +70,11 @@ parseMft bs = do
         getTime message = getNext >>= \case
             ASN1Time TimeGeneralized dt _ -> pure dt
             s  -> throwParseError $ message ++ ", got " ++ show s
+
+        verifyHash hashAlg = do 
+            -- https://www.rfc-editor.org/rfc/rfc7935.html#section-2
+            unless (hashAlg == X509.HashSHA256) $
+                throwParseError $ "Unexpected hashing algorithm: " <> show hashAlg            
+
 
 
