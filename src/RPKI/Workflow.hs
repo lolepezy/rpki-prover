@@ -357,14 +357,31 @@ runAll appContext@AppContext {..} tals = do
         logDebug logger [i|Checking if all validations are later than fetches, versions = #{versions}, fetchedBy = #{fetchedBy}, urisByTA = #{urisByTA}|]
 
         let allValidationsAreLaterThanFetches = 
-                all (\(ta, validatedBy) -> 
-                    case [ Map.lookup uri fetchedBy | uri <- IxSet.indexKeys $ IxSet.getEQ ta urisByTA ] of 
+                all (\(ta, validatedBy) -> let
+                    relevantUris = IxSet.indexKeys $ IxSet.getEQ ta urisByTA
+                    in case [ (uri, Map.lookup uri fetchedBy) | uri <- relevantUris ] of 
                         [] -> False
                         z  -> let 
-                            (fetchedAtLeastOnce, notFetched) = List.partition isJust z
+                            (fetchedAtLeastOnce, notFetched) = List.partition (isJust . snd) z
                             in case notFetched of 
-                                -- TODO Analyze _fetchStatus as well
-                                [] -> all (\(fetchedVersion, _fetchStatus) -> validatedBy > fetchedVersion) $ catMaybes fetchedAtLeastOnce
+                                [] -> all (\case 
+                                    (_, Nothing) -> False
+                                    (uri, Just (fetchedVersion, fetchStatus)) ->                                 
+                                        case fetchStatus of 
+                                            Pending     -> False
+                                            FetchedAt _ -> validatedBy > fetchedVersion
+                                            FailedAt _  -> 
+                                                -- check if all fallback URLs are fetched at least once                                                
+                                                case MonoidalMap.lookup uri fetcheables_ of 
+                                                    Nothing -> False
+                                                    Just fallbacks -> 
+                                                        all (\fallbackUri -> 
+                                                                case Map.lookup fallbackUri fetchedBy of 
+                                                                    Nothing                   -> False
+                                                                    Just (fetchedVersion', _) -> validatedBy > fetchedVersion'                                                            
+                                                            ) $ Set.toList fallbacks
+                                        ) 
+                                    fetchedAtLeastOnce
                                 _  -> False
                     ) $ perTA versions
 
