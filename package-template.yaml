@@ -132,6 +132,7 @@ dependencies:
 - tasty-quickcheck    
 - th-utilities
 - time
+- tls
 - generic-arbitrary
 - quickcheck-instances
 - unix

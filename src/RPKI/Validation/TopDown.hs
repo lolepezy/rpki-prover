@@ -545,6 +545,9 @@ validateCaNoLimitChecks
             -- i.e. all newly discovered publication points/repositories                        
             mergeFetcheables caFetcheables
 
+            caLoc <- getCaLocations appContext ca
+            logDebug logger [i|Validating CA certificate #{caLoc} with publication points: #{map fst caFetcheables}|]
+
             -- Do not validate if nothing was fetched for this CA
             -- otherwise we'll have a lot of useless errors about 
             -- missing manifests, so just don't go there
@@ -1046,12 +1049,12 @@ validateCaNoFetch
 
     -- Given MFT entry with hash and filename, get the object it refers to
     -- 
-    getManifestEntry filename hash' = do
+    getManifestEntry filename hash_ = do
         let objectType = textObjectType filename
         db <- liftIO $ readTVarIO database
-        ro <- DB.roAppTx db $ \tx -> do             
-            DB.getKeyByHash tx db hash' >>= \case                     
-                Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename            
+        ro <- DB.roAppTx db $ \tx -> do
+            DB.getKeyByHash tx db hash_ >>= \case
+                Nothing  -> vError $ ManifestEntryDoesn'tExist hash_ filename
                 Just key -> 
                     vFocusOn ObjectFocus key $
                         case objectType of 
@@ -1063,7 +1066,7 @@ validateCaNoFetch
                                     -- try to get the original blob and (re-)parse 
                                     -- it to at least complain about it at the right place
                                     getLocatedOriginal tx db key type_ $ 
-                                        vError $ ManifestEntryDoesn'tExist hash' filename
+                                        vError $ ManifestEntryDoesn'tExist hash_ filename
                             Nothing -> do
                                 -- If we don't know anything about the type from the manifest, 
                                 -- it may still be possible that the object was parsed based
@@ -1071,13 +1074,13 @@ validateCaNoFetch
                                 -- wrong
                                 increment $ topDownCounters ^. #readParsed
                                 getParsedObject tx db key $ 
-                                    vError $ ManifestEntryDoesn'tExist hash' filename
+                                    vError $ ManifestEntryDoesn'tExist hash_ filename
 
         -- The type of the object that is deserialised doesn't correspond 
         -- to the file extension on the manifest
         let realObjectType = getRpkiObjectType $ ro ^. #object
 
-        let complain = vWarn $ ManifestEntryHasWrongFileType hash' filename realObjectType
+        let complain = vWarn $ ManifestEntryHasWrongFileType hash_ filename realObjectType
         case objectType of 
             Nothing -> complain
             Just ot -> unless (realObjectType `isOfType` ot) complain

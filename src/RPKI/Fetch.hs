@@ -56,7 +56,7 @@ data Fetchers = Fetchers {
 
         -- Version for the first fetch that was finished for every repository.
         -- We want to track this to for the "one-off" mode.
-        firstFinishedFetchBy :: TVar (Map RpkiURL WorldVersion),        
+        firstFinishedFetchBy :: TVar (Map RpkiURL (WorldVersion, FetchStatus)),        
 
         -- Semaphore for untrusted fetches, i.e fetches that have 
         -- no decent history of being successful 
