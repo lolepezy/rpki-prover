@@ -211,6 +211,8 @@ toValidationMessage = \case
       NoMFTSIA -> 
           [i|No SIA pointing to the manifest on the certificate.|]
 
+      MFTBadSIA url ->
+          [i|Manifest SIA should end with '.mft', but it doesn't: #{url}.|]
       MFTOnDifferentLocation url locations -> 
           [i|Manifest location #{url} is not the same as SIA on the certificate #{fmtLocations locations}.|]
 
@@ -364,6 +366,7 @@ toSlurmMessage = \case
 toInternalErrorMessage :: InternalError -> Text
 toInternalErrorMessage = \case 
     InternalError t      -> t
+    WorkerError t        -> t
     WorkerTimeout t      -> t
     WorkerOutOfCpuTime t -> t
     WorkerOutOfMemory t  -> t
