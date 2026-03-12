@@ -322,7 +322,7 @@ ipv6Address :: ParseASN1 [Ipv6Prefix]
 ipv6Address = ipvVxAddress R.someW8ToW128 128 makeOneIP R.ipv6RangeToPrefixes
 
 makeOneIP :: (Prefix a, Integral b) => BS.ByteString -> b -> [a]
-makeOneIP bs nz = [make bs (fromIntegral nz)]
+makeOneIP bs nz = [makePrefix bs (fromIntegral nz)]
 
 ipvVxAddress :: ([Word8] -> t)
             -> Int

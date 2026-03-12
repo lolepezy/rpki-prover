@@ -37,7 +37,7 @@ instance WithSetOps Ipv4Prefix where
 
 instance Prefix Ipv4Prefix where
     type Address Ipv4Prefix = V4.IpAddress
-    make bs nonZeroBits = mkIpv4Block (fourW8sToW32 (BS.unpack bs)) (fromIntegral nonZeroBits)
+    makePrefix bs nonZeroBits = mkIpv4Block (fourW8sToW32 (BS.unpack bs)) (fromIntegral nonZeroBits)
     toRange (Ipv4Prefix p) = V4.blockToRange p
     toPrefixes r@Range {..} 
         | first > last = []
@@ -62,7 +62,7 @@ instance Interval Ipv6Prefix where
 
 instance Prefix Ipv6Prefix where
     type Address Ipv6Prefix = V6.IpAddress
-    make bs nonZeroBits = mkIpv6Block (someW8ToW128 (BS.unpack bs)) (fromIntegral nonZeroBits)
+    makePrefix bs nonZeroBits = mkIpv6Block (someW8ToW128 (BS.unpack bs)) (fromIntegral nonZeroBits)
     toRange (Ipv6Prefix p) = V6.blockToRange p    
     toPrefixes r@Range {..} 
         | first > last = []

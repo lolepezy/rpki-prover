@@ -49,10 +49,10 @@ parseSpl bs = do
     parsePrefixes addressFamily = onNextContainer Sequence $ getMany $
         getNext >>= \case       
             BitString (BitArray nzBits bs') -> 
-                makePrefix bs' nzBits nzBits addressFamily
+                makePrefix_ bs' nzBits nzBits addressFamily
             a -> throwParseError [i|Unexpected prefix list content: #{a}|]            
 
-    makePrefix bs' nonZeroBitCount prefixMaxLength addressFamily = do
+    makePrefix_ bs' nonZeroBitCount prefixMaxLength addressFamily = do
         when (nonZeroBitCount > fromIntegral prefixMaxLength) $
             throwParseError [i|Actual prefix length #{nonZeroBitCount} is bigger than the maximum length #{prefixMaxLength}.|]
 
@@ -73,4 +73,4 @@ parseSpl bs = do
                     pure $ mkPrefix nonZeroBitCount prefixMaxLength Ipv6P
       where 
         mkPrefix :: (Integral a, Integral c, Prefix b) => a -> c -> (b -> IpPrefix) -> IpPrefix
-        mkPrefix nz _ mkIp = mkIp $ make bs' (fromIntegral nz)
+        mkPrefix nz _ mkIp = mkIp $ makePrefix bs' (fromIntegral nz)
