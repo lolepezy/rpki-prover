@@ -59,6 +59,8 @@ validateMftLocation mft parentCertficate =
         Just mftSIA -> do 
             unless (".mft" `Text.isSuffixOf` (unURI mftSIA)) $ 
                 vWarn $ MFTBadSIA mftSIA
+            unless ("rsync://" `Text.isPrefixOf` (unURI mftSIA)) $ 
+                vWarn $ MFTBadSIA mftSIA                
             let mftLocations = getLocations mft
             when (Set.null $ NESet.filter ((mftSIA ==) . getURL) $ unLocations mftLocations) $ 
                 vError $ MFTOnDifferentLocation mftSIA mftLocations
@@ -82,4 +84,3 @@ checkCrlLocation crl parentCertificate =
         let crlLocations = getLocations crl
         when (Set.null $ NESet.filter ((crlDP ==) . getURL) $ unLocations crlLocations) $ 
             vError $ CRLOnDifferentLocation crlDP crlLocations
-
