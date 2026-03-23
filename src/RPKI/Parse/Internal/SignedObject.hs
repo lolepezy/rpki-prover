@@ -63,7 +63,7 @@ parseSignedObject contentBinaryParse =
             [oid]
               | oid == id_sha256 -> pure ()
             _ -> throwParseError $ 
-                  "RFC 6488 §2.1.1: digestAlgorithms must be exactly {SHA-256}, got: " 
+                  "RFC 6488 §2.1.1: digest algorithm must be SHA-256, got: " 
                   <> show digests
           pure $ DigestAlgorithmIdentifiers digests
 
