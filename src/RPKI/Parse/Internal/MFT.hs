@@ -5,7 +5,6 @@ import Control.Monad
 import qualified Data.ByteString          as BS
 import qualified Data.Text                as Text
 
-import qualified Data.X509                as X509
 import           Data.ASN1.Types
 import           Data.Bifunctor (first)
 import           Data.ASN1.BinaryEncoding
@@ -34,9 +33,8 @@ parseMft bs = do
                     (IntVal manifestNumber,
                         ASN1Time TimeGeneralized thisUpdateTime' _,
                         ASN1Time TimeGeneralized nextUpdateTime' _) -> do
-                            hashAlg_ <- getOID oid2Hash "Wrong hash algorithm OID"                            
-                            verifyHash hashAlg_
-                            entries <- getEntries hashAlg_
+                            hashAlg_ <- getOID asSha256Only "Wrong hash algorithm OID"                            
+                            entries <- getEntries
                             -- TODO translate to UTC       
                             mn <- makeMftNumber manifestNumber        
                             pure $ Manifest mn hashAlg_ 
@@ -49,9 +47,8 @@ parseMft bs = do
                             when (version /= 1) $ 
                                 throwParseError $ "Unexpected manifest version: " ++ show version
                             nextUpdateTime' <- getTime "No NextUpdate time"                            
-                            hashAlg_        <- getOID oid2Hash "Wrong hash algorithm OID"
-                            verifyHash hashAlg_
-                            entries <- getEntries hashAlg_    
+                            hashAlg_        <- getOID asSha256Only "Wrong hash algorithm OID"
+                            entries <- getEntries    
 
                             -- TODO translate to UTC
                             mn <- makeMftNumber manifestNumber
@@ -62,7 +59,7 @@ parseMft bs = do
 
         makeMftNumber n = either throwParseError pure $ makeSerial n
 
-        getEntries _ = onNextContainer Sequence $
+        getEntries = onNextContainer Sequence $
             getMany $ onNextContainer Sequence $
                 MftPair <$> getIA5String (pure . Text.pack) "Wrong file name"
                         <*> getBitString (pure . U.mkHash) "Wrong hash"
@@ -70,11 +67,6 @@ parseMft bs = do
         getTime message = getNext >>= \case
             ASN1Time TimeGeneralized dt _ -> pure dt
             s  -> throwParseError $ message ++ ", got " ++ show s
-
-        verifyHash hashAlg = do 
-            -- https://www.rfc-editor.org/rfc/rfc7935.html#section-2
-            unless (hashAlg == X509.HashSHA256) $
-                throwParseError $ "Unexpected hashing algorithm: " <> show hashAlg            
 
 
 
