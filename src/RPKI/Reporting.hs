@@ -80,6 +80,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         MoreThanOneCRLOnMFT AKI [MftPair] |
                         NoMFTSIA |
                         MFTBadSIA URI |
+                        MFTBadAIA URI |
                         MFTOnDifferentLocation URI Locations |                        
                         BadFileNameOnMFT Text Text |
                         ZeroManifestEntries |

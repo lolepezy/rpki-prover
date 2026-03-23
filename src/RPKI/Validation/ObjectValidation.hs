@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes  #-}
+{-# LANGUAGE OverloadedStrings    #-}
 
 module RPKI.Validation.ObjectValidation where
     
@@ -542,8 +543,10 @@ validateAIA cert parentCert =
         for_ (extractSiaValue sia id_pe_sia) $ \ext -> do             
             let locations = parentCert ^. #locations
             case extractURI ext of 
-                Left e            -> vPureWarning $ BrokenUri (Text.pack $ show ext) e
-                Right (URI siaUrl) -> do                     
+                Left e               -> vPureWarning $ BrokenUri (Text.pack $ show ext) e
+                Right u@(URI siaUrl) -> do                     
+                    unless ("rsync://" `Text.isPrefixOf` siaUrl) $ 
+                        vPureWarning $ MFTBadAIA u                
                     unless (siaUrl `elem` locationsToList locations) $                         
                         vPureWarning $ AIANotSameAsParentLocation siaUrl locations
 
