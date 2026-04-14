@@ -187,10 +187,11 @@ parseKI bs =
             then pure $ mkKI bytes
             else pureError $ parseErr $ "KI has wrong length, must be 160 bits, but it is " <> Text.pack (show len)
 
-oid2Hash :: OID -> ParseASN1 HashALG
-oid2Hash = \case
+-- https://www.rfc-editor.org/rfc/rfc7935.html#section-2
+asSha256Only :: OID -> ParseASN1 HashALG
+asSha256Only = \case
     oid | oid == id_sha256 -> pure HashSHA256
-        | otherwise        -> throwParseError $ "Unknown hashing algorithm OID: " <> show oid
+        | otherwise        -> throwParseError $ "Only SHA-256 hashing algorithm is supported, unknown: " <> show oid
 
 parseSignature :: ParseASN1 SignatureValue
 parseSignature = getNext >>= \case 
@@ -322,23 +323,23 @@ ipv6Address :: ParseASN1 [Ipv6Prefix]
 ipv6Address = ipvVxAddress R.someW8ToW128 128 makeOneIP R.ipv6RangeToPrefixes
 
 makeOneIP :: (Prefix a, Integral b) => BS.ByteString -> b -> [a]
-makeOneIP bs nz = [make bs (fromIntegral nz)]
+makeOneIP bs nz = [makePrefix bs (fromIntegral nz)]
 
 ipvVxAddress :: ([Word8] -> t)
             -> Int
             -> (BS.ByteString -> Word64 -> b)
             -> (t -> t -> b)
             -> ParseASN1 b
-ipvVxAddress wToAddr fullLength makePrefix rangeToPrefixes =     
+ipvVxAddress wToAddr fullLength makePrefix_ rangeToPrefixes =     
     getNextContainerMaybe Sequence >>= \case
         Nothing -> getNext >>= \case
             (BitString (BitArray nzBits bs)) -> 
-                pure $ makePrefix bs nzBits
+                pure $ makePrefix_ bs nzBits
             s -> 
                 throwParseError ("Unexpected prefix representation: " <> show s)
 
         Just [BitString (BitArray nzBits bs)] ->                
-                pure $ makePrefix bs nzBits
+                pure $ makePrefix_ bs nzBits
 
         Just [
             BitString (BitArray _       bs1),

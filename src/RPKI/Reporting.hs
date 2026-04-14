@@ -79,7 +79,9 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         NoCRLOnMFT AKI |
                         MoreThanOneCRLOnMFT AKI [MftPair] |
                         NoMFTSIA |
-                        MFTOnDifferentLocation URI Locations |
+                        MFTBadSIA URI |
+                        MFTBadAIA URI |
+                        MFTOnDifferentLocation URI Locations |                        
                         BadFileNameOnMFT Text Text |
                         ZeroManifestEntries |
                         NonUniqueManifestEntries [(Hash, [Text])] |

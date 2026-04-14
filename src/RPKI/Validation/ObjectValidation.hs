@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes  #-}
+{-# LANGUAGE OverloadedStrings    #-}
 
 module RPKI.Validation.ObjectValidation where
     
@@ -532,18 +533,21 @@ validateUpdateTimes (Now now) thisUpdateTime nextUpdateTime = do
 
 validateAIA :: forall child parent (childCertType :: CertType) .
     (WithRawResourceCertificate child
+    , WithLocations parent
     , OfCertType parent 'CACert
     , OfCertType child childCertType) =>    
     child  ->
-    Located parent ->
+    parent ->
     PureValidatorT ()
 validateAIA cert parentCert =    
     for_ (getSiaExt $ cwsX509certificate $ getCertWithSignature cert) $ \sia -> do 
         for_ (extractSiaValue sia id_pe_sia) $ \ext -> do             
-            let locations = parentCert ^. #locations
+            let locations = getLocations parentCert
             case extractURI ext of 
-                Left e            -> vPureWarning $ BrokenUri (Text.pack $ show ext) e
-                Right (URI siaUrl) -> do                     
+                Left e               -> vPureWarning $ BrokenUri (Text.pack $ show ext) e
+                Right u@(URI siaUrl) -> do                     
+                    unless ("rsync://" `Text.isPrefixOf` siaUrl) $ 
+                        vPureWarning $ MFTBadAIA u                
                     unless (siaUrl `elem` locationsToList locations) $                         
                         vPureWarning $ AIANotSameAsParentLocation siaUrl locations
 

@@ -57,8 +57,15 @@ parseSignedObject contentBinaryParse =
 
     parseVersion = getInteger (pure . CMSVersion . fromInteger) "Wrong version"
 
-    parseDigestAlgorithms = onNextContainer Sequence $
-          DigestAlgorithmIdentifiers . catMaybes <$> getMany getDigest
+    parseDigestAlgorithms = onNextContainer Sequence $ do 
+          digests <- catMaybes <$> getMany getDigest
+          case digests of 
+            [oid]
+              | oid == id_sha256 -> pure ()
+            _ -> throwParseError $ 
+                  "RFC 6488 §2.1.1: digest algorithm must be SHA-256, got: " 
+                  <> show digests
+          pure $ DigestAlgorithmIdentifiers digests
 
     parseEncapContentInfo = onNextContainer Sequence $ do
       contentType <- parseContentType            

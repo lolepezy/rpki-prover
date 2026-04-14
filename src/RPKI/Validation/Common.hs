@@ -57,9 +57,13 @@ validateMftLocation mft parentCertficate =
     case getManifestUri $ cwsX509certificate $ getCertWithSignature parentCertficate of
         Nothing     -> vError NoMFTSIA
         Just mftSIA -> do 
+            unless (".mft" `Text.isSuffixOf` (unURI mftSIA)) $ 
+                vWarn $ MFTBadSIA mftSIA
+            unless ("rsync://" `Text.isPrefixOf` (unURI mftSIA)) $ 
+                vWarn $ MFTBadSIA mftSIA                
             let mftLocations = getLocations mft
             when (Set.null $ NESet.filter ((mftSIA ==) . getURL) $ unLocations mftLocations) $ 
-                vError $ MFTOnDifferentLocation mftSIA mftLocations                    
+                vError $ MFTOnDifferentLocation mftSIA mftLocations
 
 
 -- | Validate that the object has only one location: if not, 
@@ -80,4 +84,3 @@ checkCrlLocation crl parentCertificate =
         let crlLocations = getLocations crl
         when (Set.null $ NESet.filter ((crlDP ==) . getURL) $ unLocations crlLocations) $ 
             vError $ CRLOnDifferentLocation crlDP crlLocations
-

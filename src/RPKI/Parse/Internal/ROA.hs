@@ -4,6 +4,7 @@ module RPKI.Parse.Internal.ROA where
 
 import qualified Data.ByteString as BS  
 
+import Control.Applicative
 import Control.Monad
 import Data.ASN1.Types
 import Data.ASN1.Encoding
@@ -28,11 +29,20 @@ parseRoa :: BS.ByteString -> PureValidatorT RoaObject
 parseRoa bs = do    
     asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs  
     signedRoa <- fromEither $ first (parseErr . U.convert) 
-                    $ runParseASN1 (parseSignedObject $ parseSignedContent parseRoas') asns
-    hash' <- getMetaFromSigned signedRoa bs
-    pure $ newCMSObject hash' (CMS signedRoa)
+                    $ runParseASN1 (parseSignedObject $ parseSignedContent parseRoas_) asns
+    hash_ <- getMetaFromSigned signedRoa bs
+    pure $ newCMSObject hash_ (CMS signedRoa)
   where     
-    parseRoas' = onNextContainer Sequence $ do      
+    parseRoas_ = onNextContainer Sequence $ 
+        parseRoaWithoutVersion <|> parseRoaWithVersion
+    
+    parseRoaWithVersion = do 
+        onNextContainer (Container Context 0) $ do 
+            v :: Int <- getInteger (pure . fromInteger) "Wrong version"
+            when (v /= 0) $ throwParseError $ "Version must be 0 but was " <> show v                
+        parseRoaWithoutVersion
+
+    parseRoaWithoutVersion = do 
         -- TODO Fix it so that it would work with present attestation version
         asId <- getInteger (pure . fromInteger) "Wrong ASid"
         mconcat <$> onNextContainer Sequence (getMany $
@@ -75,5 +85,5 @@ parseRoa bs = do
             mkVrp :: (Integral a, Integral c, Prefix b) => a -> c -> (b -> IpPrefix) -> Vrp
             mkVrp nz len mkIp = Vrp 
                         (ASN $ fromIntegral asId)
-                        (mkIp $ make bs' (fromIntegral nz)) 
+                        (mkIp $ makePrefix bs' (fromIntegral nz)) 
                         (PrefixLength $ fromIntegral len)
