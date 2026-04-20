@@ -33,11 +33,11 @@ parseMft bs = do
                     (IntVal manifestNumber,
                         ASN1Time TimeGeneralized thisUpdateTime' _,
                         ASN1Time TimeGeneralized nextUpdateTime' _) -> do
-                            hashAlg' <- getOID oid2Hash "Wrong hash algorithm OID"
-                            entries <- getEntries fileHashAlg
+                            hashAlg_ <- getOID asSha256Only "Wrong hash algorithm OID"                            
+                            entries <- getEntries
                             -- TODO translate to UTC       
                             mn <- makeMftNumber manifestNumber        
-                            pure $ Manifest mn hashAlg' 
+                            pure $ Manifest mn hashAlg_ 
                                 (newInstant thisUpdateTime') (newInstant nextUpdateTime') entries
 
                     -- TODO Check version?
@@ -46,19 +46,20 @@ parseMft bs = do
                         ASN1Time TimeGeneralized thisUpdateTime' _) -> do
                             when (version /= 1) $ 
                                 throwParseError $ "Unexpected manifest version: " ++ show version
-                            nextUpdateTime' <- getTime "No NextUpdate time"
-                            hashAlg'        <- getOID oid2Hash "Wrong hash algorithm OID"
-                            entries         <- getEntries fileHashAlg
+                            nextUpdateTime' <- getTime "No NextUpdate time"                            
+                            hashAlg_        <- getOID asSha256Only "Wrong hash algorithm OID"
+                            entries <- getEntries    
+
                             -- TODO translate to UTC
                             mn <- makeMftNumber manifestNumber
-                            pure $ Manifest mn hashAlg' 
+                            pure $ Manifest mn hashAlg_ 
                                 (newInstant thisUpdateTime') (newInstant nextUpdateTime') entries
 
                     s -> throwParseError $ "Unexpected manifest content: " ++ show s
 
         makeMftNumber n = either throwParseError pure $ makeSerial n
 
-        getEntries _ = onNextContainer Sequence $
+        getEntries = onNextContainer Sequence $
             getMany $ onNextContainer Sequence $
                 MftPair <$> getIA5String (pure . Text.pack) "Wrong file name"
                         <*> getBitString (pure . U.mkHash) "Wrong hash"
@@ -66,5 +67,6 @@ parseMft bs = do
         getTime message = getNext >>= \case
             ASN1Time TimeGeneralized dt _ -> pure dt
             s  -> throwParseError $ message ++ ", got " ++ show s
+
 
 
