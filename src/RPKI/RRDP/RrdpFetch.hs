@@ -52,10 +52,10 @@ import qualified RPKI.Util              as U
 
 
 runRrdpFetchWorker :: AppContext s 
-            -> FetchConfig
-            -> WorldVersion
-            -> RrdpRepository             
-            -> ValidatorT IO (RrdpRepository, RrdpFetchStat)
+                -> FetchConfig
+                -> WorldVersion
+                -> RrdpRepository             
+                -> ValidatorT IO (RrdpRepository, RrdpFetchStat, [Update])
 runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repository = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
@@ -74,7 +74,7 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
     scopes <- askScopes
 
     workerInput <- makeWorkerInput appContext workerId
-                        (RrdpFetchParams scopes repository worldVersion)                        
+                        (RrdpFetchParams scopes fetchConfig repository worldVersion)                        
                         (Timebox $ fetchConfig ^. #rrdpTimeout)                                
                         (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
 
@@ -94,11 +94,13 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
 -- 
 updateRrdpRepository :: Storage s => 
                         AppContext s 
+                    -> FetchConfig
                     -> WorldVersion 
                     -> RrdpRepository
-                    -> ValidatorT IO (RrdpRepository, RrdpFetchStat) 
+                    -> ValidatorT IO (RrdpRepository, RrdpFetchStat, [Update])
 updateRrdpRepository     
         appContext@AppContext {..}
+        fetchConfig
         worldVersion 
         repo@RrdpRepository { uri = repoUri, .. } = do
 
@@ -126,11 +128,11 @@ updateRrdpRepository
     let forceSnapshot reason notificationXml_ = do 
             notification <- validatedNotification =<< hoistHere (parseNotification notificationXml_)
             nextStep     <- vHoist $ rrdpNextStep repo notification
-            repo' <- bumpETag newETag $ do
+            (repo', addedObjects) <- bumpETag newETag $ do
                 usedSource $ RrdpSnapshot $ notification ^. #serial
                 logDebug logger [i|Forced to use snapshot for #{repoUri}, because #{reason}.|]
                 useSnapshot notification nextStep         
-            pure (repo', RrdpFetchStat nextStep)       
+            pure (repo', RrdpFetchStat nextStep, addedObjects)       
 
     case (httpStatus, enforcement) of 
         (HttpStatus 304, Just (NextTimeFetchSnapshot _ reason)) -> do                        
@@ -142,23 +144,23 @@ updateRrdpRepository
             forceSnapshot reason notificationXml
 
         (HttpStatus 304, _) -> do 
-            repo' <- bumpETag newETag $ do
+            (repo', _) <- bumpETag newETag $ do
                 usedSource RrdpNoUpdate
-                pure repo
+                pure (repo, ([] :: [Update]))
             let message = [i|Nothing to update for #{repoUri} based on ETag comparison.|]
             logDebug logger message
-            pure (repo', RrdpFetchStat $ NothingToFetch message)
+            pure (repo', RrdpFetchStat $ NothingToFetch message, [])
 
         _ -> do 
             notification <- validatedNotification =<< hoistHere (parseNotification notificationXml)
             nextStep     <- vHoist $ rrdpNextStep repo notification
 
-            repo' <- bumpETag newETag $  
+            (repo', addedObjects) <- bumpETag newETag $  
                 case nextStep of
                     NothingToFetch message -> do 
                         usedSource RrdpNoUpdate
                         logDebug logger [i|Nothing to update for #{repoUri}: #{message}|]
-                        pure repo
+                        pure (repo, [])
 
                     ForcedFetchSnapshot _ reason -> do 
                         usedSource $ RrdpSnapshot $ notification ^. #serial
@@ -184,13 +186,12 @@ updateRrdpRepository
                                 logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
                                 useSnapshot notification nextStep
 
-            pure (repo', RrdpFetchStat nextStep)                            
+            pure (repo', RrdpFetchStat nextStep, addedObjects)                            
   where
-    bumpETag newETag f = (\r -> r { eTag = newETag }) <$> f        
+    bumpETag newETag f = (\(r, objs) -> (r { eTag = newETag }, objs)) <$> f        
 
     usedSource z = updateMetric @RrdpMetric @_ (#rrdpSource .~ z)        
     hoistHere    = vHoist . fromEither . first RrdpE
-
     validatedNotification notification = do    
         let repoU = unURI $ getURL repoUri             
         for_ (U.getHostname repoU) $ \baseHostname -> do             
@@ -225,12 +226,12 @@ updateRrdpRepository
                                 })                                            
             updateMetric @RrdpMetric @_ (#lastHttpStatus .~ httpStatus') 
 
-            void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
+            addedObjects <- timedMetric' (Proxy :: Proxy RrdpMetric) 
                     (\t -> #saveTimeMs %~ (<> t))
-                    (saveSnapshot appContext worldVersion repoUri notification rawContent)                                    
+                    (saveSnapshot appContext worldVersion repoUri fetchConfig notification rawContent)                                    
 
             rrdpMeta' <- makeRrdpMeta rrdpMeta
-            pure $ repo & #rrdpMeta .~ rrdpMeta'
+            pure (repo & #rrdpMeta .~ rrdpMeta', addedObjects)
         where
             makeRrdpMeta currentMeta = do                
                 let Notification {..} = notification 
@@ -256,19 +257,20 @@ updateRrdpRepository
         -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much?
         let maxDeltaDownloadSimultaneously = 8                        
 
-        void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
+        addedObjects <- timedMetric' (Proxy :: Proxy RrdpMetric) 
                 (\t -> #saveTimeMs %~ (<> t)) $ 
                 foldPipeline
                         maxDeltaDownloadSimultaneously
                         (S.each $ NonEmpty.toList sortedDeltas)
                         downloadDelta
-                        (\(rawContent, serial, deltaUri) _ -> 
-                            inSubVScope deltaUri $ 
-                                saveDelta appContext worldVersion 
-                                    repoUri notification serial rawContent)
-                        (mempty :: ())     
+                        (\(rawContent, serial, deltaUri) acc -> 
+                            inSubVScope deltaUri $ do
+                                newObjs <- saveDelta appContext worldVersion fetchConfig
+                                    repoUri notification serial rawContent
+                                pure (acc <> newObjs))
+                        []     
 
-        pure $ repo & #rrdpMeta %~ makeRrdpMeta
+        pure (repo & #rrdpMeta %~ makeRrdpMeta, addedObjects)
 
       where        
         downloadDelta (DeltaInfo uri hash serial) = do
@@ -412,12 +414,13 @@ saveSnapshot :: Storage s =>
                 AppContext s        
                 -> WorldVersion         
                 -> RrdpURL
+                -> FetchConfig
                 -> Notification 
                 -> BS.ByteString 
-                -> ValidatorT IO ()
+                -> ValidatorT IO [Update]
 saveSnapshot 
     appContext@AppContext {..} 
-    worldVersion repoUri notification snapshotContent = do              
+    worldVersion repoUri fetchConfig notification snapshotContent = do              
 
     -- If we are going for the snapshot we are going to need a lot of CPU
     -- time, so bump the number of CPUs to the maximum possible values    
@@ -445,11 +448,13 @@ saveSnapshot
                 f tx
                 updateRepositoryMeta tx db repoUri sessionId serial
 
-    txFoldPipeline 
-            cpuParallelism
-            (S.mapM (newStorable db) $ S.each snapshotItems)
-            savingTx
-            (saveStorable db)
+    (_, updates) <- withUpdateAccum threshold (RrdpU repoUri) $ \addObj ->
+        txFoldPipeline 
+                cpuParallelism
+                (S.mapM (newStorable db) $ S.each snapshotItems)
+                savingTx
+                (saveStorable addObj db)
+    pure updates
   where        
 
     newStorable db (SnapshotPublish uri encodedb64) =             
@@ -505,10 +510,10 @@ saveSnapshot
                                 (ObjectMeta worldVersion type_)
                     )
 
-    saveStorable _ _ (Left (e, uri)) = 
+    saveStorable _ _ _ (Left (e, uri)) = 
         inSubLocationScope uri $ appWarn e             
     
-    saveStorable db tx (Right (uri, a)) = do 
+    saveStorable addObj db tx (Right (uri, a)) = do 
         z <- liftIO $ waitCatch a        
         case z of 
             Left e  -> do 
@@ -541,13 +546,15 @@ saveSnapshot
                         addedObject $ Just $ objectMeta ^. #objectType
 
                     SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do 
-                        DB.saveObject tx db so worldVersion                    
+                        objectKey <- DB.saveObject tx db so worldVersion                    
                         DB.linkObjectToUrl tx db rpkiUrl (getHash object)
                         addedObject $ Just type_
+                        forM_ (getAKI object) $ addObj objectKey
 
                     other -> 
                         logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
     
+    threshold        = fetchConfig ^. #objectUpdatesThreshold
     validationConfig = appContext ^. typed @Config . typed @ValidationConfig
 
 
@@ -562,12 +569,13 @@ saveSnapshot
 saveDelta :: Storage s => 
             AppContext s 
             -> WorldVersion         
+            -> FetchConfig
             -> RrdpURL 
             -> Notification 
             -> RrdpSerial             
             -> BS.ByteString 
-            -> ValidatorT IO ()
-saveDelta appContext worldVersion repoUri notification expectedSerial deltaContent = do                
+            -> ValidatorT IO [Update]
+saveDelta appContext worldVersion fetchConfig repoUri notification expectedSerial deltaContent = do                
     db <- liftIO $ readTVarIO $ appContext ^. #database    
 
     Delta _ sessionId serial deltaItems <- 
@@ -590,11 +598,13 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 f tx
                 updateRepositoryMeta tx db repoUri sessionId serial
 
-    txFoldPipeline
-            cpuParallelism
-            (S.mapM newStorable $ S.each deltaItems)
-            savingTx
-            (saveStorable db)
+    (_, updates) <- withUpdateAccum threshold (RrdpU repoUri) $ \addObj ->
+        txFoldPipeline
+                cpuParallelism
+                (S.mapM newStorable $ S.each deltaItems)
+                savingTx
+                (saveStorable addObj db)
+    pure updates
   where        
 
     newStorable item = do 
@@ -644,11 +654,11 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                                 (ObjectMeta worldVersion type_)
                     )
 
-    saveStorable db tx r = 
+    saveStorable addObj db tx r = 
         case r of 
             Left (e, uri)                      -> inSubLocationScope uri $ appWarn e             
-            Right (Add uri a)                  -> addObject db tx uri a 
-            Right (Replace uri a existingHash) -> replaceObject db tx uri a existingHash
+            Right (Add uri a)                  -> addObject addObj db tx uri a 
+            Right (Replace uri a existingHash) -> replaceObject addObj db tx uri a existingHash
             Right (Delete uri existingHash)    -> deleteObject db tx uri existingHash                                        
     
 
@@ -660,7 +670,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
             else appError $ RrdpE $ NoObjectToWithdraw uri existingHash
         
 
-    addObject db tx uri a = do 
+    addObject addObj db tx uri a = do 
         r <- fromTry (RrdpE . FailedToParseDeltaItem . U.fmtEx) $ wait a
         case r of         
             UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do
@@ -687,14 +697,15 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 let newHash = getHash object
                 newOneIsAlreadyThere <- DB.hashExists tx db newHash     
                 unless newOneIsAlreadyThere $ do 
-                    DB.saveObject tx db so worldVersion                        
+                    objectKey <- DB.saveObject tx db so worldVersion                        
                     addedObject $ Just type_
+                    forM_ (getAKI object) $ addObj objectKey
                 DB.linkObjectToUrl tx db rpkiUrl newHash            
 
             other -> 
                 logDebug logger [i|Weird thing happened in `addObject` #{other}.|]
 
-    replaceObject db tx uri a oldHash = do      
+    replaceObject addObj db tx uri a oldHash = do      
         let validateOldHash = do 
                 oldOneIsAlreadyThere <- DB.hashExists tx db oldHash                           
                 if oldOneIsAlreadyThere
@@ -728,13 +739,15 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 let newHash = getHash object
                 newOneIsAlreadyThere <- DB.hashExists tx db newHash
                 unless newOneIsAlreadyThere $ do 
-                    DB.saveObject tx db so worldVersion                        
+                    objectKey <- DB.saveObject tx db so worldVersion                        
                     addedObject $ Just type_
+                    forM_ (getAKI object) $ addObj objectKey
                 DB.linkObjectToUrl tx db rpkiUrl newHash 
 
             other -> 
                 logDebug logger [i|Weird thing happened in `replaceObject` #{other}.|]                                                                                                
 
+    threshold        = fetchConfig ^. #objectUpdatesThreshold
     logger           = appContext ^. typed @AppLogger           
     cpuParallelism   = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism    
     validationConfig = appContext ^. typed @Config . typed @ValidationConfig
