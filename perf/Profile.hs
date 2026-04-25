@@ -21,6 +21,7 @@ import           Options.Generic
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppState
+import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
@@ -45,8 +46,8 @@ main = do
     
 testSnapshotLoad :: IO ()
 testSnapshotLoad = do
-    let logConfig = LogConfig DebugL MainLog
-    withLogger logConfig (\_ -> pure ()) $ \logger -> liftIO $ do    
+    let logConfig = newLogConfig DebugL MainLog
+    withLogger logConfig $ \logger -> liftIO $ do    
         z <- runValidatorT (newScopes "configuration") $ createAppContext logger
         case z of
             (Left e, _) -> do
@@ -59,7 +60,8 @@ testSnapshotLoad = do
                 version <- newWorldVersion
                 snapshotContent <- readB fileName fileSize
                 (_, t) <- timedMS $ runValidatorT (newScopes "snapshot") $
-                            saveSnapshot appContext version (RrdpURL $ URI "bla.xml") 
+                            saveSnapshot appContext version (RrdpURL $ URI "bla.xml")
+                                            (newFetchConfig (appContext ^. #config))
                                             notification snapshotContent
                 logDebug logger [i|Saved snapshot in #{t}ms |]    
 

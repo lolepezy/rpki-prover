@@ -176,12 +176,11 @@ executeWorkerProcess = do
                             case input ^. #params of
                                 RrdpFetchParams {..} -> 
                                     exec resultHandler $ fmap (Right . RrdpFetchResult) $ runValidatorT scopes $ 
-                                        updateRrdpRepository appContext worldVersion rrdpRepository
+                                        updateRrdpRepository appContext fetchConfig worldVersion rrdpRepository
 
                                 RsyncFetchParams {..} -> 
                                     exec resultHandler $ fmap (Right . RsyncFetchResult) $ runValidatorT scopes $                                     
-                                        updateObjectForRsyncRepository appContext fetchConfig 
-                                            worldVersion rsyncRepository
+                                        updateForRsyncRepository appContext fetchConfig worldVersion rsyncRepository
 
                                 CompactionParams {..} -> 
                                     exec resultHandler $ 

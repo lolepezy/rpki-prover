@@ -43,7 +43,7 @@ Validate objects partially, i.e. only those that were affected by changes in a r
 Try to minimize the amount of work needed.
 
 When an update happens (object added/deleted, repository updated, TA updated) create a 
-list of UpdateHappened 
+list of Update 
 
 For each repository update count how many objects were added/deleted (already happening). 
 Based on that decide if the whole repository needs to be re-validated or only the sub-tree 
@@ -51,7 +51,7 @@ related to the changed objects:
 
 Create re-validation tasks of the kind
 
-- Added aki ObjectKey
+- Added AKI ObjectKey
 - Or WholeRepository RepositoryId
 - Or WholeTA TaName
 
@@ -61,7 +61,8 @@ result of validation is Diff Payload.
 The whole machinery of shortcuts should be in place, probably add to it 
 refactoring manifest shortcuts into the form where they store only ObjectKeys 
 of children and not children themselves (TODO It will make sense only 
-if fileName can also be stored outside of the MFT shortcut).
+if fileName can also be stored outside of the MFT shortcut, which is 
+probably not the case).
 
 Create a tree of CAs and payloads, i.e store
     KI -> KIMeta (aki, caCertificate, expiresAt) -- index to find a CA by its KI
@@ -84,13 +85,14 @@ Ideas:
 
     * What happens if a validation process was interrupted?
        Idea: 
-        - have a persistent log of changes WorldVersion -> [UpdateHappened]
+        - have a persistent log of changes WorldVersion -> [Update]
         - have a persistenr log of appled changes WorldVersion -> [Diff Payload]
         - on startup compare the two logs and apply missing changes
         - in one transaction 
             + write applied changes to the log
             + update the tree store (KI -> KIMeta, CertKey -> MftKey)
-        - MFT shortcuts should be written asynchronously as already implemented
+        - MFT shortcuts could be written asynchronously (using the queue as already implemented), 
+          we don't want a very big treansaction
 
 
     * How to deal with expiring objects? Idea:
@@ -98,20 +100,20 @@ Ideas:
       - Scan expiresAt, expire all the object for the given timestamp
       - Expire object means deleting all payloads found under that object
       - Expired objects stay in the tree and are filtered out by their validity 
-        period, they become forever skipped, but it's easier to do that than
-        actually modify MFT shortcuts
+        period, they are forever skipped on every scan, but it's easier to do 
+        that than actually modify MFT shortcuts
       - Similar applies to object that will be valid in the future (not yet valid). 
         IndexStore an index for them "maturesAt" and scan it periodically the same way as 
         expiresAt. Generate object updates for these objects when they mature.
       - data for expiration: 
         + timestamp -> objectKey
-        + key -> AKI
+        + objectKey -> AKI (from ObjectMeta)
         + AKI -> CA
         + retire all payloads under CA for the key
       - data for maturing:
         + timestamp -> objectKey
         + objectKey -> AKI
-        + run revalidation for (objectKey, AKI), something simi
+        + run revalidation for (objectKey, AKI), something similar to the case when (objectKey, AKI) is added.
  
 
     * What happens when the validator is launched after a long time of not running? 
@@ -126,10 +128,10 @@ Ideas:
        - invalid manifest means going through the manifest selection process again
        - invalid CRL means the same as invalid manifest
        - invalid CA?
-     - Wrap it in TroubledChild on the manifest shortcut
+     - Wrap it in TroubledChild on the manifest shortcut and skip when scanning.
 
-    * How to deal fencing limits?
-     - probably the same as in top-down validation
+    * How to deal with fencing limits?
+     - probably the same as in top-down validation?
 
     * Is there going to be issues with key rollovers?
      - probably not, there will be a diff on the parent manifest of each
@@ -157,20 +159,6 @@ Ideas:
 
 -- Types
 
-data UpdateHappened = ObjectUpdate AddedObject
-                    | RepositoryUpdate RpkiURL
-                    | TaUpdate TaName
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-data AddedObject = AddedObject {
-        objectKey :: {-# UNPACK #-} ObjectKey,
-        aki       :: AKI        
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-
 -- It is to simplify the definition of Payload handlers        
 data Payload = VrpsP [Vrp]                      
             | AspaP Aspa
@@ -195,7 +183,7 @@ validateCA db certKey onPayload = do
 
 {- 
     Filter will be used to 
-      * Pick up only CAs that are on somebody's path to the top\
+      * Pick up only CAs that are on somebody's path to the top
       * Pick up payloads (or their shortcuts) that are in the set up updates
 -}   
 validateCAPartially :: Storage s 
@@ -345,7 +333,7 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
             readFromCache aki >>= \case
                 Just parent
                     | accept aki parent -> do 
-                        let parentCa = parent ^. #caCertificate                        
+                        let parentCa = parent ^. #caCertificate
                         let ignored' = 
                                 if parentCa `Set.member` startCas 
                                     then ignored <> paths'

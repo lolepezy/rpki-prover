@@ -13,6 +13,8 @@ import           Control.Monad.Except
 
 import qualified Data.List.NonEmpty          as NonEmpty
 
+import           Data.Vector                     (Vector)
+import qualified Data.Vector                     as V
 import           Data.Data
 import           Data.Foldable                   (for_)
 import           Data.Maybe 
@@ -60,11 +62,11 @@ data Fetchers = Fetchers {
 
         -- Semaphore for untrusted fetches, i.e fetches that have 
         -- no decent history of being successful 
-        untrustedFetchSemaphore :: Semaphore,        
+        untrustedFetchSemaphore :: Semaphore,
 
         -- Semaphore for trusted fetches, i.e. fetches 
         -- that have already succeeded
-        trustedFetchSemaphore :: Semaphore,        
+        trustedFetchSemaphore :: Semaphore,
 
         -- Semaphore for rsync fetches per host, used to no exceed 
         -- the limit of connections per rsync host
@@ -86,6 +88,13 @@ instance Indexable Indexes UrlTA where
     indices = ixList
         (ixFun (\(UrlTA url _) -> [url]))
         (ixFun (\(UrlTA _ ta)  -> [ta]))        
+
+data Fetched = Fetched {
+        repository :: Repository,
+        updates    :: Vector Update,
+        rrdpStats  :: Maybe RrdpFetchStat
+    }
+    deriving stock (Show, Eq, Ord, Generic, Typeable)    
 
 deleteByIx :: (Indexable ixs a, IsIndexOf ix ixs) => ix -> IxSet ixs a -> IxSet ixs a
 deleteByIx ix_ s = foldr IxSet.delete s $ IxSet.getEQ ix_ s
@@ -121,7 +130,7 @@ fetchRepository :: (Storage s) =>
                 -> FetchConfig
                 -> WorldVersion
                 -> Repository 
-                -> ValidatorT IO (Repository, Maybe RrdpFetchStat)
+                -> ValidatorT IO Fetched
 fetchRepository 
     appContext@AppContext {..}
     fetchConfig
@@ -130,18 +139,18 @@ fetchRepository
         logInfo logger [i|Fetching #{getURL repoURL}.|]   
         case repo of
             RsyncR r -> do 
-                r' <- fetchRsyncRepository r
-                pure (RsyncR r', Nothing)                
+                (r', updates) <- fetchRsyncRepository r
+                pure $ Fetched (RsyncR r') (V.fromList updates) Nothing                
             RrdpR r  -> do 
-                (r', stat) <- fetchRrdpRepository r
-                pure (RrdpR r', Just stat)                
+                (r', stat, updates) <- fetchRrdpRepository r
+                pure $ Fetched (RrdpR r') (V.fromList updates) (Just stat)                
   where
     repoURL = getRpkiURL repo    
     -- Give the process some time to kill itself, 
     -- before trying to kill it from here
     timeToKillItself = Seconds 5
     
-    fetchRrdpRepository r = do 
+    fetchRrdpRepository r = do
         let fetcherTimeout = fetchConfig ^. #rrdpTimeout
         let totalTimeout = fetcherTimeout + timeToKillItself
         timeoutVT totalTimeout

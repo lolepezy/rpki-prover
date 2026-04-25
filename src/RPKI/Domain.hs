@@ -6,12 +6,14 @@
 module RPKI.Domain where
 
 import           Control.DeepSeq          (NFData)
+import           Control.Monad.IO.Class
 import           Data.Int                 (Int64)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
 import qualified Data.Vector              as V
+import qualified Data.Vector.Mutable      as MV
 
 import           Data.ByteString.Base16   as Hex
 import qualified Data.String.Conversions  as SC
@@ -30,6 +32,8 @@ import           Data.Hashable hiding (hash)
 import           Data.Semigroup
 
 import           Data.Bifunctor
+import           Control.Monad (when)
+import           Data.IORef
 import           Data.Monoid.Generic
 import           Data.Tuple.Strict
 
@@ -800,10 +804,42 @@ newtype EarliestToExpire = EarliestToExpire Instant
 
 
 instance Monoid EarliestToExpire where
-    -- It is 2262-04-11 23:47:16.000Z, it's 
+    -- It is 2262-04-11 23:47:16.000Z, and it's 
     -- 1) far enough to set it as "later that anything else"
     -- 2) Anything bigger wraps around to the year 1677
     mempty = EarliestToExpire $ Instant $ 1000_000_000 * 9_223_372_036
+
+
+data Update = ObjectUpdate AddedObject
+            | RepositoryUpdate RpkiURL
+            | TaUpdate TaName
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+data AddedObject = AddedObject {
+        objectKey :: {-# UNPACK #-} ObjectKey,
+        aki       :: AKI
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+
+withUpdateAccum :: MonadIO m => Int -> RpkiURL -> ((ObjectKey -> AKI -> m ()) -> m a) -> m (a, [Update])
+withUpdateAccum threshold url action = do
+    buffer <- liftIO $ newIORef []
+    count  <- liftIO $ newIORef (0 :: Int)
+    result <- action $ \objectKey aki -> liftIO $ do
+        n <- readIORef count
+        writeIORef count $! n + 1
+        when (n < threshold) $
+            modifyIORef' buffer (AddedObject {..} :)
+    n    <- liftIO $ readIORef count
+    objs <- liftIO $ readIORef buffer
+    let updates
+          | n <= threshold = map ObjectUpdate (reverse objs)
+          | otherwise      = [RepositoryUpdate url]
+    pure (result, updates)
+
 
 -- Small utility functions that don't have anywhere else to go
 
