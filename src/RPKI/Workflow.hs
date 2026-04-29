@@ -254,7 +254,7 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
 
 
 runAll :: (Storage s, MaintainableStorage s) =>
-                         AppContext s -> [TAL] -> IO ()
+            AppContext s -> [TAL] -> IO ()
 runAll appContext@AppContext {..} tals = do    
     void $ concurrently (
             -- Fill in the current appState if it's not too old.
@@ -266,7 +266,7 @@ runAll appContext@AppContext {..} tals = do
             withWorkflowShared appContext prometheusMetrics tals $ \workflowShared ->           
                 case config ^. #proverRunMode of     
                     ServerMode -> 
-                        void $ concurrently                    
+                        void $ concurrently   
                             (concurrently
                                 (runScheduledTasks workflowShared)
                                 (revalidate workflowShared))

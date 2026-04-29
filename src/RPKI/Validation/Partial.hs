@@ -18,8 +18,6 @@ import           Data.Tuple.Strict
 
 import           Data.Generics.Product.Fields
 
-import           GHC.Generics
-
 import           RPKI.AppMonad
 import           RPKI.Time
 import           RPKI.Domain
@@ -27,7 +25,6 @@ import           RPKI.Util (ifJustM)
 import           RPKI.Store.Database (DB)
 import qualified RPKI.Store.Database as DB
 import           RPKI.Fetch.Common
-import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Base.Storage
 import           RPKI.Validation.Types
 import           RPKI.Validation.ObjectValidation
@@ -85,13 +82,13 @@ Ideas:
     * What happens if a validation process was interrupted?
        Idea: 
         - have a persistent log of changes WorldVersion -> [Update]
-        - have a persistenr log of appled changes WorldVersion -> [Diff Payload]
+        - have a persistent log of applied changes WorldVersion -> [Diff Payload]
         - on startup compare the two logs and apply missing changes
         - in one transaction 
             + write applied changes to the log
             + update the tree store (KI -> KIMeta, CertKey -> MftKey)
         - MFT shortcuts could be written asynchronously (using the queue as already implemented), 
-          we don't want a very big treansaction
+          since we don't want a very big treansaction and to hold all manifest shortcuts in memory.
 
 
     * How to deal with expiring objects? Idea:
