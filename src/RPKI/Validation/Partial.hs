@@ -26,9 +26,8 @@ import           RPKI.Domain
 import           RPKI.Util (ifJustM)
 import           RPKI.Store.Database (DB)
 import qualified RPKI.Store.Database as DB
+import           RPKI.Fetch.Common
 import           RPKI.Store.Base.Serialisation
-import           RPKI.Store.Base.Map      (SMap (..))
-import           RPKI.Store.Base.MultiMap (SMultiMap (..))
 import           RPKI.Store.Base.Storage
 import           RPKI.Validation.Types
 import           RPKI.Validation.ObjectValidation

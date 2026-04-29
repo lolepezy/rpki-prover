@@ -40,6 +40,7 @@ import           RPKI.Metrics.System
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
+import           RPKI.Fetch.Common
 import           RPKI.Store.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
@@ -57,6 +58,7 @@ import           System.FilePath
 import           System.Process.Typed
 
 import qualified Streaming.Prelude                as S
+import qualified GHC.Float as DB
 
 
 checkRsyncInPath :: Maybe FilePath -> ValidatorT IO ()
@@ -241,11 +243,17 @@ loadRsyncRepository :: Storage s =>
                     -> DB.DB s 
                     -> ValidatorT IO [Update]
 loadRsyncRepository AppContext{..} fetchConfig worldVersion repositoryUrl rootPath db = do
-    (_, updates) <- withUpdateAccum threshold (RsyncU repositoryUrl) $ \addObj ->
+    let saveTx getUpdates f = do 
+            DB.rwAppTx db $ \tx -> do
+                f tx 
+                updates <- getUpdates
+                DB.logUpdates tx db worldVersion updates
+
+    (_, updates) <- withUpdateAccum threshold (RsyncU repositoryUrl) $ \addObj getUpdates ->
         txFoldPipeline 
                 (2 * cpuParallelism)
                 traverseFS
-                (DB.rwAppTx db)
+                (saveTx getUpdates)
                 (saveStorable addObj)
     pure updates
   where        
