@@ -33,6 +33,7 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Repository
+import           RPKI.Fetch.Common
 import           RPKI.RRDP.Types
 import           RPKI.TAL
 import           RPKI.Logging

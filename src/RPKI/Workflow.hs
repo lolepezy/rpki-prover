@@ -55,7 +55,8 @@ import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Repository
-import           RPKI.Fetch
+import           RPKI.Fetch.Common
+import           RPKI.Fetch.Fetch
 import           RPKI.Logging
 import           RPKI.Metrics.System
 import           RPKI.Http.Types
@@ -931,9 +932,12 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                 -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
                 case r of
-                    Right Fetched { repository = repository', rrdpStats = stats } -> do                         
+                    Right Fetched { repository = repository', rrdpStats = stats, .. } -> do                         
                         let (updateRepo, interval) = updateRepository fetchConfig
                                 repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duration
+
+                        unless (null updates) $
+                            logDebug logger [i|Updates for #{url}: #{updates}.|]
 
                         saveFetchOutcome updateRepo validations                        
                         triggerTaRevalidationIf $ hasUpdates validations                                                         

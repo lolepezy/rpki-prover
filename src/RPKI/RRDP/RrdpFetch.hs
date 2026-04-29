@@ -44,6 +44,7 @@ import           RPKI.RRDP.Http
 import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Validation.ObjectValidation
+import           RPKI.Fetch.Common
 import           RPKI.Store.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
@@ -443,17 +444,19 @@ saveSnapshot
     when (serial /= notificationSerial) $ 
         appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
          
-    let savingTx f = 
+    let savingTx getUpdates f = 
             DB.rwAppTx db $ \tx -> do 
                 f tx
                 updateRepositoryMeta tx db repoUri sessionId serial
+                updates <- getUpdates
+                DB.logUpdates tx db worldVersion updates
 
-    (_, updates) <- withUpdateAccum threshold (RrdpU repoUri) $ \addObj ->
-        txFoldPipeline 
-                cpuParallelism
-                (S.mapM (newStorable db) $ S.each snapshotItems)
-                savingTx
-                (saveStorable addObj db)
+    (_, updates) <- withUpdateAccum threshold (RrdpU repoUri) $ \addObj getUpdates ->
+                        txFoldPipeline 
+                            cpuParallelism
+                            (S.mapM (newStorable db) $ S.each snapshotItems)
+                            (savingTx getUpdates)
+                            (saveStorable addObj db)
     pure updates
   where        
 
@@ -592,18 +595,20 @@ saveDelta appContext worldVersion fetchConfig repoUri notification expectedSeria
     when (expectedSerial /= serial) $
         appError $ RrdpE $ DeltaSerialMismatch serial notificationSerial
     
-    let savingTx f =            
+    let savingTx getUpdates f =            
             DB.rwAppTx db $ \tx -> do 
                 verifyRrdpMeta tx db repoUri sessionId (previousSerial serial)
                 f tx
                 updateRepositoryMeta tx db repoUri sessionId serial
+                updates <- getUpdates
+                DB.logUpdates tx db worldVersion updates
 
-    (_, updates) <- withUpdateAccum threshold (RrdpU repoUri) $ \addObj ->
-        txFoldPipeline
-                cpuParallelism
-                (S.mapM newStorable $ S.each deltaItems)
-                savingTx
-                (saveStorable addObj db)
+    (_, updates) <- withUpdateAccum threshold (RrdpU repoUri) $ \addObj getUpdates ->
+                        txFoldPipeline
+                                cpuParallelism
+                                (S.mapM newStorable $ S.each deltaItems)
+                                (savingTx getUpdates)
+                                (saveStorable addObj db)
     pure updates
   where        
 
