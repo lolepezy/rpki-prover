@@ -55,7 +55,8 @@ import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Repository
-import           RPKI.Fetch
+import           RPKI.Fetch.Common
+import           RPKI.Fetch.Fetch
 import           RPKI.Logging
 import           RPKI.Metrics.System
 import           RPKI.Http.Types
@@ -253,7 +254,7 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
 
 
 runAll :: (Storage s, MaintainableStorage s) =>
-                         AppContext s -> [TAL] -> IO ()
+            AppContext s -> [TAL] -> IO ()
 runAll appContext@AppContext {..} tals = do    
     void $ concurrently (
             -- Fill in the current appState if it's not too old.
@@ -265,7 +266,7 @@ runAll appContext@AppContext {..} tals = do
             withWorkflowShared appContext prometheusMetrics tals $ \workflowShared ->           
                 case config ^. #proverRunMode of     
                     ServerMode -> 
-                        void $ concurrently                    
+                        void $ concurrently   
                             (concurrently
                                 (runScheduledTasks workflowShared)
                                 (revalidate workflowShared))
@@ -931,9 +932,12 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                 -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
                 case r of
-                    Right (repository', stats) -> do                         
+                    Right Fetched { repository = repository', rrdpStats = stats, .. } -> do                         
                         let (updateRepo, interval) = updateRepository fetchConfig
                                 repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duration
+
+                        unless (null updates) $
+                            logDebug logger [i|Updates for #{url}: #{updates}.|]
 
                         saveFetchOutcome updateRepo validations                        
                         triggerTaRevalidationIf $ hasUpdates validations                                                         
@@ -984,7 +988,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                 updatePrometheusForRepository fallbackUrl duration prometheusMetrics
                 let repo = case r of
-                        Right (repository', _noRrdpStats) -> 
+                        Right Fetched { repository = repository' } -> 
                             -- realistically at this time the only fallback repositories are rsync, so 
                             -- there's no RrdpFetchStat ever
                             updateMeta' repository' (#status .~ FetchedAt (versionToInstant worldVersion))
@@ -1018,7 +1022,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             FailedAt _ -> exponentialBackoff currentInterval
             _ ->       
                 case rrdpStats of 
-                    Nothing                  -> defaultInterval
+                    Nothing -> defaultInterval
                     Just RrdpFetchStat {..} -> 
                         case action of 
                             NothingToFetch _ -> increaseInterval currentInterval 

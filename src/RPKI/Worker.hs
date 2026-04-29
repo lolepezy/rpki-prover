@@ -33,6 +33,7 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Repository
+import           RPKI.Fetch.Common
 import           RPKI.RRDP.Types
 import           RPKI.TAL
 import           RPKI.Logging
@@ -70,6 +71,7 @@ instance Show WorkerId where
 
 data WorkerParams = RrdpFetchParams { 
                 scopes         :: Scopes, 
+                fetchConfig    :: FetchConfig,
                 rrdpRepository :: RrdpRepository,
                 worldVersion   :: WorldVersion 
             } | 
@@ -118,12 +120,12 @@ makeWorkerInput AppContext {..} workerId params timeout cpuLimit = do
                         timeout cpuLimit executableVersion
 
 newtype RrdpFetchResult = RrdpFetchResult 
-                            (Either AppError (RrdpRepository, RrdpFetchStat), ValidationState)    
+                            (Either AppError (RrdpRepository, RrdpFetchStat, [Update]), ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
 newtype RsyncFetchResult = RsyncFetchResult 
-                            (Either AppError RsyncRepository, ValidationState)    
+                            (Either AppError (RsyncRepository, [Update]), ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 

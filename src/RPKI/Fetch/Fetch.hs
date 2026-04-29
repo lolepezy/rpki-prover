@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData        #-}
 
-module RPKI.Fetch where
+module RPKI.Fetch.Fetch where
 
 import           Control.Concurrent              as Conc
 import           Control.Concurrent.Async
@@ -13,6 +13,8 @@ import           Control.Monad.Except
 
 import qualified Data.List.NonEmpty          as NonEmpty
 
+import           Data.Vector                     (Vector)
+import qualified Data.Vector                     as V
 import           Data.Data
 import           Data.Foldable                   (for_)
 import           Data.Maybe 
@@ -43,73 +45,8 @@ import           RPKI.Util
 import           RPKI.Rsync
 import           RPKI.RRDP.Http
 import           RPKI.TAL
+import           RPKI.Fetch.Common
 import           RPKI.RRDP.RrdpFetch
-
-
-data Fetchers = Fetchers {
-        -- All fetchables after the last validation, i.e. repositories
-        -- with their fallbacks
-        fetcheables :: TVar Fetcheables,
-
-        -- Fetchers that are currently running
-        runningFetchers :: TVar (Map RpkiURL ThreadId),        
-
-        -- Version for the first fetch that was finished for every repository.
-        -- We want to track this to for the "one-off" mode.
-        firstFinishedFetchBy :: TVar (Map RpkiURL WorldVersion),        
-
-        -- Semaphore for untrusted fetches, i.e fetches that have 
-        -- no decent history of being successful 
-        untrustedFetchSemaphore :: Semaphore,        
-
-        -- Semaphore for trusted fetches, i.e. fetches 
-        -- that have already succeeded
-        trustedFetchSemaphore :: Semaphore,        
-
-        -- Semaphore for rsync fetches per host, used to no exceed 
-        -- the limit of connections per rsync host
-        rsyncPerHostSemaphores  :: TVar (Map RsyncHost Semaphore),
-
-        -- Mapping of repositories to the TAs they are mentioned in
-        uriByTa :: TVar UriTaIxSet
-    }
-    deriving stock (Generic)
-
-type UriTaIxSet = IxSet Indexes UrlTA
-
-data UrlTA = UrlTA RpkiURL TaName
-    deriving stock (Show, Eq, Ord, Generic, Data, Typeable)    
-
-type Indexes = '[RpkiURL, TaName]
-
-instance Indexable Indexes UrlTA where
-    indices = ixList
-        (ixFun (\(UrlTA url _) -> [url]))
-        (ixFun (\(UrlTA _ ta)  -> [ta]))        
-
-deleteByIx :: (Indexable ixs a, IsIndexOf ix ixs) => ix -> IxSet ixs a -> IxSet ixs a
-deleteByIx ix_ s = foldr IxSet.delete s $ IxSet.getEQ ix_ s
-
-dropFetcher :: Fetchers -> RpkiURL -> IO ()
-dropFetcher Fetchers {..} url = mask_ $ do
-    readTVarIO runningFetchers >>= \running -> do
-        for_ (Map.lookup url running) $ \thread -> do
-            Conc.throwTo thread AsyncCancelled
-            atomically $ do
-                modifyTVar' runningFetchers $ Map.delete url
-                modifyTVar' uriByTa $ deleteByIx url
-
-updateUriPerTa :: Map TaName Fetcheables -> UriTaIxSet -> UriTaIxSet
-updateUriPerTa fetcheablesPerTa uriTa = uriTa'
-  where 
-    -- TODO Optimise it
-    cleanedUpPerTa = foldr deleteByIx uriTa $ Map.keys fetcheablesPerTa        
-
-    uriTa' = 
-        IxSet.insertList [ UrlTA url ta | 
-                (ta, Fetcheables fs) <- Map.toList fetcheablesPerTa,
-                url <- MonoidalMap.keys fs
-            ] cleanedUpPerTa 
 
 -- Fetch one individual repository. 
 -- 
@@ -121,7 +58,7 @@ fetchRepository :: (Storage s) =>
                 -> FetchConfig
                 -> WorldVersion
                 -> Repository 
-                -> ValidatorT IO (Repository, Maybe RrdpFetchStat)
+                -> ValidatorT IO Fetched
 fetchRepository 
     appContext@AppContext {..}
     fetchConfig
@@ -130,18 +67,18 @@ fetchRepository
         logInfo logger [i|Fetching #{getURL repoURL}.|]   
         case repo of
             RsyncR r -> do 
-                r' <- fetchRsyncRepository r
-                pure (RsyncR r', Nothing)                
+                (r', updates) <- fetchRsyncRepository r
+                pure $ Fetched (RsyncR r') (V.fromList updates) Nothing                
             RrdpR r  -> do 
-                (r', stat) <- fetchRrdpRepository r
-                pure (RrdpR r', Just stat)                
+                (r', stat, updates) <- fetchRrdpRepository r
+                pure $ Fetched (RrdpR r') (V.fromList updates) (Just stat)                
   where
     repoURL = getRpkiURL repo    
     -- Give the process some time to kill itself, 
     -- before trying to kill it from here
     timeToKillItself = Seconds 5
     
-    fetchRrdpRepository r = do 
+    fetchRrdpRepository r = do
         let fetcherTimeout = fetchConfig ^. #rrdpTimeout
         let totalTimeout = fetcherTimeout + timeToKillItself
         timeoutVT totalTimeout

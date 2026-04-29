@@ -104,11 +104,24 @@ createDatabase env logger config checkAction = do
             validatedByVersion <- newSMap                    
             mftShortcuts       <- MftShortcutStore <$> newSMap <*> newSMap
             originals          <- newSMap
+            indexStore         <- createIndexStore
             pure RpkiObjectStore {..}
             
         createRepositoryStore = 
             RepositoryStore <$> newSafeMap <*> newSafeMap <*> newSafeMap <*> newSafeMap
         
+        createIndexStore = do
+            kiMetas   <- newSMap
+            cert2mft  <- newSMap
+            mftShorts <- newSMap
+            expiresAt <- newSMultiMap
+            maturesAt <- newSMultiMap
+            repository2object <- newSMultiMap            
+            caShortcuts <- newSMap           
+            updateLog   <- newSMultiMap 
+            changeLog   <- newSMultiMap 
+            pure IndexStore {..}
+
         lmdb = LmdbStorage env 
                 (config ^. #storageConfig . #rwTransactionTimeout)
 

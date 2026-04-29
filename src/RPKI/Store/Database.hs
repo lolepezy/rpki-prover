@@ -38,6 +38,7 @@ import           RPKI.TAL
 import           RPKI.RRDP.Types
 import           RPKI.SLURM.Types
 import           RPKI.Repository
+import           RPKI.Fetch.Common
 
 import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
@@ -123,7 +124,9 @@ data RpkiObjectStore s = RpkiObjectStore {
         objectKeyToUrlKeys :: SMap "object-key-to-uri" s ObjectKey [UrlKey],
 
         mftShortcuts       :: MftShortcutStore s,
-        originals          :: SMap "object-original" s ObjectKey (Verbatim ObjectOriginal)
+        originals          :: SMap "object-original" s ObjectKey (Verbatim ObjectOriginal),
+        
+        indexStore         :: IndexStore s
     } 
     deriving stock (Generic)
 
@@ -227,6 +230,29 @@ newtype MetadataStore s = MetadataStore {
     }
     deriving stock (Generic)
 
+
+data IndexStore s = IndexStore {
+        kiMetas   :: SMap "ki-meta" s KI KIMeta,        
+        cert2mft  :: SMap "cert-to-mft" s CertKey MftKey,
+        mftShorts :: SMap "mft-shorts" s MftKey MftShortcut,
+
+        expiresAt :: SMultiMap "expires-at" s Instant ObjectKey,
+        maturesAt :: SMultiMap "matures-at" s Instant ObjectKey,
+
+        repository2object :: SMultiMap "repo-key-to-obj-keys" s RepositoryKey ObjectKey,
+
+        caShortcuts :: SMap "ca-shortcuts" s CertKey CaShortcut,
+
+        updateLog :: SMultiMap "update-log" s WorldVersion Update,
+        changeLog :: SMultiMap "change-log" s WorldVersion (Change Payload)
+    }
+    deriving (Generic)
+
+
+instance Storage s => WithStorage s (IndexStore s) where
+    storage IndexStore {..} = storage kiMetas
+
+
 -- Some DTOs for storing MFT shortcuts
 data MftShortcutMeta = MftShortcutMeta {
         key            :: ObjectKey,        
@@ -251,6 +277,18 @@ data MftShortcutStore s = MftShortcutStore {
         mftChildren :: SMap "mfts-shortcut-children" s AKI (Verbatim (Compressed MftShortcutChildren))
     }
     deriving stock (Generic)
+
+data KIMeta = KIMeta {
+        caCertificate  :: CertKey,
+        aki            :: {-# UNPACK #-} AKI,
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+instance {-# OVERLAPPING #-} WithValidityPeriod KIMeta where 
+    getValidityPeriod KIMeta {..} = (notValidBefore, notValidAfter)
 
 
 getKeyByHash :: (MonadIO m, Storage s) => 
@@ -781,6 +819,13 @@ updateRrdpMetaM tx DB { repositoryStore = RepositoryStore {..} } url f = liftIO 
         for_ maybeNewMeta $ \newMeta -> 
             SM.put tx rrdpS url (repo { rrdpMeta = Just newMeta })
  
+logUpdates :: (MonadIO m, Storage s) =>
+                Tx s 'RW -> DB s -> WorldVersion -> [Update] -> m ()
+logUpdates tx db version updates = liftIO $ do
+    let updateLog = db ^. #objectStore . #indexStore . #updateLog
+    forM_ updates $ MM.put tx updateLog version
+
+
 getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m PublicationPoints
 getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
     rrdps <- SM.all tx rrdpS
