@@ -21,6 +21,19 @@ import           RPKI.Resources.Types
 import           RPKI.Store.Base.Serialisation
 
 
+-- It is to simplify the definition of Payload handlers        
+data Payload = VrpsP [Vrp]                      
+            | AspaP Aspa
+            | BgpSecP BGPSecPayload
+            | SplP SplPayload
+            | GbrP (T2 Hash Gbr)
+    deriving (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+data Change a = Added a | Deleted a
+    deriving (Show, Eq, Ord, Generic)  
+
+
 data MftChild = CaChild CaShortcut Serial
               | RoaChild RoaShortcut Serial
               | SplChild SplShortcut Serial

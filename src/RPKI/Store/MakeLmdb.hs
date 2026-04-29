@@ -119,6 +119,7 @@ createDatabase env logger config checkAction = do
             repository2object <- newSMultiMap            
             caShortcuts <- newSMap           
             updateLog   <- newSMultiMap 
+            changeLog   <- newSMultiMap 
             pure IndexStore {..}
 
         lmdb = LmdbStorage env 

@@ -239,12 +239,12 @@ data IndexStore s = IndexStore {
         expiresAt :: SMultiMap "expires-at" s Instant ObjectKey,
         maturesAt :: SMultiMap "matures-at" s Instant ObjectKey,
 
-        -- TODO Might be PP -> object?
         repository2object :: SMultiMap "repo-key-to-obj-keys" s RepositoryKey ObjectKey,
 
         caShortcuts :: SMap "ca-shortcuts" s CertKey CaShortcut,
 
-        updateLog :: SMultiMap "update-log" s WorldVersion Update
+        updateLog :: SMultiMap "update-log" s WorldVersion Update,
+        changeLog :: SMultiMap "change-log" s WorldVersion (Change Payload)
     }
     deriving (Generic)
 
