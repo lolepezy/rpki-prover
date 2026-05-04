@@ -74,7 +74,7 @@ instance Indexable Indexes UrlTA where
 
 data Fetched = Fetched {
         repository :: Repository,
-        updates    :: Vector Update,
+        hasUpdates :: Bool,
         rrdpStats  :: Maybe RrdpFetchStat
     }
     deriving stock (Show, Eq, Ord, Generic, Typeable)    
@@ -97,7 +97,7 @@ withUpdateAccum :: MonadIO m
                 => Int 
                 -> RpkiURL 
                 -> ((ObjectKey -> AKI -> m ()) -> (m [Update]) -> m a)
-                -> m (a, [Update])
+                -> m (a, Bool)
 withUpdateAccum threshold url action = do
     buffer <- liftIO $ newIORef []
     count  <- liftIO $ newIORef (0 :: Int)
@@ -112,9 +112,9 @@ withUpdateAccum threshold url action = do
 
     let getUpdates = liftIO $ readIORef buffer
 
-    result  <- action addObject getUpdates    
-    updates <- liftIO $ readIORef buffer    
-    pure (result, updates)
+    result <- action addObject getUpdates    
+    n      <- liftIO $ readIORef count    
+    pure (result, n > 0)
 
 
 deleteByIx :: (Indexable ixs a, IsIndexOf ix ixs) => ix -> IxSet ixs a -> IxSet ixs a

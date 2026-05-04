@@ -120,12 +120,12 @@ makeWorkerInput AppContext {..} workerId params timeout cpuLimit = do
                         timeout cpuLimit executableVersion
 
 newtype RrdpFetchResult = RrdpFetchResult 
-                            (Either AppError (RrdpRepository, RrdpFetchStat, [Update]), ValidationState)    
+                            (Either AppError (RrdpRepository, RrdpFetchStat, Bool), ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
 newtype RsyncFetchResult = RsyncFetchResult 
-                            (Either AppError (RsyncRepository, [Update]), ValidationState)    
+                            (Either AppError (RsyncRepository, Bool), ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 

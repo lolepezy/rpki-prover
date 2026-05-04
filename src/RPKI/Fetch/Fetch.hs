@@ -67,11 +67,11 @@ fetchRepository
         logInfo logger [i|Fetching #{getURL repoURL}.|]   
         case repo of
             RsyncR r -> do 
-                (r', updates) <- fetchRsyncRepository r
-                pure $ Fetched (RsyncR r') (V.fromList updates) Nothing                
+                (r', hasUpdates) <- fetchRsyncRepository r
+                pure $ Fetched (RsyncR r') hasUpdates Nothing                
             RrdpR r  -> do 
-                (r', stat, updates) <- fetchRrdpRepository r
-                pure $ Fetched (RrdpR r') (V.fromList updates) (Just stat)                
+                (r', stat, hasUpdates) <- fetchRrdpRepository r
+                pure $ Fetched (RrdpR r') hasUpdates (Just stat)                
   where
     repoURL = getRpkiURL repo    
     -- Give the process some time to kill itself, 

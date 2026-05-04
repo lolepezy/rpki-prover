@@ -87,7 +87,7 @@ runRsyncFetchWorker :: AppContext s
                     -> FetchConfig
                     -> WorldVersion
                     -> RsyncRepository             
-                    -> ValidatorT IO (RsyncRepository, [Update])
+                    -> ValidatorT IO (RsyncRepository, Bool)
 runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion repository = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
@@ -155,7 +155,7 @@ updateForRsyncRepository :: Storage s
                         -> FetchConfig 
                         -> WorldVersion 
                         -> RsyncRepository 
-                        -> ValidatorT IO (RsyncRepository, [Update])
+                        -> ValidatorT IO (RsyncRepository, Bool)
 updateForRsyncRepository 
     appContext@AppContext{..} 
     fetchConfig
@@ -185,8 +185,8 @@ updateForRsyncRepository
         case exitCode of  
             ExitSuccess -> do                 
                 db <- liftIO $ readTVarIO database
-                addedObjects <- loadRsyncRepository appContext fetchConfig worldVersion uri destination db
-                pure (repo, addedObjects)
+                hasUpdates <- loadRsyncRepository appContext fetchConfig worldVersion uri destination db
+                pure (repo, hasUpdates)
             ExitFailure errorCode -> do
                 logError logger [i|Rsync process failed: #{rsync} 
                                             with code #{errorCode}, 
@@ -241,7 +241,7 @@ loadRsyncRepository :: Storage s =>
                     -> RsyncURL 
                     -> FilePath 
                     -> DB.DB s 
-                    -> ValidatorT IO [Update]
+                    -> ValidatorT IO Bool
 loadRsyncRepository AppContext{..} fetchConfig worldVersion repositoryUrl rootPath db = do
     let saveTx getUpdates f = do 
             DB.rwAppTx db $ \tx -> do
@@ -249,13 +249,13 @@ loadRsyncRepository AppContext{..} fetchConfig worldVersion repositoryUrl rootPa
                 updates <- getUpdates
                 DB.logUpdates tx db worldVersion updates
 
-    (_, updates) <- withUpdateAccum threshold (RsyncU repositoryUrl) $ \addObj getUpdates ->
-        txFoldPipeline 
-                (2 * cpuParallelism)
-                traverseFS
-                (saveTx getUpdates)
-                (saveStorable addObj)
-    pure updates
+    (_, hasUpdates) <- withUpdateAccum threshold (RsyncU repositoryUrl) $ \addObj getUpdates ->
+                            txFoldPipeline 
+                                    (2 * cpuParallelism)
+                                    traverseFS
+                                    (saveTx getUpdates)
+                                    (saveStorable addObj)
+    pure hasUpdates
   where        
     cpuParallelism = config ^. typed @Parallelism . #cpuParallelism
     threshold      = fetchConfig ^. #objectUpdatesThreshold
