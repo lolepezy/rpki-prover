@@ -414,7 +414,7 @@ getRpkiObject AppContext {..} uri hash key =
                 Nothing -> 
                     throwError err400 { errBody = convert $ "Could not parse integer key " <> key' } 
                 Just (k :: Integer) -> do 
-                    let kk = ObjectKey $ ArtificialKey $ fromIntegral k
+                    let kk = ObjectKey $ asKey $ fromIntegral k
                     roTxT database $ \tx db ->
                         (locatedDto <$>) . maybeToList <$> DB.getLocatedByKey tx db kk
         _ ->

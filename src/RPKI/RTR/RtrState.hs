@@ -15,6 +15,7 @@ import           Data.Generics.Labels
 import           Deque.Strict   as Deq
 
 import           RPKI.AppTypes
+import           RPKI.Store.Base.Serialisation (LexOrdKey64(..))
 import           RPKI.Time      (nanosPerSecond)
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
@@ -160,6 +161,6 @@ wrapAroundSerial = (2 :: Integer)^(31 :: Integer) - 1
 -- 1) strip everything except from seconds from the the version
 -- 2) Make it 2 bytes using `mod`    
 worldVersionToRtrSessionId :: WorldVersion -> RtrSessionId
-worldVersionToRtrSessionId (WorldVersion nanoseconds) =
+worldVersionToRtrSessionId (versionToInt -> nanoseconds) =
     RtrSessionId $ fromIntegral $
         (nanoseconds `div` nanosPerSecond) `mod` (256 * 256)

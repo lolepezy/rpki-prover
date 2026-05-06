@@ -43,6 +43,7 @@ import HaskellWorks.Data.Network.Ip.Ip as Ips
 
 import           RPKI.AppTypes
 import           RPKI.Domain                 as Domain
+import           RPKI.Store.Base.Serialisation (LexOrdKey64(..))
 import           RPKI.Config
 
 import           RPKI.Logging
@@ -68,7 +69,7 @@ instance ToJSON IpPrefix where
     toJSON = toJSON . show
 
 instance ToJSON WorldVersion where
-    toJSON (WorldVersion v) = toJSON $ show v
+    toJSON = toJSON . versionToInt
 
 instance (ToJSON a, ToJSON b) => ToJSON (T2 a b) where
     toJSON (T2 a b) = toJSON (a, b)
@@ -164,10 +165,10 @@ instance ToJSON Count where
     toJSON (Count s) = toJSON s
 
 instance ToJSON ObjectKey where
-    toJSON (ObjectKey (ArtificialKey k)) = toJSON k
+    toJSON (ObjectKey (ArtificialKey (LexOrdKey64 k))) = toJSON k
 
 instance ToJSONKey ObjectKey where
-    toJSONKey = toJSONKeyText $ \(ObjectKey (ArtificialKey k)) -> U.fmtGen k
+    toJSONKey = toJSONKeyText $ \(ObjectKey (ArtificialKey (LexOrdKey64 k))) -> U.fmtGen k
 
 instance ToJSON Focus
 instance ToJSONKey (Scope 'Metric)
