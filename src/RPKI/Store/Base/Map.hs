@@ -63,10 +63,8 @@ values tx (SMap _ s) = S.foldS tx s f []
   where
     f z _ (SValue sv) = pure $! fromStorable sv : z
 
--- | Return the entry with the largest key according to LMDB's byte ordering,
--- which matches Haskell ordering for types stored via 'LexOrdKey64'.
 last :: (AsStorable k, AsStorable v) =>
         Tx s m -> SMap name s k v -> IO (Maybe (k, v))
-last tx (SMap _ s) = S.foldS tx s f Nothing
+last tx (SMap _ s) = (f <$>) <$> S.last tx s
   where
-    f _ (SKey sk) (SValue sv) = pure $! Just (fromStorable sk, fromStorable sv)
+    f (SKey sk, SValue sv) = (fromStorable sk, fromStorable sv)
