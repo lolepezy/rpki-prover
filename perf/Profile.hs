@@ -21,6 +21,7 @@ import           Options.Generic
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppState
+import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting

@@ -15,7 +15,6 @@ import           Data.Generics.Labels
 import           Deque.Strict   as Deq
 
 import           RPKI.AppTypes
-import           RPKI.Store.Base.Serialisation (LexOrdKey64(..))
 import           RPKI.Time      (nanosPerSecond)
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol

@@ -25,13 +25,13 @@ type TheBinary = Store
 -- | 64-bit integers that preserve their order when serialized as byte strings.
 -- Used as keys in a tree-based DB (LMDB): two values compare the same in
 -- Haskell as they would when LMDB compares their raw byte representations.
--- Encoding: XOR the Int64 bit-pattern with 0x8000000000000000 (flip sign bit)
--- then write big-endian, mapping Int64 order onto unsigned lexicographic order.
 newtype LexOrdKey64 = LexOrdKey64 Int64
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass NFData
     deriving anyclass Hashable
 
+-- Encoding: XOR the Int64 bit-pattern with 0x8000000000000000 (flip sign bit)
+-- then write big-endian, mapping Int64 order onto unsigned lexicographic order.
 instance Store LexOrdKey64 where
     size = ConstSize 8
     poke (LexOrdKey64 i) = do

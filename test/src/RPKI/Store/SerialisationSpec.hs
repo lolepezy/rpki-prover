@@ -7,7 +7,7 @@ import qualified Test.Tasty.QuickCheck     as QC
 
 import           RPKI.Orphans
 import           RPKI.Store.Base.Serialisation
-import           RPKI.Domain (ArtificialKey(..))
+import           RPKI.Domain               (ArtificialKey(..))
 
 serialisationSpec :: TestTree
 serialisationSpec = testGroup "Serialisation ordering properties"
