@@ -613,7 +613,7 @@ runAll appContext@AppContext {..} tals = do
             profilingFlags = [ ]
 
             arguments = 
-                [ workerIdStr workerId ] <>
+                [ show workerId ] <>
                 rtsArguments ( 
                     profilingFlags <> [ 
                         rtsN maxCpuAvailable, 
@@ -629,7 +629,7 @@ runAll appContext@AppContext {..} tals = do
                                     ValidationParams {..}
                                     (Timebox timeout)
                                     Nothing
-                    workerInfo <- newWorkerInfo (GenericWorker "validation") timeout (convert $ workerIdStr workerId)
+                    workerInfo <- newWorkerInfo (GenericWorker "validation") timeout (convert $ show workerId)
                     runWorker logger workerInput arguments workerInfo
 
         pure (r, workerId)
@@ -638,7 +638,7 @@ runAll appContext@AppContext {..} tals = do
         let workerId = WorkerId [i|version:#{worldVersion}:cache-clean-up|]
         
         let arguments = 
-                [ workerIdStr workerId ] <>
+                [ show workerId ] <>
                 rtsArguments [ 
                     rtsN 2, 
                     rtsA "24m", 
@@ -653,7 +653,7 @@ runAll appContext@AppContext {..} tals = do
                                         (Timebox timeout)
                                         Nothing
                     
-                    workerInfo <- newWorkerInfo (GenericWorker "cache-clean-up") timeout (convert $ workerIdStr workerId)
+                    workerInfo <- newWorkerInfo (GenericWorker "cache-clean-up") timeout (convert $ show workerId)
                     runWorker logger workerInput arguments workerInfo
         pure (r, workerId)                            
 
