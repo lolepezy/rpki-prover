@@ -305,7 +305,7 @@ runCopyWorker appContext@AppContext {..} dbtats targetLmdbPath = do
             in max (maxMemory `div` 1024 `div` 1024) 64
 
     let arguments = 
-            [ workerIdStr workerId ] <>
+            [ show workerId ] <>
             rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory (show maxMemoryMb <> "m") ]
 
     (z, vs) <- runValidatorT 
@@ -316,7 +316,7 @@ runCopyWorker appContext@AppContext {..} dbtats targetLmdbPath = do
                                         (CompactionParams targetLmdbPath)                                        
                                         (Timebox timeout)
                                         Nothing
-                    workerInfo <- newWorkerInfo (GenericWorker "lmdb-compaction") timeout (convert $ workerIdStr workerId)
+                    workerInfo <- newWorkerInfo (GenericWorker "lmdb-compaction") timeout (convert $ show workerId)
                     runWorker logger workerInput arguments workerInfo
     case z of 
         Left e  -> do 

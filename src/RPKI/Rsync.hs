@@ -95,7 +95,7 @@ runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion reposito
 
     let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
     let arguments = 
-            [ workerIdStr workerId ] <> 
+            [ show workerId ] <> 
             rtsArguments [ 
                 rtsN maxCpuAvailable, 
                 rtsA "20m", 
@@ -108,7 +108,7 @@ runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion reposito
                         (Timebox $ fetchConfig ^. #rsyncTimeout)
                         (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
     
-    workerInfo <- newWorkerInfo RsyncWorker (fetchConfig ^. #rsyncTimeout) (U.convert $ workerIdStr workerId)
+    workerInfo <- newWorkerInfo RsyncWorker (fetchConfig ^. #rsyncTimeout) (U.convert $ show workerId)
 
     wr@WorkerResult {..} <- runWorker logger workerInput arguments workerInfo    
     case payload of 

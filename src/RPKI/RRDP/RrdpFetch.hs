@@ -64,7 +64,7 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
     let workerId = WorkerId [i|version:#{worldVersion}:rrdp-fetch:#{u}|]
 
     let arguments = 
-            [ workerIdStr workerId ] <>
+            [ show workerId ] <>
             rtsArguments [ 
                 rtsN 1, 
                 rtsA "20m", 
@@ -78,7 +78,7 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
                         (Timebox $ fetchConfig ^. #rrdpTimeout)                                
                         (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
 
-    workerInfo <- newWorkerInfo (GenericWorker "rrdp-fetch") (fetchConfig ^. #rrdpTimeout) (U.convert $ workerIdStr workerId)
+    workerInfo <- newWorkerInfo (GenericWorker "rrdp-fetch") (fetchConfig ^. #rrdpTimeout) (U.convert $ show workerId)
     wr@WorkerResult {..} <- runWorker logger workerInput arguments workerInfo
     case payload of 
         Left (ErrorResult e) -> do 

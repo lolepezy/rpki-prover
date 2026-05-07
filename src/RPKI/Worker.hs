@@ -12,7 +12,7 @@ import           Control.Concurrent.STM
 import           Control.Lens
 
 import           Conduit
-import           Data.Text
+import           Data.Text (Text, unpack)
 import qualified Data.ByteString.Lazy       as LBS
 import qualified Data.Map.Strict            as Map
 
@@ -66,7 +66,7 @@ newtype WorkerId = WorkerId Text
     deriving anyclass (TheBinary)
 
 instance Show WorkerId where
-    show (WorkerId w) = Prelude.show w
+    show (WorkerId w) = unpack w
 
 data WorkerParams = RrdpFetchParams { 
                 scopes         :: Scopes, 
@@ -171,7 +171,7 @@ executeWork input exitWith_ actualWork =
             exitWith_ replacedExecutableExitCode
         else do 
             exitCode <- newEmptyTMVarIO            
-            let done = atomically . putTMVar exitCode 
+            let done ec = atomically $ void $ tryPutTMVar exitCode ec
 
             mapM_ (\w -> forkFinally w (const $ pure ())) [
                     (actualWork input writeWorkerOutput >> done ExitSuccess) 
@@ -182,23 +182,21 @@ executeWork input exitWith_ actualWork =
                 ]
                 
             exitWith_ =<< atomically (takeTMVar exitCode)
-  where        
-    whicheverHappensFirst a b = either id id <$> race a b
-
+  where            
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
     -- there's no point continuing.
-    dieIfParentDies done = do 
-        parentId <- getParentProcessID                    
-        if parentId /= input ^. #initialParentId
-            then done parentDiedExitCode            
-            else threadDelay 500_000 >> dieIfParentDies done
+    dieIfParentDies done = forever $ do
+        threadDelay 500_000
+        parentId <- getParentProcessID
+        when (parentId /= input ^. #initialParentId) $
+            done parentDiedExitCode
 
     -- exit either because the time is up or too much CPU is spent
     dieOfTiming done = 
         case input ^. #cpuLimit of
             Nothing       -> dieAfterTimeout done
-            Just cpuLimit -> whicheverHappensFirst 
+            Just cpuLimit -> either id id <$> race 
                                 (dieAfterTimeout done) 
                                 (dieOutOfCpuTime cpuLimit done)
 
@@ -266,9 +264,6 @@ timeoutExitCode      = ExitFailure 122
 replacedExecutableExitCode = ExitFailure 123
 outOfMemoryExitCode  = ExitFailure 251
 exitKillByTypedProcess = ExitFailure (-2)
-
-workerIdStr :: WorkerId -> String
-workerIdStr (WorkerId w) = unpack w
 
 
 -- Main entry point to start a worker
@@ -346,7 +341,7 @@ runWorker logger workerInput extraCli workerInfo = do
                 | exit == replacedExecutableExitCode -> do                     
                     let message = [i|Worker #{workerId} detected that `rpki-prover` binary is different and exited for good.|]
                     logError logger message                    
-                    appError $ InternalE $ WorkerDetectedDifferentExecutable message
+                    appError $ InternalE $ WorkerDetectedDifferentExecutable message                
                 | exit == exitKillByTypedProcess -> do
                     -- 
                     -- This is a hack to work around a problem in `readProcess`:
