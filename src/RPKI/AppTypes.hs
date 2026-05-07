@@ -19,12 +19,12 @@ import           RPKI.Store.Base.Serialisation
     as 'now' for validity period comparisons. Also, most of the data in the cache is
     associated with a world version (VRPs, metrics, SLURM data, etc.).
    -}
-newtype WorldVersion = WorldVersion Int64
+newtype WorldVersion = WorldVersion LexOrdKey64
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 instance Show WorldVersion where 
-    show (WorldVersion v) = show v
+    show (WorldVersion (LexOrdKey64 nanos)) = show nanos
 
 -- Version of the executable, ideally it is supposed to 
 -- be different for every build of the program where 
@@ -68,3 +68,9 @@ instance Exception TxTimeout
 
 instance Show MaxMemory where 
     show (MaxMemory m) = show (m `div` (1024*1024)) <> "mb"
+
+asVersion :: Int64 -> WorldVersion 
+asVersion = WorldVersion . LexOrdKey64
+
+versionToInt :: WorldVersion -> Int64
+versionToInt (WorldVersion (LexOrdKey64 v)) = v

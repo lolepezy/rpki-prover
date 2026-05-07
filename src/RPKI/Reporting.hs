@@ -428,7 +428,7 @@ newtype ValidatedBy = ValidatedBy { unValidatedBy :: WorldVersion }
     deriving anyclass (TheBinary)
     
 instance Monoid ValidatedBy where
-    mempty = ValidatedBy $ WorldVersion $ 2 ^ (63 :: Int)
+    mempty = ValidatedBy $ asVersion $ 2 ^ (63 :: Int)
 
 instance Semigroup ValidatedBy where
     (<>) = min

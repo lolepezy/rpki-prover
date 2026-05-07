@@ -64,7 +64,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 47
+currentDatabaseVersion = 48
 
 -- Some constant keys
 databaseVersionKey, validatedByVersionKey :: Text
@@ -325,7 +325,7 @@ saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } so@StorableObject {.
         Just key -> pure key
         Nothing  -> do
             SequenceValue k <- nextValue tx keys
-            let objectKey = ObjectKey $ ArtificialKey k
+            let objectKey = ObjectKey $ asKey k
             M.put tx hashToKey h objectKey
             M.put tx objects objectKey (Compressed so)
             M.put tx objectMetas objectKey (ObjectMeta wv (getRpkiObjectType object))
@@ -350,7 +350,7 @@ saveOriginal tx DB { objectStore = RpkiObjectStore {..}, .. } (ObjectOriginal bl
     exists <- M.exists tx hashToKey hash    
     unless exists $ do          
         SequenceValue k <- nextValue tx keys
-        let key = ObjectKey $ ArtificialKey k
+        let key = ObjectKey $ asKey k
         M.put tx hashToKey hash key
         M.put tx originals key (Verbatim $ Storable blob)       
         M.put tx objectMetas key objectMeta
@@ -404,7 +404,7 @@ linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL hash = 
   where
     saveUrl safeUrl = do 
         SequenceValue k <- nextValue tx keys
-        let urlKey = UrlKey $ ArtificialKey k
+        let urlKey = UrlKey $ asKey k
         SM.put tx uriToUriKey safeUrl urlKey
         M.put tx uriKeyToUri urlKey rpkiURL            
         pure urlKey
@@ -722,7 +722,7 @@ saveValidationVersion tx db@DB { ..}
             => what 
             -> SMap mapName s ArtificialKey (Compressed what) -> IO ArtificialKey
     save what whereTo = do                 
-        key <- ArtificialKey . unSequenceValue <$> nextValue tx keys
+        key <- asKey . unSequenceValue <$> nextValue tx keys
         M.put tx whereTo key (Compressed what)
         pure key
 

@@ -148,6 +148,11 @@ instance Storage LmdbStorage where
     get (LmdbTx tx) LmdbStore {..} (SKey (Storable ks)) =
         (SValue . Storable <$>) <$> LMap.lookup' (toROTx tx) db ks
 
+    last (LmdbTx tx) LmdbStore {..} = do
+        let map_ (Lmdb.KeyValue k v) = (SKey (Storable k), SValue (Storable v))
+        withCursor (toROTx tx) db $ \cursor ->
+            (map_ <$>) <$> LMap.last cursor
+
     foldS (LmdbTx tx) LmdbStore {..} f a0 =
         foldGeneric tx db f a0 withCursor LMap.firstForward
 

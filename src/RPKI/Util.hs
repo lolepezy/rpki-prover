@@ -176,4 +176,4 @@ fmtLocations = mconcat .
 
 
 parseWorldVersion :: Text -> Either Text WorldVersion
-parseWorldVersion t = WorldVersion <$> first Text.pack (readEither $ Text.unpack t)
+parseWorldVersion t = asVersion <$> first Text.pack (readEither $ Text.unpack t)

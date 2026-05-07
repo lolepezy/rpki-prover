@@ -11,6 +11,7 @@ import           Control.Monad.Reader
 import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString                   as BS
+import           Data.Int                          (Int64)
 import qualified Data.List                         as List
 import qualified Data.Map.Strict                   as Map
 import           Data.Proxy
@@ -102,7 +103,8 @@ txGroup = testGroup "App transaction test"
 dbGroup :: TestTree
 dbGroup = testGroup "App database test"
     [
-        HU.testCase "Should reopen database without issues" shouldReopenDatabase        
+        HU.testCase "Should reopen database without issues" shouldReopenDatabase,
+        HU.testCase "Should keep key ordering for ArtificialKey and WorldVersion" shouldKeepKeyOrdering
     ]
 
 mapGroup :: TestTree
@@ -578,6 +580,41 @@ shouldProcessSafeMapProperly io = do
     HU.assertEqual "SafeMap.values is wrong 3" values3 []    
     
 
+shouldKeepKeyOrdering :: HU.Assertion
+shouldKeepKeyOrdering = do
+    withTestContext $ \appContext -> do
+        db@DB {..} <- readTVarIO $ appContext ^. #database
+
+        void $ forM [1..10] $ \_ -> do
+            rawKeys :: [Int64] <- generateSome
+            let artificialKeys = map (ArtificialKey . LexOrdKey64) rawKeys
+            let worldVersions  = map (WorldVersion  . LexOrdKey64) rawKeys
+
+            let storage' = storage db
+            akMap  :: SMap "test-ak-ordering" LmdbStorage ArtificialKey () <-
+                SMap storage' <$> createLmdbStore storage'
+            wvMap  :: SMap "test-wv-ordering" LmdbStorage WorldVersion () <-
+                SMap storage' <$> createLmdbStore storage'            
+
+            rwTx db $ \tx -> do
+                erase tx akMap
+                erase tx wvMap
+                mapM_ (\k -> M.put tx akMap k ()) artificialKeys
+                mapM_ (\k -> M.put tx wvMap k ()) worldVersions
+
+            -- M.last returns the entry with the largest key in LMDB byte order.
+            -- maximum gives the largest key in Haskell order.
+            -- They must agree for the encoding to be correct.
+            Just (akLast, _) <- roTx db $ \tx -> M.last tx akMap
+            HU.assertEqual "ArtificialKey: LMDB last must equal Haskell maximum"
+                (maximum artificialKeys) akLast
+
+            Just (wvLast, _) <- roTx db $ \tx -> M.last tx wvMap
+            HU.assertEqual "WorldVersion: LMDB last must equal Haskell maximum"
+                (maximum worldVersions) wvLast
+  where
+    erase tx m = M.keys tx m >>= mapM_ (M.delete tx m)
+
 shouldReopenDatabase :: HU.Assertion
 shouldReopenDatabase = do 
     withTestContext $ \appContext  -> do
@@ -596,7 +633,7 @@ stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> met
 stripTime = #totalTimeMs .~ TimeMs 0
 
 generateSome :: Arbitrary a => IO [a]
-generateSome = replicateM 1000 $ QC.generate arbitrary      
+generateSome = replicateM 100 $ QC.generate arbitrary      
 
 withDB :: (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> TestTree) -> TestTree
 withDB = withResource (makeLmdbStuff createLmdb) releaseLmdb

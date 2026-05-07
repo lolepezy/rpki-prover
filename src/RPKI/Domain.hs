@@ -6,7 +6,7 @@
 module RPKI.Domain where
 
 import           Control.DeepSeq          (NFData)
-import           Data.Int                 (Int64)
+
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
@@ -16,6 +16,7 @@ import qualified Data.Vector              as V
 import           Data.ByteString.Base16   as Hex
 import qualified Data.String.Conversions  as SC
 
+import           Data.Int
 import           Data.Hourglass
 import           Data.Data
 import           Data.Foldable            as F
@@ -748,9 +749,9 @@ newtype ObjectKey = ObjectKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-newtype ArtificialKey = ArtificialKey Int64
+newtype ArtificialKey = ArtificialKey LexOrdKey64
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 data ObjectIdentity = KeyIdentity ObjectKey
                     | HashIdentity Hash
@@ -793,6 +794,9 @@ instance Monoid EarliestToExpire where
     mempty = EarliestToExpire $ Instant $ 1000_000_000 * 9_223_372_036
 
 -- Small utility functions that don't have anywhere else to go
+
+asKey :: Int64 -> ArtificialKey
+asKey = ArtificialKey . LexOrdKey64
 
 toAKI :: SKI -> AKI
 toAKI (SKI ki) = AKI ki
