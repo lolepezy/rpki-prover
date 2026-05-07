@@ -28,8 +28,6 @@ import qualified Data.List                        as List
 import           Data.Maybe
 import           Data.Word                        (Word16)
 import           Data.String.Interpolate.IsString
-import           GHC.TypeLits
-
 import qualified Network.Wai.Handler.Warp         as Warp
 
 import           System.Directory
@@ -38,7 +36,9 @@ import           System.FilePath                  ((</>))
 import           System.IO                        
 import           System.Exit
 
-import           Options.Generic
+import           Options.Applicative
+import           Numeric.Natural
+import           GHC.Generics (Generic)
 
 import           Shower
 
@@ -79,13 +79,17 @@ import           Network.Connection
 
 main :: IO ()
 main = do
-    cliOptions@CLIOptions{..} <- unwrapRecord $ 
-            "RPKI prover, relying party software for RPKI, version " <> rpkiProverVersion
+    cliOptions@CLIOptions{..} <- execParser $
+            info (cliOptionsParser <**> helper)
+                 (fullDesc <> progDesc ("RPKI prover, relying party software for RPKI, version " <> Text.unpack rpkiProverVersion))
 
     if version        
         then do
             -- it is "--version" call, so print the version and exit
             putStrLn $ convert rpkiProverVersion
+        else if printConfig
+        then do
+            putStrLn $ shower $ applyCliToConfig defaultConfig cliOptions Hidden
         else do
             case worker of
                 Nothing ->
@@ -98,7 +102,7 @@ main = do
                     executeWorkerProcess
 
 
-executeMainProcess :: CLIOptions Unwrapped -> IO ()
+executeMainProcess :: CLIOptions -> IO ()
 executeMainProcess cliOptions@CLIOptions{..} = do     
     -- TODO This doesn't look pretty, come up with something better.
     appStateHolder <- newTVarIO Nothing
@@ -256,13 +260,10 @@ runHttpApi appContext@AppContext {..} = do
         (\(e :: SomeException) -> logError logger [i|Interrupted HTTP server: #{e}.|])
 
 
-createAppContext :: CLIOptions Unwrapped -> AppLogger -> LogLevel -> ValidatorT IO AppLmdbEnv
+createAppContext :: CLIOptions -> AppLogger -> LogLevel -> ValidatorT IO AppLmdbEnv
 createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     programPath <- liftIO getExecutablePath
-
-    let defaults = defaultConfig
-    let lmdbRealSize = (Size <$> lmdbSize) `orDefault` (defaults ^. #lmdbSizeMb)    
 
     -- Create (or make sure exist) necessary directories in the root directory
     (root, tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger
@@ -270,26 +271,17 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     -- Set capabilities to the values from the CLI or to all available CPUs,
     -- (disregard the HT issue for now it needs more testing).
     let cpuCount' = fromMaybe getRtsCpuCount cpuCount
-    liftIO $ setCpuCount cpuCount'    
-    let parallelism = 
-            case fetcherCount of 
-                Nothing -> newParallelism cpuCount'
-                Just fc -> makeParallelismF cpuCount' fc
+    liftIO $ setCpuCount cpuCount'
 
-    let rtrConfig = if withRtr
-            then Just $ defaultRtrConfig
-                        & maybeSet #rtrPort rtrPort
-                        & maybeSet #rtrAddress rtrAddress
-                        & #rtrLogFile .~ rtrLogFile
-            else Nothing        
-
-    proverRunMode     <- deriveProverRunMode cliOptions  
-    rsyncPrefetchUrls <- rsyncPrefetches cliOptions                
+    proverRunMode     <- deriveProverRunMode cliOptions
+    rsyncPrefetchUrls <- rsyncPrefetches cliOptions
 
     let apiSecured :: a -> ApiSecured a
         apiSecured a = if showHiddenConfig then Public a else Hidden a
 
-    let config = adjustConfig $ defaults
+    -- Build a base config with IO-derived values (paths, run mode, etc.),
+    -- then apply the pure CLI overrides on top.
+    let baseConfig = defaultConfig
             & #programBinaryPath .~ apiSecured programPath
             & #rootDirectory .~ apiSecured root
             & #talDirectory .~ apiSecured tald
@@ -297,41 +289,13 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & #cacheDirectory .~ apiSecured cached
             & #extraTalsDirectories .~ apiSecured extraTalsDirectory
             & #proverRunMode .~ proverRunMode
-            & #parallelism .~ parallelism
+            & #parallelism . #cpuCount .~ cpuCount'
             & #rsyncConf . #rsyncRoot .~ apiSecured rsyncd
-            & #rsyncConf . #rsyncClientPath .~ fmap apiSecured rsyncClientPath
-            & #rsyncConf . #enabled .~ not noRsync
             & #rsyncConf . #rsyncPrefetchUrls .~ rsyncPrefetchUrls
-            & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
             & #rrdpConf . #tmpRoot .~ apiSecured tmpd
-            & #rrdpConf . #enabled .~ not noRrdp
-            & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
-            & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
-            & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
-            & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
-            & #validationConfig . #manifestProcessing .~
-                    (if strictManifestValidation then RFC6486_Strict else RFC9286)
-            & #validationConfig . #validationAlgorithm .~
-                    (if noIncrementalValidation then FullEveryIteration else Incremental)
-            & #validationConfig . #validationRFC .~
-                    (if allowOverclaiming then ReconsideredRFC else StrictRFC)
-            & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
-            & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
-            & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
-            & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
-            & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
-            & maybeSet (#validationConfig . #minObjectSize) minObjectSize            
-            & maybeSet (#httpApiConf . #port) httpApiPort
-            & #rtrConfig .~ rtrConfig
-            & maybeSet #longLivedCacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
-            & #lmdbSizeMb .~ lmdbRealSize
-            & #localExceptions .~ apiSecured localExceptions
             & #logLevel .~ derivedLogLevel
-            & #withValidityApi .~ withValidityApi
-            & maybeSet #metricsPrefix (convert <$> metricsPrefix)
-            & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
-            & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
-            & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory            
+
+    let config = applyCliToConfig baseConfig cliOptions apiSecured           
         
     let readSlurms files = do
             logDebug logger [i|Reading SLURM files: #{files}.|]
@@ -381,7 +345,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     pure appContext
 
       
-fsLayout :: CLIOptions Unwrapped
+fsLayout :: CLIOptions
         -> AppLogger
         -> ValidatorT IO (FilePath, FilePath, FilePath, FilePath, FilePath)
 fsLayout cliOptions@CLIOptions {..} logger = do
@@ -460,7 +424,7 @@ fsLayout cliOptions@CLIOptions {..} logger = do
                         Text.intercalate "\n" $ mapMaybe talText httpStatuses                                        
 
 
-getRoot :: CLIOptions Unwrapped -> ValidatorT IO (Either FilePath FilePath)
+getRoot :: CLIOptions -> ValidatorT IO (Either FilePath FilePath)
 getRoot cliOptions = do    
     case getRootDirectory cliOptions of 
         Nothing -> do 
@@ -499,28 +463,28 @@ rsyncDirName = "rsync"
 talsDirName  = "tals"
 tmpDirName   = "tmp"
 
-checkSubDirectory :: FilePath -> FilePath -> IO (Either Text FilePath)
+checkSubDirectory :: FilePath -> FilePath -> IO (Either Text.Text FilePath)
 checkSubDirectory root sub = do
     let subDirectory = root </> sub
     doesDirectoryExist subDirectory >>= \case
         False -> pure $ Left [i|Directory #{subDirectory} doesn't exist|]
         True  -> pure $ Right subDirectory
 
-createSubDirectoryIfNeeded :: FilePath -> FilePath -> IO (Either Text FilePath)
+createSubDirectoryIfNeeded :: FilePath -> FilePath -> IO (Either Text.Text FilePath)
 createSubDirectoryIfNeeded root sub = do
     let subDirectory = root </> sub
     exists <- doesDirectoryExist subDirectory
     unless exists $ createDirectory subDirectory
     pure $ Right subDirectory
 
-getRootDirectory :: CLIOptions Unwrapped -> Maybe FilePath
+getRootDirectory :: CLIOptions -> Maybe FilePath
 getRootDirectory CLIOptions{..} =
     case rpkiRootDirectory of
         [] -> Nothing
         s  -> Just $ Prelude.last s
 
 -- Set rsync prefetch URLs
-rsyncPrefetches :: CLIOptions Unwrapped -> ValidatorT IO [RsyncURL]
+rsyncPrefetches :: CLIOptions -> ValidatorT IO [RsyncURL]
 rsyncPrefetches CLIOptions {..} = do
     let urlsToParse =
             case rsyncPrefetchUrl of
@@ -564,10 +528,10 @@ createAppState logger localExceptions = do
 
 
 -- | Check some crucial things before running the validator
-checkPreconditions :: CLIOptions Unwrapped -> ValidatorT IO ()
+checkPreconditions :: CLIOptions -> ValidatorT IO ()
 checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
 
-deriveProverRunMode :: CLIOptions Unwrapped -> ValidatorT IO ProverRunMode
+deriveProverRunMode :: CLIOptions -> ValidatorT IO ProverRunMode
 deriveProverRunMode CLIOptions {..} = 
     case (once, vrpOutput) of 
         (False, Nothing) -> pure ServerMode  
@@ -577,7 +541,7 @@ deriveProverRunMode CLIOptions {..} =
             
 
 -- | Run rpki-prover in a CLI mode for verifying RSC signature (*.sig file).
-executeVerifier :: CLIOptions Unwrapped -> IO ()
+executeVerifier :: CLIOptions -> IO ()
 executeVerifier cliOptions@CLIOptions {..} = do
     withLogConfig cliOptions $ \logConfig ->
         withLogger logConfig $ \logger ->
@@ -605,7 +569,7 @@ executeVerifier cliOptions@CLIOptions {..} = do
                     _              -> logError logger "Both directory and list of files are set, leave just one of them to verify."
 
 
-createVerifierContext :: CLIOptions Unwrapped -> AppLogger -> ValidatorT IO AppLmdbEnv
+createVerifierContext :: CLIOptions -> AppLogger -> ValidatorT IO AppLmdbEnv
 createVerifierContext cliOptions logger = do
     rootDir <- either id id <$> getRoot cliOptions
     cached <- fromEitherM $ first (InitE . InitError) <$> checkSubDirectory rootDir cacheDirName
@@ -624,196 +588,345 @@ createVerifierContext cliOptions logger = do
 
 
 -- CLI Options-related machinery
-data CLIOptions wrapped = CLIOptions {
-
-    -- It is not documented since it's for internal machinery
-    worker :: wrapped ::: Maybe String,
-
-    version :: wrapped ::: Bool <?> "Program version.",
-
-    once :: wrapped ::: Bool <?>
-        ("If set, runs a single validation cycle and exits." +++
-         " The HTTP API will not start, and the result will be written to the file" +++
-         " specified by the --vrp-output option (which must also be set)."),
-
-    vrpOutput :: wrapped ::: Maybe FilePath <?> 
-        ("Path to the file where VRPs will be written." +++
-         " This is only used when the --once option is set." +++
-         " VRPs are written in CSV format with TA names and included 'as is'," +++
-         " meaning duplicates within or between TAs are not removed."),
-
-    noRirTals :: wrapped ::: Bool <?> 
-        "If set, RIR TAL files will not be downloaded.",
-
-    refetchRirTals :: wrapped ::: Bool <?> 
-        "If set, RIR TAL files will be forced to re-download.",
-
-    rpkiRootDirectory :: wrapped ::: [FilePath] <?>
-        ("Root directory (default is ${HOME}/.rpki/)." +++
-         " This option can be passed multiple times, but only the last value is used." +++
-         " This allows for easy overriding, for example, in Docker."),
-
-    extraTalsDirectory :: wrapped ::: [FilePath] <?>
-        ("Additional directories to search for TAL files." +++
-         " By default, no extra directories are used;" +++
-         " TALs are only loaded from the $rpkiRootDirectory/tals directory."),
-
-    verifySignature :: wrapped ::: Bool <?>
-        ("Runs as a one-off RSC signature file verifier instead of a server." +++
-         " Requires the cache of validated RPKI objects and VRPs to be present." +++
-         " This should be run alongside a running daemon instance of rpki-prover."),
-
-    signatureFile :: wrapped ::: Maybe FilePath <?>
-        "Path to the RSC signature file.",
-
-    verifyDirectory :: wrapped ::: Maybe FilePath <?>
-        "Path to the directory containing files to be verified using an RSC signature file.",
-
-    verifyFiles :: wrapped ::: [FilePath] <?>
-        "Files to verify using an RSC signature file. Multiple files may be specified.",
-
-    cpuCount :: wrapped ::: Maybe Natural <?>
-        ("Number of CPUs available to the program (default is 2). Note that higher values lead to larger " +++ 
-        "memory usage. It's recommended to specify the number of physical CPU cores rather than (hyper-)threads, " +++
-        "as the latter may degrade performance."),
-
-    fetcherCount :: wrapped ::: Maybe Natural <?>
-        "Maximum number of concurrent fetchers (default is --cpu-count * 3).",
-
-    resetCache :: wrapped ::: Bool <?>
-        "Reset the LMDB cache, that is, remove ~/.rpki/cache/*.mdb files.",
-
-    revalidationInterval :: wrapped ::: Maybe Int64 <?>
-        ("Interval between validation cycles in seconds. " +++
-         "Each cycle traverses the RPKI tree and gathers payloads (VRPs, ASPAs, BGPSec certificates). " +++
-         "Default is 15 minutes (900 seconds). Note that revalidations are also triggered by repository " +++ 
-         "updates and object expirations, so this interval is the maximum time between validation cycles."),
-
-    cacheLifetimeHours :: wrapped ::: Maybe Int64 <?>
-        "Lifetime of objects in the local cache, in hours (default is 72).",
-
-    rrdpRefreshInterval :: wrapped ::: Maybe Int64 <?>
-        "Time interval for updating RRDP repositories in seconds (default is 120).",
-
-    rsyncRefreshInterval :: wrapped ::: Maybe Int64 <?>
-        "Time interval for updating rsync repositories in seconds (default is 11 minutes, that is, 660 seconds).",
-
-    rrdpTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timeout for RRDP repository fetching in seconds." +++
-         " If a repository cannot be fetched within this period," +++
-         " it is considered unavailable and the fetch is aborted."),
-
-    rsyncTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timeout for rsync repository fetching in seconds." +++
-         " If a repository cannot be fetched within this period," +++
-         " it is considered unavailable and the fetch is aborted."),
-
-    rsyncClientPath :: wrapped ::: Maybe String <?>
-        "Path to the rsync executable. Defaults to whatever is found in $PATH.",
-
-    httpApiPort :: wrapped ::: Maybe Word16 <?>
-        "Port for the HTTP API (default is 9999).",
-
-    lmdbSize :: wrapped ::: Maybe Int64 <?>
-        ("Maximum LMDB cache size in MB (default is 32768, that is, 32GB)." +++
-         " Note: (a) this is the upper limit; actual usage may be less;" +++
-         " (b) about 1GB of cache is needed for each additional 24 hours of cache lifetime."),
-
-    withRtr :: wrapped ::: Bool <?>
-        "Start the RTR server (default is false).",
-
-    rtrAddress :: wrapped ::: Maybe String <?>
-        "Address to bind the RTR server to (default is localhost).",
-
-    rtrPort :: wrapped ::: Maybe Int16 <?>
-        "Port for the RTR server (default is 8283).",
-
-    rtrLogFile :: wrapped ::: Maybe String <?>
-        "Path for the RTR log file (default is stdout, shared with general output).",
-
-    logLevel :: wrapped ::: Maybe String <?>
-        "Log level: 'error', 'warn', 'info', or 'debug' (case-insensitive). Default is 'info'.",
-
-    strictManifestValidation :: wrapped ::: Bool <?>
-        ("Use strict RFC 6486 (https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/, section 6.4) " +++ 
-        "for manifest validation (default is false). The currently used default is defined in " +++
-        "RFC 9286 (https://www.rfc-editor.org/rfc/rfc9286.html#name-relying-party-processing-of)."),
-
-    allowOverclaiming :: wrapped ::: Bool <?>
-        ("Use the 'validation reconsidered' algorithm to validate certificate resource sets " +++
-         "instead of the strict version. Default is false, meaning the strict version is used."),
-
-    localExceptions :: wrapped ::: [String] <?>
-        ("Paths to local exception files in SLURM format (RFC 8416)." +++
-         " Multiple files can be specified and their contents are merged internally before application."),
-
-    maxTaRepositories :: wrapped ::: Maybe Int <?>
-        "Maximum number of new repositories per TA added during a validation run (default is 1000).",
-
-    maxCertificatePathDepth :: wrapped ::: Maybe Int <?>
-        "Maximum depth of certificate path from the TA certificate to the RPKI tree (default is 32).",
-
-    maxTotalTreeSize :: wrapped ::: Maybe Int <?>
-        ("Maximum total size of the object tree for a single TA, across all object types " +++
-        "(default is 5,000,000)."),
-
-    maxObjectSize :: wrapped ::: Maybe Integer <?>
-        ("Maximum size of any object (certificate, CRL, MFT, GBR, ROA, ASPA), in bytes" +++
-         " (default is 32MB, that is, 33554432 bytes)."),
-
-    minObjectSize :: wrapped ::: Maybe Integer <?>
-        "Minimum size of any object, in bytes (default is 300).",
-
-    topDownTimeout :: wrapped ::: Maybe Int64 <?>
-        ("Timeout for validating a single TA, in seconds (default is 1 hour, that is, 3600 seconds)."),
-
-    noRrdp :: wrapped ::: Bool <?>
-        "Disable fetching RRDP repositories (default is false).",
-
-    noRsync :: wrapped ::: Bool <?>
-        "Disable fetching rsync repositories (default is false).",
-
-    rsyncPrefetchUrl :: wrapped ::: [String] <?>
-        ("rsync repositories to fetch instead of their children. " +++
-         "Defaults include common RPKI rsync URLs. This is an optimization and is rarely needed."),
-
-    metricsPrefix :: wrapped ::: Maybe String <?>
-        "Prefix for Prometheus metrics (default is 'rpki_prover').",
-
-    maxRrdpFetchMemory :: wrapped ::: Maybe Int <?>
-        "Maximum memory allocation (in MB) for the RRDP fetcher process (default is 1024).",
-
-    maxRsyncFetchMemory :: wrapped ::: Maybe Int <?>
-        "Maximum memory allocation (in MB) for the rsync fetcher process (default is 1024).",
-
-    maxValidationMemory :: wrapped ::: Maybe Int <?>
-        "Maximum memory allocation (in MB) for the validation process (default is 2048).",
-
-    noIncrementalValidation :: wrapped ::: Bool <?>
-        ("Disable the incremental validation algorithm." +++
-         " Incremental validation is enabled by default, so the default for this option is false."),
-
-    showHiddenConfig :: wrapped ::: Bool <?>
-        ("Show all configuration values in the /api/system HTTP API call. " +++
-         "This may pose a security risk, as some values may contain local filesystem paths. " +++
-         "Default is false."),
-
-    withValidityApi :: wrapped ::: Bool <?>
-        ("Enable the VRP index used by the REST API endpoint at /api/validity (default is false). " +++
-         "Note: Enabling this option increases memory usage (about 200-300MB in the main process) " +++
-         "and CPU usage (about 2 seconds per validation cycle).")
-
+data CLIOptions = CLIOptions {
+        -- Internal: identifies the worker process; not shown in --help
+        worker                   :: Maybe String,
+        version                  :: Bool,
+        once                     :: Bool,
+        vrpOutput                :: Maybe FilePath,
+        noRirTals                :: Bool,
+        refetchRirTals           :: Bool,
+        rpkiRootDirectory        :: [FilePath],
+        extraTalsDirectory       :: [FilePath],
+        verifySignature          :: Bool,
+        signatureFile            :: Maybe FilePath,
+        verifyDirectory          :: Maybe FilePath,
+        verifyFiles              :: [FilePath],
+        cpuCount                 :: Maybe Natural,
+        fetcherCount             :: Maybe Natural,
+        resetCache               :: Bool,
+        revalidationInterval     :: Maybe Int64,
+        cacheLifetimeHours       :: Maybe Int64,
+        rrdpRefreshInterval      :: Maybe Int64,
+        rsyncRefreshInterval     :: Maybe Int64,
+        rrdpTimeout              :: Maybe Int64,
+        rsyncTimeout             :: Maybe Int64,
+        rsyncClientPath          :: Maybe String,
+        httpApiPort              :: Maybe Word16,
+        lmdbSize                 :: Maybe Int64,
+        withRtr                  :: Bool,
+        rtrAddress               :: Maybe String,
+        rtrPort                  :: Maybe Int16,
+        rtrLogFile               :: Maybe String,
+        logLevel                 :: Maybe String,
+        strictManifestValidation :: Bool,
+        allowOverclaiming        :: Bool,
+        localExceptions          :: [String],
+        maxTaRepositories        :: Maybe Int,
+        maxCertificatePathDepth  :: Maybe Int,
+        maxTotalTreeSize         :: Maybe Int,
+        maxObjectSize            :: Maybe Integer,
+        minObjectSize            :: Maybe Integer,
+        topDownTimeout           :: Maybe Int64,
+        noRrdp                   :: Bool,
+        noRsync                  :: Bool,
+        rsyncPrefetchUrl         :: [String],
+        metricsPrefix            :: Maybe String,
+        maxRrdpFetchMemory       :: Maybe Int,
+        maxRsyncFetchMemory      :: Maybe Int,
+        maxValidationMemory      :: Maybe Int,
+        noIncrementalValidation  :: Bool,
+        showHiddenConfig         :: Bool,
+        withValidityApi          :: Bool,
+        printConfig              :: Bool
     }
-    deriving (Generic)
+    deriving stock (Show, Generic)
 
-instance ParseRecord (CLIOptions Wrapped) where
-    parseRecord = parseRecordWithModifiers lispCaseModifiers
+cliOptionsParser :: Parser CLIOptions
+cliOptionsParser = CLIOptions
+    <$> optional (strOption
+            (  long "worker"
+            <> internal
+            <> metavar "WORKER-ID"))
+    <*> switch
+            (  long "version"
+            <> help "Print program version and exit.")
+    <*> switch
+            (  long "once"
+            <> help ("Run a single validation cycle and exit. "
+                  <> "The HTTP API will not start, and the result will be written to the file "
+                  <> "specified by --vrp-output (which must also be set)."))
+    <*> optional (strOption
+            (  long "vrp-output"
+            <> metavar "FILE"
+            <> help ("Path to the file where VRPs will be written. "
+                  <> "Only used when --once is set. "
+                  <> "VRPs are written in CSV format with TA names, duplicates are not removed.")))
+    <*> switch
+            (  long "no-rir-tals"
+            <> help "If set, RIR TAL files will not be downloaded.")
+    <*> switch
+            (  long "refetch-rir-tals"
+            <> help "If set, RIR TAL files will be forced to re-download.")
+    <*> many (strOption
+            (  long "rpki-root-directory"
+            <> metavar "DIR"
+            <> help ("Root directory (default: ${HOME}/.rpki/). "
+                  <> "Can be passed multiple times; only the last value is used.")))
+    <*> many (strOption
+            (  long "extra-tals-directory"
+            <> metavar "DIR"
+            <> help ("Additional directories to search for TAL files. "
+                  <> "By default, TALs are only loaded from $rpkiRootDirectory/tals.")))
+    <*> switch
+            (  long "verify-signature"
+            <> help ("Run as a one-off RSC signature verifier instead of a server. "
+                  <> "Requires the cache of validated RPKI objects to be present."))
+    <*> optional (strOption
+            (  long "signature-file"
+            <> metavar "FILE"
+            <> help "Path to the RSC signature file."))
+    <*> optional (strOption
+            (  long "verify-directory"
+            <> metavar "DIR"
+            <> help "Path to the directory containing files to verify using an RSC signature file."))
+    <*> many (strOption
+            (  long "verify-files"
+            <> metavar "FILE"
+            <> help "Files to verify using an RSC signature file. Can be specified multiple times."))
+    <*> optional (option auto
+            (  long "cpu-count"
+            <> metavar "N"
+            <> help ("Number of CPUs available to the program (default: " <> show defCpuCount <> "). "
+                  <> "It is recommended to use the number of physical CPU cores rather than hyper-threads.")))
+    <*> optional (option auto
+            (  long "fetcher-count"
+            <> metavar "N"
+            <> help ("Maximum number of concurrent fetchers (default: " <> show defFetcherCount <> ", i.e. cpu-count * 2).")))
+    <*> switch
+            (  long "reset-cache"
+            <> help "Reset the LMDB cache, removing ~/.rpki/cache/*.mdb files.")
+    <*> optional (option auto
+            (  long "revalidation-interval"
+            <> metavar "SECONDS"
+            <> help ("Interval between validation cycles in seconds (default: " <> show defRevalidation <> "). "
+                  <> "Each cycle traverses the RPKI tree and gathers payloads (VRPs, ASPAs, BGPSec certificates). "
+                  <> "Revalidations are also triggered by repository updates and object expirations.")))
+    <*> optional (option auto
+            (  long "cache-lifetime-hours"
+            <> metavar "HOURS"
+            <> help ("Lifetime of objects in the local cache in hours (default: " <> show defCacheLifetimeHours <> ").")))
+    <*> optional (option auto
+            (  long "rrdp-refresh-interval"
+            <> metavar "SECONDS"
+            <> help ("Time interval for updating RRDP repositories in seconds (default: " <> show defRrdpRefresh <> ").")))
+    <*> optional (option auto
+            (  long "rsync-refresh-interval"
+            <> metavar "SECONDS"
+            <> help ("Time interval for updating rsync repositories in seconds (default: " <> show defRsyncRefresh <> ").")))
+    <*> optional (option auto
+            (  long "rrdp-timeout"
+            <> metavar "SECONDS"
+            <> help ("Timeout for RRDP repository fetching in seconds (default: " <> show defRrdpTimeout <> "). "
+                  <> "If a repository cannot be fetched within this period, it is considered unavailable.")))
+    <*> optional (option auto
+            (  long "rsync-timeout"
+            <> metavar "SECONDS"
+            <> help ("Timeout for rsync repository fetching in seconds (default: " <> show defRsyncTimeout <> "). "
+                  <> "If a repository cannot be fetched within this period, it is considered unavailable.")))
+    <*> optional (strOption
+            (  long "rsync-client-path"
+            <> metavar "PATH"
+            <> help "Path to the rsync executable. Defaults to whatever is found in $PATH."))
+    <*> optional (option auto
+            (  long "http-api-port"
+            <> metavar "PORT"
+            <> help ("Port for the HTTP API (default: " <> show defHttpApiPort <> ").")))
+    <*> optional (option auto
+            (  long "lmdb-size"
+            <> metavar "MB"
+            <> help ("Maximum LMDB cache size in MB (default: " <> show defLmdbSize <> ", i.e. " <> show (defLmdbSize `div` 1024) <> "GB). "
+                  <> "This is an upper limit; actual usage may be less. "
+                  <> "About 1GB of cache is needed for each additional 24 hours of cache lifetime.")))
+    <*> switch
+            (  long "with-rtr"
+            <> help "Start the RTR server (default: false).")
+    <*> optional (strOption
+            (  long "rtr-address"
+            <> metavar "ADDRESS"
+            <> help ("Address to bind the RTR server to (default: " <> defRtrAddress <> ").")))
+    <*> optional (option auto
+            (  long "rtr-port"
+            <> metavar "PORT"
+            <> help ("Port for the RTR server (default: " <> show defRtrPort <> ").")))
+    <*> optional (strOption
+            (  long "rtr-log-file"
+            <> metavar "FILE"
+            <> help "Path for the RTR log file (default: stdout, shared with general output)."))
+    <*> optional (strOption
+            (  long "log-level"
+            <> metavar "LEVEL"
+            <> help "Log level: 'error', 'warn', 'info', or 'debug' (case-insensitive, default: info)."))
+    <*> switch
+            (  long "strict-manifest-validation"
+            <> help ("Use strict RFC 6486 manifest validation "
+                  <> "(https://datatracker.ietf.org/doc/draft-ietf-sidrops-6486bis/02/, section 6.4). "
+                  <> "Default is RFC 9286."))
+    <*> switch
+            (  long "allow-overclaiming"
+            <> help ("Use the 'validation reconsidered' algorithm for certificate resource sets "
+                  <> "instead of the strict version. Default: false (strict version is used)."))
+    <*> many (strOption
+            (  long "local-exceptions"
+            <> metavar "FILE"
+            <> help ("Path to a local exception file in SLURM format (RFC 8416). "
+                  <> "Can be specified multiple times; contents are merged before application.")))
+    <*> optional (option auto
+            (  long "max-ta-repositories"
+            <> metavar "N"
+            <> help ("Maximum number of new repositories per TA added during a validation run (default: " <> show defMaxTaRepos <> ").")))
+    <*> optional (option auto
+            (  long "max-certificate-path-depth"
+            <> metavar "N"
+            <> help ("Maximum depth of the certificate path from the TA certificate (default: " <> show defMaxCertDepth <> ").")))
+    <*> optional (option auto
+            (  long "max-total-tree-size"
+            <> metavar "N"
+            <> help ("Maximum total number of objects in the tree for a single TA (default: " <> show defMaxTotalTree <> ").")))
+    <*> optional (option auto
+            (  long "max-object-size"
+            <> metavar "BYTES"
+            <> help ("Maximum size of any object in bytes (default: " <> show defMaxObjSize <> ", i.e. " <> show (defMaxObjSize `div` (1024*1024)) <> "MB).")))
+    <*> optional (option auto
+            (  long "min-object-size"
+            <> metavar "BYTES"
+            <> help ("Minimum size of any object in bytes (default: " <> show defMinObjSize <> ").")))
+    <*> optional (option auto
+            (  long "top-down-timeout"
+            <> metavar "SECONDS"
+            <> help ("Timeout for validating a single TA in seconds (default: " <> show defTopDownTimeout <> ", i.e. 1 hour).")))
+    <*> switch
+            (  long "no-rrdp"
+            <> help "Disable fetching RRDP repositories (default: false).")
+    <*> switch
+            (  long "no-rsync"
+            <> help "Disable fetching rsync repositories (default: false).")
+    <*> many (strOption
+            (  long "rsync-prefetch-url"
+            <> metavar "URL"
+            <> help ("rsync repositories to fetch instead of their children. "
+                  <> "Defaults include common RPKI rsync URLs.")))
+    <*> optional (strOption
+            (  long "metrics-prefix"
+            <> metavar "PREFIX"
+            <> help ("Prefix for Prometheus metrics (default: '" <> Text.unpack defMetricsPrefix <> "').")))
+    <*> optional (option auto
+            (  long "max-rrdp-fetch-memory"
+            <> metavar "MB"
+            <> help ("Maximum memory for the RRDP fetcher process in MB (default: " <> show defMaxRrdpMem <> ").")))
+    <*> optional (option auto
+            (  long "max-rsync-fetch-memory"
+            <> metavar "MB"
+            <> help ("Maximum memory for the rsync fetcher process in MB (default: " <> show defMaxRsyncMem <> ").")))
+    <*> optional (option auto
+            (  long "max-validation-memory"
+            <> metavar "MB"
+            <> help ("Maximum memory for the validation process in MB (default: " <> show defMaxValidMem <> ").")))
+    <*> switch
+            (  long "no-incremental-validation"
+            <> help ("Disable the incremental validation algorithm. "
+                  <> "Incremental validation is enabled by default."))
+    <*> switch
+            (  long "show-hidden-config"
+            <> help ("Show all configuration values in the /api/system HTTP API call. "
+                  <> "May expose local filesystem paths. Default: false."))
+    <*> switch
+            (  long "with-validity-api"
+            <> help ("Enable the VRP index used by the REST API endpoint at /api/validity (default: false). "
+                  <> "Increases memory usage (about 200-300MB in the main process) "
+                  <> "and CPU usage (about 2 seconds per validation cycle)."))
+    <*> switch
+            (  long "print-config"
+            <> help "Print the effective configuration derived from CLI options and exit.")
+  where
+    cfg    = defaultConfig
+    rtrCfg = defaultRtrConfig
+    defCpuCount               = cfg ^. #parallelism . #cpuCount
+    defFetcherCount           = cfg ^. #parallelism . #fetchParallelism
+    Seconds defRevalidation   = cfg ^. #validationConfig . #revalidationInterval
+    Seconds defCacheLifetime  = cfg ^. #longLivedCacheLifeTime
+    defCacheLifetimeHours     = defCacheLifetime `div` 3600
+    Seconds defRrdpRefresh    = cfg ^. #validationConfig . #rrdpRepositoryRefreshInterval
+    Seconds defRsyncRefresh   = cfg ^. #validationConfig . #rsyncRepositoryRefreshInterval
+    Seconds defRrdpTimeout    = cfg ^. #rrdpConf . #rrdpTimeout
+    Seconds defRsyncTimeout   = cfg ^. #rsyncConf . #rsyncTimeout
+    defHttpApiPort            = cfg ^. #httpApiConf . #port
+    defLmdbSize               = unSize $ cfg ^. #lmdbSizeMb
+    defRtrAddress             = rtrCfg ^. #rtrAddress
+    defRtrPort                = rtrCfg ^. #rtrPort
+    defMaxTaRepos             = cfg ^. #validationConfig . #maxTaRepositories
+    defMaxCertDepth           = cfg ^. #validationConfig . #maxCertificatePathDepth
+    defMaxTotalTree           = cfg ^. #validationConfig . #maxTotalTreeSize
+    defMaxObjSize             = cfg ^. #validationConfig . #maxObjectSize
+    defMinObjSize             = cfg ^. #validationConfig . #minObjectSize
+    Seconds defTopDownTimeout = cfg ^. #validationConfig . #topDownTimeout
+    defMetricsPrefix          = cfg ^. #metricsPrefix
+    defMaxRrdpMem             = cfg ^. #systemConfig . #rrdpWorkerMemoryMb
+    defMaxRsyncMem            = cfg ^. #systemConfig . #rsyncWorkerMemoryMb
+    defMaxValidMem            = cfg ^. #systemConfig . #validationWorkerMemoryMb
 
-deriving instance Show (CLIOptions Unwrapped)
 
-type (+++) (a :: Symbol) (b :: Symbol) = AppendSymbol a b
+-- | Apply CLI option overrides to a base Config. The base config should
+-- already contain any IO-derived values (paths, run mode, etc.).
+-- The 'cpuCount' field of 'parallelism' in the base config is used as
+-- the fallback when '--cpu-count' is not supplied.
+applyCliToConfig :: Config -> CLIOptions -> (forall a . a -> ApiSecured a) -> Config
+applyCliToConfig baseConfig CLIOptions{..} apiSecured = adjustConfig $ baseConfig
+        & #parallelism .~ parallelism
+        & #rsyncConf . #rsyncClientPath .~ fmap apiSecured rsyncClientPath
+        & #rsyncConf . #enabled .~ not noRsync
+        & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
+        & #rrdpConf . #enabled .~ not noRrdp
+        & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
+        & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
+        & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
+        & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
+        & #validationConfig . #manifestProcessing .~
+                (if strictManifestValidation then RFC6486_Strict else RFC9286)
+        & #validationConfig . #validationAlgorithm .~
+                (if noIncrementalValidation then FullEveryIteration else Incremental)
+        & #validationConfig . #validationRFC .~
+                (if allowOverclaiming then ReconsideredRFC else StrictRFC)
+        & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
+        & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
+        & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
+        & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
+        & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
+        & maybeSet (#validationConfig . #minObjectSize) minObjectSize
+        & maybeSet (#httpApiConf . #port) httpApiPort
+        & #rtrConfig .~ rtrConfig
+        & maybeSet #longLivedCacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
+        & #lmdbSizeMb .~ lmdbRealSize
+        & #localExceptions .~ apiSecured localExceptions
+        & #withValidityApi .~ withValidityApi
+        & maybeSet #metricsPrefix (convert <$> metricsPrefix)
+        & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
+        & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
+        & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
+  where
+    lmdbRealSize = (Size <$> lmdbSize) `orDefault` (baseConfig ^. #lmdbSizeMb)
+    cpuCount'    = fromMaybe (baseConfig ^. #parallelism . #cpuCount) cpuCount
+    parallelism  = case fetcherCount of
+        Nothing -> newParallelism cpuCount'
+        Just fc -> makeParallelismF cpuCount' fc
+    rtrConfig = if withRtr
+        then Just $ defaultRtrConfig
+                    & maybeSet #rtrPort rtrPort
+                    & maybeSet #rtrAddress rtrAddress
+                    & #rtrLogFile .~ rtrLogFile
+        else Nothing    
 
-withLogConfig :: CLIOptions Unwrapped -> (LogConfig -> IO ()) -> IO ()
+withLogConfig :: CLIOptions -> (LogConfig -> IO ()) -> IO ()
 withLogConfig CLIOptions{..} f =
     case logLevel of
         Nothing -> run defaultsLogLevel
