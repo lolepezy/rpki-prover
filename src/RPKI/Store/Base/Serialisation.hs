@@ -25,6 +25,9 @@ type TheBinary = Store
 -- | 64-bit integers that preserve their order when serialized as byte strings.
 -- Used as keys in a tree-based DB (LMDB): two values compare the same in
 -- Haskell as they would when LMDB compares their raw byte representations.
+-- NOTE: Word64 sounds like a more natural choice for this, but we want to keep 
+-- it compatible with stuff like Instant and other library types that are 
+-- based on Int64.
 newtype LexOrdKey64 = LexOrdKey64 Int64
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass NFData
