@@ -881,7 +881,8 @@ cliOptionsParser = CLIOptions
 -- The 'cpuCount' field of 'parallelism' in the base config is used as
 -- the fallback when '--cpu-count' is not supplied.
 applyCliToConfig :: Config -> CLIOptions -> (forall a . a -> ApiSecured a) -> Config
-applyCliToConfig baseConfig CLIOptions{..} apiSecured = adjustConfig $ baseConfig
+applyCliToConfig baseConfig CLIOptions{..} apiSecured = 
+    adjustConfig $ baseConfig
         & #parallelism .~ parallelism
         & #rsyncConf . #rsyncClientPath .~ fmap apiSecured rsyncClientPath
         & #rsyncConf . #enabled .~ not noRsync
