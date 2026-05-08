@@ -3,31 +3,18 @@
 
 module RPKI.Rsync where
     
-import           Control.Lens
-import           Data.Generics.Product.Typed
-
-import           Data.Bifunctor
+import           RPKI.Prelude
 
 import           Control.Concurrent.Async
-import           Control.Concurrent.STM
 import           Control.Exception.Lifted
-import           Control.Monad
-import           Control.Monad.IO.Class           
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
-import           Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict                  as Map
-import           Data.Proxy
 import           Data.List (stripPrefix)
-import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 import           Data.List.NonEmpty               (NonEmpty(..))
 import qualified Data.List.NonEmpty               as NonEmpty
-
-import           Data.Hourglass
-
-import           GHC.Generics
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -390,8 +377,8 @@ getFileContent = BS.readFile
 restoreUriFromPath :: RsyncURL -> FilePath -> FilePath -> RsyncURL
 restoreUriFromPath url@(RsyncURL host rootPath) rsyncRoot filePath = 
     case stripPrefix (splitDirectories rsyncRoot) (splitDirectories filePath) of
-        Nothing   -> url
-        Just diff -> RsyncURL host (rootPath <> map (RsyncPathChunk . U.convert) diff)
+        Nothing    -> url
+        Just diff_ -> RsyncURL host (rootPath <> map (RsyncPathChunk . U.convert) diff_)
     
 data RsyncObjectProcessingResult =           
           CantReadFile RpkiURL FilePath VIssue

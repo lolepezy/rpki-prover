@@ -4,27 +4,19 @@
 
 module RPKI.Logging where
 
+import           RPKI.Prelude
+
 import           Conduit
-import           Control.Exception
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Char8 as C8
 
-import Data.Bifunctor
-import Data.Foldable
-import Data.Text (Text, justifyLeft)
+import Data.Text (justifyLeft)
 
-import Data.Hourglass
-import Data.String.Interpolate.IsString
-
-import Control.Monad
 import Control.Concurrent.Async
-import Control.Concurrent.STM
-
-import GHC.Generics (Generic)
-
+import Control.Exception          (finally)
 import System.Posix.Types
 import System.Posix.Process
 import System.IO
@@ -301,9 +293,7 @@ withLogger LogConfig {..} f = do
 
 drainLog :: MonadIO m => AppLogger -> m ()
 drainLog (getQueue -> queue) =     
-    liftIO $ atomically $ do 
-        empty <- isEmptyCQueue queue
-        unless empty retry    
+    liftIO $ atomically $ isEmptyCQueue queue >>= (`unless` retry)        
 
 eol :: Char
 eol = '\n' 

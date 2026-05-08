@@ -2,24 +2,19 @@
 
 module RPKI.Worker where
 
+import           RPKI.Prelude
+
 import           Control.Exception.Lifted
-import           Control.Monad
-import           Control.Monad.IO.Class
 import           Control.Concurrent
 import           Control.Concurrent.Async
-import           Control.Concurrent.STM
-
-import           Control.Lens
 
 import           Conduit
-import           Data.Text (Text, unpack)
+import           Data.Text (unpack)
 import qualified Data.ByteString.Lazy       as LBS
 import qualified Data.Map.Strict            as Map
 
-import           Data.String.Interpolate.IsString
 import           Data.Conduit.Process.Typed
 
-import           GHC.Generics
 import           GHC.Stats
 
 import           System.IO (stdin, stdout)

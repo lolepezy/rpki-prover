@@ -4,9 +4,7 @@
 
 module RPKI.Util where
 
-import           Control.Exception
-import           Control.Lens
-import           Control.Monad.IO.Class
+import           RPKI.Prelude
 
 import qualified Crypto.Hash.SHA256          as S256
 import qualified Data.ByteString             as BS
@@ -18,15 +16,10 @@ import qualified Data.ByteString.Base64      as B64
 import qualified Data.Base64.Types           as B64T
 import           Data.Char
 import qualified Data.List                   as List
-import           Data.Foldable (toList)
 import qualified Data.String.Conversions     as SC
-import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 import           Text.Read                   (readEither)
 import           Data.Text.Encoding          (decodeUtf8)
-import           Data.Bifunctor
-
-import           Data.Word
 import           RPKI.Domain
 import           RPKI.AppTypes
 
@@ -102,7 +95,7 @@ fmtGen :: Show a => a -> Text
 fmtGen = Text.pack . show
 
 toNatural :: Int -> Maybe Natural 
-toNatural i | i > 0     = Just (fromIntegral i :: Natural)
+toNatural n | n > 0     = Just (fromIntegral n :: Natural)
             | otherwise = Nothing
 
 -- Some URL utilities 

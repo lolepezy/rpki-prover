@@ -3,7 +3,7 @@
 
 module RPKI.AppMonad where
 
-import           Control.Lens
+import           RPKI.Prelude
 
 import           Control.Exception.Lifted
 import           Control.Monad.Except
@@ -11,12 +11,7 @@ import           Control.Monad.Morph
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
 
-import           Data.Bifunctor              (Bifunctor (first))
 import           Data.Generics.Product       (HasField)
-import           Data.Generics.Product.Typed
-import           Data.Hourglass
-import           Data.Proxy
-import           Data.Text                   (Text)
 
 import           System.Timeout
 

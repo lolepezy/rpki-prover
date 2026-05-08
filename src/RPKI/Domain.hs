@@ -5,21 +5,17 @@
 
 module RPKI.Domain where
 
-import           Control.DeepSeq          (NFData)
+import           RPKI.Prelude
 
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
-import           Data.Text                (Text)
 import qualified Data.Text                as Text
 import qualified Data.Vector              as V
 
 import           Data.ByteString.Base16   as Hex
 import qualified Data.String.Conversions  as SC
 
-import           Data.Int
-import           Data.Hourglass
 import           Data.Data
-import           Data.Foldable            as F
 import           Data.Set.NonEmpty        (NESet)
 import qualified Data.Set.NonEmpty        as NESet
 import qualified Data.List.NonEmpty       as NonEmpty
@@ -28,13 +24,6 @@ import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Data.Hashable hiding (hash)
-import           Data.Semigroup
-
-import           Data.Bifunctor
-import           Data.Monoid.Generic
-import           Data.Tuple.Strict
-
-import           GHC.Generics
 
 import qualified Data.X509                as X509
 
@@ -891,11 +880,11 @@ maxSerial :: Integer
 maxSerial = (2 :: Integer) ^ (160  :: Integer) - (1  :: Integer)
 
 makeSerial :: Integer -> Either String Serial 
-makeSerial i = 
+makeSerial s = 
     case () of
-        _ | i <= 0         -> Left $ "Serial is not positive: " <> show i
-          | i >= maxSerial -> Left $ "Serial is too big: " <> show i
-          | otherwise      -> Right $ Serial i
+        _ | s <= 0         -> Left $ "Serial is not positive: " <> show s
+          | s >= maxSerial -> Left $ "Serial is too big: " <> show s
+          | otherwise      -> Right $ Serial s
 
 
 estimateVrpCount :: PerTA Vrps -> Int 

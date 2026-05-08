@@ -46,8 +46,8 @@ main = do
     
 testSnapshotLoad :: IO ()
 testSnapshotLoad = do
-    let logConfig = LogConfig DebugL MainLog
-    withLogger logConfig (\_ -> pure ()) $ \logger -> liftIO $ do    
+    let logConfig = newLogConfig DebugL MainLog
+    withLogger logConfig $ \logger -> liftIO $ do    
         z <- runValidatorT (newScopes "configuration") $ createAppContext logger
         case z of
             (Left e, _) -> do

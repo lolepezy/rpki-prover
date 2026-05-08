@@ -3,21 +3,14 @@
 
 module RPKI.TAL where
 
-import Data.Bifunctor (first, bimap)
-
-import           Control.Lens                     ((^.))
-import           Control.Monad
+import           RPKI.Prelude
 
 import qualified Data.List                        as List
 import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set.NonEmpty                as NESet
-import           Data.String.Interpolate.IsString
-import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Text.Encoding               (encodeUtf8)
 import qualified Data.ByteString                  as BS
-
-import           GHC.Generics
 
 import           RPKI.Domain
 import           RPKI.Reporting
