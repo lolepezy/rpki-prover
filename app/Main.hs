@@ -83,15 +83,14 @@ main = do
             info (cliOptionsParser <**> helper)
                  (fullDesc <> progDesc ("RPKI prover, relying party software for RPKI, version " <> Text.unpack rpkiProverVersion))
 
-    if version        
-        then do
+    if version 
+        then 
             -- it is "--version" call, so print the version and exit
             putStrLn $ convert rpkiProverVersion
-        else if printConfig
-        then do
-            putStrLn $ shower $ applyCliToConfig defaultConfig cliOptions Hidden
-        else do
-            case worker of
+        else 
+            if printConfig
+            then printConf cliOptions
+            else case worker of
                 Nothing ->
                     if verifySignature
                         -- this is a call to RSC verification 
@@ -100,6 +99,12 @@ main = do
                         else executeMainProcess cliOptions
                 Just _ ->
                     executeWorkerProcess
+  where
+    printConf cliOptions = do 
+        putStrLn "CLI options:"
+        putStrLn $ shower cliOptions
+        putStrLn "Configuration:"
+        putStrLn $ shower $ applyCliToConfig defaultConfig cliOptions Hidden                            
 
 
 executeMainProcess :: CLIOptions -> IO ()
