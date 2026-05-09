@@ -1174,11 +1174,9 @@ getUnappliedUpdates tx DB { objectStore = RpkiObjectStore { indexStore = IndexSt
     M.last tx payloadLog >>= \case 
         Nothing -> 
             M.all tx updateLog    
-        Just (lastApplied, _) -> do          
-            -- TODO Make it more efficient, read only the updates 
-            -- that are after the last applied one, not all of them
-            updates <- M.all tx updateLog    
-            pure $ filter (\(wv, _) -> wv > lastApplied) updates
+        Just (lastApplied, _) ->          
+            filter (\(wv, _) -> wv > lastApplied) <$> 
+                M.allFrom tx updateLog lastApplied
 
 -- Utilities to have storage transaction in ValidatorT monad.
 

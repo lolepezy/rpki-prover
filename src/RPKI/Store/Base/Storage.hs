@@ -24,6 +24,7 @@ class WithTx s => Storage s where
     get :: Tx s m -> SMapImpl s name -> SKey -> IO (Maybe SValue)    
     last :: Tx s m -> SMapImpl s name -> IO (Maybe (SKey, SValue))
     foldS :: Tx s m -> SMapImpl s name -> (a -> SKey -> SValue -> IO a) -> a -> IO a
+    foldSFrom :: Tx s m -> SMapImpl s name -> SKey -> (a -> SKey -> SValue -> IO a) -> a -> IO a
     put :: Tx s 'RW -> SMapImpl s name -> SKey -> SValue -> IO ()
     delete :: Tx s 'RW -> SMapImpl s name -> SKey -> IO ()
     clear :: Tx s 'RW -> SMapImpl s name -> IO ()
