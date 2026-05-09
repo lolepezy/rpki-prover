@@ -32,6 +32,7 @@ data Payload = VrpsP [Vrp]
 
 data Change a = Added a | Deleted a
     deriving (Show, Eq, Ord, Generic)  
+    deriving anyclass (TheBinary)
 
 
 data MftChild = CaChild CaShortcut Serial

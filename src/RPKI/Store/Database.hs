@@ -243,8 +243,8 @@ data IndexStore s = IndexStore {
 
         caShortcuts :: SMap "ca-shortcuts" s CertKey CaShortcut,
 
-        updateLog :: SMultiMap "update-log" s WorldVersion Update,
-        changeLog :: SMultiMap "change-log" s WorldVersion (Change Payload)
+        updateLog :: SMap "update-log" s WorldVersion [Update],
+        payloadLog :: SMap "change-log" s WorldVersion [Change Payload]
     }
     deriving (Generic)
 
@@ -822,8 +822,8 @@ updateRrdpMetaM tx DB { repositoryStore = RepositoryStore {..} } url f = liftIO 
 logUpdates :: (MonadIO m, Storage s) =>
                 Tx s 'RW -> DB s -> WorldVersion -> [Update] -> m ()
 logUpdates tx db version updates = liftIO $ do
-    let updateLog = db ^. #objectStore . #indexStore . #updateLog
-    forM_ updates $ MM.put tx updateLog version
+    let updateLog = db ^. #objectStore . #indexStore . #updateLog    
+    M.put tx updateLog version updates
 
 
 getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m PublicationPoints
@@ -1168,6 +1168,17 @@ getRtrPayloads tx db worldVersion =
 totalStats :: StorageStats -> SStats
 totalStats (StorageStats s) = mconcat $ Map.elems s
    
+
+getUnappliedUpdates :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(WorldVersion, [Update])]
+getUnappliedUpdates tx DB { objectStore = RpkiObjectStore { indexStore = IndexStore {..}, ..} } = liftIO $ do
+    M.last tx payloadLog >>= \case 
+        Nothing -> 
+            M.all tx updateLog    
+        Just (lastApplied, _) -> do          
+            -- TODO Make it more efficient, read only the updates 
+            -- that are after the last applied one, not all of them
+            updates <- M.all tx updateLog    
+            pure $ filter (\(wv, _) -> wv > lastApplied) updates
 
 -- Utilities to have storage transaction in ValidatorT monad.
 
