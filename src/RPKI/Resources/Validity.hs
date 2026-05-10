@@ -37,7 +37,7 @@ data ValidityResult = ValidOverall [Vrp] [ValidityPerVrp]
     deriving stock (Show, Eq, Ord, Generic)                 
 
 data Bucket a c = Bucket {
-        address :: !a,
+        address :: a,
         bitSize :: {-# UNPACK #-} Word8,
         subtree :: AddressTree a c
     }
@@ -45,9 +45,7 @@ data Bucket a c = Bucket {
     deriving anyclass (NFData)
         
 
--- | Uses SmallArray instead of [] for contiguous, cache-friendly storage
--- with a single heap object instead of N cons cells.
-data AddressTree a c = AllTogether !(SmallArray c)
+data AddressTree a c = AllTogether (SmallArray c)
                      | Divided {
                             lower       :: Bucket a c,
                             higher      :: Bucket a c,
@@ -72,9 +70,9 @@ snocSmallArray arr x = runSmallArray $ do
 
 
 data QuickCompVrp = QuickCompVrp
-    {-# UNPACK #-} !Word128
-    {-# UNPACK #-} !Word128
-    !Vrp
+    {-# UNPACK #-} Word128
+    {-# UNPACK #-} Word128
+    Vrp
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (NFData)    
     
