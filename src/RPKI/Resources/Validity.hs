@@ -10,11 +10,14 @@ import           Data.Generics.Labels
 import           Data.List                as List
 import           Data.Word                (Word8, Word32)
 import           Data.Bits
-import           Data.Foldable
+import           Data.Foldable qualified as Foldable
 import           Data.Coerce
 import           Data.Kind
 
 import           GHC.Generics
+
+import           Data.Primitive.SmallArray
+import           Data.WideWord.Word128     (Word128 (..))
 
 import qualified HaskellWorks.Data.Network.Ip.Ipv4     as V4
 import qualified HaskellWorks.Data.Network.Ip.Ipv6     as V6
@@ -34,7 +37,7 @@ data ValidityResult = ValidOverall [Vrp] [ValidityPerVrp]
     deriving stock (Show, Eq, Ord, Generic)                 
 
 data Bucket a c = Bucket {
-        address :: a,
+        address :: !a,
         bitSize :: {-# UNPACK #-} Word8,
         subtree :: AddressTree a c
     }
@@ -42,17 +45,36 @@ data Bucket a c = Bucket {
     deriving anyclass (NFData)
         
 
-data AddressTree a c = AllTogether [c]
+-- | Uses SmallArray instead of [] for contiguous, cache-friendly storage
+-- with a single heap object instead of N cons cells.
+data AddressTree a c = AllTogether !(SmallArray c)
                      | Divided {
                             lower       :: Bucket a c,
                             higher      :: Bucket a c,
-                            overlapping :: [c]
+                            overlapping :: !(SmallArray c)
                         }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (NFData)    
-    
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (NFData)
 
-data QuickCompVrp a = QuickCompVrp a a Vrp
+-- SmallArray doesn't have Ord; provide structural Eq/Ord via list conversion
+instance (Eq a, Ord c) => Ord (AddressTree a c) where
+    compare x y = compare (toList x) (toList y)
+      where
+        toList (AllTogether arr)    = foldr (:) [] arr
+        toList (Divided {..})       = foldr (:) [] overlapping
+
+snocSmallArray :: SmallArray a -> a -> SmallArray a
+snocSmallArray arr x = runSmallArray $ do
+    let n = sizeofSmallArray arr
+    ma <- newSmallArray (n + 1) x
+    copySmallArray ma 0 arr 0 n
+    pure ma
+
+
+data QuickCompVrp = QuickCompVrp
+    {-# UNPACK #-} !Word128
+    {-# UNPACK #-} !Word128
+    !Vrp
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (NFData)    
     
@@ -66,14 +88,14 @@ instance StoredVrp Word32 where
     makeStoredVrp _ _ vrp = vrp
     prefixEgdes (Vrp _ (Ipv4P p) _) = prefixEdgesV4 p
 
-instance StoredVrp Integer where 
-    type ActuallyStored Integer = QuickCompVrp Integer
-    makeStoredVrp = QuickCompVrp
+instance StoredVrp Word128 where 
+    type ActuallyStored Word128 = QuickCompVrp
+    makeStoredVrp s e vrp = QuickCompVrp s e vrp
     prefixEgdes (QuickCompVrp s e _) = (s, e)
 
 data PrefixIndex = PrefixIndex {
         ipv4 :: Bucket Word32 (ActuallyStored Word32),
-        ipv6 :: Bucket Integer (ActuallyStored Integer)
+        ipv6 :: Bucket Word128 (ActuallyStored Word128)
     }
     deriving stock (Show, Eq, Ord, Generic)     
     deriving anyclass (NFData)
@@ -81,12 +103,12 @@ data PrefixIndex = PrefixIndex {
 
 makePrefixIndex :: PrefixIndex
 makePrefixIndex = let 
-        ipv4 = Bucket 0 32  (AllTogether [])
-        ipv6 = Bucket 0 128 (AllTogether [])
+        ipv4 = Bucket 0 32  (AllTogether mempty)
+        ipv6 = Bucket (Word128 0 0) 128 (AllTogether mempty)
     in PrefixIndex {..}
 
 createPrefixIndex :: (Foldable f, Coercible v Vrp) => f v -> PrefixIndex
-createPrefixIndex = foldr (insertVrp . coerce) makePrefixIndex . toList
+createPrefixIndex = foldr (insertVrp . coerce) makePrefixIndex . Foldable.toList
 
 insertVrp :: Vrp -> PrefixIndex -> PrefixIndex
 insertVrp vrpToInsert@(Vrp _ pp _) t = 
@@ -96,17 +118,17 @@ insertVrp vrpToInsert@(Vrp _ pp _) t =
             in t & #ipv4 %~ insertIntoTree startToInsert endToInsert
 
         Ipv6P p@(Ipv6Prefix _) -> let 
-                (startToInsert, endToInsert) = prefixEdgesV6 p
+                (startToInsert, endToInsert) = prefixEdgesV6W128 p
             in t & #ipv6 %~ insertIntoTree startToInsert endToInsert
   where    
     
     insertIntoTree :: (Bits a, Num a, Ord a, StoredVrp a) => a -> a -> Bucket a (ActuallyStored a) -> Bucket a (ActuallyStored a)
     insertIntoTree startToInsert endToInsert bucket = 
         bucket & #subtree %~ \case        
-            AllTogether vrps -> let 
-                    vrps' = toInsert : vrps
-                    updated = AllTogether vrps'
-                in if length vrps' > 20 
+            AllTogether arr -> let 
+                    arr' = snocSmallArray arr toInsert
+                    updated = AllTogether arr'
+                in if sizeofSmallArray arr' > 20 
                         then divide updated 
                         else updated                
              
@@ -114,25 +136,25 @@ insertVrp vrpToInsert@(Vrp _ pp _) t =
                 case checkInterval startToInsert endToInsert middle of  
                     Lower    -> Divided { lower = insertIntoTree startToInsert endToInsert lower, .. }
                     Higher   -> Divided { higher = insertIntoTree startToInsert endToInsert higher, .. }
-                    Overlaps -> Divided { overlapping = toInsert : overlapping, ..}
+                    Overlaps -> Divided { overlapping = snocSmallArray overlapping toInsert, ..}
       where
         toInsert = makeStoredVrp startToInsert endToInsert vrpToInsert
         newBitSize = bucket ^. #bitSize - 1
         middle = intervalMiddle bucket
 
-        divide (AllTogether vrps) = let
-            (lowerVrps, higherVrps, overlapping) = 
+        divide (AllTogether arr) = let
+            (lowerVrps, higherVrps, overlapVrps) = 
                 foldr (\vrp (lowers, highers, overlaps) -> let 
                         (vStart, vEnd) = prefixEgdes vrp
                     in case checkInterval vStart vEnd middle of 
                         Lower    -> (vrp : lowers, highers,       overlaps)
                         Higher   -> (lowers,       vrp : highers, overlaps)
                         Overlaps -> (lowers,       highers,       vrp : overlaps)     
-                ) ([], [], []) vrps
+                ) ([], [], []) (foldr (:) [] arr)
 
-            lower  = Bucket (bucket ^. #address) newBitSize $ AllTogether lowerVrps 
-            
-            higher = Bucket middle newBitSize $ AllTogether higherVrps 
+            lower  = Bucket (bucket ^. #address) newBitSize $ AllTogether (smallArrayFromList lowerVrps)
+            higher = Bucket middle newBitSize $ AllTogether (smallArrayFromList higherVrps)
+            overlapping = smallArrayFromList overlapVrps
 
             in Divided {..}
 
@@ -145,14 +167,14 @@ lookupVrps prefix PrefixIndex {..} =
             in lookupTree ipv4 start end
 
         Ipv6P p@(Ipv6Prefix _) -> let 
-                (start, end) = prefixEdgesV6 p
+                (start, end) = prefixEdgesV6W128 p
             in map (\(QuickCompVrp _ _ vrp) -> vrp) $ lookupTree ipv6 start end
   where    
     lookupTree bucket start end =         
         case bucket ^. #subtree of 
-            AllTogether vrps -> filter suitable vrps
+            AllTogether arr  -> filter suitable (foldr (:) [] arr)
             Divided {..}     -> let 
-                    overlaps = filter suitable overlapping
+                    overlaps = filter suitable (foldr (:) [] overlapping)
                 in case checkInterval start end (intervalMiddle bucket) of 
                     Lower    -> overlaps <> lookupTree lower start end
                     Higher   -> overlaps <> lookupTree higher start end
@@ -187,9 +209,9 @@ prefixValidity asn prefix prefixIndex =
 prefixEdgesV4 :: Ipv4Prefix -> (Word32, Word32)
 prefixEdgesV4 (Ipv4Prefix p) = (asWord32 (V4.firstIpAddress p), asWord32 (V4.lastIpAddress p))
 
-{-# INLINE prefixEdgesV6 #-}
-prefixEdgesV6 :: Ipv6Prefix -> (Integer, Integer)
-prefixEdgesV6 (Ipv6Prefix p) = (v6toInteger (V6.firstIpAddress p), v6toInteger (V6.lastIpAddress p))
+{-# INLINE prefixEdgesV6W128 #-}
+prefixEdgesV6W128 :: Ipv6Prefix -> (Word128, Word128)
+prefixEdgesV6W128 (Ipv6Prefix p) = (asWord128 (V6.firstIpAddress p), asWord128 (V6.lastIpAddress p))
 
 {-# INLINE intervalMiddle #-}
 intervalMiddle :: (Bits a, Num a) => Bucket a c -> a
@@ -209,11 +231,8 @@ checkInterval start end middle =
 asWord32 :: V4.IpAddress -> Word32
 asWord32 (V4.IpAddress w) = w
 
-{-# INLINE v6toInteger #-}
-v6toInteger :: V6.IpAddress -> Integer
-v6toInteger (V6.IpAddress (w0, w1, w2, w3)) = let 
-        i3 = fromIntegral w3 
-        i2 = fromIntegral w2 `shiftL` 32
-        i1 = fromIntegral w1 `shiftL` 64
-        i0 = fromIntegral w0 `shiftL` 96
-    in i0 + i1 + i2 + i3
+{-# INLINE asWord128 #-}
+asWord128 :: V6.IpAddress -> Word128
+asWord128 (V6.IpAddress (w0, w1, w2, w3)) = 
+    Word128 (fromIntegral w0 `shiftL` 32 .|. fromIntegral w1)
+            (fromIntegral w2 `shiftL` 32 .|. fromIntegral w3)

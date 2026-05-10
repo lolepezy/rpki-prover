@@ -27,7 +27,8 @@ default-extensions: BangPatterns,
                     DuplicateRecordFields, 
                     FlexibleContexts, 
                     GADTs,
-                    GeneralizedNewtypeDeriving,                    
+                    GeneralizedNewtypeDeriving,
+                    ImportQualifiedPost
                     InstanceSigs,
                     KindSignatures, 
                     LambdaCase, 
@@ -140,6 +141,7 @@ dependencies:
 - unliftio
 - vector
 - warp
+- wide-word
 - xeno
 
 
