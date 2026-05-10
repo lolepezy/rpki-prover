@@ -6,7 +6,6 @@
 module RPKI.Domain where
 
 import           Control.DeepSeq          (NFData)
-import           Data.Int                 (Int64)
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
