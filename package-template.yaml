@@ -227,8 +227,9 @@ tests:
 
 benchmarks:
   validity-bench:
-    main:        ValidityBench.hs
-    source-dirs: bench
+    main:         ValidityBench.hs
+    source-dirs:  bench
+    other-modules: []
     ghc-options:
     - -threaded
     - -O2
@@ -237,4 +238,17 @@ benchmarks:
     - '"-with-rtsopts=-T"'
     dependencies:
     - rpki-prover
+
+  criterion-bench:
+    main:         CriterionBench.hs
+    source-dirs:  bench
+    other-modules: []
+    ghc-options:
+    - -threaded
+    - -O2
+    - -rtsopts
+    - -funbox-strict-fields
+    dependencies:
+    - rpki-prover
+    - criterion
 

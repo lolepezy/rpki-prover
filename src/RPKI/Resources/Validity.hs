@@ -10,9 +10,9 @@ import           Data.Generics.Labels
 import           Data.Word                (Word8, Word32)
 import           Data.Bits
 import           Data.Foldable qualified as Foldable
+import           Data.List                (sortBy)
 import           Data.Coerce
 import           Data.Kind
-
 import           GHC.Generics
 
 import           Data.Primitive.SmallArray
@@ -24,6 +24,9 @@ import qualified HaskellWorks.Data.Network.Ip.Ipv6     as V6
 import           RPKI.Domain
 import           RPKI.Resources.Types
 import           RPKI.Resources.Resources
+
+maxOverlappingPerBucket :: Int
+maxOverlappingPerBucket = 50
 
 data ValidityPerVrp = InvalidAsn Vrp
                     | InvalidLength Vrp
@@ -67,7 +70,6 @@ snocSmallArray arr x = runSmallArray $ do
     copySmallArray ma 0 arr 0 n
     pure ma
 
-
 data QuickCompVrp = QuickCompVrp
     {-# UNPACK #-} Word128
     {-# UNPACK #-} Word128
@@ -105,10 +107,36 @@ makePrefixIndex = let
     in PrefixIndex {..}
 
 createPrefixIndex :: (Foldable f, Coercible v Vrp) => f v -> PrefixIndex
-createPrefixIndex = foldr (insertVrp . coerce) makePrefixIndex . Foldable.toList
+createPrefixIndex = createPrefixIndexT maxOverlappingPerBucket
+
+createPrefixIndexT :: (Foldable f, Coercible v Vrp) => Int -> f v -> PrefixIndex
+createPrefixIndexT threshold xs =
+    let idx = foldr (insertVrpWith threshold . coerce) makePrefixIndex (Foldable.toList xs)
+        -- Sort overlapping arrays by vEnd descending for early-exit during lookup.
+        cmpV4 (Vrp _ (Ipv4P p) _) (Vrp _ (Ipv4P q) _) =
+            compare (snd $ prefixEdgesV4 q) (snd $ prefixEdgesV4 p)
+        cmpV4 _ _ = EQ
+        cmpV6 (QuickCompVrp _ e1 _) (QuickCompVrp _ e2 _) = compare e2 e1
+    in idx { ipv4 = sortBucketOverlapping cmpV4 (ipv4 idx)
+           , ipv6 = sortBucketOverlapping cmpV6 (ipv6 idx)
+           }
+  where
+    sortArr cmp arr = smallArrayFromList $ sortBy cmp $ Foldable.toList arr
+    sortBucketOverlapping cmp b =
+        case b ^. #subtree of
+            AllTogether arr -> b & #subtree .~ AllTogether (sortArr cmp arr)
+            Divided{lower, higher, overlapping} -> b & #subtree .~
+                Divided
+                    { lower       = sortBucketOverlapping cmp lower
+                    , higher      = sortBucketOverlapping cmp higher
+                    , overlapping = sortArr cmp overlapping
+                    }
 
 insertVrp :: Vrp -> PrefixIndex -> PrefixIndex
-insertVrp vrpToInsert@(Vrp _ pp _) t = 
+insertVrp = insertVrpWith maxOverlappingPerBucket
+
+insertVrpWith :: Int -> Vrp -> PrefixIndex -> PrefixIndex
+insertVrpWith threshold vrpToInsert@(Vrp _ pp _) t = 
     case pp of 
         Ipv4P p@(Ipv4Prefix _) -> let 
                 (startToInsert, endToInsert) = prefixEdgesV4 p
@@ -125,7 +153,7 @@ insertVrp vrpToInsert@(Vrp _ pp _) t =
             AllTogether arr -> let 
                     arr' = snocSmallArray arr toInsert
                     updated = AllTogether arr'
-                in if sizeofSmallArray arr' > 20 
+                in if sizeofSmallArray arr' > threshold
                         then divide updated 
                         else updated                
              
@@ -147,7 +175,7 @@ insertVrp vrpToInsert@(Vrp _ pp _) t =
                         Lower    -> (vrp : lowers, highers,       overlaps)
                         Higher   -> (lowers,       vrp : highers, overlaps)
                         Overlaps -> (lowers,       highers,       vrp : overlaps)     
-                ) ([], [], []) (foldr (:) [] arr)
+                ) ([], [], []) arr
 
             lower  = Bucket (bucket ^. #address) newBitSize $ AllTogether (smallArrayFromList lowerVrps)
             higher = Bucket middle newBitSize $ AllTogether (smallArrayFromList higherVrps)
@@ -169,35 +197,48 @@ lookupVrps prefix PrefixIndex {..} =
   where
     goV4 bucket start end acc =
         case bucket ^. #subtree of
-            AllTogether arr ->
-                foldr (filterV4 start end) acc arr
+            AllTogether arr -> scanSortedV4 arr
             Divided {..} ->
-                let acc' = foldr (filterV4 start end) acc overlapping
+                let accumulator = scanSortedV4 overlapping
                 in case checkInterval start end (intervalMiddle bucket) of
-                    Lower    -> goV4 lower  start end acc'
-                    Higher   -> goV4 higher start end acc'
-                    Overlaps -> acc'
+                    Lower    -> goV4 lower  start end accumulator
+                    Higher   -> goV4 higher start end accumulator
+                    Overlaps -> accumulator
       where
-        {-# INLINE filterV4 #-}
-        filterV4 start end vrp@(Vrp _ (Ipv4P p) _) acc =
-            let (s, e) = prefixEdgesV4 p
-            in if s <= start && e >= end then vrp : acc else acc
-        filterV4 _ _ _ acc = acc
+        scanSortedV4 arr = go 0
+          where
+            n = sizeofSmallArray arr
+            go i
+              | i >= n = acc
+              | otherwise =
+                  case indexSmallArray arr i of
+                    vrp@(Vrp _ (Ipv4P p) _) ->
+                        let (s, e) = prefixEdgesV4 p
+                        in if e < end then acc
+                           else if s <= start then vrp : go (i+1)
+                           else go (i+1)
+                    _ -> go (i+1)
 
     goV6 bucket start end acc =
         case bucket ^. #subtree of
-            AllTogether arr ->
-                foldr (filterV6 start end) acc arr
+            AllTogether arr -> scanSortedV6 arr
             Divided {..} ->
-                let acc' = foldr (filterV6 start end) acc overlapping
+                let accumulator = scanSortedV6 overlapping
                 in case checkInterval start end (intervalMiddle bucket) of
-                    Lower    -> goV6 lower  start end acc'
-                    Higher   -> goV6 higher start end acc'
-                    Overlaps -> acc'
+                    Lower    -> goV6 lower  start end accumulator
+                    Higher   -> goV6 higher start end accumulator
+                    Overlaps -> accumulator
       where
-        {-# INLINE filterV6 #-}
-        filterV6 start end (QuickCompVrp s e vrp) acc =
-            if s <= start && e >= end then vrp : acc else acc        
+        scanSortedV6 arr = go 0
+          where
+            n = sizeofSmallArray arr
+            go i
+              | i >= n = acc
+              | otherwise =
+                  let (QuickCompVrp s e vrp) = indexSmallArray arr i
+                  in if e < end then acc
+                     else if s <= start then vrp : go (i+1)
+                     else go (i+1)
 
 prefixValidity :: ASN -> IpPrefix -> PrefixIndex -> ValidityResult
 prefixValidity asn prefix prefixIndex =
@@ -245,3 +286,47 @@ asWord128 :: V6.IpAddress -> Word128
 asWord128 (V6.IpAddress (w0, w1, w2, w3)) = 
     Word128 (fromIntegral w0 `shiftL` 32 .|. fromIntegral w1)
             (fromIntegral w2 `shiftL` 32 .|. fromIntegral w3)
+
+-- ---------------------------------------------------------------------------
+-- Tree diagnostics
+-- ---------------------------------------------------------------------------
+
+data TreeStats = TreeStats
+    { tsDepth         :: !Int     -- maximum depth reached
+    , tsLeafCount     :: !Int     -- number of AllTogether leaves
+    , tsLeafSizeMax   :: !Int     -- largest AllTogether array
+    , tsLeafSizeTotal :: !Int     -- sum of all AllTogether array sizes
+    , tsOverlapMax    :: !Int     -- largest overlapping array across all Divided nodes
+    , tsOverlapTotal  :: !Int     -- sum of all overlapping arrays
+    , tsDividedCount  :: !Int     -- number of Divided nodes
+    } deriving (Show)
+
+instance Semigroup TreeStats where
+    a <> b = TreeStats
+        { tsDepth         = tsDepth         a `max` tsDepth         b
+        , tsLeafCount     = tsLeafCount     a +     tsLeafCount     b
+        , tsLeafSizeMax   = tsLeafSizeMax   a `max` tsLeafSizeMax   b
+        , tsLeafSizeTotal = tsLeafSizeTotal a +     tsLeafSizeTotal b
+        , tsOverlapMax    = tsOverlapMax    a `max` tsOverlapMax    b
+        , tsOverlapTotal  = tsOverlapTotal  a +     tsOverlapTotal  b
+        , tsDividedCount  = tsDividedCount  a +     tsDividedCount  b
+        }
+
+instance Monoid TreeStats where
+    mempty = TreeStats 0 0 0 0 0 0 0
+
+bucketStats :: Bucket a c -> TreeStats
+bucketStats = go 0
+  where
+    go depth Bucket{subtree} = case subtree of
+        AllTogether arr ->
+            let n = sizeofSmallArray arr
+            in TreeStats depth 1 n n 0 0 0
+        Divided{lower, higher, overlapping} ->
+            let n   = sizeofSmallArray overlapping
+                own = TreeStats depth 0 0 0 n n 1
+            in own <> go (depth+1) lower <> go (depth+1) higher
+
+prefixIndexStats :: PrefixIndex -> (TreeStats, TreeStats)
+prefixIndexStats PrefixIndex{ipv4, ipv6} = (bucketStats ipv4, bucketStats ipv6)
+
