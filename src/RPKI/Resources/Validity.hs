@@ -197,15 +197,15 @@ lookupVrps prefix PrefixIndex {..} =
   where
     goV4 bucket start end acc =
         case bucket ^. #subtree of
-            AllTogether arr -> scanSortedV4 arr
+            AllTogether arr -> findCoveringVrpsV4 arr
             Divided {..} ->
-                let accumulator = scanSortedV4 overlapping
+                let accumulator = findCoveringVrpsV4 overlapping
                 in case checkInterval start end (intervalMiddle bucket) of
                     Lower    -> goV4 lower  start end accumulator
                     Higher   -> goV4 higher start end accumulator
                     Overlaps -> accumulator
       where
-        scanSortedV4 arr = go 0
+        findCoveringVrpsV4 arr = go 0
           where
             n = sizeofSmallArray arr
             go i
@@ -221,15 +221,15 @@ lookupVrps prefix PrefixIndex {..} =
 
     goV6 bucket start end acc =
         case bucket ^. #subtree of
-            AllTogether arr -> scanSortedV6 arr
+            AllTogether arr -> findCoveringVrpsV6 arr
             Divided {..} ->
-                let accumulator = scanSortedV6 overlapping
+                let accumulator = findCoveringVrpsV6 overlapping
                 in case checkInterval start end (intervalMiddle bucket) of
                     Lower    -> goV6 lower  start end accumulator
                     Higher   -> goV6 higher start end accumulator
                     Overlaps -> accumulator
       where
-        scanSortedV6 arr = go 0
+        findCoveringVrpsV6 arr = go 0
           where
             n = sizeofSmallArray arr
             go i
