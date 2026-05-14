@@ -13,47 +13,21 @@
 
 module Main where
 
-import Control.DeepSeq      (force, NFData)
+import Control.DeepSeq      (force)
 import Control.Exception    (evaluate)
-import Data.Word            (Word32, Word8)
 
 import Data.List (foldl')
 
 import Criterion.Main
 import Text.Printf (printf)
 
-import RPKI.Domain              (Vrp (..))
 import RPKI.Resources.Resources (mkIpv4Block, mkIpv6Block)
 import RPKI.Resources.Types     (ASN (..), IpPrefix (..), PrefixLength (..))
 import RPKI.Resources.Validity  (PrefixIndex, ValidityResult (..), TreeStats (..), createPrefixIndex, prefixValidity, lookupVrps, prefixIndexStats)
+import BenchCommon              (genIPv4Vrps, genIPv6Vrps, mkIPv4Probes, mkIPv6Probes)
 
 -- ---------------------------------------------------------------------------
--- VRP generators  (same seed as validity-bench for comparability)
--- ---------------------------------------------------------------------------
-
-genIPv4Vrps :: [Vrp]
-genIPv4Vrps =
-    [ Vrp (ASN asn) (Ipv4P (mkIpv4Block addr len)) (PrefixLength len)
-    | i   <- [0 .. 699999 :: Int]
-    , let addr = fromIntegral (i * 57321)       :: Word32
-    , let len  = fromIntegral (8 + i `mod` 17)  :: Word8
-    , let asn  = fromIntegral (i `mod` 200000)  :: Word32
-    ]
-
-genIPv6Vrps :: [Vrp]
-genIPv6Vrps =
-    [ Vrp (ASN asn) (Ipv6P (mkIpv6Block (w0, w1, w2, w3) len)) (PrefixLength len)
-    | i   <- [0 .. 299999 :: Int]
-    , let w0  = 0x20010db8 + fromIntegral (i `div` 65536) :: Word32
-    , let w1  = fromIntegral (i * 13 `mod` 65536)          :: Word32
-    , let w2  = fromIntegral (i * 7)                        :: Word32
-    , let w3  = 0                                           :: Word32
-    , let len = fromIntegral (32 + i `mod` 17)             :: Word8
-    , let asn = fromIntegral (i `mod` 200000)              :: Word32
-    ]
-
--- ---------------------------------------------------------------------------
--- Probe helpers
+-- Index construction
 -- ---------------------------------------------------------------------------
 
 -- Force the full result to a summary Int so Criterion measures real work
@@ -85,25 +59,7 @@ ipv6HitProbe  = Ipv6P (mkIpv6Block (0x20010db8, 0, 0x64, 0) 40)
 
 -- | 500 IPv4 + 500 IPv6 probes for a batch benchmark.
 batchProbes :: [(ASN, IpPrefix)]
-batchProbes = take 500 ipv4Probes ++ take 500 ipv6Probes
-  where
-    ipv4Probes =
-        [ (ASN asn, Ipv4P (mkIpv4Block addr len))
-        | i   <- [0 .. ] :: [Int]
-        , let addr = fromIntegral (i * 57321 + 12345) :: Word32
-        , let len  = fromIntegral (16 + i `mod` 9)    :: Word8
-        , let asn  = fromIntegral (i `mod` 200000)     :: Word32
-        ]
-    ipv6Probes =
-        [ (ASN asn, Ipv6P (mkIpv6Block (w0, w1, w2, w3) len))
-        | i   <- [0 .. ] :: [Int]
-        , let w0  = 0x20010db8 + fromIntegral (i `div` 65536) :: Word32
-        , let w1  = fromIntegral (i * 13 `mod` 65536)          :: Word32
-        , let w2  = fromIntegral (i * 7 + 100)                  :: Word32
-        , let w3  = 0                                            :: Word32
-        , let len = fromIntegral (40 + i `mod` 9)              :: Word8
-        , let asn = fromIntegral (i `mod` 200000)               :: Word32
-        ]
+batchProbes = take 500 (mkIPv4Probes [0..]) ++ take 500 (mkIPv6Probes [0..])
 
 -- ---------------------------------------------------------------------------
 -- Index construction

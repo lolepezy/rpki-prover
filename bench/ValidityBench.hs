@@ -18,45 +18,14 @@ import Control.DeepSeq      (force)
 import Control.Exception    (evaluate)
 import Data.IORef           (newIORef, readIORef)
 import Data.List            (foldl')
-import Data.Word            (Word32, Word8)
 import GHC.Stats
 import System.CPUTime       (getCPUTime)
 import System.Mem           (performMajorGC)
 import Text.Printf          (printf)
 
-import RPKI.Domain              (Vrp (..))
-import RPKI.Resources.Resources (mkIpv4Block, mkIpv6Block)
 import RPKI.Resources.Types     (ASN (..), IpPrefix (..), PrefixLength (..))
 import RPKI.Resources.Validity  (PrefixIndex, ValidityResult (..), createPrefixIndex, prefixValidity)
-
--- ---------------------------------------------------------------------------
--- VRP generators
--- ---------------------------------------------------------------------------
-
--- | ~700k IPv4 VRPs spread across the full address space.
--- Prefix lengths range from /8 to /24, mirroring a realistic BGP table.
-genIPv4Vrps :: [Vrp]
-genIPv4Vrps =
-    [ Vrp (ASN asn) (Ipv4P (mkIpv4Block addr len)) (PrefixLength len)
-    | i <- [0 .. 699999 :: Int]
-    , let addr = fromIntegral (i * 57321)      :: Word32   -- wraps, spreading across space
-    , let len  = fromIntegral (8 + i `mod` 17) :: Word8
-    , let asn  = fromIntegral (i `mod` 200000) :: Word32
-    ]
-
--- | ~300k IPv6 VRPs spread across global-unicast space.
--- Prefix lengths range from /32 to /48, mirroring typical ISP allocations.
-genIPv6Vrps :: [Vrp]
-genIPv6Vrps =
-    [ Vrp (ASN asn) (Ipv6P (mkIpv6Block (w0, w1, w2, w3) len)) (PrefixLength len)
-    | i <- [0 .. 299999 :: Int]
-    , let w0  = 0x20010db8 + fromIntegral (i `div` 65536)  :: Word32
-    , let w1  = fromIntegral (i * 13 `mod` 65536)           :: Word32
-    , let w2  = fromIntegral (i * 7)                         :: Word32
-    , let w3  = 0                                            :: Word32
-    , let len = fromIntegral (32 + i `mod` 17)              :: Word8
-    , let asn = fromIntegral (i `mod` 200000)               :: Word32
-    ]
+import BenchCommon              (genIPv4Vrps, genIPv6Vrps, mkIPv4Probes, mkIPv6Probes)
 
 -- ---------------------------------------------------------------------------
 -- Probe generators for prefixValidity throughput
@@ -64,26 +33,11 @@ genIPv6Vrps =
 
 -- | 70k IPv4 probes — offsets from VRP seed so some will match, some won't.
 genIPv4Probes :: [(ASN, IpPrefix)]
-genIPv4Probes =
-    [ (ASN asn, Ipv4P (mkIpv4Block addr len))
-    | i <- [0 .. 69999 :: Int]
-    , let addr = fromIntegral (i * 57321 + 12345) :: Word32
-    , let len  = fromIntegral (16 + i `mod` 9)    :: Word8
-    , let asn  = fromIntegral (i `mod` 200000)     :: Word32
-    ]
+genIPv4Probes = mkIPv4Probes [0 .. 69999]
 
 -- | 30k IPv6 probes — same global-unicast range, slightly offset.
 genIPv6Probes :: [(ASN, IpPrefix)]
-genIPv6Probes =
-    [ (ASN asn, Ipv6P (mkIpv6Block (w0, w1, w2, w3) len))
-    | i <- [0 .. 29999 :: Int]
-    , let w0  = 0x20010db8 + fromIntegral (i `div` 65536) :: Word32
-    , let w1  = fromIntegral (i * 13 `mod` 65536)          :: Word32
-    , let w2  = fromIntegral (i * 7 + 100)                  :: Word32
-    , let w3  = 0                                            :: Word32
-    , let len = fromIntegral (40 + i `mod` 9)              :: Word8
-    , let asn = fromIntegral (i `mod` 200000)               :: Word32
-    ]
+genIPv6Probes = mkIPv6Probes [0 .. 29999]
 
 -- ---------------------------------------------------------------------------
 -- Index construction
