@@ -13,7 +13,7 @@ import           RPKI.Orphans
 import           RPKI.Domain
 import           RPKI.Resources.Types
 import           RPKI.Resources.Resources   (mkIpv4Block, mkIpv6Block,
-                                             readIp4,
+                                             readIp4, readIp6,
                                              ipv4PrefixLen)
 import           RPKI.Resources.Validity
 
@@ -76,7 +76,7 @@ validityGroup = testGroup "Prefix validity" [
                         in parentVrp `elem` lookupVrps (Ipv6P childP) idx
         ],
 
-        testGroup "prefixValidity" [
+        testGroup "prefixValidity V4" [
 
             HU.testCase "Valid: matching ASN, prefix length within maxLength" $ do
                 let vrp = Vrp (ASN 1) (Ipv4P $ readIp4 "10.0.0.0/8") (PrefixLength 24)
@@ -113,6 +113,67 @@ validityGroup = testGroup "Prefix validity" [
                         valids HU.@?= [vrp1]
                         HU.assertBool "InvalidAsn vrp2 in invalids"   (InvalidAsn    vrp2 `elem` invalids)
                         HU.assertBool "InvalidLength vrp3 in invalids" (InvalidLength vrp3 `elem` invalids)
+                    other -> HU.assertFailure $ "Expected ValidOverall, got: " <> show other,
+
+            HU.testCase "More than one valid" $ do
+                let vrp1 = Vrp (ASN 1) (Ipv4P $ readIp4 "10.0.0.0/8")  (PrefixLength 24)
+                    vrp2 = Vrp (ASN 1) (Ipv4P $ readIp4 "10.0.0.0/16") (PrefixLength 28)
+                    idx  = createPrefixIndex [vrp1, vrp2]
+                case prefixValidity (ASN 1) (Ipv4P $ readIp4 "10.0.0.0/24") idx of
+                    ValidOverall valids invalids -> do
+                        HU.assertBool "vrp1 in valids" (vrp1 `elem` valids)
+                        HU.assertBool "vrp2 in valids" (vrp2 `elem` valids)
+                        invalids HU.@?= []
+                    other -> HU.assertFailure $ "Expected ValidOverall, got: " <> show other
+        ],
+
+        testGroup "prefixValidity V6" [
+
+            HU.testCase "Valid: matching ASN, prefix length within maxLength" $ do
+                let vrp = Vrp (ASN 1) (Ipv6P $ readIp6 "2001:db8::/32") (PrefixLength 48)
+                    idx = createPrefixIndex [vrp]
+                prefixValidity (ASN 1) (Ipv6P $ readIp6 "2001:db8:1::/48") idx
+                    HU.@?= ValidOverall [vrp] [],
+
+            HU.testCase "InvalidAsn: wrong ASN" $ do
+                let vrp = Vrp (ASN 1) (Ipv6P $ readIp6 "2001:db8::/32") (PrefixLength 48)
+                    idx = createPrefixIndex [vrp]
+                prefixValidity (ASN 2) (Ipv6P $ readIp6 "2001:db8:1::/48") idx
+                    HU.@?= InvalidOverall [InvalidAsn vrp],
+
+            HU.testCase "InvalidLength: prefix more specific than maxLength" $ do
+                let vrp = Vrp (ASN 1) (Ipv6P $ readIp6 "2001:db8::/32") (PrefixLength 48)
+                    idx = createPrefixIndex [vrp]
+                prefixValidity (ASN 1) (Ipv6P $ readIp6 "2001:db8:1::/49") idx
+                    HU.@?= InvalidOverall [InvalidLength vrp],
+
+            HU.testCase "Unknown: no covering VRP in index" $ do
+                let vrp = Vrp (ASN 1) (Ipv6P $ readIp6 "2001:db8::/32") (PrefixLength 48)
+                    idx = createPrefixIndex [vrp]
+                prefixValidity (ASN 1) (Ipv6P $ readIp6 "2002::/16") idx
+                    HU.@?= Unknown,
+
+            HU.testCase "Mixed: valid, wrong-ASN, and too-specific VRPs for the same parent" $ do
+                let vrp1 = Vrp (ASN 1) (Ipv6P $ readIp6 "2001:db8::/32") (PrefixLength 48)
+                    vrp2 = Vrp (ASN 2) (Ipv6P $ readIp6 "2001:db8::/32") (PrefixLength 48)
+                    vrp3 = Vrp (ASN 1) (Ipv6P $ readIp6 "2001:db8::/32") (PrefixLength 47)
+                    idx  = createPrefixIndex [vrp1, vrp2, vrp3]
+                case prefixValidity (ASN 1) (Ipv6P $ readIp6 "2001:db8:1::/48") idx of
+                    ValidOverall valids invalids -> do
+                        valids HU.@?= [vrp1]
+                        HU.assertBool "InvalidAsn vrp2 in invalids"    (InvalidAsn    vrp2 `elem` invalids)
+                        HU.assertBool "InvalidLength vrp3 in invalids" (InvalidLength vrp3 `elem` invalids)
+                    other -> HU.assertFailure $ "Expected ValidOverall, got: " <> show other,
+
+            HU.testCase "More than one valid" $ do
+                let vrp1 = Vrp (ASN 1) (Ipv6P $ readIp6 "2001:db8::/32") (PrefixLength 64)
+                    vrp2 = Vrp (ASN 1) (Ipv6P $ readIp6 "2001:db8::/48") (PrefixLength 64)
+                    idx  = createPrefixIndex [vrp1, vrp2]
+                case prefixValidity (ASN 1) (Ipv6P $ readIp6 "2001:db8::/64") idx of
+                    ValidOverall valids invalids -> do
+                        HU.assertBool "vrp1 in valids" (vrp1 `elem` valids)
+                        HU.assertBool "vrp2 in valids" (vrp2 `elem` valids)
+                        invalids HU.@?= []
                     other -> HU.assertFailure $ "Expected ValidOverall, got: " <> show other
         ]
     ]
