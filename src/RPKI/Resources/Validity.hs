@@ -43,7 +43,7 @@ data Bucket a c = Bucket {
         bitSize :: {-# UNPACK #-} Word8,
         subtree :: AddressTree a c
     }
-    deriving stock (Show, Eq, Ord, Generic)     
+    deriving stock (Show, Eq, Generic)     
     deriving anyclass (NFData)
         
 
@@ -51,17 +51,10 @@ data AddressTree a c = AllTogether (SmallArray c)
                      | Divided {
                             lower       :: Bucket a c,
                             higher      :: Bucket a c,
-                            overlapping :: !(SmallArray c)
+                            overlapping :: SmallArray c
                         }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (NFData)
-
--- SmallArray doesn't have Ord; provide structural Eq/Ord via list conversion
-instance (Eq a, Ord c) => Ord (AddressTree a c) where
-    compare x y = compare (toList x) (toList y)
-      where
-        toList (AllTogether arr)    = foldr (:) [] arr
-        toList (Divided {..})       = foldr (:) [] overlapping
 
 snocSmallArray :: SmallArray a -> a -> SmallArray a
 snocSmallArray arr x = runSmallArray $ do
@@ -96,7 +89,7 @@ data PrefixIndex = PrefixIndex {
         ipv4 :: Bucket Word32 (ActuallyStored Word32),
         ipv6 :: Bucket Word128 (ActuallyStored Word128)
     }
-    deriving stock (Show, Eq, Ord, Generic)     
+    deriving stock (Show, Eq, Generic)     
     deriving anyclass (NFData)
 
 
