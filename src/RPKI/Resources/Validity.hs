@@ -1,10 +1,23 @@
 
 {-# LANGUAGE Strict #-}
 
-module RPKI.Resources.Validity where
+module RPKI.Resources.Validity (
+    PrefixIndex (..)
+  , ValidityResult (..)
+  , ValidityPerVrp (..)
+  , TreeStats (..)
+  , prefixValidity
+  , lookupVrps
+  , createPrefixIndex
+  , createPrefixIndexT
+  , prefixEdgesV4
+  , prefixEdgesV6W128
+  , prefixIndexStats
+) where
 
 import           Control.DeepSeq
 import           Control.Lens
+import           Control.Monad.ST                (runST)
 import           Data.Generics.Labels                  
 
 import           Data.Word                (Word8, Word32)
@@ -47,21 +60,14 @@ data Bucket a c = Bucket {
     deriving anyclass (NFData)
         
 
-data AddressTree a c = AllTogether (SmallArray c)
+data AddressTree a c = AllTogether (GrowArr c)
                      | Divided {
                             lower       :: Bucket a c,
                             higher      :: Bucket a c,
-                            overlapping :: SmallArray c
+                            overlapping :: GrowArr c
                         }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (NFData)
-
-snocSmallArray :: SmallArray a -> a -> SmallArray a
-snocSmallArray arr x = runSmallArray $ do
-    let n = sizeofSmallArray arr
-    ma <- newSmallArray (n + 1) x
-    copySmallArray ma 0 arr 0 n
-    pure ma
 
 data QuickCompVrp = QuickCompVrp
     {-# UNPACK #-} Word128
@@ -95,8 +101,8 @@ data PrefixIndex = PrefixIndex {
 
 makePrefixIndex :: PrefixIndex
 makePrefixIndex = let 
-        ipv4 = Bucket 0 32  (AllTogether mempty)
-        ipv6 = Bucket (Word128 0 0) 128 (AllTogether mempty)
+        ipv4 = Bucket 0 32  (AllTogether emptyGrowArr)
+        ipv6 = Bucket (Word128 0 0) 128 (AllTogether emptyGrowArr)
     in PrefixIndex {..}
 
 createPrefixIndex :: (Foldable f, Coercible v Vrp) => f v -> PrefixIndex
@@ -114,7 +120,7 @@ createPrefixIndexT threshold xs =
            , ipv6 = sortBucketOverlapping cmpV6 (ipv6 idx)
            }
   where
-    sortArr cmp arr = smallArrayFromList $ sortBy cmp $ Foldable.toList arr
+    sortArr cmp arr = growArrFromList $ sortBy cmp $ Foldable.toList arr
     sortBucketOverlapping cmp b =
         case b ^. #subtree of
             AllTogether arr -> b & #subtree .~ AllTogether (sortArr cmp arr)
@@ -124,9 +130,6 @@ createPrefixIndexT threshold xs =
                     , higher      = sortBucketOverlapping cmp higher
                     , overlapping = sortArr cmp overlapping
                     }
-
-insertVrp :: Vrp -> PrefixIndex -> PrefixIndex
-insertVrp = insertVrpWith maxOverlappingPerBucket
 
 insertVrpWith :: Int -> Vrp -> PrefixIndex -> PrefixIndex
 insertVrpWith threshold vrpToInsert@(Vrp _ pp _) t = 
@@ -144,9 +147,9 @@ insertVrpWith threshold vrpToInsert@(Vrp _ pp _) t =
     insertIntoTree startToInsert endToInsert bucket = 
         bucket & #subtree %~ \case        
             AllTogether arr -> let 
-                    arr' = snocSmallArray arr toInsert
+                    arr' = snocGrowArr arr toInsert
                     updated = AllTogether arr'
-                in if sizeofSmallArray arr' > threshold
+                in if length arr' > threshold
                         then divide updated 
                         else updated                
              
@@ -154,7 +157,7 @@ insertVrpWith threshold vrpToInsert@(Vrp _ pp _) t =
                 case checkInterval startToInsert endToInsert middle of  
                     Lower    -> Divided { lower = insertIntoTree startToInsert endToInsert lower, .. }
                     Higher   -> Divided { higher = insertIntoTree startToInsert endToInsert higher, .. }
-                    Overlaps -> Divided { overlapping = snocSmallArray overlapping toInsert, ..}
+                    Overlaps -> Divided { overlapping = snocGrowArr overlapping toInsert, ..}
       where
         toInsert = makeStoredVrp startToInsert endToInsert vrpToInsert
         newBitSize = bucket ^. #bitSize - 1
@@ -170,9 +173,9 @@ insertVrpWith threshold vrpToInsert@(Vrp _ pp _) t =
                         Overlaps -> (lowers,       highers,       vrp : overlaps)     
                 ) ([], [], []) arr
 
-            lower  = Bucket (bucket ^. #address) newBitSize $ AllTogether (smallArrayFromList lowerVrps)
-            higher = Bucket middle newBitSize $ AllTogether (smallArrayFromList higherVrps)
-            overlapping = smallArrayFromList overlapVrps
+            lower  = Bucket (bucket ^. #address) newBitSize $ AllTogether (growArrFromList lowerVrps)
+            higher = Bucket middle newBitSize $ AllTogether (growArrFromList higherVrps)
+            overlapping = growArrFromList overlapVrps
 
             in Divided {..}
 
@@ -198,13 +201,13 @@ lookupVrps prefix PrefixIndex {..} =
                     Higher   -> goV4 higher start end accumulator
                     Overlaps -> accumulator
       where
-        findCoveringVrpsV4 arr = go 0
+        findCoveringVrpsV4 g = go 0
           where
-            n = sizeofSmallArray arr
+            n = length g
             go i
               | i >= n = acc
               | otherwise =
-                  case indexSmallArray arr i of
+                  case growArrIndex g i of
                     vrp@(Vrp _ (Ipv4P p) _) ->
                         let (s, e) = prefixEdgesV4 p
                         in if e < end then acc
@@ -222,13 +225,13 @@ lookupVrps prefix PrefixIndex {..} =
                     Higher   -> goV6 higher start end accumulator
                     Overlaps -> accumulator
       where
-        findCoveringVrpsV6 arr = go 0
+        findCoveringVrpsV6 g = go 0
           where
-            n = sizeofSmallArray arr
+            n = length g
             go i
               | i >= n = acc
               | otherwise =
-                  let (QuickCompVrp s e vrp) = indexSmallArray arr i
+                  let (QuickCompVrp s e vrp) = growArrIndex g i
                   in if e < end then acc
                      else if s <= start then vrp : go (i+1)
                      else go (i+1)
@@ -280,6 +283,60 @@ asWord128 (V6.IpAddress (w0, w1, w2, w3)) =
     Word128 (fromIntegral w0 `shiftL` 32 .|. fromIntegral w1)
             (fromIntegral w2 `shiftL` 32 .|. fromIntegral w3)
 
+
+-- | Capacity-doubling array for use during index construction.
+-- The 'Int' records the logical size (number of valid elements);
+-- the backing 'SmallArray' may have additional capacity beyond that.
+-- After the build phase (see 'sortBucketOverlapping') every GrowArr is
+-- compacted to an exact-size array, so at query time the overhead is
+-- just one extra Int field compared to a plain SmallArray.
+data GrowArr a = GrowArr {-# UNPACK #-} Int (SmallArray a)    
+    deriving stock (Eq, Generic)
+    deriving anyclass (NFData)
+
+instance Show a => Show (GrowArr a) where
+    show g = "GrowArr " ++ show (Foldable.toList g)
+
+instance Foldable GrowArr where
+    foldr f z (GrowArr n arr) = go 0
+      where
+        go i | i >= n    = z
+             | otherwise = f (indexSmallArray arr i) (go (i+1))
+    length (GrowArr n _) = n
+
+emptyGrowArr :: GrowArr a
+emptyGrowArr = GrowArr 0 mempty
+
+growArrIndex :: GrowArr a -> Int -> a
+growArrIndex (GrowArr _ arr) i = indexSmallArray arr i
+
+growArrFromList :: [a] -> GrowArr a
+growArrFromList xs =
+    let arr = smallArrayFromList xs
+    in GrowArr (sizeofSmallArray arr) arr
+
+-- | O(1) amortised snoc.  When the backing array has spare capacity the
+-- element is written in-place via 'unsafeThawSmallArray' / 'unsafeFreezeSmallArray'
+-- (zero allocation).  When full, a new array of twice the capacity is allocated.
+-- Safety: the GrowArr must have single ownership — the backing SmallArray must
+-- not be aliased elsewhere.  This invariant holds for GrowArrs stored in the
+-- tree because each functional update produces a fresh node.
+{-# INLINE snocGrowArr #-}
+snocGrowArr :: GrowArr a -> a -> GrowArr a
+snocGrowArr (GrowArr n arr) x = runST $ do
+    let cap = sizeofSmallArray arr
+    ma <- if n < cap
+              then unsafeThawSmallArray arr   -- O(1): arr ownership transferred to ma
+              else do
+                  let newCap = max 4 (cap * 2)
+                  ma' <- newSmallArray newCap x
+                  copySmallArray ma' 0 arr 0 n
+                  pure ma'
+    writeSmallArray ma n x
+    arr' <- unsafeFreezeSmallArray ma          -- O(1)
+    pure (GrowArr (n+1) arr')
+
+
 -- ---------------------------------------------------------------------------
 -- Tree diagnostics
 -- ---------------------------------------------------------------------------
@@ -313,10 +370,10 @@ bucketStats = go 0
   where
     go depth Bucket{subtree} = case subtree of
         AllTogether arr ->
-            let n = sizeofSmallArray arr
+            let n = length arr
             in TreeStats depth 1 n n 0 0 0
         Divided{lower, higher, overlapping} ->
-            let n   = sizeofSmallArray overlapping
+            let n   = length overlapping
                 own = TreeStats depth 0 0 0 n n 1
             in own <> go (depth+1) lower <> go (depth+1) higher
 
