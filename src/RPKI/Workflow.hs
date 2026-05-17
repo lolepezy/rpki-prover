@@ -691,6 +691,7 @@ runAll appContext@AppContext {..} tals = do
                     runWorker logger workerInput arguments workerInfo
         pure (r, workerId)                            
 
+
 -- To be called by the validation worker process
 runValidation :: Storage s =>
                 AppContext s
@@ -847,6 +848,34 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
 
             mostNarrowPPScope (Scope s) = 
                 take 1 [ url | PPFocus (RrdpU url) <- NonEmpty.toList s ]
+
+
+runValidationFromLog :: Storage s =>
+                        AppContext s
+                    -> WorldVersion            
+                    -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire), Maybe Slurm)
+runValidationFromLog appContext@AppContext {..} worldVersion = do           
+    unappliedUpdates <- roTxT database $ DB.getUnappliedUpdates    
+    runValidationForUpdates appContext worldVersion $ concatMap snd unappliedUpdates
+
+runValidationBootstrap :: Storage s =>
+                        AppContext s
+                    -> WorldVersion            
+                    -> [TAL]
+                    -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire), Maybe Slurm)
+runValidationBootstrap appContext@AppContext {..} worldVersion tals = do
+    let unappliedUpdates = map (\tal -> TaUpdate $ getTaName tal) tals
+    rwTxT database $ \tx db -> DB.logUpdates tx db worldVersion unappliedUpdates
+    runValidationForUpdates appContext worldVersion unappliedUpdates    
+
+runValidationForUpdates :: Storage s =>
+                        AppContext s
+                    -> WorldVersion            
+                    -> [Update]
+                    -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire), Maybe Slurm)
+runValidationForUpdates appContext@AppContext {..} worldVersion updates = do    
+    pure (mempty, mempty, Nothing)
+
 
 
 -- | Adjust running fetchers to the latest discovered repositories
