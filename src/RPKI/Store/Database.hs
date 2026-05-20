@@ -12,6 +12,7 @@ import           Control.Monad
 import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
 import           Data.Foldable            (for_)
+import           Data.Coerce              (coerce)
 
 import qualified Data.List                as List
 import           Data.Maybe               (catMaybes, fromMaybe, isJust, listToMaybe)
@@ -65,7 +66,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 48
+currentDatabaseVersion = 49
 
 -- Some constant keys
 databaseVersionKey, validatedByVersionKey :: Text
@@ -561,19 +562,36 @@ getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ runMaybe
     located   <- MaybeT $ getLocatedByKey tx db objectKey
     pure $ located & #payload %~ (\(CerRO c) -> c) 
 
+getCaCertByKey :: (MonadIO m, Storage s) => Tx s mode -> DB s -> CertKey -> m (Maybe CaCerObject)
+getCaCertByKey tx db certKey = liftIO $ do
+    z <- getObjectByKey tx db (coerce certKey)
+    pure $ case z of
+        Just (CerRO cert) -> Just cert
+        _                 -> Nothing
+
 -- TA store functions
 
-saveTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> StorableTA -> m ()
-saveTA tx DB { taStore = TAStore s } ta = liftIO $ SM.put tx s (getTaName $ tal ta) ta
+saveTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> CaCerObject -> WorldVersion -> StorableTA -> m ()
+saveTA tx db@DB { taStore = TAStore s } cert wv ta = liftIO $ do
+    objectKey <- saveObject tx db (toStorableObject (CerRO cert)) wv
+    linkObjectToUrl tx db (actualUrl ta) (getHash cert)
+    let certKey = coerce objectKey :: CertKey
+    SM.put tx s (getTaName (tal ta)) (ta { taCertKey = certKey })
 
 deleteTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> TAL -> m ()
 deleteTA tx DB { taStore = TAStore s } tal = liftIO $ SM.delete tx s (getTaName tal)
 
-getTA :: (MonadIO m, Storage s) => Tx s mode -> DB s -> TaName -> m (Maybe StorableTA)
-getTA tx DB { taStore = TAStore s } name = liftIO $ SM.get tx s name
+getTA :: (MonadIO m, Storage s) => Tx s mode -> DB s -> TaName -> m (Maybe (StorableTA, CaCerObject))
+getTA tx db@DB { taStore = TAStore s } name = liftIO $ runMaybeT $ do
+    ta   <- MaybeT $ SM.get tx s name
+    cert <- MaybeT $ getCaCertByKey tx db (taCertKey ta)
+    pure (ta, cert)
 
-getTAs :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [StorableTA]
-getTAs tx DB { taStore = TAStore s } = liftIO $ SM.values tx s
+getTAs :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(StorableTA, CaCerObject)]
+getTAs tx db@DB { taStore = TAStore s } = liftIO $ do
+    tas <- SM.values tx s
+    fmap catMaybes $ forM tas $ \ta ->
+        fmap (ta,) <$> getCaCertByKey tx db (taCertKey ta)
 
 
 getValidationsPerTA :: (MonadIO m, Storage s) => 
