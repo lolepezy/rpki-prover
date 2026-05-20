@@ -74,25 +74,25 @@ deltaToXml (Delta (Version v) (SessionId sess) (RrdpSerial s) items) =
   where
     item (DP (DeltaPublish (URI u) Nothing (EncodedBase64 c))) =
       [i|<publish uri="#{u}">#{c}</publish>|]
-    item (DP (DeltaPublish (URI u) (Just (Hash hash)) (EncodedBase64 c))) =
-      [i|<publish uri="#{u}" hash="#{hex $ BSS.fromShort hash}">#{c}</publish>|]
-    item (DW (DeltaWithdraw (URI u) (Hash hash))) =
-      [i|<withdraw uri="#{u}" hash="#{hex $ BSS.fromShort hash}"></withdraw>|]
+    item (DP (DeltaPublish (URI u) (Just h) (EncodedBase64 c))) =
+      [i|<publish uri="#{u}" hash="#{hex $ hashToBS h}">#{c}</publish>|]
+    item (DW (DeltaWithdraw (URI u) h)) =
+      [i|<withdraw uri="#{u}" hash="#{hex $ hashToBS h}"></withdraw>|]
 
 
 notificationToXml :: Notification -> String
 notificationToXml Notification { 
       sessionId = SessionId sid,
       serial = RrdpSerial s,
-      snapshotInfo = SnapshotInfo (URI su) (Hash sh),
+      snapshotInfo = SnapshotInfo (URI su) snapshotHash,
       version = Version v,
       ..
     } =
   [i|<notification version="#{v}" session_id="#{sid}" serial="#{s}">
-      <snapshot uri="#{su}" hash="#{hex $ BSS.fromShort sh}"></snapshot>
+      <snapshot uri="#{su}" hash="#{hex $ hashToBS snapshotHash}"></snapshot>
       #{concatMap delta deltas}
   </notification>|]
   where
-    delta (DeltaInfo (URI u) (Hash hash) (RrdpSerial ds)) =
-      [i|<delta uri="#{u}" hash="#{hex $ BSS.fromShort hash}" serial="#{ds}"></delta>|]  
+    delta (DeltaInfo (URI u) h (RrdpSerial ds)) =
+      [i|<delta uri="#{u}" hash="#{hex $ hashToBS h}" serial="#{ds}"></delta>|]  
 

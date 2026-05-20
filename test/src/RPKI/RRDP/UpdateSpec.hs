@@ -35,7 +35,7 @@ testSnapshot =
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo (makeNotification (SessionId "something else") (RrdpSerial 120))
         HU.assertEqual "It's a bummer" nextStep
-                (Right $ FetchSnapshot (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
+                (Right $ FetchSnapshot (SnapshotInfo (URI "http://bla.com/snapshot.xml") (sha256s "AABB")) 
                             "Resetting RRDP session from whatever to something else")
 
 testNoUpdates :: TestTree
@@ -62,7 +62,7 @@ testDeltaUpdate =
                                     deltas = [delta]
                                 }
         HU.assertEqual "It's a bummer" nextStep 
-            (Right $ FetchDeltas (delta :| []) (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
+            (Right $ FetchDeltas (delta :| []) (SnapshotInfo (URI "http://bla.com/snapshot.xml") (sha256s "AABB")) 
             "something, deltas look good.")
 
 testNoDeltaLocalTooOld :: TestTree
@@ -73,10 +73,10 @@ testNoDeltaLocalTooOld =
         let repo = defaultRepo & typed ?~ newRrdpMeta sessionId serial
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                                 rrdpNextStep repo $ (makeNotification sessionId (RrdpSerial 15)) {       
-                                  deltas = [DeltaInfo (URI "http://host/delta15.xml") (Hash "BBCC") (RrdpSerial 15)]
+                                  deltas = [DeltaInfo (URI "http://host/delta15.xml") (sha256s "BBCC") (RrdpSerial 15)]
                                 }
         HU.assertEqual "It's a bummer" nextStep (Right $ FetchSnapshot 
-            (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
+            (SnapshotInfo (URI "http://bla.com/snapshot.xml") (sha256s "AABB")) 
                          "something, local serial 13 is too far behind remote 15.")
 
 testNonConsecutive :: TestTree
@@ -105,7 +105,7 @@ testNonConsecutive =
                         ]
                     }
         HU.assertEqual "It's a bummer" nextStep 
-            (Right (FetchSnapshot (SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")) 
+            (Right (FetchSnapshot (SnapshotInfo (URI "http://bla.com/snapshot.xml") (sha256s "AABB")) 
                 "something, there are non-consecutive delta serials: [(13,18),(18,20)]."))
     
 testIntegrity :: TestTree
@@ -118,40 +118,43 @@ testIntegrity =
         let serial13 = RrdpSerial 13        
         let serial14 = RrdpSerial 14        
         let previousDeltas = [ 
-                    DeltaInfo (deltaUrl serial11) (Hash "hash11") serial11,
-                    DeltaInfo (deltaUrl serial12) (Hash "hash12") serial12 
+                    DeltaInfo (deltaUrl serial11) (sha256s "hash11") serial11,
+                    DeltaInfo (deltaUrl serial12) (sha256s "hash12") serial12 
                 ]
 
-        let snapshotInfo = SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB")
+        let snapshotInfo = SnapshotInfo (URI "http://bla.com/snapshot.xml") (sha256s "AABB")
 
         let repo = defaultRepo & typed ?~ RrdpMeta sessionId serial13 (RrdpIntegrity previousDeltas) Nothing
 
         let (nextStep, _) = runPureValidator (newScopes "test") $ 
                     rrdpNextStep repo $ (makeNotification sessionId serial14) {       
                         deltas = [
-                            DeltaInfo (deltaUrl serial12) (Hash "hash12") serial12,
-                            DeltaInfo (deltaUrl serial13) (Hash "hash13") serial13,
-                            DeltaInfo (deltaUrl serial14) (Hash "hash14") serial14
+                            DeltaInfo (deltaUrl serial12) (sha256s "hash12") serial12,
+                            DeltaInfo (deltaUrl serial13) (sha256s "hash13") serial13,
+                            DeltaInfo (deltaUrl serial14) (sha256s "hash14") serial14
                         ]
                     }
         HU.assertEqual "It's a bummer" nextStep 
             (Right $ FetchDeltas {
                 message = "something, deltas look good.",
                 snapshotInfo = snapshotInfo,
-                sortedDeltas = DeltaInfo (URI "http://rrdp.ripe.net/delta14.xml") (Hash "hash14") serial14 :| []
+                sortedDeltas = DeltaInfo (URI "http://rrdp.ripe.net/delta14.xml") (sha256s "hash14") serial14 :| []
             })
         
         let (nextStep1, _) = runPureValidator (newScopes "test") $ 
                     rrdpNextStep repo $ (makeNotification sessionId serial14) {       
                         deltas = [
-                            DeltaInfo (deltaUrl serial12) (Hash "hash12-broken") serial12,
-                            DeltaInfo (deltaUrl serial13) (Hash "hash13") serial13,
-                            DeltaInfo (deltaUrl serial14) (Hash "hash14") serial14
+                            DeltaInfo (deltaUrl serial12) (sha256s "hash12-broken") serial12,
+                            DeltaInfo (deltaUrl serial13) (sha256s "hash13") serial13,
+                            DeltaInfo (deltaUrl serial14) (sha256s "hash14") serial14
                         ]
                     }
+        let h12  = sha256s "hash12"
+            h12b = sha256s "hash12-broken"
         HU.assertEqual "It's a bummer" nextStep1 
             (Right $ FetchSnapshot snapshotInfo 
-                "These deltas have integrity issues: serial 12, used to have hash 686173683132 and now 6861736831322d62726f6b656e.")
+                (Text.pack $ "These deltas have integrity issues: serial 12, used to have hash "
+                    <> show h12 <> " and now " <> show h12b <> "."))
 
 
 defaultRepo :: RrdpRepository
@@ -170,12 +173,12 @@ makeNotification sessionId' serial' = Notification {
     version = Version 1,
     sessionId = sessionId',
     serial = serial',
-    snapshotInfo = SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB"),
+    snapshotInfo = SnapshotInfo (URI "http://bla.com/snapshot.xml") (sha256s "AABB"),
     deltas = []
   }
 
 makeDelta :: RrdpSerial -> DeltaInfo
-makeDelta serial'@(RrdpSerial s) = DeltaInfo (URI u) (Hash "AABBCC") serial'
+makeDelta serial'@(RrdpSerial s) = DeltaInfo (URI u) (sha256s "AABBCC") serial'
   where u = Text.pack $ "http://somehost/delta" <> show s <> ".xml"
 
 

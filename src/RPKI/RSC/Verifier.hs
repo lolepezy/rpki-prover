@@ -96,7 +96,7 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
         case verifyPath of 
             FileList files -> 
                 liftIO $ for files $ \f -> 
-                    (f, ) . mkHash <$> runConduitRes (sourceFile f .| hashC)                                                
+                    (f, ) . newHash <$> runConduitRes (sourceFile f .| hashC)                                                
             Directory directory -> do 
                 files <- fromTry (UnspecifiedE [i|No directory #{directory}|] . fmtEx) $ getDirectoryContents directory
 
@@ -105,7 +105,7 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
                         let fullPath = directory </> f
                         isFile <- doesFileExist fullPath
                         if isFile then do
-                            hash <- mkHash <$> runConduitRes (sourceFile fullPath .| hashC)                            
+                            hash <- newHash <$> runConduitRes (sourceFile fullPath .| hashC)                            
                             pure [(f, hash)] 
                         else 
                             pure []

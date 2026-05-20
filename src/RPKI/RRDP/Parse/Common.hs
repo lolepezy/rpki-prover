@@ -8,9 +8,7 @@ import           Control.Monad.Trans.Except
 
 import           Data.Bifunctor
 import qualified Data.ByteString                  as BS
-import qualified Data.ByteString.Base64           as B64
 import qualified Data.List                        as List
-import qualified Data.Text                        as Text
 
 import           Data.STRef
 
@@ -62,7 +60,7 @@ parseSerial v f =  case parseInteger v of
     Just s  -> f $ RrdpSerial s
 
 makeHash :: BS.ByteString -> Maybe Hash
-makeHash bs = mkHash . toBytes <$> hexString bs
+makeHash bs = newHash . toBytes <$> hexString bs
 
 decodeBase64 :: Show c => EncodedBase64 -> c -> Either RrdpError DecodedBase64
 decodeBase64 base64 context = 

@@ -17,6 +17,8 @@ import           Data.ByteString.Base16   as Hex
 import qualified Data.String.Conversions  as SC
 
 import           Data.Int
+import           Data.Word
+import           Data.Bits
 import           Data.Hourglass
 import           Data.Data
 import           Data.Foldable            as F
@@ -71,7 +73,14 @@ data CertType = CACert | EECert | BGPCert
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-newtype Hash = Hash BSS.ShortByteString 
+type Hash = Sha256Words
+
+-- | SHA-256 hash (always 32 bytes).
+data Sha256Words = Sha256Words
+    {-# UNPACK #-} !Word64
+    {-# UNPACK #-} !Word64
+    {-# UNPACK #-} !Word64
+    {-# UNPACK #-} !Word64
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
@@ -183,7 +192,12 @@ instance {-# OVERLAPPING #-} WithRpkiURL u => WithURL u where
 toText :: RpkiURL -> Text
 toText = unURI . getURL 
 
-newtype KI = KI BSS.ShortByteString 
+-- Key identifiers (SKI and AKI) are 20 bytes, 
+-- so we store them as 3 UNPACK'd Words
+data KI = KI
+    {-# UNPACK #-} !Word64
+    {-# UNPACK #-} !Word64
+    {-# UNPACK #-} !Word32
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
@@ -225,16 +239,44 @@ instance Show RrdpURL where
     show (RrdpURL u) = show u
 
 instance Show Hash where
-    show (Hash b) = hexShow b
+    show = SC.cs . Hex.encode . hashToBS
 
 instance Show KI where
-    show (KI b) = hexShow b
+    show = SC.cs . Hex.encode . kiToBS
 
 instance {-# OVERLAPPING #-} WithSerial Serial where
     getSerial = id
 
-hexShow :: BSS.ShortByteString -> String
-hexShow = SC.cs . Hex.encode . BSS.fromShort
+-- | Extract the raw 32 bytes of a Hash (big-endian, MSB first per Word64).
+hashToBS :: Hash -> BS.ByteString
+hashToBS (Sha256Words w0 w1 w2 w3) = BS.pack $ concatMap word64ToBytes [w0, w1, w2, w3]
+
+-- | Extract the raw 20 bytes of a KI (big-endian).
+kiToBS :: KI -> BS.ByteString
+kiToBS (KI w0 w1 w2) = BS.pack $ concatMap word64ToBytes [w0, w1] ++ word32ToBytes w2
+
+word64ToBytes :: Word64 -> [Word8]
+word64ToBytes w =
+    [ fromIntegral (w `shiftR` 56), fromIntegral (w `shiftR` 48)
+    , fromIntegral (w `shiftR` 40), fromIntegral (w `shiftR` 32)
+    , fromIntegral (w `shiftR` 24), fromIntegral (w `shiftR` 16)
+    , fromIntegral (w `shiftR` 8),  fromIntegral w ]
+
+word32ToBytes :: Word32 -> [Word8]
+word32ToBytes w =
+    [ fromIntegral (w `shiftR` 24), fromIntegral (w `shiftR` 16)
+    , fromIntegral (w `shiftR` 8),  fromIntegral w ]
+
+newHash :: BS.ByteString -> Hash
+newHash bs = Sha256Words (get64 0) (get64 8) (get64 16) (get64 24)
+  where
+    b i = fromIntegral (BS.index bs i) :: Word64
+    get64 off =
+        (b off     `shiftL` 56) .|. (b (off+1) `shiftL` 48) .|.
+        (b (off+2) `shiftL` 40) .|. (b (off+3) `shiftL` 32) .|.
+        (b (off+4) `shiftL` 24) .|. (b (off+5) `shiftL` 16) .|.
+        (b (off+6) `shiftL` 8)  .|.  b (off+7)
+{-# INLINE newHash #-}
 
 -- | Domain objects
 
@@ -802,10 +844,27 @@ toAKI :: SKI -> AKI
 toAKI (SKI ki) = AKI ki
 
 mkKI :: BS.ByteString -> KI
-mkKI = KI . BSS.toShort
+mkKI bs
+    | BS.length bs >= kiSize = go bs
+    | otherwise              = go $ bs <> BS.replicate (kiSize - BS.length bs) 0
+  where
+    kiSize = 20
+    {-# INLINE go #-}    
+    go bs_ = KI (get64 0) (get64 8) w32    
+      where        
+        b i = fromIntegral (BS.index bs_ i) :: Word64
+        get64 off =
+            (b off     `shiftL` 56) .|. (b (off+1) `shiftL` 48) .|.
+            (b (off+2) `shiftL` 40) .|. (b (off+3) `shiftL` 32) .|.
+            (b (off+4) `shiftL` 24) .|. (b (off+5) `shiftL` 16) .|.
+            (b (off+6) `shiftL` 8)  .|.  b (off+7)
+
+        b32 i = fromIntegral (BS.index bs_ i) :: Word32
+        w32 = (b32 16 `shiftL` 24) .|. (b32 17 `shiftL` 16) .|.
+            (b32 18 `shiftL` 8)  .|.  b32 19
 
 skiLen :: SKI -> Int
-skiLen (SKI (KI bs)) = BSS.length bs
+skiLen _ = 20  -- KI is always 20 bytes (SHA-1 key identifier)
 
 getCMSContent :: CMS a -> a
 getCMSContent = cContent . scEncapContentInfo . soContent . unCMS

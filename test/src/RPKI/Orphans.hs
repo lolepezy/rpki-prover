@@ -57,10 +57,11 @@ import System.Posix.Types
 
 import           Data.Map.Monoidal.Strict
 import           RPKI.AppTypes
+import           RPKI.Domain
 import           RPKI.Logging
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
-import           RPKI.Util       (convert, mkHash, encodeBase64)
+import           RPKI.Util       (convert, encodeBase64)
 
 
 instance Arbitrary WorldVersion where
@@ -114,7 +115,8 @@ instance Arbitrary RpkiURL where
     shrink = genericShrink
 
 instance Arbitrary Hash where
-    arbitrary = mkHash . BS.pack <$> replicateM 32 arbitrary
+    arbitrary = genericArbitrary
+    shrink = genericShrink
 
 instance Arbitrary Serial where
     arbitrary = genericArbitrary
