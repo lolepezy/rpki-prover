@@ -333,3 +333,16 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
                     -- No parent, again it means no path, 
                     -- ignore the whole path
                     pure (mempty, paths')
+
+
+convertToObjectUpdates :: MonadIO m => DB s -> [Update] -> m [AddedObject]
+convertToObjectUpdates db updates = liftIO $ 
+    fmap catMaybes $ forM updates $ \case
+        ObjectUpdate o    -> pure $ Just o
+        RepositoryUpdate r -> do 
+            -- TODO Extract all top objects pointing to the repository
+            pure Nothing
+        TaUpdate _  -> 
+            -- TODO Extract TA certificate
+            pure Nothing
+    
