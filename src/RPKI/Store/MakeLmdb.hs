@@ -116,7 +116,8 @@ createDatabase env logger config checkAction = do
             mftShorts <- newSMap
             expiresAt <- newSMultiMap
             maturesAt <- newSMultiMap
-            repository2object <- newSMultiMap            
+            repository2object  <- newSMultiMap            
+            repositoryPointers <- newSMultiMap            
             caShortcuts <- newSMap           
             updateLog   <- newSMap 
             payloadLog  <- newSMap 

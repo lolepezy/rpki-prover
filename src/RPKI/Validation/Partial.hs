@@ -335,14 +335,33 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
                     pure (mempty, paths')
 
 
-convertToObjectUpdates :: MonadIO m => DB s -> [Update] -> m [AddedObject]
+convertToObjectUpdates :: (MonadIO m, Storage s) => DB s -> [Update] -> m [AddedObject]
 convertToObjectUpdates db updates = liftIO $ 
-    fmap catMaybes $ forM updates $ \case
-        ObjectUpdate o    -> pure $ Just o
-        RepositoryUpdate r -> do 
-            -- TODO Extract all top objects pointing to the repository
-            pure Nothing
-        TaUpdate _  -> 
-            -- TODO Extract TA certificate
-            pure Nothing
+    fmap concat $ forM updates $ \case
+        ObjectUpdate o     -> pure [o]
+        RepositoryUpdate r -> do
+            let DB.IndexStore { repositoryPointers } = db ^. #objectStore . #indexStore
+            roTx db $ \tx -> do
+                mRepoKey <- DB.getRepositoryKey tx db r
+                case mRepoKey of
+                    Nothing      -> pure []
+                    Just repoKey -> do
+                        certKeys <- MM.allForKey tx repositoryPointers repoKey
+                        fmap catMaybes $ forM certKeys $ \certKey -> do
+                            mcert <- DB.getCaCertByKey tx db certKey
+                            pure $ case mcert of
+                                Nothing   -> Nothing
+                                Just cert ->
+                                    let aki = maybe (toAKI (getSKI cert)) id (getAKI cert)
+                                    in Just $ AddedObject { objectKey = coerce certKey, aki }
+        TaUpdate taName -> do
+            mta <- roTx db $ \tx -> DB.getTA tx db taName
+            pure $ case mta of
+                Nothing         -> []
+                Just (ta, cert) ->
+                    let certKey = ta ^. #taCertKey
+                        aki     = maybe (toAKI (getSKI cert)) id (getAKI cert)
+                    in [AddedObject { objectKey = coerce certKey, aki }]
+
+
     

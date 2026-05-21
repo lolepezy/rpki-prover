@@ -240,6 +240,12 @@ data IndexStore s = IndexStore {
         expiresAt :: SMultiMap "expires-at" s Instant ObjectKey,
         maturesAt :: SMultiMap "matures-at" s Instant ObjectKey,
 
+        {- 
+            Certificates, highest in the hierarchy, that use given repository as a publication point.
+            For example, all certificates coming from rrdp.ripe.net would point to rrdp.ripe.net, 
+            but here we are only interesting in the TA certificate, as the highest in the hierarchy.
+        -}
+        repositoryPointers :: SMultiMap "repository-pointers" s RepositoryKey CertKey,
         repository2object :: SMultiMap "repo-key-to-obj-keys" s RepositoryKey ObjectKey,
 
         caShortcuts :: SMap "ca-shortcuts" s CertKey CaShortcut,
@@ -282,8 +288,8 @@ data MftShortcutStore s = MftShortcutStore {
 data KIMeta = KIMeta {
         caCertificate  :: CertKey,
         aki            :: {-# UNPACK #-} AKI,
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notValidBefore :: {-# UNPACK #-} Instant,
+        notValidAfter  :: {-# UNPACK #-} Instant
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -856,6 +862,12 @@ getRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RpkiURL -> m (Ma
 getRepository tx db = \case
         RrdpU u  -> fmap RrdpR <$> getRrdpRepository tx db u
         RsyncU u -> fmap RsyncR <$> getRsyncRepository tx db u
+
+getRepositoryKey :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RpkiURL -> m (Maybe RepositoryKey)
+getRepositoryKey tx db rpkiUrl = do 
+    -- TODO Implement it
+    pure Nothing
+
 
 getRrdpRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RrdpURL -> m (Maybe RrdpRepository)
 getRrdpRepository tx DB { repositoryStore = RepositoryStore {..}} url = 
