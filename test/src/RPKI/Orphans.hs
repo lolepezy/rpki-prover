@@ -151,8 +151,8 @@ instance Arbitrary DecodedBase64 where
 
 instance Arbitrary EncodedBase64 where
     arbitrary = do 
-        DecodedBase64 bs <- arbitrary
-        pure $ encodeBase64 $ DecodedBase64 bs
+        b64 :: DecodedBase64 <- arbitrary
+        pure $ encodeBase64 b64
 
 instance Arbitrary SPKI where
     arbitrary = genericArbitrary
