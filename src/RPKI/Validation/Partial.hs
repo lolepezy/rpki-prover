@@ -149,6 +149,14 @@ Ideas:
       - rsync - add key to the leafs of the tree
       - it might be that we'll never need to have an operation of "find repository by key", 
         so no need to have indexes for it
+
+    * How to attribute errors and warnings to scopes? How to attribute metrics to scopes?
+      - How many certificate/ROAs/etc. in the repository R?
+      - How many certificate/ROAs/etc. per TA?
+      Idea:
+        - Analyze manifest diffs, increment/decrement stats for each valid/invalid object in the diff.
+        - Decrement all stats when a manifest becomes invalid
+      
 -}
 
 
