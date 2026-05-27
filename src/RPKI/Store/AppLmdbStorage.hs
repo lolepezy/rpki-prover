@@ -304,9 +304,10 @@ runCopyWorker appContext@AppContext {..} dbtats targetLmdbPath = do
             Size maxMemory = (dbtats ^. #statMaxKeyBytes + dbtats ^. #statMaxValueBytes) * 20
             in max (maxMemory `div` 1024 `div` 1024) 64
 
+    let heapArgs = heapProfileRtsArgs config [i|compaction-#{show workerId}|]
     let arguments = 
             [ show workerId ] <>
-            rtsArguments [ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory (show maxMemoryMb <> "m") ]
+            rtsArguments ([ rtsN 1, rtsA "20m", rtsAL "64m", rtsMaxMemory (show maxMemoryMb <> "m") ] <> heapArgs)
 
     (z, vs) <- runValidatorT 
                 (newScopes "lmdb-compaction-worker") $ do 

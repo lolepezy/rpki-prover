@@ -63,13 +63,14 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
     let (URI u) = getURL repository
     let workerId = WorkerId [i|version:#{worldVersion}:rrdp-fetch:#{u}|]
 
+    let heapArgs = heapProfileRtsArgs config [i|rrdp-#{show workerId}|]
     let arguments = 
             [ show workerId ] <>
-            rtsArguments [ 
+            rtsArguments ([ 
                 rtsN 1, 
                 rtsA "20m", 
                 rtsAL "64m", 
-                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rrdpWorkerMemoryMb) ]
+                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rrdpWorkerMemoryMb) ] <> heapArgs)
 
     scopes <- askScopes
 

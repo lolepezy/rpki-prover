@@ -255,6 +255,32 @@ rtsMemValue mb = Prelude.show mb <> "m"
 defaultRts :: [String]
 defaultRts = [ "-I0" ]
 
+-- | Extra RTS args to enable info-table heap profiling for a worker.
+-- When 'heapProfileDir' is set in the config the worker writes a
+-- @<dir>/<prefix>.eventlog@ file.  Convert it afterwards with:
+--
+--   eventlog2html <file>.eventlog
+--
+-- The binary must be compiled with -finfo-table-map (already the default).
+heapProfileRtsArgs :: Config -> String -> [String]
+heapProfileRtsArgs config prefix =
+    case config ^. #systemConfig . #heapProfileDir of
+        Nothing  -> []
+        Just dir -> [ "-hi"       -- heap census by info-table (no profiling build needed)
+                    , "-l-aug"    -- eventlog: disable most events, keep heap samples + GC
+                    , "-po" <> dir <> "/" <> prefix
+                    ]
+
+-- | Short human-readable label for a set of worker parameters; used in
+-- heap-report log messages and eventlog file names.
+workerParamLabel :: WorkerParams -> Text
+workerParamLabel = \case
+    RrdpFetchParams  {} -> "rrdp-fetch"
+    RsyncFetchParams {} -> "rsync-fetch"
+    ValidationParams {} -> "validation"
+    CompactionParams {} -> "compaction"
+    CacheCleanupParams {} -> "cache-cleanup"
+
 parentDiedExitCode, timeoutExitCode, outOfCpuTimeExitCode, outOfMemoryExitCode :: ExitCode
 exitKillByTypedProcess, exceptionExitCode, replacedExecutableExitCode :: ExitCode
 exceptionExitCode    = ExitFailure 99

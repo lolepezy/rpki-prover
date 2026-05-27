@@ -65,6 +65,7 @@ import           RPKI.Rsync
 import           RPKI.TAL
 import           RPKI.Util               
 import           RPKI.Worker
+import           RPKI.Metrics.HeapReport
 import           RPKI.Workflow
 import           RPKI.RSC.Verifier
 import           RPKI.Version
@@ -181,6 +182,15 @@ executeWorkerProcess = do
                     logError logger [i|Couldn't initialise: #{e}, problems: #{validations}.|]
                 Right appContext -> do
                     atomically $ writeTVar appContextRef $ Just appContext
+                    let exec :: forall r . (WorkerResult r -> IO ()) -> IO (Either ErrorResult r) -> IO ()
+                        exec resultHandler f = do
+                            wr <- execWithStats f
+                            -- Emit a full heap report to stderr.  The parent process captures
+                            -- stderr and forwards it through its own logger, so the report ends
+                            -- up in the regular log stream and can be pasted into an AI
+                            -- conversation for memory analysis.
+                            logHeapReport logger (workerParamLabel $ input ^. #params)
+                            resultHandler wr
                     let actuallyExecuteWork = 
                             case input ^. #params of
                                 RrdpFetchParams {..} -> 
@@ -212,9 +222,6 @@ executeWorkerProcess = do
                                         pure $ Left $ ErrorResult $ fmtGen t)
                         `finally`                             
                             closeStorage appContext
-  where    
-    exec :: forall r . (WorkerResult r -> IO ()) -> IO (Either ErrorResult r) -> IO ()
-    exec resultHandler f = resultHandler =<< execWithStats f    
 
 
 -- turnOffTlsValidation :: IO ()
@@ -643,7 +650,8 @@ data CLIOptions = CLIOptions {
         noIncrementalValidation  :: Bool,
         showHiddenConfig         :: Bool,
         withValidityApi          :: Bool,
-        printConfig              :: Bool
+        printConfig              :: Bool,
+        heapProfileDir           :: Maybe FilePath
     }
     deriving stock (Show, Generic)
 
@@ -853,6 +861,13 @@ cliOptionsParser = CLIOptions
     <*> switch
             (  long "print-config"
             <> help "Print the effective configuration derived from CLI options and exit.")
+    <*> optional (strOption
+            (  long "heap-profile-dir"
+            <> metavar "DIR"
+            <> help ("When set, each worker subprocess writes a GHC heap-profiling eventlog "
+                  <> "(.eventlog) to this directory.  The binary must be compiled with "
+                  <> "-finfo-table-map (the default).  Convert the result with: "
+                  <> "eventlog2html <file>.eventlog")))
   where
     cfg    = defaultConfig
     rtrCfg = defaultRtrConfig
@@ -919,6 +934,7 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
         & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
         & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
+        & #systemConfig . #heapProfileDir .~ heapProfileDir
   where
     lmdbRealSize = (Size <$> lmdbSize) `orDefault` (baseConfig ^. #lmdbSizeMb)
     cpuCount'    = fromMaybe (baseConfig ^. #parallelism . #cpuCount) cpuCount

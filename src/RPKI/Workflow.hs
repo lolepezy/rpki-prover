@@ -608,14 +608,12 @@ runAll appContext@AppContext {..} tals = do
 
             maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
 
-            -- TODO make it a runtime thing, config?
-            -- let profilingFlags = [ "-p", "-hT", "-l" ]
-            profilingFlags = [ ]
+            heapArgs = heapProfileRtsArgs config [i|validation-#{show workerId}|]
 
             arguments = 
                 [ show workerId ] <>
                 rtsArguments ( 
-                    profilingFlags <> [ 
+                    heapArgs <> [ 
                         rtsN maxCpuAvailable, 
                         rtsA "24m", 
                         rtsAL "128m", 
@@ -637,13 +635,14 @@ runAll appContext@AppContext {..} tals = do
     runCleanUpWorker worldVersion = do             
         let workerId = WorkerId [i|version:#{worldVersion}:cache-clean-up|]
         
+        let heapArgs = heapProfileRtsArgs config [i|cache-cleanup-#{show workerId}|]
         let arguments = 
                 [ show workerId ] <>
-                rtsArguments [ 
+                rtsArguments (heapArgs <> [ 
                     rtsN 2, 
                     rtsA "24m", 
                     rtsAL "64m", 
-                    rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerMemoryMb) ]
+                    rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerMemoryMb) ])
         
         r <- runValidatorT             
                 (newScopes "cache-clean-up") $ do

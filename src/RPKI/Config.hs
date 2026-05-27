@@ -190,7 +190,13 @@ data SystemConfig = SystemConfig {
         rsyncWorkerMemoryMb      :: Int,
         rrdpWorkerMemoryMb       :: Int,
         validationWorkerMemoryMb :: Int,
-        cleanupWorkerMemoryMb    :: Int
+        cleanupWorkerMemoryMb    :: Int,
+        -- | When set, each worker process writes a GHC heap eventlog to this
+        -- directory.  Requires the binary to be compiled with
+        -- -finfo-table-map (already the default) and uses +RTS -hi -l-aug.
+        -- Convert the resulting .eventlog files with:
+        --   eventlog2html <file>.eventlog
+        heapProfileDir           :: Maybe FilePath
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -267,7 +273,8 @@ defaultConfig = Config {
         rsyncWorkerMemoryMb      = 1024,
         rrdpWorkerMemoryMb       = 1024,        
         validationWorkerMemoryMb = 2048,
-        cleanupWorkerMemoryMb    = 512
+        cleanupWorkerMemoryMb    = 512,
+        heapProfileDir           = Nothing
     },
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {       

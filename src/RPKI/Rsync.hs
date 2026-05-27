@@ -94,13 +94,14 @@ runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion reposito
     let workerId = WorkerId [i|version:#{worldVersion}:rsync-fetch:#{u}|]    
 
     let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
+    let heapArgs = heapProfileRtsArgs config [i|rsync-#{show workerId}|]
     let arguments = 
             [ show workerId ] <> 
-            rtsArguments [ 
+            rtsArguments ([ 
                 rtsN maxCpuAvailable, 
                 rtsA "20m", 
                 rtsAL "64m", 
-                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rsyncWorkerMemoryMb) ]
+                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rsyncWorkerMemoryMb) ] <> heapArgs)
 
     vp <- askScopes
     workerInput <- makeWorkerInput appContext workerId
