@@ -240,10 +240,11 @@ writeWorkerOutput = LBS.hPut stdout . LBS.fromStrict . serialise_
 rtsArguments :: [String] -> [String]
 rtsArguments args = [ "+RTS" ] <> defaultRts <> args <> [ "-RTS" ]
 
-rtsMaxMemory, rtsA, rtsAL :: String -> String
+rtsMaxMemory, rtsA, rtsAL, rtsF :: String -> String
 rtsMaxMemory m = "-M" <> m
 rtsA m = "-A" <> m
 rtsAL m = "-AL" <> m
+rtsF f = "-F" <> f
 
 rtsN :: Int -> String
 rtsN n = "-N" <> Prelude.show n
@@ -267,9 +268,16 @@ heapProfileRtsArgs config prefix =
     case config ^. #systemConfig . #heapProfileDir of
         Nothing  -> []
         Just dir -> [ "-hi"       -- heap census by info-table (no profiling build needed)
+                    , "-i0.05"   -- heap census interval: 50 ms (default 100 ms)
                     , "-l-aug"    -- eventlog: disable most events, keep heap samples + GC
-                    , "-po" <> dir <> "/" <> prefix
+                    , "-po" <> dir <> "/" <> sanitisePrefix prefix
+                    , "-ol" <> dir <> "/" <> sanitisePrefix prefix <> ".eventlog"
                     ]
+
+-- | Replace characters that are invalid in file paths so they can be used
+-- as a @-po@ prefix for the GHC RTS heap profiler.
+sanitisePrefix :: String -> String
+sanitisePrefix = map (\c -> if c `elem` (":/\\?#" :: String) then '_' else c)
 
 -- | Short human-readable label for a set of worker parameters; used in
 -- heap-report log messages and eventlog file names.

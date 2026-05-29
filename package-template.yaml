@@ -146,10 +146,18 @@ dependencies:
 ghc-options:  
   # - -j6 +RTS -A128m -AL256m -n4m -qb0 -qn6 -RTS -fprint-potential-instances -fwrite-ide-info  
   - -j8 +RTS -A256m -AL512m -n4m -qb0 -qn6 -RTS
+  # Heap profiling: embed info-table provenance entries (IPE) so that
+  # `-hi` eventlogs resolve closure addresses to readable descriptions.
+  # -fdistinct-constructor-tables goes further: each call-site gets its
+  # own info table, so eventlog2html shows WHERE a closure was created.
+  - -finfo-table-map
+  - -fdistinct-constructor-tables
 
 library:
   source-dirs: src
-  
+  ghc-options:
+  - -funbox-strict-fields
+
 executables:
   rpki-prover:
     main:                Main.hs
