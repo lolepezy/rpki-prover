@@ -149,7 +149,9 @@ ghc-options:
 
 library:
   source-dirs: src
-  
+  ghc-options:
+  - -funbox-strict-fields
+
 executables:
   rpki-prover:
     main:                Main.hs
