@@ -269,13 +269,14 @@ expireObjects db now = do
 
     pure nextToExpire
 
+
 findStartCas :: Storage s 
                => DB s 
                -> [AddedObject] 
-               -> ValidatorT IO (Set.Set CertKey, Set.Set CertKey)
+               -> IO (Set.Set CertKey, Set.Set CertKey)
 findStartCas db newObjects = do    
     now <- thisInstant
-    liftIO $ findStartCasGen readFromCache (\_ -> isWithinValidityPeriod now) newObjects
+    findStartCasGen readFromCache (\_ -> isWithinValidityPeriod now) newObjects
   where
     DB.IndexStore {..} = db ^. #objectStore . #indexStore
     readFromCache (AKI ki) = 
@@ -304,7 +305,7 @@ findStartCasGen readFromCache accept newObjects = do
             -- TODO Here we should complain when nothing is found
             findPathUp readFromCache accept ca startCas
             
-    pure (Set.difference startCas ignored, paths)
+    pure (startCas `Set.difference` ignored, paths)
 
 
 findPathUp readFromCache accept (ki, kiMeta) startCas = 
@@ -324,6 +325,9 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
                 Just parent
                     | accept aki parent -> do 
                         let parentCa = parent ^. #caCertificate
+                        -- If parent is one of the CAs we started from, 
+                        -- We can ignore the whole path until now, since it is going 
+                        -- to be validated anyway starting from `parent`
                         let ignored' = 
                                 if parentCa `Set.member` startCas 
                                     then ignored <> paths'
@@ -333,8 +337,8 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
                             (aki, parent) startCas paths' ignored'
 
                     | otherwise -> 
-                        -- Parent that is not acceptable (expire or not valid yet)
-                        -- it means no path, so ignore the whole path
+                        -- Parent that is not acceptable (expired or not valid yet)
+                        -- means no path
                         pure (mempty, paths')
 
                 Nothing -> 
@@ -343,33 +347,32 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
                     pure (mempty, paths')
 
 
-convertToObjectUpdates :: (MonadIO m, Storage s) => DB s -> [Update] -> m [AddedObject]
-convertToObjectUpdates db updates = liftIO $ 
-    fmap concat $ forM updates $ \case
-        ObjectUpdate o     -> pure [o]
+toObjectUpdates :: (MonadIO m, Storage s) => Tx s mode -> DB s -> [Update] -> m [AddedObject]
+toObjectUpdates tx db updates = liftIO $ 
+    fmap (Set.toList . Set.unions) $ forM updates $ \case
+        ObjectUpdate o     -> pure $ Set.singleton o
         RepositoryUpdate r -> do
-            let DB.IndexStore { repositoryPointers } = db ^. #objectStore . #indexStore
-            roTx db $ \tx -> do
-                mRepoKey <- DB.getRepositoryKey tx db r
-                case mRepoKey of
-                    Nothing      -> pure []
-                    Just repoKey -> do
-                        certKeys <- MM.allForKey tx repositoryPointers repoKey
-                        fmap catMaybes $ forM certKeys $ \certKey -> do
-                            mcert <- DB.getCaCertByKey tx db certKey
-                            pure $ case mcert of
-                                Nothing   -> Nothing
-                                Just cert ->
-                                    let aki = maybe (toAKI (getSKI cert)) id (getAKI cert)
-                                    in Just $ AddedObject { objectKey = coerce certKey, aki }
+            let DB.IndexStore { repositoryPointers } = db ^. #objectStore . #indexStore            
+            mRepoKey <- DB.getRepositoryKey tx db r
+            case mRepoKey of
+                Nothing      -> pure Set.empty
+                Just repoKey -> do
+                    certKeys <- MM.allForKey tx repositoryPointers repoKey
+                    fmap (Set.fromList . catMaybes) $ forM certKeys $ \certKey -> do
+                        mcert <- DB.getCaCertByKey tx db certKey
+                        pure $ case mcert of
+                            Nothing   -> Nothing
+                            Just cert ->
+                                let aki = maybe (toAKI (getSKI cert)) id (getAKI cert)
+                                in Just $ AddedObject { objectKey = coerce certKey, aki }
         TaUpdate taName -> do
-            mta <- roTx db $ \tx -> DB.getTA tx db taName
+            mta <- DB.getTA tx db taName
             pure $ case mta of
-                Nothing         -> []
+                Nothing         -> mempty
                 Just (ta, cert) ->
                     let certKey = ta ^. #taCertKey
                         aki     = maybe (toAKI (getSKI cert)) id (getAKI cert)
-                    in [AddedObject { objectKey = coerce certKey, aki }]
+                    in Set.singleton $ AddedObject { objectKey = coerce certKey, aki }
 
 
     

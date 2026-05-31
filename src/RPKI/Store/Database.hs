@@ -246,6 +246,7 @@ data IndexStore s = IndexStore {
             but here we are only interesting in the TA certificate, as the highest in the hierarchy.
         -}
         repositoryPointers :: SMultiMap "repository-pointers" s RepositoryKey CertKey,
+        
         repository2object :: SMultiMap "repo-key-to-obj-keys" s RepositoryKey ObjectKey,
 
         caShortcuts :: SMap "ca-shortcuts" s CertKey CaShortcut,

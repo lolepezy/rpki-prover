@@ -63,6 +63,7 @@ import           RPKI.Http.Types
 import           RPKI.Http.Dto
 import qualified RPKI.Store.Database               as DB
 import           RPKI.Validation.TopDown
+import           RPKI.Validation.Partial
 
 import           RPKI.AppContext
 import           RPKI.Metrics.Prometheus
@@ -77,6 +78,7 @@ import           RPKI.Time
 import           RPKI.Worker
 import           RPKI.SLURM.Types
 import           UnliftIO (pooledForConcurrentlyN)
+import Data.Coerce (coerce)
 
 {- 
     Fully asynchronous execution.
@@ -868,12 +870,27 @@ runValidationBootstrap appContext@AppContext {..} worldVersion tals = do
     rwTxT database $ \tx db -> DB.logUpdates tx db worldVersion unappliedUpdates
     runValidationForUpdates appContext worldVersion unappliedUpdates    
 
+
 runValidationForUpdates :: Storage s =>
                         AppContext s
                     -> WorldVersion            
                     -> [Update]
                     -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire), Maybe Slurm)
-runValidationForUpdates appContext@AppContext {..} worldVersion updates = do    
+runValidationForUpdates appContext@AppContext {..} worldVersion updates = do
+    db <- readTVarIO database
+
+    -- 
+    addedObjects <- roTx db $ \tx -> toObjectUpdates tx db updates        
+
+    -- 
+    (startCas, paths) <- findStartCas db addedObjects
+
+    forM_ startCas $ \certKey -> do 
+        runValidatorT (newScopes' ObjectFocus (coerce certKey)) $ 
+            validateCAPartially db certKey 
+                (\_ -> pure ()) 
+                (\(ObjectKey key) -> Set.member (CertKey key) paths)
+
     pure (mempty, mempty, Nothing)
 
 
