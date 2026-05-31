@@ -151,6 +151,8 @@ library:
   source-dirs: src
   ghc-options:
   - -funbox-strict-fields
+  - -O2
+  - -Wall
 
 executables:
   rpki-prover:
