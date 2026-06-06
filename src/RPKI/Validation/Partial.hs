@@ -17,10 +17,12 @@ import           Data.Coerce
 import           Data.Tuple.Strict
 
 import           Data.Generics.Product.Fields
-
+import           Data.String.Interpolate.IsString
 import           RPKI.AppMonad
+import           RPKI.AppContext
 import           RPKI.Time
 import           RPKI.Domain
+import           RPKI.Logging
 import           RPKI.Util (ifJustM)
 import           RPKI.Store.Database (DB)
 import qualified RPKI.Store.Database as DB
@@ -31,6 +33,7 @@ import           RPKI.Validation.ObjectValidation
 
 import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
+
 
 
 {- 
@@ -159,7 +162,48 @@ Ideas:
       
 -}
 
+validateUpdates :: Storage s 
+                => AppContext s  
+                -> [Update] 
+                -> IO ()
+validateUpdates AppContext {..} updates = do 
+    db <- readTVarIO database
 
+    let tas = []
+
+    roTx db $ \tx -> 
+      forM updates $ \case
+        ObjectUpdate o     -> pure $ Set.singleton o
+
+        RepositoryUpdate r -> do
+            logDebug logger $ [i|Processing repository update for #{r}|]
+            let DB.IndexStore { repositoryPointers } = db ^. #objectStore . #indexStore            
+            mRepoKey <- DB.getRepositoryKey tx db r
+            case mRepoKey of
+                Nothing      -> do 
+                    logError logger $ [i|Repository #{r} doesn't have a certificate pointing to it.|]
+                    pure Set.empty
+                Just repoKey -> do
+                    certKeys <- MM.allForKey tx repositoryPointers repoKey
+                    logError logger $ [i|Repository #{r} has certificates #{certKeys} pointing to it.|]
+                    fmap (Set.fromList . catMaybes) $ forM certKeys $ \certKey -> do
+                        mcert <- DB.getCaCertByKey tx db certKey
+                        pure $ case mcert of
+                            Nothing   -> Nothing
+                            Just cert ->
+                                let aki = maybe (toAKI (getSKI cert)) id (getAKI cert)
+                                in Just $ AddedObject { objectKey = coerce certKey, aki }
+
+        TaUpdate taName -> do
+            mta <- DB.getTA tx db taName
+            pure $ case mta of
+                Nothing         -> mempty
+                Just (ta, cert) ->
+                    let certKey = ta ^. #taCertKey
+                        aki     = maybe (toAKI (getSKI cert)) id (getAKI cert)
+                    in Set.singleton $ AddedObject { objectKey = coerce certKey, aki }
+
+    pure ()
 
 
 {- 
@@ -190,16 +234,12 @@ validateCAPartially db certKey onPayload objectFilter = do
             -- no shortcut, full validation needed
             z <- liftIO $ roTx db $ \tx -> DB.getObjectByKey tx db (coerce certKey)
             case z of 
-                Nothing -> do 
-                    -- complain and bail out, it's an integrity error
-                    pure ()
-
                 Just (CerRO c) -> do
                     -- validate fully
                     pure ()
 
-                Just _ -> do 
-                    -- complain, it's an integrity error
+                _Z -> do 
+                    -- complain and bail out, it's an integrity error
                     pure ()
 
         Just ca@CaShortcut {..} -> do
