@@ -127,6 +127,8 @@ Ideas:
        - invalid manifest means going through the manifest selection process again
        - invalid CRL means the same as invalid manifest
        - invalid CA?
+       - If there was a valid manifest (we know it by looking at cert2mft)
+         and now it's not there anymore, we need to delete all payloads under it.   
      - Wrap it in TroubledChild on the manifest shortcut and skip when scanning.
 
     * How to deal with fencing limits?
