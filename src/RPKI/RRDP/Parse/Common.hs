@@ -60,7 +60,12 @@ parseSerial v f =  case parseInteger v of
     Just s  -> f $ RrdpSerial s
 
 makeHash :: BS.ByteString -> Maybe Hash
-makeHash bs = newHash . toBytes <$> hexString bs
+makeHash bs = do
+    hex <- hexString bs
+    let bytes = toBytes hex
+    if BS.length bytes == 32
+        then Just $ newHash bytes
+        else Nothing
 
 decodeBase64 :: Show c => EncodedBase64 -> c -> Either RrdpError DecodedBase64
 decodeBase64 base64 context = 
