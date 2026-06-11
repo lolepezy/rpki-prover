@@ -117,6 +117,6 @@ makeNotification sessionId' serial' = Notification {
     version = Version 1,
     sessionId = sessionId',
     serial = serial',
-    snapshotInfo = SnapshotInfo (URI "http://bla.com/snapshot.xml") (Hash "AABB"),
+    snapshotInfo = SnapshotInfo (URI "http://bla.com/snapshot.xml") (sha256s "AABB"),
     deltas = []
   }
