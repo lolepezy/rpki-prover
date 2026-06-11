@@ -55,13 +55,15 @@ import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Repository
-import           RPKI.Fetch
+import           RPKI.Fetch.Common
+import           RPKI.Fetch.Fetch
 import           RPKI.Logging
 import           RPKI.Metrics.System
 import           RPKI.Http.Types
 import           RPKI.Http.Dto
 import qualified RPKI.Store.Database               as DB
 import           RPKI.Validation.TopDown
+import           RPKI.Validation.Partial
 
 import           RPKI.AppContext
 import           RPKI.Metrics.Prometheus
@@ -76,6 +78,7 @@ import           RPKI.Time
 import           RPKI.Worker
 import           RPKI.SLURM.Types
 import           UnliftIO (pooledForConcurrentlyN)
+import Data.Coerce (coerce)
 
 {- 
     Fully asynchronous execution.
@@ -252,8 +255,41 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
         ]
 
 
+runPartial :: (Storage s, MaintainableStorage s) =>
+            AppContext s -> [TAL] -> IO ()
+runPartial appContext@AppContext {..} tals = do    
+    loadStoredAppState appContext    
+    prometheusMetrics <- createPrometheusMetrics config
+
+    withWorkflowShared appContext prometheusMetrics tals $ \workflowShared ->           
+        case config ^. #proverRunMode of     
+            ServerMode -> 
+                void $ concurrently   
+                    (concurrently
+                        (runScheduledTasks workflowShared)
+                        (revalidate workflowShared))
+                    runRtrIfConfigured            
+
+            OneOffMode _ -> 
+                void $ revalidate workflowShared
+
+    pure ()
+  where
+    allTaNames = map getTaName tals   
+
+    revalidate workflowShared = do 
+        pure ()
+
+    runScheduledTasks workflowShared = do 
+        pure ()
+
+    runRtrIfConfigured = 
+        for_ (config ^. #rtrConfig) $ runRtrServer appContext
+
+
+
 runAll :: (Storage s, MaintainableStorage s) =>
-                         AppContext s -> [TAL] -> IO ()
+            AppContext s -> [TAL] -> IO ()
 runAll appContext@AppContext {..} tals = do    
     void $ concurrently (
             -- Fill in the current appState if it's not too old.
@@ -265,7 +301,7 @@ runAll appContext@AppContext {..} tals = do
             withWorkflowShared appContext prometheusMetrics tals $ \workflowShared ->           
                 case config ^. #proverRunMode of     
                     ServerMode -> 
-                        void $ concurrently                    
+                        void $ concurrently   
                             (concurrently
                                 (runScheduledTasks workflowShared)
                                 (revalidate workflowShared))
@@ -657,6 +693,7 @@ runAll appContext@AppContext {..} tals = do
                     runWorker logger workerInput arguments workerInfo
         pure (r, workerId)                            
 
+
 -- To be called by the validation worker process
 runValidation :: Storage s =>
                 AppContext s
@@ -815,6 +852,51 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                 take 1 [ url | PPFocus (RrdpU url) <- NonEmpty.toList s ]
 
 
+runValidationFromLog :: Storage s =>
+                        AppContext s
+                    -> WorldVersion            
+                    -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire), Maybe Slurm)
+runValidationFromLog appContext@AppContext {..} worldVersion = do           
+    unappliedUpdates <- roTxT database $ DB.getUnappliedUpdates    
+    runValidationForUpdates appContext worldVersion $ concatMap snd unappliedUpdates
+
+runValidationBootstrap :: Storage s =>
+                        AppContext s
+                    -> WorldVersion            
+                    -> [TAL]
+                    -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire), Maybe Slurm)
+runValidationBootstrap appContext@AppContext {..} worldVersion tals = do
+    let unappliedUpdates = map (\tal -> TaUpdate $ getTaName tal) tals
+    rwTxT database $ \tx db -> DB.logUpdates tx db worldVersion unappliedUpdates
+    runValidationForUpdates appContext worldVersion unappliedUpdates    
+
+
+runValidationForUpdates :: Storage s =>
+                        AppContext s
+                    -> WorldVersion            
+                    -> [Update]
+                    -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire), Maybe Slurm)
+runValidationForUpdates appContext@AppContext {..} worldVersion updates = do
+    db <- readTVarIO database
+
+    -- 
+    -- addedObjects <- roTx db $ \tx -> toObjectUpdates tx db updates        
+
+    -- -- 
+    -- (startCas, paths) <- findStartCas db addedObjects
+
+    -- forM_ startCas $ \certKey -> do 
+    --     runValidatorT (newScopes' ObjectFocus (coerce certKey)) $ 
+    --         validateCAPartially db certKey 
+    --             (\_ -> 
+    --                 -- TODO Imeplement payload handling
+    --                 pure ()) 
+    --             (\(ObjectKey key) -> Set.member (CertKey key) paths)
+
+    pure (mempty, mempty, Nothing)
+
+
+
 -- | Adjust running fetchers to the latest discovered repositories
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
@@ -931,12 +1013,15 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                 -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
                 case r of
-                    Right (repository', stats) -> do                         
+                    Right Fetched { repository = repository', rrdpStats = stats, .. } -> do                         
                         let (updateRepo, interval) = updateRepository fetchConfig
                                 repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duration
 
+                        when hasUpdates $
+                            logDebug logger [i|Has updates for #{url}.|]
+
                         saveFetchOutcome updateRepo validations                        
-                        triggerTaRevalidationIf $ hasUpdates validations                                                         
+                        triggerTaRevalidationOf hasUpdates
 
                         pure $ Just interval
 
@@ -950,9 +1035,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                 -- this whole fetcheable is gone
                                 pure Nothing
                             Just fallbacks -> do  
-                                anyUpdates <- fetchFallbacks fetchConfig worldVersion fallbacks                                                            
-                                triggerTaRevalidationIf anyUpdates
-                                if anyUpdates 
+                                totalUpdates <- fetchFallbacks fetchConfig worldVersion fallbacks                                                            
+                                triggerTaRevalidationOf totalUpdates
+                                if totalUpdates
                                     then do                                        
                                         pure $ Just $ 
                                                 case [ () | RsyncU _ <- Set.toList fallbacks ] of                                                     
@@ -983,21 +1068,23 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                     $ fetchRepository appContext fetchConfig worldVersion repository                
 
                 updatePrometheusForRepository fallbackUrl duration prometheusMetrics
-                let repo = case r of
-                        Right (repository', _noRrdpStats) -> 
+                let (repo, hadUpdates) = case r of
+                        Right Fetched { repository = repository', hasUpdates = u } -> 
                             -- realistically at this time the only fallback repositories are rsync, so 
                             -- there's no RrdpFetchStat ever
-                            updateMeta' repository' (#status .~ FetchedAt (versionToInstant worldVersion))
-                        Left _ -> do
-                            updateMeta' repository (#status .~ FailedAt (versionToInstant worldVersion))
+                            (updateMeta' repository' (#status .~ FetchedAt (versionToInstant worldVersion)), 
+                            u)
+                        Left _ ->
+                            (updateMeta' repository (#status .~ FailedAt (versionToInstant worldVersion)), 
+                             False)
             
-                pure (repo, validations)            
+                pure (repo, validations, hadUpdates)            
 
             rwTxT database $ \tx db -> do
-                DB.saveRepositories tx db (map fst repositories)
-                DB.saveRepositoryValidationStates tx db repositories
+                DB.saveRepositories tx db $ map (\(repo, _, _) -> repo) repositories
+                DB.saveRepositoryValidationStates tx db $ map (\(r, vs, _) -> (r, vs)) repositories
 
-            pure $ any (hasUpdates . snd) repositories
+            pure $ or $ map (\(_, _, u) -> u) repositories
         
 
     fetchableForUrl = do 
@@ -1018,7 +1105,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             FailedAt _ -> exponentialBackoff currentInterval
             _ ->       
                 case rrdpStats of 
-                    Nothing                  -> defaultInterval
+                    Nothing -> defaultInterval
                     Just RrdpFetchStat {..} -> 
                         case action of 
                             NothingToFetch _ -> increaseInterval currentInterval 
@@ -1111,10 +1198,10 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         in any (\m -> rrdpRepoHasSignificantUpdates (m ^. typed)) rrdps ||
            any (\m -> rsyncRepoHasSignificantUpdates (m ^. typed)) rsyncs
 
-    triggerTaRevalidationIf condition = atomically $ do 
+    triggerTaRevalidationOf hasUpdates = atomically $ do 
         case config ^. #proverRunMode of         
             OneOffMode _ -> trigger
-            ServerMode   -> when condition trigger                
+            ServerMode   -> when hasUpdates trigger                
       where
         trigger = do 
             relevantTas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVar uriByTa

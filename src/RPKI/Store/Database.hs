@@ -12,7 +12,9 @@ import           Control.Monad
 import           Control.Monad.Trans
 import           Control.Monad.Reader     (ask)
 import           Data.Foldable            (for_)
+import           Data.Coerce              (coerce)
 
+import           Data.Vector              (Vector)
 import qualified Data.List                as List
 import           Data.Maybe               (catMaybes, fromMaybe, isJust, listToMaybe)
 import qualified Data.Set                 as Set
@@ -38,6 +40,7 @@ import           RPKI.TAL
 import           RPKI.RRDP.Types
 import           RPKI.SLURM.Types
 import           RPKI.Repository
+import           RPKI.Fetch.Common
 
 import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
@@ -64,7 +67,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 48
+currentDatabaseVersion = 49
 
 -- Some constant keys
 databaseVersionKey, validatedByVersionKey :: Text
@@ -112,6 +115,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         mftsForKI      :: SMultiMap "mfts-for-ki" s AKI MftMeta,
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
         objectMetas    :: SMap "object-meta" s ObjectKey ObjectMeta,
+        objectAKIs     :: SMap "object-akis" s ObjectKey AKI,
 
         validatedByVersion :: SMap "validated-by-version" s Text (Compressed (Map.Map ObjectKey WorldVersion)),
 
@@ -123,7 +127,9 @@ data RpkiObjectStore s = RpkiObjectStore {
         objectKeyToUrlKeys :: SMap "object-key-to-uri" s ObjectKey [UrlKey],
 
         mftShortcuts       :: MftShortcutStore s,
-        originals          :: SMap "object-original" s ObjectKey (Verbatim ObjectOriginal)
+        originals          :: SMap "object-original" s ObjectKey (Verbatim ObjectOriginal),
+        
+        indexStore         :: IndexStore s
     } 
     deriving stock (Generic)
 
@@ -227,6 +233,36 @@ newtype MetadataStore s = MetadataStore {
     }
     deriving stock (Generic)
 
+
+data IndexStore s = IndexStore {
+        kiMetas   :: SMap "ki-meta" s KI KIMeta,        
+        cert2mft  :: SMap "cert-to-mft" s CertKey MftKey,
+        mftShorts :: SMap "mft-shorts" s MftKey MftShortcut,
+
+        expiresAt :: SMultiMap "expires-at" s Instant ObjectKey,
+        maturesAt :: SMultiMap "matures-at" s Instant ObjectKey,
+
+        {- 
+            Certificates, highest in the hierarchy, that use given repository as a publication point.
+            For example, all certificates coming from rrdp.ripe.net would point to rrdp.ripe.net, 
+            but here we are only interesting in the TA certificate, as the highest in the hierarchy.
+        -}
+        repositoryPointers :: SMultiMap "repository-pointers" s RepositoryKey CertKey,
+        
+        repository2object :: SMultiMap "repo-key-to-obj-keys" s RepositoryKey ObjectKey,
+
+        caShortcuts :: SMap "ca-shortcuts" s CertKey CaShortcut,
+
+        updateLog :: SMap "update-log" s WorldVersion [Update],
+        payloadLog :: SMap "change-log" s WorldVersion [Change Payload]
+    }
+    deriving (Generic)
+
+
+instance Storage s => WithStorage s (IndexStore s) where
+    storage IndexStore {..} = storage kiMetas
+
+
 -- Some DTOs for storing MFT shortcuts
 data MftShortcutMeta = MftShortcutMeta {
         key            :: ObjectKey,        
@@ -251,6 +287,18 @@ data MftShortcutStore s = MftShortcutStore {
         mftChildren :: SMap "mfts-shortcut-children" s AKI (Verbatim (Compressed MftShortcutChildren))
     }
     deriving stock (Generic)
+
+data KIMeta = KIMeta {
+        caCertificate  :: CertKey,
+        aki            :: {-# UNPACK #-} AKI,
+        notValidBefore :: {-# UNPACK #-} Instant,
+        notValidAfter  :: {-# UNPACK #-} Instant
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+instance {-# OVERLAPPING #-} WithValidityPeriod KIMeta where 
+    getValidityPeriod KIMeta {..} = (notValidBefore, notValidAfter)
 
 
 getKeyByHash :: (MonadIO m, Storage s) => 
@@ -329,6 +377,8 @@ saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } so@StorableObject {.
             M.put tx hashToKey h objectKey
             M.put tx objects objectKey (Compressed so)
             M.put tx objectMetas objectKey (ObjectMeta wv (getRpkiObjectType object))
+            for_ (getAKI object) $ \aki_ -> 
+                M.put tx objectAKIs objectKey aki_
             case object of
                 CerRO c -> 
                     M.put tx certBySKI (getSKI c) objectKey
@@ -424,7 +474,8 @@ deleteObjectByKey :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> ObjectKey -> 
 deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..}, ..} } objectKey = liftIO $ do 
     ifJustM (getObjectByKey tx db objectKey) $ \ro -> do 
         M.delete tx objects objectKey
-        M.delete tx objectMetas objectKey        
+        M.delete tx objectMetas objectKey
+        M.delete tx objectAKIs objectKey
         M.delete tx hashToKey (getHash ro)
         case ro of 
             CerRO c -> M.delete tx certBySKI (getSKI c)
@@ -523,19 +574,36 @@ getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ runMaybe
     located   <- MaybeT $ getLocatedByKey tx db objectKey
     pure $ located & #payload %~ (\(CerRO c) -> c) 
 
+getCaCertByKey :: (MonadIO m, Storage s) => Tx s mode -> DB s -> CertKey -> m (Maybe CaCerObject)
+getCaCertByKey tx db certKey = liftIO $ do
+    z <- getObjectByKey tx db (coerce certKey)
+    pure $ case z of
+        Just (CerRO cert) -> Just cert
+        _                 -> Nothing
+
 -- TA store functions
 
-saveTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> StorableTA -> m ()
-saveTA tx DB { taStore = TAStore s } ta = liftIO $ SM.put tx s (getTaName $ tal ta) ta
+saveTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> CaCerObject -> WorldVersion -> StorableTA -> m ()
+saveTA tx db@DB { taStore = TAStore s } cert wv ta = liftIO $ do
+    objectKey <- saveObject tx db (toStorableObject (CerRO cert)) wv
+    linkObjectToUrl tx db (actualUrl ta) (getHash cert)
+    let certKey = coerce objectKey :: CertKey
+    SM.put tx s (getTaName (tal ta)) (ta { taCertKey = certKey })
 
 deleteTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> TAL -> m ()
 deleteTA tx DB { taStore = TAStore s } tal = liftIO $ SM.delete tx s (getTaName tal)
 
-getTA :: (MonadIO m, Storage s) => Tx s mode -> DB s -> TaName -> m (Maybe StorableTA)
-getTA tx DB { taStore = TAStore s } name = liftIO $ SM.get tx s name
+getTA :: (MonadIO m, Storage s) => Tx s mode -> DB s -> TaName -> m (Maybe (StorableTA, CaCerObject))
+getTA tx db@DB { taStore = TAStore s } name = liftIO $ runMaybeT $ do
+    ta   <- MaybeT $ SM.get tx s name
+    cert <- MaybeT $ getCaCertByKey tx db (taCertKey ta)
+    pure (ta, cert)
 
-getTAs :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [StorableTA]
-getTAs tx DB { taStore = TAStore s } = liftIO $ SM.values tx s
+getTAs :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(StorableTA, CaCerObject)]
+getTAs tx db@DB { taStore = TAStore s } = liftIO $ do
+    tas <- SM.values tx s
+    fmap catMaybes $ forM tas $ \ta ->
+        fmap (ta,) <$> getCaCertByKey tx db (taCertKey ta)
 
 
 getValidationsPerTA :: (MonadIO m, Storage s) => 
@@ -781,6 +849,13 @@ updateRrdpMetaM tx DB { repositoryStore = RepositoryStore {..} } url f = liftIO 
         for_ maybeNewMeta $ \newMeta -> 
             SM.put tx rrdpS url (repo { rrdpMeta = Just newMeta })
  
+logUpdates :: (MonadIO m, Storage s) =>
+                Tx s 'RW -> DB s -> WorldVersion -> [Update] -> m ()
+logUpdates tx db version updates = liftIO $ do
+    let updateLog = db ^. #objectStore . #indexStore . #updateLog    
+    M.put tx updateLog version updates
+
+
 getPublicationPoints :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m PublicationPoints
 getPublicationPoints tx DB { repositoryStore = RepositoryStore {..}} = liftIO $ do
     rrdps <- SM.all tx rrdpS
@@ -793,6 +868,12 @@ getRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RpkiURL -> m (Ma
 getRepository tx db = \case
         RrdpU u  -> fmap RrdpR <$> getRrdpRepository tx db u
         RsyncU u -> fmap RsyncR <$> getRsyncRepository tx db u
+
+getRepositoryKey :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RpkiURL -> m (Maybe RepositoryKey)
+getRepositoryKey tx db rpkiUrl = do 
+    -- TODO Implement it
+    pure Nothing
+
 
 getRrdpRepository :: (MonadIO m, Storage s) => Tx s mode -> DB s -> RrdpURL -> m (Maybe RrdpRepository)
 getRrdpRepository tx DB { repositoryStore = RepositoryStore {..}} url = 
@@ -1123,6 +1204,15 @@ getRtrPayloads tx db worldVersion =
 totalStats :: StorageStats -> SStats
 totalStats (StorageStats s) = mconcat $ Map.elems s
    
+
+getUnappliedUpdates :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(WorldVersion, [Update])]
+getUnappliedUpdates tx DB { objectStore = RpkiObjectStore { indexStore = IndexStore {..}, ..} } = liftIO $ do
+    M.last tx payloadLog >>= \case 
+        Nothing -> 
+            M.all tx updateLog    
+        Just (lastApplied, _) ->          
+            filter (\(wv, _) -> wv > lastApplied) <$> 
+                M.allFrom tx updateLog lastApplied
 
 -- Utilities to have storage transaction in ValidatorT monad.
 

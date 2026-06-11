@@ -61,7 +61,8 @@ import           RPKI.Logging
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
 import           RPKI.Util       (convert, mkHash, encodeBase64)
-
+import           RPKI.Validation.Partial
+import           RPKI.Store.Database
 
 instance Arbitrary WorldVersion where
     arbitrary = genericArbitrary
@@ -494,11 +495,23 @@ instance Arbitrary ObjectKey where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary CertKey where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary MftKey where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary ObjectIdentity where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
 instance Arbitrary MftPair where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary KIMeta where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

@@ -40,7 +40,6 @@ import           RPKI.Logging
 import           RPKI.Metrics.Prometheus
 import           RPKI.Metrics.System
 import           RPKI.Time
-import           RPKI.TAL
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.Http.Api
@@ -391,16 +390,7 @@ getRpkiObject AppContext {..} uri hash key =
 
                 Right rpkiUrl ->                     
                     roTxT database $ \tx db ->
-                        DB.getByUri tx db rpkiUrl >>= \case     
-                            [] -> do                                
-                                -- try TA certificates
-                                tas <- DB.getTAs tx db                                 
-                                pure [ locatedDto (Located locations (CerRO taCert)) | 
-                                        StorableTA {..} <- tas, 
-                                        let locations = talCertLocations tal, 
-                                        oneOfLocations locations rpkiUrl ]                                
-                                
-                            os -> pure $ map locatedDto os
+                        map locatedDto <$> DB.getByUri tx db rpkiUrl
                         
         (Nothing, Just hash', Nothing) ->
             case parseHash hash' of
@@ -502,10 +492,10 @@ getSystem AppContext {..} = do
     getTALs = do
         db <- liftIO $ readTVarIO database
         liftIO $ roTx db $ \tx -> do        
-            tas <- DB.getTAs tx db     
-            pure [ TalDto {..} | StorableTA {..} <- tas, 
-                    let repositories = map (toText . getRpkiURL) 
-                            $ NonEmpty.toList 
+            tas <- DB.getTAs tx db
+            pure [ TalDto {..} | (StorableTA {..}, _) <- tas,
+                    let repositories = map (toText . getRpkiURL)
+                            $ NonEmpty.toList
                             $ unPublicationPointAccess initialRepositories ]                     
 
 

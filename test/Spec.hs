@@ -5,6 +5,7 @@ import Test.Tasty
 import RPKI.Parse.ObjectParseSpec
 import RPKI.RRDP.ParseSpec
 import RPKI.Store.DatabaseSpec
+import RPKI.Store.CacheSpec
 import RPKI.RRDP.UpdateSpec
 import RPKI.RRDP.HttpSpec
 import RPKI.Resources.ResourcesSpec
@@ -16,6 +17,7 @@ import RPKI.FetchSpec
 import RPKI.RTR.RtrSpec
 import RPKI.SLURM.SlurmSpec
 import RPKI.Store.SerialisationSpec
+import RPKI.PartialValidationSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
@@ -24,6 +26,7 @@ main = defaultMain $ testGroup "All tests" [
         rrdpXmlLazyParsingGroup,
         rrdpUpdateSpec,
         databaseGroup,
+        cacheGroup,
         resourceGroup,        
         validityGroup,
         repositoryGroup,
@@ -32,5 +35,6 @@ main = defaultMain $ testGroup "All tests" [
         slurmGroup,
         loggingSpec,
         workflowSpec,
-        serialisationSpec
+        serialisationSpec,
+        partialValidationSpec
     ]  

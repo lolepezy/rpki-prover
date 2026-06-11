@@ -50,7 +50,7 @@ import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
-import           RPKI.Fetch
+import           RPKI.Fetch.Fetch
 import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Logging
@@ -358,7 +358,7 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
 
         
 
-data WhichTA = FetchedTA RpkiURL RpkiObject | CachedTA StorableTA
+data WhichTA = FetchedTA RpkiURL RpkiObject | CachedTA StorableTA CaCerObject
 
 -- | Fetch and validated TA certificate starting from the TAL.
 -- | 
@@ -376,13 +376,12 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     ta <- DB.roAppTxEx db storageError $ \tx -> DB.getTA tx db (getTaName tal)
     case ta of
         Nothing -> fetchValidateAndStore db now Nothing
-        Just storedTa
+        Just (storedTa, cachedCert)
             | needsFetching (getTaCertURL tal) Nothing (storedTa ^. #fetchStatus) validationConfig now ->
-                fetchValidateAndStore db now (Just storedTa)
+                fetchValidateAndStore db now (Just (storedTa, cachedCert))
             | otherwise -> do
                 logInfo logger [i|Not re-fetching TA certificate #{getURL $ getTaCertURL tal}, it's up-to-date.|]
-                let located = locatedTaCert (getTaCertURL tal) (storedTa ^. #taCert)
-                pure (located, storedTa ^. #initialRepositories)
+                pure (locatedTaCert (getTaCertURL tal) cachedCert, storedTa ^. #initialRepositories)
 
   where
     fetchValidateAndStore db (Now moment) storableTa = do
@@ -393,34 +392,35 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 tryToFallbackToCachedCopy
 
         case z of     
-            FetchedTA actualUrl object -> do                                 
+            FetchedTA actualUrl object -> do
                 certToUse <- case storableTa of
-                    Nothing  -> vHoist $ validateTACert tal actualUrl object
-                    Just StorableTA { taCert = cachedTaCert } -> 
+                    Nothing              -> vHoist $ validateTACert tal actualUrl object
+                    Just (_, cachedCert) ->
                         vHoist (do 
                             cert <- validateTACert tal actualUrl object
-                            chooseTaCert cert cachedTaCert)
+                            chooseTaCert cert cachedCert)
                         `catchError`
                             (\e -> do
                                 logError logger [i|Fetched TA certificate is invalid with error #{e}, will use cached copy.|]
-                                pure cachedTaCert)                            
+                                pure cachedCert)                            
                 
                 case publicationPointsFromTAL tal certToUse of
                     Left e         -> appError $ ValidationE e
                     Right ppAccess ->
                         DB.rwAppTxEx db storageError $ \tx -> do
-                            DB.saveTA tx db (StorableTA tal certToUse (FetchedAt moment) ppAccess actualUrl)
+                            DB.saveTA tx db certToUse worldVersion
+                                (StorableTA tal (CertKey (asKey 0)) (FetchedAt moment) ppAccess actualUrl)
                             pure (locatedTaCert actualUrl certToUse, ppAccess)
 
-            CachedTA StorableTA { tal = _, ..} -> do 
-                void (vHoist $ validateTACert tal actualUrl (CerRO taCert))
+            CachedTA StorableTA { tal = _, ..} c -> do
+                void (vHoist $ validateTACert tal actualUrl (CerRO c))
                     `catchError`
                     (\e -> do
                         logError logger [i|Will delete cached TA certificate, it is invalid with the error: #{e}|]
                         DB.rwAppTxEx db storageError $ \tx -> DB.deleteTA tx db tal                            
                         appError e)
 
-                pure (locatedTaCert actualUrl taCert, initialRepositories)
+                pure (locatedTaCert actualUrl c, initialRepositories)
 
       where
         tryToFallbackToCachedCopy e =
@@ -431,12 +431,12 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                         [i| and there is no cached copy of it.|]
                     appError e
 
-                Just cached -> do  
+                Just (cachedTa, cert) -> do  
                     logError logger $ 
                         [i|Could not download TA certiicate for #{getTaName tal}, error: #{e}|] <> 
                         [i| will use cached copy.|]                                        
 
-                    pure $ CachedTA cached
+                    pure $ CachedTA cachedTa cert
 
     locatedTaCert url = Located (toLocations url)
 

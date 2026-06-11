@@ -20,7 +20,7 @@ import           RPKI.Store.Base.Serialisation
 
 data StorableTA = StorableTA {
         tal                 :: TAL,
-        taCert              :: CaCerObject,
+        taCertKey           :: CertKey,
         fetchStatus         :: FetchStatus,
         initialRepositories :: PublicationPointAccess,
         actualUrl           :: RpkiURL
@@ -28,17 +28,17 @@ data StorableTA = StorableTA {
     deriving (Show, Eq, Generic, TheBinary)
 
 data ObjectMeta = ObjectMeta {
-        insertedBy :: {-# UNPACK #-} WorldVersion,
+        insertedBy :: WorldVersion,
         objectType :: RpkiObjectType
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary, NFData)
 
 data MftMeta = MftMeta { 
-        key       :: {-# UNPACK #-} ObjectKey,
-        mftNumber :: {-# UNPACK #-} Serial,
-        thisTime  :: {-# UNPACK #-} Instant,
-        nextTime  :: {-# UNPACK #-} Instant 
+        key       :: ObjectKey,
+        mftNumber :: Serial,
+        thisTime  :: Instant,
+        nextTime  :: Instant 
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
@@ -50,7 +50,7 @@ instance Ord MftMeta where
 
 data Keyed a = Keyed { 
         object :: a,
-        key    :: {-# UNPACK #-} ObjectKey
+        key    :: ObjectKey
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)        
