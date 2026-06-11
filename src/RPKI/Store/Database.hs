@@ -14,6 +14,7 @@ import           Control.Monad.Reader     (ask)
 import           Data.Foldable            (for_)
 import           Data.Coerce              (coerce)
 
+import           Data.Vector              (Vector)
 import qualified Data.List                as List
 import           Data.Maybe               (catMaybes, fromMaybe, isJust, listToMaybe)
 import qualified Data.Set                 as Set
@@ -114,6 +115,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         mftsForKI      :: SMultiMap "mfts-for-ki" s AKI MftMeta,
         certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
         objectMetas    :: SMap "object-meta" s ObjectKey ObjectMeta,
+        objectAKIs     :: SMap "object-akis" s ObjectKey AKI,
 
         validatedByVersion :: SMap "validated-by-version" s Text (Compressed (Map.Map ObjectKey WorldVersion)),
 
@@ -375,6 +377,8 @@ saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } so@StorableObject {.
             M.put tx hashToKey h objectKey
             M.put tx objects objectKey (Compressed so)
             M.put tx objectMetas objectKey (ObjectMeta wv (getRpkiObjectType object))
+            for_ (getAKI object) $ \aki_ -> 
+                M.put tx objectAKIs objectKey aki_
             case object of
                 CerRO c -> 
                     M.put tx certBySKI (getSKI c) objectKey
@@ -470,7 +474,8 @@ deleteObjectByKey :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> ObjectKey -> 
 deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..}, ..} } objectKey = liftIO $ do 
     ifJustM (getObjectByKey tx db objectKey) $ \ro -> do 
         M.delete tx objects objectKey
-        M.delete tx objectMetas objectKey        
+        M.delete tx objectMetas objectKey
+        M.delete tx objectAKIs objectKey
         M.delete tx hashToKey (getHash ro)
         case ro of 
             CerRO c -> M.delete tx certBySKI (getSKI c)

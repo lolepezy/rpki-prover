@@ -880,18 +880,18 @@ runValidationForUpdates appContext@AppContext {..} worldVersion updates = do
     db <- readTVarIO database
 
     -- 
-    addedObjects <- roTx db $ \tx -> toObjectUpdates tx db updates        
+    -- addedObjects <- roTx db $ \tx -> toObjectUpdates tx db updates        
 
-    -- 
-    (startCas, paths) <- findStartCas db addedObjects
+    -- -- 
+    -- (startCas, paths) <- findStartCas db addedObjects
 
-    forM_ startCas $ \certKey -> do 
-        runValidatorT (newScopes' ObjectFocus (coerce certKey)) $ 
-            validateCAPartially db certKey 
-                (\_ -> 
-                    -- TODO Imeplement payload handling
-                    pure ()) 
-                (\(ObjectKey key) -> Set.member (CertKey key) paths)
+    -- forM_ startCas $ \certKey -> do 
+    --     runValidatorT (newScopes' ObjectFocus (coerce certKey)) $ 
+    --         validateCAPartially db certKey 
+    --             (\_ -> 
+    --                 -- TODO Imeplement payload handling
+    --                 pure ()) 
+    --             (\(ObjectKey key) -> Set.member (CertKey key) paths)
 
     pure (mempty, mempty, Nothing)
 

@@ -12,6 +12,7 @@ import           Control.Concurrent.Async
 
 import qualified Data.Map.Strict          as Map
 import qualified Data.Set                 as Set
+import qualified Data.Vector              as V
 import           Data.Maybe (catMaybes)
 import           Data.Coerce
 import           Data.Tuple.Strict
@@ -175,37 +176,19 @@ validateUpdates AppContext {..} updates = do
 
     roTx db $ \tx -> 
       forM updates $ \case
-        ObjectUpdate o     -> pure $ Set.singleton o
-
-        RepositoryUpdate r -> do
-            logDebug logger $ [i|Processing repository update for #{r}|]
-            let DB.IndexStore { repositoryPointers } = db ^. #objectStore . #indexStore            
-            mRepoKey <- DB.getRepositoryKey tx db r
-            case mRepoKey of
-                Nothing      -> do 
-                    logError logger $ [i|Repository #{r} doesn't have a certificate pointing to it.|]
-                    pure Set.empty
-                Just repoKey -> do
-                    certKeys <- MM.allForKey tx repositoryPointers repoKey
-                    logError logger $ [i|Repository #{r} has certificates #{certKeys} pointing to it.|]
-                    fmap (Set.fromList . catMaybes) $ forM certKeys $ \certKey -> do
-                        mcert <- DB.getCaCertByKey tx db certKey
-                        pure $ case mcert of
-                            Nothing   -> Nothing
-                            Just cert ->
-                                let aki = maybe (toAKI (getSKI cert)) id (getAKI cert)
-                                in Just $ AddedObject { objectKey = coerce certKey, aki }
+        ObjectUpdate o     -> pure $ Set.fromList $ V.toList o
 
         TaUpdate taName -> do
             mta <- DB.getTA tx db taName
             pure $ case mta of
                 Nothing         -> mempty
-                Just (ta, cert) ->
+                Just (ta, _cert) ->
                     let certKey = ta ^. #taCertKey
-                        aki     = maybe (toAKI (getSKI cert)) id (getAKI cert)
-                    in Set.singleton $ AddedObject { objectKey = coerce certKey, aki }
+                    in Set.singleton $ AddedObject (coerce certKey)
 
     pure ()
+  where
+    
 
 
 {- 
@@ -318,21 +301,24 @@ findStartCas :: Storage s
                -> IO (Set.Set CertKey, Set.Set CertKey)
 findStartCas db newObjects = do    
     now <- thisInstant
-    findStartCasGen readFromCache (\_ -> isWithinValidityPeriod now) newObjects
+    akis <- fmap catMaybes $ roTx db $ \tx -> 
+                forM newObjects $ \(AddedObject objectKey) ->
+                    M.get tx objectAKIs objectKey
+    findStartCasGen readFromCache (\_ -> isWithinValidityPeriod now) akis
   where
     DB.IndexStore {..} = db ^. #objectStore . #indexStore
+    DB.RpkiObjectStore {..} = db ^. #objectStore
     readFromCache (AKI ki) = 
         roTx kiMetas $ \tx -> M.get tx kiMetas ki
 
 
-findStartCasGen :: (Eq a2, Ord a,  HasField' "aki" t a2, HasField' "caCertificate" t2 a, HasField' "aki" t2 a2) 
+findStartCasGen :: (Eq a2, Ord a, HasField' "caCertificate" t2 a, HasField' "aki" t2 a2) 
                 => (a2 -> IO (Maybe t2)) 
                 -> (a2 -> t2 -> Bool) 
-                -> [t]
+                -> [a2]
                 -> IO (Set.Set a, Set.Set a)
-findStartCasGen readFromCache accept newObjects = do
-    cas <- fmap catMaybes $ forM newObjects $ \o -> do
-                let aki = o ^. #aki
+findStartCasGen readFromCache accept akis = do
+    cas <- fmap catMaybes $ forM akis $ \aki -> do
                 mkiMeta <- readFromCache aki 
                 pure $ case mkiMeta of
                     Just kiMeta
@@ -389,32 +375,17 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
                     pure (mempty, paths')
 
 
-toObjectUpdates :: (MonadIO m, Storage s) => Tx s mode -> DB s -> [Update] -> m [AddedObject]
-toObjectUpdates tx db updates = liftIO $ 
-    fmap (Set.toList . Set.unions) $ forM updates $ \case
-        ObjectUpdate o     -> pure $ Set.singleton o
-        RepositoryUpdate r -> do
-            let DB.IndexStore { repositoryPointers } = db ^. #objectStore . #indexStore            
-            mRepoKey <- DB.getRepositoryKey tx db r
-            case mRepoKey of
-                Nothing      -> pure Set.empty
-                Just repoKey -> do
-                    certKeys <- MM.allForKey tx repositoryPointers repoKey
-                    fmap (Set.fromList . catMaybes) $ forM certKeys $ \certKey -> do
-                        mcert <- DB.getCaCertByKey tx db certKey
-                        pure $ case mcert of
-                            Nothing   -> Nothing
-                            Just cert ->
-                                let aki = maybe (toAKI (getSKI cert)) id (getAKI cert)
-                                in Just $ AddedObject { objectKey = coerce certKey, aki }
-        TaUpdate taName -> do
-            mta <- DB.getTA tx db taName
-            pure $ case mta of
-                Nothing         -> mempty
-                Just (ta, cert) ->
-                    let certKey = ta ^. #taCertKey
-                        aki     = maybe (toAKI (getSKI cert)) id (getAKI cert)
-                    in Set.singleton $ AddedObject { objectKey = coerce certKey, aki }
+-- toObjectUpdates :: (MonadIO m, Storage s) => Tx s mode -> DB s -> [Update] -> m [AddedObject]
+-- toObjectUpdates tx db updates = liftIO $ 
+--     fmap (Set.toList . Set.unions) $ forM updates $ \case
+--         ObjectUpdate o     -> pure $ Set.singleton $ AddedObject o
+--         TaUpdate taName -> do
+--             mta <- DB.getTA tx db taName
+--             pure $ case mta of
+--                 Nothing         -> mempty
+--                 Just (ta, _cert) ->
+--                     let certKey = ta ^. #taCertKey
+--                     in Set.singleton $ AddedObject (coerce certKey)
 
 
     

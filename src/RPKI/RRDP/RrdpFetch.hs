@@ -449,9 +449,9 @@ saveSnapshot
                 f tx
                 updateRepositoryMeta tx db repoUri sessionId serial
                 updates <- getUpdates
-                DB.logUpdates tx db worldVersion updates
+                DB.logUpdates tx db worldVersion [ObjectUpdate updates]
 
-    (_, hasUpdates) <- withUpdateAccum threshold (RrdpU repoUri) $ \addObj getUpdates ->
+    (_, hasUpdates) <- withUpdateAccum (RrdpU repoUri) $ \addObj getUpdates ->
                         txFoldPipeline 
                             cpuParallelism
                             (S.mapM (newStorable db) $ S.each snapshotItems)
@@ -552,12 +552,11 @@ saveSnapshot
                         objectKey <- DB.saveObject tx db so worldVersion                    
                         DB.linkObjectToUrl tx db rpkiUrl (getHash object)
                         addedObject $ Just type_
-                        forM_ (getAKI object) $ addObj objectKey
+                        addObj objectKey
 
                     other -> 
                         logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
     
-    threshold        = fetchConfig ^. #objectUpdatesThreshold
     validationConfig = appContext ^. typed @Config . typed @ValidationConfig
 
 
@@ -601,10 +600,10 @@ saveDelta appContext worldVersion fetchConfig repoUri notification expectedSeria
                 f tx
                 updateRepositoryMeta tx db repoUri sessionId serial
                 updates <- getUpdates
-                DB.logUpdates tx db worldVersion updates
+                DB.logUpdates tx db worldVersion [ObjectUpdate updates]
 
-    (_, hasUpdates) <- withUpdateAccum threshold (RrdpU repoUri) $ \addObj getUpdates ->
-                        txFoldPipeline
+    (_, hasUpdates) <- withUpdateAccum (RrdpU repoUri) $ \addObj getUpdates ->
+                            txFoldPipeline
                                 cpuParallelism
                                 (S.mapM newStorable $ S.each deltaItems)
                                 (savingTx getUpdates)
@@ -704,7 +703,7 @@ saveDelta appContext worldVersion fetchConfig repoUri notification expectedSeria
                 unless newOneIsAlreadyThere $ do 
                     objectKey <- DB.saveObject tx db so worldVersion                        
                     addedObject $ Just type_
-                    forM_ (getAKI object) $ addObj objectKey
+                    addObj objectKey
                 DB.linkObjectToUrl tx db rpkiUrl newHash            
 
             other -> 
@@ -746,7 +745,7 @@ saveDelta appContext worldVersion fetchConfig repoUri notification expectedSeria
                 unless newOneIsAlreadyThere $ do 
                     objectKey <- DB.saveObject tx db so worldVersion                        
                     addedObject $ Just type_
-                    forM_ (getAKI object) $ addObj objectKey
+                    addObj objectKey
                 DB.linkObjectToUrl tx db rpkiUrl newHash 
 
             other -> 

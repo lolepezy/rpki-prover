@@ -58,7 +58,6 @@ import           System.FilePath
 import           System.Process.Typed
 
 import qualified Streaming.Prelude                as S
-import qualified GHC.Float as DB
 
 
 checkRsyncInPath :: Maybe FilePath -> ValidatorT IO ()
@@ -243,22 +242,22 @@ loadRsyncRepository :: Storage s =>
                     -> DB.DB s 
                     -> ValidatorT IO Bool
 loadRsyncRepository AppContext{..} fetchConfig worldVersion repositoryUrl rootPath db = do
+     
     let saveTx getUpdates f = do 
             DB.rwAppTx db $ \tx -> do
                 f tx 
                 updates <- getUpdates
-                DB.logUpdates tx db worldVersion updates
+                DB.logUpdates tx db worldVersion [ObjectUpdate updates]
 
-    (_, hasUpdates) <- withUpdateAccum threshold (RsyncU repositoryUrl) $ \addObj getUpdates ->
+    (_, hasUpdates) <- withUpdateAccum (RsyncU repositoryUrl) $ \addObj getUpdates ->
                             txFoldPipeline 
-                                    (2 * cpuParallelism)
-                                    traverseFS
-                                    (saveTx getUpdates)
-                                    (saveStorable addObj)
+                                (2 * cpuParallelism)
+                                traverseFS
+                                (saveTx getUpdates)
+                                (saveStorable addObj)
     pure hasUpdates
   where        
     cpuParallelism = config ^. typed @Parallelism . #cpuParallelism
-    threshold      = fetchConfig ^. #objectUpdatesThreshold
 
     traverseFS = 
         mapException (AppException . RsyncE . FileReadError . U.fmtEx) <$> 
@@ -338,7 +337,7 @@ loadRsyncRepository AppContext{..} fetchConfig worldVersion repositoryUrl rootPa
                     objectKey <- DB.saveObject tx db so worldVersion                    
                     DB.linkObjectToUrl tx db rpkiUrl (getHash object)
                     updateMetric @RsyncMetric @_ (#processed %~ Map.unionWith (+) (Map.singleton (Just type_) 1))
-                    forM_ (getAKI object) $ addObj objectKey
+                    addObj objectKey
                 other -> 
                     logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                    
                   

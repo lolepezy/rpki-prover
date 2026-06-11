@@ -13,6 +13,7 @@ import           Control.Monad.IO.Class
 import           Data.IORef
 import           Data.Data
 import           Data.Vector                     (Vector)
+import qualified Data.Vector                     as V
 import           Data.Foldable                   (for_)
 import           Data.Map.Strict                 (Map)
 import qualified Data.Map.Strict                 as Map            
@@ -79,38 +80,30 @@ data Fetched = Fetched {
     }
     deriving stock (Show, Eq, Ord, Generic, Typeable)    
 
-data Update = ObjectUpdate AddedObject
-            | RepositoryUpdate RpkiURL
+data Update = ObjectUpdate (Vector AddedObject)
             | TaUpdate TaName
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-data AddedObject = AddedObject {
-        objectKey :: {-# UNPACK #-} ObjectKey,
-        aki       :: AKI
-    }
+newtype AddedObject = AddedObject ObjectKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
 
 withUpdateAccum :: MonadIO m 
-                => Int 
-                -> RpkiURL 
-                -> ((ObjectKey -> AKI -> m ()) -> (m [Update]) -> m a)
+                => RpkiURL 
+                -> ((ObjectKey -> m ()) -> (m (Vector AddedObject)) -> m a)
                 -> m (a, Bool)
-withUpdateAccum threshold url action = do
+withUpdateAccum url action = do
     buffer <- liftIO $ newIORef []
     count  <- liftIO $ newIORef (0 :: Int)
 
-    let addObject objectKey aki = liftIO $ do
+    let addObject objectKey = liftIO $ do
             n <- readIORef count
-            writeIORef count $! n + 1
-            if n < threshold then 
-                modifyIORef' buffer (ObjectUpdate (AddedObject {..}) :)
-            else 
-                writeIORef buffer [RepositoryUpdate url]
+            writeIORef count $! n + 1    
+            modifyIORef' buffer (AddedObject objectKey :)            
 
-    let getUpdates = liftIO $ readIORef buffer
+    let getUpdates = liftIO $ V.fromList <$> readIORef buffer
 
     result <- action addObject getUpdates    
     n      <- liftIO $ readIORef count    
