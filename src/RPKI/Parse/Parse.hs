@@ -22,7 +22,6 @@ where
 
 import qualified Data.ByteString                  as BS
 import           Data.Char                        (toLower)
-import qualified Data.List                        as List
 import qualified Data.Text                        as Text
 import           Data.String                      (IsString)
 import           Data.Maybe
@@ -58,9 +57,9 @@ rpkiObjectType = \case
 -- | 
 supportedExtension :: String -> Bool
 supportedExtension filename = 
-    case map toLower $ List.drop (List.length filename - 4) filename of 
-        dot : ext -> dot == '.' && isSupportedExtension ext
-        _         -> False
+    case map toLower $ take 4 $ reverse filename of 
+        [c3, c2, c1, dot] -> dot == '.' && isSupportedExtension [c1, c2, c3]
+        _                 -> False
 
 isSupportedExtension :: (Eq a, IsString a) => a -> Bool
 isSupportedExtension = isJust . rpkiObjectType
@@ -78,17 +77,17 @@ isOfType t1 t2 = t1 == t2 || t1 == BGPSec && t2 == CER
 -- | Parse object from a bytesting containing ASN1 representaton
 -- | Decide which parser to use based on the object's filename
 readObject :: RpkiURL -> BS.ByteString -> PureValidatorT RpkiObject
-readObject objectURL content =     
+readObject objectURL bs =     
     case urlObjectType objectURL of 
-        Just type_ -> readObjectOfType type_ content
+        Just type_ -> readObjectOfType type_ bs
         Nothing    -> pureError $ parseErr $ "Could not figure out object type from URL: " <> fmtGen objectURL
 
 
 readObjectOfType :: RpkiObjectType -> BS.ByteString -> PureValidatorT RpkiObject        
-readObjectOfType objectType content = 
+readObjectOfType objectType bs = 
     case objectType of 
         CER -> do 
-            (rc, certType, ski, aki, hash) <- parseResourceCertificate content
+            (rc, certType, ski, aki, hash) <- parseResourceCertificate bs
             case certType of 
                 CACert -> do 
                     let certificate = TypedCert $ ResourceCertificate rc
@@ -99,14 +98,11 @@ readObjectOfType objectType content =
                 EECert -> 
                     pureError $ parseErr "Cannot have EE certificate as a separate object."
 
-        MFT  -> parse_ parseMft MftRO content
-        ROA  -> parse_ parseRoa RoaRO content
-        SPL  -> parse_ parseSpl SplRO content
-        CRL  -> parse_ parseCrl CrlRO content            
-        GBR  -> parse_ parseGbr GbrRO content            
-        RSC  -> parse_ parseRsc RscRO content            
-        ASPA -> parse_ parseAspa AspaRO content     
-        t    -> pureError $ parseErr $ "Parsing of type " <> fmtGen t <> " is not supported"
-  where
-    parse_ parse constructor bs = 
-        constructor <$> parse bs        
+        MFT  -> MftRO <$> parseMft bs
+        ROA  -> RoaRO <$> parseRoa bs
+        SPL  -> SplRO <$> parseSpl bs
+        CRL  -> CrlRO <$> parseCrl bs            
+        GBR  -> GbrRO <$> parseGbr bs            
+        RSC  -> RscRO <$> parseRsc bs
+        ASPA -> AspaRO <$> parseAspa bs     
+        t    -> pureError $ parseErr $ "Parsing of type " <> fmtGen t <> " is not supported"  
