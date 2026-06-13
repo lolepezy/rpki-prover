@@ -102,7 +102,7 @@ createDatabase env logger config checkAction = do
             objectKeyToUrlKeys <- newSMap
             certBySKI          <- newSMap
             validatedByVersion <- newSMap                    
-            mftShortcuts       <- MftShortcutStore <$> newSMap <*> newSMap
+            mftShortcuts       <- MftShortcutStore <$> newSMap <*> newSMultiMap <*> newSMap
             originals          <- newSMap
             pure RpkiObjectStore {..}
             

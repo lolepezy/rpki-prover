@@ -1669,10 +1669,7 @@ updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftS
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
-    liftIO $ do 
-        -- Pre-serialise the object so that all the heavy-lifting happens in the thread 
-        let !raw = Verbatim $ toStorable $ Compressed DB.MftShortcutChildren {..}        
-        atomically $ writeCQueue shortcutQueue $ UpdateMftShortcutChildren aki raw
+    liftIO $ atomically $ writeCQueue shortcutQueue $ UpdateMftShortcutChildren aki nonCrlEntries
 
 deleteMftShortcut :: MonadIO m => TopDownContext -> AKI -> m ()
 deleteMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki = 
@@ -1685,13 +1682,13 @@ storeShortcuts AppContext {..} shortcutQueue = liftIO $
     readQueueChunked shortcutQueue 1000 $ \mftShortcuts -> 
         rwTxT database $ \tx db -> 
             for_ mftShortcuts $ \case 
-                UpdateMftShortcut aki s         -> DB.saveMftShorcutMeta tx db aki s                    
-                UpdateMftShortcutChildren aki s -> DB.saveMftShorcutChildren tx db aki s
-                DeleteMftShortcut aki           -> DB.deleteMftShortcut tx db aki
+                UpdateMftShortcut aki s           -> DB.saveMftShorcutMeta tx db aki s                    
+                UpdateMftShortcutChildren aki entries -> DB.saveMftShorcutChildren tx db aki entries
+                DeleteMftShortcut aki             -> DB.deleteMftShortcut tx db aki
                  
 
 data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta))
-                   | UpdateMftShortcutChildren AKI (Verbatim (Compressed DB.MftShortcutChildren))            
+                   | UpdateMftShortcutChildren AKI (Map.Map ObjectKey MftEntry)
                    | DeleteMftShortcut AKI            
 
 -- Do whatever is required to notify other subsystems that the object was touched 

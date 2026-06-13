@@ -64,7 +64,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 48
+currentDatabaseVersion = 49
 
 -- Some constant keys
 databaseVersionKey, validatedByVersionKey :: Text
@@ -227,7 +227,6 @@ newtype MetadataStore s = MetadataStore {
     }
     deriving stock (Generic)
 
--- Some DTOs for storing MFT shortcuts
 data MftShortcutMeta = MftShortcutMeta {
         key            :: ObjectKey,        
         notValidBefore :: Instant,
@@ -239,16 +238,10 @@ data MftShortcutMeta = MftShortcutMeta {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-newtype MftShortcutChildren = MftShortcutChildren {
-        nonCrlEntries :: Map.Map ObjectKey MftEntry
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-
 data MftShortcutStore s = MftShortcutStore {
-        mftMetas    :: SMap "mfts-shortcut-meta" s AKI (Verbatim (Compressed MftShortcutMeta)),
-        mftChildren :: SMap "mfts-shortcut-children" s AKI (Verbatim (Compressed MftShortcutChildren))
+        mftMetas        :: SMap "mfts-shortcut-meta" s AKI (Verbatim (Compressed MftShortcutMeta)),
+        mftChildIndex   :: SMultiMap "mft-child-index" s AKI ObjectKey,
+        mftChildEntries :: SMap "mft-child-entries" s ObjectKey MftEntry
     }
     deriving stock (Generic)
 
@@ -471,8 +464,10 @@ getMftShorcut tx DB { objectStore = RpkiObjectStore {..} } aki = liftIO $ do
     runMaybeT $ do 
         mftMeta_ <- MaybeT $ M.get tx mftMetas aki
         let MftShortcutMeta {..} = unCompressed $ restoreFromRaw mftMeta_
-        mftChildren_ <- MaybeT $ M.get tx mftChildren aki
-        let MftShortcutChildren {..} = unCompressed $ restoreFromRaw mftChildren_
+        childKeys <- liftIO $ MM.allForKey tx mftChildIndex aki
+        nonCrlEntries <- fmap (Map.fromList . catMaybes) $ liftIO $
+            forM childKeys $ \childKey -> 
+                fmap (childKey,) <$> M.get tx mftChildEntries childKey
         pure $! MftShortcut {..}
 
 saveMftShorcutMeta :: (MonadIO m, Storage s) => 
@@ -482,11 +477,22 @@ saveMftShorcutMeta tx
     aki raw = liftIO $ M.put tx mftMetas aki raw
 
 saveMftShorcutChildren :: (MonadIO m, Storage s) => 
-                        Tx s 'RW -> DB s -> AKI -> Verbatim (Compressed MftShortcutChildren) -> m ()
+                        Tx s 'RW -> DB s -> AKI -> Map.Map ObjectKey MftEntry -> m ()
 saveMftShorcutChildren tx 
     DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
-    aki raw = liftIO $ M.put tx mftChildren aki raw
+    aki newEntries = liftIO $ do        
 
+        existingKeys <- Set.fromList <$> MM.allForKey tx mftChildIndex aki        
+
+        forM_ existingKeys $ \key ->
+            when (key `Map.notMember` newEntries) $ do
+                MM.delete tx mftChildIndex aki key
+                M.delete tx mftChildEntries key        
+
+        forM_ (Map.toList newEntries) $ \(key, entry) ->
+            when (key `Set.notMember` existingKeys) $ do 
+                MM.put tx mftChildIndex aki key
+                M.put tx mftChildEntries key entry
 
 deleteMftShortcut :: (MonadIO m, Storage s) => 
                     Tx s 'RW -> DB s -> AKI -> m ()
@@ -494,7 +500,10 @@ deleteMftShortcut tx
     DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..} } } 
     aki = liftIO $ do
         M.delete tx mftMetas aki
-        M.delete tx mftChildren aki
+        existingKeys <- MM.allForKey tx mftChildIndex aki
+        forM_ existingKeys $ \key -> do
+            MM.delete tx mftChildIndex aki key
+            M.delete tx mftChildEntries key
 
 markAsValidated :: (MonadIO m, Storage s) => 
                     Tx s 'RW -> DB s 
@@ -568,8 +577,8 @@ getValidationOutcomes :: (MonadIO m, Storage s) =>
 getValidationOutcomes tx db@DB {..} version = liftIO $ do 
     (commonV, commonM) <- 
         fmap (fromMaybe mempty) $ runMaybeT $ do
-                    VersionMeta {..} <- MaybeT $ M.get tx (versionStore ^. typed) version            
-                    getOutcomes commonValidationKey commonMetricsKey                    
+                VersionMeta {..} <- MaybeT $ M.get tx (versionStore ^. typed) version            
+                getOutcomes commonValidationKey commonMetricsKey                    
 
     perTAOutcomes <- 
         getPayloadsForTas tx db version $ 
