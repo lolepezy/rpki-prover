@@ -413,6 +413,7 @@ getRpkiObject AppContext {..} uri hash key =
   where
     locatedDto located = RObject $ located & #payload %~ objectToDto
 
+
 getOriginal :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s
                 -> Maybe Text           

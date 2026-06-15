@@ -25,6 +25,7 @@ import           GHC.Generics
 
 
 import           RPKI.AppTypes
+import           RPKI.TAL
 import           RPKI.Domain
 import           RPKI.Repository
 import           RPKI.RRDP.Types
@@ -81,7 +82,7 @@ data Fetched = Fetched {
     deriving stock (Show, Eq, Ord, Generic, Typeable)    
 
 data Update = ObjectUpdate (Vector AddedObject)
-            | TaUpdate TaName
+            | TaUpdate TAL
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 

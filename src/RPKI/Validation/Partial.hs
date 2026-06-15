@@ -13,16 +13,21 @@ import           Control.Concurrent.Async
 import qualified Data.Map.Strict          as Map
 import qualified Data.Set                 as Set
 import qualified Data.Vector              as V
+import           Data.Traversable
 import           Data.Maybe (catMaybes)
 import           Data.Coerce
 import           Data.Tuple.Strict
 
 import           Data.Generics.Product.Fields
 import           Data.String.Interpolate.IsString
+
+import           GHC.Generics
+
 import           RPKI.AppMonad
 import           RPKI.AppContext
 import           RPKI.Time
 import           RPKI.Domain
+import           RPKI.TAL
 import           RPKI.Logging
 import           RPKI.Util (ifJustM)
 import           RPKI.Store.Database (DB)
@@ -172,23 +177,37 @@ validateUpdates :: Storage s
 validateUpdates AppContext {..} updates = do 
     db <- readTVarIO database
 
-    let tas = []
+    let tals = Set.fromList [ tal | TaUpdate tal <- updates ]
 
-    roTx db $ \tx -> 
-      forM updates $ \case
-        ObjectUpdate o     -> pure $ Set.fromList $ V.toList o
+    taCerts <- 
+        if not $ Set.null tals then do 
+            fmap catMaybes 
+                $ forConcurrently (Set.toList tals) 
+                $ \tal -> do
+                -- Expect TAs to be prepared, i.e. TA certificates downloaded and validated.
+                -- If it's not the case, it's an error here.    
+                let taName = getTaName tal
+                z <- roTx db $ \tx -> DB.getTA tx db taName
+                case z of
+                    Nothing -> do 
+                        logError logger [i|TA #{taName} does not exist in the cache.|]
+                        -- TODO Complain more by emitting appError/appWarn here?
+                        pure Nothing
+                        
+                    Just (ta, taCert) -> 
+                        pure $ Just (ta ^. #taCertKey, taCert)
+        else 
+            pure []
 
-        TaUpdate taName -> do
-            mta <- DB.getTA tx db taName
-            pure $ case mta of
-                Nothing         -> mempty
-                Just (ta, _cert) ->
-                    let certKey = ta ^. #taCertKey
-                    in Set.singleton $ AddedObject (coerce certKey)
 
+    let newObjects = Set.fromList $ mconcat [ V.toList o | ObjectUpdate o <- updates ]
+
+    
+    
     pure ()
   where
     
+
 
 
 {- 
@@ -295,14 +314,20 @@ expireObjects db now = do
     pure nextToExpire
 
 
-findStartCas :: Storage s 
+data StartCas k = StartCas {
+        tops :: Set.Set k, 
+        paths :: Set.Set k
+    }
+    deriving stock (Show, Generic)
+
+findStartCas :: Storage s
                => DB s 
-               -> [AddedObject] 
-               -> IO (Set.Set CertKey, Set.Set CertKey)
+               -> [AddedObject]
+               -> IO (StartCas CertKey)
 findStartCas db newObjects = do    
     now <- thisInstant
     akis <- fmap catMaybes $ roTx db $ \tx -> 
-                forM newObjects $ \(AddedObject objectKey) ->
+                for newObjects $ \(AddedObject objectKey) ->
                     M.get tx objectAKIs objectKey
     findStartCasGen readFromCache (\_ -> isWithinValidityPeriod now) akis
   where
@@ -316,7 +341,7 @@ findStartCasGen :: (Eq a2, Ord a, HasField' "caCertificate" t2 a, HasField' "aki
                 => (a2 -> IO (Maybe t2)) 
                 -> (a2 -> t2 -> Bool) 
                 -> [a2]
-                -> IO (Set.Set a, Set.Set a)
+                -> IO (StartCas a)
 findStartCasGen readFromCache accept akis = do
     cas <- fmap catMaybes $ forM akis $ \aki -> do
                 mkiMeta <- readFromCache aki 
@@ -333,7 +358,7 @@ findStartCasGen readFromCache accept akis = do
             -- TODO Here we should complain when nothing is found
             findPathUp readFromCache accept ca startCas
             
-    pure (startCas `Set.difference` ignored, paths)
+    pure $! StartCas (startCas `Set.difference` ignored) paths
 
 
 findPathUp readFromCache accept (ki, kiMeta) startCas = 

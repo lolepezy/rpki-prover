@@ -866,7 +866,8 @@ runValidationBootstrap :: Storage s =>
                     -> [TAL]
                     -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire), Maybe Slurm)
 runValidationBootstrap appContext@AppContext {..} worldVersion tals = do
-    let unappliedUpdates = map (\tal -> TaUpdate $ getTaName tal) tals
+    -- TODO Download and validate TA certificates
+    let unappliedUpdates = map TaUpdate tals
     rwTxT database $ \tx db -> DB.logUpdates tx db worldVersion unappliedUpdates
     runValidationForUpdates appContext worldVersion unappliedUpdates    
 

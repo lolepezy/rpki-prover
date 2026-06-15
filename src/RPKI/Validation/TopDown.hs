@@ -403,7 +403,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                             (\e -> do
                                 logError logger [i|Fetched TA certificate is invalid with error #{e}, will use cached copy.|]
                                 pure cachedCert)                            
-                
+
                 case publicationPointsFromTAL tal certToUse of
                     Left e         -> appError $ ValidationE e
                     Right ppAccess ->

@@ -587,8 +587,7 @@ saveTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> CaCerObject -> WorldVers
 saveTA tx db@DB { taStore = TAStore s } cert wv ta = liftIO $ do
     objectKey <- saveObject tx db (toStorableObject (CerRO cert)) wv
     linkObjectToUrl tx db (actualUrl ta) (getHash cert)
-    let certKey = coerce objectKey :: CertKey
-    SM.put tx s (getTaName (tal ta)) (ta { taCertKey = certKey })
+    SM.put tx s (getTaName (tal ta)) (ta { taCertKey = coerce objectKey })
 
 deleteTA :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> TAL -> m ()
 deleteTA tx DB { taStore = TAStore s } tal = liftIO $ SM.delete tx s (getTaName tal)
@@ -598,6 +597,9 @@ getTA tx db@DB { taStore = TAStore s } name = liftIO $ runMaybeT $ do
     ta   <- MaybeT $ SM.get tx s name
     cert <- MaybeT $ getCaCertByKey tx db (taCertKey ta)
     pure (ta, cert)
+
+getTAOnly :: (MonadIO m, Storage s) => Tx s mode -> DB s -> TaName -> m (Maybe StorableTA)
+getTAOnly tx db@DB { taStore = TAStore s } name = liftIO $ SM.get tx s name        
 
 getTAs :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(StorableTA, CaCerObject)]
 getTAs tx db@DB { taStore = TAStore s } = liftIO $ do
