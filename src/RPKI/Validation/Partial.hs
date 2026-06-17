@@ -1,6 +1,7 @@
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE StrictData                 #-}
-{-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE StrictData           #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE OverloadedStrings    #-}
 
 module RPKI.Validation.Partial where
 
@@ -29,6 +30,7 @@ import           RPKI.Time
 import           RPKI.Domain
 import           RPKI.TAL
 import           RPKI.Logging
+import           RPKI.Reporting
 import           RPKI.Util (ifJustM)
 import           RPKI.Store.Database (DB)
 import qualified RPKI.Store.Database as DB
@@ -39,6 +41,7 @@ import           RPKI.Validation.ObjectValidation
 
 import qualified RPKI.Store.Base.Map      as M
 import qualified RPKI.Store.Base.MultiMap as MM
+import UnliftIO (pooledForConcurrentlyN)
 
 
 
@@ -200,14 +203,34 @@ validateUpdates AppContext {..} updates = do
             pure []
 
 
-    let newObjects = Set.fromList $ mconcat [ V.toList o | ObjectUpdate o <- updates ]
+    -- TODO They should be unique in any imaginable circumstances
+    let newObjects = mconcat [ V.toList o | ObjectUpdate o <- updates ]
 
-    
-    
+    starts <- findStartCas db newObjects
+
+    let taValidations = flip map taCerts $ \(certKey, cert) -> pure $
+            runValidatorT (newScopes' ObjectFocus (coerce certKey)) $ 
+                validateCAPartially db certKey 
+                    (\change -> do 
+                        -- TODO Save them
+                        pure ()) 
+                    -- For TA validation, look at all objects
+                    (\_ -> True)
+
+    let caValidations = flip map (Set.toList $ starts ^. #tops) $ \certKey -> pure $
+            runValidatorT (newScopes' ObjectFocus (coerce certKey)) $ 
+                validateCAPartially db certKey 
+                    (\change -> do 
+                        -- TODO Save them
+                        pure ())                 
+                    (\object -> Set.member (coerce object) (starts ^. #paths))        
+
+        
+    z <- pooledForConcurrentlyN 10 (taValidations <> caValidations) id
+
     pure ()
   where
     
-
 
 
 {- 
