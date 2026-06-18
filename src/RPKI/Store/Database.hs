@@ -14,7 +14,6 @@ import           Control.Monad.Reader     (ask)
 import           Data.Foldable            (for_)
 import           Data.Coerce              (coerce)
 
-import           Data.Vector              (Vector)
 import qualified Data.List                as List
 import           Data.Maybe               (catMaybes, fromMaybe, isJust, listToMaybe)
 import qualified Data.Set                 as Set
@@ -67,7 +66,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 49
+currentDatabaseVersion = 50
 
 -- Some constant keys
 databaseVersionKey, validatedByVersionKey :: Text
@@ -597,9 +596,6 @@ getTA tx db@DB { taStore = TAStore s } name = liftIO $ runMaybeT $ do
     ta   <- MaybeT $ SM.get tx s name
     cert <- MaybeT $ getCaCertByKey tx db (taCertKey ta)
     pure (ta, cert)
-
-getTAOnly :: (MonadIO m, Storage s) => Tx s mode -> DB s -> TaName -> m (Maybe StorableTA)
-getTAOnly tx db@DB { taStore = TAStore s } name = liftIO $ SM.get tx s name        
 
 getTAs :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [(StorableTA, CaCerObject)]
 getTAs tx db@DB { taStore = TAStore s } = liftIO $ do

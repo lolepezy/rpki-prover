@@ -7,6 +7,7 @@ module RPKI.Validation.Types where
 import           Data.Aeson.Types
 import qualified Data.Map.Strict             as Map
 import           Data.Text                   (Text)
+import           Data.Vector                 (Vector)
 import           Data.Tuple.Strict
 import           GHC.Generics
 
@@ -22,7 +23,7 @@ import           RPKI.Store.Base.Serialisation
 
 
 -- It is to simplify the definition of Payload handlers        
-data Payload = VrpsP [Vrp]                      
+data Payload = VrpsP (Vector Vrp)
             | AspaP Aspa
             | BgpSecP BGPSecPayload
             | SplP SplPayload
@@ -94,7 +95,7 @@ data Ca = CaShort CaShortcut
 
 data RoaShortcut = RoaShortcut {
         key            :: {-# UNPACK #-} ObjectKey,        
-        vrps           :: [Vrp],
+        vrps           :: Vector Vrp,
         notValidBefore :: Instant,
         notValidAfter  :: Instant,
         resources      :: AllResources

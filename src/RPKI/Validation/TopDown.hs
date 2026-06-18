@@ -35,6 +35,7 @@ import           Data.Monoid.Generic
 import qualified Data.List                        as List
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
+import           Data.Vector                      (Vector)
 import qualified Data.Vector                      as V
 import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
@@ -102,7 +103,7 @@ The idea behind shortcuts is as follows:
 -}
 
 data PayloadBuilder = PayloadBuilder {
-        vrps     :: IORef [T2 [Vrp] ObjectKey],        
+        vrps     :: IORef [T2 (Vector Vrp) ObjectKey],        
         spls     :: IORef [SplPayload],        
         aspas    :: IORef [Aspa],
         gbrs     :: IORef [T2 Hash Gbr],
@@ -337,7 +338,7 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
                                       SplPayload asn prefixes <- splPayloads, prefix <- prefixes ]
 
             let roas = Roas $ MonoidalMap.fromList $ 
-                            map (\(T2 vrp k) -> (k, V.fromList vrp)) vrps 
+                            map (\(T2 vrp k) -> (k, vrp)) vrps 
 
             let payloads = Payloads {..}                    
             
@@ -1174,13 +1175,13 @@ validateCaNoFetch
                     validateObjectLocations child                    
                     allowRevoked $ do
                         validRoa <- vHoist $ validateRoa validationRFC now roa fullCa validCrl verifiedResources
-                        let vrpList = getCMSContent $ cmsPayload roa
+                        let vrps = V.fromList $ getCMSContent $ cmsPayload roa
                         oneMoreRoa
-                        moreVrps $ Count $ fromIntegral $ length vrpList
+                        moreVrps $ Count $ fromIntegral $ length vrps
                         increment $ topDownCounters ^. #originalRoa                        
                         shortcut <- vHoist $ shortcutIfNoIssues childKey fileName 
-                                            (makeRoaShortcut childKey validRoa vrpList)                        
-                        rememberPayloads typed (T2 vrpList childKey :)
+                                            (makeRoaShortcut childKey validRoa vrps) 
+                        rememberPayloads typed (T2 vrps childKey :)
                         pure $! newShortcut shortcut                  
 
             SplRO spl -> 
@@ -1559,7 +1560,7 @@ makeCaShortcut key (Validated certificate) ppas fileName = let
         child = CaChild (CaShortcut {..}) serial
     in MftEntry {..}
 
-makeRoaShortcut :: ObjectKey -> Validated RoaObject -> [Vrp] -> Text -> MftEntry
+makeRoaShortcut :: ObjectKey -> Validated RoaObject -> Vector Vrp -> Text -> MftEntry
 makeRoaShortcut key (Validated roa) vrps fileName = let 
         (notValidBefore, notValidAfter) = getValidityPeriod roa    
         serial = getSerial roa

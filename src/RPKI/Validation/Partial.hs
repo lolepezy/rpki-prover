@@ -208,29 +208,26 @@ validateUpdates AppContext {..} updates = do
 
     starts <- findStartCas db newObjects
 
-    let taValidations = flip map taCerts $ \(certKey, cert) -> pure $
+    changes <- newTVarIO []
+
+    let taValidations = flip map taCerts $ \(certKey, cert) -> 
             runValidatorT (newScopes' ObjectFocus (coerce certKey)) $ 
                 validateCAPartially db certKey 
-                    (\change -> do 
-                        -- TODO Save them
-                        pure ()) 
+                    (\change -> modifyTVar' changes $ \c -> change : c) 
                     -- For TA validation, look at all objects
                     (\_ -> True)
 
-    let caValidations = flip map (Set.toList $ starts ^. #tops) $ \certKey -> pure $
+    let caValidations = flip map (Set.toList $ starts ^. #tops) $ \certKey -> 
             runValidatorT (newScopes' ObjectFocus (coerce certKey)) $ 
                 validateCAPartially db certKey 
-                    (\change -> do 
-                        -- TODO Save them
-                        pure ())                 
+                    (\change -> modifyTVar' changes $ \c -> change : c)
                     (\object -> Set.member (coerce object) (starts ^. #paths))        
 
-        
-    z <- pooledForConcurrentlyN 10 (taValidations <> caValidations) id
+    let par = fromIntegral $ config ^. #parallelism . #cpuParallelism
+    z <- pooledForConcurrentlyN par (taValidations <> caValidations) id
 
     pure ()
-  where
-    
+  where    
 
 
 {- 
