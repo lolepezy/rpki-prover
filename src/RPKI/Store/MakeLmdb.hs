@@ -118,10 +118,10 @@ createDatabase env logger config checkAction = do
             expiresAt <- newSMultiMap
             maturesAt <- newSMultiMap
             repository2object  <- newSMultiMap            
-            repositoryPointers <- newSMultiMap            
             caShortcuts <- newSMap           
             updateLog   <- newSMap 
             payloadLog  <- newSMap 
+            vsLog       <- newSMap 
             pure IndexStore {..}
 
         lmdb = LmdbStorage env 

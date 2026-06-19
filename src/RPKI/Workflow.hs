@@ -888,7 +888,7 @@ runValidationForUpdates appContext@AppContext {..} worldVersion updates = do
 
     -- forM_ startCas $ \certKey -> do 
     --     runValidatorT (newScopes' ObjectFocus (coerce certKey)) $ 
-    --         validateCAPartially db certKey 
+    --         validateCAFrom db certKey 
     --             (\_ -> 
     --                 -- TODO Imeplement payload handling
     --                 pure ()) 

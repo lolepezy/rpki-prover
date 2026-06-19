@@ -24,6 +24,7 @@ import           Data.String.Interpolate.IsString
 
 import           GHC.Generics
 
+import           RPKI.AppTypes
 import           RPKI.AppMonad
 import           RPKI.AppContext
 import           RPKI.Time
@@ -175,9 +176,10 @@ Ideas:
 
 validateUpdates :: Storage s 
                 => AppContext s  
+                -> WorldVersion
                 -> [Update] 
                 -> IO ()
-validateUpdates AppContext {..} updates = do 
+validateUpdates AppContext {..} worldVersion updates = do 
     db <- readTVarIO database
 
     let tals = Set.fromList [ tal | TaUpdate tal <- updates ]
@@ -201,33 +203,39 @@ validateUpdates AppContext {..} updates = do
                         pure $ Just (ta ^. #taCertKey, taCert)
         else 
             pure []
-
-
-    -- TODO They should be unique in any imaginable circumstances
-    let newObjects = mconcat [ V.toList o | ObjectUpdate o <- updates ]
-
-    starts <- findStartCas db newObjects
+    
 
     changes <- newTVarIO []
 
     let taValidations = flip map taCerts $ \(certKey, cert) -> 
             runValidatorT (newScopes' ObjectFocus (coerce certKey)) $ 
-                validateCAPartially db certKey 
-                    (\change -> modifyTVar' changes $ \c -> change : c) 
+                validateCAFrom db certKey 
+                    (\change -> modifyTVar' changes $ \c -> change : c)
                     -- For TA validation, look at all objects
                     (\_ -> True)
 
+    -- TODO They should be unique in any imaginable circumstances
+    let newObjects = mconcat [ V.toList o | ObjectUpdate o <- updates ]    
+    starts <- findStartCas db newObjects
+
     let caValidations = flip map (Set.toList $ starts ^. #tops) $ \certKey -> 
             runValidatorT (newScopes' ObjectFocus (coerce certKey)) $ 
-                validateCAPartially db certKey 
+                validateCAFrom db certKey 
                     (\change -> modifyTVar' changes $ \c -> change : c)
                     (\object -> Set.member (coerce object) (starts ^. #paths))        
 
     let par = fromIntegral $ config ^. #parallelism . #cpuParallelism
-    z <- pooledForConcurrentlyN par (taValidations <> caValidations) id
+    vs <- pooledForConcurrentlyN par (taValidations <> caValidations) id    
 
-    pure ()
+    changes_ <- readTVarIO changes
+    saveChanges db worldVersion changes_ (mconcat $ map snd vs)
   where    
+    saveChanges db worldVersion changes vs = do 
+        let DB.IndexStore {..} = db ^. #objectStore . #indexStore
+        rwTx db $ \tx -> do             
+            M.put tx payloadLog worldVersion changes
+            M.put tx vsLog worldVersion vs
+
 
 
 {- 
@@ -237,20 +245,20 @@ validateUpdates AppContext {..} updates = do
 -} 
 validateCA :: Storage s => DB s -> CertKey -> (Change Payload -> STM ()) -> ValidatorT IO ()
 validateCA db certKey onPayload = do
-    validateCAPartially db certKey onPayload (const True)
+    validateCAFrom db certKey onPayload (const True)
 
 {- 
     Filter will be used to 
       * Pick up only CAs that are on somebody's path to the top
       * Pick up payloads (or their shortcuts) that are in the set up updates
 -}   
-validateCAPartially :: Storage s 
+validateCAFrom :: Storage s 
                     => DB s 
                     -> CertKey 
                     -> (Change Payload -> STM ()) 
                     -> (ObjectKey -> Bool) 
                     -> ValidatorT IO ()
-validateCAPartially db certKey onPayload objectFilter = do
+validateCAFrom db certKey onPayload objectFilter = do
     let DB.IndexStore {..} = db ^. #objectStore . #indexStore
     caShort <- liftIO $ roTx db $ \tx -> M.get tx caShortcuts certKey
     case caShort of
@@ -274,7 +282,7 @@ validateCAPartially db certKey onPayload objectFilter = do
     -- Calculate MFT diff
     -- * for each added payload call onPayload (Added Payload)
     -- * for each deleted payload call onPayload (Deleted Payload)    
-    -- * for each added CA validateCAPartially recursively
+    -- * for each added CA validateCAFrom recursively
     -- * for each deleted CA call traversePayloads and delete payloads
 
     pure ()

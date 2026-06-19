@@ -239,21 +239,15 @@ data IndexStore s = IndexStore {
         mftShorts :: SMap "mft-shorts" s MftKey MftShortcut,
 
         expiresAt :: SMultiMap "expires-at" s Instant ObjectKey,
-        maturesAt :: SMultiMap "matures-at" s Instant ObjectKey,
-
-        {- 
-            Certificates, highest in the hierarchy, that use given repository as a publication point.
-            For example, all certificates coming from rrdp.ripe.net would point to rrdp.ripe.net, 
-            but here we are only interesting in the TA certificate, as the highest in the hierarchy.
-        -}
-        repositoryPointers :: SMultiMap "repository-pointers" s RepositoryKey CertKey,
+        maturesAt :: SMultiMap "matures-at" s Instant ObjectKey,        
         
         repository2object :: SMultiMap "repo-key-to-obj-keys" s RepositoryKey ObjectKey,
 
         caShortcuts :: SMap "ca-shortcuts" s CertKey CaShortcut,
 
-        updateLog :: SMap "update-log" s WorldVersion [Update],
-        payloadLog :: SMap "change-log" s WorldVersion [Change Payload]
+        updateLog  :: SMap "update-log" s WorldVersion [Update],
+        payloadLog :: SMap "change-log" s WorldVersion [Change Payload],
+        vsLog      :: SMap "validation-state-log" s WorldVersion ValidationState
     }
     deriving (Generic)
 
