@@ -116,12 +116,13 @@ validateBottomUp
     -- Given a certificate, find a chain of certificates leading to a TA, 
     -- the chain is build based on the SKI - AKI relations
     findPathToRoot db certificate = do                  
-        tas <- DB.roAppTx db $ \tx -> DB.getTAs tx db         
-        let taCerts = Map.fromList [ 
-                        (getSKI taCert, Located (talCertLocations tal) taCert) | 
-                        StorableTA {..} <- tas ]
+        taCerts <- DB.roAppTx db $ \tx -> do
+            tas <- DB.getTAs tx db
+            pure $ Map.fromList
+                [ (getSKI cert, Located (talCertLocations tal) cert)
+                | (StorableTA {..}, cert) <- tas ]
         go taCerts certificate
-      where        
+      where
         go taCerts cert = do             
             case getAKI cert of 
                 -- it is likely a TA certificate which we also downloaded from the repository

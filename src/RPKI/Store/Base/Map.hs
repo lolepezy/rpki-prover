@@ -68,3 +68,9 @@ last :: (AsStorable k, AsStorable v) =>
 last tx (SMap _ s) = (f <$>) <$> S.last tx s
   where
     f (SKey sk, SValue sv) = (fromStorable sk, fromStorable sv)
+
+allFrom :: (AsStorable k, AsStorable v) =>
+        Tx s m -> SMap name s k v -> k -> IO [(k, v)]
+allFrom tx (SMap _ s) k = S.foldSFrom tx s (storableKey k) f []
+  where
+    f z (SKey sk) (SValue sv) = pure $! (fromStorable sk, fromStorable sv) : z

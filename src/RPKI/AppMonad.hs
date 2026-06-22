@@ -201,7 +201,7 @@ timedMetric' :: forall m metric r .
                  MetricC metric, 
                  HasField "totalTimeMs" metric metric TimeMs TimeMs) =>                 
                 Proxy metric 
-            -> (TimeMs -> metric -> metric)                 
+            -> (TimeMs -> metric -> metric)      
             -> ValidatorT m r 
             -> ValidatorT m r
 timedMetric' _ f v = do

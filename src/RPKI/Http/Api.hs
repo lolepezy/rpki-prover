@@ -116,8 +116,8 @@ data API api = API {
                                       :> Get '[JSON] ValidityResultDto,
 
         validityAsnPrefix :: api :- "validity" :> QueryParam "asn" String 
-                                       :> QueryParam "prefix" String 
-                                       :> Get '[JSON] ValidityResultDto,
+                                               :> QueryParam "prefix" String 
+                                               :> Get '[JSON] ValidityResultDto,
 
         validityBulk :: api :- "validity" :> ReqBody '[JSON] [ValidityBulkInputDto] 
                                           :> Post '[JSON] ValidityBulkResultDto        

@@ -224,10 +224,10 @@ instance ToJSON a => ToJSON (GroupedMetric a)
 $(deriveToJSON defaultOptions ''FetchFreshness)
 $(deriveToJSON defaultOptions ''RsyncMetric)
 $(deriveToJSON defaultOptions ''RrdpMetric)
+$(deriveToJSON defaultOptions ''DiffMetric)
 $(deriveToJSON defaultOptions ''ResourceUsage)
 $(deriveToJSON defaultOptions ''SystemMetrics)
 $(deriveToJSON defaultOptions ''ScopeKind)
-
 
 $(deriveToJSON defaultOptions ''SStats)
 $(deriveToJSON defaultOptions ''DBFileStats)

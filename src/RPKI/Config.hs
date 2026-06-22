@@ -51,7 +51,8 @@ data FetchConfig = FetchConfig {
         cpuLimit                 :: Seconds,
         minFetchInterval         :: Seconds,
         maxFetchInterval         :: Seconds,
-        maxFailedBackoffInterval :: Seconds
+        maxFailedBackoffInterval :: Seconds,        
+        objectUpdatesThreshold   :: Int
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -359,4 +360,5 @@ newFetchConfig config = let
         minFetchInterval = Seconds 30
         maxFetchInterval = Seconds 300
         maxFailedBackoffInterval = Seconds $ 30 * 60
+        objectUpdatesThreshold = 1000
     in FetchConfig {..}    

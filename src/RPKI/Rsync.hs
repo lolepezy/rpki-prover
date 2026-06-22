@@ -40,6 +40,7 @@ import           RPKI.Metrics.System
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
+import           RPKI.Fetch.Common
 import           RPKI.Store.Types
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
@@ -85,7 +86,7 @@ runRsyncFetchWorker :: AppContext s
                     -> FetchConfig
                     -> WorldVersion
                     -> RsyncRepository             
-                    -> ValidatorT IO RsyncRepository
+                    -> ValidatorT IO (RsyncRepository, Bool)
 runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion repository = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
@@ -148,21 +149,20 @@ rsyncRpkiObject AppContext{..} fetchConfig uri = do
 
 -- | Process the whole rsync repository, download it, traverse the directory and 
 -- | add all the relevant objects to the storage.
-updateObjectForRsyncRepository :: Storage s => 
-                                  AppContext s
-                               -> FetchConfig 
-                               -> WorldVersion 
-                               -> RsyncRepository 
-                               -> ValidatorT IO RsyncRepository
-updateObjectForRsyncRepository 
+updateForRsyncRepository :: Storage s 
+                        => AppContext s
+                        -> FetchConfig 
+                        -> WorldVersion 
+                        -> RsyncRepository 
+                        -> ValidatorT IO (RsyncRepository, Bool)
+updateForRsyncRepository 
     appContext@AppContext{..} 
     fetchConfig
     worldVersion
     repo@(RsyncRepository (RsyncPublicationPoint uri) _) = 
         
     timedMetric (Proxy :: Proxy RsyncMetric) $ do     
-        let rsyncRoot = configValue $ appContext ^. typed @Config . typed @RsyncConf . typed
-        db <- liftIO $ readTVarIO database        
+        let rsyncRoot = configValue $ appContext ^. typed @Config . typed @RsyncConf . typed        
         destination <- liftIO $ rsyncDestination RsyncDirectory rsyncRoot uri
         let rsync = rsyncProcess config fetchConfig uri destination RsyncDirectory
             
@@ -183,8 +183,9 @@ updateObjectForRsyncRepository
         logInfo logger [i|Finished rsynching #{getURL uri} to #{destination}.|]
         case exitCode of  
             ExitSuccess -> do                 
-                loadRsyncRepository appContext worldVersion uri destination db                             
-                pure repo
+                db <- liftIO $ readTVarIO database
+                hasUpdates <- loadRsyncRepository appContext fetchConfig worldVersion uri destination db
+                pure (repo, hasUpdates)
             ExitFailure errorCode -> do
                 logError logger [i|Rsync process failed: #{rsync} 
                                             with code #{errorCode}, 
@@ -234,17 +235,27 @@ readRsyncProcess logger fetchConfig pc textual = do
 -- | Is not supposed to throw exceptions.
 loadRsyncRepository :: Storage s =>                         
                         AppContext s 
+                    -> FetchConfig
                     -> WorldVersion 
                     -> RsyncURL 
                     -> FilePath 
                     -> DB.DB s 
-                    -> ValidatorT IO ()
-loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =    
-    txFoldPipeline 
-            (2 * cpuParallelism)
-            traverseFS
-            (DB.rwAppTx db)
-            saveStorable   
+                    -> ValidatorT IO Bool
+loadRsyncRepository AppContext{..} fetchConfig worldVersion repositoryUrl rootPath db = do
+     
+    let saveTx getUpdates f = do 
+            DB.rwAppTx db $ \tx -> do
+                f tx 
+                updates <- getUpdates
+                DB.logUpdates tx db worldVersion [ObjectUpdate updates]
+
+    (_, hasUpdates) <- withUpdateAccum (RsyncU repositoryUrl) $ \addObj getUpdates ->
+                            txFoldPipeline 
+                                (2 * cpuParallelism)
+                                traverseFS
+                                (saveTx getUpdates)
+                                (saveStorable addObj)
+    pure hasUpdates
   where        
     cpuParallelism = config ^. typed @Parallelism . #cpuParallelism
 
@@ -302,7 +313,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                                 (ObjectMeta worldVersion type_)
                     )
 
-    saveStorable tx (a, _) = do 
+    saveStorable addObj tx (a, _) = do 
         (r, vs) <- fromTry (UnspecifiedE "Something bad happened in loadRsyncRepository" . U.fmtEx) $ wait a                
         embedState vs
         case r of 
@@ -323,9 +334,10 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                     DB.saveOriginal tx db original hash objectMeta
                     DB.linkObjectToUrl tx db rpkiUrl hash                                  
                 SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do 
-                    DB.saveObject tx db so worldVersion                    
+                    objectKey <- DB.saveObject tx db so worldVersion                    
                     DB.linkObjectToUrl tx db rpkiUrl (getHash object)
                     updateMetric @RsyncMetric @_ (#processed %~ Map.unionWith (+) (Map.singleton (Just type_) 1))
+                    addObj objectKey
                 other -> 
                     logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                    
                   
