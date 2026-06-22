@@ -59,16 +59,16 @@ data ValidationRFC = StrictRFC | ReconsideredRFC
     deriving stock (Show, Eq, Ord, Generic) 
     deriving anyclass (TheBinary, NFData)
 
+data CertType = CACert | EECert | BGPCert
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
 newtype TypedCert c (t :: CertType) = TypedCert c
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving newtype (WithSKI, WithRawResourceCertificate, WithAKI)
 
 class OfCertType c (t :: CertType)    
-
-data CertType = CACert | EECert | BGPCert
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
 
 newtype Hash = Hash BSS.ShortByteString 
     deriving stock (Eq, Ord, Generic)

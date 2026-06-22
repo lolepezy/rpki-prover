@@ -109,7 +109,7 @@ updateRrdpRepository
     
     let fetchNotification eTag_ = do 
             timedMetric' (Proxy :: Proxy RrdpMetric) 
-                (\t -> #downloadTimeMs %~ (<> t)) $
+                (\elapsed -> #downloadTimeMs %~ (<> elapsed)) $
                 fromTry (RrdpE . CantDownloadNotification . U.fmtEx)
                     $ downloadToBS (appContext ^. typed) (getURL repoUri) eTag_
 
@@ -217,7 +217,7 @@ updateRrdpRepository
             
             (rawContent, _, httpStatus', _) <- 
                 timedMetric' (Proxy :: Proxy RrdpMetric) 
-                    (\t -> #downloadTimeMs %~ (<> t)) $ do     
+                    (\elapsed -> #downloadTimeMs %~ (<> elapsed)) $ do     
                     fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
                         downloadHashedBS (appContext ^. typed @Config) uri Nothing expectedHash                                    
                             (\actualHash -> 
@@ -228,7 +228,7 @@ updateRrdpRepository
             updateMetric @RrdpMetric @_ (#lastHttpStatus .~ httpStatus') 
 
             addedObjects <- timedMetric' (Proxy :: Proxy RrdpMetric) 
-                    (\t -> #saveTimeMs %~ (<> t))
+                    (\elapsed -> #saveTimeMs %~ (<> elapsed))
                     (saveSnapshot appContext worldVersion repoUri fetchConfig notification rawContent)                                    
 
             rrdpMeta' <- makeRrdpMeta rrdpMeta
@@ -259,7 +259,7 @@ updateRrdpRepository
         let maxDeltaDownloadSimultaneously = 8                        
 
         anyUpdates <- timedMetric' (Proxy :: Proxy RrdpMetric) 
-                (\t -> #saveTimeMs %~ (<> t)) $ 
+                (\elapsed -> #saveTimeMs %~ (<> elapsed)) $ 
                 foldPipeline
                     maxDeltaDownloadSimultaneously
                     (S.each $ NonEmpty.toList sortedDeltas)

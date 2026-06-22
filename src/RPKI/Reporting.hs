@@ -433,6 +433,23 @@ instance Monoid ValidatedBy where
 instance Semigroup ValidatedBy where
     (<>) = min
 
+data DiffMetric = DiffMetric {
+        vrps  :: Count,
+        certs :: Count,
+        mfts  :: Count,
+        crls  :: Count,    
+        roas  :: Count,    
+        aspas :: Count,
+        bgps  :: Count,
+        spls  :: Count,    
+        gbrs  :: Count
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+    deriving Semigroup via GenericSemigroup DiffMetric   
+    deriving Monoid    via GenericMonoid DiffMetric
+
+
 data ValidationMetric = ValidationMetric {
         vrpCounter      :: Count,        
         uniqueVrpNumber :: Count,        
@@ -482,6 +499,7 @@ data Metrics = Metrics {
         rsyncMetrics      :: MetricMap RsyncMetric,
         rrdpMetrics       :: MetricMap RrdpMetric,
         validationMetrics :: MetricMap ValidationMetric,
+        diffMetrics       :: MetricMap DiffMetric,
         vrpCounts         :: VrpCounts
     }
     deriving stock (Show, Eq, Ord, Generic)
