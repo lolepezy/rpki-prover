@@ -100,16 +100,7 @@ The idea behind shortcuts is as follows:
  Validation is designed to be non-interfering with other processes, so it's safe to run 
  concurrently with fetching or cleanup operations (both of which are atomic).
 
--}
-
-data PayloadBuilder = PayloadBuilder {
-        vrps     :: IORef [T2 (Vector Vrp) ObjectKey],        
-        spls     :: IORef [SplPayload],        
-        aspas    :: IORef [Aspa],
-        gbrs     :: IORef [T2 Hash Gbr],
-        bgpCerts :: IORef [BGPSecPayload]
-    }
-    deriving stock (Generic)        
+-}     
 
 newPayloadBuilder :: IO PayloadBuilder 
 newPayloadBuilder = PayloadBuilder <$> 
@@ -119,63 +110,6 @@ newPayloadBuilder = PayloadBuilder <$>
             newIORef mempty <*>
             newIORef mempty
     
-
--- Auxiliarry structure used in top-down validation. It has a lot of global variables 
--- but it's lifetime is limited to one top-down validation run.
-data TopDownContext = TopDownContext {
-        verifiedResources       :: Maybe (VerifiedRS PrefixesAndAsns),
-        taName                  :: TaName,
-        allTas                  :: AllTasTopDownContext,
-        currentPathDepth        :: Int,
-        interruptedByLimit      :: TVar Limited,
-        payloadBuilder          :: PayloadBuilder,
-        overclaimingHappened    :: Bool,
-        fetcheables             :: TVar Fetcheables,
-        earliestNotValidAfter   :: TVar EarliestToExpire
-    }
-    deriving stock (Generic)
-
-
-data AllTasTopDownContext = AllTasTopDownContext {
-        now                  :: Now,
-        worldVersion         :: WorldVersion,
-        visitedKeys          :: TVar (Set ObjectKey),        
-        publicationPoints    :: PublicationPoints,
-        shortcutQueue        :: ClosableQueue MftShortcutOp,
-        topDownCounters      :: TopDownCounters IORef        
-    }
-    deriving stock (Generic)
-
-
-data TopDownCounters f = TopDownCounters {
-        originalCa   :: f Int,
-        shortcutCa   :: f Int,
-        originalMft  :: f Int,
-        shortcutMft  :: f Int,
-        originalCrl  :: f Int,
-        shortcutCrl  :: f Int,        
-        originalRoa  :: f Int,
-        originalSpl  :: f Int,
-        originalAspa :: f Int,        
-        shortcutRoa  :: f Int,
-        shortcutSpl  :: f Int,
-        shortcutAspa :: f Int,        
-        shortcutTroubled    :: f Int,
-        newChildren         :: f Int,
-        overlappingChildren :: f Int,
-        updateMftMeta       :: f Int,
-        updateMftChildren   :: f Int,
-        readOriginal :: f Int,
-        readParsed   :: f Int
-    }
-    deriving stock (Generic)
-    deriving (FunctorB, TraversableB, ApplicativeB, ConstraintsB)
-
-deriving instance AllBF Show f TopDownCounters => Show (TopDownCounters f)
-
-data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
-    deriving stock (Show, Eq, Ord, Generic)
-
 data TopDownResult = TopDownResult {
         payloads               :: Payloads,
         roas                   :: Roas,
@@ -586,7 +520,7 @@ validateCaNoFetch
                 oneMoreCert
                 join $! nextAction $ toAKI $ getSKI c
         CaShort c -> 
-            vFocusOn ObjectFocus (c ^. #key) $ do            
+            vFocusOn ObjectFocus (c ^. #key) $ do
                 increment $ topDownCounters ^. #shortcutCa 
                 markAsUsed topDownContext (c ^. #key) 
                 validateLocationForShortcut (c ^. #key)
@@ -596,7 +530,7 @@ validateCaNoFetch
                 join $! nextAction $ toAKI (c ^. #ski)
   where    
     validationAlgorithm = config ^. typed @ValidationConfig . typed @ValidationAlgorithm
-    validationRFC = config ^. typed @ValidationConfig . typed @ValidationRFC
+    validationRFC       = config ^. typed @ValidationConfig . typed @ValidationRFC
 
     nextAction =
         case validationAlgorithm of 
@@ -902,7 +836,7 @@ validateCaNoFetch
     checkForRevokedChildren mftShortcut (Keyed (Located _ mft) _) children validCrl = do        
         when (isRevoked (getSerial mft) validCrl) $
             vWarn RevokedResourceCertificate   
-        forM_ children $ \(T3 _ _ childKey) ->
+        for_ children $ \(T3 _ _ childKey) ->
             for_ (Map.lookup childKey (mftShortcut ^. #nonCrlEntries)) $ \MftEntry {..} ->
                 for_ (getMftChildSerial child) $ \childSerial ->
                     when (isRevoked childSerial validCrl) $
@@ -1648,14 +1582,6 @@ applyValidationSideEffects
     logDebug logger [i|Marked #{visitedSize} objects as used, took #{elapsed}ms.|]
 
 
--- This is to be able to print all counters as Int, not Identity Int
-newtype IdenticalShow a = IdenticalShow a
-    deriving stock (Generic)
-    deriving (Functor)
-
-instance Show a => Show (IdenticalShow a) where
-    show (IdenticalShow a) = show a
-
 reportCounters :: AppContext s -> TopDownCounters IORef -> IO ()
 reportCounters AppContext {..} counters = do
     c <- btraverse (fmap IdenticalShow . readIORef) counters
@@ -1665,14 +1591,14 @@ reportCounters AppContext {..} counters = do
 updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
-        let !raw = Verbatim $ toStorable $ Compressed $ DB.MftShortcutMeta {..}
+        let !raw = Verbatim $ toStorable $ Compressed $ MftShortcutMeta {..}
         atomically $ writeCQueue shortcutQueue $ UpdateMftShortcut aki raw  
 
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         -- Pre-serialise the object so that all the heavy-lifting happens in the thread 
-        let !raw = Verbatim $ toStorable $ Compressed DB.MftShortcutChildren {..}        
+        let !raw = Verbatim $ toStorable $ Compressed MftShortcutChildren {..}        
         atomically $ writeCQueue shortcutQueue $ UpdateMftShortcutChildren aki raw
 
 deleteMftShortcut :: MonadIO m => TopDownContext -> AKI -> m ()
@@ -1690,10 +1616,6 @@ storeShortcuts AppContext {..} shortcutQueue = liftIO $
                 UpdateMftShortcutChildren aki s -> DB.saveMftShorcutChildren tx db aki s
                 DeleteMftShortcut aki           -> DB.deleteMftShortcut tx db aki
                  
-
-data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta))
-                   | UpdateMftShortcutChildren AKI (Verbatim (Compressed DB.MftShortcutChildren))            
-                   | DeleteMftShortcut AKI            
 
 -- Do whatever is required to notify other subsystems that the object was touched 
 -- during top-down validation. It doesn't mean that the object is valid, just that 

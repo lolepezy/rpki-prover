@@ -32,7 +32,7 @@ import           RPKI.Domain
 import           RPKI.TAL
 import           RPKI.Logging
 import           RPKI.Reporting
-import           RPKI.Util (ifJustM)
+import           RPKI.Util (ifJustM, increment)
 import           RPKI.Store.Database (DB)
 import qualified RPKI.Store.Database as DB
 import           RPKI.Fetch.Common
@@ -176,10 +176,11 @@ Ideas:
 
 validateUpdates :: Storage s 
                 => AppContext s  
+                -> TopDownContext 
                 -> WorldVersion
                 -> [Update] 
                 -> IO ()
-validateUpdates AppContext {..} worldVersion updates = do 
+validateUpdates appContext@AppContext {..} topDownContext worldVersion updates = do 
     db <- readTVarIO database
 
     let tals = Set.fromList [ tal | TaUpdate tal <- updates ]
@@ -207,9 +208,9 @@ validateUpdates AppContext {..} worldVersion updates = do
 
     changes <- newTVarIO []
 
-    let taValidations = flip map taCerts $ \(certKey, cert) -> 
+    let taValidations = flip map taCerts $ \(certKey, _) -> 
             runValidatorT (newScopes' ObjectFocus (coerce certKey)) $ 
-                validateCAFrom db certKey 
+                validateCAFrom appContext topDownContext certKey 
                     (\change -> modifyTVar' changes $ \c -> change : c)
                     -- For TA validation, look at all objects
                     (\_ -> True)
@@ -220,7 +221,7 @@ validateUpdates AppContext {..} worldVersion updates = do
 
     let caValidations = flip map (Set.toList $ starts ^. #tops) $ \certKey -> 
             runValidatorT (newScopes' ObjectFocus (coerce certKey)) $ 
-                validateCAFrom db certKey 
+                validateCAFrom appContext topDownContext certKey 
                     (\change -> modifyTVar' changes $ \c -> change : c)
                     (\object -> Set.member (coerce object) (starts ^. #paths))        
 
@@ -243,9 +244,14 @@ validateUpdates AppContext {..} worldVersion updates = do
     - Look at the KI -> KIMeta and update it if needed after validation for CA succeeds
     - Generate "Delete Payload" for payloads corresponding to the removed MFT children
 -} 
-validateCA :: Storage s => DB s -> CertKey -> (Change Payload -> STM ()) -> ValidatorT IO ()
-validateCA db certKey onPayload = do
-    validateCAFrom db certKey onPayload (const True)
+validateCA :: Storage s 
+            => AppContext s 
+            -> TopDownContext 
+            -> CertKey 
+            -> (Change Payload -> STM ()) 
+            -> ValidatorT IO ()
+validateCA appContext topDownContext certKey onPayload = do
+    validateCAFrom appContext topDownContext certKey onPayload (const True)
 
 {- 
     Filter will be used to 
@@ -253,28 +259,43 @@ validateCA db certKey onPayload = do
       * Pick up payloads (or their shortcuts) that are in the set up updates
 -}   
 validateCAFrom :: Storage s 
-                    => DB s 
-                    -> CertKey 
-                    -> (Change Payload -> STM ()) 
-                    -> (ObjectKey -> Bool) 
-                    -> ValidatorT IO ()
-validateCAFrom db certKey onPayload objectFilter = do
+                => AppContext s 
+                -> TopDownContext 
+                -> CertKey 
+                -> (Change Payload -> STM ()) 
+                -> (ObjectKey -> Bool) 
+                -> ValidatorT IO ()
+validateCAFrom AppContext {..} 
+    topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
+    certKey onPayload relevant = do
+    db <- liftIO $ readTVarIO database
     let DB.IndexStore {..} = db ^. #objectStore . #indexStore
+
+    -- TODO ADd processing of limits similar to TopDown.validateCa
+
     caShort <- liftIO $ roTx db $ \tx -> M.get tx caShortcuts certKey
     case caShort of
         Nothing -> do
             -- no shortcut, full validation needed
-            z <- liftIO $ roTx db $ \tx -> DB.getObjectByKey tx db (coerce certKey)
+            z <- liftIO $ roTx db $ \tx -> DB.getLocatedByKey tx db (coerce certKey)
             case z of 
-                Just (CerRO c) -> do
-                    -- validate fully
-                    pure ()
+                Just located@Located { payload = CerRO c, .. } -> do
+                    vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
+                        increment $ topDownCounters ^. #originalCa
+                        -- validateLocationForShortcut (c ^. #key)                    
+                        pure ()
 
                 _Z -> do 
                     -- complain and bail out, it's an integrity error
                     pure ()
 
         Just ca@CaShortcut {..} -> do
+            -- validate the shortcut
+            vFocusOn ObjectFocus (ca ^. #key) $ do
+                pure ()
+
+        Just _q -> do            
+            -- integrity error, shortcut is not a CA shortcut, complain and bail out
             pure ()
 
     -- get MFT shortcut from cache, do the dance with comparing MFT to its shortcut

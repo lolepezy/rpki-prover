@@ -4,22 +4,30 @@
 
 module RPKI.Validation.Types where
 
+import           Control.Concurrent.STM
 import           Data.Aeson.Types
 import qualified Data.Map.Strict             as Map
+import           Data.Set                    (Set)
 import           Data.Text                   (Text)
 import           Data.Vector                 (Vector)
 import           Data.Tuple.Strict
+import           Data.IORef
 import           GHC.Generics
+
+import           Barbies
 
 import           Data.Proxy
 import           Data.Swagger hiding (url)
 
 import           RPKI.Orphans.Swagger
+import           RPKI.AppTypes
 import           RPKI.Time
 import           RPKI.Domain
+import           RPKI.Parallel
 import           RPKI.Repository
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Serialisation
+import           RPKI.Store.Base.Storable
 
 
 -- It is to simplify the definition of Payload handlers        
@@ -142,6 +150,104 @@ data GbrShortcut = GbrShortcut {
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
+
+
+
+data PayloadBuilder = PayloadBuilder {
+        vrps     :: IORef [T2 (Vector Vrp) ObjectKey],        
+        spls     :: IORef [SplPayload],        
+        aspas    :: IORef [Aspa],
+        gbrs     :: IORef [T2 Hash Gbr],
+        bgpCerts :: IORef [BGPSecPayload]
+    }
+    deriving stock (Generic)   
+
+-- Auxiliarry structure used in top-down validation. It has a lot of global variables 
+-- but it's lifetime is limited to one top-down validation run.
+data TopDownContext = TopDownContext {
+        verifiedResources       :: Maybe (VerifiedRS PrefixesAndAsns),
+        taName                  :: TaName,
+        allTas                  :: AllTasTopDownContext,
+        currentPathDepth        :: Int,
+        interruptedByLimit      :: TVar Limited,
+        payloadBuilder          :: PayloadBuilder,
+        overclaimingHappened    :: Bool,
+        fetcheables             :: TVar Fetcheables,
+        earliestNotValidAfter   :: TVar EarliestToExpire
+    }
+    deriving stock (Generic)
+
+
+data AllTasTopDownContext = AllTasTopDownContext {
+        now                  :: Now,
+        worldVersion         :: WorldVersion,
+        visitedKeys          :: TVar (Set ObjectKey),        
+        publicationPoints    :: PublicationPoints,
+        shortcutQueue        :: ClosableQueue MftShortcutOp,
+        topDownCounters      :: TopDownCounters IORef        
+    }
+    deriving stock (Generic)
+
+
+data TopDownCounters f = TopDownCounters {
+        originalCa   :: f Int,
+        shortcutCa   :: f Int,
+        originalMft  :: f Int,
+        shortcutMft  :: f Int,
+        originalCrl  :: f Int,
+        shortcutCrl  :: f Int,        
+        originalRoa  :: f Int,
+        originalSpl  :: f Int,
+        originalAspa :: f Int,        
+        shortcutRoa  :: f Int,
+        shortcutSpl  :: f Int,
+        shortcutAspa :: f Int,        
+        shortcutTroubled    :: f Int,
+        newChildren         :: f Int,
+        overlappingChildren :: f Int,
+        updateMftMeta       :: f Int,
+        updateMftChildren   :: f Int,
+        readOriginal :: f Int,
+        readParsed   :: f Int
+    }
+    deriving stock (Generic)
+    deriving (FunctorB, TraversableB, ApplicativeB, ConstraintsB)
+
+deriving instance AllBF Show f TopDownCounters => Show (TopDownCounters f)
+
+data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
+    deriving stock (Show, Eq, Ord, Generic)
+
+-- This is to be able to print all counters as Int, not Identity Int
+newtype IdenticalShow a = IdenticalShow a
+    deriving stock (Generic)
+    deriving (Functor)
+
+instance Show a => Show (IdenticalShow a) where
+    show (IdenticalShow a) = show a
+
+
+-- Some DTOs for storing MFT shortcuts
+data MftShortcutMeta = MftShortcutMeta {
+        key            :: ObjectKey,        
+        notValidBefore :: Instant,
+        notValidAfter  :: Instant,        
+        serial         :: Serial,
+        manifestNumber :: Serial,
+        crlShortcut    :: CrlShortcut
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+newtype MftShortcutChildren = MftShortcutChildren {
+        nonCrlEntries :: Map.Map ObjectKey MftEntry
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed MftShortcutMeta))
+                   | UpdateMftShortcutChildren AKI (Verbatim (Compressed MftShortcutChildren))            
+                   | DeleteMftShortcut AKI            
 
 
 instance {-# OVERLAPPING #-} WithValidityPeriod CaShortcut where

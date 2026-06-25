@@ -256,25 +256,6 @@ instance Storage s => WithStorage s (IndexStore s) where
     storage IndexStore {..} = storage kiMetas
 
 
--- Some DTOs for storing MFT shortcuts
-data MftShortcutMeta = MftShortcutMeta {
-        key            :: ObjectKey,        
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant,        
-        serial         :: Serial,
-        manifestNumber :: Serial,
-        crlShortcut    :: CrlShortcut
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-newtype MftShortcutChildren = MftShortcutChildren {
-        nonCrlEntries :: Map.Map ObjectKey MftEntry
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-
 data MftShortcutStore s = MftShortcutStore {
         mftMetas    :: SMap "mfts-shortcut-meta" s AKI (Verbatim (Compressed MftShortcutMeta)),
         mftChildren :: SMap "mfts-shortcut-children" s AKI (Verbatim (Compressed MftShortcutChildren))
