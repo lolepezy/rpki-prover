@@ -249,7 +249,7 @@ loadRsyncRepository AppContext{..} fetchConfig worldVersion repositoryUrl rootPa
                 updates <- getUpdates
                 DB.logUpdates tx db worldVersion [ObjectUpdate updates]
 
-    (_, hasUpdates) <- withUpdateAccum (RsyncU repositoryUrl) $ \addObj getUpdates ->
+    (_, hasUpdates) <- withUpdateAccum $ \addObj getUpdates ->
                             txFoldPipeline 
                                 (2 * cpuParallelism)
                                 traverseFS

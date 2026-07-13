@@ -451,7 +451,7 @@ saveSnapshot
                 updates <- getUpdates
                 DB.logUpdates tx db worldVersion [ObjectUpdate updates]
 
-    (_, hasUpdates) <- withUpdateAccum (RrdpU repoUri) $ \addObj getUpdates ->
+    (_, hasUpdates) <- withUpdateAccum $ \addObj getUpdates ->
                         txFoldPipeline 
                             cpuParallelism
                             (S.mapM (newStorable db) $ S.each snapshotItems)
@@ -602,7 +602,7 @@ saveDelta appContext worldVersion fetchConfig repoUri notification expectedSeria
                 updates <- getUpdates
                 DB.logUpdates tx db worldVersion [ObjectUpdate updates]
 
-    (_, hasUpdates) <- withUpdateAccum (RrdpU repoUri) $ \addObj getUpdates ->
+    (_, hasUpdates) <- withUpdateAccum $ \addObj getUpdates ->
                             txFoldPipeline
                                 cpuParallelism
                                 (S.mapM newStorable $ S.each deltaItems)

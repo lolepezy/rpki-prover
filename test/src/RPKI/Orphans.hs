@@ -590,6 +590,10 @@ instance Arbitrary Metrics where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary DiffMetric where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary RsyncMetric where
     arbitrary = genericArbitrary
     shrink = genericShrink

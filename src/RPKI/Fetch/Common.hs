@@ -92,10 +92,9 @@ newtype AddedObject = AddedObject ObjectKey
 
 
 withUpdateAccum :: MonadIO m 
-                => RpkiURL 
-                -> ((ObjectKey -> m ()) -> (m (Vector AddedObject)) -> m a)
+                => ((ObjectKey -> m ()) -> (m (Vector AddedObject)) -> m a)
                 -> m (a, Bool)
-withUpdateAccum url action = do
+withUpdateAccum action = do
     buffer <- liftIO $ newIORef []
     count  <- liftIO $ newIORef (0 :: Int)
 

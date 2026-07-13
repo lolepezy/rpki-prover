@@ -364,7 +364,7 @@ expireObjects db now = do
 
 
 data StartCas k = StartCas {
-        tops :: Set.Set k, 
+        tops  :: Set.Set k, 
         paths :: Set.Set k
     }
     deriving stock (Show, Generic)
@@ -411,9 +411,9 @@ findStartCasGen readFromCache accept akis = do
 
 
 findPathUp readFromCache accept (ki, kiMeta) startCas = 
-    go readFromCache accept (ki, kiMeta) startCas mempty mempty 
+    go readFromCache accept (ki, kiMeta) mempty mempty 
   where 
-    go readFromCache accept (ki, kiMeta) startCas paths ignored = do
+    go readFromCache accept (ki, kiMeta) paths ignored = do
         let aki = kiMeta ^. #aki
         let certKey = kiMeta ^. #caCertificate
 
@@ -435,8 +435,7 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
                                     then ignored <> paths'
                                     else ignored
 
-                        go readFromCache accept 
-                            (aki, parent) startCas paths' ignored'
+                        go readFromCache accept (aki, parent) paths' ignored'
 
                     | otherwise -> 
                         -- Parent that is not acceptable (expired or not valid yet)

@@ -79,17 +79,17 @@ shouldFindStartCasSimple = do
     let testIt = findStartCasGen (\ki -> pure $ Map.lookup ki cache) (\_ _ -> True)
 
     do 
-        (startCas, paths) <- testIt ["a"]
+        StartCas { tops = startCas, paths } <- testIt ["a"]
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3]) paths
         HU.assertEqual "CAs to validate" (Set.fromList [1]) startCas
 
     do
-        (startCas, paths) <- testIt ["a", "b"]
+        StartCas { tops = startCas, paths } <- testIt ["a", "b"]
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3]) paths
         HU.assertEqual "CAs to validate" (Set.fromList [2]) startCas        
 
     do
-        (startCas, paths) <- testIt ["a", "b", "parent"]
+        StartCas { tops = startCas, paths } <- testIt ["a", "b", "parent"]
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3]) paths
         HU.assertEqual "CAs to validate" (Set.fromList [3]) startCas                    
 
@@ -104,22 +104,22 @@ shouldFindStartCasMultipleBranches = do
     let testIt = findStartCasGen (\ki -> pure $ Map.lookup ki cache) (\_ _ -> True)
 
     do 
-        (startCas, paths) <- testIt ["a"]
+        StartCas { tops = startCas, paths } <- testIt ["a"]
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3]) paths
         HU.assertEqual "CAs to validate" (Set.fromList [1]) startCas
 
     do
-        (startCas, paths) <- testIt ["a", "b"]
+        StartCas { tops = startCas, paths } <- testIt ["a", "b"]
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3]) paths
         HU.assertEqual "CAs to validate" (Set.fromList [2]) startCas        
 
     do
-        (startCas, paths) <- testIt ["a", "w"]        
+        StartCas { tops = startCas, paths } <- testIt ["a", "w"]        
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3, 30, 100]) paths
         HU.assertEqual "CAs to validate" (Set.fromList [1, 100]) startCas  
 
     do        
-        (startCas, paths) <- testIt ["x", "z"]        
+        StartCas { tops = startCas, paths } <- testIt ["x", "z"]        
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList [10, 20, 30, 3]) paths
         HU.assertEqual "CAs to validate" (Set.fromList [30]) startCas          
         
@@ -130,13 +130,13 @@ shouldFindStartCasExpired = do
 
     do 
         let testIt = findStartCasGen (\ki -> pure $ Map.lookup ki cache) (\ki _ -> ki /= "a")
-        (startCas, paths) <- testIt ["a"]
+        StartCas { tops = startCas, paths } <- testIt ["a"]
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList []) paths
         HU.assertEqual "CAs to validate" (Set.fromList []) startCas
 
     do 
         let testIt = findStartCasGen (\ki -> pure $ Map.lookup ki cache) (\ki _ -> ki /= "b")
-        (startCas, paths) <- testIt ["a"]
+        StartCas { tops = startCas, paths } <- testIt ["a"]
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList []) paths
         HU.assertEqual "CAs to validate" (Set.fromList []) startCas
 
