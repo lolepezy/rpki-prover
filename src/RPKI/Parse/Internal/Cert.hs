@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes       #-}
 
 module RPKI.Parse.Internal.Cert where
 
@@ -7,7 +6,6 @@ import Control.Monad
 
 import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Lazy       as LBS
-import qualified Data.ByteString.Base64     as B64
 
 import           Data.Foldable
 import           Data.String.Interpolate.IsString
@@ -72,7 +70,7 @@ parseResources x509cert = do
 -- | https://tools.ietf.org/html/rfc5280#page-16
 --
 getSubjectPublicKeyInfo :: Certificate -> SPKI
-getSubjectPublicKeyInfo cert = SPKI $ EncodedBase64 $ B64.encodeBase64' $ 
+getSubjectPublicKeyInfo cert = SPKI $ U.encodeBase64 $ DecodedBase64 $
   encodeASN1' DER $ (toASN1 $ certPubKey cert) []
 
 getCertificateType :: [ExtensionRaw] -> PureValidatorT CertType

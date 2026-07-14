@@ -1,8 +1,5 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -22,6 +19,7 @@ import Data.Maybe (fromMaybe)
 import Data.Monoid.Generic
 
 import RPKI.Domain
+import RPKI.AppTypes
 import RPKI.Store.Base.Serialisation
 
 newtype Storable = Storable { unStorable :: BS.ByteString }    

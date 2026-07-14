@@ -1,8 +1,4 @@
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module RPKI.Store.Sequence where
     
@@ -21,6 +17,9 @@ newtype SequenceValue = SequenceValue { unSequenceValue :: Int64 }
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (TheBinary)
 
+nextS :: SequenceValue -> SequenceValue
+nextS (SequenceValue n) = SequenceValue (n + 1)
+
 type SequenceMap s = SMap "sequences" s Text SequenceValue
 
 data Sequence s = Sequence {
@@ -36,6 +35,6 @@ nextValue :: Storage s =>
             Tx s 'RW -> Sequence s -> IO SequenceValue
 nextValue tx Sequence {..} = do    
     current <- M.get tx sequenceMap sequenceName
-    let next = SequenceValue $ maybe 1 (\(SequenceValue n) -> n + 1) current
+    let next = maybe (SequenceValue 1) nextS current
     M.put tx sequenceMap sequenceName next
     pure next

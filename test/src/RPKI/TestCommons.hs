@@ -1,6 +1,7 @@
 {-# LANGUAGE RecordWildCards  #-}
 {-# LANGUAGE QuasiQuotes      #-}
 {-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.TestCommons where
 
@@ -13,10 +14,11 @@ import           System.Directory
 import           Data.String.Interpolate.IsString
 
 import RPKI.Config
-import RPKI.Store.Base.Storage (Storage)
 import RPKI.AppState
 import RPKI.AppContext
 import RPKI.Logging
+import RPKI.Store.Base.Storage (Storage)
+import RPKI.Store.Base.LMDB
 import qualified RPKI.Store.MakeLmdb as Lmdb
 import RPKI.UniqueId
 
@@ -26,8 +28,11 @@ testConfig = defaultConfig
 
 
 withTestContext :: (forall s . Storage s => AppContext s -> IO b) -> IO b
-withTestContext f = do
-    withLogger (makeLogConfig DebugL MainLog) $ \logger -> do
+withTestContext f = withLmdbTestContext f
+
+withLmdbTestContext :: (AppContext LmdbStorage -> IO b) -> IO b
+withLmdbTestContext f = do
+    withLogger (newLogConfig DebugL MainLog) $ \logger -> do
         dir <- createTempDirectory "/tmp" "rpki-prover-test"
 
         logDebug logger [i|Creating temporary directory #{dir}.|]
@@ -48,11 +53,12 @@ withTestContext f = do
 
         appState <- newAppState
         database <- newTVarIO =<< makeLmdb logger cacheDir
+
         let executableVersion = thisExecutableVersion
-        f AppContext {             
-                ..
-            }        
+        f AppContext {..}
   where
     makeLmdb logger cachedDir = do                 
         e <- Lmdb.mkLmdb cachedDir testConfig
-        fst <$> Lmdb.createDatabase e logger Lmdb.DontCheckVersion        
+        fst <$> Lmdb.createDatabase e logger testConfig Lmdb.DontCheckVersion
+
+

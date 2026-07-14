@@ -1,27 +1,22 @@
-{-# LANGUAGE DerivingStrategies   #-}
-{-# LANGUAGE DeriveAnyClass       #-}
-{-# LANGUAGE OverloadedLabels     #-}
-{-# LANGUAGE QuasiQuotes          #-}
-{-# LANGUAGE RecordWildCards      #-}
-{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.Worker where
 
 import           Control.Exception.Lifted
+import           Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 
-import           Control.Lens ((^.))
+import           Control.Lens
 
 import           Conduit
-import           Data.Text
+import           Data.Text (Text, unpack)
 import qualified Data.ByteString.Lazy       as LBS
 import qualified Data.Map.Strict            as Map
 
 import           Data.String.Interpolate.IsString
-import           Data.Hourglass
 import           Data.Conduit.Process.Typed
 
 import           GHC.Generics
@@ -71,7 +66,7 @@ newtype WorkerId = WorkerId Text
     deriving anyclass (TheBinary)
 
 instance Show WorkerId where
-    show (WorkerId w) = show w
+    show (WorkerId w) = unpack w
 
 data WorkerParams = RrdpFetchParams { 
                 scopes         :: Scopes, 
@@ -95,10 +90,6 @@ data WorkerParams = RrdpFetchParams {
             CacheCleanupParams { 
                 worldVersion :: WorldVersion
             }
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
-
-newtype Timebox = Timebox { unTimebox :: Seconds }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -151,8 +142,12 @@ newtype CacheCleanupResult = CacheCleanupResult DB.CleanUpResult
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)              
 
+newtype ErrorResult = ErrorResult Text
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)              
+
 data WorkerResult r = WorkerResult {
-        payload   :: r,        
+        payload   :: Either ErrorResult r,        
         cpuTime   :: CPUTime,
         clockTime :: TimeMs,
         maxMemory :: MaxMemory
@@ -164,45 +159,46 @@ data WorkerResult r = WorkerResult {
 -- and do the actual work.
 -- 
 executeWork :: WorkerInput 
-            -> (ExitCode -> IO ())
+            -> (ExitCode -> IO ()) -- ^ How to exit the worker process.
             -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                            
             -> IO ()
 executeWork input exitWith_ actualWork = 
     -- Check if version of the executable has changed compared to the parent.
-    -- If that's the case, bail out, it's likely we can do more harm then good
+    -- If that's the case, it usually means we are in the middle of an upgrade. 
+    -- In this case bail out, it's likely we can do more harm then good
     if input ^. #parentExecutableVersion /= thisExecutableVersion
         then 
             exitWith_ replacedExecutableExitCode
         else do 
             exitCode <- newEmptyTMVarIO            
-            let done = atomically . putTMVar exitCode 
+            let done ec = atomically $ void $ tryPutTMVar exitCode ec
 
             mapM_ (\w -> forkFinally w (const $ pure ())) [
                     (actualWork input writeWorkerOutput >> done ExitSuccess) 
                         `onException` 
-                    done exceptionExitCode,
+                        done exceptionExitCode,
                     dieIfParentDies done,
                     dieOfTiming done
                 ]
                 
             exitWith_ =<< atomically (takeTMVar exitCode)
-  where        
-    whicheverHappensFirst a b = either id id <$> race a b
-
+  where            
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
     -- there's no point continuing.
-    dieIfParentDies done = do 
-        parentId <- getParentProcessID                    
-        if parentId /= input ^. #initialParentId
-            then done parentDiedExitCode            
-            else threadDelay 500_000 >> dieIfParentDies done
+    dieIfParentDies done = forever $ do
+        threadDelay 500_000
+        parentId <- getParentProcessID
+        when (parentId /= input ^. #initialParentId) $
+            done parentDiedExitCode
 
     -- exit either because the time is up or too much CPU is spent
     dieOfTiming done = 
         case input ^. #cpuLimit of
             Nothing       -> dieAfterTimeout done
-            Just cpuLimit -> whicheverHappensFirst (dieAfterTimeout done) (dieOutOfCpuTime cpuLimit done)
+            Just cpuLimit -> either id id <$> race 
+                                (dieAfterTimeout done) 
+                                (dieOutOfCpuTime cpuLimit done)
 
     -- Time bomb. Wait for the certain timeout and then exit.
     dieAfterTimeout done = do
@@ -211,19 +207,19 @@ executeWork input exitWith_ actualWork =
         done timeoutExitCode
 
     -- Exit if the worker consumed too much CPU time
-    dieOutOfCpuTime cpuLimit done = go
+    dieOutOfCpuTime cpuLimit done = loop
       where
-        go = do 
+        loop = do 
             cpuTime <- getCpuTime
             if cpuTime > cpuLimit 
                 then done outOfCpuTimeExitCode
-                else threadDelay 1_000_000 >> go
+                else threadDelay 1_000_000 >> loop
 
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
 readWorkerInput = liftIO $ deserialise_ . LBS.toStrict <$> LBS.hGetContents stdin
 
-execWithStats :: MonadIO m => m r -> m (WorkerResult r)
+execWithStats :: MonadIO m => m (Either ErrorResult r) -> m (WorkerResult r)
 execWithStats f = do        
     (payload, clockTime) <- timedMS f
     (cpuTime, maxMemory) <- processStat    
@@ -250,10 +246,10 @@ rtsA m = "-A" <> m
 rtsAL m = "-AL" <> m
 
 rtsN :: Int -> String
-rtsN n = "-N" <> show n
+rtsN n = "-N" <> Prelude.show n
 
 rtsMemValue :: Int -> String
-rtsMemValue mb = show mb <> "m"
+rtsMemValue mb = Prelude.show mb <> "m"
 
 -- Don't do idle GC, it only spins the CPU without any purpose
 defaultRts :: [String]
@@ -269,8 +265,6 @@ replacedExecutableExitCode = ExitFailure 123
 outOfMemoryExitCode  = ExitFailure 251
 exitKillByTypedProcess = ExitFailure (-2)
 
-workerIdStr :: WorkerId -> String
-workerIdStr (WorkerId w) = unpack w
 
 -- Main entry point to start a worker
 -- 
@@ -278,8 +272,9 @@ runWorker :: (TheBinary r, Show r)
             => AppLogger 
             -> WorkerInput            
             -> [String] 
+            -> WorkerInfo 
             -> ValidatorT IO r
-runWorker logger workerInput extraCli = do
+runWorker logger workerInput extraCli workerInfo = do
     let executableToRun = configValue $ workerInput ^. #config . #programBinaryPath
     let worker = 
             setStdin (byteStringInput $ LBS.fromStrict $ serialise_ workerInput) $             
@@ -299,14 +294,24 @@ runWorker logger workerInput extraCli = do
     timeout = unTimebox $ workerInput ^. #workerTimeout
     workerId = workerInput ^. #workerId
 
-    waitForProcess conf f = bracket
-        (startProcess conf)
-        stopProcess
-        (\p -> (,) <$> f p <*> waitExitCode p) 
+    waitForProcess conf f = bracket start stop exec
+      where
+        start = do 
+            p <- startProcess conf
+            mpid <- getPid p
+            forM_ mpid $ \pid -> 
+                registerWorker logger $ workerInfo & #workerPid .~ pid
+            pure (mpid, p)           
+
+        stop (mpid, p) = do 
+            stopProcess p
+            forM_ mpid (deregisterWorker logger)
+
+        exec (_, p) = (,) <$> f p <*> waitExitCode p        
 
     runIt workerConf = do   
         ((_, workerStdout), exitCode) <- 
-            liftIO $ waitForProcess workerConf $ \p -> 
+            liftIO $ waitForProcess workerConf $ \p ->
                 concurrently 
                     (runConduitRes $ getStderr p .| sinkLog logger)
                     (atomically $ getStdout p)
@@ -336,7 +341,7 @@ runWorker logger workerInput extraCli = do
                 | exit == replacedExecutableExitCode -> do                     
                     let message = [i|Worker #{workerId} detected that `rpki-prover` binary is different and exited for good.|]
                     logError logger message                    
-                    appError $ InternalE $ WorkerDetectedDifferentExecutable message
+                    appError $ InternalE $ WorkerDetectedDifferentExecutable message                
                 | exit == exitKillByTypedProcess -> do
                     -- 
                     -- This is a hack to work around a problem in `readProcess`:

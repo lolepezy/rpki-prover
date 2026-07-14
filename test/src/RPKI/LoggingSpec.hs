@@ -1,5 +1,3 @@
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.LoggingSpec where
@@ -10,7 +8,6 @@ import           Test.Tasty
 import qualified Test.Tasty.HUnit        as HU
 
 import           RPKI.Logging
-
 
 loggingSpec :: TestTree
 loggingSpec = testGroup "Logging" [

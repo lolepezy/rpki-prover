@@ -20,6 +20,7 @@ import RPKI.Domain
 import RPKI.Parse.Internal.Common   
 
 import qualified RPKI.Util as U
+import RPKI.AppTypes
 import RPKI.Time
 
 -- | Parse Erik sync protocol objects, 

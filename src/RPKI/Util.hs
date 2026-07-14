@@ -1,7 +1,6 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances    #-}
 
 module RPKI.Util where
 
@@ -16,6 +15,7 @@ import qualified Data.ByteString.Base16      as Hex
 import qualified Data.ByteString.Char8       as C
 import qualified Data.ByteString.Short       as BSS
 import qualified Data.ByteString.Base64      as B64
+import qualified Data.Base64.Types           as B64T
 import           Data.Char
 import qualified Data.List                   as List
 import           Data.Foldable (toList)
@@ -29,6 +29,7 @@ import           Data.Bifunctor
 import           Data.Word
 import           RPKI.Domain
 import           RPKI.AppTypes
+import           RPKI.Store.Base.Serialisation
 
 import           Data.IORef.Lifted
 
@@ -63,7 +64,7 @@ hashHex (Hash h) = Hex.encode $ BSS.fromShort h
 {-# INLINE hashHex #-}
 
 hashAsBase64 :: Hash -> BS.ByteString
-hashAsBase64 (Hash h) = B64.encodeBase64' $ BSS.fromShort h
+hashAsBase64 (Hash h) = B64T.extractBase64 $ B64.encodeBase64' $ BSS.fromShort h
 {-# INLINE hashAsBase64 #-}
 
 class ConvertibleAsSomethingString s1 s2 where
@@ -169,12 +170,12 @@ ifJustM a f = maybe (pure ()) f =<< a
 decodeBase64 :: Show c => EncodedBase64 -> c -> Either Text DecodedBase64
 decodeBase64 (EncodedBase64 bs) context = 
     bimap 
-        (\e -> e <> " for " <> Text.pack (show context) <> convert bs)
+        (\e -> e <> " for " <> Text.pack (show context) <> ": " <> convert bs)
         DecodedBase64
-        $ B64.decodeBase64 bs 
+        $ B64.decodeBase64Untyped bs 
 
 encodeBase64 :: DecodedBase64 -> EncodedBase64
-encodeBase64 (DecodedBase64 bs) = EncodedBase64 $ B64.encodeBase64' bs
+encodeBase64 (DecodedBase64 bs) = EncodedBase64 $ B64T.extractBase64 $ B64.encodeBase64' bs
     
 textual :: LBS.ByteString -> Text
 textual = decodeUtf8 . LBS.toStrict
@@ -188,7 +189,7 @@ fmtLocations = mconcat .
 
 
 parseWorldVersion :: Text -> Either Text WorldVersion
-parseWorldVersion t = WorldVersion <$> first Text.pack (readEither $ Text.unpack t)
+parseWorldVersion t = WorldVersion . LexOrdKey64 <$> first Text.pack (readEither $ Text.unpack t)
 
 firstByteStr :: ConvertibleAsSomethingString BS.ByteString s => Hash -> s
 firstByteStr (Hash h) = convert $ hex $ BSS.fromShort $ BSS.take 2 h

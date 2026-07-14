@@ -1,11 +1,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE StrictData                 #-}
-{-# LANGUAGE UndecidableInstances       #-}
-
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE StrictData #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Resources.Types where
 
@@ -86,7 +82,7 @@ class WithSetOps p where
 
 class (Eq p, Ord p, SafeEnum (Address p), Ord (Address p), WithSetOps p) => Prefix p where
     type Address p :: Type
-    make :: BS.ByteString -> Word8 -> p
+    makePrefix :: BS.ByteString -> Word8 -> p
     toRange :: p -> Range (Address p)
     toPrefixes :: Range (Address p) -> [p]  
 

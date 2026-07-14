@@ -1,9 +1,4 @@
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE OverloadedLabels  #-}
-{-# LANGUAGE DeriveAnyClass    #-}
-{-# LANGUAGE RecordWildCards   #-}
-{-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE StrictData        #-}
 
 module RPKI.TAL where

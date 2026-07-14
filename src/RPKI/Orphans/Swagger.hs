@@ -1,7 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-
 module RPKI.Orphans.Swagger where
 
 import           Data.Text                   (Text)
@@ -23,6 +22,7 @@ import           Data.X509                   as X509
 
 import           RPKI.AppTypes
 import           RPKI.Domain                 as Domain
+import           RPKI.Store.Base.Serialisation (LexOrdKey64(..))
 import           RPKI.RRDP.Types             (RrdpSerial)
 import           RPKI.Config
 import           RPKI.Logging
@@ -43,6 +43,8 @@ import           RPKI.RTR.Protocol
 import RPKI.Repository (Fetcheables)
 
 -- ToSchema insrances for Swagger doc generation
+instance ToSchema LexOrdKey64 where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Int)
 instance ToSchema ArtificialKey
 instance ToSchema ObjectKey
 instance ToSchema Focus
@@ -143,6 +145,7 @@ instance ToSchema ValidationConfig
 instance ToSchema SystemConfig
 instance ToSchema HttpApiConfig
 instance ToSchema RtrConfig
+instance ToSchema StorageConfig
 instance ToSchema LogLevel
 instance ToSchema ManifestProcessing
 instance ToSchema ValidationRFC

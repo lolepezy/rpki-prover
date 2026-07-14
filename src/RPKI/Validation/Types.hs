@@ -1,12 +1,6 @@
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE AllowAmbiguousTypes        #-}
-{-# LANGUAGE ConstraintKinds            #-}
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE StrictData                 #-}
-{-# LANGUAGE UndecidableInstances       #-}
-{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE StrictData #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Validation.Types where
 

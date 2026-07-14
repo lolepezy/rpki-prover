@@ -1,10 +1,6 @@
-{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE BangPatterns               #-}
-{-# LANGUAGE MultiWayIf                 #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Resources.Resources where
 
@@ -41,7 +37,7 @@ instance WithSetOps Ipv4Prefix where
 
 instance Prefix Ipv4Prefix where
     type Address Ipv4Prefix = V4.IpAddress
-    make bs nonZeroBits = mkIpv4Block (fourW8sToW32 (BS.unpack bs)) (fromIntegral nonZeroBits)
+    makePrefix bs nonZeroBits = mkIpv4Block (fourW8sToW32 (BS.unpack bs)) (fromIntegral nonZeroBits)
     toRange (Ipv4Prefix p) = V4.blockToRange p
     toPrefixes r@Range {..} 
         | first > last = []
@@ -66,7 +62,7 @@ instance Interval Ipv6Prefix where
 
 instance Prefix Ipv6Prefix where
     type Address Ipv6Prefix = V6.IpAddress
-    make bs nonZeroBits = mkIpv6Block (someW8ToW128 (BS.unpack bs)) (fromIntegral nonZeroBits)
+    makePrefix bs nonZeroBits = mkIpv6Block (someW8ToW128 (BS.unpack bs)) (fromIntegral nonZeroBits)
     toRange (Ipv6Prefix p) = V6.blockToRange p    
     toPrefixes r@Range {..} 
         | first > last = []
@@ -207,11 +203,10 @@ allResources (IpResources (IpResourceSet i4 i6)) (AsResources a) = AllResources 
 
 toPrefixesAndAsns :: AllResources -> PrefixesAndAsns
 toPrefixesAndAsns (AllResources ipv4 ipv6 asn) = 
-    PrefixesAndAsns (get ipv4) (get ipv6) (get asn)
-    where 
-        get (RS r) = r
-        get Inherit = IS.empty
-
+    PrefixesAndAsns (g ipv4) (g ipv6) (g asn)
+  where 
+    g (RS r) = r
+    g Inherit = IS.empty
 
 containsAsn :: AsResource -> AsResource -> Bool
 containsAsn (AS a) (AS b) = a == b
@@ -372,7 +367,7 @@ parseAsnT = parseAsn . Text.unpack
 
 parseAsn :: String -> Maybe ASN
 parseAsn = \case 
-    (a : s : n)
-        | (a == 'a' || a == 'A') && (s == 's' || s == 'S') -> 
-            ASN <$> readMaybe n
+    a : s : n
+        | (a == 'a' || a == 'A') && (s == 's' || s == 'S') 
+            -> ASN <$> readMaybe n
     n -> ASN <$> readMaybe n

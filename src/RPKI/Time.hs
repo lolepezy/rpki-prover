@@ -1,8 +1,3 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-
 module RPKI.Time where
 
 import           Control.DeepSeq
@@ -59,6 +54,10 @@ newtype CPUTime = CPUTime { unCPUTime :: Integer }
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving newtype (Num)
+
+newtype Timebox = Timebox { unTimebox :: Seconds }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
 
 instance Show TimeMs where 
     show (TimeMs ms) = show ms

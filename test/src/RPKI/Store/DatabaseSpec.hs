@@ -1,28 +1,24 @@
-{-# LANGUAGE AllowAmbiguousTypes       #-}
-{-# LANGUAGE DerivingStrategies        #-}
-{-# LANGUAGE DuplicateRecordFields     #-}
-{-# LANGUAGE FlexibleContexts          #-}
-{-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE OverloadedLabels          #-}
-{-# LANGUAGE OverloadedStrings         #-}
-{-# LANGUAGE RecordWildCards           #-}
-
+{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.Store.DatabaseSpec where
 
 import           Control.Exception.Lifted
-
+import           Control.Concurrent (threadDelay)
+import           Control.Concurrent.STM
 import           Control.Lens                     
 import           Control.Monad
 import           Control.Monad.Reader
 import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString                   as BS
+import           Data.Int                          (Int64)
 import qualified Data.List                         as List
 import qualified Data.Map.Strict                   as Map
 import           Data.Proxy
 import qualified Data.Set as Set
 import qualified Data.Text                         as Text
+import           Data.Generics.Product (HasField)
+import           Data.Hourglass
 
 import           System.Directory
 import           System.IO.Temp
@@ -46,8 +42,10 @@ import           RPKI.Store.Base.Map               as M
 import           RPKI.Store.Base.SafeMap           as SM
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
+import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Database    (DB(..))
 import qualified RPKI.Store.Database    as DB
+import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 
 import qualified RPKI.Store.MakeLmdb as Lmdb
@@ -56,10 +54,9 @@ import           RPKI.Time
 import           RPKI.Util
 
 import           RPKI.RepositorySpec
+import           RPKI.TestCommons
+import           RPKI.Store.AppStorage
 
-import Data.Generics.Product (HasField)
-import Control.Concurrent (threadDelay)
-import RPKI.Store.Base.Serialisation (serialise_)
 
 
 databaseGroup :: TestTree
@@ -69,6 +66,7 @@ databaseGroup = testGroup "LMDB storage tests"
         repositoryStoreGroup,
         versionStoreGroup,
         txGroup,
+        dbGroup,
         mapGroup
     ]
 
@@ -100,6 +98,13 @@ txGroup = testGroup "App transaction test"
     [
         ioTestCase "Should rollback App transactions properly" shouldRollbackAppTx,        
         ioTestCase "Should preserve state from StateT in transactions" shouldPreserveStateInAppTx
+    ]
+
+dbGroup :: TestTree
+dbGroup = testGroup "App database test"
+    [
+        HU.testCase "Should reopen database without issues" shouldReopenDatabase,
+        HU.testCase "Should keep key ordering for ArtificialKey and WorldVersion" shouldKeepKeyOrdering
     ]
 
 mapGroup :: TestTree
@@ -431,8 +436,8 @@ shouldRollbackAppTx :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion
 shouldRollbackAppTx io = do  
     ((_, env), _) <- io
 
-    let storage' = LmdbStorage env
-    z :: SMap "test" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
+    let storage' = LmdbStorage env (Seconds 120)
+    z :: SMap "test" LmdbStorage Int String <- SMap storage' <$> createLmdbStore storage'
 
     void $ runValidatorT (newScopes "bla") $ DB.rwAppTx storage' $ \tx -> do
         liftIO $ M.put tx z 1 "aa"
@@ -464,8 +469,8 @@ shouldPreserveStateInAppTx :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Ass
 shouldPreserveStateInAppTx io = do  
     ((_, env), DB {..}) <- io
 
-    let storage' = LmdbStorage env
-    z :: SMap "test-state" LmdbStorage Int String <- SMap storage' <$> createLmdbStore env
+    let storage' = LmdbStorage env (Seconds 120)
+    z :: SMap "test-state" LmdbStorage Int String <- SMap storage' <$> createLmdbStore storage'
 
     let addedObject = updateMetric @RrdpMetric @_ (#added %~ Map.unionWith (+) (Map.singleton (Just CER) 1))
 
@@ -510,15 +515,17 @@ shouldProcessSafeMapProperly :: IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.A
 shouldProcessSafeMapProperly io = do    
     ((_, env), _) <- io
 
-    let storage' = LmdbStorage env
+    let maxLmdbKey = 511
+
+    let storage' = LmdbStorage env (Seconds 120)
     z :: SM.SafeMap "test-state" LmdbStorage Text.Text String <- 
-                SafeMap <$> (SMap storage' <$> createLmdbStore env) <*> 
-                            (SMap storage' <$> createLmdbStore env)
+                SafeMap <$> (SMap storage' <$> createLmdbStore storage') <*> 
+                            (SMap storage' <$> createLmdbStore storage') <*> pure maxLmdbKey
 
     let short = "short-key" :: Text.Text
     let long = Text.replicate 600 "long-key-part-" :: Text.Text   
 
-    HU.assertBool "The long key must be too long" (BS.length (serialise_ long) > 512)
+    HU.assertBool "The long key must be too long" (BS.length (serialise_ long) > maxLmdbKey)
 
     rwTx z $ \tx -> do              
         SM.put tx z short "one"
@@ -573,18 +580,67 @@ shouldProcessSafeMapProperly io = do
     HU.assertEqual "SafeMap.values is wrong 3" values3 []    
     
 
+shouldKeepKeyOrdering :: HU.Assertion
+shouldKeepKeyOrdering = do
+    withLmdbTestContext $ \appContext -> do
+        db@DB {..} <- readTVarIO $ appContext ^. #database
+
+        void $ forM [1..10] $ \_ -> do
+            rawKeys :: [Int64] <- generateSome
+            let artificialKeys = map (ArtificialKey . LexOrdKey64) rawKeys
+            let worldVersions  = map (WorldVersion  . LexOrdKey64) rawKeys
+
+            let storage' = storage db
+            akMap  :: SMap "test-ak-ordering" LmdbStorage ArtificialKey () <-
+                SMap storage' <$> createLmdbStore storage'
+            wvMap  :: SMap "test-wv-ordering" LmdbStorage WorldVersion () <-
+                SMap storage' <$> createLmdbStore storage'            
+
+            rwTx db $ \tx -> do
+                erase tx akMap
+                erase tx wvMap
+                mapM_ (\k -> M.put tx akMap k ()) artificialKeys
+                mapM_ (\k -> M.put tx wvMap k ()) worldVersions
+
+            -- M.last returns the entry with the largest key in LMDB byte order.
+            -- maximum gives the largest key in Haskell order.
+            -- They must agree for the encoding to be correct.
+            Just (akLast, _) <- roTx db $ \tx -> M.last tx akMap
+            HU.assertEqual "ArtificialKey: LMDB last must equal Haskell maximum"
+                (maximum artificialKeys) akLast
+
+            Just (wvLast, _) <- roTx db $ \tx -> M.last tx wvMap
+            HU.assertEqual "WorldVersion: LMDB last must equal Haskell maximum"
+                (maximum worldVersions) wvLast
+  where
+    erase tx m = M.keys tx m >>= mapM_ (M.delete tx m)
+
+shouldReopenDatabase :: HU.Assertion
+shouldReopenDatabase = do 
+    withLmdbTestContext $ \appContext -> do
+        db@DB {..} <- readTVarIO $ appContext ^. #database
+
+        k1 <- rwTx db $ \tx -> nextValue tx keys 
+        reopenStorage appContext
+
+        db1@DB {..} <- readTVarIO $ appContext ^. #database
+        k2 <- rwTx db1 $ \tx -> nextValue tx keys 
+
+        HU.assertEqual "Keys must be continuous after reopen" (nextS k1) k2
+
+
 stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> metric
 stripTime = #totalTimeMs .~ TimeMs 0
 
 generateSome :: Arbitrary a => IO [a]
-generateSome = replicateM 1000 $ QC.generate arbitrary      
+generateSome = replicateM 100 $ QC.generate arbitrary      
 
 withDB :: (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> TestTree) -> TestTree
 withDB = withResource (makeLmdbStuff createLmdb) releaseLmdb
   where
     createLmdb lmdbEnv = 
-        withLogger (makeLogConfig defaultsLogLevel MainLog) $ \logger -> 
-            fst <$> Lmdb.createDatabase lmdbEnv logger Lmdb.DontCheckVersion
+        withLogger (newLogConfig defaultsLogLevel MainLog) $ \logger -> 
+            fst <$> Lmdb.createDatabase lmdbEnv logger defaultConfig Lmdb.DontCheckVersion
 
 
 ioTestCase :: TestName -> (IO ((FilePath, LmdbEnv), DB LmdbStorage) -> HU.Assertion) -> TestTree

@@ -1,13 +1,6 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE OverloadedLabels           #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE QuasiQuotes                #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE StrictData                 #-}
-{-# LANGUAGE DerivingVia                #-}
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE StrictData           #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Validation.TopDown (
     TopDownResult(..),
@@ -32,6 +25,7 @@ import           GHC.Generics
 
 import           Data.Foldable
 import           Data.IORef
+import           Data.Either
 import           Data.Maybe
 import qualified Data.Set.NonEmpty                as NESet
 import           Data.Map.Strict                  (Map)
@@ -71,7 +65,7 @@ import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
-import           RPKI.Util                        
+import           RPKI.Util
 import           RPKI.Validation.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Validation.ResourceValidation
@@ -464,15 +458,14 @@ validateFromTACert
   = do
     fromTryM
         (UnspecifiedE (unTaName taName) . fmtEx)
-        (do
-            -- TODO That might not be necessary
-            let publicationPoints' = 
-                    case filterPPAccess config initialRepos of 
-                        Just filteredRepos -> foldr mergePP publicationPoints $ unPublicationPointAccess filteredRepos
-                        Nothing            -> publicationPoints
-            validateCa appContext 
-                (topDownContext & #allTas . #publicationPoints .~ publicationPoints') 
-                (CaFull taCert))
+        (validateCa appContext 
+            (topDownContext & #allTas . #publicationPoints .~ publicationPoints') 
+            (CaFull taCert))
+  where
+    publicationPoints' = 
+        case filterPPAccess config initialRepos of 
+            Just filteredRepos -> foldr mergePP publicationPoints $ unPublicationPointAccess filteredRepos
+            Nothing            -> publicationPoints
 
 
 validateCa :: Storage s =>
@@ -617,8 +610,8 @@ validateCaNoFetch
 
     makeNextFullValidationAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextFullValidationAction aki = do 
-        mfts <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
-        pure $! processMfts aki mfts
+        mftMetas <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
+        pure $! processMfts aki mftMetas
 
     makeNextIncrementalAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextIncrementalAction aki = do
@@ -627,39 +620,46 @@ validateCaNoFetch
             []   -> pure $! vError $ NoMFT aki
             mfts -> actOnMfts mfts
       where
-        actOnMfts mfts = do
+        actOnMfts mftMetas = do
             z <- roTxT database $ \tx db -> DB.getMftShorcut tx db aki
             case z of
                 Nothing -> do
                     increment $ topDownCounters ^. #originalMft
-                    pure $! processMfts aki mfts
-                Just mftShortcut -> do
-                    let mftShortcutKey = mftShortcut ^. #key
-                    markAsUsed topDownContext mftShortcutKey
-                    increment $ topDownCounters ^. #shortcutMft
-                    action <- case mftsNotInFuture mfts of
-                        [] -> vError $ NoMFT aki
-                        mft_ : otherMfts 
-                            | mft_ ^. #key == mftShortcutKey -> 
-                                pure $! onlyCollectPayloads mftShortcut                                    
-                            | otherwise -> pure $! do 
-                                let mftKey = mft_ ^. #key
-                                markAsUsed topDownContext mftKey
-                                withMft mftKey $ \mft ->                                                                     
-                                    tryOneMftWithShortcut mftShortcut mft
-                                        `catchError` \e -> 
-                                            if isWithinValidityPeriod now mftShortcut 
-                                                then do
-                                                    -- shortcut is still valid so fall back to it
-                                                    vFocusOn ObjectFocus mftKey $ vWarn $ MftFallback e
-                                                    let mftLocation = pickLocation $ getLocations $ mft ^. #object
-                                                    logWarn logger [i|Falling back to the last valid manifest for #{mftLocation}, error: #{toMessage e}|]
-                                                    onlyCollectPayloads mftShortcut                   
-                                                else 
-                                                    -- shortcut is too old, so continue with the other manifests
-                                                    tryMfts aki otherMfts
-                    pure $! action `andThen` 
-                           (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)
+                    pure $! processMfts aki mftMetas
+
+                Just mftShortcut -> do 
+                    let shortcutExpired = 
+                            not (isWithinValidityPeriod now mftShortcut) || 
+                            not (isWithinValidityPeriod now (mftShortcut ^. #crlShortcut))
+
+                    if shortcutExpired then do                 
+                        increment $ topDownCounters ^. #originalMft
+                        pure $! processMfts aki mftMetas
+                    else do
+                        let mftShortcutKey = mftShortcut ^. #key
+                        markAsUsed topDownContext mftShortcutKey
+                        increment $ topDownCounters ^. #shortcutMft
+                        action <- case mftsNotInFuture mftMetas of
+                            [] -> vError $ NoMFT aki
+                            mft_ : otherMfts 
+                                | mft_ ^. #key == mftShortcutKey -> 
+                                    pure $! onlyCollectPayloads mftShortcut                                    
+                                | otherwise -> pure $! do 
+                                    let mftKey = mft_ ^. #key
+                                    markAsUsed topDownContext mftKey
+                                    withMft mftKey $ \mft ->                                                                     
+                                        tryOneMftWithShortcut mftShortcut mft
+                                            `catchError` \e -> 
+                                                if shortcutExpired 
+                                                    then 
+                                                        tryMfts aki otherMfts
+                                                    else do                                                    
+                                                        reportMftFallback e mft                                                                                                    
+                                                        onlyCollectPayloads mftShortcut                                                                        
+                                                        
+                        pure $! action `andThen` 
+                                (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)            
+
       
         tryOneMftWithShortcut mftShortcut mft = do
             fullCa <- getFullCa appContext topDownContext ca
@@ -667,7 +667,7 @@ validateCaNoFetch
             markAsUsed topDownContext crlKey
             overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) aki
             collectPayloads mftShortcut (Just overlappingChildren) 
-                        (pure fullCa)
+                        (Left fullCa)
                         (findAndValidateCrl fullCa mft aki)   
                         (getResources ca)
 
@@ -675,32 +675,32 @@ validateCaNoFetch
             let crlKey = mftShortcut ^. #crlShortcut . #key                
             markAsUsed topDownContext crlKey
             collectPayloads mftShortcut Nothing 
-                    (getFullCa appContext topDownContext ca)
+                    (Right $ getFullCa appContext topDownContext ca)
                     (getCrlByKey appContext crlKey)
                     (getResources ca)             
 
     processMfts childrenAki mfts = do
         case (mftsNotInFuture mfts, mfts) of             
             ([], []) -> vError $ NoMFT childrenAki
+
             -- if there are only manifest(s) in the future, use them 
             -- anyway to have a meaningful error message
             ([], _) -> tryMfts childrenAki mfts
+
             -- If there're manifests that are not in the future, 
-            -- use only them and skip the future ones
+            -- use only them and ignore the future ones
             (relevantMfts, _) -> tryMfts childrenAki relevantMfts
       
 
     tryMfts aki []              = vError $ NoMFT aki
-    tryMfts aki (mftRef: mfts_) = 
-        withMft (mftRef ^. #key) $ \mft -> do 
+    tryMfts aki (m : mftsMetas_) = 
+        withMft (m ^. #key) $ \mft -> do 
             tryOneMft mft `catchError` \e -> 
-                case mfts_ of 
+                case mftsMetas_ of 
                     [] -> appError e
                     _  -> do 
-                        vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e
-                        let mftLocation = pickLocation $ getLocations $ mft ^. #object
-                        logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, error: #{toMessage e}|]
-                        tryMfts aki mfts_
+                        reportMftFallback e mft
+                        tryMfts aki mftsMetas_
       where
         tryOneMft mft = do                 
             markAsUsed topDownContext $ mft ^. #key                
@@ -713,6 +713,12 @@ validateCaNoFetch
         case z of 
             Nothing  -> integrityError appContext [i|Referential integrity error, can't find a manifest by its key #{key}.|]
             Just mft -> f mft
+
+    reportMftFallback e mft = do 
+        let mftLocation = pickLocation $ getLocations $ mft ^. #object        
+        let mftNumber = getCMSContent (mft ^. #object . #payload . #cmsPayload) ^. #mftNumber
+        vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e mftNumber
+        logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, failed manifest number #{mftNumber}, error: #{toMessage e}|]        
 
     mftsNotInFuture = filter (\MftMeta {..} -> thisTime <= unNow now)
 
@@ -870,18 +876,16 @@ validateCaNoFetch
                 Nothing  -> vError $ NoCRLExists aki crlHash
                 Just key -> do           
                     increment $ topDownCounters ^. #readParsed
-                    -- CRLs are not parsed right after fetching, so try to get the blob
                     z <- getParsedObject tx db key $ vError $ NoCRLExists aki crlHash
                     case z of 
                         Keyed locatedCrl@(Located crlLocations (CrlRO crl)) crlKey -> do
                             markAsUsed topDownContext crlKey
                             inSubLocationScope (getURL $ pickLocation crlLocations) $ do 
                                 validateObjectLocations locatedCrl
-                                vHoist $ do
-                                    let mftEECert = getEECert $ unCMS $ cmsPayload mft
-                                    checkCrlLocation locatedCrl mftEECert
-                                    void $ validateCrl now crl fullCa                
-                                    pure $! Keyed (Validated crl) crlKey                                        
+                                vHoist $ do                                    
+                                    checkCrlLocation locatedCrl $ getEECert $ unCMS $ cmsPayload mft
+                                    validatedCrl <- validateCrl now crl fullCa                
+                                    pure $! Keyed validatedCrl crlKey                                        
                         _ -> 
                             vError $ CRLHashPointsToAnotherObject crlHash   
             
@@ -1137,7 +1141,7 @@ validateCaNoFetch
                         -- https://mailarchive.ietf.org/arch/msg/sidrops/wRa88GHsJ8NMvfpuxXsT2_JXQSU/
                         --                             
                         vHoist $ validateAIA @_ @_ @'CACert childCert fullCa
-
+ 
                         (childVerifiedResources, overlclaiming) 
                             <- vHoist $ do
                                 Validated validCert <- validateResourceCert @_ @_ @'CACert
@@ -1268,7 +1272,7 @@ validateCaNoFetch
 
     collectPayloads :: MftShortcut 
                     -> Maybe [T3 Text Hash ObjectKey] 
-                    -> ValidatorT IO (Located CaCerObject)
+                    -> Either (Located CaCerObject) (ValidatorT IO (Located CaCerObject))
                     -> ValidatorT IO (Keyed (Validated CrlObject))             
                     -> AllResources
                     -> ValidatorT IO ()
@@ -1282,7 +1286,7 @@ validateCaNoFetch
                     Nothing -> Map.toList nonCrlEntries
                     Just ch -> catMaybes [ (k,) <$> Map.lookup k nonCrlEntries | T3 _ _ k <- ch ]
 
-        let T3 caCount troubledCount totalCount = 
+        let T3 !caCount !troubledCount !totalCount = 
                 foldr (\(_, MftEntry {..}) (T3 cas troubled total) -> 
                         case child of 
                             CaChild {}       -> T3 (cas + 1) troubled       (total + 1)
@@ -1307,7 +1311,7 @@ validateCaNoFetch
                                 -- Should never happen, there are no troubled children
                                 integrityError appContext [i|Impossible happened!|]
                         _  -> do 
-                            caFull   <- findFullCa
+                            caFull   <- either pure id findFullCa
                             validCrl <- findValidCrl
                             pure $ \childKey fileName -> 
                                     validateTroubledChild caFull fileName validCrl childKey                        
@@ -1355,8 +1359,17 @@ validateCaNoFetch
         getChildPayloads troubledValidation (childKey, MftEntry {..}) = do 
             markAsUsed topDownContext childKey            
             case child of 
-                CaChild caShortcut _ ->                     
-                    validateCa appContext topDownContext (CaShort caShortcut)
+                CaChild caShortcut _ -> do 
+                    (childVerifiedResources, overlclaiming) <- 
+                        vHoist $ validateChildParentResources (config ^. #validationConfig . typed)                                 
+                                    (caShortcut ^. #resources) parentCaResources verifiedResources
+                    
+                    let childTopDownContext = topDownContext
+                            & #currentPathDepth %~ (+ 1)                                        
+                            & #verifiedResources ?~ childVerifiedResources
+                            & #overclaimingHappened .~ isJust overlclaiming
+                            
+                    validateCa appContext childTopDownContext (CaShort caShortcut)
                         
                 RoaChild r@RoaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do                    
@@ -1397,17 +1410,23 @@ validateCaNoFetch
                     troubledValidation childKey_ fileName
     
         validateShortcut :: (WithValidityPeriod s, HasField' "resources" s AllResources) => s -> ObjectKey -> ValidatorT IO ()
-        validateShortcut r key = do
+        validateShortcut shortcut key = do
             validateLocationForShortcut key            
-            (_, notValidAfter) <- vHoist $ validateObjectValidityPeriod r now
-            rememberNotValidAfter topDownContext notValidAfter
-            vHoist $ case validationRFC of
-                StrictRFC       -> pure ()
-                ReconsideredRFC 
-                    | overclaimingHappened -> 
-                        void $ validateChildParentResources validationRFC 
-                            (r ^. #resources) parentCaResources verifiedResources
-                    | otherwise -> pure ()
+            (_, notValidAfter) <- vHoist $ validateObjectValidityPeriod shortcut now
+            rememberNotValidAfter topDownContext notValidAfter            
+            {- We need to revalidate resources if either of the following happens:
+                1) We came here from validating a new CA certificate, and not from a CA shortcut.
+                   That can be determined by checking if `findFullCa` is `Left`.
+                2) There were overclaiming resources on the way from the top to this CA
+            -}
+            let revalidateResources =
+                    let potentiallyNewResources = isLeft findFullCa
+                    in case validationRFC of 
+                        StrictRFC       -> potentiallyNewResources
+                        ReconsideredRFC -> potentiallyNewResources || overclaimingHappened
+            when revalidateResources $             
+                void $ vHoist $ validateChildParentResources validationRFC 
+                    (shortcut ^. #resources) parentCaResources verifiedResources
             
 
 
@@ -1693,19 +1712,18 @@ markAsUsedByHash AppContext {..} topDownContext hash = do
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Monad m => ValidatorT m ()
 oneMoreGbr, oneMoreAspa, oneMoreBgp, oneMoreSpl :: Monad m => ValidatorT m ()
 oneMoreMftShort :: Monad m => ValidatorT m ()
-oneMoreCert = updateMetric @ValidationMetric @_ (& #validCertNumber %~ (+1))
-oneMoreRoa  = updateMetric @ValidationMetric @_ (& #validRoaNumber %~ (+1))
-oneMoreSpl  = updateMetric @ValidationMetric @_ (& #validSplNumber %~ (+1))
-oneMoreMft  = updateMetric @ValidationMetric @_ (& #validMftNumber %~ (+1))
-oneMoreCrl  = updateMetric @ValidationMetric @_ (& #validCrlNumber %~ (+1))
-oneMoreGbr  = updateMetric @ValidationMetric @_ (& #validGbrNumber %~ (+1))
-oneMoreAspa = updateMetric @ValidationMetric @_ (& #validAspaNumber %~ (+1))
-oneMoreBgp  = updateMetric @ValidationMetric @_ (& #validBgpNumber %~ (+1))
-oneMoreMftShort = updateMetric @ValidationMetric @_ (& #mftShortcutNumber %~ (+1))
+oneMoreCert = updateMetric @ValidationMetric @_ (#validCertNumber %~ (+1))
+oneMoreRoa  = updateMetric @ValidationMetric @_ (#validRoaNumber %~ (+1))
+oneMoreSpl  = updateMetric @ValidationMetric @_ (#validSplNumber %~ (+1))
+oneMoreMft  = updateMetric @ValidationMetric @_ (#validMftNumber %~ (+1))
+oneMoreCrl  = updateMetric @ValidationMetric @_ (#validCrlNumber %~ (+1))
+oneMoreGbr  = updateMetric @ValidationMetric @_ (#validGbrNumber %~ (+1))
+oneMoreAspa = updateMetric @ValidationMetric @_ (#validAspaNumber %~ (+1))
+oneMoreBgp  = updateMetric @ValidationMetric @_ (#validBgpNumber %~ (+1))
+oneMoreMftShort = updateMetric @ValidationMetric @_ (#mftShortcutNumber %~ (+1))
 
 moreVrps :: Monad m => Count -> ValidatorT m ()
-moreVrps n = updateMetric @ValidationMetric @_ (& #vrpCounter %~ (+n))
-
+moreVrps n = updateMetric @ValidationMetric @_ (#vrpCounter %~ (+n))
 
 extractPPAs :: Ca -> Either ValidationError PublicationPointAccess
 extractPPAs = \case 

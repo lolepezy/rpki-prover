@@ -1,7 +1,5 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE OverloadedLabels #-}
 
 module RPKI.AppMonad where
 

@@ -1,12 +1,5 @@
 
-{-# LANGUAGE DerivingStrategies  #-}
-{-# LANGUAGE DeriveAnyClass      #-}
-{-# LANGUAGE RecordWildCards     #-}
--- it is a little faster
-{-# LANGUAGE Strict              #-}
-{-# LANGUAGE OverloadedLabels    #-}
-{-# LANGUAGE MultiWayIf          #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE Strict #-}
 
 module RPKI.Resources.Validity where
 

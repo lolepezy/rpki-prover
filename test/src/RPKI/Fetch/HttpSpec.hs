@@ -8,6 +8,7 @@ import Control.Lens
 import qualified Data.ByteString.Lazy    as LBS
 import           Data.Generics.Product.Typed
 
+import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting

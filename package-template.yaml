@@ -1,5 +1,5 @@
 name:                rpki-prover
-version:             0.10.0
+version:             0.10.1
 github:              "lolepezy/rpki-prover"
 license:             BSD3
 author:              "Mikhail Puzanov"
@@ -19,13 +19,29 @@ extra-source-files:
 # common to point users to the README.md file.
 description:         Please see the README on GitHub at <https://github.com/githubuser/rpki-prover#readme>
 
-default-extensions: BangPatterns, ViewPatterns, LambdaCase, ConstraintKinds, DataKinds, 
-                    DeriveDataTypeable, DeriveGeneric, DeriveFunctor,
-                    DuplicateRecordFields, FlexibleContexts, GADTs,
-                    KindSignatures, MultiParamTypeClasses, MultiWayIf, NoMonomorphismRestriction, 
-                    NumericUnderscores, PatternSynonyms, PolyKinds, RankNTypes, QuantifiedConstraints,
-                    StandaloneDeriving, ScopedTypeVariables, TupleSections, TypeApplications, 
-                    TypeFamilies, TypeOperators
+default-extensions: BangPatterns, 
+                    ConstraintKinds, 
+                    DataKinds, 
+                    DeriveDataTypeable, DeriveGeneric, DeriveFunctor, DerivingStrategies, 
+                    DerivingVia, DeriveAnyClass, DeriveTraversable,                    
+                    DuplicateRecordFields, 
+                    FlexibleContexts, 
+                    GADTs,
+                    GeneralizedNewtypeDeriving,                    
+                    InstanceSigs,
+                    KindSignatures, 
+                    LambdaCase, 
+                    MultiParamTypeClasses, MultiWayIf, 
+                    NoMonomorphismRestriction, 
+                    OverloadedLabels,
+                    NamedFieldPuns, NumericUnderscores, 
+                    PatternSynonyms, PolyKinds, RankNTypes, QuantifiedConstraints,
+                    QuasiQuotes,                    
+                    RecordWildCards,
+                    StandaloneDeriving, ScopedTypeVariables, 
+                    TupleSections, TypeApplications, 
+                    TypeFamilies, TypeOperators, TemplateHaskell,
+                    ViewPatterns
 
 dependencies:
 - base
@@ -86,6 +102,7 @@ dependencies:
 - network
 - nonempty-containers
 - optparse-generic
+- optparse-applicative
 - pipes
 - primitive
 - prometheus-client
@@ -132,7 +149,11 @@ ghc-options:
 
 library:
   source-dirs: src
-  
+  ghc-options:
+  - -funbox-strict-fields
+  - -O2
+  - -Wall
+
 executables:
   rpki-prover:
     main:                Main.hs

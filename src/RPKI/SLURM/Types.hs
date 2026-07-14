@@ -1,11 +1,6 @@
 {-# LANGUAGE CPP                #-}
-{-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE StrictData         #-}
-{-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE QuasiQuotes        #-}
-{-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module RPKI.SLURM.Types where
 
@@ -182,6 +177,6 @@ oneOrBothToJSON these' t1 t2 =
         That b    -> [ t2 .= toJSON b ]
         These a b -> [ t1 .= toJSON a, t2 .= toJSON b ]
 
-jsonComment :: (KeyValue a1, ToJSON a2) => Maybe a2 -> [a1]
+-- jsonComment :: (ToJSON a) => Maybe a -> [a]
 jsonComment Nothing = []
 jsonComment (Just c) = [ "comment" .= toJSON c ]
