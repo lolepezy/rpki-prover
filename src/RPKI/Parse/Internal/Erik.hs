@@ -36,7 +36,8 @@ parseErikIndex bs = do
         contentType <- getOID pure "Wrong OID for the index"
 
         when (contentType /= id_ct_rpkiErikIndex) $
-            throwParseError $ "Unexpected OID for Erik index: " <> show contentType
+            throwParseError $ "Unexpected OID for Erik index: " <> show contentType 
+                            <> ", expected " <> show id_ct_rpkiErikIndex
 
         onNextContainer (Container Context 0) $ 
             onNextContainer Sequence $ 

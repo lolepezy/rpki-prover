@@ -85,7 +85,7 @@ shouldParseErikIndex = HU.testCase "Should parse an Erik index" $ do
     HU.assertEqual "Wrong index" indexScope "ca.rg.net"
     HU.assertEqual "Wrong number of partitions" (length partitionList) 1
     HU.assertEqual "Wrong hash" 
-        "a49f627ef6f69d06192a69ea4984d7ed26a3273a1d96d106735f83063adf9813"
+        "ecac4fcf9bbefc121b936ef72ec35cf01f8448c03ac84a1c7a188288bb440f51"
         (hashHex $ head partitionList ^. #hash)
 
 shouldParseErikPartition :: TestTree

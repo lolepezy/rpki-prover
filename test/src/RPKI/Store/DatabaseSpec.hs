@@ -626,7 +626,7 @@ shouldReopenDatabase = do
         db1@DB {..} <- readTVarIO $ appContext ^. #database
         k2 <- rwTx db1 $ \tx -> nextValue tx keys 
 
-        HU.assertEqual "Keys must be continuous after reopen" (nextS k1) k2
+        HU.assertEqual "Keys must be continuous after reopen" (nextS k1) k2        
 
 
 stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> metric

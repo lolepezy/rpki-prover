@@ -16,10 +16,13 @@ import           Data.String.Interpolate.IsString
 import RPKI.Config
 import RPKI.AppState
 import RPKI.AppContext
+import RPKI.AppMonad
 import RPKI.Logging
+import RPKI.Reporting
 import RPKI.Store.Base.Storage (Storage)
 import RPKI.Store.Base.LMDB
 import qualified RPKI.Store.MakeLmdb as Lmdb
+import RPKI.Store.AppLmdbStorage
 import RPKI.UniqueId
 
 
@@ -33,32 +36,33 @@ withTestContext f = withLmdbTestContext f
 withLmdbTestContext :: (AppContext LmdbStorage -> IO b) -> IO b
 withLmdbTestContext f = do
     withLogger (newLogConfig DebugL MainLog) $ \logger -> do
-        dir <- createTempDirectory "/tmp" "rpki-prover-test"
+        withTempDirectory "/tmp" "rpki-prover-test" $ \dir -> do
 
-        logDebug logger [i|Creating temporary directory #{dir}.|]
+            logDebug logger [i|Creating temporary directory #{dir}.|]
 
-        let cacheDir = dir </> "cache"
-        let tmpDir = dir </> "tmp"
-        let talDir = dir </> "tals"
+            let cacheDir = dir </> "cache"
+            let tmpDir = dir </> "tmp"
+            let talDir = dir </> "tals"
 
-        createDirectoryIfMissing False cacheDir
-        createDirectoryIfMissing False tmpDir
-        createDirectoryIfMissing False talDir
+            createDirectoryIfMissing False cacheDir
+            createDirectoryIfMissing False tmpDir
+            createDirectoryIfMissing False talDir
 
-        let config = testConfig 
-                & #rootDirectory .~ Public dir
-                & #tmpDirectory .~ Public tmpDir
-                & #talDirectory .~ Public talDir
-                & #cacheDirectory .~ Public cacheDir        
+            let config = testConfig 
+                    & #rootDirectory .~ Public dir
+                    & #tmpDirectory .~ Public tmpDir
+                    & #talDirectory .~ Public talDir
+                    & #cacheDirectory .~ Public cacheDir        
 
-        appState <- newAppState
-        database <- newTVarIO =<< makeLmdb logger cacheDir
+            appState <- newAppState
+            database <- newTVarIO =<< makeLmdb logger cacheDir config
 
-        let executableVersion = thisExecutableVersion
-        f AppContext {..}
+            let executableVersion = thisExecutableVersion
+            f AppContext {..}
   where
-    makeLmdb logger cachedDir = do                 
-        e <- Lmdb.mkLmdb cachedDir testConfig
+    makeLmdb logger cachedDir config = do
+        (Right e, _) <- runValidatorT (newScopes "setup-lmdb-cache")  $ 
+                setupLmdbCache UseExisting logger cachedDir config
         fst <$> Lmdb.createDatabase e logger testConfig Lmdb.DontCheckVersion
 
 
