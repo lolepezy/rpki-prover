@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
 
 module RPKI.Parse.Internal.Erik where
 
@@ -71,7 +70,7 @@ parseErikPartition bs = do
   where     
     parsePartition = onNextContainer Sequence $ do
         contentType <- getOID pure "Wrong OID for partition"
-        
+
         when (contentType /= id_ct_rpkiErikPartition) $
             throwParseError $ "Unexpected OID for Erik partition: " <> show contentType
                             <> ", expected " <> show id_ct_rpkiErikPartition
