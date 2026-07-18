@@ -8,9 +8,7 @@ import           Control.Monad.Trans.Except
 
 import           Data.Bifunctor
 import qualified Data.ByteString                  as BS
-import qualified Data.ByteString.Base64           as B64
 import qualified Data.List                        as List
-import qualified Data.Text                        as Text
 
 import           Data.STRef
 
