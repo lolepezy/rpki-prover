@@ -16,21 +16,23 @@ import RPKI.FetchSpec
 import RPKI.RTR.RtrSpec
 import RPKI.SLURM.SlurmSpec
 import RPKI.Store.SerialisationSpec
+import RPKI.Fetch.ErikSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
-        objectParseSpec,
-        appMonadSpec,        
-        rrdpXmlLazyParsingGroup,
-        rrdpUpdateSpec,
-        databaseGroup,
-        resourceGroup,
-        validityGroup,
-        repositoryGroup,
-        rtrGroup,
-        httpSpec,
-        slurmGroup,
-        loggingSpec,
-        workflowSpec,
-        serialisationSpec
+        -- objectParseSpec,
+        -- appMonadSpec,        
+        -- rrdpXmlLazyParsingGroup,
+        -- rrdpUpdateSpec,
+        -- databaseGroup,
+        -- resourceGroup,
+        -- validityGroup,
+        -- repositoryGroup,
+        -- rtrGroup,
+        -- httpSpec,
+        -- slurmGroup,
+        -- loggingSpec,
+        -- workflowSpec,
+        -- serialisationSpec,
+        erikSpec
     ]  

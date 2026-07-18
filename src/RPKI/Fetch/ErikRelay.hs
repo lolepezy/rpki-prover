@@ -101,7 +101,7 @@ fetchErik
             z <- roTxT database $ \tx db -> DB.getErikPartition tx db hash
             case z of 
                 Nothing -> do     
-                    logDebug logger [i|No Erik partition #{U.hashAsBase64 hash} in the database, downloading from relay #{relayUri}.|]
+                    logDebug logger [i|No Erik partition #{U.hashAsBase64Url hash} in the database, downloading from relay #{relayUri}.|]
                     z <- fetchAndParsePartition
                     case z of 
                         (uri, Left e, vs) -> do 
@@ -110,11 +110,11 @@ fetchErik
 
                         (uri, Right partition, vs) -> do
                             rwTxT database $ \tx db -> DB.saveErikPartition tx db hash partition                        
-                            logDebug logger [i|Stored Erik partition #{U.hashAsBase64 hash} in the database.|]                        
+                            logDebug logger [i|Stored Erik partition #{U.hashAsBase64Url hash} in the database.|]                        
                             pure (hash, Right partition, mempty)
 
                 Just part@ErikPartition {..} -> do 
-                    logDebug logger [i|Found Erik partition #{U.hashAsBase64 hash} in the database.|]
+                    logDebug logger [i|Found Erik partition #{U.hashAsBase64Url hash} in the database.|]
                     pure (hash, Right part, mempty)
           where
             fetchAndParsePartition = do 
@@ -149,11 +149,11 @@ fetchErik
                 z <- roTxT database $ \tx db -> DB.getByHash tx db hash
                 case z of 
                     Just (Located _ (MftRO mft)) -> do
-                        logDebug logger [i|Manifest #{U.hashAsBase64 hash} already in the database.|]
+                        logDebug logger [i|Manifest #{U.hashAsBase64Url hash} already in the database.|]
                         getManifestChildren mft
 
                     Just (Located locations ro) -> do
-                        logDebug logger $ [i|Manifest hash #{U.hashAsBase64 hash} points to an existing |] <> 
+                        logDebug logger $ [i|Manifest hash #{U.hashAsBase64Url hash} points to an existing |] <> 
                                         [i|object that is not a manifest #{pickLocation locations}, |] <> 
                                         "it almost surely means broken Erik relay."
                         pure mempty
@@ -161,7 +161,7 @@ fetchErik
                         (r, vs) <- fetchAndParseManifest mle
                         case r of 
                             Left e -> do 
-                                logError logger [i|Could not download/parse manifest #{U.hashAsBase64 hash}.|]
+                                logError logger [i|Could not download/parse manifest #{U.hashAsBase64Url hash}.|]
                                 pure vs
                             Right mft -> do 
                                 (vs <>) <$> getManifestChildren mft
@@ -210,11 +210,11 @@ fetchErik
                         
 
 
-    indexUri = URI [i|#{relayUri}/#{fqdn_}|]
+    indexUri = URI [i|#{relayUri}/.well-known/erik/index/#{fqdn_}|]
 
-    objectByHashUri hash = 
-        URI [i|#{relayUri}/.well-known/ni/sha-256/#{U.hashAsBase64 hash}|]
-
+    objectByHashUri hash = let 
+        niHash = U.hashAsBase64Url hash
+        in URI [i|#{relayUri}/.well-known/ni/sha-256/#{niHash}|]
 
     indexDir = let 
         tmpDir = configValue $ config ^. #tmpDirectory

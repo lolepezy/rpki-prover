@@ -25,7 +25,7 @@ testFetchErik = do
             fetchErik 
                 testContext 
                 worldVersion 
-                (URI "https://miso.sobornost.net/rpki/erik/index")
+                (URI "https://miso.sobornost.net")
                 (FQDN "ca.rg.net")
         case z of
             Left err -> HU.assertFailure $ "Failed to fetch Erik index: " <> show err

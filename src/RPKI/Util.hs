@@ -15,6 +15,7 @@ import qualified Data.ByteString.Base16      as Hex
 import qualified Data.ByteString.Char8       as C
 import qualified Data.ByteString.Short       as BSS
 import qualified Data.ByteString.Base64      as B64
+import qualified Data.ByteString.Base64.URL  as B64U
 import qualified Data.Base64.Types           as B64T
 import           Data.Char
 import qualified Data.List                   as List
@@ -63,9 +64,10 @@ hashHex :: Hash -> BS.ByteString
 hashHex (Hash h) = Hex.encode $ BSS.fromShort h 
 {-# INLINE hashHex #-}
 
-hashAsBase64 :: Hash -> BS.ByteString
-hashAsBase64 (Hash h) = B64T.extractBase64 $ B64.encodeBase64' $ BSS.fromShort h
-{-# INLINE hashAsBase64 #-}
+-- | Base64url encoding without padding, as required by RFC 6920 (Named Information URIs).
+hashAsBase64Url :: Hash -> BS.ByteString
+hashAsBase64Url (Hash h) = B64T.extractBase64 $ B64U.encodeBase64Unpadded' $ BSS.fromShort h
+{-# INLINE hashAsBase64Url #-}
 
 class ConvertibleAsSomethingString s1 s2 where
     convert :: s1 -> s2

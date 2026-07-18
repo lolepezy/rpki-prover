@@ -92,8 +92,7 @@ shouldParseErikIndex = HU.testCase "Should parse an Erik index" $ do
 shouldParseErikPartition :: TestTree
 shouldParseErikPartition = HU.testCase "Should parse an Erik partition" $ do
     bs <- BS.readFile "test/data/erik/7I-e8mmhb4Hx5EcgYvZhRMHBkqsp-fHo1hUvReXcKe4"
-    let (Right p, _) = 
-            runPureValidator (newScopes "parse") $ parseMft bs
+    let (Right p, _) = runPureValidator (newScopes "parse") $ parseErikPartition bs
     
     HU.assertBool "Wrong index" True
 
