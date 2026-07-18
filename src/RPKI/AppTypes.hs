@@ -38,7 +38,7 @@ newtype ExecutableVersion = ExecutableVersion Text
 newtype Size = Size { unSize :: Int64 }
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (Num)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
     deriving Semigroup via Sum Size
     deriving Monoid via Sum Size
 

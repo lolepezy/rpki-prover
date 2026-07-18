@@ -48,7 +48,6 @@ import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 import           RPKI.Validation.Types
-
 import           RPKI.Util                (ifJustM)
 
 import           RPKI.AppMonad
@@ -87,6 +86,7 @@ data DB s = DB {
     metricStore      :: MetricStore s,
     slurmStore       :: SlurmStore s,
     jobStore         :: JobStore s,
+    erikStore        :: ErikStore s,
     sequences        :: SequenceMap s,
     metadataStore    :: MetadataStore s
 } deriving stock (Generic)
@@ -219,6 +219,19 @@ instance Storage s => WithStorage s (RepositoryStore s) where
 
 newtype JobStore s = JobStore {
         jobs :: SMap "jobs" s Text Instant
+    }
+    deriving stock (Generic)
+
+newtype ErikIndexKey = ErikIndexKey Text
+    deriving stock (Show, Eq, Ord, Generic) 
+    deriving anyclass (TheBinary)
+
+erikIndexKey :: URI -> FQDN -> ErikIndexKey
+erikIndexKey (URI relayUri) (FQDN fqdn) = ErikIndexKey $ relayUri <> "-" <> fqdn
+
+data ErikStore s = ErikStore {
+        indexes    :: SafeMap "erik-indexes" s ErikIndexKey ErikIndex,
+        partitions :: SMap "erik-partitions" s Hash ErikPartition
     }
     deriving stock (Generic)
 
@@ -409,12 +422,30 @@ linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL hash = 
         M.put tx uriKeyToUri urlKey rpkiURL            
         pure urlKey
 
-
 hashExists :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> Hash -> m Bool
 hashExists tx DB { objectStore = RpkiObjectStore {..} } h = 
     liftIO $ M.exists tx hashToKey h
 
+getErikIndex :: (MonadIO m, Storage s) => 
+                Tx s mode -> DB s -> URI -> FQDN -> m (Maybe ErikIndex)
+getErikIndex tx DB { erikStore = ErikStore {..} } relayUri fqdn = 
+    liftIO $ SM.get tx indexes (erikIndexKey relayUri fqdn)
+
+saveErikIndex :: (MonadIO m, Storage s) => 
+                Tx s 'RW -> DB s -> URI -> FQDN -> ErikIndex -> m ()
+saveErikIndex tx DB { erikStore = ErikStore {..} } relayUri fqdn index_ = 
+    liftIO $ SM.put tx indexes (erikIndexKey relayUri fqdn) index_
+
+getErikPartition :: (MonadIO m, Storage s) => 
+                       Tx s mode -> DB s -> Hash -> m (Maybe ErikPartition)
+getErikPartition tx DB { erikStore = ErikStore {..} } h = 
+    liftIO $ M.get tx partitions h
+
+saveErikPartition :: (MonadIO m, Storage s) => 
+                    Tx s 'RW -> DB s -> Hash -> ErikPartition -> m ()
+saveErikPartition tx DB { erikStore = ErikStore {..} } h partition = 
+    liftIO $ M.put tx partitions h partition
 
 deleteObjectByHash :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Hash -> m ()
 deleteObjectByHash tx db@DB { objectStore = RpkiObjectStore {..} } hash = liftIO $ 

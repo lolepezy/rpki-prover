@@ -24,7 +24,6 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Time
 
-
 -- Application monad stack
 type ValidatorT m r = ValidatorTCurried m r
 
@@ -177,7 +176,7 @@ inSubLocationScope :: Monad m => URI -> ValidatorT m r -> ValidatorT m r
 inSubLocationScope = vFocusOn LocationFocus
 
 vFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
-vFocusOn c f = local (typed @VScope %~ subScope c f)
+vFocusOn s a = local (typed @VScope %~ subScope s a)
 
 metricFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
 metricFocusOn c t = local (typed @MetricScope %~ subScope c t)
@@ -238,3 +237,13 @@ andThen f action = do
     !z <- f
     action
     pure $! z
+
+bracketVT :: IO a 
+        -> (a -> ValidatorT IO r) 
+        -> (a -> ValidatorT IO b) 
+        -> ValidatorT IO b
+bracketVT acquire release f = do 
+    scopes <- askScopes    
+    z@(_, vs) <- liftIO $ bracket acquire (runValidatorT scopes . release) (runValidatorT scopes . f)  
+    embedState vs    
+    embedValidatorT $ pure z

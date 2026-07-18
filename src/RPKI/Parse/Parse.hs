@@ -9,6 +9,7 @@ module RPKI.Parse.Parse (
     module RPKI.Parse.Internal.SignedObject,
     module RPKI.Parse.Internal.GBR,
     module RPKI.Parse.Internal.RSC,
+    module RPKI.Parse.Internal.Erik,
     readObject,
     readObjectOfType,
     supportedExtension,
@@ -16,6 +17,7 @@ module RPKI.Parse.Parse (
     rpkiObjectType,
     urlObjectType,
     textObjectType,
+    nameObjectType,
     isOfType
 )
 where
@@ -24,6 +26,7 @@ import qualified Data.ByteString                  as BS
 import           Data.Char                        (toLower)
 import qualified Data.Text                        as Text
 import           Data.String                      (IsString)
+import qualified Data.List.Split                  as Split
 import           Data.Maybe
 
 import           RPKI.AppMonad
@@ -36,6 +39,7 @@ import           RPKI.Parse.Internal.ROA
 import           RPKI.Parse.Internal.SPL
 import           RPKI.Parse.Internal.GBR
 import           RPKI.Parse.Internal.RSC
+import           RPKI.Parse.Internal.Erik
 import           RPKI.Parse.Internal.Aspa
 import           RPKI.Parse.Internal.SignedObject
 
@@ -68,8 +72,16 @@ urlObjectType :: RpkiURL -> Maybe RpkiObjectType
 urlObjectType (getURL -> URI u) = textObjectType u
 
 textObjectType :: Text.Text -> Maybe RpkiObjectType
-textObjectType t = rpkiObjectType $ Text.takeEnd 3 t
+textObjectType t = 
+    case Text.split (== '.') t of 
+        _ : x@(_ : _) -> rpkiObjectType $ last x
+        _             -> Nothing
 
+nameObjectType :: String -> Maybe RpkiObjectType
+nameObjectType s = 
+    case Split.splitOn "." s of 
+        _ : x@(_ : _) -> rpkiObjectType $ last x
+        _             -> Nothing
 
 isOfType :: RpkiObjectType -> RpkiObjectType -> Bool
 isOfType t1 t2 = t1 == t2 || t1 == BGPSec && t2 == CER
@@ -97,7 +109,6 @@ readObjectOfType objectType bs =
                     pure $ BgpRO $ BgpCerObject {..}
                 EECert -> 
                     pureError $ parseErr "Cannot have EE certificate as a separate object."
-
         MFT  -> MftRO <$> parseMft bs
         ROA  -> RoaRO <$> parseRoa bs
         SPL  -> SplRO <$> parseSpl bs
