@@ -578,21 +578,37 @@ data ErikPartitionListEntry = ErikPartitionListEntry {
 data ErikPartition = ErikPartition {
         partitionTime :: Instant,   
         hashAlg       :: DigestAlgorithmIdentifier,
-        manifestList  :: [ManifestListEntry]
+        manifestList  :: [ErikManifestRef]
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-data ManifestListEntry = ManifestListEntry {
+data ErikManifestRef = ErikManifestRef {
         hash           :: Hash,
         size           :: Size,
         aki            :: AKI,
         manifestNumber :: Serial,
         thisUpdate     :: Instant,
-        location       :: URI
+        locations      :: [URI]
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)   
+
+data ErikSegmentIndex = ErikSegmentIndex {
+        segmentScope :: Text,
+        segmentTime  :: Instant,
+        hashAlg      :: DigestAlgorithmIdentifier,
+        segmentList  :: [ErikSegmentRef]
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+data ErikSegmentRef = ErikSegmentRef {
+        segment :: Instant,
+        index   :: Hash
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
 
 
 data CertificateWithSignature = CertificateWithSignature {

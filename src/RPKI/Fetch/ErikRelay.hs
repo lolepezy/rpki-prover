@@ -39,6 +39,10 @@ import           RPKI.Fetch.DirectoryTraverse
 import qualified RPKI.Store.Database    as DB
 
 
+{- 
+    Implementation of the Erik relay fetcher.
+    https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-erik-protocol/    
+-}
 fetchErik :: Storage s
             => AppContext s 
             -> WorldVersion
@@ -144,7 +148,7 @@ fetchErik
         getManifests partitionHash partition@ErikPartition {..} = do
             let partitionDir = indexDir </> U.firstByteStr partitionHash        
 
-            fmap mconcat $ pooledForConcurrentlyN 4 manifestList $ \mle@ManifestListEntry {..} -> do
+            fmap mconcat $ pooledForConcurrentlyN 4 manifestList $ \mle@ErikManifestRef {..} -> do
 
                 {- TODO 
                     A client can then decide whether or not to fetch a given manifest object, 
@@ -172,7 +176,7 @@ fetchErik
                             Right mft -> do 
                                 (vs <>) <$> getManifestChildren mft
           where
-            fetchAndParseManifest ManifestListEntry {..} = do  
+            fetchAndParseManifest ErikManifestRef {..} = do  
                 let partitionDir = indexDir </> U.firstByteStr partitionHash
                 let manifestDir = partitionDir </> U.firstByteStr hash
                 createDirectoryIfMissing True manifestDir

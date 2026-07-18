@@ -223,10 +223,11 @@ newtype JobStore s = JobStore {
     deriving stock (Generic)
 
 newtype ErikIndexKey = ErikIndexKey Text
-    deriving (Show, Eq, Ord, Generic, TheBinary)
+    deriving stock (Show, Eq, Ord, Generic) 
+    deriving anyclass (TheBinary)
 
-indexKey :: URI -> FQDN -> ErikIndexKey
-indexKey (URI relayUri) (FQDN fqdn) = ErikIndexKey $ relayUri <> "-" <> fqdn
+erikIndexKey :: URI -> FQDN -> ErikIndexKey
+erikIndexKey (URI relayUri) (FQDN fqdn) = ErikIndexKey $ relayUri <> "-" <> fqdn
 
 data ErikStore s = ErikStore {
         indexes    :: SafeMap "erik-indexes" s ErikIndexKey ErikIndex,
@@ -429,12 +430,12 @@ hashExists tx DB { objectStore = RpkiObjectStore {..} } h =
 getErikIndex :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> URI -> FQDN -> m (Maybe ErikIndex)
 getErikIndex tx DB { erikStore = ErikStore {..} } relayUri fqdn = 
-    liftIO $ SM.get tx indexes (indexKey relayUri fqdn)
+    liftIO $ SM.get tx indexes (erikIndexKey relayUri fqdn)
 
 saveErikIndex :: (MonadIO m, Storage s) => 
                 Tx s 'RW -> DB s -> URI -> FQDN -> ErikIndex -> m ()
 saveErikIndex tx DB { erikStore = ErikStore {..} } relayUri fqdn index_ = 
-    liftIO $ SM.put tx indexes (indexKey relayUri fqdn) index_
+    liftIO $ SM.put tx indexes (erikIndexKey relayUri fqdn) index_
 
 getErikPartition :: (MonadIO m, Storage s) => 
                        Tx s mode -> DB s -> Hash -> m (Maybe ErikPartition)

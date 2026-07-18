@@ -69,8 +69,16 @@ parseErikPartition bs = do
     asn1s <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs
     fromEither $ first (parseErr . U.convert) $ runParseASN1 parsePartition asn1s
   where     
-    parsePartition = onNextContainer Sequence $ do      
-        parsePartitionFieldsWithVersion <|> parsePartitionFields
+    parsePartition = onNextContainer Sequence $ do
+        contentType <- getOID pure "Wrong OID for partition"
+        
+        when (contentType /= id_ct_rpkiErikPartition) $
+            throwParseError $ "Unexpected OID for Erik partition: " <> show contentType
+                            <> ", expected " <> show id_ct_rpkiErikPartition
+
+        onNextContainer (Container Context 0) $
+            onNextContainer Sequence $
+                parsePartitionFields <|> parsePartitionFieldsWithVersion
 
     parsePartitionFieldsWithVersion = do
         version :: Int <- getInteger (pure . fromInteger) "Wrong version"
@@ -80,7 +88,8 @@ parseErikPartition bs = do
 
     parsePartitionFields = do 
         partitionTime <- newInstant <$> getTime "No partitionTime"
-        hashAlg       <- getOID (pure . DigestAlgorithmIdentifier) "Wrong hash algorithm OID"
+        hashAlg       <- onNextContainer Sequence $
+                            getOID (pure . DigestAlgorithmIdentifier) "Wrong hash algorithm OID"
         manifestList  <- getManifestList
         pure $ ErikPartition {..}
 
@@ -88,11 +97,56 @@ parseErikPartition bs = do
 
     getManifestList = onNextContainer Sequence $
         getMany $ onNextContainer Sequence $ do 
-            hash           <- getBitString (pure . U.mkHash) "Wrong hash"
+            hash           <- getOctetString (pure . U.mkHash) "Wrong hash"
             size           <- getInteger (pure . Size . fromIntegral) "Wrong size for manifest list size"
-            aki            <- getBitString (pure . AKI . mkKI) "Wrong AKI"
+            aki            <- getOctetString (pure . AKI . mkKI) "Wrong AKI"
             manifestNumber <- getInteger makeMftNumber "Wrong serial for manifest list number"
             thisUpdate     <- newInstant <$> getTime "No partitionTime"                
-            location       <- getIA5String (pure . URI . Text.pack) "Wrong location for manifest URI"            
-            pure $ ManifestListEntry {..}                
-                    
+            locations      <- onNextContainer Sequence $ getMany getAccessDescription                                
+            pure $ ErikManifestRef {..}
+
+    getAccessDescription =
+        onNextContainer Sequence $ do
+            _accessMethod <- getOID pure "Wrong access method OID"
+            asn1          <- getNext
+            case asn1 of
+                Other Context 6 uriBytes ->
+                    either (throwParseError . Text.unpack) pure $ extractURI uriBytes
+                other -> throwParseError $ "Expected URI [6] in AccessDescription, got: " <> show other
+
+
+parseErikSegmentIndex :: BS.ByteString -> PureValidatorT ErikSegmentIndex
+parseErikSegmentIndex bs = do    
+    asn1s <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs
+    fromEither $ first (parseErr . U.convert) $ runParseASN1 parseWrapper asn1s
+  where     
+    parseWrapper = onNextContainer Sequence $ do
+        contentType <- getOID pure "Wrong OID for the segment index"
+
+        when (contentType /= id_ct_rpkiErikSegmentIndex) $
+            throwParseError $ "Unexpected OID for Erik segment index: " <> show contentType 
+                            <> ", expected " <> show id_ct_rpkiErikSegmentIndex
+
+        onNextContainer (Container Context 0) $ 
+            onNextContainer Sequence $ 
+                parseSegmentIndexFields <|> parseSegmentIndexFieldsWithVersion
+
+    parseSegmentIndexFieldsWithVersion = do
+        version :: Int <- getInteger (pure . fromInteger) "Wrong version"
+        when (version /= 0) $ 
+            throwParseError $ "Unexpected segment index version: " ++ show version
+        parseSegmentIndexFields
+
+    parseSegmentIndexFields = do
+        segmentScope <- getIA5String (pure . Text.pack) "Wrong segmentScope"
+        segmentTime  <- newInstant <$> getTime "No segmentTime"
+        hashAlg      <- onNextContainer Sequence $
+                            getOID (pure . DigestAlgorithmIdentifier) "Wrong hash algorithm OID"
+        segmentList  <- getSegmentList
+        pure $ ErikSegmentIndex {..}
+
+    getSegmentList = onNextContainer Sequence $
+        getMany $ onNextContainer Sequence $
+            ErikSegmentRef
+                <$> (newInstant <$> getTime "Wrong segment time")
+                <*> getOctetString (pure . U.mkHash) "Wrong index hash"
