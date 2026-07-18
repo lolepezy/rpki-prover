@@ -32,7 +32,8 @@ objectParseSpec = testGroup "Unit tests for object parsing" [
     shouldParseAspa1,
     shouldParseAspa2,
     shouldParseSpl,
-    shouldParseErikIndex
+    shouldParseErikIndex,
+    supportedExtensionSpec
     -- shouldParseErikPartition
   ]
 
@@ -95,3 +96,25 @@ shouldParseErikPartition = HU.testCase "Should parse an Erik partition" $ do
             runPureValidator (newScopes "parse") $ parseMft bs
     
     HU.assertBool "Wrong index" True
+
+
+supportedExtensionSpec :: TestTree
+supportedExtensionSpec = testGroup "supportedExtension should do the right thing" [
+    HU.testCase "Accepts .cer" $ HU.assertBool "" (supportedExtension "foo.cer"),
+    HU.testCase "Accepts .mft" $ HU.assertBool "" (supportedExtension "foo.mft"),
+    HU.testCase "Accepts .crl" $ HU.assertBool "" (supportedExtension "foo.crl"),
+    HU.testCase "Accepts .roa" $ HU.assertBool "" (supportedExtension "foo.roa"),
+    HU.testCase "Accepts .gbr" $ HU.assertBool "" (supportedExtension "foo.gbr"),
+    HU.testCase "Accepts .sig" $ HU.assertBool "" (supportedExtension "foo.sig"),
+    HU.testCase "Accepts .asa" $ HU.assertBool "" (supportedExtension "foo.asa"),
+    HU.testCase "Accepts .spl" $ HU.assertBool "" (supportedExtension "foo.spl"),
+    HU.testCase "More than one dot" $ HU.assertBool "" (supportedExtension "foo.cer.bak.roa"),
+    HU.testCase "Case-insensitive .CER" $ HU.assertBool "" (supportedExtension "foo.CER"),
+    HU.testCase "Case-insensitive .MFT" $ HU.assertBool "" (supportedExtension "foo.MFT"),
+    HU.testCase "Case-insensitive mixed .Cer" $ HU.assertBool "" (supportedExtension "foo.Cer"),
+    HU.testCase "Rejects unknown extension" $ HU.assertBool "" (not $ supportedExtension "foo.txt"),
+    HU.testCase "Rejects no extension"      $ HU.assertBool "" (not $ supportedExtension "foocer"),
+    HU.testCase "Rejects empty string"      $ HU.assertBool "" (not $ supportedExtension ""),
+    HU.testCase "Rejects short string"      $ HU.assertBool "" (not $ supportedExtension ".ce"),
+    HU.testCase "Accepts long path"         $ HU.assertBool "" (supportedExtension "/some/long/path/object.roa")
+  ]
