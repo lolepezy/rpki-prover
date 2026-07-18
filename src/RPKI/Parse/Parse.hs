@@ -72,16 +72,15 @@ urlObjectType :: RpkiURL -> Maybe RpkiObjectType
 urlObjectType (getURL -> URI u) = textObjectType u
 
 textObjectType :: Text.Text -> Maybe RpkiObjectType
-textObjectType t = 
-    case Text.split (== '.') t of 
-        _ : x@(_ : _) -> rpkiObjectType $ last x
-        _             -> Nothing
+textObjectType t = deriveObjectType $ Text.split (== '.') t        
 
 nameObjectType :: String -> Maybe RpkiObjectType
-nameObjectType s = 
-    case Split.splitOn "." s of 
-        _ : x@(_ : _) -> rpkiObjectType $ last x
-        _             -> Nothing
+nameObjectType s = deriveObjectType $ Split.splitOn "." s
+
+deriveObjectType :: (Eq s, IsString s) => [s] -> Maybe RpkiObjectType
+deriveObjectType = \case 
+    _ : x@(_ : _) -> rpkiObjectType $ last x
+    _             -> Nothing
 
 isOfType :: RpkiObjectType -> RpkiObjectType -> Bool
 isOfType t1 t2 = t1 == t2 || t1 == BGPSec && t2 == CER

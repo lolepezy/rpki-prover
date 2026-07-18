@@ -1,28 +1,18 @@
-{-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE FlexibleContexts   #-}
-{-# LANGUAGE FlexibleInstances  #-}
-{-# LANGUAGE OverloadedLabels   #-}
-{-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE QuasiQuotes        #-}
-{-# LANGUAGE RecordWildCards    #-}
-{-# LANGUAGE StrictData         #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StrictData        #-}
 
 module RPKI.Fetch.DirectoryTraverse where
 
 import           Data.Generics.Product.Typed
 
-import           Control.Concurrent              as Conc
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Lens hiding (indices, Indexable)
 import           Control.Monad
-import           Control.Monad.Except
 import           Control.Monad.IO.Class
 
-import qualified Data.List.NonEmpty          as NonEmpty
 import qualified Data.ByteString                  as BS
-
 import           Data.Bifunctor
 import qualified Data.Map.Strict as Map
 import           Data.String.Interpolate.IsString
@@ -31,7 +21,7 @@ import           GHC.Generics
 
 import qualified Streaming.Prelude                as S
 import           System.FilePath
-import           System.Directory                 (createDirectoryIfMissing, doesDirectoryExist, getDirectoryContents)
+import           System.Directory                 (doesDirectoryExist, getDirectoryContents)
 import           System.IO
 
 import           RPKI.AppContext
@@ -49,7 +39,6 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import qualified RPKI.Store.Database              as DB
 import qualified RPKI.Util                        as U
-import Control.Concurrent.STM (readTVar)
 
 
 -- | Recursively traverse given directory and save all the parseable 
@@ -119,14 +108,14 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                     z <- runValidatorT scopes $ vHoist $ readObjectOfType type_ blob
                     (evaluate $! 
                         case z of 
-                            (Left e, _) -> 
+                            (Left e, _) -> do                                 
                                 ObjectParsingProblem rpkiURL (VErr e) 
                                     (ObjectOriginal blob) hash
                                     (ObjectMeta worldVersion type_)                        
                             (Right ro, _) ->                                     
                                 SuccessParsed rpkiURL (toStorableObject ro) type_                    
                         ) `catch` 
-                        (\(e :: SomeException) -> 
+                        (\(e :: SomeException) -> do 
                             pure $! ObjectParsingProblem rpkiURL (VErr $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e) 
                                     (ObjectOriginal blob) hash
                                     (ObjectMeta worldVersion type_)
@@ -154,11 +143,15 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                             Just u  -> inSubLocationScope (getURL u) complain
                             Nothing -> vFocusOn TextFocus (U.convert filePath) complain
 
-                    ObjectParsingProblem rpkiUrl (VErr e) original hash objectMeta -> do
-                        logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
+                    ObjectParsingProblem rpkiUrl (VErr e) original hash objectMeta -> do                        
                         case rpkiUrl of 
-                            Just u  -> inSubLocationScope (getURL u) $ appWarn e
-                            Nothing -> vFocusOn HashFocus hash $ appWarn e
+                            Just u  -> do 
+                                logError logger [i|Couldn't parse object #{u}, error #{e}, will cache the original object.|]   
+                                inSubLocationScope (getURL u) $ appWarn e
+                            Nothing -> do 
+                                logError logger [i|Couldn't parse object with a hash #{hash}, error #{e}, will cache the original object.|]   
+                                vFocusOn HashFocus hash $ appWarn e
+
                         DB.saveOriginal tx db original hash objectMeta
                         forM_ rpkiUrl $ \u -> DB.linkObjectToUrl tx db u hash                                  
 

@@ -8,6 +8,7 @@ import           Control.Monad.IO.Class
 import           Data.Generics.Product.Typed
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                       as Text
+import qualified Data.Set                        as Set
 
 import           System.Directory
 import           System.FilePath
@@ -45,7 +46,7 @@ fetchErik
     relayUri 
     fqdn@(FQDN fqdn_) = do
 
-    downloadSemaphore <- newSemaphoreIO 10
+    downloadSemaphore <- newSemaphoreIO 20
     doFetch downloadSemaphore
   where 
 
@@ -55,16 +56,19 @@ fetchErik
             -- TODO Verify URI is the same as the index scope`
 
             logDebug logger [i|Erik index from #{indexUri} has #{index}.|]
-            vs <- fmap mconcat $ liftIO $ pooledForConcurrentlyN 4 partitionList $ \p -> do 
-                getPartition p >>= \case 
+            vs <- fmap mconcat $ liftIO $ pooledForConcurrentlyN 4 partitionList $ \partitionRef -> do 
+                getPartition partitionRef >>= \case
                     (hash, Left e, vs) -> do 
                         logError logger [i|Failed to download partition #{hash}.|]
                         pure vs
 
-                    (hash, Right partition, vs) ->
+                    (hash, Right partition, vs) -> do 
+                        logDebug logger [i|Downloaded Erik partition #{U.hashAsBase64Url hash}: #{partition}.|]
                         getManifests hash partition                            
 
             embedState vs
+
+            logDebug logger [i|Finished fetching Erik relay #{indexDir} for #{fqdn_}.|]
 
             -- Now traverse all downloaded objects and load them into the storage,
             -- the same way it happens for rsynced repositories.
@@ -97,7 +101,7 @@ fetchErik
                                 [i|Erik index for #{fqdn_} changed, updating from relay #{relayUri}.|]              
             pure index
 
-        getPartition ErikPartitionListEntry {..} = do 
+        getPartition ErikPartitionRef {..} = do 
             z <- roTxT database $ \tx db -> DB.getErikPartition tx db hash
             case z of 
                 Nothing -> do     
@@ -109,7 +113,7 @@ fetchErik
                             pure (hash, Left e, vs)
 
                         (uri, Right partition, vs) -> do
-                            rwTxT database $ \tx db -> DB.saveErikPartition tx db hash partition                        
+                            rwTxT database $ \tx db -> DB.saveErikPartition tx db hash partition
                             logDebug logger [i|Stored Erik partition #{U.hashAsBase64Url hash} in the database.|]                        
                             pure (hash, Right partition, mempty)
 
@@ -118,14 +122,13 @@ fetchErik
                     pure (hash, Right part, mempty)
           where
             fetchAndParsePartition = do 
-                let partUri = objectByHashUri hash
-                let partitionDir = indexDir </> U.firstByteStr hash
+                let partUri = objectByHashUri hash                
                 -- It will be cleaned up by the top level
-                createDirectoryIfMissing True partitionDir
+                createDirectoryIfMissing True (partitionDir hash)
 
                 (r, vs) <- withSemaphore downloadSemaphore $ 
                     runValidatorT (newScopes' LocationFocus partUri) $ do            
-                        let partitionFile = partitionDir </> show hash
+                        let partitionFile = partitionDir hash </> "partition-" <> show hash
                         (partBs, _, partStatus) <-
                             fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
                                 downloadToFileHashed partUri partitionFile hash size
@@ -135,9 +138,7 @@ fetchErik
 
                 pure (partUri, r, vs) 
 
-        getManifests partitionHash partition@ErikPartition {..} = do
-            let partitionDir = indexDir </> U.firstByteStr partitionHash        
-
+        getManifests partitionHash partition@ErikPartition {..} = do            
             fmap mconcat $ pooledForConcurrentlyN 4 manifestList $ \mle@ErikManifestRef {..} -> do
 
                 {- TODO 
@@ -166,16 +167,16 @@ fetchErik
                             Right mft -> do 
                                 (vs <>) <$> getManifestChildren mft
           where
-            fetchAndParseManifest ErikManifestRef {..} = do  
-                let partitionDir = indexDir </> U.firstByteStr partitionHash
-                let manifestDir = partitionDir </> U.firstByteStr hash
-                createDirectoryIfMissing True manifestDir
+            fetchAndParseManifest ErikManifestRef {..} = do
+                createDirectoryIfMissing True (manifestDir hash)
 
                 let manifestUri = objectByHashUri hash
 
+                -- logDebug logger [i|Downloadin./rg manifest #{U.hashAsBase64Url hash} from #{manifestUri}.|]
+
                 withSemaphore downloadSemaphore $ 
                     runValidatorT (newScopes' LocationFocus manifestUri) $ do                
-                        let manifestFile = manifestDir </> show hash <> ".mft"
+                        let manifestFile = manifestDir hash </> show hash <> ".mft"
                         (manBs, _, manStatus) <-
                             fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
                                 downloadToFileHashed manifestUri manifestFile hash size
@@ -184,30 +185,39 @@ fetchErik
                         vHoist $ parseMft manBs
 
 
-            getManifestChildren mft = do                
-                let mftChildren = getMftChildren mft
-
-                let partitionDir = indexDir </> U.firstByteStr partitionHash
-                let manifestDir = partitionDir </> U.firstByteStr (getHash mft)
-                let childrenDir = manifestDir </> "ch"
-                createDirectoryIfMissing True childrenDir
+            getManifestChildren mft = do       
+                let childrenDir_ = childrenDir $ getHash mft                         
+                createDirectoryIfMissing True childrenDir_
                 
+                let mftChildren = getMftChildren mft
+                -- logDebug logger [i|Downloading children of manifest #{U.hashAsBase64Url (getHash mft)}: #{mftChildren}.|]
+
+                -- This is to avoid a dierectory with a log of files in it                
+                forM_ (Set.fromList $ map (\MftPair {..} -> U.firstByte hash) mftChildren) $ \firstByte -> do 
+                    createDirectoryIfMissing True $ childrenDir_ </> show firstByte
+
                 fmap mconcat $ pooledForConcurrentlyN 4 mftChildren $ \MftPair {..} -> do 
                     exists <- roTxT database $ \tx db -> DB.hashExists tx db hash
                     if exists then 
                         pure mempty 
-                    else do                     
+                    else do                                             
+                        let childFile = childrenDir_ </> show (U.firstByte hash) </> show hash <> "-" <> Text.unpack fileName
+                        let childUri = objectByHashUri hash                        
                         let maxSize = Size $ fromIntegral $ config ^. #validationConfig . #maxObjectSize
-                        let childFile = childrenDir </> U.firstByteStr hash </> show hash <> "-" <> Text.unpack fileName
-                        let childUri = objectByHashUri hash
 
-                        withSemaphore downloadSemaphore $ 
+                        z <- withSemaphore downloadSemaphore $ 
                             fmap snd $ runValidatorT (newScopes' LocationFocus childUri) $ do                
                                 fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
                                     downloadToFileHashed_ childUri childFile hash maxSize
                                         (\actualHash -> Left $ ErikE $ ErikHashMismatchError { 
                                             expectedHash = hash, .. })
-                        
+
+                        -- logDebug logger [i|Downloading manifest child #{U.hashAsBase64Url hash} from #{childUri}, z = #{z}.|]
+
+                        pure z
+              
+            manifestDir mftHash = partitionDir partitionHash </> "m_" <> show (U.firstByte mftHash)
+            childrenDir mftHash = manifestDir mftHash </> "ch"
 
 
     indexUri = URI [i|#{relayUri}/.well-known/erik/index/#{fqdn_}|]
@@ -219,6 +229,8 @@ fetchErik
     indexDir = let 
         tmpDir = configValue $ config ^. #tmpDirectory
         in tmpDir </> "erik" </> U.convert fqdn_
+
+    partitionDir partitionHash = indexDir </> "p_" <> show (U.firstByte partitionHash)  
 
     withDir dir f = 
         bracketVT 

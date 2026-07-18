@@ -563,12 +563,12 @@ data ErikIndex = ErikIndex {
         indexScope    :: Text,
         indexTime     :: Instant,  
         hashAlg       :: DigestAlgorithmIdentifier,
-        partitionList :: [ErikPartitionListEntry]
+        partitionList :: [ErikPartitionRef]
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)   
 
-data ErikPartitionListEntry = ErikPartitionListEntry {
+data ErikPartitionRef = ErikPartitionRef {
         hash       :: Hash,
         size       :: Size
     }

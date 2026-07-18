@@ -34,6 +34,10 @@ toMessage = \case
     StorageE (StorageError t) -> t
     StorageE (DeserialisationError t) -> t
 
+    ErikE (Can'tDownloadObject t) -> [i|Failed to download Erik object: #{t}.|]
+    ErikE (ErikHashMismatchError {..}) -> 
+        [i|Erik object hash mismatch: expected #{expectedHash}, got #{actualHash}.|]
+
     SlurmE r    -> toSlurmMessage r
     InternalE t -> toInternalErrorMessage t
     

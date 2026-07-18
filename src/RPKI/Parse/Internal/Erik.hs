@@ -58,7 +58,7 @@ parseErikIndex bs = do
                 
     getPartitionList = onNextContainer Sequence $
         getMany $ onNextContainer Sequence $
-            ErikPartitionListEntry 
+            ErikPartitionRef 
                 <$> getOctetString (pure . U.mkHash) "Wrong hash"
                 <*> getInteger (pure . Size . fromIntegral) "Wrong size for partition size"
 

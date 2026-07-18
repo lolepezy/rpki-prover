@@ -193,5 +193,6 @@ fmtLocations = mconcat .
 parseWorldVersion :: Text -> Either Text WorldVersion
 parseWorldVersion t = WorldVersion . LexOrdKey64 <$> first Text.pack (readEither $ Text.unpack t)
 
-firstByteStr :: ConvertibleAsSomethingString BS.ByteString s => Hash -> s
-firstByteStr (Hash h) = convert $ hex $ BSS.fromShort $ BSS.take 2 h
+firstByte :: Hash -> Word8
+firstByte (Hash h) = BSS.head h
+        
