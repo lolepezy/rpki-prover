@@ -117,13 +117,10 @@ downloadRpkiObject :: AppContext s ->
 downloadRpkiObject AppContext {..} _ uri = do
     let tmpDir = configValue $ config ^. #tmpDirectory
     let maxSize = config ^. typed @RrdpConf . #maxSize
-    (content, _, _, _) <- fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
-                            downloadToBS 
-                            tmpDir 
-                            (getURL uri) 
-                            Nothing
-                            maxSize
-                        
+    (content, _, _, _) <- 
+        fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
+            downloadToBS tmpDir (getURL uri) Nothing maxSize
+
     vHoist $ readObject (RrdpU uri) content
 
 
@@ -159,23 +156,26 @@ downloadToFileHashed uri file expectedHash maxSize hashMishmatch = liftIO $
                 pure $ Right (content, size, status)
                 
 
-downloadToFileHashed_ :: MonadIO m => 
-                        URI -> 
-                        FilePath ->                    
-                        Hash -> 
-                        Size -> 
-                        (Hash -> Either e (Size, HttpStatus)) ->
-                        m (Either e (Size, HttpStatus))
-downloadToFileHashed_ uri file expectedHash maxSize hashMishmatch = liftIO $
+downloadToFileHashed_ :: MonadIO m 
+                    => URI 
+                    -> FilePath 
+                    -> Hash 
+                    -> Size 
+                    -> (HttpStatus -> Either e (Size, HttpStatus)) 
+                    -> (Hash -> Either e (Size, HttpStatus)) 
+                    -> m (Either e (Size, HttpStatus))
+downloadToFileHashed_ uri file expectedHash maxSize httpStatusNotOk hashMishmatch = liftIO $
     withFile file WriteMode $ \fd -> do 
         ((actualHash, size), status, _) <- 
                 downloadConduit uri Nothing fd 
                     (sinkGenSize uri maxSize S256.init S256.update (U.mkHash . S256.finalize))
-        if actualHash /= expectedHash 
-            then pure $! hashMishmatch actualHash
-            else do
-                hClose fd                
-                pure $ Right (size, status)
+        if status /= mempty 
+            then pure $! httpStatusNotOk status 
+            else if actualHash /= expectedHash 
+                then pure $! hashMishmatch actualHash
+                else do
+                    hClose fd                
+                    pure $ Right (size, status)            
 
 
 lazyFsRead :: FilePath -> IO LBS.ByteString

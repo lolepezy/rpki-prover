@@ -13,7 +13,8 @@ module RPKI.Parse.Parse (
     readObject,
     readObjectOfType,
     supportedExtension,
-    isSupportedExtension,
+    supportedExtensionByErik,
+    isSupportedExtension,    
     rpkiObjectType,
     urlObjectType,
     textObjectType,
@@ -61,13 +62,27 @@ rpkiObjectType = \case
 -- | 
 supportedExtension :: String -> Bool
 supportedExtension filename = 
+    supportedExtensionGen filename isSupportedExtension
+
+supportedExtensionByErik :: String -> Bool
+supportedExtensionByErik filename = 
+    supportedExtensionGen filename $ \ext -> 
+        case rpkiObjectType ext of     
+            Nothing   -> False
+            -- For now Erik relays don't retransmit GBR objects
+            Just GBR  -> False    
+            Just _    -> True
+
+supportedExtensionGen :: String -> (String -> Bool) -> Bool
+supportedExtensionGen filename f =
     case map toLower $ take 4 $ reverse filename of 
-        [c3, c2, c1, dot] -> dot == '.' && isSupportedExtension [c1, c2, c3]
+        [c3, c2, c1, dot] -> dot == '.' && f [c1, c2, c3]
         _                 -> False
+
 
 isSupportedExtension :: (Eq a, IsString a) => a -> Bool
 isSupportedExtension = isJust . rpkiObjectType
-
+        
 urlObjectType :: RpkiURL -> Maybe RpkiObjectType
 urlObjectType (getURL -> URI u) = textObjectType u
 

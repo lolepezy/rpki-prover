@@ -12,7 +12,7 @@ import qualified Data.Set                        as Set
 
 import           System.Directory
 import           System.FilePath
-import           UnliftIO (pooledForConcurrentlyN)
+import           UnliftIO (pooledForConcurrentlyN, tryAny)
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -29,6 +29,8 @@ import           RPKI.Fetch.Http
 import           RPKI.Fetch.DirectoryTraverse
 import qualified RPKI.Store.Database    as DB
 
+data IndexFetch index = SameIndex index | UpdatedIndex index
+    deriving (Show, Eq, Ord)
 
 {- 
     Implementation of the Erik relay fetcher.
@@ -52,27 +54,29 @@ fetchErik
 
     doFetch downloadSemaphore =
         withDir indexDir $ \_ -> do 
-            index@ErikIndex {..} <- getIndex            
-            -- TODO Verify URI is the same as the index scope`
+            U.ifJustM getIndex $ \index@ErikIndex {..} -> do 
+                logInfo logger [i|Erik index for #{fqdn_} updated, downloading partitions from relay #{relayUri}.|]
 
-            logDebug logger [i|Erik index from #{indexUri} has #{index}.|]
-            vs <- fmap mconcat $ liftIO $ pooledForConcurrentlyN 4 partitionList $ \partitionRef -> do 
-                getPartition partitionRef >>= \case
-                    (hash, Left e, vs) -> do 
-                        logError logger [i|Failed to download partition #{hash}.|]
-                        pure vs
+                -- TODO Verify that the index scope matches the FQDN                    
 
-                    (hash, Right partition, vs) -> do 
-                        logDebug logger [i|Downloaded Erik partition #{U.hashAsBase64Url hash}: #{partition}.|]
-                        getManifests hash partition                            
+                logDebug logger [i|Erik index from #{indexUri} has #{index}.|]
+                vs <- fmap mconcat $ liftIO $ pooledForConcurrentlyN 4 partitionList $ \partitionRef -> do 
+                    getPartition partitionRef >>= \case
+                        (hash, Left e, vs) -> do 
+                            logError logger [i|Failed to download partition #{hash}, error: #{e}.|]
+                            pure vs
 
-            embedState vs
+                        (hash, Right partition, vs) -> do 
+                            logDebug logger [i|Downloaded Erik partition #{U.hashAsBase64Url hash}: #{partition}.|]
+                            (vs <>) <$> getManifests hash partition                            
 
-            logDebug logger [i|Finished fetching Erik relay #{indexDir} for #{fqdn_}.|]
+                embedState vs
 
-            -- Now traverse all downloaded objects and load them into the storage,
-            -- the same way it happens for rsynced repositories.
-            loadObjectsFromFS appContext worldVersion (const Nothing) indexDir 
+                logDebug logger [i|Finished fetching Erik relay #{indexDir} for #{fqdn_}.|]
+
+                -- Now traverse all downloaded objects and load them into the storage,
+                -- the same way it happens for rsynced repositories.
+                loadObjectsFromFS appContext worldVersion (const Nothing) indexDir 
       where
     
         getIndex = do 
@@ -88,26 +92,27 @@ fetchErik
                 DB.getErikIndex tx db relayUri fqdn >>= \case 
                     Nothing -> do 
                         DB.saveErikIndex tx db relayUri fqdn index
-                        pure $ logDebug logger $ 
-                                [i|No Erik index for #{fqdn_} in the database, |] <> 
-                                [i|downloading from relay #{relayUri}.|]
+                        pure $ do 
+                            logInfo logger [i|No Erik index for #{fqdn_} in the database, downloading from relay #{relayUri}.|]
+                            pure $ Just index
+
                     Just existing 
                         | existing == index -> 
-                            pure $ logDebug logger 
-                                [i|Erik index for #{fqdn_} didn't change since the last synchronisation.|]
+                            pure $ do 
+                                logInfo logger [i|Erik index for #{fqdn_} didn't change since the last synchronisation.|]
+                                pure Nothing
                         | otherwise -> do 
                             DB.saveErikIndex tx db relayUri fqdn index
-                            pure $ logInfo logger 
-                                [i|Erik index for #{fqdn_} changed, updating from relay #{relayUri}.|]              
-            pure index
+                            pure $ do 
+                                logInfo logger [i|Erik index for #{fqdn_} changed, updating from relay #{relayUri}.|]              
+                                pure $ Just index            
 
         getPartition ErikPartitionRef {..} = do 
             z <- roTxT database $ \tx db -> DB.getErikPartition tx db hash
             case z of 
                 Nothing -> do     
                     logDebug logger [i|No Erik partition #{U.hashAsBase64Url hash} in the database, downloading from relay #{relayUri}.|]
-                    z <- fetchAndParsePartition
-                    case z of 
+                    fetchAndParsePartition >>= \case                    
                         (uri, Left e, vs) -> do 
                             logError logger [i|Failed to download Erik partition #{uri}|]
                             pure (hash, Left e, vs)
@@ -115,11 +120,11 @@ fetchErik
                         (uri, Right partition, vs) -> do
                             rwTxT database $ \tx db -> DB.saveErikPartition tx db hash partition
                             logDebug logger [i|Stored Erik partition #{U.hashAsBase64Url hash} in the database.|]                        
-                            pure (hash, Right partition, mempty)
+                            pure (hash, Right partition, vs)
 
-                Just part@ErikPartition {..} -> do 
+                Just partition -> do 
                     logDebug logger [i|Found Erik partition #{U.hashAsBase64Url hash} in the database.|]
-                    pure (hash, Right part, mempty)
+                    pure (hash, Right partition, mempty)
           where
             fetchAndParsePartition = do 
                 let partUri = objectByHashUri hash                
@@ -141,12 +146,6 @@ fetchErik
         getManifests partitionHash partition@ErikPartition {..} = do            
             fmap mconcat $ pooledForConcurrentlyN 4 manifestList $ \mle@ErikManifestRef {..} -> do
 
-                {- TODO 
-                    A client can then decide whether or not to fetch a given manifest object, 
-                    by comparing the manifestNumber and thisUpdate with what's locally cached 
-                    and what's offered by the remote relay.
-                 -}
-
                 z <- roTxT database $ \tx db -> DB.getByHash tx db hash
                 case z of 
                     Just (Located _ (MftRO mft)) -> do
@@ -162,37 +161,35 @@ fetchErik
                         (r, vs) <- fetchAndParseManifest mle
                         case r of 
                             Left e -> do 
-                                logError logger [i|Could not download/parse manifest #{U.hashAsBase64Url hash}.|]
+                                logError logger [i|Could not download or parse manifest #{U.hashAsBase64Url hash}: #{e}.|]
                                 pure vs
                             Right mft -> do 
                                 (vs <>) <$> getManifestChildren mft
           where
             fetchAndParseManifest ErikManifestRef {..} = do
+                
                 createDirectoryIfMissing True (manifestDir hash)
 
                 let manifestUri = objectByHashUri hash
-
-                -- logDebug logger [i|Downloadin./rg manifest #{U.hashAsBase64Url hash} from #{manifestUri}.|]
-
                 withSemaphore downloadSemaphore $ 
                     runValidatorT (newScopes' LocationFocus manifestUri) $ do                
                         let manifestFile = manifestDir hash </> show hash <> ".mft"
-                        (manBs, _, manStatus) <-
+                        (manifestBs, _, manStatus) <-
                             fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
                                 downloadToFileHashed manifestUri manifestFile hash size
                                     (\actualHash -> Left $ ErikE $ ErikHashMismatchError { expectedHash = hash, .. })
                         
-                        vHoist $ parseMft manBs
+                        vHoist $ parseMft manifestBs
 
 
             getManifestChildren mft = do       
                 let childrenDir_ = childrenDir $ getHash mft                         
                 createDirectoryIfMissing True childrenDir_
                 
-                let mftChildren = getMftChildren mft
+                let mftChildren = filter (\MftPair {..} -> supportedExtensionByErik $ Text.unpack fileName) $ getMftChildren mft                
                 -- logDebug logger [i|Downloading children of manifest #{U.hashAsBase64Url (getHash mft)}: #{mftChildren}.|]
 
-                -- This is to avoid a dierectory with a log of files in it                
+                -- This is to avoid a dierectory with a lot of files in it                
                 forM_ (Set.fromList $ map (\MftPair {..} -> U.firstByte hash) mftChildren) $ \firstByte -> do 
                     createDirectoryIfMissing True $ childrenDir_ </> show firstByte
 
@@ -203,16 +200,22 @@ fetchErik
                     else do                                             
                         let childFile = childrenDir_ </> show (U.firstByte hash) </> show hash <> "-" <> Text.unpack fileName
                         let childUri = objectByHashUri hash                        
-                        let maxSize = Size $ fromIntegral $ config ^. #validationConfig . #maxObjectSize
+                        let maxSize = Size $ fromIntegral $ config ^. #validationConfig . #maxObjectSize                        
 
-                        z <- withSemaphore downloadSemaphore $ 
-                            fmap snd $ runValidatorT (newScopes' LocationFocus childUri) $ do                
+                        z <- withSemaphore downloadSemaphore $ do 
+                            (r, vs) <- runValidatorT (newScopes' LocationFocus childUri) $ do                
                                 fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
                                     downloadToFileHashed_ childUri childFile hash maxSize
-                                        (\actualHash -> Left $ ErikE $ ErikHashMismatchError { 
-                                            expectedHash = hash, .. })
-
-                        -- logDebug logger [i|Downloading manifest child #{U.hashAsBase64Url hash} from #{childUri}, z = #{z}.|]
+                                        (\actualStatus -> Left $ ErikE $ Can'tDownloadObject $ U.convert $ "Http status: " <> show actualStatus)
+                                        (\actualHash -> Left $ ErikE $ ErikHashMismatchError { expectedHash = hash, .. })
+                            case r of 
+                                Left e -> do 
+                                    logError logger [i|Could not download/parse manifest child #{U.hashAsBase64Url hash} from #{childUri}, error: #{e}.|]
+                                    void $ tryAny $ removeFile childFile
+                                    pure vs
+                                Right _ -> do 
+                                    logDebug logger [i|Downloaded manifest child #{U.hashAsBase64Url hash} from #{childUri} to #{childFile}.|]                                            
+                                    pure vs                        
 
                         pure z
               
