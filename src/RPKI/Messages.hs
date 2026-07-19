@@ -37,6 +37,8 @@ toMessage = \case
     ErikE (Can'tDownloadObject t) -> [i|Failed to download Erik object: #{t}.|]
     ErikE (ErikHashMismatchError {..}) -> 
         [i|Erik object hash mismatch: expected #{expectedHash}, got #{actualHash}.|]
+    ErikE (ErikIndexScopeMismatch {..}) ->
+        [i|Erik index scope mismatch: expected FQDN #{expectedScope}, but index has scope '#{actualScope}'.|]
 
     SlurmE r    -> toSlurmMessage r
     InternalE t -> toInternalErrorMessage t

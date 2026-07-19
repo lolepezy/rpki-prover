@@ -186,6 +186,7 @@ instance ToSchema RrdpError where
 instance ToSchema ErikError
 instance ToSchema TALError
 instance ToSchema PrefixesAndAsns
+instance ToSchema FQDN
 
 
 instance ToSchema AsResources

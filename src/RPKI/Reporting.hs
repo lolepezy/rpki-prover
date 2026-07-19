@@ -193,7 +193,8 @@ data RsyncError = RsyncProcessError Int Text |
     deriving anyclass (TheBinary, NFData)
 
 data ErikError = Can'tDownloadObject Text |
-                 ErikHashMismatchError { actualHash :: Hash, expectedHash :: Hash }                  
+                 ErikHashMismatchError { actualHash :: Hash, expectedHash :: Hash } |
+                 ErikIndexScopeMismatch { expectedScope :: FQDN, actualScope :: Text }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 

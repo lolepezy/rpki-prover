@@ -646,6 +646,10 @@ instance Arbitrary HttpStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary FQDN where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance (Arg (T2 a b) a, Arg (T2 a b) b, 
          Arbitrary a, Arbitrary b) => Arbitrary (T2 a b) where
     arbitrary = genericArbitrary

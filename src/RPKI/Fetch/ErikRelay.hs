@@ -52,15 +52,18 @@ fetchErik
     doFetch downloadSemaphore
   where 
 
+    concurrentlyN = pooledForConcurrentlyN 4
+
     doFetch downloadSemaphore =
         withDir indexDir $ \_ -> do 
             U.ifJustM getIndex $ \index@ErikIndex {..} -> do 
                 logInfo logger [i|Erik index for #{fqdn_} updated, downloading partitions from relay #{relayUri}.|]
-
-                -- TODO Verify that the index scope matches the FQDN                    
+                
+                when (indexScope /= fqdn_) $
+                    appError $ ErikE $ ErikIndexScopeMismatch { expectedScope = fqdn, actualScope = indexScope }
 
                 logDebug logger [i|Erik index from #{indexUri} has #{index}.|]
-                vs <- fmap mconcat $ liftIO $ pooledForConcurrentlyN 4 partitionList $ \partitionRef -> do 
+                vs <- fmap mconcat $ liftIO $ concurrentlyN partitionList $ \partitionRef -> do 
                     getPartition partitionRef >>= \case
                         (hash, Left e, vs) -> do 
                             logError logger [i|Failed to download partition #{hash}, error: #{e}.|]
@@ -144,7 +147,7 @@ fetchErik
                 pure (partUri, r, vs) 
 
         getManifests partitionHash partition@ErikPartition {..} = do            
-            fmap mconcat $ pooledForConcurrentlyN 4 manifestList $ \mle@ErikManifestRef {..} -> do
+            fmap mconcat $ concurrentlyN manifestList $ \mle@ErikManifestRef {..} -> do
 
                 z <- roTxT database $ \tx db -> DB.getByHash tx db hash
                 case z of 
