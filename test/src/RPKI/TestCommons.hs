@@ -36,9 +36,7 @@ withTestContext f = withLmdbTestContext f
 withLmdbTestContext :: (AppContext LmdbStorage -> IO b) -> IO b
 withLmdbTestContext f = do
     withLogger (newLogConfig InfoL MainLog) $ \logger -> do
-        -- withTempDirectory "/tmp" "rpki-prover-test" $ \dir -> do
-
-            dir <- createTempDirectory "/tmp" "rpki-prover-test"
+        withTempDirectory "/tmp" "rpki-prover-test" $ \dir -> do            
 
             logDebug logger [i|Creating temporary directory #{dir}.|]
 
@@ -65,6 +63,6 @@ withLmdbTestContext f = do
     makeLmdb logger cachedDir config = do
         (Right e, _) <- runValidatorT (newScopes "setup-lmdb-cache")  $ 
                 setupLmdbCache UseExisting logger cachedDir config
-        fst <$> Lmdb.createDatabase e logger testConfig Lmdb.DontCheckVersion
+        fst <$> Lmdb.createDatabase e logger config Lmdb.DontCheckVersion
 
 

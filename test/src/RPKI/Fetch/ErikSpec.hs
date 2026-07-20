@@ -15,7 +15,7 @@ import           RPKI.Reporting
 import           RPKI.Logging
 
 erikSpec :: TestTree
-erikSpec = testGroup "Unit tests for repostory updates" [ 
+erikSpec = testGroup "Unit tests for repository updates" [ 
         HU.testCase "Fetch Erik test" testFetchErik
     ]
 
