@@ -232,10 +232,10 @@ loadRsyncRepository appContext worldVersion repositoryUrl rootPath =
         (Just . restoreUriFromPath repositoryUrl rootPath)
         rootPath
   where
-    restoreUriFromPath url@(RsyncURL host rootPath) rsyncRoot filePath = 
+    restoreUriFromPath url@(RsyncURL host rootPath_) rsyncRoot filePath = 
         case stripPrefix (splitDirectories rsyncRoot) (splitDirectories filePath) of
             Nothing   -> url
-            Just diff -> RsyncURL host (rootPath <> map (RsyncPathChunk . U.convert) diff)
+            Just diff -> RsyncURL host (rootPath_ <> map (RsyncPathChunk . U.convert) diff)
         
                
 data RsyncMode = RsyncOneFile | RsyncDirectory
