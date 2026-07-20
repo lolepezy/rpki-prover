@@ -35,7 +35,7 @@ withTestContext f = withLmdbTestContext f
 
 withLmdbTestContext :: (AppContext LmdbStorage -> IO b) -> IO b
 withLmdbTestContext f = do
-    withLogger (newLogConfig InfoL MainLog) $ \logger -> do
+    withLogger (newLogConfig DebugL MainLog) $ \logger -> do
         withTempDirectory "/tmp" "rpki-prover-test" $ \dir -> do            
 
             logDebug logger [i|Creating temporary directory #{dir}.|]

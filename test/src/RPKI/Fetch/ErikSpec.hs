@@ -24,8 +24,8 @@ testFetchErik = do
     withTestContext $ \testContext@AppContext {..} -> do
         worldVersion <- newWorldVersion
 
-        let fqdn = FQDN "rsync.paas.rpki.ripe.net"
-        -- let fqdn = FQDN "krill.47272.net"
+        -- let fqdn = FQDN "rsync.paas.rpki.ripe.net"
+        let fqdn = FQDN "ca.rg.net"
         let relayUri = URI "https://miso.sobornost.net"
 
         (z, _) <- runValidatorT (newScopes "erik-test") $ 

@@ -19,6 +19,7 @@ module RPKI.Parse.Parse (
     urlObjectType,
     textObjectType,
     nameObjectType,
+    deriveObjectType,
     isOfType
 )
 where
@@ -27,7 +28,6 @@ import qualified Data.ByteString                  as BS
 import           Data.Char                        (toLower)
 import qualified Data.Text                        as Text
 import           Data.String                      (IsString)
-import qualified Data.List.Split                  as Split
 import           Data.Maybe
 
 import           RPKI.AppMonad
@@ -61,24 +61,15 @@ rpkiObjectType = \case
 
 -- | 
 supportedExtension :: String -> Bool
-supportedExtension filename = 
-    supportedExtensionGen filename isSupportedExtension
+supportedExtension = isJust . nameObjectType . map toLower
 
 supportedExtensionByErik :: String -> Bool
-supportedExtensionByErik filename = 
-    supportedExtensionGen filename $ \ext -> 
-        case rpkiObjectType ext of     
-            Nothing   -> False
-            -- For now Erik relays don't retransmit GBR objects
-            Just GBR  -> False    
-            Just _    -> True
-
-supportedExtensionGen :: String -> (String -> Bool) -> Bool
-supportedExtensionGen filename f =
-    case map toLower $ take 4 $ reverse filename of 
-        [c3, c2, c1, dot] -> dot == '.' && f [c1, c2, c3]
-        _                 -> False
-
+supportedExtensionByErik filename =
+    case nameObjectType (map toLower filename) of
+        Nothing  -> False
+        -- For now Erik relays don't retransmit GBR objects
+        Just GBR -> False
+        Just _   -> True
 
 isSupportedExtension :: (Eq a, IsString a) => a -> Bool
 isSupportedExtension = isJust . rpkiObjectType
@@ -90,7 +81,7 @@ textObjectType :: Text.Text -> Maybe RpkiObjectType
 textObjectType t = deriveObjectType $ Text.split (== '.') t        
 
 nameObjectType :: String -> Maybe RpkiObjectType
-nameObjectType s = deriveObjectType $ Split.splitOn "." s
+nameObjectType = textObjectType . Text.pack
 
 deriveObjectType :: (Eq s, IsString s) => [s] -> Maybe RpkiObjectType
 deriveObjectType = \case 

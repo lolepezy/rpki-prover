@@ -33,8 +33,8 @@ objectParseSpec = testGroup "Unit tests for object parsing" [
     shouldParseAspa2,
     shouldParseSpl,
     shouldParseErikIndex,
-    supportedExtensionSpec
-    -- shouldParseErikPartition
+    filenameToObjectTypeSpec,
+    shouldParseErikPartition
   ]
 
 
@@ -91,30 +91,35 @@ shouldParseErikIndex = HU.testCase "Should parse an Erik index" $ do
 
 shouldParseErikPartition :: TestTree
 shouldParseErikPartition = HU.testCase "Should parse an Erik partition" $ do
-    bs <- BS.readFile "test/data/erik/7I-e8mmhb4Hx5EcgYvZhRMHBkqsp-fHo1hUvReXcKe4"
+    bs <- BS.readFile "test/data/erik/wjhGf2wIon7eny9o-3Wfp5EMkVmgDgQ4iac5T8NUJQ8"
     let (Right p, _) = runPureValidator (newScopes "parse") $ parseErikPartition bs
     
     HU.assertBool "Wrong index" True
 
 
-supportedExtensionSpec :: TestTree
-supportedExtensionSpec = testGroup "supportedExtension should do the right thing" [
-    HU.testCase "Accepts .cer" $ HU.assertBool "" (supportedExtension "foo.cer"),
-    HU.testCase "Accepts .mft" $ HU.assertBool "" (supportedExtension "foo.mft"),
-    HU.testCase "Accepts .crl" $ HU.assertBool "" (supportedExtension "foo.crl"),
-    HU.testCase "Accepts .roa" $ HU.assertBool "" (supportedExtension "foo.roa"),
-    HU.testCase "Accepts .gbr" $ HU.assertBool "" (supportedExtension "foo.gbr"),
-    HU.testCase "Accepts .sig" $ HU.assertBool "" (supportedExtension "foo.sig"),
-    HU.testCase "Accepts .asa" $ HU.assertBool "" (supportedExtension "foo.asa"),
-    HU.testCase "Accepts .spl" $ HU.assertBool "" (supportedExtension "foo.spl"),
-    HU.testCase "More than one dot" $ HU.assertBool "" (supportedExtension "foo.cer.bak.roa"),
-    HU.testCase "Case-insensitive .CER" $ HU.assertBool "" (supportedExtension "foo.CER"),
-    HU.testCase "Case-insensitive .MFT" $ HU.assertBool "" (supportedExtension "foo.MFT"),
-    HU.testCase "Case-insensitive mixed .Cer" $ HU.assertBool "" (supportedExtension "foo.Cer"),    
-    HU.testCase "Rejects unknown extension" $ HU.assertBool "" (not $ supportedExtension "foo.txt"),
-    HU.testCase "Rejects unknown extension after known" $ HU.assertBool "" (not $ supportedExtension "foo.cer.txt"),
-    HU.testCase "Rejects no extension"      $ HU.assertBool "" (not $ supportedExtension "foocer"),
-    HU.testCase "Rejects empty string"      $ HU.assertBool "" (not $ supportedExtension ""),
-    HU.testCase "Rejects short string"      $ HU.assertBool "" (not $ supportedExtension ".ce"),
-    HU.testCase "Accepts long path"         $ HU.assertBool "" (supportedExtension "/some/long/path/object.roa")
+filenameToObjectTypeSpec :: TestTree
+filenameToObjectTypeSpec = testGroup "Filename to object type mapping" [
+    check "foo.cer"                    (Just CER),
+    check "foo.mft"                    (Just MFT),
+    check "foo.crl"                    (Just CRL),
+    check "foo.roa"                    (Just ROA),
+    check "foo.gbr"                    (Just GBR),
+    check "foo.sig"                    (Just RSC),
+    check "foo.asa"                    (Just ASPA),
+    check "foo.spl"                    (Just SPL),
+    check "foo.CER"                    Nothing,
+    check "foo.MFT"                    Nothing,
+    check "foo.Cer"                    Nothing,
+    check "foo.cer.bak.roa"            (Just ROA),
+    check "foo.crl.cer.roa"            (Just ROA),
+    check "/some/long/path/object.roa" (Just ROA),
+    check "foo.txt"                    Nothing,
+    check "foo.cer.txt"                Nothing,
+    check "foocer"                     Nothing,
+    check ""                           Nothing,
+    check ".ce"                        Nothing
   ]
+  where
+    check filename expected =
+        HU.testCase (show filename <> " -> " <> show expected) $
+            HU.assertEqual "" expected (nameObjectType filename)
