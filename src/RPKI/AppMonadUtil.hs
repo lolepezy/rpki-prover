@@ -50,8 +50,7 @@ bracketVT :: IO a
         -> ValidatorT IO b
 bracketVT acquire release f = do 
     scopes <- askScopes    
-    z@(_, vs) <- liftIO $ bracket acquire (runValidatorT scopes . release) (runValidatorT scopes . f)  
-    embedState vs    
+    z <- liftIO $ bracket acquire (runValidatorT scopes . release) (runValidatorT scopes . f)  
     embedValidatorT $ pure z
 
 concurrentlyVTLenientN :: Int
