@@ -112,7 +112,7 @@ fetchErik
             case z of 
                 Nothing -> do     
                     logDebug logger [i|No Erik partition #{U.hashAsBase64Url hash} in the database, downloading from relay #{relayUri}.|]
-                    (uri, partition) <- fetchAndParsePartition
+                    partition <- fetchAndParsePartition
                     rwTxT database $ \tx db -> DB.saveErikPartition tx db hash partition
                     logDebug logger [i|Stored Erik partition #{U.hashAsBase64Url hash} in the database.|]                        
                     pure partition
@@ -121,24 +121,27 @@ fetchErik
                     logDebug logger [i|Found Erik partition #{U.hashAsBase64Url hash} in the database.|]
                     pure partition
           where
-            fetchAndParsePartition :: ValidatorT IO (URI, ErikPartition)
-            fetchAndParsePartition = do 
-                let partUri = objectByHashUri hash                
+            fetchAndParsePartition :: ValidatorT IO ErikPartition
+            fetchAndParsePartition = do                                 
                 -- It will be cleaned up by the top level
                 liftIO $ createDirectoryIfMissing True (partitionDir hash)
 
-                r <- withSemaphoreVT downloadSemaphore $
-                    vFocusOn LocationFocus partUri $ do
-                    -- runValidatorT (newScopes' LocationFocus partUri) $ do            
-                        let partitionFile = partitionDir hash </> "partition-" <> show hash
-                        (partBs, _, partStatus) <-
+                let partUri = objectByHashUri hash                
+                let partitionFile = partitionDir hash </> "partition-" <> show hash
+
+                logDebug logger [i|Downloading Erik partition #{U.hashAsBase64Url hash} from #{partUri} to #{partitionFile}.|]
+
+                withSemaphoreVT downloadSemaphore $
+                    vFocusOn LocationFocus partUri $ do                        
+                        (partBs, _, _) <-
                             fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
                                 downloadToFileHashed partUri partitionFile hash size
-                                    (\actualHash -> Left $ ErikE $ ErikHashMismatchError { expectedHash = hash, .. })
+                                    (\actualStatus -> Left $ ErikE $ Can'tDownloadObject 
+                                                        $ U.convert $ "Http status: " <> show actualStatus)
+                                    (\actualHash -> Left $ ErikE $ ErikHashMismatchError { 
+                                        expectedHash = hash, .. })
 
-                        vHoist $ parseErikPartition partBs      
-
-                pure (partUri, r) 
+                        vHoist $ parseErikPartition partBs                      
 
         getManifests :: Text -> Hash -> ErikPartition -> ValidatorT IO ()
         getManifests scope partitionHash ErikPartition {..} = do            
@@ -154,9 +157,9 @@ fetchErik
                         logDebug logger [i|Manifest #{U.hashAsBase64Url hash} already in the database.|]
                         void $ fetchManifestChildren mft
 
-                    Just (Located locations ro) -> do
+                    Just (Located objectLocations _) -> do
                         logDebug logger $ [i|Manifest hash #{U.hashAsBase64Url hash} points to an existing |] <>
-                                        [i|object that is not a manifest #{pickLocation locations}, |] <>
+                                        [i|object that is not a manifest #{pickLocation objectLocations}, |] <>
                                         "it almost surely means broken Erik relay."
 
                     Nothing -> do
@@ -172,9 +175,11 @@ fetchErik
                 withSemaphoreVT downloadSemaphore $ 
                     vFocusOn LocationFocus manifestUri $ do
                         let manifestFile = manifestDir hash </> show hash <> ".mft"
-                        (manifestBs, _, manStatus) <-
+                        (manifestBs, _, _) <-
                             fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
                                 downloadToFileHashed manifestUri manifestFile hash size
+                                    (\actualStatus -> Left $ ErikE $ Can'tDownloadObject 
+                                                        $ U.convert $ "Http status: " <> show actualStatus)
                                     (\actualHash -> Left $ ErikE $ ErikHashMismatchError { expectedHash = hash, .. })
                         
                         vHoist $ parseMft manifestBs

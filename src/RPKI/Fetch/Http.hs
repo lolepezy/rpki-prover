@@ -136,24 +136,19 @@ downloadToFile uri file limit = liftIO $ do
 
 -- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
 -- streaming it to the file.
-downloadToFileHashed :: (Blob bs, MonadIO m) => 
-                    URI -> 
-                    FilePath ->                    
-                    Hash -> 
-                    Size -> 
-                    (Hash -> Either e (bs, Size, HttpStatus)) ->
-                    m (Either e (bs, Size, HttpStatus))
-downloadToFileHashed uri file expectedHash maxSize hashMishmatch = liftIO $
-    withFile file WriteMode $ \fd -> do 
-        ((actualHash, size), status, _) <- 
-                downloadConduit uri Nothing fd 
-                    (sinkGenSize uri maxSize S256.init S256.update (U.mkHash . S256.finalize))
-        if actualHash /= expectedHash 
-            then pure $! hashMishmatch actualHash
-            else do
-                hClose fd
+downloadToFileHashed :: (Blob bs, MonadIO m) 
+                    => URI 
+                    -> FilePath 
+                    -> Hash 
+                    -> Size
+                    -> (HttpStatus -> Either e (bs, Size, HttpStatus)) 
+                    -> (Hash -> Either e (bs, Size, HttpStatus)) 
+                    -> m (Either e (bs, Size, HttpStatus))
+downloadToFileHashed uri file expectedHash maxSize httpStatusNotOk hashMishmatch = liftIO $
+    downloadToFileHashedGen uri file expectedHash maxSize httpStatusNotOk hashMishmatch 
+        (\file size status -> do             
                 content <- readB file size
-                pure $ Right (content, size, status)
+                pure (content, size, status))
                 
 
 downloadToFileHashed_ :: MonadIO m 
@@ -164,7 +159,20 @@ downloadToFileHashed_ :: MonadIO m
                     -> (HttpStatus -> Either e (Size, HttpStatus)) 
                     -> (Hash -> Either e (Size, HttpStatus)) 
                     -> m (Either e (Size, HttpStatus))
-downloadToFileHashed_ uri file expectedHash maxSize httpStatusNotOk hashMishmatch = liftIO $
+downloadToFileHashed_ uri file expectedHash maxSize httpStatusNotOk hashMishmatch = 
+    downloadToFileHashedGen uri file expectedHash maxSize httpStatusNotOk hashMishmatch 
+        (\file size status -> pure (size, status))
+
+downloadToFileHashedGen :: MonadIO m 
+                        => URI 
+                        -> FilePath 
+                        -> Hash 
+                        -> Size 
+                        -> (HttpStatus -> Either e r) 
+                        -> (Hash -> Either e r) 
+                        -> (FilePath -> Size -> HttpStatus -> IO r) 
+                        -> m (Either e r)
+downloadToFileHashedGen uri file expectedHash maxSize httpStatusNotOk hashMishmatch result = liftIO $
     withFile file WriteMode $ \fd -> do 
         ((actualHash, size), status, _) <- 
                 downloadConduit uri Nothing fd 
@@ -175,7 +183,7 @@ downloadToFileHashed_ uri file expectedHash maxSize httpStatusNotOk hashMishmatc
                 then pure $! hashMishmatch actualHash
                 else do
                     hClose fd                
-                    pure $ Right (size, status)            
+                    Right <$> result file size status
 
 
 lazyFsRead :: FilePath -> IO LBS.ByteString
