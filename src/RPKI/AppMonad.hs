@@ -14,11 +14,8 @@ import           Control.Monad.State.Strict
 import           Data.Bifunctor              (Bifunctor (first))
 import           Data.Generics.Product       (HasField)
 import           Data.Generics.Product.Typed
-import           Data.Hourglass
 import           Data.Proxy
 import           Data.Text                   (Text)
-
-import           System.Timeout
 
 import           RPKI.Domain
 import           RPKI.Reporting
@@ -210,40 +207,3 @@ timedMetric' _ f v = do
     updateMetric (f elapsed)
     vHoist $ fromValue r
             
-
-recover :: Monad m => ValidatorT m a -> ValidatorT m () -> ValidatorT m a
-recover tryF finallyF = 
-    tryIt `catchError` catchIt
-  where
-    tryIt = do  
-        z <- tryF 
-        finallyF
-        pure z
-    catchIt e = do
-        finallyF
-        throwError e            
-
-
-timeoutVT :: Seconds -> ValidatorT IO a -> ValidatorT IO a -> ValidatorT IO a
-timeoutVT s toDo timedOut = do 
-    let Seconds t = s
-    scopes <- askScopes 
-    z <- liftIO $ timeout (1_000_000 * fromIntegral t) (runValidatorT scopes toDo)
-    maybe timedOut (embedValidatorT . pure) z    
-
-
-andThen :: ValidatorT IO a -> ValidatorT IO () -> ValidatorT IO a
-andThen f action = do
-    !z <- f
-    action
-    pure $! z
-
-bracketVT :: IO a 
-        -> (a -> ValidatorT IO r) 
-        -> (a -> ValidatorT IO b) 
-        -> ValidatorT IO b
-bracketVT acquire release f = do 
-    scopes <- askScopes    
-    z@(_, vs) <- liftIO $ bracket acquire (runValidatorT scopes . release) (runValidatorT scopes . f)  
-    embedState vs    
-    embedValidatorT $ pure z

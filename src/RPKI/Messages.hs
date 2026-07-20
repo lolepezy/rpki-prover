@@ -21,7 +21,6 @@ import           RPKI.Reporting
 import           RPKI.Util (fmtLocations, hex)
 
 
-
 toMessage :: AppError -> Text
 toMessage = \case
     ParseE (ParseError t) -> t
@@ -39,12 +38,18 @@ toMessage = \case
         [i|Erik object hash mismatch: expected #{expectedHash}, got #{actualHash}.|]
     ErikE (ErikIndexScopeMismatch {..}) ->
         [i|Erik index scope mismatch: expected FQDN #{expectedScope}, but index has scope '#{actualScope}'.|]
+    ErikE (ErikManifestOutsideScope {..}) ->
+        [i|ManifestRef location #{location} is outside of Erik scope #{scope}.|]
 
     SlurmE r    -> toSlurmMessage r
     InternalE t -> toInternalErrorMessage t
     
     UnspecifiedE context e -> 
         [i|Unspecified error in #{context}, details: #{e}.|]
+
+    ComposeE appErrors -> let 
+        t = mconcat $ List.intersperse "\n" (map toMessage appErrors)
+        in [i|Multiple errors: #{t}.|]
 
 
 toRsyncMessage :: RsyncError -> Text

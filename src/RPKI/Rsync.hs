@@ -6,9 +6,6 @@ module RPKI.Rsync where
 import           Control.Lens
 import           Data.Generics.Product.Typed
 
-import           Data.Bifunctor
-
-import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Monad
@@ -17,9 +14,8 @@ import           Control.Monad.IO.Class
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
 import           Data.Maybe (fromMaybe)
-import qualified Data.Map.Strict                  as Map
 import           Data.Proxy
-import           Data.List (stripPrefix, foldl')
+import           Data.List (stripPrefix)
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
 import           Data.List.NonEmpty               (NonEmpty(..))
@@ -27,37 +23,30 @@ import qualified Data.List.NonEmpty               as NonEmpty
 
 import           Data.Hourglass
 
-import           GHC.Generics
-
 import           RPKI.AppContext
 import           RPKI.AppMonad
+import           RPKI.AppMonadUtil
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Metrics.System
-import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
-import           RPKI.Store.Types
-import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
-import qualified RPKI.Store.Database    as DB
 import           RPKI.Time
 import qualified RPKI.Util                        as U
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Worker
 import           RPKI.Fetch.DirectoryTraverse
 
-import           System.Directory                 (createDirectoryIfMissing, doesDirectoryExist, getDirectoryContents)
+import           System.Directory                 (createDirectoryIfMissing)
 
 import           System.Exit
 import           System.IO
 import           System.FilePath
 import           System.Process.Typed
-
-import qualified Streaming.Prelude                as S
 
 
 checkRsyncInPath :: Maybe FilePath -> ValidatorT IO ()

@@ -194,7 +194,8 @@ data RsyncError = RsyncProcessError Int Text |
 
 data ErikError = Can'tDownloadObject Text |
                  ErikHashMismatchError { actualHash :: Hash, expectedHash :: Hash } |
-                 ErikIndexScopeMismatch { expectedScope :: FQDN, actualScope :: Text }
+                 ErikIndexScopeMismatch { expectedScope :: FQDN, actualScope :: Text } |
+                 ErikManifestOutsideScope { location :: [URI], scope :: Text }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
@@ -236,6 +237,7 @@ data AppError = ParseE (ParseError Text) |
                 InitE InitError |
                 SlurmE SlurmError |
                 InternalE InternalError |
+                ComposeE [AppError] |
                 UnspecifiedE Text Text                
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
