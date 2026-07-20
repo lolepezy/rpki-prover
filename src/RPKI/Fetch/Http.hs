@@ -146,11 +146,10 @@ downloadToFileHashed :: (Blob bs, MonadIO m)
                     -> m (Either e (bs, Size, HttpStatus))
 downloadToFileHashed uri file expectedHash maxSize httpStatusNotOk hashMishmatch = liftIO $
     downloadToFileHashedGen uri file expectedHash maxSize httpStatusNotOk hashMishmatch 
-        (\file size status -> do             
-                content <- readB file size
-                pure (content, size, status))
+        (\size status -> do             
+            content <- readB file size
+            pure (content, size, status))
                 
-
 downloadToFileHashed_ :: MonadIO m 
                     => URI 
                     -> FilePath 
@@ -161,7 +160,8 @@ downloadToFileHashed_ :: MonadIO m
                     -> m (Either e (Size, HttpStatus))
 downloadToFileHashed_ uri file expectedHash maxSize httpStatusNotOk hashMishmatch = 
     downloadToFileHashedGen uri file expectedHash maxSize httpStatusNotOk hashMishmatch 
-        (\file size status -> pure (size, status))
+        (\size status -> pure (size, status))
+
 
 downloadToFileHashedGen :: MonadIO m 
                         => URI 
@@ -170,7 +170,7 @@ downloadToFileHashedGen :: MonadIO m
                         -> Size 
                         -> (HttpStatus -> Either e r) 
                         -> (Hash -> Either e r) 
-                        -> (FilePath -> Size -> HttpStatus -> IO r) 
+                        -> (Size -> HttpStatus -> IO r) 
                         -> m (Either e r)
 downloadToFileHashedGen uri file expectedHash maxSize httpStatusNotOk hashMishmatch result = liftIO $
     withFile file WriteMode $ \fd -> do 
@@ -183,7 +183,7 @@ downloadToFileHashedGen uri file expectedHash maxSize httpStatusNotOk hashMishma
                 then pure $! hashMishmatch actualHash
                 else do
                     hClose fd                
-                    Right <$> result file size status
+                    Right <$> result size status
 
 
 lazyFsRead :: FilePath -> IO LBS.ByteString
