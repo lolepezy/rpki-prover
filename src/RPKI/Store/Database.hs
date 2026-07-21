@@ -442,6 +442,11 @@ getErikPartition :: (MonadIO m, Storage s) =>
 getErikPartition tx DB { erikStore = ErikStore {..} } h = 
     liftIO $ M.get tx partitions h
 
+getAllErikIndexes :: (MonadIO m, Storage s) =>
+                     Tx s mode -> DB s -> m [(ErikIndexKey, ErikIndex)]
+getAllErikIndexes tx DB { erikStore = ErikStore {..} } =
+    liftIO $ SM.all tx indexes
+
 saveErikPartition :: (MonadIO m, Storage s) => 
                     Tx s 'RW -> DB s -> Hash -> ErikPartition -> m ()
 saveErikPartition tx DB { erikStore = ErikStore {..} } h partition = 

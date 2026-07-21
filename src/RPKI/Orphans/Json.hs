@@ -373,6 +373,15 @@ $(deriveToJSON defaultOptions ''CertificateWithSignature)
 $(deriveToJSON defaultOptions ''RawResourceCertificate)
 $(deriveToJSON defaultOptions ''ResourceCertificate)
 
+-- Erik relay types
+instance ToJSON FQDN where
+    toJSON (FQDN t) = toJSON t
+
+$(deriveToJSON defaultOptions ''ErikPartitionRef)
+$(deriveToJSON defaultOptions ''ErikManifestRef)
+$(deriveToJSON defaultOptions ''ErikPartition)
+$(deriveToJSON defaultOptions ''ErikIndex)
+
 -- RPKI Object
 instance ToJSON a => ToJSON (TypedCert a t)
 
