@@ -27,6 +27,7 @@ testFetchErik = do
         -- let fqdn = FQDN "rsync.paas.rpki.ripe.net"
         let fqdn = FQDN "ca.rg.net"
         let relayUri = URI "https://miso.sobornost.net"
+        -- let relayUri = URI "http://relay.rpki-servers.org"
 
         (z, _) <- runValidatorT (newScopes "erik-test") $ 
             fetchErik testContext worldVersion relayUri fqdn

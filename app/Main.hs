@@ -61,6 +61,7 @@ import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.RRDP.RrdpFetch
 
+import           RPKI.Fetch.ErikRelay
 import           RPKI.Rsync
 import           RPKI.TAL
 import           RPKI.Util               
@@ -191,6 +192,10 @@ executeWorkerProcess = do
                                     exec resultHandler $ fmap (Right . RsyncFetchResult) $ runValidatorT scopes $                                     
                                         updateObjectForRsyncRepository appContext fetchConfig 
                                             worldVersion rsyncRepository
+
+                                ErikFetchParams {..} ->
+                                    exec resultHandler $ fmap (Right . ErikFetchResult) $ runValidatorT scopes $
+                                        fetchErik appContext worldVersion relayUri fqdn
 
                                 CompactionParams {..} -> 
                                     exec resultHandler $ 

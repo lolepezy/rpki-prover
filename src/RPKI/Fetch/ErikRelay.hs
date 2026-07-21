@@ -31,9 +31,52 @@ import qualified RPKI.Util as U
 import           RPKI.Fetch.Http
 import           RPKI.Fetch.DirectoryTraverse
 import qualified RPKI.Store.Database    as DB
+import           RPKI.Worker
+import           RPKI.Time
+import           RPKI.Metrics.System
 
 data IndexFetch index = SameIndex index | UpdatedIndex index
     deriving (Show, Eq, Ord)
+
+runErikFetchWorker :: Storage s
+                    => AppContext s
+                    -> FetchConfig
+                    -> WorldVersion
+                    -> URI
+                    -> FQDN
+                    -> ValidatorT IO ()
+runErikFetchWorker appContext@AppContext {..} fetchConfig worldVersion relayUri fqdn@(FQDN fqdn_) = do
+
+    -- This is for humans to read in `top` or `ps`, actual parameters
+    -- are passed as 'ErikFetchParams'.
+    let workerId = WorkerId [i|version:#{worldVersion}:erik-fetch:#{fqdn_}|]
+
+    let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
+    let arguments =
+            [ show workerId ] <>
+            rtsArguments [
+                rtsN maxCpuAvailable,
+                rtsA "4m",
+                rtsAL "4m",
+                "-Fd1",
+                "--disable-delayed-os-memory-return",
+                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #erikWorkerMemoryMb) ]
+
+    scopes <- askScopes
+    workerInput <- makeWorkerInput appContext workerId
+                        (ErikFetchParams scopes fetchConfig relayUri fqdn worldVersion)
+                        (Timebox $ fetchConfig ^. #erikTimeout)
+                        (Just $ asCpuTime $ fetchConfig ^. #cpuLimit)
+
+    workerInfo <- newWorkerInfo (GenericWorker "erik-fetch") (fetchConfig ^. #erikTimeout) (U.convert $ show workerId)
+    wr@WorkerResult {..} <- runWorker logger workerInput arguments workerInfo
+    case payload of
+        Left (ErrorResult e) ->
+            appError $ InternalE $ WorkerError e
+        Right (ErikFetchResult z) -> do
+            logWorkerDone logger workerId wr
+            pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory
+            embedValidatorT $ pure z
 
 {- 
     Implementation of the Erik relay fetcher.
@@ -85,7 +128,7 @@ fetchErik
                     fromTryM (ErikE . Can'tDownloadObject . U.fmtEx) $                                      
                         downloadToBS tmpDir indexUri Nothing maxSize                    
             index <- vHoist $ parseErikIndex indexBs                
-            logDebug logger [i|Downloaded Erik index #{index}, HTTP status: #{httpStatus}|]
+            logDebug logger [i|Downloaded Erik index for #{fqdn_}, HTTP status: #{httpStatus}|]
 
             join $ rwTxT database $ \tx db -> do 
                 DB.getErikIndex tx db relayUri fqdn >>= \case 

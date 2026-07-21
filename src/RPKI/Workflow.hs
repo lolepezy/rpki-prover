@@ -752,6 +752,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     handleValidations tx db validations = do
         forceSnapshotForReferencialIssues tx db validations
         -- other processings if needed
+        -- TODO Add some logic that would reset the cache in case of storage integrity issues
 
     -- https://github.com/lolepezy/rpki-prover/issues/249
     -- This is to handle referential integrity issues, i.e. manifests referring to 
@@ -950,6 +951,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                 -- this whole fetcheable is gone
                                 pure Nothing
                             Just fallbacks -> do  
+                                -- TODO Try Erik relay before trying rsync
                                 anyUpdates <- fetchFallbacks fetchConfig worldVersion fallbacks                                                            
                                 triggerTaRevalidationIf anyUpdates
                                 if anyUpdates 
