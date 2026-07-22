@@ -556,8 +556,11 @@ data BGPSecPayload = BGPSecPayload {
 -- https://datatracker.ietf.org/doc/html/draft-spaghetti-sidrops-rpki-erik-protocol
 
 newtype FQDN = FQDN { unFQDN :: Text }
-    deriving stock (Show, Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
+
+instance Show FQDN where
+    show = Text.unpack . unFQDN
 
 data ErikIndex = ErikIndex {
         indexScope    :: Text,

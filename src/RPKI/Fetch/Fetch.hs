@@ -216,39 +216,34 @@ fetchRepositoryFromErikRelays :: (Storage s) =>
                             -> FetchConfig
                             -> [URI]                            
                             -> WorldVersion
-                            -> Repository 
-                            -> ValidatorT IO Repository
+                            -> FQDN 
+                            -> ValidatorT IO ()
 fetchRepositoryFromErikRelays
     appContext@AppContext {..}
     fetchConfig
     relays
     worldVersion    
-    repo = do
-        logInfo logger [i|Fetching #{getURL repoURL}.|]   
-        case getFQDN repoURL of 
-            Nothing -> appError $ ErikE $ ErikInvalidUrl repoURL
-            Just fqdn -> do 
-                -- TODO Make some round-robin selection of relays
-                let relay = head relays
+    fqdn = do
+        logInfo logger [i|Fetching #{fqdn}.|]           
+        -- TODO Make some round-robin selection of relays
+        let relay = head relays
 
-                let fetcherTimeout = fetchConfig ^. #erikTimeout
-                let totalTimeout = fetcherTimeout + timeToKillItself
-                timeoutVT totalTimeout
-                    (do
-                        let fetchConfig' = fetchConfig & #erikTimeout .~ fetcherTimeout
-                        (z, elapsed) <- timedMS $ fromTryM 
-                                            (ErikE . UnknownErikProblem . fmtEx) 
-                                            (runErikFetchWorker appContext fetchConfig' worldVersion relay fqdn)
-                        logInfo logger [i|Fetched #{getURL repoURL} from Erik relay #{relay}, took #{elapsed}ms.|]
-                        pure z)            
-                    (do 
-                        logError logger [i|Couldn't fetch repository #{getURL repoURL} from Erik relay #{relay} after #{totalTimeout}.|]
-                        trace WorkerTimeoutTrace
-                        appError $ ErikE $ ErikDownloadTimeout totalTimeout)                        
-        pure repo        
-  where
-    repoURL = getRpkiURL repo
-
+        let fetcherTimeout = fetchConfig ^. #erikTimeout
+        let totalTimeout = fetcherTimeout + timeToKillItself
+        timeoutVT totalTimeout
+            (do
+                let fetchConfig' = fetchConfig & #erikTimeout .~ fetcherTimeout
+                (z, elapsed) <- timedMS $ fromTryM 
+                                    (ErikE . UnknownErikProblem . fmtEx) 
+                                    (runErikFetchWorker appContext fetchConfig' worldVersion relay fqdn)
+                logInfo logger [i|Fetched #{fqdn} from Erik relay #{relay}, took #{elapsed}ms.|]
+                pure z)            
+            (do 
+                logError logger [i|Couldn't fetch repository #{fqdn} from Erik relay #{relay} after #{totalTimeout}.|]
+                trace WorkerTimeoutTrace
+                appError $ ErikE $ ErikDownloadTimeout totalTimeout)                        
+           
+  where    
     -- Give the process some time to kill itself, 
     -- before trying to kill it from here
     timeToKillItself = Seconds 5

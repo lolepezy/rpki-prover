@@ -128,31 +128,30 @@ fetchErik
             (indexBs, _, httpStatus, _ignoreEtag) <- 
                     fromTryM (ErikE . Can'tDownloadObject . U.fmtEx) $                                      
                         downloadToBS tmpDir indexUri Nothing maxSize
-            if httpStatus /= mempty 
-                then do 
-                    appError $ ErikE $ Can'tDownloadObject [i|Could not download index #{indexUri}, http status = #{httpStatus}|]
-                else do 
-                    index <- vHoist $ parseErikIndex indexBs                
-                    logDebug logger [i|Downloaded Erik index for #{fqdn_}, HTTP status: #{httpStatus}|]
+            when (httpStatus /= mempty) $ do 
+                appError $ ErikE $ Can'tDownloadObject [i|Could not download index #{indexUri}, http status = #{httpStatus}|]
 
-                    join $ rwTxT database $ \tx db -> do 
-                        DB.getErikIndex tx db relayUri fqdn >>= \case 
-                            Nothing -> do 
-                                DB.saveErikIndex tx db relayUri fqdn index
-                                pure $ do 
-                                    logInfo logger [i|No Erik index for #{fqdn_} in the database, downloading from relay #{relayUri}.|]
-                                    pure $ Just index
+            index <- vHoist $ parseErikIndex indexBs                
+            logDebug logger [i|Downloaded Erik index for #{fqdn_}, HTTP status: #{httpStatus}|]
 
-                            Just existing 
-                                | existing == index -> 
-                                    pure $ do 
-                                        logInfo logger [i|Erik index for #{fqdn_} didn't change since the last synchronisation.|]
-                                        pure Nothing
-                                | otherwise -> do 
-                                    DB.saveErikIndex tx db relayUri fqdn index
-                                    pure $ do 
-                                        logInfo logger [i|Erik index for #{fqdn_} changed, updating from relay #{relayUri}.|]              
-                                        pure $ Just index            
+            join $ rwTxT database $ \tx db -> do 
+                DB.getErikIndex tx db relayUri fqdn >>= \case 
+                    Nothing -> do 
+                        DB.saveErikIndex tx db relayUri fqdn index
+                        pure $ do 
+                            logInfo logger [i|No Erik index for #{fqdn_} in the database, downloading from relay #{relayUri}.|]
+                            pure $ Just index
+
+                    Just existing 
+                        | existing == index -> 
+                            pure $ do 
+                                logInfo logger [i|Erik index for #{fqdn_} didn't change since the last synchronisation.|]
+                                pure Nothing
+                        | otherwise -> do 
+                            DB.saveErikIndex tx db relayUri fqdn index
+                            pure $ do 
+                                logInfo logger [i|Erik index for #{fqdn_} changed, updating from relay #{relayUri}.|]              
+                                pure $ Just index            
 
         getPartition :: ErikPartitionRef -> ValidatorT IO ErikPartition
         getPartition ErikPartitionRef {..} = do 
