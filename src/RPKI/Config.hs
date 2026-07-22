@@ -255,7 +255,7 @@ defaultConfig = Config {
         enabled = True
     },
     erikConf = ErikConf {
-        relays = [],
+        relays = [ URI "https://miso.sobornost.net" ] ,
         maxSize = Size $ 20 * 1024 * 1024,
         parallelism = 10,
         erikTimeout = 15 * minutes,
