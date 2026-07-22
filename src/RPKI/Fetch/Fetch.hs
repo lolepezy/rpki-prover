@@ -43,6 +43,7 @@ import           RPKI.Parallel
 import           RPKI.Util                       
 import           RPKI.Rsync
 import           RPKI.Fetch.Http
+import           RPKI.Fetch.ErikRelay
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
 
@@ -209,6 +210,48 @@ fetchTACertificate appContext@AppContext {..} fetchConfig tal =
             validatorWarning $ VWarning e
             go uris            
 
+
+fetchRepositoryFromErikRelays :: (Storage s) =>
+                                AppContext s 
+                            -> FetchConfig
+                            -> [URI]                            
+                            -> WorldVersion
+                            -> Repository 
+                            -> ValidatorT IO Repository
+fetchRepositoryFromErikRelays
+    appContext@AppContext {..}
+    fetchConfig
+    relays
+    worldVersion    
+    repo = do
+        logInfo logger [i|Fetching #{getURL repoURL}.|]   
+        case getFQDN repoURL of 
+            Nothing -> appError $ ErikE $ ErikInvalidUrl repoURL
+            Just fqdn -> do 
+                -- TODO Make some round-robin selection of relays
+                let relay = head relays
+
+                let fetcherTimeout = fetchConfig ^. #erikTimeout
+                let totalTimeout = fetcherTimeout + timeToKillItself
+                timeoutVT totalTimeout
+                    (do
+                        let fetchConfig' = fetchConfig & #erikTimeout .~ fetcherTimeout
+                        (z, elapsed) <- timedMS $ fromTryM 
+                                            (ErikE . UnknownErikProblem . fmtEx) 
+                                            (runErikFetchWorker appContext fetchConfig worldVersion relay fqdn)
+                        logInfo logger [i|Fetched #{getURL repoURL} from Erik relay #{relay}, took #{elapsed}ms.|]
+                        pure z)            
+                    (do 
+                        logError logger [i|Couldn't fetch repository #{getURL repoURL} from Erik relay #{relay} after #{totalTimeout}.|]
+                        trace WorkerTimeoutTrace
+                        appError $ ErikE $ ErikDownloadTimeout totalTimeout)                        
+        pure repo        
+  where
+    repoURL = getRpkiURL repo
+
+    -- Give the process some time to kill itself, 
+    -- before trying to kill it from here
+    timeToKillItself = Seconds 5
 
 
 -- | Check if an URL need to be re-fetched, based on fetch status and current time.

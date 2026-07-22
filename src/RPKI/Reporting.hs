@@ -195,7 +195,10 @@ data RsyncError = RsyncProcessError Int Text |
 data ErikError = Can'tDownloadObject Text |
                  ErikHashMismatchError { actualHash :: Hash, expectedHash :: Hash } |
                  ErikIndexScopeMismatch { expectedScope :: FQDN, actualScope :: Text } |
-                 ErikManifestOutsideScope { location :: [URI], scope :: Text }
+                 ErikManifestOutsideScope { location :: [URI], scope :: Text } |
+                 ErikInvalidUrl { url :: RpkiURL } |
+                 ErikDownloadTimeout Seconds |
+                 UnknownErikProblem Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 

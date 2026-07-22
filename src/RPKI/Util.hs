@@ -163,6 +163,11 @@ getHostname t =
                 Left _  -> Nothing
                 Right a -> Just $ a ^. authHost . unRText
 
+
+getFQDN :: RpkiURL -> Maybe FQDN
+getFQDN (RsyncU (RsyncURL (RsyncHost (RsyncHostName host) _) _)) = Just $ FQDN host
+getFQDN (RrdpU (RrdpURL (URI u))) = FQDN <$> getHostname u
+
 increment :: (MonadIO m, Num a) => IORef a -> m ()
 increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())            
 

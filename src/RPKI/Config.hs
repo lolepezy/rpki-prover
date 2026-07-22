@@ -108,6 +108,7 @@ data RsyncConf = RsyncConf {
     deriving anyclass (TheBinary)
 
 data ErikConf = ErikConf {
+        relays      :: [URI],
         maxSize     :: Size,
         parallelism :: Natural,
         erikTimeout :: Seconds,
@@ -254,6 +255,7 @@ defaultConfig = Config {
         enabled = True
     },
     erikConf = ErikConf {
+        relays = [],
         maxSize = Size $ 20 * 1024 * 1024,
         parallelism = 10,
         erikTimeout = 15 * minutes,
