@@ -238,7 +238,7 @@ fetchRepositoryFromErikRelays
                         let fetchConfig' = fetchConfig & #erikTimeout .~ fetcherTimeout
                         (z, elapsed) <- timedMS $ fromTryM 
                                             (ErikE . UnknownErikProblem . fmtEx) 
-                                            (runErikFetchWorker appContext fetchConfig worldVersion relay fqdn)
+                                            (runErikFetchWorker appContext fetchConfig' worldVersion relay fqdn)
                         logInfo logger [i|Fetched #{getURL repoURL} from Erik relay #{relay}, took #{elapsed}ms.|]
                         pure z)            
                     (do 
