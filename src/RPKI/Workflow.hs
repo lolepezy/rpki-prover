@@ -552,7 +552,8 @@ runAll appContext@AppContext {..} tals = do
         let Seconds (fromIntegral -> maxTimeout :: NominalDiffTime) = 
                 10 + config ^. #rrdpConf . #rrdpTimeout
 
-        forM_ files $ \file -> 
+        -- Do not touch "erik" subdirectory, it has it's own cleanup mechanism
+        forM_ (filter (/= "erik") files) $ \file ->
             ignoreSync $ do 
                 let fullPath = tmpDir </> file
                 ageInSeconds <- diffUTCTime now <$> getModificationTime fullPath            
@@ -981,13 +982,22 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                     -- nothing responded, so just go with the normal exponential backoff thing
                                     pure $ Just interval                
 
-        fetchErikRelays fetchConfig worldVersion repository erikRelays = do
+        fetchErikRelays fetchConfig worldVersion repository erikRelays = do            
             ((r, validations), duration) <-                 
                 withFetchLimits fetchConfig repository $ timedMS $ 
-                    runValidatorT (newScopes' RepositoryFocus url) $ 
-                        fetchRepositoryFromErikRelays appContext fetchConfig 
-                            erikRelays worldVersion repository             
+                    runValidatorT (newScopes' RepositoryFocus url) $ do
+                        -- TODO Dirty to extract FQDN from fallback rsync URLs instead of 
+                        -- RRDP URL, because FQDN comes from SIA of the certificate.
+                        fallbacks <- fromMaybe mempty <$> liftIO fetchableForUrl            
+                        let fqdns = Set.fromList [ fqdn | f <- Set.toList fallbacks, Just fqdn <- [getFQDN f]]
+                        fqdn <- if Set.null fqdns 
+                                then case getFQDN $ getRpkiURL url of 
+                                        Nothing -> appError $ ErikE $ ErikInvalidUrl url
+                                        Just f  -> pure f
+                                else pure $ Set.findMin fqdns
 
+                        fetchRepositoryFromErikRelays appContext fetchConfig 
+                            erikRelays worldVersion fqdn
             case r of 
                 Right _ -> do 
                     let (updatedRepo, interval) = updateRepository fetchConfig
