@@ -998,13 +998,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                     pure $ Just interval
 
-                Left _ -> do 
-                    let newStatus = FailedAt $ versionToInstant worldVersion
-                    let (updatedRepo, interval) = updateRepository fetchConfig 
-                            repository worldVersion newStatus Nothing duration
-                    saveFetchOutcome updatedRepo validations
-
-                    pure $ Just interval
+                Left e -> do
+                    logWarn logger [i|Erik relay fetch failed for #{url} with error #{e}, falling back to primary fetch.|]
+                    fetchPrimary fetchConfig repository worldVersion
 
 
         fetchFallbacks fetchConfig worldVersion fallbacks = do 

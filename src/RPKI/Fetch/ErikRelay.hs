@@ -132,7 +132,6 @@ fetchErik
                 then do 
                     appError $ ErikE $ Can'tDownloadObject [i|Could not download index #{indexUri}, http status = #{httpStatus}|]
                 else do 
-                    logDebug logger [i|Erik index for #{fqdn_}, indexBs = #{indexBs}|]
                     index <- vHoist $ parseErikIndex indexBs                
                     logDebug logger [i|Downloaded Erik index for #{fqdn_}, HTTP status: #{httpStatus}|]
 
