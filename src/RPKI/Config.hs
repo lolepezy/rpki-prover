@@ -108,11 +108,12 @@ data RsyncConf = RsyncConf {
     deriving anyclass (TheBinary)
 
 data ErikConf = ErikConf {
-        relays      :: [URI],
-        maxSize     :: Size,
-        parallelism :: Natural,
-        erikTimeout :: Seconds,
-        cpuLimit    :: Seconds
+        relays               :: [URI],
+        maxSize              :: Size,
+        parallelism          :: Natural,
+        erikTimeout          :: Seconds,
+        erikRefreshInterval  :: Seconds,
+        cpuLimit             :: Seconds
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -255,11 +256,12 @@ defaultConfig = Config {
         enabled = True
     },
     erikConf = ErikConf {
-        relays = [ URI "https://miso.sobornost.net" ] ,
-        maxSize = Size $ 20 * 1024 * 1024,
-        parallelism = 10,
-        erikTimeout = 15 * minutes,
-        cpuLimit = 30 * minutes
+        relays              = [],
+        maxSize             = Size $ 20 * 1024 * 1024,
+        parallelism         = 10,
+        erikTimeout         = 15 * minutes,
+        erikRefreshInterval = 2 * minutes,
+        cpuLimit            = 30 * minutes
     },
     validationConfig = ValidationConfig {
         revalidationInterval           = 15 * minutes,
