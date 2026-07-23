@@ -1119,17 +1119,16 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria
 
 deleteOrphanedErikPartitions :: DB s -> Tx s 'RW -> IO Int
 deleteOrphanedErikPartitions DB { erikStore = ErikStore {..} } tx = do
-    allIndexes <- SM.all tx indexes
-    let referencedHashes = Set.fromList
-            [ partHash | (_, ErikIndex { partitionList }) <- allIndexes
-                       , ErikPartitionRef { hash = partHash } <- partitionList ]
+    allIndexes <- SM.all tx indexes    
+    let referencedHashes = Set.fromList [ ref ^. #hash | 
+            (_, index_) <- allIndexes, ref <- index_ ^. #partitionList ]                       
 
     allPartitionHashes <- M.keys tx partitions
     let hashesToDelete = filter (`Set.notMember` referencedHashes) allPartitionHashes
 
     for_ hashesToDelete $ M.delete tx partitions
 
-    pure $ length hashesToDelete
+    pure $! length hashesToDelete
 
 
 deleteDanglingUrls :: DB s -> Tx s 'RW -> IO Int
