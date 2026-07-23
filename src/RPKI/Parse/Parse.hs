@@ -25,7 +25,6 @@ module RPKI.Parse.Parse (
 where
 
 import qualified Data.ByteString                  as BS
-import           Data.Char                        (toLower)
 import qualified Data.Text                        as Text
 import           Data.String                      (IsString)
 import           Data.Maybe
@@ -61,11 +60,11 @@ rpkiObjectType = \case
 
 -- | 
 supportedExtension :: String -> Bool
-supportedExtension = isJust . nameObjectType . map toLower
+supportedExtension = isJust . nameObjectType
 
 supportedExtensionByErik :: String -> Bool
 supportedExtensionByErik filename =
-    case nameObjectType (map toLower filename) of
+    case nameObjectType filename of
         Nothing  -> False
         -- For now Erik relays don't retransmit GBR objects
         Just GBR -> False
