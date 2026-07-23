@@ -94,6 +94,7 @@ httpServer appContext = genericServe HttpApi {
         originalValidationResults = getValidationsOriginalDto appContext,
         metrics = getMetrics appContext,
         repositories = getPPs appContext,
+        erikRelays = getErikRelays_ appContext,
         lmdbStats = getStats appContext,
         jobs = getJobs appContext,
         objectView = getRpkiObject appContext,
@@ -372,6 +373,17 @@ getPPs AppContext {..} = liftIO $ do
     db <- readTVarIO database
     pps <- roTx db $ \tx -> DB.getPublicationPoints tx db
     pure $ toPublicationPointDto pps
+
+getErikRelays_ :: (MonadIO m, Storage s) => AppContext s -> m [ErikRelayDto]
+getErikRelays_ AppContext {..} = liftIO $ do
+    db <- readTVarIO database
+    roTx db $ \tx -> do
+        indexPairs <- DB.getAllErikIndexes tx db
+        forM indexPairs $ \(DB.ErikIndexKey keyText, ErikIndex {..}) -> do
+            parts <- forM partitionList $ \ErikPartitionRef { hash = partHash, size } -> do
+                partition <- DB.getErikPartition tx db partHash
+                pure ErikPartitionDto { hash = partHash, size, partition }
+            pure ErikRelayDto { relayKey = keyText, indexScope, indexTime, partitions = parts }
 
 getRpkiObject :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s

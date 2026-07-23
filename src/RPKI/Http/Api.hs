@@ -92,6 +92,8 @@ data API api = API {
 
         repositories :: api :- "repositories" :> Get '[JSON] PublicationPointsDto,        
 
+        erikRelays :: api :- "erik-relays" :> Get '[JSON] [ErikRelayDto],
+
         objectView :: api :- "object" :> QueryParam "uri" Text 
                                       :> QueryParam "hash" Text 
                                       :> QueryParam "key" Text 
@@ -185,6 +187,9 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
                 "Metrics for the latest validation run (object counts, repository statuses, etc.)"),
 
             ("/repositories", mempty & get ?~ jsonOn200 "Statuses of the repositories"),
+
+            ("/erik-relays", mempty & get ?~ jsonOn200 
+                "Erik relay indexes and their partitions cached in the database"),
 
             ("/object", mempty 
                 & get ?~ jsonOn200 

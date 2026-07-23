@@ -71,7 +71,7 @@ data CertType = CACert | EECert | BGPCert
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-newtype Hash = Hash BSS.ShortByteString 
+newtype Hash = Hash { unHash :: BSS.ShortByteString } 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
@@ -553,6 +553,67 @@ data BGPSecPayload = BGPSecPayload {
     deriving anyclass (TheBinary, NFData)
 
 
+-- https://datatracker.ietf.org/doc/html/draft-spaghetti-sidrops-rpki-erik-protocol
+
+newtype FQDN = FQDN { unFQDN :: Text }
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+instance Show FQDN where
+    show = Text.unpack . unFQDN
+
+data ErikIndex = ErikIndex {
+        indexScope    :: Text,
+        indexTime     :: Instant,  
+        hashAlg       :: DigestAlgorithmIdentifier,
+        partitionList :: [ErikPartitionRef]
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)   
+
+data ErikPartitionRef = ErikPartitionRef {
+        hash       :: Hash,
+        size       :: Size
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)   
+
+data ErikPartition = ErikPartition {
+        partitionTime :: Instant,   
+        hashAlg       :: DigestAlgorithmIdentifier,
+        manifestList  :: [ErikManifestRef]
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+data ErikManifestRef = ErikManifestRef {
+        hash           :: Hash,
+        size           :: Size,
+        aki            :: AKI,
+        manifestNumber :: Serial,
+        thisUpdate     :: Instant,
+        locations      :: [URI]
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)   
+
+data ErikSegmentIndex = ErikSegmentIndex {
+        segmentScope :: Text,
+        segmentTime  :: Instant,
+        hashAlg      :: DigestAlgorithmIdentifier,
+        segmentList  :: [ErikSegmentRef]
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+data ErikSegmentRef = ErikSegmentRef {
+        segment :: Instant,
+        index   :: Hash
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+
 data CertificateWithSignature = CertificateWithSignature {
         cwsX509certificate    :: X509.Certificate,
         cwsSignatureAlgorithm :: SignatureAlgorithmIdentifier,
@@ -573,7 +634,6 @@ data SignedObject a = SignedObject {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
--- deriving instance NFData ASN1
 
 {- 
     SignedData ::= SEQUENCE {
@@ -826,18 +886,10 @@ emptyAsResources :: AsResources
 emptyAsResources = AsResources RS.emptyRS
 
 newCrl :: AKI -> Hash -> SignCRL -> CrlObject
-newCrl a h sc = CrlObject {
-        hash = h,    
-        aki = a,
-        signCrl = sc
-    } 
+newCrl aki hash signCrl = CrlObject {..}        
 
 newCMSObject :: Hash -> CMS a -> CMSBasedObject a
-newCMSObject h cms = CMSBasedObject {
-        hash = h,    
-        -- locations = loc,
-        cmsPayload = cms
-    }
+newCMSObject hash cmsPayload = CMSBasedObject {..}        
 
 toShortBS :: BS.ByteString -> BSS.ShortByteString
 toShortBS = BSS.toShort
@@ -929,3 +981,7 @@ getForTA (PerTA a) taName = MonoidalMap.lookup taName a
 
 divSize :: Size -> Size -> Size
 divSize (Size s1) (Size n) = Size $ s1 `div` n
+
+
+getMftChildren :: MftObject -> [MftPair]
+getMftChildren = mftEntries . getCMSContent . cmsPayload

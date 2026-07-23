@@ -55,7 +55,7 @@ import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Repository
-import           RPKI.Fetch
+import           RPKI.Fetch.Fetch
 import           RPKI.Logging
 import           RPKI.Metrics.System
 import           RPKI.Http.Types
@@ -513,7 +513,8 @@ runAll appContext@AppContext {..} tals = do
                     then [i|in particular #{Map.toList deletedPerType}, |] 
                     else ""
                 logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, #{perType}kept #{keptObjects}, |] <>
-                                 [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|]
+                                 [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, |] <>
+                                 [i|deleted #{deletedErikPartitions} orphaned Erik partitions, took #{elapsed}ms.|]
       where
         cleanupOldObjects = do                 
             ((z, _), workerId) <- runCleanUpWorker worldVersion      
@@ -552,7 +553,8 @@ runAll appContext@AppContext {..} tals = do
         let Seconds (fromIntegral -> maxTimeout :: NominalDiffTime) = 
                 10 + config ^. #rrdpConf . #rrdpTimeout
 
-        forM_ files $ \file -> 
+        -- Do not touch "erik" subdirectory, it has it's own cleanup mechanism
+        forM_ (filter (/= "erik") files) $ \file ->
             ignoreSync $ do 
                 let fullPath = tmpDir </> file
                 ageInSeconds <- diffUTCTime now <$> getModificationTime fullPath            
@@ -752,6 +754,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     handleValidations tx db validations = do
         forceSnapshotForReferencialIssues tx db validations
         -- other processings if needed
+        -- TODO Add some logic that would reset the cache in case of storage integrity issues
 
     -- https://github.com/lolepezy/rpki-prover/issues/249
     -- This is to handle referential integrity issues, i.e. manifests referring to 
@@ -920,53 +923,97 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 repository <- fromMaybe (newRepository url) <$> 
                                 roTxT database (\tx db -> DB.getRepository tx db url) 
 
-                ((r, validations), duration) <-                 
-                        withFetchLimits fetchConfig repository $ timedMS $ 
-                            runValidatorT (newScopes' RepositoryFocus url) $ do                                 
-                                runConcurrentlyIfPossible logger FetchTask runningTasks 
-                                    $ fetchRepository appContext fetchConfig worldVersion repository
+                -- TODO It should be refactored to be more systematic: 
+                -- If a repository was successfully fetched before, try to fetch the update 
+                -- using Erik relays (if configured)
+                case (config ^. typed @ErikConf . #relays, getFetchStatus repository) of 
+                    (erikRelays, FetchedAt {}) 
+                        | not (null erikRelays) -> 
+                            fetchErikRelays fetchConfig worldVersion repository erikRelays
+                    _ -> 
+                            fetchPrimary fetchConfig repository worldVersion
 
-                rememberFirstFetchBy worldVersion
-                updatePrometheusForRepository url duration prometheusMetrics
-
-                -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
-                case r of
-                    Right (repository', stats) -> do                         
-                        let (updateRepo, interval) = updateRepository fetchConfig
-                                repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duration
-
-                        saveFetchOutcome updateRepo validations                        
-                        triggerTaRevalidationIf $ hasUpdates validations                                                         
-
-                        pure $ Just interval
-
-                    Left _ -> do
-                        let newStatus = FailedAt $ versionToInstant worldVersion
-                        let (updatedRepo, interval) = updateRepository fetchConfig repository worldVersion newStatus Nothing duration
-                        saveFetchOutcome updatedRepo validations
-
-                        fetchableForUrl >>= \case
-                            Nothing -> 
-                                -- this whole fetcheable is gone
-                                pure Nothing
-                            Just fallbacks -> do  
-                                anyUpdates <- fetchFallbacks fetchConfig worldVersion fallbacks                                                            
-                                triggerTaRevalidationIf anyUpdates
-                                if anyUpdates 
-                                    then do                                        
-                                        pure $ Just $ 
-                                                case [ () | RsyncU _ <- Set.toList fallbacks ] of                                                     
-                                                    -- Not implemented yet, in reality it should never happen, 
-                                                    -- fallbacks can only be rsync in forseable future
-                                                    [] -> interval
-                                                    -- fallbacks managed to get through and it was rsync (duh), 
-                                                    -- so it should be a normal rsync interval then                                                    
-                                                    _  -> max interval (config ^. #validationConfig . #rsyncRepositoryRefreshInterval)
-                                    else 
-                                        -- nothing responded, so just go with the normal exponential backoff thing
-                                        pure $ Just interval                                        
-                                
       where
+        fetchPrimary fetchConfig repository worldVersion = do
+            ((r, validations), duration) <-                 
+                withFetchLimits fetchConfig repository $ timedMS $ 
+                    runValidatorT (newScopes' RepositoryFocus url) $ do
+                        runConcurrentlyIfPossible logger FetchTask runningTasks 
+                            $ fetchRepository appContext fetchConfig worldVersion repository
+
+            rememberFirstFetchBy worldVersion
+            updatePrometheusForRepository url duration prometheusMetrics
+
+            -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
+            case r of
+                Right (repository', stats) -> do
+                    let (updatedRepo, interval) = updateRepository fetchConfig
+                            repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duration
+
+                    saveFetchOutcome updatedRepo validations                        
+                    triggerTaRevalidationIf $ hasUpdates validations                                                         
+
+                    pure $ Just interval
+
+                Left _ -> do
+                    let newStatus = FailedAt $ versionToInstant worldVersion
+                    let (updatedRepo, interval) = updateRepository fetchConfig 
+                            repository worldVersion newStatus Nothing duration
+                    saveFetchOutcome updatedRepo validations
+
+                    fetchableForUrl >>= \case
+                        Nothing -> 
+                            -- this whole fetcheable is gone
+                            pure Nothing
+                        Just fallbacks -> do  
+                            -- TODO Maybe try Erik relay before trying rsync
+                            anyUpdates <- fetchFallbacks fetchConfig worldVersion fallbacks                                                            
+                            triggerTaRevalidationIf anyUpdates
+                            if anyUpdates 
+                                then do                                        
+                                    pure $ Just $ 
+                                            case [ () | RsyncU _ <- Set.toList fallbacks ] of                                                     
+                                                -- Not implemented yet, in reality it should never happen, 
+                                                -- fallbacks can only be rsync in forseable future
+                                                [] -> interval
+                                                -- fallbacks managed to get through and it was rsync (duh), 
+                                                -- so it should be a normal rsync interval then                                                    
+                                                _  -> max interval (config ^. #validationConfig . #rsyncRepositoryRefreshInterval)
+                                else 
+                                    -- nothing responded, so just go with the normal exponential backoff thing
+                                    pure $ Just interval                
+
+        fetchErikRelays fetchConfig worldVersion repository erikRelays = do            
+            ((r, validations), duration) <-                 
+                withFetchLimits fetchConfig repository $ timedMS $ 
+                    runValidatorT (newScopes' RepositoryFocus url) $ do
+                        -- TODO Dirty to extract FQDN from fallback rsync URLs instead of 
+                        -- RRDP URL, because FQDN comes from SIA of the certificate.
+                        fallbacks <- fromMaybe mempty <$> liftIO fetchableForUrl            
+                        let fqdns = Set.fromList [ fqdn | f <- Set.toList fallbacks, Just fqdn <- [getFQDN f]]
+                        fqdn <- if Set.null fqdns 
+                                then case getFQDN $ getRpkiURL url of 
+                                        Nothing -> appError $ ErikE $ ErikInvalidUrl url
+                                        Just f  -> pure f
+                                else pure $ Set.findMin fqdns
+
+                        fetchRepositoryFromErikRelays appContext fetchConfig 
+                            erikRelays worldVersion fqdn
+            case r of 
+                Right _ -> do 
+                    let (updatedRepo, interval) = updateRepository fetchConfig
+                            repository worldVersion (FetchedAt (versionToInstant worldVersion)) Nothing duration
+
+                    saveFetchOutcome updatedRepo validations                        
+                    triggerTaRevalidationIf $ hasUpdates validations                                                         
+
+                    pure $ Just interval
+
+                Left e -> do
+                    logWarn logger [i|Erik relay fetch failed for #{url} with error #{e}, falling back to primary fetch.|]
+                    fetchPrimary fetchConfig repository worldVersion
+
+
         fetchFallbacks fetchConfig worldVersion fallbacks = do 
             -- TODO Make it a bit smarter based on the overal number and overall load
             let maxThreads = 32
@@ -1021,13 +1068,12 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                     Nothing                  -> defaultInterval
                     Just RrdpFetchStat {..} -> 
                         case action of 
-                            NothingToFetch _ -> increaseInterval currentInterval 
+                            NothingToFetch _               -> increaseInterval currentInterval 
                             FetchDeltas {..} 
                                 | moreThanOne sortedDeltas -> decreaseInterval currentInterval
                                 | otherwise                -> currentInterval
-                            FetchSnapshot _ _       -> currentInterval
-                            ForcedFetchSnapshot _ _ -> currentInterval
-      where                                    
+                            _                              -> currentInterval
+      where
         currentInterval = 
             fromMaybe defaultInterval (getMeta repository ^. #refreshInterval)
 
@@ -1080,7 +1126,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         timeToWait = fetchConfig ^. #fetchLaunchWaitDuration
 
         semaphoreToUse = 
-            case getMeta repository ^. #status of  
+            case getFetchStatus repository of  
                 -- TODO Add logic "if succeeded more than N times"
                 FetchedAt _ -> fetchers ^. #trustedFetchSemaphore
                 _           -> fetchers ^. #untrustedFetchSemaphore
@@ -1125,9 +1171,11 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         when (Map.notMember url fff) $ 
             writeTVar firstFinishedFetchBy $ Map.insert url version fff                   
 
--- Keep track of the earliest expiration time for each TA (i.e. the earlist time when some object of the TA will expire).
--- Reschedule revalidation of the TA at the moment right after its earliest expiration time. Since this expiration time
--- in practice keeps receding to the future as new objects are added, the revalidation is most likely not needed at all, 
+
+-- Keep track of the earliest expiration time for each TA (i.e. the earlist time when some 
+-- object of the TA will expire). Reschedule revalidation of the TA at the moment right after 
+-- its earliest expiration time. Since this expiration time in practice keeps receding to the 
+-- future as new objects are added, the revalidation is most likely not needed at all, 
 -- that's why we double-check it once again before revalidation.
 scheduleRevalidationOnExpiry :: Storage s => AppContext s -> Map TaName EarliestToExpire -> WorkflowShared -> IO ()
 scheduleRevalidationOnExpiry AppContext {..} expirationTimes WorkflowShared {..} = do

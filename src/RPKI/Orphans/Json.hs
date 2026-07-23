@@ -373,6 +373,14 @@ $(deriveToJSON defaultOptions ''CertificateWithSignature)
 $(deriveToJSON defaultOptions ''RawResourceCertificate)
 $(deriveToJSON defaultOptions ''ResourceCertificate)
 
+instance ToJSON FQDN where
+    toJSON (FQDN t) = toJSON t
+
+$(deriveToJSON defaultOptions ''ErikPartitionRef)
+$(deriveToJSON defaultOptions ''ErikManifestRef)
+$(deriveToJSON defaultOptions ''ErikPartition)
+$(deriveToJSON defaultOptions ''ErikIndex)
+
 -- RPKI Object
 instance ToJSON a => ToJSON (TypedCert a t)
 
@@ -450,5 +458,6 @@ instance ToJSON RtrConfig
 instance ToJSON SystemConfig
 instance ToJSON RrdpConf
 instance ToJSON RsyncConf    
+instance ToJSON ErikConf
 instance ToJSON StorageConfig
 instance ToJSON Config

@@ -14,16 +14,12 @@ import           Control.Monad.State.Strict
 import           Data.Bifunctor              (Bifunctor (first))
 import           Data.Generics.Product       (HasField)
 import           Data.Generics.Product.Typed
-import           Data.Hourglass
 import           Data.Proxy
 import           Data.Text                   (Text)
-
-import           System.Timeout
 
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Time
-
 
 -- Application monad stack
 type ValidatorT m r = ValidatorTCurried m r
@@ -177,7 +173,7 @@ inSubLocationScope :: Monad m => URI -> ValidatorT m r -> ValidatorT m r
 inSubLocationScope = vFocusOn LocationFocus
 
 vFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
-vFocusOn c f = local (typed @VScope %~ subScope c f)
+vFocusOn s a = local (typed @VScope %~ subScope s a)
 
 metricFocusOn :: Monad m => (a -> Focus) -> a -> ValidatorT m r -> ValidatorT m r
 metricFocusOn c t = local (typed @MetricScope %~ subScope c t)
@@ -211,30 +207,3 @@ timedMetric' _ f v = do
     updateMetric (f elapsed)
     vHoist $ fromValue r
             
-
-recover :: Monad m => ValidatorT m a -> ValidatorT m () -> ValidatorT m a
-recover tryF finallyF = 
-    tryIt `catchError` catchIt
-  where
-    tryIt = do  
-        z <- tryF 
-        finallyF
-        pure z
-    catchIt e = do
-        finallyF
-        throwError e            
-
-
-timeoutVT :: Seconds -> ValidatorT IO a -> ValidatorT IO a -> ValidatorT IO a
-timeoutVT s toDo timedOut = do 
-    let Seconds t = s
-    scopes <- askScopes 
-    z <- liftIO $ timeout (1_000_000 * fromIntegral t) (runValidatorT scopes toDo)
-    maybe timedOut (embedValidatorT . pure) z    
-
-
-andThen :: ValidatorT IO a -> ValidatorT IO () -> ValidatorT IO a
-andThen f action = do
-    !z <- f
-    action
-    pure $! z

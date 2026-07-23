@@ -47,6 +47,7 @@ data Parallelism = Parallelism {
 data FetchConfig = FetchConfig {
         rsyncTimeout             :: Seconds,
         rrdpTimeout              :: Seconds,
+        erikTimeout              :: Seconds,
         fetchLaunchWaitDuration  :: Seconds,
         cpuLimit                 :: Seconds,
         minFetchInterval         :: Seconds,
@@ -73,6 +74,7 @@ data Config = Config {
         parallelism               :: Parallelism, 
         rsyncConf                 :: RsyncConf,
         rrdpConf                  :: RrdpConf,
+        erikConf                  :: ErikConf,
         validationConfig          :: ValidationConfig,
         systemConfig              :: SystemConfig,
         httpApiConf               :: HttpApiConfig,
@@ -103,6 +105,17 @@ data RsyncConf = RsyncConf {
         rsyncPerHostLimit :: Int
     } 
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+data ErikConf = ErikConf {
+        relays               :: [URI],
+        maxSize              :: Size,
+        parallelism          :: Natural,
+        erikTimeout          :: Seconds,
+        erikRefreshInterval  :: Seconds,
+        cpuLimit             :: Seconds
+    }
+    deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
 data RrdpConf = RrdpConf {
@@ -189,6 +202,7 @@ data RtrConfig = RtrConfig {
 data SystemConfig = SystemConfig {
         rsyncWorkerMemoryMb      :: Int,
         rrdpWorkerMemoryMb       :: Int,
+        erikWorkerMemoryMb       :: Int,
         validationWorkerMemoryMb :: Int,
         cleanupWorkerMemoryMb    :: Int
     } 
@@ -241,6 +255,14 @@ defaultConfig = Config {
         cpuLimit = 30 * minutes,
         enabled = True
     },
+    erikConf = ErikConf {
+        relays              = [],
+        maxSize             = Size $ 20 * 1024 * 1024,
+        parallelism         = 10,
+        erikTimeout         = 15 * minutes,
+        erikRefreshInterval = 2 * minutes,
+        cpuLimit            = 30 * minutes
+    },
     validationConfig = ValidationConfig {
         revalidationInterval           = 15 * minutes,
         rrdpRepositoryRefreshInterval  = 2 * minutes,
@@ -265,7 +287,8 @@ defaultConfig = Config {
     },    
     systemConfig = SystemConfig {
         rsyncWorkerMemoryMb      = 1024,
-        rrdpWorkerMemoryMb       = 1024,        
+        rrdpWorkerMemoryMb       = 1024,
+        erikWorkerMemoryMb       = 1024,
         validationWorkerMemoryMb = 2048,
         cleanupWorkerMemoryMb    = 512
     },
@@ -352,10 +375,12 @@ newFetchConfig :: Config -> FetchConfig
 newFetchConfig config = let 
         rsyncConfig = config ^. typed @RsyncConf
         rrdpConfig = config ^. typed @RrdpConf
+        erikConfig = config ^. typed @ErikConf
         rsyncTimeout = rsyncConfig ^. #rsyncTimeout
-        rrdpTimeout  = rrdpConfig ^. #rrdpTimeout        
+        rrdpTimeout  = rrdpConfig ^. #rrdpTimeout
+        erikTimeout  = erikConfig ^. #erikTimeout
         fetchLaunchWaitDuration = Seconds 30         
-        cpuLimit = max (rrdpConfig ^. #cpuLimit) (rsyncConfig ^. #cpuLimit)        
+        cpuLimit = max (rrdpConfig ^. #cpuLimit) (rsyncConfig ^. #cpuLimit)
         minFetchInterval = Seconds 30
         maxFetchInterval = Seconds 300
         maxFailedBackoffInterval = Seconds $ 30 * 60

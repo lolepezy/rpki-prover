@@ -534,6 +534,10 @@ instance Arbitrary TALError where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary ErikError where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary InitError where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -639,6 +643,10 @@ instance Arbitrary Count where
     shrink = genericShrink
 
 instance Arbitrary HttpStatus where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary FQDN where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

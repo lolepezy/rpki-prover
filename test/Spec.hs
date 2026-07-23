@@ -6,7 +6,7 @@ import RPKI.Parse.ObjectParseSpec
 import RPKI.RRDP.ParseSpec
 import RPKI.Store.DatabaseSpec
 import RPKI.RRDP.UpdateSpec
-import RPKI.RRDP.HttpSpec
+import RPKI.Fetch.HttpSpec
 import RPKI.Resources.ResourcesSpec
 import RPKI.Resources.ValiditySpec
 import RPKI.AppMonadSpec
@@ -16,6 +16,7 @@ import RPKI.FetchSpec
 import RPKI.RTR.RtrSpec
 import RPKI.SLURM.SlurmSpec
 import RPKI.Store.SerialisationSpec
+import RPKI.Fetch.ErikSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
@@ -24,7 +25,7 @@ main = defaultMain $ testGroup "All tests" [
         rrdpXmlLazyParsingGroup,
         rrdpUpdateSpec,
         databaseGroup,
-        resourceGroup,        
+        resourceGroup,
         validityGroup,
         repositoryGroup,
         rtrGroup,
@@ -33,4 +34,5 @@ main = defaultMain $ testGroup "All tests" [
         loggingSpec,
         workflowSpec,
         serialisationSpec
+        -- erikSpec
     ]  

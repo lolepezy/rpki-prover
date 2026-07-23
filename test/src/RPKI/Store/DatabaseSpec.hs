@@ -582,7 +582,7 @@ shouldProcessSafeMapProperly io = do
 
 shouldKeepKeyOrdering :: HU.Assertion
 shouldKeepKeyOrdering = do
-    withTestContext $ \appContext -> do
+    withLmdbTestContext $ \appContext -> do
         db@DB {..} <- readTVarIO $ appContext ^. #database
 
         void $ forM [1..10] $ \_ -> do
@@ -617,7 +617,7 @@ shouldKeepKeyOrdering = do
 
 shouldReopenDatabase :: HU.Assertion
 shouldReopenDatabase = do 
-    withTestContext $ \appContext  -> do
+    withLmdbTestContext $ \appContext -> do
         db@DB {..} <- readTVarIO $ appContext ^. #database
 
         k1 <- rwTx db $ \tx -> nextValue tx keys 
@@ -626,7 +626,7 @@ shouldReopenDatabase = do
         db1@DB {..} <- readTVarIO $ appContext ^. #database
         k2 <- rwTx db1 $ \tx -> nextValue tx keys 
 
-        HU.assertEqual "Keys must be continuous after reopen" (nextS k1) k2
+        HU.assertEqual "Keys must be continuous after reopen" (nextS k1) k2        
 
 
 stripTime :: HasField "totalTimeMs" metric metric TimeMs TimeMs => metric -> metric
