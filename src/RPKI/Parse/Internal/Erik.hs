@@ -50,7 +50,7 @@ parseErikIndex bs = do
 
     parseIndexFields = do                    
         indexScope    <- getIA5String (pure . Text.pack) "Wrong indexScope"        
-        indexTime     <- newInstant <$> getTime "No partitionTime"        
+        indexTime     <- newInstant <$> getTime "No indexTime"        
         hashAlg       <- onNextContainer Sequence $ 
                             getOID (pure . DigestAlgorithmIdentifier) "Wrong hash algorithm OID"
         partitionList <- getPartitionList
