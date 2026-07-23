@@ -513,7 +513,8 @@ runAll appContext@AppContext {..} tals = do
                     then [i|in particular #{Map.toList deletedPerType}, |] 
                     else ""
                 logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, #{perType}kept #{keptObjects}, |] <>
-                                 [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|]
+                                 [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, |] <>
+                                 [i|deleted #{deletedErikPartitions} orphaned Erik partitions, took #{elapsed}ms.|]
       where
         cleanupOldObjects = do                 
             ((z, _), workerId) <- runCleanUpWorker worldVersion      

@@ -1000,11 +1000,12 @@ getObjectsStats tx DB { objectStore = RpkiObjectStore {..} } =
 -- More complicated operations
 
 data CleanUpResult = CleanUpResult {
-        deletedObjects  :: Int,
-        deletedPerType  :: Map.Map RpkiObjectType Integer,
-        keptObjects     :: Int,
-        deletedURLs     :: Int,
-        deletedVersions :: Int
+        deletedObjects       :: Int,
+        deletedPerType       :: Map.Map RpkiObjectType Integer,
+        keptObjects          :: Int,
+        deletedURLs          :: Int,
+        deletedVersions      :: Int,
+        deletedErikPartitions :: Int
     }
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -1063,6 +1064,9 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria
             -- Delete URLs that are now not referred by any object
             deletedURLs <- deleteDanglingUrls db tx
 
+            -- Delete Erik partitions not referenced by any index
+            deletedErikPartitions <- deleteOrphanedErikPartitions db tx
+
             pure CleanUpResult {..}
   where
 
@@ -1113,6 +1117,21 @@ deleteStaleContent db@DB { objectStore = RpkiObjectStore {..} } DeletionCriteria
             pure (deletedCount, deleted, kept)
 
 
+deleteOrphanedErikPartitions :: DB s -> Tx s 'RW -> IO Int
+deleteOrphanedErikPartitions DB { erikStore = ErikStore {..} } tx = do
+    allIndexes <- SM.all tx indexes
+    let referencedHashes = Set.fromList
+            [ partHash | (_, ErikIndex { partitionList }) <- allIndexes
+                       , ErikPartitionRef { hash = partHash } <- partitionList ]
+
+    allPartitionHashes <- M.keys tx partitions
+    let hashesToDelete = filter (`Set.notMember` referencedHashes) allPartitionHashes
+
+    for_ hashesToDelete $ M.delete tx partitions
+
+    pure $ length hashesToDelete
+
+
 deleteDanglingUrls :: DB s -> Tx s 'RW -> IO Int
 deleteDanglingUrls DB { objectStore = RpkiObjectStore {..} } tx = do 
     referencedUrlKeys <- M.fold tx objectKeyToUrlKeys
@@ -1132,6 +1151,7 @@ deleteDanglingUrls DB { objectStore = RpkiObjectStore {..} } tx = do
         SM.delete tx uriToUriKey url           
 
     pure $ length urlsToDelete
+
 
 
 
