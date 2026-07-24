@@ -2,8 +2,6 @@
 
 module RPKI.Parse.Internal.CRL where
     
-import           Control.Monad
-
 import           Data.ASN1.BinaryEncoding
 import           Data.ASN1.Encoding
 import           Data.ASN1.Parse
@@ -104,13 +102,13 @@ parseCrl bs = do
                 maybe Set.empty Set.fromList <$> 
                     onNextContainerMaybe Sequence (getMany getCrlSerial)
                 where
-                    getCrlSerial = onNextContainer Sequence $ 
-                        replicateM 2 getNext >>= \case 
-                            [IntVal serial', _] -> 
+                    getCrlSerial = onNextContainer Sequence $
+                        (,) <$> getNext <*> getNext >>= \case
+                            (IntVal serial', _) ->
                                 case makeSerial serial' of 
                                     Left e  -> throwParseError e
                                     Right s -> pure s
-                            s                  -> throwParseError $ "That's not a serial: " <> show s
+                            s -> throwParseError $ "That's not a serial: " <> show s
                             
                             
                         

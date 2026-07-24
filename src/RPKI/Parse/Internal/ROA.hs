@@ -53,16 +53,18 @@ parseRoa bs = do
                     Left af     -> throwParseError $ "Unsupported address family: " ++ show af)
 
     getRoa :: Int -> AddrFamily -> ParseASN1 [Vrp]
-    getRoa asId addressFamily = onNextContainer Sequence $ getMany $
-        getNextContainerMaybe Sequence >>= \case       
-            Just [BitString (BitArray nzBits bs')] ->
-                makeVrp asId bs' nzBits nzBits addressFamily
-            Just [BitString (BitArray nzBits bs'), IntVal maxLength] ->
-                makeVrp asId bs' nzBits maxLength addressFamily
-            Just a  -> throwParseError [i|Unexpected ROA content: #{a}|]
-            Nothing -> throwParseError "Unexpected ROA content"
+    getRoa asId addressFamily =
+        let !asn = ASN $ fromIntegral asId
+        in onNextContainer Sequence $ getMany $
+            getNextContainerMaybe Sequence >>= \case       
+                Just [BitString (BitArray nzBits bs')] ->
+                    makeVrp asn bs' nzBits nzBits addressFamily
+                Just [BitString (BitArray nzBits bs'), IntVal maxLength] ->
+                    makeVrp asn bs' nzBits maxLength addressFamily
+                Just a  -> throwParseError [i|Unexpected ROA content: #{a}|]
+                Nothing -> throwParseError "Unexpected ROA content"
 
-    makeVrp asId bs' nonZeroBitCount prefixMaxLength addressFamily = do
+    makeVrp asn bs' nonZeroBitCount prefixMaxLength addressFamily = do
         when (nonZeroBitCount > fromIntegral prefixMaxLength) $
             throwParseError [i|Actual prefix length #{nonZeroBitCount} is bigger than the maximum length #{prefixMaxLength}.|]
 
@@ -84,6 +86,6 @@ parseRoa bs = do
         where 
             mkVrp :: (Integral a, Integral c, Prefix b) => a -> c -> (b -> IpPrefix) -> Vrp
             mkVrp nz len mkIp = Vrp 
-                        (ASN $ fromIntegral asId)
+                        asn
                         (mkIp $ makePrefix bs' (fromIntegral nz)) 
                         (PrefixLength $ fromIntegral len)

@@ -680,7 +680,7 @@ instance Arbitrary Ipv4Prefix where
         w4 :: Word8 <- arbitrary
         m :: Word8  <- choose (8, 32)        
         let mask = (0xFFFFFFFF :: Word32) `shift` (32 - fromIntegral m)
-        let x = fourW8sToW32 [w1, w2, w3, w4] .&. mask 
+        let x = fourW8sToW32 (BS.pack [w1, w2, w3, w4]) .&. mask 
         pure $! mkIpv4Block x m
 
 instance Arbitrary Ipv6Prefix where

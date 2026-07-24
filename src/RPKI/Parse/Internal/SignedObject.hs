@@ -124,7 +124,7 @@ parseSignedObject contentBinaryParse =
                 Left e -> throwParseError $ show e
                 Right attributes -> pure $ SignedAttributes attributes $ toShortBS saEncoded
                 where 
-                  saEncoded = encodeASN1' DER $ [Start Set] <> asns <> [End Set]
+                  saEncoded = encodeASN1' DER $ Start Set : asns ++ [End Set]
                   parseSA = getMany $ 
                         onNextContainer Sequence $ getNext >>= \case 
                             OID attrId 
