@@ -37,7 +37,7 @@ instance WithSetOps Ipv4Prefix where
 
 instance Prefix Ipv4Prefix where
     type Address Ipv4Prefix = V4.IpAddress
-    makePrefix bs nonZeroBits = mkIpv4Block (fourW8sToW32 (BS.unpack bs)) (fromIntegral nonZeroBits)
+    makePrefix bs nonZeroBits = mkIpv4Block (fourW8sToW32 bs) (fromIntegral nonZeroBits)
     toRange (Ipv4Prefix p) = V4.blockToRange p
     toPrefixes r@Range {..} 
         | first > last = []
@@ -62,7 +62,7 @@ instance Interval Ipv6Prefix where
 
 instance Prefix Ipv6Prefix where
     type Address Ipv6Prefix = V6.IpAddress
-    makePrefix bs nonZeroBits = mkIpv6Block (someW8ToW128 (BS.unpack bs)) (fromIntegral nonZeroBits)
+    makePrefix bs nonZeroBits = mkIpv6Block (someW8ToW128 bs) (fromIntegral nonZeroBits)
     toRange (Ipv6Prefix p) = V6.blockToRange p    
     toPrefixes r@Range {..} 
         | first > last = []
@@ -282,31 +282,34 @@ unwrapAsns = mconcat . map (
 
 
 -- Bits munching
-fourW8sToW32 :: [Word8] -> Word32
-fourW8sToW32 = \case 
-    []                    -> 0 
-    [w1]                  -> toW32 w1 24
-    [w1, w2]              -> toW32 w1 24 .|. toW32 w2 16
-    [w1, w2, w3]          -> toW32 w1 24 .|. toW32 w2 16 .|. toW32 w3 8
-    w1 : w2 : w3 : w4 : _ -> toW32 w1 24 .|. toW32 w2 16 .|. toW32 w3 8 .|. fromIntegral w4
-  where        
+fourW8sToW32 :: BS.ByteString -> Word32
+fourW8sToW32 bs = case BS.length bs of
+    0 -> 0
+    1 -> toW32 0 24
+    2 -> toW32 0 24 .|. toW32 1 16
+    3 -> toW32 0 24 .|. toW32 1 16 .|. toW32 2 8
+    _ -> toW32 0 24 .|. toW32 1 16 .|. toW32 2 8 .|. fromIntegral (BS.index bs 3)
+  where
     {-# INLINE toW32 #-}
-    toW32 !w !s = (fromIntegral w :: Word32) `shiftL` s
+    toW32 !i !s = (fromIntegral (BS.index bs i) :: Word32) `shiftL` s
 {-# INLINE fourW8sToW32 #-}
 
-someW8ToW128 :: [Word8] -> (Word32, Word32, Word32, Word32)
-someW8ToW128 w8s = (
-        fourW8sToW32 (take 4 unpacked),
-        fourW8sToW32 (take 4 drop4),
-        fourW8sToW32 (take 4 drop8),
-        fourW8sToW32 (take 4 drop12)
-    ) 
-  where 
-    unpacked = rightPad 16 0 w8s  
-    drop4 = drop 4 unpacked
-    drop8 = drop 4 drop4
-    drop12 = drop 4 drop8
-{-# INLINE someW8ToW128 #-}    
+someW8ToW128 :: BS.ByteString -> (Word32, Word32, Word32, Word32)
+someW8ToW128 bs = (
+        fourW8sAtOffset 0,
+        fourW8sAtOffset 4,
+        fourW8sAtOffset 8,
+        fourW8sAtOffset 12
+    )
+  where
+    len = BS.length bs
+    byteAt i = if i < len then fromIntegral (BS.index bs i) else 0 :: Word32
+    fourW8sAtOffset off =
+        (byteAt off       `shiftL` 24) .|.
+        (byteAt (off + 1) `shiftL` 16) .|.
+        (byteAt (off + 2) `shiftL`  8) .|.
+         byteAt (off + 3)
+{-# INLINE someW8ToW128 #-}
 
 rightPad :: Int -> a -> [a] -> [a]
 rightPad n a = go 0

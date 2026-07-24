@@ -8,15 +8,13 @@ import Control.Monad
 
 import Data.Bits
 
-import qualified Data.ByteString as BS  
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BSC
 import           Data.Text   (Text)
 import qualified Data.Text as Text  
 import Data.Text.Encoding (decodeUtf8')
 
-import qualified Data.List as List
-
 import Data.Word
-import Data.Char (chr)
 import Data.Maybe
 
 import Data.ASN1.OID
@@ -129,7 +127,7 @@ getOID f m = getNext >>= \case
 
 getIA5String :: (String -> ParseASN1 a) -> String -> ParseASN1 a
 getIA5String f m = getNext >>= \case 
-    ASN1String (ASN1CharacterString IA5 bs) -> f $ map (chr . fromEnum) $ BS.unpack bs
+    ASN1String (ASN1CharacterString IA5 bs) -> f $ BSC.unpack bs
     a                                       -> parseError m a
 
 getBitString :: (BS.ByteString -> ParseASN1 a) -> String -> ParseASN1 a
@@ -325,7 +323,7 @@ ipv6Address = ipvVxAddress R.someW8ToW128 128 makeOneIP R.ipv6RangeToPrefixes
 makeOneIP :: (Prefix a, Integral b) => BS.ByteString -> b -> [a]
 makeOneIP bs nz = [makePrefix bs (fromIntegral nz)]
 
-ipvVxAddress :: ([Word8] -> t)
+ipvVxAddress :: (BS.ByteString -> t)
             -> Int
             -> (BS.ByteString -> Word64 -> b)
             -> (t -> t -> b)
@@ -345,8 +343,8 @@ ipvVxAddress wToAddr fullLength makePrefix_ rangeToPrefixes =
             BitString (BitArray _       bs1),
             BitString (BitArray nzBits2 bs2)
             ] ->
-                let w1 = wToAddr $ BS.unpack bs1
-                    w2 = wToAddr $ setLowerBitsToOne (BS.unpack bs2)
+                let w1 = wToAddr bs1
+                    w2 = wToAddr $ setLowerBitsToOne bs2
                         (fromIntegral nzBits2) fullLength
                 in pure $ rangeToPrefixes w1 w2
 
@@ -356,16 +354,22 @@ ipvVxAddress wToAddr fullLength makePrefix_ rangeToPrefixes =
 -- Set all the bits to `1` starting from `setBitsNum`
 -- `allBitsNum` is the total number of bits.
 --
-setLowerBitsToOne :: (Bits a, Num a) => [a] -> Int -> Int -> [a]
-setLowerBitsToOne ws setBitsNum allBitsNum =
-    R.rightPad (allBitsNum `div` 8) 0xFF $
-        List.zipWith setBits ws (map (*8) [0..])
-    where
-        setBits w8 i | i < setBitsNum && setBitsNum < i + 8 = w8 .|. extra (i + 8 - setBitsNum)
-                        | i < setBitsNum = w8
-                        | otherwise = 0xFF
-        extra lastBitsNum =
-            List.foldl' (\w i -> w .|. (1 `shiftL` i)) 0 [0..lastBitsNum - 1]
+setLowerBitsToOne :: BS.ByteString -> Int -> Int -> BS.ByteString
+setLowerBitsToOne bs setBitsNum allBitsNum =
+    fst $ BS.unfoldrN totalBytes go 0
+  where
+    totalBytes = allBitsNum `div` 8
+    len = BS.length bs
+    go i
+        | i >= totalBytes = Nothing
+        | otherwise =
+            let bitOffset = i * 8
+                result
+                    | bitOffset + 8 <= setBitsNum = BS.index bs i
+                    | bitOffset >= setBitsNum     = 0xFF
+                    | otherwise =
+                        (BS.index bs i) .|. fromIntegral ((1 `shiftL` (bitOffset + 8 - setBitsNum) :: Int) - 1)
+            in Just (result, i + 1)
 
 
 parseIpExt :: [ASN1] -> PureValidatorT IpResources
