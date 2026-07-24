@@ -359,7 +359,6 @@ setLowerBitsToOne bs setBitsNum allBitsNum =
     fst $ BS.unfoldrN totalBytes go 0
   where
     totalBytes = allBitsNum `div` 8
-    len = BS.length bs
     go i
         | i >= totalBytes = Nothing
         | otherwise =
