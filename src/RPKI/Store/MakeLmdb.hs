@@ -111,10 +111,10 @@ createDatabase env logger config checkAction = do
         createRepositoryStore = 
             RepositoryStore <$> newSafeMap <*> newSafeMap <*> newSafeMap <*> newSafeMap
         
-        createIndexStore = do
-            kiMetas   <- newSMap
+        createIndexStore = do            
             cert2mft  <- newSMap
             mftShorts <- newSMap
+            kiMetas   <- newSMultiMap            
             expiresAt <- newSMultiMap
             maturesAt <- newSMultiMap
             repository2object  <- newSMultiMap            

@@ -233,10 +233,10 @@ newtype MetadataStore s = MetadataStore {
     deriving stock (Generic)
 
 
-data IndexStore s = IndexStore {
-        kiMetas   :: SMap "ki-meta" s KI KIMeta,        
+data IndexStore s = IndexStore {        
         cert2mft  :: SMap "cert-to-mft" s CertKey MftKey,
         mftShorts :: SMap "mft-shorts" s MftKey MftShortcut,
+        kiMetas   :: SMultiMap "ki-meta" s KI KIMeta,
 
         expiresAt :: SMultiMap "expires-at" s Instant ObjectKey,
         maturesAt :: SMultiMap "matures-at" s Instant ObjectKey,        

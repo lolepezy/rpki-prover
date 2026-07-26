@@ -15,6 +15,7 @@ import qualified Data.Map.Strict          as Map
 import qualified Data.Set                 as Set
 import qualified Data.Vector              as V
 import           Data.Traversable
+import           Data.Monoid.Generic
 import           Data.Maybe (catMaybes)
 import           Data.Coerce
 import           Data.Tuple.Strict
@@ -368,6 +369,8 @@ data StartCas k = StartCas {
         paths :: Set.Set k
     }
     deriving stock (Show, Generic)
+    deriving Semigroup via GenericSemigroup (StartCas k)
+    deriving Monoid    via GenericMonoid (StartCas k)
 
 findStartCas :: Storage s
                => DB s 
@@ -383,24 +386,20 @@ findStartCas db newObjects = do
     DB.IndexStore {..} = db ^. #objectStore . #indexStore
     DB.RpkiObjectStore {..} = db ^. #objectStore
     readFromCache (AKI ki) = 
-        roTx kiMetas $ \tx -> M.get tx kiMetas ki
+        roTx kiMetas $ \tx -> MM.allForKey tx kiMetas ki
 
 
-findStartCasGen :: (Eq a2, Ord a, HasField' "caCertificate" t2 a, HasField' "aki" t2 a2) 
-                => (a2 -> IO (Maybe t2)) 
-                -> (a2 -> t2 -> Bool) 
-                -> [a2]
-                -> IO (StartCas a)
+findStartCasGen :: (Eq ki, Ord ca, HasField' "caCertificate" meta ca, HasField' "aki" meta ki)
+                => (ki -> IO [meta])
+                -> (ki -> meta -> Bool) 
+                -> [ki]
+                -> IO (StartCas ca)
 findStartCasGen readFromCache accept akis = do
-    cas <- fmap catMaybes $ forM akis $ \aki -> do
-                mkiMeta <- readFromCache aki 
-                pure $ case mkiMeta of
-                    Just kiMeta
-                        | accept aki kiMeta -> Just (aki, kiMeta)
-                        | otherwise         -> Nothing
-                    Nothing -> Nothing
+    cas <- fmap mconcat $ for akis $ \aki -> do
+                kiMetas <- readFromCache aki
+                pure [(aki, kiMeta) | kiMeta <- kiMetas, accept aki kiMeta]                
 
-    let startCas = Set.fromList [ kiMeta ^. #caCertificate | (_, kiMeta) <- cas ]    
+    let startCas = Set.fromList [ kiMeta ^. #caCertificate | (_, kiMeta) <- cas ]
 
     (paths, ignored) <- 
         fmap mconcat $ forConcurrently cas $ \ca -> do 
@@ -419,13 +418,18 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
 
         let paths' = Set.insert certKey paths
 
-        -- if it's the root stop                    
+        -- if it's root -- stop
         if ki == aki then
             pure (paths', ignored)
         else 
             readFromCache aki >>= \case
-                Just parent
-                    | accept aki parent -> do 
+                [] -> 
+                    -- No acceptable parents means there are no path up 
+                    -- and we should ignore the whole path and don't use it for validation
+                    pure (mempty, paths')                    
+
+                parents ->                
+                    fmap mconcat $ for (filter (accept aki) parents) $ \parent -> do
                         let parentCa = parent ^. #caCertificate
                         -- If parent is one of the CAs we started from, 
                         -- We can ignore the whole path until now, since it is going 
@@ -435,17 +439,7 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
                                     then ignored <> paths'
                                     else ignored
 
-                        go readFromCache accept (aki, parent) paths' ignored'
-
-                    | otherwise -> 
-                        -- Parent that is not acceptable (expired or not valid yet)
-                        -- means no path
-                        pure (mempty, paths')
-
-                Nothing -> 
-                    -- No parent, again it means no path, 
-                    -- ignore the whole path
-                    pure (mempty, paths')
+                        go readFromCache accept (aki, parent) paths' ignored
 
 
 -- toObjectUpdates :: (MonadIO m, Storage s) => Tx s mode -> DB s -> [Update] -> m [AddedObject]
