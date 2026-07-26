@@ -128,7 +128,8 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                 Left e  -> appWarn e
                 Right z -> case z of 
                     HashExists rpkiURL hash ->
-                        forM_ rpkiURL $ \u -> DB.linkObjectToUrl tx db u hash
+                        U.ifJustM (DB.getKeyByHash tx db hash) $ \key ->
+                            forM_ rpkiURL $ \u -> DB.linkObjectToUrl tx db u key
 
                     CantReadFile rpkiUrl filePath (VErr e) -> do                    
                         logError logger [i|Cannot read file #{filePath}, error #{e} |]                    
@@ -152,18 +153,18 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                                 logError logger [i|Couldn't parse object with a hash #{hash}, error #{e}, will cache the original object.|]   
                                 vFocusOn HashFocus hash $ appWarn e
 
-                        DB.saveOriginal tx db original hash objectMeta
-                        forM_ rpkiUrl $ \u -> DB.linkObjectToUrl tx db u hash                                  
+                        key <- DB.saveOriginal tx db original hash objectMeta
+                        forM_ rpkiUrl $ \u -> DB.linkObjectToUrl tx db u key
 
                     SuccessParsed rpkiUrl filePath so@StorableObject {..} type_ -> do 
-                        DB.saveObject tx db so worldVersion                   
+                        objectKey <- DB.saveObject tx db so worldVersion                   
                         case rpkiUrl of 
                             Just u -> do 
-                                DB.linkObjectToUrl tx db u (getHash object)
+                                DB.linkObjectToUrl tx db u objectKey
                                 logDebug logger [i|Saved object #{u} of type #{type_}.|]                                   
                             Nothing -> 
                                 forM_ (restoreUrl filePath (Just object)) $ \u ->
-                                    DB.linkObjectToUrl tx db (RsyncU u) (getHash object)
+                                    DB.linkObjectToUrl tx db (RsyncU u) objectKey
                         
                         updateMetric @RsyncMetric @_ (#processed %~ Map.unionWith (+) (Map.singleton (Just type_) 1))
 

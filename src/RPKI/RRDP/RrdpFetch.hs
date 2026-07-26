@@ -526,7 +526,8 @@ saveSnapshot
             Right r -> 
                 case r of 
                     HashExists rpkiURL hash ->
-                        DB.linkObjectToUrl tx db rpkiURL hash
+                        U.ifJustM (DB.getKeyByHash tx db hash) $ \key ->
+                            DB.linkObjectToUrl tx db rpkiURL key
 
                     UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do                    
                         logError logger [i|Skipped object #{rpkiUrl}: #{e}|]
@@ -544,13 +545,13 @@ saveSnapshot
                     ObjectParsingProblem rpkiUrl (VErr e) original hash objectMeta -> do                    
                         logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
                         inSubLocationScope uri $ appWarn e                 
-                        DB.saveOriginal tx db original hash objectMeta
-                        DB.linkObjectToUrl tx db rpkiUrl hash                
+                        key <- DB.saveOriginal tx db original hash objectMeta
+                        DB.linkObjectToUrl tx db rpkiUrl key                
                         addedObject $ Just $ objectMeta ^. #objectType
 
                     SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do 
-                        DB.saveObject tx db so worldVersion                    
-                        DB.linkObjectToUrl tx db rpkiUrl (getHash object)
+                        objectKey <- DB.saveObject tx db so worldVersion                    
+                        DB.linkObjectToUrl tx db rpkiUrl objectKey
                         addedObject $ Just type_
 
                     other -> 
@@ -687,17 +688,16 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
             ObjectParsingProblem rpkiUrl (VErr e) original hash objectMeta -> do
                 logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
                 inSubLocationScope (getURL rpkiUrl) $ appWarn e
-                DB.saveOriginal tx db original hash objectMeta
-                DB.linkObjectToUrl tx db rpkiUrl hash         
+                key <- DB.saveOriginal tx db original hash objectMeta
+                DB.linkObjectToUrl tx db rpkiUrl key         
                 logDebug logger [i||Added original object #{rpkiUrl} with hash #{hash} to the database.|]                 
 
             SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do            
                 let newHash = getHash object
                 newOneIsAlreadyThere <- DB.hashExists tx db newHash     
-                unless newOneIsAlreadyThere $ do 
-                    DB.saveObject tx db so worldVersion                        
-                    addedObject $ Just type_
-                DB.linkObjectToUrl tx db rpkiUrl newHash            
+                objectKey <- DB.saveObject tx db so worldVersion
+                unless newOneIsAlreadyThere $ addedObject $ Just type_
+                DB.linkObjectToUrl tx db rpkiUrl objectKey            
 
             other -> 
                 logDebug logger [i|Weird thing happened in `addObject` #{other}.|]
@@ -728,17 +728,16 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
                 inSubLocationScope (getURL rpkiUrl) $ appWarn e
                 validateOldHash
-                DB.saveOriginal tx db original hash objectMeta
-                DB.linkObjectToUrl tx db rpkiUrl hash
+                key <- DB.saveOriginal tx db original hash objectMeta
+                DB.linkObjectToUrl tx db rpkiUrl key
 
             SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do 
                 validateOldHash
                 let newHash = getHash object
                 newOneIsAlreadyThere <- DB.hashExists tx db newHash
-                unless newOneIsAlreadyThere $ do 
-                    DB.saveObject tx db so worldVersion                        
-                    addedObject $ Just type_
-                DB.linkObjectToUrl tx db rpkiUrl newHash 
+                objectKey <- DB.saveObject tx db so worldVersion
+                unless newOneIsAlreadyThere $ addedObject $ Just type_
+                DB.linkObjectToUrl tx db rpkiUrl objectKey 
 
             other -> 
                 logDebug logger [i|Weird thing happened in `replaceObject` #{other}.|]                                                                                                

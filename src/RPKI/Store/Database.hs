@@ -358,15 +358,18 @@ saveOriginal :: (MonadIO m, Storage s) =>
                 -> ObjectOriginal
                 -> Hash          
                 -> ObjectMeta  
-                -> m ()
+                -> m ObjectKey
 saveOriginal tx DB { objectStore = RpkiObjectStore {..}, .. } (ObjectOriginal blob) hash objectMeta = liftIO $ do    
-    exists <- M.exists tx hashToKey hash    
-    unless exists $ do          
-        SequenceValue k <- nextValue tx keys
-        let key = ObjectKey $ asKey k
-        M.put tx hashToKey hash key
-        M.put tx originals key (Verbatim $ Storable blob)       
-        M.put tx objectMetas key objectMeta
+    existingKey <- M.get tx hashToKey hash
+    case existingKey of
+        Just key -> pure key
+        Nothing  -> do          
+            SequenceValue k <- nextValue tx keys
+            let key = ObjectKey $ asKey k
+            M.put tx hashToKey hash key
+            M.put tx originals key (Verbatim $ Storable blob)       
+            M.put tx objectMetas key objectMeta
+            pure key
 
 
 getOriginalBlob :: (MonadIO m, Storage s) => 
@@ -399,21 +402,20 @@ linkObjectToUrl :: (MonadIO m, Storage s) =>
                 Tx s 'RW 
                 -> DB s 
                 -> RpkiURL
-                -> Hash
+                -> ObjectKey
                 -> m ()
-linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL hash = liftIO $ do    
-    ifJustM (M.get tx hashToKey hash) $ \objectKey -> do        
-        z <- SM.get tx uriToUriKey rpkiURL 
-        urlKey <- maybe (saveUrl rpkiURL) pure z                
-        
-        M.get tx objectKeyToUrlKeys objectKey >>= \case 
-            Nothing -> do 
-                M.put tx objectKeyToUrlKeys objectKey [urlKey]
+linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL objectKey = liftIO $ do    
+    z <- SM.get tx uriToUriKey rpkiURL 
+    urlKey <- maybe (saveUrl rpkiURL) pure z                
+    
+    M.get tx objectKeyToUrlKeys objectKey >>= \case 
+        Nothing -> do 
+            M.put tx objectKeyToUrlKeys objectKey [urlKey]
+            MM.put tx urlKeyToObjectKey urlKey objectKey
+        Just existingUrlKeys -> 
+            unless (urlKey `elem` existingUrlKeys) $ do 
+                M.put tx objectKeyToUrlKeys objectKey (urlKey : existingUrlKeys)
                 MM.put tx urlKeyToObjectKey urlKey objectKey
-            Just existingUrlKeys -> 
-                unless (urlKey `elem` existingUrlKeys) $ do 
-                    M.put tx objectKeyToUrlKeys objectKey (urlKey : existingUrlKeys)
-                    MM.put tx urlKeyToObjectKey urlKey objectKey
   where
     saveUrl safeUrl = do 
         SequenceValue k <- nextValue tx keys

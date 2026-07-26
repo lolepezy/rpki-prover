@@ -126,7 +126,9 @@ fetchErik
                 Nothing -> Nothing
                 Just o  -> 
                     case getSIA o of 
-                        Just sia -> toRsyncURL sia                            
+                        Just sia -> toRsyncURL sia          
+                        -- TODO For now -- make something up from the file path, in the future 
+                        -- we might be a bit sma
                         Nothing  -> toRsyncURL $ fqdn_ <> "/erik-relay/" <> U.convert filePath
           where
             toRsyncURL u = 
