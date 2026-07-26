@@ -118,9 +118,22 @@ fetchErik
 
                 -- Now traverse all downloaded objects and load them into the storage,
                 -- the same way it happens for rsync-ed repositories.
-                loadObjectsFromFS appContext worldVersion (const Nothing) indexDir 
+                loadObjectsFromFS appContext worldVersion recoverUri indexDir 
       where
     
+        recoverUri filePath object = 
+            case object of                 
+                Nothing -> Nothing
+                Just o  -> 
+                    case getSIA o of 
+                        Just sia -> toRsyncURL sia                            
+                        Nothing  -> toRsyncURL $ fqdn_ <> "/erik-relay/" <> U.convert filePath
+          where
+            toRsyncURL u = 
+                case U.parseRsyncURL $ U.convert u of 
+                    Left _   -> Nothing 
+                    Right u_ -> Just u_
+
         getIndex :: ValidatorT IO (Maybe ErikIndex)
         getIndex = do 
             let tmpDir = configValue $ config ^. #tmpDirectory

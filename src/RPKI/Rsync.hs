@@ -229,7 +229,7 @@ loadRsyncRepository :: Storage s =>
                     -> ValidatorT IO ()
 loadRsyncRepository appContext worldVersion repositoryUrl rootPath =
     loadObjectsFromFS appContext worldVersion 
-        (Just . restoreUriFromPath repositoryUrl rootPath)
+        (\filePath _ -> Just $ restoreUriFromPath repositoryUrl rootPath filePath)
         rootPath
   where
     restoreUriFromPath url@(RsyncURL host rootPath_) rsyncRoot filePath = 

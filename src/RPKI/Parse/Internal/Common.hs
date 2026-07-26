@@ -282,6 +282,20 @@ certificatePoliciesToText :: BS.ByteString -> Text
 certificatePoliciesToText bs =
     either fmtGen fmtGen $ decodeASN1' BER bs
 
+getSIA :: RpkiObject -> Maybe BS.ByteString
+getSIA = \case
+    CerRO c  -> siaOf c
+    MftRO c  -> siaOf c
+    RoaRO c  -> siaOf c
+    SplRO c  -> siaOf c
+    GbrRO c  -> siaOf c
+    RscRO c  -> siaOf c
+    AspaRO c -> siaOf c
+    BgpRO c  -> siaOf c
+    CrlRO _  -> Nothing
+  where
+    siaOf = getSiaExt . cwsX509certificate . getCertWithSignature
+
 
 toMaybe :: Either b a -> Maybe a
 toMaybe = either (const Nothing) Just

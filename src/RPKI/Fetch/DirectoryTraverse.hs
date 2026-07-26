@@ -48,7 +48,7 @@ import qualified RPKI.Util                        as U
 loadObjectsFromFS :: forall s . Storage s =>                         
                         AppContext s 
                     -> WorldVersion 
-                    -> (FilePath -> Maybe RsyncURL) 
+                    -> (FilePath -> Maybe RpkiObject -> Maybe RsyncURL)
                     -> FilePath 
                     -> ValidatorT IO ()
 loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
@@ -77,7 +77,7 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                     True  -> traverseDirectory path
                     False -> 
                         when (supportedExtension name) $ do         
-                            let !uri = restoreUrl path
+                            let !uri = restoreUrl path Nothing
                             s <- askScopes                     
                             let task = runValidatorT s $ liftIO $ readAndParseObject path (RsyncU <$> uri)
                             a <- liftIO $ async $ evaluate =<< task
@@ -113,7 +113,7 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                                     (ObjectOriginal blob) hash
                                     (ObjectMeta worldVersion type_)                        
                             (Right ro, _) ->                                     
-                                SuccessParsed rpkiURL (toStorableObject ro) type_                    
+                                SuccessParsed rpkiURL filePath (toStorableObject ro) type_
                         ) `catch` 
                         (\(e :: SomeException) -> do 
                             pure $! ObjectParsingProblem rpkiURL (VErr $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e) 
@@ -155,13 +155,20 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                         DB.saveOriginal tx db original hash objectMeta
                         forM_ rpkiUrl $ \u -> DB.linkObjectToUrl tx db u hash                                  
 
-                    SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do 
-                        DB.saveObject tx db so worldVersion                    
-                        forM_ rpkiUrl $ \u -> DB.linkObjectToUrl tx db u (getHash object)
+                    SuccessParsed rpkiUrl filePath so@StorableObject {..} type_ -> do 
+                        DB.saveObject tx db so worldVersion                   
+                        case rpkiUrl of 
+                            Just u -> do 
+                                DB.linkObjectToUrl tx db u (getHash object)
+                                logDebug logger [i|Saved object #{u} of type #{type_}.|]                                   
+                            Nothing -> 
+                                forM_ (restoreUrl filePath (Just object)) $ \u ->
+                                    DB.linkObjectToUrl tx db (RsyncU u) (getHash object)
+                        
                         updateMetric @RsyncMetric @_ (#processed %~ Map.unionWith (+) (Map.singleton (Just type_) 1))
 
                     other -> 
-                        logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                          
+                        logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                                             
                   
 
 getSizeAndContent :: ValidationConfig -> FilePath -> IO (Either AppError (Integer, BS.ByteString))
@@ -193,5 +200,5 @@ data ObjectProcessingResult =
         | HashExists (Maybe RpkiURL) Hash
         | UknownObjectType (Maybe RpkiURL) String
         | ObjectParsingProblem (Maybe RpkiURL) VIssue ObjectOriginal Hash ObjectMeta
-        | SuccessParsed (Maybe RpkiURL) (StorableObject RpkiObject) RpkiObjectType
+        | SuccessParsed (Maybe RpkiURL) FilePath (StorableObject RpkiObject) RpkiObjectType
     deriving stock (Show, Eq, Generic)
