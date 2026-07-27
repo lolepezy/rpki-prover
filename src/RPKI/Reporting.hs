@@ -363,16 +363,6 @@ class Monoid metric => MetricC metric where
     -- lens to access the specific metric map in the total metric record    
     metricLens :: Lens' Metrics (MetricMap metric)
 
-newtype Count = Count { unCount :: Int64 }
-    deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-    deriving newtype (Num)
-    deriving Semigroup via Sum Count
-    deriving Monoid via Sum Count
-
-instance Show Count where 
-    show (Count c) = Prelude.show c
-
 newtype HttpStatus = HttpStatus { unHttpStatus :: Int }
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)        

@@ -42,6 +42,16 @@ newtype Size = Size { unSize :: Int64 }
     deriving Semigroup via Sum Size
     deriving Monoid via Sum Size
 
+newtype Count = Count { unCount :: Int64 }
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+    deriving newtype (Num)
+    deriving Semigroup via Sum Count
+    deriving Monoid via Sum Count
+
+instance Show Count where 
+    show (Count c) = Prelude.show c
+
 -- TODO Probably move it to some other module
 newtype MaxMemory = MaxMemory Int
     deriving stock (Eq, Ord, Generic)
