@@ -21,16 +21,17 @@ partialValidationSpec = testGroup "Partial validation" [
         HU.testCase "Find parent in longer chain" shouldFindParentLongerChains,
         HU.testCase "Should find start CAs in one branch" shouldFindStartCasSimple,
         HU.testCase "Should find start CAs in multiple branches" shouldFindStartCasMultipleBranches,
-        HU.testCase "Should find start CAs when some are expired" shouldFindStartCasExpired
+        HU.testCase "Should find start CAs when some are expired" shouldFindStartCasExpired,
+        HU.testCase "Should find start CAs when there are multiple parents" shouldFindStartCasMultipleParents
     ]
 
 
 shouldFindParent :: HU.Assertion
 shouldFindParent = do    
     let cache = newCache [ ("a", "parent", 1), ("parent", "parent", 2) ]
-    let Just kimA = Map.lookup "a" cache
+    let Just kimA = Set.lookupMin =<< Map.lookup "a" cache
 
-    let testIt = findPathUp (\ki -> pure $ maybe [] pure $ Map.lookup ki cache) (\_ _ -> True) ("a", kimA)
+    let testIt = findPathUp (\ki -> pure $ maybe [] Set.toList $ Map.lookup ki cache) (\_ _ -> True) ("a", kimA)
 
     (paths, ignored) <- testIt (Set.fromList [1])
     HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2]) paths
@@ -40,9 +41,9 @@ shouldFindParent = do
 shouldFindOnlyParent :: HU.Assertion
 shouldFindOnlyParent = do
     let cache = newCache [ ("a", "parent", 1), ("parent", "parent", 2) ]
-    let Just kimA = Map.lookup "a" cache
+    let Just kimA = Set.lookupMin =<< Map.lookup "a" cache
                      
-    let testIt = findPathUp (\ki -> pure $ maybe [] pure $ Map.lookup ki cache) (\_ _ -> True) ("a", kimA)
+    let testIt = findPathUp (\ki -> pure $ maybe [] Set.toList $ Map.lookup ki cache) (\_ _ -> True) ("a", kimA)
 
     (paths, ignored) <- testIt (Set.fromList [1, 2])
     HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2]) paths
@@ -52,9 +53,9 @@ shouldFindOnlyParent = do
 shouldFindParentLongerChains :: HU.Assertion
 shouldFindParentLongerChains = do
     let cache = newCache [ ("a", "b", 1), ("b", "parent", 2), ("parent", "parent", 3) ]
-    let Just kimA = Map.lookup "a" cache
+    let Just kimA = Set.lookupMin =<< Map.lookup "a" cache
 
-    let testIt = findPathUp (\ki -> pure $ maybe [] pure $ Map.lookup ki cache) (\_ _ -> True) ("a", kimA)
+    let testIt = findPathUp (\ki -> pure $ maybe [] Set.toList $ Map.lookup ki cache) (\_ _ -> True) ("a", kimA)
 
     do 
         (paths, ignored) <- testIt (Set.fromList [1])
@@ -75,7 +76,7 @@ shouldFindParentLongerChains = do
 shouldFindStartCasSimple :: HU.Assertion
 shouldFindStartCasSimple = do
     let cache = newCache [ ("a", "b", 1), ("b", "parent", 2), ("parent", "parent", 3) ]    
-    let testIt = findStartCasGen (\ki -> pure $ maybe [] pure $ Map.lookup ki cache) (\_ _ -> True)
+    let testIt = findStartCasGen (\ki -> pure $ maybe [] Set.toList $ Map.lookup ki cache) (\_ _ -> True)
 
     do 
         StartCas { tops = startCas, paths } <- testIt ["a"]
@@ -100,7 +101,7 @@ shouldFindStartCasMultipleBranches = do
                 ("x", "y", 10), ("y", "z", 20), ("z", "parent", 30), 
                                 ("w", "z", 100)
             ]    
-    let testIt = findStartCasGen (\ki -> pure $ maybe [] pure $ Map.lookup ki cache) (\_ _ -> True)
+    let testIt = findStartCasGen (\ki -> pure $ maybe [] Set.toList $ Map.lookup ki cache) (\_ _ -> True)
 
     do 
         StartCas { tops = startCas, paths } <- testIt ["a"]
@@ -128,25 +129,49 @@ shouldFindStartCasExpired = do
     let cache = newCache [("a", "b", 1), ("b", "parent", 2), ("parent", "parent", 3)]     
 
     do 
-        let testIt = findStartCasGen (\ki -> pure $ maybe [] pure $ Map.lookup ki cache) (\ki _ -> ki /= "a")
+        let testIt = findStartCasGen (\ki -> pure $ maybe [] Set.toList $ Map.lookup ki cache) (\ki _ -> ki /= "a")
         StartCas { tops = startCas, paths } <- testIt ["a"]
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList []) paths
         HU.assertEqual "CAs to validate" (Set.fromList []) startCas
 
     do 
-        let testIt = findStartCasGen (\ki -> pure $ maybe [] pure $ Map.lookup ki cache) (\ki _ -> ki /= "b")
+        let testIt = findStartCasGen (\ki -> pure $ maybe [] Set.toList $ Map.lookup ki cache) (\ki _ -> ki /= "b")
         StartCas { tops = startCas, paths } <- testIt ["a"]
         HU.assertEqual "paths should contain lead to the TA" (Set.fromList []) paths
         HU.assertEqual "CAs to validate" (Set.fromList []) startCas
 
     
+shouldFindStartCasMultipleParents :: HU.Assertion
+shouldFindStartCasMultipleParents = do
+    let cache = newCache [ ("a", "b", 1), ("b", "parent", 2), ("parent", "parent", 3),
+                                          ("b", "parent2", 20), ("parent2", "parent2", 30) ]
+
+    let testIt = findStartCasGen (\ki -> pure $ maybe [] Set.toList $ Map.lookup ki cache) (\_ _ -> True)
+
+    do 
+        StartCas { tops = startCas, paths } <- testIt ["a"]
+        HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3, 20, 30]) paths
+        HU.assertEqual "CAs to validate" (Set.fromList [1]) startCas
+
+    do
+        StartCas { tops = startCas, paths } <- testIt ["a", "b"]
+        HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3, 20, 30]) paths
+        HU.assertEqual "CAs to validate" (Set.fromList [2, 20]) startCas        
+
+    do
+        StartCas { tops = startCas, paths } <- testIt ["a", "b", "parent"]
+        HU.assertEqual "paths should contain lead to the TA" (Set.fromList [1, 2, 3, 20, 30]) paths
+        HU.assertEqual "CAs to validate" (Set.fromList [3, 20]) startCas                    
 
 
-newCache :: [(Text, Text, Int)] -> Map.Map Text TestKIMeta
-newCache metas = Map.fromList [ (ki, TestKIMeta { aki = pki, caCertificate = ca }) | (ki, pki, ca) <- metas ]
+
+newCache :: [(Text, Text, Int)] -> Map.Map Text (Set.Set TestKIMeta)
+newCache metas = Map.fromListWith Set.union
+    [ (ki, Set.singleton $ TestKIMeta { aki = pki, caCertificate = ca })
+    | (ki, pki, ca) <- metas ]
 
 
 data TestKIMeta = TestKIMeta {
     aki      :: Text,
     caCertificate :: Int
-} deriving (Eq, Show, Generic)
+} deriving (Eq, Ord, Show, Generic)

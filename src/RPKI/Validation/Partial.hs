@@ -428,18 +428,24 @@ findPathUp readFromCache accept (ki, kiMeta) startCas =
                     -- and we should ignore the whole path and don't use it for validation
                     pure (mempty, paths')                    
 
-                parents ->                
-                    fmap mconcat $ for (filter (accept aki) parents) $ \parent -> do
-                        let parentCa = parent ^. #caCertificate
-                        -- If parent is one of the CAs we started from, 
-                        -- We can ignore the whole path until now, since it is going 
-                        -- to be validated anyway starting from `parent`
-                        let ignored' = 
-                                if parentCa `Set.member` startCas 
-                                    then ignored <> paths'
-                                    else ignored
+                parents ->
+                    case filter (accept aki) parents of
+                        [] ->
+                            -- Parents exist but all were filtered out (expired/not-yet-valid)
+                            -- means no valid path up, ignore the whole path
+                            pure (mempty, paths')
+                        acceptedParents ->
+                            fmap mconcat $ for acceptedParents $ \parent -> do
+                                let parentCa = parent ^. #caCertificate
+                                -- If parent is one of the CAs we started from, 
+                                -- We can ignore the whole path until now, since it is going 
+                                -- to be validated anyway starting from `parent`
+                                let ignored' = 
+                                        if parentCa `Set.member` startCas 
+                                            then ignored <> paths'
+                                            else ignored
 
-                        go readFromCache accept (aki, parent) paths' ignored
+                                go readFromCache accept (aki, parent) paths' ignored'
 
 
 -- toObjectUpdates :: (MonadIO m, Storage s) => Tx s mode -> DB s -> [Update] -> m [AddedObject]
