@@ -1092,7 +1092,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
         minInterval = 
             case repository of                
-                -- it's signifantly cheaper to use E-Tag and If_No-Mobified-Since, 
+                -- it's signifantly cheaper to use E-Tag and If_No-Modified-Since, 
                 -- so the interval can be smaller
                 RrdpR (RrdpRepository { eTag = Just _ }) -> fetchConfig ^. #minFetchInterval
                 _                                        -> 2 * fetchConfig ^. #minFetchInterval
