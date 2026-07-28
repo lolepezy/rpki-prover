@@ -75,11 +75,11 @@ mainPage version systemInfo perTaValidations generalValidations fetchDtos metric
                 H.section $ H.h3 "RRDP fetches"
                 rrdpMetricsHtml rrdpMetrics
 
-            let rsyncMetrics = [ d | RsyncDto d <- fetchDtos ]
-            unless (Prelude.null rsyncMetrics) $ do 
+            let traverseMetrics = [ d | RsyncDto d <- fetchDtos ]
+            unless (Prelude.null traverseMetrics) $ do 
                 H.a ! A.id "rsync-fetches" $ ""
                 H.section $ H.h3 "Rsync fetches"
-                rsyncMetricsHtml rsyncMetrics        
+                rsyncMetricsHtml traverseMetrics        
 
     sideBar = do
         H.div ! A.class_ "side-navigation" $ do
@@ -312,19 +312,19 @@ rrdpMetricsHtml rrdpMetrics =
 
 
 rsyncMetricsHtml :: [RsyncRepositoryDto] -> Html
-rsyncMetricsHtml rsyncMetrics =
-    unless (rsyncMetrics == mempty) $ do    
+rsyncMetricsHtml traverseMetrics =
+    unless (traverseMetrics == mempty) $ do    
         H.table ! A.class_ "gen-t" $ do  
             H.thead $ tr $ do 
                 genTh $ do 
-                    H.text "Repository (" >> toHtml (length rsyncMetrics) >> H.text " in total)" 
+                    H.text "Repository (" >> toHtml (length traverseMetrics) >> H.text " in total)" 
                 genTh $ H.div ! A.class_ "tooltip" $ do
                     H.text "Updated at"                
                 genTh $ H.text "Processed objects"
                 genTh $ H.text "Total time"                    
 
             H.tbody $ do 
-                let slowestFirst = List.sortOn (\m -> ordering $ m ^. #meta . #status) rsyncMetrics
+                let slowestFirst = List.sortOn (\m -> ordering $ m ^. #meta . #status) traverseMetrics
                 forM_ (zip slowestFirst [1 :: Int ..]) $ \(m, index) -> do          
                     htmlClickableRow index rsyncDetailRow $ do 
                         let (statusHtml, dot) = 

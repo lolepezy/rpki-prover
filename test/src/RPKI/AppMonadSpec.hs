@@ -45,7 +45,7 @@ scopesShouldBeProperlyNested = do
             timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                 appWarn $ UnspecifiedE "Error0" "text 0"
                 vFocusOn TextFocus "snapshot.xml" $ do            
-                    timedMetric (Proxy :: Proxy RsyncMetric) $ do                        
+                    timedMetric (Proxy :: Proxy TraverseMetric) $ do                        
                         appWarn $ UnspecifiedE "Error1" "text 1"
                         vFocusOn TextFocus "broken.roa" $ do                                        
                             appError $ UnspecifiedE "Crash" "Crash it"                                                                    

@@ -152,7 +152,7 @@ updateObjectForRsyncRepository
     worldVersion
     repo@(RsyncRepository (RsyncPublicationPoint uri) _) = 
         
-    timedMetric (Proxy :: Proxy RsyncMetric) $ do     
+    timedMetric (Proxy :: Proxy TraverseMetric) $ do     
         let rsyncRoot = configValue $ appContext ^. typed @Config . typed @RsyncConf . typed
         destination <- liftIO $ rsyncDestination RsyncDirectory rsyncRoot uri
         let rsync = rsyncProcess config fetchConfig uri destination RsyncDirectory

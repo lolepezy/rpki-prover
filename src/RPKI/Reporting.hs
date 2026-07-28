@@ -10,10 +10,8 @@ import           Control.Lens
 
 import           Data.Generics.Labels
 import qualified Data.ByteString             as BS
-import           Data.Int                    (Int64)
 import           Data.Hourglass
 import           Data.Maybe                  (fromMaybe)
-import           Data.Monoid
 import           Data.Text                   as Text
 import qualified Data.List                   as List
 import           Data.List.NonEmpty          (NonEmpty (..))
@@ -416,15 +414,15 @@ data RrdpMetric = RrdpMetric {
     deriving Semigroup via GenericSemigroup RrdpMetric   
     deriving Monoid    via GenericMonoid RrdpMetric
 
-data RsyncMetric = RsyncMetric {
+data TraverseMetric = TraverseMetric {
         processed      :: Map (Maybe RpkiObjectType) Count,        
         totalTimeMs    :: TimeMs,
         fetchFreshness :: FetchFreshness
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
-    deriving Semigroup via GenericSemigroup RsyncMetric   
-    deriving Monoid    via GenericMonoid RsyncMetric
+    deriving Semigroup via GenericSemigroup TraverseMetric   
+    deriving Monoid    via GenericMonoid TraverseMetric
 
 newtype ValidatedBy = ValidatedBy { unValidatedBy :: WorldVersion }
     deriving stock (Show, Eq, Ord, Generic)
@@ -459,8 +457,8 @@ data ValidationMetric = ValidationMetric {
 instance MetricC RrdpMetric where
     metricLens = #rrdpMetrics
 
-instance MetricC RsyncMetric where
-    metricLens = #rsyncMetrics
+instance MetricC TraverseMetric where
+    metricLens = #traverseMetrics
 
 instance MetricC ValidationMetric where 
     metricLens = #validationMetrics
@@ -482,7 +480,7 @@ data VrpCounts = VrpCounts {
     deriving Monoid    via GenericMonoid VrpCounts
 
 data Metrics = Metrics {
-        rsyncMetrics      :: MetricMap RsyncMetric,
+        traverseMetrics   :: MetricMap TraverseMetric,
         rrdpMetrics       :: MetricMap RrdpMetric,
         validationMetrics :: MetricMap ValidationMetric,
         vrpCounts         :: VrpCounts
@@ -544,15 +542,15 @@ totalMapCount m = sum $ Map.elems m
 rrdpRepoHasUpdates :: RrdpMetric -> Bool
 rrdpRepoHasUpdates RrdpMetric {..} = anyPositive added || anyPositive deleted   
 
-rsyncRepoHasUpdates :: RsyncMetric -> Bool
-rsyncRepoHasUpdates RsyncMetric {..} = anyPositive processed
+rsyncRepoHasUpdates :: TraverseMetric -> Bool
+rsyncRepoHasUpdates TraverseMetric {..} = anyPositive processed
 
 rrdpRepoHasSignificantUpdates :: RrdpMetric -> Bool
 rrdpRepoHasSignificantUpdates RrdpMetric {..} = 
     anySignificantPositive added || anySignificantPositive deleted   
 
-rsyncRepoHasSignificantUpdates :: RsyncMetric -> Bool
-rsyncRepoHasSignificantUpdates RsyncMetric {..} = anySignificantPositive processed
+rsyncRepoHasSignificantUpdates :: TraverseMetric -> Bool
+rsyncRepoHasSignificantUpdates TraverseMetric {..} = anySignificantPositive processed
 
 anyPositive :: (Ord b, Num b) => Map a b -> Bool
 anyPositive m = Prelude.any ((> 0) . snd) $ Map.toList m    

@@ -619,7 +619,7 @@ toRepositoryDtos AppContext {..} inputs = do
                 resolved <- forM validationDtos $ resolveOriginalDto tx db
 
                 pure $ fmap (\metrics -> RsyncRepositoryDto { validations = resolved, .. }) 
-                        $ filterRepositoryMetrics (RsyncU uri) $ state ^. typed @Metrics . #rsyncMetrics
+                        $ filterRepositoryMetrics (RsyncU uri) $ state ^. typed @Metrics . #traverseMetrics
 
         pure $ rrdpRepos <> rsyncRepos            
   where

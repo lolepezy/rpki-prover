@@ -549,7 +549,7 @@ saveSnapshot
                         DB.linkObjectToUrl tx db rpkiUrl key                
                         addedObject $ Just $ objectMeta ^. #objectType
 
-                    SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do 
+                    SuccessParsed rpkiUrl so type_ -> do 
                         objectKey <- DB.saveObject tx db so worldVersion                    
                         DB.linkObjectToUrl tx db rpkiUrl objectKey
                         addedObject $ Just type_
@@ -715,7 +715,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                             appError $ RrdpE $ NoObjectToReplace uri oldHash
 
         r <- fromTry (RrdpE . FailedToParseDeltaItem . U.fmtEx) $ wait a
-        case r of                    
+        case r of
             UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do
                 logError logger [i|Skipped object #{rpkiUrl}, error #{e} |]
                 inSubLocationScope uri $ appWarn e

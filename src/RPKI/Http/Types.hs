@@ -290,7 +290,7 @@ data RepositoryDto = RsyncDto RsyncRepositoryDto
 data RsyncRepositoryDto = RsyncRepositoryDto {
         uri         :: RsyncURL,
         meta        :: RepositoryMeta,
-        metrics     :: RsyncMetric,
+        metrics     :: TraverseMetric,
         validations :: [ResolvedVDto]
     }
     deriving stock (Eq, Show, Generic)

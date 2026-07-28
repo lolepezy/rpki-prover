@@ -222,7 +222,7 @@ $(deriveToJSON defaultOptions ''ValidationMetric)
 instance ToJSON a => ToJSON (GroupedMetric a)
 
 $(deriveToJSON defaultOptions ''FetchFreshness)
-$(deriveToJSON defaultOptions ''RsyncMetric)
+$(deriveToJSON defaultOptions ''TraverseMetric)
 $(deriveToJSON defaultOptions ''RrdpMetric)
 $(deriveToJSON defaultOptions ''ResourceUsage)
 $(deriveToJSON defaultOptions ''SystemMetrics)

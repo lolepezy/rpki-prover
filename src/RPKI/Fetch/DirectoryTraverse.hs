@@ -157,7 +157,7 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                         forM_ rpkiUrl $ \u -> DB.linkObjectToUrl tx db u key
 
                     SuccessParsed rpkiUrl filePath so@StorableObject {..} type_ -> do 
-                        objectKey <- DB.saveObject tx db so worldVersion                   
+                        objectKey <- DB.saveObject tx db so worldVersion                        
                         case rpkiUrl of 
                             Just u -> do 
                                 DB.linkObjectToUrl tx db u objectKey
@@ -166,7 +166,7 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                                 forM_ (restoreUrl filePath (Just object)) $ \u ->
                                     DB.linkObjectToUrl tx db (RsyncU u) objectKey
                         
-                        updateMetric @RsyncMetric @_ (#processed %~ Map.unionWith (+) (Map.singleton (Just type_) 1))
+                        updateMetric @TraverseMetric @_ (#processed %~ Map.unionWith (+) (Map.singleton (Just type_) 1))
 
                     other -> 
                         logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                                             

@@ -581,7 +581,7 @@ instance Arbitrary Metrics where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RsyncMetric where
+instance Arbitrary TraverseMetric where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

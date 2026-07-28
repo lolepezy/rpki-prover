@@ -98,7 +98,7 @@ instance ToSchema a => ToSchema (MetricMap a)
 instance ToSchema ValidatedBy
 instance ToSchema ValidationMetric
 instance ToSchema RpkiObjectType
-instance ToSchema RsyncMetric
+instance ToSchema TraverseMetric
 instance ToSchema RrdpMetric
 instance ToSchema ResourceUsage
 instance ToSchema SystemMetrics
