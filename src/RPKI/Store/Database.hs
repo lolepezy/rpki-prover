@@ -110,7 +110,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         objects        :: SMap "objects" s ObjectKey (Compressed (StorableObject RpkiObject)),
         hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
         mftsForKI      :: SMultiMap "mfts-for-ki" s AKI MftMeta,
-        certBySKI      :: SMap "cert-by-ski" s SKI ObjectKey,    
+        certBySKI      :: SMultiMap "cert-by-ski" s SKI ObjectKey,    
         objectMetas    :: SMap "object-meta" s ObjectKey ObjectMeta,
 
         validatedByVersion :: SMap "validated-by-version" s Text (Compressed (Map.Map ObjectKey WorldVersion)),
@@ -331,7 +331,7 @@ saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } so@StorableObject {.
             M.put tx objectMetas objectKey (ObjectMeta wv (getRpkiObjectType object))
             case object of
                 CerRO c -> 
-                    M.put tx certBySKI (getSKI c) objectKey
+                    MM.put tx certBySKI (getSKI c) objectKey
                 MftRO mft -> 
                     for_ (getAKI object) $ \aki_ -> 
                         MM.put tx mftsForKI aki_ (getMftMeta mft objectKey)
@@ -427,7 +427,7 @@ deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore { mftShortcuts = MftS
         M.delete tx objectMetas objectKey        
         M.delete tx hashToKey (getHash ro)
         case ro of 
-            CerRO c -> M.delete tx certBySKI (getSKI c)
+            CerRO c -> MM.delete tx certBySKI (getSKI c) objectKey
             _       -> pure ()
         ifJustM (M.get tx objectKeyToUrlKeys objectKey) $ \urlKeys -> do 
             M.delete tx objectKeyToUrlKeys objectKey            
@@ -517,11 +517,12 @@ getMftMeta mft key = let
     in MftMeta {..}
 
 
-getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m (Maybe (Located CaCerObject))
-getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ runMaybeT $ do 
-    objectKey <- MaybeT $ M.get tx certBySKI ski
-    located   <- MaybeT $ getLocatedByKey tx db objectKey
-    pure $ located & #payload %~ (\(CerRO c) -> c) 
+getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m [Located CaCerObject]
+getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ do
+    objectKeys <- MM.allForKey tx certBySKI ski
+    fmap catMaybes $ forM objectKeys $ \objectKey -> runMaybeT $ do
+        located <- MaybeT $ getLocatedByKey tx db objectKey
+        pure $ located & #payload %~ (\(CerRO c) -> c)
 
 -- TA store functions
 
