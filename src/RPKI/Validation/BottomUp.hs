@@ -43,14 +43,19 @@ validateBottomUp
     case getAKI object of 
         Nothing  -> appError $ ValidationE NoAKI
         Just (AKI ki) -> do 
-            parentCerts <- DB.roAppTx db $ \tx -> DB.getBySKI tx db (SKI ki)            
-            case parentCerts of 
-                []  -> appError $ ValidationE ParentCertificateNotFound
-                pcs ->                               
-                    fmap (Validated object, ) $ forM pcs $ \pc -> do 
-                        certPath <- reverse . (pc :) <$> findPathToRoot db pc                                        
-                        validateTopDownAlongPath db certPath 
-                        pure certPath                    
+            z <- DB.roAppTx db $ \tx -> DB.getBySKI tx db (SKI ki)            
+            case z of 
+                []          -> appError $ ValidationE ParentCertificateNotFound
+                parentCerts ->                               
+                    fmap (Validated object, ) 
+                    $ fmap mconcat 
+                    $ forM parentCerts $ \pc -> do 
+                        pathsToRoot <- findPathsToRoot db pc
+                        -- certPath <- reverse . (pc :) <$> findPathsToRoot db pc
+                        forM pathsToRoot $ \path -> do
+                            let topDownPath = reverse $ pc : path
+                            validateTopDownAlongPath db topDownPath
+                            pure topDownPath
   where
     validationRFC = config ^. #validationConfig . #validationRFC
     {- Given a chain of certificatees from a TA to the object, 
@@ -116,7 +121,7 @@ validateBottomUp
 
     -- Given a certificate, find a chain of certificates leading to a TA, 
     -- the chain is build based on the SKI - AKI relations
-    findPathToRoot db certificate = do                  
+    findPathsToRoot db certificate = do                  
         tas <- DB.roAppTx db $ \tx -> DB.getTAs tx db         
         let taCerts = Map.fromList [ 
                         (getSKI taCert, Located (talCertLocations tal) taCert) | 
@@ -133,12 +138,13 @@ validateBottomUp
                 Just (AKI ki) -> do 
                     parentCerts <- DB.roAppTx db $ \tx -> DB.getBySKI tx db (SKI ki)
                     case parentCerts of 
-                        [] -> do                         
+                        [] ->                       
                             case Map.lookup (SKI ki) taCerts of 
                                 Nothing -> appError $ ValidationE ParentCertificateNotFound
-                                Just c  -> pure [c]
-                        (pc:_) ->
-                            (pc :) <$> go taCerts pc
+                                Just c  -> pure [[c]]
+                        parents -> 
+                            fmap mconcat $ forM parents $ \pc -> 
+                                map (pc: ) <$> go taCerts pc
 
 
     validateManifest db certificate = do
