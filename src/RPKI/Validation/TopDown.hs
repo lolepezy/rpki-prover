@@ -102,7 +102,7 @@ The idea behind shortcuts is as follows:
 -}
 
 data PayloadBuilder = PayloadBuilder {
-        vrps     :: IORef [T2 [Vrp] ObjectKey],        
+        vrps     :: IORef [T2 RoaPayload ObjectKey],
         spls     :: IORef [SplPayload],        
         aspas    :: IORef [Aspa],
         gbrs     :: IORef [T2 Hash Gbr],
@@ -337,7 +337,7 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
                                       SplPayload asn prefixes <- splPayloads, prefix <- prefixes ]
 
             let roas = Roas $ MonoidalMap.fromList $ 
-                            map (\(T2 vrp k) -> (k, V.fromList vrp)) vrps 
+                            map (\(T2 roaPayload k) -> (k, V.fromList $ roaPayloadToVrps roaPayload)) vrps 
 
             let payloads = Payloads {..}                    
             
@@ -1174,14 +1174,13 @@ validateCaNoFetch
                     validateObjectLocations child                    
                     allowRevoked $ do
                         validRoa <- vHoist $ validateRoa validationRFC now roa fullCa validCrl verifiedResources
-                        let roaPayload = getCMSContent $ cmsPayload roa
-                            vrpList   = roaPayloadToVrps roaPayload
+                        let roaPayload = getCMSContent $ cmsPayload roa                            
                         oneMoreRoa
-                        moreVrps $ Count $ fromIntegral $ length vrpList
+                        moreVrps $ Count $ fromIntegral $ length (roaV4 roaPayload) + length (roaV6 roaPayload)
                         increment $ topDownCounters ^. #originalRoa                        
                         shortcut <- vHoist $ shortcutIfNoIssues childKey fileName 
                                             (makeRoaShortcut childKey validRoa roaPayload)                        
-                        rememberPayloads typed (T2 vrpList childKey :)
+                        rememberPayloads typed (T2 roaPayload childKey :)
                         pure $! newShortcut shortcut                  
 
             SplRO spl -> 
@@ -1375,11 +1374,10 @@ validateCaNoFetch
                 RoaChild r@RoaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do                    
                         validateShortcut r key                   
-                        oneMoreRoa
-                        let vrps = roaPayloadToVrps roaPayload
-                        moreVrps $ Count $ fromIntegral $ length vrps
+                        oneMoreRoa                        
+                        moreVrps $ Count $ fromIntegral $ length (roaV4 roaPayload) + length (roaV6 roaPayload)
                         increment $ topDownCounters ^. #shortcutRoa
-                        rememberPayloads typed (T2 vrps childKey :)
+                        rememberPayloads typed (T2 roaPayload childKey :)
 
                 SplChild s@SplShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do
