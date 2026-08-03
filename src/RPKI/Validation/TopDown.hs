@@ -1174,12 +1174,13 @@ validateCaNoFetch
                     validateObjectLocations child                    
                     allowRevoked $ do
                         validRoa <- vHoist $ validateRoa validationRFC now roa fullCa validCrl verifiedResources
-                        let vrpList = getCMSContent $ cmsPayload roa
+                        let roaPayload = getCMSContent $ cmsPayload roa
+                            vrpList   = roaPayloadToVrps roaPayload
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length vrpList
                         increment $ topDownCounters ^. #originalRoa                        
                         shortcut <- vHoist $ shortcutIfNoIssues childKey fileName 
-                                            (makeRoaShortcut childKey validRoa vrpList)                        
+                                            (makeRoaShortcut childKey validRoa roaPayload)                        
                         rememberPayloads typed (T2 vrpList childKey :)
                         pure $! newShortcut shortcut                  
 
@@ -1375,6 +1376,7 @@ validateCaNoFetch
                     vFocusOn ObjectFocus childKey $ do                    
                         validateShortcut r key                   
                         oneMoreRoa
+                        let vrps = roaPayloadToVrps roaPayload
                         moreVrps $ Count $ fromIntegral $ length vrps
                         increment $ topDownCounters ^. #shortcutRoa
                         rememberPayloads typed (T2 vrps childKey :)
@@ -1559,8 +1561,8 @@ makeCaShortcut key (Validated certificate) ppas fileName = let
         child = CaChild (CaShortcut {..}) serial
     in MftEntry {..}
 
-makeRoaShortcut :: ObjectKey -> Validated RoaObject -> [Vrp] -> Text -> MftEntry
-makeRoaShortcut key (Validated roa) vrps fileName = let 
+makeRoaShortcut :: ObjectKey -> Validated RoaObject -> RoaPayload -> Text -> MftEntry
+makeRoaShortcut key (Validated roa) roaPayload fileName = let
         (notValidBefore, notValidAfter) = getValidityPeriod roa    
         serial = getSerial roa
         resources = getRawCert roa ^. #resources

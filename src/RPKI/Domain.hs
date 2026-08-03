@@ -287,7 +287,7 @@ data CMSBasedObject a = CMSBasedObject {
 type MftObject = CMSBasedObject Manifest
 
 -- https://datatracker.ietf.org/doc/rfc6482
-type RoaObject = CMSBasedObject [Vrp]
+type RoaObject = CMSBasedObject RoaPayload
 
 -- https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-prefixlist
 type SplObject = CMSBasedObject SplPayload
@@ -482,6 +482,30 @@ newtype ResourceCertificate = ResourceCertificate RawResourceCertificate
 data Vrp = Vrp ASN IpPrefix PrefixLength
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
+
+-- ROA-internal prefix types: split by family to eliminate the IpPrefix sum-type
+-- wrapper and allow UNPACK on the address fields.
+data Vrp4 = Vrp4 {-# UNPACK #-} !Ipv4Prefix {-# UNPACK #-} !PrefixLength
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+data Vrp6 = Vrp6 {-# UNPACK #-} !Ipv6Prefix {-# UNPACK #-} !PrefixLength
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+-- ROA payload: ASN stored once; IPv4 and IPv6 entries kept in separate lists.
+data RoaPayload = RoaPayload {
+    roaAsn :: {-# UNPACK #-} !ASN,
+    roaV4  :: ![Vrp4],
+    roaV6  :: ![Vrp6]
+}
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+roaPayloadToVrps :: RoaPayload -> [Vrp]
+roaPayloadToVrps (RoaPayload asn v4s v6s) =
+    map (\(Vrp4 p len) -> Vrp asn (Ipv4P p) len) v4s <>
+    map (\(Vrp6 p len) -> Vrp asn (Ipv6P p) len) v6s
 
 -- Signed Prefix List normalised payload
 data SplN = SplN ASN IpPrefix

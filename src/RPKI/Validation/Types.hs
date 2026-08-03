@@ -79,8 +79,8 @@ data Ca = CaShort CaShortcut
 
 
 data RoaShortcut = RoaShortcut {
-        key            :: {-# UNPACK #-} ObjectKey,        
-        vrps           :: [Vrp],
+        key            :: {-# UNPACK #-} ObjectKey,
+        roaPayload     :: RoaPayload,
         notValidBefore :: {-# UNPACK #-} Instant,
         notValidAfter  :: {-# UNPACK #-} Instant,
         resources      :: AllResources

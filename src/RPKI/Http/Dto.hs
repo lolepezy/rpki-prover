@@ -206,10 +206,9 @@ objectToDto = \case
                 & #ski ?~ getSKI c
 
     roaDto r = let
-                vrps = getCMSContent $ r ^. #cmsPayload
-                -- TODO Fix ROA somehow, make it NonEmpty?
-                asn = head $ map (\(Vrp a _ _) -> a) vrps
-                prefixes = map (\(Vrp _ p l) -> RoaPrefixDto p l) vrps
+                RoaPayload asn v4s v6s = getCMSContent $ r ^. #cmsPayload
+                prefixes = map (\(Vrp4 p l) -> RoaPrefixDto (Ipv4P p) l) v4s
+                        <> map (\(Vrp6 p l) -> RoaPrefixDto (Ipv6P p) l) v6s
             in RoaDto {..}
 
     splDto r = let SplPayload asn prefixes = getCMSContent $ r ^. #cmsPayload 
