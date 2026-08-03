@@ -495,10 +495,10 @@ data Vrp6 = Vrp6 {-# UNPACK #-} !Ipv6Prefix {-# UNPACK #-} !PrefixLength
 
 -- ROA payload: ASN stored once; IPv4 and IPv6 entries kept in separate lists.
 data RoaPayload = RoaPayload {
-    roaAsn :: {-# UNPACK #-} !ASN,
-    roaV4  :: ![Vrp4],
-    roaV6  :: ![Vrp6]
-}
+        roaAsn :: {-# UNPACK #-} !ASN,
+        roaV4  :: ![Vrp4],
+        roaV6  :: ![Vrp6]
+    }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
