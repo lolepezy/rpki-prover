@@ -20,7 +20,8 @@ import           Data.Proxy
 import           Data.X509
 import           Data.X509.Validation               hiding (InvalidSignature)
 import           Data.ASN1.Types
-import           GHC.Generics
+import           Data.ASN1.Encoding                 (encodeASN1')
+import           Data.ASN1.BinaryEncoding           (DER(..))
 
 import           RPKI.AppMonad
 import           RPKI.Config
@@ -32,14 +33,11 @@ import           RPKI.Resources.IntervalContainers as IS
 import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Util                          (convert)
+import qualified RPKI.Util                         as U
 import           RPKI.Validation.Crypto
 import           RPKI.Validation.ResourceValidation
 import           RPKI.Resources.Resources
 
-
-newtype Validated a = Validated a
-    deriving stock (Show, Eq, Generic)
-    deriving newtype (WithSKI, WithAKI, WithHash)
 
 class ExtensionValidator (t :: CertType) where
     validateResourceCertExtensions_ :: Proxy t -> [ExtensionRaw] -> PureValidatorT ()
@@ -218,14 +216,14 @@ validateResourceCert now cert parentCert vcrl = do
         maybe False (\(AKI a) -> a == s) $ getAKI c
 
 
-validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT (Instant, Instant)
+validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT ValidityPeriod
 validateObjectValidityPeriod c (Now now) = do 
-    let (notBefore, notAfter) = getValidityPeriod c
+    let vp@ValidityPeriod { notBefore, notAfter } = getValidityPeriod c
     when (now < notBefore) $ 
         vPureError $ ObjectValidityIsInTheFuture notBefore notAfter
     when (now > notAfter) $ 
         vPureError $ ObjectIsExpired notBefore notAfter
-    pure (notBefore, notAfter)
+    pure vp
 
 
 validateResources ::
@@ -449,7 +447,7 @@ validateRsc validationRFC now rsc parentCert crl verifiedResources = do
         validateCms validationRFC now (cmsPayload rsc) parentCert crl verifiedResources $ \rscCms -> do
             let rsc' = getCMSContent rscCms
             let rc = getRawCert $ getEEResourceCert $ unCMS rscCms
-            let eeCert = toPrefixesAndAsns $ resources rc 
+            let eeCert = toPrefixesAndAsns $ rc ^. #resources 
             validateNested (rsc' ^. #rscResources) eeCert            
             
     pure $ Validated rsc
@@ -564,6 +562,162 @@ signatureCheck sv = case sv of
     SignatureFailed e -> vPureError $ InvalidSignature $ convert $ show e
     SignaturePass -> pure ()
 
+
+-- ============================================================
+-- V-variant validators operating on 'ValidatedRpkiObject' types
+-- ============================================================
+
+-- | Validate a 'ValidatedCaCert' child against a 'ValidatedCaCert' parent.
+-- Extension checks were already performed during prevalidation, so only
+-- signature, revocation, validity period, and AKI/SKI are re-checked here.
+validateResourceCertV :: 
+    Now -> ValidatedCaCert -> ValidatedCaCert -> Validated CrlObject
+    -> PureValidatorT (Validated ValidatedCaCert)
+validateResourceCertV now cert parentCert vcrl = do
+    signatureCheck $ validateCertSignatureCA cert parentCert
+    when (isRevoked cert vcrl) $ vPureError RevokedResourceCertificate
+    void $ validateObjectValidityPeriod cert now
+    unless (maybe False (\(AKI a) -> a == unSKI (getSKI parentCert)) (getAKI cert)) $
+        vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
+    pure $ Validated cert
+
+-- | Validate a 'ValidatedEECert' (embedded in a CMS object) against a
+-- 'ValidatedCaCert' parent.
+validateEECertV ::
+    Now -> ValidatedEECert -> ValidatedCaCert -> Validated CrlObject
+    -> PureValidatorT ()
+validateEECertV now eeCert parentCert vcrl = do
+    signatureCheck $ validateCertSignatureEE eeCert parentCert
+    when (isRevoked eeCert vcrl) $ vPureError RevokedResourceCertificate
+    void $ validateObjectValidityPeriod eeCert now
+    unless (getAKI eeCert == Just (toAKI $ getSKI parentCert)) $
+        vPureError $ AKIIsNotEqualsToParentSKI (getAKI eeCert) (getSKI parentCert)
+
+-- | Validate resources for a 'ValidatedEECert' child against a
+-- 'ValidatedCaCert' parent.
+validateResourcesEEV ::
+    ValidationRFC ->
+    Maybe (VerifiedRS PrefixesAndAsns) ->
+    ValidatedEECert -> ValidatedCaCert ->
+    PureValidatorT (VerifiedRS PrefixesAndAsns, Maybe (Overclaiming PrefixesAndAsns))
+validateResourcesEEV validationRFC verifiedResources childCert parentCert =
+    validateChildParentResources validationRFC (childCert ^. #resources) (parentCert ^. #resources) verifiedResources
+
+-- | Validate resources for a 'ValidatedCaCert' child against a
+-- 'ValidatedCaCert' parent.
+validateResourcesCAV ::
+    ValidationRFC ->
+    Maybe (VerifiedRS PrefixesAndAsns) ->
+    ValidatedCaCert -> ValidatedCaCert ->
+    PureValidatorT (VerifiedRS PrefixesAndAsns, Maybe (Overclaiming PrefixesAndAsns))
+validateResourcesCAV validationRFC verifiedResources childCert parentCert =
+    validateChildParentResources validationRFC (childCert ^. #resources) (parentCert ^. #resources) verifiedResources
+
+-- | Common CMS validation for validated objects.
+validateCmsV ::
+    ValidationRFC -> Now
+    -> ValidatedCMSObject a
+    -> ValidatedCaCert
+    -> Validated CrlObject
+    -> Maybe (VerifiedRS PrefixesAndAsns)
+    -> (ValidatedCMSObject a -> PureValidatorT ())
+    -> PureValidatorT (Validated (ValidatedCMSObject a))
+validateCmsV validationRFC now cms parentCert crl verifiedResources extraValidation = do
+    signatureCheck $ validateCMSSignatureV cms
+    validateEECertV now (eeCert cms) parentCert crl
+    void $ validateResourcesEEV validationRFC verifiedResources (eeCert cms) parentCert
+    extraValidation cms
+    pure $ Validated cms
+
+validateRoaV ::
+    ValidationRFC -> Now
+    -> ValidatedCMSObject [Vrp] -> ValidatedCaCert -> Validated CrlObject
+    -> Maybe (VerifiedRS PrefixesAndAsns)
+    -> PureValidatorT (Validated (ValidatedCMSObject [Vrp]))
+validateRoaV validationRFC now roa parentCert crl verifiedResources =
+    validateCmsV validationRFC now roa parentCert crl verifiedResources $ \cms ->
+        for_ (content cms) $ \vrp@(Vrp _ prefix maxLength) -> do
+            case (verifiedResources, prefix) of
+                (Just (VerifiedRS rs), Ipv4P p) ->
+                    unless (isInside p (rs ^. typed)) $
+                        vPureError $ RoaPrefixIsOutsideOfResourceSet prefix rs
+                (Just (VerifiedRS rs), Ipv6P p) ->
+                    unless (isInside p (rs ^. typed)) $
+                        vPureError $ RoaPrefixIsOutsideOfResourceSet prefix rs
+                _ -> pure ()
+            when (prefixLen prefix > maxLength) $
+                vPureError $ RoaPrefixLenghtsIsBiggerThanMaxLength vrp
+
+validateMftV ::
+    ValidationRFC -> Now
+    -> ValidatedCMSObject Manifest -> ValidatedCaCert -> Validated CrlObject
+    -> Maybe (VerifiedRS PrefixesAndAsns)
+    -> PureValidatorT (Validated (ValidatedCMSObject Manifest))
+validateMftV validationRFC now mft parentCert crl verifiedResources =
+    validateCmsV validationRFC now mft parentCert crl verifiedResources $ \_ -> pure ()
+
+validateGbrV ::
+    ValidationRFC -> Now
+    -> ValidatedCMSObject Gbr -> ValidatedCaCert -> Validated CrlObject
+    -> Maybe (VerifiedRS PrefixesAndAsns)
+    -> PureValidatorT (Validated (ValidatedCMSObject Gbr))
+validateGbrV validationRFC now gbr parentCert crl verifiedResources =
+    validateCmsV validationRFC now gbr parentCert crl verifiedResources $ \cms -> do
+        let Gbr vcardBS = content cms
+        case parseVCard $ toNormalBS vcardBS of
+            Left e  -> vPureError $ InvalidVCardFormatInGbr e
+            Right _ -> pure ()
+
+validateAspaV ::
+    ValidationRFC -> Now
+    -> ValidatedCMSObject Aspa -> ValidatedCaCert -> Validated CrlObject
+    -> Maybe (VerifiedRS PrefixesAndAsns)
+    -> PureValidatorT (Validated (ValidatedCMSObject Aspa))
+validateAspaV validationRFC now aspa parentCert crl verifiedResources =
+    validateCmsV validationRFC now aspa parentCert crl verifiedResources $ \cms -> do
+        let Aspa {..} = content cms
+        when (customer `Set.member` providers) $
+            vPureError $ AspaOverlappingCustomerProvider customer (Set.toList providers)
+
+validateSplV ::
+    ValidationRFC -> Now
+    -> ValidatedCMSObject SplPayload -> ValidatedCaCert -> Validated CrlObject
+    -> Maybe (VerifiedRS PrefixesAndAsns)
+    -> PureValidatorT (Validated (ValidatedCMSObject SplPayload))
+validateSplV validationRFC now spl parentCert crl verifiedResources =
+    validateCmsV validationRFC now spl parentCert crl verifiedResources $ \_ -> pure ()
+
+validateRscV ::
+    ValidationRFC -> Now
+    -> ValidatedCMSObject Rsc -> ValidatedCaCert -> Validated CrlObject
+    -> Maybe (VerifiedRS PrefixesAndAsns)
+    -> PureValidatorT (Validated (ValidatedCMSObject Rsc))
+validateRscV validationRFC now rsc parentCert crl verifiedResources =
+    validateCmsV validationRFC now rsc parentCert crl verifiedResources $ \_ -> pure ()
+
+validateBgpCertV ::
+    Now -> ValidatedBgpCert -> ValidatedCaCert -> Validated CrlObject
+    -> PureValidatorT (Validated ValidatedBgpCert, BGPSecPayload)
+validateBgpCertV now bgpCert parentCert vcrl = do
+    let ee = bgpToEE bgpCert
+    signatureCheck $ validateCertSignatureEE ee parentCert
+    when (isRevoked bgpCert vcrl) $ vPureError RevokedResourceCertificate
+    void $ validateObjectValidityPeriod bgpCert now
+    unless (getAKI bgpCert == Just (toAKI $ getSKI parentCert)) $
+        vPureError $ AKIIsNotEqualsToParentSKI (getAKI bgpCert) (getSKI parentCert)
+    let bgpSecSki  = getSKI bgpCert
+    let bgpSecAsns = case bgpCert ^. #resources of
+            AllResources _ _ (RS asSet) -> unwrapAsns $ IS.toList asSet
+            _                           -> []
+    let bgpSecSpki = SPKI $ U.encodeBase64 $ DecodedBase64 $
+                        encodeASN1' DER ((toASN1 $ bgpCert ^. #pubKey) [])
+    pure (Validated bgpCert, BGPSecPayload {..})
+  where
+    bgpToEE ValidatedBgpCert { aki = mAki, .. } =
+        ValidatedEECert
+            { aki = maybe (AKI (unSKI ski)) id mAki, .. }
+            
+
 validateSizeM :: ValidationConfig -> Integer -> PureValidatorT Integer
 validateSizeM vc s = vFromEither $ validateSize vc s
 
@@ -581,5 +735,5 @@ validateSize vc s =
 
 isWithinValidityPeriod :: WithValidityPeriod a => Now -> a -> Bool
 isWithinValidityPeriod (Now now) a = 
-    let (start_, end_) = getValidityPeriod a
-    in start_ <= now && now < end_
+    let ValidityPeriod {..} = getValidityPeriod a
+    in notBefore <= now && now < notAfter

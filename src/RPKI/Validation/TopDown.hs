@@ -363,8 +363,8 @@ data WhichTA = FetchedTA RpkiURL RpkiObject | CachedTA StorableTA
 -- | Fetch and validated TA certificate starting from the TAL.
 -- | 
 -- | This function doesn't throw exceptions.
-validateTACertificateFromTAL :: Storage s =>
-                                AppContext s
+validateTACertificateFromTAL :: Storage s 
+                                => AppContext s
                                 -> TAL
                                 -> WorldVersion
                                 -> ValidatorT IO (Located CaCerObject, PublicationPointAccess)
@@ -580,8 +580,8 @@ validateCaNoFetch
                 increment $ topDownCounters ^. #originalCa
                 markAsUsedByHash appContext topDownContext (getHash c)                         
                 validateObjectLocations c
-                (_, notValidAfter) <- vHoist $ validateObjectValidityPeriod c now
-                rememberNotValidAfter topDownContext notValidAfter
+                ValidityPeriod {..} <- vHoist $ validateObjectValidityPeriod c now
+                rememberNotValidAfter topDownContext notAfter
                 oneMoreCert
                 join $! nextAction $ toAKI $ getSKI c
         CaShort c -> 
@@ -589,8 +589,8 @@ validateCaNoFetch
                 increment $ topDownCounters ^. #shortcutCa 
                 markAsUsed topDownContext (c ^. #key) 
                 validateLocationForShortcut (c ^. #key)
-                (_, notValidAfter) <- vHoist $ validateObjectValidityPeriod c now
-                rememberNotValidAfter topDownContext notValidAfter
+                ValidityPeriod {..} <- vHoist $ validateObjectValidityPeriod c now
+                rememberNotValidAfter topDownContext notAfter
                 oneMoreCert
                 join $! nextAction $ toAKI (c ^. #ski)
   where    
@@ -754,7 +754,8 @@ validateCaNoFetch
             validMft <- vHoist $ validateMft (config ^. #validationConfig . typed) 
                                     now mft fullCa validCrl verifiedResources
 
-            rememberNotValidAfter topDownContext (snd $ getValidityPeriod mft)
+            let ValidityPeriod { notAfter = mftNotAfter } = getValidityPeriod mft
+            rememberNotValidAfter topDownContext mftNotAfter
             rememberCrlNextUpdate topDownContext validCrl
 
             -- Validate entry list and filter out CRL itself
@@ -791,7 +792,7 @@ validateCaNoFetch
                     --
                     -- * So in case there is nothing to fall back to, we emit a warning and still 
                     --   use the manifest
-                    let (beforeMft, afterMft) = getValidityPeriod mftShort
+                    let ValidityPeriod { notBefore = beforeMft, notAfter = afterMft } = getValidityPeriod mftShort
                     let issue = ManifestNumberDecreased (mftShort ^. #manifestNumber) mftNumber
                     if beforeMft < unNow now && unNow now > afterMft
                         then vError issue
@@ -1296,10 +1297,10 @@ validateCaNoFetch
 
         vFocusOn ObjectFocus (mftShortcut ^. #key) $ do
             validateLocationForShortcut (mftShortcut ^. #key)
-            (_, notValidAfter) <- vHoist $ validateObjectValidityPeriod mftShortcut now
-            rememberNotValidAfter topDownContext notValidAfter
+            ValidityPeriod { notAfter } <- vHoist $ validateObjectValidityPeriod mftShortcut now
+            rememberNotValidAfter topDownContext notAfter
             vFocusOn ObjectFocus (mftShortcut ^. #crlShortcut . #key) $ do                
-                (_, notValidAfterCrl) <- vHoist $ validateObjectValidityPeriod (mftShortcut ^. #crlShortcut) now
+                ValidityPeriod { notAfter = notValidAfterCrl } <- vHoist $ validateObjectValidityPeriod (mftShortcut ^. #crlShortcut) now
                 rememberNotValidAfter topDownContext notValidAfterCrl
 
             -- For children that are problematic we'll have to fall back 
@@ -1412,8 +1413,8 @@ validateCaNoFetch
         validateShortcut :: (WithValidityPeriod s, HasField' "resources" s AllResources) => s -> ObjectKey -> ValidatorT IO ()
         validateShortcut shortcut key = do
             validateLocationForShortcut key            
-            (_, notValidAfter) <- vHoist $ validateObjectValidityPeriod shortcut now
-            rememberNotValidAfter topDownContext notValidAfter            
+            ValidityPeriod {..} <- vHoist $ validateObjectValidityPeriod shortcut now
+            rememberNotValidAfter topDownContext notAfter            
             {- We need to revalidate resources if either of the following happens:
                 1) We came here from validating a new CA certificate, and not from a CA shortcut.
                    That can be determined by checking if `findFullCa` is `Left`.
@@ -1552,7 +1553,7 @@ integrityError AppContext {..} message = do
 
 makeCaShortcut :: ObjectKey -> Validated CaCerObject -> PublicationPointAccess -> Text -> MftEntry
 makeCaShortcut key (Validated certificate) ppas fileName = let 
-        (notValidBefore, notValidAfter) = getValidityPeriod certificate            
+        ValidityPeriod {..} = getValidityPeriod certificate            
         ski = getSKI certificate
         serial = getSerial certificate
         resources = getRawCert certificate ^. #resources
@@ -1561,7 +1562,7 @@ makeCaShortcut key (Validated certificate) ppas fileName = let
 
 makeRoaShortcut :: ObjectKey -> Validated RoaObject -> [Vrp] -> Text -> MftEntry
 makeRoaShortcut key (Validated roa) vrps fileName = let 
-        (notValidBefore, notValidAfter) = getValidityPeriod roa    
+        ValidityPeriod {..} = getValidityPeriod roa    
         serial = getSerial roa
         resources = getRawCert roa ^. #resources
         child = RoaChild (RoaShortcut {..}) serial
@@ -1569,7 +1570,7 @@ makeRoaShortcut key (Validated roa) vrps fileName = let
 
 makeSplShortcut :: ObjectKey -> Validated SplObject -> SplPayload -> Text -> MftEntry
 makeSplShortcut key (Validated spl) splPayload fileName = let 
-        (notValidBefore, notValidAfter) = getValidityPeriod spl
+        ValidityPeriod {..} = getValidityPeriod spl
         serial = getSerial spl
         resources = getRawCert spl ^. #resources
         child = SplChild (SplShortcut {..}) serial
@@ -1577,7 +1578,7 @@ makeSplShortcut key (Validated spl) splPayload fileName = let
 
 makeAspaShortcut :: ObjectKey -> Validated AspaObject -> Aspa -> Text -> MftEntry
 makeAspaShortcut key (Validated aspaObject) aspa fileName = let 
-        (notValidBefore, notValidAfter) = getValidityPeriod aspaObject            
+        ValidityPeriod {..} = getValidityPeriod aspaObject            
         serial = getSerial aspaObject
         resources = getRawCert aspaObject ^. #resources
         child = AspaChild (AspaShortcut {..}) serial
@@ -1585,7 +1586,7 @@ makeAspaShortcut key (Validated aspaObject) aspa fileName = let
 
 makeGbrShortcut :: ObjectKey -> Validated GbrObject -> T2 Hash Gbr -> Text -> MftEntry
 makeGbrShortcut key (Validated gbrObject) gbr fileName = let 
-        (notValidBefore, notValidAfter) = getValidityPeriod gbrObject    
+        ValidityPeriod {..} = getValidityPeriod gbrObject    
         serial = getSerial gbrObject
         resources = getRawCert gbrObject ^. #resources
         child = GbrChild (GbrShortcut {..}) serial       
@@ -1593,7 +1594,7 @@ makeGbrShortcut key (Validated gbrObject) gbr fileName = let
 
 makeBgpSecShortcut :: ObjectKey -> Validated BgpCerObject -> BGPSecPayload -> Text -> MftEntry
 makeBgpSecShortcut key (Validated bgpCert) bgpSec fileName = let         
-        (notValidBefore, notValidAfter) = getValidityPeriod bgpCert                  
+        ValidityPeriod {..} = getValidityPeriod bgpCert                  
         serial = getSerial bgpCert
         resources = getRawCert bgpCert ^. #resources        
         child = BgpSecChild (BgpSecShortcut {..}) serial
@@ -1607,17 +1608,17 @@ makeMftShortcut key
     (Validated mftObject) (Map.fromList -> nonCrlEntries) 
     (Keyed (Validated validCrl) crlKey) = 
   let 
-    (notValidBefore, notValidAfter) = getValidityPeriod mftObject        
+    ValidityPeriod {..} = getValidityPeriod mftObject        
     serial = getSerial mftObject
     manifestNumber = getCMSContent (cmsPayload mftObject) ^. #mftNumber
     crlShortcut = let 
         SignCRL {..} = validCrl ^. #signCrl
         -- That must always match, since it's a validated CRL
-        Just nextUpdateTime' = nextUpdateTime            
+        Just nextUpdateTime' = nextUpdateTime
         in CrlShortcut {
             key = crlKey,
-            notValidBefore = thisUpdateTime,
-            notValidAfter = nextUpdateTime'
+            notBefore = thisUpdateTime,
+            notAfter = nextUpdateTime'
         }            
     in MftShortcut { .. }  
 
@@ -1754,8 +1755,8 @@ bumpCounterBy counters counterLens n = liftIO $
 
 
 rememberNotValidAfter :: MonadIO m => TopDownContext -> Instant -> m ()
-rememberNotValidAfter TopDownContext {..} notValidAfter = 
-    liftIO $ atomically $ modifyTVar' earliestNotValidAfter (<> EarliestToExpire notValidAfter)
+rememberNotValidAfter TopDownContext {..} notAfter = 
+    liftIO $ atomically $ modifyTVar' earliestNotValidAfter (<> EarliestToExpire notAfter)
 
 rememberCrlNextUpdate :: MonadIO m => TopDownContext -> Validated CrlObject -> m ()
 rememberCrlNextUpdate topDownContext (Validated (CrlObject { signCrl = SignCRL {..}})) = liftIO $ 

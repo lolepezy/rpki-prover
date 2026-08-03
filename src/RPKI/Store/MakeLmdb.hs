@@ -103,7 +103,6 @@ createDatabase env logger config checkAction = do
             certBySKI          <- newSMultiMap
             validatedByVersion <- newSMap                    
             mftShortcuts       <- MftShortcutStore <$> newSMap <*> newSMap
-            originals          <- newSMap
             pure RpkiObjectStore {..}
             
         createRepositoryStore = 

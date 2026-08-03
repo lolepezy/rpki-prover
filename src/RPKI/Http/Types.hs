@@ -131,6 +131,7 @@ data ObjectDto = CertificateD (ObjectContentDto CertificateDto)
                 | ASPAD (ObjectContentDto (CMSObjectDto AspaDto))
                 | GBRD (ObjectContentDto (CMSObjectDto GbrDto))
                 | RSCD (ObjectContentDto (CMSObjectDto RscDto))
+                | OriginalBlobD Hash RpkiObjectType  -- ^ parse/prevalidation failure
     deriving stock (Eq, Show, Generic)
 
 data ObjectContentDto payload = ObjectContentDto {
@@ -173,8 +174,8 @@ data CertificateDto = CertificateDto {
         certSignatureAlg :: Text,
         certIssuerDN     :: Text,
         certSubjectDN    :: Text,
-        notValidBefore   :: Instant,
-        notValidAfter    :: Instant,        
+        notBefore   :: Instant,
+        notAfter    :: Instant,        
         pubKey           :: Either Text PubKeyDto,
         ipv4             :: IntervalSet Ipv4Prefix,        
         ipv6             :: IntervalSet Ipv6Prefix,        
@@ -345,16 +346,16 @@ data CaShortcutDto = CaShortcutDto {
         key            :: ObjectKey,        
         ski            :: SKI,
         publicationPoints :: [Text],
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notBefore :: Instant,
+        notAfter  :: Instant
     }
     deriving stock (Show, Eq, Ord, Generic)
 
 data ManifestShortcutDto = ManifestShortcutDto {
         key            :: ObjectKey,
         nonCrlChildren :: Map.Map ObjectKey ManifestChildDto,
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant,        
+        notBefore :: Instant,
+        notAfter  :: Instant,        
         serial         :: Serial,
         manifestNumber :: Serial,
         crlShortcut    :: CrlShortcut

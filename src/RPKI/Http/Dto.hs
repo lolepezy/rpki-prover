@@ -37,6 +37,7 @@ import           RPKI.RTR.Types
 import           RPKI.Validation.Types
 import           RPKI.Util
 import          RPKI.AppTypes (WorldVersion)
+import           RPKI.Store.Types (RpkiObjectLifecycle(..))
 
 {-
     Mainly domain objects -> DTO convertions. 
@@ -233,8 +234,8 @@ objectToDto = \case
 
             certSignatureAlg = Text.pack $ show $ X509.certSignatureAlg x509cert
 
-            notValidBefore = newInstant $ fst $ X509.certValidity x509cert
-            notValidAfter  = newInstant $ snd $ X509.certValidity x509cert
+            notBefore = newInstant $ fst $ X509.certValidity x509cert
+            notAfter  = newInstant $ snd $ X509.certValidity x509cert
 
             pubKey = case X509.certPubKey x509cert of
                         X509.PubKeyRSA RSA.PublicKey {..} -> Right $ let
@@ -325,6 +326,23 @@ objectToDto = \case
 manifestDto :: MftObject -> ManifestDto
 manifestDto m = let
         mft@Manifest {..} = getCMSContent $ m ^. #cmsPayload
+        entries = map (\(MftPair f h) -> (f, h)) mftEntries
+    in
+        ManifestDto {
+            fileHashAlg = Text.pack $ show $ mft ^. #fileHashAlg,
+            ..
+        }
+
+-- | Convert a lifecycle entry to a DTO.  For 'ValidatedRO' we currently return
+-- 'OriginalBlobD' with the hash and type; a richer DTO can be added later.
+lifecycleToDto :: RpkiObjectLifecycle -> ObjectDto
+lifecycleToDto (OriginalRO _ _ h t) = OriginalBlobD h t
+lifecycleToDto (ValidatedRO vro)    = OriginalBlobD (getHash vro) (getRpkiObjectType vro)
+
+-- | 'manifestDto' variant for validated manifest objects.
+manifestDtoV :: ValidatedCMSObject Manifest -> ManifestDto
+manifestDtoV m = let
+        mft@Manifest {..} = m ^. #content
         entries = map (\(MftPair f h) -> (f, h)) mftEntries
     in
         ManifestDto {

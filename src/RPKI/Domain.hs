@@ -29,8 +29,6 @@ import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Data.Hashable hiding (hash)
 import           Data.Semigroup
-
-import           Data.Bifunctor
 import           Data.Monoid.Generic
 import           Data.Tuple.Strict
 
@@ -117,8 +115,15 @@ data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
+data ValidityPeriod = ValidityPeriod {
+        notBefore :: Instant,
+        notAfter  :: Instant
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
 class WithValidityPeriod a where
-    getValidityPeriod :: a -> (Instant, Instant)
+    getValidityPeriod :: a -> ValidityPeriod
 
 class WithURL a where
     getURL :: a -> URI
@@ -146,6 +151,16 @@ class WithSerial a where
 
 class WithRpkiObjectType a where
     getRpkiObjectType :: a -> RpkiObjectType
+
+-- | Wrapper indicating that an object has been through all self-contained
+-- structural validations ('prevalidate' / 'prevalidateObject').
+newtype Validated a = Validated a
+    deriving stock (Show, Eq, Generic)
+    deriving newtype (WithSKI, WithAKI, WithHash)
+
+instance WithRpkiObjectType a => WithRpkiObjectType (Validated a) where
+    getRpkiObjectType (Validated a) = getRpkiObjectType a
+
 
 instance {-# OVERLAPPING #-} WithURL URI where
     getURL = id
@@ -341,9 +356,9 @@ instance WithHash (CMSBasedObject a) where
 
 instance {-# OVERLAPPING #-} WithValidityPeriod (CMSBasedObject a) where
     getValidityPeriod CMSBasedObject {..} = 
-        bimap newInstant newInstant $ X509.certValidity 
-            $ cwsX509certificate $ getCertWithSignature 
-            $ getEEResourceCert $ unCMS cmsPayload 
+        let (nb, na) = X509.certValidity $ cwsX509certificate $ getCertWithSignature 
+                     $ getEEResourceCert $ unCMS cmsPayload 
+        in ValidityPeriod (newInstant nb) (newInstant na)
 
 instance {-# OVERLAPPING #-} WithSerial (CMSBasedObject a) where
     getSerial CMSBasedObject {..} = 
@@ -372,9 +387,9 @@ instance WithSKI (CMSBasedObject a) where
     getSKI CMSBasedObject {..} = getSKI $ getEEResourceCert $ unCMS cmsPayload 
 
 instance WithRawResourceCertificate a => WithValidityPeriod a where
-    getValidityPeriod cert = 
-        bimap newInstant newInstant $ X509.certValidity 
-            $ cwsX509certificate $ getCertWithSignature $ getRawCert cert
+    getValidityPeriod cert =
+        let (nb, na) = X509.certValidity $ cwsX509certificate $ getCertWithSignature $ getRawCert cert
+        in ValidityPeriod (newInstant nb) (newInstant na)
 
 instance {-# OVERLAPPING #-} WithRawResourceCertificate a => WithSerial a where
     getSerial = Serial . X509.certSerial . cwsX509certificate . certX509 . getRawCert
@@ -792,6 +807,134 @@ instance Monoid EarliestToExpire where
     -- 1) far enough to set it as "later that anything else"
     -- 2) Anything bigger than that wraps around to the year 1677
     mempty = EarliestToExpire $ Instant $ 1000_000_000 * 9_223_372_036
+
+-- | Minimized EE certificate, stripped of fields that are either
+-- constant-after-prevalidation (CMS versions, digest algorithms) or
+-- derivable from other stored data (SID == SKI, etc.).
+-- Retains only what is needed for chain validation and CMS signature
+-- verification.
+data ValidatedEECert = ValidatedEECert {
+        ski        :: SKI,
+        aki        :: AKI,
+        resources  :: AllResources,
+        pubKey     :: X509.PubKey,
+        serial     :: Serial,
+        validity   :: ValidityPeriod,
+        extensions :: [X509.ExtensionRaw],
+        encoded    :: BSS.ShortByteString,   -- TBSCertificate DER bytes
+        signature  :: SignatureValue,
+        sigAlg     :: SignatureAlgorithmIdentifier
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (TheBinary)
+
+instance WithSKI  ValidatedEECert where getSKI (ValidatedEECert { ski }) = ski
+instance WithAKI  ValidatedEECert where getAKI (ValidatedEECert { aki }) = Just aki
+instance {-# OVERLAPPING #-} WithValidityPeriod ValidatedEECert where getValidityPeriod (ValidatedEECert { validity }) = validity
+
+-- | Minimized CMS-based signed object.  Replaces 'CMSBasedObject a' in the
+-- post-prevalidation in-memory path.
+data ValidatedCMSObject a = ValidatedCMSObject {
+        hash          :: Hash,
+        content       :: a,
+        eeCert        :: ValidatedEECert,
+        signingTime   :: Maybe Instant,
+        cmsSignature  :: SignatureValue,
+        signedAttrsBS :: BSS.ShortByteString   -- raw DER signed-attributes
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (TheBinary)
+
+instance WithHash (ValidatedCMSObject a) where getHash (ValidatedCMSObject { hash }) = hash
+instance WithSKI  (ValidatedCMSObject a) where getSKI  (ValidatedCMSObject { eeCert = ValidatedEECert { ski } }) = ski
+instance WithAKI  (ValidatedCMSObject a) where getAKI  (ValidatedCMSObject { eeCert = ValidatedEECert { aki } }) = Just aki
+instance {-# OVERLAPPING #-} WithValidityPeriod (ValidatedCMSObject a) where getValidityPeriod (ValidatedCMSObject { eeCert }) = getValidityPeriod eeCert
+
+-- | Minimized CA certificate.
+data ValidatedCaCert = ValidatedCaCert {
+        hash       :: Hash,
+        ski        :: SKI,
+        aki        :: Maybe AKI,
+        resources  :: AllResources,
+        pubKey     :: X509.PubKey,
+        serial     :: Serial,
+        validity   :: ValidityPeriod,
+        extensions :: [X509.ExtensionRaw],
+        encoded    :: BSS.ShortByteString,
+        signature  :: SignatureValue,
+        sigAlg     :: SignatureAlgorithmIdentifier
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (TheBinary)
+
+instance WithHash ValidatedCaCert where getHash (ValidatedCaCert { hash }) = hash
+instance WithSKI  ValidatedCaCert where getSKI  (ValidatedCaCert { ski })  = ski
+instance WithAKI  ValidatedCaCert where getAKI  (ValidatedCaCert { aki })  = aki
+instance {-# OVERLAPPING #-} WithValidityPeriod ValidatedCaCert where getValidityPeriod (ValidatedCaCert { validity }) = validity
+
+-- | Minimized BGP security certificate.
+data ValidatedBgpCert = ValidatedBgpCert {
+        hash       :: Hash,
+        ski        :: SKI,
+        aki        :: Maybe AKI,
+        resources  :: AllResources,
+        pubKey     :: X509.PubKey,
+        serial     :: Serial,
+        validity   :: ValidityPeriod,
+        extensions :: [X509.ExtensionRaw],
+        encoded    :: BSS.ShortByteString,
+        signature  :: SignatureValue,
+        sigAlg     :: SignatureAlgorithmIdentifier
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (TheBinary)
+
+instance WithHash ValidatedBgpCert where getHash (ValidatedBgpCert { hash }) = hash
+instance WithSKI  ValidatedBgpCert where getSKI  (ValidatedBgpCert { ski })  = ski
+instance WithAKI  ValidatedBgpCert where getAKI  (ValidatedBgpCert { aki })  = aki
+instance {-# OVERLAPPING #-} WithValidityPeriod ValidatedBgpCert where getValidityPeriod (ValidatedBgpCert { validity }) = validity
+
+instance {-# OVERLAPPING #-} WithSerial ValidatedCaCert  where getSerial (ValidatedCaCert  { serial }) = serial
+instance {-# OVERLAPPING #-} WithSerial ValidatedBgpCert where getSerial (ValidatedBgpCert { serial }) = serial
+instance {-# OVERLAPPING #-} WithSerial ValidatedEECert  where getSerial (ValidatedEECert  { serial }) = serial
+instance {-# OVERLAPPING #-} WithSerial (ValidatedCMSObject a) where
+    getSerial (ValidatedCMSObject { eeCert = ValidatedEECert { serial } }) = serial
+
+-- | An 'RpkiObject' that has passed 'prevalidateObject' and been stripped of
+-- fields that are either constant-after-validation or redundant.
+-- This is the in-memory representation used between parse and DB save; the
+-- on-disk representation remains the original 'RpkiObject' bytes for
+-- backward-compatible retrieval.
+data ValidatedRpkiObject
+    = VCerRO  ValidatedCaCert
+    | VMftRO  (ValidatedCMSObject Manifest)
+    | VRoaRO  (ValidatedCMSObject [Vrp])
+    | VSplRO  (ValidatedCMSObject SplPayload)
+    | VGbrRO  (ValidatedCMSObject Gbr)
+    | VRscRO  (ValidatedCMSObject Rsc)
+    | VAspaRO (ValidatedCMSObject Aspa)
+    | VBgpRO  ValidatedBgpCert
+    | VCrlRO  CrlObject
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (TheBinary)
+
+instance WithHash ValidatedRpkiObject where
+    getHash = \case
+        VCerRO  c -> getHash c;  VMftRO  o -> getHash o;  VRoaRO  o -> getHash o
+        VSplRO  o -> getHash o;  VGbrRO  o -> getHash o;  VRscRO  o -> getHash o
+        VAspaRO o -> getHash o;  VBgpRO  c -> getHash c;  VCrlRO  c -> getHash c
+
+instance WithAKI ValidatedRpkiObject where
+    getAKI = \case
+        VCerRO  c -> getAKI c;  VMftRO  o -> getAKI o;  VRoaRO  o -> getAKI o
+        VSplRO  o -> getAKI o;  VGbrRO  o -> getAKI o;  VRscRO  o -> getAKI o
+        VAspaRO o -> getAKI o;  VBgpRO  c -> getAKI c;  VCrlRO  c -> getAKI c
+
+instance WithRpkiObjectType ValidatedRpkiObject where
+    getRpkiObjectType = \case
+        VCerRO  _ -> CER;   VMftRO  _ -> MFT;  VRoaRO  _ -> ROA
+        VSplRO  _ -> SPL;   VGbrRO  _ -> GBR;  VRscRO  _ -> RSC
+        VAspaRO _ -> ASPA;  VBgpRO  _ -> BGPSec; VCrlRO _ -> CRL
 
 -- Small utility functions that don't have anywhere else to go
 

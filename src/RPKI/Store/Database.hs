@@ -64,7 +64,7 @@ import           RPKI.Time
 -- It is brittle and inconvenient, but so far seems to be 
 -- the only realistic option.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 48
+currentDatabaseVersion = 49
 
 -- Some constant keys
 databaseVersionKey, validatedByVersionKey :: Text
@@ -107,7 +107,7 @@ instance Storage s => WithStorage s (DB s) where
 -- URLs and artificial UrlKeys.
 -- 
 data RpkiObjectStore s = RpkiObjectStore {        
-        objects        :: SMap "objects" s ObjectKey (Compressed (StorableObject RpkiObject)),
+        objects        :: SMap "objects" s ObjectKey (Compressed (StorableObject RpkiObjectLifecycle)),
         hashToKey      :: SMap "hash-to-key" s Hash ObjectKey,    
         mftsForKI      :: SMultiMap "mfts-for-ki" s AKI MftMeta,
         certBySKI      :: SMultiMap "cert-by-ski" s SKI ObjectKey,    
@@ -122,8 +122,7 @@ data RpkiObjectStore s = RpkiObjectStore {
         urlKeyToObjectKey  :: SMultiMap "uri-key-to-object-key" s UrlKey ObjectKey,
         objectKeyToUrlKeys :: SMap "object-key-to-uri" s ObjectKey [UrlKey],
 
-        mftShortcuts       :: MftShortcutStore s,
-        originals          :: SMap "object-original" s ObjectKey (Verbatim ObjectOriginal)
+        mftShortcuts       :: MftShortcutStore s
     } 
     deriving stock (Generic)
 
@@ -230,8 +229,8 @@ newtype MetadataStore s = MetadataStore {
 -- Some DTOs for storing MFT shortcuts
 data MftShortcutMeta = MftShortcutMeta {
         key            :: ObjectKey,        
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant,        
+        notBefore      :: Instant,
+        notAfter       :: Instant,        
         serial         :: Serial,
         manifestNumber :: Serial,
         crlShortcut    :: CrlShortcut
@@ -259,18 +258,18 @@ getKeyByHash tx DB { objectStore = RpkiObjectStore {..} } h =
     liftIO $ M.get tx hashToKey h
 
 getByHash :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> Hash -> m (Maybe (Located RpkiObject))
+            Tx s mode -> DB s -> Hash -> m (Maybe (Located RpkiObjectLifecycle))
 getByHash tx db h = ((^. #object) <$>) <$> getKeyedByHash tx db h    
 
 getKeyedByHash :: (MonadIO m, Storage s) => 
-              Tx s mode -> DB s -> Hash -> m (Maybe (Keyed (Located RpkiObject)))
+              Tx s mode -> DB s -> Hash -> m (Maybe (Keyed (Located RpkiObjectLifecycle)))
 getKeyedByHash tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $ runMaybeT $ do 
     objectKey <- MaybeT $ M.get tx hashToKey h
     z         <- MaybeT $ getLocatedByKey tx db objectKey
     pure $ Keyed z objectKey
             
 getByUri :: (MonadIO m, Storage s) => 
-            Tx s mode -> DB s -> RpkiURL -> m [Located RpkiObject]
+            Tx s mode -> DB s -> RpkiURL -> m [Located RpkiObjectLifecycle]
 getByUri tx db uri = liftIO $ do
     keys' <- getKeysByUri tx db uri
     catMaybes <$> mapM (getLocatedByKey tx db) keys'
@@ -283,16 +282,29 @@ getKeysByUri tx DB { objectStore = RpkiObjectStore {..} } uri = liftIO $
         Just uriKey -> MM.allForKey tx urlKeyToObjectKey uriKey
                 
 getObjectByKey :: (MonadIO m, Storage s) => 
-                Tx s mode -> DB s -> ObjectKey -> m (Maybe RpkiObject)
+                Tx s mode -> DB s -> ObjectKey -> m (Maybe RpkiObjectLifecycle)
 getObjectByKey tx DB { objectStore = RpkiObjectStore {..} } k = liftIO $
     fmap (\(Compressed StorableObject{..}) -> object) <$> M.get tx objects k    
 
 getLocatedByKey :: (MonadIO m, Storage s) => 
-                Tx s mode -> DB s -> ObjectKey -> m (Maybe (Located RpkiObject))
+                Tx s mode -> DB s -> ObjectKey -> m (Maybe (Located RpkiObjectLifecycle))
 getLocatedByKey tx db k = liftIO $ runMaybeT $ do     
-    object    <- MaybeT $ getObjectByKey tx db k    
+    lifecycle <- MaybeT $ getObjectByKey tx db k    
     locations <- MaybeT $ getLocationsByKey tx db k                    
-    pure $ Located locations object
+    pure $ Located locations lifecycle
+
+-- | Like 'getLocatedByKey' but in ValidatorT: if the key points to an
+-- 'OriginalRO' the stored ValidationState is re-emitted and Nothing is
+-- returned; only 'ValidatedRO' entries yield a result.
+getValidatedByKey :: (MonadIO m, Storage s) =>
+                    Tx s mode -> DB s -> ObjectKey
+                    -> ValidatorT m (Maybe (Located ValidatedRpkiObject))
+getValidatedByKey tx db key = do
+    liftIO (getLocatedByKey tx db key) >>= \case
+        Nothing -> pure Nothing
+        Just (Located locs lifecycle) -> case lifecycle of
+            OriginalRO _ vs _ _ -> embedState vs >> pure Nothing
+            ValidatedRO vro     -> pure $ Just (Located locs vro)
 
 
 -- Very specifis for optimising locations validation
@@ -312,14 +324,17 @@ getLocationsByKey tx DB { objectStore = RpkiObjectStore {..} } k = liftIO $ runM
                     $ mapM (M.get tx uriKeyToUri) uriKeys             
     pure $ Locations locations
 
+-- | Save an 'RpkiObjectLifecycle' entry. Replaces both the former
+-- 'saveObject' (for validated objects) and 'saveOriginal' (for raw blobs)
+-- with a single unified function.
 saveObject :: (MonadIO m, Storage s) => 
             Tx s 'RW 
             -> DB s 
-            -> StorableObject RpkiObject
+            -> RpkiObjectLifecycle
             -> WorldVersion 
             -> m ObjectKey
-saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } so@StorableObject {..} wv = liftIO $ do
-    let h = getHash object
+saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } lifecycle wv = liftIO $ do
+    let h = getHash lifecycle
     existingKey <- M.get tx hashToKey h
     case existingKey of
         Just key -> pure key
@@ -327,52 +342,34 @@ saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } so@StorableObject {.
             SequenceValue k <- nextValue tx keys
             let objectKey = ObjectKey $ asKey k
             M.put tx hashToKey h objectKey
-            M.put tx objects objectKey (Compressed so)
-            M.put tx objectMetas objectKey (ObjectMeta wv (getRpkiObjectType object))
-            case object of
-                CerRO c -> 
-                    MM.put tx certBySKI (getSKI c) objectKey
-                MftRO mft -> 
-                    for_ (getAKI object) $ \aki_ -> 
-                        MM.put tx mftsForKI aki_ (getMftMeta mft objectKey)
-                _ -> pure ()        
-
+            M.put tx objects objectKey (Compressed $ toStorableObject lifecycle)
+            M.put tx objectMetas objectKey (ObjectMeta wv (getRpkiObjectType lifecycle))
+            case lifecycle of
+                ValidatedRO (VCerRO vc) ->
+                    MM.put tx certBySKI (getSKI vc) objectKey
+                ValidatedRO (VMftRO vmft) ->
+                    for_ (getAKI vmft) $ \aki_ ->
+                        MM.put tx mftsForKI aki_ (getMftMetaFromValidated vmft objectKey)
+                _ -> pure ()
             pure objectKey
 
-saveOriginal :: (MonadIO m, Storage s) => 
-                Tx s 'RW 
-                -> DB s 
-                -> ObjectOriginal
-                -> Hash          
-                -> ObjectMeta  
-                -> m ()
-saveOriginal tx DB { objectStore = RpkiObjectStore {..}, .. } (ObjectOriginal blob) hash objectMeta = liftIO $ do    
-    exists <- M.exists tx hashToKey hash    
-    unless exists $ do          
-        SequenceValue k <- nextValue tx keys
-        let key = ObjectKey $ asKey k
-        M.put tx hashToKey hash key
-        M.put tx originals key (Verbatim $ Storable blob)       
-        M.put tx objectMetas key objectMeta
+getMftMetaFromValidated :: ValidatedCMSObject Manifest -> ObjectKey -> MftMeta
+getMftMetaFromValidated ValidatedCMSObject { content = Manifest {..} } key = MftMeta {..}
 
-
-getOriginalBlob :: (MonadIO m, Storage s) => 
-                Tx s mode
-                -> DB s 
-                -> ObjectKey            
-                -> m (Maybe ObjectOriginal)
-getOriginalBlob tx DB { objectStore = RpkiObjectStore {..} } key = liftIO $ do    
-    fmap (ObjectOriginal . unStorable . unVerbatim) <$> M.get tx originals key
+-- | Return the raw bytes for an 'OriginalRO' entry, if the key maps to one.
+getOriginalBlob :: (MonadIO m, Storage s) =>
+                Tx s mode -> DB s -> ObjectKey -> m (Maybe ObjectOriginal)
+getOriginalBlob tx db key = liftIO $
+    getObjectByKey tx db key >>= \case
+        Just (OriginalRO blob _ _ _) -> pure $ Just blob
+        _                            -> pure Nothing
 
 getOriginalBlobByHash :: (MonadIO m, Storage s) => 
-                        Tx s mode
-                        -> DB s 
-                        -> Hash 
-                        -> m (Maybe ObjectOriginal)
+                        Tx s mode -> DB s -> Hash -> m (Maybe ObjectOriginal)
 getOriginalBlobByHash tx db hash =     
     getKeyByHash tx db hash >>= \case 
         Nothing  -> pure Nothing
-        Just key -> getOriginalBlob tx db key    
+        Just key -> getOriginalBlob tx db key
 
 getObjectMeta :: (MonadIO m, Storage s) => 
                 Tx s mode
@@ -422,46 +419,47 @@ deleteObjectByHash tx db@DB { objectStore = RpkiObjectStore {..} } hash = liftIO
 
 deleteObjectByKey :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> ObjectKey -> m ()
 deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore { mftShortcuts = MftShortcutStore {..}, ..} } objectKey = liftIO $ do 
-    ifJustM (getObjectByKey tx db objectKey) $ \ro -> do 
+    ifJustM (getObjectByKey tx db objectKey) $ \lifecycle -> do 
         M.delete tx objects objectKey
         M.delete tx objectMetas objectKey        
-        M.delete tx hashToKey (getHash ro)
-        case ro of 
-            CerRO c -> MM.delete tx certBySKI (getSKI c) objectKey
-            _       -> pure ()
+        M.delete tx hashToKey (getHash lifecycle)
+
         ifJustM (M.get tx objectKeyToUrlKeys objectKey) $ \urlKeys -> do 
             M.delete tx objectKeyToUrlKeys objectKey            
             forM_ urlKeys $ \urlKey ->
                 MM.delete tx urlKeyToObjectKey urlKey objectKey                
-        
-        for_ (getAKI ro) $ \aki_ -> 
-            case ro of
-                MftRO mft -> do 
-                    MM.delete tx mftsForKI aki_ (getMftMeta mft objectKey)                    
+
+        case lifecycle of 
+            ValidatedRO (VCerRO vc) -> 
+                MM.delete tx certBySKI (getSKI vc) objectKey
+                
+            ValidatedRO (VMftRO vmft) -> do 
+                for_ (getAKI vmft) $ \aki_ -> do
+                    MM.delete tx mftsForKI aki_ (getMftMetaFromValidated vmft objectKey)                    
                     ifJustM (M.get tx mftMetas aki_) $ \(unCompressed . restoreFromRaw -> mftShort) ->
                         when (mftShort ^. #key == objectKey) $
-                            deleteMftShortcut tx db aki_
-                _  -> pure ()   
-
+                            deleteMftShortcut tx db aki_            
+            _                       -> pure ()
+                    
 getMftsForAKI :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> AKI -> m [MftMeta]
 getMftsForAKI tx DB { objectStore = RpkiObjectStore {..} } aki_ = 
     liftIO $ List.sortOn Down <$> MM.allForKey tx mftsForKI aki_
 
 findAllMftsByAKI :: (MonadIO m, Storage s) => 
-                    Tx s mode -> DB s -> AKI -> m [(MftMeta, Keyed (Located MftObject))]
+                    Tx s mode -> DB s -> AKI -> m [(MftMeta, Keyed (Located (ValidatedCMSObject Manifest)))]
 findAllMftsByAKI tx db aki_ = liftIO $ do
     mftMetas <- getMftsForAKI tx db aki_
     fmap catMaybes $ forM mftMetas $ \meta@MftMeta {..} -> fmap (meta,) <$> getMftByKey tx db key
     
 
 getMftByKey :: (MonadIO m, Storage s) => 
-                Tx s mode -> DB s -> ObjectKey -> m (Maybe (Keyed (Located MftObject)))
+                Tx s mode -> DB s -> ObjectKey -> m (Maybe (Keyed (Located (ValidatedCMSObject Manifest))))
 getMftByKey tx db k = do 
     o <- getLocatedByKey tx db k
     pure $! case o of 
-        Just (Located loc (MftRO mft)) -> Just $ Keyed (Located loc mft) k
-        _                              -> Nothing       
+        Just (Located loc (ValidatedRO (VMftRO mft))) -> Just $ Keyed (Located loc mft) k
+        _                                              -> Nothing       
 
 
 getMftShorcut :: (MonadIO m, Storage s) => 
@@ -506,7 +504,7 @@ markAsValidated tx db allKeys worldVersion =
 
 
 -- This is for testing purposes mostly
-getAll :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [Located RpkiObject]
+getAll :: (MonadIO m, Storage s) => Tx s mode -> DB s -> m [Located RpkiObjectLifecycle]
 getAll tx db@DB { objectStore = RpkiObjectStore {..} } = liftIO $ do 
     allKeys <- M.keys tx objects
     catMaybes <$> forM allKeys (getLocatedByKey tx db)    
@@ -517,12 +515,16 @@ getMftMeta mft key = let
     in MftMeta {..}
 
 
-getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> m [Located CaCerObject]
-getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = liftIO $ do
-    objectKeys <- MM.allForKey tx certBySKI ski
-    fmap catMaybes $ forM objectKeys $ \objectKey -> runMaybeT $ do
-        located <- MaybeT $ getLocatedByKey tx db objectKey
-        pure $ located & #payload %~ (\(CerRO c) -> c)
+getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> ValidatorT m [Located ValidatedCaCert]
+getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = do
+    objectKeys <- liftIO $ MM.allForKey tx certBySKI ski
+    fmap catMaybes $ forM objectKeys $ \objectKey ->
+        liftIO (getLocatedByKey tx db objectKey) >>= \case
+            Nothing -> pure Nothing
+            Just (Located locs lifecycle) -> case lifecycle of
+                OriginalRO _ vs _ _ -> embedState vs >> pure Nothing
+                ValidatedRO (VCerRO vc) -> pure $ Just (Located locs vc)
+                _                       -> pure Nothing
 
 -- TA store functions
 
@@ -1107,7 +1109,7 @@ getLatestVersion tx db = do
         
                     
 getGbrObjects :: (MonadIO m, Storage s) => 
-                Tx s mode -> DB s -> WorldVersion -> m [Located RpkiObject]
+                Tx s mode -> DB s -> WorldVersion -> m [Located RpkiObjectLifecycle]
 getGbrObjects tx db version = do    
     gbrs <- maybe [] Set.toList <$> getGbrs tx db version
     fmap catMaybes $ forM gbrs $ \(T2 hash _) -> getByHash tx db hash

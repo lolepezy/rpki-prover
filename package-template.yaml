@@ -65,6 +65,7 @@ dependencies:
 - crypton
 - crypton-x509
 - crypton-x509-validation
+- cryptohash-sha1
 - cryptohash-sha256
 - cryptohash-sha512
 - crypton-connection

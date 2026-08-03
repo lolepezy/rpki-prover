@@ -45,6 +45,7 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Database    (DB(..))
 import qualified RPKI.Store.Database    as DB
+import           RPKI.Validation.Common  (toValidatedRpkiObject)
 import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 
@@ -126,7 +127,7 @@ shouldMergeObjectLocations io = do
     ro2 :: RpkiObject <- QC.generate arbitrary        
     
     let storeIt obj url = rwTx db $ \tx -> do        
-            DB.saveObject tx db (toStorableObject obj) (instantToVersion now)
+            DB.saveObject tx db (StorableObject (toValidatedRpkiObject obj) (toStorable obj)) (instantToVersion now)
             DB.linkObjectToUrl tx db url (getHash obj)
 
     let getIt hash = roTx db $ \tx -> DB.getByHash tx db hash    
@@ -232,8 +233,8 @@ shouldOrderManifests io = do
     worldVersion <- newVersion
 
     rwTx objectStore $ \tx -> do        
-            void $ DB.saveObject tx db (toStorableObject mft1) worldVersion
-            void $ DB.saveObject tx db (toStorableObject mft2) worldVersion
+            void $ DB.saveObject tx db (StorableObject (toValidatedRpkiObject mft1) (toStorable mft1)) worldVersion
+            void $ DB.saveObject tx db (StorableObject (toValidatedRpkiObject mft2) (toStorable mft2)) worldVersion
             DB.linkObjectToUrl tx db url1 (getHash mft1)
             DB.linkObjectToUrl tx db url2 (getHash mft2)
 

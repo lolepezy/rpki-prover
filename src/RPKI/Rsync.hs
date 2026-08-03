@@ -46,6 +46,7 @@ import           RPKI.Store.Base.Storage
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Time
 import qualified RPKI.Util                        as U
+import           RPKI.Validation.Common  (prevalidateObject)
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Worker
 
@@ -288,20 +289,23 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
           where
             tryToParse hash blob type_ = do            
                 let scopes = newScopes $ unURI $ getURL rpkiURL
-                z <- liftIO $ runValidatorT scopes $ vHoist $ readObjectOfType type_ blob
-                (evaluate $! 
-                    case z of 
-                        (Left e, _) -> 
-                            ObjectParsingProblem rpkiURL (VErr e) 
-                                (ObjectOriginal blob) hash
-                                (ObjectMeta worldVersion type_)                        
-                        (Right ro, _) ->                                     
-                            SuccessParsed rpkiURL (toStorableObject ro) type_                    
-                    ) `catch` 
-                    (\(e :: SomeException) -> 
-                        pure $! ObjectParsingProblem rpkiURL (VErr $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e) 
-                                (ObjectOriginal blob) hash
-                                (ObjectMeta worldVersion type_)
+                z <- liftIO $ runValidatorT scopes $ do
+                    ro <- vHoist $ readObjectOfType type_ blob
+                    prevalidateObject ro
+                (evaluate $!
+                    case z of
+                        (Left _, vs) ->
+                            SaveObject rpkiURL $ OriginalRO (ObjectOriginal blob) vs hash type_
+                        (Right vro, vs)
+                            | hasValidationErrors vs ->
+                                SaveObject rpkiURL $ OriginalRO (ObjectOriginal blob) vs hash type_
+                            | otherwise ->
+                                SaveObject rpkiURL $ ValidatedRO vro
+                    ) `catch`
+                    (\(e :: SomeException) -> do
+                        (_, vs) <- runValidatorT scopes $
+                            vHoist $ fromEither @() $ Left $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e
+                        pure $! SaveObject rpkiURL $ OriginalRO (ObjectOriginal blob) vs hash type_
                     )
 
     saveStorable tx (a, _) = do 
@@ -324,10 +328,16 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                     inSubLocationScope (getURL rpkiUrl) $ appWarn e                   
                     DB.saveOriginal tx db original hash objectMeta
                     DB.linkObjectToUrl tx db rpkiUrl hash                                  
-                SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do 
-                    DB.saveObject tx db so worldVersion                    
-                    DB.linkObjectToUrl tx db rpkiUrl (getHash object)
-                    updateMetric @RsyncMetric @_ (#processed %~ Map.unionWith (+) (Map.singleton (Just type_) 1))
+                SaveObject rpkiUrl lifecycle -> do
+                    case lifecycle of
+                        OriginalRO _ vs _ _ -> do
+                            logError logger [i|Object #{rpkiUrl} failed parse/prevalidation.|]
+                            embedState vs
+                        ValidatedRO _ -> pure ()
+                    let h = getHash lifecycle
+                    DB.saveObject tx db lifecycle worldVersion
+                    DB.linkObjectToUrl tx db rpkiUrl h
+                    updateMetric @RsyncMetric @_ (#processed %~ Map.unionWith (+) (Map.singleton (Just $ getRpkiObjectType lifecycle) 1))
                 other -> 
                     logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                    
                   
@@ -400,5 +410,5 @@ data RsyncObjectProcessingResult =
         | HashExists RpkiURL Hash
         | UknownObjectType RpkiURL String
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
-        | SuccessParsed RpkiURL (StorableObject RpkiObject) RpkiObjectType
+        | SaveObject RpkiURL RpkiObjectLifecycle
     deriving stock (Show, Eq, Generic)

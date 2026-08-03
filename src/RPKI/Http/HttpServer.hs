@@ -290,8 +290,8 @@ getGbrs_ appContext version =
         (\tx db v -> Just <$> DB.getGbrObjects tx db v) toDtos
   where
     toDtos gbrs = 
-        [ Located { payload = gbrObjectToDto g, .. }
-        | Located { payload = GbrRO g, .. } <- fromMaybe [] gbrs ]    
+        [ Located { payload = gbrToDto (content g), .. }
+        | Located { payload = ValidatedRO (VGbrRO g), .. } <- fromMaybe [] gbrs ]    
  
 
 getValidationsOriginalDto :: (MonadIO m, Storage s, MonadError ServerError m) =>
@@ -395,7 +395,7 @@ getRpkiObject AppContext {..} uri hash key =
                             [] -> do                                
                                 -- try TA certificates
                                 tas <- DB.getTAs tx db                                 
-                                pure [ locatedDto (Located locations (CerRO taCert)) | 
+                                pure [ locatedDtoLegacy (Located locations (CerRO taCert)) | 
                                         StorableTA {..} <- tas, 
                                         let locations = talCertLocations tal, 
                                         oneOfLocations locations rpkiUrl ]                                
@@ -421,7 +421,8 @@ getRpkiObject AppContext {..} uri hash key =
             throwError $ err400 { errBody =
                 "Only one of 'uri', 'hash' or 'key' must be provided." }
   where
-    locatedDto located = RObject $ located & #payload %~ objectToDto
+    locatedDto located = RObject $ located & #payload %~ lifecycleToDto
+    locatedDtoLegacy located = RObject $ located & #payload %~ objectToDto
 
 getOriginal :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s
@@ -457,7 +458,7 @@ getManifests AppContext {..} akiText =
                     roTxT database $ \tx db -> do 
                         shortcutMft     <- fmap toMftShortcutDto <$> DB.getMftShorcut tx db aki                        
                         manifestObjects <- DB.findAllMftsByAKI tx db aki
-                        let manifests = fmap (\(meta, Keyed (Located _ m) _) -> (meta, manifestDto m)) manifestObjects
+                        let manifests = fmap (\(meta, Keyed (Located _ m) _) -> (meta, manifestDtoV m)) manifestObjects
                         pure ManifestsDto {..}
             
 

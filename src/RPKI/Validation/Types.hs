@@ -43,8 +43,8 @@ data MftEntry = MftEntry {
 
 data CrlShortcut = CrlShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant        
+        notBefore :: {-# UNPACK #-} Instant,
+        notAfter  :: {-# UNPACK #-} Instant        
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -52,8 +52,8 @@ data CrlShortcut = CrlShortcut {
 data MftShortcut = MftShortcut { 
         key            :: {-# UNPACK #-} ObjectKey,
         nonCrlEntries  :: Map.Map ObjectKey MftEntry,
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant,        
+        notBefore :: {-# UNPACK #-} Instant,
+        notAfter  :: {-# UNPACK #-} Instant,        
         serial         :: {-# UNPACK #-} Serial,
         manifestNumber :: {-# UNPACK #-} Serial,
         crlShortcut    :: CrlShortcut        
@@ -65,8 +65,8 @@ data CaShortcut = CaShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
         ski            :: SKI,
         ppas           :: PublicationPointAccess,
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant,
+        notBefore :: {-# UNPACK #-} Instant,
+        notAfter  :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -81,8 +81,8 @@ data Ca = CaShort CaShortcut
 data RoaShortcut = RoaShortcut {
         key            :: {-# UNPACK #-} ObjectKey,        
         vrps           :: [Vrp],
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant,
+        notBefore :: {-# UNPACK #-} Instant,
+        notAfter  :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -91,8 +91,8 @@ data RoaShortcut = RoaShortcut {
 data SplShortcut = SplShortcut {
         key            :: {-# UNPACK #-} ObjectKey,        
         splPayload     :: SplPayload,
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant,
+        notBefore :: {-# UNPACK #-} Instant,
+        notAfter  :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -101,8 +101,8 @@ data SplShortcut = SplShortcut {
 data AspaShortcut = AspaShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
         aspa           :: Aspa,
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant,
+        notBefore :: {-# UNPACK #-} Instant,
+        notAfter  :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -111,8 +111,8 @@ data AspaShortcut = AspaShortcut {
 data BgpSecShortcut = BgpSecShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
         bgpSec         :: BGPSecPayload,
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant,
+        notBefore :: {-# UNPACK #-} Instant,
+        notAfter  :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -121,8 +121,8 @@ data BgpSecShortcut = BgpSecShortcut {
 data GbrShortcut = GbrShortcut {
         key            :: {-# UNPACK #-} ObjectKey,    
         gbr            :: T2 Hash Gbr,
-        notValidBefore :: {-# UNPACK #-} Instant,
-        notValidAfter  :: {-# UNPACK #-} Instant,
+        notBefore :: {-# UNPACK #-} Instant,
+        notAfter  :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -130,28 +130,28 @@ data GbrShortcut = GbrShortcut {
 
 
 instance {-# OVERLAPPING #-} WithValidityPeriod CaShortcut where
-    getValidityPeriod CaShortcut {..} = (notValidBefore, notValidAfter)
+    getValidityPeriod CaShortcut {..} = ValidityPeriod notBefore notAfter
 
 instance {-# OVERLAPPING #-} WithValidityPeriod MftShortcut where
-    getValidityPeriod MftShortcut {..} = (notValidBefore, notValidAfter)
+    getValidityPeriod MftShortcut {..} = ValidityPeriod notBefore notAfter
 
 instance {-# OVERLAPPING #-} WithValidityPeriod CrlShortcut where
-    getValidityPeriod CrlShortcut {..} = (notValidBefore, notValidAfter)
+    getValidityPeriod CrlShortcut {..} = ValidityPeriod notBefore notAfter
 
 instance {-# OVERLAPPING #-} WithValidityPeriod RoaShortcut where
-    getValidityPeriod RoaShortcut {..} = (notValidBefore, notValidAfter)
+    getValidityPeriod RoaShortcut {..} = ValidityPeriod notBefore notAfter
 
 instance {-# OVERLAPPING #-} WithValidityPeriod SplShortcut where
-    getValidityPeriod SplShortcut {..} = (notValidBefore, notValidAfter)
+    getValidityPeriod SplShortcut {..} = ValidityPeriod notBefore notAfter
 
 instance {-# OVERLAPPING #-} WithValidityPeriod AspaShortcut where
-    getValidityPeriod AspaShortcut {..} = (notValidBefore, notValidAfter)
+    getValidityPeriod AspaShortcut {..} = ValidityPeriod notBefore notAfter
 
 instance {-# OVERLAPPING #-} WithValidityPeriod BgpSecShortcut where
-    getValidityPeriod BgpSecShortcut {..} = (notValidBefore, notValidAfter)
+    getValidityPeriod BgpSecShortcut {..} = ValidityPeriod notBefore notAfter
 
 instance {-# OVERLAPPING #-} WithValidityPeriod GbrShortcut where
-    getValidityPeriod GbrShortcut {..} = (notValidBefore, notValidAfter)
+    getValidityPeriod GbrShortcut {..} = ValidityPeriod notBefore notAfter
 
 instance ToJSON CrlShortcut
 instance ToJSON GbrShortcut
