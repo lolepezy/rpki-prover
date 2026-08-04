@@ -5,7 +5,7 @@
 
 versionModule="src/RPKI/UniqueId.hs"
 
-hash=$((echo "package-template.yaml" "stack.yaml";
+hash=$((echo "package-template.yaml" "cabal.project";
         find src app  -type f -name \*.hs) | \
         grep -v "$versionModule" | \
         sort | \
