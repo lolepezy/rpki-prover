@@ -13,7 +13,6 @@ import Data.Set.NonEmpty
 import Data.Set.NonEmpty.Internal
 import Data.Map.Monoidal.Strict
 import Data.ASN1.BitArray
-import Crypto.PubKey.RSA.Types (PublicKey(..))
 import Crypto.PubKey.DSA (PublicKey(..), Params(..))
 
 import Crypto.PubKey.ECC.Types
@@ -30,7 +29,6 @@ deriving instance Generic NanoSeconds
 
 deriving instance Generic ASN1
 
-deriving instance Generic Crypto.PubKey.RSA.Types.PublicKey
 deriving instance Generic Crypto.PubKey.DSA.PublicKey
 deriving instance Generic Crypto.PubKey.DSA.Params
 
