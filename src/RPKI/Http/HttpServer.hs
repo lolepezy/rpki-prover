@@ -10,6 +10,7 @@ import           Control.Monad.IO.Class
 import           Control.Monad.Trans.Maybe
 import           Control.Monad.Error.Class
 
+import           Data.FileEmbed          (makeRelativeToProject)
 import           FileEmbedLzma.Untyped
 import           Data.Generics.Product.Typed
 
@@ -65,7 +66,7 @@ httpServer appContext = genericServe HttpApi {
         api     = apiServer,
         metrics = convert <$> textualMetrics,
         ui      = uiServer appContext,
-        staticContent = serveDirectoryEmbedded $(embedRecursiveDir "static"),
+        staticContent = serveDirectoryEmbedded $(makeRelativeToProject "static" >>= embedRecursiveDir),
         swagger = swaggerSchemaUIServer swaggerDoc
     }
   where

@@ -23,9 +23,10 @@ rpkiProverVersion :: Text
 rpkiProverVersion = [i|rpki-prover-#{showVersion_}|]
 
 makeGitInfo :: Text
-makeGitInfo = [i|#{giBranch gi}@#{giHash gi}, at #{giCommitDate gi}, #{giCommitCount gi} commits in HEAD#{dirty}|]
+makeGitInfo =
+    case $$tGitInfoCwdTry of
+        Left  _  -> Text.pack "git info unavailable"
+        Right gi -> [i|#{giBranch gi}@#{giHash gi}, at #{giCommitDate gi}, #{giCommitCount gi} commits in HEAD#{dirty gi}|]
   where
-    dirty :: String
-    dirty | giDirty gi = ", (uncommitted files present)"
-          | otherwise  = ""
-    gi = $$tGitInfoCwd
+    dirty gi | giDirty gi = ", (uncommitted files present)"
+             | otherwise  = ""
