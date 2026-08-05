@@ -16,8 +16,9 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /opt/build
 
+# Restore pre-compiled packages from the dependency cache; no dist-newstyle
+# (dist-newstyle from dependencies stage has no source tree baked in)
 COPY --from=dependencies /root/.cabal /root/.cabal
-COPY --from=dependencies /opt/build/dist-newstyle /opt/build/dist-newstyle
 COPY . /opt/build/
 
 RUN cabal install exe:rpki-prover \
