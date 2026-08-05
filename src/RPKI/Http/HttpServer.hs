@@ -58,7 +58,7 @@ import           RPKI.Resources.Resources
 import           RPKI.Resources.Validity
 import           RPKI.Util
 import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
-import           RPKI.Version
+import           RPKI.Meta.Version
 
 
 httpServer :: (Storage s, MaintainableStorage s) => AppContext s -> Application

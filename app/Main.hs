@@ -67,7 +67,7 @@ import           RPKI.Util
 import           RPKI.Worker
 import           RPKI.Workflow
 import           RPKI.RSC.Verifier
-import           RPKI.Version
+import           RPKI.Meta.Version
 import           RPKI.Meta.UniqueId
 
 

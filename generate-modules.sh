@@ -1,6 +1,6 @@
 #!/bin/bash 
 
-# Calculate hash of the sources and update it in the RPKI.Version module,
+# Calculate hash of the sources and update it in the RPKI.Meta.Version module,
 # it is used for determining upgrades at the runtime.
 
 # Genrate git info module

@@ -1,4 +1,4 @@
-module RPKI.Version (
+module RPKI.Meta.Version (
     rpkiProverVersionNumber, 
     rpkiProverVersion, 
     makeGitInfo
