@@ -8,4 +8,6 @@ docker run --rm \
     -v "$(pwd)":/project:Z \
     -w /project \
     rpki-prover-builder \
-    cabal install rpki-prover:exe:rpki-prover --overwrite-policy=always
+    cabal install exe:rpki-prover \
+        --enable-executable-static \
+        --overwrite-policy=always
