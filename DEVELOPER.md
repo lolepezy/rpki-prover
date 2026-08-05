@@ -1,7 +1,7 @@
 
 ## Setting up development environment
 
-- You need `stack` to start (https://docs.haskellstack.org/en/stable/README/)
+- You need `cabal` to start. The easiest way to manage GHC/Cabal versions at the moment is to use ghcup (https://www.haskell.org/ghcup/)
 - Docker
 - Some libraries
     * On Linux using apt-get, that will be : `sudo apt install rsync libz-dev libexpat1-dev liblmdb-dev liblzma-dev libgmp-dev`.
@@ -16,16 +16,8 @@ So
 - Full build is done by the `./build-local.sh` script, it should normally take 30-40 minutes on an average computer.
 - Static binary is built by `./build-static.sh`.
 - Tests can be run using `./run-tests.sh`.
-- The command for using `ghcid` is 
-
-    ```ghcid --command="stack repl rpki-prover:lib rpki-prover:rpki-prover"``` 
-or 
-
-     ```ghcid --command="stack repl rpki-prover:lib rpki-prover:test:rpki-prover-test"```  for the set of modules including tests.
-
-- For local docker image build use 
-
-     ```cp package-template.yaml package.yaml && docker build . --file Dockerfile.prover --tag lolepezy/rpki-prover:latest```
+- `ghcid` works just as is 
+- For local docker image build use `./build-docker.sh`
 
 ## Bumping DB version
 

@@ -88,7 +88,7 @@ docker run -p 9999:9999 --mount source=rpki-data,target=/something-else lolepezy
 
 ## Building from source <a name="building-from-source"></a>
 
-The software is a daemon written in Haskell and can be built using [`stack`](https://docs.haskellstack.org/en/stable/README/).
+The software is a daemon written in Haskell and can be built using [`cabal`](https://www.haskell.org/cabal/). The easiest way to manage GHC/Cabal versions at the moment is to use [`ghcup`](https://www.haskell.org/ghcup/).
 
 The instructions below are for Linux but apply equally to \\\*BSD and macOS. Windows is not supported or tested.
 
