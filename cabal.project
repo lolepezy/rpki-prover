@@ -21,10 +21,6 @@ source-repository-package
   location: https://github.com/lolepezy/bytestring-mmap
   tag: 244367f5febcc44ca9e673dedbf00874395de406
 
-source-repository-package
-  type: git
-  location: https://github.com/well-typed/ixset-typed
-  tag: 984b26cbbfc39c68905a5675de61c50706ab9f73
 
 -- macOS Homebrew paths for C libraries (lmdb etc.); harmless on Linux
 package lmdb
