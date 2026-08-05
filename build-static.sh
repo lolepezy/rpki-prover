@@ -1,11 +1,7 @@
 #!/bin/bash 
 docker build - < Dockerfile.static-builder --tag rpki-prover-builder
 
-. ./src-hash.sh
-
-# Uncomment static-build flags (lines marked #1) in package.yaml, then regenerate .cabal
-cat package-template.yaml | sed 's/#1//g' > package.yaml
-hpack
+. ./generate-modules.sh
 
 # NOTE: Dockerfile.static-builder must have cabal-install available
 docker run --rm \

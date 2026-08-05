@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module RPKI.UniqueId where
+module RPKI.Meta.UniqueId where
 
 import RPKI.AppTypes
 import RPKI.Version
@@ -9,5 +9,5 @@ thisExecutableVersion :: ExecutableVersion
 thisExecutableVersion = ExecutableVersion $ rpkiProverVersion <> " " <> 
     -- The content is to be updated by the 'src-hash' script 
     -- that calculates hash of the source tree and configuration/build files     
-    "srcHash#b0e17b7bca689f0df774f0ec4034d0752d57f0273e32a5d5737859929b548e8c#srcHash"
+    "srcHash#21204137cb5cc63a40a101adfaa6bb70ce6c3fe936b8c68df50ab6548255044c#srcHash"
     

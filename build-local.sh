@@ -1,3 +1,3 @@
 #!/bin/bash 
-. ./src-hash.sh
-cabal install rpki-prover:exe:rpki-prover
+. ./generate-modules.sh
+cabal install rpki-prover:exe:rpki-prover --overwrite-policy=always

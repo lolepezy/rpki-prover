@@ -11,7 +11,7 @@ import Data.Version
 import Data.String.Interpolate.IsString
 
 import qualified Paths_rpki_prover as Autogen
-import GitHash
+import qualified RPKI.Meta.GitVersionInfo as Git
 
 showVersion_ :: String
 showVersion_ = showVersion Autogen.version
@@ -23,10 +23,7 @@ rpkiProverVersion :: Text
 rpkiProverVersion = [i|rpki-prover-#{showVersion_}|]
 
 makeGitInfo :: Text
-makeGitInfo =
-    case $$tGitInfoCwdTry of
-        Left  _  -> Text.pack "git info unavailable"
-        Right gi -> [i|#{giBranch gi}@#{giHash gi}, at #{giCommitDate gi}, #{giCommitCount gi} commits in HEAD#{dirty gi}|]
+makeGitInfo = [i|#{Git.gitBranch}@#{Git.gitHash}, at #{Git.gitCommitDate}, #{Git.gitCommitCount} commits in HEAD#{dirty}|]
   where
-    dirty gi | giDirty gi = ", (uncommitted files present)"
-             | otherwise  = ""
+    dirty | Git.gitDirty = ", (uncommitted files present)"
+          | otherwise    = "" :: String

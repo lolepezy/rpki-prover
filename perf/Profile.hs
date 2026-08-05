@@ -34,7 +34,7 @@ import           RPKI.RRDP.RrdpFetch
 
 import           RPKI.Time
 import           RPKI.Util               
-import           RPKI.UniqueId
+import           RPKI.Meta.UniqueId
 import           RPKI.RRDP.Types
 import           RPKI.RRDP.Http
 
