@@ -5,13 +5,13 @@ gitBranch :: String
 gitBranch = "cabal"
 
 gitHash :: String
-gitHash = "b0c6859c48c6d84886f07261a4a464980cb8ba65"
+gitHash = "035e11163e28867e69dd0891b5a0d6cc2ee22732"
 
 gitCommitDate :: String
-gitCommitDate = "2026-08-05 20:07:02 +0200"
+gitCommitDate = "2026-08-05 22:22:15 +0200"
 
 gitCommitCount :: Int
-gitCommitCount = 2675
+gitCommitCount = 2676
 
 gitDirty :: Bool
 gitDirty = True

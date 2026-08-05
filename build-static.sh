@@ -8,6 +8,8 @@ docker run --rm \
     -v "$(pwd)":/project:Z \
     -w /project \
     rpki-prover-builder \
-    cabal install exe:rpki-prover \
+    sh -c "cabal update && cabal install exe:rpki-prover \
         --enable-executable-static \
-        --overwrite-policy=always
+        --installdir=/project \
+        --install-method=copy \
+        --overwrite-policy=always"
