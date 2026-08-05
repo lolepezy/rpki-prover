@@ -88,7 +88,7 @@ docker run -p 9999:9999 --mount source=rpki-data,target=/something-else lolepezy
 
 ## Building from source <a name="building-from-source"></a>
 
-The software is a daemon written in Haskell and can be built using [`cabal`](https://www.haskell.org/cabal/). The easiest way to manage GHC/Cabal versions at the moment is to use [`ghcup`](https://www.haskell.org/ghcup/).
+The software can be built using [`cabal`](https://www.haskell.org/cabal/). The easiest way to manage GHC/Cabal versions at the moment is to use [`ghcup`](https://www.haskell.org/ghcup/).
 
 The instructions below are for Linux but apply equally to \\\*BSD and macOS. Windows is not supported or tested.
 
@@ -107,7 +107,13 @@ The instructions below are for Linux but apply equally to \\\*BSD and macOS. Win
     ```
   * For other Unix-like OSes, use the appropriate package manager.
 
-* Install `stack` as described [here](https://docs.haskellstack.org/en/stable/install_and_upgrade/)
+* Install `GHC` and `Cabal` using [`ghcup`](https://www.haskell.org/ghcup/):
+
+  ```
+  ghcup run --install
+  ```
+
+  This reads the required versions from `.tool-versions` in the repository root and installs them if missing.
 
 * Clone the repository:
 
