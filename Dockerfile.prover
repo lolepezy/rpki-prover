@@ -10,7 +10,7 @@ RUN cabal update
 # Stub source dirs prevent cabal configure from failing on missing directories.
 COPY rpki-prover.cabal cabal.project /opt/build/
 RUN mkdir -p src app test/src perf \
-    && cabal build --only-dependencies exe:rpki-prover
+    && cabal build --only-dependencies lib:rpki-prover
 
 COPY . /opt/build/
 RUN cabal install exe:rpki-prover \
