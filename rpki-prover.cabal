@@ -78,7 +78,6 @@ common shared
     , generic-arbitrary
     , generic-lens
     , generic-monoid
-    , githash
     , hashable
     , time-hourglass
     , http-client
