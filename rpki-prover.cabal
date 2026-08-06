@@ -63,6 +63,7 @@ common shared
     , conduit
     , conduit-extra
     , containers
+    , cryptohash-sha1
     , cryptohash-sha256
     , cryptohash-sha512
     , crypton
