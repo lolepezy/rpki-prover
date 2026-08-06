@@ -329,9 +329,9 @@ getEnvStats env =
                             -- close and reopen as multi map
                             closeDatabase env m
                             m' <- openMultiDatabase tx (Just $ convert mapName) defaultMultiDbSettngs
-                            gatherStats tx m' withMultiCursor LMMap.firstForward
+                            gatherStats tx m' withMultiCursor (\c -> LMMap.firstForward c)
                         else
-                            gatherStats tx m withCursor LMap.firstForward
+                            gatherStats tx m withCursor (\c -> LMap.firstForward c)
                 pure (convert mapName, stat)
   where
     gatherStats tx m cursorF forwardF = do

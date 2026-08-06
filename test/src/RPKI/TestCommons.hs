@@ -20,7 +20,7 @@ import RPKI.AppState
 import RPKI.AppContext
 import RPKI.Logging
 import qualified RPKI.Store.MakeLmdb as Lmdb
-import RPKI.UniqueId
+import RPKI.Meta.UniqueId
 import RPKI.AppMonad (runValidatorT)
 import RPKI.Reporting (newScopes)
 
