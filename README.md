@@ -15,26 +15,25 @@
   * [Prometheus metrics](#prometheus-metrics)  
   * [Support for RSC](#support-for-rsc)
   * [Resource consumption](#resource-consumption)
+  * [Known issues](#known-issues)
   
 * [Why Haskell?](#why-haskell)
 
 # Introduction <a name="introduction"></a>
 
-RPKI Prover is an implementation of [RPKI relying party software](https://rpki.readthedocs.io/en/latest/rpki/using-rpki-data.html) focused on achieving a reasonable balance between resource utilization and ease of maintenance. This implementation aims to address potential security vulnerabilities by utilizing process isolation,
-memory and time constraints, and other techniques to prevent resource exhaustion attacks and ensure
-that it "keeps going," even when encountering unstable or maliciously constructed RPKI repositories.
+RPKI Prover is [RPKI relying party software](https://rpki.readthedocs.io/en/latest/rpki/using-rpki-data.html) designed to balance resource efficiency, operational robustness, and maintainability. It uses process isolation, memory and time limits, and related safeguards to reduce the impact of resource-exhaustion attacks and keep validation running even when repositories are unstable or intentionally malformed.
 
 Issues are tracked [here](https://github.com/lolepezy/rpki-prover/issues). You can also ask questions there.
 
 # Features <a name="features"></a>
 
 * UI for reporting metrics and problems
-* REST API for almost all validator functions
+* REST API covering most validation and reporting operations
 * Output of VRPs in CSV and JSON formats
 * RTR server supporting versions 0 and 1
-* Support for RFC 8360 "validation reconsidered"
+* Implements RFC 8360 validation reconsidered behavior
 * Support for SLURM (RFC 8416)
-* Support for ASPA object validation and output
+* Validates ASPA objects and exposes them in output
 * Support for BGPSec certificate validation and RTR
 * Support for RPKI Signed Checklists
 * Support for RPKI Prefix Lists
@@ -45,14 +44,14 @@ Issues are tracked [here](https://github.com/lolepezy/rpki-prover/issues). You c
 
 Running `rpki-prover --help` displays a description of CLI options.
 
-The only dependency required for `rpki-prover` is an `rsync` client.
+For a prebuilt `rpki-prover` binary, the only external runtime dependency is an `rsync` client.
 
 `rpki-prover` is a daemon that periodically revalidates all TAs in the RPKI hierarchy. The results are exposed via the UI, JSON API, and Prometheus metrics. The `--with-rtr` option enables the RTR server, which pushes VRP updates to RTR clients.
 
-There is no configuration file; all configuration is provided via the CLI. Most defaults are reasonable, so you typically don't need to adjust many parameters. A typical command line might look like this:
+There is no configuration file; all configuration is provided via the CLI. Most defaults are reasonable, so you typically do not need to adjust many parameters. By default, the HTTP API listens on port `9999`. A typical command line might look like this:
 
 ```
-/opt/bin/rpki-prover --rpki-root-directory /var/rpki/ --cpu-count 4 --http-api-port 8080
+/opt/bin/rpki-prover --rpki-root-directory /var/rpki/ --cpu-count 4 --http-api-port 9999
 ```
 
 At the first launch, `rpki-prover` initializes the filesystem layout and
@@ -64,15 +63,9 @@ Every [release](https://github.com/lolepezy/rpki-prover/releases) includes a sta
 
 ## Docker image <a name="docker-image"></a>
 
-You can run `rpki-prover` using Docker:
+You can run `rpki-prover` using Docker. The image is available on Docker Hub.
 
-```
-docker run lolepezy/rpki-prover:latest
-```
-
-The image is available on Docker Hub.
-
-Since `rpki-prover` requires a persistent directory for TALs, caches, temporary files, etc., a persistent volume must be configured. A typical sequence of commands looks like this:
+Since `rpki-prover` needs a persistent directory for TALs, caches, and temporary files, a volume-backed run is recommended. A typical sequence of commands looks like this:
 
 ```
 docker volume create rpki-data
@@ -80,7 +73,7 @@ docker pull lolepezy/rpki-prover:latest
 docker run -p 9999:9999 --mount source=rpki-data,target=/rpki-data lolepezy/rpki-prover:latest
 ```
 
-The key part is `target=/rpki-data`, which is created by default inside the Docker container. Alternatively:
+The important part is `target=/rpki-data`, which matches the default root directory inside the container. Alternatively:
 
 ```
 docker run -p 9999:9999 --mount source=rpki-data,target=/something-else lolepezy/rpki-prover:latest --rpki-root-directory /something-else
@@ -109,19 +102,22 @@ The instructions below are for Linux but apply equally to \\\*BSD and macOS. Win
 
 * Install `GHC` and `Cabal` using [`ghcup`](https://www.haskell.org/ghcup/):
 
+* Clone the repository:
+
+  ```
+  git clone https://github.com/lolepezy/rpki-prover/
+  cd rpki-prover
+  ```
+
+* Install `GHC` and `Cabal` using [`ghcup`](https://www.haskell.org/ghcup/):
+
   ```
   ghcup run --install
   ```
 
   This reads the required versions from `.tool-versions` in the repository root and installs them if missing.
 
-* Clone the repository:
-
-  ```
-  git clone https://github.com/lolepezy/rpki-prover/
-  ```
-
-* Run `./build-local.sh` inside the `rpki-prover` directory. This takes 30-50 minutes as it builds required libraries.
+* Run `./build-local.sh` in the `rpki-prover` directory. This takes 30-50 minutes because it builds the required libraries.
 
 * After building, run `rpki-prover` from `~/.local/bin` as described in the usage section.
 
@@ -142,7 +138,7 @@ curl -s http://localhost:9999/api/vrps.json
 
 ## RTR server <a name="rtr-server"></a>
 
-RPKI Prover can be an [RTR server](https://www.rfc-editor.org/rfc/rfc8210), to enable the feature, add `--with-rtr` CLI option. It may also make sense to add `--rtr-address` and `--rtr-port` to listen on.
+RPKI Prover can also run as an [RTR server](https://www.rfc-editor.org/rfc/rfc8210). Enable it with the `--with-rtr` option. In most deployments, you will also want to set `--rtr-address` and `--rtr-port`.
 
 ## HTTP API <a name="http-api"></a>
 
@@ -197,7 +193,7 @@ Disk usage depends on `--cache-lifetime-hours`. The default of 24 hours results 
 
 # Why Haskell? <a name="why-haskell"></a>
 
-* Compact codebase (\~17KLOC), including custom CMS parsing
+* Compact codebase (\~20KLOC), including custom CMS parsing
 * Fast prototyping and smooth refactoring
 * Quick iteration and short time-to-market
 * High-level language with good performance (GC, immutability, powerful type system)
