@@ -2,16 +2,16 @@
 module RPKI.Meta.GitVersionInfo where
 
 gitBranch :: String
-gitBranch = "cabal"
+gitBranch = "unknown"
 
 gitHash :: String
-gitHash = "1b4e233565dc4e8e2b3be32da7027388828f58f1"
+gitHash = "unknown"
 
 gitCommitDate :: String
-gitCommitDate = "2026-08-06 00:22:58 +0200"
+gitCommitDate = "unknown"
 
 gitCommitCount :: Int
-gitCommitCount = 2677
+gitCommitCount = 0
 
 gitDirty :: Bool
-gitDirty = True
+gitDirty = False
