@@ -34,7 +34,7 @@ import           RPKI.Metrics.System
 import           RPKI.Repository
 import           RPKI.Reporting
 import           RPKI.Time
-import           RPKI.Version
+import           RPKI.Meta.Version
 
 mainPage :: WorldVersion
         -> SystemInfo 

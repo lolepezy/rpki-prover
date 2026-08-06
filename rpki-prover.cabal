@@ -1,0 +1,306 @@
+cabal-version: 2.2
+
+name:           rpki-prover
+version:        0.10.1
+description:    Please see the README on GitHub at <https://github.com/lolepezy/rpki-prover#readme>
+homepage:       https://github.com/lolepezy/rpki-prover#readme
+bug-reports:    https://github.com/lolepezy/rpki-prover/issues
+author:         Mikhail Puzanov
+maintainer:     misha.puzanov@gmail.com
+copyright:      2026 Mikhail Puzanov
+license:        BSD-3-Clause
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    ChangeLog.md
+    static/script.js
+    static/styles.css
+    src/RPKI/Meta/GitVersionInfo.hs
+    src/RPKI/Meta/UniqueId.hs
+
+source-repository head
+  type: git
+  location: https://github.com/lolepezy/rpki-prover
+
+common shared
+  default-extensions:      
+    DerivingVia
+    , DeriveAnyClass
+    , DuplicateRecordFields
+    , MultiWayIf
+    , NoMonomorphismRestriction
+    , OverloadedLabels
+    , PatternSynonyms
+    , QuantifiedConstraints
+    , QuasiQuotes
+    , RecordWildCards
+    , TypeFamilies
+    , TemplateHaskell
+    , ViewPatterns
+  default-language: GHC2024
+  ghc-options:
+      -j8 +RTS -A256m -AL512m -n4m -qb0 -qn6 -RTS
+  autogen-modules:
+      Paths_rpki_prover
+  build-depends:
+      QuickCheck
+    , aeson
+    , crypton-asn1-encoding
+    , crypton-asn1-parse
+    , crypton-asn1-types
+    , async
+    , barbies
+    , base
+    , base16-bytestring
+    , base64
+    , binary
+    , blaze-html
+    , blaze-markup
+    , bytestring
+    , bytestring-mmap
+    , cborg
+    , conduit
+    , conduit-extra
+    , containers
+    , cryptohash-sha256
+    , cryptohash-sha512
+    , crypton
+    , crypton-connection
+    , crypton-x509
+    , crypton-x509-validation
+    , deepseq
+    , deque
+    , directory
+    , file-embed
+    , file-embed-lzma
+    , filepath
+    , generic-arbitrary
+    , generic-lens
+    , generic-monoid
+    , hashable
+    , time-hourglass
+    , http-client
+    , http-client-tls
+    , http-conduit
+    , http-media
+    , http-types
+    , hw-ip
+    , insert-ordered-containers
+    , interpolate
+    , ixset-typed
+    , lens
+    , lifted-async
+    , lifted-base
+    , list-t
+    , lmdb-high-level
+    , lz4
+    , ram
+    , mmorph
+    , modern-uri
+    , monad-control
+    , monoidal-containers
+    , mtl
+    , network
+    , nonempty-containers
+    , optparse-applicative
+    , optparse-generic
+    , pipes
+    , primitive
+    , prometheus-client
+    , prometheus-metrics-ghc
+    , quickcheck-instances
+    , servant
+    , servant-blaze
+    , servant-server
+    , servant-swagger
+    , servant-swagger-ui
+    , shower
+    , split
+    , stm
+    , stm-containers
+    , store
+    , streaming
+    , strict-tuple
+    , string-conversions
+    , swagger2
+    , tasty
+    , tasty-hunit
+    , tasty-quickcheck
+    , temporary
+    , text
+    , th-utilities
+    , these
+    , time
+    , transformers
+    , typed-process
+    , unix
+    , unliftio
+    , unordered-containers
+    , vector
+    , warp
+    , xeno
+
+library
+  import:          shared
+  exposed-modules:
+      RPKI.AppContext
+      RPKI.AppMonad
+      RPKI.AppState
+      RPKI.AppTypes
+      RPKI.Config
+      RPKI.Domain
+      RPKI.Fetch
+      RPKI.Http.Api
+      RPKI.Http.Dto
+      RPKI.Http.HttpServer
+      RPKI.Http.Types
+      RPKI.Http.UI
+      RPKI.Logging
+      RPKI.Messages
+      RPKI.Metrics.Metrics
+      RPKI.Metrics.Prometheus
+      RPKI.Metrics.System
+      RPKI.Orphans.Generics
+      RPKI.Orphans.Json
+      RPKI.Orphans.Store
+      RPKI.Orphans.Swagger
+      RPKI.Parallel
+      RPKI.Parse.Internal.Aspa
+      RPKI.Parse.Internal.Cert
+      RPKI.Parse.Internal.Common
+      RPKI.Parse.Internal.CRL
+      RPKI.Parse.Internal.GBR
+      RPKI.Parse.Internal.MFT
+      RPKI.Parse.Internal.ROA
+      RPKI.Parse.Internal.RSC
+      RPKI.Parse.Internal.SignedObject
+      RPKI.Parse.Internal.SPL
+      RPKI.Parse.Parse
+      RPKI.Reporting
+      RPKI.Repository
+      RPKI.Resources.IntervalContainers
+      RPKI.Resources.Resources
+      RPKI.Resources.Types
+      RPKI.Resources.Validity
+      RPKI.RRDP.Http
+      RPKI.RRDP.Parse
+      RPKI.RRDP.Parse.Common
+      RPKI.RRDP.Parse.Xeno
+      RPKI.RRDP.RrdpFetch
+      RPKI.RRDP.Types
+      RPKI.RSC.Verifier
+      RPKI.Rsync
+      RPKI.RTR.Pdus
+      RPKI.RTR.Protocol
+      RPKI.RTR.RtrServer
+      RPKI.RTR.RtrState
+      RPKI.RTR.Types
+      RPKI.SLURM.SlurmProcessing
+      RPKI.SLURM.Types
+      RPKI.Store.AppLmdbStorage
+      RPKI.Store.AppStorage
+      RPKI.Store.Base.LMDB
+      RPKI.Store.Base.Map
+      RPKI.Store.Base.MultiMap
+      RPKI.Store.Base.SafeMap
+      RPKI.Store.Base.Serialisation
+      RPKI.Store.Base.Storable
+      RPKI.Store.Base.Storage
+      RPKI.Store.Database
+      RPKI.Store.MakeLmdb
+      RPKI.Store.Sequence
+      RPKI.Store.Types
+      RPKI.TAL
+      RPKI.Time
+      RPKI.Meta.UniqueId
+      RPKI.Util
+      RPKI.Validation.BottomUp
+      RPKI.Validation.Common
+      RPKI.Validation.Crypto
+      RPKI.Validation.ObjectValidation
+      RPKI.Validation.ResourceValidation
+      RPKI.Validation.TopDown
+      RPKI.Validation.Types
+      RPKI.Meta.GitVersionInfo
+      RPKI.Meta.Version
+      RPKI.Worker
+      RPKI.Workflow
+  other-modules:
+      Paths_rpki_prover
+  hs-source-dirs:
+      src
+  ghc-options:
+      -funbox-strict-fields
+      -O2
+      -Wall
+
+executable profiler
+  import:          shared
+  buildable:       False
+  main-is:         Profile.hs
+  other-modules:
+      Paths_rpki_prover
+  hs-source-dirs:
+      perf
+  ghc-options:
+      -threaded
+      -O2
+      -Wall
+      -rtsopts
+      -funbox-strict-fields
+      "-with-rtsopts=-A16m -AL64m -N2 -qg -T -I0 --disable-delayed-os-memory-return"
+  build-depends:
+      rpki-prover
+
+executable rpki-prover
+  import:          shared
+  main-is:         Main.hs
+  other-modules:
+      Paths_rpki_prover
+  hs-source-dirs:
+      app
+  ghc-options:
+      -threaded
+      -O2
+      -Wall
+      -rtsopts
+      -funbox-strict-fields
+      "-with-rtsopts=-A16m -AL64m -N2 -qg -T -I0 --disable-delayed-os-memory-return"
+  build-depends:
+      rpki-prover
+
+test-suite rpki-prover-test
+  import:          shared
+  type:            exitcode-stdio-1.0
+  main-is:         Spec.hs
+  other-modules:
+      RPKI.AppMonadSpec
+      RPKI.FetchSpec
+      RPKI.LoggingSpec
+      RPKI.Orphans
+      RPKI.Parse.ObjectParseSpec
+      RPKI.RepositorySpec
+      RPKI.Resources.ResourcesSpec
+      RPKI.Resources.ValiditySpec
+      RPKI.RRDP.HttpSpec
+      RPKI.RRDP.ParseSpec
+      RPKI.RRDP.UpdateSpec
+      RPKI.RTR.RtrSpec
+      RPKI.SLURM.SlurmSpec
+      RPKI.Store.DatabaseSpec
+      RPKI.Store.SerialisationSpec
+      RPKI.TestCommons
+      Paths_rpki_prover
+  hs-source-dirs:
+      test
+      test/src
+  ghc-options:
+      -threaded
+      -rtsopts
+      -Wall
+      -with-rtsopts=-N
+      -O2
+  build-depends:
+      rpki-prover
+    , wreq

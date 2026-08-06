@@ -1,4 +1,3 @@
-#!/bin/sh
-. ./src-hash.sh
-cp package-template.yaml package.yaml 
+#!/bin/bash
+. ./generate-modules.sh
 docker build . --file Dockerfile.prover --tag lolepezy/rpki-prover:latest

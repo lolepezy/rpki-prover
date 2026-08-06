@@ -1,11 +1,15 @@
 #!/bin/bash 
 docker build - < Dockerfile.static-builder --tag rpki-prover-builder
 
-. ./src-hash.sh
+. ./generate-modules.sh
 
-# This is extremely ugly but that's the only working option so far
-# to avoid attempts to build static binaries every time
-cat package-template.yaml | sed 's/#1//g' > package.yaml 
-
-stack install --docker --docker-image "rpki-prover-builder" \
-    --no-nix rpki-prover:rpki-prover-static --stack-yaml=stack.yaml
+# NOTE: Dockerfile.static-builder must have cabal-install available
+docker run --rm \
+    -v "$(pwd)":/project:Z \
+    -w /project \
+    rpki-prover-builder \
+    sh -c "cabal update && cabal install exe:rpki-prover \
+        --enable-executable-static \
+        --installdir=/project \
+        --install-method=copy \
+        --overwrite-policy=always"

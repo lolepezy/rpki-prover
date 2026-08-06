@@ -26,7 +26,7 @@ import           RPKI.Store.Types
 import           RPKI.Http.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util (convert)
-import           RPKI.Version
+import           RPKI.Meta.Version
 import           RPKI.Repository (Fetcheables)
 import           RPKI.Store.Base.Storable
 

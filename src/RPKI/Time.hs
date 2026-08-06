@@ -8,7 +8,7 @@ import           Control.Monad.IO.Class (MonadIO, liftIO)
 import           GHC.Generics
 
 import           Data.Hourglass         
-import           System.Hourglass       (dateCurrent)
+import           Time.System            (dateCurrent)
 import           System.CPUTime
 
 import           RPKI.Store.Base.Serialisation
