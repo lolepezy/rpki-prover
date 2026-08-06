@@ -37,6 +37,7 @@ versionModule="src/RPKI/Meta/UniqueId.hs"
 
 hash=$((echo "rpki-prover.cabal"; 
         echo "cabal.project";
+        echo "cabal.project.freeze";
         find src app  -type f -name \*.hs) | \
         grep -v "$versionModule" | \
         sort | \
