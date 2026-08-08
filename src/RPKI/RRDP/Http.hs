@@ -121,7 +121,7 @@ downloadHashedBS config uri@(URI u) eTag expectedHash hashMishmatch = liftIO $ d
 downloadRpkiObject :: AppContext s ->
                     FetchConfig ->             
                     RrdpURL ->             
-                    ValidatorT IO RpkiObject
+                    ValidatorT IO ParsedRpkiObject
 downloadRpkiObject appContext _ uri = do
     (content, _, _, _) <- fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
                             downloadToBS 

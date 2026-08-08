@@ -34,6 +34,16 @@ validateCRLSignature crl parentCert =
             encodedValue = encoded 
         } = signCrl crl
 
+validateCRLSignatureV :: CrlObject -> ValidatedCaCert -> SignatureVerification
+validateCRLSignatureV crl ValidatedCaCert { pubKey = parentPubKey } =
+    verifySignature signAlgorithm parentPubKey (toNormalBS encoded) (toNormalBS signature')
+  where
+    SignCRL {
+        signatureAlgorithm = SignatureAlgorithmIdentifier signAlgorithm,
+        signatureValue = SignatureValue signature',
+        encodedValue = encoded
+    } = signCrl crl
+
  
 -- | Validate that the CMS is signed by the public key of the EE certficate it has
 validateCMSSignature :: CMS a -> SignatureVerification

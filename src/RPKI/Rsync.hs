@@ -129,7 +129,7 @@ runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion reposito
 rsyncRpkiObject :: AppContext s -> 
                 FetchConfig -> 
                 RsyncURL -> 
-                ValidatorT IO RpkiObject
+                ValidatorT IO ParsedRpkiObject
 rsyncRpkiObject AppContext{..} fetchConfig uri = do
     let RsyncConf {..} = rsyncConf config
     destination <- liftIO $ rsyncDestination RsyncOneFile (configValue rsyncRoot) uri
@@ -326,7 +326,8 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
                 ObjectParsingProblem rpkiUrl (VErr e) original hash objectMeta -> do
                     logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
                     inSubLocationScope (getURL rpkiUrl) $ appWarn e                   
-                    DB.saveOriginal tx db original hash objectMeta
+                    let ObjectMeta { objectType = type_ } = objectMeta
+                    void $ DB.saveObject tx db (OriginalRO original vs hash type_) worldVersion
                     DB.linkObjectToUrl tx db rpkiUrl hash                                  
                 SaveObject rpkiUrl lifecycle -> do
                     case lifecycle of

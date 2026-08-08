@@ -396,10 +396,10 @@ getRpkiObject AppContext {..} uri hash key =
                             [] -> do                                
                                 -- try TA certificates
                                 tas <- DB.getTAs tx db                                 
-                                pure [ locatedDtoLegacy (Located locations (CerRO taCert)) | 
-                                        StorableTA {..} <- tas, 
-                                        let locations = talCertLocations tal, 
-                                        oneOfLocations locations rpkiUrl ]                                
+                                pure [ taLocatedDto locations taCert |
+                                    StorableTA {..} <- tas,
+                                    let locations = talCertLocations tal,
+                                    oneOfLocations locations rpkiUrl ]
                                 
                             os -> pure $ map locatedDto os
                         
@@ -424,6 +424,7 @@ getRpkiObject AppContext {..} uri hash key =
   where
     locatedDto located = RObject $ located & #payload %~ lifecycleToDto
     locatedDtoLegacy located = RObject $ located & #payload %~ objectToDto
+    taLocatedDto locations taCert = RObject $ Located locations $ validatedCaToDto taCert
 
 getOriginal :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s

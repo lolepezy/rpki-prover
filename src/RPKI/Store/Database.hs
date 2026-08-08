@@ -345,9 +345,9 @@ saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } lifecycle wv = liftI
             M.put tx objects objectKey (Compressed $ toStorableObject lifecycle)
             M.put tx objectMetas objectKey (ObjectMeta wv (getRpkiObjectType lifecycle))
             case lifecycle of
-                ValidatedRO (VCerRO vc) ->
+                ValidatedRO (CerRO vc) ->
                     MM.put tx certBySKI (getSKI vc) objectKey
-                ValidatedRO (VMftRO vmft) ->
+                ValidatedRO (MftRO vmft) ->
                     for_ (getAKI vmft) $ \aki_ ->
                         MM.put tx mftsForKI aki_ (getMftMetaFromValidated vmft objectKey)
                 _ -> pure ()
@@ -430,10 +430,10 @@ deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore { mftShortcuts = MftS
                 MM.delete tx urlKeyToObjectKey urlKey objectKey                
 
         case lifecycle of 
-            ValidatedRO (VCerRO vc) -> 
+            ValidatedRO (CerRO vc) -> 
                 MM.delete tx certBySKI (getSKI vc) objectKey
                 
-            ValidatedRO (VMftRO vmft) -> do 
+            ValidatedRO (MftRO vmft) -> do 
                 for_ (getAKI vmft) $ \aki_ -> do
                     MM.delete tx mftsForKI aki_ (getMftMetaFromValidated vmft objectKey)                    
                     ifJustM (M.get tx mftMetas aki_) $ \(unCompressed . restoreFromRaw -> mftShort) ->
@@ -458,8 +458,8 @@ getMftByKey :: (MonadIO m, Storage s) =>
 getMftByKey tx db k = do 
     o <- getLocatedByKey tx db k
     pure $! case o of 
-        Just (Located loc (ValidatedRO (VMftRO mft))) -> Just $ Keyed (Located loc mft) k
-        _                                              -> Nothing       
+        Just (Located loc (ValidatedRO (MftRO mft))) -> Just $ Keyed (Located loc mft) k
+        _                                             -> Nothing       
 
 
 getMftShorcut :: (MonadIO m, Storage s) => 
@@ -523,8 +523,8 @@ getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = do
             Nothing -> pure Nothing
             Just (Located locs lifecycle) -> case lifecycle of
                 OriginalRO _ vs _ _ -> embedState vs >> pure Nothing
-                ValidatedRO (VCerRO vc) -> pure $ Just (Located locs vc)
-                _                       -> pure Nothing
+                ValidatedRO (CerRO vc) -> pure $ Just (Located locs vc)
+                _                      -> pure Nothing
 
 -- TA store functions
 

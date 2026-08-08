@@ -9,6 +9,7 @@ import           Control.Monad.IO.Class
 import           Control.Lens
 
 import qualified Data.Map.Strict                  as Map
+import qualified Data.Text                        as Text
 
 import           Data.String.Interpolate.IsString
 
@@ -32,9 +33,9 @@ import           RPKI.Validation.Common
 -}
 validateBottomUp :: Storage s => 
                 AppContext s 
-                -> RpkiObject
+                -> ParsedRpkiObject
                 -> Now
-                -> ValidatorT IO (Validated RpkiObject, [[Located CaCerObject]])
+                -> ValidatorT IO (Validated ParsedRpkiObject, [[Located ValidatedCaCert]])
 validateBottomUp 
     AppContext{..}
     object 
@@ -88,35 +89,47 @@ validateBottomUp
                 (mft, crl) <- validateManifest db cert
                 let childCert = head certs                
                 validateOnMft mft childCert                            
-                Validated validCert    <- vHoist $ validateResourceCert @_ @_ @'CACert 
-                                                    now childCert cert crl
-                (childVerifiedResources, _) <- vHoist $ validateResources validationRFC
-                                                    (Just verifiedResources) childCert validCert            
+                Validated validCert <- vHoist $ validateResourceCertV
+                                                now
+                                                (childCert ^. #payload)
+                                                (cert ^. #payload)
+                                                crl
+                (childVerifiedResources, _) <- vHoist $ validateResourcesCAV
+                                                    validationRFC
+                                                    (Just verifiedResources)
+                                                    validCert
+                                                    (cert ^. #payload)
                 go childVerifiedResources certs
         
         validateOnMft mft o = do             
-            let mftChildren = mftEntries $ getCMSContent $ mft ^. #cmsPayload
+            let mftChildren = mftEntries $ mft ^. #content
             case filter (\(MftPair _ h) -> h == getHash o) mftChildren of 
                 [] -> appError $ ValidationE ObjectNotOnManifest
                 _  -> pure ()            
 
 
-    validateObjectItself bottomCert crl verifiedResources =         
-        vFocusOn TextFocus "rpki-object" $ 
-            case object of 
+    validateObjectItself bottomCert crl verifiedResources =
+        vFocusOn TextFocus "rpki-object" $ do
+            validatedObject <- vHoist $ prevalidateObject object
+            case validatedObject of
                 CerRO child ->
-                    void $ vHoist $ validateResourceCert @_ @_ @'CACert 
-                                        now child bottomCert crl                
-                RoaRO roa -> 
-                    void $ vHoist $ validateRoa validationRFC now roa bottomCert crl (Just verifiedResources)
-                GbrRO gbr -> 
-                    void $ vHoist $ validateGbr validationRFC now gbr bottomCert crl (Just verifiedResources)
-                AspaRO rsc -> 
-                    void $ vHoist $ validateAspa validationRFC now rsc bottomCert crl (Just verifiedResources)                    
-                RscRO rsc -> 
-                    void $ vHoist $ validateRsc validationRFC now rsc bottomCert crl (Just verifiedResources)
-                _somethingElse -> do 
-                    logWarn logger [i|Unsupported type of object: #{_somethingElse}.|]        
+                    void $ vHoist $ validateResourceCertV now child (bottomCert ^. #payload) crl
+                MftRO mft ->
+                    void $ vHoist $ validateMftV validationRFC now mft (bottomCert ^. #payload) crl (Just verifiedResources)
+                RoaRO roa ->
+                    void $ vHoist $ validateRoaV validationRFC now roa (bottomCert ^. #payload) crl (Just verifiedResources)
+                SplRO spl ->
+                    void $ vHoist $ validateSplV validationRFC now spl (bottomCert ^. #payload) crl (Just verifiedResources)
+                GbrRO gbr ->
+                    void $ vHoist $ validateGbrV validationRFC now gbr (bottomCert ^. #payload) crl (Just verifiedResources)
+                RscRO rsc ->
+                    void $ vHoist $ validateRscV validationRFC now rsc (bottomCert ^. #payload) crl (Just verifiedResources)
+                AspaRO aspa ->
+                    void $ vHoist $ validateAspaV validationRFC now aspa (bottomCert ^. #payload) crl (Just verifiedResources)
+                BgpRO bgp ->
+                    void $ vHoist $ validateBgpCertV now bgp (bottomCert ^. #payload) crl
+                CrlRO childCrl ->
+                    void $ vHoist $ validateCrlV now childCrl (bottomCert ^. #payload)
 
 
     -- Given a certificate, find a chain of certificates leading to a TA, 
@@ -163,12 +176,12 @@ validateBottomUp
             Just keyedMft -> do
                 -- TODO Decide what to do with nested scopes (we go bottom up, 
                 -- so nesting doesn't work the same way).                            
-                let locatedMft@(Located mftLocation mft) = keyedMft ^. #object    
+                let Keyed locatedMft@(Located mftLocation mft) _ = keyedMft
                 vFocusOn LocationFocus (getURL $ pickLocation mftLocation) $ do                
                     validateObjectLocations locatedMft
                     validateMftLocation locatedMft certificate
                     MftPair _ crlHash <- 
-                            case findCrlOnMft mft of 
+                            case filter (\(MftPair name _) -> ".crl" `Text.isSuffixOf` name) $ mftEntries $ mft ^. #content of
                                 []    -> vError $ NoCRLOnMFT childrenAki
                                 [crl] -> pure crl
                                 crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls
@@ -178,12 +191,11 @@ validateBottomUp
                         Nothing -> 
                             vError $ NoCRLExists childrenAki crlHash
 
-                        Just foundCrl@(Located crlLocations (CrlRO crl)) -> do      
+                        Just foundCrl@(Located crlLocations (ValidatedRO (CrlRO crl))) -> do
                             vFocusOn LocationFocus (getURL $ pickLocation crlLocations) $ do 
                                 validateObjectLocations foundCrl
-                                let mftEECert = getEECert $ unCMS $ cmsPayload mft
-                                checkCrlLocation foundCrl mftEECert
-                                validCrl <- vHoist $ validateCrl now crl certificate
+                                checkCrlLocation foundCrl $ eeCert mft
+                                validCrl <- vHoist $ validateCrlV now crl (certificate ^. #payload)
                                 pure (mft, validCrl)
 
                         Just _ -> 

@@ -37,6 +37,7 @@ import qualified RPKI.Util                         as U
 import           RPKI.Validation.Crypto
 import           RPKI.Validation.ResourceValidation
 import           RPKI.Resources.Resources
+import           RPKI.Validation.Common         (extractCaCert)
 
 
 class ExtensionValidator (t :: CertType) where
@@ -111,9 +112,8 @@ validateNoUnknownCriticalExtensions extensions =
             vPureError $ UnknownCriticalCertificateExtension extRawOID extRawContent
         
 
--- | Validated specifically the TA's self-signed certificate
--- 
-validateTACert :: TAL -> RpkiURL -> RpkiObject -> PureValidatorT CaCerObject
+-- | Validate specifically the TA's self-signed certificate.
+validateTACert :: TAL -> RpkiURL -> ParsedRpkiObject -> PureValidatorT ValidatedCaCert
 validateTACert tal u (CerRO taCert) = do
     let spki = getSubjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
     let talSPKI = SPKI $ publicKeyInfo tal
@@ -121,6 +121,7 @@ validateTACert tal u (CerRO taCert) = do
     validateTaCertAKI taCert u
     signatureCheck $ validateCertSignature taCert taCert
     validateResourceCertExtensions @CaCerObject @'CACert taCert
+    pure $ extractCaCert taCert
 
 validateTACert _ _ _ = vPureError UnknownObjectAsTACert
 
@@ -143,11 +144,10 @@ validateTaCertAKI taCert u =
 -- Emit a warning when deciding to use the cached certificate 
 -- instead of the fetched one.
 -- 
-chooseTaCert :: CaCerObject -> CaCerObject -> PureValidatorT CaCerObject
+chooseTaCert :: ValidatedCaCert -> ValidatedCaCert -> PureValidatorT ValidatedCaCert
 chooseTaCert cert cachedCert = do
-    let validities = bimap newInstant newInstant . certValidity . cwsX509certificate . getCertWithSignature
-    let (notBefore, notAfter) = validities cert
-    let (cachedNotBefore, cachedNotAfter) = validities cachedCert
+    let ValidityPeriod notBefore notAfter = getValidityPeriod cert
+    let ValidityPeriod cachedNotBefore cachedNotAfter = getValidityPeriod cachedCert
     let bothValidities = TACertValidities {..}
 
         {- 
@@ -315,6 +315,22 @@ validateCrl now crlObject@CrlObject {..} parentCert = do
         Nothing   -> vPureError NextUpdateTimeNotSet
         Just next -> validateUpdateTimes now thisUpdateTime next
     pure $ Validated crlObject  
+
+
+validateCrlV ::
+    Now ->
+    CrlObject ->
+    ValidatedCaCert ->
+    PureValidatorT (Validated CrlObject)
+validateCrlV now crlObject@CrlObject {..} parentCert = do
+    let SignCRL {..} = signCrl
+    signatureCheck $ validateCRLSignatureV crlObject parentCert
+    when (toAKI (getSKI parentCert) /= aki) $
+        vPureError $ CRL_AKI_DifferentFromCertSKI (getSKI parentCert) aki
+    case nextUpdateTime of
+        Nothing   -> vPureError NextUpdateTimeNotSet
+        Just next -> validateUpdateTimes now thisUpdateTime next
+    pure $ Validated crlObject
     
 
 validateMft ::

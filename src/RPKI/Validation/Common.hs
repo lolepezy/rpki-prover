@@ -21,6 +21,7 @@ import           Data.Maybe                       (listToMaybe)
 import           Data.ASN1.Types                  (ASN1(..), ASN1Object(..))
 import           Data.ASN1.BitArray               (BitArray(..))
 import           Data.X509                        (PubKey(..), certPubKey, certValidity, certSerial)
+import qualified Data.X509                        as X509
 import qualified Crypto.PubKey.RSA.Types          as RSA
 import qualified Crypto.Hash.SHA1                 as SHA1
 
@@ -35,9 +36,42 @@ import qualified RPKI.Util as U
 
 -- Validated and ValidatedRpkiObject are defined in RPKI.Domain and re-exported
 -- from there so that both Store and Validation layers can use them.
-createVerifiedResources :: CaCerObject -> VerifiedRS PrefixesAndAsns
-createVerifiedResources certificate = 
-    VerifiedRS $ toPrefixesAndAsns $ getRawCert certificate ^. typed
+createVerifiedResources :: WithResources c => c -> VerifiedRS PrefixesAndAsns
+createVerifiedResources c = 
+    VerifiedRS $ toPrefixesAndAsns $ getResources c
+
+class WithCertExtensions a where
+    getCertExtensions :: a -> [X509.ExtensionRaw]
+
+instance WithCertExtensions CertificateWithSignature where
+    getCertExtensions = getExtsSign
+
+instance WithCertExtensions RawResourceCertificate where
+    getCertExtensions = getCertExtensions . certX509
+
+instance WithCertExtensions ResourceCertificate where
+    getCertExtensions = getCertExtensions . getRawCert
+
+instance WithCertExtensions CaCerObject where
+    getCertExtensions = getCertExtensions . getRawCert
+
+instance WithCertExtensions EECerObject where
+    getCertExtensions = getCertExtensions . getRawCert
+
+instance WithCertExtensions BgpCerObject where
+    getCertExtensions = getCertExtensions . getRawCert
+
+instance WithCertExtensions a => WithCertExtensions (Located a) where
+    getCertExtensions = getCertExtensions . payload
+
+instance WithCertExtensions ValidatedCaCert where
+    getCertExtensions ValidatedCaCert { extensions = exts } = exts
+
+instance WithCertExtensions ValidatedEECert where
+    getCertExtensions ValidatedEECert { extensions = exts } = exts
+
+instance WithCertExtensions ValidatedBgpCert where
+    getCertExtensions ValidatedBgpCert { extensions = exts } = exts
 
 validateMftFileName :: Monad m => Text.Text -> ValidatorT m ()
 validateMftFileName filename =                
@@ -64,10 +98,10 @@ findCrlOnMft mft = filter (\(MftPair name _) -> ".crl" `Text.isSuffixOf` name) $
 
 -- | Check that manifest URL in the certificate is the same as the one 
 -- the manifest was actually fetched from.
-validateMftLocation :: (WithRawResourceCertificate c, Monad m, WithLocations c, WithLocations mft) =>
+validateMftLocation :: (WithCertExtensions c, Monad m, WithLocations c, WithLocations mft) =>
                         mft -> c -> ValidatorT m ()
 validateMftLocation mft parentCertficate = 
-    case getManifestUri $ cwsX509certificate $ getCertWithSignature parentCertficate of
+    case getManifestUriExt $ getCertExtensions parentCertficate of
         Nothing     -> vError NoMFTSIA
         Just mftSIA -> do 
             unless (".mft" `Text.isSuffixOf` (unURI mftSIA)) $ 
@@ -89,11 +123,11 @@ validateObjectLocations (getLocations -> Locations locSet) =
 -- | Check that CRL URL in the certificate is the same as the one 
 -- the CRL was actually fetched from. 
 -- 
-checkCrlLocation :: (Monad m, WithLocations a) => a
-                    -> CertificateWithSignature
+checkCrlLocation :: (Monad m, WithLocations a, WithCertExtensions c) => a
+                    -> c
                     -> ValidatorT m ()
 checkCrlLocation crl parentCertificate = 
-    for_ (getCrlDistributionPoint $ cwsX509certificate parentCertificate) $ \crlDP -> do
+    for_ (getCrlDistributionPointExt $ getCertExtensions parentCertificate) $ \crlDP -> do
         let crlLocations = getLocations crl
         when (Set.null $ NESet.filter ((crlDP ==) . getURL) $ unLocations crlLocations) $ 
             vError $ CRLOnDifferentLocation crlDP crlLocations
@@ -101,7 +135,7 @@ checkCrlLocation crl parentCertificate =
 
 -- | Full structural validation including multiple-location check.
 -- Use in contexts (e.g. TopDown) where the full 'Located' object is available.
-prevalidate :: Monad m => Located RpkiObject -> ValidatorT m ValidatedRpkiObject
+prevalidate :: Monad m => Located ParsedRpkiObject -> ValidatorT m ValidatedRpkiObject
 prevalidate located@(Located _ rpkiObject) = do
     validateObjectLocations located
     prevalidateObject rpkiObject
@@ -110,7 +144,7 @@ prevalidate located@(Located _ rpkiObject) = do
 -- | Self-contained structural validation without a location context.
 -- Used at object-save time (when only one URL is known) and wherever
 -- constructing a 'Located' wrapper is unnecessary overhead.
-prevalidateObject :: Monad m => RpkiObject -> ValidatorT m ValidatedRpkiObject
+prevalidateObject :: Monad m => ParsedRpkiObject -> ValidatorT m ValidatedRpkiObject
 prevalidateObject rpkiObject = do
     case rpkiObject of
         CerRO ca    -> validateCaCertStructure ca
@@ -125,22 +159,22 @@ prevalidateObject rpkiObject = do
     pure $ toValidatedRpkiObject rpkiObject
 
 
--- | Convert a fully-parsed 'RpkiObject' to its minimized post-prevalidation
+-- | Convert a fully-parsed 'ParsedRpkiObject' to its minimized post-prevalidation
 -- representation.  Drops all fields that are constant-after-validation
 -- (CMS version, digest-algorithm OIDs, duplicate content-type, SignerInfo SID)
 -- and extracts the few surviving fields (signing-time, CMS signature,
 -- raw signed-attributes bytes, cert public-key, extensions, etc.).
-toValidatedRpkiObject :: RpkiObject -> ValidatedRpkiObject
+toValidatedRpkiObject :: ParsedRpkiObject -> ValidatedRpkiObject
 toValidatedRpkiObject = \case
-    CerRO ca    -> VCerRO  $ extractCaCert ca
-    CrlRO crl   -> VCrlRO  crl
-    MftRO mft   -> VMftRO  $ extractCMSObject mft
-    RoaRO roa   -> VRoaRO  $ extractCMSObject roa
-    GbrRO gbr   -> VGbrRO  $ extractCMSObject gbr
-    AspaRO aspa -> VAspaRO $ extractCMSObject aspa
-    SplRO spl   -> VSplRO  $ extractCMSObject spl
-    BgpRO bgp   -> VBgpRO  $ extractBgpCert bgp
-    RscRO rsc   -> VRscRO  $ extractCMSObject rsc
+    CerRO ca    -> CerRO  $ extractCaCert ca
+    CrlRO crl   -> CrlRO  crl
+    MftRO mft   -> MftRO  $ extractCMSObject mft
+    RoaRO roa   -> RoaRO  $ extractCMSObject roa
+    GbrRO gbr   -> GbrRO  $ extractCMSObject gbr
+    AspaRO aspa -> AspaRO $ extractCMSObject aspa
+    SplRO spl   -> SplRO  $ extractCMSObject spl
+    BgpRO bgp   -> BgpRO  $ extractBgpCert bgp
+    RscRO rsc   -> RscRO  $ extractCMSObject rsc
 
 -- Internal helpers --------------------------------------------------------
 

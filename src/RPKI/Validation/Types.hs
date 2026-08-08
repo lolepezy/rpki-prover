@@ -73,7 +73,7 @@ data CaShortcut = CaShortcut {
     deriving anyclass (TheBinary)
 
 data Ca = CaShort CaShortcut
-        | CaFull (Located CaCerObject)
+    | CaFull (Located ValidatedCaCert)
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
@@ -174,8 +174,9 @@ getMftChildSerial = \case
     BgpSecChild _ serial -> Just serial 
     GbrChild _ serial    -> Just serial 
     _                    -> Nothing
-              
-getResources :: Ca -> AllResources
-getResources = \case 
-    CaShort CaShortcut {..} -> resources
-    CaFull (getRawCert -> RawResourceCertificate {..}) -> resources
+
+instance WithResources Ca where
+    getResources = \case 
+        CaShort CaShortcut {..} -> resources
+        CaFull (Located _ ca)   -> RPKI.Domain.getResources ca
+

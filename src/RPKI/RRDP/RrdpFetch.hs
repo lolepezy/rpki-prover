@@ -633,15 +633,22 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                                         Nothing    -> pure $! UknownObjectType rpkiURL
           where
             tryToParse rpkiURL hash blob type_ = do
-                z <- liftIO $ runValidatorT (newScopes $ unURI uri) $ vHoist $ readObjectOfType type_ blob
+                z <- liftIO $ runValidatorT (newScopes $ unURI uri) $ do
+                    ro <- vHoist $ readObjectOfType type_ blob
+                    prevalidateObject ro
                 (evaluate $!
                     case z of 
-                        (Left e, _) -> 
+                        (Left _, vs) ->
                             ObjectParsingProblem rpkiURL (VErr e) 
                                 (ObjectOriginal blob) hash
-                                (ObjectMeta worldVersion type_)                        
-                        (Right ro, _) ->                                     
-                            SuccessParsed rpkiURL (toStorableObject ro) type_                    
+                                (ObjectMeta worldVersion type_)
+                          where
+                            e = ParseE $ ParseError "RRDP object failed prevalidation"
+                        (Right vro, vs)
+                            | hasValidationErrors vs ->
+                                SaveObject rpkiURL $ OriginalRO (ObjectOriginal blob) vs hash type_
+                            | otherwise ->
+                                SaveObject rpkiURL $ ValidatedRO vro
                     ) `catch` 
                     (\(e :: SomeException) -> 
                         pure $! ObjectParsingProblem rpkiURL (VErr $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e) 
@@ -684,7 +691,10 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
             ObjectParsingProblem rpkiUrl (VErr e) original hash objectMeta -> do
                 logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
                 inSubLocationScope (getURL rpkiUrl) $ appWarn e
-                DB.saveOriginal tx db original hash objectMeta
+                let ObjectMeta { objectType = type_ } = objectMeta
+                let validationScope = newScopes $ unURI $ getURL rpkiUrl
+                let validationState = ValidationState (mError (validationScope ^. typed) e) mempty mempty
+                void $ DB.saveObject tx db (OriginalRO original validationState hash type_) worldVersion
                 DB.linkObjectToUrl tx db rpkiUrl hash         
                 logDebug logger [i||Added original object #{rpkiUrl} with hash #{hash} to the database.|]                 
 
@@ -730,7 +740,10 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
                 inSubLocationScope (getURL rpkiUrl) $ appWarn e
                 validateOldHash
-                DB.saveOriginal tx db original hash objectMeta
+                let ObjectMeta { objectType = type_ } = objectMeta
+                let validationScope = newScopes $ unURI $ getURL rpkiUrl
+                let validationState = ValidationState (mError (validationScope ^. typed) e) mempty mempty
+                void $ DB.saveObject tx db (OriginalRO original validationState hash type_) worldVersion
                 DB.linkObjectToUrl tx db rpkiUrl hash
 
             SaveObject rpkiUrl lifecycle -> do

@@ -231,12 +231,12 @@ mergePP (RsyncPP r) = mergeRsyncPP r
 -- | Extract repositories from URIs in TAL and in TA certificate,
 -- | use some reasonable heuristics, but don't try to be very smart.
 -- | Prefer RRDP to rsync for everything.
-publicationPointsFromTAL :: TAL -> CaCerObject -> Either ValidationError PublicationPointAccess
-publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert) = 
+publicationPointsFromTAL :: TAL -> ValidatedCaCert -> Either ValidationError PublicationPointAccess
+publicationPointsFromTAL tal cert = 
     case tal of 
         PropertiesTAL {..} -> do 
 
-            PublicationPointAccess ppsFromCert <- getPublicationPointsFromCert cert
+            PublicationPointAccess ppsFromCert <- getPublicationPointsFromValidatedCert cert
             
             let uniquePrefetchRepos = map (snd . fromURI) prefetchUris
 
@@ -248,7 +248,7 @@ publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert)
                 maybe ppsFromCert (ppsFromCert <>) $ 
                 nonEmpty prefetchReposToUse
 
-        RFC_TAL {} -> getPublicationPointsFromCert cert
+        RFC_TAL {} -> getPublicationPointsFromValidatedCert cert
   where        
     fromURI r = 
         case r of
@@ -260,6 +260,38 @@ publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert)
 -- 
 getPublicationPointsFromCertObject :: CaCerObject -> Either ValidationError PublicationPointAccess
 getPublicationPointsFromCertObject = getPublicationPointsFromCert . cwsX509certificate . getCertWithSignature
+
+getPublicationPointsFromValidatedCert :: ValidatedCaCert -> Either ValidationError PublicationPointAccess
+getPublicationPointsFromValidatedCert ValidatedCaCert { extensions = certExtensions } = do 
+    rrdp <- case getRrdpNotifyUriExt certExtensions of
+        Just rrdpNotifyUri
+            | isRrdpURI rrdpNotifyUri -> Right [rrdpPP $ RrdpURL rrdpNotifyUri]
+            | otherwise               -> Left $ UnknownUriType rrdpNotifyUri
+        Nothing -> Right []
+
+    rsync <- case getRepositoryUriExt certExtensions of
+        Just repositoryUri
+            | isRsyncURI repositoryUri ->
+                case parseRsyncURL (unURI repositoryUri) of
+                    Left e   -> Left $ BrokenUri (unURI repositoryUri) e
+                    Right rr -> Right [rsyncPP rr]
+            | otherwise -> Left $ UnknownUriType repositoryUri
+        Nothing -> Right []
+
+    case nonEmpty (rrdp <> rsync) of
+        Nothing -> Left CertificateDoesntHaveSIA
+        Just ne -> Right $ PublicationPointAccess ne
+  where
+    getRrdpNotifyUriExt exts =
+        extVal exts id_pe_sia >>= \sia ->
+            extractSiaValue sia id_ad_rpki_notify >>= 
+                either (const Nothing) Just . extractURI
+
+    getRepositoryUriExt exts =
+        extVal exts id_pe_sia >>= \sia ->
+            extractSiaValue sia id_ad_rpki_repository >>= 
+                either (const Nothing) Just . extractURI
+
 
 getPublicationPointsFromCert :: Certificate -> Either ValidationError PublicationPointAccess
 getPublicationPointsFromCert cert = do 

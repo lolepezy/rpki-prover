@@ -66,6 +66,7 @@ import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Util
+import           RPKI.Validation.Common
 import           RPKI.Validation.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Validation.ResourceValidation
@@ -358,7 +359,7 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
 
         
 
-data WhichTA = FetchedTA RpkiURL RpkiObject | CachedTA StorableTA
+data WhichTA = FetchedTA RpkiURL ParsedRpkiObject | CachedTA StorableTA
 
 -- | Fetch and validated TA certificate starting from the TAL.
 -- | 
@@ -367,7 +368,7 @@ validateTACertificateFromTAL :: Storage s
                                 => AppContext s
                                 -> TAL
                                 -> WorldVersion
-                                -> ValidatorT IO (Located CaCerObject, PublicationPointAccess)
+                                -> ValidatorT IO (Located ValidatedCaCert, PublicationPointAccess)
 validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let now = Now $ versionToInstant worldVersion
     let validationConfig = config ^. typed
@@ -380,8 +381,8 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
             | needsFetching (getTaCertURL tal) Nothing (storedTa ^. #fetchStatus) validationConfig now ->
                 fetchValidateAndStore db now (Just storedTa)
             | otherwise -> do
-                logInfo logger [i|Not re-fetching TA certificate #{getURL $ getTaCertURL tal}, it's up-to-date.|]
-                let located = locatedTaCert (getTaCertURL tal) (storedTa ^. #taCert)
+                logInfo logger [i|Not re-fetching TA certificate #{getURL $ getTaCertURL tal}, it's up-to-date.|]                
+                let located = locatedTaCert (getTaCertURL tal) $ storedTa ^. #taCert
                 pure (located, storedTa ^. #initialRepositories)
 
   where
@@ -394,32 +395,29 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
 
         case z of     
             FetchedTA actualUrl object -> do                                 
-                certToUse <- case storableTa of
-                    Nothing  -> vHoist $ validateTACert tal actualUrl object
-                    Just StorableTA { taCert = cachedTaCert } -> 
-                        vHoist (do 
-                            cert <- validateTACert tal actualUrl object
-                            chooseTaCert cert cachedTaCert)
+                fetchedValidatedCert <- vHoist $ validateTACert tal actualUrl object
+
+                (certToUse, certToStore) <- case storableTa of
+                    Nothing  -> pure (fetchedValidatedCert, fetchedValidatedCert)
+                    Just StorableTA { taCert = cachedTaCert } ->
+                        vHoist (do
+                            cert <- chooseTaCert fetchedValidatedCert cachedTaCert
+                            pure $ if cert == cachedTaCert
+                                then (cachedTaCert, cachedTaCert)
+                                else (fetchedValidatedCert, fetchedValidatedCert))
                         `catchError`
                             (\e -> do
                                 logError logger [i|Fetched TA certificate is invalid with error #{e}, will use cached copy.|]
-                                pure cachedTaCert)                            
-                
+                                pure (cachedTaCert, cachedTaCert))
+
                 case publicationPointsFromTAL tal certToUse of
                     Left e         -> appError $ ValidationE e
                     Right ppAccess ->
                         DB.rwAppTxEx db storageError $ \tx -> do
-                            DB.saveTA tx db (StorableTA tal certToUse (FetchedAt moment) ppAccess actualUrl)
+                            DB.saveTA tx db (StorableTA tal certToStore (FetchedAt moment) ppAccess actualUrl)
                             pure (locatedTaCert actualUrl certToUse, ppAccess)
 
-            CachedTA StorableTA { tal = _, ..} -> do 
-                void (vHoist $ validateTACert tal actualUrl (CerRO taCert))
-                    `catchError`
-                    (\e -> do
-                        logError logger [i|Will delete cached TA certificate, it is invalid with the error: #{e}|]
-                        DB.rwAppTxEx db storageError $ \tx -> DB.deleteTA tx db tal                            
-                        appError e)
-
+            CachedTA StorableTA { tal = _, ..} ->
                 pure (locatedTaCert actualUrl taCert, initialRepositories)
 
       where
@@ -448,7 +446,7 @@ validateFromTACert :: Storage s =>
                     AppContext s ->
                     TopDownContext ->
                     PublicationPointAccess ->
-                    Located CaCerObject ->
+                    Located ValidatedCaCert ->
                     ValidatorT IO ()
 validateFromTACert
     appContext@AppContext {..}
@@ -661,6 +659,7 @@ validateCaNoFetch
                                 (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)            
 
       
+        tryOneMftWithShortcut :: MftShortcut -> Keyed (Located MftObject) -> ValidatorT IO a
         tryOneMftWithShortcut mftShortcut mft = do
             fullCa <- getFullCa appContext topDownContext ca
             let crlKey = mftShortcut ^. #crlShortcut . #key
@@ -677,7 +676,7 @@ validateCaNoFetch
             collectPayloads mftShortcut Nothing 
                     (Right $ getFullCa appContext topDownContext ca)
                     (getCrlByKey appContext crlKey)
-                    (getResources ca)             
+                    (getResources ca)
 
     processMfts childrenAki mfts = do
         case (mftsNotInFuture mfts, mfts) of             
@@ -716,7 +715,7 @@ validateCaNoFetch
 
     reportMftFallback e mft = do 
         let mftLocation = pickLocation $ getLocations $ mft ^. #object        
-        let mftNumber = getCMSContent (mft ^. #object . #payload . #cmsPayload) ^. #mftNumber
+        let mftNumber = mft ^. #object . #payload . #content . #mftNumber
         vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e mftNumber
         logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, failed manifest number #{mftNumber}, error: #{toMessage e}|]        
 
@@ -1121,7 +1120,7 @@ validateCaNoFetch
     -}
     validateChildObject :: 
             Located CaCerObject
-            -> Keyed (Located RpkiObject) 
+            -> Keyed (Located ParsedRpkiObject) 
             -> Text
             -> Validated CrlObject
             -> ValidatorT IO (Maybe MftEntry)
@@ -1344,16 +1343,14 @@ validateCaNoFetch
             db <- liftIO $ readTVarIO database            
             childObject <- 
                 DB.roAppTx db $ \tx -> do
-                    increment $ topDownCounters ^. #readParsed
-                    getParsedObject tx db childKey $ do 
-                        increment $ topDownCounters ^. #readOriginal
-                        getLocatedOriginalUnknownType tx db childKey $ do
-                            -- Something is wrong with the references in the database. Normally it should never happen,
-                            -- but if it does, we have to delete the shortcut and report the error.
-                            deleteMftShortcut topDownContext $ toAKI $ getSKI caFull
-                            logError logger [i|Troubled child #{childKey} not found in the database, will delete manifest shortcut.|]
-                            integrityError appContext 
-                                [i|Referential integrity error, can't find a troubled child by its key #{childKey}.|]
+                    increment $ topDownCounters ^. #readOriginal
+                    getLocatedOriginalUnknownType tx db childKey $ do
+                        -- Something is wrong with the references in the database. Normally it should never happen,
+                        -- but if it does, we have to delete the shortcut and report the error.
+                        deleteMftShortcut topDownContext $ toAKI $ getSKI caFull
+                        logError logger [i|Troubled child #{childKey} not found in the database, will delete manifest shortcut.|]
+                        integrityError appContext 
+                            [i|Referential integrity error, can't find a troubled child by its key #{childKey}.|]
 
             void $ validateChildObject caFull childObject fileName validCrl
 
@@ -1471,14 +1468,14 @@ manifestDiff mftShortcut newMftChidlren =
 
 
 getLocatedOriginal :: Storage s => Tx s mode -> DB s -> ObjectKey -> RpkiObjectType         
-                    -> ValidatorT IO (Keyed (Located RpkiObject))
-                    -> ValidatorT IO (Keyed (Located RpkiObject))
+                    -> ValidatorT IO (Keyed (Located ParsedRpkiObject))
+                    -> ValidatorT IO (Keyed (Located ParsedRpkiObject))
 getLocatedOriginal tx db key type_ ifNotFound =
     getLocatedOriginal' tx db key (Just type_) ifNotFound
 
 getLocatedOriginalUnknownType :: Storage s => Tx s mode -> DB s -> ObjectKey                                           
-                                -> ValidatorT IO (Keyed (Located RpkiObject))
-                                -> ValidatorT IO (Keyed (Located RpkiObject))
+                                -> ValidatorT IO (Keyed (Located ParsedRpkiObject))
+                                -> ValidatorT IO (Keyed (Located ParsedRpkiObject))
 getLocatedOriginalUnknownType tx db key ifNotFound =
     getLocatedOriginal' tx db key Nothing ifNotFound
 
@@ -1487,8 +1484,8 @@ getLocatedOriginal' :: Storage s =>
                     -> DB s
                     -> ObjectKey           
                     -> Maybe RpkiObjectType         
-                    -> ValidatorT IO (Keyed (Located RpkiObject))
-                    -> ValidatorT IO (Keyed (Located RpkiObject))
+                    -> ValidatorT IO (Keyed (Located ParsedRpkiObject))
+                    -> ValidatorT IO (Keyed (Located ParsedRpkiObject))
 getLocatedOriginal' tx db key type_ ifNotFound = do
     DB.getOriginalBlob tx db key >>= \case 
         Nothing                    -> ifNotFound
@@ -1512,28 +1509,24 @@ getParsedObject :: Storage s =>
                     Tx s mode
                     -> DB s
                     -> ObjectKey
-                    -> ValidatorT IO (Keyed (Located RpkiObject))
-                    -> ValidatorT IO (Keyed (Located RpkiObject))
+                    -> ValidatorT IO (Keyed (Located RpkiObjectLifecycle))
+                    -> ValidatorT IO (Keyed (Located RpkiObjectLifecycle))
 getParsedObject tx db key ifNotFound = do
     DB.getLocatedByKey tx db key >>= \case 
         Just ro -> pure $! Keyed ro key
         Nothing -> ifNotFound
 
 
-getFullCa :: Storage s => AppContext s -> TopDownContext -> Ca -> ValidatorT IO (Located CaCerObject)
+getFullCa :: Storage s => AppContext s -> TopDownContext -> Ca -> ValidatorT IO (Located ValidatedCaCert)
 getFullCa appContext@AppContext {..} topDownContext = \case    
     CaFull c -> pure c            
     CaShort CaShortcut {..} -> do   
         db <- liftIO $ readTVarIO database
         DB.roAppTx db $ \tx -> do 
             increment $ topDownContext ^. #allTas . #topDownCounters . #readParsed
-            z <- getParsedObject tx db key $ do
-                    increment $ topDownContext ^. #allTas . #topDownCounters . #readOriginal
-                    getLocatedOriginal tx db key CER $ 
-                        integrityError appContext 
-                            [i|Referential integrity error, can't find a CA by its key #{key}.|]            
+            z <- DB.getLocatedByKey tx db key
             case z of 
-                Keyed (Located locations (CerRO ca_)) _ -> pure $! Located locations ca_
+                Just (Located locations (ValidatedRO (CerRO ca_))) -> pure $! Located locations ca_
                 _ -> integrityError appContext 
                         [i|Referential integrity error, wrong type of the CA found by its key #{key}.|]            
     
@@ -1542,7 +1535,7 @@ getCrlByKey :: Storage s => AppContext s -> ObjectKey -> ValidatorT IO (Keyed (V
 getCrlByKey appContext@AppContext {..} crlKey = do        
     z <- roTxT database $ \tx db -> DB.getObjectByKey tx db crlKey
     case z of 
-        Just (CrlRO c) -> pure $! Keyed (Validated c) crlKey 
+        Just (ValidatedRO (CrlRO c)) -> pure $! Keyed (Validated c) crlKey 
         _ -> integrityError appContext [i|Referential integrity error, can't find a CRL by its key #{crlKey}.|]
      
     
@@ -1729,7 +1722,7 @@ moreVrps n = updateMetric @ValidationMetric @_ (#vrpCounter %~ (+n))
 extractPPAs :: Ca -> Either ValidationError PublicationPointAccess
 extractPPAs = \case 
     CaShort (CaShortcut {..}) -> Right ppas 
-    CaFull c                  -> getPublicationPointsFromCertObject $ c ^. #payload
+    CaFull c                  -> getPublicationPointsFromValidatedCert $ c ^. #payload
 
 getCaLocations :: Storage s => AppContext s -> Ca -> ValidatorT IO (Maybe Locations)
 getCaLocations AppContext {..} = \case 

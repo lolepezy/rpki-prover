@@ -123,8 +123,8 @@ shouldMergeObjectLocations io = do
 
     [url1, url2, url3] :: [RpkiURL] <- take 3 . List.nub <$> replicateM 10 (QC.generate arbitrary)
 
-    ro1 :: RpkiObject <- QC.generate arbitrary    
-    ro2 :: RpkiObject <- QC.generate arbitrary        
+    ro1 :: ParsedRpkiObject <- QC.generate arbitrary    
+    ro2 :: ParsedRpkiObject <- QC.generate arbitrary        
     
     let storeIt obj url = rwTx db $ \tx -> do        
             DB.saveObject tx db (StorableObject (toValidatedRpkiObject obj) (toStorable obj)) (instantToVersion now)
@@ -171,12 +171,12 @@ shouldMergeObjectLocations io = do
 --     db <- io
 --     aki1 :: AKI <- QC.generate arbitrary
 --     aki2 :: AKI <- QC.generate arbitrary
---     ros :: [Located RpkiObject] <- removeMftNumberDuplicates <$> generateSome    
+--     ros :: [Located ParsedRpkiObject] <- removeMftNumberDuplicates <$> generateSome    
 
 --     let (firstHalf, secondHalf) = List.splitAt (List.length ros `div` 2) ros
 
---     let ros1 = List.map (typed @RpkiObject %~ replaceAKI aki1) firstHalf
---     let ros2 = List.map (typed @RpkiObject %~ replaceAKI aki2) secondHalf
+--     let ros1 = List.map (typed @ParsedRpkiObject %~ replaceAKI aki1) firstHalf
+--     let ros2 = List.map (typed @ParsedRpkiObject %~ replaceAKI aki2) secondHalf
 --     let ros' = ros1 <> ros2 
 
 --     Now now <- thisInstant     
@@ -662,14 +662,14 @@ releaseLmdb ((dir, e), _) = do
     Lmdb.closeLmdb e
     removeDirectoryRecursive dir
 
-readObjectFromFile :: FilePath -> ValidatorT IO (RpkiURL, RpkiObject)
+readObjectFromFile :: FilePath -> ValidatorT IO (RpkiURL, ParsedRpkiObject)
 readObjectFromFile path = do 
     bs <- liftIO $ BS.readFile path
     let Right url = parseRpkiURL $ "rsync://host/" <> Text.pack path
     o <- vHoist $ readObject url bs
     pure (url, o)
 
-replaceAKI :: AKI -> RpkiObject -> RpkiObject
+replaceAKI :: AKI -> ParsedRpkiObject -> ParsedRpkiObject
 replaceAKI a = \case 
     CerRO c  -> CerRO $ c & #aki ?~ a
     BgpRO c  -> BgpRO $ c & #aki ?~ a    

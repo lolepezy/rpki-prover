@@ -283,7 +283,7 @@ instance Arbitrary ResourceCertificate where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RpkiObject where
+instance Arbitrary ParsedRpkiObject where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

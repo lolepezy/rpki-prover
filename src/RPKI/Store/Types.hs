@@ -21,7 +21,7 @@ import           RPKI.Store.Base.Serialisation
 
 data StorableTA = StorableTA {
         tal                 :: TAL,
-        taCert              :: CaCerObject,
+    taCert              :: ValidatedCaCert,
         fetchStatus         :: FetchStatus,
         initialRepositories :: PublicationPointAccess,
         actualUrl           :: RpkiURL
@@ -75,7 +75,7 @@ data RpkiObjectLifecycle
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
-instance WithHash RpkiObjectLifecycle where
+instance {-# OVERLAPPING #-} WithHash RpkiObjectLifecycle where
     getHash (OriginalRO _ _ h _) = h
     getHash (ValidatedRO vro)    = getHash vro
 

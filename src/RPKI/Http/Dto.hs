@@ -167,7 +167,7 @@ toMftShortcutDto MftShortcut {..} = ManifestShortcutDto {..}
     nonCrlChildren = Map.map (\MftEntry {..} -> ManifestChildDto {..}) nonCrlEntries
     
 
-objectToDto :: RpkiObject -> ObjectDto
+objectToDto :: ParsedRpkiObject -> ObjectDto
 objectToDto = \case
     CerRO c -> CertificateD $ objectDto c (certDto c) & #ski ?~ getSKI c
     CrlRO c -> CRLD $ objectDto c $ crlDto c    
@@ -208,8 +208,9 @@ objectToDto = \case
 
     roaDto r = let
                 vrps = getCMSContent $ r ^. #cmsPayload
-                -- TODO Fix ROA somehow, make it NonEmpty?
-                asn = head $ map (\(Vrp a _ _) -> a) vrps
+                asn = case vrps of
+                    Vrp a _ _ : _ -> a
+                    []            -> ASN 0
                 prefixes = map (\(Vrp _ p l) -> RoaPrefixDto p l) vrps
             in RoaDto {..}
 
@@ -339,6 +340,96 @@ lifecycleToDto :: RpkiObjectLifecycle -> ObjectDto
 lifecycleToDto (OriginalRO _ _ h t) = OriginalBlobD h t
 lifecycleToDto (ValidatedRO vro)    = OriginalBlobD (getHash vro) (getRpkiObjectType vro)
 
+validatedCaToDto :: ValidatedCaCert -> ObjectDto
+validatedCaToDto cert =
+    let
+        ValidityPeriod nb na = getValidityPeriod cert
+        AllResources ipv4R ipv6R asnR = RPKI.Domain.getResources cert
+        ValidatedCaCert {
+            pubKey = certPubKey,
+            extensions = certExtensions,
+            sigAlg = SignatureAlgorithmIdentifier signatureAlgorithm
+        } = cert
+        ipv4 = asRS ipv4R
+        ipv6 = asRS ipv6R
+        asn = asRS asnR
+    in CertificateD $ ObjectContentDto {
+        hash = getHash cert,
+        ski = Just $ getSKI cert,
+        aki = getAKI cert,
+        eeCertificate = Nothing,
+        objectPayload = CertificateDto {
+            certVersion = Version 3,
+            certSerial = getSerial cert,
+            certSignatureAlg = Text.pack $ show signatureAlgorithm,
+            certIssuerDN = "omitted in validated representation",
+            certSubjectDN = "omitted in validated representation",
+            notBefore = nb,
+            notAfter = na,
+            pubKey = pubKeyDto certPubKey,
+            ipv4 = ipv4,
+            ipv6 = ipv6,
+            asn = asn,
+            extensions = ExtensionsDto $ map mapExt certExtensions
+        }
+    }
+  where
+    asRS = \case
+        RS s    -> s
+        Inherit -> IS.empty
+
+    pubKeyDto = \case
+        X509.PubKeyRSA RSA.PublicKey {..} -> Right $ PubKeyDto {
+            pubKeySize = public_size,
+            pubKeyPQ = public_n,
+            pubKeyExp = public_e
+        }
+        other -> Left $ Text.pack $ show other
+
+    mapExt X509.ExtensionRaw {..} = let
+            oid      = OIDDto extRawOID
+            bytes    = extRawContent
+            critical = extRawCritical
+            value = case () of
+                _
+                    | extRawOID == id_ce_keyUsage ->
+                        strExt (Proxy :: Proxy X509.ExtKeyUsage) extRawContent
+                    | extRawOID == id_ce_basicConstraints ->
+                        strExt (Proxy :: Proxy X509.ExtBasicConstraints) extRawContent
+                    | extRawOID == id_ce_CRLDistributionPoints ->
+                        maybe "undefined" unURI (extractCrlDistributionPoint extRawContent)
+                    | extRawOID == id_ad_rpki_notify ->
+                        urlText $ extractSiaValue extRawContent id_ad_rpki_notify
+                    | extRawOID == id_pe_sia ->
+                        urlText $ extractSiaValue extRawContent id_ad_rpki_notify
+                              <|> extractSiaValue extRawContent id_ad_rpki_repository
+                              <|> extractSiaValue extRawContent id_ad_rpkiManifest
+                    | extRawOID == id_pe_aia ->
+                        urlText $ extractSiaValue extRawContent id_ad_caIssuers
+                              <|> extractSiaValue extRawContent id_ad_rpki_notify
+                              <|> extractSiaValue extRawContent id_ad_rpki_repository
+                              <|> extractSiaValue extRawContent id_ad_rpkiManifest
+                    | extRawOID == id_subjectKeyId ->
+                        case runPureValidator (newScopes "id_subjectKeyId") $ parseKI extRawContent of
+                            (Left e, _)   -> Text.pack $ "Could not parse SKI: " <> show e
+                            (Right ki, _) -> Text.pack $ show ki
+                    | extRawOID == id_authorityKeyId ->
+                        case runPureValidator (newScopes "id_subjectKeyId") $ parseKI extRawContent of
+                            (Left e, _)   -> Text.pack $ "Could not parse AKI: " <> show e
+                            (Right ki, _) -> Text.pack $ show ki
+                    | extRawOID == id_pe_ipAddrBlocks -> "IP resources (see 'ipv4', 'ipv6' fields)"
+                    | extRawOID == id_pe_autonomousSysIds -> "ASN resources (see 'asn' field)"
+                    | extRawOID == id_ce_certificatePolicies -> certificatePoliciesToText extRawContent
+                    | otherwise -> "Unrecognised extension"
+        in ExtensionDto {..}
+
+    strExt :: forall a . (Show a, X509.Extension a) => Proxy a -> BS.ByteString -> Text
+    strExt _ bytes = Text.pack $ show (X509.extDecodeBs bytes :: Either String a)
+
+    urlText = \case
+        Nothing -> "undefined"
+        Just bs -> either id unURI $ extractURI bs
+
 -- | 'manifestDto' variant for validated manifest objects.
 manifestDtoV :: ValidatedCMSObject Manifest -> ManifestDto
 manifestDtoV m = let
@@ -380,7 +471,10 @@ toRouteDto
             unmatched_length = [ vrpToMatch vrp | InvalidLength vrp <- invalids ]
         }
 
-    vrpToMatch (Vrp asn (prefixStr -> prefix) max_length) = MatchVrpDto {..}
+    vrpToMatch (Vrp asn (prefixStr -> vrpPrefix) max_length) = MatchVrpDto {
+        prefix = vrpPrefix,
+        ..
+    }
 
 
 toBulkResultDto :: Instant -> [T3 ASN IpPrefix ValidityResult] -> ValidityBulkResultDto
