@@ -261,8 +261,8 @@ publicationPointsFromTAL tal cert =
 getPublicationPointsFromCertObject :: CaCerObject -> Either ValidationError PublicationPointAccess
 getPublicationPointsFromCertObject = getPublicationPointsFromCert . cwsX509certificate . getCertWithSignature
 
-getPublicationPointsFromValidatedCert :: ValidatedCaCert -> Either ValidationError PublicationPointAccess
-getPublicationPointsFromValidatedCert ValidatedCaCert { extensions = certExtensions } = do 
+getPublicationPointsFromValidatedCert :: ValidatedCert t -> Either ValidationError PublicationPointAccess
+getPublicationPointsFromValidatedCert ValidatedCert { extensions = certExtensions } = do 
     rrdp <- case getRrdpNotifyUriExt certExtensions of
         Just rrdpNotifyUri
             | isRrdpURI rrdpNotifyUri -> Right [rrdpPP $ RrdpURL rrdpNotifyUri]

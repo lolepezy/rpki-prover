@@ -34,8 +34,8 @@ validateCRLSignature crl parentCert =
             encodedValue = encoded 
         } = signCrl crl
 
-validateCRLSignatureV :: CrlObject -> ValidatedCaCert -> SignatureVerification
-validateCRLSignatureV crl ValidatedCaCert { pubKey = parentPubKey } =
+validateCRLSignatureV :: CrlObject -> ValidatedCert t -> SignatureVerification
+validateCRLSignatureV crl ValidatedCert { pubKey = parentPubKey } =
     verifySignature signAlgorithm parentPubKey (toNormalBS encoded) (toNormalBS signature')
   where
     SignCRL {
@@ -65,15 +65,15 @@ validateCMSSignatureV ValidatedCMSObject { cmsSignature = SignatureValue sign, s
                                             eeCert = ValidatedEECert { sigAlg = SignatureAlgorithmIdentifier alg, pubKey } } =
     verifySignature alg pubKey (toNormalBS signedAttrsBS) (toNormalBS sign)
 
--- | Validate the signature of a 'ValidatedCaCert' against a parent 'ValidatedCaCert'.
-validateCertSignatureCA :: ValidatedCaCert -> ValidatedCaCert -> SignatureVerification
-validateCertSignatureCA ValidatedCaCert { sigAlg = SignatureAlgorithmIdentifier alg, signature = SignatureValue sig, encoded }
-                        ValidatedCaCert { pubKey = parentPubKey } =
+-- | Validate the signature of a 'ValidatedCert' against a parent 'ValidatedCert'.
+validateCertSignatureCA :: ValidatedCert t -> ValidatedCert 'CACert -> SignatureVerification
+validateCertSignatureCA ValidatedCert { sigAlg = SignatureAlgorithmIdentifier alg, signature = SignatureValue sig, encoded }
+                        ValidatedCert { pubKey = parentPubKey } =
     verifySignature alg parentPubKey (toNormalBS encoded) (toNormalBS sig)
 
--- | Validate the signature of a 'ValidatedEECert' against a parent 'ValidatedCaCert'.
-validateCertSignatureEE :: ValidatedEECert -> ValidatedCaCert -> SignatureVerification
+-- | Validate the signature of a 'ValidatedEECert' against a parent 'ValidatedCert'.
+validateCertSignatureEE :: ValidatedEECert -> ValidatedCert 'CACert -> SignatureVerification
 validateCertSignatureEE ValidatedEECert { sigAlg = SignatureAlgorithmIdentifier alg, signature = SignatureValue sig, encoded }
-                        ValidatedCaCert { pubKey = parentPubKey } =
+                        ValidatedCert { pubKey = parentPubKey } =
     verifySignature alg parentPubKey (toNormalBS encoded) (toNormalBS sig)
         

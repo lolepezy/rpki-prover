@@ -658,8 +658,7 @@ validateCaNoFetch
                         pure $! action `andThen` 
                                 (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)            
 
-      
-        tryOneMftWithShortcut :: MftShortcut -> Keyed (Located MftObject) -> ValidatorT IO a
+              
         tryOneMftWithShortcut mftShortcut mft = do
             fullCa <- getFullCa appContext topDownContext ca
             let crlKey = mftShortcut ^. #crlShortcut . #key
@@ -727,8 +726,8 @@ validateCaNoFetch
     -- run full validation only for new children and create a new manifest shortcut
     -- with updated set of children.
     manifestFullValidation :: 
-                    Located CaCerObject
-                    -> Keyed (Located MftObject) 
+                    Located ValidatedCaCert
+                    -> Keyed (Located ValidatedMft)
                     -> Maybe MftShortcut 
                     -> AKI
                     -> ValidatorT IO [T3 Text Hash ObjectKey]
@@ -780,7 +779,7 @@ validateCaNoFetch
 
                 -- manifest number must increase 
                 -- https://www.rfc-editor.org/rfc/rfc9286.html#name-manifest
-                let mftNumber = getCMSContent (mft ^. #cmsPayload) ^. #mftNumber 
+                let mftNumber = mft ^. #content . #mftNumber 
                 when (mftNumber < mftShort ^. #manifestNumber) $ do 
                     -- Here we have to do a bit of hackery: 
                     -- * Calling vError will interrupt this function and call for fall-back to 
@@ -859,8 +858,8 @@ validateCaNoFetch
             processChildren `recover` markAllEntriesAsUsed
 
 
-    findAndValidateCrl :: Located CaCerObject
-                    -> Keyed (Located MftObject) 
+    findAndValidateCrl :: Located ValidatedCaCert
+                    -> Keyed (Located ValidatedMft)
                     -> AKI
                     -> ValidatorT IO (Keyed (Validated CrlObject))
     findAndValidateCrl fullCa (Keyed (Located _ mft) _) aki = do  
@@ -1272,7 +1271,7 @@ validateCaNoFetch
 
     collectPayloads :: MftShortcut 
                     -> Maybe [T3 Text Hash ObjectKey] 
-                    -> Either (Located CaCerObject) (ValidatorT IO (Located CaCerObject))
+                    -> Either (Located ValidatedCaCert) (ValidatorT IO (Located ValidatedCaCert))
                     -> ValidatorT IO (Keyed (Validated CrlObject))             
                     -> AllResources
                     -> ValidatorT IO ()

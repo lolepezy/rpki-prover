@@ -64,14 +64,11 @@ instance WithCertExtensions BgpCerObject where
 instance WithCertExtensions a => WithCertExtensions (Located a) where
     getCertExtensions = getCertExtensions . payload
 
-instance WithCertExtensions ValidatedCaCert where
-    getCertExtensions ValidatedCaCert { extensions = exts } = exts
+instance WithCertExtensions (ValidatedCert t) where
+    getCertExtensions ValidatedCert {..} = extensions
 
 instance WithCertExtensions ValidatedEECert where
     getCertExtensions ValidatedEECert { extensions = exts } = exts
-
-instance WithCertExtensions ValidatedBgpCert where
-    getCertExtensions ValidatedBgpCert { extensions = exts } = exts
 
 validateMftFileName :: Monad m => Text.Text -> ValidatorT m ()
 validateMftFileName filename =                
@@ -166,30 +163,25 @@ prevalidateObject rpkiObject = do
 -- raw signed-attributes bytes, cert public-key, extensions, etc.).
 toValidatedRpkiObject :: ParsedRpkiObject -> ValidatedRpkiObject
 toValidatedRpkiObject = \case
-    CerRO ca    -> CerRO  $ extractCaCert ca
+    CerRO ca    -> CerRO  $ extractCert ca
     CrlRO crl   -> CrlRO  crl
     MftRO mft   -> MftRO  $ extractCMSObject mft
     RoaRO roa   -> RoaRO  $ extractCMSObject roa
     GbrRO gbr   -> GbrRO  $ extractCMSObject gbr
     AspaRO aspa -> AspaRO $ extractCMSObject aspa
     SplRO spl   -> SplRO  $ extractCMSObject spl
-    BgpRO bgp   -> BgpRO  $ extractBgpCert bgp
+    BgpRO bgp   -> BgpRO  $ extractCert bgp
     RscRO rsc   -> RscRO  $ extractCMSObject rsc
 
--- Internal helpers --------------------------------------------------------
 
-extractCertFields :: (WithRawResourceCertificate a) => a -> SKI -> Maybe AKI -> Hash
-                  -> ValidatedCaCert
-extractCertFields certHolder certSki certAki certHash =
-    let rc        = getRawCert certHolder
+extractCert :: (WithHash c, WithSKI c, WithAKI c, WithRawResourceCertificate c) => c -> ValidatedCert t
+extractCert c =
+    let rc        = getRawCert c
         cws       = certX509 rc
         cert      = cwsX509certificate cws
         (nb, na)  = certValidity cert
-    in ValidatedCaCert
-        { hash       = certHash
-        , ski        = certSki
-        , aki        = certAki
-        , resources  = rc ^. #resources
+    in ValidatedCert
+        { resources  = rc ^. #resources
         , pubKey     = certPubKey cert
         , serial     = Serial $ certSerial cert
         , validity   = ValidityPeriod (newInstant nb) (newInstant na)
@@ -197,30 +189,10 @@ extractCertFields certHolder certSki certAki certHash =
         , encoded    = cwsEncoded cws
         , signature  = cwsSignature cws
         , sigAlg     = cwsSignatureAlgorithm cws
-        }
-
-extractCaCert :: CaCerObject -> ValidatedCaCert
-extractCaCert ca@CaCerObject { hash, ski, aki } = extractCertFields ca ski aki hash
-
-extractBgpCert :: BgpCerObject -> ValidatedBgpCert
-extractBgpCert BgpCerObject { hash, ski, aki, certificate } =
-    let rc        = getRawCert certificate
-        cws       = certX509 rc
-        cert      = cwsX509certificate cws
-        (nb, na)  = certValidity cert
-    in ValidatedBgpCert
-        { hash
-        , ski
-        , aki
-        , resources  = rc ^. #resources
-        , pubKey     = certPubKey cert
-        , serial     = Serial $ certSerial cert
-        , validity   = ValidityPeriod (newInstant nb) (newInstant na)
-        , extensions = getExts cert
-        , encoded    = cwsEncoded cws
-        , signature  = cwsSignature cws
-        , sigAlg     = cwsSignatureAlgorithm cws
-        }
+        , hash       = getHash c        
+        , ski        = getSKI c
+        , aki        = getAKI c
+        }    
 
 extractEECert :: EECerObject -> ValidatedEECert
 extractEECert EECerObject { ski, aki, certificate } =
@@ -243,13 +215,14 @@ extractEECert EECerObject { ski, aki, certificate } =
 
 extractCMSObject :: CMSBasedObject a -> ValidatedCMSObject a
 extractCMSObject CMSBasedObject { hash, cmsPayload } =
-    let CMS SignedObject { soContent = SignedData { scEncapContentInfo, scCertificate, scSignerInfos } }
-              = cmsPayload
-        SignerInfos { signature = cmsSignature, signedAttrs }
-              = scSignerInfos
-        SignedAttributes attrs signedAttrsBS
-              = signedAttrs
-        signingTime = listToMaybe [ newInstant dt | SigningTime dt _ <- attrs ]
+    let CMS SignedObject { soContent = SignedData { scEncapContentInfo, scCertificate, scSignerInfos } } = cmsPayload
+        SignerInfos { signature = cmsSignature, signedAttrs } = scSignerInfos
+        SignedAttributes attrs signedAttrsBS = signedAttrs
+
+        -- It will be there, it's validated according to 
+        -- https://datatracker.ietf.org/doc/html/rfc9589#name-updates-to-rfc-6488
+        [signingTime] = [ newInstant dt | SigningTime dt _ <- attrs ]
+
         eeCert      = extractEECert scCertificate
         content     = cContent scEncapContentInfo
     in ValidatedCMSObject { hash, content, eeCert, signingTime, cmsSignature, signedAttrsBS }
@@ -293,13 +266,24 @@ validateCmsStructure cmsObj = do
 
     -- Validate each signed attribute
     let SignedAttributes attrs _ = signedAttrs
-    for_ attrs $ \case
-        BinarySigningTime _    -> vError BinarySigningTimePresent
-        UnknownAttribute oid _ -> vError $ UnexpectedSignedAttribute oid
-        ContentTypeAttr ct     ->
+
+    when (null [ () | ContentTypeAttr _ <- attrs ]) $     
+        vError ContentTypeAttrMissing
+    
+    when (null [ () | SigningTime _ _ <- attrs ]) $ 
+        vError SigningTimeMissing
+
+    when (null [ () | MessageDigest _ <- attrs ]) $     
+        vError MessageDigestMissing 
+
+    for_ attrs $ \case        
+        SigningTime _ _    -> pure ()
+        ContentTypeAttr ct ->
             unless (ct == eContentType scEncapContentInfo) $
                 vError EECertContentTypeMismatch
-        _ -> pure ()
+        MessageDigest _ -> pure ()
+        BinarySigningTime _    -> vError BinarySigningTimePresent        
+        UnknownAttribute oid _ -> vError $ UnexpectedSignedAttribute oid        
 
     -- SignerInfo SID must equal the EE certificate's SKI
     let SKI (KI skiBytes)        = getSKI scCertificate
@@ -312,7 +296,7 @@ validateCmsStructure cmsObj = do
 
 
 -- | Validate manifest-specific structural invariants.
-validateMftStructure :: Monad m => MftObject -> ValidatorT m ()
+validateMftStructure :: Monad m => MftObject -> ValidatorT m Manifest
 validateMftStructure mft = do
     let Manifest { thisTime, nextTime, mftEntries } = getCMSContent (cmsPayload mft)
 
@@ -358,15 +342,15 @@ validateCrlStructure CrlObject { signCrl = SignCRL { thisUpdateTime, nextUpdateT
 -- | Validate X.509 certificate properties checkable without a parent certificate.
 validateCertX509Structure :: Monad m => CertificateWithSignature -> ValidatorT m ()
 validateCertX509Structure CertificateWithSignature { cwsX509certificate = cert } = do
-    -- notBefore must be strictly before notAfter
+    -- notBefore must be strictly before notAfter        
     let (nb, na) = certValidity cert
     when (newInstant nb >= newInstant na) $
         vError CertValidityPeriodInvalid
 
     -- Serial number must be positive and within 20 octets (RFC 5280 §4.1.2.2)
-    let serial = certSerial cert
-    when (serial <= 0 || serial >= 2 ^ (160 :: Int)) $
-        vError SerialNumberOutOfBounds
+    case makeSerial $ certSerial cert of 
+        Left e  -> vError SerialNumberOutOfBounds
+        Right _ -> pure ()            
 
     -- Public key constraints
     case certPubKey cert of

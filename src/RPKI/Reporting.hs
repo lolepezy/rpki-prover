@@ -134,6 +134,9 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         InvalidCMSVersion Int |
                         InvalidSignerInfoVersion Int |
                         BinarySigningTimePresent |
+                        ContentTypeAttrMissing |
+                        MessageDigestMissing |
+                        SigningTimeMissing |
                         UnexpectedSignedAttribute OID |
                         EECertSKIMismatch |
                         EECertContentTypeMismatch |

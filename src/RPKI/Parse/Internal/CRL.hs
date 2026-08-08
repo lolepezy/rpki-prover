@@ -105,12 +105,12 @@ parseCrl bs = do
                     onNextContainerMaybe Sequence (getMany getCrlSerial)
                 where
                     getCrlSerial = onNextContainer Sequence $ 
-                        replicateM 2 getNext >>= \case 
-                            [IntVal serial', _] -> 
+                        (,) <$> getNext <*> getNext >>= \case 
+                            (IntVal serial', _) -> 
                                 case makeSerial serial' of 
                                     Left e  -> throwParseError e
                                     Right s -> pure s
-                            s                  -> throwParseError $ "That's not a serial: " <> show s
+                            s               -> throwParseError $ "That's not a serial: " <> show s
                             
                             
                         

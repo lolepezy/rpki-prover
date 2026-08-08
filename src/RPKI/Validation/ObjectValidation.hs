@@ -37,7 +37,7 @@ import qualified RPKI.Util                         as U
 import           RPKI.Validation.Crypto
 import           RPKI.Validation.ResourceValidation
 import           RPKI.Resources.Resources
-import           RPKI.Validation.Common         (extractCaCert)
+import           RPKI.Validation.Common         (extractCert)
 
 
 class ExtensionValidator (t :: CertType) where
@@ -121,7 +121,7 @@ validateTACert tal u (CerRO taCert) = do
     validateTaCertAKI taCert u
     signatureCheck $ validateCertSignature taCert taCert
     validateResourceCertExtensions @CaCerObject @'CACert taCert
-    pure $ extractCaCert taCert
+    pure $ extractCert taCert
 
 validateTACert _ _ _ = vPureError UnknownObjectAsTACert
 
@@ -199,21 +199,23 @@ validateResourceCert :: forall child parent (childCertType :: CertType) .
     Validated CrlObject ->    
     PureValidatorT (Validated child)
 validateResourceCert now cert parentCert vcrl = do
-    
-    signatureCheck $ validateCertSignature cert parentCert
-
-    when (isRevoked cert vcrl) $ 
-        vPureError RevokedResourceCertificate
-
-    void $ validateObjectValidityPeriod cert now    
-
-    unless (correctSkiAki cert parentCert) $
-        vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
-
-    Validated <$> validateResourceCertExtensions @_ @childCertType cert    
+    cert' <- self
+    wrtParent
+    pure $ Validated cert'  
   where
-    correctSkiAki c (getSKI -> SKI s) =
-        maybe False (\(AKI a) -> a == s) $ getAKI c
+    self = do 
+        when (isRevoked cert vcrl) $ 
+            vPureError RevokedResourceCertificate        
+        void $ validateObjectValidityPeriod cert now    
+        validateResourceCertExtensions @_ @childCertType cert
+
+    wrtParent = do 
+        signatureCheck $ validateCertSignature cert parentCert
+        unless (correctSkiAki cert parentCert) $
+            vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
+      where
+        correctSkiAki c (getSKI -> SKI s) =
+            maybe False (\(AKI a) -> a == s) $ getAKI c
 
 
 validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT ValidityPeriod
@@ -229,7 +231,7 @@ validateObjectValidityPeriod c (Now now) = do
 validateResources ::
     (WithRawResourceCertificate child, 
      WithRawResourceCertificate parent,
-     OfCertType parent 'CACert) =>
+     parent `OfCertType` 'CACert) =>
     ValidationRFC ->
     Maybe (VerifiedRS PrefixesAndAsns) ->        
     child ->
@@ -315,22 +317,6 @@ validateCrl now crlObject@CrlObject {..} parentCert = do
         Nothing   -> vPureError NextUpdateTimeNotSet
         Just next -> validateUpdateTimes now thisUpdateTime next
     pure $ Validated crlObject  
-
-
-validateCrlV ::
-    Now ->
-    CrlObject ->
-    ValidatedCaCert ->
-    PureValidatorT (Validated CrlObject)
-validateCrlV now crlObject@CrlObject {..} parentCert = do
-    let SignCRL {..} = signCrl
-    signatureCheck $ validateCRLSignatureV crlObject parentCert
-    when (toAKI (getSKI parentCert) /= aki) $
-        vPureError $ CRL_AKI_DifferentFromCertSKI (getSKI parentCert) aki
-    case nextUpdateTime of
-        Nothing   -> vPureError NextUpdateTimeNotSet
-        Just next -> validateUpdateTimes now thisUpdateTime next
-    pure $ Validated crlObject
     
 
 validateMft ::
@@ -502,17 +488,17 @@ validateAspa validationRFC now aspa parentCert crl verifiedResources = do
     
 
 
-validateCms :: forall a c .
-    (WithRawResourceCertificate c, 
-    WithSKI c, 
-    OfCertType c 'CACert) =>
+validateCms :: forall cms parent .
+    (WithRawResourceCertificate parent, 
+    WithSKI parent, 
+    OfCertType parent 'CACert) =>
     ValidationRFC ->
     Now ->
-    CMS a ->
-    c ->
+    CMS cms ->
+    parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
-    (CMS a -> PureValidatorT ()) ->
+    (CMS cms -> PureValidatorT ()) ->
     PureValidatorT ()
 validateCms validationRFC now cms parentCert crl verifiedResources extraValidation = do
     -- Signature algorithm in the EE certificate has to be
@@ -712,8 +698,8 @@ validateRscV validationRFC now rsc parentCert crl verifiedResources =
     validateCmsV validationRFC now rsc parentCert crl verifiedResources $ \_ -> pure ()
 
 validateBgpCertV ::
-    Now -> ValidatedBgpCert -> ValidatedCaCert -> Validated CrlObject
-    -> PureValidatorT (Validated ValidatedBgpCert, BGPSecPayload)
+    Now -> ValidatedCert 'BGPCert -> ValidatedCert 'CACert -> Validated CrlObject
+    -> PureValidatorT (Validated (ValidatedCert 'BGPCert), BGPSecPayload)
 validateBgpCertV now bgpCert parentCert vcrl = do
     let ee = bgpToEE bgpCert
     signatureCheck $ validateCertSignatureEE ee parentCert
@@ -729,7 +715,7 @@ validateBgpCertV now bgpCert parentCert vcrl = do
                         encodeASN1' DER ((toASN1 $ bgpCert ^. #pubKey) [])
     pure (Validated bgpCert, BGPSecPayload {..})
   where
-    bgpToEE ValidatedBgpCert { aki = mAki, .. } =
+    bgpToEE ValidatedCert { aki = mAki, .. } =
         ValidatedEECert
             { aki = maybe (AKI (unSKI ski)) id mAki, .. }
             

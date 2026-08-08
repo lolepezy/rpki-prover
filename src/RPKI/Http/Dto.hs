@@ -340,12 +340,12 @@ lifecycleToDto :: RpkiObjectLifecycle -> ObjectDto
 lifecycleToDto (OriginalRO _ _ h t) = OriginalBlobD h t
 lifecycleToDto (ValidatedRO vro)    = OriginalBlobD (getHash vro) (getRpkiObjectType vro)
 
-validatedCaToDto :: ValidatedCaCert -> ObjectDto
+validatedCaToDto :: ValidatedCert c -> ObjectDto
 validatedCaToDto cert =
     let
         ValidityPeriod nb na = getValidityPeriod cert
         AllResources ipv4R ipv6R asnR = RPKI.Domain.getResources cert
-        ValidatedCaCert {
+        ValidatedCert {
             pubKey = certPubKey,
             extensions = certExtensions,
             sigAlg = SignatureAlgorithmIdentifier signatureAlgorithm

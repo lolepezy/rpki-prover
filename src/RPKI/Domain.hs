@@ -357,14 +357,21 @@ type ParsedRpkiObject = RpkiObject_
         BgpCerObject 
         CrlObject
 
+type ValidatedMft = ValidatedCMSObject Manifest
+type ValidatedRoa = ValidatedCMSObject [Vrp]
+type ValidatedSpl = ValidatedCMSObject SplPayload
+type ValidatedGbr = ValidatedCMSObject Gbr
+type ValidatedRsc = ValidatedCMSObject Rsc
+type ValidatedAspa = ValidatedCMSObject Aspa
+
 type ValidatedRpkiObject = RpkiObject_ 
         ValidatedCaCert 
-        (ValidatedCMSObject Manifest) 
-        (ValidatedCMSObject [Vrp]) 
-        (ValidatedCMSObject SplPayload) 
-        (ValidatedCMSObject Gbr) 
-        (ValidatedCMSObject Rsc) 
-        (ValidatedCMSObject Aspa) 
+        ValidatedMft
+        ValidatedRoa
+        ValidatedSpl
+        ValidatedGbr
+        ValidatedRsc  
+        ValidatedAspa
         ValidatedBgpCert
         CrlObject
 
@@ -385,9 +392,6 @@ data RpkiObjectType = CER | MFT | CRL | ROA | ASPA | GBR | SPL | BGPSec | RSC
     deriving (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary, NFData)
 
--- instance {-# OVERLAPPING #-} (Generic o, HasType (Maybe AKI) o) => WithAKI o where
---     getAKI o = o ^. typed @(Maybe AKI)
-
 instance {-# OVERLAPPING #-} (Generic o, HasType Hash o) => WithHash o where
     getHash o = o ^. typed @Hash
 
@@ -399,9 +403,6 @@ instance {-# OVERLAPPING #-} (Generic o, HasType AKI o) => WithAKI o where
 
 instance {-# OVERLAPPING #-} WithAKI CrlObject where
     getAKI CrlObject {..} = Just aki
-
-instance WithResources CrlObject where
-    getResources _ = emptyAllResources
 
 instance {-# OVERLAPPING #-} WithAKI CaCerObject where
     getAKI CaCerObject {..} = aki
@@ -475,6 +476,9 @@ instance OfCertType CaCerObject 'CACert
 instance OfCertType EECerObject 'EECert
 instance OfCertType BgpCerObject 'BGPCert
 
+
+-- Ehm, it looks pretty terrible, but it works.
+
 instance (WithAKI ca, WithAKI mft, WithAKI roa, WithAKI spl, WithAKI gbr, 
           WithAKI rsc, WithAKI aspa, WithAKI bgpSec, WithAKI crl) => 
     WithAKI (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl) where
@@ -485,18 +489,10 @@ instance {-# OVERLAPPING #-} (WithHash ca, WithHash mft, WithHash roa, WithHash 
     WithHash (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl) where
     getHash = foldRpkiObject getHash getHash getHash getHash getHash getHash getHash getHash getHash
 
-
-instance (WithResources ca, WithResources mft, WithResources roa, WithResources spl, WithResources gbr,
-          WithResources rsc, WithResources aspa, WithResources bgpSec, WithResources crl) =>
-    WithResources (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl) where
-    getResources = foldRpkiObject 
-                        getResources getResources getResources getResources 
-                        getResources getResources getResources getResources getResources
-
 instance WithRpkiObjectType (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl) where
     getRpkiObjectType = foldRpkiObject 
-                         (const CER) (const MFT) (const ROA) (const SPL) 
-                         (const GBR) (const RSC) (const ASPA) (const BGPSec) (const CRL)
+                         (const CER) (const MFT) (const ROA) (const SPL) (const GBR) 
+                         (const RSC) (const ASPA) (const BGPSec) (const CRL)
 
 
 data Located a = Located { 
@@ -859,8 +855,7 @@ instance Monoid EarliestToExpire where
     mempty = EarliestToExpire $ Instant $ 1000_000_000 * 9_223_372_036
 
 
--- | Minimized CA certificate.
-data ValidatedCaCert = ValidatedCaCert {
+data ValidatedCert (t :: CertType) = ValidatedCert {
         hash       :: Hash,
         ski        :: SKI,
         aki        :: Maybe AKI,
@@ -874,12 +869,19 @@ data ValidatedCaCert = ValidatedCaCert {
         sigAlg     :: SignatureAlgorithmIdentifier
     }
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary)    
 
-instance {-# OVERLAPPING #-} WithAKI ValidatedCaCert where getAKI (ValidatedCaCert { aki }) = aki
-instance WithResources ValidatedCaCert where getResources (ValidatedCaCert { resources }) = resources
-instance {-# OVERLAPPING #-} WithValidityPeriod ValidatedCaCert where getValidityPeriod (ValidatedCaCert { validity }) = validity
+instance {-# OVERLAPPING #-} WithSerial (ValidatedCert t) where getSerial (ValidatedCert { serial }) = serial
+instance {-# OVERLAPPING #-} WithAKI (ValidatedCert t) where getAKI (ValidatedCert { aki }) = aki
+instance {-# OVERLAPPING #-} WithResources (ValidatedCert t) where getResources (ValidatedCert { resources }) = resources
+instance {-# OVERLAPPING #-} WithValidityPeriod (ValidatedCert t) where getValidityPeriod (ValidatedCert { validity }) = validity
 
+
+-- | Minimized CA certificate.
+type ValidatedCaCert = ValidatedCert 'CACert
+
+-- | Minimized BGPSec certificate.
+type ValidatedBgpCert = ValidatedCert 'BGPCert
 
 -- | Minimized EE certificate, stripped of fields that are either
 -- constant-after-prevalidation (CMS versions, digest algorithms) or
@@ -905,34 +907,13 @@ instance WithResources ValidatedEECert where getResources (ValidatedEECert { res
 instance {-# OVERLAPPING #-} WithValidityPeriod ValidatedEECert where getValidityPeriod (ValidatedEECert { validity }) = validity
 
 
--- | Minimized BGPSec certificate.
-data ValidatedBgpCert = ValidatedBgpCert {
-        hash       :: Hash,
-        ski        :: SKI,
-        aki        :: Maybe AKI,
-        resources  :: AllResources,
-        pubKey     :: X509.PubKey,
-        serial     :: Serial,
-        validity   :: ValidityPeriod,
-        extensions :: [X509.ExtensionRaw],
-        encoded    :: BSS.ShortByteString,
-        signature  :: SignatureValue,
-        sigAlg     :: SignatureAlgorithmIdentifier
-    }
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary)
-instance {-# OVERLAPPING #-} WithAKI ValidatedBgpCert where getAKI (ValidatedBgpCert { aki }) = aki
-instance WithResources ValidatedBgpCert where getResources (ValidatedBgpCert { resources }) = resources
-instance {-# OVERLAPPING #-} WithValidityPeriod ValidatedBgpCert where getValidityPeriod (ValidatedBgpCert { validity }) = validity
-
-
 -- | Minimized CMS-based signed object.  Replaces 'CMSBasedObject a' in the
 -- post-prevalidation in-memory path.
 data ValidatedCMSObject a = ValidatedCMSObject {
         hash          :: Hash,
         content       :: a,
         eeCert        :: ValidatedEECert,
-        signingTime   :: Maybe Instant,
+        signingTime   :: Instant,
         cmsSignature  :: SignatureValue,
         signedAttrsBS :: BSS.ShortByteString   -- raw DER signed-attributes
     }
@@ -940,12 +921,12 @@ data ValidatedCMSObject a = ValidatedCMSObject {
     deriving anyclass (TheBinary)
 
 instance {-# OVERLAPPING #-} WithAKI  (ValidatedCMSObject a) where getAKI  (ValidatedCMSObject { eeCert = ValidatedEECert { aki } }) = Just aki
-instance WithResources (ValidatedCMSObject a) where getResources (ValidatedCMSObject { eeCert }) = getResources eeCert
+instance {-# OVERLAPPING #-} WithResources (ValidatedCMSObject a) where getResources (ValidatedCMSObject { eeCert }) = getResources eeCert
 instance {-# OVERLAPPING #-} WithValidityPeriod (ValidatedCMSObject a) where getValidityPeriod (ValidatedCMSObject { eeCert }) = getValidityPeriod eeCert
 
-instance {-# OVERLAPPING #-} WithSerial ValidatedCaCert  where getSerial (ValidatedCaCert  { serial }) = serial
-instance {-# OVERLAPPING #-} WithSerial ValidatedBgpCert where getSerial (ValidatedBgpCert { serial }) = serial
-instance {-# OVERLAPPING #-} WithSerial ValidatedEECert  where getSerial (ValidatedEECert  { serial }) = serial
+instance {-# OVERLAPPING #-} WithSerial ValidatedEECert  where 
+    getSerial (ValidatedEECert  { serial }) = serial
+
 instance {-# OVERLAPPING #-} WithSerial (ValidatedCMSObject a) where
     getSerial (ValidatedCMSObject { eeCert = ValidatedEECert { serial } }) = serial
 
