@@ -246,22 +246,22 @@ validateResources validationRFC verifiedResources childCert parentCert =
 
 
 validateBgpCert ::
-    forall child parent.
-    ( WithRawResourceCertificate child
+    forall bgpCert parent.
+    ( WithRawResourceCertificate bgpCert
     , WithRawResourceCertificate parent
     , WithSKI parent
-    , WithAKI child
-    , WithSKI child
-    , WithValidityPeriod child
-    , WithSerial child
-    , child `OfCertType` BGPCert
+    , WithAKI bgpCert
+    , WithSKI bgpCert
+    , WithValidityPeriod bgpCert
+    , WithSerial bgpCert
+    , bgpCert `OfCertType` BGPCert
     , parent `OfCertType` CACert
     ) =>
     Now ->
-    child ->
+    bgpCert ->
     parent ->
     Validated CrlObject ->
-    PureValidatorT (Validated child, BGPSecPayload)
+    PureValidatorT (Validated bgpCert, BGPSecPayload)
 validateBgpCert now bgpCert parentCert validCrl = do
     -- Validate BGP certificate according to 
     -- https://www.rfc-editor.org/rfc/rfc8209.html#section-3.3    
@@ -455,7 +455,7 @@ validateRsc validationRFC now rsc parentCert crl verifiedResources = do
     pure $ Validated rsc
 
 validateAspa ::
-    (WithRawResourceCertificate parent, WithSKI parent, OfCertType parent 'CACert) =>
+    (WithRawResourceCertificate parent, WithSKI parent, parent `OfCertType` 'CACert) =>
     ValidationRFC ->
     Now ->
     AspaObject ->

@@ -227,7 +227,6 @@ extractCMSObject CMSBasedObject { hash, cmsPayload } =
         content     = cContent scEncapContentInfo
     in ValidatedCMSObject { hash, content, eeCert, signingTime, cmsSignature, signedAttrsBS }
 
-
 -- | Validate self-contained structural properties of a CA certificate.
 validateCaCertStructure :: Monad m => CaCerObject -> ValidatorT m ()
 validateCaCertStructure ca@CaCerObject { ski = SKI (KI skiBytes) } = do
@@ -296,7 +295,7 @@ validateCmsStructure cmsObj = do
 
 
 -- | Validate manifest-specific structural invariants.
-validateMftStructure :: Monad m => MftObject -> ValidatorT m Manifest
+validateMftStructure :: Monad m => MftObject -> ValidatorT m ()
 validateMftStructure mft = do
     let Manifest { thisTime, nextTime, mftEntries } = getCMSContent (cmsPayload mft)
 
