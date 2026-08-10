@@ -493,8 +493,9 @@ saveSnapshot
           where
             tryToParse rpkiURL hash blob type_ = do
                 z <- liftIO $ runValidatorT (newScopes $ unURI uri) $ do
-                    ro <- vHoist $ readObjectOfType type_ blob
-                    prevalidateObject ro
+                        vHoist $ do 
+                            ro <- readObjectOfType type_ blob
+                            prevalidateObject ro
                 (evaluate $!
                     case z of
                         (Left _, vs) ->
@@ -634,8 +635,9 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
           where
             tryToParse rpkiURL hash blob type_ = do
                 z <- liftIO $ runValidatorT (newScopes $ unURI uri) $ do
-                    ro <- vHoist $ readObjectOfType type_ blob
-                    prevalidateObject ro
+                        vHoist $ do 
+                            ro <- readObjectOfType type_ blob
+                            prevalidateObject ro
                 (evaluate $!
                     case z of 
                         (Left _, vs) ->

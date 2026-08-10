@@ -37,7 +37,7 @@ import qualified RPKI.Util                         as U
 import           RPKI.Validation.Crypto
 import           RPKI.Validation.ResourceValidation
 import           RPKI.Resources.Resources
-import           RPKI.Validation.Common         (extractCert)
+import           RPKI.Validation.Common        
 
 
 class ExtensionValidator (t :: CertType) where
@@ -293,12 +293,6 @@ validateBgpCert now bgpCert parentCert validCrl = do
     let bgpSecSpki = getSubjectPublicKeyInfo cwsX509
     pure (Validated bgpCert, BGPSecPayload {..})
 
-
-resourceSetMustBeEmpty :: RSet (IntervalSet a) -> ValidationError -> PureValidatorT ()
-resourceSetMustBeEmpty ips errConstructor = 
-    case ips of 
-        Inherit -> vError errConstructor
-        RS i    -> unless (IS.null i) $ vError errConstructor  
     
 
 -- | Validate CRL object with the parent certificate

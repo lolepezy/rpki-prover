@@ -6,21 +6,17 @@ module RPKI.Validation.Common where
 import           Control.Monad
 
 import           Control.Lens
-import           Data.Generics.Product.Typed
-
 import           Data.Foldable
 import qualified Data.Set.NonEmpty                as NESet
 import qualified Data.Set                         as Set
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Text                        as Text
-import           GHC.Generics
 
 import qualified Data.ByteString.Short            as BSS
-import           Data.Maybe                       (listToMaybe)
 
+import           Data.X509
 import           Data.ASN1.Types                  (ASN1(..), ASN1Object(..))
 import           Data.ASN1.BitArray               (BitArray(..))
-import           Data.X509                        (PubKey(..), certPubKey, certValidity, certSerial)
 import qualified Data.X509                        as X509
 import qualified Crypto.PubKey.RSA.Types          as RSA
 import qualified Crypto.Hash.SHA1                 as SHA1
@@ -31,6 +27,7 @@ import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
+import qualified RPKI.Resources.IntervalContainers as IS
 import           RPKI.Time                        (newInstant)
 import qualified RPKI.Util as U
 
@@ -132,7 +129,7 @@ checkCrlLocation crl parentCertificate =
 
 -- | Full structural validation including multiple-location check.
 -- Use in contexts (e.g. TopDown) where the full 'Located' object is available.
-prevalidate :: Monad m => Located ParsedRpkiObject -> ValidatorT m ValidatedRpkiObject
+prevalidate :: Located ParsedRpkiObject -> PureValidatorT ValidatedRpkiObject
 prevalidate located@(Located _ rpkiObject) = do
     validateObjectLocations located
     prevalidateObject rpkiObject
@@ -141,7 +138,7 @@ prevalidate located@(Located _ rpkiObject) = do
 -- | Self-contained structural validation without a location context.
 -- Used at object-save time (when only one URL is known) and wherever
 -- constructing a 'Located' wrapper is unnecessary overhead.
-prevalidateObject :: Monad m => ParsedRpkiObject -> ValidatorT m ValidatedRpkiObject
+prevalidateObject :: ParsedRpkiObject -> PureValidatorT ValidatedRpkiObject
 prevalidateObject rpkiObject = do
     case rpkiObject of
         CerRO ca    -> validateCaCertStructure ca
@@ -219,8 +216,7 @@ extractCMSObject CMSBasedObject { hash, cmsPayload } =
         SignerInfos { signature = cmsSignature, signedAttrs } = scSignerInfos
         SignedAttributes attrs signedAttrsBS = signedAttrs
 
-        -- It will be there, it's validated according to 
-        -- https://datatracker.ietf.org/doc/html/rfc9589#name-updates-to-rfc-6488
+        -- It will be there, it's already validated         
         [signingTime] = [ newInstant dt | SigningTime dt _ <- attrs ]
 
         eeCert      = extractEECert scCertificate
@@ -228,29 +224,29 @@ extractCMSObject CMSBasedObject { hash, cmsPayload } =
     in ValidatedCMSObject { hash, content, eeCert, signingTime, cmsSignature, signedAttrsBS }
 
 -- | Validate self-contained structural properties of a CA certificate.
-validateCaCertStructure :: Monad m => CaCerObject -> ValidatorT m ()
-validateCaCertStructure ca@CaCerObject { ski = SKI (KI skiBytes) } = do
+validateCaCertStructure :: CaCerObject -> PureValidatorT ()
+validateCaCertStructure ca@CaCerObject { ski } = do
     let certWS = getCertWithSignature ca
     validateCertX509Structure certWS
-    validateSKIMatchesPublicKey skiBytes certWS
+    validateSKIMatchesPublicKey ski certWS
 
 
 -- | Validate self-contained structural properties of a BGP security certificate.
-validateBgpCertStructure :: Monad m => BgpCerObject -> ValidatorT m ()
-validateBgpCertStructure bgp@BgpCerObject { ski = SKI (KI skiBytes) } = do
+validateBgpCertStructure :: BgpCerObject -> PureValidatorT ()
+validateBgpCertStructure bgp@BgpCerObject { ski } = do
     let certWS = getCertWithSignature bgp
     validateCertX509Structure certWS
     let pubKey = certPubKey $ cwsX509certificate certWS
     case pubKey of
         PubKeyEC _ -> pure ()
         _          -> vError $ InvalidPublicKey "BGPsec certificate must use an EC public key"
-    validateSKIMatchesPublicKey skiBytes certWS
+    validateSKIMatchesPublicKey ski certWS
 
 
 -- | Validate the CMS envelope structure common to all signed objects.
-validateCmsStructure :: Monad m => CMSBasedObject a -> ValidatorT m ()
-validateCmsStructure cmsObj = do
-    let CMS SignedObject { soContent = sd } = cmsPayload cmsObj
+validateCmsStructure :: CMSBasedObject a -> PureValidatorT ()
+validateCmsStructure cmsObject = do
+    let cms@(CMS SignedObject { soContent = sd }) = cmsPayload cmsObject
     let SignedData { scVersion, scSignerInfos, scEncapContentInfo, scCertificate } = sd
 
     -- RFC 6488 §2.1.1: SignedData.version must be 3
@@ -266,6 +262,8 @@ validateCmsStructure cmsObj = do
     -- Validate each signed attribute
     let SignedAttributes attrs _ = signedAttrs
 
+    -- https://datatracker.ietf.org/doc/html/rfc9589#name-updates-to-rfc-6488
+    -- There must be exactly three signed attributes: contentType, signingTime, and messageDigest.
     when (null [ () | ContentTypeAttr _ <- attrs ]) $     
         vError ContentTypeAttrMissing
     
@@ -275,27 +273,45 @@ validateCmsStructure cmsObj = do
     when (null [ () | MessageDigest _ <- attrs ]) $     
         vError MessageDigestMissing 
 
+    -- And no other signed attributes are allowed. 
+    -- If any unknown attributes are present, it's an error.
     for_ attrs $ \case        
-        SigningTime _ _    -> pure ()
+        MessageDigest _ -> pure ()
+        SigningTime _ _ -> pure ()
         ContentTypeAttr ct ->
             unless (ct == eContentType scEncapContentInfo) $
-                vError EECertContentTypeMismatch
-        MessageDigest _ -> pure ()
+                vError EECertContentTypeMismatch        
         BinarySigningTime _    -> vError BinarySigningTimePresent        
         UnknownAttribute oid _ -> vError $ UnexpectedSignedAttribute oid        
 
     -- SignerInfo SID must equal the EE certificate's SKI
-    let SKI (KI skiBytes)        = getSKI scCertificate
-    let SignerIdentifier siBytes  = siSid
+    let ski@(SKI (KI skiBytes))  = getSKI scCertificate
+    let SignerIdentifier siBytes = siSid
     unless (skiBytes == siBytes) $ vError EECertSKIMismatch
 
     -- Validate the embedded EE certificate
     validateCertX509Structure (getCertWithSignature scCertificate)
-    validateSKIMatchesPublicKey skiBytes (getCertWithSignature scCertificate)
+    validateSKIMatchesPublicKey ski (getCertWithSignature scCertificate)
+
+    -- Signature algorithm in the EE certificate has to be
+    -- exactly the same as in the signed attributes
+    let eeCert = getEEResourceCert $ unCMS cms
+    let certWSign = getCertWithSignature eeCert
+    let SignatureAlgorithmIdentifier eeCertSigAlg = certWSign ^. #cwsSignatureAlgorithm
+    let attributeSigAlg = certSignatureAlg $ certWSign ^. #cwsX509certificate
+
+    -- That can be a problem:
+    -- http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt
+    -- Correct behaviour is to request exact match here.
+    unless (eeCertSigAlg == attributeSigAlg) $
+        vPureError $
+            CMSSignatureAlgorithmMismatch
+                (Text.pack $ show eeCertSigAlg)
+                (Text.pack $ show attributeSigAlg)    
 
 
 -- | Validate manifest-specific structural invariants.
-validateMftStructure :: Monad m => MftObject -> ValidatorT m ()
+validateMftStructure :: MftObject -> PureValidatorT ()
 validateMftStructure mft = do
     let Manifest { thisTime, nextTime, mftEntries } = getCMSContent (cmsPayload mft)
 
@@ -322,14 +338,32 @@ validateMftStructure mft = do
 
 
 -- | Validate ASPA content invariants.
-validateAspaContent :: Monad m => AspaObject -> ValidatorT m ()
-validateAspaContent aspa =
+validateAspaContent :: AspaObject -> PureValidatorT ()
+validateAspaContent aspa = do 
+    let a = getCMSContent $ cmsPayload aspa
     when (Set.null $ providers $ getCMSContent (cmsPayload aspa)) $
-        vError AspaNoAsn
+        vError AspaNoAsn    
+
+    -- https://www.ietf.org/archive/id/draft-ietf-sidrops-aspa-profile-12.html#name-aspa-validation
+    let AllResources ipv4 ipv6 asns = getRawCert (getEEResourceCert $ unCMS (cmsPayload aspa)) ^. #resources
+    resourceSetMustBeEmpty ipv4 AspaIPv4Present
+    resourceSetMustBeEmpty ipv6 AspaIPv6Present
+
+    asnSet <- case asns of 
+                Inherit -> vError AspaNoAsn
+                RS s    -> pure s
+
+    let Aspa {..} = getCMSContent (cmsPayload aspa)
+
+    unless ((AS customer) `IS.isInside` asnSet) $ 
+        vError $ AspaAsNotOnEECert customer (IS.toList asnSet)
+
+    when (customer `Set.member` providers) $
+        vError $ AspaOverlappingCustomerProvider customer $ Set.toList providers        
 
 
 -- | Validate CRL structural invariants.
-validateCrlStructure :: Monad m => CrlObject -> ValidatorT m ()
+validateCrlStructure :: CrlObject -> PureValidatorT ()
 validateCrlStructure CrlObject { signCrl = SignCRL { thisUpdateTime, nextUpdateTime } } =
     case nextUpdateTime of
         Nothing         -> vError NextUpdateTimeNotSet
@@ -339,7 +373,7 @@ validateCrlStructure CrlObject { signCrl = SignCRL { thisUpdateTime, nextUpdateT
 
 
 -- | Validate X.509 certificate properties checkable without a parent certificate.
-validateCertX509Structure :: Monad m => CertificateWithSignature -> ValidatorT m ()
+validateCertX509Structure :: CertificateWithSignature -> PureValidatorT ()
 validateCertX509Structure CertificateWithSignature { cwsX509certificate = cert } = do
     -- notBefore must be strictly before notAfter        
     let (nb, na) = certValidity cert
@@ -368,11 +402,10 @@ validateCertX509Structure CertificateWithSignature { cwsX509certificate = cert }
 
 -- | Verify that the declared SKI equals SHA-1 of the subjectPublicKey bit-string value.
 -- RFC 6487 §4.8.2 / RFC 5280 §4.2.1.2: SKI = SHA-1(subjectPublicKey BIT STRING value).
-validateSKIMatchesPublicKey :: Monad m
-                            => BSS.ShortByteString   -- ^ raw bytes of the SKI extension KI
+validateSKIMatchesPublicKey :: SKI   -- ^ raw bytes of the SKI extension KI
                             -> CertificateWithSignature
-                            -> ValidatorT m ()
-validateSKIMatchesPublicKey skiBytes certWS = do
+                            -> PureValidatorT ()
+validateSKIMatchesPublicKey (SKI (KI skiBytes)) certWS = do
     let pubKey = certPubKey $ cwsX509certificate certWS
     -- toASN1 produces the SubjectPublicKeyInfo flat ASN1 sequence.
     -- The subjectPublicKey BIT STRING value is the preimage for the SHA-1 SKI.
@@ -383,6 +416,12 @@ validateSKIMatchesPublicKey skiBytes certWS = do
         _ ->
             vError $ InvalidKI "Cannot extract subjectPublicKey bit string from public key"
 
+
+resourceSetMustBeEmpty :: RSet (IntervalSet a) -> ValidationError -> PureValidatorT ()
+resourceSetMustBeEmpty ips errConstructor = 
+    case ips of 
+        Inherit -> vError errConstructor
+        RS i    -> unless (IS.null i) $ vError errConstructor  
 
 -- | Return deduplicated elements that appear more than once in the input list.
 duplicatesOf :: Ord a => [a] -> [a]

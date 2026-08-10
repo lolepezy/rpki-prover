@@ -290,8 +290,9 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db =
             tryToParse hash blob type_ = do            
                 let scopes = newScopes $ unURI $ getURL rpkiURL
                 z <- liftIO $ runValidatorT scopes $ do
-                    ro <- vHoist $ readObjectOfType type_ blob
-                    prevalidateObject ro
+                        vHoist $ do 
+                            ro <- readObjectOfType type_ blob
+                            prevalidateObject ro
                 (evaluate $!
                     case z of
                         (Left _, vs) ->
