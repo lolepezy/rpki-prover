@@ -339,11 +339,7 @@ validateMftStructure mft = do
 
 -- | Validate ASPA content invariants.
 validateAspaContent :: AspaObject -> PureValidatorT ()
-validateAspaContent aspa = do 
-    let a = getCMSContent $ cmsPayload aspa
-    when (Set.null $ providers $ getCMSContent (cmsPayload aspa)) $
-        vError AspaNoAsn    
-
+validateAspaContent aspa = do     
     -- https://www.ietf.org/archive/id/draft-ietf-sidrops-aspa-profile-12.html#name-aspa-validation
     let AllResources ipv4 ipv6 asns = getRawCert (getEEResourceCert $ unCMS (cmsPayload aspa)) ^. #resources
     resourceSetMustBeEmpty ipv4 AspaIPv4Present
@@ -354,6 +350,9 @@ validateAspaContent aspa = do
                 RS s    -> pure s
 
     let Aspa {..} = getCMSContent (cmsPayload aspa)
+
+    when (Set.null providers) $
+        vError AspaNoAsn    
 
     unless ((AS customer) `IS.isInside` asnSet) $ 
         vError $ AspaAsNotOnEECert customer (IS.toList asnSet)
