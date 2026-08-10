@@ -11,6 +11,7 @@ import RPKI.Resources.ResourcesSpec
 import RPKI.Resources.ValiditySpec
 import RPKI.AppMonadSpec
 import RPKI.LoggingSpec
+import RPKI.DomainSpec
 import RPKI.RepositorySpec
 import RPKI.FetchSpec
 import RPKI.RTR.RtrSpec
@@ -26,6 +27,7 @@ main = defaultMain $ testGroup "All tests" [
         databaseGroup,
         resourceGroup,        
         validityGroup,
+        domainSpec,
         repositoryGroup,
         rtrGroup,
         httpSpec,

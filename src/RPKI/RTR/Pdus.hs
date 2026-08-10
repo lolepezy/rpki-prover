@@ -14,7 +14,7 @@ import           Data.Binary.Put          (runPut, putLazyByteString, putByteStr
 import           Data.Int
 
 import           Control.Monad            (unless)
-import           RPKI.Domain              (toNormalBS, KI (..), SKI (..), skiLen, toShortBS)
+import           RPKI.Domain              (SKI (..), skiLen, kiToBS, mkKI)
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RTR.Protocol
@@ -111,11 +111,11 @@ pduToBytes pdu protocolVersion =
                 put (0 :: Word16) >> put pduLen
 
             -- This is illegal to use for V0, but we are not going to complain here
-            RouterKeyPdu (ASN asn') flags (SKI (KI ski)) spki -> do                
+            RouterKeyPdu (ASN asn') flags (SKI ki) spki -> do                
                 put flags
                 put (0 :: Word8)
                 put pduLen
-                putByteString $ toNormalBS ski
+                putByteString $ kiToBS ki
                 put asn'
                 putLazyByteString spki                
 
@@ -265,7 +265,7 @@ parseVersionedPdu protocolVersion pduType =
                     (fromIntegral (BS.length spki) :: Word32)
              
             pure $ RouterKeyPdu asn' flags 
-                    (SKI (KI $ toShortBS ski)) 
+                    (SKI (mkKI ski)) 
                     (LBS.fromStrict spki)
 
         PduCode 10 -> do 

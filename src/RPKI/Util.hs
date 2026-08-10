@@ -13,9 +13,9 @@ import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Base16      as Hex
 import qualified Data.ByteString.Char8       as C
-import qualified Data.ByteString.Short       as BSS
 import qualified Data.ByteString.Base64      as B64
 import qualified Data.Base64.Types           as B64T
+import           Data.Bits                   (shiftL, (.|.))
 import           Data.Char
 import qualified Data.List                   as List
 import           Data.Foldable (toList)
@@ -39,16 +39,12 @@ import           Text.URI.Lens
 
 
 sha256 :: LBS.ByteString -> Hash
-sha256 = mkHash . S256.hashlazy
+sha256 = newHash . S256.hashlazy
 {-# INLINE sha256 #-}
 
 sha256s :: BS.ByteString -> Hash
-sha256s = mkHash . S256.hash
+sha256s = newHash . S256.hash
 {-# INLINE sha256s #-}
-
-mkHash :: BS.ByteString -> Hash
-mkHash = Hash . BSS.toShort
-{-# INLINE mkHash #-}
 
 unhex :: BS.ByteString -> Maybe BS.ByteString
 unhex hexed = either (const Nothing) Just $ Hex.decode hexed    

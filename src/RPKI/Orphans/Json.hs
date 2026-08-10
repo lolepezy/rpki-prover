@@ -106,10 +106,10 @@ instance ToJSON AKI where
     toJSON (AKI ki) = toJSON ki
 
 instance ToJSON Hash where
-    toJSON (Hash h) = shortBsJson h
+    toJSON = toJSON . showHex . Domain.hashToBS
 
 instance ToJSON KI where
-    toJSON (KI bs) = shortBsJson bs
+    toJSON = toJSON . showHex . Domain.kiToBS
       
 instance ToJSON Domain.URI where
     toJSON (Domain.URI u) = toJSON u

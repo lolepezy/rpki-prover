@@ -45,8 +45,6 @@ import           RPKI.Resources.Types
 import           RPKI.Store.Types hiding (object)
 import           RPKI.RTR.Types
 import           RPKI.Time
-import           RPKI.Util (mkHash)
-
 
 data ValidationsDto a = ValidationsDto {
         worldVersion :: WorldVersion,
@@ -679,13 +677,13 @@ toPublicationPointDto PublicationPoints {..} = PublicationPointsDto {
 parseHash :: Text -> Either Text Hash
 parseHash hashText = bimap 
     (Text.pack . ("Broken hex: " <>) . show)
-    mkHash
+    newHash
     $ Hex.decode $ encodeUtf8 hashText
 
 parseAki :: Text -> Either Text AKI
 parseAki akiText = bimap 
     (Text.pack . ("Broken hex: " <>) . show)
-    (AKI . KI . toShortBS) 
+    (AKI . mkKI) 
     $ Hex.decode $ encodeUtf8 akiText
 
 

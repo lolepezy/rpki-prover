@@ -107,7 +107,7 @@ downloadHashedBS config uri@(URI u) eTag expectedHash hashMishmatch = liftIO $ d
                         (config ^. typed @RrdpConf . #maxSize)
                         S256.init
                         S256.update
-                        (U.mkHash . S256.finalize))
+                        (newHash . S256.finalize))
         if actualHash /= expectedHash 
             then pure $! hashMishmatch actualHash
             else do

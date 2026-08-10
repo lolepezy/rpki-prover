@@ -62,7 +62,7 @@ parseMft bs = do
         getEntries = onNextContainer Sequence $
             getMany $ onNextContainer Sequence $
                 MftPair <$> getIA5String (pure . Text.pack) "Wrong file name"
-                        <*> getBitString (pure . U.mkHash) "Wrong hash"
+                        <*> getBitString (pure . newHash) "Wrong hash"
 
         getTime message = getNext >>= \case
             ASN1Time TimeGeneralized dt _ -> pure dt

@@ -68,9 +68,9 @@ parseRsc bs = do
                     getNext >>= \case 
                         ASN1String (ASN1CharacterString IA5 filename) ->
                             getNext >>= \case
-                                OctetString os -> pure $ T2 (Just $ U.convert filename) (U.mkHash os)
+                                OctetString os -> pure $ T2 (Just $ U.convert filename) (newHash os)
                                 other          -> throwParseError $ "Unexpected checklist item: " ++ show other
-                        OctetString os         -> pure $ T2 Nothing (U.mkHash os)
+                        OctetString os         -> pure $ T2 Nothing (newHash os)
                         other                  -> throwParseError $ "Unexpected checklist item: " ++ show other
     
     parseIps = do 
