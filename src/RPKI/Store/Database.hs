@@ -85,7 +85,8 @@ import           GHC.Natural
 import           Text.Read
 
 import           Database.SQLite.Simple
-import           Data.Store (Store)
+import           Data.Bits                (shiftR, (.&.))
+import           Data.Store               (Store)
 import qualified Data.ByteString       as BS
 
 import           RPKI.Domain  hiding (object)
@@ -197,6 +198,15 @@ insertCompressed conn q val = do
 
 storageError :: SomeException -> AppError
 storageError = StorageE . StorageError . fmtEx
+
+-- | Encode a non-negative Integer as a length-prefixed big-endian BLOB.
+-- Length-then-bytes encoding means memcmp / SQLite BLOB ORDER BY gives numeric order.
+serialToBlob :: Integer -> BS.ByteString
+serialToBlob n = BS.pack (fromIntegral (length bytes) : bytes)
+  where
+    bytes = go n []
+    go 0 acc = acc
+    go m acc = go (m `shiftR` 8) (fromIntegral (m .&. 0xFF) : acc)
 
 
 -- ---------------------------------------------------------------------------
@@ -310,10 +320,11 @@ saveObject (Tx conn) _ lifecycle wv = liftIO $ do
             forM_ (getAKI mft) $ \aki_ ->
                 let meta = getMftMetaFromWellStructured mft objectKey
                 in execute conn
-                    "INSERT OR IGNORE INTO manifest_meta(object_key, aki, meta) \
-                    \VALUES (?, ?, ?)"
+                    "INSERT OR IGNORE INTO manifest_meta(object_key, aki, manifest_number, meta) \
+                    \VALUES (?, ?, ?, ?)"
                     ( SQLite.toInt64 objectKey
                     , SQLite.akiToBlob aki_
+                    , let Serial mftNum = meta ^. #mftNumber in serialToBlob mftNum
                     , serialiseField meta )
         _ -> pure ()
 
@@ -395,9 +406,9 @@ getMftMetaFromWellStructured WellStructuredCms { content = Manifest {..} } key =
 getMftsForAKI :: MonadIO m => Tx mode -> DB -> AKI -> m [MftMeta]
 getMftsForAKI (Tx conn) _ aki_ = liftIO $ do
     rows <- query conn
-        "SELECT meta FROM manifest_meta WHERE aki = ?"
+        "SELECT meta FROM manifest_meta WHERE aki = ? ORDER BY manifest_number DESC"
         (Only (SQLite.akiToBlob aki_))
-    pure $ List.sortOn Down $ map (deserialiseField . fromOnly) rows
+    pure $ map (deserialiseField . fromOnly) rows
 
 findAllMftsByAKI :: MonadIO m
                  => Tx mode -> DB -> AKI -> m [(MftMeta, Keyed (Located WellStructuredMft))]

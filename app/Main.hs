@@ -55,6 +55,7 @@ import           RPKI.Http.HttpServer
 import           RPKI.Logging
 
 import           RPKI.Store.AppStorage
+import           RPKI.Store.AppSqliteStorage (AppSQLiteEnv)
 import qualified RPKI.Store.Database as DB
 import qualified RPKI.Store.SQLite   as SQLite
 import           RPKI.SLURM.SlurmProcessing
@@ -265,7 +266,7 @@ runHttpApi appContext@AppContext {..} = do
         (\(e :: SomeException) -> logError logger [i|Interrupted HTTP server: #{e}.|])
 
 
-createAppContext :: CLIOptions -> AppLogger -> LogLevel -> ValidatorT IO AppLmdbEnv
+createAppContext :: CLIOptions -> AppLogger -> LogLevel -> ValidatorT IO AppSQLiteEnv
 createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     programPath <- liftIO getExecutablePath
@@ -311,7 +312,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
         void $ readSlurms localExceptions
     
     appState <- createAppState logger localExceptions    
-    
+
     (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $
                 createSqliteDatabase cached config resetCache True
 
@@ -338,7 +339,6 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
         -- Nothing special, the cache has the version as expected
         WasCompatible    -> pure ()
-
     logInfo logger [i|Created application context with configuration: 
 #{shower (config)}|]
     pure appContext
@@ -541,7 +541,7 @@ rsyncPrefetches CLIOptions {..} = do
             Right rsyncURL -> pure rsyncURL
 
 
-createWorkerAppContext :: Config -> AppLogger -> ValidatorT IO AppLmdbEnv
+createWorkerAppContext :: Config -> AppLogger -> ValidatorT IO AppSQLiteEnv
 createWorkerAppContext config logger = do
     (db, _) <- fromTry (InitE . InitError . fmtEx) $
                 createSqliteDatabase (configValue $ config ^. #cacheDirectory) config False False
@@ -608,7 +608,7 @@ executeVerifier cliOptions@CLIOptions {..} = do
                     _              -> logError logger "Both directory and list of files are set, leave just one of them to verify."
 
 
-createVerifierContext :: CLIOptions -> AppLogger -> ValidatorT IO AppLmdbEnv
+createVerifierContext :: CLIOptions -> AppLogger -> ValidatorT IO AppSQLiteEnv
 createVerifierContext cliOptions logger = do
     rootDir <- either id id <$> getRoot cliOptions
     cached <- fromEitherM $ first (InitE . InitError) <$> checkSubDirectory rootDir cacheDirName

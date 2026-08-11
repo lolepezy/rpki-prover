@@ -14,7 +14,7 @@ import           System.Directory
 import           Data.String.Interpolate.IsString
 
 import RPKI.Config
-import RPKI.Store.Base.LMDB
+-- import RPKI.Store.Base.LMDB
 import RPKI.Store.AppLmdbStorage
 import RPKI.AppState
 import RPKI.AppContext

@@ -37,7 +37,7 @@ import           RPKI.Logging
 import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Repository
-import           RPKI.Store.Base.LMDB
+-- import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Map               as M
 import           RPKI.Store.Base.SafeMap           as SM
 import           RPKI.Store.Base.Storable
@@ -47,7 +47,6 @@ import           RPKI.Store.Database    (DB(..))
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Validation.Common
 import           RPKI.Validation.ObjectValidation
-import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 
 import qualified RPKI.Store.MakeLmdb as Lmdb

@@ -21,7 +21,7 @@ import           RPKI.AppTypes
 import           RPKI.Logging
 import           RPKI.Worker
 import           RPKI.Reporting
-import           RPKI.Store.Base.LMDB
+-- import           RPKI.Store.Base.LMDB
 
 import qualified RPKI.Store.Database             as DB
 import           RPKI.Store.MakeLmdb

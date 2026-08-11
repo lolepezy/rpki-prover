@@ -201,6 +201,7 @@ library
       RPKI.RTR.Types
       RPKI.SLURM.SlurmProcessing
       RPKI.SLURM.Types
+      RPKI.Store.AppSqliteStorage
       RPKI.Store.AppStorage
       RPKI.Store.Base.Serialisation
       RPKI.Store.Base.Storable

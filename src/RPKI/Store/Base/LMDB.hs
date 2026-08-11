@@ -17,7 +17,7 @@ import           Data.Hourglass
 
 
 import RPKI.Store.Base.Storable
-import RPKI.Store.Base.Storage
+-- import RPKI.Store.Base.Storage
 import RPKI.Store.Base.Serialisation
 import RPKI.Parallel
 import RPKI.AppTypes
@@ -32,8 +32,8 @@ import Data.Proxy as P
 
 import Lmdb.Connection
 import Lmdb.Codec (byteString)
-import qualified Lmdb.Map as LMap
-import qualified Lmdb.Multimap as LMMap
+-- import qualified Lmdb.Map as LMap
+-- import qualified Lmdb.Multimap as LMMap
 import qualified Lmdb.Types as Lmdb
 
 import Pipes

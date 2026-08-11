@@ -165,6 +165,7 @@ schemaDDL =
     , "CREATE TABLE IF NOT EXISTS manifest_meta ( \
       \    object_key      INTEGER NOT NULL PRIMARY KEY REFERENCES objects(object_key) ON DELETE CASCADE, \
       \    aki             BLOB    NOT NULL, \
+      \    manifest_number BLOB    NOT NULL, \
       \    meta            BLOB    NOT NULL \
       \)"
     , "CREATE INDEX IF NOT EXISTS idx_mft_aki ON manifest_meta(aki)"

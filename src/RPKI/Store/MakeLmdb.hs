@@ -10,13 +10,13 @@ import           Data.Foldable                   (for_)
 
 import           GHC.TypeLits
 
-import           RPKI.Store.Base.Map      (SMap (..))
-import           RPKI.Store.Base.MultiMap (SMultiMap (..))
-import           RPKI.Store.Base.SafeMap  (SafeMap (..))
+-- import           RPKI.Store.Base.Map      (SMap (..))
+-- import           RPKI.Store.Base.MultiMap (SMultiMap (..))
+-- import           RPKI.Store.Base.SafeMap  (SafeMap (..))
 
-import           Lmdb.Connection
+-- import           Lmdb.Connection
 
-import           RPKI.Store.Base.LMDB
+-- import           RPKI.Store.Base.LMDB
 import           RPKI.Config
 import           RPKI.AppTypes
 import           RPKI.Parallel
@@ -24,7 +24,7 @@ import           RPKI.Logging
 import           RPKI.Time
 
 import           RPKI.Store.Database    
-import           RPKI.Store.Sequence
+-- import           RPKI.Store.Sequence
 
 
 data IncompatibleDbCheck = CheckVersion | DontCheckVersion
