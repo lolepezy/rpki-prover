@@ -53,10 +53,10 @@ import           RPKI.Reporting
 import           RPKI.RRDP.Http (downloadToFile)
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
-import           RPKI.Store.Base.Storage
+
 import           RPKI.Store.AppStorage
-import           RPKI.Store.AppLmdbStorage
-import qualified RPKI.Store.MakeLmdb as Lmdb
+import qualified RPKI.Store.Database as DB
+import qualified RPKI.Store.SQLite   as SQLite
 import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.RRDP.RrdpFetch
@@ -193,8 +193,8 @@ executeWorkerProcess = do
                                             worldVersion rsyncRepository
 
                                 CompactionParams {..} -> 
-                                    exec resultHandler $ 
-                                        Right . CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
+                                    exec resultHandler $
+                                        pure $ Right $ CompactionResult ()
 
                                 ValidationParams {..} -> 
                                     exec resultHandler $ do 
@@ -223,7 +223,7 @@ executeWorkerProcess = do
 --     setGlobalManager manager    
 
 
-readTALs :: (Storage s, MaintainableStorage s) => AppContext s -> IO [TAL]
+readTALs :: MaintainableStorage s => AppContext s -> IO [TAL]
 readTALs AppContext {..} = do
     
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
@@ -257,7 +257,7 @@ readTALs AppContext {..} = do
         vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName            
 
 
-runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
+runHttpApi :: (MaintainableStorage s) => AppContext s -> IO ()
 runHttpApi appContext@AppContext {..} = do 
     let httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
     Warp.run httpPort (httpServer appContext) 
@@ -312,14 +312,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     
     appState <- createAppState logger localExceptions    
     
-    lmdbEnv <- setupLmdbCache
-                    (if resetCache then Reset else UseExisting)
-                    logger
-                    cached
-                    config
-
-    (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ 
-                Lmdb.createDatabase lmdbEnv logger config Lmdb.CheckVersion
+    (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $
+                createSqliteDatabase cached config resetCache True
 
     database <- liftIO $ newTVarIO db    
     
@@ -332,7 +326,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
         -- compaction. Not performing it may potentially bloat the database 
         -- (not sure why exactly but it was reproduced multiple times)
         -- until the next compaction that will happen probably in weeks.
-        Lmdb.WasIncompatible -> liftIO $ runMaintenance appContext
+        WasIncompatible -> liftIO $ runMaintenance appContext
 
         -- It may mean two different cases
         --   * empty db
@@ -340,14 +334,59 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
         -- In practice there hardly ever be a non-empty old cache, 
         -- and even if it will be there, it will be compacted in 
         -- a week or so. So don't compact,
-        Lmdb.DidntHaveVersion -> pure ()
+        DidntHaveVersion -> pure ()
 
         -- Nothing special, the cache has the version as expected
-        Lmdb.WasCompatible    -> pure ()
+        WasCompatible    -> pure ()
 
     logInfo logger [i|Created application context with configuration: 
 #{shower (config)}|]
     pure appContext
+
+
+data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion
+
+createSqliteDatabase :: FilePath -> Config -> Bool -> Bool -> IO (DB.DB, DbCheckResult)
+createSqliteDatabase cacheDir config resetCache checkVersion = do
+    createDirectoryIfMissing True cacheDir
+
+    let dbPath = cacheDir </> "rpki.sqlite"
+    when resetCache $ do
+        removeIfExists dbPath
+        removeIfExists $ dbPath <> "-wal"
+        removeIfExists $ dbPath <> "-shm"
+
+    let poolSize = max 2 $ fromIntegral $ config ^. #parallelism . #cpuParallelism
+    sdb <- SQLite.createDB dbPath 30_000 poolSize
+    SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> SQLite.initSchema conn
+
+    let db = DB.DB sdb
+    dbCheck <-
+        if checkVersion
+            then do
+                existingVersion <- DB.roTx db $ \tx -> DB.getDatabaseVersion tx db
+                case existingVersion of
+                    Nothing -> do
+                        DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx db
+                        pure DidntHaveVersion
+
+                    Just version
+                        | version == DB.currentDatabaseVersion -> pure WasCompatible
+                        | otherwise -> do
+                            SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> do
+                                SQLite.dropSchema conn
+                                SQLite.initSchema conn
+                            DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx db
+                            pure WasIncompatible
+            else do
+                DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx db
+                pure WasCompatible
+
+    pure (db, dbCheck)
+  where
+    removeIfExists filePath = do
+        exists <- doesFileExist filePath
+        when exists $ removeFile filePath
 
       
 fsLayout :: CLIOptions
@@ -504,13 +543,8 @@ rsyncPrefetches CLIOptions {..} = do
 
 createWorkerAppContext :: Config -> AppLogger -> ValidatorT IO AppLmdbEnv
 createWorkerAppContext config logger = do
-    lmdbEnv <- setupWorkerLmdbCache
-                    logger
-                    (configValue $ config ^. #cacheDirectory)
-                    config
-
-    (db, _) <- fromTry (InitE . InitError . fmtEx) $ 
-                Lmdb.createDatabase lmdbEnv logger config Lmdb.DontCheckVersion
+    (db, _) <- fromTry (InitE . InitError . fmtEx) $
+                createSqliteDatabase (configValue $ config ^. #cacheDirectory) config False False
 
     appState <- createAppState logger (configValue $ config ^. #localExceptions)
     database <- liftIO $ newTVarIO db
@@ -580,10 +614,8 @@ createVerifierContext cliOptions logger = do
     cached <- fromEitherM $ first (InitE . InitError) <$> checkSubDirectory rootDir cacheDirName
 
     let config = defaultConfig
-    lmdbEnv <- setupWorkerLmdbCache logger cached config
-
-    (db, _) <- fromTry (InitE . InitError . fmtEx) $ 
-                Lmdb.createDatabase lmdbEnv logger config Lmdb.DontCheckVersion
+    (db, _) <- fromTry (InitE . InitError . fmtEx) $
+                createSqliteDatabase cached config False False
 
     appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db

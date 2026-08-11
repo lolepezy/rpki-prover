@@ -66,7 +66,6 @@ import           RPKI.Validation.TopDown
 import           RPKI.AppContext
 import           RPKI.Metrics.Prometheus
 import           RPKI.RTR.RtrServer
-import           RPKI.Store.Base.Storage
 import           RPKI.Store.AppStorage
 import           RPKI.RRDP.Types
 import           RPKI.TAL
@@ -129,7 +128,7 @@ data WorkflowShared = WorkflowShared {
     deriving stock (Generic)
 
 
-withWorkflowShared :: (MonadBaseControl IO m, MonadIO m, Storage s) 
+withWorkflowShared :: (MonadBaseControl IO m, MonadIO m) 
                     => AppContext s
                     -> PrometheusMetrics 
                     -> [TAL]
@@ -202,7 +201,7 @@ newRunningTasks = Tasks <$> newTVar mempty
 -- The main entry point for the whole validator workflow. Runs multiple threads, 
 -- running validation, RTR server, cleanups, cache maintenance and async fetches.
 -- 
-runValidatorWorkflow :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> IO ()
+runValidatorWorkflow :: MaintainableStorage s => AppContext s -> [TAL] -> IO ()
 runValidatorWorkflow appContext@AppContext {..} tals = do    
     case config ^. #proverRunMode of     
         ServerMode   -> selfRecoveryLoop 0
@@ -252,7 +251,7 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
         ]
 
 
-runAll :: (Storage s, MaintainableStorage s) =>
+runAll :: MaintainableStorage s =>
                          AppContext s -> [TAL] -> IO ()
 runAll appContext@AppContext {..} tals = do    
     void $ concurrently (
@@ -331,7 +330,7 @@ runAll appContext@AppContext {..} tals = do
                     
 
     outputVrps vrpOutputFile = do 
-        vrps <- roTxT database $ \tx db -> 
+        vrps <- DB.roTxT database $ \tx db -> 
                 DB.getLatestVersion tx db >>= \case 
                     Nothing            -> pure Nothing
                     Just latestVersion -> Just <$> DB.getVrps tx db latestVersion
@@ -344,7 +343,7 @@ runAll appContext@AppContext {..} tals = do
     hasValidatedEverythingForEveryTA WorkflowShared { fetchers = Fetchers {..}} = do 
         -- check if for every TA the last validation time is later than 
         -- all of the first fetching dates for the repositories
-        versions  <- roTxT database DB.getLatestVersions
+        versions  <- DB.roTxT database DB.getLatestVersions
         fetchedBy <- readTVarIO firstFinishedFetchBy                
         urisByTA  <- readTVarIO uriByTa
         
@@ -395,7 +394,7 @@ runAll appContext@AppContext {..} tals = do
     --   * run tasks using `runConcurrentlyIfPossible` to make sure 
     --     there is no data races between different tasks
     runScheduledTasks workflowShared = do                
-        persistedJobs <- roTxT database $ \tx db -> Map.fromList <$> DB.allJobs tx db
+        persistedJobs <- DB.roTxT database $ \tx db -> Map.fromList <$> DB.allJobs tx db
 
         Now now <- thisInstant
         forConcurrently (schedules workflowShared) $ \Scheduling { taskDef = (task, action), ..} -> do                        
@@ -429,7 +428,7 @@ runAll appContext@AppContext {..} tals = do
                                 Now endTime <- thisInstant
                                 -- re-read `db` since it could have been changed by the time the
                                 -- job is finished (after compaction, in particular)                                                                
-                                rwTxT database $ \tx db' -> DB.setJobCompletionTime tx db' name endTime
+                                DB.rwTxT database $ \tx db' -> DB.setJobCompletionTime tx db' name endTime
                             updateMainResourcesStat
                             logDebug logger [i|Done with task '#{name}'.|])    
 
@@ -459,7 +458,7 @@ runAll appContext@AppContext {..} tals = do
             ((z, workerVS), workerId) <- runValidationWorker worldVersion talsToValidate            
             let reportError message = do 
                     logError logger message
-                    rwTxT database $ \tx db -> do
+                    DB.rwTxT database $ \tx db -> do
                         DB.saveValidationVersion tx db worldVersion allTaNames mempty workerVS
                     updatePrometheus (workerVS ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion
                     pure (mempty, mempty)
@@ -490,7 +489,7 @@ runAll appContext@AppContext {..} tals = do
                             pure q
           where
             reReadAndUpdatePayloads maybeSlurm = do 
-                roTxT database (\tx db -> DB.getRtrPayloads tx db worldVersion) >>= \case                         
+                DB.roTxT database (\tx db -> DB.getRtrPayloads tx db worldVersion) >>= \case                         
                     Nothing -> do 
                         logError logger [i|Something weird happened, could not re-read VRPs.|]
                         pure (mempty, mempty)
@@ -658,8 +657,7 @@ runAll appContext@AppContext {..} tals = do
         pure (r, workerId)                            
 
 -- To be called by the validation worker process
-runValidation :: Storage s =>
-                AppContext s
+runValidation :: AppContext s
             -> WorldVersion
             -> [TAL]
             -> [TaName]
@@ -672,7 +670,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     (slurmValidations, maybeSlurm) <- reReadSlurm        
 
     -- Save all the results into LMDB    
-    ((deleted, updatedValidation), elapsed) <- timedMS $ rwTxT database $ \tx db -> do              
+    ((deleted, updatedValidation), elapsed) <- timedMS $ DB.rwTxT database $ \tx db -> do              
                             
         let results' = addVersionPerTA results
         updatedValidation <- addUniqueVrpCountsToMetrics tx db results' slurmValidations                
@@ -818,7 +816,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
 -- | Adjust running fetchers to the latest discovered repositories
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
-adjustFetchers :: Storage s => AppContext s -> Map TaName Fetcheables -> WorkflowShared -> IO ()
+adjustFetchers :: AppContext s -> Map TaName Fetcheables -> WorkflowShared -> IO ()
 adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@WorkflowShared { fetchers = Fetchers {..} } = do
     (currentFetchers, toStop, toStart) <- atomically $ do            
 
@@ -861,7 +859,7 @@ adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@W
                 foldr Map.delete addedNewAsyncs $ Set.toList toStop
                         
 -- | Create a new fetcher for the given URL and run it.
-newFetcher :: Storage s => AppContext s -> WorkflowShared -> RpkiURL -> IO ()
+newFetcher :: AppContext s -> WorkflowShared -> RpkiURL -> IO ()
 newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetchers {..}, ..} url = do
     ignoreSync $ go `finally` dropFetcher fetchers url    
   where
@@ -889,7 +887,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         pauseIfNeeded now = do 
             f <- fetchableForUrl 
             for_ f $ \_ -> do 
-                r <- roTxT database (\tx db -> DB.getRepository tx db url)
+                r <- DB.roTxT database (\tx db -> DB.getRepository tx db url)
                 for_ r $ \repository -> do          
                     let status = getMeta repository ^. #status
                     let lastFetchMoment = 
@@ -918,7 +916,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 let fetchConfig = newFetchConfig config
                 worldVersion <- newWorldVersion
                 repository <- fromMaybe (newRepository url) <$> 
-                                roTxT database (\tx db -> DB.getRepository tx db url) 
+                                DB.roTxT database (\tx db -> DB.getRepository tx db url) 
 
                 ((r, validations), duration) <-                 
                         withFetchLimits fetchConfig repository $ timedMS $ 
@@ -973,7 +971,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             repositories <- pooledForConcurrentlyN maxThreads (Set.toList fallbacks) $ \fallbackUrl -> do 
 
                 repository <- fromMaybe (newRepository fallbackUrl) <$> 
-                                roTxT database (\tx db -> DB.getRepository tx db fallbackUrl)
+                                DB.roTxT database (\tx db -> DB.getRepository tx db fallbackUrl)
                                 
                 ((r, validations), duration) <- 
                         withFetchLimits fetchConfig repository 
@@ -993,7 +991,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             
                 pure (repo, validations)            
 
-            rwTxT database $ \tx db -> do
+            DB.rwTxT database $ \tx db -> do
                 DB.saveRepositories tx db (map fst repositories)
                 DB.saveRepositoryValidationStates tx db repositories
 
@@ -1066,7 +1064,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             in fromIntegral r :: Int64
 
     saveFetchOutcome r validations =
-        rwTxT database $ \tx db -> do
+        DB.rwTxT database $ \tx db -> do
             DB.saveRepositories tx db [r]
             DB.saveRepositoryValidationStates tx db [(r, validations)]
 
@@ -1129,7 +1127,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 -- Reschedule revalidation of the TA at the moment right after its earliest expiration time. Since this expiration time
 -- in practice keeps receding to the future as new objects are added, the revalidation is most likely not needed at all, 
 -- that's why we double-check it once again before revalidation.
-scheduleRevalidationOnExpiry :: Storage s => AppContext s -> Map TaName EarliestToExpire -> WorkflowShared -> IO ()
+scheduleRevalidationOnExpiry :: AppContext s -> Map TaName EarliestToExpire -> WorkflowShared -> IO ()
 scheduleRevalidationOnExpiry AppContext {..} expirationTimes WorkflowShared {..} = do
     Now now <- thisInstant
 
@@ -1176,7 +1174,7 @@ scheduleRevalidationOnExpiry AppContext {..} expirationTimes WorkflowShared {..}
 
 -- To be called from the cache cleanup worker
 -- 
-runCacheCleanup :: Storage s =>
+runCacheCleanup ::
                 AppContext s
                 -> WorldVersion                
                 -> IO DB.CleanUpResult
@@ -1185,7 +1183,7 @@ runCacheCleanup AppContext {..} worldVersion = do
     -- Use the latest completed validation moment as a cutting point.
     -- This is to prevent cleaning up objects actual object if they were 
     -- untouched because prover was stopped for a long period.
-    cutOffVersion <- roTx db $ \tx -> 
+    cutOffVersion <- DB.roTx db $ \tx -> 
         fromMaybe worldVersion <$> DB.getLatestVersion tx db
     
     let cutOffMoment = versionToInstant cutOffVersion
@@ -1205,11 +1203,11 @@ runCacheCleanup AppContext {..} worldVersion = do
 
 -- | Load the state corresponding to the last completed validation version.
 -- 
-loadStoredAppState :: Storage s => AppContext s -> IO (Maybe WorldVersion)
+loadStoredAppState :: AppContext s -> IO (Maybe WorldVersion)
 loadStoredAppState AppContext {..} = do
     Now now' <- thisInstant
     let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval    
-    roTxT database $ \tx db ->
+    DB.roTxT database $ \tx db ->
         DB.getLatestVersion tx db >>= \case
             Nothing  -> pure Nothing
 

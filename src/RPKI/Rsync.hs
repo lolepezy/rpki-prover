@@ -41,7 +41,8 @@ import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Store.Types
-import           RPKI.Store.Base.Storage
+import           RPKI.Store.Base.Storable
+import           RPKI.Store.Database     (DB, roTx)
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Time
 import qualified RPKI.Util                        as U
@@ -149,7 +150,7 @@ rsyncRpkiObject AppContext{..} fetchConfig uri = do
 
 -- | Process the whole rsync repository, download it, traverse the directory and 
 -- | add all the relevant objects to the storage.
-updateObjectForRsyncRepository :: Storage s => 
+updateObjectForRsyncRepository :: 
                                   AppContext s
                                -> FetchConfig 
                                -> WorldVersion 
@@ -233,12 +234,12 @@ readRsyncProcess logger fetchConfig pc textual = do
 -- | objects into the storage.
 -- 
 -- | Is not supposed to throw exceptions.
-loadRsyncRepository :: Storage s =>                         
+loadRsyncRepository ::                         
                         AppContext s 
                     -> WorldVersion 
                     -> RsyncURL 
                     -> FilePath 
-                    -> DB.DB s 
+                    -> DB
                     -> ValidatorT IO ()
 loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
     txFoldPipeline 

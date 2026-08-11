@@ -22,7 +22,7 @@ import           RPKI.AppTypes
 import           RPKI.Parallel
 import           RPKI.Logging
 import           RPKI.Time
-import           RPKI.Store.Base.Storage
+
 import           RPKI.Store.Database    
 import           RPKI.Store.Sequence
 

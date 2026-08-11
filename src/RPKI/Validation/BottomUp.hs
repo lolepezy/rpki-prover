@@ -15,7 +15,6 @@ import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Reporting
-import           RPKI.Store.Base.Storage
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 import           RPKI.TAL
@@ -28,7 +27,7 @@ import           RPKI.Validation.Common
      - find a path up to a TA certificate
      - validate the chain and the given object     
 -}
-validateBottomUp :: Storage s => 
+validateBottomUp :: 
                 AppContext s 
                 -> ParsedRpkiObject
                 -> Now
@@ -163,7 +162,7 @@ validateBottomUp
            and don't track visited object or metrics.
          -}
         let childrenAki = toAKI $ getSKI certificate
-        maybeMft <- liftIO $ roTx db $ \tx -> do 
+        maybeMft <- liftIO $ DB.roTx db $ \tx -> do 
             DB.getMftsForAKI tx db childrenAki >>= \case
                 [] -> pure Nothing
                 (MftMeta {..} : _) -> DB.getMftByKey tx db key
@@ -183,7 +182,7 @@ validateBottomUp
                                 [crl] -> pure crl
                                 crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls
                     
-                    crlObject <- liftIO $ roTx db $ \tx -> DB.getByHash tx db crlHash
+                    crlObject <- liftIO $ DB.roTx db $ \tx -> DB.getByHash tx db crlHash
                     case crlObject of 
                         Nothing -> 
                             vError $ NoCRLExists childrenAki crlHash

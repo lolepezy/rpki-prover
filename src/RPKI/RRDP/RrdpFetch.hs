@@ -45,7 +45,8 @@ import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Store.Types
-import           RPKI.Store.Base.Storage
+import           RPKI.Store.Base.Storable
+import           RPKI.Store.Database     (DB, Tx(..), TxMode(..), roTx, rwTx, roTxT, rwTxT)
 import qualified RPKI.Store.Database    as DB
 import qualified RPKI.Util              as U
 
@@ -93,7 +94,7 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
 -- | 
 --  Update RRDP repository, actually saving all the objects in the DB.
 -- 
-updateRrdpRepository :: Storage s => 
+updateRrdpRepository :: 
                         AppContext s 
                     -> WorldVersion 
                     -> RrdpRepository
@@ -409,7 +410,7 @@ nextSerial (RrdpSerial s) = RrdpSerial $ s + 1
         - one thread parses XML, reads base64s and pushes CPU-intensive parsing tasks into the queue 
         - another thread reads parsing tasks, waits for them and saves the results into the DB.
 -} 
-saveSnapshot :: Storage s => 
+saveSnapshot :: 
                 AppContext s        
                 -> WorldVersion         
                 -> RrdpURL
@@ -563,7 +564,7 @@ saveSnapshot
     a non-existent object, or add an existing one. In all these cases, we
     emit an error and fall back to downloading snapshot.
 -}
-saveDelta :: Storage s => 
+saveDelta :: 
             AppContext s 
             -> WorldVersion         
             -> RrdpURL 
@@ -790,9 +791,8 @@ data DeltaOp m a = Delete URI Hash
                 | Replace URI (Async a) Hash
 
 
-verifyRrdpMeta :: Storage s
-            => Tx s mode 
-            -> DB.DB s 
+verifyRrdpMeta :: Tx mode
+            -> DB 
             -> RrdpURL 
             -> SessionId 
             -> RrdpSerial 
@@ -811,9 +811,9 @@ verifyRrdpMeta tx db repoUri expectedSessionId expectedSerial = do
                                 expectedSessionId = expectedSessionId, 
                                 expectedSerial    = expectedSerial }
 
-updateRepositoryMeta :: Storage s => 
-                        Tx s 'RW 
-                    -> DB.DB s
+updateRepositoryMeta :: 
+                        Tx 'RW 
+                    -> DB
                     -> RrdpURL 
                     -> SessionId
                     -> RrdpSerial

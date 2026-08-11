@@ -36,7 +36,7 @@ import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Repository
 import           RPKI.RRDP.Types
-import           RPKI.Store.Base.Storage
+
 import           RPKI.Time
 import           RPKI.Parallel
 import           RPKI.Util                       
@@ -116,8 +116,7 @@ updateUriPerTa fetcheablesPerTa uriTa = uriTa'
 -- Returned repository has all the metadata updated (in case of RRDP session and serial).
 -- The metadata is also updated in the database.
 --
-fetchRepository :: (Storage s) => 
-                    AppContext s 
+fetchRepository :: AppContext s 
                 -> FetchConfig
                 -> WorldVersion
                 -> Repository 

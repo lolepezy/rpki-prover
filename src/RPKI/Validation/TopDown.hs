@@ -58,9 +58,9 @@ import           RPKI.Messages
 import           RPKI.Parallel
 import           RPKI.Repository
 import           RPKI.Resources.Types
-import           RPKI.Store.Base.Storage
+
 import           RPKI.Store.Base.Storable
-import           RPKI.Store.Database    (DB)
+import           RPKI.Store.Database    (DB, Tx, roTx, rwTx, roTxT, rwTxT)
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 import           RPKI.TAL
@@ -269,8 +269,7 @@ verifyLimit hitTheLimit limit =
 
 -- | It is the main entry point for the top-down validation. 
 -- Validates a bunch of TAs starting from their TALs.  
-validateMutlipleTAs :: Storage s =>
-                    AppContext s
+validateMutlipleTAs :: AppContext s
                     -> WorldVersion
                     -> [TAL]
                     -> IO (Map TaName TopDownResult)
@@ -301,8 +300,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         foldr (mergePP . rsyncPP) pps (config ^. #rsyncConf . #rsyncPrefetchUrls)
 
 --
-validateTA :: Storage s =>
-            AppContext s
+validateTA :: AppContext s
             -> TAL
             -> WorldVersion
             -> AllTasTopDownContext
@@ -367,8 +365,7 @@ data WhichTA = FetchedTA RpkiURL ParsedRpkiObject | CachedTA StorableTA
 -- | Fetch and validated TA certificate starting from the TAL.
 -- | 
 -- | This function doesn't throw exceptions.
-validateTACertificateFromTAL :: Storage s 
-                                => AppContext s
+validateTACertificateFromTAL :: AppContext s
                                 -> TAL
                                 -> WorldVersion
                                 -> ValidatorT IO (Located WellStructuredCaCert, PublicationPointAccess)
@@ -377,7 +374,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let validationConfig = config ^. typed
 
     db <- liftIO $ readTVarIO database
-    ta <- DB.roAppTxEx db storageError $ \tx -> DB.getTA tx db $ getTaName tal
+    ta <- DB.roAppTxEx db DB.storageError $ \tx -> DB.getTA tx db (getTaName tal)
     case ta of
         Nothing -> fetchValidateAndStore db now Nothing
         Just storedTa
@@ -394,7 +391,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     -- Keep persisted TAL metadata in sync so all configured TA cert
     -- locations (e.g. rsync + https) are retained in cache.    
     updateStoredTal db storedTa = 
-        DB.rwAppTxEx db storageError $ \tx -> do
+        DB.rwAppTxEx db DB.storageError $ \tx -> do
             let updatedTa = storedTa & #tal .~ tal
             DB.saveTA tx db updatedTa
             pure updatedTa     
@@ -426,7 +423,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 case publicationPointsFromTAL tal certToUse of
                     Left e         -> appError $ ValidationE e
                     Right ppAccess ->
-                        DB.rwAppTxEx db storageError $ \tx -> do
+                        DB.rwAppTxEx db DB.storageError $ \tx -> do
                             DB.saveTA tx db (StorableTA tal certToStore (FetchedAt moment) ppAccess actualUrl)
                             pure (locatedTaCert (talCertLocations tal <> toLocations actualUrl) certToUse, ppAccess)
 
@@ -455,8 +452,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
 -- | Do the validation starting from the TA certificate.
 -- | 
 -- | This function doesn't throw exceptions.
-validateFromTACert :: Storage s =>
-                    AppContext s ->
+validateFromTACert :: AppContext s ->
                     TopDownContext ->
                     PublicationPointAccess ->
                     Located WellStructuredCaCert ->
@@ -479,8 +475,7 @@ validateFromTACert
             Nothing            -> publicationPoints
 
 
-validateCa :: Storage s =>
-            AppContext s ->
+validateCa :: AppContext s ->
             TopDownContext ->
             Ca ->
             ValidatorT IO ()
@@ -538,8 +533,7 @@ validateCa
     validationConfig = config ^. typed @ValidationConfig
     
 
-validateCaNoLimitChecks :: Storage s =>
-                        AppContext s ->
+validateCaNoLimitChecks :: AppContext s ->
                         TopDownContext ->
                         Ca ->
                         ValidatorT IO ()
@@ -581,8 +575,7 @@ validateCaNoLimitChecks
                 appError $ ValidationE $ WeirdCaPublicationPoints weirdCaUrls                        
 
 
-validateCaNoFetch :: Storage s =>
-                    AppContext s 
+validateCaNoFetch :: AppContext s
                 -> TopDownContext 
                 -> Ca 
                 -> ValidatorT IO ()
@@ -1502,9 +1495,8 @@ manifestDiff mftShortcut newMftChidlren =
                 newMftChidlren
 
 
-resolveTroubledChildByKey :: Storage s
-                            => Tx s mode
-                            -> DB s
+resolveTroubledChildByKey :: Tx mode
+                            -> DB
                             -> ObjectKey
                             -> ValidatorT IO (Maybe (TroubledChildLoadPath, Keyed (Located WellStructuredRpkiObject)))
 resolveTroubledChildByKey tx db childKey =
@@ -1519,16 +1511,14 @@ resolveTroubledChildByKey tx db childKey =
                 pure $! Just (TroubledFromOriginal, Keyed (Located locations validatedRo) childKey)
 
         _ -> pure Nothing
-
-getStoredObject :: Storage s =>
-                    Tx s mode
-                    -> DB s
+getStoredObject :: Tx mode
+                    -> DB
                     -> ObjectKey
                     -> ValidatorT IO (Maybe (Keyed (Located RpkiObjectLifecycle)))
 getStoredObject tx db key =
     fmap (`Keyed` key) <$> DB.getLocatedByKey tx db key    
 
-getFullCa :: Storage s => AppContext s -> TopDownContext -> Ca -> ValidatorT IO (Located WellStructuredCaCert)
+getFullCa :: AppContext s -> TopDownContext -> Ca -> ValidatorT IO (Located WellStructuredCaCert)
 getFullCa appContext@AppContext {..} topDownContext = \case    
     CaFull c -> pure c            
     CaShort CaShortcut {..} -> do   
@@ -1542,11 +1532,11 @@ getFullCa appContext@AppContext {..} topDownContext = \case
                         [i|Referential integrity error, wrong type of the CA found by its key #{key}.|]            
     
 
-getCrlByKey :: Storage s => AppContext s -> ObjectKey -> ValidatorT IO (Keyed (Validated CrlObject))
+getCrlByKey :: AppContext s -> ObjectKey -> ValidatorT IO (Keyed (Validated CrlObject))
 getCrlByKey appContext@AppContext {..} crlKey = do        
     z <- roTxT database $ \tx db -> DB.getObjectByKey tx db crlKey
     case z of 
-        Just (WellStructuredRO (CrlRO c)) -> pure $! Keyed (Validated c) crlKey 
+        Just (WellStructuredRO (CrlRO c)) -> pure $! Keyed (Validated c) crlKey
         _ -> integrityError appContext [i|Referential integrity error, can't find a CRL by its key #{crlKey}.|]
      
     
@@ -1636,7 +1626,7 @@ vUniqueFocusOn c a f nonUniqueError = do
         
 
 -- | Mark validated objects in the database, i.e.
-applyValidationSideEffects :: (MonadIO m, Storage s) =>
+applyValidationSideEffects :: (MonadIO m) =>
                               AppContext s -> AllTasTopDownContext -> m ()
 applyValidationSideEffects
     appContext@AppContext {..}
@@ -1681,7 +1671,7 @@ deleteMftShortcut :: MonadIO m => TopDownContext -> AKI -> m ()
 deleteMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki = 
     liftIO $ atomically $ writeCQueue shortcutQueue $ DeleteMftShortcut aki
 
-storeShortcuts :: (Storage s, MonadIO m) => 
+storeShortcuts :: (MonadIO m) => 
                 AppContext s 
              -> ClosableQueue MftShortcutOp -> m ()
 storeShortcuts AppContext {..} shortcutQueue = liftIO $   
@@ -1706,7 +1696,7 @@ markAsUsed :: TopDownContext -> ObjectKey -> ValidatorT IO ()
 markAsUsed TopDownContext { allTas = AllTasTopDownContext {..} } k = 
     liftIO $ atomically $ modifyTVar' visitedKeys (Set.insert k)
 
-markAsUsedByHash :: Storage s => 
+markAsUsedByHash :: 
                     AppContext s -> TopDownContext -> Hash -> ValidatorT IO ()
 markAsUsedByHash AppContext {..} topDownContext hash = do
     key <- roTxT database $ \tx db -> DB.getKeyByHash tx db hash
@@ -1733,7 +1723,7 @@ extractPPAs = \case
     CaShort (CaShortcut {..}) -> Right ppas 
     CaFull c                  -> getPublicationPointsFromWellStructuredCert c.payload
 
-getCaLocations :: Storage s => AppContext s -> Ca -> ValidatorT IO (Maybe Locations)
+getCaLocations :: AppContext s -> Ca -> ValidatorT IO (Maybe Locations)
 getCaLocations AppContext {..} = \case 
     CaShort (CaShortcut {..}) -> 
         roTxT database $ \tx db -> DB.getLocationsByKey tx db key

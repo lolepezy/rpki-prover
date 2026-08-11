@@ -50,7 +50,7 @@ import           RPKI.Util                        (convert, hex, decodeBase64)
 
 import           RPKI.AppState
 import           RPKI.AppTypes
-import           RPKI.Store.Base.Storage
+
 import qualified RPKI.Store.Database    as DB
 
 import           System.Timeout                   (timeout)
@@ -63,7 +63,7 @@ data PduLike = TruePdu Pdu | SerialisedPdu BS.ByteString
 -- 
 -- | Main entry point, here we start the RTR server. 
 -- 
-runRtrServer :: Storage s => AppContext s -> RtrConfig -> IO ()
+runRtrServer :: AppContext s -> RtrConfig -> IO ()
 runRtrServer appContext RtrConfig {..} = do         
     -- re-initialise `rtrState` and create a broadcast 
     -- channel to publish update for all clients
@@ -270,11 +270,11 @@ runRtrServer appContext RtrConfig {..} = do
                                 pure $ io <> serveLoop session outboxQueue
 
 
-readRtrPayload :: Storage s => AppContext s -> WorldVersion -> IO RtrPayloads 
+readRtrPayload :: AppContext s -> WorldVersion -> IO RtrPayloads 
 readRtrPayload AppContext {..} worldVersion = do 
     db <- readTVarIO database
 
-    (vrps, bgpSec) <- roTx db $ \tx -> do 
+    (vrps, bgpSec) <- DB.roTx db $ \tx -> do 
                 slurm <- DB.getSlurm tx db worldVersion
                 vrps <- do 
                         vrps_ <- DB.getVrps tx db worldVersion
@@ -289,7 +289,7 @@ readRtrPayload AppContext {..} worldVersion = do
     pure $ mkRtrPayloads vrps bgpSec
 
 
-waitForLatestRtrPayload :: Storage s => AppContext s 
+waitForLatestRtrPayload :: AppContext s 
         -> TVar (Maybe RtrState) 
         -> IO (RtrState, WorldVersion, WorldVersion, RtrPayloads)
 waitForLatestRtrPayload AppContext {..} rtrState = do 

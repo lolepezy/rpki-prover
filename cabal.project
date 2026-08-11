@@ -6,11 +6,6 @@ allow-newer: True
 
 source-repository-package
   type: git
-  location: https://github.com/lolepezy/lmdb-high-level.git
-  tag: c1bfd9564b5a894659428281f328df2975d04569
-
-source-repository-package
-  type: git
   location: https://github.com/lolepezy/hs-connection
   tag: e3cf8623979f8687694280939349734868cd18ac
 

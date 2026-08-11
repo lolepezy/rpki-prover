@@ -22,7 +22,7 @@ import           RPKI.Logging
 import           RPKI.Worker
 import           RPKI.Reporting
 import           RPKI.Store.Base.LMDB
-import           RPKI.Store.Base.Storage
+
 import qualified RPKI.Store.Database             as DB
 import           RPKI.Store.MakeLmdb
 import           RPKI.Store.Base.Storable

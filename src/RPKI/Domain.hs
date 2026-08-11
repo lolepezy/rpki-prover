@@ -398,7 +398,7 @@ foldRpkiObject onCer onMft onRoa onSpl onGbr onRsc onAspa onBgp onCrl = \case
 
 
 data RpkiObjectType = CER | MFT | CRL | ROA | ASPA | GBR | SPL | BGPSec | RSC
-    deriving (Show, Eq, Ord, Generic)    
+    deriving (Show, Read, Eq, Ord, Generic)    
     deriving anyclass (TheBinary, NFData)
 
 instance {-# OVERLAPPING #-} (Generic o, HasType Hash o) => WithHash o where

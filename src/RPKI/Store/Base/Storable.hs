@@ -87,6 +87,18 @@ instance {-# OVERLAPPING #-} AsStorable a => AsStorable (Compressed a) where
 restoreFromRaw :: AsStorable a => Verbatim a -> a
 restoreFromRaw = fromStorable . unVerbatim
 
+serialiseField :: AsStorable a => a -> BS.ByteString
+serialiseField = unStorable . toStorable
+
+deserialiseField :: AsStorable a => BS.ByteString -> a
+deserialiseField = fromStorable . Storable
+
+serialiseCompressed :: AsStorable a => a -> BS.ByteString
+serialiseCompressed = fromMaybe BS.empty . compress . unStorable . toStorable
+
+deserialiseCompressed :: AsStorable a => BS.ByteString -> a
+deserialiseCompressed = fromStorable . Storable . fromMaybe "broken binary" . decompress
+
 data SStats = SStats {
         statSize          :: Size,
         statKeyBytes      :: Size,        

@@ -95,9 +95,10 @@ common shared
     , lifted-async
     , lifted-base
     , list-t
-    , lmdb-high-level
     , lz4
     , ram
+    , resource-pool
+    , sqlite-simple
     , mmorph
     , modern-uri
     , monad-control
@@ -200,18 +201,11 @@ library
       RPKI.RTR.Types
       RPKI.SLURM.SlurmProcessing
       RPKI.SLURM.Types
-      RPKI.Store.AppLmdbStorage
       RPKI.Store.AppStorage
-      RPKI.Store.Base.LMDB
-      RPKI.Store.Base.Map
-      RPKI.Store.Base.MultiMap
-      RPKI.Store.Base.SafeMap
       RPKI.Store.Base.Serialisation
       RPKI.Store.Base.Storable
-      RPKI.Store.Base.Storage
       RPKI.Store.Database
-      RPKI.Store.MakeLmdb
-      RPKI.Store.Sequence
+      RPKI.Store.SQLite
       RPKI.Store.Types
       RPKI.TAL
       RPKI.Time

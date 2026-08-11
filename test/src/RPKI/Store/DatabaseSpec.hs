@@ -41,7 +41,7 @@ import           RPKI.Store.Base.LMDB
 import           RPKI.Store.Base.Map               as M
 import           RPKI.Store.Base.SafeMap           as SM
 import           RPKI.Store.Base.Storable
-import           RPKI.Store.Base.Storage
+
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Database    (DB(..))
 import qualified RPKI.Store.Database    as DB
@@ -116,7 +116,7 @@ mapGroup = testGroup "SafeMap tests"
     ]
 
 
-shouldMergeObjectLocations :: Storage s => IO (DB s) -> HU.Assertion
+shouldMergeObjectLocations :: IO (DB s) -> HU.Assertion
 shouldMergeObjectLocations io = do 
     
     db <- io
@@ -230,7 +230,7 @@ shouldMergeObjectLocations io = do
 --         HU.assertEqual "Not the same manifests" ((^. #object . #payload) <$> mftLatest) mftLatest'                    
 
 
-shouldOrderManifests :: Storage s => IO (DB s) -> HU.Assertion
+shouldOrderManifests :: IO (DB s) -> HU.Assertion
 shouldOrderManifests io = do  
     db@DB {..} <- io
     (Right (url1, mft1), _) <- runValidatorT (newScopes "read1") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
@@ -258,7 +258,7 @@ shouldOrderManifests io = do
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) (toValidatedRpkiObject mft2)
 
 
-shouldSaveAndGetRsyncRepositories :: Storage s => IO (DB s) -> HU.Assertion
+shouldSaveAndGetRsyncRepositories :: IO (DB s) -> HU.Assertion
 shouldSaveAndGetRsyncRepositories io = do  
     db <- io
 
@@ -277,7 +277,7 @@ shouldSaveAndGetRsyncRepositories io = do
     
 
 
-shouldSaveMetaAndValidationAsCorrectSemigroup :: Storage s => IO (DB s) -> HU.Assertion
+shouldSaveMetaAndValidationAsCorrectSemigroup :: IO (DB s) -> HU.Assertion
 shouldSaveMetaAndValidationAsCorrectSemigroup io = do
     db <- io
     [rsync1] <- rsyncReposWithCommonHosts 1
@@ -326,7 +326,7 @@ rrdpSubMap pps = do
     pure $ RrdpMap $ Map.filterWithKey (\u _ -> u `elem` keys_) rrdpsM
 
 
-shouldSaveAndGetValidationVersion :: Storage s => IO (DB s) -> HU.Assertion
+shouldSaveAndGetValidationVersion :: IO (DB s) -> HU.Assertion
 shouldSaveAndGetValidationVersion io = do
     db <- io
 
@@ -354,7 +354,7 @@ shouldSaveAndGetValidationVersion io = do
     HU.assertEqual "Metrics don't match" (fmap (\(_, vs) -> vs ^. typed) perTaResults) storedMetrics
 
 
-shouldSaveAndGetValidationVersionFilledWithPastData :: Storage s => IO (DB s) -> HU.Assertion
+shouldSaveAndGetValidationVersionFilledWithPastData :: IO (DB s) -> HU.Assertion
 shouldSaveAndGetValidationVersionFilledWithPastData io = do
     db <- io
 
