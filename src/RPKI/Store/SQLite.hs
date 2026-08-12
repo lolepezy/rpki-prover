@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds         #-}
 {-# LANGUAGE KindSignatures    #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE RecordWildCards   #-}
 
 module RPKI.Store.SQLite (
@@ -46,6 +47,7 @@ import qualified Data.ByteString.Short as BSS
 import qualified Data.Text             as Text
 
 import Database.SQLite.Simple
+import Database.SQLite.Simple.QQ (sql)
 import Codec.Compression.LZ4 (compress, decompress)
 import Data.Store (Store, encode, decodeEx)
 
@@ -136,57 +138,74 @@ dropSchema conn = forM_ dropDDL (execute_ conn)
 
 schemaDDL :: [Query]
 schemaDDL =
-    [ 
-      "CREATE TABLE IF NOT EXISTS objects ( \
-      \    object_key    INTEGER PRIMARY KEY, \
-      \    hash          BLOB    NOT NULL UNIQUE, \
-      \    type          TEXT    NOT NULL, \
-      \    data          BLOB, \
-      \    original      BLOB, \
-      \    world_version INTEGER NOT NULL, \
-      \    CHECK (data IS NOT NULL OR original IS NOT NULL) \
-      \)"
-    , "CREATE TABLE IF NOT EXISTS urls ( \
-      \    url_key INTEGER PRIMARY KEY, \
-      \    url     TEXT    NOT NULL UNIQUE \
-      \)"
-    , "CREATE TABLE IF NOT EXISTS object_urls ( \
-      \    object_key INTEGER NOT NULL REFERENCES objects(object_key) ON DELETE CASCADE, \
-      \    url_key    INTEGER NOT NULL REFERENCES urls(url_key)       ON DELETE CASCADE, \
-      \    PRIMARY KEY (object_key, url_key) \
-      \)"
+    [ [sql|
+        CREATE TABLE IF NOT EXISTS objects (
+            object_key    INTEGER PRIMARY KEY,
+            hash          BLOB    NOT NULL UNIQUE,
+            type          TEXT    NOT NULL,
+            data          BLOB,
+            original      BLOB,
+            world_version INTEGER NOT NULL,
+            CHECK (data IS NOT NULL OR original IS NOT NULL)
+        )
+      |]
+    , [sql|
+        CREATE TABLE IF NOT EXISTS urls (
+            url_key INTEGER PRIMARY KEY,
+            url     TEXT    NOT NULL UNIQUE
+        )
+      |]
+    , [sql|
+        CREATE TABLE IF NOT EXISTS object_urls (
+            object_key INTEGER NOT NULL REFERENCES objects(object_key) ON DELETE CASCADE,
+            url_key    INTEGER NOT NULL REFERENCES urls(url_key)       ON DELETE CASCADE,
+            PRIMARY KEY (object_key, url_key)
+        )
+      |]
     , "CREATE INDEX IF NOT EXISTS idx_object_urls_url ON object_urls(url_key)"
-    , "CREATE TABLE IF NOT EXISTS certificates ( \
-      \    object_key INTEGER NOT NULL PRIMARY KEY REFERENCES objects(object_key) ON DELETE CASCADE, \
-      \    ski        BLOB    NOT NULL, \
-      \    aki        BLOB \
-      \)"
+    , [sql|
+        CREATE TABLE IF NOT EXISTS certificates (
+            object_key INTEGER NOT NULL PRIMARY KEY REFERENCES objects(object_key) ON DELETE CASCADE,
+            ski        BLOB    NOT NULL,
+            aki        BLOB
+        )
+      |]
     , "CREATE INDEX IF NOT EXISTS idx_cert_ski ON certificates(ski)"
-    , "CREATE TABLE IF NOT EXISTS manifest_meta ( \
-      \    object_key      INTEGER NOT NULL PRIMARY KEY REFERENCES objects(object_key) ON DELETE CASCADE, \
-      \    aki             BLOB    NOT NULL, \
-      \    manifest_number BLOB    NOT NULL, \
-      \    meta            BLOB    NOT NULL \
-      \)"
+    , [sql|
+        CREATE TABLE IF NOT EXISTS manifest_meta (
+            object_key      INTEGER NOT NULL PRIMARY KEY REFERENCES objects(object_key) ON DELETE CASCADE,
+            aki             BLOB    NOT NULL,
+            manifest_number BLOB    NOT NULL,
+            meta            BLOB    NOT NULL
+        )
+      |]
     , "CREATE INDEX IF NOT EXISTS idx_mft_aki ON manifest_meta(aki)"
-    , "CREATE TABLE IF NOT EXISTS mft_shortcut_meta ( \
-      \    aki  BLOB NOT NULL PRIMARY KEY, \
-      \    data BLOB NOT NULL \
-      \)"
-    , "CREATE TABLE IF NOT EXISTS mft_shortcut_children ( \
-      \    aki  BLOB NOT NULL PRIMARY KEY, \
-      \    data BLOB NOT NULL \
-      \)"
-    , "CREATE TABLE IF NOT EXISTS trust_anchors ( \
-      \    ta_name TEXT NOT NULL PRIMARY KEY, \
-      \    data    BLOB NOT NULL \
-      \)"
-    , "CREATE TABLE IF NOT EXISTS repositories ( \
-      \    key  BLOB NOT NULL, \
-      \    kind TEXT NOT NULL, \
-      \    data BLOB NOT NULL, \
-      \    PRIMARY KEY (key, kind) \
-      \)"
+    , [sql|
+        CREATE TABLE IF NOT EXISTS mft_shortcut_meta (
+            aki  BLOB NOT NULL PRIMARY KEY,
+            data BLOB NOT NULL
+        )
+      |]
+    , [sql|
+        CREATE TABLE IF NOT EXISTS mft_shortcut_children (
+            aki  BLOB NOT NULL PRIMARY KEY,
+            data BLOB NOT NULL
+        )
+      |]
+    , [sql|
+        CREATE TABLE IF NOT EXISTS trust_anchors (
+            ta_name TEXT NOT NULL PRIMARY KEY,
+            data    BLOB NOT NULL
+        )
+      |]
+    , [sql|
+        CREATE TABLE IF NOT EXISTS repositories (
+            key  BLOB NOT NULL,
+            kind TEXT NOT NULL,
+            data BLOB NOT NULL,
+            PRIMARY KEY (key, kind)
+        )
+      |]
     , "CREATE TABLE IF NOT EXISTS validations (key INTEGER PRIMARY KEY, value BLOB NOT NULL)"
     , "CREATE TABLE IF NOT EXISTS metrics     (key INTEGER PRIMARY KEY, value BLOB NOT NULL)"
     , "CREATE TABLE IF NOT EXISTS roas        (key INTEGER PRIMARY KEY, value BLOB NOT NULL)"
@@ -198,10 +217,12 @@ schemaDDL =
     , "CREATE TABLE IF NOT EXISTS versions    (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL)"
     , "CREATE TABLE IF NOT EXISTS jobs        (key TEXT NOT NULL PRIMARY KEY, value BLOB NOT NULL)"
     , "CREATE TABLE IF NOT EXISTS metadata    (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)"
-    , "CREATE TABLE IF NOT EXISTS validated_by_version ( \
-      \    key   TEXT NOT NULL PRIMARY KEY, \
-      \    value BLOB NOT NULL \
-      \)"
+    , [sql|
+        CREATE TABLE IF NOT EXISTS validated_by_version (
+            key   TEXT NOT NULL PRIMARY KEY,
+            value BLOB NOT NULL
+        )
+      |]
     ]
 
 dropDDL :: [Query]

@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE QuasiQuotes         #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData          #-}
 
@@ -85,6 +86,7 @@ import           GHC.Natural
 import           Text.Read
 
 import           Database.SQLite.Simple
+import           Database.SQLite.Simple.QQ (sql)
 import           Data.Bits                (shiftR, (.&.))
 import           Data.Store               (Store)
 import qualified Data.ByteString       as BS
@@ -241,9 +243,11 @@ getKeysByUri :: MonadIO m => Tx mode -> DB -> RpkiURL -> m [ObjectKey]
 getKeysByUri (Tx conn) _ uri = liftIO $ do
     let uriText = toText uri
     rows <- query conn
-        "SELECT ou.object_key \
-        \FROM object_urls ou JOIN urls u USING(url_key) \
-        \WHERE u.url = ?"
+        [sql|
+            SELECT ou.object_key
+            FROM object_urls ou JOIN urls u USING(url_key)
+            WHERE u.url = ?
+        |]
         (Only uriText)
     pure $ map (SQLite.fromInt64 . fromOnly) rows
 
@@ -273,9 +277,11 @@ getLocationCountByKey (Tx conn) _ k = liftIO $ do
 getLocationsByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe Locations)
 getLocationsByKey (Tx conn) _ k = liftIO $ do
     rows <- query conn
-        "SELECT u.url FROM urls u \
-        \JOIN object_urls ou USING(url_key) \
-        \WHERE ou.object_key = ?"
+        [sql|
+            SELECT u.url FROM urls u
+            JOIN object_urls ou USING(url_key)
+            WHERE ou.object_key = ?
+        |]
         (Only (SQLite.toInt64 k))
     let urls = map fromOnly rows
     pure $ case urls of
@@ -320,8 +326,10 @@ saveObject (Tx conn) _ lifecycle wv = liftIO $ do
             forM_ (getAKI mft) $ \aki_ ->
                 let meta = getMftMetaFromWellStructured mft objectKey
                 in execute conn
-                    "INSERT OR IGNORE INTO manifest_meta(object_key, aki, manifest_number, meta) \
-                    \VALUES (?, ?, ?, ?)"
+                    [sql|
+                        INSERT OR IGNORE INTO manifest_meta(object_key, aki, manifest_number, meta)
+                        VALUES (?, ?, ?, ?)
+                    |]
                     ( SQLite.toInt64 objectKey
                     , SQLite.akiToBlob aki_
                     , let Serial mftNum = meta ^. #mftNumber in serialToBlob mftNum
@@ -966,8 +974,10 @@ updateValidatedByVersionMap (Tx conn) _ f = liftIO $ do
 getObjectsStats :: MonadIO m => Tx mode -> DB -> m ObjectStats
 getObjectsStats (Tx conn) _ = liftIO $ do
     rows <- query_ conn
-        "SELECT type, COUNT(*), SUM(LENGTH(COALESCE(data, original))) \
-        \FROM objects GROUP BY type"
+        [sql|
+            SELECT type, COUNT(*), SUM(LENGTH(COALESCE(data, original)))
+            FROM objects GROUP BY type
+        |]
     pure $ foldr accumulate mempty rows
   where
     accumulate (typText, cnt, sz) acc =
