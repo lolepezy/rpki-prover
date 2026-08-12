@@ -10,7 +10,7 @@ module RPKI.Store.Database (
     Tx(..),
     TxMode(..),
     -- * Transaction runners
-    withReadTx, withWriteTx, roTx, rwTx, roTxT, rwTxT,
+    withReadTx, withWriteTx, roTx, rwTx, roTxT, rwTxT, noTx, noTxT,
     -- * ValidatorT integration
     roAppTx, rwAppTx, appTx, roAppTxEx, rwAppTxEx, appTxEx,
     TxRollbackException(..),
@@ -126,21 +126,32 @@ withReadTx (DB sdb) = SQLite.withReadTx sdb
 withWriteTx :: MonadIO m => DB -> (Tx 'RW -> IO a) -> m a
 withWriteTx (DB sdb) = SQLite.withWriteTx sdb
 
+withoutTx :: MonadIO m => DB -> (Tx 'NOTX -> IO a) -> m a
+withoutTx (DB sdb) = SQLite.withoutTx sdb
+
 roTx :: MonadIO m => DB -> (Tx 'RO -> IO a) -> m a
 roTx = withReadTx
 
 rwTx :: MonadIO m => DB -> (Tx 'RW -> IO a) -> m a
 rwTx = withWriteTx
 
+noTx :: MonadIO m => DB -> (Tx 'NOTX -> IO a) -> m a
+noTx = withoutTx
+
 roTxT :: MonadIO m => TVar DB -> (Tx 'RO -> DB -> IO a) -> m a
 roTxT tdb f = liftIO $ do
     db <- readTVarIO tdb
-    withReadTx db (\tx -> f tx db)
+    roTx db (\tx -> f tx db)
 
 rwTxT :: MonadIO m => TVar DB -> (Tx 'RW -> DB -> IO a) -> m a
 rwTxT tdb f = liftIO $ do
     db <- readTVarIO tdb
-    withWriteTx db (\tx -> f tx db)
+    rwTx db (\tx -> f tx db)
+
+noTxT :: MonadIO m => TVar DB -> (Tx 'NOTX -> DB -> IO a) -> m a
+noTxT tdb f = liftIO $ do
+    db <- readTVarIO tdb
+    noTx db (\tx -> f tx db)
 
 -- ---------------------------------------------------------------------------
 -- Constants

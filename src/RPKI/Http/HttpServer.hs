@@ -93,7 +93,6 @@ httpServer appContext = genericServe HttpApi {
         originalValidationResults = getValidationsOriginalDto appContext,
         metrics = getMetrics appContext,
         repositories = getPPs appContext,
-        lmdbStats = getStats appContext,
         jobs = getJobs appContext,
         objectView = getRpkiObject appContext,
         manifests  = getManifests appContext,

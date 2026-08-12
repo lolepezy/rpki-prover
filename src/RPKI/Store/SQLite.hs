@@ -12,9 +12,8 @@ module RPKI.Store.SQLite (
     SqliteDB(..),
     -- * Transaction runners
     withReadTx,
-    withWriteTx,
-    roTx,
-    rwTx,
+    withWriteTx,    
+    withoutTx,    
     -- * Lifecycle
     initConn,
     createDB,
@@ -60,7 +59,7 @@ import RPKI.Store.Base.Serialisation (LexOrdKey64(..))
 -- Core types
 -- ---------------------------------------------------------------------------
 
-data TxMode = RO | RW
+data TxMode = RO | RW | NOTX
 
 -- | Phantom wrapper over Connection preserving the RO/RW call-site discipline.
 newtype Tx (m :: TxMode) = Tx { unTx :: Connection }
@@ -83,11 +82,9 @@ withWriteTx :: MonadIO m => SqliteDB -> (Tx 'RW -> IO a) -> m a
 withWriteTx SqliteDB{writeConn} f = liftIO $ withMVar writeConn $ \conn ->
     withImmediateTransaction conn (f (Tx conn))
 
-roTx :: MonadIO m => SqliteDB -> (Tx 'RO -> IO a) -> m a
-roTx = withReadTx
-
-rwTx :: MonadIO m => SqliteDB -> (Tx 'RW -> IO a) -> m a
-rwTx = withWriteTx
+withoutTx :: MonadIO m => SqliteDB -> (Tx 'NOTX -> IO a) -> m a
+withoutTx SqliteDB{readPool} f = liftIO $ Pool.withResource readPool $ \conn ->
+    f (Tx conn)
 
 
 -- ---------------------------------------------------------------------------

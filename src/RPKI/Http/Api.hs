@@ -86,7 +86,6 @@ data API api = API {
                             :> QueryParam "version" Text 
                             :> Get '[JSON] MetricsDto,                
 
-        lmdbStats :: api :- "lmdb-stats" :> Get '[JSON] TotalDBStats,
         jobs :: api      :- "jobs" :> Get '[JSON] JobsDto,
         system :: api    :- "system" :> Get '[JSON] SystemDto,
 
@@ -235,7 +234,6 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             ("/slurms", mempty & get ?~ jsonOn200 
                         "Returns all SLURMs (RFC 8416) for every version"),
 
-            ("/lmdb-stats", mempty & get ?~ jsonOn200 "LMDB cache statistics per key-value map"),
             ("/jobs", mempty & get ?~ jsonOn200 "List of latest job runs"),
             ("/system", mempty & get ?~ jsonOn200 "State of RPKI prover instance itself, some metrics and config"),
             ("/rtr", mempty & get ?~ jsonOn200 "State of the RTR server"),

@@ -60,7 +60,7 @@ import           RPKI.Repository
 import           RPKI.Resources.Types
 
 import           RPKI.Store.Base.Storable
-import           RPKI.Store.Database    (DB, Tx, roTx, rwTx, roTxT, rwTxT)
+import           RPKI.Store.Database    (DB, Tx, roTx, rwTx, roTxT, rwTxT, noTx, noTxT)
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 import           RPKI.TAL
@@ -620,18 +620,18 @@ validateCaNoFetch
 
     makeNextFullValidationAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextFullValidationAction aki = do 
-        mftMetas <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
+        mftMetas <- noTxT database $ \tx db -> DB.getMftsForAKI tx db aki
         pure $! processMfts aki mftMetas
 
     makeNextIncrementalAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextIncrementalAction aki = do
-        z <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
+        z <- noTxT database $ \tx db -> DB.getMftsForAKI tx db aki
         case z of
             []   -> pure $! vError $ NoMFT aki
             mfts -> actOnMfts mfts
       where
         actOnMfts mftMetas = do
-            z <- roTxT database $ \tx db -> DB.getMftShorcut tx db aki
+            z <- noTxT database $ \tx db -> DB.getMftShorcut tx db aki
             case z of
                 Nothing -> do
                     increment $ topDownCounters.originalMft

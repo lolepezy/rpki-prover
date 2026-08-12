@@ -168,8 +168,6 @@ data Task =
     -- delete old objects and old versions
     | CacheCleanupTask    
 
-    | LmdbCompactTask
-
     -- cleanup files in tmp, stale LMDB reader transactions, run-away child processes, etc.
     | LeftoversCleanupTask
 
@@ -367,12 +365,6 @@ runAll appContext@AppContext {..} tals = do
                 interval = config ^. #cacheCleanupInterval,
                 taskDef = (CacheCleanupTask, cacheCleanup workflowShared),
                 persistent = True                
-            },       
-            Scheduling {                 
-                initialDelay = 900 * 1_000_000,
-                interval = config ^. #storageCompactionInterval,
-                taskDef = (LmdbCompactTask, compact workflowShared),
-                persistent = True
             },
             Scheduling {             
                 initialDelay = 1200 * 1_000_000,
@@ -525,18 +517,7 @@ runAll appContext@AppContext {..} tals = do
                         Right r -> do
                             logWorkerDone logger workerId wr
                             pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxMemory
-                            pure $ Right r
-
-    -- Do LMDB compaction
-    compact workflowShared worldVersion _ = do
-        -- Some heuristics first to see if it's obvisouly too early to run compaction:
-        -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
-        deletedAnything <- readTVarIO $ workflowShared ^. #deletedAnythingFromDb
-        if deletedAnything then do
-            (_, elapsed) <- timedMS $ runMaintenance appContext
-            logInfo logger [i|Done with compacting the storage, version #{worldVersion}, took #{elapsed}ms.|]
-        else 
-            logDebug logger [i|Nothing has been deleted from the storage, compaction is not needed.|]
+                            pure $ Right r    
 
     -- Delete temporary files and LMDB stale reader transactions
     cleanupLeftovers = do
@@ -1240,19 +1221,17 @@ canRunInParallel t1 t2 =
     t2 `elem` canRunWith t1 || t1 `elem` canRunWith t2
   where    
     canRunWith = \case 
-        ValidationTask       -> allExcept [LmdbCompactTask]
+        ValidationTask       -> allTasks
 
         -- two different fetches can run in parallel, it's fine    
         FetchTask            -> [ValidationTask, FetchTask, CacheCleanupTask]
 
         CacheCleanupTask     -> [ValidationTask, FetchTask, RsyncCleanupTask]    
         RsyncCleanupTask     -> allExcept [FetchTask]
-        LeftoversCleanupTask -> allExcept [LmdbCompactTask]
-    
-        -- this one can only run alone
-        LmdbCompactTask     -> []
+        LeftoversCleanupTask -> allTasks
   
-    allExcept tasks = filter (not . (`elem` tasks)) [minBound..maxBound]
+    allExcept tasks = filter (not . (`elem` tasks)) allTasks
+    allTasks = [minBound..maxBound]
         
     
 runConcurrentlyIfPossible :: (MonadIO m, MonadBaseControl IO m) 

@@ -135,6 +135,7 @@ txOverheadBenchGroup poolName txEnv =
         , bench "single-roTxT-batched-1000" $ whnfIO (benchRoTxTBatched txEnv)
         , bench "per-call-roTxT-topdown-like-1000" $ whnfIO (benchRoTxTPerCallTopDownLike txEnv)
         , bench "single-roTxT-topdown-like-batched-1000" $ whnfIO (benchRoTxTBatchedTopDownLike txEnv)
+        , bench "single-noTx-topdown-like-batched-1000" $ whnfIO (benchNoTxTBatchedTopDownLike txEnv)
         ]
 
 mkBenchDb :: IO BenchDb
@@ -150,7 +151,7 @@ mkBenchDbWithPoolAndMmap poolSize mmapSizeMb = do
     createDirectoryIfMissing True root
     let dbPath = root </> "bench.sqlite"
 
-    sqliteDb <- SQLite.createDB dbPath 10_000 poolSize mmapSizeMb
+    sqliteDb <- SQLite.createDB dbPath 10_000 poolSize
     withMVar (SQLite.writeConn sqliteDb) SQLite.initSchema
 
     let db = DB sqliteDb
@@ -383,3 +384,9 @@ benchRoTxTBatchedTopDownLike TxOverheadEnv{..} =
     DB.roTxT txOverheadTVar $ \tx db ->
         forM_ [1 .. 1000 :: Int] $ \_ ->
             topDownLikeReadPass tx db txOverheadAki
+
+benchNoTxTBatchedTopDownLike :: TxOverheadEnv -> IO ()
+benchNoTxTBatchedTopDownLike TxOverheadEnv{..} =    
+    forM_ [1 .. 1000 :: Int] $ \_ ->
+        DB.noTx (benchDb txOverheadDb) $ \tx ->
+            topDownLikeReadPass tx (benchDb txOverheadDb) txOverheadAki

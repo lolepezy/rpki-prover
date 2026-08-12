@@ -193,10 +193,6 @@ executeWorkerProcess = do
                                         updateObjectForRsyncRepository appContext fetchConfig 
                                             worldVersion rsyncRepository
 
-                                CompactionParams {..} -> 
-                                    exec resultHandler $
-                                        pure $ Right $ CompactionResult ()
-
                                 ValidationParams {..} -> 
                                     exec resultHandler $ do 
                                         (vs, discoveredRepositories, slurm) <- 
@@ -652,7 +648,6 @@ data CLIOptions = CLIOptions {
         rsyncTimeout             :: Maybe Int64,
         rsyncClientPath          :: Maybe String,
         httpApiPort              :: Maybe Word16,
-        lmdbSize                 :: Maybe Int64,
         sqliteMmapMb             :: Maybe Int64,
         withRtr                  :: Bool,
         rtrAddress               :: Maybe String,
@@ -745,7 +740,7 @@ cliOptionsParser = CLIOptions
             <> help ("Maximum number of concurrent fetchers (default: " <> show defFetcherCount <> ", i.e. cpu-count * 2).")))
     <*> switch
             (  long "reset-cache"
-            <> help "Reset the LMDB cache, removing ~/.rpki/cache/*.mdb files.")
+            <> help "Reset the SQLite cache, removing ~/.rpki/cache/rpki-cache.sqlite.")
     <*> optional (option auto
             (  long "revalidation-interval"
             <> metavar "SECONDS"
@@ -783,12 +778,6 @@ cliOptionsParser = CLIOptions
             <> metavar "PORT"
             <> help ("Port for the HTTP API (default: " <> show defHttpApiPort <> ").")))
     <*> optional (option auto
-            (  long "lmdb-size"
-            <> metavar "MB"
-            <> help ("Maximum LMDB cache size in MB (default: " <> show defLmdbSize <> ", i.e. " <> show (defLmdbSize `div` 1024) <> "GB). "
-                  <> "This is an upper limit; actual usage may be less. "
-                  <> "About 1GB of cache is needed for each additional 24 hours of cache lifetime.")))
-        <*> optional (option auto
             (  long "sqlite-mmap-mb"
             <> metavar "MB"
             <> help ("Set SQLite PRAGMA mmap_size in MB for each connection. "
@@ -906,7 +895,6 @@ cliOptionsParser = CLIOptions
     Seconds defRrdpTimeout    = cfg ^. #rrdpConf . #rrdpTimeout
     Seconds defRsyncTimeout   = cfg ^. #rsyncConf . #rsyncTimeout
     defHttpApiPort            = cfg ^. #httpApiConf . #port
-    defLmdbSize               = unSize $ cfg ^. #lmdbSizeMb
     defRtrAddress             = rtrCfg ^. #rtrAddress
     defRtrPort                = rtrCfg ^. #rtrPort
     defMaxTaRepos             = cfg ^. #validationConfig . #maxTaRepositories
@@ -952,7 +940,6 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#httpApiConf . #port) httpApiPort
         & #rtrConfig .~ rtrConfig
         & maybeSet #longLivedCacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
-        & #lmdbSizeMb .~ lmdbRealSize
         & #localExceptions .~ apiSecured localExceptions
         & #withValidityApi .~ withValidityApi
         & maybeSet #metricsPrefix (convert <$> metricsPrefix)
@@ -961,7 +948,6 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
           & #storageConfig . #sqliteMmapSizeMb .~ sqliteMmapSize
   where
-    lmdbRealSize = (Size <$> lmdbSize) `orDefault` (baseConfig ^. #lmdbSizeMb)
     cpuCount'    = fromMaybe (baseConfig ^. #parallelism . #cpuCount) cpuCount
     parallelism  = case fetcherCount of
         Nothing -> newParallelism cpuCount'

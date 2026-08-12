@@ -27,9 +27,6 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Store.AppStorage
-import           RPKI.Store.AppLmdbStorage
-import qualified RPKI.Store.MakeLmdb as Lmdb
-
 import           RPKI.RRDP.RrdpFetch
 
 import           RPKI.Time
