@@ -237,7 +237,7 @@ defaultConfig = Config {
     rrdpConf = RrdpConf {
         tmpRoot = Hidden "",
         maxSize = Size $ 1024 * 1024 * 1024,
-        rrdpTimeout = 7 * minutes,
+        rrdpTimeout = 11 * minutes,
         cpuLimit = 30 * minutes,
         enabled = True
     },
@@ -271,9 +271,7 @@ defaultConfig = Config {
     },
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {       
-        -- There should normally be no transactions longer than that 
-        rwTransactionTimeout = 5 * minutes,
-        -- Disabled by default; set to Just (Size N) to use PRAGMA mmap_size = N MB.
+        rwTransactionTimeout = 15 * minutes,
         sqliteMmapSizeMb     = Nothing
     },
     cacheCleanupInterval      = 6 * hours,    
