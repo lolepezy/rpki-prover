@@ -719,18 +719,18 @@ deleteValidationVersion (Tx conn) db worldVersion = liftIO $
             del "bgps"        bgpCertsKey
             del "metrics"     metricsKey
             del "validations" validationsKey
-        execute conn "DELETE FROM slurm    WHERE key = ?" (Only (serialiseField worldVersion))
+        execute conn "DELETE FROM slurm    WHERE key = ?" (Only (SQLite.toInt64 worldVersion))
         execute conn "DELETE FROM versions WHERE key = ?" (Only (serialiseField worldVersion))
 
 saveSlurm :: MonadIO m => Tx 'RW -> DB -> WorldVersion -> Slurm -> m ()
 saveSlurm (Tx conn) _ version slurm = liftIO $
     execute conn "INSERT OR REPLACE INTO slurm(key, value) VALUES (?, ?)"
-        (serialiseField version, serialiseCompressed slurm)
+        (SQLite.toInt64 version, serialiseCompressed slurm)
 
 getSlurm :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe Slurm)
 getSlurm (Tx conn) _ version = liftIO $ do
     rows <- query conn "SELECT value FROM slurm WHERE key = ?"
-                (Only (serialiseField version))
+                (Only (SQLite.toInt64 version))
     pure $ fmap (deserialiseCompressed . fromOnly) (listToMaybe rows)
 
 getLatestVersions :: MonadIO m => Tx mode -> DB -> m (PerTA WorldVersion)
