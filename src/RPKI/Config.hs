@@ -57,7 +57,8 @@ data FetchConfig = FetchConfig {
     deriving anyclass (TheBinary)
 
 data StorageConfig = StorageConfig {
-        rwTransactionTimeout :: Seconds
+    rwTransactionTimeout :: Seconds,
+    sqliteMmapSizeMb     :: Maybe Size
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)    
@@ -272,7 +273,9 @@ defaultConfig = Config {
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {       
         -- There should normally be no transactions longer than that 
-        rwTransactionTimeout = 5 * minutes
+        rwTransactionTimeout = 5 * minutes,
+        -- Disabled by default; set to Just (Size N) to use PRAGMA mmap_size = N MB.
+        sqliteMmapSizeMb     = Nothing
     },
     cacheCleanupInterval      = 6 * hours,    
     versionNumberToKeep       = 3,

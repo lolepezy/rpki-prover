@@ -88,10 +88,9 @@ import           Text.Read
 import           Database.SQLite.Simple
 import           Database.SQLite.Simple.QQ (sql)
 import           Data.Bits                (shiftR, (.&.))
-import           Data.Store               (Store)
 import qualified Data.ByteString       as BS
 
-import           RPKI.Domain  hiding (object)
+import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.TAL
 import           RPKI.RRDP.Types
@@ -416,7 +415,7 @@ getMftsForAKI (Tx conn) _ aki_ = liftIO $ do
     rows <- query conn
         "SELECT meta FROM manifest_meta WHERE aki = ? ORDER BY manifest_number DESC"
         (Only (SQLite.akiToBlob aki_))
-    pure $ map (deserialiseField . fromOnly) rows
+    pure $! map (deserialiseField . fromOnly) rows
 
 findAllMftsByAKI :: MonadIO m
                  => Tx mode -> DB -> AKI -> m [(MftMeta, Keyed (Located WellStructuredMft))]
@@ -435,14 +434,17 @@ getMftByKey tx db k = do
 
 getMftShorcut :: MonadIO m => Tx mode -> DB -> AKI -> m (Maybe MftShortcut)
 getMftShorcut (Tx conn) _ aki = liftIO $ runMaybeT $ do
-    MftShortcutMeta{..} <- MaybeT $ do
-        rows <- query conn
-            "SELECT data FROM mft_shortcut_meta WHERE aki = ?" (Only (SQLite.akiToBlob aki))
-        pure $ fmap (deserialiseCompressed . fromOnly) (listToMaybe rows)    
-    MftShortcutChildren{..} <- MaybeT $ do
-        rows <- query conn
-            "SELECT data FROM mft_shortcut_children WHERE aki = ?" (Only (SQLite.akiToBlob aki))
-        pure $ fmap (deserialiseCompressed . fromOnly) (listToMaybe rows)
+    let akiBs = SQLite.akiToBlob aki
+    (metaBs, childrenBs) <- MaybeT $ listToMaybe <$> query conn
+        [sql|
+            SELECT m.data, c.data
+            FROM mft_shortcut_meta m
+            JOIN mft_shortcut_children c USING(aki)
+            WHERE m.aki = ?
+        |]
+        (Only akiBs)
+    let MftShortcutMeta{..} = deserialiseCompressed metaBs
+    let MftShortcutChildren{..} = deserialiseCompressed childrenBs
     pure $! MftShortcut {..}
 
 saveMftShorcutMeta :: MonadIO m => Tx 'RW -> DB -> AKI -> Verbatim (Compressed MftShortcutMeta) -> m ()
@@ -452,10 +454,10 @@ saveMftShorcutMeta (Tx conn) _ aki meta = liftIO $
     (SQLite.akiToBlob aki, unStorable $ unVerbatim meta)
 
 saveMftShorcutChildren :: MonadIO m => Tx 'RW -> DB -> AKI -> Verbatim (Compressed MftShortcutChildren) -> m ()
-saveMftShorcutChildren (Tx conn) _ aki children = liftIO $
+saveMftShorcutChildren (Tx conn) _ aki children_ = liftIO $
     execute conn
         "INSERT OR REPLACE INTO mft_shortcut_children(aki, data) VALUES (?, ?)"
-    (SQLite.akiToBlob aki, unStorable $ unVerbatim children)
+    (SQLite.akiToBlob aki, unStorable $ unVerbatim children_)
 
 deleteMftShortcut :: MonadIO m => Tx 'RW -> DB -> AKI -> m ()
 deleteMftShortcut (Tx conn) _ aki = liftIO $ do

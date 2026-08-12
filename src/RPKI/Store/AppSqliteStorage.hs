@@ -7,10 +7,12 @@ module RPKI.Store.AppSqliteStorage (
     setupSqliteCache,
 ) where
 
+import           Control.Lens
 import           Control.Concurrent.MVar  (withMVar)
 import           Control.Concurrent.STM   (readTVarIO)
 import           Control.Monad.IO.Class   (liftIO)
 
+import           Data.Hourglass
 import           Data.String.Interpolate.IsString
 
 import           RPKI.AppContext
@@ -66,7 +68,7 @@ data SqliteFlow = UseExisting | Reset
 -- | Create or reuse the SQLite database at <cacheDir>/rpki-cache.sqlite.
 -- Used for the main process and workers alike; no separate worker variant is needed.
 setupSqliteCache :: SqliteFlow -> AppLogger -> FilePath -> Config -> ValidatorT IO DB
-setupSqliteCache flow logger cacheDir _config = do
+setupSqliteCache flow logger cacheDir config = do
 
     case flow of
         Reset -> do
@@ -78,7 +80,6 @@ setupSqliteCache flow logger cacheDir _config = do
 
     db <- fromTry (InitE . InitError . fmtEx) $ do
         sdb <- SQLite.createDB dbPath busyTimeoutMs poolSize
-        -- initSchema outside a transaction is fine; all statements are IF NOT EXISTS
         withMVar (writeConn sdb) SQLite.initSchema
         pure (DB sdb)
 
@@ -99,5 +100,6 @@ setupSqliteCache flow logger cacheDir _config = do
     pure db
   where
     dbPath        = cacheDir </> "rpki-cache.sqlite"
-    busyTimeoutMs = 10_000
+    busyTimeoutMs = let Seconds s = config ^. #storageConfig . #rwTransactionTimeout 
+                    in fromIntegral $ s * 1000
     poolSize      = 8

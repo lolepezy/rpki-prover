@@ -267,6 +267,23 @@ executable rpki-prover
   build-depends:
       rpki-prover
 
+benchmark rpki-prover-bench
+  import:          shared
+  type:            exitcode-stdio-1.0
+  main-is:         Main.hs
+  other-modules:
+      Paths_rpki_prover
+  hs-source-dirs:
+      bench
+  ghc-options:
+      -threaded
+      -O2
+      -Wall
+      -rtsopts
+  build-depends:
+      rpki-prover
+    , criterion
+
 test-suite rpki-prover-test
   import:          shared
   type:            exitcode-stdio-1.0

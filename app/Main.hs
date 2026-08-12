@@ -653,6 +653,7 @@ data CLIOptions = CLIOptions {
         rsyncClientPath          :: Maybe String,
         httpApiPort              :: Maybe Word16,
         lmdbSize                 :: Maybe Int64,
+        sqliteMmapMb             :: Maybe Int64,
         withRtr                  :: Bool,
         rtrAddress               :: Maybe String,
         rtrPort                  :: Maybe Int16,
@@ -787,6 +788,11 @@ cliOptionsParser = CLIOptions
             <> help ("Maximum LMDB cache size in MB (default: " <> show defLmdbSize <> ", i.e. " <> show (defLmdbSize `div` 1024) <> "GB). "
                   <> "This is an upper limit; actual usage may be less. "
                   <> "About 1GB of cache is needed for each additional 24 hours of cache lifetime.")))
+        <*> optional (option auto
+            (  long "sqlite-mmap-mb"
+            <> metavar "MB"
+            <> help ("Set SQLite PRAGMA mmap_size in MB for each connection. "
+              <> "Unset by default (mmap disabled by config).")))
     <*> switch
             (  long "with-rtr"
             <> help "Start the RTR server (default: false).")
@@ -953,12 +959,14 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
         & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
         & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
+          & #storageConfig . #sqliteMmapSizeMb .~ sqliteMmapSize
   where
     lmdbRealSize = (Size <$> lmdbSize) `orDefault` (baseConfig ^. #lmdbSizeMb)
     cpuCount'    = fromMaybe (baseConfig ^. #parallelism . #cpuCount) cpuCount
     parallelism  = case fetcherCount of
         Nothing -> newParallelism cpuCount'
         Just fc -> makeParallelismF cpuCount' fc
+    sqliteMmapSize = maybe (baseConfig ^. #storageConfig . #sqliteMmapSizeMb) (Just . Size) sqliteMmapMb
     rtrConfig = if withRtr
         then Just $ defaultRtrConfig
                     & maybeSet #rtrPort rtrPort
