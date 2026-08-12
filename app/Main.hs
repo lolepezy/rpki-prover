@@ -211,7 +211,9 @@ executeWorkerProcess = do
                                     exec @() resultHandler $ do
                                         pushSystemStatus logger $ SystemStatusMessage $ SystemState { dbState = DbStuck }
                                         pure $ Left $ ErrorResult $ fmtGen t)
-                        `finally`                             
+                        `finally` do
+                            -- Clear the ref first so onExit doesn't close the same DB a second time.
+                            atomically $ writeTVar appContextRef Nothing
                             closeStorage appContext
   where    
     exec :: forall r . (WorkerResult r -> IO ()) -> IO (Either ErrorResult r) -> IO ()
