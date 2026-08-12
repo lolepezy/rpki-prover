@@ -1053,7 +1053,7 @@ deleteStaleContent db DeletionCriteria{..} =
 
         let Tx conn = tx
         allObjs <- query_ conn
-            "SELECT object_key, world_version, object_type FROM objects"
+            "SELECT object_key, world_version, type FROM objects"
 
         deletedPerType <- newTVarIO mempty
         keptTotal      <- newTVarIO (0 :: Int)
