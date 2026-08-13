@@ -17,8 +17,9 @@ import qualified Data.Set                          as Set
 import qualified Data.Text                         as Text
 import           Data.Hourglass
 import           Data.Proxy                        (Proxy(..))
+import           Data.Int                          (Int64)
 
-import           Database.SQLite.Simple            (Only(..), query_)
+import           Database.SQLite.Simple            (Only(..), query, query_)
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit                  as HU
@@ -39,6 +40,8 @@ import           RPKI.Store.Database               (DB(..), Tx(..), roTx, rwTx)
 import qualified RPKI.Store.Database               as DB
 import           RPKI.Validation.Common
 import           RPKI.Validation.ObjectValidation
+import qualified RPKI.Store.SQLite                 as SQLite
+import qualified RPKI.Store.SQLite                 as SQLite
 import           RPKI.Store.Types
 import           RPKI.TestCommons
 import           RPKI.Time
@@ -58,6 +61,8 @@ objectStoreGroup :: TestTree
 objectStoreGroup = testGroup "Object storage test"
     [ dbTestCase "Should order manifests according to their dates" shouldOrderManifests
     , dbTestCase "Should merge locations" shouldMergeObjectLocations
+    , dbTestCase "Should deduplicate saveObject by hash" shouldDeduplicateSaveObjectByHash
+    , dbTestCase "Should index certificates on saveObject" shouldIndexCertificateOnSaveObject
     ]
 
 repositoryStoreGroup :: TestTree
@@ -165,6 +170,73 @@ shouldOrderManifests io = do
         DB.getMftByKey tx db key
 
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) (toValidatedRpkiObject mft2)
+
+
+shouldDeduplicateSaveObjectByHash :: IO DB -> HU.Assertion
+shouldDeduplicateSaveObjectByHash io = do
+    db <- io
+    ro :: ParsedRpkiObject <- QC.generate QC.arbitrary
+    let lifecycle = OriginalRO
+            (ObjectOriginal $ unStorable $ toStorable ro)
+            mempty
+            (getHash ro)
+            (getRpkiObjectType ro)
+
+    wv1 <- newVersion
+    threadDelay 10_000
+    wv2 <- newVersion
+
+    k1 <- rwTx db $ \tx -> DB.saveObject tx db lifecycle wv1
+    k2 <- rwTx db $ \tx -> DB.saveObject tx db lifecycle wv2
+
+    HU.assertEqual "Saving the same hash twice must return the same key" k1 k2
+
+    rows <- roTx db $ \(Tx conn) ->
+        query conn "SELECT COUNT(*) FROM objects WHERE hash = ?"
+            (Only (SQLite.hashToBlob (getHash ro))) :: IO [Only Int64]
+
+    let objectsWithHash = case rows of
+            [Only n] -> n
+            _        -> 0
+    HU.assertEqual "Only one object row must exist for the hash" 1 objectsWithHash
+
+    meta <- roTx db $ \tx -> DB.getObjectMeta tx db k1
+    HU.assertEqual "Object metadata must come from the first insert"
+        (Just $ ObjectMeta wv1 (getRpkiObjectType ro))
+        meta
+
+
+shouldIndexCertificateOnSaveObject :: IO DB -> HU.Assertion
+shouldIndexCertificateOnSaveObject io = do
+    db <- io
+    cert <- QC.generate QC.arbitrary :: IO CaCerObject
+    url <- QC.generate QC.arbitrary :: IO RpkiURL
+    wv <- newVersion
+    let wsCert = extractCert cert
+    let ro = WellStructuredRO $ CerRO wsCert
+
+    key <- rwTx db $ \tx -> do
+        k <- DB.saveObject tx db ro wv
+        DB.linkObjectToUrl tx db url k
+        pure k
+
+    bySki <- roTx db $ \tx -> DB.getBySKI tx db (getSKI wsCert)
+    HU.assertBool "Certificate key must be indexed by SKI" (not $ null bySki)
+
+    rows <- roTx db $ \(Tx conn) ->
+        query conn "SELECT COUNT(*) FROM certificates WHERE object_key = ?"
+            (Only (SQLite.toInt64 key)) :: IO [Only Int64]
+    let certRows = case rows of
+            [Only n] -> n
+            _        -> 0
+    HU.assertEqual "Exactly one certificates row must be created" 1 certRows
+
+    fetched <- roTx db $ \tx -> DB.getFirstCaCertBySKI tx db (getSKI wsCert)
+    case fetched of
+        Just (Located _ fetchedCert) ->
+            HU.assertEqual "Fetched cert by SKI must match the inserted cert" wsCert fetchedCert
+        Nothing ->
+            HU.assertFailure "Expected getFirstCaCertBySKI to return inserted certificate"
 
 
 shouldSaveAndGetRsyncRepositories :: IO DB -> HU.Assertion

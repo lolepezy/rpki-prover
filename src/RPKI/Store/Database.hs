@@ -1202,4 +1202,8 @@ appTxEx db err f txF = do
 data TxRollbackException = TxRollbackException AppError ValidationState
     deriving stock (Show, Eq, Ord, Generic)
 
+data StorageCorruptedException = StorageCorruptedException Text
+    deriving stock (Show, Eq, Ord, Generic)
+
 instance Exception TxRollbackException
+instance Exception StorageCorruptedException
