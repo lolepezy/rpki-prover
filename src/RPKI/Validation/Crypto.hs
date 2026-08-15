@@ -23,27 +23,15 @@ validateCertSignature cert parentCert =
 
 
 -- | Validate the signature of a CRL object
-validateCRLSignature :: WithRawResourceCertificate c => CrlObject -> c -> SignatureVerification                
+validateCRLSignature :: WithPubKey c => CrlObject -> c -> SignatureVerification
 validateCRLSignature crl parentCert = 
-    verifySignature signAlgorithm pubKey (toNormalBS encoded) (toNormalBS signature')
+    verifySignature signAlgorithm (getPubKey parentCert) (toNormalBS encoded) (toNormalBS signature_)
     where
-        pubKey = certPubKey $ cwsX509certificate $ getCertWithSignature parentCert
         SignCRL { 
             signatureAlgorithm = (SignatureAlgorithmIdentifier signAlgorithm),
-            signatureValue = (SignatureValue signature'),
+            signatureValue = (SignatureValue signature_),
             encodedValue = encoded 
         } = signCrl crl
-
-validateCRLSignatureV :: CrlObject -> ValidatedCert t -> SignatureVerification
-validateCRLSignatureV crl ValidatedCert { pubKey = parentPubKey } =
-    verifySignature signAlgorithm parentPubKey (toNormalBS encoded) (toNormalBS signature')
-  where
-    SignCRL {
-        signatureAlgorithm = SignatureAlgorithmIdentifier signAlgorithm,
-        signatureValue = SignatureValue signature',
-        encodedValue = encoded
-    } = signCrl crl
-
  
 -- | Validate that the CMS is signed by the public key of the EE certficate it has
 validateCMSSignature :: CMS a -> SignatureVerification

@@ -129,7 +129,7 @@ validateBottomUp
                 BgpRO bgp ->
                     void $ vHoist $ validateBgpCertV now bgp (bottomCert ^. #payload) crl
                 CrlRO childCrl ->
-                    void $ vHoist $ validateCrlV now childCrl (bottomCert ^. #payload)
+                    void $ vHoist $ validateCrl now childCrl (bottomCert ^. #payload)
 
 
     -- Given a certificate, find a chain of certificates leading to a TA, 
@@ -195,7 +195,7 @@ validateBottomUp
                             vFocusOn LocationFocus (getURL $ pickLocation crlLocations) $ do 
                                 validateObjectLocations foundCrl
                                 checkCrlLocation foundCrl $ eeCert mft
-                                validCrl <- vHoist $ validateCrlV now crl (certificate ^. #payload)
+                                validCrl <- vHoist $ validateCrl now crl (certificate ^. #payload)
                                 pure (mft, validCrl)
 
                         Just _ -> 

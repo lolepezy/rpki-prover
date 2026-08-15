@@ -148,6 +148,9 @@ class WithHash a where
 class WithSKI a where
     getSKI :: a -> SKI
 
+class WithPubKey a where
+    getPubKey :: a -> X509.PubKey
+
 class WithRawResourceCertificate a where
     getRawCert :: a -> RawResourceCertificate
 
@@ -164,7 +167,7 @@ class WithResources a where
 -- structural validations ('prevalidate' / 'prevalidateObject').
 newtype Validated a = Validated a
     deriving stock (Show, Eq, Generic)
-    deriving newtype (WithSKI, WithAKI, WithHash, WithRpkiObjectType)
+    deriving newtype (WithSKI, WithAKI, WithHash, WithPubKey, WithRpkiObjectType)
 
 instance {-# OVERLAPPING #-} WithURL URI where
     getURL = id
@@ -398,6 +401,9 @@ instance {-# OVERLAPPING #-} (Generic o, HasType Hash o) => WithHash o where
 instance {-# OVERLAPPING #-} (Generic o, HasType SKI o) => WithSKI o where
     getSKI o = o ^. typed @SKI
 
+instance {-# OVERLAPPING #-} (Generic o, HasType X509.PubKey o) => WithPubKey o where
+    getPubKey o = o ^. typed @X509.PubKey
+
 instance {-# OVERLAPPING #-} (Generic o, HasType AKI o) => WithAKI o where
     getAKI o = Just $ o ^. typed @AKI
 
@@ -412,6 +418,9 @@ instance WithResources CaCerObject where
     
 instance {-# OVERLAPPING #-} WithAKI (CMSBasedObject a) where
     getAKI CMSBasedObject {..} = getAKI $ getEEResourceCert $ unCMS cmsPayload 
+
+instance {-# OVERLAPPING #-} WithPubKey (CMSBasedObject a) where
+    getPubKey CMSBasedObject { cmsPayload } = getPubKey $ getEEResourceCert $ unCMS cmsPayload
 
 instance WithResources (CMSBasedObject a) where
     getResources CMSBasedObject { cmsPayload } = getResources $ getEEResourceCert $ unCMS cmsPayload
@@ -433,8 +442,14 @@ instance WithRawResourceCertificate (CMSBasedObject a) where
 instance {-# OVERLAPPING #-} WithAKI BgpCerObject where
     getAKI BgpCerObject {..} = aki
 
+instance {-# OVERLAPPING #-} WithPubKey BgpCerObject where
+    getPubKey BgpCerObject { certificate } = X509.certPubKey $ cwsX509certificate $ getCertWithSignature certificate
+
 instance WithResources BgpCerObject where
     getResources BgpCerObject { certificate } = getResources certificate
+
+instance {-# OVERLAPPING #-} WithPubKey EECerObject where
+    getPubKey EECerObject { certificate } = X509.certPubKey $ cwsX509certificate $ getCertWithSignature certificate
 
 instance WithResources EECerObject where
     getResources EECerObject { certificate } = getResources certificate
@@ -479,10 +494,15 @@ instance OfCertType BgpCerObject 'BGPCert
 
 -- Ehm, it looks pretty terrible, but it works.
 
-instance (WithAKI ca, WithAKI mft, WithAKI roa, WithAKI spl, WithAKI gbr, 
+instance {-# OVERLAPPING #-} (WithAKI ca, WithAKI mft, WithAKI roa, WithAKI spl, WithAKI gbr, 
           WithAKI rsc, WithAKI aspa, WithAKI bgpSec, WithAKI crl) => 
     WithAKI (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl) where
     getAKI = foldRpkiObject getAKI getAKI getAKI getAKI getAKI getAKI getAKI getAKI getAKI
+
+instance {-# OVERLAPPING #-} (WithPubKey ca, WithPubKey mft, WithPubKey roa, WithPubKey spl, WithPubKey gbr, 
+          WithPubKey rsc, WithPubKey aspa, WithPubKey bgpSec, WithPubKey crl) => 
+    WithPubKey (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl) where
+    getPubKey = foldRpkiObject getPubKey getPubKey getPubKey getPubKey getPubKey getPubKey getPubKey getPubKey getPubKey
 
 instance {-# OVERLAPPING #-} (WithHash ca, WithHash mft, WithHash roa, WithHash spl, WithHash gbr, 
           WithHash rsc, WithHash aspa, WithHash bgpSec, WithHash crl) => 
@@ -509,13 +529,16 @@ instance WithLocations (Located a) where
 instance WithLocations Locations where
     getLocations = id
 
-instance WithAKI a => WithAKI (Located a) where
+instance {-# OVERLAPPING #-} WithAKI a => WithAKI (Located a) where
     getAKI (Located _ o) = getAKI o    
 
-instance WithHash a => WithHash (Located a) where
+instance {-# OVERLAPPING #-} WithHash a => WithHash (Located a) where
     getHash (Located _ o) = getHash o
 
-instance WithSKI a => WithSKI (Located a) where
+instance {-# OVERLAPPING #-} WithPubKey a => WithPubKey (Located a) where
+    getPubKey (Located _ o) = getPubKey o
+
+instance {-# OVERLAPPING #-} WithSKI a => WithSKI (Located a) where
     getSKI (Located _ o) = getSKI o
 
 instance WithRawResourceCertificate a => WithRawResourceCertificate (Located a) where    
@@ -873,6 +896,7 @@ data ValidatedCert (t :: CertType) = ValidatedCert {
 
 instance {-# OVERLAPPING #-} WithSerial (ValidatedCert t) where getSerial (ValidatedCert { serial }) = serial
 instance {-# OVERLAPPING #-} WithAKI (ValidatedCert t) where getAKI (ValidatedCert { aki }) = aki
+instance {-# OVERLAPPING #-} WithPubKey (ValidatedCert t) where getPubKey (ValidatedCert { pubKey }) = pubKey
 instance {-# OVERLAPPING #-} WithResources (ValidatedCert t) where getResources (ValidatedCert { resources }) = resources
 instance {-# OVERLAPPING #-} WithValidityPeriod (ValidatedCert t) where getValidityPeriod (ValidatedCert { validity }) = validity
 
@@ -903,6 +927,7 @@ data ValidatedEECert = ValidatedEECert {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
+instance {-# OVERLAPPING #-} WithPubKey ValidatedEECert where getPubKey (ValidatedEECert { pubKey }) = pubKey
 instance WithResources ValidatedEECert where getResources (ValidatedEECert { resources }) = resources
 instance {-# OVERLAPPING #-} WithValidityPeriod ValidatedEECert where getValidityPeriod (ValidatedEECert { validity }) = validity
 
@@ -921,6 +946,7 @@ data ValidatedCMSObject a = ValidatedCMSObject {
     deriving anyclass (TheBinary)
 
 instance {-# OVERLAPPING #-} WithAKI  (ValidatedCMSObject a) where getAKI  (ValidatedCMSObject { eeCert = ValidatedEECert { aki } }) = Just aki
+instance {-# OVERLAPPING #-} WithPubKey (ValidatedCMSObject a) where getPubKey (ValidatedCMSObject { eeCert }) = getPubKey eeCert
 instance {-# OVERLAPPING #-} WithResources (ValidatedCMSObject a) where getResources (ValidatedCMSObject { eeCert }) = getResources eeCert
 instance {-# OVERLAPPING #-} WithValidityPeriod (ValidatedCMSObject a) where getValidityPeriod (ValidatedCMSObject { eeCert }) = getValidityPeriod eeCert
 

@@ -49,7 +49,6 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Storage
 import qualified RPKI.Store.Database    as DB
 import qualified RPKI.Util              as U
-import           RPKI.Validation.Common  (prevalidateObject)
 
 
 runRrdpFetchWorker :: AppContext s 
