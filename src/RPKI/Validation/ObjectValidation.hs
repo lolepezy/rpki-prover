@@ -205,23 +205,35 @@ validateResourceCert :: forall child parent (childCertType :: CertType) .
     Validated CrlObject ->    
     PureValidatorT (Validated child)
 validateResourceCert now cert parentCert vcrl = do
-    cert' <- self
-    wrtParent
-    pure $ Validated cert'  
-  where
-    self = do 
-        when (isRevoked cert vcrl) $ 
-            vPureError RevokedResourceCertificate        
-        void $ validateObjectValidityPeriod cert now    
-        validateResourceCertExtensions @_ @childCertType cert
+    validateResourceCertSelf @_ @childCertType now cert
 
-    wrtParent = do 
-        signatureCheck $ validateCertSignature cert parentCert
-        unless (correctSkiAki cert parentCert) $
-            vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
-      where
-        correctSkiAki c (getSKI -> SKI s) =
-            maybe False (\(AKI a) -> a == s) $ getAKI c
+    signatureCheck $ validateCertSignature cert parentCert    
+    when (isRevoked cert vcrl) $ 
+        vPureError RevokedResourceCertificate                
+
+    unless (correctSkiAki cert parentCert) $    
+        vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
+
+    pure $ Validated cert
+  where
+    correctSkiAki c (getSKI -> SKI s) =
+        maybe False (\(AKI a) -> a == s) $ getAKI c
+
+
+validateResourceCertSelf :: forall child (childCertType :: CertType) .
+    ( WithRawResourceCertificate child
+    , WithAKI child
+    , WithSerial child
+    , WithValidityPeriod child
+    , OfCertType child childCertType
+    , ExtensionValidator childCertType
+    ) =>
+    Now ->
+    child ->    
+    PureValidatorT ()
+validateResourceCertSelf now cert = do
+    void $ validateObjectValidityPeriod cert now    
+    void $ validateResourceCertExtensions @_ @childCertType cert
 
 
 validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT ValidityPeriod
@@ -523,6 +535,32 @@ validateCms validationRFC now cms parentCert crl verifiedResources extraValidati
     extraValidation cms
 
 
+validateCmsSelf :: Now 
+                -> CMS cms 
+                -> PureValidatorT ()
+validateCmsSelf now cms = do
+    -- EE cert should sign the CMS
+    signatureCheck $ validateCMSSignature cms
+
+    -- Signature algorithm in the EE certificate has to be
+    -- exactly the same as in the signed attributes
+    let eeCert = getEEResourceCert $ unCMS cms
+    let certWSign = getCertWithSignature eeCert
+    let SignatureAlgorithmIdentifier eeCertSigAlg = certWSign ^. #cwsSignatureAlgorithm
+    let attributeSigAlg = certSignatureAlg $ certWSign ^. #cwsX509certificate
+
+    -- That can be a problem:
+    -- http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt
+    -- Correct behaviour is to request exact match here.
+    unless (eeCertSigAlg == attributeSigAlg) $
+        vPureError $
+            CMSSignatureAlgorithmMismatch
+                (Text.pack $ show eeCertSigAlg)
+                (Text.pack $ show attributeSigAlg)
+
+    validateResourceCertSelf @_ @'EECert now eeCert
+
+
 validateUpdateTimes :: Now -> Instant -> Instant -> PureValidatorT ()
 validateUpdateTimes (Now now) thisUpdateTime nextUpdateTime = do
     when (thisUpdateTime >= now) $ vPureError $ ThisUpdateTimeIsInTheFuture {..}
@@ -613,7 +651,10 @@ validateResourcesCAV ::
     ValidatedCaCert -> ValidatedCaCert ->
     PureValidatorT (VerifiedRS PrefixesAndAsns, Maybe (Overclaiming PrefixesAndAsns))
 validateResourcesCAV validationRFC verifiedResources childCert parentCert =
-    validateChildParentResources validationRFC (childCert ^. #resources) (parentCert ^. #resources) verifiedResources
+    validateChildParentResources validationRFC 
+        (childCert ^. #resources) 
+        (parentCert ^. #resources) 
+        verifiedResources
 
 -- | Common CMS validation for validated objects.
 validateCmsV ::
