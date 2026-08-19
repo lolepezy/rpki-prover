@@ -276,6 +276,7 @@ test-suite rpki-prover-test
   main-is:         Spec.hs
   other-modules:
       RPKI.AppMonadSpec
+      RPKI.DomainSpec
       RPKI.FetchSpec
       RPKI.LoggingSpec
       RPKI.Orphans
