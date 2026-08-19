@@ -930,15 +930,7 @@ estimateVrpCountRoas = sum . map V.length . MonoidalMap.elems . unRoas
 
 -- Precise but much more expensive
 uniqueVrpCount :: PerTA Vrps -> Int 
--- uniqueVrpCount = Set.size . Set.fromList . concatMap (V.toList . unVrps . snd) . perTA
--- uniqueVrpCount = 
---     length
---         . List.group
---         . List.sort
---         . concatMap (V.toList . unVrps . snd)
---         . perTA    
 uniqueVrpCount = length . uniqVrpsListBy compare . allTAs
--- uniqueVrpCount _ = 0 
 
 uniqVrpsBy :: (Vrp -> Vrp -> Ordering) -> Vrps -> V.Vector Vrp 
 uniqVrpsBy cmp = V.fromList . uniqVrpsListBy cmp
