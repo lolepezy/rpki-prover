@@ -684,5 +684,18 @@ replaceAKI a = \case
     mapCms :: CMS a -> CMS a
     mapCms (CMS so) = CMS $ so & #soContent . #scCertificate . #aki .~ a
 
+-- Convert without validating, 
+toValidatedRpkiObject :: ParsedRpkiObject -> ValidatedRpkiObject
+toValidatedRpkiObject = \case
+    CerRO ca    -> CerRO  $ extractCert ca
+    CrlRO crl   -> CrlRO  crl
+    MftRO mft   -> MftRO  $ extractCMSObject mft
+    RoaRO roa   -> RoaRO  $ extractCMSObject roa
+    GbrRO gbr   -> GbrRO  $ extractCMSObject gbr
+    AspaRO aspa -> AspaRO $ extractCMSObject aspa
+    SplRO spl   -> SplRO  $ extractCMSObject spl
+    BgpRO bgp   -> BgpRO  $ extractCert bgp
+    RscRO rsc   -> RscRO  $ extractCMSObject rsc
+
 newVersion :: MonadIO m => m WorldVersion
 newVersion = instantToVersion . unNow <$> thisInstant     

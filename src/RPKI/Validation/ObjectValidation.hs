@@ -789,40 +789,42 @@ prevalidate located@(Located _ rpkiObject) = do
     prevalidateObject rpkiObject
 
 
--- | Self-contained structural validation without a location context.
--- Used at object-save time (when only one URL is known) and wherever
--- constructing a 'Located' wrapper is unnecessary overhead.
+{- | Self-contained structural validation without a location context.
+Used at object-save time (when only one URL is known) and wherever
+constructing a 'Located' wrapper is unnecessary overhead.
+-}
 prevalidateObject :: ParsedRpkiObject -> PureValidatorT ValidatedRpkiObject
 prevalidateObject rpkiObject = do
     case rpkiObject of
-        CerRO ca    -> validateCaCertStructure ca
-        CrlRO crl   -> validateCrlStructure crl
-        MftRO mft   -> validateCmsStructure mft >> validateMftStructure mft
-        RoaRO roa   -> validateCmsStructure roa
-        GbrRO gbr   -> validateCmsStructure gbr
-        AspaRO aspa -> validateCmsStructure aspa >> validateAspaContent aspa
-        SplRO spl   -> validateCmsStructure spl
-        BgpRO bgp   -> validateBgpCertStructure bgp
-        RscRO rsc   -> validateCmsStructure rsc
-    pure $ toValidatedRpkiObject rpkiObject
-
-
--- | Convert a fully-parsed 'ParsedRpkiObject' to its minimized post-prevalidation
--- representation.  Drops all fields that are constant-after-validation
--- (CMS version, digest-algorithm OIDs, duplicate content-type, SignerInfo SID)
--- and extracts the few surviving fields (signing-time, CMS signature,
--- raw signed-attributes bytes, cert public-key, extensions, etc.).
-toValidatedRpkiObject :: ParsedRpkiObject -> ValidatedRpkiObject
-toValidatedRpkiObject = \case
-    CerRO ca    -> CerRO  $ extractCert ca
-    CrlRO crl   -> CrlRO  crl
-    MftRO mft   -> MftRO  $ extractCMSObject mft
-    RoaRO roa   -> RoaRO  $ extractCMSObject roa
-    GbrRO gbr   -> GbrRO  $ extractCMSObject gbr
-    AspaRO aspa -> AspaRO $ extractCMSObject aspa
-    SplRO spl   -> SplRO  $ extractCMSObject spl
-    BgpRO bgp   -> BgpRO  $ extractCert bgp
-    RscRO rsc   -> RscRO  $ extractCMSObject rsc
+        CerRO ca -> do
+            validateCaCertStructure ca
+            pure $ CerRO $ extractCert ca
+        CrlRO crl -> do
+            validateCrlStructure crl
+            pure $ CrlRO crl
+        MftRO mft -> do
+            validateCmsStructure mft
+            validateMftStructure mft
+            pure $ MftRO $ extractCMSObject mft
+        RoaRO roa -> do
+            validateCmsStructure roa
+            pure $! RoaRO $ extractCMSObject roa
+        GbrRO gbr -> do
+            validateCmsStructure gbr
+            pure $! GbrRO $ extractCMSObject gbr
+        AspaRO aspa -> do
+            validateCmsStructure aspa
+            validateAspaContent aspa
+            pure $! AspaRO $ extractCMSObject aspa
+        SplRO spl -> do
+            validateCmsStructure spl
+            pure $! SplRO $ extractCMSObject spl
+        BgpRO bgp -> do
+            validateBgpCertStructure bgp
+            pure $! BgpRO $ extractCert bgp
+        RscRO rsc -> do
+            validateCmsStructure rsc
+            pure $! RscRO $ extractCMSObject rsc
 
 
 extractCert :: (WithHash c, WithSKI c, WithAKI c, WithRawResourceCertificate c) => c -> ValidatedCert t
