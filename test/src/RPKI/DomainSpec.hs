@@ -5,12 +5,12 @@ module RPKI.DomainSpec where
 import           Test.Tasty
 import qualified Test.Tasty.HUnit as HU
 
-import qualified Data.Map.Strict as Map
+import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import qualified Data.Vector     as V
 
 import           RPKI.Domain
 import           RPKI.Resources.Resources (readIp4)
-import           RPKI.Resources.Types (ASN(..), PrefixLength(..))
+import           RPKI.Resources.Types (ASN(..), IpPrefix(..), PrefixLength(..))
 
 
 domainCountersGroup :: TestTree
@@ -43,32 +43,24 @@ testUniqueVrpCount =
 perTaVrps :: PerTA Vrps
 perTaVrps =
     toPerTA
-        [ (TaName "ta-1", Vrps $ V.fromList [duplicatePayload, duplicatePayload])
-        , (TaName "ta-2", Vrps $ V.singleton uniquePayload)
+        [ (TaName "ta-1", Vrps $ V.fromList [duplicateVrp, duplicateVrp, uniqueVrp])
+        , (TaName "ta-2", Vrps $ V.fromList [duplicateVrp, uniqueVrp])
         ]
 
 
 roasFixture :: Roas
-roasFixture = Roas $ Map.fromList
-    [ (ObjectKey $ asKey 1, duplicatePayload)
-    , (ObjectKey $ asKey 2, duplicatePayload)
-    , (ObjectKey $ asKey 3, uniquePayload)
+roasFixture = Roas $ MonoidalMap.fromList
+    [ (ObjectKey $ asKey 1, V.fromList [duplicateVrp, duplicateVrp])
+    , (ObjectKey $ asKey 2, V.singleton duplicateVrp)
+    , (ObjectKey $ asKey 3, V.fromList [uniqueVrp, uniqueVrp])
     ]
 
 
-duplicatePayload :: VrpsPerAs
-duplicatePayload =
-    VrpsPerAs
-        (ASN 64500)
-        [ Vrp4 (readIp4 "10.0.0.0/24") (PrefixLength 24)
-        , Vrp4 (readIp4 "10.0.0.0/24") (PrefixLength 24)
-        ]
-        []
+duplicateVrp :: Vrp
+duplicateVrp =
+    Vrp (ASN 64500) (Ipv4P $ readIp4 "10.0.0.0/24") (PrefixLength 24)
 
 
-uniquePayload :: VrpsPerAs
-uniquePayload =
-    VrpsPerAs
-        (ASN 64501)
-        [ Vrp4 (readIp4 "10.0.1.0/24") (PrefixLength 24) ]
-        []
+uniqueVrp :: Vrp
+uniqueVrp =
+    Vrp (ASN 64501) (Ipv4P $ readIp4 "10.0.1.0/24") (PrefixLength 24)
