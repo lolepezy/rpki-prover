@@ -102,7 +102,7 @@ The idea behind shortcuts is as follows:
 -}
 
 data PayloadBuilder = PayloadBuilder {
-        vrps     :: IORef [T2 RoaPayload ObjectKey],
+        vrps     :: IORef [T2 VrpsPerAs ObjectKey],
         spls     :: IORef [SplPayload],        
         aspas    :: IORef [Aspa],
         gbrs     :: IORef [T2 Hash Gbr],
@@ -1559,7 +1559,7 @@ makeCaShortcut key (Validated certificate) ppas fileName = let
         child = CaChild (CaShortcut {..}) serial
     in MftEntry {..}
 
-makeRoaShortcut :: ObjectKey -> Validated RoaObject -> RoaPayload -> Text -> MftEntry
+makeRoaShortcut :: ObjectKey -> Validated RoaObject -> VrpsPerAs -> Text -> MftEntry
 makeRoaShortcut key (Validated roa) roaPayload fileName = let
         (notValidBefore, notValidAfter) = getValidityPeriod roa    
         serial = getSerial roa

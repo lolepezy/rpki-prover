@@ -363,7 +363,7 @@ validateRoa validationRFC now roa parentCert crl verifiedResources = do
         validateCms validationRFC now (cmsPayload roa) parentCert crl verifiedResources $ \roaCMS -> do
             let checkerV4 = validatedPrefixInRS @Ipv4Prefix verifiedResources
             let checkerV6 = validatedPrefixInRS @Ipv6Prefix verifiedResources
-            let RoaPayload asn v4s v6s = getCMSContent roaCMS
+            let VrpsPerAs asn v4s v6s = getCMSContent roaCMS
             for_ v4s $ \(Vrp4 prefix maxLength) -> do
                 checkerV4 prefix (RoaPrefixIsOutsideOfResourceSet (Ipv4P prefix))
                 when (ipv4PrefixLen prefix > maxLength) $

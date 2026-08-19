@@ -206,7 +206,7 @@ objectToDto = \case
                 & #ski ?~ getSKI c
 
     roaDto r = let
-                RoaPayload asn v4s v6s = getCMSContent $ r ^. #cmsPayload
+                VrpsPerAs asn v4s v6s = getCMSContent $ r ^. #cmsPayload
                 prefixes = map (\(Vrp4 p l) -> RoaPrefixDto (Ipv4P p) l) v4s
                         <> map (\(Vrp6 p l) -> RoaPrefixDto (Ipv6P p) l) v6s
             in RoaDto {..}

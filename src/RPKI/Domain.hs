@@ -287,7 +287,7 @@ data CMSBasedObject a = CMSBasedObject {
 type MftObject = CMSBasedObject Manifest
 
 -- https://datatracker.ietf.org/doc/rfc6482
-type RoaObject = CMSBasedObject RoaPayload
+type RoaObject = CMSBasedObject VrpsPerAs
 
 -- https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-prefixlist
 type SplObject = CMSBasedObject SplPayload
@@ -494,7 +494,7 @@ data Vrp6 = Vrp6 {-# UNPACK #-} !Ipv6Prefix {-# UNPACK #-} !PrefixLength
     deriving anyclass (TheBinary, NFData)
 
 -- ROA payload: ASN stored once; IPv4 and IPv6 entries kept in separate lists.
-data RoaPayload = RoaPayload {
+data VrpsPerAs = VrpsPerAs {
         roaAsn :: {-# UNPACK #-} !ASN,
         roaV4  :: ![Vrp4],
         roaV6  :: ![Vrp6]
@@ -502,8 +502,8 @@ data RoaPayload = RoaPayload {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-roaPayloadToVrps :: RoaPayload -> [Vrp]
-roaPayloadToVrps (RoaPayload asn v4s v6s) =
+roaPayloadToVrps :: VrpsPerAs -> [Vrp]
+roaPayloadToVrps (VrpsPerAs asn v4s v6s) =
     map (\(Vrp4 p len) -> Vrp asn (Ipv4P p) len) v4s <>
     map (\(Vrp6 p len) -> Vrp asn (Ipv6P p) len) v6s
 

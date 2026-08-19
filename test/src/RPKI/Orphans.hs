@@ -237,7 +237,7 @@ instance Arbitrary Vrp6 where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RoaPayload where
+instance Arbitrary VrpsPerAs where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
