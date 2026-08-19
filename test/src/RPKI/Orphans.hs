@@ -241,10 +241,6 @@ instance Arbitrary VrpsPerAs where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary AscOrderedVrp where
-    arbitrary = genericArbitrary
-    shrink = genericShrink
-
 instance Arbitrary BGPSecPayload where
     arbitrary = genericArbitrary
     shrink = genericShrink

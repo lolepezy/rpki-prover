@@ -51,13 +51,13 @@ toVrpDtos vrpsPerTa =
 toVrpDto :: Vrp -> TaName -> VrpDto
 toVrpDto (Vrp a p len) (TaName ta) = VrpDto a p len ta
 
-toVrpV :: Maybe Vrps -> V.Vector AscOrderedVrp
-toVrpV = maybe mempty uniqVrps
+toVrpV :: Maybe Vrps -> V.Vector Vrp
+toVrpV = maybe mempty (uniqVrpsBy cmpVrps)
 
 toVrpMinimalDtos :: Maybe Vrps -> [VrpMinimalDto]
 toVrpMinimalDtos = map asDto . V.toList . toVrpV
   where
-    asDto (AscOrderedVrp (Vrp asn prefix maxLength)) = VrpMinimalDto {..}
+    asDto (Vrp asn prefix maxLength) = VrpMinimalDto {..}
 
 
 bgpSecToDto :: BGPSecPayload -> BgpCertDto
@@ -148,13 +148,13 @@ vrpExtDtosToCSV vrpDtos =
             str (convert ta) <> ch '\n'
 
 
-vrpSetToCSV :: Foldable f => f AscOrderedVrp -> RawCSV
+vrpSetToCSV :: Foldable f => f Vrp -> RawCSV
 vrpSetToCSV vrpDtos =
     rawCSV
         (str "ASN,IP Prefix,Max Length\n")
         (mconcat $ map toBS $ toList vrpDtos)
   where
-    toBS (AscOrderedVrp (Vrp asn prefix (PrefixLength maxLength))) =
+    toBS (Vrp asn prefix (PrefixLength maxLength)) =
         str (show asn) <> ch ',' <>
         text (prefixStr prefix) <> ch ',' <>
         str (show maxLength) <> ch '\n'

@@ -495,9 +495,9 @@ data Vrp6 = Vrp6 {-# UNPACK #-} !Ipv6Prefix {-# UNPACK #-} !PrefixLength
 
 -- ROA payload: ASN stored once; IPv4 and IPv6 entries kept in separate lists.
 data VrpsPerAs = VrpsPerAs {
-        roaAsn :: {-# UNPACK #-} !ASN,
-        roaV4  :: ![Vrp4],
-        roaV6  :: ![Vrp6]
+        roaAsn :: {-# UNPACK #-} ASN,
+        roaV4  :: [Vrp4],
+        roaV6  :: [Vrp6]
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -930,8 +930,32 @@ estimateVrpCountRoas = sum . map V.length . MonoidalMap.elems . unRoas
 
 -- Precise but much more expensive
 uniqueVrpCount :: PerTA Vrps -> Int 
-uniqueVrpCount = Set.size . Set.fromList . concatMap (V.toList . unVrps . snd) . perTA
+-- uniqueVrpCount = Set.size . Set.fromList . concatMap (V.toList . unVrps . snd) . perTA
+-- uniqueVrpCount = 
+--     length
+--         . List.group
+--         . List.sort
+--         . concatMap (V.toList . unVrps . snd)
+--         . perTA    
+uniqueVrpCount = length . uniqVrpsListBy compare . allTAs
 -- uniqueVrpCount _ = 0 
+
+uniqVrpsBy :: (Vrp -> Vrp -> Ordering) -> Vrps -> V.Vector Vrp 
+uniqVrpsBy cmp = V.fromList . uniqVrpsListBy cmp
+
+uniqVrpsListBy :: (Vrp -> Vrp -> Ordering) -> Vrps -> [Vrp]
+uniqVrpsListBy cmp vrps =
+    dedupSortedList . List.sortBy cmp . V.toList . unVrps $ vrps
+   where    
+    dedupSortedList = \case
+        [] -> []
+        x : xs -> x : go x xs
+      where
+        go _ [] = []
+        go prev (y : ys)
+                | prev == y = go prev ys
+                | otherwise = y : go y ys                
+
 
 createVrps :: Foldable f => f Vrp -> Vrps
 createVrps vrps = Vrps $ V.fromList $ toList vrps
