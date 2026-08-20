@@ -5,13 +5,13 @@ gitBranch :: String
 gitBranch = "optimise-vrps"
 
 gitHash :: String
-gitHash = "bf86b1eebdacdd6623bd45765ec172a750e2a37a"
+gitHash = "92bc7c07ca112f6c9d2768dcf5d4e1488f9ffc9f"
 
 gitCommitDate :: String
-gitCommitDate = "2026-08-19 20:22:11 +0200"
+gitCommitDate = "2026-08-19 20:25:46 +0200"
 
 gitCommitCount :: Int
-gitCommitCount = 2692
+gitCommitCount = 2693
 
 gitDirty :: Bool
 gitDirty = True

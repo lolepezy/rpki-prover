@@ -10,6 +10,7 @@ import qualified Data.HashSet as HashSet
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.List as List
+import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import qualified Data.Set  as Set
 import qualified Data.Text as Text
 import qualified Data.Vector as V
@@ -17,6 +18,7 @@ import qualified Data.Vector as V
 import           Data.Bits ((.&.), shiftR)
 import           Data.Function (on)
 import           Data.Hashable (Hashable, hashWithSalt)
+import           Data.Int (Int64)
 import           Data.Word (Word8, Word32, Word64)
 import           Numeric (showHex)
 import           GHC.Clock (getMonotonicTimeNSec)
@@ -31,6 +33,7 @@ import           RPKI.RTR.Types
 main :: IO ()
 main = do
     input <- force <$> mkBenchmarkInput
+    let roasInput = force $ mkBenchmarkRoas input
 
     putStrLn "Dataset: PerTA Vrps with 5 entries x 200000 VRPs = 1000000 total (80% IPv4, 20% IPv6)"
     putStrLn "Each implementation is measured 5 times after one warmup run."
@@ -56,6 +59,15 @@ main = do
     printf "Fastest uniqVrps implementation: %s (avg %.2f ms, min %.2f ms)\n"
         (implName uniqFastest) (avgMs uniqFastest) (minMs uniqFastest)
 
+    putStrLn ""
+    putStrLn "estimateVrpCountRoas benchmarks"
+    roaCountResults <- forM roaCountImplementations $ \impl -> benchmarkRoaCountImpl 5 roasInput impl
+    mapM_ printResult roaCountResults
+    let roaFastest = List.minimumBy (compare `on` avgMs) roaCountResults
+    putStrLn ""
+    printf "Fastest estimateVrpCountRoas implementation: %s (avg %.2f ms, min %.2f ms)\n"
+        (implName roaFastest) (avgMs roaFastest) (minMs roaFastest)
+
 
 -- 1,000,000 total VRPs: 5 TAs x 200,000 each, with 80/20 IPv4/IPv6 split.
 mkBenchmarkInput :: IO (PerTA Vrps)
@@ -63,6 +75,23 @@ mkBenchmarkInput = pure $ toPerTA
     [ mkTaEntry taIx | taIx <- [0 .. taCount - 1] ]
   where
     taCount = 5 :: Int
+
+
+mkBenchmarkRoas :: PerTA Vrps -> Roas
+mkBenchmarkRoas perTaVrps =
+        Roas $ MonoidalMap.fromList $ Prelude.zipWith mkEntry [1 :: Int64 ..] allVrps
+    where
+        allVrps = concatMap (V.toList . unVrps . snd) $ perTA perTaVrps
+
+        mkEntry :: Int64 -> Vrp -> (ObjectKey, VrpsPerAs)
+        mkEntry ix vrp = (ObjectKey $ asKey ix, vrpToPayload vrp)
+
+
+vrpToPayload :: Vrp -> VrpsPerAs
+vrpToPayload (Vrp asn prefix maxLen) =
+    case prefix of
+        Ipv4P p -> VrpsPerAs asn [Vrp4 p maxLen] []
+        Ipv6P p -> VrpsPerAs asn [] [Vrp6 p maxLen]
 
 
 mkTaEntry :: Int -> (TaName, Vrps)
@@ -245,6 +274,33 @@ uniqImplementations =
     ]
 
 
+roaCountImplementations :: [(String, Roas -> Int)]
+roaCountImplementations =
+    [ ("domain/estimateVrpCountRoas", estimateVrpCountRoas)
+    , ("foldl-payload-count", estimateVrpCountRoasFoldl)
+    , ("flatten-list-length", estimateVrpCountRoasFlatten)
+    , ("toVrps-length", estimateVrpCountRoasViaToVrps)
+    ]
+
+
+estimateVrpCountRoasFoldl :: Roas -> Int
+estimateVrpCountRoasFoldl (Roas roas) =
+    List.foldl' (\acc payload -> acc + payloadVrpCount payload) 0 $ MonoidalMap.elems roas
+
+
+estimateVrpCountRoasFlatten :: Roas -> Int
+estimateVrpCountRoasFlatten (Roas roas) =
+    sum $ Prelude.map (length . roaPayloadToVrps) $ MonoidalMap.elems roas
+
+
+estimateVrpCountRoasViaToVrps :: Roas -> Int
+estimateVrpCountRoasViaToVrps = V.length . unVrps . toVrps
+
+
+payloadVrpCount :: VrpsPerAs -> Int
+payloadVrpCount (VrpsPerAs _ v4 v6) = length v4 + length v6
+
+
 data ImplResult = ImplResult {
     implName :: String,
     implCount :: Int,
@@ -415,6 +471,26 @@ benchmarkUniqImpl repetitions input (name, implementation) = do
         else error $ "Inconsistent uniqVrps counts for implementation: " <> name
 
 
+benchmarkRoaCountImpl :: Int -> Roas -> (String, Roas -> Int) -> IO ImplResult
+benchmarkRoaCountImpl repetitions input (name, implementation) = do
+    warmupCount <- evaluate $ force $ runRoaCountWithSalt 0 implementation input
+    samples <- forM [1 .. repetitions] $ \sampleIx -> do
+        started <- getMonotonicTimeNSec
+        count <- evaluate $ force $ runRoaCountWithSalt sampleIx implementation input
+        ended <- getMonotonicTimeNSec
+        pure (count, nanosToMillis $ ended - started)
+
+    let counts = map fst samples
+    let timesMs = map snd samples
+    let total = sum timesMs
+    let avg = total / fromIntegral repetitions
+    let mn = minimum timesMs
+    let mx = maximum timesMs
+    if all (== warmupCount) counts
+        then pure $ ImplResult name warmupCount avg mn mx
+        else error $ "Inconsistent estimateVrpCountRoas counts for implementation: " <> name
+
+
 verifyUniqImplementations :: Vrps -> IO ()
 verifyUniqImplementations input = do
     let expected = uniqVrpsBy cmpVrps input
@@ -451,3 +527,10 @@ runUniqWithSalt salt implementation input =
         count = V.length output
     in output `seq` (count + salt - salt)
 {-# NOINLINE runUniqWithSalt #-}
+
+
+runRoaCountWithSalt :: Int -> (Roas -> Int) -> Roas -> Int
+runRoaCountWithSalt salt implementation input =
+    let count = implementation input
+    in count `seq` (count + salt - salt)
+{-# NOINLINE runRoaCountWithSalt #-}

@@ -35,7 +35,6 @@ import           Data.Monoid.Generic
 import qualified Data.List                        as List
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
-import qualified Data.Vector                      as V
 import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
@@ -334,10 +333,11 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
 
             splPayloads <- readIORef $ builder ^. #spls            
             let spls = Set.fromList [ SplN asn prefix | 
-                                      SplPayload asn prefixes <- splPayloads, prefix <- prefixes ]
+                                      SplPayload asn prefixes <- splPayloads, 
+                                      prefix <- prefixes ]
 
             let roas = Roas $ MonoidalMap.fromList $ 
-                            map (\(T2 roaPayload k) -> (k, V.fromList $ roaPayloadToVrps roaPayload)) vrps 
+                            map (\(T2 roaPayload k) -> (k, roaPayload)) vrps 
 
             let payloads = Payloads {..}                    
             

@@ -500,7 +500,13 @@ data VrpsPerAs = VrpsPerAs {
         roaV6  :: [Vrp6]
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
+
+instance Semigroup VrpsPerAs where
+    -- ROA key collisions are unexpected; keep the first ASN and aggregate
+    -- all prefixes so MonoidalMap can still combine duplicate keys.
+    VrpsPerAs asn1 v41 v61 <> VrpsPerAs _ v42 v62 =
+        VrpsPerAs asn1 (v41 <> v42) (v61 <> v62)
 
 roaPayloadToVrps :: VrpsPerAs -> [Vrp]
 roaPayloadToVrps (VrpsPerAs asn v4s v6s) =
@@ -731,7 +737,7 @@ newtype Vrps = Vrps { unVrps :: V.Vector Vrp }
     deriving Semigroup via GenericSemigroup Vrps
     deriving Monoid    via GenericMonoid Vrps
 
-newtype Roas = Roas { unRoas :: MonoidalMap ObjectKey (V.Vector Vrp) }
+newtype Roas = Roas { unRoas :: MonoidalMap ObjectKey VrpsPerAs }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup Roas
@@ -926,7 +932,13 @@ estimateVrpCount :: PerTA Vrps -> Int
 estimateVrpCount = sum . map (V.length . unVrps . snd) . perTA
 
 estimateVrpCountRoas :: Roas -> Int 
-estimateVrpCountRoas = sum . map V.length . MonoidalMap.elems . unRoas
+estimateVrpCountRoas =
+    sum
+        . map payloadVrpCount
+        . MonoidalMap.elems
+        . unRoas
+  where
+    payloadVrpCount (VrpsPerAs _ v4 v6) = length v4 + length v6
 
 -- Precise but much more expensive
 uniqueVrpCount :: PerTA Vrps -> Int 
@@ -945,15 +957,15 @@ uniqVrpsListBy cmp vrps =
       where
         go _ [] = []
         go prev (y : ys)
-                | prev == y = go prev ys
-                | otherwise = y : go y ys                
+            | prev == y = go prev ys
+            | otherwise = y : go y ys                
 
 
 createVrps :: Foldable f => f Vrp -> Vrps
 createVrps vrps = Vrps $ V.fromList $ toList vrps
 
 toVrps :: Roas -> Vrps
-toVrps (Roas roas) = Vrps $ V.concat $ MonoidalMap.elems roas
+toVrps (Roas roas) = createVrps . concatMap roaPayloadToVrps $ MonoidalMap.elems roas
 
 perTA :: PerTA a -> [(TaName, a)]
 perTA (PerTA a) = MonoidalMap.toList a

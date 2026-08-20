@@ -50,9 +50,16 @@ perTaVrps =
 
 roasFixture :: Roas
 roasFixture = Roas $ MonoidalMap.fromList
-    [ (ObjectKey $ asKey 1, V.fromList [duplicateVrp, duplicateVrp])
-    , (ObjectKey $ asKey 2, V.singleton duplicateVrp)
-    , (ObjectKey $ asKey 3, V.fromList [uniqueVrp, uniqueVrp])
+    [ (ObjectKey $ asKey 1, VrpsPerAs (ASN 64500)
+        [ Vrp4 (readIp4 "10.0.0.0/24") (PrefixLength 24)
+        , Vrp4 (readIp4 "10.0.0.0/24") (PrefixLength 24)
+        ] [])
+    , (ObjectKey $ asKey 2, VrpsPerAs (ASN 64500)
+        [Vrp4 (readIp4 "10.0.0.0/24") (PrefixLength 24)] [])
+    , (ObjectKey $ asKey 3, VrpsPerAs (ASN 64501)
+        [ Vrp4 (readIp4 "10.0.1.0/24") (PrefixLength 24)
+        , Vrp4 (readIp4 "10.0.1.0/24") (PrefixLength 24)
+        ] [])
     ]
 
 
