@@ -947,7 +947,7 @@ getObjectsStats tx DB { objectStore = RpkiObjectStore {..} } =
                     Nothing -> pure mempty
                     Just size -> pure $ Size $ fromIntegral size            
 
-                pure $ acc & #totalObjects %~ (+1) 
+                pure $! acc & #totalObjects %~ (+1) 
                            & #totalSize %~ (+ objectSize)                
                            & #countPerType %~ Map.insertWith (+) type_ 1
                            & #totalSizePerType %~ Map.insertWith (+) type_ objectSize
@@ -956,7 +956,7 @@ getObjectsStats tx DB { objectStore = RpkiObjectStore {..} } =
             )
             mempty
 
-        pure $ stats & #avgSizePerType .~ 
+        pure $! stats & #avgSizePerType .~ 
             Map.mapWithKey (\k s -> maybe 0 (s `divSize`) $ Map.lookup k (stats ^. #countPerType)) (stats ^. #totalSizePerType)
   
     
