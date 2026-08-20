@@ -43,47 +43,55 @@ parseRoa bs = do
         parseRoaWithoutVersion
 
     parseRoaWithoutVersion = do 
-        -- TODO Fix it so that it would work with present attestation version
         asId <- getInteger (pure . fromInteger) "Wrong ASid"
-        mconcat <$> onNextContainer Sequence (getMany $
+        (v4s, v6s) <- mconcat <$> onNextContainer Sequence (getMany $
             onNextContainer Sequence $ 
                 getAddressFamily "Expected an address family here" >>= \case 
-                    Right Ipv4F -> getRoa asId Ipv4F
-                    Right Ipv6F -> getRoa asId Ipv6F
+                    Right Ipv4F -> (, []) <$> getRoa4
+                    Right Ipv6F -> ([], ) <$> getRoa6
                     Left af     -> throwParseError $ "Unsupported address family: " ++ show af)
+        pure $! VrpsPerAs (ASN $ fromIntegral asId) v4s v6s
 
-    getRoa :: Int -> AddrFamily -> ParseASN1 [Vrp]
-    getRoa asId addressFamily = onNextContainer Sequence $ getMany $
+    getRoa4 :: ParseASN1 [Vrp4]
+    getRoa4 = onNextContainer Sequence $ getMany $
         getNextContainerMaybe Sequence >>= \case       
             Just [BitString (BitArray nzBits bs')] ->
-                makeVrp asId bs' nzBits nzBits addressFamily
+                makeVrp4 bs' nzBits nzBits
             Just [BitString (BitArray nzBits bs'), IntVal maxLength] ->
-                makeVrp asId bs' nzBits maxLength addressFamily
+                makeVrp4 bs' nzBits maxLength
             Just a  -> throwParseError [i|Unexpected ROA content: #{a}|]
             Nothing -> throwParseError "Unexpected ROA content"
 
-    makeVrp asId bs' nonZeroBitCount prefixMaxLength addressFamily = do
+    getRoa6 :: ParseASN1 [Vrp6]
+    getRoa6 = onNextContainer Sequence $ getMany $
+        getNextContainerMaybe Sequence >>= \case       
+            Just [BitString (BitArray nzBits bs')] ->
+                makeVrp6 bs' nzBits nzBits
+            Just [BitString (BitArray nzBits bs'), IntVal maxLength] ->
+                makeVrp6 bs' nzBits maxLength
+            Just a  -> throwParseError [i|Unexpected ROA content: #{a}|]
+            Nothing -> throwParseError "Unexpected ROA content"
+
+    makeVrp4 bs' nonZeroBitCount prefixMaxLength = do
         when (nonZeroBitCount > fromIntegral prefixMaxLength) $
             throwParseError [i|Actual prefix length #{nonZeroBitCount} is bigger than the maximum length #{prefixMaxLength}.|]
-
-        case addressFamily of
-            Ipv4F 
-                | prefixMaxLength <= 0  -> 
+        case () of
+            _ | prefixMaxLength <= 0  -> 
                     throwParseError [i|Negative or zero value for IPv4 prefix max length: #{prefixMaxLength}|]
-                | prefixMaxLength > 32 -> 
+              | prefixMaxLength > 32  -> 
                     throwParseError [i|Too big value for IPv4 prefix max length: #{prefixMaxLength}|]
-                | otherwise ->
-                    pure $ mkVrp nonZeroBitCount prefixMaxLength Ipv4P
-            Ipv6F 
-                | prefixMaxLength <= 0  -> 
+              | otherwise ->
+                    pure $! Vrp4 (makePrefix bs' (fromIntegral nonZeroBitCount))
+                                 (PrefixLength $ fromIntegral prefixMaxLength)
+
+    makeVrp6 bs' nonZeroBitCount prefixMaxLength = do
+        when (nonZeroBitCount > fromIntegral prefixMaxLength) $
+            throwParseError [i|Actual prefix length #{nonZeroBitCount} is bigger than the maximum length #{prefixMaxLength}.|]
+        case () of
+            _ | prefixMaxLength <= 0   -> 
                     throwParseError [i|Negative or zero value for IPv6 prefix max length: #{prefixMaxLength}|]
-                | prefixMaxLength > 128 -> 
+              | prefixMaxLength > 128  -> 
                     throwParseError [i|Too big value for IPv6 prefix max length: #{prefixMaxLength}|]
-                | otherwise ->
-                    pure $ mkVrp nonZeroBitCount prefixMaxLength Ipv6P
-        where 
-            mkVrp :: (Integral a, Integral c, Prefix b) => a -> c -> (b -> IpPrefix) -> Vrp
-            mkVrp nz len mkIp = Vrp 
-                        (ASN $ fromIntegral asId)
-                        (mkIp $ makePrefix bs' (fromIntegral nz)) 
-                        (PrefixLength $ fromIntegral len)
+              | otherwise ->
+                    pure $! Vrp6 (makePrefix bs' (fromIntegral nonZeroBitCount))
+                                 (PrefixLength $ fromIntegral prefixMaxLength)

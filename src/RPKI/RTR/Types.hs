@@ -32,7 +32,7 @@ data GenDiffs a b = GenDiffs {
     deriving stock (Show, Eq, Ord)
     deriving stock Generic
 
-type RtrDiffs = GenDiffs AscOrderedVrp BGPSecPayload        
+type RtrDiffs = GenDiffs Vrp BGPSecPayload        
 
 
 data RtrState = RtrState {
@@ -49,26 +49,23 @@ data RtrState = RtrState {
 
 data RtrPayloads = RtrPayloads {
         vrps       :: PerTA Vrps,
-        uniqueVrps :: ~(Vector AscOrderedVrp),
+        uniqueVrps :: ~(Vector Vrp),
         bgpSec     :: Set BGPSecPayload
     }
     deriving stock (Show, Eq, Generic)
     deriving Semigroup via GenericSemigroup RtrPayloads   
     deriving Monoid    via GenericMonoid RtrPayloads           
 
-newtype AscOrderedVrp = AscOrderedVrp Vrp
-    deriving stock (Show, Eq, Generic)
-
-
 -- We store VRPs sorteed in a specific way, so that we don't have to sort them before 
 -- sending to every client every time.
 -- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis-02#section-11
 -- 
-instance Ord AscOrderedVrp where    
-    compare (AscOrderedVrp (Vrp asn1 p1 ml1)) (AscOrderedVrp (Vrp asn2 p2 ml2)) = 
-        compare asn1 asn2 <> 
-        -- Sort prefixes backwards -- it automatically means that 
-        -- smaller prefixes will be in front of larger ones.
-        compare (Down p1) (Down p2) <> 
-        -- shorter max length should precede?
-        compare ml1 ml2       
+cmpVrps :: Vrp -> Vrp -> Ordering
+cmpVrps (Vrp asn1 p1 ml1) (Vrp asn2 p2 ml2) = 
+    compare asn1 asn2 <> 
+    -- Sort prefixes backwards -- it automatically means that 
+    -- smaller prefixes will be in front of larger ones.
+    compare (Down p1) (Down p2) <> 
+    -- shorter max length should precede?
+    compare ml1 ml2       
+     

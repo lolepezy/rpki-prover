@@ -230,7 +230,7 @@ testRtrStateUpdates = HU.testCase "Should update RTR state and shrink it when ne
 --         <> ", currentSessionId = " <> show currentSessionId
 --         <> ", maxSerialsPerSession = " <> show maxSerialsPerSession <> "]"
 
-generateVrps :: Int -> IO (Set AscOrderedVrp)
+generateVrps :: Int -> IO (Set Vrp)
 generateVrps n = Set.fromList <$> replicateM n (QC.generate arbitrary)
 
 generateBgpSecs :: Int -> IO (Set BGPSecPayload)

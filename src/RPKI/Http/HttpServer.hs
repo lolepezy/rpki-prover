@@ -28,7 +28,6 @@ import qualified Data.List.NonEmpty               as NonEmpty
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
-import qualified Data.Vector                      as V
 import           Data.String.Interpolate.IsString
 
 import           Text.Read                        (readMaybe)
@@ -197,12 +196,14 @@ getRoasValidatedRaw appContext version =
         roas <- DB.getRoas tx db version_
         fmap (Just . mconcat . mconcat) $ 
             forM (perTA roas) $ \(taName, Roas r) -> 
-                forM (MonoidalMap.toList r) $ \(roaKey, vrps) ->                             
+                forM (MonoidalMap.toList r) $ \(roaKey, roaPayload) ->                             
                     DB.getLocationsByKey tx db roaKey >>= \case 
                         Nothing   -> pure []
                         Just locs -> do 
                             let uri = toText $ pickLocation locs
-                            pure $! [ VrpExtDto { vrp = toVrpDto vrp taName, .. } | vrp <- V.toList vrps ] 
+                            pure $! [ VrpExtDto { vrp = toVrpDto vrp taName, .. }
+                                    | vrp <- roaPayloadToVrps roaPayload
+                                    ]
 
 asMaybe :: (Eq a, Monoid a) => a -> Maybe a
 asMaybe a = if mempty == a then Nothing else Just a

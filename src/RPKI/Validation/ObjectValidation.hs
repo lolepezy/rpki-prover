@@ -375,16 +375,15 @@ validateRoa validationRFC now roa parentCert crl verifiedResources = do
         validateCms validationRFC now (cmsPayload roa) parentCert crl verifiedResources $ \roaCMS -> do
             let checkerV4 = validatedPrefixInRS @Ipv4Prefix verifiedResources
             let checkerV6 = validatedPrefixInRS @Ipv6Prefix verifiedResources
-            for_ (getCMSContent roaCMS) $ \vrp@(Vrp _ prefix maxLength) ->
-                case prefix of
-                    Ipv4P p -> do
-                        checkerV4 p (RoaPrefixIsOutsideOfResourceSet prefix)
-                        when (ipv4PrefixLen p > maxLength) $
-                            vPureError $ RoaPrefixLenghtsIsBiggerThanMaxLength vrp
-                    Ipv6P p -> do
-                        checkerV6 p (RoaPrefixIsOutsideOfResourceSet prefix)
-                        when (ipv6PrefixLen p > maxLength) $
-                            vPureError $ RoaPrefixLenghtsIsBiggerThanMaxLength vrp
+            let VrpsPerAs asn v4s v6s = getCMSContent roaCMS
+            for_ v4s $ \(Vrp4 prefix maxLength) -> do
+                checkerV4 prefix (RoaPrefixIsOutsideOfResourceSet (Ipv4P prefix))
+                when (ipv4PrefixLen prefix > maxLength) $
+                    vPureError $ RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp asn (Ipv4P prefix) maxLength)
+            for_ v6s $ \(Vrp6 prefix maxLength) -> do
+                checkerV6 prefix (RoaPrefixIsOutsideOfResourceSet (Ipv6P prefix))
+                when (ipv6PrefixLen prefix > maxLength) $
+                    vPureError $ RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp asn (Ipv6P prefix) maxLength)
     pure $ Validated roa
   where
     validatedPrefixInRS ::

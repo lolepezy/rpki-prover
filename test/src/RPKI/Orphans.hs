@@ -229,7 +229,15 @@ instance Arbitrary Vrp where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary AscOrderedVrp where
+instance Arbitrary Vrp4 where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary Vrp6 where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary VrpsPerAs where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

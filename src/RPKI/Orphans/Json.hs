@@ -365,7 +365,9 @@ $(deriveToJSON defaultOptions ''X509.CRL)
 
 $(deriveToJSON defaultOptions ''Aspa)
 $(deriveToJSON defaultOptions ''Rsc)
-$(deriveToJSON defaultOptions ''Vrp)
+$(deriveToJSON defaultOptions ''Vrp4)
+$(deriveToJSON defaultOptions ''Vrp6)
+$(deriveToJSON defaultOptions ''VrpsPerAs)
 $(deriveToJSON defaultOptions ''SplPayload)
 $(deriveToJSON defaultOptions ''MftPair)
 $(deriveToJSON defaultOptions ''Manifest)
@@ -397,8 +399,7 @@ instance ToJSON BGPSecPayload
 instance ToJSON SerialNumber
 instance ToJSON RtrSessionId
 
-instance ToJSON AscOrderedVrp where
-    toJSON (AscOrderedVrp v) = toJSON v
+instance ToJSON Vrp    
 instance ToJSON a => ToJSON (Deq.Deque a) where
     toJSON = toJSON . toList
 

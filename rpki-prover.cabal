@@ -277,6 +277,7 @@ test-suite rpki-prover-test
   main-is:         Spec.hs
   other-modules:
       RPKI.AppMonadSpec
+      RPKI.DomainSpec
       RPKI.FetchSpec
       RPKI.LoggingSpec
       RPKI.Orphans
@@ -305,3 +306,19 @@ test-suite rpki-prover-test
   build-depends:
       rpki-prover
     , wreq
+
+benchmark unique-vrp-count-bench
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         UniqueVrpCountBench.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -threaded
+            -rtsopts
+            -O2
+            -with-rtsopts=-N
+    build-depends:
+            rpki-prover

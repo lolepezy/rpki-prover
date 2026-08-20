@@ -52,13 +52,13 @@ toVrpDtos vrpsPerTa =
 toVrpDto :: Vrp -> TaName -> VrpDto
 toVrpDto (Vrp a p len) (TaName ta) = VrpDto a p len ta
 
-toVrpV :: Maybe Vrps -> V.Vector AscOrderedVrp
-toVrpV = maybe mempty uniqVrps
+toVrpV :: Maybe Vrps -> V.Vector Vrp
+toVrpV = maybe mempty (uniqVrpsBy cmpVrps)
 
 toVrpMinimalDtos :: Maybe Vrps -> [VrpMinimalDto]
 toVrpMinimalDtos = map asDto . V.toList . toVrpV
   where
-    asDto (AscOrderedVrp (Vrp asn prefix maxLength)) = VrpMinimalDto {..}
+    asDto (Vrp asn prefix maxLength) = VrpMinimalDto {..}
 
 
 bgpSecToDto :: BGPSecPayload -> BgpCertDto
@@ -149,13 +149,13 @@ vrpExtDtosToCSV vrpDtos =
             str (convert ta) <> ch '\n'
 
 
-vrpSetToCSV :: Foldable f => f AscOrderedVrp -> RawCSV
+vrpSetToCSV :: Foldable f => f Vrp -> RawCSV
 vrpSetToCSV vrpDtos =
     rawCSV
         (str "ASN,IP Prefix,Max Length\n")
         (mconcat $ map toBS $ toList vrpDtos)
   where
-    toBS (AscOrderedVrp (Vrp asn prefix (PrefixLength maxLength))) =
+    toBS (Vrp asn prefix (PrefixLength maxLength)) =
         str (show asn) <> ch ',' <>
         text (prefixStr prefix) <> ch ',' <>
         str (show maxLength) <> ch '\n'
@@ -207,11 +207,9 @@ objectToDto = \case
                 & #ski ?~ getSKI c
 
     roaDto r = let
-                vrps = getCMSContent $ r ^. #cmsPayload
-                asn = case vrps of
-                    Vrp a _ _ : _ -> a
-                    []            -> ASN 0
-                prefixes = map (\(Vrp _ p l) -> RoaPrefixDto p l) vrps
+                VrpsPerAs asn v4s v6s = getCMSContent $ r ^. #cmsPayload
+                prefixes = map (\(Vrp4 p l) -> RoaPrefixDto (Ipv4P p) l) v4s
+                        <> map (\(Vrp6 p l) -> RoaPrefixDto (Ipv6P p) l) v6s
             in RoaDto {..}
 
     splDto r = let SplPayload asn prefixes = getCMSContent $ r ^. #cmsPayload 

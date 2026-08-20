@@ -13,6 +13,7 @@ import RPKI.AppMonadSpec
 import RPKI.LoggingSpec
 import RPKI.RepositorySpec
 import RPKI.FetchSpec
+import RPKI.DomainSpec
 import RPKI.RTR.RtrSpec
 import RPKI.SLURM.SlurmSpec
 import RPKI.Store.SerialisationSpec
@@ -27,6 +28,7 @@ main = defaultMain $ testGroup "All tests" [
         resourceGroup,        
         validityGroup,
         repositoryGroup,
+        domainCountersGroup,
         rtrGroup,
         httpSpec,
         slurmGroup,

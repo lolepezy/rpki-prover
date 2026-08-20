@@ -79,11 +79,11 @@ data Ca = CaShort CaShortcut
 
 
 data RoaShortcut = RoaShortcut {
-        key            :: {-# UNPACK #-} ObjectKey,        
-        vrps           :: [Vrp],
-        notBefore :: {-# UNPACK #-} Instant,
-        notAfter  :: {-# UNPACK #-} Instant,
-        resources      :: AllResources
+        key        :: {-# UNPACK #-} ObjectKey,
+        roaPayload :: VrpsPerAs,
+        notBefore  :: {-# UNPACK #-} Instant,
+        notAfter   :: {-# UNPACK #-} Instant,
+        resources  :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)

@@ -244,8 +244,6 @@ instance ToSchema RtrState
 instance ToSchema BGPSecPayload
 instance ToSchema SerialNumber
 instance ToSchema RtrSessionId
-instance ToSchema AscOrderedVrp where
-    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Vrp)
 instance ToSchema a => ToSchema (Deq.Deque a) where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
