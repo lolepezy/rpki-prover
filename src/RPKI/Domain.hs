@@ -361,7 +361,7 @@ type ParsedRpkiObject = RpkiObject_
         CrlObject
 
 type ValidatedMft = ValidatedCMSObject Manifest
-type ValidatedRoa = ValidatedCMSObject [Vrp]
+type ValidatedRoa = ValidatedCMSObject VrpsPerAs
 type ValidatedSpl = ValidatedCMSObject SplPayload
 type ValidatedGbr = ValidatedCMSObject Gbr
 type ValidatedRsc = ValidatedCMSObject Rsc
