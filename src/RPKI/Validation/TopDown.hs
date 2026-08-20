@@ -864,7 +864,7 @@ validateCaNoFetch
                     -> ValidatorT IO (Keyed (Validated CrlObject))
     findAndValidateCrl fullCa (Keyed (Located _ mft) _) aki = do  
         MftPair _ crlHash <-
-            case findCrlOnMft mft of
+            case findCrlOnMft mft.content of
                 []    -> vError $ NoCRLOnMFT aki 
                 [crl] -> pure crl
                 crls  -> vError $ MoreThanOneCRLOnMFT aki crls
@@ -1498,8 +1498,7 @@ getLocatedOriginal' tx db key type_ ifNotFound = do
                     parse blob t
   where                    
     parse blob t = do
-        ro <- vFocusOn ObjectFocus key $ 
-                    vHoist $ readObjectOfType t blob
+        ro <- vFocusOn ObjectFocus key $ vHoist $ readObjectOfType t blob
         DB.getLocationsByKey tx db key >>= \case                                             
             Nothing        -> ifNotFound
             Just locations -> pure $! Keyed (Located locations ro) key

@@ -9,17 +9,19 @@ import           RPKI.Domain
 
 
 -- | Validate the signature of an certificate-holding object
-validateCertSignature :: (WithRawResourceCertificate c, WithRawResourceCertificate parent) => 
+validateCertSignature :: (WithRawResourceCertificate c, WithPubKey parent) => 
                         c -> parent -> SignatureVerification                
 validateCertSignature cert parentCert = 
-    verifySignature algorithm pubKey (toNormalBS signedData) (toNormalBS signature1)
+    verifySignature algorithm 
+        (getPubKey parentCert) 
+        (toNormalBS signedData) 
+        (toNormalBS signature_)
     where
         CertificateWithSignature {
             cwsSignatureAlgorithm = SignatureAlgorithmIdentifier algorithm,
-            cwsSignature = SignatureValue signature1,
+            cwsSignature = SignatureValue signature_,
             cwsEncoded = signedData
-        } = getCertWithSignature cert
-        pubKey = certPubKey $ cwsX509certificate $ getCertWithSignature parentCert
+        } = getCertWithSignature cert        
 
 
 -- | Validate the signature of a CRL object

@@ -117,7 +117,7 @@ validateBottomUp
                 MftRO mft ->
                     void $ vHoist $ validateMftV validationRFC now mft (bottomCert ^. #payload) crl (Just verifiedResources)
                 RoaRO roa ->
-                    void $ vHoist $ validateRoaV validationRFC now roa (bottomCert ^. #payload) crl (Just verifiedResources)
+                    void $ vHoist $ validateRoa validationRFC now roa (bottomCert ^. #payload) crl (Just verifiedResources)
                 SplRO spl ->
                     void $ vHoist $ validateSplV validationRFC now spl (bottomCert ^. #payload) crl (Just verifiedResources)
                 GbrRO gbr ->

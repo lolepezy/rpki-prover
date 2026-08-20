@@ -416,6 +416,9 @@ instance {-# OVERLAPPING #-} WithAKI CaCerObject where
 instance WithResources CaCerObject where
     getResources CaCerObject { certificate } = getResources certificate
     
+instance {-# OVERLAPPING #-} WithPubKey CaCerObject where
+    getPubKey CaCerObject { certificate } = X509.certPubKey $ cwsX509certificate $ getCertWithSignature certificate
+
 instance {-# OVERLAPPING #-} WithAKI (CMSBasedObject a) where
     getAKI CMSBasedObject {..} = getAKI $ getEEResourceCert $ unCMS cmsPayload 
 
