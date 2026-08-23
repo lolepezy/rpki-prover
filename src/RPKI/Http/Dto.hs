@@ -429,7 +429,7 @@ validatedCaToDto cert =
         Just bs -> either id unURI $ extractURI bs
 
 -- | 'manifestDto' variant for validated manifest objects.
-manifestDtoV :: ValidatedCMSObject Manifest -> ManifestDto
+manifestDtoV :: WellStructuredCms Manifest -> ManifestDto
 manifestDtoV m = let
         mft@Manifest {..} = m ^. #content
         entries = map (\(MftPair f h) -> (f, h)) mftEntries

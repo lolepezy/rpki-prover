@@ -15,7 +15,6 @@ import qualified Data.Text                as Text
 import qualified Data.Vector              as V
 
 import           Data.Generics.Product.Typed
-import           Data.Generics.Product.Fields
 
 import           Data.ByteString.Base16   as Hex
 import qualified Data.String.Conversions  as SC
@@ -127,6 +126,13 @@ data ValidityPeriod = ValidityPeriod {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
+data SignMaterial = SignMaterial {
+        algorithm  :: SignatureAlgorithmIdentifier,
+        signature  :: SignatureValue,
+        signedData :: BSS.ShortByteString
+    }
+    deriving stock (Show, Eq, Generic) 
+
 class WithValidityPeriod a where
     getValidityPeriod :: a -> ValidityPeriod
 
@@ -162,6 +168,12 @@ class WithRpkiObjectType a where
 
 class WithResources a where
     getResources :: a -> AllResources
+
+class WithPayload a p where
+    getPayload :: a -> p
+
+class WithSignMaterial a where
+    getSignMaterial :: a -> SignMaterial
 
 -- | Wrapper indicating that an object has been through all self-contained
 -- structural validations ('prevalidate' / 'prevalidateObject').
@@ -360,23 +372,42 @@ type ParsedRpkiObject = RpkiObject_
         BgpCerObject 
         CrlObject
 
-type ValidatedMft = ValidatedCMSObject Manifest
-type ValidatedRoa = ValidatedCMSObject VrpsPerAs
-type ValidatedSpl = ValidatedCMSObject SplPayload
-type ValidatedGbr = ValidatedCMSObject Gbr
-type ValidatedRsc = ValidatedCMSObject Rsc
-type ValidatedAspa = ValidatedCMSObject Aspa
+type WellStructuredMft  = WellStructuredCms Manifest
+type WellStruturedRoa   = WellStructuredCms VrpsPerAs
+type WellStructuredSpl  = WellStructuredCms SplPayload
+type WellStructuredGbr  = WellStructuredCms Gbr
+type WellStructuredRsc  = WellStructuredCms Rsc
+type WellStructuredAspa = WellStructuredCms Aspa
 
 type ValidatedRpkiObject = RpkiObject_ 
-        ValidatedCaCert 
-        ValidatedMft
-        ValidatedRoa
-        ValidatedSpl
-        ValidatedGbr
-        ValidatedRsc  
-        ValidatedAspa
-        ValidatedBgpCert
+        WellStructuredCaCert 
+        WellStructuredMft
+        WellStruturedRoa
+        WellStructuredSpl
+        WellStructuredGbr
+        WellStructuredRsc  
+        WellStructuredAspa
+        WellStructuredBgpCert
         CrlObject
+
+-- data ValidationPhase p v = WhenParsing p | WhenFullyValidating v
+--     deriving stock (Show, Eq, Generic)
+--     deriving anyclass (TheBinary) 
+
+
+-- data RpkiValidationPhased = 
+--                   CerRO_ (ValidationPhase CaCerObject WellStructuredCaCert)
+--                 | MftRO_ (ValidationPhase MftObject WellStructuredMft)
+--                 | RoaRO_ (ValidationPhase RoaObject WellStruturedRoa)
+--                 | SplRO_ (ValidationPhase SplObject WellStructuredSpl)
+--                 | GbrRO_ (ValidationPhase GbrObject WellStructuredGbr)
+--                 | RscRO_ (ValidationPhase RscObject WellStructuredRsc)
+--                 | AspaRO_ (ValidationPhase AspaObject WellStructuredAspa)
+--                 | BgpRO_ (ValidationPhase BgpCerObject WellStructuredBgpCert)
+--                 | CrlRO_ CrlObject
+--     deriving stock (Show, Eq, Generic)
+--     deriving anyclass (TheBinary) 
+
 
 {-# INLINE foldRpkiObject #-}
 foldRpkiObject onCer onMft onRoa onSpl onGbr onRsc onAspa onBgp onCrl = \case
@@ -628,7 +659,7 @@ data Manifest = Manifest {
 
 data SignCRL = SignCRL {
         thisUpdateTime     :: Instant,
-        nextUpdateTime     :: Maybe Instant,
+        nextUpdateTime     :: Instant,
         signatureAlgorithm :: SignatureAlgorithmIdentifier,
         signatureValue     :: SignatureValue,
         encodedValue       :: BSS.ShortByteString,
@@ -935,10 +966,10 @@ instance {-# OVERLAPPING #-} WithValidityPeriod (ValidatedCert t) where getValid
 
 
 -- | Minimized CA certificate.
-type ValidatedCaCert = ValidatedCert 'CACert
+type WellStructuredCaCert = ValidatedCert 'CACert
 
 -- | Minimized BGPSec certificate.
-type ValidatedBgpCert = ValidatedCert 'BGPCert
+type WellStructuredBgpCert = ValidatedCert 'BGPCert
 
 -- | Minimized EE certificate, stripped of fields that are either
 -- constant-after-prevalidation (CMS versions, digest algorithms) or
@@ -967,7 +998,7 @@ instance {-# OVERLAPPING #-} WithValidityPeriod ValidatedEECert where getValidit
 
 -- | Minimized CMS-based signed object.  Replaces 'CMSBasedObject a' in the
 -- post-prevalidation in-memory path.
-data ValidatedCMSObject a = ValidatedCMSObject {
+data WellStructuredCms a = WellStructuredCms {
         hash          :: Hash,
         content       :: a,
         eeCert        :: ValidatedEECert,
@@ -978,16 +1009,16 @@ data ValidatedCMSObject a = ValidatedCMSObject {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
-instance {-# OVERLAPPING #-} WithAKI  (ValidatedCMSObject a) where getAKI  (ValidatedCMSObject { eeCert = ValidatedEECert { aki } }) = Just aki
-instance {-# OVERLAPPING #-} WithPubKey (ValidatedCMSObject a) where getPubKey (ValidatedCMSObject { eeCert }) = getPubKey eeCert
-instance {-# OVERLAPPING #-} WithResources (ValidatedCMSObject a) where getResources (ValidatedCMSObject { eeCert }) = getResources eeCert
-instance {-# OVERLAPPING #-} WithValidityPeriod (ValidatedCMSObject a) where getValidityPeriod (ValidatedCMSObject { eeCert }) = getValidityPeriod eeCert
+instance {-# OVERLAPPING #-} WithAKI  (WellStructuredCms a) where getAKI  (WellStructuredCms { eeCert = ValidatedEECert { aki } }) = Just aki
+instance {-# OVERLAPPING #-} WithPubKey (WellStructuredCms a) where getPubKey (WellStructuredCms { eeCert }) = getPubKey eeCert
+instance {-# OVERLAPPING #-} WithResources (WellStructuredCms a) where getResources (WellStructuredCms { eeCert }) = getResources eeCert
+instance {-# OVERLAPPING #-} WithValidityPeriod (WellStructuredCms a) where getValidityPeriod (WellStructuredCms { eeCert }) = getValidityPeriod eeCert
 
 instance {-# OVERLAPPING #-} WithSerial ValidatedEECert  where 
     getSerial (ValidatedEECert  { serial }) = serial
 
-instance {-# OVERLAPPING #-} WithSerial (ValidatedCMSObject a) where
-    getSerial (ValidatedCMSObject { eeCert = ValidatedEECert { serial } }) = serial
+instance {-# OVERLAPPING #-} WithSerial (WellStructuredCms a) where
+    getSerial (WellStructuredCms { eeCert = ValidatedEECert { serial } }) = serial
 
 
 -- Small utility functions that don't have anywhere else to go

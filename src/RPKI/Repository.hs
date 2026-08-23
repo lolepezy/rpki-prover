@@ -231,7 +231,7 @@ mergePP (RsyncPP r) = mergeRsyncPP r
 -- | Extract repositories from URIs in TAL and in TA certificate,
 -- | use some reasonable heuristics, but don't try to be very smart.
 -- | Prefer RRDP to rsync for everything.
-publicationPointsFromTAL :: TAL -> ValidatedCaCert -> Either ValidationError PublicationPointAccess
+publicationPointsFromTAL :: TAL -> WellStructuredCaCert -> Either ValidationError PublicationPointAccess
 publicationPointsFromTAL tal cert = 
     case tal of 
         PropertiesTAL {..} -> do 

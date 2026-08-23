@@ -35,7 +35,7 @@ validateBottomUp :: Storage s =>
                 AppContext s 
                 -> ParsedRpkiObject
                 -> Now
-                -> ValidatorT IO (Validated ParsedRpkiObject, [[Located ValidatedCaCert]])
+                -> ValidatorT IO (Validated ParsedRpkiObject, [[Located WellStructuredCaCert]])
 validateBottomUp 
     AppContext{..}
     object 
@@ -113,21 +113,21 @@ validateBottomUp
             validatedObject <- vHoist $ prevalidateObject object
             case validatedObject of
                 CerRO child ->
-                    void $ vHoist $ validateResourceCertV now child (bottomCert ^. #payload) crl
+                    void $ vHoist $ validateResourceCert now child (bottomCert ^. #payload) crl
                 MftRO mft ->
-                    void $ vHoist $ validateMftV validationRFC now mft (bottomCert ^. #payload) crl (Just verifiedResources)
+                    void $ vHoist $ validateMft validationRFC now mft (bottomCert ^. #payload) crl (Just verifiedResources)
                 RoaRO roa ->
                     void $ vHoist $ validateRoa validationRFC now roa (bottomCert ^. #payload) crl (Just verifiedResources)
                 SplRO spl ->
-                    void $ vHoist $ validateSplV validationRFC now spl (bottomCert ^. #payload) crl (Just verifiedResources)
+                    void $ vHoist $ validateSpl validationRFC now spl (bottomCert ^. #payload) crl (Just verifiedResources)
                 GbrRO gbr ->
-                    void $ vHoist $ validateGbrV validationRFC now gbr (bottomCert ^. #payload) crl (Just verifiedResources)
+                    void $ vHoist $ validateGbr validationRFC now gbr (bottomCert ^. #payload) crl (Just verifiedResources)
                 RscRO rsc ->
-                    void $ vHoist $ validateRscV validationRFC now rsc (bottomCert ^. #payload) crl (Just verifiedResources)
+                    void $ vHoist $ validateRsc validationRFC now rsc (bottomCert ^. #payload) crl (Just verifiedResources)
                 AspaRO aspa ->
-                    void $ vHoist $ validateAspaV validationRFC now aspa (bottomCert ^. #payload) crl (Just verifiedResources)
+                    void $ vHoist $ validateAspa validationRFC now aspa (bottomCert ^. #payload) crl (Just verifiedResources)
                 BgpRO bgp ->
-                    void $ vHoist $ validateBgpCertV now bgp (bottomCert ^. #payload) crl
+                    void $ vHoist $ validateBgpCert now bgp (bottomCert ^. #payload) crl
                 CrlRO childCrl ->
                     void $ vHoist $ validateCrl now childCrl (bottomCert ^. #payload)
 

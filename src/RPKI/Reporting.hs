@@ -144,7 +144,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         InvalidPublicKey Text |
                         DuplicateManifestFilenames [Text] |
                         CertValidityPeriodInvalid |
-                        SerialNumberOutOfBounds |
+                        SerialNumberOutOfBounds Text |
                         ReferentialIntegrityError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)

@@ -21,7 +21,7 @@ import           RPKI.Store.Base.Serialisation
 
 data StorableTA = StorableTA {
         tal                 :: TAL,
-    taCert              :: ValidatedCaCert,
+    taCert              :: WellStructuredCaCert,
         fetchStatus         :: FetchStatus,
         initialRepositories :: PublicationPointAccess,
         actualUrl           :: RpkiURL

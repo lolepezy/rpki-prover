@@ -73,7 +73,7 @@ data CaShortcut = CaShortcut {
     deriving anyclass (TheBinary)
 
 data Ca = CaShort CaShortcut
-    | CaFull (Located ValidatedCaCert)
+    | CaFull (Located WellStructuredCaCert)
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 

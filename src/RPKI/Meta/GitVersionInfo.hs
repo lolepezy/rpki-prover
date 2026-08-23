@@ -5,13 +5,13 @@ gitBranch :: String
 gitBranch = "fix-cache-poisoning"
 
 gitHash :: String
-gitHash = "8794e8bca9657eedf48089542e31501eb5b3c75c"
+gitHash = "f75bc064daad3068831fe6ce1ba0d1ae0598b7e3"
 
 gitCommitDate :: String
-gitCommitDate = "2026-08-20 17:25:21 +0200"
+gitCommitDate = "2026-08-20 19:23:16 +0200"
 
 gitCommitCount :: Int
-gitCommitCount = 2712
+gitCommitCount = 2713
 
 gitDirty :: Bool
 gitDirty = True

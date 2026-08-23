@@ -368,7 +368,7 @@ validateTACertificateFromTAL :: Storage s
                                 => AppContext s
                                 -> TAL
                                 -> WorldVersion
-                                -> ValidatorT IO (Located ValidatedCaCert, PublicationPointAccess)
+                                -> ValidatorT IO (Located WellStructuredCaCert, PublicationPointAccess)
 validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let now = Now $ versionToInstant worldVersion
     let validationConfig = config ^. typed
@@ -446,7 +446,7 @@ validateFromTACert :: Storage s =>
                     AppContext s ->
                     TopDownContext ->
                     PublicationPointAccess ->
-                    Located ValidatedCaCert ->
+                    Located WellStructuredCaCert ->
                     ValidatorT IO ()
 validateFromTACert
     appContext@AppContext {..}
@@ -725,12 +725,11 @@ validateCaNoFetch
     -- and children mentioned in the manifest shortcut. Create a diff between them,
     -- run full validation only for new children and create a new manifest shortcut
     -- with updated set of children.
-    manifestFullValidation :: 
-                    Located ValidatedCaCert
-                    -> Keyed (Located ValidatedMft)
-                    -> Maybe MftShortcut 
-                    -> AKI
-                    -> ValidatorT IO [T3 Text Hash ObjectKey]
+    manifestFullValidation :: Located WellStructuredCaCert
+                        -> Keyed (Located WellStructuredMft)
+                        -> Maybe MftShortcut 
+                        -> AKI
+                        -> ValidatorT IO [T3 Text Hash ObjectKey]
     manifestFullValidation fullCa 
         keyedMft@(Keyed locatedMft@(Located mftLocations mft) mftKey) 
         mftShortcut childrenAki = do         
@@ -858,8 +857,8 @@ validateCaNoFetch
             processChildren `recover` markAllEntriesAsUsed
 
 
-    findAndValidateCrl :: Located ValidatedCaCert
-                    -> Keyed (Located ValidatedMft)
+    findAndValidateCrl :: Located WellStructuredCaCert
+                    -> Keyed (Located WellStructuredMft)
                     -> AKI
                     -> ValidatorT IO (Keyed (Validated CrlObject))
     findAndValidateCrl fullCa (Keyed (Located _ mft) _) aki = do  
@@ -1118,7 +1117,7 @@ validateCaNoFetch
         And return shortcut created for it
     -}
     validateChildObject :: 
-            Located CaCerObject
+            Located WellStructuredCaCert
             -> Keyed (Located ParsedRpkiObject) 
             -> Text
             -> Validated CrlObject
@@ -1271,7 +1270,7 @@ validateCaNoFetch
 
     collectPayloads :: MftShortcut 
                     -> Maybe [T3 Text Hash ObjectKey] 
-                    -> Either (Located ValidatedCaCert) (ValidatorT IO (Located ValidatedCaCert))
+                    -> Either (Located WellStructuredCaCert) (ValidatorT IO (Located WellStructuredCaCert))
                     -> ValidatorT IO (Keyed (Validated CrlObject))             
                     -> AllResources
                     -> ValidatorT IO ()
@@ -1426,9 +1425,11 @@ validateCaNoFetch
                     (shortcut ^. #resources) parentCaResources verifiedResources
             
 
-
     -- TODO This is pretty bad, it's easy to forget to do it
-    rememberPayloads :: forall m a . MonadIO m => Getting (IORef a) PayloadBuilder (IORef a) -> (a -> a) -> m ()
+    rememberPayloads :: forall m a . MonadIO m 
+                    => Getting (IORef a) PayloadBuilder (IORef a) 
+                    -> (a -> a) 
+                    -> m ()
     rememberPayloads lens_ f = do
         let builder = topDownContext ^. #payloadBuilder . lens_        
         liftIO $! atomicModifyIORef' builder $ \b -> let !z = f b in (z, ())
@@ -1515,7 +1516,7 @@ getParsedObject tx db key ifNotFound = do
         Nothing -> ifNotFound
 
 
-getFullCa :: Storage s => AppContext s -> TopDownContext -> Ca -> ValidatorT IO (Located ValidatedCaCert)
+getFullCa :: Storage s => AppContext s -> TopDownContext -> Ca -> ValidatorT IO (Located WellStructuredCaCert)
 getFullCa appContext@AppContext {..} topDownContext = \case    
     CaFull c -> pure c            
     CaShort CaShortcut {..} -> do   

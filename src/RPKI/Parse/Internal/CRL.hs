@@ -66,14 +66,17 @@ parseCrl bs = do
 
             let encoded = encodeASN1' DER $ [Start Sequence] <> asns <> [End Sequence]
 
-            let mkSignCRL crlNumber' = SignCRL 
-                        (newInstant thisUpdate)
-                        (newInstant <$> nextUpdate)
-                        (SignatureAlgorithmIdentifier signatureId) 
-                        signatureVal (toShortBS encoded) 
-                        crlNumber' 
-                        revoked
-            pure (extensions, mkSignCRL)            
+            case nextUpdate of 
+                Nothing -> throwParseError "nextUpdate in CRL must no be empty"
+                Just nu -> do 
+                    let mkSignCRL crlNumber_ = SignCRL 
+                                (newInstant thisUpdate)
+                                (newInstant nu)
+                                (SignatureAlgorithmIdentifier signatureId) 
+                                signatureVal (toShortBS encoded) 
+                                crlNumber_
+                                revoked
+                    pure (extensions, mkSignCRL)            
         
         getCrlContent = do        
             -- This is copy-pasted from the Data.X509.CRL to fix getRevokedCertificates 

@@ -353,8 +353,8 @@ saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } lifecycle wv = liftI
                 _ -> pure ()
             pure objectKey
 
-getMftMetaFromValidated :: ValidatedCMSObject Manifest -> ObjectKey -> MftMeta
-getMftMetaFromValidated ValidatedCMSObject { content = Manifest {..} } key = MftMeta {..}
+getMftMetaFromValidated :: WellStructuredCms Manifest -> ObjectKey -> MftMeta
+getMftMetaFromValidated WellStructuredCms { content = Manifest {..} } key = MftMeta {..}
 
 -- | Return the raw bytes for an 'OriginalRO' entry, if the key maps to one.
 getOriginalBlob :: (MonadIO m, Storage s) =>
@@ -447,14 +447,14 @@ getMftsForAKI tx DB { objectStore = RpkiObjectStore {..} } aki_ =
     liftIO $ List.sortOn Down <$> MM.allForKey tx mftsForKI aki_
 
 findAllMftsByAKI :: (MonadIO m, Storage s) => 
-                    Tx s mode -> DB s -> AKI -> m [(MftMeta, Keyed (Located (ValidatedCMSObject Manifest)))]
+                    Tx s mode -> DB s -> AKI -> m [(MftMeta, Keyed (Located (WellStructuredCms Manifest)))]
 findAllMftsByAKI tx db aki_ = liftIO $ do
     mftMetas <- getMftsForAKI tx db aki_
     fmap catMaybes $ forM mftMetas $ \meta@MftMeta {..} -> fmap (meta,) <$> getMftByKey tx db key
     
 
 getMftByKey :: (MonadIO m, Storage s) => 
-                Tx s mode -> DB s -> ObjectKey -> m (Maybe (Keyed (Located (ValidatedCMSObject Manifest))))
+                Tx s mode -> DB s -> ObjectKey -> m (Maybe (Keyed (Located (WellStructuredCms Manifest))))
 getMftByKey tx db k = do 
     o <- getLocatedByKey tx db k
     pure $! case o of 
@@ -515,7 +515,7 @@ getMftMeta mft key = let
     in MftMeta {..}
 
 
-getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> ValidatorT m [Located ValidatedCaCert]
+getBySKI :: (MonadIO m, Storage s) => Tx s mode -> DB s -> SKI -> ValidatorT m [Located WellStructuredCaCert]
 getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = do
     objectKeys <- liftIO $ MM.allForKey tx certBySKI ski
     fmap catMaybes $ forM objectKeys $ \objectKey ->
