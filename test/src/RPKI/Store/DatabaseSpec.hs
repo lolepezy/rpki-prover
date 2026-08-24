@@ -45,7 +45,8 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Database    (DB(..))
 import qualified RPKI.Store.Database    as DB
-import           RPKI.Validation.Common  (toValidatedRpkiObject)
+import           RPKI.Validation.Common
+import           RPKI.Validation.ObjectValidation
 import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 
@@ -127,7 +128,12 @@ shouldMergeObjectLocations io = do
     ro2 :: ParsedRpkiObject <- QC.generate arbitrary        
     
     let storeIt obj url = rwTx db $ \tx -> do        
-            DB.saveObject tx db (StorableObject (toValidatedRpkiObject obj) (toStorable obj)) (instantToVersion now)
+            DB.saveObject tx db
+                (OriginalRO (ObjectOriginal $ unStorable $ toStorable obj)
+                            mempty
+                            (getHash obj)
+                            (getRpkiObjectType obj))
+                (instantToVersion now)
             DB.linkObjectToUrl tx db url (getHash obj)
 
     let getIt hash = roTx db $ \tx -> DB.getByHash tx db hash    
@@ -233,8 +239,8 @@ shouldOrderManifests io = do
     worldVersion <- newVersion
 
     rwTx objectStore $ \tx -> do        
-            void $ DB.saveObject tx db (StorableObject (toValidatedRpkiObject mft1) (toStorable mft1)) worldVersion
-            void $ DB.saveObject tx db (StorableObject (toValidatedRpkiObject mft2) (toStorable mft2)) worldVersion
+            void $ DB.saveObject tx db (ValidatedRO $ toValidatedRpkiObject mft1) worldVersion
+            void $ DB.saveObject tx db (ValidatedRO $ toValidatedRpkiObject mft2) worldVersion
             DB.linkObjectToUrl tx db url1 (getHash mft1)
             DB.linkObjectToUrl tx db url2 (getHash mft2)
 
@@ -249,7 +255,7 @@ shouldOrderManifests io = do
             MftMeta {..} : _ <- DB.getMftsForAKI tx db aki1
             DB.getMftByKey tx db key
 
-    HU.assertEqual "Not the same manifests" (MftRO mftLatest) mft2
+    HU.assertEqual "Not the same manifests" (MftRO mftLatest) (toValidatedRpkiObject mft2)
 
 
 shouldSaveAndGetRsyncRepositories :: Storage s => IO (DB s) -> HU.Assertion
@@ -685,7 +691,7 @@ replaceAKI a = \case
     mapCms (CMS so) = CMS $ so & #soContent . #scCertificate . #aki .~ a
 
 -- Convert without validating, 
-toValidatedRpkiObject :: ParsedRpkiObject -> ValidatedRpkiObject
+toValidatedRpkiObject :: ParsedRpkiObject -> WellStructuredRpkiObject
 toValidatedRpkiObject = \case
     CerRO ca    -> CerRO  $ extractCert ca
     CrlRO crl   -> CrlRO  crl

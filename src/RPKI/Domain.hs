@@ -175,8 +175,6 @@ class WithPayload a p where
 class WithSignMaterial a where
     getSignMaterial :: a -> SignMaterial
 
--- | Wrapper indicating that an object has been through all self-contained
--- structural validations ('prevalidate' / 'prevalidateObject').
 newtype Validated a = Validated a
     deriving stock (Show, Eq, Generic)
     deriving newtype (WithSKI, WithAKI, WithHash, WithPubKey, WithRpkiObjectType)
@@ -379,7 +377,7 @@ type WellStructuredGbr  = WellStructuredCms Gbr
 type WellStructuredRsc  = WellStructuredCms Rsc
 type WellStructuredAspa = WellStructuredCms Aspa
 
-type ValidatedRpkiObject = RpkiObject_ 
+type WellStructuredRpkiObject = RpkiObject_ 
         WellStructuredCaCert 
         WellStructuredMft
         WellStruturedRoa
@@ -410,6 +408,18 @@ type ValidatedRpkiObject = RpkiObject_
 
 
 {-# INLINE foldRpkiObject #-}
+foldRpkiObject ::
+    (ca -> r) ->
+    (mft -> r) ->
+    (roa -> r) ->
+    (spl -> r) ->
+    (gbr -> r) ->
+    (rsc -> r) ->
+    (aspa -> r) ->
+    (bgpSec -> r) ->
+    (crl -> r) ->
+    RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl ->
+    r
 foldRpkiObject onCer onMft onRoa onSpl onGbr onRsc onAspa onBgp onCrl = \case
     CerRO c  -> onCer c
     MftRO c  -> onMft c
@@ -498,6 +508,15 @@ instance WithRawResourceCertificate a => WithValidityPeriod a where
 
 instance {-# OVERLAPPING #-} WithRawResourceCertificate a => WithSerial a where
     getSerial = Serial . X509.certSerial . cwsX509certificate . certX509 . getRawCert
+
+instance {-# OVERLAPPING #-} WithRawResourceCertificate a => WithSignMaterial a where
+    getSignMaterial c = let 
+            CertificateWithSignature {                
+                cwsSignatureAlgorithm = algorithm,
+                cwsSignature          = signature,
+                cwsEncoded            = signedData
+            } = certX509 $ getRawCert c
+        in SignMaterial {..}
 
 instance WithRawResourceCertificate CaCerObject where
     getRawCert CaCerObject {..} = getRawCert certificate
@@ -958,6 +977,8 @@ data ValidatedCert (t :: CertType) = ValidatedCert {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)    
 
+instance OfCertType (ValidatedCert t) t
+
 instance {-# OVERLAPPING #-} WithSerial (ValidatedCert t) where getSerial (ValidatedCert { serial }) = serial
 instance {-# OVERLAPPING #-} WithAKI (ValidatedCert t) where getAKI (ValidatedCert { aki }) = aki
 instance {-# OVERLAPPING #-} WithPubKey (ValidatedCert t) where getPubKey (ValidatedCert { pubKey }) = pubKey
@@ -991,9 +1012,18 @@ data ValidatedEECert = ValidatedEECert {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
+instance OfCertType ValidatedEECert 'EECert
+
 instance {-# OVERLAPPING #-} WithPubKey ValidatedEECert where getPubKey (ValidatedEECert { pubKey }) = pubKey
 instance WithResources ValidatedEECert where getResources (ValidatedEECert { resources }) = resources
 instance {-# OVERLAPPING #-} WithValidityPeriod ValidatedEECert where getValidityPeriod (ValidatedEECert { validity }) = validity
+instance {-# OVERLAPPING #-} WithSignMaterial ValidatedEECert where
+    getSignMaterial ValidatedEECert { sigAlg = algorithm, signature, encoded = signedData } =
+        SignMaterial {..}
+
+instance {-# OVERLAPPING #-} WithSignMaterial (ValidatedCert t) where
+    getSignMaterial ValidatedCert { sigAlg = algorithm, signature, encoded = signedData } =
+        SignMaterial {..}
 
 
 -- | Minimized CMS-based signed object.  Replaces 'CMSBasedObject a' in the

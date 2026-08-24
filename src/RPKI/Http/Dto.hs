@@ -312,7 +312,7 @@ objectToDto = \case
     bgpSecDto :: BgpCerObject -> BgpCertDto
     bgpSecDto bgpCert = let
             AllResources _ _ asns = getRawCert bgpCert ^. #resources
-            bgpSecSpki = getSubjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature bgpCert
+            bgpSecSpki = getSubjectPublicKeyInfo bgpCert
             bgpSecAsns = case asns of
                             Inherit -> []
                             RS r

@@ -121,7 +121,7 @@ validateNoUnknownCriticalExtensions extensions =
 -- | Validate specifically the TA's self-signed certificate.
 validateTACert :: TAL -> RpkiURL -> ParsedRpkiObject -> PureValidatorT WellStructuredCaCert
 validateTACert tal u (CerRO taCert) = do
-    let spki = getSubjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature taCert
+    let spki = getSubjectPublicKeyInfo taCert
     let talSPKI = SPKI $ publicKeyInfo tal
     unless (talSPKI == spki) $ vPureError $ SPKIMismatch talSPKI spki
     validateTaCertAKI taCert u
@@ -189,7 +189,7 @@ chooseTaCert cert cachedCert = do
 --    - check it's not revoked (needs CRL)
 -- 
 validateResourceCert :: forall child parent .
-    ( WithRawResourceCertificate child
+    ( WithSignMaterial child
     , WithPubKey parent
     , WithSKI parent
     , WithAKI child
@@ -205,7 +205,8 @@ validateResourceCert :: forall child parent .
 validateResourceCert now cert parentCert vcrl = do
     void $ validateObjectValidityPeriod cert now
 
-    signatureCheck $ validateCertSignature cert parentCert    
+    -- signatureCheck $ validateCertSignature cert parentCert    
+    signatureCheck $ validateSignMaterial cert parentCert    
     when (isRevoked cert vcrl) $ 
         vPureError RevokedResourceCertificate                
 
@@ -263,9 +264,10 @@ validateResources validationRFC verifiedResources childCert parentCert =
 
 validateBgpCert ::
     forall bgpCert parent.
-    ( WithRawResourceCertificate bgpCert
+    ( WithSignMaterial bgpCert
     , WithPubKey parent
     , WithSKI parent
+    , WithPubKey bgpCert
     , WithAKI bgpCert
     , WithSKI bgpCert
     , WithValidityPeriod bgpCert
@@ -296,7 +298,7 @@ validateBgpCert now bgpCert parentCert validCrl = do
     let bgpSecSki = getSKI bgpCert
 
     -- https://www.rfc-editor.org/rfc/rfc8208#section-3.1    
-    let bgpSecSpki = getSubjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature bgpCert
+    let bgpSecSpki = getSubjectPublicKeyInfo bgpCert
     pure (Validated bgpCert, BGPSecPayload {..})
 
     
@@ -368,6 +370,12 @@ validateMft validationRFC now mft parentCert crl verifiedResources = do
     let Manifest{..} = mft.content
     validateUpdateTimes now thisTime nextTime        
     validateCms validationRFC now mft parentCert crl verifiedResources
+
+    let AllResources ipv4 ipv6 asns = getResources mft
+    verifyInherit ipv4
+    verifyInherit ipv6
+    verifyInherit asns
+
     pure $ Validated mft
 
   where
@@ -519,19 +527,18 @@ validateRsc ::
     ( WithResources parent
     , WithPubKey parent
     , WithSKI parent
-    , OfCertType parent 'CACert
+    , OfCertType parent 'CACert    
     ) =>
     ValidationRFC ->
     Now ->
-    RscObject ->
+    WellStructuredRsc ->
     parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
-    PureValidatorT (Validated RscObject)
+    PureValidatorT (Validated WellStructuredRsc)
 validateRsc validationRFC now rsc parentCert crl verifiedResources = do
-    let rscCms = cmsPayload rsc
-    validateParsedCms validationRFC now rsc.cmsPayload parentCert crl verifiedResources
-    let rsc' = getCMSContent rscCms    
+    validateCms validationRFC now rsc parentCert crl verifiedResources
+    let rsc' = rsc.content
     let eeCert = toPrefixesAndAsns $ getResources rsc
     validateNested (rsc' ^. #rscResources) eeCert
     pure $ Validated rsc
@@ -572,11 +579,12 @@ validateAspa validationRFC now aspa parentCert crl verifiedResources = do
     pure $ Validated aspa
     
 
-validateCms :: 
-    (WithPubKey parent,
-    WithSKI parent,
-    WithResources parent,
-    OfCertType parent 'CACert) =>
+validateCms ::
+    ( WithPubKey parent
+    , WithSKI parent
+    , WithResources parent
+    , OfCertType parent 'CACert
+    ) =>
     ValidationRFC ->
     Now ->
     WellStructuredCms payload ->
@@ -584,24 +592,30 @@ validateCms ::
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
     PureValidatorT ()
-validateCms validationRFC now cms parentCert crl verifiedResources = do    
+validateCms validationRFC now cms parentCert crl verifiedResources = do
     void $ validateResourceCert now cms.eeCert parentCert crl
-    void $ validateResources validationRFC verifiedResources eeCert parentCert
+    void $ validateResources validationRFC verifiedResources cms.eeCert parentCert
 
-validateParsedCms :: forall cms parent .
-    (WithRawResourceCertificate cms, 
-    OfCertType parent 'CACert) =>
+
+validateParsedCms ::
+    forall payload parent.
+    ( WithPubKey parent
+    , WithSKI parent
+    , WithResources parent
+    , OfCertType parent 'CACert
+    ) =>
     ValidationRFC ->
     Now ->
-    CMS cms ->
+    CMS payload ->
     parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
     PureValidatorT ()
-validateParsedCms validationRFC now cms parentCert crl verifiedResources = do    
+validateParsedCms validationRFC now cms parentCert crl verifiedResources = do
+    let eeCert = getEEResourceCert $ unCMS cms
     signatureCheck $ validateCMSSignature cms
-    void $ validateResourceCert now cms.eeCert parentCert crl
-    void $ validateResources validationRFC verifiedResources cms.eeCert parentCert
+    void $ validateResourceCert now eeCert parentCert crl
+    void $ validateResources validationRFC verifiedResources eeCert parentCert
 
 
 validateCmsSelf :: Now 
@@ -639,17 +653,15 @@ validateUpdateTimes (Now now) thisUpdateTime nextUpdateTime = do
 
 
 validateAIA ::
-    forall child parent (childCertType :: CertType).
-    ( WithRawResourceCertificate child
+    forall child parent.
+    ( WithCertExtensions child
     , WithLocations parent
-    , OfCertType parent 'CACert
-    , OfCertType child childCertType
     ) =>
     child ->
     parent ->
     PureValidatorT ()
 validateAIA cert parentCert =    
-    for_ (getSiaExt $ cwsX509certificate $ getCertWithSignature cert) $ \sia -> do 
+    for_ (extVal (getCertExtensions cert) id_pe_sia) $ \sia -> do 
         for_ (extractSiaValue sia id_pe_sia) $ \ext -> do             
             let locations = getLocations parentCert
             case extractURI ext of 
@@ -675,7 +687,7 @@ signatureCheck sv = case sv of
 
 
 -- ============================================================
--- V-variant validators operating on 'ValidatedRpkiObject' types
+-- V-variant validators operating on 'WellStructuredRpkiObject' types
 -- ============================================================
 
 -- | Validate a 'WellStructuredCaCert' child against a 'WellStructuredCaCert' parent.
@@ -854,7 +866,7 @@ isWithinValidityPeriod (Now now) a =
 
 -- | Full structural validation including multiple-location check.
 -- Use in contexts (e.g. TopDown) where the full 'Located' object is available.
-prevalidate :: Located ParsedRpkiObject -> PureValidatorT ValidatedRpkiObject
+prevalidate :: Located ParsedRpkiObject -> PureValidatorT WellStructuredRpkiObject
 prevalidate located@(Located _ rpkiObject) = do
     validateObjectLocations located
     prevalidateObject rpkiObject
@@ -864,7 +876,7 @@ prevalidate located@(Located _ rpkiObject) = do
 Used at object-save time (when only one URL is known) and wherever
 constructing a 'Located' wrapper is unnecessary overhead.
 -}
-prevalidateObject :: ParsedRpkiObject -> PureValidatorT ValidatedRpkiObject
+prevalidateObject :: ParsedRpkiObject -> PureValidatorT WellStructuredRpkiObject
 prevalidateObject rpkiObject = do
     case rpkiObject of
         CerRO ca -> do
@@ -943,8 +955,12 @@ extractCMSObject CMSBasedObject { hash, cmsPayload } =
         SignerInfos { signature = cmsSignature, signedAttrs } = scSignerInfos
         SignedAttributes attrs signedAttrsBS = signedAttrs
 
-        -- It will be there, it's already validated         
-        [signingTime] = [ newInstant dt | SigningTime dt _ <- attrs ]
+        -- It is guaranteed by validateCmsStructure; keep total pattern here
+        -- to satisfy -Wincomplete-uni-patterns.
+        signingTime =
+            case [ newInstant dt | SigningTime dt _ <- attrs ] of
+                [st] -> st
+                _    -> error "Invariant violated: expected exactly one SigningTime attribute"
 
         eeCert      = extractEECert scCertificate
         content     = cContent scEncapContentInfo

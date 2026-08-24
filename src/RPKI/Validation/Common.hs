@@ -20,7 +20,7 @@ import           RPKI.Resources.Types
 
 import qualified RPKI.Util as U
 
--- Validated and ValidatedRpkiObject are defined in RPKI.Domain and re-exported
+-- Validated and WellStructuredRpkiObject are defined in RPKI.Domain and re-exported
 -- from there so that both Store and Validation layers can use them.
 createVerifiedResources :: WithResources c => c -> VerifiedRS PrefixesAndAsns
 createVerifiedResources c = 

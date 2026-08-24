@@ -69,9 +69,9 @@ parseResources x509cert = do
 
 -- | https://tools.ietf.org/html/rfc5280#page-16
 --
-getSubjectPublicKeyInfo :: Certificate -> SPKI
+getSubjectPublicKeyInfo :: WithPubKey c => c -> SPKI
 getSubjectPublicKeyInfo cert = SPKI $ U.encodeBase64 $ DecodedBase64 $
-  encodeASN1' DER $ (toASN1 $ certPubKey cert) []
+  encodeASN1' DER $ (toASN1 $ getPubKey cert) []
 
 getCertificateType :: [ExtensionRaw] -> PureValidatorT CertType
 getCertificateType extensions =

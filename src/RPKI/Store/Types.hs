@@ -71,7 +71,7 @@ newtype ObjectOriginal = ObjectOriginal BS.ByteString
 -- complete without any validation errors.
 data RpkiObjectLifecycle
     = OriginalRO ObjectOriginal ValidationState Hash RpkiObjectType
-    | ValidatedRO ValidatedRpkiObject
+    | ValidatedRO WellStructuredRpkiObject
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 

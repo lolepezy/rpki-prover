@@ -298,7 +298,7 @@ getLocatedByKey tx db k = liftIO $ runMaybeT $ do
 -- returned; only 'ValidatedRO' entries yield a result.
 getValidatedByKey :: (MonadIO m, Storage s) =>
                     Tx s mode -> DB s -> ObjectKey
-                    -> ValidatorT m (Maybe (Located ValidatedRpkiObject))
+                    -> ValidatorT m (Maybe (Located WellStructuredRpkiObject))
 getValidatedByKey tx db key = do
     liftIO (getLocatedByKey tx db key) >>= \case
         Nothing -> pure Nothing

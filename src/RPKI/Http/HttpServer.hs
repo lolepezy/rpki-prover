@@ -424,7 +424,6 @@ getRpkiObject AppContext {..} uri hash key =
                 "Only one of 'uri', 'hash' or 'key' must be provided." }
   where
     locatedDto located = RObject $ located & #payload %~ lifecycleToDto
-    locatedDtoLegacy located = RObject $ located & #payload %~ objectToDto
     taLocatedDto locations taCert = RObject $ Located locations $ validatedCaToDto taCert
 
 getOriginal :: (MonadIO m, Storage s, MonadError ServerError m)

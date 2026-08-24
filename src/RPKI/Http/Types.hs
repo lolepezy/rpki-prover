@@ -207,7 +207,7 @@ newtype ExtensionsDto = ExtensionsDto [ExtensionDto]
 
 data CrlDto = CrlDto {
         thisUpdateTime     :: Instant,
-        nextUpdateTime     :: Maybe Instant,
+        nextUpdateTime     :: Instant,
         signatureAlgorithm :: SignatureAlgorithmIdentifier,
         signatureValue     :: SignatureValue,
         crlNumber          :: Serial,
