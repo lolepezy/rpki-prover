@@ -461,27 +461,27 @@ instance {-# OVERLAPPING #-} WithPubKey CaCerObject where
     getPubKey CaCerObject { certificate } = X509.certPubKey $ cwsX509certificate $ getCertWithSignature certificate
 
 instance {-# OVERLAPPING #-} WithAKI (CMSBasedObject a) where
-    getAKI CMSBasedObject {..} = getAKI $ getEEResourceCert $ unCMS cmsPayload 
+    getAKI CMSBasedObject {..} = getAKI $ getEEResourceCert cmsPayload 
 
 instance {-# OVERLAPPING #-} WithPubKey (CMSBasedObject a) where
-    getPubKey CMSBasedObject { cmsPayload } = getPubKey $ getEEResourceCert $ unCMS cmsPayload
+    getPubKey CMSBasedObject { cmsPayload } = getPubKey $ getEEResourceCert cmsPayload
 
 instance WithResources (CMSBasedObject a) where
-    getResources CMSBasedObject { cmsPayload } = getResources $ getEEResourceCert $ unCMS cmsPayload
+    getResources CMSBasedObject { cmsPayload } = getResources $ getEEResourceCert cmsPayload
 
 instance {-# OVERLAPPING #-} WithValidityPeriod (CMSBasedObject a) where
     getValidityPeriod CMSBasedObject {..} = 
         let (nb, na) = X509.certValidity $ cwsX509certificate $ getCertWithSignature 
-                     $ getEEResourceCert $ unCMS cmsPayload 
+                     $ getEEResourceCert cmsPayload 
         in ValidityPeriod (newInstant nb) (newInstant na)
 
 instance {-# OVERLAPPING #-} WithSerial (CMSBasedObject a) where
     getSerial CMSBasedObject {..} = 
         Serial $ X509.certSerial $ cwsX509certificate $ getCertWithSignature 
-            $ getEEResourceCert $ unCMS cmsPayload 
+            $ getEEResourceCert cmsPayload 
 
 instance WithRawResourceCertificate (CMSBasedObject a) where
-    getRawCert CMSBasedObject {..} = getRawCert $ getEEResourceCert $ unCMS cmsPayload 
+    getRawCert CMSBasedObject {..} = getRawCert $ getEEResourceCert cmsPayload 
 
 instance {-# OVERLAPPING #-} WithAKI BgpCerObject where
     getAKI BgpCerObject {..} = aki
@@ -499,7 +499,7 @@ instance WithResources EECerObject where
     getResources EECerObject { certificate } = getResources certificate
 
 instance {-# OVERLAPPING #-} WithSKI (CMSBasedObject a) where    
-    getSKI CMSBasedObject {..} = getSKI $ getEEResourceCert $ unCMS cmsPayload 
+    getSKI CMSBasedObject {..} = getSKI $ getEEResourceCert cmsPayload 
 
 instance WithRawResourceCertificate a => WithValidityPeriod a where
     getValidityPeriod cert =
@@ -509,7 +509,7 @@ instance WithRawResourceCertificate a => WithValidityPeriod a where
 instance {-# OVERLAPPING #-} WithRawResourceCertificate a => WithSerial a where
     getSerial = Serial . X509.certSerial . cwsX509certificate . certX509 . getRawCert
 
-instance {-# OVERLAPPING #-} WithRawResourceCertificate a => WithSignMaterial a where
+instance {-# OVERLAPPABLE #-} WithRawResourceCertificate a => WithSignMaterial a where
     getSignMaterial c = let 
             CertificateWithSignature {                
                 cwsSignatureAlgorithm = algorithm,
@@ -517,6 +517,37 @@ instance {-# OVERLAPPING #-} WithRawResourceCertificate a => WithSignMaterial a 
                 cwsEncoded            = signedData
             } = certX509 $ getRawCert c
         in SignMaterial {..}
+
+instance WithSignMaterial CrlObject where
+    getSignMaterial CrlObject {
+        signCrl = SignCRL {
+            signatureAlgorithm,
+            signatureValue,
+            encodedValue
+        }
+    } = SignMaterial {
+            algorithm = signatureAlgorithm,
+            signature = signatureValue,
+            signedData = encodedValue
+        }
+
+instance WithSignMaterial (CMS a) where
+    getSignMaterial (CMS so) =
+        let
+            SignerInfos {
+                signature = cmsSignature,
+                signedAttrs = SignedAttributes _ signedAttrsBS
+            } = scSignerInfos $ soContent so
+
+            CertificateWithSignature {
+                cwsSignatureAlgorithm = eeSignatureAlgorithm
+            } = getEECert so
+        in
+            SignMaterial {
+                algorithm = eeSignatureAlgorithm,
+                signature = cmsSignature,
+                signedData = signedAttrsBS
+            }
 
 instance WithRawResourceCertificate CaCerObject where
     getRawCert CaCerObject {..} = getRawCert certificate
@@ -1068,8 +1099,8 @@ skiLen (SKI (KI bs)) = BSS.length bs
 getCMSContent :: CMS a -> a
 getCMSContent = cContent . scEncapContentInfo . soContent . unCMS
 
-getEEResourceCert :: SignedObject a -> EECerObject
-getEEResourceCert = scCertificate . soContent
+getEEResourceCert :: CMS a -> EECerObject
+getEEResourceCert = scCertificate . soContent . unCMS
 
 getCertWithSignature :: WithRawResourceCertificate a => a -> CertificateWithSignature
 getCertWithSignature = certX509 . getRawCert

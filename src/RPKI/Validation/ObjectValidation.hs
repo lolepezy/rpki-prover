@@ -47,31 +47,12 @@ import           RPKI.Resources.Resources
 import           RPKI.Validation.Common        
 
 
-type WithIssuerKey parent =
-    ( WithPubKey parent
-    , WithSKI parent
-    )
+type WithIssuerKey p = (WithPubKey p, WithSKI p)
+type CertIssuer p    = (WithIssuerKey p, OfCertType p 'CACert)
+type CaParent p      = (CertIssuer p, WithResources p)
 
-type CertIssuer parent =
-    ( WithIssuerKey parent
-    , OfCertType parent 'CACert
-    )
-
-type CaParent parent =
-    ( CertIssuer parent
-    , WithResources parent
-    )
-
-type CertCore child =
-    ( WithAKI child
-    , WithSerial child
-    , WithValidityPeriod child
-    )
-
-type SignedCertCore child =
-    ( CertCore child
-    , WithSignMaterial child
-    )
+type CertCore c       = (WithAKI c, WithSerial c, WithValidityPeriod c)
+type SignedCertCore c = (CertCore c, WithSignMaterial c)
 
 
 class ExtensionValidator (t :: CertType) where
@@ -153,7 +134,7 @@ validateTACert tal u (CerRO taCert) = do
     let talSPKI = SPKI $ publicKeyInfo tal
     unless (talSPKI == spki) $ vPureError $ SPKIMismatch talSPKI spki
     validateTaCertAKI taCert u
-    signatureCheck $ validateCertSignature taCert taCert
+    signatureCheck $ validateSignMaterial taCert taCert
     void $ validateResourceCertExtensions @CaCerObject @'CACert taCert
     pure $ extractCert taCert
 
@@ -228,8 +209,7 @@ validateResourceCert :: forall child parent .
 validateResourceCert now cert parentCert vcrl = do
     void $ validateObjectValidityPeriod cert now
 
-    -- signatureCheck $ validateCertSignature cert parentCert    
-    signatureCheck $ validateSignMaterial cert parentCert    
+    signatureCheck $ validateSignMaterial cert parentCert
     when (isRevoked cert vcrl) $ 
         vPureError RevokedResourceCertificate                
 
@@ -302,14 +282,8 @@ validateBgpCert now bgpCert parentCert validCrl = do
     -- https://www.rfc-editor.org/rfc/rfc8209.html#section-3.3    
     void $ validateResourceCert now bgpCert parentCert validCrl
 
-    let AllResources _ _ asns = getResources bgpCert
-    
     -- Must be some ASNs
-    bgpSecAsns <- case asns of 
-                Inherit -> vError BGPCertBrokenASNs
-                RS i
-                    | IS.null i -> vError BGPCertBrokenASNs                
-                    | otherwise -> pure $ unwrapAsns $ IS.toList i
+    bgpSecAsns <- validateBgpCertAsns $ getResources bgpCert
 
     let bgpSecSki = getSKI bgpCert
 
@@ -328,7 +302,7 @@ validateCrl ::
     PureValidatorT (Validated CrlObject)
 validateCrl now crlObject@CrlObject{..} parentCert = do
     let SignCRL{..} = signCrl
-    signatureCheck $ validateCRLSignature crlObject parentCert
+    signatureCheck $ validateSignMaterial crlObject parentCert
     when (toAKI (getSKI parentCert) /= aki) $
         vPureError $ CRL_AKI_DifferentFromCertSKI (getSKI parentCert) aki    
     validateUpdateTimes now thisUpdateTime nextUpdateTime
@@ -550,22 +524,7 @@ validateAspa ::
 validateAspa validationRFC now aspa parentCert crl verifiedResources = do    
     validateCms validationRFC now aspa parentCert crl verifiedResources 
 
-    -- https://www.ietf.org/archive/id/draft-ietf-sidrops-aspa-profile-12.html#name-aspa-validation
-    let AllResources ipv4 ipv6 asns = getResources aspa
-    resourceSetMustBeEmpty ipv4 AspaIPv4Present
-    resourceSetMustBeEmpty ipv6 AspaIPv6Present
-
-    asnSet <- case asns of 
-                Inherit -> vError AspaNoAsn
-                RS s    -> pure s
-
-    let Aspa {..} = aspa.content         
-
-    unless ((AS customer) `IS.isInside` asnSet) $ 
-        vError $ AspaAsNotOnEECert customer (IS.toList asnSet)
-
-    when (customer `Set.member` providers) $
-        vError $ AspaOverlappingCustomerProvider customer $ Set.toList providers
+    validateAspaCore (getResources aspa) aspa.content
     
     pure $ Validated aspa
     
@@ -595,44 +554,17 @@ validateParsedCms ::
     Maybe (VerifiedRS PrefixesAndAsns) ->
     PureValidatorT ()
 validateParsedCms validationRFC now cms parentCert crl verifiedResources = do
-    let eeCert = getEEResourceCert $ unCMS cms
+    let eeCert = getEEResourceCert cms
     signatureCheck $ validateCMSSignature cms
     void $ validateResourceCert now eeCert parentCert crl
     void $ validateResources validationRFC verifiedResources eeCert parentCert
-
-
-validateCmsSelf :: Now 
-                -> CMS cms 
-                -> PureValidatorT ()
-validateCmsSelf now cms = do
-    -- EE cert should sign the CMS
-    signatureCheck $ validateCMSSignature cms
-
-    -- Signature algorithm in the EE certificate has to be
-    -- exactly the same as in the signed attributes
-    let eeCert = getEEResourceCert $ unCMS cms
-    let certWSign = getCertWithSignature eeCert
-    let SignatureAlgorithmIdentifier eeCertSigAlg = certWSign ^. #cwsSignatureAlgorithm
-    let attributeSigAlg = certSignatureAlg $ certWSign ^. #cwsX509certificate
-
-    -- That can be a problem:
-    -- http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt
-    -- Correct behaviour is to request exact match here.
-    unless (eeCertSigAlg == attributeSigAlg) $
-        vPureError $
-            CMSSignatureAlgorithmMismatch
-                (Text.pack $ show eeCertSigAlg)
-                (Text.pack $ show attributeSigAlg)
-
-    validateResourceCertSelf @_ @'EECert now eeCert
 
 
 validateUpdateTimes :: Now -> Instant -> Instant -> PureValidatorT ()
 validateUpdateTimes (Now now) thisUpdateTime nextUpdateTime = do
     when (thisUpdateTime >= now) $ vPureError $ ThisUpdateTimeIsInTheFuture {..}
     when (nextUpdateTime < now)  $ vPureError $ NextUpdateTimeIsInThePast {..}
-    when (nextUpdateTime <= thisUpdateTime) $ 
-        vPureError $ NextUpdateTimeBeforeThisUpdateTime {..}
+    validateUpdateTimesOrder thisUpdateTime nextUpdateTime
 
 
 validateAIA ::
@@ -821,6 +753,64 @@ validateBgpCertV now bgpCert parentCert vcrl = do
     bgpToEE ValidatedCert { aki = mAki, .. } =
         ValidatedEECert
             { aki = maybe (AKI (unSKI ski)) id mAki, .. }
+
+
+validateUpdateTimesOrder :: Instant -> Instant -> PureValidatorT ()
+validateUpdateTimesOrder thisUpdateTime nextUpdateTime =
+    when (nextUpdateTime <= thisUpdateTime) $
+        vError $ NextUpdateTimeBeforeThisUpdateTime nextUpdateTime thisUpdateTime
+
+
+validateAspaCore :: AllResources -> Aspa -> PureValidatorT ()
+validateAspaCore resources Aspa { customer, providers } = do
+    -- https://www.ietf.org/archive/id/draft-ietf-sidrops-aspa-profile-12.html#name-aspa-validation
+    let AllResources ipv4 ipv6 asns = resources
+    resourceSetMustBeEmpty ipv4 AspaIPv4Present
+    resourceSetMustBeEmpty ipv6 AspaIPv6Present
+
+    asnSet <- case asns of
+                Inherit -> vError AspaNoAsn
+                RS s    -> pure s
+
+    unless ((AS customer) `IS.isInside` asnSet) $
+        vError $ AspaAsNotOnEECert customer (IS.toList asnSet)
+
+    when (customer `Set.member` providers) $
+        vError $ AspaOverlappingCustomerProvider customer $ Set.toList providers
+    
+    when ((ASN 0) `Set.member` providers && Set.size providers > 1) $
+        vError $ AspaAsZeoAndNonZero $ Set.toList providers
+
+
+validateBgpCertAsns :: AllResources -> PureValidatorT [ASN]
+validateBgpCertAsns (AllResources _ _ asns) =
+    case asns of
+        Inherit -> vError BGPCertBrokenASNs
+        RS i
+            | IS.null i -> vError BGPCertBrokenASNs
+            | otherwise -> pure $ unwrapAsns $ IS.toList i
+
+
+validateCmsEeSignatureConsistency :: CMS a -> PureValidatorT ()
+validateCmsEeSignatureConsistency cms = do
+    -- EE cert should sign the CMS
+    signatureCheck $ validateCMSSignature cms
+
+    -- Signature algorithm in the EE certificate has to be
+    -- exactly the same as in the signed attributes
+    let eeCert = getEEResourceCert cms
+    let certWSign = getCertWithSignature eeCert
+    let SignatureAlgorithmIdentifier eeCertSigAlg = certWSign ^. #cwsSignatureAlgorithm
+    let attributeSigAlg = certSignatureAlg $ certWSign ^. #cwsX509certificate
+
+    -- That can be a problem:
+    -- http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt
+    -- Correct behaviour is to request exact match here.
+    unless (eeCertSigAlg == attributeSigAlg) $
+        vPureError $
+            CMSSignatureAlgorithmMismatch
+                (Text.pack $ show eeCertSigAlg)
+                (Text.pack $ show attributeSigAlg)
             
 
 validateSizeM :: ValidationConfig -> Integer -> PureValidatorT Integer
@@ -971,16 +961,12 @@ validateBgpCertStructure bgp@BgpCerObject { ski } = do
     for_ (getSiaExt cwsX509) $ vError . BGPCertSIAPresent
 
     -- No IP resources
-    let AllResources ipv4 ipv6 asns = getResources bgp
+    let AllResources ipv4 ipv6 _ = getResources bgp
     resourceSetMustBeEmpty ipv4 BGPCertIPv4Present
     resourceSetMustBeEmpty ipv6 BGPCertIPv6Present    
     
     -- Must be some ASNs
-    case asns of 
-        Inherit -> vError BGPCertBrokenASNs
-        RS i
-            | IS.null i -> vError BGPCertBrokenASNs                
-            | otherwise -> pure ()
+    void $ validateBgpCertAsns $ getResources bgp
 
 
 -- | Validate the CMS envelope structure common to all signed objects.
@@ -1033,24 +1019,7 @@ validateCmsStructure cmsObject = do
     validateCertX509Structure (getCertWithSignature scCertificate)
     validateSKIMatchesPublicKey ski (getCertWithSignature scCertificate)
 
-    -- Signature algorithm in the EE certificate has to be
-    -- exactly the same as in the signed attributes
-    let eeCert = getEEResourceCert $ unCMS cms
-    let certWSign = getCertWithSignature eeCert
-    let SignatureAlgorithmIdentifier eeCertSigAlg = certWSign ^. #cwsSignatureAlgorithm
-    let attributeSigAlg = certSignatureAlg $ certWSign ^. #cwsX509certificate
-
-    -- That can be a problem:
-    -- http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt
-    -- Correct behaviour is to request exact match here.
-    unless (eeCertSigAlg == attributeSigAlg) $
-        vPureError $
-            CMSSignatureAlgorithmMismatch
-                (Text.pack $ show eeCertSigAlg)
-                (Text.pack $ show attributeSigAlg)    
-
-    -- EE cert should sign the CMS
-    signatureCheck $ validateCMSSignature cms
+    validateCmsEeSignatureConsistency cms
 
 
 -- | Validate manifest-specific structural invariants.
@@ -1059,8 +1028,7 @@ validateMftStructure mft = do
     let Manifest { thisTime, nextTime, mftEntries } = getCMSContent (cmsPayload mft)
 
     -- thisUpdate must be strictly before nextUpdate
-    when (thisTime >= nextTime) $
-        vError $ NextUpdateTimeBeforeThisUpdateTime nextTime thisTime
+    validateUpdateTimesOrder thisTime nextTime
 
     -- Every filename must use the permitted charset
     for_ mftEntries $ \MftPair { fileName } -> validateMftFileName fileName
@@ -1083,32 +1051,18 @@ validateMftStructure mft = do
 -- | Validate ASPA content invariants.
 validateAspaContent :: AspaObject -> PureValidatorT ()
 validateAspaContent aspa = do     
-    -- https://www.ietf.org/archive/id/draft-ietf-sidrops-aspa-profile-12.html#name-aspa-validation
-    let AllResources ipv4 ipv6 asns = getRawCert (getEEResourceCert $ unCMS (cmsPayload aspa)) ^. #resources
-    resourceSetMustBeEmpty ipv4 AspaIPv4Present
-    resourceSetMustBeEmpty ipv6 AspaIPv6Present
-
-    asnSet <- case asns of 
-                Inherit -> vError AspaNoAsn
-                RS s    -> pure s
-
-    let Aspa {..} = getCMSContent (cmsPayload aspa)
+    let payload@Aspa {..} = getCMSContent (cmsPayload aspa)
 
     when (Set.null providers) $
-        vError AspaNoAsn    
+        vError AspaNoAsn
 
-    unless ((AS customer) `IS.isInside` asnSet) $ 
-        vError $ AspaAsNotOnEECert customer (IS.toList asnSet)
-
-    when (customer `Set.member` providers) $
-        vError $ AspaOverlappingCustomerProvider customer $ Set.toList providers        
+    validateAspaCore (getResources aspa) payload
 
 
 -- | Validate CRL structural invariants.
 validateCrlStructure :: CrlObject -> PureValidatorT ()
 validateCrlStructure CrlObject { signCrl = SignCRL { thisUpdateTime, nextUpdateTime } } =    
-    when (nextUpdateTime <= thisUpdateTime) $
-        vError NextUpdateTimeBeforeThisUpdateTime {..}
+    validateUpdateTimesOrder thisUpdateTime nextUpdateTime
 
 
 -- | Validate X.509 certificate properties checkable without a parent certificate.

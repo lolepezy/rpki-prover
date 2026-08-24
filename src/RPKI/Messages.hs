@@ -324,6 +324,9 @@ toValidationMessage = \case
       AspaOverlappingCustomerProvider customer providers -> 
         [i|ASPA contains customer ASN #{customer} in the list of provider ASNs #{providers}.|]
 
+      AspaAsZeoAndNonZero providers ->
+        [i|ASPA provider set contains both AS0 and non-zero ASNs: #{providers}.|]
+
       BGPCertSIAPresent bs -> 
         [i|SIA extension is present on the BGPSec certificate: #{hex bs}.|]
 
@@ -342,6 +345,47 @@ toValidationMessage = \case
 
       SplNotIpResources prefixes -> 
         [i|Prefix list must not have IP resources on its EE certificate, but has #{prefixes}.|]
+
+      InvalidCMSVersion v ->
+        [i|Invalid CMS SignedData.version #{v}, expected 3.|]
+
+      InvalidSignerInfoVersion v ->
+        [i|Invalid CMS SignerInfo.version #{v}, expected 3.|]
+
+      BinarySigningTimePresent ->
+        [i|CMS signed attributes contain binary-signing-time, which is not allowed.|]
+
+      ContentTypeAttrMissing ->
+        [i|CMS signed attributes are missing contentType.|]
+
+      MessageDigestMissing ->
+        [i|CMS signed attributes are missing messageDigest.|]
+
+      SigningTimeMissing ->
+        [i|CMS signed attributes are missing signingTime.|]
+
+      UnexpectedSignedAttribute oid ->
+        [i|CMS signed attributes contain unexpected attribute OID #{fmtOID oid}.|]
+
+      EECertSKIMismatch ->
+        [i|CMS SignerInfo SID does not match the embedded EE certificate SKI.|]
+
+      EECertContentTypeMismatch ->
+        [i|CMS contentType attribute does not match encapsulated content type.|]
+
+      SKINotMatchingPublicKey ->
+        [i|Certificate SKI does not match SHA-1 of subjectPublicKey BIT STRING.|]
+
+      InvalidPublicKey t -> [i|Invalid public key: #{t}.|]
+
+      DuplicateManifestFilenames filenames ->
+        [i|Manifest contains duplicate filenames: #{filenames}.|]
+
+      CertValidityPeriodInvalid ->
+        [i|Certificate validity period is invalid: notBefore is not strictly before notAfter.|]
+
+      SerialNumberOutOfBounds t ->
+        [i|Certificate serial number is out of bounds: #{t}.|]
 
       ReferentialIntegrityError message -> [i|Referential integrity problem: #{message}.|]
 

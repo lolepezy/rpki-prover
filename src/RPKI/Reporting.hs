@@ -120,6 +120,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |
                         RoaPrefixLenghtsIsBiggerThanMaxLength Vrp |
                         AspaOverlappingCustomerProvider ASN [ASN] | 
+                        AspaAsZeoAndNonZero [ASN] | 
                         AspaAsNotOnEECert ASN [AsResource] | 
                         AspaNoAsn |
                         AspaIPv4Present |
