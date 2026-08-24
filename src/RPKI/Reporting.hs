@@ -126,6 +126,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         AspaNoAsn |
                         AspaIPv4Present |
                         AspaIPv6Present |      
+                        AspaNoProviders |      
                         -- BGPSec
                         BGPCertSIAPresent BS.ByteString | 
                         BGPCertIPv4Present |

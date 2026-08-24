@@ -337,8 +337,9 @@ toValidationMessage = \case
       AspaNoAsn       -> [i|ASN extension is not present on the ASPA EE certificate or has 'inherit' value.|]
       AspaIPv4Present -> [i|IPv4 extension is present on the ASPA EE certificate.|]
       AspaIPv6Present -> [i|IPv6 extension is present on the ASPA EE certificate.|]      
+      AspaNoProviders -> [i|ASPA provider set is empty.|]
       AspaAsNotOnEECert customer eeAsns -> 
-        [i|Customer ASN (#{customer}) is not in the EE certificate AS set (#{eeAsns}).|]      
+        [i|Customer ASN (#{customer}) is not in the EE certificate AS set (#{eeAsns}).|]            
     
       SplAsnNotInResourceSet asn asns ->
         [i|#{asn} is not in the EE certificate AS set (#{asns}).|]      

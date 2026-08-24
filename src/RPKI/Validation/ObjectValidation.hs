@@ -18,8 +18,6 @@ import           Data.Foldable (for_)
 import qualified Data.Set                         as Set
 import qualified Data.Map.Strict                  as Map
 
-import           Data.Proxy
-
 import qualified Crypto.PubKey.RSA.Types          as RSA
 import qualified Crypto.Hash.SHA1                 as SHA1
 
@@ -54,32 +52,24 @@ type CaParent p      = (CertIssuer p, WithResources p)
 type CertCore c       = (WithAKI c, WithSerial c, WithValidityPeriod c)
 type SignedCertCore c = (CertCore c, WithSignMaterial c)
 
+extractExtensions :: WithRawResourceCertificate c => c -> [ExtensionRaw]
+extractExtensions = getExts . cwsX509certificate . getCertWithSignature
 
-class ExtensionValidator (t :: CertType) where
-    validateResourceCertExtensions_ :: Proxy t -> [ExtensionRaw] -> PureValidatorT ()
+validateCaCertExtensions :: [ExtensionRaw] -> PureValidatorT ()
+validateCaCertExtensions extensions = do
+    validateCaBasicConstraint extensions
+    validatePolicyExtension extensions
+    validateNoUnknownCriticalExtensions extensions
 
-instance ExtensionValidator 'CACert where
-    validateResourceCertExtensions_ _ extensions = do             
-        validateCaBasicConstraint extensions
-        validatePolicyExtension extensions                        
+-- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8.9
+validateEeCertExtensions :: [ExtensionRaw] -> PureValidatorT ()
+validateEeCertExtensions extensions = do
+    noBasicContraint extensions
+    validateNoUnknownCriticalExtensions extensions
 
-instance ExtensionValidator 'BGPCert where
-    -- https://datatracker.ietf.org/doc/html/rfc8209#section-3.1.3
-    validateResourceCertExtensions_ _ = noBasicContraint
-
-instance ExtensionValidator 'EECert where
-    validateResourceCertExtensions_ _ = noBasicContraint
-
-validateResourceCertExtensions :: forall c (t :: CertType) .
-    (WithRawResourceCertificate c, OfCertType c t, ExtensionValidator t) => 
-    c -> PureValidatorT c
-validateResourceCertExtensions cert = do     
-    let extensions = getExts $ cwsX509certificate $ getCertWithSignature cert
-
-    validateResourceCertExtensions_ (Proxy :: Proxy t) extensions
-    validateNoUnknownCriticalExtensions extensions            
-    
-    pure cert
+-- https://datatracker.ietf.org/doc/html/rfc8209#section-3.1.3
+validateBgpCertExtensions :: [ExtensionRaw] -> PureValidatorT ()
+validateBgpCertExtensions = validateEeCertExtensions
 
 
 -- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8            
@@ -135,7 +125,7 @@ validateTACert tal u (CerRO taCert) = do
     unless (talSPKI == spki) $ vPureError $ SPKIMismatch talSPKI spki
     validateTaCertAKI taCert u
     signatureCheck $ validateSignMaterial taCert taCert
-    void $ validateResourceCertExtensions @CaCerObject @'CACert taCert
+    validateCaCertExtensions $ extractExtensions taCert
     pure $ extractCert taCert
 
 validateTACert _ _ _ = vPureError UnknownObjectAsTACert
@@ -220,20 +210,6 @@ validateResourceCert now cert parentCert vcrl = do
   where
     correctSkiAki c (getSKI -> SKI s) =
         maybe False (\(AKI a) -> a == s) $ getAKI c
-
-
-validateResourceCertSelf :: forall child (childCertType :: CertType) .
-    ( WithRawResourceCertificate child
-    , WithValidityPeriod child
-    , OfCertType child childCertType
-    , ExtensionValidator childCertType
-    ) =>
-    Now ->
-    child ->    
-    PureValidatorT ()
-validateResourceCertSelf now cert = do
-    void $ validateObjectValidityPeriod cert now
-    void $ validateResourceCertExtensions @_ @childCertType cert
 
 
 validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT ValidityPeriod
@@ -680,6 +656,9 @@ validateAspaCore resources Aspa { customer, providers } = do
                 Inherit -> vError AspaNoAsn
                 RS s    -> pure s
 
+    when (Set.null providers) $
+        vError AspaNoProviders
+
     unless ((AS customer) `IS.isInside` asnSet) $
         vError $ AspaAsNotOnEECert customer (IS.toList asnSet)
 
@@ -849,6 +828,7 @@ validateCaCertStructure ca@CaCerObject { ski } = do
     let certWS = getCertWithSignature ca
     validateCertX509Structure certWS
     validateSKIMatchesPublicKey ski certWS
+    validateCaCertExtensions $ extractExtensions ca
 
 
 -- | Validate self-contained structural properties of a BGP security certificate.
@@ -856,6 +836,7 @@ validateBgpCertStructure :: BgpCerObject -> PureValidatorT ()
 validateBgpCertStructure bgp@BgpCerObject { ski } = do
     let certWS = getCertWithSignature bgp
     validateCertX509Structure certWS
+    validateBgpCertExtensions $ extractExtensions bgp
     let pubKey = certPubKey $ cwsX509certificate certWS
     case pubKey of
         PubKeyEC _ -> pure ()
@@ -926,6 +907,7 @@ validateCmsStructure cmsObject = do
     -- Validate the embedded EE certificate
     validateCertX509Structure (getCertWithSignature scCertificate)
     validateSKIMatchesPublicKey ski (getCertWithSignature scCertificate)
+    validateEeCertExtensions $ extractExtensions scCertificate
 
     validateCmsEeSignatureConsistency cms
 
@@ -959,11 +941,7 @@ validateMftStructure mft = do
 -- | Validate ASPA content invariants.
 validateAspaContent :: AspaObject -> PureValidatorT ()
 validateAspaContent aspa = do     
-    let payload@Aspa {..} = getCMSContent (cmsPayload aspa)
-
-    when (Set.null providers) $
-        vError AspaNoAsn
-
+    let payload = getCMSContent aspa.cmsPayload 
     validateAspaCore (getResources aspa) payload
 
 
