@@ -1564,7 +1564,7 @@ makeCaShortcut key (Validated certificate) ppas fileName = let
         child = CaChild (CaShortcut {..}) serial
     in MftEntry {..}
 
-makeRoaShortcut :: ObjectKey -> Validated WellStruturedRoa -> VrpsPerAs -> Text -> MftEntry
+makeRoaShortcut :: ObjectKey -> Validated WellStructuredRoa -> VrpsPerAs -> Text -> MftEntry
 makeRoaShortcut key (Validated roa) roaPayload fileName = let
         ValidityPeriod {..} = getValidityPeriod roa    
         serial = getSerial roa

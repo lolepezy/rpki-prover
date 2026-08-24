@@ -371,7 +371,7 @@ type ParsedRpkiObject = RpkiObject_
         CrlObject
 
 type WellStructuredMft  = WellStructuredCms Manifest
-type WellStruturedRoa   = WellStructuredCms VrpsPerAs
+type WellStructuredRoa  = WellStructuredCms VrpsPerAs
 type WellStructuredSpl  = WellStructuredCms SplPayload
 type WellStructuredGbr  = WellStructuredCms Gbr
 type WellStructuredRsc  = WellStructuredCms Rsc
@@ -380,7 +380,7 @@ type WellStructuredAspa = WellStructuredCms Aspa
 type WellStructuredRpkiObject = RpkiObject_ 
         WellStructuredCaCert 
         WellStructuredMft
-        WellStruturedRoa
+        WellStructuredRoa
         WellStructuredSpl
         WellStructuredGbr
         WellStructuredRsc  
@@ -396,7 +396,7 @@ type WellStructuredRpkiObject = RpkiObject_
 -- data RpkiValidationPhased = 
 --                   CerRO_ (ValidationPhase CaCerObject WellStructuredCaCert)
 --                 | MftRO_ (ValidationPhase MftObject WellStructuredMft)
---                 | RoaRO_ (ValidationPhase RoaObject WellStruturedRoa)
+--                 | RoaRO_ (ValidationPhase RoaObject WellStructuredRoa)
 --                 | SplRO_ (ValidationPhase SplObject WellStructuredSpl)
 --                 | GbrRO_ (ValidationPhase GbrObject WellStructuredGbr)
 --                 | RscRO_ (ValidationPhase RscObject WellStructuredRsc)

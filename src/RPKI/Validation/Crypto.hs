@@ -7,7 +7,6 @@ import           Data.X509.Validation (SignatureVerification, verifySignature)
 import           RPKI.Domain
 
 
--- | Validate the signature of an certificate-holding object
 validateSignMaterial :: (WithSignMaterial child, WithPubKey parent) => 
                         child -> parent -> SignatureVerification
 validateSignMaterial child parent = 

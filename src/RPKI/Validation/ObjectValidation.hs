@@ -309,38 +309,6 @@ validateCrl now crlObject@CrlObject{..} parentCert = do
     pure $ Validated crlObject
 
 
--- validateMft ::
---     ( WithResources parent
---     , WithPubKey parent
---     , WithSKI parent
---     , parent `OfCertType` CACert
---     ) =>
---     ValidationRFC ->
---     Now ->
---     MftObject ->
---     parent ->
---     Validated CrlObject ->
---     Maybe (VerifiedRS PrefixesAndAsns) ->
---     PureValidatorT (Validated MftObject)
--- validateMft validationRFC now mft parentCert crl verifiedResources = do
---     let mftCMS = cmsPayload mft
---     validateCms validationRFC now mftCMS parentCert crl verifiedResources
-
---     let Manifest{..} = getCMSContent mftCMS
---     validateUpdateTimes now thisTime nextTime
-
---     let AllResources ipv4 ipv6 asns = getResources mft
---     verifyInherit ipv4
---     verifyInherit ipv6
---     verifyInherit asns
-
---     pure $ Validated mft
---   where
---     verifyInherit = \case
---         RS _    -> vPureError ResourceSetMustBeInherit
---         Inherit -> pure ()        
-
-
 validateMft ::
     CaParent parent =>
     ValidationRFC ->
@@ -367,57 +335,15 @@ validateMft validationRFC now mft parentCert crl verifiedResources = do
         RS _    -> vPureError ResourceSetMustBeInherit
         Inherit -> pure ()    
 
--- validateRoa ::
---     (WithResources parent,
---      WithSKI parent, 
---      WithPubKey parent,
---      OfCertType parent CACert) =>
---     ValidationRFC ->
---     Now ->
---     RoaObject ->
---     parent ->
---     Validated CrlObject ->
---     Maybe (VerifiedRS PrefixesAndAsns) ->
---     PureValidatorT (Validated RoaObject)
--- validateRoa validationRFC now roa parentCert crl verifiedResources = do    
---     let roaCMS = cmsPayload roa
---     validateCms validationRFC now roaCMS parentCert crl verifiedResources  
-  
---     let checkerV4 = validatedPrefixInRS @Ipv4Prefix verifiedResources
---     let checkerV6 = validatedPrefixInRS @Ipv6Prefix verifiedResources
---     let VrpsPerAs asn v4s v6s = getCMSContent roaCMS
---     for_ v4s $ \(Vrp4 prefix maxLength) -> do
---         checkerV4 prefix (RoaPrefixIsOutsideOfResourceSet (Ipv4P prefix))
---         when (ipv4PrefixLen prefix > maxLength) $
---             vPureError $ RoaPrefixLenghtsIsBiggerThanMaxLength $ Vrp asn (Ipv4P prefix) maxLength
---     for_ v6s $ \(Vrp6 prefix maxLength) -> do
---         checkerV6 prefix (RoaPrefixIsOutsideOfResourceSet (Ipv6P prefix))
---         when (ipv6PrefixLen prefix > maxLength) $
---             vPureError $ RoaPrefixLenghtsIsBiggerThanMaxLength $ Vrp asn (Ipv6P prefix) maxLength
---     pure $ Validated roa
---   where
---     validatedPrefixInRS ::
---         forall a.
---         (Interval a, HasType (IntervalSet a) PrefixesAndAsns) =>
---         Maybe (VerifiedRS PrefixesAndAsns) ->
---         (a -> (PrefixesAndAsns -> ValidationError) -> PureValidatorT ())
---     validatedPrefixInRS = \case
---         Nothing               -> \_ _ -> pure ()
---         Just (VerifiedRS vrs) -> \i' errorReport ->
---             unless (isInside i' (vrs ^. typed)) $
---                 vPureError $ errorReport vrs
-
-
-
 validateRoa ::
     CaParent parent =>
     ValidationRFC ->
     Now ->
-    WellStruturedRoa ->
+    WellStructuredRoa ->
     parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
-    PureValidatorT (Validated WellStruturedRoa)
+    PureValidatorT (Validated WellStructuredRoa)
 validateRoa validationRFC now roa parentCert crl verifiedResources = do      
     validateCms validationRFC now roa parentCert crl verifiedResources    
     checkResources roa.content
@@ -666,24 +592,6 @@ validateCmsV validationRFC now cms parentCert crl verifiedResources extraValidat
     extraValidation cms
     pure $ Validated cms
 
--- validateRoaV ::
---     ValidationRFC -> Now
---     -> WellStruturedRoa -> WellStructuredCaCert -> Validated CrlObject
---     -> Maybe (VerifiedRS PrefixesAndAsns)
---     -> PureValidatorT (Validated (WellStruturedRoa))
--- validateRoaV validationRFC now roa parentCert crl verifiedResources =
---     validateCmsV validationRFC now roa parentCert crl verifiedResources $ \cms ->
---         for_ (content cms) $ \vrp@(Vrp _ prefix maxLength) -> do
---             case (verifiedResources, prefix) of
---                 (Just (VerifiedRS rs), Ipv4P p) ->
---                     unless (isInside p (rs ^. typed)) $
---                         vPureError $ RoaPrefixIsOutsideOfResourceSet prefix rs
---                 (Just (VerifiedRS rs), Ipv6P p) ->
---                     unless (isInside p (rs ^. typed)) $
---                         vPureError $ RoaPrefixIsOutsideOfResourceSet prefix rs
---                 _ -> pure ()
---             when (prefixLen prefix > maxLength) $
---                 vPureError $ RoaPrefixLenghtsIsBiggerThanMaxLength vrp
 
 validateMftV ::
     ValidationRFC -> Now

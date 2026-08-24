@@ -119,16 +119,19 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         InvalidVCardFormatInGbr Text | 
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |
                         RoaPrefixLenghtsIsBiggerThanMaxLength Vrp |
+                        -- ASPA
                         AspaOverlappingCustomerProvider ASN [ASN] | 
                         AspaAsZeoAndNonZero [ASN] | 
                         AspaAsNotOnEECert ASN [AsResource] | 
                         AspaNoAsn |
                         AspaIPv4Present |
                         AspaIPv6Present |      
+                        -- BGPSec
                         BGPCertSIAPresent BS.ByteString | 
                         BGPCertIPv4Present |
                         BGPCertIPv6Present | 
                         BGPCertBrokenASNs  | 
+                        -- SPL
                         SplAsnNotInResourceSet ASN [AsResource] | 
                         SplNotIpResources [IpPrefix] |
                         -- Self-contained structural validations (checked in prevalidate)
