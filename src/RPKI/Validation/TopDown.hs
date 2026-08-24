@@ -20,7 +20,6 @@ import           Control.Lens hiding (children)
 import           Barbies
 
 import           Data.Generics.Product.Typed
-import           Data.Generics.Product.Fields
 import           GHC.Generics
 
 import           Data.Foldable
@@ -1418,7 +1417,7 @@ validateCaNoFetch
                     increment $ topDownCounters ^. #shortcutTroubled
                     troubledValidation childKey_ fileName
     
-        validateShortcut :: (WithValidityPeriod s, HasField' "resources" s AllResources) => s -> ObjectKey -> ValidatorT IO ()
+        validateShortcut :: (WithValidityPeriod s, WithResources s) => s -> ObjectKey -> ValidatorT IO ()
         validateShortcut shortcut key = do
             validateLocationForShortcut key            
             ValidityPeriod {..} <- vHoist $ validateObjectValidityPeriod shortcut now
@@ -1435,7 +1434,7 @@ validateCaNoFetch
                         ReconsideredRFC -> potentiallyNewResources || overclaimingHappened
             when revalidateResources $             
                 void $ vHoist $ validateChildParentResources validationRFC 
-                    (shortcut ^. #resources) parentCaResources verifiedResources
+                    (getResources shortcut) parentCaResources verifiedResources
             
 
     -- TODO This is pretty bad, it's easy to forget to do it

@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes  #-}
+{-# LANGUAGE ConstraintKinds      #-}
 {-# LANGUAGE OverloadedStrings    #-}
 
 module RPKI.Validation.ObjectValidation where
@@ -44,6 +45,33 @@ import           RPKI.Validation.Crypto
 import           RPKI.Validation.ResourceValidation
 import           RPKI.Resources.Resources
 import           RPKI.Validation.Common        
+
+
+type WithIssuerKey parent =
+    ( WithPubKey parent
+    , WithSKI parent
+    )
+
+type CertIssuer parent =
+    ( WithIssuerKey parent
+    , OfCertType parent 'CACert
+    )
+
+type CaParent parent =
+    ( CertIssuer parent
+    , WithResources parent
+    )
+
+type CertCore child =
+    ( WithAKI child
+    , WithSerial child
+    , WithValidityPeriod child
+    )
+
+type SignedCertCore child =
+    ( CertCore child
+    , WithSignMaterial child
+    )
 
 
 class ExtensionValidator (t :: CertType) where
@@ -189,13 +217,8 @@ chooseTaCert cert cachedCert = do
 --    - check it's not revoked (needs CRL)
 -- 
 validateResourceCert :: forall child parent .
-    ( WithSignMaterial child
-    , WithPubKey parent
-    , WithSKI parent
-    , WithAKI child
-    , WithSerial child
-    , WithValidityPeriod child
-    , OfCertType parent 'CACert
+    ( SignedCertCore child
+    , CertIssuer parent
     ) =>
     Now ->
     child ->    
@@ -221,8 +244,6 @@ validateResourceCert now cert parentCert vcrl = do
 
 validateResourceCertSelf :: forall child (childCertType :: CertType) .
     ( WithRawResourceCertificate child
-    , WithAKI child
-    , WithSerial child
     , WithValidityPeriod child
     , OfCertType child childCertType
     , ExtensionValidator childCertType
@@ -246,9 +267,9 @@ validateObjectValidityPeriod c (Now now) = do
 
 
 validateResources ::
-    (WithResources child, 
-     WithResources parent,
-     parent `OfCertType` 'CACert) =>
+    ( WithResources child
+    , CaParent parent
+    ) =>
     ValidationRFC ->
     Maybe (VerifiedRS PrefixesAndAsns) ->        
     child ->
@@ -264,17 +285,12 @@ validateResources validationRFC verifiedResources childCert parentCert =
 
 validateBgpCert ::
     forall bgpCert parent.
-    ( WithSignMaterial bgpCert
-    , WithPubKey parent
-    , WithSKI parent
+    ( SignedCertCore bgpCert
     , WithPubKey bgpCert
-    , WithAKI bgpCert
     , WithSKI bgpCert
-    , WithValidityPeriod bgpCert
-    , WithSerial bgpCert
     , WithResources bgpCert
     , bgpCert `OfCertType` BGPCert
-    , parent `OfCertType` CACert
+    , CertIssuer parent
     ) =>
     Now ->
     bgpCert ->
@@ -305,9 +321,7 @@ validateBgpCert now bgpCert parentCert validCrl = do
 
 -- | Validate CRL object with the parent certificate
 validateCrl ::
-    ( WithPubKey parent
-    , WithSKI parent
-    ) =>
+    WithIssuerKey parent =>
     Now ->
     CrlObject ->
     parent ->
@@ -354,11 +368,7 @@ validateCrl now crlObject@CrlObject{..} parentCert = do
 
 
 validateMft ::
-    ( WithResources parent
-    , WithPubKey parent
-    , WithSKI parent
-    , parent `OfCertType` CACert
-    ) =>
+    CaParent parent =>
     ValidationRFC ->
     Now ->
     WellStructuredMft ->
@@ -426,10 +436,7 @@ validateMft validationRFC now mft parentCert crl verifiedResources = do
 
 
 validateRoa ::
-    (WithResources parent,
-     WithSKI parent, 
-     WithPubKey parent,
-     OfCertType parent CACert) =>
+    CaParent parent =>
     ValidationRFC ->
     Now ->
     WellStruturedRoa ->
@@ -468,11 +475,7 @@ validateRoa validationRFC now roa parentCert crl verifiedResources = do
                     vPureError $ errorReport vrs
 
 validateSpl ::
-    ( WithResources parent
-    , WithPubKey parent
-    , WithSKI parent
-    , OfCertType parent CACert
-    ) =>
+    CaParent parent =>
     ValidationRFC ->
     Now ->
     WellStructuredSpl ->
@@ -501,11 +504,7 @@ validateSpl validationRFC now spl parentCert crl verifiedResources = do
 
 
 validateGbr ::
-    ( WithResources parent
-    , WithSKI parent
-    , WithPubKey parent
-    , OfCertType parent 'CACert
-    ) =>
+    CaParent parent =>
     ValidationRFC ->
     Now ->
     WellStructuredGbr ->
@@ -524,11 +523,7 @@ validateGbr validationRFC now gbr parentCert crl verifiedResources = do
 
 
 validateRsc ::
-    ( WithResources parent
-    , WithPubKey parent
-    , WithSKI parent
-    , OfCertType parent 'CACert    
-    ) =>
+    CaParent parent =>
     ValidationRFC ->
     Now ->
     WellStructuredRsc ->
@@ -544,11 +539,7 @@ validateRsc validationRFC now rsc parentCert crl verifiedResources = do
     pure $ Validated rsc
 
 validateAspa ::
-    ( WithResources parent
-    , WithSKI parent
-    , WithPubKey parent
-    , parent `OfCertType` 'CACert
-    ) =>
+    CaParent parent =>
     ValidationRFC ->
     Now ->
     WellStructuredAspa ->
@@ -580,11 +571,7 @@ validateAspa validationRFC now aspa parentCert crl verifiedResources = do
     
 
 validateCms ::
-    ( WithPubKey parent
-    , WithSKI parent
-    , WithResources parent
-    , OfCertType parent 'CACert
-    ) =>
+    CaParent parent =>
     ValidationRFC ->
     Now ->
     WellStructuredCms payload ->
@@ -599,11 +586,7 @@ validateCms validationRFC now cms parentCert crl verifiedResources = do
 
 validateParsedCms ::
     forall payload parent.
-    ( WithPubKey parent
-    , WithSKI parent
-    , WithResources parent
-    , OfCertType parent 'CACert
-    ) =>
+    CaParent parent =>
     ValidationRFC ->
     Now ->
     CMS payload ->
@@ -653,12 +636,8 @@ validateUpdateTimes (Now now) thisUpdateTime nextUpdateTime = do
 
 
 validateAIA ::
-    forall child parent.
-    ( WithCertExtensions child
-    , WithLocations parent
-    ) =>
-    child ->
-    parent ->
+    WellStructuredCaCert ->
+    Located WellStructuredCaCert ->
     PureValidatorT ()
 validateAIA cert parentCert =    
     for_ (extVal (getCertExtensions cert) id_pe_sia) $ \sia -> do 

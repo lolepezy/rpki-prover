@@ -13,7 +13,7 @@ import           GHC.Generics
 import           Data.Proxy
 import           Data.Swagger hiding (url)
 
-import           RPKI.Orphans.Swagger
+import           RPKI.Orphans.Swagger ()
 import           RPKI.Time
 import           RPKI.Domain
 import           RPKI.Repository
@@ -152,6 +152,24 @@ instance {-# OVERLAPPING #-} WithValidityPeriod BgpSecShortcut where
 
 instance {-# OVERLAPPING #-} WithValidityPeriod GbrShortcut where
     getValidityPeriod GbrShortcut {..} = ValidityPeriod notBefore notAfter
+
+instance WithResources CaShortcut where
+    getResources CaShortcut { resources } = resources
+
+instance WithResources RoaShortcut where
+    getResources RoaShortcut { resources } = resources
+
+instance WithResources SplShortcut where
+    getResources SplShortcut { resources } = resources
+
+instance WithResources AspaShortcut where
+    getResources AspaShortcut { resources } = resources
+
+instance WithResources BgpSecShortcut where
+    getResources BgpSecShortcut { resources } = resources
+
+instance WithResources GbrShortcut where
+    getResources GbrShortcut { resources } = resources
 
 instance ToJSON CrlShortcut
 instance ToJSON GbrShortcut
