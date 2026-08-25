@@ -164,8 +164,13 @@ getDigest =
         s       -> throwParseError $ "DigestAlgorithms is wrong " <> show s
 
 -- Certificate utilities
+-- Keep full extension metadata (including critical bit) for profile checks.
+-- https://www.rfc-editor.org/rfc/rfc6487#section-4.8
+extRawVal :: [ExtensionRaw] -> OID -> Maybe ExtensionRaw
+extRawVal exts oid = listToMaybe [e | e@(ExtensionRaw oid' _ _) <- exts, oid' == oid]
+
 extVal :: [ExtensionRaw] -> OID -> Maybe BS.ByteString
-extVal exts oid = listToMaybe [c | ExtensionRaw oid' _ c <- exts, oid' == oid ]
+extVal exts oid = extRawContent <$> extRawVal exts oid
 
 getExts :: Certificate -> [ExtensionRaw]
 getExts (certExtensions -> Extensions extensions) = fromMaybe [] extensions   
@@ -243,9 +248,6 @@ getRepositoryUri c = toMaybe . extractURI =<< getSiaValue c id_ad_rpki_repositor
 
 getRepositoryUriExt :: [ExtensionRaw] -> Maybe URI
 getRepositoryUriExt exts = toMaybe . extractURI =<< (extVal exts id_pe_sia >>= (`extractSiaValue` id_ad_rpki_repository))
-
-getManifestUri :: Certificate -> Maybe URI
-getManifestUri c = toMaybe . extractURI =<< getSiaValue c id_ad_rpkiManifest
 
 getManifestUriExt :: [ExtensionRaw] -> Maybe URI
 getManifestUriExt exts = toMaybe . extractURI =<< (extVal exts id_pe_sia >>= (`extractSiaValue` id_ad_rpkiManifest))

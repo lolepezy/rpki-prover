@@ -15,11 +15,13 @@ import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Short            as BSS
 import qualified Data.Text                        as Text
 import           Data.Foldable (for_)
+import           Data.Maybe (isJust, isNothing)
 import qualified Data.Set                         as Set
 import qualified Data.Map.Strict                  as Map
 
 import qualified Crypto.PubKey.RSA.Types          as RSA
 import qualified Crypto.Hash.SHA1                 as SHA1
+import qualified Crypto.Hash.SHA256               as SHA256
 
 import           Data.X509
 import           Data.X509.Validation               hiding (InvalidSignature)
@@ -55,16 +57,79 @@ type SignedCertCore c = (CertCore c, WithSignMaterial c)
 extractExtensions :: WithRawResourceCertificate c => c -> [ExtensionRaw]
 extractExtensions = getExts . cwsX509certificate . getCertWithSignature
 
+-- Resource certificates must carry at least one of IP/AS resources,
+-- and each present resource extension must be critical.
+-- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.10
+-- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.11
+validateResourceExtensionsPresenceAndCriticality :: [ExtensionRaw] -> PureValidatorT ()
+validateResourceExtensionsPresenceAndCriticality extensions = do
+    let ipExt = extRawVal extensions id_pe_ipAddrBlocks
+    let asExt = extRawVal extensions id_pe_autonomousSysIds
+
+    when (isNothing ipExt && isNothing asExt) $
+        vPureError MissingIPOrASResourcesExtension
+
+    for_ [ipExt, asExt] $ \case
+        Just ExtensionRaw { extRawOID, extRawCritical = False } ->
+            vPureError $ CertificateExtensionMustBeCritical extRawOID
+        _ -> pure ()
+
+-- A helper for profile clauses that require an extension to be present and non-critical.
+-- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.6
+-- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.7
+validateRequiredNonCriticalExtension :: [ExtensionRaw] -> OID -> PureValidatorT BS.ByteString
+validateRequiredNonCriticalExtension extensions oid =
+    case extRawVal extensions oid of
+        Nothing -> vPureError $ MissingRequiredCertificateExtension oid
+        Just ExtensionRaw { extRawCritical = True } ->
+            vPureError $ CertificateExtensionMustBeNonCritical oid
+        Just ExtensionRaw { extRawContent = bs }
+            | BS.null bs -> vPureError $ CertBrokenExtension oid bs
+            | otherwise  -> pure bs
+
+-- AIA must contain an id-ad-caIssuers URI, and rsync is mandatory.
+-- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.7
+validateAiaCaIssuersUri :: [ExtensionRaw] -> PureValidatorT URI
+validateAiaCaIssuersUri extensions = do
+    aia <- validateRequiredNonCriticalExtension extensions id_pe_aia
+    case extractSiaValue aia id_ad_caIssuers >>= either (const Nothing) Just . extractURI of
+        Nothing -> vPureError $ CertBrokenExtension id_pe_aia aia
+        Just uri@(URI url)
+            | "rsync://" `Text.isPrefixOf` url -> pure uri
+            | otherwise                        -> vPureError $ UnknownUriType uri
+
+-- CRLDP must be present and carry a URI with rsync access.
+-- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.6
+validateCrlDistributionPointUri :: [ExtensionRaw] -> PureValidatorT URI
+validateCrlDistributionPointUri extensions = do
+    crlDP <- validateRequiredNonCriticalExtension extensions id_ce_CRLDistributionPoints
+    case extractCrlDistributionPoint crlDP of
+        Nothing -> vPureError $ CertBrokenExtension id_ce_CRLDistributionPoints crlDP
+        Just uri@(URI url)
+            | "rsync://" `Text.isPrefixOf` url -> pure uri
+            | otherwise                         -> vPureError $ UnknownUriType uri
+
+-- Child certificates must point to issuer material via AIA and CRLDP.
+-- https://www.rfc-editor.org/rfc/rfc6487#section-7.2
+validateRequiredParentPointerExtensions :: WithCertExtensions c => c -> PureValidatorT ()
+validateRequiredParentPointerExtensions cert = do
+    let extensions = getCertExtensions cert
+    void $ validateAiaCaIssuersUri extensions
+    void $ validateCrlDistributionPointUri extensions
+
 validateCaCertExtensions :: [ExtensionRaw] -> PureValidatorT ()
 validateCaCertExtensions extensions = do
     validateCaBasicConstraint extensions
     validatePolicyExtension extensions
+    validateResourceExtensionsPresenceAndCriticality extensions
     validateNoUnknownCriticalExtensions extensions
 
 -- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8.9
 validateEeCertExtensions :: [ExtensionRaw] -> PureValidatorT ()
 validateEeCertExtensions extensions = do
     noBasicContraint extensions
+    validatePolicyExtension extensions
+    validateResourceExtensionsPresenceAndCriticality extensions
     validateNoUnknownCriticalExtensions extensions
 
 -- https://datatracker.ietf.org/doc/html/rfc8209#section-3.1.3
@@ -189,6 +254,7 @@ chooseTaCert cert cachedCert = do
 -- 
 validateResourceCert :: forall child parent .
     ( SignedCertCore child
+    , WithCertExtensions child
     , CertIssuer parent
     ) =>
     Now ->
@@ -197,6 +263,10 @@ validateResourceCert :: forall child parent .
     Validated CrlObject ->    
     PureValidatorT (Validated child)
 validateResourceCert now cert parentCert vcrl = do
+    -- Enforce profile-mandated issuer pointers on child certificates.
+    -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.6
+    -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.7
+    validateRequiredParentPointerExtensions cert
     void $ validateObjectValidityPeriod cert now
 
     signatureCheck $ validateSignMaterial cert parentCert
@@ -242,6 +312,7 @@ validateResources validationRFC verifiedResources childCert parentCert =
 validateBgpCert ::
     forall bgpCert parent.
     ( SignedCertCore bgpCert
+    , WithCertExtensions bgpCert
     , WithPubKey bgpCert
     , WithSKI bgpCert
     , WithResources bgpCert
@@ -473,18 +544,45 @@ validateAIA ::
     WellStructuredCaCert ->
     Located WellStructuredCaCert ->
     PureValidatorT ()
-validateAIA cert parentCert =    
-    for_ (extVal (getCertExtensions cert) id_pe_sia) $ \sia -> do 
-        for_ (extractSiaValue sia id_pe_sia) $ \ext -> do             
-            let locations = getLocations parentCert
-            case extractURI ext of 
-                Left e               -> vPureWarning $ BrokenUri (Text.pack $ show ext) e
-                Right u@(URI siaUrl) -> do                     
-                    unless ("rsync://" `Text.isPrefixOf` siaUrl) $ 
-                        vPureWarning $ MFTBadAIA u                
-                    unless (siaUrl `elem` locationsToList locations) $                         
-                        vPureWarning $ AIANotSameAsParentLocation siaUrl locations
+validateAIA cert parentCert = do
+    let locations = getLocations parentCert
+    -- AIA caIssuers must identify the immediate superior certificate location.
+    -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.7
+    URI aiaUrl <- validateAiaCaIssuersUri $ getCertExtensions cert
+    let parentUrls = locationsToList locations
+    unless (matchesOneOfParentLocations aiaUrl parentUrls) $
+        vPureWarning $ AIANotSameAsParentLocation aiaUrl locations
+  where
+    matchesOneOfParentLocations childAia = any (sameObjectLocation childAia)
 
+    -- Parent certificates may be fetched via RRDP (https://...) while child AIA
+    -- still points to mandatory rsync:// URI for the same object.
+    -- Accept exact matches or scheme-only differences for the same authority/path.
+    -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.7
+    sameObjectLocation a b = a == b || stripScheme a == stripScheme b
+
+    stripScheme u =
+        case Text.breakOn "://" u of
+            (_, rest) | Text.isPrefixOf "://" rest -> Text.drop 3 rest
+            _                                        -> u
+
+
+
+-- validateAIA :: 
+--     WellStructuredCaCert ->
+--     Located WellStructuredCaCert ->
+--     PureValidatorT ()
+-- validateAIA cert parentCert =    
+--     for_ (getSiaExt $ cwsX509certificate $ getCertWithSignature cert) $ \sia -> do 
+--         for_ (extractSiaValue sia id_pe_sia) $ \ext -> do             
+--             let locations = getLocations parentCert
+--             case extractURI ext of 
+--                 Left e               -> vPureWarning $ BrokenUri (Text.pack $ show ext) e
+--                 Right u@(URI siaUrl) -> do                     
+--                     unless ("rsync://" `Text.isPrefixOf` siaUrl) $ 
+--                         vPureWarning $ MFTBadAIA u                
+--                     unless (siaUrl `elem` locationsToList locations) $                         
+--                         vPureWarning $ AIANotSameAsParentLocation siaUrl locations
 
 -- | Check if CMS is on the revocation list
 isRevoked :: WithSerial c => c -> Validated CrlObject -> Bool
@@ -510,6 +608,7 @@ validateResourceCertV ::
     Now -> WellStructuredCaCert -> WellStructuredCaCert -> Validated CrlObject
     -> PureValidatorT (Validated WellStructuredCaCert)
 validateResourceCertV now cert parentCert vcrl = do
+    validateRequiredParentPointerExtensions cert
     signatureCheck $ validateCertSignatureCA cert parentCert
     when (isRevoked cert vcrl) $ vPureError RevokedResourceCertificate
     void $ validateObjectValidityPeriod cert now
@@ -523,6 +622,7 @@ validateEECertV ::
     Now -> ValidatedEECert -> WellStructuredCaCert -> Validated CrlObject
     -> PureValidatorT ()
 validateEECertV now eeCert parentCert vcrl = do
+    validateRequiredParentPointerExtensions eeCert
     signatureCheck $ validateCertSignatureEE eeCert parentCert
     when (isRevoked eeCert vcrl) $ vPureError RevokedResourceCertificate
     void $ validateObjectValidityPeriod eeCert now
@@ -621,6 +721,7 @@ validateBgpCertV ::
     -> PureValidatorT (Validated (ValidatedCert 'BGPCert), BGPSecPayload)
 validateBgpCertV now bgpCert parentCert vcrl = do
     let ee = bgpToEE bgpCert
+    validateRequiredParentPointerExtensions bgpCert
     signatureCheck $ validateCertSignatureEE ee parentCert
     when (isRevoked bgpCert vcrl) $ vPureError RevokedResourceCertificate
     void $ validateObjectValidityPeriod bgpCert now
@@ -720,17 +821,9 @@ isWithinValidityPeriod (Now now) a =
     in notBefore <= now && now < notAfter
 
 
--- | Full structural validation including multiple-location check.
--- Use in contexts (e.g. TopDown) where the full 'Located' object is available.
-prevalidate :: Located ParsedRpkiObject -> PureValidatorT WellStructuredRpkiObject
-prevalidate located@(Located _ rpkiObject) = do
-    validateObjectLocations located
-    prevalidateObject rpkiObject
-
-
 {- | Self-contained structural validation without a location context.
-Used at object-save time (when only one URL is known) and wherever
-constructing a 'Located' wrapper is unnecessary overhead.
+Used at object-save time, when only one URL is known and there's no 
+information about relashionships of this object with the other ones.
 -}
 prevalidateObject :: ParsedRpkiObject -> PureValidatorT WellStructuredRpkiObject
 prevalidateObject rpkiObject = do
@@ -835,8 +928,9 @@ validateCaCertStructure ca@CaCerObject { ski } = do
 validateBgpCertStructure :: BgpCerObject -> PureValidatorT ()
 validateBgpCertStructure bgp@BgpCerObject { ski } = do
     let certWS = getCertWithSignature bgp
+    let extensions = extractExtensions bgp
     validateCertX509Structure certWS
-    validateBgpCertExtensions $ extractExtensions bgp
+    validateBgpCertExtensions extensions
     let pubKey = certPubKey $ cwsX509certificate certWS
     case pubKey of
         PubKeyEC _ -> pure ()
@@ -846,10 +940,24 @@ validateBgpCertStructure bgp@BgpCerObject { ski } = do
 
     let cwsX509 = cwsX509certificate $ getCertWithSignature bgp
 
-    -- No SIA
+    -- BGPsec router certificates must omit SIA.
+    -- https://www.rfc-editor.org/rfc/rfc8209#section-3.1.3.3
     for_ (getSiaExt cwsX509) $ vError . BGPCertSIAPresent
 
-    -- No IP resources
+    -- BGPsec router certificates must omit IP resources.
+    -- https://www.rfc-editor.org/rfc/rfc8209#section-3.1.3.4
+    when (isJust $ extRawVal extensions id_pe_ipAddrBlocks) $
+        vError BGPCertIPv4Present
+
+    -- BGPsec router certificates must include AS resources and keep it critical.
+    -- https://www.rfc-editor.org/rfc/rfc8209#section-3.1.3.5
+    case extRawVal extensions id_pe_autonomousSysIds of
+        Nothing -> vError BGPCertBrokenASNs
+        Just ExtensionRaw { extRawCritical = False } ->
+            vError $ CertificateExtensionMustBeCritical id_pe_autonomousSysIds
+        _ -> pure ()
+
+    -- No IP resources in parsed resource set either.
     let AllResources ipv4 ipv6 _ = getResources bgp
     resourceSetMustBeEmpty ipv4 BGPCertIPv4Present
     resourceSetMustBeEmpty ipv6 BGPCertIPv6Present    
@@ -887,6 +995,26 @@ validateCmsStructure cmsObject = do
 
     when (Prelude.null [ () | MessageDigest _ <- attrs ]) $
         vError MessageDigestMissing 
+
+    case [ md | MessageDigest md <- attrs ] of
+        [messageDigest] -> do
+            -- messageDigest must equal digest(eContent) computed with the declared digest algorithm.
+            -- https://www.rfc-editor.org/rfc/rfc6488#section-2.1.6.4.2
+            -- https://www.rfc-editor.org/rfc/rfc6488#section-3
+            -- https://www.rfc-editor.org/rfc/rfc5652#section-5.4
+            let DigestAlgorithmIdentifiers digestOids = scDigestAlgorithms sd
+            digestOid <- case digestOids of
+                [oid] -> pure oid
+                _     -> vError $ UnsupportedHashAlgorithm $ Text.pack $ show digestOids
+
+            expectedDigest <-
+                if digestOid == id_sha256
+                    then pure $ BSS.toShort $ SHA256.hash $ eContentBytes scEncapContentInfo
+                    else vError $ UnsupportedHashAlgorithm $ Text.pack $ show digestOid
+
+            unless (messageDigest == expectedDigest) $
+                vError CMSMessageDigestMismatch
+        _ -> vError MessageDigestMissing
 
     -- And no other signed attributes are allowed. 
     -- If any unknown attributes are present, it's an error.

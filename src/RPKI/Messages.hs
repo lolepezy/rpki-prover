@@ -190,6 +190,10 @@ toValidationMessage = \case
           
       CertBrokenExtension oid b -> [i|Certificate extension #{fmtOID oid} is broken: #{b}.|]
       UnknownCriticalCertificateExtension oid b -> [i|Unknown critical certificate extension, OID: #{fmtOID  oid}, content #{b}.|]
+      MissingRequiredCertificateExtension oid -> [i|Missing required certificate extension #{fmtOID oid}.|]
+      MissingIPOrASResourcesExtension -> [i|Certificate must contain at least one of IP resources or AS resources extensions.|]
+      CertificateExtensionMustBeCritical oid -> [i|Certificate extension #{fmtOID oid} must be marked critical.|]
+      CertificateExtensionMustBeNonCritical oid -> [i|Certificate extension #{fmtOID oid} must be marked non-critical.|]
       MissingCriticalExtension oid -> [i|Missing critical certificate extension #{fmtOID oid}.|]
       BrokenKeyUsage t -> [i|Broken keyUsage extension: #{t}.|]
 
@@ -361,6 +365,9 @@ toValidationMessage = \case
 
       MessageDigestMissing ->
         [i|CMS signed attributes are missing messageDigest.|]
+
+      CMSMessageDigestMismatch ->
+        [i|CMS messageDigest does not match the encapsulated content digest.|]
 
       SigningTimeMissing ->
         [i|CMS signed attributes are missing signingTime.|]

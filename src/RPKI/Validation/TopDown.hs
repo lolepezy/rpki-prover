@@ -380,10 +380,20 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 fetchValidateAndStore db now (Just storedTa)
             | otherwise -> do
                 logInfo logger [i|Not re-fetching TA certificate #{getURL $ getTaCertURL tal}, it's up-to-date.|]                
-                let located = locatedTaCert (getTaCertURL tal) $ storedTa ^. #taCert
-                pure (located, storedTa ^. #initialRepositories)
+                storedTa' <- updateStoredTal db storedTa
+                let locations = talCertLocations tal <> toLocations (storedTa' ^. #actualUrl)
+                let located = locatedTaCert locations (storedTa' ^. #taCert)                
+                pure (located, storedTa' ^. #initialRepositories)
 
   where
+    -- Keep persisted TAL metadata in sync so all configured TA cert
+    -- locations (e.g. rsync + https) are retained in cache.    
+    updateStoredTal db storedTa = 
+        DB.rwAppTxEx db storageError $ \tx -> do
+            let updatedTa = storedTa & #tal .~ tal
+            DB.saveTA tx db updatedTa
+            pure updatedTa     
+   
     fetchValidateAndStore db (Now moment) storableTa = do
         z <- (do 
                 (u, ro) <- fetchTACertificate appContext (newFetchConfig config) tal
@@ -413,10 +423,10 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                     Right ppAccess ->
                         DB.rwAppTxEx db storageError $ \tx -> do
                             DB.saveTA tx db (StorableTA tal certToStore (FetchedAt moment) ppAccess actualUrl)
-                            pure (locatedTaCert actualUrl certToUse, ppAccess)
+                            pure (locatedTaCert (talCertLocations tal <> toLocations actualUrl) certToUse, ppAccess)
 
             CachedTA StorableTA { tal = _, ..} ->
-                pure (locatedTaCert actualUrl taCert, initialRepositories)
+                pure (locatedTaCert (talCertLocations tal <> toLocations actualUrl) taCert, initialRepositories)
 
       where
         tryToFallbackToCachedCopy e =
@@ -434,7 +444,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
 
                     pure $ CachedTA cached
 
-    locatedTaCert url = Located (toLocations url)
+    locatedTaCert locations cert = Located locations cert
 
 
 -- | Do the validation starting from the TA certificate.

@@ -455,6 +455,13 @@ instance ToJSON ObjectDto where
         ASPAD v -> object ["type" .= ("ASPA" :: Text), "value" .= toJSON v]
         GBRD v  -> object ["type" .= ("GBR" :: Text), "value" .= toJSON v]
         RSCD v  -> object ["type" .= ("RSC" :: Text), "value" .= toJSON v]
+        OriginalBlobD h t -> object [
+                "type" .= ("original-blob" :: Text),
+                "value" .= object [
+                    "hash" .= toJSON h,
+                    "objectType" .= toJSON t
+                ]
+            ]
 
 
 instance ToJSON a => ToJSON (ObjectContentDto a) where

@@ -70,6 +70,10 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         CertNoPolicyExtension |
                         CertBrokenExtension OID BS.ByteString |
                         UnknownCriticalCertificateExtension OID BS.ByteString |
+                        MissingRequiredCertificateExtension OID |
+                        MissingIPOrASResourcesExtension |
+                        CertificateExtensionMustBeCritical OID |
+                        CertificateExtensionMustBeNonCritical OID |
                         MissingCriticalExtension OID |
                         BrokenKeyUsage Text |
                         WeirdCaPublicationPoints [RpkiURL] | 
@@ -141,6 +145,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BinarySigningTimePresent |
                         ContentTypeAttrMissing |
                         MessageDigestMissing |
+                        CMSMessageDigestMismatch |
                         SigningTimeMissing |
                         UnexpectedSignedAttribute OID |
                         EECertSKIMismatch |

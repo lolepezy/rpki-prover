@@ -802,8 +802,13 @@ data SignedData a = SignedData {
         eContent [0] EXPLICIT OCTET STRING OPTIONAL }
 -}
 data EncapsulatedContentInfo a = EncapsulatedContentInfo {
-        eContentType :: ContentType, 
-        cContent     :: a    
+        eContentType  :: ContentType, 
+        -- Raw eContent octets are retained to verify messageDigest against
+        -- the exact encapsulated payload during CMS validation.
+        -- https://www.rfc-editor.org/rfc/rfc6488#section-2.1.6.4.2
+        -- https://www.rfc-editor.org/rfc/rfc6488#section-3
+        eContentBytes :: BS.ByteString,
+        cContent      :: a    
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)

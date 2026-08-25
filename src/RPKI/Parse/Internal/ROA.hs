@@ -43,7 +43,7 @@ parseRoa bs = do
         parseRoaWithoutVersion
 
     parseRoaWithoutVersion = do 
-        asId <- getInteger (pure . fromInteger) "Wrong ASid"
+        asId <- getInteger pure "Wrong ASid"
         (v4s, v6s) <- mconcat <$> onNextContainer Sequence (getMany $
             onNextContainer Sequence $ 
                 getAddressFamily "Expected an address family here" >>= \case 

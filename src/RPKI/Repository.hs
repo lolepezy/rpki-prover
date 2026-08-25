@@ -280,18 +280,7 @@ getPublicationPointsFromValidatedCert ValidatedCert { extensions = certExtension
 
     case nonEmpty (rrdp <> rsync) of
         Nothing -> Left CertificateDoesntHaveSIA
-        Just ne -> Right $ PublicationPointAccess ne
-  where
-    getRrdpNotifyUriExt exts =
-        extVal exts id_pe_sia >>= \sia ->
-            extractSiaValue sia id_ad_rpki_notify >>= 
-                either (const Nothing) Just . extractURI
-
-    getRepositoryUriExt exts =
-        extVal exts id_pe_sia >>= \sia ->
-            extractSiaValue sia id_ad_rpki_repository >>= 
-                either (const Nothing) Just . extractURI
-
+        Just ne -> Right $ PublicationPointAccess ne  
 
 getPublicationPointsFromCert :: Certificate -> Either ValidationError PublicationPointAccess
 getPublicationPointsFromCert cert = do 
