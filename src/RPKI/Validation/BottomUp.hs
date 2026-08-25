@@ -11,13 +11,10 @@ import           Control.Lens
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Text                        as Text
 
-import           Data.String.Interpolate.IsString
-
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Reporting
-import           RPKI.Logging
 import           RPKI.Store.Base.Storage
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
@@ -89,12 +86,12 @@ validateBottomUp
                 (mft, crl) <- validateManifest db cert
                 let childCert = head certs                
                 validateOnMft mft childCert                            
-                Validated validCert <- vHoist $ validateResourceCertV
+                Validated validCert <- vHoist $ validateResourceCert
                                                 now
                                                 (childCert ^. #payload)
                                                 (cert ^. #payload)
                                                 crl
-                (childVerifiedResources, _) <- vHoist $ validateResourcesCAV
+                (childVerifiedResources, _) <- vHoist $ validateResources
                                                     validationRFC
                                                     (Just verifiedResources)
                                                     validCert

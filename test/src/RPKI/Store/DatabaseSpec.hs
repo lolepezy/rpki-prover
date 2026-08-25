@@ -128,13 +128,13 @@ shouldMergeObjectLocations io = do
     ro2 :: ParsedRpkiObject <- QC.generate arbitrary        
     
     let storeIt obj url = rwTx db $ \tx -> do        
-            DB.saveObject tx db
+            k <- DB.saveObject tx db
                 (OriginalRO (ObjectOriginal $ unStorable $ toStorable obj)
                             mempty
                             (getHash obj)
                             (getRpkiObjectType obj))
                 (instantToVersion now)
-            DB.linkObjectToUrl tx db url (getHash obj)
+            DB.linkObjectToUrl tx db url k
 
     let getIt hash = roTx db $ \tx -> DB.getByHash tx db hash    
 
@@ -239,10 +239,10 @@ shouldOrderManifests io = do
     worldVersion <- newVersion
 
     rwTx objectStore $ \tx -> do        
-            void $ DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft1) worldVersion
-            void $ DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft2) worldVersion
-            DB.linkObjectToUrl tx db url1 (getHash mft1)
-            DB.linkObjectToUrl tx db url2 (getHash mft2)
+            key1 <- DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft1) worldVersion
+            key2 <- DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft2) worldVersion
+            DB.linkObjectToUrl tx db url1 key1
+            DB.linkObjectToUrl tx db url2 key2
 
 
     -- they have the same AKIs
