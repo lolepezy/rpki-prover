@@ -332,11 +332,11 @@ manifestDto m = let
             ..
         }
 
--- | Convert a lifecycle entry to a DTO.  For 'ValidatedRO' we currently return
+-- | Convert a lifecycle entry to a DTO.  For 'WellStructuredRO' we currently return
 -- 'OriginalBlobD' with the hash and type; a richer DTO can be added later.
 lifecycleToDto :: RpkiObjectLifecycle -> ObjectDto
 lifecycleToDto (OriginalRO _ _ h t) = OriginalBlobD h t
-lifecycleToDto (ValidatedRO vro)    = OriginalBlobD (getHash vro) (getRpkiObjectType vro)
+lifecycleToDto (WellStructuredRO vro)    = OriginalBlobD (getHash vro) (getRpkiObjectType vro)
 
 validatedCaToDto :: ValidatedCert c -> ObjectDto
 validatedCaToDto cert =

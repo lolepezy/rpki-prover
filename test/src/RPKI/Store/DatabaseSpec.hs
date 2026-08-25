@@ -239,8 +239,8 @@ shouldOrderManifests io = do
     worldVersion <- newVersion
 
     rwTx objectStore $ \tx -> do        
-            void $ DB.saveObject tx db (ValidatedRO $ toValidatedRpkiObject mft1) worldVersion
-            void $ DB.saveObject tx db (ValidatedRO $ toValidatedRpkiObject mft2) worldVersion
+            void $ DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft1) worldVersion
+            void $ DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft2) worldVersion
             DB.linkObjectToUrl tx db url1 (getHash mft1)
             DB.linkObjectToUrl tx db url2 (getHash mft2)
 

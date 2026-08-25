@@ -884,7 +884,7 @@ validateCaNoFetch
                     increment $ topDownCounters ^. #readParsed
                     z <- getParsedObject tx db key $ vError $ NoCRLExists aki crlHash
                     case z of 
-                        Keyed locatedCrl@(Located crlLocations (ValidatedRO (CrlRO crl))) crlKey -> do
+                        Keyed locatedCrl@(Located crlLocations (WellStructuredRO (CrlRO crl))) crlKey -> do
                             markAsUsed topDownContext crlKey
                             inSubLocationScope (getURL $ pickLocation crlLocations) $ do 
                                 validateObjectLocations locatedCrl
@@ -1104,7 +1104,7 @@ validateCaNoFetch
             OriginalRO _ childValidations _ _ -> do
                 embedState childValidations
                 pure $! newShortcut (makeChildWithIssues (child ^. #key) filename)
-            ValidatedRO validatedChild ->
+            WellStructuredRO validatedChild ->
                 validateChildObject
                     caFull
                     (child & #object . #payload .~ validatedChild)
@@ -1547,7 +1547,7 @@ getFullCa appContext@AppContext {..} topDownContext = \case
             increment $ topDownContext ^. #allTas . #topDownCounters . #readParsed
             z <- DB.getLocatedByKey tx db key
             case z of 
-                Just (Located locations (ValidatedRO (CerRO ca_))) -> pure $! Located locations ca_
+                Just (Located locations (WellStructuredRO (CerRO ca_))) -> pure $! Located locations ca_
                 _ -> integrityError appContext 
                         [i|Referential integrity error, wrong type of the CA found by its key #{key}.|]            
     
@@ -1556,7 +1556,7 @@ getCrlByKey :: Storage s => AppContext s -> ObjectKey -> ValidatorT IO (Keyed (V
 getCrlByKey appContext@AppContext {..} crlKey = do        
     z <- roTxT database $ \tx db -> DB.getObjectByKey tx db crlKey
     case z of 
-        Just (ValidatedRO (CrlRO c)) -> pure $! Keyed (Validated c) crlKey 
+        Just (WellStructuredRO (CrlRO c)) -> pure $! Keyed (Validated c) crlKey 
         _ -> integrityError appContext [i|Referential integrity error, can't find a CRL by its key #{crlKey}.|]
      
     

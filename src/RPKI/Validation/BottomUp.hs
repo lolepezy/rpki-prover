@@ -191,7 +191,7 @@ validateBottomUp
                         Nothing -> 
                             vError $ NoCRLExists childrenAki crlHash
 
-                        Just foundCrl@(Located crlLocations (ValidatedRO (CrlRO crl))) -> do
+                        Just foundCrl@(Located crlLocations (WellStructuredRO (CrlRO crl))) -> do
                             vFocusOn LocationFocus (getURL $ pickLocation crlLocations) $ do 
                                 validateObjectLocations foundCrl
                                 checkCrlLocation foundCrl $ eeCert mft

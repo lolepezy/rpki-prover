@@ -293,7 +293,7 @@ getGbrs_ appContext version =
   where
     toDtos gbrs = 
         [ Located { payload = gbrToDto (content g), .. }
-        | Located { payload = ValidatedRO (GbrRO g), .. } <- fromMaybe [] gbrs ]    
+        | Located { payload = WellStructuredRO (GbrRO g), .. } <- fromMaybe [] gbrs ]    
  
 
 getValidationsOriginalDto :: (MonadIO m, Storage s, MonadError ServerError m) =>

@@ -295,7 +295,7 @@ getLocatedByKey tx db k = liftIO $ runMaybeT $ do
 
 -- | Like 'getLocatedByKey' but in ValidatorT: if the key points to an
 -- 'OriginalRO' the stored ValidationState is re-emitted and Nothing is
--- returned; only 'ValidatedRO' entries yield a result.
+-- returned; only 'WellStructuredRO' entries yield a result.
 getValidatedByKey :: (MonadIO m, Storage s) =>
                     Tx s mode -> DB s -> ObjectKey
                     -> ValidatorT m (Maybe (Located WellStructuredRpkiObject))
@@ -303,8 +303,8 @@ getValidatedByKey tx db key = do
     liftIO (getLocatedByKey tx db key) >>= \case
         Nothing -> pure Nothing
         Just (Located locs lifecycle) -> case lifecycle of
-            OriginalRO _ vs _ _ -> embedState vs >> pure Nothing
-            ValidatedRO vro     -> pure $ Just (Located locs vro)
+            OriginalRO _ vs _ _  -> embedState vs >> pure Nothing
+            WellStructuredRO vro -> pure $ Just (Located locs vro)
 
 
 -- Very specifis for optimising locations validation
@@ -345,9 +345,9 @@ saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } lifecycle wv = liftI
             M.put tx objects objectKey (Compressed $ toStorableObject lifecycle)
             M.put tx objectMetas objectKey (ObjectMeta wv (getRpkiObjectType lifecycle))
             case lifecycle of
-                ValidatedRO (CerRO vc) ->
+                WellStructuredRO (CerRO vc) ->
                     MM.put tx certBySKI (getSKI vc) objectKey
-                ValidatedRO (MftRO vmft) ->
+                WellStructuredRO (MftRO vmft) ->
                     for_ (getAKI vmft) $ \aki_ ->
                         MM.put tx mftsForKI aki_ (getMftMetaFromValidated vmft objectKey)
                 _ -> pure ()
@@ -383,21 +383,20 @@ linkObjectToUrl :: (MonadIO m, Storage s) =>
                 Tx s 'RW 
                 -> DB s 
                 -> RpkiURL
-                -> Hash
+                -> ObjectKey
                 -> m ()
-linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL hash = liftIO $ do    
-    ifJustM (M.get tx hashToKey hash) $ \objectKey -> do        
-        z <- SM.get tx uriToUriKey rpkiURL 
-        urlKey <- maybe (saveUrl rpkiURL) pure z                
-        
-        M.get tx objectKeyToUrlKeys objectKey >>= \case 
-            Nothing -> do 
-                M.put tx objectKeyToUrlKeys objectKey [urlKey]
+linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL objectKey = liftIO $ do        
+    z <- SM.get tx uriToUriKey rpkiURL 
+    urlKey <- maybe (saveUrl rpkiURL) pure z                
+    
+    M.get tx objectKeyToUrlKeys objectKey >>= \case 
+        Nothing -> do 
+            M.put tx objectKeyToUrlKeys objectKey [urlKey]
+            MM.put tx urlKeyToObjectKey urlKey objectKey
+        Just existingUrlKeys -> 
+            unless (urlKey `elem` existingUrlKeys) $ do 
+                M.put tx objectKeyToUrlKeys objectKey (urlKey : existingUrlKeys)
                 MM.put tx urlKeyToObjectKey urlKey objectKey
-            Just existingUrlKeys -> 
-                unless (urlKey `elem` existingUrlKeys) $ do 
-                    M.put tx objectKeyToUrlKeys objectKey (urlKey : existingUrlKeys)
-                    MM.put tx urlKeyToObjectKey urlKey objectKey
   where
     saveUrl safeUrl = do 
         SequenceValue k <- nextValue tx keys
@@ -411,6 +410,11 @@ hashExists :: (MonadIO m, Storage s) =>
             Tx s mode -> DB s -> Hash -> m Bool
 hashExists tx DB { objectStore = RpkiObjectStore {..} } h = 
     liftIO $ M.exists tx hashToKey h
+
+getObjectKey :: (MonadIO m, Storage s) => 
+            Tx s mode -> DB s -> Hash -> m (Maybe ObjectKey)
+getObjectKey tx DB { objectStore = RpkiObjectStore {..} } h = 
+    liftIO $ M.get tx hashToKey h
 
 
 deleteObjectByHash :: (MonadIO m, Storage s) => Tx s 'RW -> DB s -> Hash -> m ()
@@ -430,10 +434,10 @@ deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore { mftShortcuts = MftS
                 MM.delete tx urlKeyToObjectKey urlKey objectKey                
 
         case lifecycle of 
-            ValidatedRO (CerRO vc) -> 
+            WellStructuredRO (CerRO vc) -> 
                 MM.delete tx certBySKI (getSKI vc) objectKey
                 
-            ValidatedRO (MftRO vmft) -> do 
+            WellStructuredRO (MftRO vmft) -> do 
                 for_ (getAKI vmft) $ \aki_ -> do
                     MM.delete tx mftsForKI aki_ (getMftMetaFromValidated vmft objectKey)                    
                     ifJustM (M.get tx mftMetas aki_) $ \(unCompressed . restoreFromRaw -> mftShort) ->
@@ -458,8 +462,8 @@ getMftByKey :: (MonadIO m, Storage s) =>
 getMftByKey tx db k = do 
     o <- getLocatedByKey tx db k
     pure $! case o of 
-        Just (Located loc (ValidatedRO (MftRO mft))) -> Just $ Keyed (Located loc mft) k
-        _                                             -> Nothing       
+        Just (Located loc (WellStructuredRO (MftRO mft))) -> Just $ Keyed (Located loc mft) k
+        _                                                 -> Nothing       
 
 
 getMftShorcut :: (MonadIO m, Storage s) => 
@@ -523,8 +527,8 @@ getBySKI tx db@DB { objectStore = RpkiObjectStore {..} } ski = do
             Nothing -> pure Nothing
             Just (Located locs lifecycle) -> case lifecycle of
                 OriginalRO _ vs _ _ -> embedState vs >> pure Nothing
-                ValidatedRO (CerRO vc) -> pure $ Just (Located locs vc)
-                _                      -> pure Nothing
+                WellStructuredRO (CerRO vc) -> pure $ Just (Located locs vc)
+                _                           -> pure Nothing
 
 -- TA store functions
 

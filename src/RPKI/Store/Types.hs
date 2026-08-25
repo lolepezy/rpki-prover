@@ -67,21 +67,21 @@ newtype ObjectOriginal = ObjectOriginal BS.ByteString
 -- in both cases the raw bytes are retained alongside the merged
 -- ValidationState that records why the object was not promoted.
 --
--- 'ValidatedRO' is produced only when both parsing AND 'prevalidateObject'
+-- 'WellStructuredRO' is produced only when both parsing AND 'prevalidateObject'
 -- complete without any validation errors.
 data RpkiObjectLifecycle
     = OriginalRO ObjectOriginal ValidationState Hash RpkiObjectType
-    | ValidatedRO WellStructuredRpkiObject
+    | WellStructuredRO WellStructuredRpkiObject
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
 instance {-# OVERLAPPING #-} WithHash RpkiObjectLifecycle where
-    getHash (OriginalRO _ _ h _) = h
-    getHash (ValidatedRO vro)    = getHash vro
+    getHash (OriginalRO _ _ h _)   = h
+    getHash (WellStructuredRO vro) = getHash vro
 
 instance WithRpkiObjectType RpkiObjectLifecycle where
-    getRpkiObjectType (OriginalRO _ _ _ t) = t
-    getRpkiObjectType (ValidatedRO vro)    = getRpkiObjectType vro
+    getRpkiObjectType (OriginalRO _ _ _ t)   = t
+    getRpkiObjectType (WellStructuredRO vro) = getRpkiObjectType vro
 
 
 -- data 

@@ -532,11 +532,10 @@ data ValidationState = ValidationState {
     deriving Semigroup via GenericSemigroup ValidationState
     deriving Monoid    via GenericMonoid ValidationState
 
--- | True iff the ValidationState contains at least one 'VErr'.
--- Warnings alone do not count as errors.
 hasValidationErrors :: ValidationState -> Bool
 hasValidationErrors vs =
-    Prelude.any (Prelude.any isVErr . Set.toList) $ Map.elems $ let Validations m = validations vs in m
+    Prelude.any (Prelude.any isVErr . Set.toList)
+        $ Map.elems $ let Validations m = validations vs in m
   where
     isVErr (VErr _) = True
     isVErr _        = False
