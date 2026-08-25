@@ -169,9 +169,6 @@ class WithRpkiObjectType a where
 class WithResources a where
     getResources :: a -> AllResources
 
-class WithPayload a p where
-    getPayload :: a -> p
-
 class WithSignMaterial a where
     getSignMaterial :: a -> SignMaterial
 
@@ -333,19 +330,6 @@ type RscObject = CMSBasedObject Rsc
 -- https://datatracker.ietf.org/doc/draft-ietf-sidrops-aspa-profile/
 type AspaObject = CMSBasedObject Aspa
 
-    
--- data RpkiObject = CerRO CaCerObject 
---                 | MftRO MftObject
---                 | RoaRO RoaObject
---                 | SplRO SplObject
---                 | GbrRO GbrObject
---                 | RscRO RscObject
---                 | AspaRO AspaObject
---                 | BgpRO BgpCerObject
---                 | CrlRO CrlObject
---     deriving stock (Show, Eq, Generic)
---     deriving anyclass (TheBinary) 
-
 data RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl = 
                   CerRO ca 
                 | MftRO mft
@@ -387,25 +371,6 @@ type WellStructuredRpkiObject = RpkiObject_
         WellStructuredAspa
         WellStructuredBgpCert
         CrlObject
-
--- data ValidationPhase p v = WhenParsing p | WhenFullyValidating v
---     deriving stock (Show, Eq, Generic)
---     deriving anyclass (TheBinary) 
-
-
--- data RpkiValidationPhased = 
---                   CerRO_ (ValidationPhase CaCerObject WellStructuredCaCert)
---                 | MftRO_ (ValidationPhase MftObject WellStructuredMft)
---                 | RoaRO_ (ValidationPhase RoaObject WellStructuredRoa)
---                 | SplRO_ (ValidationPhase SplObject WellStructuredSpl)
---                 | GbrRO_ (ValidationPhase GbrObject WellStructuredGbr)
---                 | RscRO_ (ValidationPhase RscObject WellStructuredRsc)
---                 | AspaRO_ (ValidationPhase AspaObject WellStructuredAspa)
---                 | BgpRO_ (ValidationPhase BgpCerObject WellStructuredBgpCert)
---                 | CrlRO_ CrlObject
---     deriving stock (Show, Eq, Generic)
---     deriving anyclass (TheBinary) 
-
 
 {-# INLINE foldRpkiObject #-}
 foldRpkiObject ::
@@ -510,44 +475,32 @@ instance {-# OVERLAPPING #-} WithRawResourceCertificate a => WithSerial a where
     getSerial = Serial . X509.certSerial . cwsX509certificate . certX509 . getRawCert
 
 instance {-# OVERLAPPABLE #-} WithRawResourceCertificate a => WithSignMaterial a where
-    getSignMaterial c = let 
-            CertificateWithSignature {                
+    getSignMaterial (certX509 . getRawCert -> CertificateWithSignature {                
                 cwsSignatureAlgorithm = algorithm,
                 cwsSignature          = signature,
                 cwsEncoded            = signedData
-            } = certX509 $ getRawCert c
-        in SignMaterial {..}
+            }) = SignMaterial {..}
 
 instance WithSignMaterial CrlObject where
     getSignMaterial CrlObject {
         signCrl = SignCRL {
-            signatureAlgorithm,
-            signatureValue,
-            encodedValue
+            signatureAlgorithm = algorithm,
+            signatureValue = signature,
+            encodedValue = signedData
         }
-    } = SignMaterial {
-            algorithm = signatureAlgorithm,
-            signature = signatureValue,
-            signedData = encodedValue
-        }
+    } = SignMaterial {..}
 
 instance WithSignMaterial (CMS a) where
-    getSignMaterial (CMS so) =
-        let
+    getSignMaterial (CMS so) = let        
             SignerInfos {
                 signature = cmsSignature,
                 signedAttrs = SignedAttributes _ signedAttrsBS
-            } = scSignerInfos $ soContent so
-
-            CertificateWithSignature {
-                cwsSignatureAlgorithm = eeSignatureAlgorithm
-            } = getEECert so
-        in
-            SignMaterial {
-                algorithm = eeSignatureAlgorithm,
-                signature = cmsSignature,
-                signedData = signedAttrsBS
-            }
+            } = scSignerInfos $ soContent so            
+        in SignMaterial {
+            algorithm = cwsSignatureAlgorithm $ certX509 $ getRawCert $ scCertificate $ soContent so,
+            signature = cmsSignature,
+            signedData = signedAttrsBS
+        }
 
 instance WithRawResourceCertificate CaCerObject where
     getRawCert CaCerObject {..} = getRawCert certificate
@@ -1110,17 +1063,11 @@ getEEResourceCert = scCertificate . soContent . unCMS
 getCertWithSignature :: WithRawResourceCertificate a => a -> CertificateWithSignature
 getCertWithSignature = certX509 . getRawCert
 
-getEECert :: SignedObject a -> CertificateWithSignature
-getEECert = certX509 . getRawCert . scCertificate . soContent
-
 emptyIpResources :: IpResources
 emptyIpResources = IpResources RS.emptyIpSet 
 
 emptyAsResources :: AsResources
 emptyAsResources = AsResources RS.emptyRS
-
-emptyAllResources :: AllResources
-emptyAllResources = RS.allResources emptyIpResources emptyAsResources
 
 newCrl :: AKI -> Hash -> SignCRL -> CrlObject
 newCrl a h sc = CrlObject {
