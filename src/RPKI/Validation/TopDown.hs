@@ -388,7 +388,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 storedTa' <- updateStoredTal db storedTa
                 let locations = talCertLocations tal <> toLocations (storedTa' ^. #actualUrl)
                 let located = locatedTaCert locations (storedTa' ^. #taCert)                
-                pure (located, storedTa' ^. #initialRepositories)
+                pure $! (located, storedTa' ^. #initialRepositories)
 
   where
     -- Keep persisted TAL metadata in sync so all configured TA cert
@@ -1078,7 +1078,7 @@ validateCaNoFetch
                                         embedState vs_
                                     WellStructuredRO _ ->
                                         pure ()
-                                pure o
+                                pure $! o
 
         -- The type of the object that is deserialised doesn't correspond 
         -- to the file extension on the manifest
@@ -1365,11 +1365,11 @@ validateCaNoFetch
                 case resolved of
                     Just (TroubledFromParsed, objectByKey) -> do
                         increment $ topDownCounters ^. #readParsed
-                        pure objectByKey
+                        pure $! objectByKey
 
                     Just (TroubledFromOriginal, objectByKey) -> do
                         increment $ topDownCounters ^. #readOriginal
-                        pure objectByKey
+                        pure $! objectByKey
 
                     Nothing -> do
                         -- Something is wrong with the references in the database. Normally it should never happen,
