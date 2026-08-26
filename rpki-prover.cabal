@@ -294,6 +294,7 @@ test-suite rpki-prover-test
       RPKI.Store.DatabaseSpec
       RPKI.Store.SerialisationSpec
       RPKI.TestCommons
+      RPKI.Validation.TopDownSpec
       Paths_rpki_prover
   hs-source-dirs:
       test

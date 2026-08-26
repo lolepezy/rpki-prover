@@ -271,8 +271,8 @@ getKeyedByHash tx db@DB { objectStore = RpkiObjectStore {..} } h = liftIO $ runM
 getByUri :: (MonadIO m, Storage s) => 
             Tx s mode -> DB s -> RpkiURL -> m [Located RpkiObjectLifecycle]
 getByUri tx db uri = liftIO $ do
-    keys' <- getKeysByUri tx db uri
-    catMaybes <$> mapM (getLocatedByKey tx db) keys'
+    keys_ <- getKeysByUri tx db uri
+    catMaybes <$> mapM (getLocatedByKey tx db) keys_
 
 getKeysByUri :: (MonadIO m, Storage s) => 
                 Tx s mode -> DB s -> RpkiURL -> m [ObjectKey]
@@ -293,20 +293,6 @@ getLocatedByKey tx db k = liftIO $ runMaybeT $ do
     locations <- MaybeT $ getLocationsByKey tx db k                    
     pure $ Located locations lifecycle
 
--- | Like 'getLocatedByKey' but in ValidatorT: if the key points to an
--- 'OriginalRO' the stored ValidationState is re-emitted and Nothing is
--- returned; only 'WellStructuredRO' entries yield a result.
-getValidatedByKey :: (MonadIO m, Storage s) =>
-                    Tx s mode -> DB s -> ObjectKey
-                    -> ValidatorT m (Maybe (Located WellStructuredRpkiObject))
-getValidatedByKey tx db key = do
-    liftIO (getLocatedByKey tx db key) >>= \case
-        Nothing -> pure Nothing
-        Just (Located locs lifecycle) -> case lifecycle of
-            OriginalRO _ vs _ _  -> embedState vs >> pure Nothing
-            WellStructuredRO vro -> pure $ Just (Located locs vro)
-
-
 -- Very specifis for optimising locations validation
 getLocationCountByKey :: (MonadIO m, Storage s) => 
                         Tx s mode -> DB s -> ObjectKey -> m Int
@@ -324,9 +310,6 @@ getLocationsByKey tx DB { objectStore = RpkiObjectStore {..} } k = liftIO $ runM
                     $ mapM (M.get tx uriKeyToUri) uriKeys             
     pure $ Locations locations
 
--- | Save an 'RpkiObjectLifecycle' entry. Replaces both the former
--- 'saveObject' (for validated objects) and 'saveOriginal' (for raw blobs)
--- with a single unified function.
 saveObject :: (MonadIO m, Storage s) => 
             Tx s 'RW 
             -> DB s 
@@ -349,12 +332,12 @@ saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } lifecycle wv = liftI
                     MM.put tx certBySKI (getSKI vc) objectKey
                 WellStructuredRO (MftRO vmft) ->
                     for_ (getAKI vmft) $ \aki_ ->
-                        MM.put tx mftsForKI aki_ (getMftMetaFromValidated vmft objectKey)
+                        MM.put tx mftsForKI aki_ (getMftMetaFromWellStructured vmft objectKey)
                 _ -> pure ()
             pure objectKey
 
-getMftMetaFromValidated :: WellStructuredCms Manifest -> ObjectKey -> MftMeta
-getMftMetaFromValidated WellStructuredCms { content = Manifest {..} } key = MftMeta {..}
+getMftMetaFromWellStructured :: WellStructuredCms Manifest -> ObjectKey -> MftMeta
+getMftMetaFromWellStructured WellStructuredCms { content = Manifest {..} } key = MftMeta {..}
 
 -- | Return the raw bytes for an 'OriginalRO' entry, if the key maps to one.
 getOriginalBlob :: (MonadIO m, Storage s) =>
@@ -370,14 +353,6 @@ getOriginalBlobByHash tx db hash =
     getKeyByHash tx db hash >>= \case 
         Nothing  -> pure Nothing
         Just key -> getOriginalBlob tx db key
-
-getObjectMeta :: (MonadIO m, Storage s) => 
-                Tx s mode
-                -> DB s 
-                -> ObjectKey            
-                -> m (Maybe ObjectMeta)
-getObjectMeta tx DB { objectStore = RpkiObjectStore {..} } key = 
-    liftIO $ M.get tx objectMetas key                
 
 linkObjectToUrl :: (MonadIO m, Storage s) => 
                 Tx s 'RW 
@@ -439,7 +414,7 @@ deleteObjectByKey tx db@DB { objectStore = RpkiObjectStore { mftShortcuts = MftS
                 
             WellStructuredRO (MftRO vmft) -> do 
                 for_ (getAKI vmft) $ \aki_ -> do
-                    MM.delete tx mftsForKI aki_ (getMftMetaFromValidated vmft objectKey)                    
+                    MM.delete tx mftsForKI aki_ (getMftMetaFromWellStructured vmft objectKey)                    
                     ifJustM (M.get tx mftMetas aki_) $ \(unCompressed . restoreFromRaw -> mftShort) ->
                         when (mftShort ^. #key == objectKey) $
                             deleteMftShortcut tx db aki_            

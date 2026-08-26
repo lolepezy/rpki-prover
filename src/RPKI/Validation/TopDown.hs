@@ -4,7 +4,9 @@
 
 module RPKI.Validation.TopDown (
     TopDownResult(..),
-    validateMutlipleTAs
+    validateMutlipleTAs,
+    TroubledChildLoadPath(..),
+    resolveTroubledChildByKey
 )
 where
 
@@ -186,6 +188,9 @@ data TopDownResult = TopDownResult {
 
 fromValidations :: ValidationState -> TopDownResult
 fromValidations vs = TopDownResult mempty mempty vs mempty mempty
+
+data TroubledChildLoadPath = TroubledFromParsed | TroubledFromOriginal
+    deriving stock (Show, Eq, Ord, Generic)
 
 newTopDownContext :: MonadIO m =>
                     TaName
@@ -882,9 +887,12 @@ validateCaNoFetch
                 Nothing  -> vError $ NoCRLExists aki crlHash
                 Just key -> do           
                     increment $ topDownCounters ^. #readParsed
-                    z <- getParsedObject tx db key $ vError $ NoCRLExists aki crlHash
+                    z <- getStoredObject tx db key
                     case z of 
-                        Keyed locatedCrl@(Located crlLocations (WellStructuredRO (CrlRO crl))) crlKey -> do
+                        Nothing -> 
+                            vError $ NoCRLExists aki crlHash
+
+                        Just (Keyed locatedCrl@(Located crlLocations (WellStructuredRO (CrlRO crl))) crlKey) -> do
                             markAsUsed topDownContext crlKey
                             inSubLocationScope (getURL $ pickLocation crlLocations) $ do 
                                 validateObjectLocations locatedCrl
@@ -1059,26 +1067,18 @@ validateCaNoFetch
             DB.getKeyByHash tx db hash' >>= \case                     
                 Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename            
                 Just key -> 
-                    vFocusOn ObjectFocus key $
-                        case objectType of 
-                            Just type_ -> do
-                                increment $ topDownCounters ^. #readParsed
-                                -- we expect objects to be stored in the parsed-serialised form                                                            
-                                getParsedObject tx db key $ do
-                                    increment $ topDownCounters ^. #readOriginal
-                                    -- try to get the original blob and (re-)parse 
-                                    -- it to at least complain about it at the right place
-                                    void $ getLocatedOriginal tx db key type_ $
-                                        vError $ ManifestEntryDoesn'tExist hash' filename
-                                    vError $ ManifestEntryDoesn'tExist hash' filename
-                            Nothing -> do
-                                -- If we don't know anything about the type from the manifest, 
-                                -- it may still be possible that the object was parsed based
-                                -- on the rsync/rrdp url and the entry in the manifest is just
-                                -- wrong
-                                increment $ topDownCounters ^. #readParsed
-                                getParsedObject tx db key $ 
-                                    vError $ ManifestEntryDoesn'tExist hash' filename
+                    vFocusOn ObjectFocus key $ do
+                        increment $ topDownCounters ^. #readParsed
+                        getStoredObject tx db key >>= \case 
+                            Nothing -> vError $ ManifestEntryDoesn'tExist hash' filename
+                            Just o  -> do
+                                case o ^. #object . #payload of
+                                    OriginalRO _ vs_ _ _ -> do
+                                        increment $ topDownCounters ^. #readOriginal
+                                        embedState vs_
+                                    WellStructuredRO _ ->
+                                        pure ()
+                                pure o
 
         -- The type of the object that is deserialised doesn't correspond 
         -- to the file extension on the manifest
@@ -1101,13 +1101,12 @@ validateCaNoFetch
             vWarn $ ManifestLocationMismatch filename objectLocations
 
         case child ^. #object . #payload of
-            OriginalRO _ childValidations _ _ -> do
-                embedState childValidations
+            OriginalRO _ _ _ _ -> do
                 pure $! newShortcut (makeChildWithIssues (child ^. #key) filename)
-            WellStructuredRO validatedChild ->
+            WellStructuredRO wellStructuredChild ->
                 validateChildObject
                     caFull
-                    (child & #object . #payload .~ validatedChild)
+                    (child & #object . #payload .~ wellStructuredChild)
                     filename
                     validCrl
 
@@ -1293,7 +1292,7 @@ validateCaNoFetch
                     -> ValidatorT IO ()
     collectPayloads mftShortcut childrenToCheck findFullCa findValidCrl parentCaResources = do      
         
-        let nonCrlEntries = mftShortcut ^. #nonCrlEntries
+        let nonCrlEntries = mftShortcut.nonCrlEntries
 
         -- Filter children that we actually want to go through here
         let filteredChildren = 
@@ -1309,12 +1308,12 @@ validateCaNoFetch
                             _                -> T3 cas       troubled       (total + 1)
                     ) (T3 0 0 0 :: T3 Int Int Int) filteredChildren
 
-        vFocusOn ObjectFocus (mftShortcut ^. #key) $ do
-            validateLocationForShortcut (mftShortcut ^. #key)
+        vFocusOn ObjectFocus mftShortcut.key $ do
+            validateLocationForShortcut mftShortcut.key
             ValidityPeriod { notAfter } <- vHoist $ validateObjectValidityPeriod mftShortcut now
             rememberNotValidAfter topDownContext notAfter
-            vFocusOn ObjectFocus (mftShortcut ^. #crlShortcut . #key) $ do                
-                ValidityPeriod { notAfter = notValidAfterCrl } <- vHoist $ validateObjectValidityPeriod (mftShortcut ^. #crlShortcut) now
+            vFocusOn ObjectFocus mftShortcut.crlShortcut.key $ do
+                ValidityPeriod { notAfter = notValidAfterCrl } <- vHoist $ validateObjectValidityPeriod mftShortcut.crlShortcut now
                 rememberNotValidAfter topDownContext notValidAfterCrl
 
             -- For children that are problematic we'll have to fall back 
@@ -1325,13 +1324,14 @@ validateCaNoFetch
                         0 -> pure $ \_ _ -> 
                                 -- Should never happen, there are no troubled children
                                 integrityError appContext [i|Impossible happened!|]
-                        _  -> do 
+                        _ -> do 
                             caFull   <- either pure id findFullCa
                             validCrl <- findValidCrl
                             pure $ \childKey fileName -> 
                                     validateTroubledChild caFull fileName validCrl childKey                        
 
-            collectResultsInParallel caCount totalCount filteredChildren (getChildPayloads troubledValidation)
+            collectResultsInParallel caCount totalCount 
+                filteredChildren (getChildPayloads troubledValidation)
 
       where
         collectResultsInParallel caCount totalCount children f = do 
@@ -1353,24 +1353,31 @@ validateCaNoFetch
             embedState $ mconcat $ map snd z                 
 
         validateTroubledChild caFull fileName (Keyed validCrl _) childKey = do  
-            -- It was an invalid child and nothing about it is cached, so 
-            -- we have to process full validation for it           
+            -- Troubled entries may point either to an original blob or to a
+            -- well-structured object that previously produced issues (e.g. warnings).
+            -- Handle both shapes to avoid stale-shortcut false positives.
             db <- liftIO $ readTVarIO database            
-            parsedChild <- 
+            resolved <-
                 DB.roAppTx db $ \tx -> do
-                    increment $ topDownCounters ^. #readOriginal
-                    getLocatedOriginalUnknownType tx db childKey $ do
+                    resolveTroubledChildByKey tx db childKey
+
+            childObject <-
+                case resolved of
+                    Just (TroubledFromParsed, objectByKey) -> do
+                        increment $ topDownCounters ^. #readParsed
+                        pure objectByKey
+
+                    Just (TroubledFromOriginal, objectByKey) -> do
+                        increment $ topDownCounters ^. #readOriginal
+                        pure objectByKey
+
+                    Nothing -> do
                         -- Something is wrong with the references in the database. Normally it should never happen,
                         -- but if it does, we have to delete the shortcut and report the error.
                         deleteMftShortcut topDownContext $ toAKI $ getSKI caFull
                         logError logger [i|Troubled child #{childKey} not found in the database, will delete manifest shortcut.|]
-                        integrityError appContext 
+                        integrityError appContext
                             [i|Referential integrity error, can't find a troubled child by its key #{childKey}.|]
-
-            childObject <- case parsedChild of
-                Keyed (Located locations parsedRo) key -> do
-                    validatedRo <- vHoist $ prevalidateObject parsedRo
-                    pure $! Keyed (Located locations validatedRo) key
 
             void $ validateChildObject caFull childObject fileName validCrl
 
@@ -1407,7 +1414,7 @@ validateCaNoFetch
                 AspaChild a@AspaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do 
                         validateShortcut a key
-                        oneMoreAspa
+                        oneMoreAspa 
                         increment $ topDownCounters ^. #shortcutAspa                        
                         rememberPayloads typed (aspa :)                        
 
@@ -1489,54 +1496,30 @@ manifestDiff mftShortcut newMftChidlren =
                 newMftChidlren
 
 
-getLocatedOriginal :: Storage s => Tx s mode -> DB s -> ObjectKey -> RpkiObjectType         
-                    -> ValidatorT IO (Keyed (Located ParsedRpkiObject))
-                    -> ValidatorT IO (Keyed (Located ParsedRpkiObject))
-getLocatedOriginal tx db key type_ ifNotFound =
-    getLocatedOriginal' tx db key (Just type_) ifNotFound
+resolveTroubledChildByKey :: Storage s
+                            => Tx s mode
+                            -> DB s
+                            -> ObjectKey
+                            -> ValidatorT IO (Maybe (TroubledChildLoadPath, Keyed (Located WellStructuredRpkiObject)))
+resolveTroubledChildByKey tx db childKey =
+    DB.getLocatedByKey tx db childKey >>= \case
+        Just (Located locations (WellStructuredRO vro)) ->
+            pure $! Just (TroubledFromParsed, Keyed (Located locations vro) childKey)
 
-getLocatedOriginalUnknownType :: Storage s => Tx s mode -> DB s -> ObjectKey                                           
-                                -> ValidatorT IO (Keyed (Located ParsedRpkiObject))
-                                -> ValidatorT IO (Keyed (Located ParsedRpkiObject))
-getLocatedOriginalUnknownType tx db key ifNotFound =
-    getLocatedOriginal' tx db key Nothing ifNotFound
+        Just (Located locations (OriginalRO (ObjectOriginal blob) _ _ t)) -> do
+            parsedRo <- vFocusOn ObjectFocus childKey $ vHoist $ readObjectOfType t blob
+            validatedRo <- vHoist $ prevalidateObject parsedRo
+            pure $! Just (TroubledFromOriginal, Keyed (Located locations validatedRo) childKey)
 
-getLocatedOriginal' :: Storage s =>                    
-                    Tx s mode                    
-                    -> DB s
-                    -> ObjectKey           
-                    -> Maybe RpkiObjectType         
-                    -> ValidatorT IO (Keyed (Located ParsedRpkiObject))
-                    -> ValidatorT IO (Keyed (Located ParsedRpkiObject))
-getLocatedOriginal' tx db key type_ ifNotFound = do
-    DB.getOriginalBlob tx db key >>= \case 
-        Nothing                    -> ifNotFound
-        Just (ObjectOriginal blob) -> do 
-            case type_  of 
-                Nothing -> 
-                    DB.getObjectMeta tx db key >>= \case            
-                        Nothing               -> ifNotFound
-                        Just (ObjectMeta _ t) -> parse blob t
-                Just t -> 
-                    parse blob t
-  where                    
-    parse blob t = do
-        ro <- vFocusOn ObjectFocus key $ vHoist $ readObjectOfType t blob
-        DB.getLocationsByKey tx db key >>= \case                                             
-            Nothing        -> ifNotFound
-            Just locations -> pure $! Keyed (Located locations ro) key
+        _ -> pure Nothing
 
-getParsedObject :: Storage s =>
+getStoredObject :: Storage s =>
                     Tx s mode
                     -> DB s
                     -> ObjectKey
-                    -> ValidatorT IO (Keyed (Located RpkiObjectLifecycle))
-                    -> ValidatorT IO (Keyed (Located RpkiObjectLifecycle))
-getParsedObject tx db key ifNotFound = do
-    DB.getLocatedByKey tx db key >>= \case 
-        Just ro -> pure $! Keyed ro key
-        Nothing -> ifNotFound
-
+                    -> ValidatorT IO (Maybe (Keyed (Located RpkiObjectLifecycle)))
+getStoredObject tx db key =
+    fmap (`Keyed` key) <$> DB.getLocatedByKey tx db key    
 
 getFullCa :: Storage s => AppContext s -> TopDownContext -> Ca -> ValidatorT IO (Located WellStructuredCaCert)
 getFullCa appContext@AppContext {..} topDownContext = \case    
@@ -1615,7 +1598,7 @@ makeBgpSecShortcut key (Validated bgpCert) bgpSec fileName = let
     in MftEntry {..}    
 
 makeMftShortcut :: ObjectKey 
-        -> Validated WellStructuredMft -> [(ObjectKey, MftEntry)] 
+                -> Validated WellStructuredMft -> [(ObjectKey, MftEntry)] 
                 -> Keyed (Validated CrlObject) 
                 -> MftShortcut   
 makeMftShortcut key 
