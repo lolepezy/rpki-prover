@@ -139,8 +139,7 @@ instantDateFormat (Instant d) = timePrint format (fromNanoseconds d)
     format = TimeFormatString [
             Format_Year, dash, Format_Month2, dash, Format_Day2,
             Format_Text ' ',
-            Format_Hour, colon, Format_Minute, colon, Format_Second,
-            Format_TimezoneName
+            Format_Hour, colon, Format_Minute, colon, Format_Second
         ]
     dash = Format_Text '-'
     colon = Format_Text ':'   
