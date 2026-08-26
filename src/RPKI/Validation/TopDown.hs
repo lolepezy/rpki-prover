@@ -388,7 +388,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 storedTa' <- updateStoredTal db storedTa
                 let locations = talCertLocations tal <> toLocations (storedTa' ^. #actualUrl)
                 let located = locatedTaCert locations (storedTa' ^. #taCert)                
-                pure $! (located, storedTa' ^. #initialRepositories)
+                pure (located, storedTa' ^. #initialRepositories)
 
   where
     -- Keep persisted TAL metadata in sync so all configured TA cert
@@ -588,7 +588,7 @@ validateCaNoFetch
     case ca of 
         CaFull c -> 
             vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
-                increment $ topDownCounters ^. #originalCa
+                increment $ topDownCounters.originalCa
                 markAsUsedByHash appContext topDownContext (getHash c)                         
                 validateObjectLocations c
                 ValidityPeriod {..} <- vHoist $ validateObjectValidityPeriod (c ^. #payload) now
@@ -597,7 +597,7 @@ validateCaNoFetch
                 join $! nextAction $ toAKI $ getSKI c
         CaShort c -> 
             vFocusOn ObjectFocus (c ^. #key) $ do            
-                increment $ topDownCounters ^. #shortcutCa 
+                increment $ topDownCounters.shortcutCa 
                 markAsUsed topDownContext (c ^. #key) 
                 validateLocationForShortcut (c ^. #key)
                 ValidityPeriod {..} <- vHoist $ validateObjectValidityPeriod c now
@@ -635,7 +635,7 @@ validateCaNoFetch
             z <- roTxT database $ \tx db -> DB.getMftShorcut tx db aki
             case z of
                 Nothing -> do
-                    increment $ topDownCounters ^. #originalMft
+                    increment $ topDownCounters.originalMft
                     pure $! processMfts aki mftMetas
 
                 Just mftShortcut -> do 
@@ -644,30 +644,27 @@ validateCaNoFetch
                             not (isWithinValidityPeriod now (mftShortcut ^. #crlShortcut))
 
                     if shortcutExpired then do                 
-                        increment $ topDownCounters ^. #originalMft
+                        increment topDownCounters.originalMft
                         pure $! processMfts aki mftMetas
                     else do
-                        let mftShortcutKey = mftShortcut ^. #key
-                        markAsUsed topDownContext mftShortcutKey
-                        increment $ topDownCounters ^. #shortcutMft
+                        markAsUsed topDownContext mftShortcut.key
+                        increment topDownCounters.shortcutMft
                         action <- case mftsNotInFuture mftMetas of
                             [] -> vError $ NoMFT aki
                             mft_ : otherMfts 
-                                | mft_ ^. #key == mftShortcutKey -> 
+                                | mft_.key == mftShortcut.key -> 
                                     pure $! onlyCollectPayloads mftShortcut                                    
                                 | otherwise -> pure $! do 
-                                    let mftKey = mft_ ^. #key
-                                    markAsUsed topDownContext mftKey
-                                    withMft mftKey $ \mft ->                                                                     
+                                    markAsUsed topDownContext mft_.key
+                                    withMft mft_.key $ \mft ->                                                  
                                         tryOneMftWithShortcut mftShortcut mft
                                             `catchError` \e -> 
                                                 if shortcutExpired 
                                                     then 
                                                         tryMfts aki otherMfts
                                                     else do                                                    
-                                                        reportMftFallback e mft                                                                                                    
-                                                        onlyCollectPayloads mftShortcut                                                                        
-                                                        
+                                                        reportMftFallback e mft                                                                                            
+                                                        onlyCollectPayloads mftShortcut                                                        
                         pure $! action `andThen` 
                                 (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)            
 
@@ -786,13 +783,13 @@ validateCaNoFetch
                 -- If will be checked by full validation for newChildren but it needs 
                 -- to be explicitly checked for overlappingChildren                
                 when (crlKey /= mftShort ^. #crlShortcut . #key) $ do     
-                    increment $ topDownCounters ^. #originalCrl                         
+                    increment topDownCounters.originalCrl                         
                     checkForRevokedChildren mftShort keyedMft overlappingChildren validCrl            
 
                 -- manifest number must increase 
                 -- https://www.rfc-editor.org/rfc/rfc9286.html#name-manifest
-                let mftNumber = mft ^. #content . #mftNumber 
-                when (mftNumber < mftShort ^. #manifestNumber) $ do 
+                let mftNumber = mft.content.mftNumber 
+                when (mftNumber < mftShort.manifestNumber) $ do 
                     -- Here we have to do a bit of hackery: 
                     -- * Calling vError will interrupt this function and call for fall-back to 
                     --   the "latest valid manifest" which is the shortcut
@@ -803,7 +800,7 @@ validateCaNoFetch
                     -- * So in case there is nothing to fall back to, we emit a warning and still 
                     --   use the manifest
                     let ValidityPeriod { notBefore = beforeMft, notAfter = afterMft } = getValidityPeriod mftShort
-                    let issue = ManifestNumberDecreased (mftShort ^. #manifestNumber) mftNumber
+                    let issue = ManifestNumberDecreased mftShort.manifestNumber mftNumber
                     if beforeMft < unNow now && unNow now > afterMft
                         then vError issue
                         else vWarn issue
@@ -850,9 +847,9 @@ validateCaNoFetch
 
                                 -- If manifest key is not the same as the shortcut key,
                                 -- we need to replace the shortcut with the new one      
-                                when (maybe True ((/= mftKey) . (^. #key)) mftShortcut) $ do                                
+                                when (maybe True ((/= mftKey) . (.key)) mftShortcut) $ do                                
                                     updateMftShortcut topDownContext aki nextMftShortcut
-                                    increment $ topDownCounters ^. #updateMftMeta
+                                    increment topDownCounters.updateMftMeta
 
                                 -- Update manifest shortcut children in case there are new 
                                 -- or deleted children in the new manifest. They are updated
@@ -861,7 +858,7 @@ validateCaNoFetch
                                 -- CPU on serialisation.
                                 when (isNothing mftShortcut || not (null newChildren) || isSomethingDeleted) $ do
                                     updateMftShortcutChildren topDownContext aki nextMftShortcut
-                                    increment $ topDownCounters ^. #updateMftChildren
+                                    increment topDownCounters.updateMftChildren
 
                         _  -> pure ()
 
@@ -886,7 +883,7 @@ validateCaNoFetch
             DB.getKeyByHash tx db crlHash >>= \case         
                 Nothing  -> vError $ NoCRLExists aki crlHash
                 Just key -> do           
-                    increment $ topDownCounters ^. #readParsed
+                    increment $ topDownCounters.readParsed
                     z <- getStoredObject tx db key
                     case z of 
                         Nothing -> 
@@ -916,7 +913,7 @@ validateCaNoFetch
         when (isRevoked (getSerial mft) validCrl) $
             vWarn RevokedResourceCertificate   
         forM_ children $ \(T3 _ _ childKey) ->
-            for_ (Map.lookup childKey (mftShortcut ^. #nonCrlEntries)) $ \MftEntry {..} ->
+            for_ (Map.lookup childKey mftShortcut.nonCrlEntries) $ \MftEntry {..} ->
                 for_ (getMftChildSerial child) $ \childSerial ->
                     when (isRevoked childSerial validCrl) $
                         vFocusOn ObjectFocus childKey $
@@ -926,7 +923,7 @@ validateCaNoFetch
     -- this indicates the difference between RFC9286-bis 
     -- version 02 (strict) and version 03 and later (more loose).                                                                                            
     gatherMftEntryValidations =
-        case config ^. #validationConfig . #manifestProcessing of
+        case config.validationConfig.manifestProcessing of
             {-                                             
             https://datatracker.ietf.org/doc/rfc9286/
             item 6.4 says
@@ -996,7 +993,7 @@ validateCaNoFetch
         itemsPerThread = 20
         threads = min 
                 (length nonCrlChildren `div` itemsPerThread)
-                (fromIntegral $ config ^. #parallelism . #cpuParallelism)
+                (fromIntegral config.parallelism.cpuParallelism)
 
         forAllChildren = 
                 if threads <= 1
@@ -1068,13 +1065,13 @@ validateCaNoFetch
                 Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename            
                 Just key -> 
                     vFocusOn ObjectFocus key $ do
-                        increment $ topDownCounters ^. #readParsed
+                        increment topDownCounters.readParsed
                         getStoredObject tx db key >>= \case 
                             Nothing -> vError $ ManifestEntryDoesn'tExist hash' filename
                             Just o  -> do
                                 case o ^. #object . #payload of
                                     OriginalRO _ vs_ _ _ -> do
-                                        increment $ topDownCounters ^. #readOriginal
+                                        increment topDownCounters.readOriginal
                                         embedState vs_
                                     WellStructuredRO _ ->
                                         pure ()
@@ -1100,9 +1097,9 @@ validateCaNoFetch
         when (null nameMatches) $
             vWarn $ ManifestLocationMismatch filename objectLocations
 
-        case child ^. #object . #payload of
+        case child.object.payload of
             OriginalRO _ _ _ _ -> do
-                pure $! newShortcut (makeChildWithIssues (child ^. #key) filename)
+                pure $! newShortcut (makeChildWithIssues child.key filename)
             WellStructuredRO wellStructuredChild ->
                 validateChildObject
                     caFull
@@ -1187,11 +1184,11 @@ validateCaNoFetch
                 focusOnChild $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
-                        validRoa <- vHoist $ validateRoa validationRFC now roa (fullCa ^. #payload) validCrl verifiedResources
+                        validRoa <- vHoist $ validateRoa validationRFC now roa fullCa.payload validCrl verifiedResources
                         let roaPayload = roa.content
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length (roaV4 roaPayload) + length (roaV6 roaPayload)
-                        increment $ topDownCounters ^. #originalRoa                        
+                        increment $ topDownCounters.originalRoa                        
                         shortcut <- vHoist $ shortcutIfNoIssues childKey fileName 
                                             (makeRoaShortcut childKey validRoa roaPayload)                        
                         rememberPayloads typed (T2 roaPayload childKey :)
@@ -1201,10 +1198,10 @@ validateCaNoFetch
                 focusOnChild $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
-                        validSpl <- vHoist $ validateSpl validationRFC now spl (fullCa ^. #payload) validCrl verifiedResources
+                        validSpl <- vHoist $ validateSpl validationRFC now spl fullCa.payload validCrl verifiedResources
                         let spls = spl.content
                         oneMoreSpl                        
-                        increment $ topDownCounters ^. #originalSpl
+                        increment $ topDownCounters.originalSpl
                         shortcut <- vHoist $ shortcutIfNoIssues childKey fileName 
                                             (makeSplShortcut childKey validSpl spls)
                         rememberPayloads typed (spls :)
@@ -1214,10 +1211,10 @@ validateCaNoFetch
                 focusOnChild $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
-                        validAspa <- vHoist $ validateAspa validationRFC now aspa (fullCa ^. #payload) validCrl verifiedResources
+                        validAspa <- vHoist $ validateAspa validationRFC now aspa fullCa.payload validCrl verifiedResources
                         oneMoreAspa
                         let aspaPayload = aspa.content
-                        increment $ topDownCounters ^. #originalAspa
+                        increment $ topDownCounters.originalAspa
                         shortcut <- vHoist $ shortcutIfNoIssues childKey fileName
                                             (makeAspaShortcut childKey validAspa aspaPayload)                        
                         rememberPayloads typed (aspaPayload :)    
@@ -1227,7 +1224,7 @@ validateCaNoFetch
                 focusOnChild $ do
                     validateObjectLocations child
                     allowRevoked $ do
-                        (validaBgpCert, bgpPayload) <- vHoist $ validateBgpCert now bgpCert (fullCa ^. #payload) validCrl
+                        (validaBgpCert, bgpPayload) <- vHoist $ validateBgpCert now bgpCert fullCa.payload validCrl
                         oneMoreBgp
                         shortcut <- vHoist $ shortcutIfNoIssues childKey fileName
                                             (makeBgpSecShortcut childKey validaBgpCert bgpPayload)    
@@ -1239,7 +1236,7 @@ validateCaNoFetch
                 focusOnChild $ do
                     validateObjectLocations child                    
                     allowRevoked $ do
-                        validGbr <- vHoist $ validateGbr validationRFC now gbr (fullCa ^. #payload) validCrl verifiedResources
+                        validGbr <- vHoist $ validateGbr validationRFC now gbr fullCa.payload validCrl verifiedResources
                         oneMoreGbr
                         let gbr' = gbr.content
                         let gbrPayload = T2 (getHash gbr) gbr'                        
@@ -1341,7 +1338,7 @@ validateCaNoFetch
             let eePerThread = 500
             let threads = min 
                     (caCount `div` caPerThread + (totalCount - caCount) `div` eePerThread)
-                    (fromIntegral $ config ^. #parallelism . #cpuParallelism)                        
+                    (fromIntegral config.parallelism.cpuParallelism)
             
             let forAllChildren = 
                     if threads <= 1
@@ -1364,12 +1361,12 @@ validateCaNoFetch
             childObject <-
                 case resolved of
                     Just (TroubledFromParsed, objectByKey) -> do
-                        increment $ topDownCounters ^. #readParsed
-                        pure $! objectByKey
+                        increment topDownCounters.readParsed
+                        pure objectByKey
 
                     Just (TroubledFromOriginal, objectByKey) -> do
-                        increment $ topDownCounters ^. #readOriginal
-                        pure $! objectByKey
+                        increment topDownCounters.readOriginal
+                        pure objectByKey
 
                     Nothing -> do
                         -- Something is wrong with the references in the database. Normally it should never happen,
@@ -1386,8 +1383,11 @@ validateCaNoFetch
             case child of 
                 CaChild caShortcut _ -> do 
                     (childVerifiedResources, overlclaiming) <- 
-                        vHoist $ validateChildParentResources (config ^. #validationConfig . typed)                                 
-                                    (caShortcut ^. #resources) parentCaResources verifiedResources
+                        vHoist $ validateChildParentResources 
+                                    (config ^. #validationConfig . typed)                                 
+                                    caShortcut.resources 
+                                    parentCaResources 
+                                    verifiedResources
                     
                     let childTopDownContext = topDownContext
                             & #currentPathDepth %~ (+ 1)                                        
@@ -1401,21 +1401,21 @@ validateCaNoFetch
                         validateShortcut r key                   
                         oneMoreRoa                        
                         moreVrps $ Count $ fromIntegral $ length (roaV4 roaPayload) + length (roaV6 roaPayload)
-                        increment $ topDownCounters ^. #shortcutRoa
+                        increment topDownCounters.shortcutRoa
                         rememberPayloads typed (T2 roaPayload childKey :)
 
                 SplChild s@SplShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do
                         validateShortcut s key
                         oneMoreSpl                        
-                        increment $ topDownCounters ^. #shortcutSpl
+                        increment topDownCounters.shortcutSpl
                         rememberPayloads typed (splPayload :)
                 
                 AspaChild a@AspaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do 
                         validateShortcut a key
                         oneMoreAspa 
-                        increment $ topDownCounters ^. #shortcutAspa                        
+                        increment topDownCounters.shortcutAspa
                         rememberPayloads typed (aspa :)                        
 
                 BgpSecChild b@BgpSecShortcut {..} _ -> 
@@ -1431,7 +1431,7 @@ validateCaNoFetch
                         rememberPayloads typed (gbr :)
 
                 TroubledChild childKey_ -> do
-                    increment $ topDownCounters ^. #shortcutTroubled
+                    increment topDownCounters.shortcutTroubled
                     troubledValidation childKey_ fileName
     
         validateShortcut :: (WithValidityPeriod s, WithResources s) => s -> ObjectKey -> ValidatorT IO ()
@@ -1478,21 +1478,21 @@ manifestDiff mftShortcut newMftChidlren =
     -- it's not in the map of shortcut children or it has changed 
     -- its name (very unlikely but can happen in theory)                
     isNewEntry key_ fileName  = 
-        case Map.lookup key_ (mftShortcut ^. #nonCrlEntries) of
+        case Map.lookup key_ mftShortcut.nonCrlEntries of
             Nothing -> True
-            Just e  -> e ^. #fileName /= fileName 
+            Just e  -> e.fileName /= fileName 
                     
     deletedEntries = 
         -- If we delete everything from mftShortcut.nonCrlEntries that is present in 
         -- newMftChidlren, we only have the entries that are not present on the new manifest,
         -- i.e. the deleted ones.
         foldr (\(T3 fileName _ key_) entries -> 
-                case Map.lookup key_ (mftShortcut ^. #nonCrlEntries) of 
+                case Map.lookup key_ mftShortcut.nonCrlEntries of 
                     Nothing -> entries
                     Just e 
-                        | e ^. #fileName == fileName -> Map.delete key_ entries
+                        | e.fileName == fileName -> Map.delete key_ entries
                         | otherwise -> entries) 
-                (mftShortcut ^. #nonCrlEntries)
+                mftShortcut.nonCrlEntries
                 newMftChidlren
 
 
@@ -1527,7 +1527,7 @@ getFullCa appContext@AppContext {..} topDownContext = \case
     CaShort CaShortcut {..} -> do   
         db <- liftIO $ readTVarIO database
         DB.roAppTx db $ \tx -> do 
-            increment $ topDownContext ^. #allTas . #topDownCounters . #readParsed
+            increment topDownContext.allTas.topDownCounters.readParsed
             z <- DB.getLocatedByKey tx db key
             case z of 
                 Just (Located locations (WellStructuredRO (CerRO ca_))) -> pure $! Located locations ca_
@@ -1609,7 +1609,7 @@ makeMftShortcut key
     serial = getSerial mftObject
     manifestNumber = mftObject.content.mftNumber
     crlShortcut = let 
-        SignCRL {..} = validCrl ^. #signCrl
+        SignCRL {..} = validCrl.signCrl
         in CrlShortcut {
             key = crlKey,
             notBefore = thisUpdateTime,
@@ -1724,19 +1724,19 @@ moreVrps n = updateMetric @ValidationMetric @_ (#vrpCounter %~ (+n))
 extractPPAs :: Ca -> Either ValidationError PublicationPointAccess
 extractPPAs = \case 
     CaShort (CaShortcut {..}) -> Right ppas 
-    CaFull c                  -> getPublicationPointsFromValidatedCert $ c ^. #payload
+    CaFull c                  -> getPublicationPointsFromValidatedCert c.payload
 
 getCaLocations :: Storage s => AppContext s -> Ca -> ValidatorT IO (Maybe Locations)
 getCaLocations AppContext {..} = \case 
     CaShort (CaShortcut {..}) -> 
         roTxT database $ \tx db -> DB.getLocationsByKey tx db key
     CaFull c -> 
-        pure $! Just $ getLocations c
+        pure $! Just $! getLocations c
 
 
 data ManifestValidity e v = InvalidEntry e v 
-                            | InvalidChild e v ObjectKey Text
-                            | ValidEntry v (Maybe MftEntry) ObjectKey Text
+                          | InvalidChild e v ObjectKey Text
+                          | ValidEntry v (Maybe MftEntry) ObjectKey Text
 
 makeChildWithIssues :: ObjectKey -> Text -> MftEntry
 makeChildWithIssues childKey fileName = 
