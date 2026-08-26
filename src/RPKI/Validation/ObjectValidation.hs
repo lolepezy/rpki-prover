@@ -26,8 +26,6 @@ import qualified Crypto.Hash.SHA256               as SHA256
 import           Data.X509
 import           Data.X509.Validation               hiding (InvalidSignature)
 import           Data.ASN1.Types
-import           Data.ASN1.Encoding                 (encodeASN1')
-import           Data.ASN1.BinaryEncoding           (DER(..))
 import           Data.ASN1.BitArray               (BitArray(..))
 
 import           RPKI.AppMonad
@@ -550,51 +548,20 @@ validateAIA cert parentCert = do
     -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.7
     URI aiaUrl <- validateAiaCaIssuersUri $ getCertExtensions cert
     let parentUrls = locationsToList locations
-    unless (matchesOneOfParentLocations aiaUrl parentUrls) $
-        vPureWarning $ AIANotSameAsParentLocation aiaUrl locations
-  where
-    matchesOneOfParentLocations childAia = any (sameObjectLocation childAia)
-
-    -- Parent certificates may be fetched via RRDP (https://...) while child AIA
-    -- still points to mandatory rsync:// URI for the same object.
-    -- Accept exact matches or scheme-only differences for the same authority/path.
-    -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.7
-    sameObjectLocation a b = a == b || stripScheme a == stripScheme b
-
-    stripScheme u =
-        case Text.breakOn "://" u of
-            (_, rest) | Text.isPrefixOf "://" rest -> Text.drop 3 rest
-            _                                        -> u
-
-
-
--- validateAIA :: 
---     WellStructuredCaCert ->
---     Located WellStructuredCaCert ->
---     PureValidatorT ()
--- validateAIA cert parentCert =    
---     for_ (getSiaExt $ cwsX509certificate $ getCertWithSignature cert) $ \sia -> do 
---         for_ (extractSiaValue sia id_pe_sia) $ \ext -> do             
---             let locations = getLocations parentCert
---             case extractURI ext of 
---                 Left e               -> vPureWarning $ BrokenUri (Text.pack $ show ext) e
---                 Right u@(URI siaUrl) -> do                     
---                     unless ("rsync://" `Text.isPrefixOf` siaUrl) $ 
---                         vPureWarning $ MFTBadAIA u                
---                     unless (siaUrl `elem` locationsToList locations) $                         
---                         vPureWarning $ AIANotSameAsParentLocation siaUrl locations
+    unless (aiaUrl `elem` parentUrls) $
+        vPureWarning $ AIANotSameAsParentLocation aiaUrl locations  
 
 -- | Check if CMS is on the revocation list
 isRevoked :: WithSerial c => c -> Validated CrlObject -> Bool
-isRevoked (getSerial -> serial) (Validated crlObject) = 
+isRevoked (getSerial -> serial) (Validated CrlObject {..}) = 
     Set.member serial revokedSerials
   where
-    SignCRL{..} = signCrl crlObject
+    SignCRL{..} = signCrl
 
 signatureCheck :: SignatureVerification -> PureValidatorT ()
 signatureCheck sv = case sv of
     SignatureFailed e -> vPureError $ InvalidSignature $ convert $ show e
-    SignaturePass -> pure ()
+    SignaturePass     -> pure ()
 
 validateUpdateTimesOrder :: Instant -> Instant -> PureValidatorT ()
 validateUpdateTimesOrder thisUpdateTime nextUpdateTime =
