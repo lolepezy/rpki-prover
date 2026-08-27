@@ -98,8 +98,8 @@ validateAiaCaIssuersUri extensions = do
 
 -- CRLDP must be present and carry a URI with rsync access.
 -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.6
-validateCrlDistributionPointUri :: [ExtensionRaw] -> PureValidatorT URI
-validateCrlDistributionPointUri extensions = do
+validatecrlDPUri :: [ExtensionRaw] -> PureValidatorT URI
+validatecrlDPUri extensions = do
     crlDP <- validateRequiredNonCriticalExtension extensions id_ce_CRLDistributionPoints
     case extractCrlDistributionPoint crlDP of
         Nothing -> vPureError $ CertBrokenExtension id_ce_CRLDistributionPoints crlDP
@@ -107,13 +107,43 @@ validateCrlDistributionPointUri extensions = do
             | "rsync://" `Text.isPrefixOf` url -> pure uri
             | otherwise                         -> vPureError $ UnknownUriType uri
 
+getAiaCaIssuersUriExt :: [ExtensionRaw] -> Maybe URI
+getAiaCaIssuersUriExt exts =
+    extVal exts id_pe_aia >>= (\aia -> extractSiaValue aia id_ad_caIssuers >>= either (const Nothing) Just . extractURI)
+
+deriveCertUrisFromExtensions :: [ExtensionRaw] -> CertUris
+deriveCertUrisFromExtensions extensions =
+    CertUris {
+        aiaCaIssuersUri = getAiaCaIssuersUriExt extensions,
+        crlDPUri = getCrlDistributionPointExt extensions,
+        repositoryUri = getRepositoryUriExt extensions,
+        manifestUri = getManifestUriExt extensions,
+        rrdpNotifyUri = getRrdpNotifyUriExt extensions
+    }
+
+validateDerivedCertUris :: CertUris -> PureValidatorT ()
+validateDerivedCertUris CertUris {..} = do
+    for_ aiaCaIssuersUri $ \uri ->
+        unless (U.isRsyncURI uri) $ vPureError $ UnknownUriType uri
+
+    for_ crlDPUri $ \uri ->
+        unless (U.isRsyncURI uri) $ vPureError $ UnknownUriType uri
+
+    for_ repositoryUri $ \uri ->
+        unless (U.isRsyncURI uri) $ vPureError $ UnknownUriType uri
+
+    for_ manifestUri $ \uri ->
+        unless (U.isRsyncURI uri) $ vPureError $ UnknownUriType uri
+
+    for_ rrdpNotifyUri $ \uri ->
+        unless (U.isRrdpURI uri) $ vPureError $ UnknownUriType uri
+
 -- Child certificates must point to issuer material via AIA and CRLDP.
 -- https://www.rfc-editor.org/rfc/rfc6487#section-7.2
-validateRequiredParentPointerExtensions :: WithCertExtensions c => c -> PureValidatorT ()
-validateRequiredParentPointerExtensions cert = do
-    let extensions = getCertExtensions cert
+validateRequiredParentPointerExtensions :: [ExtensionRaw] -> PureValidatorT ()
+validateRequiredParentPointerExtensions extensions = do
     void $ validateAiaCaIssuersUri extensions
-    void $ validateCrlDistributionPointUri extensions
+    void $ validatecrlDPUri extensions
 
 validateCaCertExtensions :: [ExtensionRaw] -> PureValidatorT ()
 validateCaCertExtensions extensions = do
@@ -252,7 +282,6 @@ chooseTaCert cert cachedCert = do
 -- 
 validateResourceCert :: forall child parent .
     ( SignedCertCore child
-    , WithCertExtensions child
     , CertIssuer parent
     ) =>
     Now ->
@@ -261,10 +290,6 @@ validateResourceCert :: forall child parent .
     Validated CrlObject ->    
     PureValidatorT (Validated child)
 validateResourceCert now cert parentCert vcrl = do
-    -- Enforce profile-mandated issuer pointers on child certificates.
-    -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.6
-    -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.7
-    validateRequiredParentPointerExtensions cert
     void $ validateObjectValidityPeriod cert now
 
     signatureCheck $ validateSignMaterial cert parentCert
@@ -310,7 +335,6 @@ validateResources validationRFC verifiedResources childCert parentCert =
 validateBgpCert ::
     forall bgpCert parent.
     ( SignedCertCore bgpCert
-    , WithCertExtensions bgpCert
     , WithPubKey bgpCert
     , WithSKI bgpCert
     , WithResources bgpCert
@@ -546,7 +570,11 @@ validateAIA cert parentCert = do
     let locations = getLocations parentCert
     -- AIA caIssuers must identify the immediate superior certificate location.
     -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.7
-    URI aiaUrl <- validateAiaCaIssuersUri $ getCertExtensions cert
+    URI aiaUrl <- case cert.certUris.aiaCaIssuersUri of
+        Nothing -> vPureError $ MissingRequiredCertificateExtension id_pe_aia
+        Just uri
+            | U.isRsyncURI uri -> pure uri
+            | otherwise        -> vPureError $ UnknownUriType uri
     let parentUrls = locationsToList locations
     unless (aiaUrl `elem` parentUrls) $
         vPureWarning $ AIANotSameAsParentLocation aiaUrl locations  
@@ -681,18 +709,19 @@ prevalidateObject rpkiObject = do
             pure $! RscRO $ extractCMSObject rsc
 
 
-extractCert :: (WithHash c, WithSKI c, WithAKI c, WithRawResourceCertificate c) => c -> ValidatedCert t
+extractCert :: (WithHash c, WithSKI c, WithAKI c, WithRawResourceCertificate c) => c -> WellStructuredCert t
 extractCert c =
     let rc        = getRawCert c
         cws       = certX509 rc
         cert      = cwsX509certificate cws
+        certUris  = deriveCertUrisFromExtensions $ getExts cert
         (nb, na)  = certValidity cert
-    in ValidatedCert
+    in WellStructuredCert
         { resources  = rc ^. #resources
         , pubKey     = certPubKey cert
         , serial     = Serial $ certSerial cert
         , validity   = ValidityPeriod (newInstant nb) (newInstant na)
-        , extensions = getExts cert
+        , certUris
         , encoded    = cwsEncoded cws
         , signature  = cwsSignature cws
         , sigAlg     = cwsSignatureAlgorithm cws
@@ -701,20 +730,21 @@ extractCert c =
         , aki        = getAKI c
         }    
 
-extractEECert :: EECerObject -> ValidatedEECert
+extractEECert :: EECerObject -> WellStructuredEECert
 extractEECert EECerObject { ski, aki, certificate } =
     let rc        = getRawCert certificate
         cws       = certX509 rc
         cert      = cwsX509certificate cws
+        certUris' = deriveCertUrisFromExtensions $ getExts cert
         (nb, na)  = certValidity cert
-    in ValidatedEECert
+    in WellStructuredEECert
         { ski
         , aki
         , resources  = rc ^. #resources
         , pubKey     = certPubKey cert
         , serial     = Serial $ certSerial cert
         , validity   = ValidityPeriod (newInstant nb) (newInstant na)
-        , extensions = getExts cert
+        , certUris   = certUris'
         , encoded    = cwsEncoded cws
         , signature  = cwsSignature cws
         , sigAlg     = cwsSignatureAlgorithm cws
@@ -741,9 +771,13 @@ extractCMSObject CMSBasedObject { hash, cmsPayload } =
 validateCaCertStructure :: CaCerObject -> PureValidatorT ()
 validateCaCertStructure ca@CaCerObject { ski } = do
     let certWS = getCertWithSignature ca
+    let extensions = extractExtensions ca
+    let certUris = deriveCertUrisFromExtensions extensions
     validateCertX509Structure certWS
     validateSKIMatchesPublicKey ski certWS
-    validateCaCertExtensions $ extractExtensions ca
+    validateRequiredParentPointerExtensions extensions
+    validateCaCertExtensions extensions
+    validateDerivedCertUris certUris
 
 
 -- | Validate self-contained structural properties of a BGP security certificate.
@@ -751,8 +785,11 @@ validateBgpCertStructure :: BgpCerObject -> PureValidatorT ()
 validateBgpCertStructure bgp@BgpCerObject { ski } = do
     let certWS = getCertWithSignature bgp
     let extensions = extractExtensions bgp
+    let certUris = deriveCertUrisFromExtensions extensions
     validateCertX509Structure certWS
     validateBgpCertExtensions extensions
+    validateRequiredParentPointerExtensions extensions
+    validateDerivedCertUris certUris
     let pubKey = certPubKey $ cwsX509certificate certWS
     case pubKey of
         PubKeyEC _ -> pure ()
@@ -857,7 +894,10 @@ validateCmsStructure cmsObject = do
     -- Validate the embedded EE certificate
     validateCertX509Structure (getCertWithSignature scCertificate)
     validateSKIMatchesPublicKey ski (getCertWithSignature scCertificate)
-    validateEeCertExtensions $ extractExtensions scCertificate
+    let eeExtensions = extractExtensions scCertificate
+    validateRequiredParentPointerExtensions eeExtensions
+    validateEeCertExtensions eeExtensions
+    validateDerivedCertUris $ deriveCertUrisFromExtensions eeExtensions
 
     validateCmsEeSignatureConsistency cms
 

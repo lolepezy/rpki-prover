@@ -236,7 +236,7 @@ publicationPointsFromTAL tal cert =
     case tal of 
         PropertiesTAL {..} -> do 
 
-            PublicationPointAccess ppsFromCert <- getPublicationPointsFromValidatedCert cert
+            PublicationPointAccess ppsFromCert <- getPublicationPointsFromWellStructuredCert cert
             
             let uniquePrefetchRepos = map (snd . fromURI) prefetchUris
 
@@ -248,7 +248,7 @@ publicationPointsFromTAL tal cert =
                 maybe ppsFromCert (ppsFromCert <>) $ 
                 nonEmpty prefetchReposToUse
 
-        RFC_TAL {} -> getPublicationPointsFromValidatedCert cert
+        RFC_TAL {} -> getPublicationPointsFromWellStructuredCert cert
   where        
     fromURI r = 
         case r of
@@ -261,21 +261,26 @@ publicationPointsFromTAL tal cert =
 getPublicationPointsFromCertObject :: CaCerObject -> Either ValidationError PublicationPointAccess
 getPublicationPointsFromCertObject = getPublicationPointsFromCert . cwsX509certificate . getCertWithSignature
 
-getPublicationPointsFromValidatedCert :: ValidatedCert t -> Either ValidationError PublicationPointAccess
-getPublicationPointsFromValidatedCert ValidatedCert { extensions = certExtensions } = do 
-    rrdp <- case getRrdpNotifyUriExt certExtensions of
-        Just rrdpNotifyUri
-            | isRrdpURI rrdpNotifyUri -> Right [rrdpPP $ RrdpURL rrdpNotifyUri]
-            | otherwise               -> Left $ UnknownUriType rrdpNotifyUri
+getPublicationPointsFromWellStructuredCert :: WellStructuredCert t -> Either ValidationError PublicationPointAccess
+getPublicationPointsFromWellStructuredCert WellStructuredCert {
+    certUris = CertUris {
+        rrdpNotifyUri = certRrdpNotifyUri,
+        repositoryUri = certRepositoryUri
+    }
+} = do
+    rrdp <- case certRrdpNotifyUri of
+        Just notifyUri
+            | isRrdpURI notifyUri -> Right [rrdpPP $ RrdpURL notifyUri]
+            | otherwise           -> Left $ UnknownUriType notifyUri
         Nothing -> Right []
 
-    rsync <- case getRepositoryUriExt certExtensions of
-        Just repositoryUri
-            | isRsyncURI repositoryUri ->
-                case parseRsyncURL (unURI repositoryUri) of
-                    Left e   -> Left $ BrokenUri (unURI repositoryUri) e
+    rsync <- case certRepositoryUri of
+        Just repoUri
+            | isRsyncURI repoUri ->
+                case parseRsyncURL (unURI repoUri) of
+                    Left e   -> Left $ BrokenUri (unURI repoUri) e
                     Right rr -> Right [rsyncPP rr]
-            | otherwise -> Left $ UnknownUriType repositoryUri
+            | otherwise -> Left $ UnknownUriType repoUri
         Nothing -> Right []
 
     case nonEmpty (rrdp <> rsync) of

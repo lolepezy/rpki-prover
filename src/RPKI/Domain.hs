@@ -950,7 +950,7 @@ instance Monoid EarliestToExpire where
     mempty = EarliestToExpire $ Instant $ 1000_000_000 * 9_223_372_036
 
 
-data ValidatedCert (t :: CertType) = ValidatedCert {
+data WellStructuredCert (t :: CertType) = WellStructuredCert {
         hash       :: Hash,
         ski        :: SKI,
         aki        :: Maybe AKI,
@@ -958,7 +958,7 @@ data ValidatedCert (t :: CertType) = ValidatedCert {
         pubKey     :: X509.PubKey,
         serial     :: Serial,
         validity   :: ValidityPeriod,
-        extensions :: [X509.ExtensionRaw],
+        certUris   :: CertUris,
         encoded    :: BSS.ShortByteString,
         signature  :: SignatureValue,
         sigAlg     :: SignatureAlgorithmIdentifier
@@ -966,34 +966,44 @@ data ValidatedCert (t :: CertType) = ValidatedCert {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)    
 
-instance OfCertType (ValidatedCert t) t
+instance OfCertType (WellStructuredCert t) t
 
-instance {-# OVERLAPPING #-} WithSerial (ValidatedCert t) where getSerial (ValidatedCert { serial }) = serial
-instance {-# OVERLAPPING #-} WithAKI (ValidatedCert t) where getAKI (ValidatedCert { aki }) = aki
-instance {-# OVERLAPPING #-} WithPubKey (ValidatedCert t) where getPubKey (ValidatedCert { pubKey }) = pubKey
-instance {-# OVERLAPPING #-} WithResources (ValidatedCert t) where getResources (ValidatedCert { resources }) = resources
-instance {-# OVERLAPPING #-} WithValidityPeriod (ValidatedCert t) where getValidityPeriod (ValidatedCert { validity }) = validity
+instance {-# OVERLAPPING #-} WithSerial (WellStructuredCert t) where getSerial (WellStructuredCert { serial }) = serial
+instance {-# OVERLAPPING #-} WithAKI (WellStructuredCert t) where getAKI (WellStructuredCert { aki }) = aki
+instance {-# OVERLAPPING #-} WithPubKey (WellStructuredCert t) where getPubKey (WellStructuredCert { pubKey }) = pubKey
+instance {-# OVERLAPPING #-} WithResources (WellStructuredCert t) where getResources (WellStructuredCert { resources }) = resources
+instance {-# OVERLAPPING #-} WithValidityPeriod (WellStructuredCert t) where getValidityPeriod (WellStructuredCert { validity }) = validity
 
 
 -- | Minimized CA certificate.
-type WellStructuredCaCert = ValidatedCert 'CACert
+type WellStructuredCaCert = WellStructuredCert 'CACert
 
 -- | Minimized BGPSec certificate.
-type WellStructuredBgpCert = ValidatedCert 'BGPCert
+type WellStructuredBgpCert = WellStructuredCert 'BGPCert
 
 -- | Minimized EE certificate, stripped of fields that are either
 -- constant-after-prevalidation (CMS versions, digest algorithms) or
 -- derivable from other stored data (SID == SKI, etc.).
 -- Retains only what is needed for chain validation and CMS signature
 -- verification.
-data ValidatedEECert = ValidatedEECert {
+data CertUris = CertUris {
+        aiaCaIssuersUri :: Maybe URI,
+        crlDPUri        :: Maybe URI,
+        repositoryUri   :: Maybe URI,
+        manifestUri     :: Maybe URI,
+        rrdpNotifyUri   :: Maybe URI
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+data WellStructuredEECert = WellStructuredEECert {
         ski        :: SKI,
         aki        :: AKI,
         resources  :: AllResources,
         pubKey     :: X509.PubKey,
         serial     :: Serial,
         validity   :: ValidityPeriod,
-        extensions :: [X509.ExtensionRaw],
+        certUris   :: CertUris,
         encoded    :: BSS.ShortByteString,   -- TBSCertificate DER bytes
         signature  :: SignatureValue,
         sigAlg     :: SignatureAlgorithmIdentifier
@@ -1001,17 +1011,17 @@ data ValidatedEECert = ValidatedEECert {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
-instance OfCertType ValidatedEECert 'EECert
+instance OfCertType WellStructuredEECert 'EECert
 
-instance {-# OVERLAPPING #-} WithPubKey ValidatedEECert where getPubKey (ValidatedEECert { pubKey }) = pubKey
-instance WithResources ValidatedEECert where getResources (ValidatedEECert { resources }) = resources
-instance {-# OVERLAPPING #-} WithValidityPeriod ValidatedEECert where getValidityPeriod (ValidatedEECert { validity }) = validity
-instance {-# OVERLAPPING #-} WithSignMaterial ValidatedEECert where
-    getSignMaterial ValidatedEECert { sigAlg = algorithm, signature, encoded = signedData } =
+instance {-# OVERLAPPING #-} WithPubKey WellStructuredEECert where getPubKey (WellStructuredEECert { pubKey }) = pubKey
+instance WithResources WellStructuredEECert where getResources (WellStructuredEECert { resources }) = resources
+instance {-# OVERLAPPING #-} WithValidityPeriod WellStructuredEECert where getValidityPeriod (WellStructuredEECert { validity }) = validity
+instance {-# OVERLAPPING #-} WithSignMaterial WellStructuredEECert where
+    getSignMaterial WellStructuredEECert { sigAlg = algorithm, signature, encoded = signedData } =
         SignMaterial {..}
 
-instance {-# OVERLAPPING #-} WithSignMaterial (ValidatedCert t) where
-    getSignMaterial ValidatedCert { sigAlg = algorithm, signature, encoded = signedData } =
+instance {-# OVERLAPPING #-} WithSignMaterial (WellStructuredCert t) where
+    getSignMaterial WellStructuredCert { sigAlg = algorithm, signature, encoded = signedData } =
         SignMaterial {..}
 
 
@@ -1020,7 +1030,7 @@ instance {-# OVERLAPPING #-} WithSignMaterial (ValidatedCert t) where
 data WellStructuredCms a = WellStructuredCms {
         hash          :: Hash,
         content       :: a,
-        eeCert        :: ValidatedEECert,
+        eeCert        :: WellStructuredEECert,
         signingTime   :: Instant,
         cmsSignature  :: SignatureValue,
         signedAttrsBS :: BSS.ShortByteString   -- raw DER signed-attributes
@@ -1028,16 +1038,16 @@ data WellStructuredCms a = WellStructuredCms {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
-instance {-# OVERLAPPING #-} WithAKI  (WellStructuredCms a) where getAKI  (WellStructuredCms { eeCert = ValidatedEECert { aki } }) = Just aki
+instance {-# OVERLAPPING #-} WithAKI  (WellStructuredCms a) where getAKI  (WellStructuredCms { eeCert = WellStructuredEECert { aki } }) = Just aki
 instance {-# OVERLAPPING #-} WithPubKey (WellStructuredCms a) where getPubKey (WellStructuredCms { eeCert }) = getPubKey eeCert
 instance {-# OVERLAPPING #-} WithResources (WellStructuredCms a) where getResources (WellStructuredCms { eeCert }) = getResources eeCert
 instance {-# OVERLAPPING #-} WithValidityPeriod (WellStructuredCms a) where getValidityPeriod (WellStructuredCms { eeCert }) = getValidityPeriod eeCert
 
-instance {-# OVERLAPPING #-} WithSerial ValidatedEECert  where 
-    getSerial (ValidatedEECert  { serial }) = serial
+instance {-# OVERLAPPING #-} WithSerial WellStructuredEECert  where 
+    getSerial (WellStructuredEECert  { serial }) = serial
 
 instance {-# OVERLAPPING #-} WithSerial (WellStructuredCms a) where
-    getSerial (WellStructuredCms { eeCert = ValidatedEECert { serial } }) = serial
+    getSerial (WellStructuredCms { eeCert = WellStructuredEECert { serial } }) = serial
 
 
 -- Small utility functions that don't have anywhere else to go

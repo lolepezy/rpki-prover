@@ -242,6 +242,7 @@ objectToDto = \case
                             in PubKeyDto {..}
                         _ -> Left $ Text.pack $ show $ X509.certPubKey x509cert
 
+            certificateUris = getCertificateUris $ rawCert.certX509
             extensions = getExtensions $ rawCert.certX509
 
         in CertificateDto {..}
@@ -299,6 +300,16 @@ objectToDto = \case
             urlText = \case 
                 Nothing -> "undefined"
                 Just bs -> either id unURI $ extractURI bs
+
+        getCertificateUris cert =
+            let exts = getExtsSign cert
+                aiaCaIssuersUri =
+                    extVal exts id_pe_aia >>= (\aia -> extractSiaValue aia id_ad_caIssuers >>= either (const Nothing) Just . extractURI)
+                crlDPUri = getCrlDistributionPointExt exts
+                repositoryUri = getRepositoryUriExt exts
+                manifestUri = getManifestUriExt exts
+                rrdpNotifyUri = getRrdpNotifyUriExt exts
+            in CertUris {..}
 
 
     aspaDto = aspaToDto . getCMSContent . (^. #cmsPayload)
@@ -421,14 +432,14 @@ wellStructuredToDto = \case
             bgpSecSki = getSKI bgpCert
         in bgpSecToDto BGPSecPayload {..}
 
-validatedCaToDto :: ValidatedCert c -> ObjectDto
+validatedCaToDto :: WellStructuredCert c -> ObjectDto
 validatedCaToDto cert =
     let
         ValidityPeriod nb na = getValidityPeriod cert
         AllResources ipv4R ipv6R asnR = RPKI.Domain.getResources cert
-        ValidatedCert {
+        WellStructuredCert {
             pubKey = certPubKey,
-            extensions = certExtensions,
+            certUris = certificateUris,
             sigAlg = SignatureAlgorithmIdentifier signatureAlgorithm
         } = cert
         ipv4 = asRS ipv4R
@@ -451,7 +462,8 @@ validatedCaToDto cert =
             ipv4 = ipv4,
             ipv6 = ipv6,
             asn = asn,
-            extensions = ExtensionsDto $ map mapExt certExtensions
+            certificateUris = certificateUris,
+            extensions = ExtensionsDto []
         }
     }
   where
@@ -466,50 +478,6 @@ validatedCaToDto cert =
             pubKeyExp = public_e
         }
         other -> Left $ Text.pack $ show other
-
-    mapExt X509.ExtensionRaw {..} = let
-            oid      = OIDDto extRawOID
-            bytes    = extRawContent
-            critical = extRawCritical
-            value = case () of
-                _
-                    | extRawOID == id_ce_keyUsage ->
-                        strExt (Proxy :: Proxy X509.ExtKeyUsage) extRawContent
-                    | extRawOID == id_ce_basicConstraints ->
-                        strExt (Proxy :: Proxy X509.ExtBasicConstraints) extRawContent
-                    | extRawOID == id_ce_CRLDistributionPoints ->
-                        maybe "undefined" unURI (extractCrlDistributionPoint extRawContent)
-                    | extRawOID == id_ad_rpki_notify ->
-                        urlText $ extractSiaValue extRawContent id_ad_rpki_notify
-                    | extRawOID == id_pe_sia ->
-                        urlText $ extractSiaValue extRawContent id_ad_rpki_notify
-                              <|> extractSiaValue extRawContent id_ad_rpki_repository
-                              <|> extractSiaValue extRawContent id_ad_rpkiManifest
-                    | extRawOID == id_pe_aia ->
-                        urlText $ extractSiaValue extRawContent id_ad_caIssuers
-                              <|> extractSiaValue extRawContent id_ad_rpki_notify
-                              <|> extractSiaValue extRawContent id_ad_rpki_repository
-                              <|> extractSiaValue extRawContent id_ad_rpkiManifest
-                    | extRawOID == id_subjectKeyId ->
-                        case runPureValidator (newScopes "id_subjectKeyId") $ parseKI extRawContent of
-                            (Left e, _)   -> Text.pack $ "Could not parse SKI: " <> show e
-                            (Right ki, _) -> Text.pack $ show ki
-                    | extRawOID == id_authorityKeyId ->
-                        case runPureValidator (newScopes "id_subjectKeyId") $ parseKI extRawContent of
-                            (Left e, _)   -> Text.pack $ "Could not parse AKI: " <> show e
-                            (Right ki, _) -> Text.pack $ show ki
-                    | extRawOID == id_pe_ipAddrBlocks -> "IP resources (see 'ipv4', 'ipv6' fields)"
-                    | extRawOID == id_pe_autonomousSysIds -> "ASN resources (see 'asn' field)"
-                    | extRawOID == id_ce_certificatePolicies -> certificatePoliciesToText extRawContent
-                    | otherwise -> "Unrecognised extension"
-        in ExtensionDto {..}
-
-    strExt :: forall a . (Show a, X509.Extension a) => Proxy a -> BS.ByteString -> Text
-    strExt _ bytes = Text.pack $ show (X509.extDecodeBs bytes :: Either String a)
-
-    urlText = \case
-        Nothing -> "undefined"
-        Just bs -> either id unURI $ extractURI bs
 
 -- | 'manifestDto' variant for validated manifest objects.
 manifestDtoV :: WellStructuredCms Manifest -> ManifestDto

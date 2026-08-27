@@ -172,12 +172,13 @@ data CertificateDto = CertificateDto {
         certSignatureAlg :: Text,
         certIssuerDN     :: Text,
         certSubjectDN    :: Text,
-        notBefore   :: Instant,
-        notAfter    :: Instant,        
+        notBefore        :: Instant,
+        notAfter         :: Instant,        
         pubKey           :: Either Text PubKeyDto,
         ipv4             :: IntervalSet Ipv4Prefix,        
         ipv6             :: IntervalSet Ipv6Prefix,        
         asn              :: IntervalSet AsResource,
+    certificateUris  :: CertUris,
         extensions       :: ExtensionsDto
     }
     deriving stock (Eq, Show, Generic)
@@ -467,6 +468,7 @@ instance ToJSON a => ToJSON (ObjectContentDto a) where
 
 instance ToJSON a => ToJSON (CMSObjectDto a)
 instance ToJSON CertificateDto
+instance ToJSON CertUris
 instance ToJSON PubKeyDto
 instance ToJSON ExtensionDto where
     toJSON = genericToJSON defaultOptions { omitNothingFields = True }
@@ -545,6 +547,7 @@ instance ToSchema ObjectDto
 instance ToSchema a => ToSchema (ObjectContentDto a)
 instance ToSchema a => ToSchema (CMSObjectDto a)
 instance ToSchema CertificateDto
+instance ToSchema CertUris
 instance ToSchema PubKeyDto
 instance ToSchema ExtensionDto where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)

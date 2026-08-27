@@ -9,7 +9,6 @@ import           Data.Foldable
 import qualified Data.Set.NonEmpty                as NESet
 import qualified Data.Set                         as Set
 import qualified Data.Text                        as Text
-import qualified Data.X509                        as X509
 
 import           RPKI.AppMonad
 import           RPKI.Domain
@@ -26,35 +25,17 @@ createVerifiedResources :: WithResources c => c -> VerifiedRS PrefixesAndAsns
 createVerifiedResources c = 
     VerifiedRS $ toPrefixesAndAsns $ getResources c
 
-class WithCertExtensions a where
-    getCertExtensions :: a -> [X509.ExtensionRaw]
+class WithCertUris a where
+    getCertUris :: a -> CertUris
 
-instance WithCertExtensions CertificateWithSignature where
-    getCertExtensions = getExtsSign
+instance WithCertUris (WellStructuredCert t) where
+    getCertUris WellStructuredCert { certUris = uris } = uris
 
-instance WithCertExtensions RawResourceCertificate where
-    getCertExtensions = getCertExtensions . certX509
+instance WithCertUris WellStructuredEECert where
+    getCertUris WellStructuredEECert { certUris = uris } = uris
 
-instance WithCertExtensions ResourceCertificate where
-    getCertExtensions = getCertExtensions . getRawCert
-
-instance WithCertExtensions CaCerObject where
-    getCertExtensions = getCertExtensions . getRawCert
-
-instance WithCertExtensions EECerObject where
-    getCertExtensions = getCertExtensions . getRawCert
-
-instance WithCertExtensions BgpCerObject where
-    getCertExtensions = getCertExtensions . getRawCert
-
-instance WithCertExtensions a => WithCertExtensions (Located a) where
-    getCertExtensions = getCertExtensions . payload
-
-instance WithCertExtensions (ValidatedCert t) where
-    getCertExtensions ValidatedCert {..} = extensions
-
-instance WithCertExtensions ValidatedEECert where
-    getCertExtensions ValidatedEECert { extensions = exts } = exts
+instance WithCertUris a => WithCertUris (Located a) where
+    getCertUris = getCertUris . payload
 
 validateMftFileName :: Monad m => Text.Text -> ValidatorT m ()
 validateMftFileName filename =                
@@ -80,10 +61,10 @@ findCrlOnMft mft = filter (\(MftPair name _) -> ".crl" `Text.isSuffixOf` name) $
 
 -- | Check that manifest URL in the certificate is the same as the one 
 -- the manifest was actually fetched from.
-validateMftLocation :: (WithCertExtensions c, Monad m, WithLocations c, WithLocations mft) =>
+validateMftLocation :: (WithCertUris c, Monad m, WithLocations c, WithLocations mft) =>
                         mft -> c -> ValidatorT m ()
 validateMftLocation mft parentCertficate = 
-    case getManifestUriExt $ getCertExtensions parentCertficate of
+    case manifestUri $ getCertUris parentCertficate of
         Nothing     -> vError NoMFTSIA
         Just mftSIA -> do 
             unless (".mft" `Text.isSuffixOf` (unURI mftSIA)) $ 
@@ -105,11 +86,11 @@ validateObjectLocations (getLocations -> Locations locSet) =
 -- | Check that CRL URL in the certificate is the same as the one 
 -- the CRL was actually fetched from. 
 -- 
-checkCrlLocation :: (Monad m, WithLocations a, WithCertExtensions c) => a
+checkCrlLocation :: (Monad m, WithLocations a, WithCertUris c) => a
                     -> c
                     -> ValidatorT m ()
 checkCrlLocation crl parentCertificate = 
-    for_ (getCrlDistributionPointExt $ getCertExtensions parentCertificate) $ \crlDP -> do
+    for_ (crlDPUri $ getCertUris parentCertificate) $ \crlDP -> do
         let crlLocations = getLocations crl
         when (Set.null $ NESet.filter ((crlDP ==) . getURL) $ unLocations crlLocations) $ 
             vError $ CRLOnDifferentLocation crlDP crlLocations

@@ -408,16 +408,16 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
 
         case z of     
             FetchedTA actualUrl object -> do                                 
-                fetchedValidatedCert <- vHoist $ validateTACert tal actualUrl object
+                fetchedCert <- vHoist $ validateTACert tal actualUrl object
 
                 (certToUse, certToStore) <- case storableTa of
-                    Nothing  -> pure (fetchedValidatedCert, fetchedValidatedCert)
+                    Nothing  -> pure (fetchedCert, fetchedCert)
                     Just StorableTA { taCert = cachedTaCert } ->
                         vHoist (do
-                            cert <- chooseTaCert fetchedValidatedCert cachedTaCert
+                            cert <- chooseTaCert fetchedCert cachedTaCert
                             pure $ if cert == cachedTaCert
                                 then (cachedTaCert, cachedTaCert)
-                                else (fetchedValidatedCert, fetchedValidatedCert))
+                                else (fetchedCert, fetchedCert))
                         `catchError`
                             (\e -> do
                                 logError logger [i|Fetched TA certificate is invalid with error #{e}, will use cached copy.|]
@@ -1177,7 +1177,7 @@ validateCaNoFetch
                 case r of 
                     Left _  -> pure $! Just $! makeChildWithIssues childKey fileName
                     Right _  -> do 
-                        case getPublicationPointsFromValidatedCert childCert of 
+                        case getPublicationPointsFromWellStructuredCert childCert of 
                             -- It's not going to happen?
                             Left e     -> vError e
                             Right ppas -> do 
@@ -1731,7 +1731,7 @@ moreVrps n = updateMetric @ValidationMetric @_ (#vrpCounter %~ (+n))
 extractPPAs :: Ca -> Either ValidationError PublicationPointAccess
 extractPPAs = \case 
     CaShort (CaShortcut {..}) -> Right ppas 
-    CaFull c                  -> getPublicationPointsFromValidatedCert c.payload
+    CaFull c                  -> getPublicationPointsFromWellStructuredCert c.payload
 
 getCaLocations :: Storage s => AppContext s -> Ca -> ValidatorT IO (Maybe Locations)
 getCaLocations AppContext {..} = \case 
