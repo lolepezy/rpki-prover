@@ -145,10 +145,8 @@ data ObjectContentDto payload = ObjectContentDto {
 
 
 data CMSObjectDto cmsPayload = CMSObjectDto {
-        cmsVersion         :: CMSVersion,
-        signedInfoVersion  :: CMSVersion,
+        encapsulatedContentType :: ContentType,    
         contentType        :: ContentType,        
-        encapsulatedContentType :: ContentType,        
         digestAlgorithms   :: DigestAlgorithmIdentifiers,
         signatureAlgorithm :: SignatureAlgorithmIdentifier,
         signerIdentifier   :: SignerIdentifier,        

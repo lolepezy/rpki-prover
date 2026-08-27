@@ -71,12 +71,12 @@ bgpSecToDto BGPSecPayload {..} = BgpCertDto {
 aspaToDto :: Aspa -> AspaDto
 aspaToDto aspa =
     AspaDto {
-        customer = aspa ^. #customer,
-        providers = Set.toList $ aspa ^. #providers
+        customer = aspa.customer,
+        providers = Set.toList $ aspa.providers
 }
 
 gbrObjectToDto :: GbrObject -> GbrDto
-gbrObjectToDto g = gbrToDto $ getCMSContent $ g ^. #cmsPayload
+gbrObjectToDto g = gbrToDto $ getCMSContent $ g.cmsPayload
 
 gbrToDto :: Gbr -> GbrDto
 gbrToDto (Gbr vcardBS) = let    
@@ -191,39 +191,37 @@ objectToDto = \case
         }
 
     cmsDto c cmsPayload = let
-            signedObject = unCMS $ c ^. #cmsPayload
-            contentType  = signedObject ^. #soContentType
-            signedData   = signedObject ^. #soContent
-            cmsVersion         = signedData ^. #scVersion
-            signedInfoVersion  = signedData ^. #scSignerInfos . #siVersion
-            digestAlgorithms   = signedData ^. #scDigestAlgorithms
-            signerIdentifier   = signedData ^. #scSignerInfos . #siSid
-            signatureAlgorithm = signedData ^. #scSignerInfos . #signatureAlgorithm
-            signature          = signedData ^. #scSignerInfos . #signature
-            signedAttributes   = signedData ^. #scSignerInfos . #signedAttrs
-            encapsulatedContentType = signedData ^. #scEncapContentInfo . #eContentType
+            CMS signedObject = c.cmsPayload
+            contentType  = signedObject.soContentType
+            signedData   = signedObject.soContent
+            digestAlgorithms   = signedData.scDigestAlgorithms
+            signerIdentifier   = signedData.scSignerInfos.siSid
+            signatureAlgorithm = signedData.scSignerInfos.signatureAlgorithm
+            signature          = signedData.scSignerInfos.signature
+            signedAttributes   = signedData.scSignerInfos.signedAttrs
+            encapsulatedContentType = signedData.scEncapContentInfo.eContentType
         in objectDto c CMSObjectDto {..}
                 & #eeCertificate ?~ certDto c
                 & #ski ?~ getSKI c
 
     roaDto r = let
-                VrpsPerAs asn v4s v6s = getCMSContent $ r ^. #cmsPayload
+                VrpsPerAs asn v4s v6s = getCMSContent $ r.cmsPayload
                 prefixes = map (\(Vrp4 p l) -> RoaPrefixDto (Ipv4P p) l) v4s
                         <> map (\(Vrp6 p l) -> RoaPrefixDto (Ipv6P p) l) v6s
             in RoaDto {..}
 
-    splDto r = let SplPayload asn prefixes = getCMSContent $ r ^. #cmsPayload 
+    splDto r = let SplPayload asn prefixes = getCMSContent $ r.cmsPayload 
                 in SplPayloadDto {..}
 
     crlDto CrlObject {..} = let
             SignCRL {..} = signCrl
-        in CrlDto { revokedSerials = Set.toList $ signCrl ^. #revokedSerials, .. }
+        in CrlDto { revokedSerials = Set.toList $ signCrl.revokedSerials, .. }
 
     certDto c = let
             rawCert = getRawCert c
 
-            AllResources (asRS -> ipv4) (asRS -> ipv6) (asRS -> asn) = rawCert ^. #resources
-            x509cert = rawCert ^. #certX509 . #cwsX509certificate
+            AllResources (asRS -> ipv4) (asRS -> ipv6) (asRS -> asn) = rawCert.resources
+            x509cert = rawCert.certX509.cwsX509certificate
 
             certVersion = Version $ fromIntegral $ X509.certVersion x509cert
             certSerial  = Serial $ X509.certSerial x509cert
@@ -244,7 +242,7 @@ objectToDto = \case
                             in PubKeyDto {..}
                         _ -> Left $ Text.pack $ show $ X509.certPubKey x509cert
 
-            extensions = getExtensions $ rawCert ^. #certX509
+            extensions = getExtensions $ rawCert.certX509
 
         in CertificateDto {..}
       where
@@ -306,12 +304,12 @@ objectToDto = \case
     aspaDto = aspaToDto . getCMSContent . (^. #cmsPayload)
 
     rscDto r = let 
-            rsc@Rsc {..} = getCMSContent $ r ^. #cmsPayload
-        in RscDto { checkList = map (\(T2 f h) -> CheckListDto f h) $ rsc ^. #checkList, ..}
+            rsc@Rsc {..} = getCMSContent $ r.cmsPayload
+        in RscDto { checkList = map (\(T2 f h) -> CheckListDto f h) $ rsc.checkList, ..}
 
     bgpSecDto :: BgpCerObject -> BgpCertDto
     bgpSecDto bgpCert = let
-            AllResources _ _ asns = getRawCert bgpCert ^. #resources
+            AllResources _ _ asns = getResources bgpCert
             bgpSecSpki = getSubjectPublicKeyInfo bgpCert
             bgpSecAsns = case asns of
                             Inherit -> []
@@ -324,11 +322,11 @@ objectToDto = \case
 
 manifestDto :: MftObject -> ManifestDto
 manifestDto m = let
-        mft@Manifest {..} = getCMSContent $ m ^. #cmsPayload
+        mft@Manifest {..} = getCMSContent $ m.cmsPayload
         entries = map (\(MftPair f h) -> (f, h)) mftEntries
     in
         ManifestDto {
-            fileHashAlg = Text.pack $ show $ mft ^. #fileHashAlg,
+            fileHashAlg = Text.pack $ show $ mft.fileHashAlg,
             ..
         }
 
@@ -350,9 +348,9 @@ wellStructuredToDto = \case
     MftRO m  -> ManifestD $ mkCmsObjectContent m $ manifestDtoV m
     RoaRO r  -> ROAD $ mkCmsObjectContent r $ roaDtoW r
     SplRO s  -> SPLD $ mkCmsObjectContent s $ splDtoW s
-    GbrRO g  -> GBRD $ mkCmsObjectContent g $ gbrToDto $ g ^. #content
+    GbrRO g  -> GBRD $ mkCmsObjectContent g $ gbrToDto $ g.content
     RscRO r  -> RSCD $ mkCmsObjectContent r $ rscDtoW r
-    AspaRO a -> ASPAD $ mkCmsObjectContent a $ aspaToDto $ a ^. #content
+    AspaRO a -> ASPAD $ mkCmsObjectContent a $ aspaToDto $ a.content
   where
     mkObjectContent :: (WithHash o, WithAKI o) => o -> Maybe SKI -> payload -> ObjectContentDto payload
     mkObjectContent o ski payload =
@@ -367,20 +365,18 @@ wellStructuredToDto = \case
     mkCmsObjectContent :: WellStructuredCms payload -> cmsPayload -> ObjectContentDto (CMSObjectDto cmsPayload)
     mkCmsObjectContent cms payload =
         ObjectContentDto {
-            hash = cms ^. #hash,
-            ski = Just $ cms ^. #eeCert . #ski,
-            aki = Just $ cms ^. #eeCert . #aki,
+            hash = cms.hash,
+            ski = Just $ cms.eeCert.ski,
+            aki = Just $ cms.eeCert.aki,
             eeCertificate = Nothing,
             objectPayload = CMSObjectDto {
-                cmsVersion = CMSVersion 3,
-                signedInfoVersion = CMSVersion 3,
                 contentType = signedDataContentType,
                 encapsulatedContentType = signedDataContentType,
                 digestAlgorithms = DigestAlgorithmIdentifiers [id_sha256],
-                signatureAlgorithm = cms ^. #eeCert . #sigAlg,
-                signerIdentifier = signerIdentifierFromSki $ cms ^. #eeCert . #ski,
-                signature = cms ^. #cmsSignature,
-                signedAttributes = SignedAttributes [] (cms ^. #signedAttrsBS),
+                signatureAlgorithm = cms.eeCert.sigAlg,
+                signerIdentifier = signerIdentifierFromSki cms.eeCert.ski,
+                signature = cms.cmsSignature,
+                signedAttributes = SignedAttributes [] (cms.signedAttrsBS),
                 cmsPayload = payload
             }
         }
@@ -393,25 +389,25 @@ wellStructuredToDto = \case
 
     roaDtoW :: WellStructuredCms VrpsPerAs -> RoaDto
     roaDtoW r = let
-            VrpsPerAs asn v4s v6s = r ^. #content
+            VrpsPerAs asn v4s v6s = r.content
             prefixes = map (\(Vrp4 p l) -> RoaPrefixDto (Ipv4P p) l) v4s
                     <> map (\(Vrp6 p l) -> RoaPrefixDto (Ipv6P p) l) v6s
         in RoaDto {..}
 
     splDtoW :: WellStructuredCms SplPayload -> SplPayloadDto
     splDtoW r = let
-            SplPayload asn prefixes = r ^. #content
+            SplPayload asn prefixes = r.content
         in SplPayloadDto {..}
 
     crlDtoW :: CrlObject -> CrlDto
     crlDtoW CrlObject {..} = let
             SignCRL {..} = signCrl
-        in CrlDto { revokedSerials = Set.toList $ signCrl ^. #revokedSerials, .. }
+        in CrlDto { revokedSerials = Set.toList $ signCrl.revokedSerials, .. }
 
     rscDtoW :: WellStructuredCms Rsc -> RscDto
     rscDtoW r = let
-            rsc@Rsc {..} = r ^. #content
-        in RscDto { checkList = map (\(T2 f h) -> CheckListDto f h) $ rsc ^. #checkList, .. }
+            rsc@Rsc {..} = r.content
+        in RscDto { checkList = map (\(T2 f h) -> CheckListDto f h) $ rsc.checkList, .. }
 
     bgpSecDtoW :: WellStructuredBgpCert -> BgpCertDto
     bgpSecDtoW bgpCert = let
@@ -518,11 +514,11 @@ validatedCaToDto cert =
 -- | 'manifestDto' variant for validated manifest objects.
 manifestDtoV :: WellStructuredCms Manifest -> ManifestDto
 manifestDtoV m = let
-        mft@Manifest {..} = m ^. #content
+        mft@Manifest {..} = m.content
         entries = map (\(MftPair f h) -> (f, h)) mftEntries
     in
         ManifestDto {
-            fileHashAlg = Text.pack $ show $ mft ^. #fileHashAlg,
+            fileHashAlg = Text.pack $ show $ mft.fileHashAlg,
             ..
         }
 
