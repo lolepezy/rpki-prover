@@ -332,11 +332,98 @@ manifestDto m = let
             ..
         }
 
--- | Convert a lifecycle entry to a DTO.  For 'WellStructuredRO' we currently return
--- 'OriginalBlobD' with the hash and type; a richer DTO can be added later.
+-- | Convert a lifecycle entry to a DTO.
+--
+-- 'OriginalRO' means parse/prevalidation failed, so only hash/type are available.
+-- 'WellStructuredRO' means parsing succeeded, so expose a typed object DTO.
 lifecycleToDto :: RpkiObjectLifecycle -> ObjectDto
 lifecycleToDto (OriginalRO _ _ h t) = OriginalBlobD h t
-lifecycleToDto (WellStructuredRO vro)    = OriginalBlobD (getHash vro) (getRpkiObjectType vro)
+lifecycleToDto (WellStructuredRO vro) = wellStructuredToDto vro
+
+wellStructuredToDto :: WellStructuredRpkiObject -> ObjectDto
+wellStructuredToDto = \case
+    CerRO c -> validatedCaToDto c
+    CrlRO c -> CRLD $ mkObjectContent c Nothing (crlDtoW c)
+    BgpRO b -> BGPSecD $ mkObjectContent b (Just $ getSKI b) (bgpSecDtoW b)
+
+    -- CMS-based minimized objects still carry enough information for payload DTOs.
+    MftRO m  -> ManifestD $ mkCmsObjectContent m $ manifestDtoV m
+    RoaRO r  -> ROAD $ mkCmsObjectContent r $ roaDtoW r
+    SplRO s  -> SPLD $ mkCmsObjectContent s $ splDtoW s
+    GbrRO g  -> GBRD $ mkCmsObjectContent g $ gbrToDto $ g ^. #content
+    RscRO r  -> RSCD $ mkCmsObjectContent r $ rscDtoW r
+    AspaRO a -> ASPAD $ mkCmsObjectContent a $ aspaToDto $ a ^. #content
+  where
+    mkObjectContent :: (WithHash o, WithAKI o) => o -> Maybe SKI -> payload -> ObjectContentDto payload
+    mkObjectContent o ski payload =
+        ObjectContentDto {
+            hash = getHash o,
+            ski = ski,
+            aki = getAKI o,
+            eeCertificate = Nothing,
+            objectPayload = payload
+        }
+
+    mkCmsObjectContent :: WellStructuredCms payload -> cmsPayload -> ObjectContentDto (CMSObjectDto cmsPayload)
+    mkCmsObjectContent cms payload =
+        ObjectContentDto {
+            hash = cms ^. #hash,
+            ski = Just $ cms ^. #eeCert . #ski,
+            aki = Just $ cms ^. #eeCert . #aki,
+            eeCertificate = Nothing,
+            objectPayload = CMSObjectDto {
+                cmsVersion = CMSVersion 3,
+                signedInfoVersion = CMSVersion 3,
+                contentType = signedDataContentType,
+                encapsulatedContentType = signedDataContentType,
+                digestAlgorithms = DigestAlgorithmIdentifiers [id_sha256],
+                signatureAlgorithm = cms ^. #eeCert . #sigAlg,
+                signerIdentifier = signerIdentifierFromSki $ cms ^. #eeCert . #ski,
+                signature = cms ^. #cmsSignature,
+                signedAttributes = SignedAttributes [] (cms ^. #signedAttrsBS),
+                cmsPayload = payload
+            }
+        }
+
+    signerIdentifierFromSki :: SKI -> SignerIdentifier
+    signerIdentifierFromSki (SKI (KI skiBytes)) = SignerIdentifier skiBytes
+
+    signedDataContentType :: ContentType
+    signedDataContentType = ContentType [1, 2, 840, 113549, 1, 7, 2]
+
+    roaDtoW :: WellStructuredCms VrpsPerAs -> RoaDto
+    roaDtoW r = let
+            VrpsPerAs asn v4s v6s = r ^. #content
+            prefixes = map (\(Vrp4 p l) -> RoaPrefixDto (Ipv4P p) l) v4s
+                    <> map (\(Vrp6 p l) -> RoaPrefixDto (Ipv6P p) l) v6s
+        in RoaDto {..}
+
+    splDtoW :: WellStructuredCms SplPayload -> SplPayloadDto
+    splDtoW r = let
+            SplPayload asn prefixes = r ^. #content
+        in SplPayloadDto {..}
+
+    crlDtoW :: CrlObject -> CrlDto
+    crlDtoW CrlObject {..} = let
+            SignCRL {..} = signCrl
+        in CrlDto { revokedSerials = Set.toList $ signCrl ^. #revokedSerials, .. }
+
+    rscDtoW :: WellStructuredCms Rsc -> RscDto
+    rscDtoW r = let
+            rsc@Rsc {..} = r ^. #content
+        in RscDto { checkList = map (\(T2 f h) -> CheckListDto f h) $ rsc ^. #checkList, .. }
+
+    bgpSecDtoW :: WellStructuredBgpCert -> BgpCertDto
+    bgpSecDtoW bgpCert = let
+            AllResources _ _ asns = getResources bgpCert
+            bgpSecSpki = getSubjectPublicKeyInfo bgpCert
+            bgpSecAsns = case asns of
+                            Inherit -> []
+                            RS r
+                                | IS.null r -> []
+                                | otherwise -> unwrapAsns $ IS.toList r
+            bgpSecSki = getSKI bgpCert
+        in bgpSecToDto BGPSecPayload {..}
 
 validatedCaToDto :: ValidatedCert c -> ObjectDto
 validatedCaToDto cert =

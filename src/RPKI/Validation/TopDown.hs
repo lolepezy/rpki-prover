@@ -561,9 +561,15 @@ validateCaNoLimitChecks
             -- missing manifests, so just don't go there
             unless (all ((== Pending) . snd) caFetcheables) $ do   
                 let primaryUrl = getPrimaryRepositoryUrl publicationPoints ppAccess
-                vFocusOn PPFocus primaryUrl $
-                    metricFocusOn PPFocus primaryUrl $
-                        validateCaNoFetch appContext topDownContext ca
+                let validateWithPpScope =
+                        vFocusOn PPFocus primaryUrl $
+                            metricFocusOn PPFocus primaryUrl $
+                                validateCaNoFetch appContext topDownContext ca
+                case ca of
+                    CaFull c ->
+                        vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) validateWithPpScope
+                    CaShort c ->
+                        vFocusOn ObjectFocus (c ^. #key) validateWithPpScope
   where
     mergeFetcheables caFetcheables =
         case map fst caFetcheables of 
@@ -1507,9 +1513,10 @@ resolveTroubledChildByKey tx db childKey =
             pure $! Just (TroubledFromParsed, Keyed (Located locations vro) childKey)
 
         Just (Located locations (OriginalRO (ObjectOriginal blob) _ _ t)) -> do
-            parsedRo <- vFocusOn ObjectFocus childKey $ vHoist $ readObjectOfType t blob
-            validatedRo <- vHoist $ prevalidateObject parsedRo
-            pure $! Just (TroubledFromOriginal, Keyed (Located locations validatedRo) childKey)
+            vFocusOn ObjectFocus childKey $ do
+                parsedRo <- vHoist $ readObjectOfType t blob
+                validatedRo <- vHoist $ prevalidateObject parsedRo
+                pure $! Just (TroubledFromOriginal, Keyed (Located locations validatedRo) childKey)
 
         _ -> pure Nothing
 
