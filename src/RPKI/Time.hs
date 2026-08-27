@@ -148,8 +148,7 @@ instantTimeFormat :: Instant -> String
 instantTimeFormat (Instant d) = timePrint format (fromNanoseconds d)
   where 
     format = TimeFormatString [            
-            Format_Hour, colon, Format_Minute, colon, Format_Second,
-            Format_TimezoneName
+            Format_Hour, colon, Format_Minute, colon, Format_Second
         ]
     colon = Format_Text ':'   
 
