@@ -377,7 +377,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let validationConfig = config ^. typed
 
     db <- liftIO $ readTVarIO database
-    ta <- DB.roAppTxEx db storageError $ \tx -> DB.getTA tx db (getTaName tal)
+    ta <- DB.roAppTxEx db storageError $ \tx -> DB.getTA tx db $ getTaName tal
     case ta of
         Nothing -> fetchValidateAndStore db now Nothing
         Just storedTa
