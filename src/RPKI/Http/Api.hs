@@ -97,9 +97,6 @@ data API api = API {
                                       :> QueryParam "key" Text 
                                       :> Get '[JSON] [RObject],
 
-        originals :: api :- "original" :> QueryParam "hash" Text 
-                                       :> Get '[ObjectBlob] ObjectOriginal,
-
         manifests :: api :- "manifests" :> QueryParam "aki" Text 
                                         :> Get '[JSON] ManifestsDto,
 

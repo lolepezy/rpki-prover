@@ -336,24 +336,6 @@ saveObject tx DB { objectStore = RpkiObjectStore {..}, .. } lifecycle wv = liftI
                 _ -> pure ()
             pure objectKey
 
-getMftMetaFromWellStructured :: WellStructuredCms Manifest -> ObjectKey -> MftMeta
-getMftMetaFromWellStructured WellStructuredCms { content = Manifest {..} } key = MftMeta {..}
-
--- | Return the raw bytes for an 'OriginalRO' entry, if the key maps to one.
-getOriginalBlob :: (MonadIO m, Storage s) =>
-                Tx s mode -> DB s -> ObjectKey -> m (Maybe ObjectOriginal)
-getOriginalBlob tx db key = liftIO $
-    getObjectByKey tx db key >>= \case
-        Just (OriginalRO blob _ _ _) -> pure $ Just blob
-        _                            -> pure Nothing
-
-getOriginalBlobByHash :: (MonadIO m, Storage s) => 
-                        Tx s mode -> DB s -> Hash -> m (Maybe ObjectOriginal)
-getOriginalBlobByHash tx db hash =     
-    getKeyByHash tx db hash >>= \case 
-        Nothing  -> pure Nothing
-        Just key -> getOriginalBlob tx db key
-
 linkObjectToUrl :: (MonadIO m, Storage s) => 
                 Tx s 'RW 
                 -> DB s 
@@ -379,6 +361,9 @@ linkObjectToUrl tx DB { objectStore = RpkiObjectStore {..}, .. } rpkiURL objectK
         SM.put tx uriToUriKey safeUrl urlKey
         M.put tx uriKeyToUri urlKey rpkiURL            
         pure urlKey
+
+getMftMetaFromWellStructured :: WellStructuredCms Manifest -> ObjectKey -> MftMeta
+getMftMetaFromWellStructured WellStructuredCms { content = Manifest {..} } key = MftMeta {..}
 
 
 hashExists :: (MonadIO m, Storage s) => 

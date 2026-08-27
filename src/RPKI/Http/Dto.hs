@@ -2,10 +2,6 @@
 
 module RPKI.Http.Dto where
 
-import           Control.Lens
-import           Control.Applicative
-
-import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Builder          as BB
 
 import qualified Data.List.NonEmpty               as NonEmpty
@@ -15,13 +11,11 @@ import qualified Data.Map.Strict                  as Map
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
-import           Data.Proxy
 import           Data.Foldable
 
 import qualified Data.X509 as X509
 import qualified Crypto.PubKey.RSA.Types as RSA
 
-import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Messages
@@ -74,9 +68,6 @@ aspaToDto aspa =
         customer = aspa.customer,
         providers = Set.toList $ aspa.providers
 }
-
-gbrObjectToDto :: GbrObject -> GbrDto
-gbrObjectToDto g = gbrToDto $ getCMSContent $ g.cmsPayload
 
 gbrToDto :: Gbr -> GbrDto
 gbrToDto (Gbr vcardBS) = let    
@@ -166,180 +157,6 @@ toMftShortcutDto MftShortcut {..} = ManifestShortcutDto {..}
   where
     nonCrlChildren = Map.map (\MftEntry {..} -> ManifestChildDto {..}) nonCrlEntries
     
-
-objectToDto :: ParsedRpkiObject -> ObjectDto
-objectToDto = \case
-    CerRO c -> CertificateD $ objectDto c (certDto c) & #ski ?~ getSKI c
-    CrlRO c -> CRLD $ objectDto c $ crlDto c    
-    BgpRO b -> BGPSecD $ objectDto b (bgpSecDto b) & #ski ?~ getSKI b
-
-    -- CMS-based stuff
-    MftRO m  -> ManifestD $ cmsDto m $ manifestDto m
-    RoaRO r  -> ROAD $ cmsDto r $ roaDto r
-    SplRO r  -> SPLD $ cmsDto r $ splDto r
-    GbrRO g  -> GBRD $ cmsDto g $ gbrObjectToDto g
-    RscRO r  -> RSCD $ cmsDto r $ rscDto r
-    AspaRO a -> ASPAD $ cmsDto a $ aspaDto a
-
-  where
-    objectDto o p = ObjectContentDto {
-            ski  = Nothing,
-            aki  = getAKI o,
-            hash = getHash o,
-            objectPayload = p,
-            eeCertificate = Nothing
-        }
-
-    cmsDto c cmsPayload = let
-            CMS signedObject = c.cmsPayload
-            contentType  = signedObject.soContentType
-            signedData   = signedObject.soContent
-            digestAlgorithms   = signedData.scDigestAlgorithms
-            signerIdentifier   = signedData.scSignerInfos.siSid
-            signatureAlgorithm = signedData.scSignerInfos.signatureAlgorithm
-            signature          = signedData.scSignerInfos.signature
-            signedAttributes   = signedData.scSignerInfos.signedAttrs
-            encapsulatedContentType = signedData.scEncapContentInfo.eContentType
-        in objectDto c CMSObjectDto {..}
-                & #eeCertificate ?~ certDto c
-                & #ski ?~ getSKI c
-
-    roaDto r = let
-                VrpsPerAs asn v4s v6s = getCMSContent $ r.cmsPayload
-                prefixes = map (\(Vrp4 p l) -> RoaPrefixDto (Ipv4P p) l) v4s
-                        <> map (\(Vrp6 p l) -> RoaPrefixDto (Ipv6P p) l) v6s
-            in RoaDto {..}
-
-    splDto r = let SplPayload asn prefixes = getCMSContent $ r.cmsPayload 
-                in SplPayloadDto {..}
-
-    crlDto CrlObject {..} = let
-            SignCRL {..} = signCrl
-        in CrlDto { revokedSerials = Set.toList $ signCrl.revokedSerials, .. }
-
-    certDto c = let
-            rawCert = getRawCert c
-
-            AllResources (asRS -> ipv4) (asRS -> ipv6) (asRS -> asn) = rawCert.resources
-            x509cert = rawCert.certX509.cwsX509certificate
-
-            certVersion = Version $ fromIntegral $ X509.certVersion x509cert
-            certSerial  = Serial $ X509.certSerial x509cert
-
-            certIssuerDN = Text.pack $ show $ X509.certSignatureAlg x509cert
-            certSubjectDN = Text.pack $ show $ X509.certSubjectDN x509cert
-
-            certSignatureAlg = Text.pack $ show $ X509.certSignatureAlg x509cert
-
-            notBefore = newInstant $ fst $ X509.certValidity x509cert
-            notAfter  = newInstant $ snd $ X509.certValidity x509cert
-
-            pubKey = case X509.certPubKey x509cert of
-                        X509.PubKeyRSA RSA.PublicKey {..} -> Right $ let
-                                pubKeySize = public_size
-                                pubKeyPQ   = public_n
-                                pubKeyExp  = public_e
-                            in PubKeyDto {..}
-                        _ -> Left $ Text.pack $ show $ X509.certPubKey x509cert
-
-            certificateUris = getCertificateUris $ rawCert.certX509
-            extensions = getExtensions $ rawCert.certX509
-
-        in CertificateDto {..}
-      where
-        asRS = \case
-            (RS s)  -> s
-            Inherit -> IS.empty
-
-        getExtensions cert =
-            ExtensionsDto $ map mapExt $ getExtsSign cert
-          where
-            mapExt X509.ExtensionRaw {..} = let
-                    oid      = OIDDto extRawOID
-                    bytes    = extRawContent
-                    critical = extRawCritical
-                    value = case () of
-                        _
-                            | extRawOID == id_ce_keyUsage ->
-                                strExt (Proxy :: Proxy X509.ExtKeyUsage) extRawContent
-                            | extRawOID == id_ce_basicConstraints    ->
-                                strExt (Proxy :: Proxy X509.ExtBasicConstraints) extRawContent
-                            | extRawOID == id_ce_CRLDistributionPoints ->
-                                maybe "undefined" unURI (extractCrlDistributionPoint extRawContent)
-                            | extRawOID == id_ad_rpki_notify ->
-                                urlText $ extractSiaValue extRawContent id_ad_rpki_notify
-                            | extRawOID == id_pe_sia -> 
-                                urlText $ extractSiaValue extRawContent id_ad_rpki_notify
-                                      <|> extractSiaValue extRawContent id_ad_rpki_repository
-                                      <|> extractSiaValue extRawContent id_ad_rpkiManifest
-                            | extRawOID == id_pe_aia -> 
-                                urlText $ extractSiaValue extRawContent id_ad_caIssuers
-                                      <|> extractSiaValue extRawContent id_ad_rpki_notify
-                                      <|> extractSiaValue extRawContent id_ad_rpki_repository
-                                      <|> extractSiaValue extRawContent id_ad_rpkiManifest
-                            | extRawOID == id_subjectKeyId ->                                 
-                                    case runPureValidator (newScopes "id_subjectKeyId") $ parseKI extRawContent of 
-                                        (Left e, _)   -> Text.pack $ "Could not parse SKI: " <> show e
-                                        (Right ki, _) -> Text.pack $ show ki
-                            | extRawOID == id_authorityKeyId ->                                 
-                                    case runPureValidator (newScopes "id_subjectKeyId") $ parseKI extRawContent of 
-                                        (Left e, _)   -> Text.pack $ "Could not parse AKI: " <> show e
-                                        (Right ki, _) -> Text.pack $ show ki
-                            | extRawOID == id_pe_ipAddrBlocks    -> "IP resources (see 'ipv4', 'ipv6' fields)"
-                            | extRawOID == id_pe_autonomousSysIds    -> "ASN resources (see 'asn' field)"
-                            | extRawOID == id_ce_certificatePolicies -> certificatePoliciesToText extRawContent
-                                    
-                            | otherwise -> "Unrecognised extension"
-
-                in ExtensionDto {..}
-
-            strExt :: forall a . (Show a, X509.Extension a) => Proxy a -> BS.ByteString -> Text
-            strExt _ bytes = Text.pack $ show (X509.extDecodeBs bytes :: Either String a)
-
-            urlText :: Maybe BS.ByteString -> Text
-            urlText = \case 
-                Nothing -> "undefined"
-                Just bs -> either id unURI $ extractURI bs
-
-        getCertificateUris cert =
-            let exts = getExtsSign cert
-                aiaCaIssuersUri =
-                    extVal exts id_pe_aia >>= (\aia -> extractSiaValue aia id_ad_caIssuers >>= either (const Nothing) Just . extractURI)
-                crlDPUri = getCrlDistributionPointExt exts
-                repositoryUri = getRepositoryUriExt exts
-                manifestUri = getManifestUriExt exts
-                rrdpNotifyUri = getRrdpNotifyUriExt exts
-            in CertUris {..}
-
-
-    aspaDto = aspaToDto . getCMSContent . (^. #cmsPayload)
-
-    rscDto r = let 
-            rsc@Rsc {..} = getCMSContent $ r.cmsPayload
-        in RscDto { checkList = map (\(T2 f h) -> CheckListDto f h) $ rsc.checkList, ..}
-
-    bgpSecDto :: BgpCerObject -> BgpCertDto
-    bgpSecDto bgpCert = let
-            AllResources _ _ asns = getResources bgpCert
-            bgpSecSpki = getSubjectPublicKeyInfo bgpCert
-            bgpSecAsns = case asns of
-                            Inherit -> []
-                            RS r
-                                | IS.null r -> []
-                                | otherwise -> unwrapAsns $ IS.toList r
-            bgpSecSki = getSKI bgpCert
-        in bgpSecToDto BGPSecPayload {..}
-
-
-manifestDto :: MftObject -> ManifestDto
-manifestDto m = let
-        mft@Manifest {..} = getCMSContent $ m.cmsPayload
-        entries = map (\(MftPair f h) -> (f, h)) mftEntries
-    in
-        ManifestDto {
-            fileHashAlg = Text.pack $ show $ mft.fileHashAlg,
-            ..
-        }
 
 -- | Convert a lifecycle entry to a DTO.
 --
