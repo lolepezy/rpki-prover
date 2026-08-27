@@ -58,9 +58,9 @@ toResourceCert cert = do
 parseResources :: CertificateWithSignature -> PureValidatorT RawResourceCertificate
 parseResources x509cert = do    
     let ext' = extVal $ getExtsSign x509cert        
-    ips'  <- maybe (pure emptyIpResources) (parseR parseIpExt) $ ext' id_pe_ipAddrBlocks
-    asns' <- maybe (pure emptyAsResources) (parseR parseAsnExt) $ ext' id_pe_autonomousSysIds
-    pure $ RawResourceCertificate x509cert $ allResources ips' asns'
+    ips_  <- maybe (pure emptyIpResources) (parseR parseIpExt) $ ext' id_pe_ipAddrBlocks
+    asns_ <- maybe (pure emptyAsResources) (parseR parseAsnExt) $ ext' id_pe_autonomousSysIds
+    pure $ RawResourceCertificate x509cert $ allResources ips_ asns_
   where             
     parseR f bs = 
         case decodeASN1' BER bs of 
@@ -69,9 +69,9 @@ parseResources x509cert = do
 
 -- | https://tools.ietf.org/html/rfc5280#page-16
 --
-getSubjectPublicKeyInfo :: Certificate -> SPKI
+getSubjectPublicKeyInfo :: WithPubKey c => c -> SPKI
 getSubjectPublicKeyInfo cert = SPKI $ U.encodeBase64 $ DecodedBase64 $
-  encodeASN1' DER $ (toASN1 $ certPubKey cert) []
+  encodeASN1' DER $ (toASN1 $ getPubKey cert) []
 
 getCertificateType :: [ExtensionRaw] -> PureValidatorT CertType
 getCertificateType extensions =
@@ -116,9 +116,12 @@ withCriticalExtension :: [ExtensionRaw]
                     -> (BS.ByteString -> [ASN1] -> PureValidatorT r)
                     -> PureValidatorT r
 withCriticalExtension extensions oid f = do 
-    case extVal extensions oid of
+    -- Enforce that profile-defined critical extensions are really marked critical.
+    -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8
+    case extRawVal extensions oid of
         Nothing -> vPureError $ MissingCriticalExtension oid
-        Just bs 
+        Just (ExtensionRaw _ isCritical bs)
+            | not isCritical -> vPureError $ CertificateExtensionMustBeCritical oid
             | BS.null bs -> vPureError $ MissingCriticalExtension oid
             | otherwise -> do 
                 case decodeASN1 DER (LBS.fromStrict bs) of

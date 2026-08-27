@@ -45,6 +45,8 @@ import           RPKI.Store.Base.Storage
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Database    (DB(..))
 import qualified RPKI.Store.Database    as DB
+import           RPKI.Validation.Common
+import           RPKI.Validation.ObjectValidation
 import           RPKI.Store.Sequence
 import           RPKI.Store.Types
 
@@ -122,12 +124,17 @@ shouldMergeObjectLocations io = do
 
     [url1, url2, url3] :: [RpkiURL] <- take 3 . List.nub <$> replicateM 10 (QC.generate arbitrary)
 
-    ro1 :: RpkiObject <- QC.generate arbitrary    
-    ro2 :: RpkiObject <- QC.generate arbitrary        
+    ro1 :: ParsedRpkiObject <- QC.generate arbitrary    
+    ro2 :: ParsedRpkiObject <- QC.generate arbitrary        
     
     let storeIt obj url = rwTx db $ \tx -> do        
-            DB.saveObject tx db (toStorableObject obj) (instantToVersion now)
-            DB.linkObjectToUrl tx db url (getHash obj)
+            k <- DB.saveObject tx db
+                (OriginalRO (ObjectOriginal $ unStorable $ toStorable obj)
+                            mempty
+                            (getHash obj)
+                            (getRpkiObjectType obj))
+                (instantToVersion now)
+            DB.linkObjectToUrl tx db url k
 
     let getIt hash = roTx db $ \tx -> DB.getByHash tx db hash    
 
@@ -170,12 +177,12 @@ shouldMergeObjectLocations io = do
 --     db <- io
 --     aki1 :: AKI <- QC.generate arbitrary
 --     aki2 :: AKI <- QC.generate arbitrary
---     ros :: [Located RpkiObject] <- removeMftNumberDuplicates <$> generateSome    
+--     ros :: [Located ParsedRpkiObject] <- removeMftNumberDuplicates <$> generateSome    
 
 --     let (firstHalf, secondHalf) = List.splitAt (List.length ros `div` 2) ros
 
---     let ros1 = List.map (typed @RpkiObject %~ replaceAKI aki1) firstHalf
---     let ros2 = List.map (typed @RpkiObject %~ replaceAKI aki2) secondHalf
+--     let ros1 = List.map (typed @ParsedRpkiObject %~ replaceAKI aki1) firstHalf
+--     let ros2 = List.map (typed @ParsedRpkiObject %~ replaceAKI aki2) secondHalf
 --     let ros' = ros1 <> ros2 
 
 --     Now now <- thisInstant     
@@ -232,10 +239,10 @@ shouldOrderManifests io = do
     worldVersion <- newVersion
 
     rwTx objectStore $ \tx -> do        
-            void $ DB.saveObject tx db (toStorableObject mft1) worldVersion
-            void $ DB.saveObject tx db (toStorableObject mft2) worldVersion
-            DB.linkObjectToUrl tx db url1 (getHash mft1)
-            DB.linkObjectToUrl tx db url2 (getHash mft2)
+            key1 <- DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft1) worldVersion
+            key2 <- DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft2) worldVersion
+            DB.linkObjectToUrl tx db url1 key1
+            DB.linkObjectToUrl tx db url2 key2
 
 
     -- they have the same AKIs
@@ -248,7 +255,7 @@ shouldOrderManifests io = do
             MftMeta {..} : _ <- DB.getMftsForAKI tx db aki1
             DB.getMftByKey tx db key
 
-    HU.assertEqual "Not the same manifests" (MftRO mftLatest) mft2
+    HU.assertEqual "Not the same manifests" (MftRO mftLatest) (toValidatedRpkiObject mft2)
 
 
 shouldSaveAndGetRsyncRepositories :: Storage s => IO (DB s) -> HU.Assertion
@@ -661,14 +668,14 @@ releaseLmdb ((dir, e), _) = do
     Lmdb.closeLmdb e
     removeDirectoryRecursive dir
 
-readObjectFromFile :: FilePath -> ValidatorT IO (RpkiURL, RpkiObject)
+readObjectFromFile :: FilePath -> ValidatorT IO (RpkiURL, ParsedRpkiObject)
 readObjectFromFile path = do 
     bs <- liftIO $ BS.readFile path
     let Right url = parseRpkiURL $ "rsync://host/" <> Text.pack path
     o <- vHoist $ readObject url bs
     pure (url, o)
 
-replaceAKI :: AKI -> RpkiObject -> RpkiObject
+replaceAKI :: AKI -> ParsedRpkiObject -> ParsedRpkiObject
 replaceAKI a = \case 
     CerRO c  -> CerRO $ c & #aki ?~ a
     BgpRO c  -> BgpRO $ c & #aki ?~ a    
@@ -682,6 +689,19 @@ replaceAKI a = \case
   where
     mapCms :: CMS a -> CMS a
     mapCms (CMS so) = CMS $ so & #soContent . #scCertificate . #aki .~ a
+
+-- Convert without validating, 
+toValidatedRpkiObject :: ParsedRpkiObject -> WellStructuredRpkiObject
+toValidatedRpkiObject = \case
+    CerRO ca    -> CerRO  $ extractCert ca
+    CrlRO crl   -> CrlRO  crl
+    MftRO mft   -> MftRO  $ extractCMSObject mft
+    RoaRO roa   -> RoaRO  $ extractCMSObject roa
+    GbrRO gbr   -> GbrRO  $ extractCMSObject gbr
+    AspaRO aspa -> AspaRO $ extractCMSObject aspa
+    SplRO spl   -> SplRO  $ extractCMSObject spl
+    BgpRO bgp   -> BgpRO  $ extractCert bgp
+    RscRO rsc   -> RscRO  $ extractCMSObject rsc
 
 newVersion :: MonadIO m => m WorldVersion
 newVersion = instantToVersion . unNow <$> thisInstant     

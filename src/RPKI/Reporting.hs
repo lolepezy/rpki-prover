@@ -70,6 +70,10 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         CertNoPolicyExtension |
                         CertBrokenExtension OID BS.ByteString |
                         UnknownCriticalCertificateExtension OID BS.ByteString |
+                        MissingRequiredCertificateExtension OID |
+                        MissingIPOrASResourcesExtension |
+                        CertificateExtensionMustBeCritical OID |
+                        CertificateExtensionMustBeNonCritical OID |
                         MissingCriticalExtension OID |
                         BrokenKeyUsage Text |
                         WeirdCaPublicationPoints [RpkiURL] | 
@@ -119,17 +123,38 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         InvalidVCardFormatInGbr Text | 
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |
                         RoaPrefixLenghtsIsBiggerThanMaxLength Vrp |
+                        -- ASPA
                         AspaOverlappingCustomerProvider ASN [ASN] | 
+                        AspaAsZeoAndNonZero [ASN] | 
                         AspaAsNotOnEECert ASN [AsResource] | 
                         AspaNoAsn |
                         AspaIPv4Present |
                         AspaIPv6Present |      
+                        AspaNoProviders |      
+                        -- BGPSec
                         BGPCertSIAPresent BS.ByteString | 
                         BGPCertIPv4Present |
                         BGPCertIPv6Present | 
                         BGPCertBrokenASNs  | 
+                        -- SPL
                         SplAsnNotInResourceSet ASN [AsResource] | 
                         SplNotIpResources [IpPrefix] |
+                        -- Self-contained structural validations (checked in prevalidate)
+                        InvalidCMSVersion Int |
+                        InvalidSignerInfoVersion Int |
+                        BinarySigningTimePresent |
+                        ContentTypeAttrMissing |
+                        MessageDigestMissing |
+                        CMSMessageDigestMismatch |
+                        SigningTimeMissing |
+                        UnexpectedSignedAttribute OID |
+                        EECertSKIMismatch |
+                        EECertContentTypeMismatch |
+                        SKINotMatchingPublicKey |
+                        InvalidPublicKey Text |
+                        DuplicateManifestFilenames [Text] |
+                        CertValidityPeriodInvalid |
+                        SerialNumberOutOfBounds Text |
                         ReferentialIntegrityError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -506,6 +531,14 @@ data ValidationState = ValidationState {
     deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup ValidationState
     deriving Monoid    via GenericMonoid ValidationState
+
+hasValidationErrors :: ValidationState -> Bool
+hasValidationErrors vs =
+    Prelude.any (Prelude.any isVErr . Set.toList)
+        $ Map.elems $ let Validations m = validations vs in m
+  where
+    isVErr (VErr _) = True
+    isVErr _        = False
 
 mTrace :: Trace -> Set Trace
 mTrace = Set.singleton

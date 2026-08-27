@@ -164,8 +164,13 @@ getDigest =
         s       -> throwParseError $ "DigestAlgorithms is wrong " <> show s
 
 -- Certificate utilities
+-- Keep full extension metadata (including critical bit) for profile checks.
+-- https://www.rfc-editor.org/rfc/rfc6487#section-4.8
+extRawVal :: [ExtensionRaw] -> OID -> Maybe ExtensionRaw
+extRawVal exts oid = listToMaybe [e | e@(ExtensionRaw oid' _ _) <- exts, oid' == oid]
+
 extVal :: [ExtensionRaw] -> OID -> Maybe BS.ByteString
-extVal exts oid = listToMaybe [c | ExtensionRaw oid' _ c <- exts, oid' == oid ]
+extVal exts oid = extRawContent <$> extRawVal exts oid
 
 getExts :: Certificate -> [ExtensionRaw]
 getExts (certExtensions -> Extensions extensions) = fromMaybe [] extensions   
@@ -235,11 +240,17 @@ getSiaExt c = extVal (getExts c) id_pe_sia
 getRrdpNotifyUri :: Certificate -> Maybe URI
 getRrdpNotifyUri c = toMaybe . extractURI =<< getSiaValue c id_ad_rpki_notify
 
+getRrdpNotifyUriExt :: [ExtensionRaw] -> Maybe URI
+getRrdpNotifyUriExt exts = toMaybe . extractURI =<< (extVal exts id_pe_sia >>= (`extractSiaValue` id_ad_rpki_notify))
+
 getRepositoryUri :: Certificate -> Maybe URI
 getRepositoryUri c = toMaybe . extractURI =<< getSiaValue c id_ad_rpki_repository
 
-getManifestUri :: Certificate -> Maybe URI
-getManifestUri c = toMaybe . extractURI =<< getSiaValue c id_ad_rpkiManifest
+getRepositoryUriExt :: [ExtensionRaw] -> Maybe URI
+getRepositoryUriExt exts = toMaybe . extractURI =<< (extVal exts id_pe_sia >>= (`extractSiaValue` id_ad_rpki_repository))
+
+getManifestUriExt :: [ExtensionRaw] -> Maybe URI
+getManifestUriExt exts = toMaybe . extractURI =<< (extVal exts id_pe_sia >>= (`extractSiaValue` id_ad_rpkiManifest))
 
 extractURI :: BS.ByteString -> Either Text URI
 extractURI u =  fmap URI $ first fmtGen $ decodeUtf8' u
@@ -248,6 +259,9 @@ getCrlDistributionPoint :: Certificate -> Maybe URI
 getCrlDistributionPoint c = do
     crlDP <- extVal (getExts c) id_ce_CRLDistributionPoints
     extractCrlDistributionPoint crlDP    
+
+getCrlDistributionPointExt :: [ExtensionRaw] -> Maybe URI
+getCrlDistributionPointExt exts = extVal exts id_ce_CRLDistributionPoints >>= extractCrlDistributionPoint
 
 extractCrlDistributionPoint :: BS.ByteString -> Maybe URI
 extractCrlDistributionPoint crlDP = do    

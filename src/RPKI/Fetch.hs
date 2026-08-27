@@ -178,7 +178,7 @@ fetchRepository
 
 -- | Fetch TA certificate based on TAL location(s)
 --
-fetchTACertificate :: AppContext s -> FetchConfig -> TAL -> ValidatorT IO (RpkiURL, RpkiObject)
+fetchTACertificate :: AppContext s -> FetchConfig -> TAL -> ValidatorT IO (RpkiURL, ParsedRpkiObject)
 fetchTACertificate appContext@AppContext {..} fetchConfig tal = 
     go $ sortRrdpFirst $ neSetToList $ unLocations $ talCertLocations tal
   where

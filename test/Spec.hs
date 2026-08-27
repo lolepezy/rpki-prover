@@ -17,6 +17,7 @@ import RPKI.DomainSpec
 import RPKI.RTR.RtrSpec
 import RPKI.SLURM.SlurmSpec
 import RPKI.Store.SerialisationSpec
+import RPKI.Validation.TopDownSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
@@ -34,5 +35,6 @@ main = defaultMain $ testGroup "All tests" [
         slurmGroup,
         loggingSpec,
         workflowSpec,
+        topDownRegressionGroup,
         serialisationSpec
     ]  

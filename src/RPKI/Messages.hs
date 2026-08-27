@@ -190,6 +190,10 @@ toValidationMessage = \case
           
       CertBrokenExtension oid b -> [i|Certificate extension #{fmtOID oid} is broken: #{b}.|]
       UnknownCriticalCertificateExtension oid b -> [i|Unknown critical certificate extension, OID: #{fmtOID  oid}, content #{b}.|]
+      MissingRequiredCertificateExtension oid -> [i|Missing required certificate extension #{fmtOID oid}.|]
+      MissingIPOrASResourcesExtension -> [i|Certificate must contain at least one of IP resources or AS resources extensions.|]
+      CertificateExtensionMustBeCritical oid -> [i|Certificate extension #{fmtOID oid} must be marked critical.|]
+      CertificateExtensionMustBeNonCritical oid -> [i|Certificate extension #{fmtOID oid} must be marked non-critical.|]
       MissingCriticalExtension oid -> [i|Missing critical certificate extension #{fmtOID oid}.|]
       BrokenKeyUsage t -> [i|Broken keyUsage extension: #{t}.|]
 
@@ -324,6 +328,9 @@ toValidationMessage = \case
       AspaOverlappingCustomerProvider customer providers -> 
         [i|ASPA contains customer ASN #{customer} in the list of provider ASNs #{providers}.|]
 
+      AspaAsZeoAndNonZero providers ->
+        [i|ASPA provider set contains both AS0 and non-zero ASNs: #{providers}.|]
+
       BGPCertSIAPresent bs -> 
         [i|SIA extension is present on the BGPSec certificate: #{hex bs}.|]
 
@@ -334,14 +341,59 @@ toValidationMessage = \case
       AspaNoAsn       -> [i|ASN extension is not present on the ASPA EE certificate or has 'inherit' value.|]
       AspaIPv4Present -> [i|IPv4 extension is present on the ASPA EE certificate.|]
       AspaIPv6Present -> [i|IPv6 extension is present on the ASPA EE certificate.|]      
+      AspaNoProviders -> [i|ASPA provider set is empty.|]
       AspaAsNotOnEECert customer eeAsns -> 
-        [i|Customer ASN (#{customer}) is not in the EE certificate AS set (#{eeAsns}).|]      
+        [i|Customer ASN (#{customer}) is not in the EE certificate AS set (#{eeAsns}).|]            
     
       SplAsnNotInResourceSet asn asns ->
         [i|#{asn} is not in the EE certificate AS set (#{asns}).|]      
 
       SplNotIpResources prefixes -> 
         [i|Prefix list must not have IP resources on its EE certificate, but has #{prefixes}.|]
+
+      InvalidCMSVersion v ->
+        [i|Invalid CMS SignedData.version #{v}, expected 3.|]
+
+      InvalidSignerInfoVersion v ->
+        [i|Invalid CMS SignerInfo.version #{v}, expected 3.|]
+
+      BinarySigningTimePresent ->
+        [i|CMS signed attributes contain binary-signing-time, which is not allowed.|]
+
+      ContentTypeAttrMissing ->
+        [i|CMS signed attributes are missing contentType.|]
+
+      MessageDigestMissing ->
+        [i|CMS signed attributes are missing messageDigest.|]
+
+      CMSMessageDigestMismatch ->
+        [i|CMS messageDigest does not match the encapsulated content digest.|]
+
+      SigningTimeMissing ->
+        [i|CMS signed attributes are missing signingTime.|]
+
+      UnexpectedSignedAttribute oid ->
+        [i|CMS signed attributes contain unexpected attribute OID #{fmtOID oid}.|]
+
+      EECertSKIMismatch ->
+        [i|CMS SignerInfo SID does not match the embedded EE certificate SKI.|]
+
+      EECertContentTypeMismatch ->
+        [i|CMS contentType attribute does not match encapsulated content type.|]
+
+      SKINotMatchingPublicKey ->
+        [i|Certificate SKI does not match SHA-1 of subjectPublicKey BIT STRING.|]
+
+      InvalidPublicKey t -> [i|Invalid public key: #{t}.|]
+
+      DuplicateManifestFilenames filenames ->
+        [i|Manifest contains duplicate filenames: #{filenames}.|]
+
+      CertValidityPeriodInvalid ->
+        [i|Certificate validity period is invalid: notBefore is not strictly before notAfter.|]
+
+      SerialNumberOutOfBounds t ->
+        [i|Certificate serial number is out of bounds: #{t}.|]
 
       ReferentialIntegrityError message -> [i|Referential integrity problem: #{message}.|]
 

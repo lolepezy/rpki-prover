@@ -97,9 +97,6 @@ data API api = API {
                                       :> QueryParam "key" Text 
                                       :> Get '[JSON] [RObject],
 
-        originals :: api :- "original" :> QueryParam "hash" Text 
-                                       :> Get '[ObjectBlob] ObjectOriginal,
-
         manifests :: api :- "manifests" :> QueryParam "aki" Text 
                                         :> Get '[JSON] ManifestsDto,
 
@@ -139,9 +136,9 @@ data HttpApi route = HttpApi {
 -- 
 swaggerDoc :: Swagger
 swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
-    & info.title    .~ "RPKI Prover API"
-    & info.version  .~ convert rpkiProverVersion
-    & info.description  ?~ ("Note: at the moment this API does not generate a proper API schema, " <> 
+    & info . title    .~ "RPKI Prover API"
+    & info . version  .~ convert rpkiProverVersion
+    & info . description  ?~ ("Note: at the moment this API does not generate a proper API schema, " <> 
                             "this UI is only good for documentation and examples." )
     & basePath          ?~ "/api"
     & paths .~ IOMap.fromList 

@@ -97,7 +97,6 @@ httpServer appContext = genericServe HttpApi {
         lmdbStats = getStats appContext,
         jobs = getJobs appContext,
         objectView = getRpkiObject appContext,
-        originals  = getOriginal appContext,
         manifests  = getManifests appContext,
         system = liftIO $ getSystem appContext,
         rtr = getRtr appContext,
@@ -292,8 +291,8 @@ getGbrs_ appContext version =
         (\tx db v -> Just <$> DB.getGbrObjects tx db v) toDtos
   where
     toDtos gbrs = 
-        [ Located { payload = gbrObjectToDto g, .. }
-        | Located { payload = GbrRO g, .. } <- fromMaybe [] gbrs ]    
+        [ Located { payload = gbrToDto (content g), .. }
+        | Located { payload = WellStructuredRO (GbrRO g), .. } <- fromMaybe [] gbrs ]    
  
 
 getValidationsOriginalDto :: (MonadIO m, Storage s, MonadError ServerError m) =>
@@ -397,10 +396,10 @@ getRpkiObject AppContext {..} uri hash key =
                             [] -> do                                
                                 -- try TA certificates
                                 tas <- DB.getTAs tx db                                 
-                                pure [ locatedDto (Located locations (CerRO taCert)) | 
-                                        StorableTA {..} <- tas, 
-                                        let locations = talCertLocations tal, 
-                                        oneOfLocations locations rpkiUrl ]                                
+                                pure [ taLocatedDto locations taCert |
+                                    StorableTA {..} <- tas,
+                                    let locations = talCertLocations tal,
+                                    oneOfLocations locations rpkiUrl ]
                                 
                             os -> pure $ map locatedDto os
                         
@@ -423,25 +422,9 @@ getRpkiObject AppContext {..} uri hash key =
             throwError $ err400 { errBody =
                 "Only one of 'uri', 'hash' or 'key' must be provided." }
   where
-    locatedDto located = RObject $ located & #payload %~ objectToDto
+    locatedDto located = RObject $ located & #payload %~ lifecycleToDto
+    taLocatedDto locations taCert = RObject $ Located locations $ validatedCaToDto taCert
 
-getOriginal :: (MonadIO m, Storage s, MonadError ServerError m)
-                => AppContext s
-                -> Maybe Text           
-                -> m ObjectOriginal
-getOriginal AppContext {..} hashText =
-    case hashText of
-        Nothing ->
-            throwError $ err400 { errBody = "'hash' parameter must be provided." }
-                        
-        Just hashText' ->
-            case parseHash hashText' of
-                Left _  -> throwError err400
-                Right hash -> do
-                    z <- roTxT database $ \tx db -> DB.getOriginalBlobByHash tx db hash
-                    case z of 
-                        Nothing -> throwError err404
-                        Just b  -> pure b
 
 getManifests :: (MonadIO m, Storage s, MonadError ServerError m)
                 => AppContext s
@@ -459,7 +442,7 @@ getManifests AppContext {..} akiText =
                     roTxT database $ \tx db -> do 
                         shortcutMft     <- fmap toMftShortcutDto <$> DB.getMftShorcut tx db aki                        
                         manifestObjects <- DB.findAllMftsByAKI tx db aki
-                        let manifests = fmap (\(meta, Keyed (Located _ m) _) -> (meta, manifestDto m)) manifestObjects
+                        let manifests = fmap (\(meta, Keyed (Located _ m) _) -> (meta, manifestDtoV m)) manifestObjects
                         pure ManifestsDto {..}
             
 

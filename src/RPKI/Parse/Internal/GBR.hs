@@ -30,7 +30,9 @@ parseGbr bs = do
     pure $ newCMSObject hash' (CMS signedGbr)
     where     
         parseGbr' contentType octets = 
-            pure $ EncapsulatedContentInfo contentType (Gbr $ toShortBS octets)
+            -- Keep original CMS eContent bytes for RFC 6488 messageDigest checks.
+            -- https://www.rfc-editor.org/rfc/rfc6488#section-2.1.6.4.2
+            pure $ EncapsulatedContentInfo contentType octets (Gbr $ toShortBS octets)
 
 
 {- 
