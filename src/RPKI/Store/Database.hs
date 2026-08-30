@@ -216,6 +216,12 @@ serialToBlob n = BS.pack (fromIntegral (length bytes) : bytes)
     go 0 acc = acc
     go m acc = go (m `shiftR` 8) (fromIntegral (m .&. 0xFF) : acc)
 
+chunksOf :: Int -> [a] -> [[a]]
+chunksOf _ [] = []
+chunksOf n xs =
+        let (h, t) = splitAt n xs
+        in h : chunksOf n t
+
 
 -- ---------------------------------------------------------------------------
 -- Object functions
@@ -402,12 +408,23 @@ hashExists (Tx conn) _ h = liftIO $ do
 
 deleteObjectByHash :: MonadIO m => Tx 'RW -> DB -> Hash -> m ()
 deleteObjectByHash tx db h = liftIO $
-    ifJustM (getKeyByHash tx db h) (deleteObjectByKey tx db)
+    ifJustM (getKeyByHash tx db h) (\k -> deleteObjectByKey tx db [k])
 
 -- | ON DELETE CASCADE handles certificates, manifest_meta, and object_urls.
-deleteObjectByKey :: MonadIO m => Tx 'RW -> DB -> ObjectKey -> m ()
-deleteObjectByKey (Tx conn) _ k = liftIO $
-    execute conn "DELETE FROM objects WHERE object_key = ?" (Only (SQLite.toInt64 k))
+deleteObjectByKey :: MonadIO m => Tx 'RW -> DB -> [ObjectKey] -> m ()
+deleteObjectByKey (Tx conn) _ keys = liftIO $
+    -- Keep each statement below SQLite's parameter limit.
+    forM_ (chunksOf 500 keys) $ \batch -> do
+        let keyParams = zip [1 :: Int ..] batch
+            placeholders = Text.intercalate ", "
+                [":k" <> Text.pack (show i) | (i, _) <- keyParams]
+            queryText =
+                "DELETE FROM objects WHERE object_key IN (" <> placeholders <> ")"
+            params =
+                [ (":k" <> Text.pack (show i)) := SQLite.toInt64 key
+                | (i, key) <- keyParams
+                ]
+        executeNamed conn (fromString $ Text.unpack queryText) params
 
 getMftMetaFromWellStructured :: WellStructuredCms Manifest -> ObjectKey -> MftMeta
 getMftMetaFromWellStructured WellStructuredCms { content = Manifest {..} } key = MftMeta {..}
@@ -1155,7 +1172,7 @@ deleteStaleContent db DeletionCriteria{..} =
         execute conn "INSERT OR REPLACE INTO validated_by_version(key, value) VALUES (?, ?)"
             (validatedByVersionKey, serialiseCompressed validatedBy')
 
-        forM_ keysToDelete $ deleteObjectByKey tx db
+        deleteObjectByKey tx db keysToDelete
 
         atomically $ do
             deleted <- readTVar deletedPerType
