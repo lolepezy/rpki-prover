@@ -32,9 +32,9 @@ module RPKI.Store.Database (
     getMftShorcut, saveMftShorcutMeta, saveMftShorcutChildren,
     deleteMftShortcut, getBySKI, getFirstCaCertBySKI,
     markAsValidated,
-    saveTA, deleteTA, getTA, getTAs,
+    saveTA, deleteTA, getTA, getTAs, setActiveTAs,
     versionsBackwards, previousVersion, getLatestVersion,
-    getVersionMeta, getPayloadsForTas,
+    getVersionMeta,
     getValidationsPerTA, getMetricsPerTA, getCommonMetrics,
     getValidationOutcomes,
     getVrps, getVrpsForTA, getRoas, getAspas, getGbrs, getBgps, getSpls,
@@ -75,6 +75,7 @@ import           Data.Maybe               (catMaybes, fromMaybe, listToMaybe)
 import qualified Data.Set                 as Set
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
+import           Data.String              (fromString)
 import qualified Data.Map.Strict          as Map
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Data.Int                 (Int64)
@@ -159,7 +160,7 @@ noTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 49
+currentDatabaseVersion = 51
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -202,11 +203,6 @@ encodeSO = unStorable . toStorable . Compressed
 -- | Decode a StorableObject from compressed bytes.
 decodeSO :: AsStorable a => BS.ByteString -> StorableObject a
 decodeSO bs = unCompressed (fromStorable (Storable bs))
-
-insertCompressed :: AsStorable a => Connection -> Query -> a -> IO ArtificialKey
-insertCompressed conn q val = do
-    execute conn q (Only (serialiseCompressed val))
-    SQLite.fromInt64 <$> lastInsertRowId conn
 
 storageError :: SomeException -> AppError
 storageError = StorageE . StorageError . fmtEx
@@ -507,7 +503,7 @@ markAsValidated tx db allKeys worldVersion =
 saveTA :: MonadIO m => Tx 'RW -> DB -> StorableTA -> m ()
 saveTA (Tx conn) _ ta = liftIO $
     execute conn
-        "INSERT OR REPLACE INTO trust_anchors(ta_name, data) VALUES (?, ?)"
+        "INSERT OR REPLACE INTO trust_anchors(ta_name, data, active) VALUES (?, ?, 1)"
         (unTaName (getTaName (tal ta)), serialiseField ta)
 
 deleteTA :: MonadIO m => Tx 'RW -> DB -> TAL -> m ()
@@ -521,8 +517,16 @@ getTA (Tx conn) _ name = liftIO $ do
 
 getTAs :: MonadIO m => Tx mode -> DB -> m [StorableTA]
 getTAs (Tx conn) _ = liftIO $ do
-    rows <- query_ conn "SELECT data FROM trust_anchors"
+    rows <- query_ conn "SELECT data FROM trust_anchors WHERE active = 1"
     pure $ map (deserialiseField . fromOnly) rows
+
+setActiveTAs :: MonadIO m => Tx 'RW -> DB -> [TaName] -> m ()
+setActiveTAs (Tx conn) _ taNames = liftIO $ do
+    execute_ conn "UPDATE trust_anchors SET active = 0"
+    forM_ taNames $ \(TaName taName) ->
+        execute conn
+            "UPDATE trust_anchors SET active = 1 WHERE ta_name = ?"
+            (Only taName)
 
 -- ---------------------------------------------------------------------------
 -- Version / Validation payload functions
@@ -550,123 +554,154 @@ getVersionMeta (Tx conn) _ wv = liftIO $ do
                 (Only (serialiseField wv))
     pure $ fmap (deserialiseField . fromOnly) (listToMaybe rows)
 
-getPayloadsForTas :: MonadIO m
-                  => Tx mode
-                  -> DB
-                  -> WorldVersion
-                  -> (Tx mode -> DB -> ValidationVersion -> IO (Maybe payload))
-                  -> m (PerTA payload)
-getPayloadsForTas tx db version f = liftIO $
-    fmap (toPerTA . catMaybes) $
-        getVersionMeta tx db version >>= \case
-            Nothing -> pure []
-            Just versionMeta ->
-                forM (perTA $ versionMeta ^. typed) $ \(ta, vv) ->
-                    fmap (ta,) <$> f tx db vv
+rowsToPerTa :: AsStorable a => [(Text, BS.ByteString)] -> PerTA a
+rowsToPerTa rows = toPerTA
+    [ (TaName taName, deserialiseCompressed bs) | (taName, bs) <- rows ]
+
+mkLatestPerTaQuery :: [Text] -> Query
+mkLatestPerTaQuery columns =
+    fromString . Text.unpack $ Text.unlines $
+        [ "WITH ranked AS ("
+        , "    SELECT " <> Text.intercalate ", " (["vo.ta_name"] <> fmap ("vo." <>) columns) <> ","
+        , "           ROW_NUMBER() OVER (PARTITION BY vo.ta_name ORDER BY vo.version DESC) AS rn"
+        , "    FROM validation_outcomes vo"
+        , "    JOIN trust_anchors ta ON ta.ta_name = vo.ta_name"
+        , "    WHERE ta.active = 1"
+        , "      AND vo.version <= :version"
+        ]
+        <> fmap (\column -> "      AND vo." <> column <> " IS NOT NULL") columns
+        <>
+        [ ")"
+        , "SELECT " <> Text.intercalate ", " ("ta_name" : columns)
+        , "FROM ranked"
+        , "WHERE rn = 1"
+        ]
+
+mkLatestCommonQuery :: [Text] -> Query
+mkLatestCommonQuery columns =
+    fromString . Text.unpack $ Text.unlines $
+        [ "WITH ranked AS ("
+        , "    SELECT " <> Text.intercalate ", " (fmap ("vo." <>) columns) <> ","
+        , "           ROW_NUMBER() OVER (ORDER BY vo.version DESC) AS rn"
+        , "    FROM validation_outcomes vo"
+        , "    WHERE vo.ta_name IS NULL"
+        , "      AND vo.version <= :version"
+        ]
+        <> fmap (\column -> "      AND vo." <> column <> " IS NOT NULL") columns
+        <>
+        [ ")"
+        , "SELECT " <> Text.intercalate ", " columns
+        , "FROM ranked"
+        , "WHERE rn = 1"
+        ]
+
+mkLatestPayloadForTaQuery :: Text -> Query
+mkLatestPayloadForTaQuery column =
+    fromString . Text.unpack $ Text.unlines
+        [ "WITH ranked AS ("
+        , "    SELECT vo." <> column <> ","
+        , "           ROW_NUMBER() OVER (ORDER BY vo.version DESC) AS rn"
+        , "    FROM validation_outcomes vo"
+        , "    JOIN trust_anchors ta ON ta.ta_name = vo.ta_name"
+        , "    WHERE ta.active = 1"
+        , "      AND vo.ta_name = :ta_name"
+        , "      AND vo.version <= :version"
+        , "      AND vo." <> column <> " IS NOT NULL"
+        , ")"
+        , "SELECT " <> column
+        , "FROM ranked"
+        , "WHERE rn = 1"
+        ]
 
 getValidationsPerTA :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (PerTA Validations)
-getValidationsPerTA tx db version = liftIO $
-    getPayloadsForTas tx db version $ \(Tx conn) _ ValidationVersion{..} -> do
-        rows <- query conn "SELECT value FROM validations WHERE key = ?"
-                    (Only (SQLite.toInt64 validationsKey))
-        pure $ fmap (deserialiseCompressed . fromOnly) (listToMaybe rows)
+getValidationsPerTA (Tx conn) _ version = liftIO $ do
+    rows <- queryNamed conn
+        (mkLatestPerTaQuery ["validations"])
+        [":version" := SQLite.toInt64 version]
+    pure $ rowsToPerTa rows
 
 getMetricsPerTA :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (PerTA Metrics)
-getMetricsPerTA tx db version = liftIO $
-    getPayloadsForTas tx db version $ \(Tx conn) _ ValidationVersion{..} -> do
-        rows <- query conn "SELECT value FROM metrics WHERE key = ?"
-                    (Only (SQLite.toInt64 metricsKey))
-        pure $ fmap (deserialiseCompressed . fromOnly) (listToMaybe rows)
+getMetricsPerTA (Tx conn) _ version = liftIO $ do
+    rows <- queryNamed conn
+        (mkLatestPerTaQuery ["metrics"])
+        [":version" := SQLite.toInt64 version]
+    pure $ rowsToPerTa rows
 
 getCommonMetrics :: MonadIO m => Tx mode -> DB -> WorldVersion -> m Metrics
-getCommonMetrics tx db version = liftIO $
-    fmap (fromMaybe mempty) $ runMaybeT $ do
-        VersionMeta{..} <- MaybeT $ getVersionMeta tx db version
-        let Tx conn = tx
-        rows <- liftIO $ query conn "SELECT value FROM metrics WHERE key = ?"
-                    (Only (SQLite.toInt64 commonMetricsKey))
-        MaybeT $ pure $ fmap (deserialiseCompressed . fromOnly) (listToMaybe rows)
+getCommonMetrics (Tx conn) _ version = liftIO $ fmap (fromMaybe mempty) $ do
+    rows <- queryNamed conn
+        (mkLatestCommonQuery ["metrics"])
+        [":version" := SQLite.toInt64 version]
+    pure $ deserialiseCompressed . fromOnly <$> listToMaybe rows
 
 getValidationOutcomes :: MonadIO m
                       => Tx mode
                       -> DB
                       -> WorldVersion
                       -> m (Validations, Metrics, PerTA (Validations, Metrics))
-getValidationOutcomes tx db version = liftIO $ do
-    (commonV, commonM) <-
-        fmap (fromMaybe mempty) $ runMaybeT $ do
-            VersionMeta{..} <- MaybeT $ getVersionMeta tx db version
-            let Tx conn = tx
-            v <- MaybeT $ fmap (deserialiseCompressed . fromOnly) . listToMaybe
-                    <$> query conn "SELECT value FROM validations WHERE key = ?"
-                            (Only (SQLite.toInt64 commonValidationKey))
-            m <- MaybeT $ fmap (deserialiseCompressed . fromOnly) . listToMaybe
-                    <$> query conn "SELECT value FROM metrics WHERE key = ?"
-                            (Only (SQLite.toInt64 commonMetricsKey))
-            pure (v, m)
-    perTAOutcomes <-
-        getPayloadsForTas tx db version $ \(Tx conn) _ ValidationVersion{..} ->
-            runMaybeT $ do
-                v <- MaybeT $ fmap (deserialiseCompressed . fromOnly) . listToMaybe
-                        <$> query conn "SELECT value FROM validations WHERE key = ?"
-                                (Only (SQLite.toInt64 validationsKey))
-                m <- MaybeT $ fmap (deserialiseCompressed . fromOnly) . listToMaybe
-                        <$> query conn "SELECT value FROM metrics WHERE key = ?"
-                                (Only (SQLite.toInt64 metricsKey))
-                pure (v, m)
-    pure (commonV, commonM, perTAOutcomes)
+getValidationOutcomes (Tx conn) _ version = liftIO $ do
+    commonRows <- queryNamed conn
+                (mkLatestCommonQuery ["validations", "metrics"])
+        [":version" := SQLite.toInt64 version]
+
+    perTaRows <- queryNamed conn
+                (mkLatestPerTaQuery ["validations", "metrics"])
+        [":version" := SQLite.toInt64 version]
+
+    let (commonV, commonM) =
+            case listToMaybe commonRows of
+                Just (v, m) -> (deserialiseCompressed v, deserialiseCompressed m)
+                Nothing     -> mempty
+        perTa = toPerTA
+            [ (TaName taName, (deserialiseCompressed v, deserialiseCompressed m))
+            | (taName, v, m) <- perTaRows
+            ]
+    pure (commonV, commonM, perTa)
 
 getVrps :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (PerTA Vrps)
 getVrps tx db version = fmap toVrps <$> getRoas tx db version
 
 getVrpsForTA :: MonadIO m => Tx mode -> DB -> WorldVersion -> TaName -> m Vrps
-getVrpsForTA tx db version taName = liftIO $
-    fmap (toVrps . maybe mempty id) $ runMaybeT $ do
-        VersionMeta{..} <- MaybeT $ getVersionMeta tx db version
-        ValidationVersion{..} <- MaybeT $ pure $ getForTA perTa taName
-        let Tx conn = tx
-        rows <- liftIO $ query conn "SELECT value FROM roas WHERE key = ?"
-                    (Only (SQLite.toInt64 roasKey))
-        MaybeT $ pure $ fmap (deserialiseCompressed . fromOnly) (listToMaybe rows)
+getVrpsForTA (Tx conn) _ version taName = liftIO $ do
+    rows <- queryNamed conn
+        (mkLatestPayloadForTaQuery "roas")
+        [":ta_name" := unTaName taName, ":version" := SQLite.toInt64 version]
+    pure $ toVrps $ maybe mempty (deserialiseCompressed . fromOnly) (listToMaybe rows)
 
 getRoas :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (PerTA Roas)
-getRoas tx db version = liftIO $
-    getPayloadsForTas tx db version $ \(Tx conn) _ ValidationVersion{..} -> do
-        rows <- query conn "SELECT value FROM roas WHERE key = ?"
-                    (Only (SQLite.toInt64 roasKey))
-        pure $ fmap (deserialiseCompressed . fromOnly) (listToMaybe rows)
+getRoas (Tx conn) _ version = liftIO $ do
+    rows <- queryNamed conn
+        (mkLatestPerTaQuery ["roas"])
+        [":version" := SQLite.toInt64 version]
+    pure $ rowsToPerTa rows
 
 getAspas :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set Aspa))
-getAspas tx db version =
-    liftIO $ fmap (Just . allTAs) $
-        getPayloadsForTas tx db version $ \(Tx conn) _ ValidationVersion{..} -> do
-            rows <- query conn "SELECT value FROM aspas WHERE key = ?"
-                        (Only (SQLite.toInt64 aspasKey))
-            pure $ fmap (deserialiseCompressed . fromOnly) (listToMaybe rows)
+getAspas (Tx conn) _ version = liftIO $ do
+    rows <- queryNamed conn
+        (mkLatestPerTaQuery ["aspa"])
+        [":version" := SQLite.toInt64 version]
+    pure $ Just $ allTAs (rowsToPerTa rows)
 
 getGbrs :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set (T2 Hash Gbr)))
-getGbrs tx db version =
-    liftIO $ fmap (Just . allTAs) $
-        getPayloadsForTas tx db version $ \(Tx conn) _ ValidationVersion{..} -> do
-            rows <- query conn "SELECT value FROM gbrs WHERE key = ?"
-                        (Only (SQLite.toInt64 gbrsKey))
-            pure $ fmap (deserialiseCompressed . fromOnly) (listToMaybe rows)
+getGbrs (Tx conn) _ version = liftIO $ do
+    rows <- queryNamed conn
+        (mkLatestPerTaQuery ["gbrs"])
+        [":version" := SQLite.toInt64 version]
+    pure $ Just $ allTAs (rowsToPerTa rows)
 
 getBgps :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set BGPSecPayload))
-getBgps tx db version =
-    liftIO $ fmap (Just . allTAs) $
-        getPayloadsForTas tx db version $ \(Tx conn) _ ValidationVersion{..} -> do
-            rows <- query conn "SELECT value FROM bgps WHERE key = ?"
-                        (Only (SQLite.toInt64 bgpCertsKey))
-            pure $ fmap (deserialiseCompressed . fromOnly) (listToMaybe rows)
+getBgps (Tx conn) _ version = liftIO $ do
+    rows <- queryNamed conn
+        (mkLatestPerTaQuery ["bgps"])
+        [":version" := SQLite.toInt64 version]
+    pure $ Just $ allTAs (rowsToPerTa rows)
 
 getSpls :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set SplN))
-getSpls tx db version =
-    liftIO $ fmap (Just . allTAs) $
-        getPayloadsForTas tx db version $ \(Tx conn) _ ValidationVersion{..} -> do
-            rows <- query conn "SELECT value FROM spls WHERE key = ?"
-                        (Only (SQLite.toInt64 splsKey))
-            pure $ fmap (deserialiseCompressed . fromOnly) (listToMaybe rows)
+getSpls (Tx conn) _ version = liftIO $ do
+    rows <- queryNamed conn
+        (mkLatestPerTaQuery ["spls"])
+        [":version" := SQLite.toInt64 version]
+    pure $ Just $ allTAs (rowsToPerTa rows)
 
 saveValidationVersion :: MonadIO m
                       => Tx 'RW
@@ -678,22 +713,44 @@ saveValidationVersion :: MonadIO m
                       -> m ()
 saveValidationVersion (Tx conn) db validatedBy allTaNames results@(PerTA perTAResults) commonVS =
     liftIO $ do
-    commonValidationKey <- insertCompressed conn "INSERT INTO validations(value) VALUES (?)"
-                               (commonVS ^. typed @Validations)
-    commonMetricsKey    <- insertCompressed conn "INSERT INTO metrics(value) VALUES (?)"
-                               (commonVS ^. typed @Metrics)
+    let validatedByInt = SQLite.toInt64 validatedBy
 
-    addedResults <- forM (perTA results) $ \(taName, (Payloads{..}, vs)) -> do
-        roasKey        <- insertCompressed conn "INSERT INTO roas(value)        VALUES (?)" roas
-        aspasKey       <- insertCompressed conn "INSERT INTO aspas(value)       VALUES (?)" aspas
-        splsKey        <- insertCompressed conn "INSERT INTO spls(value)        VALUES (?)" spls
-        gbrsKey        <- insertCompressed conn "INSERT INTO gbrs(value)        VALUES (?)" gbrs
-        bgpCertsKey    <- insertCompressed conn "INSERT INTO bgps(value)        VALUES (?)" bgpCerts
-        validationsKey <- insertCompressed conn "INSERT INTO validations(value) VALUES (?)"
-                              (vs ^. typed @Validations)
-        metricsKey     <- insertCompressed conn "INSERT INTO metrics(value)     VALUES (?)"
-                              (vs ^. typed @Metrics)
-        pure (taName, ValidationVersion{..})
+    execute conn "DELETE FROM validation_outcomes WHERE version = ?" (Only validatedByInt)
+
+    execute conn
+        [sql|
+            INSERT OR REPLACE INTO validation_outcomes
+                (ta_name, version, validations, metrics, roas, spls, aspa, bgps, gbrs)
+            VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
+        |]
+        ( Nothing :: Maybe Text
+        , validatedByInt
+        , Just $ serialiseCompressed (commonVS ^. typed @Validations)
+        , Just $ serialiseCompressed (commonVS ^. typed @Metrics)
+        )
+
+    forM_ (perTA results) $ \(taName, (Payloads{..}, vs)) ->
+        execute conn
+            [sql|
+                INSERT OR REPLACE INTO validation_outcomes
+                    (ta_name, version, validations, metrics, roas, spls, aspa, bgps, gbrs)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            |]
+            ( Just $ unTaName taName
+            , validatedByInt
+            , Just $ serialiseCompressed (vs ^. typed @Validations)
+            , Just $ serialiseCompressed (vs ^. typed @Metrics)
+            , Just $ serialiseCompressed roas
+            , Just $ serialiseCompressed spls
+            , Just $ serialiseCompressed aspas
+            , Just $ serialiseCompressed bgpCerts
+            , Just $ serialiseCompressed gbrs
+            )
+
+    let addedResults =
+            [ (taName, ValidationVersion { validatedBy })
+            | (taName, _) <- perTA results
+            ]
 
     let notPresentTAs = filter (`MonoidalMap.notMember` perTAResults) allTaNames
     earlierResults <-
@@ -706,32 +763,19 @@ saveValidationVersion (Tx conn) db validatedBy allTaNames results@(PerTA perTARe
     execute conn "INSERT OR REPLACE INTO versions(key, value) VALUES (?, ?)"
         ( serialiseField validatedBy
         , serialiseField $
-            VersionMeta { perTa = toPerTA (addedResults <> earlierResults)
-                        , .. } )
+            VersionMeta { perTa = toPerTA (addedResults <> earlierResults) } )
   where
     fillUpEarlierTAData [] _ acc = acc
     fillUpEarlierTAData _ [] acc = acc
     fillUpEarlierTAData ((_, vmeta) : versions) tasToFind acc =
         let (found, notFound) = List.partition (maybe False (const True) . snd)
-                [ (ta, MonoidalMap.lookup ta (unPerTA $ vmeta ^. typed)) | ta <- tasToFind ]
+                [ (ta, MonoidalMap.lookup ta (unPerTA $ vmeta ^. #perTa)) | ta <- tasToFind ]
         in fillUpEarlierTAData versions (map fst notFound) (acc <> found)
 
 deleteValidationVersion :: MonadIO m => Tx 'RW -> DB -> WorldVersion -> m ()
-deleteValidationVersion (Tx conn) db worldVersion = liftIO $
-    ifJustM (getVersionMeta (Tx conn) db worldVersion) $ \vmeta -> do
-        let del tbl k = execute conn
-                (Query $ "DELETE FROM " <> tbl <> " WHERE key = ?")
-                (Only (SQLite.toInt64 k))
-        del "validations" (vmeta ^. #commonValidationKey)
-        del "metrics"     (vmeta ^. #commonMetricsKey)
-        forM_ (perTA $ vmeta ^. typed) $ \(_, ValidationVersion{..}) -> do
-            del "roas"        roasKey
-            del "aspas"       aspasKey
-            del "spls"        splsKey
-            del "gbrs"        gbrsKey
-            del "bgps"        bgpCertsKey
-            del "metrics"     metricsKey
-            del "validations" validationsKey
+deleteValidationVersion (Tx conn) _ worldVersion = liftIO $ do
+        execute conn "DELETE FROM validation_outcomes WHERE version = ?"
+            (Only (SQLite.toInt64 worldVersion))
         execute conn "DELETE FROM slurm    WHERE key = ?" (Only (SQLite.toInt64 worldVersion))
         execute conn "DELETE FROM versions WHERE key = ?" (Only (serialiseField worldVersion))
 
@@ -747,12 +791,20 @@ getSlurm (Tx conn) _ version = liftIO $ do
     pure $ fmap (deserialiseCompressed . fromOnly) (listToMaybe rows)
 
 getLatestVersions :: MonadIO m => Tx mode -> DB -> m (PerTA WorldVersion)
-getLatestVersions tx db = liftIO $
-    getLatestVersion tx db >>= \case
-        Nothing -> pure $ PerTA MonoidalMap.empty
-        Just lv ->
-            getPayloadsForTas tx db lv $ \_ _ ValidationVersion{..} ->
-                pure $ Just validatedBy
+getLatestVersions (Tx conn) _ = liftIO $ do
+    rows <- query_ conn
+        [sql|
+            SELECT vo.ta_name, MAX(vo.version)
+            FROM validation_outcomes vo
+            JOIN trust_anchors ta ON ta.ta_name = vo.ta_name
+            WHERE ta.active = 1
+            AND vo.ta_name IS NOT NULL
+            GROUP BY vo.ta_name
+        |] :: IO [(Text, Int64)]
+    pure $ toPerTA
+        [ (TaName taName, SQLite.fromInt64 latestVersion)
+        | (taName, latestVersion) <- rows
+        ]
 
 
 -- ---------------------------------------------------------------------------

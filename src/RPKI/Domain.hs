@@ -915,23 +915,14 @@ data ObjectIdentity = KeyIdentity ObjectKey
     deriving anyclass (TheBinary, NFData)
 
 data ValidationVersion = ValidationVersion { 
-        validatedBy    :: WorldVersion,
-        validationsKey :: ArtificialKey,
-        metricsKey     :: ArtificialKey,
-        roasKey        :: ArtificialKey,
-        aspasKey       :: ArtificialKey,
-        splsKey        :: ArtificialKey,            
-        gbrsKey        :: ArtificialKey,
-        bgpCertsKey    :: ArtificialKey
+    validatedBy    :: WorldVersion
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)    
 
 
 data VersionMeta = VersionMeta { 
-        perTa               :: PerTA ValidationVersion,
-        commonValidationKey :: ArtificialKey,
-        commonMetricsKey    :: ArtificialKey
+        perTa :: PerTA ValidationVersion
     }      
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)

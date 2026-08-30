@@ -18,7 +18,7 @@ import qualified Data.Text                         as Text
 import           Data.Proxy                        (Proxy(..))
 import           Data.Int                          (Int64)
 
-import           Database.SQLite.Simple            (Only(..), query, query_)
+import           Database.SQLite.Simple            (Only(..), execute, query, query_)
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit                  as HU
@@ -72,6 +72,8 @@ versionStoreGroup = testGroup "Version storage test"
     [ dbTestCase "Should insert and get a version" shouldSaveAndGetValidationVersion
     , dbTestCase "Should insert and get a version with data from previous versions"
         shouldSaveAndGetValidationVersionFilledWithPastData
+    , dbTestCase "Should read payload getters with fallback and active TA filtering"
+        shouldReadValidationOutcomePayloadQueries
     , dbTestCase "Should keep versions ordered and resolve previous version" shouldOrderAndLinkVersions
     , dbTestCase "Should delete version data including slurm" shouldDeleteValidationVersionData
     ]
@@ -304,6 +306,7 @@ shouldSaveAndGetValidationVersion io = do
 
     worldVersion <- newVersion
     let taNames = map TaName ["ripe", "apnic", "afrinic"]
+    seedActiveTaNames db taNames
 
     perTaResults <- QC.generate $ do
         taCount <- QC.choose (1, length taNames)
@@ -321,9 +324,22 @@ shouldSaveAndGetValidationVersion io = do
 
     storedValidations <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion
     storedMetrics <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion
+    (commonValidations, commonMetrics, storedOutcomes) <-
+        roTx db $ \tx -> DB.getValidationOutcomes tx db worldVersion
 
-    HU.assertEqual "Validations don't match" (fmap (\(_, vs) -> vs ^. typed) perTaResults) storedValidations
-    HU.assertEqual "Metrics don't match" (fmap (\(_, vs) -> vs ^. typed) perTaResults) storedMetrics
+    let expectedValidations = fmap (\(_, vs) -> vs ^. typed) perTaResults
+    let expectedMetrics = fmap (\(_, vs) -> vs ^. typed) perTaResults
+    let expectedOutcomes = fmap (\(_, vs) -> (vs ^. typed, vs ^. typed)) perTaResults
+
+    HU.assertEqual "Validations don't match" expectedValidations storedValidations
+    HU.assertEqual "Metrics don't match" expectedMetrics storedMetrics
+    HU.assertEqual "Common validations don't match"
+        (commonVS ^. typed)
+        commonValidations
+    HU.assertEqual "Common metrics don't match"
+        (commonVS ^. typed)
+        commonMetrics
+    HU.assertEqual "Validation outcomes don't match" expectedOutcomes storedOutcomes
 
 
 shouldSaveAndGetValidationVersionFilledWithPastData :: IO DB -> HU.Assertion
@@ -340,6 +356,7 @@ shouldSaveAndGetValidationVersionFilledWithPastData io = do
     let apnic = TaName "apnic"
     let afrinic = TaName "afrinic"
     let taNames = [ripe, apnic, afrinic]
+    seedActiveTaNames db taNames
 
     perTa1 <- QC.generate $ generatePerTa taNames
     perTa2 <- QC.generate $ generatePerTa [ripe]
@@ -374,6 +391,137 @@ shouldSaveAndGetValidationVersionFilledWithPastData io = do
     HU.assertEqual "1" (extract <$> perTa2 `getForTA` ripe) (v3 `getForTA` ripe)
     HU.assertEqual "2" (extract <$> perTa1 `getForTA` apnic) (v3 `getForTA` apnic)
     HU.assertEqual "3" (extract <$> perTa3 `getForTA` afrinic) (v3 `getForTA` afrinic)
+
+
+shouldReadValidationOutcomePayloadQueries :: IO DB -> HU.Assertion
+shouldReadValidationOutcomePayloadQueries io = do
+    db <- io
+
+    worldVersion1 <- newVersion
+    threadDelay 10_000
+    worldVersion2 <- newVersion
+    threadDelay 10_000
+    worldVersion3 <- newVersion
+
+    let ripe = TaName "ripe"
+    let apnic = TaName "apnic"
+    let afrinic = TaName "afrinic"
+    let taNames = [ripe, apnic, afrinic]
+    seedActiveTaNames db taNames
+
+    perTa1 <- QC.generate $ generatePerTa taNames
+    perTa2 <- QC.generate $ generatePerTa [ripe]
+    perTa3 <- QC.generate $ generatePerTa [afrinic]
+
+    commonVS1 <- QC.generate QC.arbitrary
+    commonVS2 <- QC.generate QC.arbitrary
+    commonVS3 <- QC.generate QC.arbitrary
+
+    rwTx db $ \tx ->
+        DB.saveValidationVersion tx db worldVersion1 taNames perTa1 commonVS1
+
+    rwTx db $ \tx ->
+        DB.saveValidationVersion tx db worldVersion2 taNames perTa2 commonVS2
+
+    rwTx db $ \tx ->
+        DB.saveValidationVersion tx db worldVersion3 taNames perTa3 commonVS3
+
+    ripeV2 <- expectJust "Missing ripe data in version 2 fixture" (getForTA perTa2 ripe)
+    apnicV1 <- expectJust "Missing apnic data in version 1 fixture" (getForTA perTa1 apnic)
+    afrinicV3 <- expectJust "Missing afrinic data in version 3 fixture" (getForTA perTa3 afrinic)
+
+    let expectedPerTaV3 = toPerTA
+            [ (ripe, ripeV2)
+            , (apnic, apnicV1)
+            , (afrinic, afrinicV3)
+            ]
+        expectedRoasV3 = fmap (roas . fst) expectedPerTaV3
+        expectedVrpsV3 = fmap toVrps expectedRoasV3
+        expectedAspasV3 = Just $ Set.unions $ fmap (aspas . fst) expectedPerTaV3
+        expectedGbrsV3 = Just $ Set.unions $ fmap (gbrs . fst) expectedPerTaV3
+        expectedBgpsV3 = Just $ Set.unions $ fmap (bgpCerts . fst) expectedPerTaV3
+        expectedSplsV3 = Just $ Set.unions $ fmap (spls . fst) expectedPerTaV3
+        expectedValidationsV3 = fmap (\(_, vs) -> vs ^. typed) expectedPerTaV3
+        expectedMetricsV3 = fmap (\(_, vs) -> vs ^. typed) expectedPerTaV3
+        expectedOutcomesV3 = fmap (\(_, vs) -> (vs ^. typed, vs ^. typed)) expectedPerTaV3
+        expectedLatestVersionsAll = toPerTA
+            [ (ripe, worldVersion2)
+            , (apnic, worldVersion1)
+            , (afrinic, worldVersion3)
+            ]
+
+    commonMetricsV2 <- roTx db $ \tx -> DB.getCommonMetrics tx db worldVersion2
+    HU.assertEqual "Common metrics should come from latest <= requested version"
+        (commonVS2 ^. typed)
+        commonMetricsV2
+
+    storedRoasV3 <- roTx db $ \tx -> DB.getRoas tx db worldVersion3
+    storedVrpsV3 <- roTx db $ \tx -> DB.getVrps tx db worldVersion3
+    storedVrpsRipeV3 <- roTx db $ \tx -> DB.getVrpsForTA tx db worldVersion3 ripe
+    storedVrpsApnicV3 <- roTx db $ \tx -> DB.getVrpsForTA tx db worldVersion3 apnic
+    storedVrpsAfrinicV3 <- roTx db $ \tx -> DB.getVrpsForTA tx db worldVersion3 afrinic
+    storedAspasV3 <- roTx db $ \tx -> DB.getAspas tx db worldVersion3
+    storedGbrsV3 <- roTx db $ \tx -> DB.getGbrs tx db worldVersion3
+    storedBgpsV3 <- roTx db $ \tx -> DB.getBgps tx db worldVersion3
+    storedSplsV3 <- roTx db $ \tx -> DB.getSpls tx db worldVersion3
+    storedValidationsV3 <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion3
+    storedMetricsV3 <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion3
+    (commonValidationsV3, commonMetricsV3, storedOutcomesV3) <-
+        roTx db $ \tx -> DB.getValidationOutcomes tx db worldVersion3
+    latestVersionsAll <- roTx db $ \tx -> DB.getLatestVersions tx db
+
+    HU.assertEqual "ROAs should be selected from latest available rows per TA" expectedRoasV3 storedRoasV3
+    HU.assertEqual "VRPs should be derived from latest ROAs per TA" expectedVrpsV3 storedVrpsV3
+    HU.assertEqual "VRPs for ripe should come from version 2" (toVrps $ roas $ fst ripeV2) storedVrpsRipeV3
+    HU.assertEqual "VRPs for apnic should fallback to version 1" (toVrps $ roas $ fst apnicV1) storedVrpsApnicV3
+    HU.assertEqual "VRPs for afrinic should come from version 3" (toVrps $ roas $ fst afrinicV3) storedVrpsAfrinicV3
+    HU.assertEqual "ASPAs should aggregate latest per-TA rows" expectedAspasV3 storedAspasV3
+    HU.assertEqual "GBRs should aggregate latest per-TA rows" expectedGbrsV3 storedGbrsV3
+    HU.assertEqual "BGP certs should aggregate latest per-TA rows" expectedBgpsV3 storedBgpsV3
+    HU.assertEqual "SPLs should aggregate latest per-TA rows" expectedSplsV3 storedSplsV3
+    HU.assertEqual "Per-TA validations should use latest available rows" expectedValidationsV3 storedValidationsV3
+    HU.assertEqual "Per-TA metrics should use latest available rows" expectedMetricsV3 storedMetricsV3
+    HU.assertEqual "Common validations should come from the latest common row"
+        (commonVS3 ^. typed)
+        commonValidationsV3
+    HU.assertEqual "Common metrics should come from the latest common row"
+        (commonVS3 ^. typed)
+        commonMetricsV3
+    HU.assertEqual "Validation outcomes should combine common and per-TA latest rows"
+        expectedOutcomesV3
+        storedOutcomesV3
+    HU.assertEqual "Latest versions should be computed from validation_outcomes rows"
+        expectedLatestVersionsAll
+        latestVersionsAll
+
+    rwTx db $ \tx -> DB.setActiveTAs tx db [ripe, afrinic]
+
+    let expectedPerTaActive = toPerTA
+            [ (ripe, ripeV2)
+            , (afrinic, afrinicV3)
+            ]
+        expectedRoasActive = fmap (roas . fst) expectedPerTaActive
+        expectedValidationsActive = fmap (\(_, vs) -> vs ^. typed) expectedPerTaActive
+        expectedMetricsActive = fmap (\(_, vs) -> vs ^. typed) expectedPerTaActive
+        expectedOutcomesActive = fmap (\(_, vs) -> (vs ^. typed, vs ^. typed)) expectedPerTaActive
+        expectedLatestVersionsActive = toPerTA
+            [ (ripe, worldVersion2)
+            , (afrinic, worldVersion3)
+            ]
+
+    filteredRoas <- roTx db $ \tx -> DB.getRoas tx db worldVersion3
+    filteredValidations <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion3
+    filteredMetrics <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion3
+    (_, _, filteredOutcomes) <- roTx db $ \tx -> DB.getValidationOutcomes tx db worldVersion3
+    filteredLatest <- roTx db $ \tx -> DB.getLatestVersions tx db
+    vrpsApnicInactive <- roTx db $ \tx -> DB.getVrpsForTA tx db worldVersion3 apnic
+
+    HU.assertEqual "Inactive TA must be excluded from ROAs" expectedRoasActive filteredRoas
+    HU.assertEqual "Inactive TA must be excluded from validations" expectedValidationsActive filteredValidations
+    HU.assertEqual "Inactive TA must be excluded from metrics" expectedMetricsActive filteredMetrics
+    HU.assertEqual "Inactive TA must be excluded from validation outcomes" expectedOutcomesActive filteredOutcomes
+    HU.assertEqual "Inactive TA must be excluded from latest versions" expectedLatestVersionsActive filteredLatest
+    HU.assertEqual "VRPs for inactive TA must be empty" mempty vrpsApnicInactive
 
 
 shouldOrderAndLinkVersions :: IO DB -> HU.Assertion
@@ -458,6 +606,15 @@ generatePerTa taNames = do
         validationState <- QC.arbitrary
         pure (payloads, validationState)
     pure $ toPerTA $ zip taNames perTaMap
+
+
+seedActiveTaNames :: DB -> [TaName] -> IO ()
+seedActiveTaNames db taNames =
+    rwTx db $ \(Tx conn) ->
+        forM_ taNames $ \(TaName taName) ->
+            execute conn
+                "INSERT OR REPLACE INTO trust_anchors(ta_name, data, active) VALUES (?, ?, 1)"
+                (taName, BS.empty)
 
 
 shouldRollbackAppTx :: IO DB -> HU.Assertion
@@ -603,3 +760,8 @@ toValidatedRpkiObject = \case
 
 newVersion :: MonadIO m => m WorldVersion
 newVersion = instantToVersion . unNow <$> thisInstant
+
+expectJust :: String -> Maybe a -> IO a
+expectJust message = \case
+    Just a  -> pure a
+    Nothing -> HU.assertFailure message >> fail message

@@ -5,13 +5,13 @@ gitBranch :: String
 gitBranch = "sqlite"
 
 gitHash :: String
-gitHash = "49f04815fe444268485351e30acea71bb59f6fb3"
+gitHash = "0b8e71e8b86431cdc2135e380c03f0a35b842d29"
 
 gitCommitDate :: String
-gitCommitDate = "2026-08-30 15:59:46 +0200"
+gitCommitDate = "2026-08-30 16:16:24 +0200"
 
 gitCommitCount :: Int
-gitCommitCount = 2747
+gitCommitCount = 2749
 
 gitDirty :: Bool
 gitDirty = True

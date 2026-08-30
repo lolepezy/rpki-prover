@@ -192,9 +192,11 @@ schemaDDL =
     , [sql|
         CREATE TABLE IF NOT EXISTS trust_anchors (
             ta_name TEXT NOT NULL PRIMARY KEY,
-            data    BLOB NOT NULL
+            data    BLOB NOT NULL,
+            active  INTEGER NOT NULL DEFAULT 1
         )
       |]
+    , "CREATE INDEX IF NOT EXISTS idx_trust_anchors_active ON trust_anchors(active)"
     , [sql|
         CREATE TABLE IF NOT EXISTS repositories (
             key  BLOB NOT NULL,
@@ -203,13 +205,21 @@ schemaDDL =
             PRIMARY KEY (key, kind)
         )
       |]
-    , "CREATE TABLE IF NOT EXISTS validations (key INTEGER PRIMARY KEY, value BLOB NOT NULL)"
-    , "CREATE TABLE IF NOT EXISTS metrics     (key INTEGER PRIMARY KEY, value BLOB NOT NULL)"
-    , "CREATE TABLE IF NOT EXISTS roas        (key INTEGER PRIMARY KEY, value BLOB NOT NULL)"
-    , "CREATE TABLE IF NOT EXISTS spls        (key INTEGER PRIMARY KEY, value BLOB NOT NULL)"
-    , "CREATE TABLE IF NOT EXISTS aspas       (key INTEGER PRIMARY KEY, value BLOB NOT NULL)"
-    , "CREATE TABLE IF NOT EXISTS gbrs        (key INTEGER PRIMARY KEY, value BLOB NOT NULL)"
-    , "CREATE TABLE IF NOT EXISTS bgps        (key INTEGER PRIMARY KEY, value BLOB NOT NULL)"
+        , [sql|
+                CREATE TABLE IF NOT EXISTS validation_outcomes (
+                        ta_name     TEXT,
+                        version     INTEGER NOT NULL,
+                        validations BLOB,
+                        metrics     BLOB,
+                        roas        BLOB,
+                        spls        BLOB,
+                        aspa        BLOB,
+                        bgps        BLOB,
+                        gbrs        BLOB,
+                        PRIMARY KEY (ta_name, version)
+                )
+            |]
+        , "CREATE UNIQUE INDEX IF NOT EXISTS idx_validation_outcomes_common ON validation_outcomes(version) WHERE ta_name IS NULL"
     , "CREATE TABLE IF NOT EXISTS slurm       (key INTEGER PRIMARY KEY, value BLOB NOT NULL)"
     , "CREATE TABLE IF NOT EXISTS versions    (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL)"
     , "CREATE TABLE IF NOT EXISTS jobs        (key TEXT NOT NULL PRIMARY KEY, value BLOB NOT NULL)"
@@ -228,7 +238,8 @@ dropDDL = map (\t -> "DROP TABLE IF EXISTS " <> t)
     , "objects", "urls"
     , "mft_shortcut_meta", "mft_shortcut_children"
     , "trust_anchors", "repositories"
-    , "validations", "metrics", "roas", "spls", "aspas", "gbrs", "bgps", "slurm"
+    , "validations", "metrics", "roas", "spls", "aspas", "gbrs", "bgps"
+    , "validation_outcomes", "slurm"
     , "versions", "jobs", "metadata", "validated_by_version"
     ]
 
