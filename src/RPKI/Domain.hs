@@ -214,26 +214,26 @@ toText = unURI . getURL
 
 newtype KI = KI BSS.ShortByteString 
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 newtype SKI  = SKI { unSKI :: KI }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 newtype AKI  = AKI { unAKI :: KI }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 newtype SessionId = SessionId { unSessionId :: Text }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 instance Show SessionId where
     show (SessionId s) = show s
 
 newtype Serial = Serial Integer     
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 newtype Version = Version Integer 
     deriving stock (Show, Eq, Ord, Generic)
@@ -241,7 +241,7 @@ newtype Version = Version Integer
 
 newtype Locations = Locations { unLocations :: NESet RpkiURL } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
     deriving newtype (Semigroup)
 
 instance Show Serial where
@@ -269,7 +269,7 @@ hexShow = SC.cs . Hex.encode . BSS.fromShort
 
 newtype CMS a = CMS { unCMS :: SignedObject a } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 data CrlObject = CrlObject {
         hash    :: {-# UNPACK #-} Hash,
@@ -598,7 +598,7 @@ data RawResourceCertificate = RawResourceCertificate {
 
 newtype ResourceCertificate = ResourceCertificate RawResourceCertificate
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 data Vrp = Vrp ASN IpPrefix PrefixLength
     deriving stock (Show, Eq, Ord, Generic)
@@ -789,35 +789,35 @@ data SignerInfos = SignerInfos {
 
 newtype IssuerAndSerialNumber = IssuerAndSerialNumber Text 
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 newtype SignerIdentifier = SignerIdentifier BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 newtype ContentType = ContentType OID 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 newtype CMSVersion = CMSVersion Int 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 newtype DigestAlgorithmIdentifier = DigestAlgorithmIdentifier OID
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier X509.SignatureALG  
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 newtype SignatureValue = SignatureValue BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)  
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 
 -- | According to https://tools.ietf.org/html/rfc5652#page-16
@@ -838,34 +838,34 @@ data Attribute = ContentTypeAttr ContentType
 -- Subject Public Key Info
 newtype SPKI = SPKI { unSPKI :: EncodedBase64 }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 newtype EncodedBase64 = EncodedBase64 BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
     deriving newtype (Monoid, Semigroup)
 
 newtype DecodedBase64 = DecodedBase64 BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
     deriving newtype (Monoid, Semigroup)
 
 newtype TaName = TaName { unTaName :: Text }
     deriving stock (Eq, Ord, Generic, Typeable, Data)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 instance Show TaName where
     show = show . unTaName
 
 newtype Vrps = Vrps { unVrps :: V.Vector Vrp }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup Vrps
     deriving Monoid    via GenericMonoid Vrps
 
 newtype Roas = Roas { unRoas :: MonoidalMap ObjectKey VrpsPerAs }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup Roas
     deriving Monoid    via GenericMonoid Roas
 
@@ -893,17 +893,17 @@ data Payloads = Payloads {
 
 newtype PerTA a = PerTA { unPerTA :: MonoidalMap TaName a }
     deriving stock (Show, Eq, Ord, Generic, Functor, Traversable, Foldable)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup (PerTA a)
     deriving Monoid    via GenericMonoid (PerTA a)
 
 newtype UrlKey = UrlKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 newtype ObjectKey = ObjectKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 newtype ArtificialKey = ArtificialKey LexOrdKey64
     deriving stock (Show, Eq, Ord, Generic)
@@ -939,7 +939,7 @@ data VersionMeta = VersionMeta {
 
 newtype EarliestToExpire = EarliestToExpire Instant
     deriving stock (Show, Eq, Ord, Generic)    
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
     deriving Semigroup via Min EarliestToExpire
 
 
