@@ -195,12 +195,12 @@ onlyValue :: [Only a] -> Maybe a
 onlyValue []          = Nothing
 onlyValue (Only v : _) = Just v
 
--- | Encode StorableObject using AsStorable (pre-serialised bytes + compression).
-encodeSO :: AsStorable a => a -> BS.ByteString
+-- | Encode a pre-serialised object wrapper as compressed bytes.
+encodeSO :: AsStorable a => StorableObject a -> BS.ByteString
 encodeSO = unStorable . toStorable . Compressed
 
 -- | Decode a StorableObject from compressed bytes.
-decodeSO :: AsStorable a => BS.ByteString -> a
+decodeSO :: AsStorable a => BS.ByteString -> StorableObject a
 decodeSO bs = unCompressed (fromStorable (Storable bs))
 
 insertCompressed :: AsStorable a => Connection -> Query -> a -> IO ArtificialKey

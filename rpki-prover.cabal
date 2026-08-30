@@ -305,6 +305,7 @@ test-suite rpki-prover-test
       RPKI.SLURM.SlurmSpec
       RPKI.Store.DatabaseSpec
       RPKI.Store.SerialisationSpec
+      RPKI.Store.StorableSpec
       RPKI.TestCommons
       RPKI.Validation.TopDownSpec
       Paths_rpki_prover
