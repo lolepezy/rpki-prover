@@ -60,7 +60,7 @@ import           RPKI.Repository
 import           RPKI.Resources.Types
 
 import           RPKI.Store.Base.Storable
-import           RPKI.Store.Database    (DB, Tx, roTx, rwTx, roTxT, rwTxT, roTx, roTxT)
+import           RPKI.Store.Database    (DB, Tx, roTxT, rwTxT)
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 import           RPKI.TAL

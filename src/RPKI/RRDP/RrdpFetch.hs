@@ -45,8 +45,7 @@ import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Store.Types
-import           RPKI.Store.Base.Storable
-import           RPKI.Store.Database     (DB, Tx(..), TxMode(..), roTx, rwTx, roTxT, rwTxT)
+import           RPKI.Store.Database     (DB, Tx(..), TxMode(..), roTx)
 import qualified RPKI.Store.Database    as DB
 import qualified RPKI.Util              as U
 

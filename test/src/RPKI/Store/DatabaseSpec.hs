@@ -15,7 +15,6 @@ import qualified Data.List                         as List
 import qualified Data.Map.Strict                   as Map
 import qualified Data.Set                          as Set
 import qualified Data.Text                         as Text
-import           Data.Hourglass
 import           Data.Proxy                        (Proxy(..))
 import           Data.Int                          (Int64)
 
@@ -35,12 +34,9 @@ import           RPKI.Repository
 import           RPKI.RepositorySpec
 import           RPKI.Store.AppStorage
 import           RPKI.Store.Base.Storable
-import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Database               (DB(..), Tx(..), roTx, rwTx)
 import qualified RPKI.Store.Database               as DB
-import           RPKI.Validation.Common
 import           RPKI.Validation.ObjectValidation
-import qualified RPKI.Store.SQLite                 as SQLite
 import qualified RPKI.Store.SQLite                 as SQLite
 import           RPKI.Store.Types
 import           RPKI.TestCommons
@@ -156,10 +152,10 @@ shouldOrderManifests io = do
     worldVersion <- newVersion
 
     rwTx db $ \tx -> do
-    key1 <- DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft1) worldVersion
-    key2 <- DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft2) worldVersion
-    DB.linkObjectToUrl tx db url1 key1
-    DB.linkObjectToUrl tx db url2 key2
+        key1 <- DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft1) worldVersion
+        key2 <- DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft2) worldVersion
+        DB.linkObjectToUrl tx db url1 key1
+        DB.linkObjectToUrl tx db url2 key2
 
     let Just aki1 = getAKI mft1
     [m1, m2] <- roTx db $ \tx -> DB.getMftsForAKI tx db aki1

@@ -2,13 +2,9 @@
 
 module RPKI.Store.AppStorage where
 
-import Control.Concurrent.STM (TVar, readTVarIO)
-import Control.Monad.IO.Class
-
 import RPKI.AppContext
 import RPKI.AppTypes
-import RPKI.Store.Base.Storable (StorageStats(..), SStats)
-import RPKI.Store.Database (DB, Tx, TxMode(..), withReadTx, withWriteTx)
+import RPKI.Store.Base.Storable (StorageStats(..))
 
 data AppStorageTag
 

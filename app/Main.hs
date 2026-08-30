@@ -72,12 +72,6 @@ import           RPKI.Meta.Version
 import           RPKI.Meta.UniqueId
 
 
-import           Network.HTTP.Client
-import           Network.HTTP.Client.TLS
--- import           Network.HTTP.Simple
-import           Network.Connection
-
-
 main :: IO ()
 main = do
     cliOptions@CLIOptions{..} <- execParser $

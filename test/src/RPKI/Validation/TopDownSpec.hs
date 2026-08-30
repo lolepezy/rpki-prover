@@ -18,7 +18,6 @@ import           RPKI.AppTypes                    (WorldVersion)
 import           RPKI.Domain
 import           RPKI.Parse.Parse
 import           RPKI.Reporting                   (newScopes)
-import           RPKI.Store.Base.Storage
 import           RPKI.Store.Database              (DB)
 import qualified RPKI.Store.Database              as DB
 import           RPKI.Store.Types
@@ -91,9 +90,9 @@ shouldResolveTroubledFromOriginal =
                 HU.assertFailure $ "Expected TroubledFromOriginal resolution, got: " <> show other
 
 
-storeLifecycle :: Storage s => DB s -> WorldVersion -> RpkiObjectLifecycle -> RpkiURL -> IO ObjectKey
+storeLifecycle :: DB -> WorldVersion -> RpkiObjectLifecycle -> RpkiURL -> IO ObjectKey
 storeLifecycle db worldVersion lifecycle url =
-    rwTx db $ \tx -> do
+    DB.rwTx db $ \tx -> do
         key <- DB.saveObject tx db lifecycle worldVersion
         DB.linkObjectToUrl tx db url key
         pure key

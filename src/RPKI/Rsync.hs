@@ -41,7 +41,6 @@ import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Store.Types
-import           RPKI.Store.Base.Storable
 import           RPKI.Store.Database     (DB, roTx)
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Time

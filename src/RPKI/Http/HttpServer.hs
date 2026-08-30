@@ -47,7 +47,7 @@ import           RPKI.Http.Api
 import           RPKI.Http.Types
 import           RPKI.Http.Dto
 import           RPKI.Http.UI
-import           RPKI.Store.Database     (DB, Tx(..), TxMode(..), roTx, rwTx, roTxT, rwTxT)
+import           RPKI.Store.Database     (DB, Tx(..), TxMode(..), roTx, roTxT)
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.AppStorage
 import           RPKI.Store.Types
