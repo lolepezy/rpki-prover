@@ -24,8 +24,7 @@ module RPKI.Store.Database (
     getByUri, getKeysByUri,
     getObjectByKey, getLocatedByKey,
     getLocationCountByKey, getLocationsByKey,
-    saveObject, saveOriginal,
-    getOriginalBlob, getOriginalBlobByHash,
+    saveObject, 
     getObjectMeta, linkObjectToUrl,
     hashExists, deleteObjectByHash, deleteObjectByKey,
     getMftsForAKI, findAllMftsByAKI, getMftByKey,
@@ -350,34 +349,6 @@ saveObject (Tx conn) _ lifecycle wv = liftIO $ do
 
     pure objectKey
 
-saveOriginal :: MonadIO m
-             => Tx 'RW
-             -> DB
-             -> ObjectOriginal
-             -> Hash
-             -> ObjectMeta
-             -> m ()
-saveOriginal (Tx conn) _ (ObjectOriginal blob) h (ObjectMeta wv typ) = liftIO $ do
-    let so = toStorableObject $ OriginalRO (ObjectOriginal blob) mempty h typ
-    execute conn
-        "INSERT OR IGNORE INTO objects(hash, type, data, original, world_version) \
-        \VALUES (?, ?, ?, ?, ?)"
-        (SQLite.hashToBlob h, show typ, encodeSO so, blob, SQLite.toInt64 wv)
-
-getOriginalBlob :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe ObjectOriginal)
-getOriginalBlob (Tx conn) _ k = liftIO $ do
-    rows <- query conn
-        "SELECT original FROM objects WHERE object_key = ? AND original IS NOT NULL"
-        (Only (SQLite.toInt64 k))
-    pure $ case rows of
-        [Only bs] -> Just (ObjectOriginal bs)
-        _         -> Nothing
-
-getOriginalBlobByHash :: MonadIO m => Tx mode -> DB -> Hash -> m (Maybe ObjectOriginal)
-getOriginalBlobByHash tx db h =
-    getKeyByHash tx db h >>= \case
-        Nothing  -> pure Nothing
-        Just key -> getOriginalBlob tx db key
 
 getObjectMeta :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe ObjectMeta)
 getObjectMeta (Tx conn) _ k = liftIO $ do
