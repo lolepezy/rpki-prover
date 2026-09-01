@@ -338,6 +338,13 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
 data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion
 
+newSqliteDB :: FilePath -> Config -> IO SQLite.SqliteDB
+newSqliteDB dbPath config = SQLite.createDB dbPath busyTimeoutMs poolSize
+  where
+    poolSize      = max 2 $ fromIntegral $ config ^. #parallelism . #cpuParallelism
+    busyTimeoutMs = let Seconds s = config ^. #storageConfig . #rwTransactionTimeout
+                    in fromIntegral $ s * 1000
+
 createSqliteDatabase :: FilePath -> Config -> Bool -> Bool -> IO (DB.DB, DbCheckResult)
 createSqliteDatabase cacheDir config resetCache checkVersion = do
     createDirectoryIfMissing True cacheDir
@@ -348,8 +355,7 @@ createSqliteDatabase cacheDir config resetCache checkVersion = do
         removeIfExists $ dbPath <> "-wal"
         removeIfExists $ dbPath <> "-shm"
 
-    let poolSize = max 2 $ fromIntegral $ config ^. #parallelism . #cpuParallelism
-    sdb <- SQLite.createDB dbPath 30_000 poolSize
+    sdb <- newSqliteDB dbPath config
     SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> SQLite.initSchema conn
 
     let db = DB.DB sdb
@@ -535,14 +541,20 @@ rsyncPrefetches CLIOptions {..} = do
 
 createWorkerAppContext :: Config -> AppLogger -> ValidatorT IO AppSQLiteEnv
 createWorkerAppContext config logger = do
-    (db, _) <- fromTry (InitE . InitError . fmtEx) $
-                createSqliteDatabase (configValue $ config ^. #cacheDirectory) config False False
-
+    db <- fromTry (InitE . InitError . fmtEx) $ openExistingSqliteDatabase cacheDir config
     appState <- createAppState logger (configValue $ config ^. #localExceptions)
     database <- liftIO $ newTVarIO db
     let executableVersion = thisExecutableVersion
-
     pure AppContext {..}
+  where
+    cacheDir = configValue $ config ^. #cacheDirectory
+
+-- | Open an already-initialised SQLite database without touching the schema or version.
+-- Used by worker processes to avoid unnecessary write-transaction contention on startup.
+openExistingSqliteDatabase :: FilePath -> Config -> IO DB.DB
+openExistingSqliteDatabase cacheDir config = do
+    sdb <- newSqliteDB (cacheDir </> "rpki.sqlite") config
+    pure (DB.DB sdb)
 
 createAppState :: MonadIO m => AppLogger -> [String] -> m AppState
 createAppState logger localExceptions = do
@@ -734,7 +746,7 @@ cliOptionsParser = CLIOptions
             <> help ("Maximum number of concurrent fetchers (default: " <> show defFetcherCount <> ", i.e. cpu-count * 2).")))
     <*> switch
             (  long "reset-cache"
-            <> help "Reset the SQLite cache, removing ~/.rpki/cache/rpki-cache.sqlite.")
+            <> help "Delete rpki.sqlite (and its -wal/-shm files) from the cache directory before starting.")
     <*> optional (option auto
             (  long "revalidation-interval"
             <> metavar "SECONDS"
