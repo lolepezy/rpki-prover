@@ -159,7 +159,7 @@ noTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 51
+currentDatabaseVersion = 52
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -497,8 +497,8 @@ markAsValidated tx db allKeys worldVersion =
 saveTA :: MonadIO m => Tx 'RW -> DB -> StorableTA -> m ()
 saveTA (Tx conn) _ ta = liftIO $
     execute conn
-        "INSERT OR REPLACE INTO trust_anchors(ta_name, data, active) VALUES (?, ?, 1)"
-        (unTaName (getTaName (tal ta)), serialiseField ta)
+        "INSERT OR REPLACE INTO trust_anchors(ta_name, ta_cert_key, data, active) VALUES (?, ?, ?, 1)"
+        (unTaName (getTaName (tal ta)), SQLite.toInt64 (taCertKey ta), serialiseField ta)
 
 deleteTA :: MonadIO m => Tx 'RW -> DB -> TAL -> m ()
 deleteTA (Tx conn) _ t = liftIO $

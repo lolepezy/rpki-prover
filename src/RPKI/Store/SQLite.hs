@@ -191,9 +191,10 @@ schemaDDL =
       |]
     , [sql|
         CREATE TABLE IF NOT EXISTS trust_anchors (
-            ta_name TEXT NOT NULL PRIMARY KEY,
-            data    BLOB NOT NULL,
-            active  INTEGER NOT NULL DEFAULT 1
+            ta_name     TEXT    NOT NULL PRIMARY KEY,
+            ta_cert_key INTEGER NOT NULL REFERENCES objects(object_key),
+            data        BLOB    NOT NULL,
+            active      INTEGER NOT NULL DEFAULT 1
         )
       |]
     , "CREATE INDEX IF NOT EXISTS idx_trust_anchors_active ON trust_anchors(active)"
@@ -234,10 +235,10 @@ schemaDDL =
 
 dropDDL :: [Query]
 dropDDL = map (\t -> "DROP TABLE IF EXISTS " <> t)
-    [ "object_urls", "certificates", "manifest_meta"
+    [ "object_urls", "certificates", "manifest_meta", "trust_anchors"
     , "objects", "urls"
     , "mft_shortcut_meta", "mft_shortcut_children"
-    , "trust_anchors", "repositories"
+    , "repositories"
     , "validations", "metrics", "roas", "spls", "aspas", "gbrs", "bgps"
     , "validation_outcomes", "slurm"
     , "versions", "jobs", "metadata", "validated_by_version"
