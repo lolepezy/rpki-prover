@@ -905,7 +905,7 @@ newtype ObjectKey = ObjectKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (TheBinary, NFData)
 
-newtype ArtificialKey = ArtificialKey LexOrdKey64
+newtype ArtificialKey = ArtificialKey Int64
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (TheBinary, NFData)
 
@@ -1044,7 +1044,7 @@ instance {-# OVERLAPPING #-} WithSerial (WellStructuredCms a) where
 -- Small utility functions that don't have anywhere else to go
 
 asKey :: Int64 -> ArtificialKey
-asKey = ArtificialKey . LexOrdKey64
+asKey = ArtificialKey
 
 toAKI :: SKI -> AKI
 toAKI (SKI ki) = AKI ki

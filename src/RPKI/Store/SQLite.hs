@@ -52,7 +52,6 @@ import Data.Store (Store, encode, decodeEx)
 
 import RPKI.AppTypes (WorldVersion(..))
 import RPKI.Domain   (ArtificialKey(..), ObjectKey(..), UrlKey(..), SKI(..), AKI(..), Hash(..), KI(..))
-import RPKI.Store.Base.Serialisation (LexOrdKey64(..))
 
 
 -- ---------------------------------------------------------------------------
@@ -192,7 +191,7 @@ schemaDDL =
     , [sql|
         CREATE TABLE IF NOT EXISTS trust_anchors (
             ta_name     TEXT    NOT NULL PRIMARY KEY,
-            ta_cert_key INTEGER NOT NULL REFERENCES objects(object_key),
+            ta_cert_key INTEGER REFERENCES objects(object_key),
             data        BLOB    NOT NULL,
             active      INTEGER NOT NULL DEFAULT 1
         )
@@ -222,7 +221,7 @@ schemaDDL =
             |]
         , "CREATE UNIQUE INDEX IF NOT EXISTS idx_validation_outcomes_common ON validation_outcomes(version) WHERE ta_name IS NULL"
     , "CREATE TABLE IF NOT EXISTS slurm       (key INTEGER PRIMARY KEY, value BLOB NOT NULL)"
-    , "CREATE TABLE IF NOT EXISTS versions    (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL)"
+    , "CREATE TABLE IF NOT EXISTS versions    (key INTEGER NOT NULL PRIMARY KEY, value BLOB NOT NULL)"
     , "CREATE TABLE IF NOT EXISTS jobs        (key TEXT NOT NULL PRIMARY KEY, value BLOB NOT NULL)"
     , "CREATE TABLE IF NOT EXISTS metadata    (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)"
     , [sql|
@@ -255,8 +254,8 @@ class HasInt64Key a where
     fromInt64 :: Int64 -> a
 
 instance HasInt64Key ArtificialKey where
-    toInt64   (ArtificialKey (LexOrdKey64 n)) = n
-    fromInt64 = ArtificialKey . LexOrdKey64
+    toInt64   (ArtificialKey n) = n
+    fromInt64 = ArtificialKey
 
 instance HasInt64Key ObjectKey where
     toInt64   (ObjectKey k) = toInt64 k
@@ -267,8 +266,8 @@ instance HasInt64Key UrlKey where
     fromInt64 = UrlKey . fromInt64
 
 instance HasInt64Key WorldVersion where
-    toInt64   (WorldVersion (LexOrdKey64 n)) = n
-    fromInt64 = WorldVersion . LexOrdKey64
+    toInt64   (WorldVersion n) = n
+    fromInt64 = WorldVersion
 
 kiToBlob :: KI -> BS.ByteString
 kiToBlob (KI sbs) = BSS.fromShort sbs

@@ -159,7 +159,7 @@ noTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 52
+currentDatabaseVersion = 53
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -528,9 +528,8 @@ setActiveTAs (Tx conn) _ taNames = liftIO $ do
 
 versionsBackwards :: MonadIO m => Tx mode -> DB -> m [(WorldVersion, VersionMeta)]
 versionsBackwards (Tx conn) _ = liftIO $ do
-    rows <- query_ conn "SELECT key, value FROM versions"
-    pure $ List.sortOn (Down . fst)
-        [ (deserialiseField k, deserialiseField v) | (k, v) <- rows ]
+    rows <- query_ conn "SELECT key, value FROM versions ORDER BY key DESC"
+    pure [ (SQLite.fromInt64 k, deserialiseField v) | (k, v) <- rows ]
 
 previousVersion :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe WorldVersion)
 previousVersion tx db version = liftIO $ do
@@ -545,7 +544,7 @@ getLatestVersion tx db = listToMaybe . map fst <$> versionsBackwards tx db
 getVersionMeta :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe VersionMeta)
 getVersionMeta (Tx conn) _ wv = liftIO $ do
     rows <- query conn "SELECT value FROM versions WHERE key = ?"
-                (Only (serialiseField wv))
+                (Only (SQLite.toInt64 wv))
     pure $ fmap (deserialiseField . fromOnly) (listToMaybe rows)
 
 rowsToPerTa :: AsStorable a => [(Text, BS.ByteString)] -> PerTA a
@@ -755,7 +754,7 @@ saveValidationVersion (Tx conn) db validatedBy allTaNames results@(PerTA perTARe
                 pure [ (ta, r) | (ta, Just r) <- fillUpEarlierTAData versions notPresentTAs mempty ]
 
     execute conn "INSERT OR REPLACE INTO versions(key, value) VALUES (?, ?)"
-        ( serialiseField validatedBy
+        ( SQLite.toInt64 validatedBy
         , serialiseField $
             VersionMeta { perTa = toPerTA (addedResults <> earlierResults) } )
   where
@@ -771,7 +770,7 @@ deleteValidationVersion (Tx conn) _ worldVersion = liftIO $ do
         execute conn "DELETE FROM validation_outcomes WHERE version = ?"
             (Only (SQLite.toInt64 worldVersion))
         execute conn "DELETE FROM slurm    WHERE key = ?" (Only (SQLite.toInt64 worldVersion))
-        execute conn "DELETE FROM versions WHERE key = ?" (Only (serialiseField worldVersion))
+        execute conn "DELETE FROM versions WHERE key = ?" (Only (SQLite.toInt64 worldVersion))
 
 saveSlurm :: MonadIO m => Tx 'RW -> DB -> WorldVersion -> Slurm -> m ()
 saveSlurm (Tx conn) _ version slurm = liftIO $

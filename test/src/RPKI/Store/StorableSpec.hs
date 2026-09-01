@@ -16,7 +16,6 @@ import qualified Test.Tasty.QuickCheck          as QC
 import           RPKI.AppTypes                  (WorldVersion (..))
 import           RPKI.Domain                    (Hash (..), RpkiObjectType (..))
 import           RPKI.Orphans                   ()
-import           RPKI.Store.Base.Serialisation  (LexOrdKey64 (..))
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Database            (DB, Tx (..), roTx, rwTx)
 import qualified RPKI.Store.Database            as DB
@@ -76,7 +75,7 @@ storableEncodingSpec =
                 withTestContext $ \appContext -> do
                     db <- readTVarIO $ appContext ^. #database
 
-                    let worldVersion = WorldVersion (LexOrdKey64 1)
+                    let worldVersion = WorldVersion 1
                         hash = Hash $ BSS.toShort $ BS.pack [1 .. 32]
                         original = ObjectOriginal $ BS.replicate 1024 0xAB
                         lifecycle = OriginalRO original mempty hash CER
