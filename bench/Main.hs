@@ -11,7 +11,6 @@ import           Control.Lens ((^.))
 
 import qualified Data.ByteString as BS
 import           Data.Int (Int64)
-import qualified Data.Map.Strict as Map
 import           Data.IORef
 import qualified Data.Text as Text
 import           Data.Hourglass (Seconds(..))
@@ -25,7 +24,7 @@ import           RPKI.Domain
 import           RPKI.Parse.Parse (readObject)
 import           RPKI.Reporting (newScopes)
 import           RPKI.Store.Base.Storable (Compressed(..), Verbatim(..), toStorable, toStorableObject)
-import           RPKI.Store.Database (DB(..), Tx, MftShortcutChildren(..), MftShortcutMeta(..))
+import           RPKI.Store.Database (DB(..), Tx, MftShortcutMeta(..))
 import qualified RPKI.Store.Database as DB
 import qualified RPKI.Store.SQLite as SQLite
 import           RPKI.Time (thisInstant, unNow, momentAfter)
@@ -219,23 +218,19 @@ mkShortcutEnv = do
         key <- DB.saveObject tx saveDb_ (toStorableObject mftObject) (instantToVersion now)
         let crlShortcut = CrlShortcut {
                 key = key,
-                notValidBefore = now,
-                notValidAfter = later
+                notBefore = now,
+                notAfter = later
             }
             meta = MftShortcutMeta {
                 key = key,
-                notValidBefore = now,
-                notValidAfter = later,
+                notBefore = now,
+                notAfter = later,
                 serial = Serial 1,
                 manifestNumber = Serial 1,
                 crlShortcut = crlShortcut
             }
-            children = MftShortcutChildren {
-                nonCrlEntries = Map.empty
-            }
 
         DB.saveMftShorcutMeta tx saveDb_ shortcutAki (Verbatim $ toStorable $ Compressed meta)
-        DB.saveMftShorcutChildren tx saveDb_ shortcutAki (Verbatim $ toStorable $ Compressed children)
 
     pure ShortcutEnv {..}
 
@@ -329,23 +324,19 @@ mkTxOverheadEnvFromDb txOverheadDb = do
         key <- DB.saveObject tx db (toStorableObject mftObject) (instantToVersion now)
         let crlShortcut = CrlShortcut {
                 key = key,
-                notValidBefore = now,
-                notValidAfter = later
+                notBefore = now,
+                notAfter = later
             }
             meta = MftShortcutMeta {
                 key = key,
-                notValidBefore = now,
-                notValidAfter = later,
+                notBefore = now,
+                notAfter = later,
                 serial = Serial 1,
                 manifestNumber = Serial 1,
                 crlShortcut = crlShortcut
             }
-            children = MftShortcutChildren {
-                nonCrlEntries = Map.empty
-            }
 
         DB.saveMftShorcutMeta tx db txOverheadAki (Verbatim $ toStorable $ Compressed meta)
-        DB.saveMftShorcutChildren tx db txOverheadAki (Verbatim $ toStorable $ Compressed children)
 
     txOverheadTVar <- newTVarIO db
     pure TxOverheadEnv {..}

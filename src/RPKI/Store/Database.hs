@@ -18,17 +18,19 @@ module RPKI.Store.Database (
     currentDatabaseVersion,
     databaseVersionKey, validatedByVersionKey,
     -- * DTOs
-    MftShortcutMeta(..), MftShortcutChildren(..),
+    MftShortcutMeta(..),
     -- * Query functions
     getKeyByHash, getObjectKey, getByHash, getKeyedByHash,
     getByUri, getKeysByUri,
     getObjectByKey, getLocatedByKey,
     getLocationCountByKey, getLocationsByKey,
-    saveObject, 
+    saveObject,
     getObjectMeta, linkObjectToUrl,
     hashExists, deleteObjectByHash, deleteObjectByKey,
     getMftsForAKI, findAllMftsByAKI, getMftByKey,
-    getMftShorcut, saveMftShorcutMeta, saveMftShorcutChildren,
+    getMftShorcut, getMftShorcutMeta, getMftShorcutChildrenLight, getMftShorcutChildrenFull,
+    getMftShortcutChildFileName,
+    saveMftShorcutMeta, insertMftShortcutChildren, deleteMftShortcutChildren,
     deleteMftShortcut, getBySKI, getFirstCaCertBySKI, getTaCertByKey,
     markAsValidated,
     saveTA, deleteTA, getTA, getTAs, setActiveTAs,
@@ -159,7 +161,7 @@ noTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 53
+currentDatabaseVersion = 54
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -181,10 +183,8 @@ data MftShortcutMeta = MftShortcutMeta
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-newtype MftShortcutChildren = MftShortcutChildren
-    { nonCrlEntries :: Map.Map ObjectKey MftEntry }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+instance {-# OVERLAPPING #-} WithValidityPeriod MftShortcutMeta where
+    getValidityPeriod MftShortcutMeta {..} = ValidityPeriod notBefore notAfter
 
 
 -- ---------------------------------------------------------------------------
@@ -427,20 +427,59 @@ getMftByKey tx db k = do
         Just (Located loc (WellStructuredRO (MftRO mft))) -> Just $ Keyed (Located loc mft) k
         _                              -> Nothing
 
-getMftShorcut :: MonadIO m => Tx mode -> DB -> AKI -> m (Maybe MftShortcut)
-getMftShorcut (Tx conn) _ aki = liftIO $ runMaybeT $ do
-    let akiBs = SQLite.akiToBlob aki
-    (metaBs, childrenBs) <- MaybeT $ listToMaybe <$> query conn
+getMftShorcutMeta :: MonadIO m => Tx mode -> DB -> AKI -> m (Maybe MftShortcutMeta)
+getMftShorcutMeta (Tx conn) _ aki = liftIO $ do
+    rows <- query conn "SELECT data FROM mft_shortcut_meta WHERE aki = ?" (Only (SQLite.akiToBlob aki))
+    pure $! deserialiseCompressed . fromOnly <$> listToMaybe rows
+
+-- | Children without file_name, for the hot "nothing changed" path that never needs it.
+getMftShorcutChildrenLight :: MonadIO m => Tx mode -> DB -> AKI -> m (Map.Map ObjectKey MftChild)
+getMftShorcutChildrenLight (Tx conn) _ aki = liftIO $ do
+    rows <- query conn
         [sql|
-            SELECT m.data, c.data
-            FROM mft_shortcut_meta m
-            JOIN mft_shortcut_children c USING(aki)
-            WHERE m.aki = ?
+            SELECT c.child_key, s.data
+            FROM mft_shortcut_children c
+            JOIN shortcuts s ON s.object_key = c.child_key
+            WHERE c.aki = ?
         |]
-        (Only akiBs)
-    let MftShortcutMeta{..} = deserialiseCompressed metaBs
-    let MftShortcutChildren{..} = deserialiseCompressed childrenBs
-    pure $! MftShortcut {..}
+        (Only (SQLite.akiToBlob aki))
+    pure $! Map.fromList
+        [ (SQLite.fromInt64 childKeyInt, deserialiseCompressed dataBs)
+        | (childKeyInt, dataBs) <- rows ]
+
+-- | Full children incl. file_name, for the diff path that needs to detect renames.
+getMftShorcutChildrenFull :: MonadIO m => Tx mode -> DB -> AKI -> m (Map.Map ObjectKey MftEntry)
+getMftShorcutChildrenFull (Tx conn) _ aki = liftIO $ do
+    rows <- query conn
+        [sql|
+            SELECT c.file_name, c.child_key, s.data
+            FROM mft_shortcut_children c
+            JOIN shortcuts s ON s.object_key = c.child_key
+            WHERE c.aki = ?
+        |]
+        (Only (SQLite.akiToBlob aki))
+    pure $! Map.fromList
+        [ (childKey, MftEntry { fileName = fileName_, child = deserialiseCompressed dataBs })
+        | (fileName_, childKeyInt, dataBs) <- rows
+        , let childKey = SQLite.fromInt64 childKeyInt ]
+
+-- | On-demand single-row lookup, used only by the rare TroubledChild fallback
+-- on the light (file_name-free) read path.
+getMftShortcutChildFileName :: MonadIO m => Tx mode -> DB -> AKI -> ObjectKey -> m (Maybe Text)
+getMftShortcutChildFileName (Tx conn) _ aki childKey = liftIO $ do
+    rows <- query conn
+        "SELECT file_name FROM mft_shortcut_children WHERE aki = ? AND child_key = ?"
+        (SQLite.akiToBlob aki, SQLite.toInt64 childKey)
+    pure $! fromOnly <$> listToMaybe rows
+
+getMftShorcut :: MonadIO m => Tx mode -> DB -> AKI -> m (Maybe MftShortcut)
+getMftShorcut tx db aki = do
+    metaM <- getMftShorcutMeta tx db aki
+    case metaM of
+        Nothing -> pure Nothing
+        Just MftShortcutMeta {..} -> do
+            nonCrlEntries <- getMftShorcutChildrenFull tx db aki
+            pure $! Just $! MftShortcut {..}
 
 saveMftShorcutMeta :: MonadIO m => Tx 'RW -> DB -> AKI -> Verbatim (Compressed MftShortcutMeta) -> m ()
 saveMftShorcutMeta (Tx conn) _ aki meta = liftIO $
@@ -448,17 +487,43 @@ saveMftShorcutMeta (Tx conn) _ aki meta = liftIO $
         "INSERT OR REPLACE INTO mft_shortcut_meta(aki, data) VALUES (?, ?)"
     (SQLite.akiToBlob aki, unStorable $ unVerbatim meta)
 
-saveMftShorcutChildren :: MonadIO m => Tx 'RW -> DB -> AKI -> Verbatim (Compressed MftShortcutChildren) -> m ()
-saveMftShorcutChildren (Tx conn) _ aki children_ = liftIO $
-    execute conn
-        "INSERT OR REPLACE INTO mft_shortcut_children(aki, data) VALUES (?, ?)"
-    (SQLite.akiToBlob aki, unStorable $ unVerbatim children_)
+-- | Insert only the given (new) children; never touches rows for unchanged children.
+-- `OR REPLACE` on purpose: a TroubledChild re-validation, or a manifest-entry
+-- rename (same child_key, new file_name), can legitimately overwrite an
+-- existing row for a key that's already cached.
+insertMftShortcutChildren :: MonadIO m => Tx 'RW -> DB -> AKI -> [(ObjectKey, Text, BS.ByteString)] -> m ()
+insertMftShortcutChildren (Tx conn) _ aki newEntries = liftIO $
+    forM_ newEntries $ \(childKey, fileName_, dataBs) -> do
+        execute conn
+            "INSERT OR REPLACE INTO shortcuts(object_key, data) VALUES (?, ?)"
+            (SQLite.toInt64 childKey, dataBs)
+        execute conn
+            "INSERT OR REPLACE INTO mft_shortcut_children(aki, file_name, child_key) VALUES (?, ?, ?)"
+            (SQLite.akiToBlob aki, fileName_, SQLite.toInt64 childKey)
+
+-- | Delete the `shortcuts` row for each given child key outright; the
+-- corresponding mft_shortcut_children row(s) are removed automatically via
+-- ON DELETE CASCADE, so there's no separate orphan sweep to maintain here.
+deleteMftShortcutChildren :: MonadIO m => Tx 'RW -> DB -> [ObjectKey] -> m ()
+deleteMftShortcutChildren (Tx conn) _ deletedKeys = liftIO $
+    forM_ (chunksOf 500 deletedKeys) $ \batch -> do
+        let keyParams = zip [1 :: Int ..] batch
+            placeholders = Text.intercalate ", "
+                [":k" <> Text.pack (show i) | (i, _) <- keyParams]
+            keyNamedParams =
+                [ (":k" <> Text.pack (show i)) := SQLite.toInt64 key
+                | (i, key) <- keyParams ]
+        executeNamed conn
+            (fromString $ Text.unpack $ "DELETE FROM shortcuts WHERE object_key IN (" <> placeholders <> ")")
+            keyNamedParams
 
 deleteMftShortcut :: MonadIO m => Tx 'RW -> DB -> AKI -> m ()
-deleteMftShortcut (Tx conn) _ aki = liftIO $ do
+deleteMftShortcut tx@(Tx conn) db aki = liftIO $ do
     let akiBs = SQLite.akiToBlob aki
-    execute conn "DELETE FROM mft_shortcut_meta     WHERE aki = ?" (Only akiBs)
-    execute conn "DELETE FROM mft_shortcut_children WHERE aki = ?" (Only akiBs)
+    childKeys <- map (SQLite.fromInt64 . fromOnly) <$>
+        query conn "SELECT child_key FROM mft_shortcut_children WHERE aki = ?" (Only akiBs)
+    execute conn "DELETE FROM mft_shortcut_meta WHERE aki = ?" (Only akiBs)
+    deleteMftShortcutChildren tx db childKeys
 
 -- | Returns all candidates for the SKI; callers must verify signatures.
 getBySKI :: MonadIO m => Tx mode -> DB -> SKI -> m [Located WellStructuredCaCert]

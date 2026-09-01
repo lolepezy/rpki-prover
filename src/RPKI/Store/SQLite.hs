@@ -183,11 +183,20 @@ schemaDDL =
         )
       |]
     , [sql|
-        CREATE TABLE IF NOT EXISTS mft_shortcut_children (
-            aki  BLOB NOT NULL PRIMARY KEY,
-            data BLOB NOT NULL
+        CREATE TABLE IF NOT EXISTS shortcuts (
+            object_key INTEGER PRIMARY KEY REFERENCES objects(object_key) ON DELETE CASCADE,
+            data       BLOB    NOT NULL
         )
       |]
+    , [sql|
+        CREATE TABLE IF NOT EXISTS mft_shortcut_children (
+            aki       BLOB    NOT NULL,
+            file_name TEXT    NOT NULL,
+            child_key INTEGER NOT NULL REFERENCES shortcuts(object_key) ON DELETE CASCADE,
+            PRIMARY KEY (aki, child_key)
+        )
+      |]
+    , "CREATE INDEX IF NOT EXISTS idx_mft_shortcut_children_child_key ON mft_shortcut_children(child_key)"
     , [sql|
         CREATE TABLE IF NOT EXISTS trust_anchors (
             ta_name     TEXT    NOT NULL PRIMARY KEY,
@@ -234,9 +243,10 @@ schemaDDL =
 
 dropDDL :: [Query]
 dropDDL = map (\t -> "DROP TABLE IF EXISTS " <> t)
-    [ "object_urls", "certificates", "manifest_meta", "trust_anchors"
+    [ "object_urls", "certificates", "manifest_meta"
+    , "mft_shortcut_children", "shortcuts", "mft_shortcut_meta"
+    , "trust_anchors"
     , "objects", "urls"
-    , "mft_shortcut_meta", "mft_shortcut_children"
     , "repositories"
     , "validations", "metrics", "roas", "spls", "aspas", "gbrs", "bgps"
     , "validation_outcomes", "slurm"
