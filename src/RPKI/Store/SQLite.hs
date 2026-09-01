@@ -47,6 +47,8 @@ import qualified Data.Text             as Text
 
 import Database.SQLite.Simple
 import Database.SQLite.Simple.QQ (sql)
+import Database.SQLite.Simple.ToField (ToField(..))
+import Database.SQLite.Simple.FromField (FromField(..))
 import Codec.Compression.LZ4 (compress, decompress)
 import Data.Store (Store, encode, decodeEx)
 
@@ -302,3 +304,45 @@ hashToBlob (Hash sbs) = BSS.fromShort sbs
 
 blobToHash :: BS.ByteString -> Hash
 blobToHash = Hash . BSS.toShort
+
+
+-- ---------------------------------------------------------------------------
+-- ToField/FromField instances: let query/execute take these key types
+-- directly instead of every call site converting to/from Int64 or BLOB by hand.
+-- ---------------------------------------------------------------------------
+
+instance ToField ObjectKey where
+    toField = toField . toInt64
+
+instance FromField ObjectKey where
+    fromField f = fromInt64 <$> fromField f
+
+instance ToField UrlKey where
+    toField = toField . toInt64
+
+instance FromField UrlKey where
+    fromField f = fromInt64 <$> fromField f
+
+instance ToField WorldVersion where
+    toField = toField . toInt64
+
+instance FromField WorldVersion where
+    fromField f = fromInt64 <$> fromField f
+
+instance ToField AKI where
+    toField = toField . akiToBlob
+
+instance FromField AKI where
+    fromField f = blobToAKI <$> fromField f
+
+instance ToField SKI where
+    toField = toField . skiToBlob
+
+instance FromField SKI where
+    fromField f = blobToSKI <$> fromField f
+
+instance ToField Hash where
+    toField = toField . hashToBlob
+
+instance FromField Hash where
+    fromField f = blobToHash <$> fromField f

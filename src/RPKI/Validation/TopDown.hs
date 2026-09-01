@@ -1716,7 +1716,7 @@ updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } 
         let !inserts = [ (k, fileName, unStorable $ toStorable $ Compressed child)
                        | (k, MftEntry {..}) <- newEntries ]
         unless (null inserts)     $ atomically $ writeCQueue shortcutQueue $ InsertMftShortcutChildren aki inserts
-        unless (null deletedKeys) $ atomically $ writeCQueue shortcutQueue $ DeleteMftShortcutChildren deletedKeys
+        unless (null deletedKeys) $ atomically $ writeCQueue shortcutQueue $ DeleteMftShortcutChildren aki deletedKeys
 
 deleteMftShortcut :: MonadIO m => TopDownContext -> AKI -> m ()
 deleteMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki = 
@@ -1731,13 +1731,13 @@ storeShortcuts AppContext {..} shortcutQueue = liftIO $
             for_ mftShortcuts $ \case
                 UpdateMftShortcut aki s               -> DB.saveMftShorcutMeta tx db aki s
                 InsertMftShortcutChildren aki entries -> DB.insertMftShortcutChildren tx db aki entries
-                DeleteMftShortcutChildren keys         -> DB.deleteMftShortcutChildren tx db keys
+                DeleteMftShortcutChildren aki keys     -> DB.deleteMftShortcutChildren tx db aki keys
                 DeleteMftShortcut aki                  -> DB.deleteMftShortcut tx db aki
 
 
 data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta))
                    | InsertMftShortcutChildren AKI [(ObjectKey, Text, BS.ByteString)]
-                   | DeleteMftShortcutChildren [ObjectKey]
+                   | DeleteMftShortcutChildren AKI [ObjectKey]
                    | DeleteMftShortcut AKI
 
 -- Do whatever is required to notify other subsystems that the object was touched 
