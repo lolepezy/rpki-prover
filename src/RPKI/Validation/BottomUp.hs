@@ -9,6 +9,7 @@ import           Control.Monad.IO.Class
 import           Control.Lens
 
 import qualified Data.Map.Strict                  as Map
+import           Data.Maybe                        (catMaybes)
 import qualified Data.Text                        as Text
 
 import           RPKI.AppContext
@@ -131,10 +132,11 @@ validateBottomUp
     -- Given a certificate, find a chain of certificates leading to a TA, 
     -- the chain is build based on the SKI - AKI relations
     findPathsToRoot db certificate = do                  
-        tas <- DB.roAppTx db $ \tx -> DB.getTAs tx db         
-        let taCerts = Map.fromList [ 
-                        (getSKI taCert, Located (talCertLocations tal) taCert) | 
-                        StorableTA {..} <- tas ]
+        taCerts <- DB.roAppTx db $ \tx -> do
+            tas <- DB.getTAs tx db
+            fmap (Map.fromList . catMaybes) $ forM tas $ \StorableTA {..} -> do
+                mcert <- DB.getTaCertByKey tx db taCertKey
+                pure $ fmap (\cert -> (getSKI cert, Located (talCertLocations tal) cert)) mcert
         go taCerts certificate
       where        
         go taCerts cert = do             

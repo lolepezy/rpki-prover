@@ -384,8 +384,11 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 logInfo logger [i|Not re-fetching TA certificate #{getURL $ getTaCertURL tal}, it's up-to-date.|]                
                 storedTa' <- updateStoredTal db storedTa
                 let locations = talCertLocations tal <> toLocations (storedTa' ^. #actualUrl)
-                let located = locatedTaCert locations (storedTa' ^. #taCert)                
-                pure (located, storedTa' ^. #initialRepositories)
+                taCert <- DB.roAppTxEx db DB.storageError $ \tx ->
+                    DB.getTaCertByKey tx db (storedTa' ^. #taCertKey)
+                case taCert of
+                    Nothing   -> appError $ UnspecifiedE (unTaName $ getTaName tal) "TA cert not found in objects store"
+                    Just cert -> pure (locatedTaCert locations cert, storedTa' ^. #initialRepositories)
 
   where
     -- Keep persisted TAL metadata in sync so all configured TA cert
@@ -397,6 +400,12 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
             pure updatedTa     
    
     fetchValidateAndStore db (Now moment) storableTa = do
+        cachedTaCertM <- case storableTa of
+            Nothing -> pure Nothing
+            Just StorableTA { taCertKey } ->
+                DB.roAppTxEx db DB.storageError $ \tx ->
+                    DB.getTaCertByKey tx db taCertKey
+
         z <- (do 
                 (u, ro) <- fetchTACertificate appContext (newFetchConfig config) tal
                 pure $ FetchedTA u ro)
@@ -407,9 +416,9 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
             FetchedTA actualUrl object -> do                                 
                 fetchedCert <- vHoist $ validateTACert tal actualUrl object
 
-                (certToUse, certToStore) <- case storableTa of
+                (certToUse, certToStore) <- case cachedTaCertM of
                     Nothing  -> pure (fetchedCert, fetchedCert)
-                    Just StorableTA { taCert = cachedTaCert } ->
+                    Just cachedTaCert ->
                         vHoist (do
                             cert <- chooseTaCert fetchedCert cachedTaCert
                             pure $ if cert == cachedTaCert
@@ -424,11 +433,16 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                     Left e         -> appError $ ValidationE e
                     Right ppAccess ->
                         DB.rwAppTxEx db DB.storageError $ \tx -> do
-                            DB.saveTA tx db (StorableTA tal certToStore (FetchedAt moment) ppAccess actualUrl)
+                            taCertKey <- DB.saveObject tx db (WellStructuredRO (CerRO certToStore)) worldVersion
+                            DB.linkObjectToUrl tx db actualUrl taCertKey
+                            DB.saveTA tx db (StorableTA tal taCertKey (FetchedAt moment) ppAccess actualUrl)
                             pure (locatedTaCert (talCertLocations tal <> toLocations actualUrl) certToUse, ppAccess)
 
             CachedTA StorableTA { tal = _, ..} ->
-                pure (locatedTaCert (talCertLocations tal <> toLocations actualUrl) taCert, initialRepositories)
+                case cachedTaCertM of
+                    Nothing -> appError $ UnspecifiedE (unTaName $ getTaName tal) "Cached TA cert not found in objects store"
+                    Just taCert ->
+                        pure (locatedTaCert (talCertLocations tal <> toLocations actualUrl) taCert, initialRepositories)
 
       where
         tryToFallbackToCachedCopy e =

@@ -29,7 +29,7 @@ module RPKI.Store.Database (
     hashExists, deleteObjectByHash, deleteObjectByKey,
     getMftsForAKI, findAllMftsByAKI, getMftByKey,
     getMftShorcut, saveMftShorcutMeta, saveMftShorcutChildren,
-    deleteMftShortcut, getBySKI, getFirstCaCertBySKI,
+    deleteMftShortcut, getBySKI, getFirstCaCertBySKI, getTaCertByKey,
     markAsValidated,
     saveTA, deleteTA, getTA, getTAs, setActiveTAs,
     versionsBackwards, previousVersion, getLatestVersion,
@@ -477,6 +477,12 @@ getBySKI tx@(Tx conn) db ski = liftIO $ do
 getFirstCaCertBySKI :: MonadIO m => Tx mode -> DB -> SKI -> m (Maybe (Located WellStructuredCaCert))
 getFirstCaCertBySKI tx db ski =
     listToMaybe <$> getBySKI tx db ski
+
+getTaCertByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe WellStructuredCaCert)
+getTaCertByKey tx db k =
+    getLocatedByKey tx db k >>= \case
+        Just (Located _ (WellStructuredRO (CerRO c))) -> pure $ Just c
+        _                                             -> pure Nothing
 
 markAsValidated :: MonadIO m
                 => Tx 'RW -> DB -> Set.Set ObjectKey -> WorldVersion -> m ()

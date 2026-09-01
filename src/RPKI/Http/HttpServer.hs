@@ -390,16 +390,7 @@ getRpkiObject AppContext {..} uri hash key =
 
                 Right rpkiUrl ->                     
                     roTxT database $ \tx db ->
-                        DB.getByUri tx db rpkiUrl >>= \case     
-                            [] -> do                                
-                                -- try TA certificates
-                                tas <- DB.getTAs tx db                                 
-                                pure [ taLocatedDto locations taCert |
-                                    StorableTA {..} <- tas,
-                                    let locations = talCertLocations tal,
-                                    oneOfLocations locations rpkiUrl ]
-                                
-                            os -> pure $ map locatedDto os
+                        map locatedDto <$> DB.getByUri tx db rpkiUrl
                         
         (Nothing, Just hash', Nothing) ->
             case parseHash hash' of
@@ -421,7 +412,6 @@ getRpkiObject AppContext {..} uri hash key =
                 "Only one of 'uri', 'hash' or 'key' must be provided." }
   where
     locatedDto located = RObject $ located & #payload %~ lifecycleToDto
-    taLocatedDto locations taCert = RObject $ Located locations $ validatedCaToDto taCert
 
 
 getManifests :: (MonadIO m, MonadError ServerError m)
