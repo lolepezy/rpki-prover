@@ -200,7 +200,7 @@ collectRows :: FromRow r => Statement -> IO [r]
 collectRows stmt = go []
   where
     go acc = nextRow stmt >>= \case
-        Nothing -> pure (reverse acc)
+        Nothing -> pure $! reverse acc
         Just r  -> go (r : acc)
 
 -- | Step a statement expected to return no rows (INSERT/UPDATE/DELETE).

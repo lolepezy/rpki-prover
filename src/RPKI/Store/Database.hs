@@ -228,7 +228,6 @@ inClauseBatches = map toBatch . chunksOf 500
             params = [ (":k" <> Text.pack (show i)) := key | (i, key) <- keyParams ]
         in (placeholders, params)
 
-
 -- ---------------------------------------------------------------------------
 -- Object functions
 -- ---------------------------------------------------------------------------
