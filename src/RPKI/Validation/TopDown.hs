@@ -652,21 +652,21 @@ validateCaNoFetch
                     increment $ topDownCounters.originalMft
                     pure $! processMfts aki mftMetas
 
-                Just meta@DB.MftShortcutMeta{..} -> do
+                Just meta -> do
                     let shortcutExpired =
                             not (isWithinValidityPeriod now meta) ||
-                            not (isWithinValidityPeriod now crlShortcut)
+                            not (isWithinValidityPeriod now meta.crlShortcut)
 
                     if shortcutExpired then do
                         increment topDownCounters.originalMft
                         pure $! processMfts aki mftMetas
                     else do
-                        markAsUsed topDownContext key
+                        markAsUsed topDownContext meta.key
                         increment topDownCounters.shortcutMft
                         action <- case mftsNotInFuture mftMetas of
                             [] -> vError $ NoMFT aki
                             mft_ : otherMfts
-                                | mft_.key == key ->
+                                | mft_.key == meta.key ->
                                     pure $! onlyCollectPayloads meta
                                 | otherwise -> pure $! do
                                     markAsUsed topDownContext mft_.key
@@ -1708,6 +1708,11 @@ updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftS
 -- | Only the new children get inserted (into `shortcuts` and `mft_shortcut_children`)
 -- and only the deleted keys get removed -- unchanged ("overlapping") children are
 -- never touched.
+--
+-- Inserts and deletes are bundled into a single queue message so that the writer
+-- applies them in one transaction -- if they were queued as two separate messages,
+-- a chunk boundary on the consuming end could split them across transactions and
+-- leave a manifest shortcut's children updated only partially.
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> [(ObjectKey, MftEntry)] -> [ObjectKey] -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki newEntries deletedKeys =
     liftIO $ do
@@ -1715,8 +1720,8 @@ updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } 
         -- (validation) thread, not on the DB-writer thread.
         let !inserts = [ (k, fileName, unStorable $ toStorable $ Compressed child)
                        | (k, MftEntry {..}) <- newEntries ]
-        unless (null inserts)     $ atomically $ writeCQueue shortcutQueue $ InsertMftShortcutChildren aki inserts
-        unless (null deletedKeys) $ atomically $ writeCQueue shortcutQueue $ DeleteMftShortcutChildren aki deletedKeys
+        unless (null inserts && null deletedKeys) $
+            atomically $ writeCQueue shortcutQueue $ UpdateMftShortcutChildren aki inserts deletedKeys
 
 deleteMftShortcut :: MonadIO m => TopDownContext -> AKI -> m ()
 deleteMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki = 
@@ -1726,18 +1731,20 @@ storeShortcuts :: (MonadIO m) =>
                 AppContext s 
              -> ClosableQueue MftShortcutOp -> m ()
 storeShortcuts AppContext {..} shortcutQueue = liftIO $
-    readQueueChunked shortcutQueue 1000 $ \mftShortcuts ->
+    readQueueChunked shortcutQueue 1000 $ \shotcutOps ->
         rwTxT database $ \tx db ->
-            for_ mftShortcuts $ \case
-                UpdateMftShortcut aki s               -> DB.saveMftShorcutMeta tx db aki s
-                InsertMftShortcutChildren aki entries -> DB.insertMftShortcutChildren tx db aki entries
-                DeleteMftShortcutChildren aki keys     -> DB.deleteMftShortcutChildren tx db aki keys
-                DeleteMftShortcut aki                  -> DB.deleteMftShortcut tx db aki
+            for_ shotcutOps $ \case
+                UpdateMftShortcut aki s ->
+                    DB.saveMftShorcutMeta tx db aki s
+                UpdateMftShortcutChildren aki inserts deletedKeys -> do
+                    unless (null inserts)     $ DB.insertMftShortcutChildren tx db aki inserts
+                    unless (null deletedKeys) $ DB.deleteMftShortcutChildren tx db aki deletedKeys
+                DeleteMftShortcut aki ->
+                    DB.deleteMftShortcut tx db aki
 
 
 data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta))
-                   | InsertMftShortcutChildren AKI [(ObjectKey, Text, BS.ByteString)]
-                   | DeleteMftShortcutChildren AKI [ObjectKey]
+                   | UpdateMftShortcutChildren AKI [(ObjectKey, Text, BS.ByteString)] [ObjectKey]
                    | DeleteMftShortcut AKI
 
 -- Do whatever is required to notify other subsystems that the object was touched 
