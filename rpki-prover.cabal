@@ -356,6 +356,37 @@ benchmark save-snapshot-bench
           , filepath
           , temporary
 
+benchmark validate-tas-bench
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         ValidateTAsBench.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -threaded
+            -rtsopts
+            -O2
+            "-with-rtsopts=-N -T"
+    build-depends:
+            rpki-prover
+          , directory
+          , filepath
+
+benchmark migrate-urls-to-blob
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         MigrateUrlsToBlob.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -O2
+    build-depends:
+            rpki-prover
+
 benchmark pipeline-stage-bench
     import:          shared
     type:            exitcode-stdio-1.0

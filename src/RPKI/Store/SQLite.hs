@@ -277,7 +277,7 @@ schemaDDL =
     , [sql|
         CREATE TABLE IF NOT EXISTS urls (
             url_key INTEGER PRIMARY KEY,
-            url     TEXT    NOT NULL UNIQUE
+            url     BLOB    NOT NULL UNIQUE
         )
       |]
     , [sql|

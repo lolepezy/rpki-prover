@@ -111,7 +111,7 @@ import qualified RPKI.Store.SQLite            as SQLite
 import           RPKI.Store.Types
 import           RPKI.Validation.Types
 
-import           RPKI.Util                (ifJustM, fmtEx, parseRpkiURL)
+import           RPKI.Util                (ifJustM, fmtEx)
 import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.AppTypes
@@ -155,7 +155,7 @@ rwTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 54
+currentDatabaseVersion = 55
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -259,14 +259,13 @@ getByUri tx db uri = liftIO $ do
 
 getKeysByUri :: MonadIO m => Tx mode -> DB -> RpkiURL -> m [ObjectKey]
 getKeysByUri (Tx conn) _ uri = liftIO $ do
-    let uriText = toText uri
     rows <- query conn
         [sql|
             SELECT ou.object_key
             FROM object_urls ou JOIN urls u USING(url_key)
             WHERE u.url = ?
         |]
-        (Only uriText)
+        (Only (serialiseField uri))
     pure $ map fromOnly rows
 
 getObjectByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe RpkiObjectLifecycle)
@@ -301,12 +300,10 @@ getLocationsByKey (Tx conn) _ k = liftIO $ do
             WHERE ou.object_key = ?
         |]
         (Only k)
-    let urls = map fromOnly rows
+    let urls = map (deserialiseField . fromOnly) rows :: [RpkiURL]
     pure $ case urls of
         [] -> Nothing
-        _  -> case mapM parseRpkiURL urls of
-                Left _   -> Nothing
-                Right us -> Locations <$> toNESet us        
+        us -> Locations <$> toNESet us
 
 saveObject :: MonadIO m
            => Tx 'RW
@@ -381,12 +378,11 @@ getObjectMeta (Tx conn) _ k = liftIO $ do
 
 linkObjectToUrl :: MonadIO m => Tx 'RW -> DB -> RpkiURL -> ObjectKey -> m ()
 linkObjectToUrl (Tx conn) _ rpkiURL objectKey = liftIO $ do
-    let uriText = toText rpkiURL
     [Only urlKey] <- query conn
         [sql|INSERT INTO urls(url) VALUES (?)
              ON CONFLICT(url) DO UPDATE SET url = excluded.url
              RETURNING url_key|]
-        (Only uriText)
+        (Only (serialiseField rpkiURL))
     execute conn
         "INSERT OR IGNORE INTO object_urls(object_key, url_key) VALUES (?, ?)"
         (objectKey, urlKey :: UrlKey)
