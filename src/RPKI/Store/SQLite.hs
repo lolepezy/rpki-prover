@@ -106,12 +106,12 @@ initConn busyTimeoutMs path = do
 
 createDB :: FilePath -> Int -> Int -> IO SqliteDB
 createDB path busyTimeoutMs poolSize = do
-    readPool  <- Pool.createPool
-                    (initConn busyTimeoutMs path)
-                    close
-                    1       -- stripes
-                    60      -- idle TTL seconds
-                    poolSize
+    readPool  <- Pool.newPool $
+                    Pool.defaultPoolConfig
+                        (initConn busyTimeoutMs path)
+                        close
+                        60      -- idle TTL seconds
+                        poolSize
     writeConn <- newMVar =<< initConn busyTimeoutMs path
     pure SqliteDB{..}
 
@@ -214,21 +214,21 @@ schemaDDL =
             PRIMARY KEY (key, kind)
         )
       |]
-        , [sql|
-                CREATE TABLE IF NOT EXISTS validation_outcomes (
-                        ta_name     TEXT,
-                        version     INTEGER NOT NULL,
-                        validations BLOB,
-                        metrics     BLOB,
-                        roas        BLOB,
-                        spls        BLOB,
-                        aspa        BLOB,
-                        bgps        BLOB,
-                        gbrs        BLOB,
-                        PRIMARY KEY (ta_name, version)
-                )
-            |]
-        , "CREATE UNIQUE INDEX IF NOT EXISTS idx_validation_outcomes_common ON validation_outcomes(version) WHERE ta_name IS NULL"
+    , [sql|
+            CREATE TABLE IF NOT EXISTS validation_outcomes (
+                    ta_name     TEXT,
+                    version     INTEGER NOT NULL,
+                    validations BLOB,
+                    metrics     BLOB,
+                    roas        BLOB,
+                    spls        BLOB,
+                    aspa        BLOB,
+                    bgps        BLOB,
+                    gbrs        BLOB,
+                    PRIMARY KEY (ta_name, version)
+            )
+        |]
+    , "CREATE UNIQUE INDEX IF NOT EXISTS idx_validation_outcomes_common ON validation_outcomes(version) WHERE ta_name IS NULL"
     , "CREATE TABLE IF NOT EXISTS slurm       (key INTEGER PRIMARY KEY, value BLOB NOT NULL)"
     , "CREATE TABLE IF NOT EXISTS jobs        (key TEXT NOT NULL PRIMARY KEY, value BLOB NOT NULL)"
     , "CREATE TABLE IF NOT EXISTS metadata    (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)"

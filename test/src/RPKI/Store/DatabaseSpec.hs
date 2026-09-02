@@ -65,6 +65,8 @@ repositoryStoreGroup :: TestTree
 repositoryStoreGroup = testGroup "Repository storage test"
     [ dbTestCase "Should insert and get an rsync repository" shouldSaveAndGetRsyncRepositories
     , dbTestCase "Should overwrite metadata and validations" shouldSaveMetaAndValidationAsCorrectSemigroup
+    , dbTestCase "Should save and get a mix of RRDP/rsync repositories with validation states, respecting the filter"
+        shouldSaveAndGetRepositoriesWithValidationStates
     ]
 
 versionStoreGroup :: TestTree
@@ -277,6 +279,40 @@ shouldSaveMetaAndValidationAsCorrectSemigroup io = do
         rs <- roTx db $ \tx -> DB.getRsyncRepositories tx db [url]
         let Just r = Map.lookup url rs
         HU.assertEqual "Same repository" r rsync
+
+
+-- | Covers `saveRepositories`/`saveRepositoryValidationStates`/`getRepositories`
+-- together for a mix of RRDP and rsync repositories -- the bulk vstate lookup
+-- in `getRepositories` replaced a per-repository query, so this checks it
+-- still returns exactly the saved (repository, validation state) pairs and
+-- still respects the URL filter.
+shouldSaveAndGetRepositoriesWithValidationStates :: IO DB -> HU.Assertion
+shouldSaveAndGetRepositoriesWithValidationStates io = do
+    db <- io
+
+    repos  <- QC.generate $ replicateM 40 QC.arbitrary :: IO [Repository]
+    states <- QC.generate $ replicateM (length repos) QC.arbitrary :: IO [ValidationState]
+    let reposWithStates = zip repos states
+
+    rwTx db $ \tx -> do
+        DB.saveRepositories tx db repos
+        DB.saveRepositoryValidationStates tx db reposWithStates
+
+    stored <- roTx db $ \tx -> DB.getRepositories tx db (const True)
+
+    HU.assertEqual "Should get back all saved repositories with their validation states"
+        (byUrl reposWithStates)
+        (byUrl stored)
+
+    -- Only keep the first half by URL and check the filter predicate is respected.
+    let keptUrls = Set.fromList $ map (getRpkiURL . fst) $ take (length repos `div` 2) reposWithStates
+    storedFiltered <- roTx db $ \tx -> DB.getRepositories tx db (`Set.member` keptUrls)
+
+    HU.assertEqual "Filter predicate should restrict returned repositories"
+        (Map.filterWithKey (\u _ -> u `Set.member` keptUrls) (byUrl reposWithStates))
+        (byUrl storedFiltered)
+  where
+    byUrl = Map.fromList . map (\(r, vs) -> (getRpkiURL r, (r, vs)))
 
 
 rsyncReposWithCommonHosts :: Int -> IO [RsyncRepository]

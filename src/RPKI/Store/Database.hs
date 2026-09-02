@@ -491,14 +491,13 @@ saveMftShorcutMeta (Tx conn) _ aki meta = liftIO $
 -- rename (same child_key, new file_name), can legitimately overwrite an
 -- existing row for a key that's already cached.
 insertMftShortcutChildren :: MonadIO m => Tx 'RW -> DB -> AKI -> [(ObjectKey, Text, BS.ByteString)] -> m ()
-insertMftShortcutChildren (Tx conn) _ aki newEntries = liftIO $
-    forM_ newEntries $ \(childKey, fileName_, dataBs) -> do
-        execute conn
-            "INSERT OR REPLACE INTO shortcuts(object_key, data) VALUES (?, ?)"
-            (childKey, dataBs)
-        execute conn
-            "INSERT OR REPLACE INTO mft_shortcut_children(aki, file_name, child_key) VALUES (?, ?, ?)"
-            (aki, fileName_, childKey)
+insertMftShortcutChildren (Tx conn) _ aki newEntries = liftIO $ do
+    executeMany conn
+        "INSERT OR REPLACE INTO shortcuts(object_key, data) VALUES (?, ?)"
+        [ (childKey, dataBs) | (childKey, _, dataBs) <- newEntries ]
+    executeMany conn
+        "INSERT OR REPLACE INTO mft_shortcut_children(aki, file_name, child_key) VALUES (?, ?, ?)"
+        [ (aki, fileName_, childKey) | (childKey, fileName_, _) <- newEntries ]
 
 -- | Delete only this AKI's (aki, child_key) membership rows. Never touches
 -- `shortcuts` -- an orphaned shortcut is cleaned up by the general objects
@@ -910,9 +909,9 @@ saveRepositories :: MonadIO m => Tx 'RW -> DB -> [Repository] -> m ()
 saveRepositories tx db repos = liftIO $ do
     let (rrdps, rsyncs) = foldr sep ([], []) repos
     let Tx conn = tx
-    forM_ rrdps $ \r ->
-        execute conn "INSERT OR REPLACE INTO repositories(key, kind, data) VALUES (?, 'rrdp-pp', ?)"
-            (serialiseField (r ^. #uri), serialiseField r)
+    executeMany conn
+        "INSERT OR REPLACE INTO repositories(key, kind, data) VALUES (?, 'rrdp-pp', ?)"
+        [ (serialiseField (r ^. #uri), serialiseField r) | r <- rrdps ]
     saveRsyncRepositories tx db rsyncs
   where
     sep (RrdpR r)  (rs, ss) = (r : rs, ss)
@@ -923,10 +922,9 @@ saveRepositoryValidationStates :: MonadIO m
 saveRepositoryValidationStates tx db repos = liftIO $ do
     let (rrdps, rsyncs) = foldr sep ([], []) repos
     let Tx conn = tx
-    forM_ rrdps $ \(r, vs) ->
-        execute conn
-            "INSERT OR REPLACE INTO repositories(key, kind, data) VALUES (?, 'rrdp-vstate', ?)"
-            (serialiseField (r ^. #uri), serialiseCompressed vs)
+    executeMany conn
+        "INSERT OR REPLACE INTO repositories(key, kind, data) VALUES (?, 'rrdp-vstate', ?)"
+        [ (serialiseField (r ^. #uri), serialiseCompressed vs) | (r, vs) <- rrdps ]
     saveRsyncValidationStates tx db rsyncs
   where
     sep (RrdpR r,  a) (rs, ss) = ((r, a) : rs, ss)
@@ -982,29 +980,33 @@ getRepositories (Tx conn) _ filterF = liftIO $ do
     let rrdps  = [ (deserialiseField k :: RrdpURL,  deserialiseField v) | (k, v) <- rrdpRows ]
         rsyncs = [ (deserialiseField k :: RsyncHost, deserialiseField v) | (k, v) <- rsyncRows ]
 
-    rrdpResults <- fmap mconcat $ forM rrdps $ \(url, r) ->
-        if not (filterF (RrdpU url)) then pure [] else do
-            rows <- query conn
-                "SELECT data FROM repositories WHERE key = ? AND kind = 'rrdp-vstate'"
-                (Only (serialiseField url))
-            pure $ case listToMaybe rows of
-                Nothing        -> []
-                Just (Only bs) -> [(RrdpR r, deserialiseCompressed bs)]
+    -- Bulk-fetch validation states in two queries instead of one query per
+    -- repository/host -- with hundreds of repositories that N+1 pattern was
+    -- hundreds of round-trips on every call (this is on the main UI page's
+    -- request path).
+    rrdpVstateRows  <- query_ conn "SELECT key, data FROM repositories WHERE kind = 'rrdp-vstate'"
+    rsyncVstateRows <- query_ conn "SELECT key, data FROM repositories WHERE kind = 'rsync-vstate'"
+    let rrdpVstates  = Map.fromList rrdpVstateRows  :: Map.Map BS.ByteString BS.ByteString
+        rsyncVstates = Map.fromList rsyncVstateRows :: Map.Map BS.ByteString BS.ByteString
 
-    rsyncResults <- fmap mconcat $ forM rsyncs $ \(host, metas) -> do
-        rows <- query conn
-            "SELECT data FROM repositories WHERE key = ? AND kind = 'rsync-vstate'"
-            (Only (serialiseField host))
-        pure $ case listToMaybe rows of
-            Nothing        -> []
-            Just (Only bs) ->
-                let vss = deserialiseCompressed bs :: RsyncTree ValidationState
-                in  [ (RsyncR repo, vs)
-                    | (RsyncURL _ path, meta) <- flattenTree host metas
-                    , let uri  = RsyncURL host path
-                    , let repo = RsyncRepository { repoPP = RsyncPublicationPoint uri, .. }
-                    , filterF (RsyncU uri)
-                    , Just (_, vs) <- [lookupInRsyncTree path vss] ]
+    let rrdpResults =
+            [ (RrdpR r, deserialiseCompressed bs)
+            | (url, r) <- rrdps
+            , filterF (RrdpU url)
+            , Just bs <- [Map.lookup (serialiseField url) rrdpVstates]
+            ]
+
+        rsyncResults =
+            [ (RsyncR repo, vs)
+            | (host, metas) <- rsyncs
+            , Just bs <- [Map.lookup (serialiseField host) rsyncVstates]
+            , let vss = deserialiseCompressed bs :: RsyncTree ValidationState
+            , (RsyncURL _ path, meta) <- flattenTree host metas
+            , let uri  = RsyncURL host path
+            , let repo = RsyncRepository { repoPP = RsyncPublicationPoint uri, .. }
+            , filterF (RsyncU uri)
+            , Just (_, vs) <- [lookupInRsyncTree path vss]
+            ]
     pure $ rrdpResults <> rsyncResults
 
 
