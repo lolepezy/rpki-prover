@@ -1514,30 +1514,25 @@ manifestDiff :: MftShortcut
             -> [T3 Text a ObjectKey]
             -> ([T3 Text a ObjectKey], [T3 Text a ObjectKey], [ObjectKey])
 manifestDiff mftShortcut newMftChidlren =
-    (newOnes, overlapping, Map.keys deletedEntries)
+    (List.reverse newOnes, List.reverse overlapping, Map.keys deletedEntries)
   where
-    (newOnes, overlapping) = List.partition 
-            (\(T3 fileName _  k) -> isNewEntry k fileName) newMftChidlren                
+    (newOnes, overlapping, deletedEntries) =
+        foldl' go ([], [], mftShortcut.nonCrlEntries) newMftChidlren
 
-    -- it's not in the map of shortcut children or it has changed 
-    -- its name (very unlikely but can happen in theory)                
-    isNewEntry key_ fileName  = 
+    -- If we delete everything from mftShortcut.nonCrlEntries that is present in
+    -- newMftChidlren, we only have the entries that are not present on the new manifest,
+    -- i.e. the deleted ones.
+    go (!newOnes_, !overlapping_, !remaining) t3@(T3 fileName _ key_) =
         case Map.lookup key_ mftShortcut.nonCrlEntries of
-            Nothing -> True
-            Just e  -> e.fileName /= fileName 
-                    
-    deletedEntries = 
-        -- If we delete everything from mftShortcut.nonCrlEntries that is present in 
-        -- newMftChidlren, we only have the entries that are not present on the new manifest,
-        -- i.e. the deleted ones.
-        foldr (\(T3 fileName _ key_) entries -> 
-                case Map.lookup key_ mftShortcut.nonCrlEntries of 
-                    Nothing -> entries
-                    Just e 
-                        | e.fileName == fileName -> Map.delete key_ entries
-                        | otherwise -> entries) 
-                mftShortcut.nonCrlEntries
-                newMftChidlren
+            -- it's not in the map of shortcut children -- new entry
+            Nothing -> (t3 : newOnes_, overlapping_, remaining)
+            Just e
+                | e.fileName == fileName ->
+                    (newOnes_, t3 : overlapping_, Map.delete key_ remaining)
+                -- it has changed its name (very unlikely but can happen in theory)
+                -- -- new entry, and the old one under the same key stays "deleted"
+                | otherwise ->
+                    (t3 : newOnes_, overlapping_, remaining)
 
 
 resolveTroubledChildByKey :: Tx mode
