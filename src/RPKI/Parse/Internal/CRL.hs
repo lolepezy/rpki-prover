@@ -25,13 +25,13 @@ import qualified RPKI.Util                  as U
 parseCrl :: BS.ByteString -> PureValidatorT CrlObject
 parseCrl bs = do
     -- pureError $ parseErr $ "Couldn't parse IP address extension: " <> Text.pack (show e)
-    asns                   <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs
+    asns                   <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs
     (extensions, signCrlF) <- fromEither $ first (parseErr . U.convert) $ runParseASN1 getCrl asns      
     akiBS <- case extVal extensions id_authorityKeyId of
                 Nothing -> pureError $ parseErr "No AKI in CRL"
                 Just a  -> pure a
 
-    aki' <- case decodeASN1' BER akiBS of
+    aki' <- case decodeASN1' DER akiBS of
                 Left e -> pureError $ parseErr $ "Unknown AKI format: " <> U.fmtGen e
                 Right [Start Sequence, Other Context 0 ki, End Sequence] -> pure ki
                 Right s -> pureError $ parseErr $ "Unknown AKI format: " <> U.fmtGen s
@@ -40,7 +40,7 @@ parseCrl bs = do
                 Nothing -> pureError $ parseErr "No CRL number in CRL"
                 Just n  -> pure n
 
-    numberAsns <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER crlNumberBS
+    numberAsns <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER crlNumberBS
     crlNumber' <- fromEither $ first (parseErr . U.convert) $ 
                     runParseASN1 (getInteger pure "Wrong CRL number") numberAsns
 

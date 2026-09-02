@@ -76,7 +76,7 @@ parseSignedObject contentBinaryParse =
           eContent contentType = do 
             fullContent <- getMany getNext
             let bs = BS.concat [ os | OctetString os <- fullContent ]            
-            -- throwParseError $ "ASNs = " <> show (decodeASN1' BER bs)
+            -- throwParseError $ "ASNs = " <> show (decodeASN1' DER bs)
             contentBinaryParse contentType bs
 
     parseEECertificate = onNextContainer (Container Context 0) $                  
@@ -158,7 +158,7 @@ parseSignedContent :: ParseASN1 a
                     -> BS.ByteString 
                     -> ParseASN1 (EncapsulatedContentInfo a)
 parseSignedContent eContentParse contentType bs = 
-    case decodeASN1' BER bs of
+    case decodeASN1' DER bs of
         Left e     -> throwParseError $ "Couldn't decode embedded content: " <> show e
         Right asns ->  
             case runParseASN1 eContentParse asns of

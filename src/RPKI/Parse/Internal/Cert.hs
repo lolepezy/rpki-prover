@@ -63,7 +63,7 @@ parseResources x509cert = do
     pure $ RawResourceCertificate x509cert $ allResources ips' asns'
   where             
     parseR f bs = 
-        case decodeASN1' BER bs of 
+        case decodeASN1' DER bs of 
             Left e     -> pureError $ parseErr $ "Couldn't parse IP address extension: " <> U.fmtGen e
             Right asns -> f asns                  
 
