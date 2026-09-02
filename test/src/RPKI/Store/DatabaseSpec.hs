@@ -17,6 +17,8 @@ import qualified Data.Set                          as Set
 import qualified Data.Text                         as Text
 import           Data.Proxy                        (Proxy(..))
 import           Data.Int                          (Int64)
+import           Data.Ord                          (Down(..))
+import           Data.Hourglass                    (Seconds(..))
 
 import           Database.SQLite.Simple            (Only(..), execute, query, query_)
 
@@ -56,6 +58,14 @@ databaseGroup = testGroup "SQLite storage tests"
 objectStoreGroup :: TestTree
 objectStoreGroup = testGroup "Object storage test"
     [ dbTestCase "Should order manifests according to their dates" shouldOrderManifests
+    , dbTestCase "Should order manifests by thisTime, not by manifest_number"
+        shouldOrderManifestsByThisTimeNotNumber
+    , dbTestCase "Should order manifests by nextTime when thisTime ties"
+        shouldOrderManifestsByNextTimeWhenThisTimeTies
+    , dbTestCase "Should order manifests by mftNumber when thisTime and nextTime both tie"
+        shouldOrderManifestsByMftNumberWhenTimesTie
+    , dbTestCase "Should order many manifests by thisTime across many random mftNumber/nextTime permutations"
+        shouldOrderManyRandomManifestsByThisTime
     , dbTestCase "Should merge locations" shouldMergeObjectLocations
     , dbTestCase "Should deduplicate saveObject by hash" shouldDeduplicateSaveObjectByHash
     , dbTestCase "Should index certificates on saveObject" shouldIndexCertificateOnSaveObject
@@ -174,6 +184,126 @@ shouldOrderManifests io = do
         DB.getMftByKey tx db key
 
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) (toValidatedRpkiObject mft2)
+
+
+-- | Saves one fresh dummy object per descriptor (to satisfy manifest_meta's
+-- FK to objects) and inserts a manifest_meta row for each `(mftNumber,
+-- thisTime, nextTime)` descriptor, all under the given AKI. Bypasses
+-- `saveObject`'s manifest-specific insertion (which needs a real parsed
+-- manifest CMS+certificate) so the three ordering fields can be set
+-- independently of each other and of a real manifest's actual content.
+insertMftMetasFor :: DB -> AKI -> [(Serial, Instant, Instant)] -> IO [MftMeta]
+insertMftMetasFor db aki descriptors = do
+    worldVersion <- newVersion
+    rwTx db $ \tx@(Tx conn) ->
+        forM descriptors $ \(mftNumber, thisTime, nextTime) -> do
+            ro :: ParsedRpkiObject <- QC.generate QC.arbitrary
+            key <- DB.saveObject tx db
+                (OriginalRO (ObjectOriginal $ unStorable $ toStorable ro) mempty (getHash ro) (getRpkiObjectType ro))
+                worldVersion
+            let meta = MftMeta {..}
+            execute conn
+                "INSERT INTO manifest_meta(object_key, aki, manifest_number, meta) VALUES (?, ?, ?, ?)"
+                (key, aki, serialiseField mftNumber, serialiseField meta)
+            pure meta
+
+
+-- | Regression test: `getMftsForAKI` used to sort with a SQL `ORDER BY
+-- manifest_number DESC`, but manifest serial numbers aren't guaranteed to
+-- grow monotonically in practice (e.g. ARIN's don't), so that can pick the
+-- wrong "latest" manifest. It must sort by thisTime/nextTime instead
+-- (`Ord MftMeta`), with manifest_number only as a last-resort tiebreaker.
+shouldOrderManifestsByThisTimeNotNumber :: IO DB -> HU.Assertion
+shouldOrderManifestsByThisTimeNotNumber io = do
+    db <- io
+    aki :: AKI <- QC.generate QC.arbitrary
+
+    Now t1 <- thisInstant
+    threadDelay 10_000
+    Now t2 <- thisInstant
+
+    -- The smaller manifest_number has the LATER thisTime; the bigger
+    -- manifest_number has the EARLIER thisTime.
+    metas <- insertMftMetasFor db aki
+        [ (Serial 1,  t2, t2)
+        , (Serial 99, t1, t1)
+        ]
+
+    ordered <- roTx db $ \tx -> DB.getMftsForAKI tx db aki
+
+    HU.assertEqual "Must be ordered by thisTime, not manifest_number"
+        (List.sortOn Down metas)
+        ordered
+
+
+-- | When thisTime ties, nextTime must be the tiebreaker, regardless of
+-- manifest_number.
+shouldOrderManifestsByNextTimeWhenThisTimeTies :: IO DB -> HU.Assertion
+shouldOrderManifestsByNextTimeWhenThisTimeTies io = do
+    db <- io
+    aki :: AKI <- QC.generate QC.arbitrary
+    Now sharedThisTime <- thisInstant
+
+    let n = 6 :: Int
+        nextTimes = [ momentAfter sharedThisTime (Seconds (fromIntegral i)) | i <- [1 .. n] ]
+    shuffledNumbers <- QC.generate $ QC.shuffle [ Serial (fromIntegral i) | i <- [1 .. n] ]
+
+    metas <- insertMftMetasFor db aki
+        [ (num, sharedThisTime, next) | (num, next) <- zip shuffledNumbers nextTimes ]
+
+    ordered <- roTx db $ \tx -> DB.getMftsForAKI tx db aki
+
+    HU.assertEqual "Must be ordered by nextTime when thisTime ties"
+        (List.sortOn Down metas)
+        ordered
+
+
+-- | When both thisTime and nextTime tie, manifest_number is the last-resort
+-- tiebreaker.
+shouldOrderManifestsByMftNumberWhenTimesTie :: IO DB -> HU.Assertion
+shouldOrderManifestsByMftNumberWhenTimesTie io = do
+    db <- io
+    aki :: AKI <- QC.generate QC.arbitrary
+    Now sharedTime <- thisInstant
+
+    let n = 6 :: Int
+    shuffledNumbers <- QC.generate $ QC.shuffle [ Serial (fromIntegral i) | i <- [1 .. n] ]
+
+    metas <- insertMftMetasFor db aki
+        [ (num, sharedTime, sharedTime) | num <- shuffledNumbers ]
+
+    ordered <- roTx db $ \tx -> DB.getMftsForAKI tx db aki
+
+    HU.assertEqual "Must be ordered by manifest_number when thisTime and nextTime both tie"
+        (List.sortOn Down metas)
+        ordered
+
+
+-- | Broad randomised stress test: many trials, each with a random number of
+-- manifests, distinct thisTime values (so there's always a well-defined
+-- expected order), and mftNumber/nextTime independently shuffled/randomised
+-- so they routinely disagree with the thisTime order. Every trial's result
+-- must match sorting the input with `Ord MftMeta` (i.e. `List.sortOn Down`).
+shouldOrderManyRandomManifestsByThisTime :: IO DB -> HU.Assertion
+shouldOrderManyRandomManifestsByThisTime io = do
+    db <- io
+    forM_ [1 .. 40 :: Int] $ \trial -> do
+        aki :: AKI <- QC.generate QC.arbitrary
+        n :: Int <- QC.generate $ QC.choose (2, 12)
+        Now base <- thisInstant
+
+        let thisTimes = [ momentAfter base (Seconds (fromIntegral i)) | i <- [1 .. n] ]
+        shuffledNumbers <- QC.generate $ QC.shuffle [ Serial (fromIntegral i) | i <- [1 .. n] ]
+        nextTimeOffsets <- QC.generate $ QC.vectorOf n (QC.choose (0, 1000) :: QC.Gen Int64)
+        let nextTimes = [ momentAfter t (Seconds o) | (t, o) <- zip thisTimes nextTimeOffsets ]
+            descriptors = zip3 shuffledNumbers thisTimes nextTimes
+
+        metas <- insertMftMetasFor db aki descriptors
+        ordered <- roTx db $ \tx -> DB.getMftsForAKI tx db aki
+
+        HU.assertEqual ("Trial " <> show trial <> ": must be ordered by thisTime regardless of mftNumber/nextTime")
+            (List.sortOn Down metas)
+            ordered
 
 
 shouldDeduplicateSaveObjectByHash :: IO DB -> HU.Assertion

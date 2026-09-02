@@ -70,7 +70,9 @@ import           Control.Monad.Trans.Maybe
 
 import           Data.Generics.Product.Typed
 
+import qualified Data.List                as List
 import           Data.Maybe               (catMaybes, fromMaybe, listToMaybe)
+import qualified Data.List.NonEmpty       as NonEmpty
 import qualified Data.Set                 as Set
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
@@ -78,6 +80,7 @@ import           Data.String              (fromString)
 import qualified Data.Map.Strict          as Map
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Data.Int                 (Int64)
+import           Data.Ord                 (Down(..))
 import           Data.Tuple.Strict
 
 import           GHC.Generics
@@ -405,12 +408,19 @@ getMftMetaFromWellStructured WellStructuredCms { content = Manifest {..} } key =
 -- Manifest / Certificate index functions
 -- ---------------------------------------------------------------------------
 
+-- | Sorted newest-first by `Ord MftMeta` (thisTime, then nextTime, then
+-- mftNumber as a last-resort tiebreaker) -- NOT by manifest_number alone,
+-- since manifest serial numbers aren't guaranteed to grow monotonically
+-- (e.g. ARIN's don't in practice), so sorting purely by manifest_number
+-- can pick the wrong "latest" manifest. Sorted here instead of via SQL
+-- `ORDER BY` because thisTime/nextTime live inside the serialised `meta`
+-- BLOB, not as their own columns.
 getMftsForAKI :: MonadIO m => Tx mode -> DB -> AKI -> m [MftMeta]
 getMftsForAKI (Tx conn) _ aki_ = liftIO $ do
     rows <- query conn
-        "SELECT meta FROM manifest_meta WHERE aki = ? ORDER BY manifest_number DESC"
+        "SELECT meta FROM manifest_meta WHERE aki = ?"
         (Only aki_)
-    pure $! map (deserialiseField . fromOnly) rows
+    pure $! List.sortOn Down $ map (deserialiseField . fromOnly) rows
 
 findAllMftsByAKI :: MonadIO m
                  => Tx mode -> DB -> AKI -> m [(MftMeta, Keyed (Located WellStructuredMft))]
@@ -1125,29 +1135,30 @@ deleteOldestVersionsIfNeeded tx@(Tx conn) db versionNumberToKeep =
     mapException (AppException . storageError) <$> liftIO $ do
         versions <- versionsBackwards tx db
         let reallyToKeep = max 2 (fromIntegral versionNumberToKeep)
-        if length versions > reallyToKeep
-            then do
+        case NonEmpty.nonEmpty versions of
+            Just neVersions | NonEmpty.length neVersions > reallyToKeep -> do
                 taVersionRows <- query_ conn
                     "SELECT ta_name, version FROM validation_outcomes WHERE ta_name IS NOT NULL"
                     :: IO [(Text, WorldVersion)]
                 let taRealVersions = MonoidalMap.fromListWith (<>)
                         [ (ta, Set.singleton v) | (ta, v) <- taVersionRows ]
 
+                    -- The Nth most recent (1-indexed) distinct real version, or the
+                    -- oldest known version overall if there are fewer than N.
                     cutoffFor realVersions =
-                        let desc = Set.toDescList realVersions
-                        in if length desc >= reallyToKeep
-                            then desc !! (reallyToKeep - 1)
-                            else last versions
+                        case drop (reallyToKeep - 1) (Set.toDescList realVersions) of
+                            v : _ -> v
+                            []    -> NonEmpty.last neVersions
 
                     cutoff
-                        | MonoidalMap.null taRealVersions = head versions
+                        | MonoidalMap.null taRealVersions = NonEmpty.head neVersions
                         | otherwise = minimum $ map cutoffFor $ MonoidalMap.elems taRealVersions
 
                     versionsToDelete = filter (< cutoff) versions
 
                 forM_ versionsToDelete $ deleteValidationVersion tx db
                 pure versionsToDelete
-            else pure []
+            _ -> pure []
 
 deleteStaleContent :: MonadIO m => DB -> DeletionCriteria -> m CleanUpResult
 deleteStaleContent db DeletionCriteria{..} =
