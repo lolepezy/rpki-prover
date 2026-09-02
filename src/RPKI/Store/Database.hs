@@ -10,7 +10,7 @@ module RPKI.Store.Database (
     Tx(..),
     TxMode(..),
     -- * Transaction runners
-    withReadTx, withWriteTx, roTx, rwTx, roTxT, rwTxT, noTx, noTxT,
+    withReadTx, withWriteTx, roTx, rwTx, roTxT, rwTxT,
     -- * ValidatorT integration
     roAppTx, rwAppTx, appTx, roAppTxEx, rwAppTxEx, appTxEx,
     TxRollbackException(..),
@@ -24,7 +24,7 @@ module RPKI.Store.Database (
     getByUri, getKeysByUri,
     getObjectByKey, getLocatedByKey,
     getLocationCountByKey, getLocationsByKey,
-    saveObject,
+    saveObject, saveStorableObject,
     getObjectMeta, linkObjectToUrl,
     hashExists, deleteObjectByHash, deleteObjectByKey,
     getMftsForAKI, findAllMftsByAKI, getMftByKey,
@@ -129,17 +129,11 @@ withReadTx (DB sdb) = SQLite.withReadTx sdb
 withWriteTx :: MonadIO m => DB -> (Tx 'RW -> IO a) -> m a
 withWriteTx (DB sdb) = SQLite.withWriteTx sdb
 
-withoutTx :: MonadIO m => DB -> (Tx 'NOTX -> IO a) -> m a
-withoutTx (DB sdb) = SQLite.withoutTx sdb
-
 roTx :: MonadIO m => DB -> (Tx 'RO -> IO a) -> m a
 roTx = withReadTx
 
 rwTx :: MonadIO m => DB -> (Tx 'RW -> IO a) -> m a
 rwTx = withWriteTx
-
-noTx :: MonadIO m => DB -> (Tx 'NOTX -> IO a) -> m a
-noTx = withoutTx
 
 roTxT :: MonadIO m => TVar DB -> (Tx 'RO -> DB -> IO a) -> m a
 roTxT tdb f = liftIO $ do
@@ -150,11 +144,6 @@ rwTxT :: MonadIO m => TVar DB -> (Tx 'RW -> DB -> IO a) -> m a
 rwTxT tdb f = liftIO $ do
     db <- readTVarIO tdb
     rwTx db (\tx -> f tx db)
-
-noTxT :: MonadIO m => TVar DB -> (Tx 'NOTX -> DB -> IO a) -> m a
-noTxT tdb f = liftIO $ do
-    db <- readTVarIO tdb
-    noTx db (\tx -> f tx db)
 
 -- ---------------------------------------------------------------------------
 -- Constants
@@ -321,44 +310,57 @@ saveObject :: MonadIO m
            -> RpkiObjectLifecycle
            -> WorldVersion
            -> m ObjectKey
-saveObject (Tx conn) _ lifecycle wv = liftIO $ do
-    let so     = toStorableObject lifecycle
-        hash_  = getHash lifecycle
-        typ    = show (getRpkiObjectType lifecycle)
-        dataBs = encodeSO so
-        originalBs = case lifecycle of
-            OriginalRO (ObjectOriginal blob) _ _ _ -> Just blob
-            _                                      -> Nothing
+saveObject tx db lifecycle = saveStorableObject tx db (toStorableObject lifecycle)
 
-    execute conn
-        "INSERT OR IGNORE INTO objects(hash, type, data, original, world_version) \
-        \VALUES (?, ?, ?, ?, ?)"
-        (hash_, typ, dataBs, originalBs, wv)
+-- | Like 'saveObject', but takes an already-built 'StorableObject' (its
+-- 'storable' bytes already forced) instead of serialising the lifecycle
+-- here. Use this from hot paths that parse many objects concurrently and
+-- want that (CPU-heavy) serialisation done on the parsing (parallel) thread
+-- rather than the single serial DB-writer thread -- see 'toStorableObject'.
+saveStorableObject :: MonadIO m
+                => Tx 'RW
+                -> DB
+                -> StorableObject RpkiObjectLifecycle
+                -> WorldVersion
+                -> m ObjectKey
+saveStorableObject (Tx conn) _ so@StorableObject { object = lifecycle } wv = liftIO $ do
+    let hash_ = getHash lifecycle
 
-    rows <- query conn "SELECT object_key FROM objects WHERE hash = ?" (Only hash_)
-    let objectKey = fromOnly (head rows) :: ObjectKey
+    existing <- query conn "SELECT object_key FROM objects WHERE hash = ?" (Only hash_)
+    case existing of
+        Only objectKey : _ -> pure objectKey
+        [] -> do
+            let typ    = show (getRpkiObjectType lifecycle)
+                dataBs = encodeSO so
+                originalBs = case lifecycle of
+                    OriginalRO (ObjectOriginal blob) _ _ _ -> Just blob
+                    _                                      -> Nothing
 
-    affectedRows <- changes conn
-    when (affectedRows > 0) $ case lifecycle of
-        WellStructuredRO (CerRO c) ->
-            execute conn
-                "INSERT OR IGNORE INTO certificates(object_key, ski, aki) VALUES (?, ?, ?)"
-                (objectKey, getSKI c, getAKI c)
-        WellStructuredRO (MftRO mft) ->
-            forM_ (getAKI mft) $ \aki_ ->
-                let meta = getMftMetaFromWellStructured mft objectKey
-                in execute conn
-                    [sql|
-                        INSERT OR IGNORE INTO manifest_meta(object_key, aki, manifest_number, meta)
-                        VALUES (?, ?, ?, ?)
-                    |]
-                    ( objectKey
-                    , aki_
-                    , let Serial mftNum = meta ^. #mftNumber in serialToBlob mftNum
-                    , serialiseField meta )
-        _ -> pure ()
+            [Only objectKey] <- query conn
+                [sql|INSERT INTO objects(hash, type, data, original, world_version)
+                     VALUES (?, ?, ?, ?, ?) RETURNING object_key|]
+                (hash_, typ, dataBs, originalBs, wv)
 
-    pure objectKey
+            case lifecycle of
+                WellStructuredRO (CerRO c) ->
+                    execute conn
+                        [sql|INSERT OR IGNORE INTO certificates(object_key, ski, aki) VALUES (?, ?, ?)|]
+                        (objectKey, getSKI c, getAKI c)
+                WellStructuredRO (MftRO mft) ->
+                    forM_ (getAKI mft) $ \aki_ ->
+                        let meta = getMftMetaFromWellStructured mft objectKey
+                        in execute conn
+                            [sql|
+                                INSERT OR IGNORE INTO manifest_meta(object_key, aki, manifest_number, meta)
+                                VALUES (?, ?, ?, ?)
+                            |]
+                            ( objectKey
+                            , aki_
+                            , let Serial mftNum = meta ^. #mftNumber in serialToBlob mftNum
+                            , serialiseField meta )
+                _ -> pure ()
+
+            pure objectKey
 
 
 getObjectMeta :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe ObjectMeta)

@@ -41,6 +41,7 @@ import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Store.Types
+import           RPKI.Store.Base.Storable (StorableObject(..), toStorableObject)
 import           RPKI.Store.Database     (DB, roTx)
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Time
@@ -293,18 +294,22 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
                 (evaluate $!
                     case z of
                         (Left _, vs) ->
-                            SaveObject rpkiURL $ OriginalRO (ObjectOriginal blob) vs hash type_
+                            mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
                         (Right vro, vs)
                             | hasValidationErrors vs ->
-                                SaveObject rpkiURL $ OriginalRO (ObjectOriginal blob) vs hash type_
+                                mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
                             | otherwise ->
-                                SaveObject rpkiURL $ WellStructuredRO vro
+                                mkSaveObject $ WellStructuredRO vro
                     ) `catch`
                     (\(e :: SomeException) -> do
                         (_, vs) <- runValidatorT scopes $
                             vHoist $ fromEither @() $ Left $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e
-                        pure $! SaveObject rpkiURL $ OriginalRO (ObjectOriginal blob) vs hash type_
+                        pure $! mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
                     )
+              where
+                -- Encode/compress the object here, on the parsing (async) thread,
+                -- so the single-threaded DB-writer only has to do the INSERT.
+                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject lifecycle)
 
     saveStorable tx (a, _) = do 
         (r, vs) <- fromTry (UnspecifiedE "Something bad happened in loadRsyncRepository" . U.fmtEx) $ wait a                
@@ -328,14 +333,14 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
                     key <- DB.saveObject tx db (OriginalRO original vs hash objectMeta.objectType) worldVersion
                     DB.linkObjectToUrl tx db rpkiUrl key
 
-                SaveObject rpkiUrl lifecycle -> do
+                SaveObject rpkiUrl so@StorableObject { object = lifecycle } -> do
                     case lifecycle of
                         OriginalRO _ vs1 _ _ -> do
                             logError logger [i|Object #{rpkiUrl} failed parse/prevalidation.|]
                             embedState vs1
                         WellStructuredRO _ -> pure ()
 
-                    key <- DB.saveObject tx db lifecycle worldVersion
+                    key <- DB.saveStorableObject tx db so worldVersion
                     DB.linkObjectToUrl tx db rpkiUrl key
                     updateMetric @RsyncMetric @_ (#processed %~ 
                         Map.unionWith (+) (Map.singleton (Just $ getRpkiObjectType lifecycle) 1))
@@ -411,5 +416,5 @@ data RsyncObjectProcessingResult =
         | HashExists RpkiURL Hash ObjectKey
         | UknownObjectType RpkiURL String
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
-        | SaveObject RpkiURL RpkiObjectLifecycle
+        | SaveObject RpkiURL (StorableObject RpkiObjectLifecycle)
     deriving stock (Show, Eq, Generic)
