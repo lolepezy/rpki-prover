@@ -1012,15 +1012,11 @@ validateCaNoFetch
                                 Right childShortcut -> ValidEntry vs' childShortcut key filename
     
     forChildren nonCrlChildren = let
-        itemsPerThread = 20
-        threads = min 
-                (length nonCrlChildren `div` itemsPerThread)
-                (fromIntegral config.parallelism.cpuParallelism)
-
-        forAllChildren = 
-                if threads <= 1
+        worthParallelism = length nonCrlChildren > 500
+        forAllChildren =
+                if worthParallelism
                     then forM 
-                    else pooledForConcurrentlyN threads        
+                    else pooledForConcurrentlyN 2
 
         in forAllChildren nonCrlChildren 
 
@@ -1354,17 +1350,17 @@ validateCaNoFetch
       where
         collectResultsInParallel caCount totalCount children f = do 
             -- Pick up some good parallelism to avoid too many threads, 
-            -- but also process big manifests quicker
-            let caPerThread = 50            
-            let eePerThread = 500
-            let threads = min 
-                    (caCount `div` caPerThread + (totalCount - caCount) `div` eePerThread)
-                    (fromIntegral config.parallelism.cpuParallelism)
+            -- but also process big manifests quicker            
+            let worthParallelism = 
+                    caCount `div` 50 + 
+                    (totalCount - caCount) `div` 500 > 1
             
+            -- let worthParallelism = False
+
             let forAllChildren = 
-                    if threads <= 1
+                    if worthParallelism
                         then forM 
-                        else pooledForConcurrentlyN threads
+                        else pooledForConcurrentlyN 2
 
             scopes <- askScopes
             z <- liftIO $ forAllChildren children $ runValidatorT scopes . f
