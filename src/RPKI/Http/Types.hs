@@ -131,7 +131,7 @@ data ObjectDto = CertificateD (ObjectContentDto CertificateDto)
                 | ASPAD (ObjectContentDto (CMSObjectDto AspaDto))
                 | GBRD (ObjectContentDto (CMSObjectDto GbrDto))
                 | RSCD (ObjectContentDto (CMSObjectDto RscDto))
-                | OriginalBlobD Hash RpkiObjectType  -- ^ parse/prevalidation failure
+                | OriginalBlobD Hash RpkiObjectType EncodedBase64  -- ^ parse/prevalidation failure
     deriving stock (Eq, Show, Generic)
 
 data ObjectContentDto payload = ObjectContentDto {
@@ -454,11 +454,12 @@ instance ToJSON ObjectDto where
         ASPAD v -> object ["type" .= ("ASPA" :: Text), "value" .= toJSON v]
         GBRD v  -> object ["type" .= ("GBR" :: Text), "value" .= toJSON v]
         RSCD v  -> object ["type" .= ("RSC" :: Text), "value" .= toJSON v]
-        OriginalBlobD h t -> object [
+        OriginalBlobD h t b64 -> object [
                 "type" .= ("original-blob" :: Text),
                 "value" .= object [
                     "hash" .= toJSON h,
-                    "objectType" .= toJSON t
+                    "objectType" .= toJSON t,
+                    "base64" .= toJSON b64
                 ]
             ]
 

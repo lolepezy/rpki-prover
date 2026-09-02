@@ -30,8 +30,8 @@ import           RPKI.Resources.Validity
 import           RPKI.RTR.Types
 import           RPKI.Validation.Types
 import           RPKI.Util
-import          RPKI.AppTypes (WorldVersion)
-import           RPKI.Store.Types (RpkiObjectLifecycle(..))
+import           RPKI.AppTypes (WorldVersion)
+import           RPKI.Store.Types (RpkiObjectLifecycle(..), ObjectOriginal(..))
 
 {-
     Mainly domain objects -> DTO convertions. 
@@ -163,7 +163,7 @@ toMftShortcutDto MftShortcut {..} = ManifestShortcutDto {..}
 -- 'OriginalRO' means parse/prevalidation failed, so only hash/type are available.
 -- 'WellStructuredRO' means parsing succeeded, so expose a typed object DTO.
 lifecycleToDto :: RpkiObjectLifecycle -> ObjectDto
-lifecycleToDto (OriginalRO _ _ h t) = OriginalBlobD h t
+lifecycleToDto (OriginalRO (ObjectOriginal bs) _ h t) = OriginalBlobD h t (encodeBase64 (DecodedBase64 bs))
 lifecycleToDto (WellStructuredRO vro) = wellStructuredToDto vro
 
 wellStructuredToDto :: WellStructuredRpkiObject -> ObjectDto
