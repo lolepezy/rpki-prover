@@ -41,7 +41,7 @@ import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Store.Types
-import           RPKI.Store.Base.Storable (StorableObject(..), toStorableObject)
+import           RPKI.Store.Base.Storable (StorableObject(..), Compressed(..), toStorableObject)
 import           RPKI.Store.Database     (DB, roTx)
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Time
@@ -309,7 +309,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
               where
                 -- Encode/compress the object here, on the parsing (async) thread,
                 -- so the single-threaded DB-writer only has to do the INSERT.
-                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject lifecycle)
+                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
 
     saveStorable tx (a, _) = do 
         (r, vs) <- fromTry (UnspecifiedE "Something bad happened in loadRsyncRepository" . U.fmtEx) $ wait a                
@@ -333,7 +333,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
                     key <- DB.saveObject tx db (OriginalRO original vs hash objectMeta.objectType) worldVersion
                     DB.linkObjectToUrl tx db rpkiUrl key
 
-                SaveObject rpkiUrl so@StorableObject { object = lifecycle } -> do
+                SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
                     case lifecycle of
                         OriginalRO _ vs1 _ _ -> do
                             logError logger [i|Object #{rpkiUrl} failed parse/prevalidation.|]
@@ -416,5 +416,5 @@ data RsyncObjectProcessingResult =
         | HashExists RpkiURL Hash ObjectKey
         | UknownObjectType RpkiURL String
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
-        | SaveObject RpkiURL (StorableObject RpkiObjectLifecycle)
+        | SaveObject RpkiURL (StorableObject (Compressed RpkiObjectLifecycle))
     deriving stock (Show, Eq, Generic)

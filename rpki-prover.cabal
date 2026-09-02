@@ -336,3 +336,38 @@ benchmark unique-vrp-count-bench
             -with-rtsopts=-N
     build-depends:
             rpki-prover
+
+benchmark save-snapshot-bench
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         SaveSnapshotBench.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -threaded
+            -rtsopts
+            -O2
+            "-with-rtsopts=-N -T"
+    build-depends:
+            rpki-prover
+          , directory
+          , filepath
+          , temporary
+
+benchmark pipeline-stage-bench
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         PipelineStageBench.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -threaded
+            -rtsopts
+            -O2
+            "-with-rtsopts=-N1 -T"
+    build-depends:
+            rpki-prover

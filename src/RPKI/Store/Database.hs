@@ -87,7 +87,7 @@ import           GHC.Generics
 import           GHC.Natural
 import           Text.Read
 
-import           Database.SQLite.Simple
+import           Database.SQLite.Simple hiding (query, query_, queryNamed, execute, execute_, executeMany, executeNamed, changes)
 import           Database.SQLite.Simple.QQ (sql)
 import           Database.SQLite.Simple.ToField (ToField)
 import           Data.Bits                (shiftR, (.&.))
@@ -102,7 +102,11 @@ import           RPKI.Repository
 
 import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Base.Storable
-import           RPKI.Store.SQLite            (Tx(..), SqliteDB(..), TxMode(..))
+-- Cached-statement 'query'/'execute'/etc. (operating on 'CachedConn') instead
+-- of the raw Database.SQLite.Simple ones: see 'RPKI.Store.SQLite.CachedConn'.
+import           RPKI.Store.SQLite            (Tx(..), SqliteDB(..), TxMode(..),
+                                                query, query_, queryNamed,
+                                                execute, execute_, executeMany, executeNamed, changes)
 import qualified RPKI.Store.SQLite            as SQLite
 import           RPKI.Store.Types
 import           RPKI.Validation.Types
@@ -310,20 +314,22 @@ saveObject :: MonadIO m
            -> RpkiObjectLifecycle
            -> WorldVersion
            -> m ObjectKey
-saveObject tx db lifecycle = saveStorableObject tx db (toStorableObject lifecycle)
+saveObject tx db lifecycle = saveStorableObject tx db (toStorableObject (Compressed lifecycle))
 
--- | Like 'saveObject', but takes an already-built 'StorableObject' (its
--- 'storable' bytes already forced) instead of serialising the lifecycle
--- here. Use this from hot paths that parse many objects concurrently and
--- want that (CPU-heavy) serialisation done on the parsing (parallel) thread
--- rather than the single serial DB-writer thread -- see 'toStorableObject'.
+-- | Like 'saveObject', but takes an already-built @StorableObject (Compressed
+-- RpkiObjectLifecycle)@ (its serialised-and-compressed bytes already forced,
+-- via 'toStorableObject' dispatching to the 'Compressed' 'AsStorable'
+-- instance) instead of encoding the lifecycle here. Use this from hot paths
+-- that parse many objects concurrently and want that (CPU-heavy)
+-- serialisation+compression done on the parsing (parallel) thread rather
+-- than the single serial DB-writer thread.
 saveStorableObject :: MonadIO m
                 => Tx 'RW
                 -> DB
-                -> StorableObject RpkiObjectLifecycle
+                -> StorableObject (Compressed RpkiObjectLifecycle)
                 -> WorldVersion
                 -> m ObjectKey
-saveStorableObject (Tx conn) _ so@StorableObject { object = lifecycle } wv = liftIO $ do
+saveStorableObject (Tx conn) _ StorableObject { object = Compressed lifecycle, storable = Storable dataBs } wv = liftIO $ do
     let hash_ = getHash lifecycle
 
     existing <- query conn "SELECT object_key FROM objects WHERE hash = ?" (Only hash_)
@@ -331,7 +337,6 @@ saveStorableObject (Tx conn) _ so@StorableObject { object = lifecycle } wv = lif
         Only objectKey : _ -> pure objectKey
         [] -> do
             let typ    = show (getRpkiObjectType lifecycle)
-                dataBs = encodeSO so
                 originalBs = case lifecycle of
                     OriginalRO (ObjectOriginal blob) _ _ _ -> Just blob
                     _                                      -> Nothing
@@ -377,17 +382,18 @@ getObjectMeta (Tx conn) _ k = liftIO $ do
 linkObjectToUrl :: MonadIO m => Tx 'RW -> DB -> RpkiURL -> ObjectKey -> m ()
 linkObjectToUrl (Tx conn) _ rpkiURL objectKey = liftIO $ do
     let uriText = toText rpkiURL
-    execute conn "INSERT OR IGNORE INTO urls(url) VALUES (?)" (Only uriText)
-    ukRows <- query conn "SELECT url_key FROM urls WHERE url = ?" (Only uriText)
-    forM_ (listToMaybe ukRows) $ \(Only urlKey) ->
-        execute conn
-            "INSERT OR IGNORE INTO object_urls(object_key, url_key) VALUES (?, ?)"
-            (objectKey, urlKey :: UrlKey)
+    [Only urlKey] <- query conn
+        [sql|INSERT INTO urls(url) VALUES (?)
+             ON CONFLICT(url) DO UPDATE SET url = excluded.url
+             RETURNING url_key|]
+        (Only uriText)
+    execute conn
+        "INSERT OR IGNORE INTO object_urls(object_key, url_key) VALUES (?, ?)"
+        (objectKey, urlKey :: UrlKey)
 
 hashExists :: MonadIO m => Tx mode -> DB -> Hash -> m Bool
 hashExists (Tx conn) _ h = liftIO $ do
-    rows <- query conn "SELECT 1 FROM objects WHERE hash = ?"
-                (Only h)
+    rows <- query conn "SELECT 1 FROM objects WHERE hash = ?" (Only h)
     pure $ not (null (rows :: [Only Int]))
 
 deleteObjectByHash :: MonadIO m => Tx 'RW -> DB -> Hash -> m ()
@@ -1051,7 +1057,7 @@ saveCurrentDatabaseVersion (Tx conn) _ = liftIO $
 
 -- | Shared by updateValidatedByVersionMap and deleteStaleContent's sweep --
 -- both need the same "current validated-by-version map, or empty" read.
-getValidatedByVersionMap :: Connection -> IO (Map.Map ObjectKey WorldVersion)
+getValidatedByVersionMap :: SQLite.CachedConn -> IO (Map.Map ObjectKey WorldVersion)
 getValidatedByVersionMap conn = do
     rows <- query conn "SELECT value FROM validated_by_version WHERE key = ?"
                 (Only validatedByVersionKey)
