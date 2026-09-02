@@ -914,20 +914,6 @@ data ObjectIdentity = KeyIdentity ObjectKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-data ValidationVersion = ValidationVersion { 
-    validatedBy    :: WorldVersion
-    }
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)    
-
-
-data VersionMeta = VersionMeta { 
-        perTa :: PerTA ValidationVersion
-    }      
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-
 newtype EarliestToExpire = EarliestToExpire Instant
     deriving stock (Show, Eq, Ord, Generic)    
     deriving newtype (TheBinary)

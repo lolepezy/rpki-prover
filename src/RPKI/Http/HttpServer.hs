@@ -40,7 +40,6 @@ import           RPKI.Logging
 import           RPKI.Metrics.Prometheus
 import           RPKI.Metrics.System
 import           RPKI.Time
-import           RPKI.TAL
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.Http.Api
@@ -233,7 +232,7 @@ getValuesByVersion AppContext {..} version readFromState readForVersion convertT
 
     getByVersion worldVersion = do        
         versions <- roTxT database DB.versionsBackwards        
-        case filter ((worldVersion == ) . fst) versions of
+        case filter (worldVersion == ) versions of
             [] -> throwError $ err404 { errBody = [i|Version #{worldVersion} doesn't exist.|] }
             _  -> roTxT database $ \tx db -> 
                     readForVersion tx db worldVersion
@@ -346,7 +345,7 @@ getAllSlurms :: (MonadIO m, MonadError ServerError m) =>
 getAllSlurms AppContext {..} = 
     liftIO $ roTxT database $ \tx db -> do
         versions <- DB.versionsBackwards tx db
-        slurms   <- mapM (\(wv, _) -> (wv, ) <$> DB.getSlurm tx db wv) versions        
+        slurms   <- mapM (\wv -> (wv, ) <$> DB.getSlurm tx db wv) versions
         pure [ (w, s) | (w, Just s) <- slurms ]
 
     
@@ -493,7 +492,7 @@ getRtr AppContext {..} = do
 getVersions :: (MonadIO m, MonadError ServerError m) =>
                 AppContext s -> m [WorldVersion]
 getVersions AppContext {..} = 
-    liftIO $ map fst <$> roTxT database DB.versionsBackwards
+    liftIO $ roTxT database DB.versionsBackwards
 
 getFetcheables :: (MonadIO m, MonadError ServerError m) =>
                   AppContext s -> m Fetcheables

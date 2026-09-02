@@ -3,6 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module RPKI.Store.SQLite (
     -- * Transaction mode
@@ -38,7 +39,6 @@ import Control.Monad (forM_)
 import Control.Monad.IO.Class
 
 import Data.Int (Int64)
-import Data.Maybe (fromMaybe)
 import Data.Pool (Pool)
 import qualified Data.Pool as Pool
 import qualified Data.ByteString       as BS
@@ -49,8 +49,6 @@ import Database.SQLite.Simple
 import Database.SQLite.Simple.QQ (sql)
 import Database.SQLite.Simple.ToField (ToField(..))
 import Database.SQLite.Simple.FromField (FromField(..))
-import Codec.Compression.LZ4 (compress, decompress)
-import Data.Store (Store, encode, decodeEx)
 
 import RPKI.AppTypes (WorldVersion(..))
 import RPKI.Domain   (ArtificialKey(..), ObjectKey(..), UrlKey(..), SKI(..), AKI(..), Hash(..), KI(..))
@@ -232,7 +230,6 @@ schemaDDL =
             |]
         , "CREATE UNIQUE INDEX IF NOT EXISTS idx_validation_outcomes_common ON validation_outcomes(version) WHERE ta_name IS NULL"
     , "CREATE TABLE IF NOT EXISTS slurm       (key INTEGER PRIMARY KEY, value BLOB NOT NULL)"
-    , "CREATE TABLE IF NOT EXISTS versions    (key INTEGER NOT NULL PRIMARY KEY, value BLOB NOT NULL)"
     , "CREATE TABLE IF NOT EXISTS jobs        (key TEXT NOT NULL PRIMARY KEY, value BLOB NOT NULL)"
     , "CREATE TABLE IF NOT EXISTS metadata    (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)"
     , [sql|
@@ -252,7 +249,7 @@ dropDDL = map (\t -> "DROP TABLE IF EXISTS " <> t)
     , "repositories"
     , "validations", "metrics", "roas", "spls", "aspas", "gbrs", "bgps"
     , "validation_outcomes", "slurm"
-    , "versions", "jobs", "metadata", "validated_by_version"
+    , "jobs", "metadata", "validated_by_version"
     ]
 
 

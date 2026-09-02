@@ -76,6 +76,10 @@ versionStoreGroup = testGroup "Version storage test"
         shouldReadValidationOutcomePayloadQueries
     , dbTestCase "Should keep versions ordered and resolve previous version" shouldOrderAndLinkVersions
     , dbTestCase "Should delete version data including slurm" shouldDeleteValidationVersionData
+    , dbTestCase "Should delete oldest versions once every TA has enough real data"
+        shouldDeleteOldestVersionsOnceEveryTAHasEnoughRealData
+    , dbTestCase "Should not delete anything while a TA never accumulates enough real data"
+        shouldNotDeleteVersionsBlockedByLaggingTA
     ]
 
 txGroup :: TestTree
@@ -320,7 +324,7 @@ shouldSaveAndGetValidationVersion io = do
     commonVS <- QC.generate QC.arbitrary
 
     rwTx db $ \tx ->
-        DB.saveValidationVersion tx db worldVersion taNames perTaResults commonVS
+        DB.saveValidationVersion tx db worldVersion perTaResults commonVS
 
     storedValidations <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion
     storedMetrics <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion
@@ -364,15 +368,15 @@ shouldSaveAndGetValidationVersionFilledWithPastData io = do
 
     rwTx db $ \tx -> do
         commonVS <- QC.generate QC.arbitrary
-        DB.saveValidationVersion tx db worldVersion1 taNames perTa1 commonVS
+        DB.saveValidationVersion tx db worldVersion1 perTa1 commonVS
 
     rwTx db $ \tx -> do
         commonVS <- QC.generate QC.arbitrary
-        DB.saveValidationVersion tx db worldVersion2 taNames perTa2 commonVS
+        DB.saveValidationVersion tx db worldVersion2 perTa2 commonVS
 
     rwTx db $ \tx -> do
         commonVS <- QC.generate QC.arbitrary
-        DB.saveValidationVersion tx db worldVersion3 taNames perTa3 commonVS
+        DB.saveValidationVersion tx db worldVersion3 perTa3 commonVS
 
     v1 <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion1
     v2 <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion2
@@ -418,13 +422,13 @@ shouldReadValidationOutcomePayloadQueries io = do
     commonVS3 <- QC.generate QC.arbitrary
 
     rwTx db $ \tx ->
-        DB.saveValidationVersion tx db worldVersion1 taNames perTa1 commonVS1
+        DB.saveValidationVersion tx db worldVersion1 perTa1 commonVS1
 
     rwTx db $ \tx ->
-        DB.saveValidationVersion tx db worldVersion2 taNames perTa2 commonVS2
+        DB.saveValidationVersion tx db worldVersion2 perTa2 commonVS2
 
     rwTx db $ \tx ->
-        DB.saveValidationVersion tx db worldVersion3 taNames perTa3 commonVS3
+        DB.saveValidationVersion tx db worldVersion3 perTa3 commonVS3
 
     ripeV2 <- expectJust "Missing ripe data in version 2 fixture" (getForTA perTa2 ripe)
     apnicV1 <- expectJust "Missing apnic data in version 1 fixture" (getForTA perTa1 apnic)
@@ -539,19 +543,19 @@ shouldOrderAndLinkVersions io = do
     rwTx db $ \tx -> do
         common1 <- QC.generate QC.arbitrary
         perTa1  <- QC.generate $ generatePerTa taNames
-        DB.saveValidationVersion tx db worldVersion1 taNames perTa1 common1
+        DB.saveValidationVersion tx db worldVersion1 perTa1 common1
 
         common2 <- QC.generate QC.arbitrary
         perTa2  <- QC.generate $ generatePerTa taNames
-        DB.saveValidationVersion tx db worldVersion2 taNames perTa2 common2
+        DB.saveValidationVersion tx db worldVersion2 perTa2 common2
 
         common3 <- QC.generate QC.arbitrary
         perTa3  <- QC.generate $ generatePerTa taNames
-        DB.saveValidationVersion tx db worldVersion3 taNames perTa3 common3
+        DB.saveValidationVersion tx db worldVersion3 perTa3 common3
 
     versions <- roTx db $ \tx -> DB.versionsBackwards tx db
     HU.assertEqual "Expected 3 stored versions" 3 (length versions)
-    HU.assertEqual "Latest version should be first in descending list" worldVersion3 (fst $ head versions)
+    HU.assertEqual "Latest version should be first in descending list" worldVersion3 (head versions)
 
     latest <- roTx db $ \tx -> DB.getLatestVersion tx db
     HU.assertEqual "Latest version mismatch" (Just worldVersion3) latest
@@ -577,26 +581,93 @@ shouldDeleteValidationVersionData io = do
     let slurm = mempty
 
     rwTx db $ \tx -> do
-        DB.saveValidationVersion tx db worldVersion taNames perTa commonVS
+        DB.saveValidationVersion tx db worldVersion perTa commonVS
         DB.saveSlurm tx db worldVersion slurm
 
     -- sanity check before delete
-    vmBefore <- roTx db $ \tx -> DB.getVersionMeta tx db worldVersion
+    versionsBefore <- roTx db $ \tx -> DB.versionsBackwards tx db
     slurmBefore <- roTx db $ \tx -> DB.getSlurm tx db worldVersion
-    HU.assertBool "Version must exist before deletion" (maybe False (const True) vmBefore)
+    HU.assertBool "Version must exist before deletion" (worldVersion `elem` versionsBefore)
     HU.assertEqual "Slurm must exist before deletion" (Just slurm) slurmBefore
 
     rwTx db $ \tx -> DB.deleteValidationVersion tx db worldVersion
 
-    vmAfter <- roTx db $ \tx -> DB.getVersionMeta tx db worldVersion
+    versionsAfter <- roTx db $ \tx -> DB.versionsBackwards tx db
     slurmAfter <- roTx db $ \tx -> DB.getSlurm tx db worldVersion
     valsAfter <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion
     metricsAfter <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion
 
-    HU.assertEqual "Version meta must be gone" Nothing vmAfter
+    HU.assertBool "Version must be gone after deletion" (worldVersion `notElem` versionsAfter)
     HU.assertEqual "Slurm must be gone" Nothing slurmAfter
     HU.assertEqual "Per-TA validations must be empty" mempty valsAfter
     HU.assertEqual "Per-TA metrics must be empty" mempty metricsAfter
+
+
+shouldDeleteOldestVersionsOnceEveryTAHasEnoughRealData :: IO DB -> HU.Assertion
+shouldDeleteOldestVersionsOnceEveryTAHasEnoughRealData io = do
+    db <- io
+
+    let ripe = TaName "ripe"
+    let apnic = TaName "apnic"
+    let taNames = [ripe, apnic]
+    seedActiveTaNames db taNames
+
+    -- Both TAs validate successfully every round.
+    versions@[worldVersion1, worldVersion2, worldVersion3, worldVersion4, worldVersion5] <- newVersions 5
+    forM_ versions $ \wv -> rwTx db $ \tx -> do
+        perTa <- QC.generate $ generatePerTa taNames
+        commonVS <- QC.generate QC.arbitrary
+        DB.saveValidationVersion tx db wv perTa commonVS
+
+    deleted <- rwTx db $ \tx -> DB.deleteOldestVersionsIfNeeded tx db 2
+
+    HU.assertEqual "Should delete the three oldest rounds, keeping the newest 2 per TA"
+        (List.sort [worldVersion1, worldVersion2, worldVersion3]) (List.sort deleted)
+
+    remaining <- roTx db $ \tx -> DB.versionsBackwards tx db
+    HU.assertEqual "Only the newest 2 versions should remain"
+        (List.sort [worldVersion4, worldVersion5]) (List.sort remaining)
+
+
+shouldNotDeleteVersionsBlockedByLaggingTA :: IO DB -> HU.Assertion
+shouldNotDeleteVersionsBlockedByLaggingTA io = do
+    db <- io
+
+    let ripe = TaName "ripe"
+    let apnic = TaName "apnic"
+    let taNames = [ripe, apnic]
+    seedActiveTaNames db taNames
+
+    -- apnic only ever gets real data on the very first round; every later
+    -- round only ripe validates. apnic can never accumulate 2 distinct real
+    -- rounds, so nothing should ever be deleted, no matter how many rounds
+    -- pass -- even though apnic gets no `validation_outcomes` row at all in
+    -- any of the later rounds.
+    versions@(worldVersion1 : _) <- newVersions 5
+
+    rwTx db $ \tx -> do
+        perTa1 <- QC.generate $ generatePerTa taNames
+        commonVS1 <- QC.generate QC.arbitrary
+        DB.saveValidationVersion tx db worldVersion1 perTa1 commonVS1
+
+    forM_ (drop 1 versions) $ \wv -> rwTx db $ \tx -> do
+        perTa <- QC.generate $ generatePerTa [ripe]
+        commonVS <- QC.generate QC.arbitrary
+        DB.saveValidationVersion tx db wv perTa commonVS
+
+    deleted <- rwTx db $ \tx -> DB.deleteOldestVersionsIfNeeded tx db 2
+
+    HU.assertEqual "Nothing should be deleted while apnic never reaches 2 real rounds" [] deleted
+
+    remaining <- roTx db $ \tx -> DB.versionsBackwards tx db
+    HU.assertBool "The round with apnic's only real data must still be present"
+        (worldVersion1 `elem` remaining)
+
+
+newVersions :: Int -> IO [WorldVersion]
+newVersions n = forM [1 .. n] $ \i -> do
+    when (i > 1) $ threadDelay 10_000
+    newVersion
 
 
 generatePerTa :: (QC.Arbitrary a, QC.Arbitrary b) => [TaName] -> QC.Gen (PerTA (a, b))

@@ -35,7 +35,6 @@ module RPKI.Store.Database (
     markAsValidated,
     saveTA, deleteTA, getTA, getTAs, setActiveTAs,
     versionsBackwards, previousVersion, getLatestVersion,
-    getVersionMeta,
     getValidationsPerTA, getMetricsPerTA, getCommonMetrics,
     getValidationOutcomes,
     getVrps, getVrpsForTA, getRoas, getAspas, getGbrs, getBgps, getSpls,
@@ -71,7 +70,6 @@ import           Control.Monad.Trans.Maybe
 
 import           Data.Generics.Product.Typed
 
-import qualified Data.List                as List
 import           Data.Maybe               (catMaybes, fromMaybe, listToMaybe)
 import qualified Data.Set                 as Set
 import           Data.Text                (Text)
@@ -80,7 +78,6 @@ import           Data.String              (fromString)
 import qualified Data.Map.Strict          as Map
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Data.Int                 (Int64)
-import           Data.Ord
 import           Data.Tuple.Strict
 
 import           GHC.Generics
@@ -588,26 +585,23 @@ setActiveTAs (Tx conn) _ taNames = liftIO $ do
 -- Version / Validation payload functions
 -- ---------------------------------------------------------------------------
 
-versionsBackwards :: MonadIO m => Tx mode -> DB -> m [(WorldVersion, VersionMeta)]
-versionsBackwards (Tx conn) _ = liftIO $ do
-    rows <- query_ conn "SELECT key, value FROM versions ORDER BY key DESC"
-    pure [ (k, deserialiseField v) | (k, v) <- rows ]
+-- | Every world version that has ever been validated, newest first.
+-- `validation_outcomes` is the ground truth for this -- a version always
+-- gets at least its common (ta_name IS NULL) row written by
+-- `saveValidationVersion`, so there's no need for a separate `versions` table.
+versionsBackwards :: MonadIO m => Tx mode -> DB -> m [WorldVersion]
+versionsBackwards (Tx conn) _ = liftIO $
+    map fromOnly <$> query_ conn "SELECT DISTINCT version FROM validation_outcomes ORDER BY version DESC"
 
 previousVersion :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe WorldVersion)
 previousVersion tx db version = liftIO $ do
     vs <- versionsBackwards tx db
-    pure $ case filter (\(v, _) -> v < version) vs of
+    pure $ case filter (< version) vs of
         [] -> Nothing
-        xs -> Just $ maximum (map fst xs)
+        xs -> Just $ maximum xs
 
 getLatestVersion :: MonadIO m => Tx mode -> DB -> m (Maybe WorldVersion)
-getLatestVersion tx db = listToMaybe . map fst <$> versionsBackwards tx db
-
-getVersionMeta :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe VersionMeta)
-getVersionMeta (Tx conn) _ wv = liftIO $ do
-    rows <- query conn "SELECT value FROM versions WHERE key = ?"
-                (Only wv)
-    pure $ fmap (deserialiseField . fromOnly) (listToMaybe rows)
+getLatestVersion tx db = listToMaybe <$> versionsBackwards tx db
 
 rowsToPerTa :: AsStorable a => [(Text, BS.ByteString)] -> PerTA a
 rowsToPerTa rows = toPerTA
@@ -762,11 +756,10 @@ saveValidationVersion :: MonadIO m
                       => Tx 'RW
                       -> DB
                       -> WorldVersion
-                      -> [TaName]
                       -> PerTA (Payloads, ValidationState)
                       -> ValidationState
                       -> m ()
-saveValidationVersion (Tx conn) db validatedBy allTaNames results@(PerTA perTAResults) commonVS =
+saveValidationVersion (Tx conn) _ validatedBy results commonVS =
     liftIO $ do
     execute conn "DELETE FROM validation_outcomes WHERE version = ?" (Only validatedBy)
 
@@ -800,37 +793,11 @@ saveValidationVersion (Tx conn) db validatedBy allTaNames results@(PerTA perTARe
             , Just $ serialiseCompressed gbrs
             )
 
-    let addedResults =
-            [ (taName, ValidationVersion { validatedBy })
-            | (taName, _) <- perTA results
-            ]
-
-    let notPresentTAs = filter (`MonoidalMap.notMember` perTAResults) allTaNames
-    earlierResults <-
-        case notPresentTAs of
-            [] -> pure []
-            _  -> do
-                versions <- versionsBackwards (Tx conn) db
-                pure [ (ta, r) | (ta, Just r) <- fillUpEarlierTAData versions notPresentTAs mempty ]
-
-    execute conn "INSERT OR REPLACE INTO versions(key, value) VALUES (?, ?)"
-        ( validatedBy
-        , serialiseField $
-            VersionMeta { perTa = toPerTA (addedResults <> earlierResults) } )
-  where
-    fillUpEarlierTAData [] _ acc = acc
-    fillUpEarlierTAData _ [] acc = acc
-    fillUpEarlierTAData ((_, vmeta) : versions) tasToFind acc =
-        let (found, notFound) = List.partition (maybe False (const True) . snd)
-                [ (ta, MonoidalMap.lookup ta (unPerTA $ vmeta ^. #perTa)) | ta <- tasToFind ]
-        in fillUpEarlierTAData versions (map fst notFound) (acc <> found)
-
 deleteValidationVersion :: MonadIO m => Tx 'RW -> DB -> WorldVersion -> m ()
 deleteValidationVersion (Tx conn) _ worldVersion = liftIO $ do
         execute conn "DELETE FROM validation_outcomes WHERE version = ?"
             (Only worldVersion)
         execute conn "DELETE FROM slurm    WHERE key = ?" (Only worldVersion)
-        execute conn "DELETE FROM versions WHERE key = ?" (Only worldVersion)
 
 saveSlurm :: MonadIO m => Tx 'RW -> DB -> WorldVersion -> Slurm -> m ()
 saveSlurm (Tx conn) _ version slurm = liftIO $
@@ -966,7 +933,7 @@ saveRepositoryValidationStates tx db repos = liftIO $ do
     sep (RsyncR r, a) (rs, ss) = (rs, (r, a) : ss)
 
 saveRsyncRepositories :: MonadIO m => Tx 'RW -> DB -> [RsyncRepository] -> m ()
-saveRsyncRepositories (Tx conn) db repos = liftIO $
+saveRsyncRepositories (Tx conn) _ repos = liftIO $
     saveRsyncAnything (map (\r -> (r, r ^. #meta)) repos)
         (\host -> do            
             rows <- query conn
@@ -1140,28 +1107,45 @@ data DeletionCriteria = DeletionCriteria
     }
     deriving (Generic)
 
+-- | Keep the newest `versionNumberToKeep` versions that actually carry data
+-- for each TA, and delete everything older. A version round doesn't
+-- necessarily have fresh data for every TA (a TA that failed to fetch just
+-- keeps reusing older data), so we can't just keep the last N rounds -- some
+-- of the last N rounds may not have moved a given TA forward at all. Instead,
+-- for every TA find the round at which it accumulates N *distinct* rounds of
+-- real data counting backwards from the newest, and keep everything back to
+-- the earliest such round across all TAs (the most demanding one). A TA that
+-- never reaches N real rounds in its whole history blocks deletion entirely,
+-- same as it would if we kept everything to satisfy it.
 deleteOldestVersionsIfNeeded :: MonadIO m
                              => Tx 'RW -> DB -> Natural -> m [WorldVersion]
-deleteOldestVersionsIfNeeded tx db versionNumberToKeep =
+deleteOldestVersionsIfNeeded tx@(Tx conn) db versionNumberToKeep =
     mapException (AppException . storageError) <$> liftIO $ do
         versions <- versionsBackwards tx db
         let reallyToKeep = max 2 (fromIntegral versionNumberToKeep)
         if length versions > reallyToKeep
             then do
-                let versionsToDelete = map fst $ findEnoughForEachTA reallyToKeep versions mempty
+                taVersionRows <- query_ conn
+                    "SELECT ta_name, version FROM validation_outcomes WHERE ta_name IS NOT NULL"
+                    :: IO [(Text, WorldVersion)]
+                let taRealVersions = MonoidalMap.fromListWith (<>)
+                        [ (ta, Set.singleton v) | (ta, v) <- taVersionRows ]
+
+                    cutoffFor realVersions =
+                        let desc = Set.toDescList realVersions
+                        in if length desc >= reallyToKeep
+                            then desc !! (reallyToKeep - 1)
+                            else last versions
+
+                    cutoff
+                        | MonoidalMap.null taRealVersions = head versions
+                        | otherwise = minimum $ map cutoffFor $ MonoidalMap.elems taRealVersions
+
+                    versionsToDelete = filter (< cutoff) versions
+
                 forM_ versionsToDelete $ deleteValidationVersion tx db
                 pure versionsToDelete
             else pure []
-  where
-    findEnoughForEachTA _ [] _ = []
-    findEnoughForEachTA n ((_, meta) : versions) acc =
-        if any (\v -> Set.size v < fromIntegral n) $ MonoidalMap.elems acc'
-            then findEnoughForEachTA n versions acc'
-            else versions
-      where
-        acc' = acc <> mconcat
-            [ MonoidalMap.singleton ta (Set.singleton v)
-            | (ta, v) <- perTA $ meta ^. #perTa ]
 
 deleteStaleContent :: MonadIO m => DB -> DeletionCriteria -> m CleanUpResult
 deleteStaleContent db DeletionCriteria{..} =
@@ -1173,7 +1157,7 @@ deleteStaleContent db DeletionCriteria{..} =
             pure CleanUpResult{..}
   where
     deleteOldVersions tx = do
-        toDelete <- filter versionIsTooOld . map fst <$> versionsBackwards tx db
+        toDelete <- filter versionIsTooOld <$> versionsBackwards tx db
         forM_ toDelete $ deleteValidationVersion tx db
         pure $ length toDelete
 
