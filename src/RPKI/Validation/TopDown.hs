@@ -1708,11 +1708,6 @@ updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftS
 -- | Only the new children get inserted (into `shortcuts` and `mft_shortcut_children`)
 -- and only the deleted keys get removed -- unchanged ("overlapping") children are
 -- never touched.
---
--- Inserts and deletes are bundled into a single queue message so that the writer
--- applies them in one transaction -- if they were queued as two separate messages,
--- a chunk boundary on the consuming end could split them across transactions and
--- leave a manifest shortcut's children updated only partially.
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> [(ObjectKey, MftEntry)] -> [ObjectKey] -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki newEntries deletedKeys =
     liftIO $ do
