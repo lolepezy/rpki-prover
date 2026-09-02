@@ -23,7 +23,7 @@ import qualified RPKI.Util as U
 -- 
 parseGbr :: BS.ByteString -> PureValidatorT GbrObject
 parseGbr bs = do    
-    asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs  
+    asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs  
     signedGbr <- fromEither $ first (parseErr . U.convert) $ 
                     runParseASN1 (parseSignedObject parseGbr') asns
     hash' <- getMetaFromSigned signedGbr bs
