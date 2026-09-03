@@ -975,9 +975,9 @@ validateCaNoFetch
         scopes <- askScopes
         liftIO $ forChildren
             nonCrlChildren
-            $ \(T3 filename hash' key) -> do 
+            $ \(T3 filename hash' key) -> do
                 (z, vs) <- runValidatorT scopes $ do
-                                ro <- getManifestEntry filename hash'
+                                ro <- getManifestEntry filename hash' key
                                 -- if failed this one interrupts the whole MFT valdiation
                                 validateMftChild fullCa ro filename validCrl
                 pure $! case z of
@@ -991,7 +991,7 @@ validateCaNoFetch
         liftIO $ forChildren
             nonCrlChildren
             $ \(T3 filename hash key) -> do
-                (r, vs) <- runValidatorT scopes $ getManifestEntry filename hash
+                (r, vs) <- runValidatorT scopes $ getManifestEntry filename hash key
                 case r of
                     Left e -> do 
                         -- Decide if the error is related to the manifest itself 
@@ -1012,15 +1012,11 @@ validateCaNoFetch
                                 Right childShortcut -> ValidEntry vs' childShortcut key filename
     
     forChildren nonCrlChildren = let
-        itemsPerThread = 20
-        threads = min 
-                (length nonCrlChildren `div` itemsPerThread)
-                (fromIntegral config.parallelism.cpuParallelism)
-
-        forAllChildren = 
-                if threads <= 1
+        worthParallelism = length nonCrlChildren > 500
+        forAllChildren =
+                if worthParallelism
                     then forM 
-                    else pooledForConcurrentlyN threads        
+                    else pooledForConcurrentlyN 2
 
         in forAllChildren nonCrlChildren 
 
@@ -1065,39 +1061,38 @@ validateCaNoFetch
             vWarn $ NonUniqueManifestEntries $ Map.toList nonUniqueEntries
 
         db <- liftIO $ readTVarIO database
-        forM nonCrlChildren $ \(MftPair fileName hash) -> do
-                k <- DB.roAppTx db $ \tx -> DB.getKeyByHash tx db hash            
-                case k of 
+        DB.roAppTx db $ \tx ->
+            forM nonCrlChildren $ \(MftPair fileName hash) -> do
+                k <- DB.getKeyByHash tx db hash
+                case k of
                     Nothing  -> vError $ ManifestEntryDoesn'tExist hash fileName
-                    Just key -> do 
+                    Just key -> do
                         validateMftFileName fileName
-                        pure $! T3 fileName hash key        
+                        pure $! T3 fileName hash key
         where
             longerThanOne = \case 
                 _:_:_ -> True
                 _     -> False
 
-    -- Given MFT entry with hash and filename, get the object it refers to
-    -- 
-    getManifestEntry filename hash' = do
+    -- Given MFT entry with hash, filename and its already-resolved key
+    -- (from validateMftEntries, which already looked it up), get the
+    -- object it refers to.
+    getManifestEntry filename hash' key = do
         let objectType = textObjectType filename
         db <- liftIO $ readTVarIO database
-        ro <- DB.roAppTx db $ \tx -> do             
-            DB.getKeyByHash tx db hash' >>= \case                     
-                Nothing  -> vError $ ManifestEntryDoesn'tExist hash' filename            
-                Just key -> 
-                    vFocusOn ObjectFocus key $ do
-                        increment topDownCounters.readParsed
-                        getStoredObject tx db key >>= \case 
-                            Nothing -> vError $ ManifestEntryDoesn'tExist hash' filename
-                            Just o  -> do
-                                case o ^. #object . #payload of
-                                    OriginalRO _ vs_ _ _ -> do
-                                        increment topDownCounters.readOriginal
-                                        embedState vs_
-                                    WellStructuredRO _ ->
-                                        pure ()
-                                pure $! o
+        ro <- DB.roAppTx db $ \tx ->
+            vFocusOn ObjectFocus key $ do
+                increment topDownCounters.readParsed
+                getStoredObject tx db key >>= \case
+                    Nothing -> vError $ ManifestEntryDoesn'tExist hash' filename
+                    Just o  -> do
+                        case o ^. #object . #payload of
+                            OriginalRO _ vs_ _ _ -> do
+                                increment topDownCounters.readOriginal
+                                embedState vs_
+                            WellStructuredRO _ ->
+                                pure ()
+                        pure $! o
 
         -- The type of the object that is deserialised doesn't correspond 
         -- to the file extension on the manifest
@@ -1355,17 +1350,17 @@ validateCaNoFetch
       where
         collectResultsInParallel caCount totalCount children f = do 
             -- Pick up some good parallelism to avoid too many threads, 
-            -- but also process big manifests quicker
-            let caPerThread = 50            
-            let eePerThread = 500
-            let threads = min 
-                    (caCount `div` caPerThread + (totalCount - caCount) `div` eePerThread)
-                    (fromIntegral config.parallelism.cpuParallelism)
+            -- but also process big manifests quicker            
+            let worthParallelism = 
+                    caCount `div` 50 + 
+                    (totalCount - caCount) `div` 500 > 1
             
+            -- let worthParallelism = False
+
             let forAllChildren = 
-                    if threads <= 1
+                    if worthParallelism
                         then forM 
-                        else pooledForConcurrentlyN threads
+                        else pooledForConcurrentlyN 2
 
             scopes <- askScopes
             z <- liftIO $ forAllChildren children $ runValidatorT scopes . f

@@ -356,7 +356,7 @@ createSqliteDatabase cacheDir config resetCache checkVersion = do
         removeIfExists $ dbPath <> "-shm"
 
     sdb <- newSqliteDB dbPath config
-    SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> SQLite.initSchema conn
+    SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> SQLite.initSchema (SQLite.rawConn conn)
 
     let db = DB.DB sdb
     dbCheck <-
@@ -372,8 +372,8 @@ createSqliteDatabase cacheDir config resetCache checkVersion = do
                         | version == DB.currentDatabaseVersion -> pure WasCompatible
                         | otherwise -> do
                             SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> do
-                                SQLite.dropSchema conn
-                                SQLite.initSchema conn
+                                SQLite.dropSchema (SQLite.rawConn conn)
+                                SQLite.initSchema (SQLite.rawConn conn)
                             DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx db
                             pure WasIncompatible
             else do

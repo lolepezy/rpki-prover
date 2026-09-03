@@ -45,7 +45,7 @@ import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Store.Types
-import           RPKI.Store.Base.Storable (StorableObject(..), toStorableObject)
+import           RPKI.Store.Base.Storable (StorableObject(..), Compressed(..), toStorableObject)
 import           RPKI.Store.Database     (DB, Tx(..), TxMode(..), roTx)
 import qualified RPKI.Store.Database    as DB
 import qualified RPKI.Util              as U
@@ -499,22 +499,22 @@ saveSnapshot
                 (evaluate $!
                     case z of
                         (Left _, vs) ->
-                            mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
+                            mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
                         (Right vro, vs)
                             | hasValidationErrors vs ->
-                                mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
+                                mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
                             | otherwise ->
-                                mkSaveObject $ WellStructuredRO vro
+                                mkSaveObject $! WellStructuredRO vro
                     ) `catch`
                     (\(e :: SomeException) -> do
                         (_, vs) <- runValidatorT scopes $ inSubLocationScope uri $
                             vHoist $ fromEither @() $ Left $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e
-                        pure $! mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
+                        pure $! mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
                     )
               where
                 -- Encode/compress the object here, on the parsing (async) thread,
                 -- so the single-threaded DB-writer only has to do the INSERT.
-                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject lifecycle)
+                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
 
     saveStorable _ _ (Left (e, uri)) = 
         inSubLocationScope uri $ appWarn e             
@@ -544,7 +544,7 @@ saveSnapshot
                         inSubLocationScope uri $ 
                             appWarn $ RrdpE $ RrdpUnsupportedObjectType $ U.convert rpkiUrl                   
 
-                    SaveObject rpkiUrl so@StorableObject { object = lifecycle } -> do
+                    SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
                         case lifecycle of
                             OriginalRO _ vs _ _ -> do
                                 logError logger [i|Object #{rpkiUrl} failed parse/prevalidation, storing original.|]
@@ -653,9 +653,9 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                             e = ParseE $ ParseError "RRDP object failed prevalidation"
                         (Right vro, vs)
                             | hasValidationErrors vs ->
-                                mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
+                                mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
                             | otherwise ->
-                                mkSaveObject $ WellStructuredRO vro
+                                mkSaveObject $! WellStructuredRO vro
                     ) `catch`
                     (\(e :: SomeException) ->
                         pure $! ObjectParsingProblem rpkiURL (VErr $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e)
@@ -665,7 +665,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
               where
                 -- Encode/compress the object here, on the parsing (async) thread,
                 -- so the single-threaded DB-writer only has to do the INSERT.
-                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject lifecycle)
+                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
 
     saveStorable db tx r = 
         case r of 
@@ -708,7 +708,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 DB.linkObjectToUrl tx db rpkiUrl key
                 logDebug logger [i||Added original object #{rpkiUrl} with hash #{hash} to the database.|]                 
 
-            SaveObject rpkiUrl so@StorableObject { object = lifecycle } -> do
+            SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
                 let newHash = getHash lifecycle
                 newOneIsAlreadyThere <- DB.hashExists tx db newHash
                 unless newOneIsAlreadyThere $ do
@@ -755,7 +755,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 key <- DB.saveObject tx db (OriginalRO original validationState hash objectMeta.objectType) worldVersion
                 DB.linkObjectToUrl tx db rpkiUrl key
 
-            SaveObject rpkiUrl so@StorableObject { object = lifecycle } -> do
+            SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
                 validateOldHash
                 let newHash = getHash lifecycle
                 newOneIsAlreadyThere <- DB.hashExists tx db newHash
@@ -791,7 +791,7 @@ data RrdpObjectProcessingResult =
         | HashExists RpkiURL Hash ObjectKey
         | UknownObjectType RpkiURL    
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
-        | SaveObject RpkiURL (StorableObject RpkiObjectLifecycle)
+        | SaveObject RpkiURL (StorableObject (Compressed RpkiObjectLifecycle))
     deriving stock (Show, Eq, Generic)
 
 data DeltaOp m a = Delete URI Hash 

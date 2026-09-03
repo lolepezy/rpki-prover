@@ -8,7 +8,7 @@ import           Control.Lens                   ((^.))
 import qualified Data.ByteString                as BS
 import qualified Data.ByteString.Short          as BSS
 import           Data.Int                       (Int64)
-import           Database.SQLite.Simple         (Only (..), query)
+import           Database.SQLite.Simple         (Only (..))
 import           Test.Tasty
 import qualified Test.Tasty.HUnit               as HU
 import qualified Test.Tasty.QuickCheck          as QC
@@ -84,7 +84,7 @@ storableEncodingSpec =
                     key <- rwTx db $ \tx -> DB.saveObject tx db lifecycle worldVersion
 
                     rows <- roTx db $ \(Tx conn) ->
-                        query conn
+                        SQLite.query conn
                             "SELECT data FROM objects WHERE object_key = ?"
                             (Only (SQLite.toInt64 key)) :: IO [Only BS.ByteString]
 

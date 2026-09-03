@@ -151,7 +151,7 @@ mkBenchDbWithPoolAndMmap poolSize mmapSizeMb = do
     let dbPath = root </> "bench.sqlite"
 
     sqliteDb <- SQLite.createDB dbPath 10_000 poolSize
-    withMVar (SQLite.writeConn sqliteDb) SQLite.initSchema
+    withMVar (SQLite.writeConn sqliteDb) (SQLite.initSchema . SQLite.rawConn)
 
     let db = DB sqliteDb
     DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx db

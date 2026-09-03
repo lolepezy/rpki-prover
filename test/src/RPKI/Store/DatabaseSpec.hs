@@ -20,7 +20,7 @@ import           Data.Int                          (Int64)
 import           Data.Ord                          (Down(..))
 import           Data.Hourglass                    (Seconds(..))
 
-import           Database.SQLite.Simple            (Only(..), execute, query, query_)
+import           Database.SQLite.Simple            (Only(..))
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit                  as HU
@@ -154,7 +154,7 @@ shouldMergeObjectLocations io = do
   where
     verifyUrlCount db' suffix expected = do
         actual <- roTx db' $ \(Tx conn) -> do
-            rows <- query_ conn "SELECT COUNT(*) FROM urls" :: IO [Only Int]
+            rows <- SQLite.query_ conn "SELECT COUNT(*) FROM urls" :: IO [Only Int]
             pure $ case rows of
                 [Only n] -> n
                 _        -> 0
@@ -202,7 +202,7 @@ insertMftMetasFor db aki descriptors = do
                 (OriginalRO (ObjectOriginal $ unStorable $ toStorable ro) mempty (getHash ro) (getRpkiObjectType ro))
                 worldVersion
             let meta = MftMeta {..}
-            execute conn
+            SQLite.execute conn
                 "INSERT INTO manifest_meta(object_key, aki, manifest_number, meta) VALUES (?, ?, ?, ?)"
                 (key, aki, serialiseField mftNumber, serialiseField meta)
             pure meta
@@ -326,7 +326,7 @@ shouldDeduplicateSaveObjectByHash io = do
     HU.assertEqual "Saving the same hash twice must return the same key" k1 k2
 
     rows <- roTx db $ \(Tx conn) ->
-        query conn "SELECT COUNT(*) FROM objects WHERE hash = ?"
+        SQLite.query conn "SELECT COUNT(*) FROM objects WHERE hash = ?"
             (Only (SQLite.hashToBlob (getHash ro))) :: IO [Only Int64]
 
     let objectsWithHash = case rows of
@@ -358,7 +358,7 @@ shouldIndexCertificateOnSaveObject io = do
     HU.assertBool "Certificate key must be indexed by SKI" (not $ null bySki)
 
     rows <- roTx db $ \(Tx conn) ->
-        query conn "SELECT COUNT(*) FROM certificates WHERE object_key = ?"
+        SQLite.query conn "SELECT COUNT(*) FROM certificates WHERE object_key = ?"
             (Only (SQLite.toInt64 key)) :: IO [Only Int64]
     let certRows = case rows of
             [Only n] -> n
@@ -849,7 +849,7 @@ seedActiveTaNames :: DB -> [TaName] -> IO ()
 seedActiveTaNames db taNames =
     rwTx db $ \(Tx conn) ->
         forM_ taNames $ \(TaName taName) ->
-            execute conn
+            SQLite.execute conn
                 "INSERT OR REPLACE INTO trust_anchors(ta_name, data, active) VALUES (?, ?, 1)"
                 (taName, BS.empty)
 

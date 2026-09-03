@@ -21,7 +21,7 @@ import qualified RPKI.Util                  as U
 
 parseMft :: BS.ByteString -> PureValidatorT MftObject
 parseMft bs = do
-    asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs
+    asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs
     signedMft <- fromEither $ first (parseErr . U.fmtGen) $ 
                     runParseASN1 (parseSignedObject $ parseSignedContent parseManifest) asns
     hash' <- getMetaFromSigned signedMft bs

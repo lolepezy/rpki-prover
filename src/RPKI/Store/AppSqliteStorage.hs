@@ -80,7 +80,7 @@ setupSqliteCache flow logger cacheDir config = do
 
     db <- fromTry (InitE . InitError . fmtEx) $ do
         sdb <- SQLite.createDB dbPath busyTimeoutMs poolSize
-        withMVar (writeConn sdb) SQLite.initSchema
+        withMVar (writeConn sdb) (SQLite.initSchema . SQLite.rawConn)
         pure (DB sdb)
 
     version <- liftIO $ DB.roTx db $ \tx -> DB.getDatabaseVersion tx db
@@ -93,8 +93,8 @@ setupSqliteCache flow logger cacheDir config = do
             fromTry (InitE . InitError . fmtEx) $
                 DB.rwTx db $ \tx -> do
                     let Tx conn = tx
-                    SQLite.dropSchema conn
-                    SQLite.initSchema conn
+                    SQLite.dropSchema (SQLite.rawConn conn)
+                    SQLite.initSchema (SQLite.rawConn conn)
                     DB.saveCurrentDatabaseVersion tx db
 
     pure db
