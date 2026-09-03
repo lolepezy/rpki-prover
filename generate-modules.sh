@@ -1,4 +1,6 @@
-#!/bin/bash 
+#!/bin/sh
+# POSIX sh: this is sourced from both bash build scripts and
+# build-openbsd.sh (plain /bin/sh, no bash on OpenBSD base).
 
 # Calculate hash of the sources and update it in the RPKI.Meta.Version module,
 # it is used for determining upgrades at the runtime.
@@ -31,11 +33,26 @@ gitDirty :: Bool
 gitDirty = $GIT_DIRTY
 EOF
 
-# Generate source hash module to keep track of the source tree changes 
-# 
+# Generate source hash module to keep track of the source tree changes
+#
 versionModule="src/RPKI/Meta/UniqueId.hs"
 
-hash=$((echo "rpki-prover.cabal"; 
+# sha256sum is GNU coreutils and isn't present on OpenBSD/macOS by default;
+# fall back to shasum (macOS) or the BSD "sha256" tool (OpenBSD/FreeBSD/NetBSD).
+sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum | awk '{print $1;}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 | awk '{print $1;}'
+    elif command -v sha256 >/dev/null 2>&1; then
+        sha256 -q
+    else
+        echo "No sha256/sha256sum/shasum utility found in PATH" >&2
+        exit 1
+    fi
+}
+
+hash=$( (echo "rpki-prover.cabal";
         echo "cabal.project";
         echo "cabal.project.freeze";
         find src app  -type f -name \*.hs) | \
@@ -43,7 +60,7 @@ hash=$((echo "rpki-prover.cabal";
         sort | \
         xargs cat | \
         grep -v -e '^[[:space:]]*$' | \
-        grep -v '^[[:space:]]*--' | sha256sum | awk '{print $1;}')
+        grep -v '^[[:space:]]*--' | sha256)
 
 tmpfile=`mktemp`
 cat $versionModule | sed "s/srcHash#.*#srcHash/srcHash#$hash#srcHash/g" > "${tmpfile}"

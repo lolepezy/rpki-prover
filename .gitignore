@@ -9,3 +9,6 @@ rpki-prover-test.prof*
 stack*yaml.lock
 package.yaml
 *.hie
+.vagrant/
+*.box
+/dist/

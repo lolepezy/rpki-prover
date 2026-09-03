@@ -20,7 +20,9 @@ source-repository-package
   tag: 244367f5febcc44ca9e673dedbf00874395de406
 
 
--- macOS Homebrew paths for C libraries (lmdb etc.); harmless on Linux
+-- macOS Homebrew paths for C libraries (lmdb etc.); harmless on Linux.
+-- /usr/local/{include,lib} also covers OpenBSD's pkg_add prefix, so no
+-- extra stanza is needed there.
 package lmdb
   extra-include-dirs: /opt/homebrew/include /usr/local/include
   extra-lib-dirs:     /opt/homebrew/lib     /usr/local/lib

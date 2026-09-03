@@ -6,6 +6,7 @@
 
 * [Installation and usage](#usage)
   * [Static Linux binary](#static-linux-binary)
+  * [OpenBSD binary](#openbsd-binary)
   * [Docker image](#docker-image)
   * [Building from source](#building-from-source)
 
@@ -38,6 +39,7 @@ Issues are tracked [here](https://github.com/lolepezy/rpki-prover/issues). You c
 * Support for RPKI Signed Checklists
 * Support for RPKI Prefix Lists
 * Static binaries for Linux
+* OpenBSD binary release
 * Docker image
 
 # Installation and usage <a name="usage"></a>
@@ -60,6 +62,18 @@ downloads [TAL files](https://www.ripe.net/manage-ips-and-asns/resource-manageme
 ## Static Linux binary <a name="static-linux-binary"></a>
 
 Every [release](https://github.com/lolepezy/rpki-prover/releases) includes a statically linked Linux x64 executable. Just download and run it.
+
+## OpenBSD binary <a name="openbsd-binary"></a>
+
+Releases also include an OpenBSD tarball. Unlike the Linux binary this one is
+*dynamically* linked -- OpenBSD ports generally don't ship static archives to
+link against, so a fully static binary isn't practical there. Install the
+runtime libraries first (`doas pkg_add lmdb xz gmp`), then unpack and run.
+
+`rpki-prover` also needs an `rsync` client. OpenBSD's base `rsync` is
+`openrsync`, which supports fewer flags than GNU rsync; if repository
+fetches fail, `doas pkg_add rsync` and pass
+`--rsync-client-path=/usr/local/bin/rsync`.
 
 ## Docker image <a name="docker-image"></a>
 
@@ -98,9 +112,15 @@ The instructions below are for Linux but apply equally to \\\*BSD and macOS. Win
     ```
     brew install rsync lmdb xz expat
     ```
+  * On OpenBSD, see [DEVELOPER.md](DEVELOPER.md#openbsd) -- it needs a
+    different path since `ghcup` doesn't support OpenBSD, and there's a
+    caveat about `rsync` flag compatibility. There's also a
+    [`build-openbsd.sh`](build-openbsd.sh) script and a `Vagrantfile` for
+    testing in a local VM, neither of which is covered by the generic
+    instructions below.
   * For other Unix-like OSes, use the appropriate package manager.
 
-* Install `GHC` and `Cabal` using [`ghcup`](https://www.haskell.org/ghcup/):
+* Install `GHC` and `Cabal` using [`ghcup`](https://www.haskell.org/ghcup/) (not available on OpenBSD -- see above):
 
 * Clone the repository:
 
