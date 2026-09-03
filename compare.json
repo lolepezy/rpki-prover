@@ -1,0 +1,17 @@
+{
+  "db":             "~/.rpki-compare/history.db",
+  "host":           "192.168.2.9",
+  "master":         {"name": "master", "port": 34135},
+  "branches":       [
+    {"name": "sqlite-relational-mft", "port": 33798}
+  ],
+  "warmup_cycles":  10,
+  "alert_streak":   3,
+  "poll_interval_s": 300,
+  "thresholds": {
+    "vrp_pct":       3.0,
+    "objects_pct":   5.0,
+    "errors_pct":    20.0,
+    "resources_pct": 25.0
+  }
+}
