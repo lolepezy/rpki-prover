@@ -180,7 +180,7 @@ getExtsSign = getExts . cwsX509certificate
 
 parseKI :: BS.ByteString -> PureValidatorT KI
 parseKI bs = 
-    case decodeASN1' BER bs of
+    case decodeASN1' DER bs of
         Left e -> pureError $ parseErr $ "Error decoding key identifier: " <> Text.pack (show e)
         Right [OctetString bytes] -> makeKI bytes
         Right [Start Sequence, Other Context 0 bytes, End Sequence] -> makeKI bytes    
@@ -222,7 +222,7 @@ getSiaValue c oid = do
 
 extractSiaValue :: BS.ByteString -> OID -> Maybe BS.ByteString
 extractSiaValue sia oid = do 
-    asns <- toMaybe $ decodeASN1' BER sia
+    asns <- toMaybe $ decodeASN1' DER sia
     join $ toMaybe $ flip runParseASN1 asns $ 
             listToMaybe . catMaybes <$> 
                 onNextContainer Sequence (getMany extractByOid)
@@ -265,7 +265,7 @@ getCrlDistributionPointExt exts = extVal exts id_ce_CRLDistributionPoints >>= ex
 
 extractCrlDistributionPoint :: BS.ByteString -> Maybe URI
 extractCrlDistributionPoint crlDP = do    
-    asns  <- toMaybe $ decodeASN1' BER crlDP
+    asns  <- toMaybe $ decodeASN1' DER crlDP
     join $ toMaybe $ flip runParseASN1 asns $ 
         onNextContainer Sequence $ 
             onNextContainer Sequence $ 
@@ -278,7 +278,7 @@ extractCrlDistributionPoint crlDP = do
 
 certificatePoliciesToText :: BS.ByteString -> Text
 certificatePoliciesToText bs =
-    either fmtGen fmtGen $ decodeASN1' BER bs
+    either fmtGen fmtGen $ decodeASN1' DER bs
 
 
 toMaybe :: Either b a -> Maybe a

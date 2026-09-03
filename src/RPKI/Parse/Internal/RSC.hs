@@ -29,7 +29,7 @@ import qualified RPKI.Util                  as U
 -- 
 parseRsc :: BS.ByteString -> PureValidatorT RscObject
 parseRsc bs = do    
-    asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' BER bs      
+    asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs      
     signedRsc <- fromEither $ first (parseErr . U.convert) $ 
                     runParseASN1 (parseSignedObject $ parseSignedContent parseRsc') asns
     hash' <- getMetaFromSigned signedRsc bs

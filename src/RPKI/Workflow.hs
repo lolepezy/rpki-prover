@@ -451,7 +451,7 @@ runAll appContext@AppContext {..} tals = do
             let reportError message = do 
                     logError logger message
                     DB.rwTxT database $ \tx db -> do
-                        DB.saveValidationVersion tx db worldVersion allTaNames mempty workerVS
+                        DB.saveValidationVersion tx db worldVersion mempty workerVS
                     updatePrometheus (workerVS ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion
                     pure (mempty, mempty)
 
@@ -660,8 +660,8 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                 $ map (\(ta, r) -> (ta, (r ^. typed, r ^. typed))) 
                 $ Map.toList results'
 
-        DB.saveValidationVersion tx db worldVersion 
-            allTaNames resultsToSave updatedValidation                            
+        DB.saveValidationVersion tx db worldVersion
+            resultsToSave updatedValidation
      
         for_ maybeSlurm $ DB.saveSlurm tx db worldVersion        
  

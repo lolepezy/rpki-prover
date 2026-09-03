@@ -17,8 +17,10 @@ import qualified Data.Set                          as Set
 import qualified Data.Text                         as Text
 import           Data.Proxy                        (Proxy(..))
 import           Data.Int                          (Int64)
+import           Data.Ord                          (Down(..))
+import           Data.Hourglass                    (Seconds(..))
 
-import           Database.SQLite.Simple            (Only(..), execute, query, query_)
+import           Database.SQLite.Simple            (Only(..))
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit                  as HU
@@ -56,6 +58,14 @@ databaseGroup = testGroup "SQLite storage tests"
 objectStoreGroup :: TestTree
 objectStoreGroup = testGroup "Object storage test"
     [ dbTestCase "Should order manifests according to their dates" shouldOrderManifests
+    , dbTestCase "Should order manifests by thisTime, not by manifest_number"
+        shouldOrderManifestsByThisTimeNotNumber
+    , dbTestCase "Should order manifests by nextTime when thisTime ties"
+        shouldOrderManifestsByNextTimeWhenThisTimeTies
+    , dbTestCase "Should order manifests by mftNumber when thisTime and nextTime both tie"
+        shouldOrderManifestsByMftNumberWhenTimesTie
+    , dbTestCase "Should order many manifests by thisTime across many random mftNumber/nextTime permutations"
+        shouldOrderManyRandomManifestsByThisTime
     , dbTestCase "Should merge locations" shouldMergeObjectLocations
     , dbTestCase "Should deduplicate saveObject by hash" shouldDeduplicateSaveObjectByHash
     , dbTestCase "Should index certificates on saveObject" shouldIndexCertificateOnSaveObject
@@ -65,6 +75,8 @@ repositoryStoreGroup :: TestTree
 repositoryStoreGroup = testGroup "Repository storage test"
     [ dbTestCase "Should insert and get an rsync repository" shouldSaveAndGetRsyncRepositories
     , dbTestCase "Should overwrite metadata and validations" shouldSaveMetaAndValidationAsCorrectSemigroup
+    , dbTestCase "Should save and get a mix of RRDP/rsync repositories with validation states, respecting the filter"
+        shouldSaveAndGetRepositoriesWithValidationStates
     ]
 
 versionStoreGroup :: TestTree
@@ -76,6 +88,10 @@ versionStoreGroup = testGroup "Version storage test"
         shouldReadValidationOutcomePayloadQueries
     , dbTestCase "Should keep versions ordered and resolve previous version" shouldOrderAndLinkVersions
     , dbTestCase "Should delete version data including slurm" shouldDeleteValidationVersionData
+    , dbTestCase "Should delete oldest versions once every TA has enough real data"
+        shouldDeleteOldestVersionsOnceEveryTAHasEnoughRealData
+    , dbTestCase "Should not delete anything while a TA never accumulates enough real data"
+        shouldNotDeleteVersionsBlockedByLaggingTA
     ]
 
 txGroup :: TestTree
@@ -138,7 +154,7 @@ shouldMergeObjectLocations io = do
   where
     verifyUrlCount db' suffix expected = do
         actual <- roTx db' $ \(Tx conn) -> do
-            rows <- query_ conn "SELECT COUNT(*) FROM urls" :: IO [Only Int]
+            rows <- SQLite.query_ conn "SELECT COUNT(*) FROM urls" :: IO [Only Int]
             pure $ case rows of
                 [Only n] -> n
                 _        -> 0
@@ -170,6 +186,126 @@ shouldOrderManifests io = do
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) (toValidatedRpkiObject mft2)
 
 
+-- | Saves one fresh dummy object per descriptor (to satisfy manifest_meta's
+-- FK to objects) and inserts a manifest_meta row for each `(mftNumber,
+-- thisTime, nextTime)` descriptor, all under the given AKI. Bypasses
+-- `saveObject`'s manifest-specific insertion (which needs a real parsed
+-- manifest CMS+certificate) so the three ordering fields can be set
+-- independently of each other and of a real manifest's actual content.
+insertMftMetasFor :: DB -> AKI -> [(Serial, Instant, Instant)] -> IO [MftMeta]
+insertMftMetasFor db aki descriptors = do
+    worldVersion <- newVersion
+    rwTx db $ \tx@(Tx conn) ->
+        forM descriptors $ \(mftNumber, thisTime, nextTime) -> do
+            ro :: ParsedRpkiObject <- QC.generate QC.arbitrary
+            key <- DB.saveObject tx db
+                (OriginalRO (ObjectOriginal $ unStorable $ toStorable ro) mempty (getHash ro) (getRpkiObjectType ro))
+                worldVersion
+            let meta = MftMeta {..}
+            SQLite.execute conn
+                "INSERT INTO manifest_meta(object_key, aki, manifest_number, meta) VALUES (?, ?, ?, ?)"
+                (key, aki, serialiseField mftNumber, serialiseField meta)
+            pure meta
+
+
+-- | Regression test: `getMftsForAKI` used to sort with a SQL `ORDER BY
+-- manifest_number DESC`, but manifest serial numbers aren't guaranteed to
+-- grow monotonically in practice (e.g. ARIN's don't), so that can pick the
+-- wrong "latest" manifest. It must sort by thisTime/nextTime instead
+-- (`Ord MftMeta`), with manifest_number only as a last-resort tiebreaker.
+shouldOrderManifestsByThisTimeNotNumber :: IO DB -> HU.Assertion
+shouldOrderManifestsByThisTimeNotNumber io = do
+    db <- io
+    aki :: AKI <- QC.generate QC.arbitrary
+
+    Now t1 <- thisInstant
+    threadDelay 10_000
+    Now t2 <- thisInstant
+
+    -- The smaller manifest_number has the LATER thisTime; the bigger
+    -- manifest_number has the EARLIER thisTime.
+    metas <- insertMftMetasFor db aki
+        [ (Serial 1,  t2, t2)
+        , (Serial 99, t1, t1)
+        ]
+
+    ordered <- roTx db $ \tx -> DB.getMftsForAKI tx db aki
+
+    HU.assertEqual "Must be ordered by thisTime, not manifest_number"
+        (List.sortOn Down metas)
+        ordered
+
+
+-- | When thisTime ties, nextTime must be the tiebreaker, regardless of
+-- manifest_number.
+shouldOrderManifestsByNextTimeWhenThisTimeTies :: IO DB -> HU.Assertion
+shouldOrderManifestsByNextTimeWhenThisTimeTies io = do
+    db <- io
+    aki :: AKI <- QC.generate QC.arbitrary
+    Now sharedThisTime <- thisInstant
+
+    let n = 6 :: Int
+        nextTimes = [ momentAfter sharedThisTime (Seconds (fromIntegral i)) | i <- [1 .. n] ]
+    shuffledNumbers <- QC.generate $ QC.shuffle [ Serial (fromIntegral i) | i <- [1 .. n] ]
+
+    metas <- insertMftMetasFor db aki
+        [ (num, sharedThisTime, next) | (num, next) <- zip shuffledNumbers nextTimes ]
+
+    ordered <- roTx db $ \tx -> DB.getMftsForAKI tx db aki
+
+    HU.assertEqual "Must be ordered by nextTime when thisTime ties"
+        (List.sortOn Down metas)
+        ordered
+
+
+-- | When both thisTime and nextTime tie, manifest_number is the last-resort
+-- tiebreaker.
+shouldOrderManifestsByMftNumberWhenTimesTie :: IO DB -> HU.Assertion
+shouldOrderManifestsByMftNumberWhenTimesTie io = do
+    db <- io
+    aki :: AKI <- QC.generate QC.arbitrary
+    Now sharedTime <- thisInstant
+
+    let n = 6 :: Int
+    shuffledNumbers <- QC.generate $ QC.shuffle [ Serial (fromIntegral i) | i <- [1 .. n] ]
+
+    metas <- insertMftMetasFor db aki
+        [ (num, sharedTime, sharedTime) | num <- shuffledNumbers ]
+
+    ordered <- roTx db $ \tx -> DB.getMftsForAKI tx db aki
+
+    HU.assertEqual "Must be ordered by manifest_number when thisTime and nextTime both tie"
+        (List.sortOn Down metas)
+        ordered
+
+
+-- | Broad randomised stress test: many trials, each with a random number of
+-- manifests, distinct thisTime values (so there's always a well-defined
+-- expected order), and mftNumber/nextTime independently shuffled/randomised
+-- so they routinely disagree with the thisTime order. Every trial's result
+-- must match sorting the input with `Ord MftMeta` (i.e. `List.sortOn Down`).
+shouldOrderManyRandomManifestsByThisTime :: IO DB -> HU.Assertion
+shouldOrderManyRandomManifestsByThisTime io = do
+    db <- io
+    forM_ [1 .. 40 :: Int] $ \trial -> do
+        aki :: AKI <- QC.generate QC.arbitrary
+        n :: Int <- QC.generate $ QC.choose (2, 12)
+        Now base <- thisInstant
+
+        let thisTimes = [ momentAfter base (Seconds (fromIntegral i)) | i <- [1 .. n] ]
+        shuffledNumbers <- QC.generate $ QC.shuffle [ Serial (fromIntegral i) | i <- [1 .. n] ]
+        nextTimeOffsets <- QC.generate $ QC.vectorOf n (QC.choose (0, 1000) :: QC.Gen Int64)
+        let nextTimes = [ momentAfter t (Seconds o) | (t, o) <- zip thisTimes nextTimeOffsets ]
+            descriptors = zip3 shuffledNumbers thisTimes nextTimes
+
+        metas <- insertMftMetasFor db aki descriptors
+        ordered <- roTx db $ \tx -> DB.getMftsForAKI tx db aki
+
+        HU.assertEqual ("Trial " <> show trial <> ": must be ordered by thisTime regardless of mftNumber/nextTime")
+            (List.sortOn Down metas)
+            ordered
+
+
 shouldDeduplicateSaveObjectByHash :: IO DB -> HU.Assertion
 shouldDeduplicateSaveObjectByHash io = do
     db <- io
@@ -190,7 +326,7 @@ shouldDeduplicateSaveObjectByHash io = do
     HU.assertEqual "Saving the same hash twice must return the same key" k1 k2
 
     rows <- roTx db $ \(Tx conn) ->
-        query conn "SELECT COUNT(*) FROM objects WHERE hash = ?"
+        SQLite.query conn "SELECT COUNT(*) FROM objects WHERE hash = ?"
             (Only (SQLite.hashToBlob (getHash ro))) :: IO [Only Int64]
 
     let objectsWithHash = case rows of
@@ -222,7 +358,7 @@ shouldIndexCertificateOnSaveObject io = do
     HU.assertBool "Certificate key must be indexed by SKI" (not $ null bySki)
 
     rows <- roTx db $ \(Tx conn) ->
-        query conn "SELECT COUNT(*) FROM certificates WHERE object_key = ?"
+        SQLite.query conn "SELECT COUNT(*) FROM certificates WHERE object_key = ?"
             (Only (SQLite.toInt64 key)) :: IO [Only Int64]
     let certRows = case rows of
             [Only n] -> n
@@ -275,6 +411,40 @@ shouldSaveMetaAndValidationAsCorrectSemigroup io = do
         HU.assertEqual "Same repository" r rsync
 
 
+-- | Covers `saveRepositories`/`saveRepositoryValidationStates`/`getRepositories`
+-- together for a mix of RRDP and rsync repositories -- the bulk vstate lookup
+-- in `getRepositories` replaced a per-repository query, so this checks it
+-- still returns exactly the saved (repository, validation state) pairs and
+-- still respects the URL filter.
+shouldSaveAndGetRepositoriesWithValidationStates :: IO DB -> HU.Assertion
+shouldSaveAndGetRepositoriesWithValidationStates io = do
+    db <- io
+
+    repos  <- QC.generate $ replicateM 40 QC.arbitrary :: IO [Repository]
+    states <- QC.generate $ replicateM (length repos) QC.arbitrary :: IO [ValidationState]
+    let reposWithStates = zip repos states
+
+    rwTx db $ \tx -> do
+        DB.saveRepositories tx db repos
+        DB.saveRepositoryValidationStates tx db reposWithStates
+
+    stored <- roTx db $ \tx -> DB.getRepositories tx db (const True)
+
+    HU.assertEqual "Should get back all saved repositories with their validation states"
+        (byUrl reposWithStates)
+        (byUrl stored)
+
+    -- Only keep the first half by URL and check the filter predicate is respected.
+    let keptUrls = Set.fromList $ map (getRpkiURL . fst) $ take (length repos `div` 2) reposWithStates
+    storedFiltered <- roTx db $ \tx -> DB.getRepositories tx db (`Set.member` keptUrls)
+
+    HU.assertEqual "Filter predicate should restrict returned repositories"
+        (Map.filterWithKey (\u _ -> u `Set.member` keptUrls) (byUrl reposWithStates))
+        (byUrl storedFiltered)
+  where
+    byUrl = Map.fromList . map (\(r, vs) -> (getRpkiURL r, (r, vs)))
+
+
 rsyncReposWithCommonHosts :: Int -> IO [RsyncRepository]
 rsyncReposWithCommonHosts n =
     replicateM n $ QC.generate $ do
@@ -320,7 +490,7 @@ shouldSaveAndGetValidationVersion io = do
     commonVS <- QC.generate QC.arbitrary
 
     rwTx db $ \tx ->
-        DB.saveValidationVersion tx db worldVersion taNames perTaResults commonVS
+        DB.saveValidationVersion tx db worldVersion perTaResults commonVS
 
     storedValidations <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion
     storedMetrics <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion
@@ -364,15 +534,15 @@ shouldSaveAndGetValidationVersionFilledWithPastData io = do
 
     rwTx db $ \tx -> do
         commonVS <- QC.generate QC.arbitrary
-        DB.saveValidationVersion tx db worldVersion1 taNames perTa1 commonVS
+        DB.saveValidationVersion tx db worldVersion1 perTa1 commonVS
 
     rwTx db $ \tx -> do
         commonVS <- QC.generate QC.arbitrary
-        DB.saveValidationVersion tx db worldVersion2 taNames perTa2 commonVS
+        DB.saveValidationVersion tx db worldVersion2 perTa2 commonVS
 
     rwTx db $ \tx -> do
         commonVS <- QC.generate QC.arbitrary
-        DB.saveValidationVersion tx db worldVersion3 taNames perTa3 commonVS
+        DB.saveValidationVersion tx db worldVersion3 perTa3 commonVS
 
     v1 <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion1
     v2 <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion2
@@ -418,13 +588,13 @@ shouldReadValidationOutcomePayloadQueries io = do
     commonVS3 <- QC.generate QC.arbitrary
 
     rwTx db $ \tx ->
-        DB.saveValidationVersion tx db worldVersion1 taNames perTa1 commonVS1
+        DB.saveValidationVersion tx db worldVersion1 perTa1 commonVS1
 
     rwTx db $ \tx ->
-        DB.saveValidationVersion tx db worldVersion2 taNames perTa2 commonVS2
+        DB.saveValidationVersion tx db worldVersion2 perTa2 commonVS2
 
     rwTx db $ \tx ->
-        DB.saveValidationVersion tx db worldVersion3 taNames perTa3 commonVS3
+        DB.saveValidationVersion tx db worldVersion3 perTa3 commonVS3
 
     ripeV2 <- expectJust "Missing ripe data in version 2 fixture" (getForTA perTa2 ripe)
     apnicV1 <- expectJust "Missing apnic data in version 1 fixture" (getForTA perTa1 apnic)
@@ -539,19 +709,19 @@ shouldOrderAndLinkVersions io = do
     rwTx db $ \tx -> do
         common1 <- QC.generate QC.arbitrary
         perTa1  <- QC.generate $ generatePerTa taNames
-        DB.saveValidationVersion tx db worldVersion1 taNames perTa1 common1
+        DB.saveValidationVersion tx db worldVersion1 perTa1 common1
 
         common2 <- QC.generate QC.arbitrary
         perTa2  <- QC.generate $ generatePerTa taNames
-        DB.saveValidationVersion tx db worldVersion2 taNames perTa2 common2
+        DB.saveValidationVersion tx db worldVersion2 perTa2 common2
 
         common3 <- QC.generate QC.arbitrary
         perTa3  <- QC.generate $ generatePerTa taNames
-        DB.saveValidationVersion tx db worldVersion3 taNames perTa3 common3
+        DB.saveValidationVersion tx db worldVersion3 perTa3 common3
 
     versions <- roTx db $ \tx -> DB.versionsBackwards tx db
     HU.assertEqual "Expected 3 stored versions" 3 (length versions)
-    HU.assertEqual "Latest version should be first in descending list" worldVersion3 (fst $ head versions)
+    HU.assertEqual "Latest version should be first in descending list" worldVersion3 (head versions)
 
     latest <- roTx db $ \tx -> DB.getLatestVersion tx db
     HU.assertEqual "Latest version mismatch" (Just worldVersion3) latest
@@ -577,26 +747,93 @@ shouldDeleteValidationVersionData io = do
     let slurm = mempty
 
     rwTx db $ \tx -> do
-        DB.saveValidationVersion tx db worldVersion taNames perTa commonVS
+        DB.saveValidationVersion tx db worldVersion perTa commonVS
         DB.saveSlurm tx db worldVersion slurm
 
     -- sanity check before delete
-    vmBefore <- roTx db $ \tx -> DB.getVersionMeta tx db worldVersion
+    versionsBefore <- roTx db $ \tx -> DB.versionsBackwards tx db
     slurmBefore <- roTx db $ \tx -> DB.getSlurm tx db worldVersion
-    HU.assertBool "Version must exist before deletion" (maybe False (const True) vmBefore)
+    HU.assertBool "Version must exist before deletion" (worldVersion `elem` versionsBefore)
     HU.assertEqual "Slurm must exist before deletion" (Just slurm) slurmBefore
 
     rwTx db $ \tx -> DB.deleteValidationVersion tx db worldVersion
 
-    vmAfter <- roTx db $ \tx -> DB.getVersionMeta tx db worldVersion
+    versionsAfter <- roTx db $ \tx -> DB.versionsBackwards tx db
     slurmAfter <- roTx db $ \tx -> DB.getSlurm tx db worldVersion
     valsAfter <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion
     metricsAfter <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion
 
-    HU.assertEqual "Version meta must be gone" Nothing vmAfter
+    HU.assertBool "Version must be gone after deletion" (worldVersion `notElem` versionsAfter)
     HU.assertEqual "Slurm must be gone" Nothing slurmAfter
     HU.assertEqual "Per-TA validations must be empty" mempty valsAfter
     HU.assertEqual "Per-TA metrics must be empty" mempty metricsAfter
+
+
+shouldDeleteOldestVersionsOnceEveryTAHasEnoughRealData :: IO DB -> HU.Assertion
+shouldDeleteOldestVersionsOnceEveryTAHasEnoughRealData io = do
+    db <- io
+
+    let ripe = TaName "ripe"
+    let apnic = TaName "apnic"
+    let taNames = [ripe, apnic]
+    seedActiveTaNames db taNames
+
+    -- Both TAs validate successfully every round.
+    versions@[worldVersion1, worldVersion2, worldVersion3, worldVersion4, worldVersion5] <- newVersions 5
+    forM_ versions $ \wv -> rwTx db $ \tx -> do
+        perTa <- QC.generate $ generatePerTa taNames
+        commonVS <- QC.generate QC.arbitrary
+        DB.saveValidationVersion tx db wv perTa commonVS
+
+    deleted <- rwTx db $ \tx -> DB.deleteOldestVersionsIfNeeded tx db 2
+
+    HU.assertEqual "Should delete the three oldest rounds, keeping the newest 2 per TA"
+        (List.sort [worldVersion1, worldVersion2, worldVersion3]) (List.sort deleted)
+
+    remaining <- roTx db $ \tx -> DB.versionsBackwards tx db
+    HU.assertEqual "Only the newest 2 versions should remain"
+        (List.sort [worldVersion4, worldVersion5]) (List.sort remaining)
+
+
+shouldNotDeleteVersionsBlockedByLaggingTA :: IO DB -> HU.Assertion
+shouldNotDeleteVersionsBlockedByLaggingTA io = do
+    db <- io
+
+    let ripe = TaName "ripe"
+    let apnic = TaName "apnic"
+    let taNames = [ripe, apnic]
+    seedActiveTaNames db taNames
+
+    -- apnic only ever gets real data on the very first round; every later
+    -- round only ripe validates. apnic can never accumulate 2 distinct real
+    -- rounds, so nothing should ever be deleted, no matter how many rounds
+    -- pass -- even though apnic gets no `validation_outcomes` row at all in
+    -- any of the later rounds.
+    versions@(worldVersion1 : _) <- newVersions 5
+
+    rwTx db $ \tx -> do
+        perTa1 <- QC.generate $ generatePerTa taNames
+        commonVS1 <- QC.generate QC.arbitrary
+        DB.saveValidationVersion tx db worldVersion1 perTa1 commonVS1
+
+    forM_ (drop 1 versions) $ \wv -> rwTx db $ \tx -> do
+        perTa <- QC.generate $ generatePerTa [ripe]
+        commonVS <- QC.generate QC.arbitrary
+        DB.saveValidationVersion tx db wv perTa commonVS
+
+    deleted <- rwTx db $ \tx -> DB.deleteOldestVersionsIfNeeded tx db 2
+
+    HU.assertEqual "Nothing should be deleted while apnic never reaches 2 real rounds" [] deleted
+
+    remaining <- roTx db $ \tx -> DB.versionsBackwards tx db
+    HU.assertBool "The round with apnic's only real data must still be present"
+        (worldVersion1 `elem` remaining)
+
+
+newVersions :: Int -> IO [WorldVersion]
+newVersions n = forM [1 .. n] $ \i -> do
+    when (i > 1) $ threadDelay 10_000
+    newVersion
 
 
 generatePerTa :: (QC.Arbitrary a, QC.Arbitrary b) => [TaName] -> QC.Gen (PerTA (a, b))
@@ -612,7 +849,7 @@ seedActiveTaNames :: DB -> [TaName] -> IO ()
 seedActiveTaNames db taNames =
     rwTx db $ \(Tx conn) ->
         forM_ taNames $ \(TaName taName) ->
-            execute conn
+            SQLite.execute conn
                 "INSERT OR REPLACE INTO trust_anchors(ta_name, data, active) VALUES (?, ?, 1)"
                 (taName, BS.empty)
 

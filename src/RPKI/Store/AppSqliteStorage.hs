@@ -80,7 +80,7 @@ setupSqliteCache flow logger cacheDir config = do
 
     db <- fromTry (InitE . InitError . fmtEx) $ do
         sdb <- SQLite.createDB dbPath busyTimeoutMs poolSize
-        withMVar (writeConn sdb) SQLite.initSchema
+        withMVar (writeConn sdb) (SQLite.initSchema . SQLite.rawConn)
         pure (DB sdb)
 
     version <- liftIO $ DB.roTx db $ \tx -> DB.getDatabaseVersion tx db
@@ -93,13 +93,19 @@ setupSqliteCache flow logger cacheDir config = do
             fromTry (InitE . InitError . fmtEx) $
                 DB.rwTx db $ \tx -> do
                     let Tx conn = tx
-                    SQLite.dropSchema conn
-                    SQLite.initSchema conn
+                    SQLite.dropSchema (SQLite.rawConn conn)
+                    SQLite.initSchema (SQLite.rawConn conn)
                     DB.saveCurrentDatabaseVersion tx db
 
     pure db
   where
     dbPath        = cacheDir </> "rpki-cache.sqlite"
-    busyTimeoutMs = let Seconds s = config ^. #storageConfig . #rwTransactionTimeout 
+    busyTimeoutMs = let Seconds s = config ^. #storageConfig . #rwTransactionTimeout
                     in fromIntegral $ s * 1000
-    poolSize      = 8
+    -- Every parsing async (there are up to `cpuParallelism` of them running
+    -- concurrently, see `newParallelism`) does at least one read-only query
+    -- against this pool (e.g. a hash-exists check) before/while parsing, so
+    -- sizing the pool after the CPU count keeps those reads from queuing up
+    -- behind each other on machines with more cores. 8 is kept as a floor so
+    -- small machines don't regress from the previous hardcoded value.
+    poolSize      = max 8 (fromIntegral (config ^. #parallelism . #cpuParallelism))
