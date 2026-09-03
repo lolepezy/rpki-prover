@@ -64,37 +64,28 @@ Given that, the actual steps:
 
 For testing without dedicating a physical/cloud OpenBSD machine, use
 `Vagrantfile` + `vagrant/provision-openbsd.sh` -- a local OpenBSD VM
-(VirtualBox or libvirt) for interactive build/debug work. Docker cannot run
-OpenBSD guests, which is why this is a VM rather than a container.
+(libvirt) for interactive build/debug work. Docker cannot run OpenBSD
+guests, which is why this is a VM rather than a container.
 
-**One-time box setup, before any of this works:** the only well-known,
-actively-published Vagrant box (`generic/openbsd7`) has been pinned to
-OpenBSD 7.4 across every box version it's published, and OpenBSD only keeps
-packages live on its mirrors for the current and previous release -- so a
-fresh box has literally no installable packages (`pkg_add` fails with
-"no such dir"), and there's no dependable long-term archive of old releases
-to fall back to. The fix is a one-time `sysupgrade` (OpenBSD's supported
-upgrade mechanism, one release at a time only -- no skipping) followed by
-packaging the upgraded VM into your own reusable local box, since the
-upgrade doesn't change the box image Vagrant cached, only that one VM's
-disk. Full recipe, including why, is in the `Vagrantfile` header comment;
-short version:
-```
-vagrant up
-vagrant ssh
-    doas sysupgrade   # repeat: wait for reboot, ssh back in, uname -r,
-                       # repeat until uname -r is a currently-live release
-                       # (check https://ftp.openbsd.org/pub/OpenBSD/ for
-                       # which point releases still exist there)
-vagrant halt
-vagrant package --output openbsd-current.box
-vagrant box add openbsd-current-local openbsd-current.box
-RPKI_OPENBSD_BOX=openbsd-current-local vagrant up
-```
-After that, `RPKI_OPENBSD_BOX=openbsd-current-local` before any `vagrant`
-command uses your upgraded box instead of the pristine 7.4 one -- including
-after a `vagrant destroy`, which otherwise reverts to 7.4 and loses this
-work.
+**Box freshness matters more than you'd expect.** The obvious choice,
+`generic/openbsd7`, is pinned to OpenBSD 7.4 across every version it's
+published, and OpenBSD only keeps packages -- and, as it turns out,
+install/upgrade sets -- live on its mirrors for the current and previous
+release. A 7.4 box has no installable packages at all, and can't be fixed
+with `sysupgrade` either: the one-hop-at-a-time upgrade needs 7.5's sets,
+which are equally gone, and 7.4's `sysupgrade` binary predates the
+`-R <version>` flag that could otherwise target a later release directly.
+It's a dead end, not an inconvenience -- don't spend time re-attempting an
+in-place upgrade if a box turns out to be this stale.
+
+The `Vagrantfile` therefore defaults to `DefinedNet/openbsd78` instead
+(real 7.8, native libvirt build, no upgrade needed). If that ever goes
+stale or disappears, find a replacement the same way this one was found:
+it needs a libvirt provider build, and to actually be a currently-supported
+release -- check https://ftp.openbsd.org/pub/OpenBSD/ for which point
+releases still have live packages before trusting a box's advertised
+version, then `RPKI_OPENBSD_BOX=org/box-name vagrant up` (see the
+`Vagrantfile` header for details) rather than editing the file.
 
 ## Build
 

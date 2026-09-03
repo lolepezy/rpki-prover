@@ -4,10 +4,12 @@
 # failure, checking rsync flag compatibility, running the daemon against
 # real repositories, etc.
 #
-# Requires Vagrant plus a provider it can drive (VirtualBox is the default
-# below; libvirt/QEMU also works, pass --provider=libvirt to `vagrant up`).
-# Neither Vagrant nor a hypervisor is installed by this repo -- install
-# whichever you already use, or VirtualBox if unsure.
+# Requires Vagrant plus a provider it can drive. The box below
+# (DefinedNet/openbsd78) only publishes a libvirt build, so
+# `vagrant up --provider=libvirt` is effectively required unless you swap
+# in a different box that also has a VirtualBox build (the "virtualbox"
+# provider block further down is harmless but unused until then). Neither
+# Vagrant nor a hypervisor is installed by this repo.
 #
 # Usage:
 #   vagrant up          # boots + provisions (installs ghc/cabal/rsync/etc as root)
@@ -32,29 +34,30 @@
 # already present and Vagrant's capability check skips the broken install
 # path entirely.
 #
-# IMPORTANT, one-time setup: as of writing, "generic/openbsd7" is pinned to
-# OpenBSD 7.4 across every published box version, and OpenBSD only keeps
-# packages live on its mirrors for the current + previous release -- so a
-# fresh 7.4 box has NO installable packages at all (pkg_add fails with
-# "no such dir"). There's no reliable long-term archive for old releases
-# either, so the fix is to upgrade the box once, then keep the upgraded
-# image instead of the pristine one:
+# Box choice, and why it's NOT the obvious "generic/openbsd7": that box is
+# pinned to OpenBSD 7.4 across every published version, and OpenBSD only
+# keeps packages (and, it turns out, install/upgrade sets) live on its
+# mirrors for the current + previous release. A fresh 7.4 box therefore has
+# no installable packages at all ("no such dir"), and can't be fixed with
+# an in-place `sysupgrade` either: the normal one-hop-at-a-time upgrade
+# needs 7.5's sets, which are equally gone from the mirrors, and 7.4's
+# `sysupgrade` binary predates the `-R <version>` flag that would let it
+# target a later release directly. It's a genuine dead end, not just an
+# inconvenience -- don't re-attempt it if some other box goes stale the
+# same way; skip straight to finding/building a current one instead (see
+# below).
 #
-#   vagrant up                 # boots the pristine (7.4) box
-#   vagrant ssh
-#     doas sysupgrade          # one release at a time -- repeat until
-#     # (VM reboots itself; `vagrant ssh` back in, `uname -r`, repeat)
-#     # `uname -r` reads a current release (7.8 as of writing -- check
-#     # what's actually live on the mirrors first, see DEVELOPER.md)
-#   vagrant halt
-#   vagrant package --output openbsd-current.box
-#   vagrant box add openbsd-current-local openbsd-current.box
+# DefinedNet/openbsd78 is what's actually used below: real OpenBSD 7.8, a
+# native libvirt build, no upgrade dance required. It's a much smaller/less
+# established publisher than "generic", so if it goes stale or disappears,
+# check https://portal.cloud.hashicorp.com/vagrant/discover for a
+# replacement (needs a libvirt build, and to actually be a still-supported
+# release -- check https://ftp.openbsd.org/pub/OpenBSD/ for which point
+# releases currently have packages before trusting a box's version number).
 #
-# Then either edit BOX_NAME below, or leave it and run:
-#   RPKI_OPENBSD_BOX=openbsd-current-local vagrant up
-# The env var takes precedence so this file doesn't need a personal box
-# name hardcoded into it -- everyone doing this setup picks their own.
-BOX_NAME = ENV.fetch("RPKI_OPENBSD_BOX", "generic/openbsd7")
+# Override without editing this file:
+#   RPKI_OPENBSD_BOX=some/other-box vagrant up
+BOX_NAME = ENV.fetch("RPKI_OPENBSD_BOX", "DefinedNet/openbsd78")
 
 Vagrant.configure("2") do |config|
   config.vm.box = BOX_NAME
