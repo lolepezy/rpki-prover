@@ -6,7 +6,7 @@ description:    Please see the README on GitHub at <https://github.com/lolepezy/
 homepage:       https://github.com/lolepezy/rpki-prover#readme
 bug-reports:    https://github.com/lolepezy/rpki-prover/issues
 author:         Mikhail Puzanov
-maintainer:     misha.puzanov@gmail.com
+maintainer:     misha.puzanov@pm.me
 copyright:      2026 Mikhail Puzanov
 license:        BSD-3-Clause
 license-file:   LICENSE

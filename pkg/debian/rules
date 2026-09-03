@@ -1,0 +1,61 @@
+#!/usr/bin/make -f
+#
+# Binary packaging for rpki-prover.
+#
+# This is deliberately not a "proper" Debian source package: the Haskell
+# toolchain comes from ghcup, not from Debian, so the package can only be built
+# in the prepared container image from pkg/Dockerfile.deb-builder.  Everything
+# else -- dependency resolution via dpkg-shlibdeps, systemd integration,
+# conffile handling -- is left to debhelper, which is what makes this worth
+# doing with dh at all.
+
+export LANG = C.UTF-8
+export LC_ALL = C.UTF-8
+
+# GHC binaries carry DWARF that dwz regularly chokes on, and a -dbgsym package
+# for a binary this size is not worth shipping.
+export DEB_BUILD_OPTIONS := $(DEB_BUILD_OPTIONS) noautodbgsym
+
+# Set by pkg/Dockerfile.deb-builder; the image pre-populates the cabal store
+# with all of this project's dependencies.
+export GHCUP_INSTALL_BASE_PREFIX ?= /opt
+export CABAL_DIR ?= /opt/cabal
+export PATH := /opt/.ghcup/bin:/opt/cabal/bin:$(PATH)
+
+CABAL      ?= cabal
+CABAL_OPTS  = -j
+STAGE       = $(CURDIR)/debian/stage
+PKGDIR      = $(CURDIR)/debian/rpki-prover
+VERSION     = $(shell dpkg-parsechangelog -SVersion)
+
+%:
+	dh $@
+
+override_dh_auto_clean:
+	rm -rf $(STAGE) dist-newstyle debian/rpki-prover.1
+
+override_dh_auto_configure:
+
+override_dh_auto_build:
+	mkdir -p $(STAGE)
+	$(CABAL) $(CABAL_OPTS) install exe:rpki-prover \
+		--install-method=copy \
+		--installdir=$(STAGE) \
+		--overwrite-policy=always
+	# A man page keeps lintian quiet and is genuinely useful, but never let a
+	# help2man hiccup fail the whole build.
+	help2man --no-info --section=1 \
+		--name='RPKI relying party software' \
+		--version-string='$(VERSION)' \
+		--include=debian/rpki-prover.h2m \
+		--output=debian/rpki-prover.1 \
+		$(STAGE)/rpki-prover \
+	  || sed -e 's/@VERSION@/$(VERSION)/' debian/rpki-prover.1.fallback > debian/rpki-prover.1
+
+# The test suite needs network access to live RPKI repositories.
+override_dh_auto_test:
+
+override_dh_auto_install:
+	install -D -m 0755 $(STAGE)/rpki-prover $(PKGDIR)/usr/bin/rpki-prover
+
+override_dh_dwz:

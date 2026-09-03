@@ -10,3 +10,7 @@ stack*yaml.lock
 package.yaml
 *.hie
 cbits/*.o
+# Debian packaging build output
+pkg/packages/
+pkg/apt-repo/public/
+.vagrant/

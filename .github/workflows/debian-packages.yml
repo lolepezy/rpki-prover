@@ -1,0 +1,152 @@
+name: Debian packages
+
+# Building a package means compiling the whole Haskell tree inside a container
+# for each target release, so this is deliberately not run on every push.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      releases:
+        description: 'Space separated codenames to build (empty = all of pkg/releases.conf)'
+        required: false
+        default: ''
+      publish:
+        description: 'Publish the APT repository to GitHub Pages afterwards'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  releases:
+    name: Work out which releases to build
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: set
+        env:
+          REQUESTED: ${{ inputs.releases }}
+        run: |
+          set -euo pipefail
+          if [ -n "${REQUESTED}" ]; then
+            codenames="${REQUESTED}"
+          else
+            codenames=$(grep -v '^[[:space:]]*#' pkg/releases.conf | awk 'NF { print $1 }')
+          fi
+          echo "Building for: ${codenames}"
+          matrix=$(printf '%s\n' ${codenames} | jq -R . | jq -sc .)
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.release }}
+    needs: releases
+    runs-on: ubuntu-latest
+    # A cold build compiles GHC's package set plus the project itself.
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ${{ fromJson(needs.releases.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the package
+        run: ./pkg/build-packages.sh "${{ matrix.release }}"
+
+      - name: Install / upgrade / remove / purge tests
+        run: ./pkg/test-scripts/run-in-docker.sh "${{ matrix.release }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpki-prover-deb-${{ matrix.release }}
+          path: pkg/packages/${{ matrix.release }}/*.deb
+          if-no-files-found: error
+
+  release:
+    name: Attach packages to the GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          pattern: rpki-prover-deb-*
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: packages/*.deb
+          draft: true
+          fail_on_unmatched_files: true
+
+  publish:
+    name: Publish the APT repository to GitHub Pages
+    needs: build
+    # Opt-in only: this needs an APT_REPO_GPG_KEY secret and GitHub Pages
+    # enabled for the repository. Add the tag trigger here once both exist.
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: downloaded
+          pattern: rpki-prover-deb-*
+
+      - name: Lay the packages out per release
+        run: |
+          set -euo pipefail
+          for dir in downloaded/rpki-prover-deb-*; do
+            codename=${dir#downloaded/rpki-prover-deb-}
+            mkdir -p "pkg/packages/${codename}"
+            cp -v "${dir}"/*.deb "pkg/packages/${codename}/"
+          done
+
+      - name: Import the signing key
+        env:
+          GPG_KEY: ${{ secrets.APT_REPO_GPG_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GPG_KEY}" ]; then
+            echo "::error::APT_REPO_GPG_KEY secret is not set" >&2
+            exit 1
+          fi
+          printf '%s' "${GPG_KEY}" | gpg --batch --import
+
+      - uses: actions/configure-pages@v5
+        id: pages
+
+      - name: Build the repository
+        env:
+          KEY_ID: ${{ secrets.APT_REPO_GPG_KEY_ID }}
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends apt-utils
+          ./pkg/apt-repo/build-apt-repo.sh --key "${KEY_ID}" --url "${BASE_URL}"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: pkg/apt-repo/public
+
+      - uses: actions/deploy-pages@v4
+        id: deploy
