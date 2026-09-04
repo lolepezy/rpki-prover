@@ -136,6 +136,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BGPCertIPv4Present |
                         BGPCertIPv6Present | 
                         BGPCertBrokenASNs  | 
+                        BGPCertTooManyASNs Integer Integer | 
                         -- SPL
                         SplAsnNotInResourceSet ASN [AsResource] | 
                         SplNotIpResources [IpPrefix] |
@@ -147,6 +148,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         MessageDigestMissing |
                         CMSMessageDigestMismatch |
                         SigningTimeMissing |
+                        DuplicateSignedAttribute OID |
                         UnexpectedSignedAttribute OID |
                         EECertSKIMismatch |
                         EECertContentTypeMismatch |

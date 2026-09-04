@@ -348,6 +348,9 @@ toValidationMessage = \case
       SplAsnNotInResourceSet asn asns ->
         [i|#{asn} is not in the EE certificate AS set (#{asns}).|]      
 
+      BGPCertTooManyASNs asnCount limit -> 
+        [i|BGPSec certificate declares #{asnCount} ASNs, more than the limit of #{limit}.|]
+
       SplNotIpResources prefixes -> 
         [i|Prefix list must not have IP resources on its EE certificate, but has #{prefixes}.|]
 
@@ -371,6 +374,10 @@ toValidationMessage = \case
 
       SigningTimeMissing ->
         [i|CMS signed attributes are missing signingTime.|]
+
+      DuplicateSignedAttribute oid ->
+        [i|CMS signed attributes contain more than one attribute with OID #{fmtOID oid}, |] <>
+        [i|exactly one is allowed.|]
 
       UnexpectedSignedAttribute oid ->
         [i|CMS signed attributes contain unexpected attribute OID #{fmtOID oid}.|]

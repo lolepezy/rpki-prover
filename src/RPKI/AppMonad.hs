@@ -10,6 +10,7 @@ import           Control.Monad.Except
 import           Control.Monad.Morph
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
+import           Control.Monad.Trans.Control  (MonadBaseControl)
 
 import           Data.Bifunctor              (Bifunctor (first))
 import           Data.Generics.Product       (HasField)
@@ -98,6 +99,19 @@ fromTryM mapErr t =
                 Just (SomeAsyncException _) -> throwIO e
                 Nothing                     -> appError $ mapErr e
 
+
+{- | Like `catch` for `SomeException`, but re-throws asynchronous exceptions 
+   instead of swallowing them.
+
+   Meant for handlers that turn a failure into a cached "this object is broken" 
+   result: treating a timeout or `ThreadKilled` that way would poison the cache.
+-}
+catchSync :: MonadBaseControl IO m => m a -> (SomeException -> m a) -> m a
+catchSync action handler = 
+    action `catch` \e -> 
+        case fromException e of 
+            Just (SomeAsyncException _) -> throwIO e
+            Nothing                     -> handler e
 
 fromTryEither :: Exception exc =>
                 (exc -> AppError) -> 

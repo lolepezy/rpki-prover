@@ -491,22 +491,28 @@ saveSnapshot
                                     Nothing -> 
                                         pure $! UknownObjectType rpkiURL
           where
-            tryToParse rpkiURL hash blob type_ = do
-                z <- liftIO $ runValidatorT scopes $
-                        inSubLocationScope uri $ vHoist $ do
-                            ro <- readObjectOfType type_ blob
-                            prevalidateObject ro
-                (evaluate $!
-                    case z of
-                        (Left _, vs) ->
-                            mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
-                        (Right vro, vs)
-                            | hasValidationErrors vs ->
+            tryToParse rpkiURL hash blob type_ = 
+                -- NOTE: the parse/prevalidation result is forced *inside* `runValidatorT`
+                -- (ExceptT's bind pattern-matches the Either and StrictData forces the
+                -- parsed object all the way down), so a pure exception raised by a
+                -- broken object escapes from that call, not from `evaluate` below.
+                -- Both have to be inside the handler.
+                (do 
+                    z <- liftIO $ runValidatorT scopes $
+                            inSubLocationScope uri $ vHoist $ do
+                                ro <- readObjectOfType type_ blob
+                                prevalidateObject ro
+                    evaluate $!
+                        case z of
+                            (Left _, vs) ->
                                 mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
-                            | otherwise ->
-                                mkSaveObject $! WellStructuredRO vro
-                    ) `catch`
-                    (\(e :: SomeException) -> do
+                            (Right vro, vs)
+                                | hasValidationErrors vs ->
+                                    mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
+                                | otherwise ->
+                                    mkSaveObject $! WellStructuredRO vro
+                    ) `catchSync`
+                    (\e -> do
                         (_, vs) <- runValidatorT scopes $ inSubLocationScope uri $
                             vHoist $ fromEither @() $ Left $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e
                         pure $! mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
@@ -638,26 +644,32 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                                         Just type_ -> tryToParse rpkiURL hash blob type_
                                         Nothing    -> pure $! UknownObjectType rpkiURL
           where
-            tryToParse rpkiURL hash blob type_ = do
-                z <- liftIO $ runValidatorT scopes $ 
-                        inSubLocationScope uri $ vHoist $ do 
-                            ro <- readObjectOfType type_ blob
-                            prevalidateObject ro
-                (evaluate $!
-                    case z of 
-                        (Left _, vs) ->
-                            ObjectParsingProblem rpkiURL (VErr e) 
-                                (ObjectOriginal blob) hash
-                                (ObjectMeta worldVersion type_)
-                          where
-                            e = ParseE $ ParseError "RRDP object failed prevalidation"
-                        (Right vro, vs)
-                            | hasValidationErrors vs ->
-                                mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
-                            | otherwise ->
-                                mkSaveObject $! WellStructuredRO vro
-                    ) `catch`
-                    (\(e :: SomeException) ->
+            tryToParse rpkiURL hash blob type_ = 
+                -- NOTE: the parse/prevalidation result is forced *inside* `runValidatorT`
+                -- (ExceptT's bind pattern-matches the Either and StrictData forces the
+                -- parsed object all the way down), so a pure exception raised by a
+                -- broken object escapes from that call, not from `evaluate` below.
+                -- Both have to be inside the handler.
+                (do 
+                    z <- liftIO $ runValidatorT scopes $ 
+                            inSubLocationScope uri $ vHoist $ do 
+                                ro <- readObjectOfType type_ blob
+                                prevalidateObject ro
+                    evaluate $!
+                        case z of 
+                            (Left _, vs) ->
+                                ObjectParsingProblem rpkiURL (VErr e) 
+                                    (ObjectOriginal blob) hash
+                                    (ObjectMeta worldVersion type_)
+                              where
+                                e = ParseE $ ParseError "RRDP object failed prevalidation"
+                            (Right vro, vs)
+                                | hasValidationErrors vs ->
+                                    mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
+                                | otherwise ->
+                                    mkSaveObject $! WellStructuredRO vro
+                    ) `catchSync`
+                    (\e ->
                         pure $! ObjectParsingProblem rpkiURL (VErr $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e)
                                 (ObjectOriginal blob) hash
                                 (ObjectMeta worldVersion type_)

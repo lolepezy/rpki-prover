@@ -798,22 +798,33 @@ validateCaNoFetch
 
             -- If MFT shortcut is present, filter children that need validation, 
             -- children that are on the shortcut are already validated.
-            let (newChildren, overlappingChildren, deletedKeys) =
+            let (newChildren, overlappingChildren0, deletedKeys0) =
                     case mftShortcut of
                         Nothing       -> (nonCrlChildren, [], [])
                         Just mftShort -> manifestDiff mftShort nonCrlChildren
+
+            -- If the CRL has changed, children that are not going to be re-validated 
+            -- here (i.e. the overlapping ones) still have to be checked for revocation.
+            -- New children are checked as a part of their full validation.
+            revokedOverlapping <- 
+                case mftShortcut of 
+                    Just mftShort | crlKey /= mftShort ^. #crlShortcut . #key -> do 
+                        increment topDownCounters.originalCrl
+                        checkForRevokedChildren mftShort keyedMft overlappingChildren0 validCrl
+                    _ -> pure mempty
+
+            -- A revoked child must not contribute any payload (and, if it is a CA, 
+            -- its sub-tree must not be traversed), so drop it from the overlapping set.
+            -- Its shortcut entry is deleted as well, so that the next run treats it as 
+            -- a new child, validates it in full and reports the revocation again.
+            let overlappingChildren = 
+                    filter (\(T3 _ _ k) -> k `Set.notMember` revokedOverlapping) overlappingChildren0
+            let deletedKeys = deletedKeys0 <> Set.toList revokedOverlapping
 
             bumpCounterBy topDownCounters #newChildren (length newChildren)
             bumpCounterBy topDownCounters #overlappingChildren (length overlappingChildren)
             
             forM_ mftShortcut $ \mftShort -> do          
-                -- If CRL has changed, we have to recheck if children are not revoked. 
-                -- If will be checked by full validation for newChildren but it needs 
-                -- to be explicitly checked for overlappingChildren                
-                when (crlKey /= mftShort ^. #crlShortcut . #key) $ do     
-                    increment topDownCounters.originalCrl                         
-                    checkForRevokedChildren mftShort keyedMft overlappingChildren validCrl            
-
                 -- manifest number must increase 
                 -- https://www.rfc-editor.org/rfc/rfc9286.html#name-manifest
                 let mftNumber = mft.content.mftNumber 
@@ -827,9 +838,8 @@ validateCaNoFetch
                     --
                     -- * So in case there is nothing to fall back to, we emit a warning and still 
                     --   use the manifest
-                    let ValidityPeriod { notBefore = beforeMft, notAfter = afterMft } = getValidityPeriod mftShort
                     let issue = ManifestNumberDecreased mftShort.manifestNumber mftNumber
-                    if beforeMft < unNow now && unNow now > afterMft
+                    if isWithinValidityPeriod now mftShort
                         then vError issue
                         else vWarn issue
 
@@ -937,16 +947,26 @@ validateCaNoFetch
             entry      <- maybeToList $ Map.lookup key entryMap ]
 
 
-    -- Check if shortcut children are revoked
+    -- Check which of the shortcut children are revoked by the (new) CRL.
+    -- Returns the keys of the revoked ones, reporting a warning for each.
+    checkForRevokedChildren :: MftShortcut 
+                            -> Keyed (Located WellStructuredMft)
+                            -> [T3 Text Hash ObjectKey]
+                            -> Validated CrlObject
+                            -> ValidatorT IO (Set ObjectKey)
     checkForRevokedChildren mftShortcut (Keyed (Located _ mft) _) children validCrl = do        
         when (isRevoked (getSerial mft) validCrl) $
             vWarn RevokedResourceCertificate   
-        forM_ children $ \(T3 _ _ childKey) ->
-            for_ (Map.lookup childKey mftShortcut.nonCrlEntries) $ \MftEntry {..} ->
-                for_ (getMftChildSerial child) $ \childSerial ->
-                    when (isRevoked childSerial validCrl) $
-                        vFocusOn ObjectFocus childKey $
-                            vWarn RevokedResourceCertificate
+        fmap (Set.fromList . catMaybes) $ 
+            forM children $ \(T3 _ _ childKey) -> 
+                case Map.lookup childKey mftShortcut.nonCrlEntries of 
+                    Nothing            -> pure Nothing
+                    Just MftEntry {..} -> 
+                        case getMftChildSerial child of 
+                            Just childSerial | isRevoked childSerial validCrl -> do 
+                                vFocusOn ObjectFocus childKey $ vWarn RevokedResourceCertificate
+                                pure $! Just childKey
+                            _ -> pure Nothing
 
 
     -- this indicates the difference between RFC9286-bis 
@@ -1548,11 +1568,16 @@ resolveTroubledChildByKey tx db childKey =
         Just (Located locations (WellStructuredRO vro)) ->
             pure $! Just (TroubledFromParsed, Keyed (Located locations vro) childKey)
 
-        Just (Located locations (OriginalRO (ObjectOriginal blob) _ _ t)) -> do
-            vFocusOn ObjectFocus childKey $ do
-                parsedRo <- vHoist $ readObjectOfType t blob
-                validatedRo <- vHoist $ prevalidateObject parsedRo
-                pure $! Just (TroubledFromOriginal, Keyed (Located locations validatedRo) childKey)
+        Just (Located locations (OriginalRO (ObjectOriginal blob) _ _ t)) -> 
+            vFocusOn ObjectFocus childKey $ 
+                -- Re-parsing a cached blob can raise a pure exception for a sufficiently 
+                -- broken object. Turn it into a normal validation error so that it stays 
+                -- contained to this child instead of failing the whole TA.
+                fromTryM (\(e :: SomeException) -> 
+                            parseErr $ "Failed to re-parse the cached object: " <> fmtEx e) $ do
+                    parsedRo <- vHoist $ readObjectOfType t blob
+                    validatedRo <- vHoist $ prevalidateObject parsedRo
+                    pure $! Just (TroubledFromOriginal, Keyed (Located locations validatedRo) childKey)
 
         _ -> pure Nothing
 getStoredObject :: Tx mode

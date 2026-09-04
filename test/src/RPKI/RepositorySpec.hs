@@ -7,8 +7,12 @@ import Control.Monad (replicateM)
 import Data.Maybe (catMaybes)
 import Data.List (sort, isPrefixOf, sortOn)
 
+import           Data.Either (isRight)
+import qualified Data.Text                         as Text
+
 import           Test.Tasty
 import           Test.QuickCheck.Arbitrary.Generic
+import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
 
 import           Test.QuickCheck.Gen
@@ -32,8 +36,71 @@ repositoryGroup = testGroup "PublicationPoints" [
         -- QC.testProperty "FetchStatus is a semigroup" $ isASemigroup @FetchStatus,
         -- QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RrdpRepository,
         -- QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RepositoryMeta,
-        QC.testProperty "RrdpMap is a semigroup" $ isASemigroup @RrdpMap        
+        QC.testProperty "RrdpMap is a semigroup" $ isASemigroup @RrdpMap,
+
+        rsyncUrlSafetyGroup
     ]
+
+{- | Rsync URLs are turned into local filesystem paths by `rsyncDestination`, and 
+   the rsync client is invoked with --delete on the resulting directory. A URL 
+   whose path escapes the rsync root would therefore let a CA certificate point 
+   rsync at an arbitrary directory on the host.
+
+   Note that `modern-uri` percent-decodes path pieces and does not remove 
+   dot-segments, so both the literal and the encoded forms have to be rejected.
+-}
+rsyncUrlSafetyGroup :: TestTree
+rsyncUrlSafetyGroup = testGroup "Rsync URL path safety" [
+        HU.testCase "Accepts ordinary rsync URLs" $ do
+            accepted "rsync://rpki.example.com/repository/"
+            accepted "rsync://rpki.example.com/repo/subdir/object.cer"
+            accepted "rsync://rpki.example.com:8730/repo/"
+            accepted "rsync://rpki.example.com/a.b/c-d_e~f/",
+
+        HU.testCase "Rejects dot-segments in the path" $ do
+            rejected "rsync://rpki.example.com/a/../../../../etc/cron.d/"
+            rejected "rsync://rpki.example.com/../etc/"
+            rejected "rsync://rpki.example.com/./repo/"
+            rejected "rsync://rpki.example.com/repo/..",
+
+        HU.testCase "Rejects percent-encoded dot-segments" $ do
+            rejected "rsync://rpki.example.com/a/%2e%2e/%2e%2e/etc/"
+            rejected "rsync://rpki.example.com/%2E%2E/etc/",
+
+        HU.testCase "Rejects percent-encoded path separators" $ do
+            rejected "rsync://rpki.example.com/%2Fetc%2Fcron.d/"
+            rejected "rsync://rpki.example.com/repo%2f..%2f..%2fetc/"
+            rejected "rsync://rpki.example.com/repo/a%5Cb/",
+
+        HU.testCase "Rejects a NUL byte in the path" $
+            rejected "rsync://rpki.example.com/repo%00/",
+
+        HU.testCase "Every accepted path chunk is a single safe path segment" $
+            HU.assertBool "chunks must be usable as file names" $
+                all safeChunks [ "rsync://rpki.example.com/repository/"
+                               , "rsync://rpki.example.com/a/b/c/d.cer"
+                               , "rsync://rpki.example.com:873/x/" ]
+    ]
+  where
+    accepted u =
+        HU.assertBool ("Should have accepted " <> Text.unpack u) $
+            isRight $ parseRsyncURL u
+
+    rejected u =
+        case parseRsyncURL u of
+            Left _  -> pure ()
+            Right r -> HU.assertFailure $
+                "Should have rejected " <> Text.unpack u <> ", but got " <> show r
+
+    safeChunks u =
+        case parseRsyncURL u of
+            Left _                     -> False
+            Right (RsyncURL _ chunks)  -> all isSafe chunks
+      where
+        isSafe (RsyncPathChunk c) =
+            not (Text.null c)
+                && c /= "." && c /= ".."
+                && not (Text.any (\ch -> ch == '/' || ch == '\\' || ch == '\0') c)
 
 isASemigroup :: Eq s => Semigroup s => (s, s, s) -> Bool
 isASemigroup (s1, s2, s3) = s1 <> (s2 <> s3) == (s1 <> s2) <> s3

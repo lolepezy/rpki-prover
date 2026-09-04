@@ -19,6 +19,7 @@ import qualified Data.ByteString.Lazy             as LBS
 import           Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict                  as Map
 import           Data.Proxy
+import           Data.Foldable (for_)
 import           Data.List (stripPrefix)
 import           Data.String.Interpolate.IsString
 import qualified Data.Text                        as Text
@@ -131,7 +132,7 @@ rsyncRpkiObject :: AppContext s ->
                 ValidatorT IO ParsedRpkiObject
 rsyncRpkiObject AppContext{..} fetchConfig uri = do
     let RsyncConf {..} = rsyncConf config
-    destination <- liftIO $ rsyncDestination RsyncOneFile (configValue rsyncRoot) uri
+    destination <- rsyncDestination RsyncOneFile (configValue rsyncRoot) uri
     let rsync = rsyncProcess config fetchConfig uri destination RsyncOneFile
     (exitCode, out, err) <- readRsyncProcess logger fetchConfig rsync [i|rsync for #{uri}|]
     case exitCode of  
@@ -165,7 +166,7 @@ updateObjectForRsyncRepository
     timedMetric (Proxy :: Proxy RsyncMetric) $ do     
         let rsyncRoot = configValue $ appContext ^. typed @Config . typed @RsyncConf . typed
         db <- liftIO $ readTVarIO database        
-        destination <- liftIO $ rsyncDestination RsyncDirectory rsyncRoot uri
+        destination <- rsyncDestination RsyncDirectory rsyncRoot uri
         let rsync = rsyncProcess config fetchConfig uri destination RsyncDirectory
             
         logDebug logger [i|Runnning #{U.trimmed rsync}|]
@@ -286,21 +287,27 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
           where
             tryToParse hash blob type_ = do 
                 scopes <- askScopes                           
-                z <- liftIO $ runValidatorT scopes $ do
-                        inSubLocationScope (getURL rpkiURL) $ vHoist $ do 
-                            ro <- readObjectOfType type_ blob
-                            prevalidateObject ro
-                (evaluate $!
-                    case z of
-                        (Left _, vs) ->
-                            mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
-                        (Right vro, vs)
-                            | hasValidationErrors vs ->
+                -- NOTE: the parse/prevalidation result is forced *inside* `runValidatorT`
+                -- (ExceptT's bind pattern-matches the Either and StrictData forces the
+                -- parsed object all the way down), so a pure exception raised by a
+                -- broken object escapes from that call, not from `evaluate` below.
+                -- Both have to be inside the handler.
+                (do 
+                    z <- liftIO $ runValidatorT scopes $ do
+                            inSubLocationScope (getURL rpkiURL) $ vHoist $ do 
+                                ro <- readObjectOfType type_ blob
+                                prevalidateObject ro
+                    evaluate $!
+                        case z of
+                            (Left _, vs) ->
                                 mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
-                            | otherwise ->
-                                mkSaveObject $ WellStructuredRO vro
-                    ) `catch`
-                    (\(e :: SomeException) -> do
+                            (Right vro, vs)
+                                | hasValidationErrors vs ->
+                                    mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
+                                | otherwise ->
+                                    mkSaveObject $ WellStructuredRO vro
+                    ) `catchSync`
+                    (\e -> do
                         (_, vs) <- runValidatorT scopes $
                             vHoist $ fromEither @() $ Left $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e
                         pure $! mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
@@ -366,20 +373,53 @@ rsyncProcess Config {..} fetchConfig rsyncURL destination rsyncMode =
             RsyncOneFile   -> (source, [])
             RsyncDirectory -> (addTrailingPathSeparator source, [ "--recursive", "--delete", "--copy-links" ])
 
-rsyncDestination :: RsyncMode -> FilePath -> RsyncURL -> IO FilePath
-rsyncDestination rsyncMode root (RsyncURL (RsyncHost (RsyncHostName host) port) path) = do 
+{- | Map an rsync URL onto a local path under the rsync root.
+
+   `parseRsyncURL` already rejects host names and path segments that are not 
+   usable as a single path component, so this is defence in depth: whatever 
+   happens, never create directories or point the rsync client (which runs 
+   with --delete) outside of `root`.
+-}
+rsyncDestination :: RsyncMode -> FilePath -> RsyncURL -> ValidatorT IO FilePath
+rsyncDestination rsyncMode root url@(RsyncURL (RsyncHost (RsyncHostName host) port) path) = do 
     let portPath = maybe "" (\p -> "_" <> show p) port
     let fullPath = ((U.convert host :: String) <> portPath) :| map (U.convert . unRsyncPathChunk) path
     let mkPath p = foldl (</>) root p
     let pathWithoutLast = NonEmpty.init fullPath
     let target = mkPath $ NonEmpty.toList fullPath
-    case rsyncMode of 
+
+    for_ (NonEmpty.toList fullPath) $ \segment -> 
+        unless (isSafePathSegment segment) $ 
+            appError $ RsyncE $ UnknownRsyncProblem 
+                [i|Unsafe path segment '#{segment}' derived from rsync URL #{getURL url}.|]
+
+    unless (isUnderRoot root target) $ 
+        appError $ RsyncE $ UnknownRsyncProblem 
+            [i|Rsync URL #{getURL url} maps to #{target} which is outside of the rsync root #{root}.|]
+
+    liftIO $ case rsyncMode of 
         RsyncOneFile -> do             
             createDirectoryIfMissing True (mkPath pathWithoutLast)
             pure target
         RsyncDirectory -> do            
             createDirectoryIfMissing True target
             pure $ addTrailingPathSeparator target
+
+-- | A path segment must be exactly one non-empty file/directory name.
+isSafePathSegment :: FilePath -> Bool
+isSafePathSegment segment = 
+    not (null segment)
+        && segment /= "." && segment /= ".."
+        && not (any isPathSeparator segment)
+        && not (any (\c -> c == '\0' || c == '\\') segment)
+        && not (isAbsolute segment)
+
+-- | Purely lexical containment check on normalised paths.
+isUnderRoot :: FilePath -> FilePath -> Bool
+isUnderRoot root target = 
+    case stripPrefix (splitDirectories (normalise root)) (splitDirectories (normalise target)) of 
+        Nothing   -> False
+        Just rest -> ".." `notElem` rest
     
                         
 getSizeAndContent :: ValidationConfig -> FilePath -> IO (Either AppError (Integer, BS.ByteString))

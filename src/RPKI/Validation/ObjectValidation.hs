@@ -603,13 +603,30 @@ validateAspaCore resources Aspa { customer, providers } = do
         vError $ AspaAsZeoAndNonZero $ Set.toList providers
 
 
+{- | The ASNs a BGPSec router certificate is valid for.
+
+   The AS resources are expanded into individual ASNs (they end up in RTR Router 
+   Key PDUs one by one), so the number of them has to be bounded: a certificate 
+   declaring 0-4294967295 would otherwise expand into a 2^32-element list and 
+   exhaust the memory of the validation worker.
+
+   Real router certificates carry a handful of ASNs, so the limit is generous.
+-}
+maxBgpSecAsns :: Integer
+maxBgpSecAsns = 65536
+
 validateBgpCertAsns :: AllResources -> PureValidatorT [ASN]
 validateBgpCertAsns (AllResources _ _ asns) =
     case asns of
         Inherit -> vError BGPCertBrokenASNs
         RS i
             | IS.null i -> vError BGPCertBrokenASNs
-            | otherwise -> pure $ unwrapAsns $ IS.toList i
+            | otherwise -> do 
+                let asResources = IS.toList i
+                let asnCount = countAsns asResources
+                when (asnCount > maxBgpSecAsns) $ 
+                    vError $ BGPCertTooManyASNs asnCount maxBgpSecAsns
+                pure $! unwrapAsns asResources
 
 
 validateCmsEeSignatureConsistency :: CMS a -> PureValidatorT ()
@@ -668,28 +685,28 @@ prevalidateObject rpkiObject = do
             validateCrlStructure crl
             pure $ CrlRO crl
         MftRO mft -> do
-            validateCmsStructure mft
+            signingTime <- validateCmsStructure mft
             validateMftStructure mft
-            pure $ MftRO $ extractCMSObject mft
+            pure $ MftRO $ extractCMSObject signingTime mft
         RoaRO roa -> do
-            validateCmsStructure roa
-            pure $! RoaRO $ extractCMSObject roa
+            signingTime <- validateCmsStructure roa
+            pure $! RoaRO $ extractCMSObject signingTime roa
         GbrRO gbr -> do
-            validateCmsStructure gbr
-            pure $! GbrRO $ extractCMSObject gbr
+            signingTime <- validateCmsStructure gbr
+            pure $! GbrRO $ extractCMSObject signingTime gbr
         AspaRO aspa -> do
-            validateCmsStructure aspa
+            signingTime <- validateCmsStructure aspa
             validateAspaContent aspa
-            pure $! AspaRO $ extractCMSObject aspa
+            pure $! AspaRO $ extractCMSObject signingTime aspa
         SplRO spl -> do
-            validateCmsStructure spl
-            pure $! SplRO $ extractCMSObject spl
+            signingTime <- validateCmsStructure spl
+            pure $! SplRO $ extractCMSObject signingTime spl
         BgpRO bgp -> do
             validateBgpCertStructure bgp
             pure $! BgpRO $ extractCert bgp
         RscRO rsc -> do
-            validateCmsStructure rsc
-            pure $! RscRO $ extractCMSObject rsc
+            signingTime <- validateCmsStructure rsc
+            pure $! RscRO $ extractCMSObject signingTime rsc
 
 
 extractCert :: (WithHash c, WithSKI c, WithAKI c, WithRawResourceCertificate c) => c -> WellStructuredCert t
@@ -733,22 +750,29 @@ extractEECert EECerObject { ski, aki, certificate } =
         , sigAlg     = cwsSignatureAlgorithm cws
         }
 
-extractCMSObject :: CMSBasedObject a -> WellStructuredCms a
-extractCMSObject CMSBasedObject { hash, cmsPayload } =
+-- | Build the well-structured representation of a CMS object.
+-- The signing time is passed in rather than re-derived here: `validateCmsStructure`
+-- is what establishes that there is exactly one signing-time attribute, and taking
+-- it as an argument makes that dependency explicit instead of a partial pattern.
+extractCMSObject :: Instant -> CMSBasedObject a -> WellStructuredCms a
+extractCMSObject signingTime CMSBasedObject { hash, cmsPayload } =
     let CMS SignedObject { soContent = SignedData { scEncapContentInfo, scCertificate, scSignerInfos } } = cmsPayload
         SignerInfos { signature = cmsSignature, signedAttrs } = scSignerInfos
-        SignedAttributes attrs signedAttrsBS = signedAttrs
-
-        -- It is guaranteed by validateCmsStructure; keep total pattern here
-        -- to satisfy -Wincomplete-uni-patterns.
-        signingTime =
-            case [ newInstant dt | SigningTime dt _ <- attrs ] of
-                [st] -> st
-                _    -> error "Invariant violated: expected exactly one SigningTime attribute"
+        SignedAttributes _ signedAttrsBS = signedAttrs
 
         eeCert      = extractEECert scCertificate
         content     = cContent scEncapContentInfo
     in WellStructuredCms { hash, content, eeCert, signingTime, cmsSignature, signedAttrsBS }
+
+-- | The signing time of a CMS object, if it carries exactly one signing-time
+-- signed attribute. Total, unlike relying on the invariant implicitly.
+cmsSigningTime :: CMSBasedObject a -> Maybe Instant
+cmsSigningTime CMSBasedObject { cmsPayload } =
+    let CMS SignedObject { soContent = SignedData { scSignerInfos = SignerInfos { signedAttrs } } } = cmsPayload
+        SignedAttributes attrs _ = signedAttrs
+    in case [ newInstant dt | SigningTime dt _ <- attrs ] of
+        [st] -> Just st
+        _    -> Nothing
 
 -- | Validate self-contained structural properties of a CA certificate.
 validateCaCertStructure :: CaCerObject -> PureValidatorT ()
@@ -809,7 +833,8 @@ validateBgpCertStructure bgp@BgpCerObject { ski } = do
 
 
 -- | Validate the CMS envelope structure common to all signed objects.
-validateCmsStructure :: CMSBasedObject a -> PureValidatorT ()
+-- Returns the (unique) signing time from the signed attributes.
+validateCmsStructure :: CMSBasedObject a -> PureValidatorT Instant
 validateCmsStructure cmsObject = do
     let cms@(CMS SignedObject { soContent = sd }) = cmsPayload cmsObject
     let SignedData { scVersion, scSignerInfos, scEncapContentInfo, scCertificate } = sd
@@ -828,17 +853,21 @@ validateCmsStructure cmsObject = do
     let SignedAttributes attrs _ = signedAttrs
 
     -- https://datatracker.ietf.org/doc/html/rfc9589#name-updates-to-rfc-6488
-    -- There must be exactly three signed attributes: contentType, signingTime, and messageDigest.
-    when (Prelude.null [ () | ContentTypeAttr _ <- attrs ]) $     
-        vError ContentTypeAttrMissing
-    
-    when (Prelude.null [ () | SigningTime _ _ <- attrs ]) $ 
-        vError SigningTimeMissing
+    -- There must be exactly three signed attributes: contentType, signingTime, and 
+    -- messageDigest. "Exactly one of each" matters, not just presence: duplicates are 
+    -- a DER/profile violation and downstream code relies on the signing time being unique.
+    case [ () | ContentTypeAttr _ <- attrs ] of
+        []  -> vError ContentTypeAttrMissing
+        [_] -> pure ()
+        _   -> vError $ DuplicateSignedAttribute id_contentType
 
-    when (Prelude.null [ () | MessageDigest _ <- attrs ]) $
-        vError MessageDigestMissing 
+    signingTime <- case [ newInstant dt | SigningTime dt _ <- attrs ] of
+        []   -> vError SigningTimeMissing
+        [st] -> pure st
+        _    -> vError $ DuplicateSignedAttribute id_signingTime
 
     case [ md | MessageDigest md <- attrs ] of
+        []  -> vError MessageDigestMissing
         [messageDigest] -> do
             -- messageDigest must equal digest(eContent) computed with the declared digest algorithm.
             -- https://www.rfc-editor.org/rfc/rfc6488#section-2.1.6.4.2
@@ -856,7 +885,7 @@ validateCmsStructure cmsObject = do
 
             unless (messageDigest == expectedDigest) $
                 vError CMSMessageDigestMismatch
-        _ -> vError MessageDigestMissing
+        _ -> vError $ DuplicateSignedAttribute id_messageDigest
 
     -- And no other signed attributes are allowed. 
     -- If any unknown attributes are present, it's an error.
@@ -883,6 +912,8 @@ validateCmsStructure cmsObject = do
     validateDerivedCertUris $ deriveCertUrisFromExtensions eeExtensions
 
     validateCmsEeSignatureConsistency cms
+
+    pure signingTime
 
 
 -- | Validate manifest-specific structural invariants.

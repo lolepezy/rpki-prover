@@ -141,12 +141,15 @@ getAddressFamily message = getNext >>= \case
     a -> parseError message a      
 
 
+-- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.10
+-- SAFI must not be used in the RPKI profile, so the addressFamily field 
+-- is exactly two octets, no more.
 extractAddressaFamily :: BS.ByteString -> Either BS.ByteString AddrFamily
 extractAddressaFamily familyBS = 
-    case BS.take 2 familyBS of 
-        "\NUL\SOH" -> Right Ipv4F
-        "\NUL\STX" -> Right Ipv6F
-        af         -> Left af
+    case BS.unpack familyBS of 
+        [0, 1] -> Right Ipv4F
+        [0, 2] -> Right Ipv6F
+        _      -> Left familyBS
 
 getDigest :: ParseASN1 (Maybe OID)
 getDigest = 
@@ -296,13 +299,20 @@ toMaybe = either (const Nothing) Just
 -}
 parseIpExt' :: ParseASN1 IpResources
 parseIpExt' = do
-    afs <- getMany addrFamily    
-    pure $ IpResources $ IpResourceSet
-      (rs [ af | Left  af <- afs ]) 
-      (rs [ af | Right af <- afs ])
+    afs  <- getMany addrFamily    
+    ipv4 <- oneAddressFamily "IPv4" [ af | Left  af <- afs ]
+    ipv6 <- oneAddressFamily "IPv6" [ af | Right af <- afs ]
+    pure $ IpResources $ IpResourceSet ipv4 ipv6
   where
-    rs []       = R.emptyRS
-    rs (af : _) = af
+    -- https://www.rfc-editor.org/rfc/rfc3779#section-2.2.3.3
+    -- Every address family may appear at most once. Silently using the first 
+    -- block and dropping the rest would make the resulting resource set 
+    -- implementation-dependent.
+    oneAddressFamily _    []   = pure R.emptyRS
+    oneAddressFamily _    [af] = pure af
+    oneAddressFamily name _    = throwParseError $ 
+        "More than one " <> name <> " block in the IP resource extension"
+
     addrFamily = onNextContainer Sequence $
         getAddressFamily "Expected an address family here" >>= \case
             Right Ipv4F -> Left  <$> ipResourceSet ipv4Address
@@ -323,7 +333,8 @@ ipv6Address = ipvVxAddress R.someW8ToW128 128 makeOneIP R.ipv6RangeToPrefixes
 makeOneIP :: (Prefix a, Integral b) => BS.ByteString -> b -> [a]
 makeOneIP bs nz = [makePrefix bs (fromIntegral nz)]
 
-ipvVxAddress :: ([Word8] -> t)
+ipvVxAddress :: Ord t 
+            => ([Word8] -> t)
             -> Int
             -> (BS.ByteString -> Word64 -> b)
             -> (t -> t -> b)
@@ -332,23 +343,49 @@ ipvVxAddress wToAddr fullLength makePrefix_ rangeToPrefixes =
     getNextContainerMaybe Sequence >>= \case
         Nothing -> getNext >>= \case
             (BitString (BitArray nzBits bs)) -> 
-                pure $ makePrefix_ bs nzBits
+                onePrefix bs nzBits
             s -> 
                 throwParseError ("Unexpected prefix representation: " <> show s)
 
         Just [BitString (BitArray nzBits bs)] ->                
-                pure $ makePrefix_ bs nzBits
+                onePrefix bs nzBits
 
         Just [
-            BitString (BitArray _       bs1),
+            BitString (BitArray nzBits1 bs1),
             BitString (BitArray nzBits2 bs2)
-            ] ->
+            ] -> do
+                checkPrefixEncoding nzBits1 bs1
+                checkPrefixEncoding nzBits2 bs2
                 let w1 = wToAddr $ BS.unpack bs1
                     w2 = wToAddr $ setLowerBitsToOne (BS.unpack bs2)
                         (fromIntegral nzBits2) fullLength
-                in pure $ rangeToPrefixes w1 w2
+                -- https://www.rfc-editor.org/rfc/rfc3779#section-2.2.3.9
+                -- min must not be bigger than max. An inverted range is not just 
+                -- meaningless, it silently decodes to a completely different 
+                -- (and arbitrary) set of prefixes.
+                when (w1 > w2) $ 
+                    throwParseError "Address range has min bigger than max"
+                pure $ rangeToPrefixes w1 w2
 
         s -> throwParseError $ "Unexpected address representation: " <> show s
+  where
+    onePrefix bs nzBits = do 
+        checkPrefixEncoding nzBits bs
+        pure $! makePrefix_ bs nzBits
+
+    {- The number of significant bits ends up in the prefix length, which is a 
+       Word8. Without this check a certificate declaring, say, 40 significant 
+       bits for an IPv4 prefix produces a prefix with mask 40, for which 
+       hw-ip computes a `lastIpAddress` that precedes its `firstIpAddress`, 
+       and every containment/intersection test on it misbehaves.
+    -}
+    checkPrefixEncoding nzBits bs = do 
+        when (nzBits > fromIntegral fullLength) $ 
+            throwParseError $ "Prefix length " <> show nzBits 
+                <> " is bigger than the address size " <> show fullLength
+        when (BS.length bs > (fullLength + 7) `div` 8) $ 
+            throwParseError $ "Prefix is encoded in " <> show (BS.length bs) 
+                <> " octets, too many for " <> show fullLength <> "-bit addresses"
 
 --
 -- Set all the bits to `1` starting from `setBitsNum`
@@ -407,9 +444,15 @@ asOrRange :: ParseASN1 AsResource
 asOrRange = 
     getNextContainerMaybe Sequence >>= \case
         Nothing -> getNext >>= \case
-            IntVal asn -> pure $ AS $ as' asn
+            IntVal asn -> AS <$> as' asn
             something  -> throwParseError $ "Unknown ASN specification " <> show something
-        Just [IntVal b, IntVal e] -> pure $ ASRange (as' b) (as' e)
+        Just [IntVal b, IntVal e] -> do 
+            b' <- as' b
+            e' <- as' e
+            -- https://www.rfc-editor.org/rfc/rfc3779#section-3.2.3.8, min <= max
+            when (b' > e') $ 
+                throwParseError $ "AS range " <> show b <> "-" <> show e <> " has min bigger than max"
+            pure $ ASRange b' e'
         Just something -> throwParseError $ "Unknown ASN specification " <> show something
   where
-    as' = ASN . fromInteger
+    as' = either throwParseError pure . mkAsn

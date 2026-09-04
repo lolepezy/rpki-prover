@@ -44,7 +44,7 @@ data IpPrefix = Ipv4P Ipv4Prefix | Ipv6P Ipv6Prefix
 newtype ASN = ASN Word32
     deriving stock (Eq, Ord, Generic) 
     deriving anyclass (TheBinary, NFData)
-    deriving newtype Enum
+    deriving newtype (Enum, Bounded)
 
 newtype PrefixLength = PrefixLength Word8
     deriving stock (Eq, Ord, Generic)
@@ -89,6 +89,24 @@ data AsResource = AS ASN
                 | ASRange ASN ASN
     deriving stock (Eq, Ord, Generic) 
     deriving anyclass (TheBinary, NFData)
+
+-- | The biggest valid AS number, i.e. the upper bound of `INTEGER (0..4294967295)`.
+maxAsnValue :: Integer
+maxAsnValue = 4294967295
+
+{- | Checked constructor for ASN.
+
+   Every RPKI profile constrains AS numbers to `INTEGER (0..4294967295)`
+   (RFC 3779 section 3.2.3, RFC 9582 section 4.1, the ASPA profile). Going 
+   through `fromInteger` directly would silently wrap modulo 2^32 and turn, 
+   say, asID 4294967303 into AS 7 -- an object other RPs reject but that 
+   would produce a VRP for an unrelated ASN here.
+-}
+mkAsn :: Integer -> Either String ASN
+mkAsn i 
+    | i < 0           = Left $ "ASN is negative: " <> show i
+    | i > maxAsnValue = Left $ "ASN is too big: " <> show i
+    | otherwise       = Right $! ASN (fromInteger i)
 
 instance Show Ipv4Prefix where
     show (Ipv4Prefix block) = show block

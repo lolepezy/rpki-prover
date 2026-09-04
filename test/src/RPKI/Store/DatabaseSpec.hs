@@ -17,6 +17,7 @@ import qualified Data.Map.Strict                   as Map
 import qualified Data.Set                          as Set
 import qualified Data.Text                         as Text
 import           Data.Proxy                        (Proxy(..))
+import           Data.Maybe                        (fromMaybe)
 import           Data.Int                          (Int64)
 import           Data.Ord                          (Down(..))
 import           Data.Hourglass                    (Seconds(..))
@@ -1032,7 +1033,12 @@ dbTestCase = ioTestCase
 readObjectFromFile :: FilePath -> ValidatorT IO (RpkiURL, ParsedRpkiObject)
 readObjectFromFile path = do 
     bs <- liftIO $ BS.readFile path
-    let Right url = parseRpkiURL $ "rsync://host/" <> Text.pack path
+    -- Drop the "./" prefix of the fixture path: `parseRpkiURL` (rightly) rejects 
+    -- dot-segments, since rsync URLs are mapped onto local filesystem paths.
+    let urlPath = Text.dropWhile (== '/') $ Text.replace "./" "" $ Text.pack path
+    url <- case parseRpkiURL $ "rsync://host/" <> urlPath of 
+                Right u -> pure u
+                Left e  -> liftIO $ fail $ "Failed to parse fixture URL: " <> Text.unpack e
     o <- vHoist $ readObject url bs
     pure (url, o)
 
@@ -1056,13 +1062,18 @@ toValidatedRpkiObject :: ParsedRpkiObject -> WellStructuredRpkiObject
 toValidatedRpkiObject = \case
     CerRO ca    -> CerRO  $ extractCert ca
     CrlRO crl   -> CrlRO  crl
-    MftRO mft   -> MftRO  $ extractCMSObject mft
-    RoaRO roa   -> RoaRO  $ extractCMSObject roa
-    GbrRO gbr   -> GbrRO  $ extractCMSObject gbr
-    AspaRO aspa -> AspaRO $ extractCMSObject aspa
-    SplRO spl   -> SplRO  $ extractCMSObject spl
+    MftRO mft   -> MftRO  $ extractCms mft
+    RoaRO roa   -> RoaRO  $ extractCms roa
+    GbrRO gbr   -> GbrRO  $ extractCms gbr
+    AspaRO aspa -> AspaRO $ extractCms aspa
+    SplRO spl   -> SplRO  $ extractCms spl
     BgpRO bgp   -> BgpRO  $ extractCert bgp
-    RscRO rsc   -> RscRO  $ extractCMSObject rsc
+    RscRO rsc   -> RscRO  $ extractCms rsc
+  where
+    -- `extractCMSObject` takes the signing time that `validateCmsStructure` has
+    -- established to be unique; here we are deliberately not validating, so fall
+    -- back to the epoch when the object doesn't have exactly one signing time.
+    extractCms cms = extractCMSObject (fromMaybe (Instant 0) $ cmsSigningTime cms) cms
 
 newVersion :: MonadIO m => m WorldVersion
 newVersion = instantToVersion . unNow <$> thisInstant

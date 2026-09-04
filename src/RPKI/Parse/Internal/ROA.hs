@@ -43,14 +43,14 @@ parseRoa bs = do
         parseRoaWithoutVersion
 
     parseRoaWithoutVersion = do 
-        asId <- getInteger pure "Wrong ASid"
+        asId <- getInteger (either throwParseError pure . mkAsn) "Wrong ASid"
         (v4s, v6s) <- mconcat <$> onNextContainer Sequence (getMany $
             onNextContainer Sequence $ 
                 getAddressFamily "Expected an address family here" >>= \case 
                     Right Ipv4F -> (, []) <$> getRoa4
                     Right Ipv6F -> ([], ) <$> getRoa6
                     Left af     -> throwParseError $ "Unsupported address family: " ++ show af)
-        pure $! VrpsPerAs (ASN $ fromIntegral asId) v4s v6s
+        pure $! VrpsPerAs asId v4s v6s
 
     getRoa4 :: ParseASN1 [Vrp4]
     getRoa4 = onNextContainer Sequence $ getMany $

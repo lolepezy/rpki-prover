@@ -101,8 +101,11 @@ storeLifecycle db worldVersion lifecycle url =
 readFixtureObject :: FilePath -> ValidatorT IO (RpkiURL, BS.ByteString, ParsedRpkiObject)
 readFixtureObject path = do
     blob <- liftIO $ BS.readFile path
+    -- Drop the "./" prefix of the fixture path: `parseRpkiURL` (rightly) rejects 
+    -- dot-segments, since rsync URLs are mapped onto local filesystem paths.
+    let urlPath = Text.dropWhile (== '/') $ Text.replace "./" "" $ Text.pack path
     let url =
-            case parseRpkiURL $ "rsync://host/" <> Text.pack path of
+            case parseRpkiURL $ "rsync://host/" <> urlPath of
                 Right parsedUrl -> parsedUrl
                 Left err -> error $ "Failed to parse fixture URL: " <> Text.unpack err
     object <- vHoist $ readObject url blob
