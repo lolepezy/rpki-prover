@@ -34,7 +34,7 @@ parseSpl bs = do
   where     
     parseSpls' = onNextContainer Sequence $ do      
         -- TODO Fix it so that it would work with present attestation version
-        asId <- getInteger (pure . fromInteger) "Wrong ASid"        
+        asId <- getInteger (either throwParseError pure . mkAsn) "Wrong ASid"        
         prefixes <- 
             fmap mconcat $ onNextContainer Sequence $ 
                 getMany $ onNextContainer Sequence $ do
@@ -43,7 +43,7 @@ parseSpl bs = do
                         Right Ipv4F -> parsePrefixes Ipv4F
                         Right Ipv6F -> parsePrefixes Ipv6F
                         Left af     -> throwParseError $ "Unsupported address family: " ++ show af
-        pure $ SplPayload (ASN asId) prefixes
+        pure $ SplPayload asId prefixes
 
     parsePrefixes :: AddrFamily -> ParseASN1 [IpPrefix]
     parsePrefixes addressFamily = onNextContainer Sequence $ getMany $

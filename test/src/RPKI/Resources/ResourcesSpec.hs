@@ -2,6 +2,8 @@
 
 module RPKI.Resources.ResourcesSpec where
 
+import           Prelude                    hiding (subtract)
+
 import           Data.List                  as List
 import           Test.QuickCheck.Gen
 import           Test.Tasty
@@ -21,8 +23,105 @@ resourceGroup = testGroup "Resources" [
         prefixPropertyGroup,
         resourcesUnitTests,
         intervalSetUnitTests,
-        ipOverlapTests
+        ipOverlapTests,
+        boundaryValueTests
     ]
+
+{- | `ASN` and the hw-ip address types derive `Enum` from `Word32`/`Word128`, so 
+   `succ maxBound` and `pred minBound` throw. These used to be reachable from 
+   parsing alone: an AS block of {0-4294967295, 10-20} crashed `normaliseAsns` 
+   before any signature was checked.
+
+   Everything here must merely not throw; the expected values are the 
+   mathematically correct ones.
+-}
+boundaryValueTests :: TestTree
+boundaryValueTests = testGroup "Boundary values must not throw" [
+    HU.testCase "normalise of AS ranges touching maxBound" $ do
+        let maxAsn = ASN maxBound
+        -- The original crash: "all ASNs" plus any other range
+        normalise [ASRange (ASN 0) maxAsn, ASRange (ASN 10) (ASN 20)]
+            @?= [ASRange (ASN 0) maxAsn]
+        normalise [ASRange (ASN 10) (ASN 20), ASRange (ASN 0) maxAsn]
+            @?= [ASRange (ASN 0) maxAsn]
+        normalise [AS maxAsn, AS maxAsn] @?= [AS maxAsn]
+        normalise [ASRange (ASN 10) maxAsn, AS maxAsn] @?= [ASRange (ASN 10) maxAsn]
+        -- Inverted ranges can reach normalisation via a malformed certificate
+        normalise [AS maxAsn, ASRange maxAsn (ASN 0)] `seq` pure ()
+        normalise [ASRange maxAsn (ASN 0), AS (ASN 5)] `seq` pure (),
+
+    HU.testCase "subtractAsn at the ends of the range" $ do
+        let maxAsn = ASN maxBound
+        subtractAsn (ASRange (ASN 0) maxAsn) (AS (ASN 0))
+            @?= [ASRange (ASN 1) maxAsn]
+        subtractAsn (ASRange (ASN 0) maxAsn) (AS maxAsn)
+            @?= [ASRange (ASN 0) (ASN (maxBound - 1))]
+        subtractAsn (AS (ASN 0)) (AS (ASN 0)) @?= []
+        subtractAsn (ASRange maxAsn maxAsn) (AS maxAsn) @?= []
+        subtractAsn (ASRange (ASN 0) (ASN 0)) (AS (ASN 0)) @?= []
+        subtractAsn (ASRange (ASN 0) maxAsn) (ASRange (ASN 0) maxAsn) @?= [],
+
+    HU.testCase "subtract of IPv4 prefixes at 0.0.0.0 and 255.255.255.255" $ do
+        -- `subtract` uses pred/succ on the range ends, which throw at the 
+        -- boundaries of the address space
+        let all4    = readIp4 "0.0.0.0/0"
+        let lower   = readIp4 "0.0.0.0/1"
+        let upper   = readIp4 "128.0.0.0/1"
+        subtract all4 lower  @?= [upper]
+        subtract all4 upper  @?= [lower]
+        subtract all4 all4   @?= []
+        subtract lower lower @?= []
+        subtract lower all4  @?= [],
+
+    HU.testCase "subtract of IPv6 prefixes at the ends of the address space" $ do
+        let all6  = readIp6 "::/0"
+        let lower = readIp6 "::/1"
+        let upper = readIp6 "8000::/1"
+        subtract all6 lower @?= [upper]
+        subtract all6 upper @?= [lower]
+        subtract all6 all6  @?= [],
+
+    HU.testCase "overclaiming against a parent holding the whole address space" $ do
+        let child  = IS.fromList [readIp4 "0.0.0.0/0"]
+        let parent = IS.fromList [readIp4 "0.0.0.0/1"]
+        let (Nested n, Overclaiming o) = IS.intersectionAndOverclaimedIntervals child parent
+        n @?= IS.fromList [readIp4 "0.0.0.0/1"]
+        o @?= IS.fromList [readIp4 "128.0.0.0/1"],
+
+    HU.testCase "countAsns does not materialise the ASNs" $ do
+        countAsns [ASRange (ASN 0) (ASN maxBound)] @?= 4294967296
+        countAsns [AS (ASN 7)] @?= 1
+        countAsns [ASRange (ASN 10) (ASN 20)] @?= 11
+        countAsns [ASRange (ASN 20) (ASN 10)] @?= 0
+        countAsns [] @?= 0,
+
+    HU.testCase "mkAsn rejects out-of-range AS numbers" $ do
+        mkAsn 0 @?= Right (ASN 0)
+        mkAsn 4294967295 @?= Right (ASN maxBound)
+        HU.assertBool "2^32 must be rejected"     $ isLeft $ mkAsn 4294967296
+        HU.assertBool "2^32 + 7 must be rejected" $ isLeft $ mkAsn 4294967303
+        HU.assertBool "negative must be rejected" $ isLeft $ mkAsn (-1),
+
+    QC.testProperty "normalise never throws for arbitrary AS resources including the bounds" $
+        QC.forAll (listOf extremeAsResource) $ \asns -> 
+            length (normalise asns) >= 0,
+
+    QC.testProperty "subtractAsn never throws for arbitrary AS resources including the bounds" $
+        QC.forAll ((,) <$> extremeAsResource <*> extremeAsResource) $ \(a, b) -> 
+            length (subtractAsn a b) >= 0
+    ]
+  where
+    isLeft = \case
+        Left _  -> True
+        Right _ -> False
+
+    -- Generator biased towards the ends of the ASN space, which the default 
+    -- `Arbitrary AsResource` instance essentially never produces.
+    extremeAsResource = do 
+        let edges = [0, 1, 2, maxBound, maxBound - 1, maxBound - 2, 65535, 65536]
+        a <- elements edges
+        b <- elements edges
+        elements [AS (ASN a), ASRange (ASN a) (ASN b)]
 
 prefixPropertyGroup :: TestTree
 prefixPropertyGroup = testGroup "Prefix properties tests"
