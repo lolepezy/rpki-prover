@@ -19,7 +19,7 @@ import           Servant.Server.StaticFiles
 import           Servant hiding (contentType, URI)
 import           Servant.Swagger.UI
 
-import           Data.Maybe                       (maybeToList, fromMaybe, fromJust, catMaybes)
+import           Data.Maybe                       (maybeToList, fromMaybe, catMaybes)
 import qualified Data.Set                         as Set
 import qualified Data.List                        as List
 import qualified Data.Map.Strict                  as Map
@@ -143,7 +143,7 @@ getVRPValidated appContext version =
     getValuesByVersion appContext version 
         (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #validated)) 
         (\tx db v -> Just <$> DB.getVrps tx db v) 
-        (toVrpDtos . fromMaybe mempty)
+        (pure . toVrpDtos . fromMaybe mempty)
 
 getVRPSlurmed :: (MonadIO m, MonadError ServerError m)
                 => AppContext s -> Maybe Text -> m [VrpDto]
@@ -151,7 +151,7 @@ getVRPSlurmed appContext version =
     getValuesByVersion appContext version 
         (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #filtered)) 
         (\tx db v -> Just <$> DB.getVrps tx db v) 
-        (toVrpDtos . fromMaybe mempty)
+        (pure . toVrpDtos . fromMaybe mempty)
 
 getVRPValidatedRaw :: (MonadIO m, MonadError ServerError m)
                     => AppContext s -> Maybe Text -> m RawCSV
@@ -170,7 +170,7 @@ getVRPsUniqueRaw appContext version =
         getValuesByVersion appContext version 
         (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #filtered)) 
         (\tx db v -> Just <$> DB.getVrps tx db v) 
-        (toVrpV . (allTAs <$>))
+        (pure . toVrpV . (allTAs <$>))
 
 getVRPsUnique :: (MonadIO m, MonadError ServerError m)
                     => AppContext s -> Maybe Text -> m [VrpMinimalDto]
@@ -178,7 +178,7 @@ getVRPsUnique appContext version =
     getValuesByVersion appContext version 
         (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #filtered)) 
         (\tx db v -> Just <$> DB.getVrps tx db v) 
-        (toVrpMinimalDtos . (allTAs <$>))        
+        (pure . toVrpMinimalDtos . (allTAs <$>))        
 
 
 getRoasValidatedRaw :: (MonadIO m, MonadError ServerError m)
@@ -186,7 +186,7 @@ getRoasValidatedRaw :: (MonadIO m, MonadError ServerError m)
 getRoasValidatedRaw appContext version =     
     getValuesByVersion appContext version  
         (\_ -> pure Nothing)
-        getRoaDtos (vrpExtDtosToCSV . fromMaybe [])
+        getRoaDtos (pure . vrpExtDtosToCSV . fromMaybe [])
   where
     getRoaDtos tx db version_ = do  
         roas <- DB.getRoas tx db version_
@@ -205,20 +205,25 @@ asMaybe :: (Eq a, Monoid a) => a -> Maybe a
 asMaybe a = if mempty == a then Nothing else Just a
 
 
+{- | NOTE: `convertToResult` runs in the handler monad so that an endpoint with 
+   nothing sensible to return for `Nothing` can report it properly. `Nothing` 
+   happens before the first validation run has finished, and endpoints that used 
+   `fromJust` here answered with an opaque 500 until then.
+-}
 getValuesByVersion :: (MonadIO m, MonadError ServerError m)
                     => AppContext s
                     -> Maybe Text
                     -> (AppState -> STM (Maybe v))   
                     -> (Tx 'RO -> DB -> WorldVersion -> IO (Maybe v))
-                    -> (Maybe v -> a)                   
+                    -> (Maybe v -> m a)                   
                     -> m a
 getValuesByVersion AppContext {..} version readFromState readForVersion convertToResult = do
     case version of
-        Nothing -> liftIO $ convertToResult <$> getLatest
+        Nothing -> convertToResult =<< liftIO getLatest
         Just v  ->
             case parseWorldVersion v of
                 Left e            -> throwError $ err400 { errBody = [i|'version' is not valid #{v}, error: #{e}|] }
-                Right worlVersion -> convertToResult <$> getByVersion worlVersion
+                Right worlVersion -> convertToResult =<< getByVersion worlVersion
   where
     getLatest = do
         atomically (readFromState appState) >>= \case   
@@ -242,7 +247,7 @@ getAspas_ :: (MonadIO m, MonadError ServerError m) =>
              AppContext s -> Maybe Text -> m [AspaDto]
 getAspas_ appContext version = 
     getValuesByVersion appContext version  
-        (\_ -> pure Nothing) DB.getAspas toDtos
+        (\_ -> pure Nothing) DB.getAspas (pure . toDtos)
   where
     toDtos = map aspaToDto . maybe [] Set.toList
 
@@ -251,7 +256,7 @@ getSpls_ :: (MonadIO m, MonadError ServerError m) =>
            AppContext s -> Maybe Text -> m [SplDto]
 getSpls_ appContext version =
     getValuesByVersion appContext version  
-        (\_ -> pure Nothing) DB.getSpls toDtos
+        (\_ -> pure Nothing) DB.getSpls (pure . toDtos)
   where
     toDtos spls = 
         map (\(SplN asn prefix) -> SplDto {..}) $ 
@@ -261,7 +266,7 @@ getBgps_ :: (MonadIO m, MonadError ServerError m) =>
            AppContext s -> Maybe Text -> m [BgpCertDto]
 getBgps_ appContext version =
     getValuesByVersion appContext version  
-        (\_ -> pure Nothing) DB.getBgps toDtos
+        (\_ -> pure Nothing) DB.getBgps (pure . toDtos)
   where
     toDtos = map bgpSecToDto . maybe [] Set.toList
 
@@ -270,7 +275,7 @@ getBGPCertsFiltered_ :: (MonadIO m, MonadError ServerError m) =>
                         AppContext s -> Maybe Text -> m [BgpCertDto]
 getBGPCertsFiltered_ appContext version =
     getValuesByVersion appContext version  
-        (\_ -> pure Nothing) getSlurmedBgps toDtos
+        (\_ -> pure Nothing) getSlurmedBgps (pure . toDtos)
   where
     toDtos = map bgpSecToDto . maybe [] Set.toList
 
@@ -285,7 +290,7 @@ getGbrs_ :: (MonadIO m, MonadError ServerError m) =>
 getGbrs_ appContext version = 
     getValuesByVersion appContext version  
         (\_ -> pure Nothing) 
-        (\tx db v -> Just <$> DB.getGbrObjects tx db v) toDtos
+        (\tx db v -> Just <$> DB.getGbrObjects tx db v) (pure . toDtos)
   where
     toDtos gbrs = 
         [ Located { payload = gbrToDto (content g), .. }
@@ -301,7 +306,7 @@ getValidationsOriginalDto appContext versionText = do
         (\_ -> pure Nothing) 
         (\tx db version ->
             Just . validationsToDto version . allTAs <$> DB.getValidationsPerTA tx db version)
-        fromJust
+        (orNoFinishedValidation "validations")
         
 getValidationsDto :: (MonadIO m, MonadError ServerError m) =>
                     AppContext s 
@@ -313,7 +318,7 @@ getValidationsDto appContext versionText =
         (\tx db version -> do 
             originalDtos <- validationsToDto version . allTAs <$> DB.getValidationsPerTA tx db version            
             Just <$> resolveValidationDto tx db originalDtos)
-        fromJust
+        (orNoFinishedValidation "validations")
 
 getMetrics :: (MonadIO m, MonadError ServerError m) =>
             AppContext s 
@@ -326,7 +331,16 @@ getMetrics appContext versionText =
             fmap Just $ toMetricsDto <$> 
                             DB.getCommonMetrics tx db version <*> 
                             DB.getMetricsPerTA tx db version)
-        fromJust
+        (orNoFinishedValidation "metrics")
+
+{- | `getValuesByVersion` yields `Nothing` when there is no version in the 
+   database yet, i.e. before the first validation run has finished. Endpoints 
+   that have nothing to return in that case used to apply `fromJust` and answer 
+   with an opaque 500.
+-}
+orNoFinishedValidation :: MonadError ServerError m => Text -> Maybe a -> m a
+orNoFinishedValidation what = 
+    maybe (throwError $ err404 { errBody = [i|No #{what} yet, no validation run has finished.|] }) pure
 
 getSlurm :: (MonadIO m, MonadError ServerError m) =>
             AppContext s -> m Slurm

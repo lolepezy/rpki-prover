@@ -153,6 +153,13 @@ validateCaCertExtensions extensions = do
     validateResourceExtensionsPresenceAndCriticality extensions
     validateNoUnknownCriticalExtensions extensions
 
+    -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.5
+    -- Extended Key Usage must not appear in a CA certificate. A critical one is 
+    -- already rejected by validateNoUnknownCriticalExtensions, a non-critical 
+    -- one used to pass unnoticed.
+    when (isJust $ extRawVal extensions id_ce_extKeyUsage) $
+        vPureError $ ExtensionMustBeAbsent id_ce_extKeyUsage
+
 -- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8.9
 validateEeCertExtensions :: [ExtensionRaw] -> PureValidatorT ()
 validateEeCertExtensions extensions = do
@@ -1015,8 +1022,19 @@ validateCrlStructure CrlObject { signCrl = SignCRL { thisUpdateTime, nextUpdateT
 -- | Validate X.509 certificate properties checkable without a parent certificate.
 validateCertX509Structure :: CertificateWithSignature -> PureValidatorT ()
 validateCertX509Structure certWS@CertificateWithSignature { cwsX509certificate = cert } = do
-    -- notBefore must be strictly before notAfter        
+    -- https://www.rfc-editor.org/rfc/rfc6487#section-4.1, must be X.509 v3, 
+    -- which `certVersion` reports as 2
+    when (certVersion cert /= 2) $
+        vError $ CertVersionInvalid $ certVersion cert
+
+    -- Reject dates that `Instant` cannot represent instead of letting them wrap
     let (nb, na) = certValidity cert
+    unless (isRepresentableInstant nb) $
+        vError $ TimeNotRepresentable $ "Certificate notBefore " <> Text.pack (show nb)
+    unless (isRepresentableInstant na) $
+        vError $ TimeNotRepresentable $ "Certificate notAfter " <> Text.pack (show na)
+
+    -- notBefore must be strictly before notAfter        
     when (newInstant nb >= newInstant na) $
         vError CertValidityPeriodInvalid
 

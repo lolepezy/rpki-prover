@@ -82,15 +82,22 @@ parseCrl bs = do
             case nextUpdate of 
                 Nothing -> throwParseError "nextUpdate in CRL must no be empty"
                 Just nu -> do 
+                    thisUpdate' <- makeInstant "thisUpdate" thisUpdate
+                    nextUpdate' <- makeInstant "nextUpdate" nu
                     let mkSignCRL crlNumber_ = SignCRL 
-                                (newInstant thisUpdate)
-                                (newInstant nu)
+                                thisUpdate'
+                                nextUpdate' 
                                 (SignatureAlgorithmIdentifier signatureId) 
                                 signatureVal (toShortBS encoded) 
                                 crlNumber_
                                 revoked
                     pure (extensions, mkSignCRL)            
         
+        -- Reject times that `Instant` cannot represent rather than wrapping them
+        makeInstant what t = 
+            maybe (throwParseError $ "CRL " <> what <> " is out of the representable range: " <> show t) 
+                  pure (newInstantChecked t)
+
         getCrlContent = do        
             -- This is copy-pasted from the Data.X509.CRL to fix getRevokedCertificates 
             -- which should be more flexible.            

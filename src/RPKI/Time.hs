@@ -2,6 +2,7 @@ module RPKI.Time where
 
 import           Control.DeepSeq
 import           Data.Int
+import           Data.Maybe             (isJust)
 import           Data.Semigroup
 import           Control.Monad.IO.Class (MonadIO, liftIO)
 
@@ -67,6 +68,28 @@ instance Show CPUTime where
 
 newInstant :: DateTime -> Instant
 newInstant = Instant . toNanos
+
+{- | `Instant` is Int64 nanoseconds since the epoch, so it can only represent 
+   dates between roughly 1678 and 2262. Outside of that range `toNanos` 
+   silently wraps around, which for a certificate's notAfter turns into an 
+   arbitrary date -- usually in the past, but for some values a plausible 
+   future one.
+
+   Returns Nothing rather than wrapping, so callers can reject the object.
+-}
+newInstantChecked :: DateTime -> Maybe Instant
+newInstantChecked d
+    | seconds < minInstantSeconds || seconds > maxInstantSeconds = Nothing
+    | otherwise                                                  = Just $! Instant $ toNanos d
+  where
+    ElapsedP (Elapsed (Seconds seconds)) _ = timeGetElapsedP d
+
+isRepresentableInstant :: DateTime -> Bool
+isRepresentableInstant = isJust . newInstantChecked
+
+minInstantSeconds, maxInstantSeconds :: Int64
+minInstantSeconds = (minBound :: Int64) `div` nanosPerSecond
+maxInstantSeconds = (maxBound :: Int64) `div` nanosPerSecond
 
 thisInstant :: MonadIO m => m Now
 thisInstant = Now . Instant . toNanos <$> liftIO dateCurrent

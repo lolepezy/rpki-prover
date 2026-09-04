@@ -59,6 +59,15 @@ import           Time.Types
 data PduLike = TruePdu Pdu | SerialisedPdu BS.ByteString 
     deriving (Show, Eq)
 
+{- | Maximum number of simultaneous RTR client connections.
+
+   An RTR server talks to routers, so a few hundred is already generous, while 
+   an unbounded accept loop lets anyone who can reach the port exhaust threads 
+   and file descriptors.
+-}
+maxRtrConnections :: Int
+maxRtrConnections = 512
+
 -- 
 -- | Main entry point, here we start the RTR server. 
 -- 
@@ -80,7 +89,10 @@ runRtrServer appContext RtrConfig {..} = do
     runSocketBusiness rtrState updateBroadcastChan = 
         withSocketsDo $ do                 
             address <- resolve (show rtrPort)
-            bracket (open address) close loop
+            -- Every accepted connection forks two threads and duplicates the 
+            -- update broadcast channel, so the number of them has to be bounded.
+            connectionCount <- newTVarIO (0 :: Int)
+            bracket (open address) close (loop connectionCount)
       where
         resolve port = do
             let hints = defaultHints {
@@ -97,14 +109,29 @@ runRtrServer appContext RtrConfig {..} = do
             listen sock 1024
             pure sock
 
-        loop sock = forever $ do
+        loop connectionCount sock = forever $ do
             (conn, peer) <- accept sock
-            logInfo logger [i|Connection from #{peer}|]
-            void $ forkFinally 
-                (serveConnection conn peer updateBroadcastChan rtrState) 
-                (\_ -> do 
-                    logInfo logger [i|Closing connection with #{peer}|]
-                    close conn)
+            accepted <- atomically $ do 
+                n <- readTVar connectionCount
+                if n >= maxRtrConnections
+                    then pure False
+                    else do 
+                        writeTVar connectionCount $! n + 1
+                        pure True
+            if accepted 
+                then do 
+                    logInfo logger [i|Connection from #{peer}|]
+                    void $ forkFinally 
+                        (serveConnection conn peer updateBroadcastChan rtrState) 
+                        (\_ -> do 
+                            logInfo logger [i|Closing connection with #{peer}|]
+                            atomically $ modifyTVar' connectionCount (\n -> n - 1)
+                            close conn)
+                else do 
+                    logWarn logger $ 
+                        [i|Rejecting RTR connection from #{peer}, |] <>
+                        [i|already serving the maximum of #{maxRtrConnections} connections.|]
+                    close conn
     
     -- | Block on updates on `appState` and when these update happen
     --
