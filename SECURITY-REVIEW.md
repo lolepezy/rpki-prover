@@ -10,8 +10,13 @@ Scope:
 2. **Robustness** — crashes, unbounded resource use, and other non-semantic issues
    that can be triggered by data from the network.
 
-Nothing in this file has been applied. Each item has a location, the reason it
-matters, and a concrete suggested change.
+Each item has a location, the reason it matters, and a concrete suggested change.
+
+**Status:** items 1-11, 13-16, 18, 20-22 are fixed on branch `sqlite-security-fixes`
+(commits `4ec56969`, `b6e470e6`, `4da979e8`). Item 17 turned out to be fixed as a
+side effect of 4. Items 12 and 19, and one part of 15, are deliberately left open
+-- see [Open items](#open) at the end. The "Where" locations below refer to the
+code as it was *before* the fixes.
 
 Two facts that set severity throughout:
 
@@ -34,30 +39,30 @@ polish.
 
 ## Summary table
 
-| # | Severity | Area | Issue |
-|---|----------|------|-------|
-| [1](#1) | Critical | rsync fetch | Path traversal from certificate SIA into `rsync --delete` destination |
-| [2](#2) | High | Top-down (incremental) | Revocation not enforced for unchanged manifest children |
-| [3](#3) | High | Top-down (incremental) | Manifest-number-rollback check has an inverted condition |
-| [4](#4) | High | Parsing | `succ`/`pred` overflow in AS resource normalisation → uncaught `ErrorCall` |
-| [5](#5) | High | Prevalidation | `error` call reachable via duplicate `signing-time` CMS attribute |
-| [6](#6) | Medium | Prevalidation | `eContentType` / outer `contentType` OIDs are never validated (RFC 6488 §2.1) |
-| [7](#7) | Medium | Parsing | ASN values silently truncated `mod 2^32` in ROA / ASPA / SPL / RFC 3779 |
-| [8](#8) | Medium | BGPsec | AS range in a router certificate expands to a list → memory exhaustion |
-| [9](#9) | Medium | Parsing | RFC 3779 ranges/prefixes not range-checked (inverted ranges, bogus lengths, duplicate AFIs) |
-| [10](#10) | Medium | BGPsec | EC curve and signature algorithm not constrained (RFC 8608) |
-| [11](#11) | Medium | Prevalidation | EE certificate SIA `id-ad-signedObject` never checked (RFC 6487 §4.8.8.2) |
-| [12](#12) | Medium | Top-down | Manifest selection orders by `thisUpdate`, not `manifestNumber` |
-| [13](#13) | Medium | Robustness | Parse exceptions escape the local `catch` in the fetch paths |
-| [14](#14) | Low | Prevalidation | Missing RFC 6487 profile checks (version, EKU on CA certs, signature algorithm) |
-| [15](#15) | Low | ROA | Missing RFC 9582 content checks (empty ROA, duplicate AFI, `maxLength = 0`, AS resources on EE) |
-| [16](#16) | Low | Manifest parser | Version check is inverted / unreachable |
-| [17](#17) | Low | Resources | `subtractRange` off-by-one produces a wrong overclaim report |
-| [18](#18) | Low | Time | `Instant` is `Int64` nanoseconds — dates after 2262 wrap silently |
-| [19](#19) | Low | Performance | `worthParallelism` selects the sequential branch (inverted, two places) |
-| [20](#20) | Low | RTR | No connection limit; PDU framing assumes one PDU per `recv` |
-| [21](#21) | Low | HTTP API | `fromJust` on endpoints before the first validation completes |
-| [22](#22) | Low | ASPA | Provider list ordering/duplication not enforced |
+| # | Severity | Area | Issue | Status |
+|---|----------|------|-------|--------|
+| [1](#1) | Critical | rsync fetch | Path traversal from certificate SIA into `rsync --delete` destination | fixed |
+| [2](#2) | High | Top-down (incremental) | Revocation not enforced for unchanged manifest children | fixed |
+| [3](#3) | High | Top-down (incremental) | Manifest-number-rollback check has an inverted condition | fixed |
+| [4](#4) | High | Parsing | `succ`/`pred` overflow in AS resource normalisation → uncaught `ErrorCall` | fixed |
+| [5](#5) | High | Prevalidation | `error` call reachable via duplicate `signing-time` CMS attribute | fixed |
+| [6](#6) | Medium | Prevalidation | `eContentType` / outer `contentType` OIDs are never validated (RFC 6488 §2.1) | fixed |
+| [7](#7) | Medium | Parsing | ASN values silently truncated `mod 2^32` in ROA / ASPA / SPL / RFC 3779 | fixed |
+| [8](#8) | Medium | BGPsec | AS range in a router certificate expands to a list → memory exhaustion | fixed |
+| [9](#9) | Medium | Parsing | RFC 3779 ranges/prefixes not range-checked (inverted ranges, bogus lengths, duplicate AFIs) | fixed |
+| [10](#10) | Medium | BGPsec | EC curve and signature algorithm not constrained (RFC 8608) | fixed |
+| [11](#11) | Medium | Prevalidation | EE certificate SIA `id-ad-signedObject` never checked (RFC 6487 §4.8.8.2) | fixed |
+| [12](#12) | Medium | Top-down | Manifest selection orders by `thisUpdate`, not `manifestNumber` | **open** |
+| [13](#13) | Medium | Robustness | Parse exceptions escape the local `catch` in the fetch paths | fixed |
+| [14](#14) | Low | Prevalidation | Missing RFC 6487 profile checks (version, EKU on CA certs, signature algorithm) | fixed |
+| [15](#15) | Low | ROA | Missing RFC 9582 content checks (empty ROA, duplicate AFI, `maxLength = 0`, AS resources on EE) | fixed (partly) |
+| [16](#16) | Low | Manifest parser | Version check is inverted / unreachable | fixed |
+| [17](#17) | Low | Resources | `subtractRange` off-by-one produces a wrong overclaim report | fixed via 4 |
+| [18](#18) | Low | Time | `Instant` is `Int64` nanoseconds — dates after 2262 wrap silently | fixed |
+| [19](#19) | Low | Performance | `worthParallelism` selects the sequential branch (inverted, two places) | **open** |
+| [20](#20) | Low | RTR | No connection limit; PDU framing assumes one PDU per `recv` | fixed |
+| [21](#21) | Low | HTTP API | `fromJust` on endpoints before the first validation completes | fixed |
+| [22](#22) | Low | ASPA | Provider list ordering/duplication not enforced | fixed |
 
 ---
 
@@ -853,6 +858,44 @@ Worth recording so they don't get "fixed" later:
 * No XSS surface in the UI: `preEscapedToMarkup` is used only on constant entities.
 * `proc "rsync"` bypasses the shell — the rsync issue in [#1](#1) is the destination path,
   not argument injection.
+
+---
+
+<a name="open"></a>
+## Open items
+
+**12 -- manifest ordering.** `Ord MftMeta` compares `thisTime` before
+`mftNumber`, and four tests in `DatabaseSpec` pin exactly that
+("Should order manifests by thisTime, not by manifest_number", and three more).
+That reads as a deliberate decision rather than an oversight, so reversing it
+silently would be wrong. If RFC 9286's "highest manifestNumber" preference is
+what you want, the change is one line in the `Ord` instance plus those four
+tests.
+
+**15 -- ROA EE certificate must not carry AS resources.** Implemented the
+checks I could confirm from the ASN.1 module (non-empty `ipAddrBlocks`,
+non-empty `addresses`, one block per AFI, `maxLength >= 0`). The
+"the EE certificate MUST NOT contain the AS Identifier Delegation extension"
+rule needs the exact RFC 9582 §4 wording checked before enforcing it -- there
+is only one ROA fixture in `test/data`, which is thin evidence for a change
+that rejects objects.
+
+**19 -- `worthParallelism`.** Both occurrences select `forM` (sequential) when
+parallelism is judged worthwhile. Flipping them trades validation latency
+against peak memory on very large manifests, and the commented-out
+`-- let worthParallelism = False` next to the second one suggests this was
+being experimented with. Left for you to decide.
+
+**20 -- RTR PDU framing.** The connection cap is in; `recv connection 1024` is
+still treated as exactly one PDU. Fixing that properly means per-connection
+buffering driven by the PDU length field, which is a bigger change than the
+rest of this list.
+
+Also worth noting, from fixing item 10: the certificate signature algorithm is
+the *issuer's*, not the subject's. A BGPSec router certificate carries an ECDSA
+P-256 key but is signed by its parent CA with RSA/SHA-256. An earlier version of
+that fix keyed the algorithm check on the subject key type and rejected
+`test/data/bgp_router_cert.cer`; the new prevalidation test group caught it.
 
 ---
 
