@@ -76,14 +76,14 @@ isOfType t1 t2 = t1 == t2 || t1 == BGPSec && t2 == CER
 
 -- | Parse object from a bytesting containing ASN1 representaton
 -- | Decide which parser to use based on the object's filename
-readObject :: RpkiURL -> BS.ByteString -> PureValidatorT RpkiObject
+readObject :: RpkiURL -> BS.ByteString -> PureValidatorT ParsedRpkiObject
 readObject objectURL bs =     
     case urlObjectType objectURL of 
         Just type_ -> readObjectOfType type_ bs
         Nothing    -> pureError $ parseErr $ "Could not figure out object type from URL: " <> fmtGen objectURL
 
 
-readObjectOfType :: RpkiObjectType -> BS.ByteString -> PureValidatorT RpkiObject        
+readObjectOfType :: RpkiObjectType -> BS.ByteString -> PureValidatorT ParsedRpkiObject        
 readObjectOfType objectType bs = 
     case objectType of 
         CER -> do 

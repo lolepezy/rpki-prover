@@ -14,12 +14,10 @@ import           System.Directory
 import           Data.String.Interpolate.IsString
 
 import RPKI.Config
-import RPKI.Store.Base.LMDB
-import RPKI.Store.AppLmdbStorage
 import RPKI.AppState
 import RPKI.AppContext
 import RPKI.Logging
-import qualified RPKI.Store.MakeLmdb as Lmdb
+import RPKI.Store.AppSqliteStorage
 import RPKI.Meta.UniqueId
 import RPKI.AppMonad (runValidatorT)
 import RPKI.Reporting (newScopes)
@@ -29,7 +27,7 @@ testConfig :: Config
 testConfig = defaultConfig
 
 
-withTestContext :: (AppContext LmdbStorage -> IO b) -> IO b
+withTestContext :: (AppContext SqliteBackend -> IO b) -> IO b
 withTestContext f = do
     withLogger (newLogConfig DebugL MainLog) $ \logger -> do
         dir <- createTempDirectory "/tmp" "rpki-prover-test"
@@ -51,15 +49,12 @@ withTestContext f = do
                 & #talDirectory .~ Public talDir
                 & #cacheDirectory .~ Public cacheDir        
 
-        (Right lmdbEnv, _) <- runValidatorT (newScopes "create-db") $ 
-                    setupLmdbCache Reset logger cacheDir config
+        (Right db, _) <- runValidatorT (newScopes "create-db") $
+                    setupSqliteCache Reset logger cacheDir config
 
         appState <- newAppState
-        database <- newTVarIO =<< makeLmdb logger lmdbEnv config 
+        database <- newTVarIO db
         let executableVersion = thisExecutableVersion
         f AppContext {             
                 ..
-            }        
-  where
-    makeLmdb logger lmdbEnv config = do
-        fst <$> Lmdb.createDatabase lmdbEnv logger config Lmdb.DontCheckVersion 
+            }

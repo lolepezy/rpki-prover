@@ -163,4 +163,7 @@ parseSignedContent eContentParse contentType bs =
         Right asns ->  
             case runParseASN1 eContentParse asns of
                 Left e  -> throwParseError $ "Couldn't parse embedded ASN1 stream: " <> e
-                Right a -> pure $ EncapsulatedContentInfo contentType a
+            -- Keep original eContent bytes so messageDigest can be verified later.
+            -- https://www.rfc-editor.org/rfc/rfc6488#section-2.1.6.4.2
+            -- https://www.rfc-editor.org/rfc/rfc5652#section-5.4
+                Right a -> pure $ EncapsulatedContentInfo contentType bs a

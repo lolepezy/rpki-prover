@@ -79,9 +79,6 @@ data WorkerParams = RrdpFetchParams {
                 rsyncRepository :: RsyncRepository,
                 worldVersion    :: WorldVersion 
             } | 
-            CompactionParams { 
-                targetLmdbEnv :: FilePath 
-            } | 
             ValidationParams {                 
                 worldVersion   :: WorldVersion,
                 allTaNames     :: [TaName],

@@ -9,15 +9,13 @@ import           Control.Monad.IO.Class
 import           Control.Lens
 
 import qualified Data.Map.Strict                  as Map
-
-import           Data.String.Interpolate.IsString
+import           Data.Maybe                        (catMaybes)
+import qualified Data.Text                        as Text
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Reporting
-import           RPKI.Logging
-import           RPKI.Store.Base.Storage
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 import           RPKI.TAL
@@ -30,11 +28,11 @@ import           RPKI.Validation.Common
      - find a path up to a TA certificate
      - validate the chain and the given object     
 -}
-validateBottomUp :: Storage s => 
+validateBottomUp :: 
                 AppContext s 
-                -> RpkiObject
+                -> ParsedRpkiObject
                 -> Now
-                -> ValidatorT IO (Validated RpkiObject, [Located CaCerObject])
+                -> ValidatorT IO (Validated ParsedRpkiObject, [[Located WellStructuredCaCert]])
 validateBottomUp 
     AppContext{..}
     object 
@@ -43,13 +41,19 @@ validateBottomUp
     case getAKI object of 
         Nothing  -> appError $ ValidationE NoAKI
         Just (AKI ki) -> do 
-            parentCert <- DB.roAppTx db $ \tx -> DB.getBySKI tx db (SKI ki)            
-            case parentCert of 
-                Nothing -> appError $ ValidationE ParentCertificateNotFound
-                Just pc  -> do                                        
-                    certPath <- reverse . (pc :) <$> findPathToRoot db pc                                        
-                    validateTopDownAlongPath db certPath 
-                    pure (Validated object, certPath)
+            z <- DB.roAppTx db $ \tx -> DB.getBySKI tx db (SKI ki)            
+            case z of 
+                []          -> appError $ ValidationE ParentCertificateNotFound
+                parentCerts ->                               
+                    fmap (Validated object, ) 
+                    $ fmap mconcat 
+                    $ forM parentCerts $ \pc -> do 
+                        pathsToRoot <- findPathsToRoot db pc
+                        -- certPath <- reverse . (pc :) <$> findPathsToRoot db pc
+                        forM pathsToRoot $ \path -> do
+                            let topDownPath = reverse $ pc : path
+                            validateTopDownAlongPath db topDownPath
+                            pure topDownPath
   where
     validationRFC = config ^. #validationConfig . #validationRFC
     {- Given a chain of certificatees from a TA to the object, 
@@ -82,44 +86,57 @@ validateBottomUp
                 (mft, crl) <- validateManifest db cert
                 let childCert = head certs                
                 validateOnMft mft childCert                            
-                Validated validCert    <- vHoist $ validateResourceCert @_ @_ @'CACert 
-                                                    now childCert cert crl
-                (childVerifiedResources, _) <- vHoist $ validateResources validationRFC
-                                                    (Just verifiedResources) childCert validCert            
+                Validated validCert <- vHoist $ validateResourceCert
+                                                now
+                                                (childCert ^. #payload)
+                                                (cert ^. #payload)
+                                                crl
+                (childVerifiedResources, _) <- vHoist $ validateResources
+                                                    validationRFC
+                                                    (Just verifiedResources)
+                                                    validCert
+                                                    (cert ^. #payload)
                 go childVerifiedResources certs
         
         validateOnMft mft o = do             
-            let mftChildren = mftEntries $ getCMSContent $ mft ^. #cmsPayload
+            let mftChildren = mftEntries $ mft ^. #content
             case filter (\(MftPair _ h) -> h == getHash o) mftChildren of 
                 [] -> appError $ ValidationE ObjectNotOnManifest
                 _  -> pure ()            
 
 
-    validateObjectItself bottomCert crl verifiedResources =         
-        vFocusOn TextFocus "rpki-object" $ 
-            case object of 
+    validateObjectItself bottomCert crl verifiedResources =
+        vFocusOn TextFocus "rpki-object" $ do
+            validatedObject <- vHoist $ prevalidateObject object
+            case validatedObject of
                 CerRO child ->
-                    void $ vHoist $ validateResourceCert @_ @_ @'CACert 
-                                        now child bottomCert crl                
-                RoaRO roa -> 
-                    void $ vHoist $ validateRoa validationRFC now roa bottomCert crl (Just verifiedResources)
-                GbrRO gbr -> 
-                    void $ vHoist $ validateGbr validationRFC now gbr bottomCert crl (Just verifiedResources)
-                AspaRO rsc -> 
-                    void $ vHoist $ validateAspa validationRFC now rsc bottomCert crl (Just verifiedResources)                    
-                RscRO rsc -> 
-                    void $ vHoist $ validateRsc validationRFC now rsc bottomCert crl (Just verifiedResources)
-                _somethingElse -> do 
-                    logWarn logger [i|Unsupported type of object: #{_somethingElse}.|]        
+                    void $ vHoist $ validateResourceCert now child (bottomCert ^. #payload) crl
+                MftRO mft ->
+                    void $ vHoist $ validateMft validationRFC now mft (bottomCert ^. #payload) crl (Just verifiedResources)
+                RoaRO roa ->
+                    void $ vHoist $ validateRoa validationRFC now roa (bottomCert ^. #payload) crl (Just verifiedResources)
+                SplRO spl ->
+                    void $ vHoist $ validateSpl validationRFC now spl (bottomCert ^. #payload) crl (Just verifiedResources)
+                GbrRO gbr ->
+                    void $ vHoist $ validateGbr validationRFC now gbr (bottomCert ^. #payload) crl (Just verifiedResources)
+                RscRO rsc ->
+                    void $ vHoist $ validateRsc validationRFC now rsc (bottomCert ^. #payload) crl (Just verifiedResources)
+                AspaRO aspa ->
+                    void $ vHoist $ validateAspa validationRFC now aspa (bottomCert ^. #payload) crl (Just verifiedResources)
+                BgpRO bgp ->
+                    void $ vHoist $ validateBgpCert now bgp (bottomCert ^. #payload) crl
+                CrlRO childCrl ->
+                    void $ vHoist $ validateCrl now childCrl (bottomCert ^. #payload)
 
 
     -- Given a certificate, find a chain of certificates leading to a TA, 
     -- the chain is build based on the SKI - AKI relations
-    findPathToRoot db certificate = do                  
-        tas <- DB.roAppTx db $ \tx -> DB.getTAs tx db         
-        let taCerts = Map.fromList [ 
-                        (getSKI taCert, Located (talCertLocations tal) taCert) | 
-                        StorableTA {..} <- tas ]
+    findPathsToRoot db certificate = do                  
+        taCerts <- DB.roAppTx db $ \tx -> do
+            tas <- DB.getTAs tx db
+            fmap (Map.fromList . catMaybes) $ forM tas $ \StorableTA {..} -> do
+                mcert <- DB.getTaCertByKey tx db taCertKey
+                pure $ fmap (\cert -> (getSKI cert, Located (talCertLocations tal) cert)) mcert
         go taCerts certificate
       where        
         go taCerts cert = do             
@@ -130,14 +147,15 @@ validateBottomUp
                         [] -> appError $ ValidationE NoAKI
                         _  -> pure []
                 Just (AKI ki) -> do 
-                    parentCert <- DB.roAppTx db $ \tx -> DB.getBySKI tx db (SKI ki)
-                    case parentCert of 
-                        Nothing -> do                         
+                    parentCerts <- DB.roAppTx db $ \tx -> DB.getBySKI tx db (SKI ki)
+                    case parentCerts of 
+                        [] ->                       
                             case Map.lookup (SKI ki) taCerts of 
                                 Nothing -> appError $ ValidationE ParentCertificateNotFound
-                                Just c  -> pure [c]
-                        Just pc ->
-                            (pc :) <$> go taCerts pc
+                                Just c  -> pure [[c]]
+                        parents -> 
+                            fmap mconcat $ forM parents $ \pc -> 
+                                map (pc: ) <$> go taCerts pc
 
 
     validateManifest db certificate = do
@@ -146,7 +164,7 @@ validateBottomUp
            and don't track visited object or metrics.
          -}
         let childrenAki = toAKI $ getSKI certificate
-        maybeMft <- liftIO $ roTx db $ \tx -> do 
+        maybeMft <- liftIO $ DB.roTx db $ \tx -> do 
             DB.getMftsForAKI tx db childrenAki >>= \case
                 [] -> pure Nothing
                 (MftMeta {..} : _) -> DB.getMftByKey tx db key
@@ -156,27 +174,26 @@ validateBottomUp
             Just keyedMft -> do
                 -- TODO Decide what to do with nested scopes (we go bottom up, 
                 -- so nesting doesn't work the same way).                            
-                let locatedMft@(Located mftLocation mft) = keyedMft ^. #object    
+                let Keyed locatedMft@(Located mftLocation mft) _ = keyedMft
                 vFocusOn LocationFocus (getURL $ pickLocation mftLocation) $ do                
                     validateObjectLocations locatedMft
                     validateMftLocation locatedMft certificate
                     MftPair _ crlHash <- 
-                            case findCrlOnMft mft of 
+                            case filter (\(MftPair name _) -> ".crl" `Text.isSuffixOf` name) $ mftEntries $ mft ^. #content of
                                 []    -> vError $ NoCRLOnMFT childrenAki
                                 [crl] -> pure crl
                                 crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls
                     
-                    crlObject <- liftIO $ roTx db $ \tx -> DB.getByHash tx db crlHash
+                    crlObject <- liftIO $ DB.roTx db $ \tx -> DB.getByHash tx db crlHash
                     case crlObject of 
                         Nothing -> 
                             vError $ NoCRLExists childrenAki crlHash
 
-                        Just foundCrl@(Located crlLocations (CrlRO crl)) -> do      
+                        Just foundCrl@(Located crlLocations (WellStructuredRO (CrlRO crl))) -> do
                             vFocusOn LocationFocus (getURL $ pickLocation crlLocations) $ do 
                                 validateObjectLocations foundCrl
-                                let mftEECert = getEECert $ unCMS $ cmsPayload mft
-                                checkCrlLocation foundCrl mftEECert
-                                validCrl <- vHoist $ validateCrl now crl certificate
+                                checkCrlLocation foundCrl $ eeCert mft
+                                validCrl <- vHoist $ validateCrl now crl (certificate ^. #payload)
                                 pure (mft, validCrl)
 
                         Just _ -> 

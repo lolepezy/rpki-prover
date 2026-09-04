@@ -5,6 +5,7 @@
 
 module RPKI.Domain where
 
+import           Control.Lens
 import           Control.DeepSeq          (NFData)
 
 import qualified Data.ByteString          as BS
@@ -12,6 +13,8 @@ import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
 import qualified Data.Vector              as V
+
+import           Data.Generics.Product.Typed
 
 import           Data.ByteString.Base16   as Hex
 import qualified Data.String.Conversions  as SC
@@ -29,8 +32,6 @@ import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Data.Hashable hiding (hash)
 import           Data.Semigroup
-
-import           Data.Bifunctor
 import           Data.Monoid.Generic
 import           Data.Tuple.Strict
 
@@ -63,7 +64,8 @@ data ValidationRFC = StrictRFC | ReconsideredRFC
 newtype TypedCert c (t :: CertType) = TypedCert c
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
-    deriving newtype (WithSKI, WithRawResourceCertificate, WithAKI)
+    deriving newtype (WithSKI, WithRawResourceCertificate, WithAKI, 
+                      WithResources, WithValidityPeriod, WithSerial)
 
 class OfCertType c (t :: CertType)    
 
@@ -117,8 +119,22 @@ data RpkiURL = RsyncU !RsyncURL | RrdpU !RrdpURL
     deriving anyclass (TheBinary, NFData)
     deriving anyclass Hashable
 
+data ValidityPeriod = ValidityPeriod {
+        notBefore :: Instant,
+        notAfter  :: Instant
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+data SignMaterial = SignMaterial {
+        algorithm  :: SignatureAlgorithmIdentifier,
+        signature  :: SignatureValue,
+        signedData :: BSS.ShortByteString
+    }
+    deriving stock (Show, Eq, Generic) 
+
 class WithValidityPeriod a where
-    getValidityPeriod :: a -> (Instant, Instant)
+    getValidityPeriod :: a -> ValidityPeriod
 
 class WithURL a where
     getURL :: a -> URI
@@ -138,6 +154,9 @@ class WithHash a where
 class WithSKI a where
     getSKI :: a -> SKI
 
+class WithPubKey a where
+    getPubKey :: a -> X509.PubKey
+
 class WithRawResourceCertificate a where
     getRawCert :: a -> RawResourceCertificate
 
@@ -146,6 +165,16 @@ class WithSerial a where
 
 class WithRpkiObjectType a where
     getRpkiObjectType :: a -> RpkiObjectType
+
+class WithResources a where
+    getResources :: a -> AllResources
+
+class WithSignMaterial a where
+    getSignMaterial :: a -> SignMaterial
+
+newtype Validated a = Validated a
+    deriving stock (Show, Eq, Generic)
+    deriving newtype (WithSKI, WithAKI, WithHash, WithPubKey, WithRpkiObjectType)
 
 instance {-# OVERLAPPING #-} WithURL URI where
     getURL = id
@@ -185,26 +214,26 @@ toText = unURI . getURL
 
 newtype KI = KI BSS.ShortByteString 
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 newtype SKI  = SKI { unSKI :: KI }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 newtype AKI  = AKI { unAKI :: KI }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 newtype SessionId = SessionId { unSessionId :: Text }
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 instance Show SessionId where
     show (SessionId s) = show s
 
 newtype Serial = Serial Integer     
     deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 newtype Version = Version Integer 
     deriving stock (Show, Eq, Ord, Generic)
@@ -212,7 +241,7 @@ newtype Version = Version Integer
 
 newtype Locations = Locations { unLocations :: NESet RpkiURL } 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
     deriving newtype (Semigroup)
 
 instance Show Serial where
@@ -240,7 +269,7 @@ hexShow = SC.cs . Hex.encode . BSS.fromShort
 
 newtype CMS a = CMS { unCMS :: SignedObject a } 
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 data CrlObject = CrlObject {
         hash    :: {-# UNPACK #-} Hash,
@@ -301,83 +330,177 @@ type RscObject = CMSBasedObject Rsc
 -- https://datatracker.ietf.org/doc/draft-ietf-sidrops-aspa-profile/
 type AspaObject = CMSBasedObject Aspa
 
-    
-data RpkiObject = CerRO CaCerObject 
-                | MftRO MftObject
-                | RoaRO RoaObject
-                | SplRO SplObject
-                | GbrRO GbrObject
-                | RscRO RscObject
-                | AspaRO AspaObject
-                | BgpRO BgpCerObject
-                | CrlRO CrlObject
+data RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl = 
+                  CerRO ca 
+                | MftRO mft
+                | RoaRO roa
+                | SplRO spl
+                | GbrRO gbr
+                | RscRO rsc
+                | AspaRO aspa
+                | BgpRO bgpSec
+                | CrlRO crl
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary) 
 
+type ParsedRpkiObject = RpkiObject_ 
+        CaCerObject 
+        MftObject 
+        RoaObject 
+        SplObject 
+        GbrObject 
+        RscObject 
+        AspaObject 
+        BgpCerObject 
+        CrlObject
+
+type WellStructuredMft  = WellStructuredCms Manifest
+type WellStructuredRoa  = WellStructuredCms VrpsPerAs
+type WellStructuredSpl  = WellStructuredCms SplPayload
+type WellStructuredGbr  = WellStructuredCms Gbr
+type WellStructuredRsc  = WellStructuredCms Rsc
+type WellStructuredAspa = WellStructuredCms Aspa
+
+type WellStructuredRpkiObject = RpkiObject_ 
+        WellStructuredCaCert 
+        WellStructuredMft
+        WellStructuredRoa
+        WellStructuredSpl
+        WellStructuredGbr
+        WellStructuredRsc  
+        WellStructuredAspa
+        WellStructuredBgpCert
+        CrlObject
+
+{-# INLINE foldRpkiObject #-}
+foldRpkiObject ::
+    (ca -> r) ->
+    (mft -> r) ->
+    (roa -> r) ->
+    (spl -> r) ->
+    (gbr -> r) ->
+    (rsc -> r) ->
+    (aspa -> r) ->
+    (bgpSec -> r) ->
+    (crl -> r) ->
+    RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl ->
+    r
+foldRpkiObject onCer onMft onRoa onSpl onGbr onRsc onAspa onBgp onCrl = \case
+    CerRO c  -> onCer c
+    MftRO c  -> onMft c
+    RoaRO c  -> onRoa c
+    SplRO c  -> onSpl c
+    GbrRO c  -> onGbr c
+    RscRO c  -> onRsc c
+    AspaRO c -> onAspa c
+    BgpRO c  -> onBgp c
+    CrlRO c  -> onCrl c
+
+
 data RpkiObjectType = CER | MFT | CRL | ROA | ASPA | GBR | SPL | BGPSec | RSC
-    deriving (Show, Eq, Ord, Generic)    
+    deriving (Show, Read, Eq, Ord, Generic)    
     deriving anyclass (TheBinary, NFData)
 
-instance WithAKI CrlObject where
+instance {-# OVERLAPPING #-} (Generic o, HasType Hash o) => WithHash o where
+    getHash o = o ^. typed @Hash
+
+instance {-# OVERLAPPING #-} (Generic o, HasType SKI o) => WithSKI o where
+    getSKI o = o ^. typed @SKI
+
+instance {-# OVERLAPPING #-} (Generic o, HasType X509.PubKey o) => WithPubKey o where
+    getPubKey o = o ^. typed @X509.PubKey
+
+instance {-# OVERLAPPING #-} (Generic o, HasType AKI o) => WithAKI o where
+    getAKI o = Just $ o ^. typed @AKI
+
+instance {-# OVERLAPPING #-} WithAKI CrlObject where
     getAKI CrlObject {..} = Just aki
 
-instance WithHash CrlObject where
-    getHash CrlObject {..} = hash
-
-instance WithAKI CaCerObject where
+instance {-# OVERLAPPING #-} WithAKI CaCerObject where
     getAKI CaCerObject {..} = aki
 
-instance WithHash CaCerObject where
-    getHash CaCerObject {..} = hash
-
-instance WithSKI CaCerObject where
-    getSKI CaCerObject {..} = ski
+instance WithResources CaCerObject where
+    getResources CaCerObject { certificate } = getResources certificate
     
-instance WithAKI (CMSBasedObject a) where
-    getAKI CMSBasedObject {..} = getAKI $ getEEResourceCert $ unCMS cmsPayload 
+instance {-# OVERLAPPING #-} WithPubKey CaCerObject where
+    getPubKey CaCerObject { certificate } = X509.certPubKey $ cwsX509certificate $ getCertWithSignature certificate
 
-instance WithHash (CMSBasedObject a) where
-    getHash CMSBasedObject {..} = hash
+instance {-# OVERLAPPING #-} WithAKI (CMSBasedObject a) where
+    getAKI CMSBasedObject {..} = getAKI $ getEEResourceCert cmsPayload 
+
+instance {-# OVERLAPPING #-} WithPubKey (CMSBasedObject a) where
+    getPubKey CMSBasedObject { cmsPayload } = getPubKey $ getEEResourceCert cmsPayload
+
+instance WithResources (CMSBasedObject a) where
+    getResources CMSBasedObject { cmsPayload } = getResources $ getEEResourceCert cmsPayload
 
 instance {-# OVERLAPPING #-} WithValidityPeriod (CMSBasedObject a) where
     getValidityPeriod CMSBasedObject {..} = 
-        bimap newInstant newInstant $ X509.certValidity 
-            $ cwsX509certificate $ getCertWithSignature 
-            $ getEEResourceCert $ unCMS cmsPayload 
+        let (nb, na) = X509.certValidity $ cwsX509certificate $ getCertWithSignature 
+                     $ getEEResourceCert cmsPayload 
+        in ValidityPeriod (newInstant nb) (newInstant na)
 
 instance {-# OVERLAPPING #-} WithSerial (CMSBasedObject a) where
     getSerial CMSBasedObject {..} = 
         Serial $ X509.certSerial $ cwsX509certificate $ getCertWithSignature 
-            $ getEEResourceCert $ unCMS cmsPayload 
+            $ getEEResourceCert cmsPayload 
 
 instance WithRawResourceCertificate (CMSBasedObject a) where
-    getRawCert CMSBasedObject {..} = getRawCert $ getEEResourceCert $ unCMS cmsPayload 
+    getRawCert CMSBasedObject {..} = getRawCert $ getEEResourceCert cmsPayload 
 
-instance WithAKI EECerObject where
-    getAKI EECerObject {..} = Just aki
-
-instance WithHash BgpCerObject where
-    getHash BgpCerObject {..} = hash
-
-instance WithSKI BgpCerObject where
-    getSKI BgpCerObject {..} = ski    
-
-instance WithAKI BgpCerObject where
+instance {-# OVERLAPPING #-} WithAKI BgpCerObject where
     getAKI BgpCerObject {..} = aki
 
-instance WithSKI EECerObject where
-    getSKI EECerObject {..} = ski
+instance {-# OVERLAPPING #-} WithPubKey BgpCerObject where
+    getPubKey BgpCerObject { certificate } = X509.certPubKey $ cwsX509certificate $ getCertWithSignature certificate
 
-instance WithSKI (CMSBasedObject a) where    
-    getSKI CMSBasedObject {..} = getSKI $ getEEResourceCert $ unCMS cmsPayload 
+instance WithResources BgpCerObject where
+    getResources BgpCerObject { certificate } = getResources certificate
+
+instance {-# OVERLAPPING #-} WithPubKey EECerObject where
+    getPubKey EECerObject { certificate } = X509.certPubKey $ cwsX509certificate $ getCertWithSignature certificate
+
+instance WithResources EECerObject where
+    getResources EECerObject { certificate } = getResources certificate
+
+instance {-# OVERLAPPING #-} WithSKI (CMSBasedObject a) where    
+    getSKI CMSBasedObject {..} = getSKI $ getEEResourceCert cmsPayload 
 
 instance WithRawResourceCertificate a => WithValidityPeriod a where
-    getValidityPeriod cert = 
-        bimap newInstant newInstant $ X509.certValidity 
-            $ cwsX509certificate $ getCertWithSignature $ getRawCert cert
+    getValidityPeriod cert =
+        let (nb, na) = X509.certValidity $ cwsX509certificate $ getCertWithSignature $ getRawCert cert
+        in ValidityPeriod (newInstant nb) (newInstant na)
 
 instance {-# OVERLAPPING #-} WithRawResourceCertificate a => WithSerial a where
     getSerial = Serial . X509.certSerial . cwsX509certificate . certX509 . getRawCert
+
+instance {-# OVERLAPPABLE #-} WithRawResourceCertificate a => WithSignMaterial a where
+    getSignMaterial (certX509 . getRawCert -> CertificateWithSignature {                
+                cwsSignatureAlgorithm = algorithm,
+                cwsSignature          = signature,
+                cwsEncoded            = signedData
+            }) = SignMaterial {..}
+
+instance WithSignMaterial CrlObject where
+    getSignMaterial CrlObject {
+        signCrl = SignCRL {
+            signatureAlgorithm = algorithm,
+            signatureValue = signature,
+            encodedValue = signedData
+        }
+    } = SignMaterial {..}
+
+instance WithSignMaterial (CMS a) where
+    getSignMaterial (CMS so) = let        
+            SignerInfos {
+                signature = cmsSignature,
+                signedAttrs = SignedAttributes _ signedAttrsBS
+            } = scSignerInfos $ soContent so            
+        in SignMaterial {
+            algorithm = cwsSignatureAlgorithm $ certX509 $ getRawCert $ scCertificate $ soContent so,
+            signature = cmsSignature,
+            signedData = signedAttrsBS
+        }
 
 instance WithRawResourceCertificate CaCerObject where
     getRawCert CaCerObject {..} = getRawCert certificate
@@ -394,45 +517,40 @@ instance WithRawResourceCertificate RawResourceCertificate where
 instance WithRawResourceCertificate ResourceCertificate where
     getRawCert (ResourceCertificate s) = s
 
+instance WithResources RawResourceCertificate where
+    getResources RawResourceCertificate { resources } = resources
+
+instance WithResources ResourceCertificate where
+    getResources = getResources . getRawCert
+
 instance OfCertType (TypedCert c (t :: CertType)) t
 instance OfCertType CaCerObject 'CACert
 instance OfCertType EECerObject 'EECert
 instance OfCertType BgpCerObject 'BGPCert
 
-instance WithAKI RpkiObject where
-    getAKI (CerRO c) = getAKI c
-    getAKI (MftRO c) = getAKI c
-    getAKI (RoaRO c) = getAKI c
-    getAKI (SplRO c) = getAKI c
-    getAKI (GbrRO c) = getAKI c
-    getAKI (CrlRO c) = getAKI c
-    getAKI (RscRO c) = getAKI c
-    getAKI (AspaRO c) = getAKI c
-    getAKI (BgpRO c)  = getAKI c
 
-instance WithHash RpkiObject where
-    getHash (CerRO c) = getHash c
-    getHash (MftRO c) = getHash c
-    getHash (RoaRO c) = getHash c
-    getHash (SplRO c) = getHash c
-    getHash (GbrRO c) = getHash c
-    getHash (CrlRO c) = getHash c
-    getHash (RscRO c) = getHash c
-    getHash (AspaRO c) = getHash c
-    getHash (BgpRO c) = getHash c
+-- Ehm, it looks pretty terrible, but it works.
 
-instance WithRpkiObjectType RpkiObject where
-    getRpkiObjectType = \case 
-        CerRO _ -> CER
-        MftRO _ -> MFT
-        RoaRO _ -> ROA
-        SplRO _ -> SPL
-        GbrRO _ -> GBR
-        CrlRO _ -> CRL
-        RscRO _ -> RSC
-        AspaRO _ -> ASPA
-        BgpRO _ -> BGPSec
-        
+instance {-# OVERLAPPING #-} (WithAKI ca, WithAKI mft, WithAKI roa, WithAKI spl, WithAKI gbr, 
+          WithAKI rsc, WithAKI aspa, WithAKI bgpSec, WithAKI crl) => 
+    WithAKI (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl) where
+    getAKI = foldRpkiObject getAKI getAKI getAKI getAKI getAKI getAKI getAKI getAKI getAKI
+
+instance {-# OVERLAPPING #-} (WithPubKey ca, WithPubKey mft, WithPubKey roa, WithPubKey spl, WithPubKey gbr, 
+          WithPubKey rsc, WithPubKey aspa, WithPubKey bgpSec, WithPubKey crl) => 
+    WithPubKey (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl) where
+    getPubKey = foldRpkiObject getPubKey getPubKey getPubKey getPubKey getPubKey getPubKey getPubKey getPubKey getPubKey
+
+instance {-# OVERLAPPING #-} (WithHash ca, WithHash mft, WithHash roa, WithHash spl, WithHash gbr, 
+          WithHash rsc, WithHash aspa, WithHash bgpSec, WithHash crl) => 
+    WithHash (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl) where
+    getHash = foldRpkiObject getHash getHash getHash getHash getHash getHash getHash getHash getHash
+
+instance WithRpkiObjectType (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl) where
+    getRpkiObjectType = foldRpkiObject 
+                         (const CER) (const MFT) (const ROA) (const SPL) (const GBR) 
+                         (const RSC) (const ASPA) (const BGPSec) (const CRL)
+
 
 data Located a = Located { 
         locations :: Locations,        
@@ -448,13 +566,16 @@ instance WithLocations (Located a) where
 instance WithLocations Locations where
     getLocations = id
 
-instance WithAKI a => WithAKI (Located a) where
+instance {-# OVERLAPPING #-} WithAKI a => WithAKI (Located a) where
     getAKI (Located _ o) = getAKI o    
 
-instance WithHash a => WithHash (Located a) where
+instance {-# OVERLAPPING #-} WithHash a => WithHash (Located a) where
     getHash (Located _ o) = getHash o
 
-instance WithSKI a => WithSKI (Located a) where
+instance {-# OVERLAPPING #-} WithPubKey a => WithPubKey (Located a) where
+    getPubKey (Located _ o) = getPubKey o
+
+instance {-# OVERLAPPING #-} WithSKI a => WithSKI (Located a) where
     getSKI (Located _ o) = getSKI o
 
 instance WithRawResourceCertificate a => WithRawResourceCertificate (Located a) where    
@@ -477,7 +598,7 @@ data RawResourceCertificate = RawResourceCertificate {
 
 newtype ResourceCertificate = ResourceCertificate RawResourceCertificate
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 data Vrp = Vrp ASN IpPrefix PrefixLength
     deriving stock (Show, Eq, Ord, Generic)
@@ -541,7 +662,7 @@ data Manifest = Manifest {
 
 data SignCRL = SignCRL {
         thisUpdateTime     :: Instant,
-        nextUpdateTime     :: Maybe Instant,
+        nextUpdateTime     :: Instant,
         signatureAlgorithm :: SignatureAlgorithmIdentifier,
         signatureValue     :: SignatureValue,
         encodedValue       :: BSS.ShortByteString,
@@ -634,8 +755,13 @@ data SignedData a = SignedData {
         eContent [0] EXPLICIT OCTET STRING OPTIONAL }
 -}
 data EncapsulatedContentInfo a = EncapsulatedContentInfo {
-        eContentType :: ContentType, 
-        cContent     :: a    
+        eContentType  :: ContentType, 
+        -- Raw eContent octets are retained to verify messageDigest against
+        -- the exact encapsulated payload during CMS validation.
+        -- https://www.rfc-editor.org/rfc/rfc6488#section-2.1.6.4.2
+        -- https://www.rfc-editor.org/rfc/rfc6488#section-3
+        eContentBytes :: BS.ByteString,
+        cContent      :: a    
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -663,35 +789,35 @@ data SignerInfos = SignerInfos {
 
 newtype IssuerAndSerialNumber = IssuerAndSerialNumber Text 
     deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 newtype SignerIdentifier = SignerIdentifier BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 newtype ContentType = ContentType OID 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 newtype CMSVersion = CMSVersion Int 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 newtype DigestAlgorithmIdentifiers = DigestAlgorithmIdentifiers [OID] 
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 newtype DigestAlgorithmIdentifier = DigestAlgorithmIdentifier OID
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 newtype SignatureAlgorithmIdentifier = SignatureAlgorithmIdentifier X509.SignatureALG  
     deriving stock (Show, Eq, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 newtype SignatureValue = SignatureValue BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)  
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 
 -- | According to https://tools.ietf.org/html/rfc5652#page-16
@@ -712,34 +838,34 @@ data Attribute = ContentTypeAttr ContentType
 -- Subject Public Key Info
 newtype SPKI = SPKI { unSPKI :: EncodedBase64 }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 newtype EncodedBase64 = EncodedBase64 BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
     deriving newtype (Monoid, Semigroup)
 
 newtype DecodedBase64 = DecodedBase64 BS.ByteString
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
     deriving newtype (Monoid, Semigroup)
 
 newtype TaName = TaName { unTaName :: Text }
     deriving stock (Eq, Ord, Generic, Typeable, Data)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
 instance Show TaName where
     show = show . unTaName
 
 newtype Vrps = Vrps { unVrps :: V.Vector Vrp }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup Vrps
     deriving Monoid    via GenericMonoid Vrps
 
 newtype Roas = Roas { unRoas :: MonoidalMap ObjectKey VrpsPerAs }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup Roas
     deriving Monoid    via GenericMonoid Roas
 
@@ -767,19 +893,19 @@ data Payloads = Payloads {
 
 newtype PerTA a = PerTA { unPerTA :: MonoidalMap TaName a }
     deriving stock (Show, Eq, Ord, Generic, Functor, Traversable, Foldable)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
     deriving Semigroup via GenericSemigroup (PerTA a)
     deriving Monoid    via GenericMonoid (PerTA a)
 
 newtype UrlKey = UrlKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
 
 newtype ObjectKey = ObjectKey ArtificialKey
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
+    deriving newtype (TheBinary, NFData)
 
-newtype ArtificialKey = ArtificialKey LexOrdKey64
+newtype ArtificialKey = ArtificialKey Int64
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (TheBinary, NFData)
 
@@ -788,32 +914,9 @@ data ObjectIdentity = KeyIdentity ObjectKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-data ValidationVersion = ValidationVersion { 
-        validatedBy    :: WorldVersion,
-        validationsKey :: ArtificialKey,
-        metricsKey     :: ArtificialKey,
-        roasKey        :: ArtificialKey,
-        aspasKey       :: ArtificialKey,
-        splsKey        :: ArtificialKey,            
-        gbrsKey        :: ArtificialKey,
-        bgpCertsKey    :: ArtificialKey
-    }
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)    
-
-
-data VersionMeta = VersionMeta { 
-        perTa               :: PerTA ValidationVersion,
-        commonValidationKey :: ArtificialKey,
-        commonMetricsKey    :: ArtificialKey
-    }      
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-
 newtype EarliestToExpire = EarliestToExpire Instant
     deriving stock (Show, Eq, Ord, Generic)    
-    deriving anyclass (TheBinary)
+    deriving newtype (TheBinary)
     deriving Semigroup via Min EarliestToExpire
 
 
@@ -823,10 +926,111 @@ instance Monoid EarliestToExpire where
     -- 2) Anything bigger than that wraps around to the year 1677
     mempty = EarliestToExpire $ Instant $ 1000_000_000 * 9_223_372_036
 
+
+data WellStructuredCert (t :: CertType) = WellStructuredCert {
+        hash       :: Hash,
+        ski        :: SKI,
+        aki        :: Maybe AKI,
+        resources  :: AllResources,
+        pubKey     :: X509.PubKey,
+        serial     :: Serial,
+        validity   :: ValidityPeriod,
+        certUris   :: CertUris,
+        encoded    :: BSS.ShortByteString,
+        signature  :: SignatureValue,
+        sigAlg     :: SignatureAlgorithmIdentifier
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (TheBinary)    
+
+instance OfCertType (WellStructuredCert t) t
+
+instance {-# OVERLAPPING #-} WithSerial (WellStructuredCert t) where getSerial (WellStructuredCert { serial }) = serial
+instance {-# OVERLAPPING #-} WithAKI (WellStructuredCert t) where getAKI (WellStructuredCert { aki }) = aki
+instance {-# OVERLAPPING #-} WithPubKey (WellStructuredCert t) where getPubKey (WellStructuredCert { pubKey }) = pubKey
+instance {-# OVERLAPPING #-} WithResources (WellStructuredCert t) where getResources (WellStructuredCert { resources }) = resources
+instance {-# OVERLAPPING #-} WithValidityPeriod (WellStructuredCert t) where getValidityPeriod (WellStructuredCert { validity }) = validity
+
+
+-- | Minimized CA certificate.
+type WellStructuredCaCert = WellStructuredCert 'CACert
+
+-- | Minimized BGPSec certificate.
+type WellStructuredBgpCert = WellStructuredCert 'BGPCert
+
+-- | Minimized EE certificate, stripped of fields that are either
+-- constant-after-prevalidation (CMS versions, digest algorithms) or
+-- derivable from other stored data (SID == SKI, etc.).
+-- Retains only what is needed for chain validation and CMS signature
+-- verification.
+data CertUris = CertUris {
+        aiaCaIssuersUri :: Maybe URI,
+        crlDPUri        :: Maybe URI,
+        repositoryUri   :: Maybe URI,
+        manifestUri     :: Maybe URI,
+        rrdpNotifyUri   :: Maybe URI
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+data WellStructuredEECert = WellStructuredEECert {
+        ski        :: SKI,
+        aki        :: AKI,
+        resources  :: AllResources,
+        pubKey     :: X509.PubKey,
+        serial     :: Serial,
+        validity   :: ValidityPeriod,
+        certUris   :: CertUris,
+        encoded    :: BSS.ShortByteString,   -- TBSCertificate DER bytes
+        signature  :: SignatureValue,
+        sigAlg     :: SignatureAlgorithmIdentifier
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (TheBinary)
+
+instance OfCertType WellStructuredEECert 'EECert
+
+instance {-# OVERLAPPING #-} WithPubKey WellStructuredEECert where getPubKey (WellStructuredEECert { pubKey }) = pubKey
+instance WithResources WellStructuredEECert where getResources (WellStructuredEECert { resources }) = resources
+instance {-# OVERLAPPING #-} WithValidityPeriod WellStructuredEECert where getValidityPeriod (WellStructuredEECert { validity }) = validity
+instance {-# OVERLAPPING #-} WithSignMaterial WellStructuredEECert where
+    getSignMaterial WellStructuredEECert { sigAlg = algorithm, signature, encoded = signedData } =
+        SignMaterial {..}
+
+instance {-# OVERLAPPING #-} WithSignMaterial (WellStructuredCert t) where
+    getSignMaterial WellStructuredCert { sigAlg = algorithm, signature, encoded = signedData } =
+        SignMaterial {..}
+
+
+-- | Minimized CMS-based signed object.  Replaces 'CMSBasedObject a' in the
+-- post-prevalidation in-memory path.
+data WellStructuredCms a = WellStructuredCms {
+        hash          :: Hash,
+        content       :: a,
+        eeCert        :: WellStructuredEECert,
+        signingTime   :: Instant,
+        cmsSignature  :: SignatureValue,
+        signedAttrsBS :: BSS.ShortByteString   -- raw DER signed-attributes
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (TheBinary)
+
+instance {-# OVERLAPPING #-} WithAKI  (WellStructuredCms a) where getAKI  (WellStructuredCms { eeCert = WellStructuredEECert { aki } }) = Just aki
+instance {-# OVERLAPPING #-} WithPubKey (WellStructuredCms a) where getPubKey (WellStructuredCms { eeCert }) = getPubKey eeCert
+instance {-# OVERLAPPING #-} WithResources (WellStructuredCms a) where getResources (WellStructuredCms { eeCert }) = getResources eeCert
+instance {-# OVERLAPPING #-} WithValidityPeriod (WellStructuredCms a) where getValidityPeriod (WellStructuredCms { eeCert }) = getValidityPeriod eeCert
+
+instance {-# OVERLAPPING #-} WithSerial WellStructuredEECert  where 
+    getSerial (WellStructuredEECert  { serial }) = serial
+
+instance {-# OVERLAPPING #-} WithSerial (WellStructuredCms a) where
+    getSerial (WellStructuredCms { eeCert = WellStructuredEECert { serial } }) = serial
+
+
 -- Small utility functions that don't have anywhere else to go
 
 asKey :: Int64 -> ArtificialKey
-asKey = ArtificialKey . LexOrdKey64
+asKey = ArtificialKey
 
 toAKI :: SKI -> AKI
 toAKI (SKI ki) = AKI ki
@@ -840,14 +1044,11 @@ skiLen (SKI (KI bs)) = BSS.length bs
 getCMSContent :: CMS a -> a
 getCMSContent = cContent . scEncapContentInfo . soContent . unCMS
 
-getEEResourceCert :: SignedObject a -> EECerObject
-getEEResourceCert = scCertificate . soContent
+getEEResourceCert :: CMS a -> EECerObject
+getEEResourceCert = scCertificate . soContent . unCMS
 
 getCertWithSignature :: WithRawResourceCertificate a => a -> CertificateWithSignature
 getCertWithSignature = certX509 . getRawCert
-
-getEECert :: SignedObject a -> CertificateWithSignature
-getEECert = certX509 . getRawCert . scCertificate . soContent
 
 emptyIpResources :: IpResources
 emptyIpResources = IpResources RS.emptyIpSet 

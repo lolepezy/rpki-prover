@@ -112,21 +112,26 @@ parseSnapshot bs = catchExceptions $ runST $ do
                             Just v' -> lift $ writeSTRef versionRef  (Just $ Version v')
                 ("publish", attributes) -> do
                     uri <- forAttribute attributes "uri" NoPublishURI (lift . pure)
-                    lift $ modifySTRef publishes $ \pubs -> (uri, mempty) : pubs
+                    lift $ modifySTRef publishes $ \pubs -> (uri, []) : pubs
                 (_, _) -> pure ()
             )
-            (\base64 ->                                
+            -- Accumulate chunks in reverse order and concatenate once at the
+            -- end (in `snapshotPublishes`) instead of re-concatenating on
+            -- every chunk here: Xeno's SAX parser can deliver a single
+            -- element's base64 body across many `onText` calls, and
+            -- `BS.concat [existing, base64]` on every call is O(n) per call,
+            -- i.e. O(n^2) overall for an n-chunk body.
+            (\base64 ->
                 (lift . readSTRef) publishes >>= \case
                     []               -> pure ()
-                    (uri, existing) : pubs -> do
-                        let base64' = BS.concat [existing, base64]
-                        lift $ writeSTRef publishes $ (uri, base64') : pubs
+                    (uri, chunks) : pubs ->
+                        lift $ writeSTRef publishes $ (uri, base64 : chunks) : pubs
             )
 
     let snapshotPublishes = do
             ps <- (lift . readSTRef) publishes
-            pure $ map (\(uri, base64) -> 
-                        SnapshotPublish (URI $ convert uri) (EncodedBase64 $ removeSpaces base64))
+            pure $ map (\(uri, chunks) ->
+                        SnapshotPublish (URI $ convert uri) (EncodedBase64 $ removeSpaces $ BS.concat $ reverse chunks))
                         $ reverse ps
 
     let snapshot = Snapshot <$>
@@ -166,7 +171,7 @@ parseDelta bs = catchExceptions $ runST $ do
                             Just h  -> case makeHash h of
                                 Nothing     -> throwE $ BadHash $ convert h
                                 Just hash'' -> pure $ Just hash''                    
-                lift $ modifySTRef' deltaItemsRef $ \ps -> Right (uri, hash', mempty) : ps
+                lift $ modifySTRef' deltaItemsRef $ \ps -> Right (uri, hash', []) : ps
 
             ("withdraw", attributes) -> do
                 uri <- forAttribute attributes "uri" NoPublishURI (lift . pure)
@@ -187,19 +192,22 @@ parseDelta bs = catchExceptions $ runST $ do
                             case item of
                                 Left  (uri, _) -> 
                                     throwE $ ContentInWithdraw (convert uri) (convert base64)
-                                Right (uri, hash', existing) -> do
-                                    let base64' = BS.concat [existing, base64]
-                                    lift $ writeSTRef deltaItemsRef $ Right (uri, hash', base64') : is   
+                                Right (uri, hash', chunks) ->
+                                    -- See the analogous comment in `parseSnapshot`:
+                                    -- accumulate chunks and concatenate once at
+                                    -- the end instead of re-concatenating here
+                                    -- on every `onText` call.
+                                    lift $ writeSTRef deltaItemsRef $ Right (uri, hash', base64 : chunks) : is
 
     let parse = parseXml bs onElement onCharacterData
 
     let deltaItemsRef' = do
             is <- (lift . readSTRef) deltaItemsRef
             pure $ map (\case
-                    Left  (uri, hash') -> 
+                    Left  (uri, hash') ->
                         DW $ DeltaWithdraw (URI $ convert uri) hash'
-                    Right (uri, hash', base64) -> 
-                        DP $ DeltaPublish (URI $ convert uri) hash' (EncodedBase64 $ removeSpaces base64))
+                    Right (uri, hash', chunks) ->
+                        DP $ DeltaPublish (URI $ convert uri) hash' (EncodedBase64 $ removeSpaces $ BS.concat $ reverse chunks))
                     $ reverse is
 
 

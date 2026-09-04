@@ -35,12 +35,18 @@ objectParseSpec = testGroup "Unit tests for object parsing" [
 shoudlParseBGPSec :: TestTree
 shoudlParseBGPSec = HU.testCase "Should parse a BGPSec certificate" $ do        
     bs <- BS.readFile "test/data/bgp_router_cert.cer"
-    let (Right (rc, ct, ski, aki, hash), _) = 
+    let (Right (rc, ct, ski, aki, objectHash), _) = 
             runPureValidator (newScopes "parse") $ parseResourceCertificate bs
+    let bgpObject = BgpCerObject {
+            hash = objectHash,
+            ski = ski,
+            aki = aki,
+            certificate = TypedCert rc
+        }
     
     HU.assertEqual "It is a BGPSec certificate" ct  BGPCert               
     HU.assertEqual "SPKI is right" 
-        (getSubjectPublicKeyInfo $ cwsX509certificate $ getCertWithSignature rc)  
+        (getSubjectPublicKeyInfo bgpObject)
         (SPKI $ EncodedBase64 "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAET10FMBxP6P3r6aG/ICpfsktp7X6ylJIY8Kye6zkQhNOt0y+cRzYngH8MGzY3cXNvZ64z4CpZ22gf4teybGq8ow==")
     HU.assertBool "It has AKI" (isJust aki)   
 

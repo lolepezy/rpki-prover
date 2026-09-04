@@ -29,7 +29,6 @@ import           Data.Tuple.Strict
 
 import           RPKI.Orphans.Generics
 import           RPKI.Domain
-import           RPKI.Store.Base.Serialisation (LexOrdKey64(..))
 import           RPKI.Time
 import           RPKI.Repository
 import           RPKI.Resources.Resources
@@ -291,7 +290,7 @@ instance Arbitrary ResourceCertificate where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RpkiObject where
+instance Arbitrary ParsedRpkiObject where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -490,9 +489,6 @@ instance Arbitrary RrdpMap where
         pure $ RrdpMap $ Map.fromList [ (uri, r) | r@RrdpRepository{..} <- rrdps ]
 
 -- errors and warnings
-
-instance Arbitrary LexOrdKey64 where
-    arbitrary = LexOrdKey64 <$> arbitrary
 
 instance Arbitrary ArtificialKey where
     arbitrary = genericArbitrary

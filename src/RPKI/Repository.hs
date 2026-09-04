@@ -231,12 +231,12 @@ mergePP (RsyncPP r) = mergeRsyncPP r
 -- | Extract repositories from URIs in TAL and in TA certificate,
 -- | use some reasonable heuristics, but don't try to be very smart.
 -- | Prefer RRDP to rsync for everything.
-publicationPointsFromTAL :: TAL -> CaCerObject -> Either ValidationError PublicationPointAccess
-publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert) = 
+publicationPointsFromTAL :: TAL -> WellStructuredCaCert -> Either ValidationError PublicationPointAccess
+publicationPointsFromTAL tal cert = 
     case tal of 
         PropertiesTAL {..} -> do 
 
-            PublicationPointAccess ppsFromCert <- getPublicationPointsFromCert cert
+            PublicationPointAccess ppsFromCert <- getPublicationPointsFromWellStructuredCert cert
             
             let uniquePrefetchRepos = map (snd . fromURI) prefetchUris
 
@@ -248,7 +248,7 @@ publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert)
                 maybe ppsFromCert (ppsFromCert <>) $ 
                 nonEmpty prefetchReposToUse
 
-        RFC_TAL {} -> getPublicationPointsFromCert cert
+        RFC_TAL {} -> getPublicationPointsFromWellStructuredCert cert
   where        
     fromURI r = 
         case r of
@@ -260,6 +260,32 @@ publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert)
 -- 
 getPublicationPointsFromCertObject :: CaCerObject -> Either ValidationError PublicationPointAccess
 getPublicationPointsFromCertObject = getPublicationPointsFromCert . cwsX509certificate . getCertWithSignature
+
+getPublicationPointsFromWellStructuredCert :: WellStructuredCert t -> Either ValidationError PublicationPointAccess
+getPublicationPointsFromWellStructuredCert WellStructuredCert {
+    certUris = CertUris {
+        rrdpNotifyUri = certRrdpNotifyUri,
+        repositoryUri = certRepositoryUri
+    }
+} = do
+    rrdp <- case certRrdpNotifyUri of
+        Just notifyUri
+            | isRrdpURI notifyUri -> Right [rrdpPP $ RrdpURL notifyUri]
+            | otherwise           -> Left $ UnknownUriType notifyUri
+        Nothing -> Right []
+
+    rsync <- case certRepositoryUri of
+        Just repoUri
+            | isRsyncURI repoUri ->
+                case parseRsyncURL (unURI repoUri) of
+                    Left e   -> Left $ BrokenUri (unURI repoUri) e
+                    Right rr -> Right [rsyncPP rr]
+            | otherwise -> Left $ UnknownUriType repoUri
+        Nothing -> Right []
+
+    case nonEmpty (rrdp <> rsync) of
+        Nothing -> Left CertificateDoesntHaveSIA
+        Just ne -> Right $ PublicationPointAccess ne  
 
 getPublicationPointsFromCert :: Certificate -> Either ValidationError PublicationPointAccess
 getPublicationPointsFromCert cert = do 

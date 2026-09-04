@@ -38,6 +38,7 @@ common shared
     , TypeFamilies
     , TemplateHaskell
     , ViewPatterns
+    , OverloadedRecordDot
   default-language: GHC2024
   ghc-options:
       -j8 +RTS -A256m -AL512m -n4m -qb0 -qn6 -RTS
@@ -63,6 +64,7 @@ common shared
     , conduit
     , conduit-extra
     , containers
+    , cryptohash-sha1
     , cryptohash-sha256
     , cryptohash-sha512
     , crypton
@@ -93,9 +95,10 @@ common shared
     , lifted-async
     , lifted-base
     , list-t
-    , lmdb-high-level
     , lz4
     , ram
+    , resource-pool
+    , sqlite-simple
     , mmorph
     , modern-uri
     , monad-control
@@ -198,18 +201,12 @@ library
       RPKI.RTR.Types
       RPKI.SLURM.SlurmProcessing
       RPKI.SLURM.Types
-      RPKI.Store.AppLmdbStorage
+      RPKI.Store.AppSqliteStorage
       RPKI.Store.AppStorage
-      RPKI.Store.Base.LMDB
-      RPKI.Store.Base.Map
-      RPKI.Store.Base.MultiMap
-      RPKI.Store.Base.SafeMap
       RPKI.Store.Base.Serialisation
       RPKI.Store.Base.Storable
-      RPKI.Store.Base.Storage
       RPKI.Store.Database
-      RPKI.Store.MakeLmdb
-      RPKI.Store.Sequence
+      RPKI.Store.SQLite
       RPKI.Store.Types
       RPKI.TAL
       RPKI.Time
@@ -260,6 +257,8 @@ executable rpki-prover
       Paths_rpki_prover
   hs-source-dirs:
       app
+  c-sources:
+      cbits/malloc_arenas.c
   ghc-options:
       -threaded
       -O2
@@ -269,6 +268,23 @@ executable rpki-prover
       "-with-rtsopts=-A16m -AL64m -N2 -qg -T -I0 --disable-delayed-os-memory-return"
   build-depends:
       rpki-prover
+
+benchmark rpki-prover-bench
+  import:          shared
+  type:            exitcode-stdio-1.0
+  main-is:         Main.hs
+  other-modules:
+      Paths_rpki_prover
+  hs-source-dirs:
+      bench
+  ghc-options:
+      -threaded
+      -O2
+      -Wall
+      -rtsopts
+  build-depends:
+      rpki-prover
+    , criterion
 
 test-suite rpki-prover-test
   import:          shared
@@ -290,8 +306,9 @@ test-suite rpki-prover-test
       RPKI.RTR.RtrSpec
       RPKI.SLURM.SlurmSpec
       RPKI.Store.DatabaseSpec
-      RPKI.Store.SerialisationSpec
+      RPKI.Store.StorableSpec
       RPKI.TestCommons
+      RPKI.Validation.TopDownSpec
       Paths_rpki_prover
   hs-source-dirs:
       test
@@ -319,5 +336,71 @@ benchmark unique-vrp-count-bench
             -rtsopts
             -O2
             -with-rtsopts=-N
+    build-depends:
+            rpki-prover
+
+benchmark save-snapshot-bench
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         SaveSnapshotBench.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -threaded
+            -rtsopts
+            -O2
+            "-with-rtsopts=-N -T"
+    build-depends:
+            rpki-prover
+          , directory
+          , filepath
+          , temporary
+
+benchmark validate-tas-bench
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         ValidateTAsBench.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -threaded
+            -rtsopts
+            -O2
+            "-with-rtsopts=-N -T"
+    build-depends:
+            rpki-prover
+          , directory
+          , filepath
+
+benchmark migrate-urls-to-blob
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         MigrateUrlsToBlob.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -O2
+    build-depends:
+            rpki-prover
+
+benchmark pipeline-stage-bench
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         PipelineStageBench.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -threaded
+            -rtsopts
+            -O2
+            "-with-rtsopts=-N1 -T"
     build-depends:
             rpki-prover

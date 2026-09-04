@@ -40,7 +40,7 @@ import qualified RPKI.Store.Database    as DB
 import           RPKI.Parse.Parse
 
 import           RPKI.AppContext
-import           RPKI.Store.Base.Storage
+
 import           RPKI.Time
 
 import           RPKI.Util
@@ -54,13 +54,13 @@ data VerifyPath = FileList [FilePath]
     deriving stock (Show, Eq, Ord, Generic)    
 
 
-rscVerify :: Storage s => AppContext s -> FilePath -> VerifyPath -> ValidatorT IO ()
+rscVerify :: AppContext s -> FilePath -> VerifyPath -> ValidatorT IO ()
 rscVerify appContext@AppContext {..} rscFile verifyPath = do
 
     db <- liftIO $ readTVarIO database
 
     -- First check that there's some validated data
-    lastVersion <- liftIO $ roTx db $ \tx -> DB.getLatestVersion tx db    
+    lastVersion <- liftIO $ DB.roTx db $ \tx -> DB.getLatestVersion tx db    
     when (isNothing lastVersion) $ appError $ ValidationE NoValidatedVersion    
 
     bs        <- fromTry (ParseE . ParseError . fmtEx) $ BS.readFile rscFile

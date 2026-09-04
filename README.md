@@ -85,18 +85,18 @@ The software can be built using [`cabal`](https://www.haskell.org/cabal/). The e
 
 The instructions below are for Linux but apply equally to \\\*BSD and macOS. Windows is not supported or tested.
 
-* Install prerequisites: `lmdb`, `lzma`, `expat`, `gmp`, and `rsync`.
+* Install prerequisites: `lzma`, `expat`, `gmp`, and `rsync`.
 
   * On Debian-based Linux:
 
     ```
-    sudo apt-get install rsync libz-dev libexpat1-dev liblmdb-dev liblzma-dev libgmp-dev pkg-config
+    sudo apt-get install rsync libz-dev libexpat1-dev liblzma-dev libgmp-dev pkg-config
     ```
     (on RPM-based -- their respective `yum/dnf` versions)
   * On macOS:
 
     ```
-    brew install rsync lmdb xz expat
+    brew install rsync xz expat
     ```
   * For other Unix-like OSes, use the appropriate package manager.
 
