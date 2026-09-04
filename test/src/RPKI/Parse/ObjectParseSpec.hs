@@ -13,6 +13,7 @@ import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Parse.Internal.Aspa
 import           RPKI.Parse.Internal.SPL
+import           RPKI.Validation.ObjectValidation (prevalidateObject)
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit        as HU
@@ -28,8 +29,51 @@ objectParseSpec = testGroup "Unit tests for object parsing" [
     shoudlParseBGPSec,
     shouldParseAspa,
     shouldParseSpl,
-    supportedExtensionSpec
+    supportedExtensionSpec,
+    prevalidationSpec
   ]
+
+
+{- | Run the full self-contained validation over the real objects in test/data.
+
+   `prevalidateObject` enforces a lot of profile requirements (eContentType, the 
+   EE certificate SIA, signature algorithms, key parameters, the CMS signature 
+   itself, ...), and every one of them is a way to reject an object that other 
+   RPs accept. These objects come from the real RPKI, so they must all pass.
+-}
+prevalidationSpec :: TestTree
+prevalidationSpec = testGroup "Prevalidation of real objects" 
+    [ shouldPrevalidate "test/data/afrinic_mft1.mft"                MFT
+    , shouldPrevalidate "test/data/afrinic_mft2.mft"                MFT
+    , shouldPrevalidate "test/data/AS204325.asa"                    ASPA
+    , shouldPrevalidate "test/data/9X0AhXWTJDl8lJhfOwvnac-42CA.spl" SPL
+    , shouldPrevalidate "test/data/ClF4YOBviAEnwFokhNG1NXBZjEA.gbr" GBR
+    , shouldPrevalidate "test/data/VZgMGXDlMc_DQX3QkQKbaQ0K8vM.gbr" GBR
+    , shouldPrevalidate "test/data/checklist.sig"                   RSC
+    , shouldPrevalidate "test/data/bgp_router_cert.cer"             CER
+    , shouldPrevalidate "test/data/big_cert.cer"                    CER
+    , shouldPrevalidate "test/data/smaller.cer"                     CER
+    , shouldPrevalidate "test/data/overcleaiming/2R93viIBHX4dV12fmttfjhYOX9k.cer" CER
+    , shouldPrevalidate "test/data/overcleaiming/EBA158C223CE11EBA804DD64C4F9AE02.roa" ROA
+
+    -- Two fixtures are deliberately left out. Both fail on checks that predate 
+    -- this test, so they are not "known good" objects:
+    --   * test/data/aspa.1.asa uses the obsolete ASPA draft encoding, where a 
+    --     provider is a SEQUENCE {ASId, afiLimit} rather than a bare ASId, so 
+    --     `getInteger` rejects it in the providers list.
+    --   * test/data/checklist.sig.1 has certificate serial number 0, which 
+    --     `makeSerial` rejects per RFC 5280 section 4.1.2.2.
+    ]
+  where
+    shouldPrevalidate path objectType = 
+        HU.testCase ("Should prevalidate " <> path) $ do 
+            bs <- BS.readFile path
+            let (r, _) = runPureValidator (newScopes "prevalidate") $ 
+                            readObjectOfType objectType bs >>= prevalidateObject
+            case r of 
+                Right _ -> pure ()
+                Left e  -> HU.assertFailure $ 
+                    "Failed to prevalidate " <> path <> ": " <> show e
 
 
 shoudlParseBGPSec :: TestTree

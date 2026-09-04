@@ -388,6 +388,18 @@ toValidationMessage = \case
       EECertContentTypeMismatch ->
         [i|CMS contentType attribute does not match encapsulated content type.|]
 
+      WrongSignedDataContentType oid ->
+        [i|CMS ContentInfo contentType is #{fmtOID oid}, expected id-signedData.|]
+
+      WrongEContentType expected actual ->
+        [i|CMS eContentType is #{fmtOID actual}, expected #{fmtOID expected} for this object type.|]
+
+      UnsupportedSignatureAlgorithm t ->
+        [i|Unsupported signature algorithm: #{t}.|]
+
+      SignatureAlgorithmMismatch outer inner ->
+        [i|Certificate signatureAlgorithm #{outer} does not match the signature field #{inner}.|]
+
       SKINotMatchingPublicKey ->
         [i|Certificate SKI does not match SHA-1 of subjectPublicKey BIT STRING.|]
 

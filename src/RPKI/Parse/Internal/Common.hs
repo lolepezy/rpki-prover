@@ -39,7 +39,7 @@ import RPKI.Resources.Resources   as R
 oid_pkix, oid_pe :: OID
 id_pe_ipAddrBlocks, id_pe_autonomousSysIds :: OID
 id_pe_sia, id_pe_aia, id_ad_rpki_notify, id_ad_rpki_repository, id_ad_caIssuers :: OID
-id_ad_rpkiManifest, id_kp_bgpsecRouter :: OID
+id_ad_rpkiManifest, id_ad_signedObject, id_kp_bgpsecRouter :: OID
 
 oid_pkix                  = [1, 3, 6, 1, 5, 5, 7]
 oid_pe                    = oid_pkix <> [ 1 ]
@@ -52,6 +52,7 @@ id_ad_rpki_notify         = oid_pkix <> [ 48, 13 ]
 id_ad_rpki_repository     = oid_pkix <> [ 48, 5 ]  
 id_ad_rpkiManifest        = oid_pkix <> [ 48, 10]
 id_ad_caIssuers           = oid_pkix <> [ 48, 2]
+id_ad_signedObject        = oid_pkix <> [ 48, 11]
 
 id_kp_bgpsecRouter        = oid_pkix <> [3, 30]
 
@@ -65,13 +66,26 @@ id_authorityKeyId = [2, 5, 29, 35]
 id_crlNumber      = [2, 5, 29, 20]
 
 id_pkcs9, id_contentType, id_messageDigest, id_signingTime, id_binarySigningTime :: OID
-id_sha256, id_sha512 :: OID
+id_sha256, id_sha512, id_ct_signedChecklist, id_ct_aspa, id_ct_rpkiSignedPrefixList :: OID
+id_signedData, id_ct_rpkiManifest, id_ct_routeOriginAuthz, id_ct_rpkiGhostbusters :: OID
 
 id_pkcs9                   = [1, 2, 840, 113549, 1, 9]
 id_contentType             = id_pkcs9 <> [3]
 id_messageDigest           = id_pkcs9 <> [4]
 id_signingTime             = id_pkcs9 <> [5]
 id_binarySigningTime       = id_pkcs9 <> [16, 2, 46]
+
+-- https://www.rfc-editor.org/rfc/rfc5652#section-5.1
+id_signedData              = [1, 2, 840, 113549, 1, 7, 2]
+
+-- eContentType OIDs, one per signed object type
+-- https://www.rfc-editor.org/rfc/rfc6488#section-2.1.3.1
+id_ct_rpkiManifest         = id_pkcs9 <> [16, 1, 26]   -- RFC 9286
+id_ct_routeOriginAuthz     = id_pkcs9 <> [16, 1, 24]   -- RFC 9582
+id_ct_rpkiGhostbusters     = id_pkcs9 <> [16, 1, 35]   -- RFC 6493
+id_ct_signedChecklist      = id_pkcs9 <> [16, 1, 48]   -- RFC 9323
+id_ct_aspa                 = id_pkcs9 <> [16, 1, 49]
+id_ct_rpkiSignedPrefixList = id_pkcs9 <> [16, 1, 51]
                        
                         
 id_sha256            = [2, 16, 840, 1, 101, 3, 4, 2, 1]

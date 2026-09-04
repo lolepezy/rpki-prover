@@ -19,6 +19,7 @@ import           Data.Maybe (isJust, isNothing)
 import qualified Data.Set                         as Set
 import qualified Data.Map.Strict                  as Map
 
+import           Crypto.PubKey.ECC.Types           (CurveName(..))
 import qualified Crypto.PubKey.RSA.Types          as RSA
 import qualified Crypto.Hash.SHA1                 as SHA1
 import qualified Crypto.Hash.SHA256               as SHA256
@@ -685,27 +686,27 @@ prevalidateObject rpkiObject = do
             validateCrlStructure crl
             pure $ CrlRO crl
         MftRO mft -> do
-            signingTime <- validateCmsStructure mft
+            signingTime <- validateCmsStructure id_ct_rpkiManifest mft
             validateMftStructure mft
             pure $ MftRO $ extractCMSObject signingTime mft
         RoaRO roa -> do
-            signingTime <- validateCmsStructure roa
+            signingTime <- validateCmsStructure id_ct_routeOriginAuthz roa
             pure $! RoaRO $ extractCMSObject signingTime roa
         GbrRO gbr -> do
-            signingTime <- validateCmsStructure gbr
+            signingTime <- validateCmsStructure id_ct_rpkiGhostbusters gbr
             pure $! GbrRO $ extractCMSObject signingTime gbr
         AspaRO aspa -> do
-            signingTime <- validateCmsStructure aspa
+            signingTime <- validateCmsStructure id_ct_aspa aspa
             validateAspaContent aspa
             pure $! AspaRO $ extractCMSObject signingTime aspa
         SplRO spl -> do
-            signingTime <- validateCmsStructure spl
+            signingTime <- validateCmsStructure id_ct_rpkiSignedPrefixList spl
             pure $! SplRO $ extractCMSObject signingTime spl
         BgpRO bgp -> do
             validateBgpCertStructure bgp
             pure $! BgpRO $ extractCert bgp
         RscRO rsc -> do
-            signingTime <- validateCmsStructure rsc
+            signingTime <- validateCmsStructure id_ct_signedChecklist rsc
             pure $! RscRO $ extractCMSObject signingTime rsc
 
 
@@ -832,12 +833,28 @@ validateBgpCertStructure bgp@BgpCerObject { ski } = do
     void $ validateBgpCertAsns $ getResources bgp
 
 
--- | Validate the CMS envelope structure common to all signed objects.
--- Returns the (unique) signing time from the signed attributes.
-validateCmsStructure :: CMSBasedObject a -> PureValidatorT Instant
-validateCmsStructure cmsObject = do
-    let cms@(CMS SignedObject { soContent = sd }) = cmsPayload cmsObject
+{- | Validate the CMS envelope structure common to all signed objects.
+   Returns the (unique) signing time from the signed attributes.
+
+   `expectedContentType` is the eContentType OID of this particular kind of signed 
+   object (RFC 6488 section 2.1.3.1), e.g. id-ct-rpkiManifest for a manifest.
+-}
+validateCmsStructure :: OID -> CMSBasedObject a -> PureValidatorT Instant
+validateCmsStructure expectedContentType cmsObject = do
+    let cms@(CMS SignedObject { soContentType, soContent = sd }) = cmsPayload cmsObject
     let SignedData { scVersion, scSignerInfos, scEncapContentInfo, scCertificate } = sd
+
+    -- RFC 6488 §2.1: the ContentInfo contentType must be id-signedData
+    let ContentType outerContentType = soContentType
+    unless (outerContentType == id_signedData) $
+        vError $ WrongSignedDataContentType outerContentType
+
+    -- RFC 6488 §2.1.3.1: eContentType must be the OID for this object type.
+    -- Without this check an object of one type can carry another type's content 
+    -- type OID and still be accepted here, while other RPs reject it.
+    let ContentType actualContentType = eContentType scEncapContentInfo
+    unless (actualContentType == expectedContentType) $
+        vError $ WrongEContentType expectedContentType actualContentType
 
     -- RFC 6488 §2.1.1: SignedData.version must be 3
     let CMSVersion v = scVersion
@@ -911,10 +928,50 @@ validateCmsStructure cmsObject = do
     validateEeCertExtensions eeExtensions
     validateDerivedCertUris $ deriveCertUrisFromExtensions eeExtensions
 
+    -- An RSC is transferred out of band rather than published in a repository, 
+    -- so its EE certificate has no SIA (https://www.rfc-editor.org/rfc/rfc9323). 
+    -- Every other signed object must point at its own publication location.
+    unless (expectedContentType == id_ct_signedChecklist) $ 
+        validateSignedObjectSia eeExtensions
+
     validateCmsEeSignatureConsistency cms
 
     pure signingTime
 
+
+{- | An EE certificate's SIA must carry an id-ad-signedObject accessDescription 
+   with an rsync URI, identifying where the signed object itself is published.
+   https://www.rfc-editor.org/rfc/rfc6487#section-4.8.8.2
+-}
+validateSignedObjectSia :: [ExtensionRaw] -> PureValidatorT ()
+validateSignedObjectSia extensions = do 
+    sia <- validateRequiredNonCriticalExtension extensions id_pe_sia
+    case extractSiaValue sia id_ad_signedObject >>= either (const Nothing) Just . extractURI of 
+        Nothing  -> vError $ CertBrokenExtension id_pe_sia sia
+        Just uri 
+            | U.isRsyncURI uri -> pure ()
+            | otherwise        -> vError $ UnknownUriType uri
+
+{- | Every certificate in the RPKI is signed by a CA using RSA PKCS#1 v1.5 with 
+   SHA-256, https://www.rfc-editor.org/rfc/rfc7935#section-3.
+
+   NOTE: this is about the algorithm the *issuer* signed with, which is unrelated 
+   to the subject's own key. A BGPSec router certificate carries an ECDSA P-256 
+   key (RFC 8608) but is still signed by its parent CA with RSA/SHA-256.
+-}
+validateSignatureAlgorithm :: CertificateWithSignature -> PureValidatorT ()
+validateSignatureAlgorithm certWS = do 
+    let SignatureAlgorithmIdentifier sigAlg = cwsSignatureAlgorithm certWS
+    let innerSigAlg = certSignatureAlg $ cwsX509certificate certWS
+
+    -- https://www.rfc-editor.org/rfc/rfc5280#section-4.1.1.2, the outer 
+    -- signatureAlgorithm must be identical to the inner signature field
+    unless (sigAlg == innerSigAlg) $
+        vError $ SignatureAlgorithmMismatch (Text.pack $ show sigAlg) (Text.pack $ show innerSigAlg)
+
+    case sigAlg of
+        SignatureALG HashSHA256 PubKeyALG_RSA -> pure ()
+        _ -> vError $ UnsupportedSignatureAlgorithm $ Text.pack $ show sigAlg
 
 -- | Validate manifest-specific structural invariants.
 validateMftStructure :: MftObject -> PureValidatorT ()
@@ -957,7 +1014,7 @@ validateCrlStructure CrlObject { signCrl = SignCRL { thisUpdateTime, nextUpdateT
 
 -- | Validate X.509 certificate properties checkable without a parent certificate.
 validateCertX509Structure :: CertificateWithSignature -> PureValidatorT ()
-validateCertX509Structure CertificateWithSignature { cwsX509certificate = cert } = do
+validateCertX509Structure certWS@CertificateWithSignature { cwsX509certificate = cert } = do
     -- notBefore must be strictly before notAfter        
     let (nb, na) = certValidity cert
     when (newInstant nb >= newInstant na) $
@@ -980,8 +1037,18 @@ validateCertX509Structure CertificateWithSignature { cwsX509certificate = cert }
                     "RSA public exponent must be 65537, got "
                     <> Text.pack (show (RSA.public_e k))
 
-        PubKeyEC _ -> pure ()   -- EC keys are valid (BGPsec)
-        _          -> vError $ InvalidPublicKey "Unsupported public key type for RPKI"
+        -- EC keys are only used by BGPSec router certificates and must be on P-256.
+        -- https://www.rfc-editor.org/rfc/rfc8608#section-3.1
+        PubKeyEC (PubKeyEC_Named curve _)
+            | curve == SEC_p256r1 -> pure ()
+            | otherwise -> vError $ InvalidPublicKey $
+                "EC public key must be on the P-256 curve, got " <> Text.pack (show curve)
+        PubKeyEC PubKeyEC_Prime {} ->
+            vError $ InvalidPublicKey "EC public key must use a named curve, not explicit parameters"
+
+        _ -> vError $ InvalidPublicKey "Unsupported public key type for RPKI"
+
+    validateSignatureAlgorithm certWS
 
 
 -- | Verify that the declared SKI equals SHA-1 of the subjectPublicKey bit-string value.
