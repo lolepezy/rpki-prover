@@ -257,6 +257,8 @@ executable rpki-prover
       Paths_rpki_prover
   hs-source-dirs:
       app
+  c-sources:
+      cbits/malloc_arenas.c
   ghc-options:
       -threaded
       -O2

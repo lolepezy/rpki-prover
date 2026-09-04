@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
 
@@ -41,8 +40,6 @@ import           Options.Applicative
 import           Numeric.Natural
 import           GHC.Generics (Generic)
 
-import           Foreign.C.Types (CInt(..))
-
 import           Shower
 
 import           RPKI.AppTypes
@@ -77,7 +74,6 @@ import           RPKI.Meta.UniqueId
 
 main :: IO ()
 main = do
-    limitMallocArenas
     cliOptions@CLIOptions{..} <- execParser $
             info (cliOptionsParser <**> helper)
                  (fullDesc <> progDesc ("RPKI prover, relying party software for RPKI, version " <> Text.unpack rpkiProverVersion))
@@ -989,29 +985,3 @@ withLogConfig CLIOptions{..} f =
             (Nothing, Nothing) -> MainLog
             (_,        Just _) -> WorkerLog
             
-
-
-#if defined(linux_HOST_OS)
-foreign import ccall unsafe "mallopt"
-    c_mallopt :: CInt -> CInt -> IO CInt
-
--- | Cap glibc's per-thread malloc arenas.
---
--- The SQLite connection pool is hit concurrently from many OS threads (one
--- per in-flight FFI call), and by default glibc hands each contending
--- thread its own ~64MB arena that's never released back to the OS. With a
--- pool sized to cpu-count, that alone can balloon RES into the gigabytes
--- even though live heap data stays small. Skip it if the user already set
--- MALLOC_ARENA_MAX themselves.
-limitMallocArenas :: IO ()
-limitMallocArenas = do
-    alreadySet <- lookupEnv "MALLOC_ARENA_MAX"
-    case alreadySet of
-        Just _  -> pure ()
-        Nothing -> void $ c_mallopt mArenaMax 2
-  where
-    mArenaMax = -8 -- M_ARENA_MAX, from malloc.h
-#else
-limitMallocArenas :: IO ()
-limitMallocArenas = pure ()
-#endif            
