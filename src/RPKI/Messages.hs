@@ -191,6 +191,10 @@ toValidationMessage = \case
       CertBrokenExtension oid b -> [i|Certificate extension #{fmtOID oid} is broken: #{b}.|]
       UnknownCriticalCertificateExtension oid b -> [i|Unknown critical certificate extension, OID: #{fmtOID  oid}, content #{b}.|]
       MissingRequiredCertificateExtension oid -> [i|Missing required certificate extension #{fmtOID oid}.|]
+      ExtensionMustBeAbsent oid -> [i|Certificate extension #{fmtOID oid} must not be present.|]
+      CertVersionInvalid v -> [i|Certificate version is #{v + 1}, must be 3.|]
+      TimeNotRepresentable t -> 
+        [i|#{t} is outside of the representable time range (roughly the years 1678 to 2262).|]
       MissingIPOrASResourcesExtension -> [i|Certificate must contain at least one of IP resources or AS resources extensions.|]
       CertificateExtensionMustBeCritical oid -> [i|Certificate extension #{fmtOID oid} must be marked critical.|]
       CertificateExtensionMustBeNonCritical oid -> [i|Certificate extension #{fmtOID oid} must be marked non-critical.|]

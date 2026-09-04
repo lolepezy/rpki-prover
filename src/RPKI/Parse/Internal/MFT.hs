@@ -27,35 +27,45 @@ parseMft bs = do
     hash' <- getMetaFromSigned signedMft bs
     pure $ newCMSObject hash' (CMS signedMft)
     where
+        {-
+            Manifest ::= SEQUENCE {
+                version     [0] INTEGER DEFAULT 0,
+                manifestNumber  INTEGER (0..MAX),
+                thisUpdate      GeneralizedTime,
+                nextUpdate      GeneralizedTime,
+                fileHashAlg     OBJECT IDENTIFIER,
+                fileList        SEQUENCE SIZE (0..MAX) OF FileAndHash }
+
+            https://www.rfc-editor.org/rfc/rfc9286#section-4.2
+        -}
         parseManifest :: ParseASN1 Manifest
-        parseManifest = onNextContainer Sequence $
-            (,,) <$> getNext <*> getNext <*> getNext >>= \case
-                    (IntVal manifestNumber,
-                        ASN1Time TimeGeneralized thisUpdateTime' _,
-                        ASN1Time TimeGeneralized nextUpdateTime' _) -> do
-                            hashAlg_ <- getOID asSha256Only "Wrong hash algorithm OID"                            
-                            entries <- getEntries
-                            -- TODO translate to UTC       
-                            mn <- makeMftNumber manifestNumber        
-                            pure $ Manifest mn hashAlg_ 
-                                (newInstant thisUpdateTime') (newInstant nextUpdateTime') entries
+        parseManifest = onNextContainer Sequence $ do
+            parseVersion
+            manifestNumber  <- getInteger pure "Wrong manifest number"
+            thisUpdateTime' <- getTime "No ThisUpdate time"
+            nextUpdateTime' <- getTime "No NextUpdate time"
+            hashAlg_        <- getOID asSha256Only "Wrong hash algorithm OID"
+            entries         <- getEntries
+            -- TODO translate to UTC
+            mn        <- makeMftNumber manifestNumber
+            thisUpdate <- makeInstant "thisUpdate" thisUpdateTime'
+            nextUpdate <- makeInstant "nextUpdate" nextUpdateTime'
+            pure $ Manifest mn hashAlg_ thisUpdate nextUpdate entries
 
-                    -- TODO Check version?
-                    (IntVal version,
-                        IntVal manifestNumber,
-                        ASN1Time TimeGeneralized thisUpdateTime' _) -> do
-                            when (version /= 1) $ 
-                                throwParseError $ "Unexpected manifest version: " ++ show version
-                            nextUpdateTime' <- getTime "No NextUpdate time"                            
-                            hashAlg_        <- getOID asSha256Only "Wrong hash algorithm OID"
-                            entries <- getEntries    
+        -- Reject times that `Instant` cannot represent rather than wrapping them
+        makeInstant what t = 
+            maybe (throwParseError $ "Manifest " <> what <> " is out of the representable range: " <> show t) 
+                  pure (newInstantChecked t)
 
-                            -- TODO translate to UTC
-                            mn <- makeMftNumber manifestNumber
-                            pure $ Manifest mn hashAlg_ 
-                                (newInstant thisUpdateTime') (newInstant nextUpdateTime') entries
-
-                    s -> throwParseError $ "Unexpected manifest content: " ++ show s
+        -- The version is `[0] EXPLICIT INTEGER DEFAULT 0`. DER requires DEFAULT 
+        -- values to be omitted, but accept an explicitly encoded 0 as well -- 
+        -- unlike the value 1, which the previous version of this parser required 
+        -- from an untagged integer that could never appear here in the first place.
+        parseVersion =
+            getNextContainerMaybe (Container Context 0) >>= \case
+                Nothing          -> pure ()
+                Just [IntVal 0]  -> pure ()
+                Just s           -> throwParseError $ "Unexpected manifest version: " ++ show s
 
         makeMftNumber n = either throwParseError pure $ makeSerial n
 

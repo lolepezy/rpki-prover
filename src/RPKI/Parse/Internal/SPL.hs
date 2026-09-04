@@ -58,15 +58,15 @@ parseSpl bs = do
 
         case addressFamily of
             Ipv4F 
-                | prefixMaxLength <= 0  -> 
-                    throwParseError [i|Negative or zero value for IPv4 prefix max length: #{prefixMaxLength}|]
+                | prefixMaxLength < 0  -> 
+                    throwParseError [i|Negative value for IPv4 prefix max length: #{prefixMaxLength}|]
                 | prefixMaxLength > 32 -> 
                     throwParseError [i|Too big value for IPv4 prefix max length: #{prefixMaxLength}|]
                 | otherwise ->
                     pure $ mkPrefix nonZeroBitCount prefixMaxLength Ipv4P
             Ipv6F 
-                | prefixMaxLength <= 0  -> 
-                    throwParseError [i|Negative or zero value for IPv6 prefix max length: #{prefixMaxLength}|]
+                | prefixMaxLength < 0  -> 
+                    throwParseError [i|Negative value for IPv6 prefix max length: #{prefixMaxLength}|]
                 | prefixMaxLength > 128 -> 
                     throwParseError [i|Too big value for IPv6 prefix max length: #{prefixMaxLength}|]
                 | otherwise ->

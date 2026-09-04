@@ -75,6 +75,8 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         CertificateExtensionMustBeCritical OID |
                         CertificateExtensionMustBeNonCritical OID |
                         MissingCriticalExtension OID |
+                        ExtensionMustBeAbsent OID |
+                        CertVersionInvalid Int |
                         BrokenKeyUsage Text |
                         WeirdCaPublicationPoints [RpkiURL] | 
                         ObjectHasMultipleLocations [RpkiURL] |
@@ -160,6 +162,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         InvalidPublicKey Text |
                         DuplicateManifestFilenames [Text] |
                         CertValidityPeriodInvalid |
+                        TimeNotRepresentable Text |
                         SerialNumberOutOfBounds Text |
                         ReferentialIntegrityError Text 
     deriving stock (Show, Eq, Ord, Generic)
