@@ -152,6 +152,10 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         UnexpectedSignedAttribute OID |
                         EECertSKIMismatch |
                         EECertContentTypeMismatch |
+                        WrongSignedDataContentType OID |
+                        WrongEContentType { expectedOid :: OID, actualOid :: OID } |
+                        UnsupportedSignatureAlgorithm Text |
+                        SignatureAlgorithmMismatch Text Text |
                         SKINotMatchingPublicKey |
                         InvalidPublicKey Text |
                         DuplicateManifestFilenames [Text] |
