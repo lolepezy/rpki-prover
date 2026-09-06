@@ -49,7 +49,10 @@ data RtrState = RtrState {
 
 data RtrPayloads = RtrPayloads {
         vrps       :: PerTA Vrps,
-        uniqueVrps :: Vrps,
+        -- Lazy on purpose (StrictData is on for this module): nothing needs
+        -- the deduplicated set unless RTR or the validity API is running, and
+        -- the thunk only closes over `vrps`, which is retained anyway.
+        uniqueVrps :: ~Vrps,
         bgpSec     :: Set BGPSecPayload
     }
     deriving stock (Show, Eq, Generic)
