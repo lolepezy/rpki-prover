@@ -48,10 +48,9 @@ applySlurmToVrps slurm (PerTA vrps) =
     PerTA (MonoidalMap.singleton slurmVrpName assertedVrps)
 
   where     
-    filteredVrps = Vrps . V.filter filterFunc . unVrps
+    filteredVrps = filterVrps filterFunc
 
-    assertedVrps = Vrps 
-        $ V.fromList 
+    assertedVrps = createVrps
         $ map toVrp 
         $ slurm ^. #locallyAddedAssertions . #prefixAssertions
       where

@@ -43,8 +43,8 @@ testUniqueVrpCount =
 perTaVrps :: PerTA Vrps
 perTaVrps =
     toPerTA
-        [ (TaName "ta-1", Vrps $ V.fromList [duplicateVrp, duplicateVrp, uniqueVrp])
-        , (TaName "ta-2", Vrps $ V.fromList [duplicateVrp, uniqueVrp])
+        [ (TaName "ta-1", createVrps [duplicateVrp, duplicateVrp, uniqueVrp])
+        , (TaName "ta-2", createVrps [duplicateVrp, uniqueVrp])
         ]
 
 

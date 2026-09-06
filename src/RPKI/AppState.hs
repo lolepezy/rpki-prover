@@ -70,7 +70,7 @@ data AppState = AppState {
 
 
 mkRtrPayloads :: PerTA Vrps -> Set BGPSecPayload -> RtrPayloads
-mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrpsBy cmpVrps $ allTAs vrps, .. }
+mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrpsPackedBy cmpPackedVrps $ allTAs vrps, .. }
 
 -- 
 newAppState :: IO AppState
@@ -108,7 +108,7 @@ completeVersion AppState {..} worldVersion rtrPayloads slurm = do
 updatePrefixIndex :: AppState -> RtrPayloads -> STM ()
 updatePrefixIndex AppState {..} rtrPayloads = 
     writeTVar prefixIndex $! 
-        force $ Just $ createPrefixIndex $ rtrPayloads ^. #uniqueVrps
+        force $ Just $ createPrefixIndex $ vrpsToList $ rtrPayloads ^. #uniqueVrps
 
 getOrCreateWorldVerion :: AppState -> IO WorldVersion
 getOrCreateWorldVerion AppState {..} = 

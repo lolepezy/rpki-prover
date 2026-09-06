@@ -40,8 +40,8 @@ import           RPKI.Store.Types (RpkiObjectLifecycle(..), ObjectOriginal(..))
 toVrpDtos :: PerTA Vrps -> [VrpDto]
 toVrpDtos vrpsPerTa =     
     [ VrpDto {..} | 
-        (TaName ta, Vrps vrps) <- perTA vrpsPerTa,
-        Vrp asn prefix maxLength <- V.toList vrps ]
+        (TaName ta, vrps) <- perTA vrpsPerTa,
+        Vrp asn prefix maxLength <- vrpsToList vrps ]
 
 toVrpDto :: Vrp -> TaName -> VrpDto
 toVrpDto (Vrp a p len) (TaName ta) = VrpDto a p len ta

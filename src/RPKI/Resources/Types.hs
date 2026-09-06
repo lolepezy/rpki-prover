@@ -13,7 +13,8 @@ import qualified Data.ByteString                       as BS
 import           Data.Kind
 import           Data.Store
 import           Data.Vector                           (Vector)
-import           Data.Word                             (Word8, Word32)
+import           Data.Bits                             (shiftL, shiftR, (.|.), (.&.))
+import           Data.Word                             (Word8, Word32, Word64)
 import           GHC.Generics
 
 import qualified HaskellWorks.Data.Network.Ip.Ipv4     as V4
@@ -48,6 +49,41 @@ newtype ASN = ASN Word32
 newtype PrefixLength = PrefixLength Word8
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
+
+
+-- ---------------------------------------------------------------------------
+-- Prefixes as plain words
+--
+-- A prefix is an address plus a mask length, and nothing else. These convert
+-- between that and the boxed representation, so prefixes can be stored packed
+-- (see 'RPKI.Domain.PackedVrp') instead of as a chain of newtypes over an
+-- IpBlock. The word order is chosen so that comparing the words gives the same
+-- answer as comparing the prefixes: derived Ord on Ipv4Prefix compares the
+-- address then the mask, and on Ipv6Prefix the four address words in order,
+-- which is what (hi, lo) compared as unsigned 64-bit words reproduces.
+-- ---------------------------------------------------------------------------
+
+ipv4PrefixWords :: Ipv4Prefix -> (Word32, Word8)
+ipv4PrefixWords (Ipv4Prefix (V4.IpBlock (V4.IpAddress w) (V4.IpNetMask m))) = (w, m)
+
+mkIpv4Prefix :: Word32 -> Word8 -> Ipv4Prefix
+mkIpv4Prefix w m = Ipv4Prefix (V4.IpBlock (V4.IpAddress w) (V4.IpNetMask m))
+
+ipv6PrefixWords :: Ipv6Prefix -> (Word64, Word64, Word8)
+ipv6PrefixWords (Ipv6Prefix (V6.IpBlock (V6.IpAddress (w1, w2, w3, w4)) (V6.IpNetMask m))) =
+    (joinWords w1 w2, joinWords w3 w4, m)
+
+mkIpv6Prefix :: Word64 -> Word64 -> Word8 -> Ipv6Prefix
+mkIpv6Prefix hi lo m =
+    Ipv6Prefix (V6.IpBlock (V6.IpAddress (hiWord hi, loWord hi, hiWord lo, loWord lo))
+                           (V6.IpNetMask m))
+
+joinWords :: Word32 -> Word32 -> Word64
+joinWords hi lo = (fromIntegral hi `shiftL` 32) .|. fromIntegral lo
+
+hiWord, loWord :: Word64 -> Word32
+hiWord w = fromIntegral (w `shiftR` 32)
+loWord w = fromIntegral (w .&. 0xFFFFFFFF)
 
 data AsResource = AS ASN
                 | ASRange ASN ASN

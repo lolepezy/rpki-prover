@@ -190,7 +190,14 @@ data SystemConfig = SystemConfig {
         rsyncWorkerMemoryMb      :: Int,
         rrdpWorkerMemoryMb       :: Int,
         validationWorkerMemoryMb :: Int,
-        cleanupWorkerMemoryMb    :: Int
+        cleanupWorkerMemoryMb    :: Int,
+        -- | How often to write a memory sample to the log (see
+        -- 'RPKI.Metrics.Memory'). Zero switches the sampling off.
+        memoryMetricsInterval    :: Seconds,
+        -- | Give memory back to the OS when the C allocator is sitting on at
+        -- least this many megabytes of freed-but-retained space. Zero never
+        -- trims. Checked at every memory sample.
+        mallocTrimThresholdMb    :: Int
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -267,7 +274,9 @@ defaultConfig = Config {
         rsyncWorkerMemoryMb      = 1024,
         rrdpWorkerMemoryMb       = 1024,        
         validationWorkerMemoryMb = 2048,
-        cleanupWorkerMemoryMb    = 512
+        cleanupWorkerMemoryMb    = 512,
+        memoryMetricsInterval    = Seconds 60,
+        mallocTrimThresholdMb    = 64
     },
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {       

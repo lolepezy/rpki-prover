@@ -54,8 +54,14 @@ data ResourceUsage = ResourceUsage {
         latestCpuTime       :: LatestCPUTime,
         aggregatedCpuTime   :: AggregatedCPUTime,
         aggregatedClockTime :: TimeMs,
+        -- | The Haskell heap, as the RTS reports it.
         maxMemory           :: MaxMemory,
-        avgMemory           :: AvgMemory
+        avgMemory           :: AvgMemory,
+        -- | The whole process (RSS), so anything allocated outside the Haskell
+        -- heap -- SQLite's C allocations above all -- is accounted for too.
+        -- See 'RPKI.Metrics.Memory' for the full breakdown.
+        maxProcessMemory    :: MaxMemory,
+        avgProcessMemory    :: AvgMemory
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary)
@@ -81,14 +87,16 @@ data SystemInfo = SystemInfo {
 newSystemInfo :: Instant -> SystemInfo
 newSystemInfo = SystemInfo mempty 
 
-cpuMemMetric :: Text -> CPUTime -> TimeMs -> MaxMemory -> SystemMetrics
-cpuMemMetric scope cpuTime clockTime maxMemory' = SystemMetrics {
-        resources = updateMetricInMap 
-                        (newScope scope) 
-                        ((#latestCpuTime %~ (<> LatestCPUTime cpuTime)) . 
-                         (#aggregatedCpuTime %~ (<> AggregatedCPUTime cpuTime)) . 
-                         (#aggregatedClockTime %~ (<> clockTime)) .  
+cpuMemMetric :: Text -> CPUTime -> TimeMs -> MaxMemory -> MaxMemory -> SystemMetrics
+cpuMemMetric scope cpuTime clockTime maxMemory' processMemory' = SystemMetrics {
+        resources = updateMetricInMap
+                        (newScope scope)
+                        ((#latestCpuTime %~ (<> LatestCPUTime cpuTime)) .
+                         (#aggregatedCpuTime %~ (<> AggregatedCPUTime cpuTime)) .
+                         (#aggregatedClockTime %~ (<> clockTime)) .
                          (#maxMemory %~ (<> maxMemory')) .
-                         (#avgMemory %~ (<> newAvgMemory maxMemory')))
+                         (#avgMemory %~ (<> newAvgMemory maxMemory')) .
+                         (#maxProcessMemory %~ (<> processMemory')) .
+                         (#avgProcessMemory %~ (<> newAvgMemory processMemory')))
                         mempty
     }

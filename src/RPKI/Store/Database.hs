@@ -11,6 +11,7 @@ module RPKI.Store.Database (
     TxMode(..),
     -- * Transaction runners
     withReadTx, withWriteTx, roTx, rwTx, roTxT, rwTxT,
+    preparedStatementCount,
     -- * ValidatorT integration
     roAppTx, rwAppTx, appTx, roAppTxEx, rwAppTxEx, appTxEx,
     TxRollbackException(..),
@@ -71,7 +72,7 @@ import           Control.Monad.Trans.Maybe
 import           Data.Generics.Product.Typed
 
 import qualified Data.List                as List
-import           Data.Maybe               (catMaybes, fromMaybe, listToMaybe)
+import           Data.Maybe               (catMaybes, fromMaybe, listToMaybe, mapMaybe)
 import qualified Data.List.NonEmpty       as NonEmpty
 import qualified Data.Set                 as Set
 import           Data.Text                (Text)
@@ -132,6 +133,11 @@ withReadTx (DB sdb) = SQLite.withReadTx sdb
 
 withWriteTx :: MonadIO m => DB -> (Tx 'RW -> IO a) -> m a
 withWriteTx (DB sdb) = SQLite.withWriteTx sdb
+
+-- | Prepared statements currently cached across all connections, for the
+-- memory metrics (see 'RPKI.Metrics.Memory').
+preparedStatementCount :: MonadIO m => DB -> m Int
+preparedStatementCount (DB sdb) = SQLite.preparedStatementCount sdb
 
 roTx :: MonadIO m => DB -> (Tx 'RO -> IO a) -> m a
 roTx = withReadTx
@@ -218,15 +224,30 @@ chunksOf n xs =
 -- | Split `keys` into SQLite-parameter-limit-safe batches (see `chunksOf`),
 -- generating a ":k1, :k2, ..." placeholder list and matching named params
 -- for each batch, ready to splice into an `IN (...)` clause.
+--
+-- Batch sizes are rounded up to a power of two, padding with a repeat of the
+-- first key -- duplicates inside `IN (...)` are harmless. Without the padding
+-- every distinct batch size yields a distinct SQL string, and since prepared
+-- statements are cached per SQL text (see 'RPKI.Store.SQLite.CachedConn'),
+-- a full spread of arities costs ~46mb of SQLite heap per connection against
+-- ~0.5mb for the 10 power-of-two buckets.
 inClauseBatches :: ToField k => [k] -> [(Text, [NamedParam])]
-inClauseBatches = map toBatch . chunksOf 500
+inClauseBatches = mapMaybe toBatch . chunksOf maxBatch
   where
-    toBatch batch =
-        let keyParams = zip [1 :: Int ..] batch
+    maxBatch = 512
+
+    toBatch []             = Nothing
+    toBatch batch@(first : _) =
+        let padded = batch <> replicate (bucketSize (length batch) - length batch) first
+            keyParams = zip [1 :: Int ..] padded
             placeholders = Text.intercalate ", "
                 [":k" <> Text.pack (show i) | (i, _) <- keyParams]
             params = [ (":k" <> Text.pack (show i)) := key | (i, key) <- keyParams ]
-        in (placeholders, params)
+        in Just (placeholders, params)
+
+    -- Round up to the next power of two, so only ~10 distinct arities
+    -- (and so ~10 cached prepared statements) ever exist per call site.
+    bucketSize n = fromMaybe maxBatch $ List.find (>= n) $ takeWhile (<= maxBatch) $ iterate (* 2) 1
 
 -- ---------------------------------------------------------------------------
 -- Object functions

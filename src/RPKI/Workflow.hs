@@ -58,6 +58,7 @@ import           RPKI.Repository
 import           RPKI.Fetch
 import           RPKI.Logging
 import           RPKI.Metrics.System
+import           RPKI.Metrics.Memory
 import           RPKI.Http.Types
 import           RPKI.Http.Dto
 import qualified RPKI.Store.Database               as DB
@@ -259,17 +260,19 @@ runAll appContext@AppContext {..} tals = do
         (do 
             prometheusMetrics <- createPrometheusMetrics config
 
-            withWorkflowShared appContext prometheusMetrics tals $ \workflowShared ->           
-                case config ^. #proverRunMode of     
-                    ServerMode -> 
-                        void $ concurrently                    
+            withWorkflowShared appContext prometheusMetrics tals $ \workflowShared ->
+                case config ^. #proverRunMode of
+                    ServerMode ->
+                        void $ concurrently
                             (concurrently
-                                (runScheduledTasks workflowShared)
-                                (revalidate workflowShared))
-                            runRtrIfConfigured            
+                                (concurrently
+                                    (runScheduledTasks workflowShared)
+                                    (revalidate workflowShared))
+                                logMemoryStatsPeriodically)
+                            runRtrIfConfigured
 
-                    OneOffMode _ -> 
-                        void $ revalidate workflowShared                                  
+                    OneOffMode _ ->
+                        void $ revalidate workflowShared
         )
   where
     allTaNames = map getTaName tals
@@ -428,12 +431,42 @@ runAll appContext@AppContext {..} tals = do
                 runConcurrentlyIfPossible logger task (workflowShared ^. #runningTasks) (actualAction jobRun) 
                 pure RanBefore
 
-    updateMainResourcesStat = do 
-        (cpuTime, maxMemory) <- processStat
+    -- Sample the process's memory every `memoryMetricsInterval` and write it
+    -- to the log as one line of JSON. The RTS only accounts for the Haskell
+    -- heap, so without this the C allocator's share -- SQLite's, mostly -- is
+    -- invisible; having it as a time series is what makes it possible to
+    -- correlate growth with whatever else the log says was happening.
+    logMemoryStatsPeriodically = do
+        let interval = config ^. typed @SystemConfig . #memoryMetricsInterval
+        when (interval > 0) $ forever $ do
+            threadDelay $ toMicroseconds interval
+            stats <- sampleMemory
+            logInfo logger [i|memory-stats #{memoryStatsJson stats}|]
+            trimMallocIfWorthIt stats
+
+    sampleMemory = getMemoryStats =<< DB.preparedStatementCount =<< readTVarIO database
+
+    -- Reading payload BLOBs out of SQLite allocates tens of megabytes at a
+    -- time; freeing them only returns the memory to the C allocator's free
+    -- lists, so it accumulates to the high-water mark of that churn and never
+    -- comes back on its own. Hand it back once it is worth the syscalls.
+    trimMallocIfWorthIt stats = do
+        let thresholdMb = config ^. typed @SystemConfig . #mallocTrimThresholdMb
+        let freeMb = fromIntegral (unSize (stats ^. #mallocFree)) `div` (1024 * 1024 :: Int)
+        when (thresholdMb > 0 && freeMb >= thresholdMb) $ do
+            released <- trimMalloc
+            when released $ do
+                after <- sampleMemory
+                let mb s = unSize (s ^. #processRss) `div` (1024 * 1024)
+                logDebug logger
+                    [i|Trimmed the C allocator sitting on #{freeMb}mb of freed space, RSS #{mb stats}mb -> #{mb after}mb.|]
+
+    updateMainResourcesStat = do
+        (cpuTime, maxMemory, processMemory) <- processStat
         SystemInfo {..} <- readTVarIO $ appState ^. #system
         Now now <- thisInstant
         let clockTime = durationMs startUpTime now
-        pushSystem logger $ cpuMemMetric "root" cpuTime clockTime maxMemory        
+        pushSystem logger $ cpuMemMetric "root" cpuTime clockTime maxMemory processMemory
 
     validateTAs workflowShared worldVersion talsToValidate = do  
         let taNames = map getTaName talsToValidate
@@ -469,7 +502,7 @@ runAll appContext@AppContext {..} tals = do
                             scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
                             
                             logWorkerDone logger workerId wr
-                            pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory
+                            pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory processMemory
                         
                             let topDownState = workerVS <> vs
                             logDebug logger [i|Validation result: 
@@ -516,7 +549,7 @@ runAll appContext@AppContext {..} tals = do
                             pure $ Left [i|Cache cleanup process failed: #{message}.|]
                         Right r -> do
                             logWorkerDone logger workerId wr
-                            pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxMemory
+                            pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxMemory processMemory
                             pure $ Right r    
 
     -- Delete temporary files and any stale storage-backend state
@@ -710,12 +743,10 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
    
         pure $ addUniqueVRPCount (toPerTA vrps) slurmValidations
       where
-        -- TODO This is very expensive and _probably_ there's a faster 
-        -- way to do it then Set.fromList
         addUniqueVRPCount vrps !vs = let
                 vrpCountLens = typed @Metrics . #vrpCounts
                 totalUnique = Count (fromIntegral $ uniqueVrpCount vrps)        
-                perTaUnique = fmap (Count . fromIntegral . Set.size . Set.fromList . V.toList . unVrps) (unPerTA vrps)   
+                perTaUnique = fmap (Count . fromIntegral . countUniqueVrps) (unPerTA vrps)   
             in vs & vrpCountLens . #totalUnique .~ totalUnique                
                   & vrpCountLens . #perTaUnique .~ perTaUnique
 

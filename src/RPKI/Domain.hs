@@ -13,6 +13,10 @@ import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
 import qualified Data.Vector              as V
+import qualified Data.Vector.Algorithms.Merge as VectorSort
+import qualified Data.Vector.Algorithms.Intro as VectorSortU
+import qualified Data.Vector.Unboxed      as VU
+import           Data.Word                (Word8, Word32, Word64)
 
 import           Data.Generics.Product.Typed
 
@@ -634,6 +638,13 @@ roaPayloadToVrps (VrpsPerAs asn v4s v6s) =
     map (\(Vrp4 p len) -> Vrp asn (Ipv4P p) len) v4s <>
     map (\(Vrp6 p len) -> Vrp asn (Ipv6P p) len) v6s
 
+roaPayloadToPacked :: VrpsPerAs -> [PackedVrp]
+roaPayloadToPacked (VrpsPerAs (ASN asn) v4s v6s) =
+    map (\(Vrp4 p (PrefixLength maxLen)) ->
+            let (w, len) = ipv4PrefixWords p in (asn, 0, fromIntegral w, 0, len, maxLen)) v4s <>
+    map (\(Vrp6 p (PrefixLength maxLen)) ->
+            let (hi, lo, len) = ipv6PrefixWords p in (asn, 1, hi, lo, len, maxLen)) v6s
+
 -- Signed Prefix List normalised payload
 data SplN = SplN ASN IpPrefix
     deriving stock (Show, Eq, Ord, Generic)
@@ -857,11 +868,78 @@ newtype TaName = TaName { unTaName :: Text }
 instance Show TaName where
     show = show . unTaName
 
-newtype Vrps = Vrps { unVrps :: V.Vector Vrp }
+-- | One VRP flattened into plain words: ASN, an IPv6 flag, the address as two
+-- 64-bit halves, the prefix length and the ROA max length.
+--
+-- Field order is deliberate: comparing packed VRPs componentwise reproduces
+-- derived Ord on 'Vrp' exactly (see 'unpackVrp'). The IPv6 flag stands in for
+-- the 'IpPrefix' constructor tag, which derived Ord compares first, and an
+-- IPv4 address in the high half compares like the Word32 it is.
+type PackedVrp = (Word32, Word8, Word64, Word64, Word8, Word8)
+
+-- | VRPs stored packed, in an unboxed vector.
+--
+-- This used to be a boxed @V.Vector Vrp@, which cost around 60 bytes per VRP
+-- against the 10-22 bytes a VRP actually carries. Worse, it was built lazily
+-- from 'Roas' -- @V.fromList@ forces the list spine but not the elements -- so
+-- every slot held a thunk that kept its source 'Vrp4'\/'Vrp6' alive, and the
+-- process paid for both representations at once plus the thunks in between.
+-- An unboxed vector cannot hold a thunk, so building one forces the conversion
+-- and lets the 'Roas' go.
+newtype Vrps = Vrps { packedVrps :: VU.Vector PackedVrp }
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (TheBinary, NFData)
-    deriving Semigroup via GenericSemigroup Vrps
-    deriving Monoid    via GenericMonoid Vrps
+
+instance Semigroup Vrps where
+    Vrps a <> Vrps b = Vrps (a VU.++ b)
+
+instance Monoid Vrps where
+    mempty = Vrps VU.empty
+
+packVrp :: Vrp -> PackedVrp
+packVrp (Vrp (ASN asn) prefix (PrefixLength maxLen)) =
+    case prefix of
+        Ipv4P p -> let (w, len)        = ipv4PrefixWords p in (asn, 0, fromIntegral w, 0, len, maxLen)
+        Ipv6P p -> let (hi, lo, len)   = ipv6PrefixWords p in (asn, 1, hi, lo, len, maxLen)
+
+unpackVrp :: PackedVrp -> Vrp
+unpackVrp (asn, isV6, hi, lo, len, maxLen) =
+    Vrp (ASN asn) prefix (PrefixLength maxLen)
+  where
+    prefix
+        | isV6 == 0 = Ipv4P $ mkIpv4Prefix (fromIntegral hi) len
+        | otherwise = Ipv6P $ mkIpv6Prefix hi lo len
+
+-- | Materialise the VRPs. Only worth doing where a consumer genuinely needs
+-- boxed 'Vrp' values; the packed form is what is kept in memory.
+vrpsToVector :: Vrps -> V.Vector Vrp
+vrpsToVector = V.map unpackVrp . V.convert . packedVrps
+
+vrpsToList :: Vrps -> [Vrp]
+vrpsToList = map unpackVrp . VU.toList . packedVrps
+
+vrpsCount :: Vrps -> Int
+vrpsCount = VU.length . packedVrps
+
+filterVrps :: (Vrp -> Bool) -> Vrps -> Vrps
+filterVrps f = Vrps . VU.filter (f . unpackVrp) . packedVrps
+
+-- | Sort and deduplicate in the packed form, given a comparator on packed
+-- VRPs. Nothing is materialised, so the result costs the same as the input.
+uniqVrpsPackedBy :: (PackedVrp -> PackedVrp -> Ordering) -> Vrps -> Vrps
+uniqVrpsPackedBy cmp (Vrps v)
+    | VU.null v = Vrps VU.empty
+    | otherwise = Vrps $ dedupSorted $ VU.modify (VectorSortU.sortBy cmp) v
+  where
+    dedupSorted sorted =
+        VU.ifilter (\i x -> i == 0 || sorted VU.! (i - 1) /= x) sorted
+
+-- | Number of distinct VRPs, without materialising any of them.
+countUniqueVrps :: Vrps -> Int
+countUniqueVrps (Vrps v)
+    | VU.null v = 0
+    | otherwise = let sorted = VU.modify VectorSortU.sort v
+                  in VU.length $ VU.ifilter (\i x -> i == 0 || sorted VU.! (i - 1) /= x) sorted
 
 newtype Roas = Roas { unRoas :: MonoidalMap ObjectKey VrpsPerAs }
     deriving stock (Show, Eq, Ord, Generic)
@@ -1130,7 +1208,7 @@ makeSerial i =
 
 
 estimateVrpCount :: PerTA Vrps -> Int 
-estimateVrpCount = sum . map (V.length . unVrps . snd) . perTA
+estimateVrpCount = sum . map (vrpsCount . snd) . perTA
 
 estimateVrpCountRoas :: Roas -> Int 
 estimateVrpCountRoas =
@@ -1141,32 +1219,44 @@ estimateVrpCountRoas =
   where
     payloadVrpCount (VrpsPerAs _ v4 v6) = length v4 + length v6
 
--- Precise but much more expensive
+-- Precise, and now no more expensive than a sort of the packed data:
+-- packing is injective, so distinct packed VRPs are distinct VRPs.
 uniqueVrpCount :: PerTA Vrps -> Int 
-uniqueVrpCount = length . uniqVrpsListBy compare . allTAs
+uniqueVrpCount = countUniqueVrps . allTAs
 
-uniqVrpsBy :: (Vrp -> Vrp -> Ordering) -> Vrps -> V.Vector Vrp 
-uniqVrpsBy cmp = V.fromList . uniqVrpsListBy cmp
+-- | Sort and deduplicate, in place on the vector.
+--
+-- This used to go through a list -- @V.toList@, @List.sortBy@, dedup, then
+-- @V.fromList@ -- which for a million VRPs allocated ~1.5gb of cons cells per
+-- call and took ~2s. Sorting the vector itself does the same work in ~0.5s for
+-- ~170mb. It matters because this is rebuilt from scratch on every payload
+-- re-read, and the transient peak is what the RTS then sizes the heap for.
+--
+-- A stable sort keeps this exactly equivalent to the list version: dedup drops
+-- structurally equal neighbours, so for a `cmp` that can call two distinct VRPs
+-- EQ (neither of the two used here -- 'cmpVrps' and 'compare' -- can), their
+-- relative order stays the input order, as it did before.
+uniqVrpsBy :: (Vrp -> Vrp -> Ordering) -> Vrps -> V.Vector Vrp
+uniqVrpsBy cmp vrps = dedupSorted $ V.modify (VectorSort.sortBy cmp) (vrpsToVector vrps)
+  where
+    dedupSorted sorted =
+        V.ifilter (\i x -> i == 0 || sorted V.! (i - 1) /= x) sorted
 
 uniqVrpsListBy :: (Vrp -> Vrp -> Ordering) -> Vrps -> [Vrp]
-uniqVrpsListBy cmp vrps =
-    dedupSortedList . List.sortBy cmp . V.toList . unVrps $ vrps
-   where    
-    dedupSortedList = \case
-        [] -> []
-        x : xs -> x : go x xs
-      where
-        go _ [] = []
-        go prev (y : ys)
-            | prev == y = go prev ys
-            | otherwise = y : go y ys                
+uniqVrpsListBy cmp = V.toList . uniqVrpsBy cmp
 
 
 createVrps :: Foldable f => f Vrp -> Vrps
-createVrps vrps = Vrps $ V.fromList $ toList vrps
+createVrps vrps = Vrps $ VU.fromList $ map packVrp $ toList vrps
 
+-- | Convert stored ROA payloads into the packed VRP set.
+--
+-- Goes straight from 'Vrp4'\/'Vrp6' to packed words without building 'Vrp'
+-- values on the way, and the unboxed vector forces the whole conversion, so
+-- the 'Roas' it came from become garbage immediately rather than being kept
+-- alive behind unevaluated elements.
 toVrps :: Roas -> Vrps
-toVrps (Roas roas) = createVrps . concatMap roaPayloadToVrps $ MonoidalMap.elems roas
+toVrps (Roas roas) = Vrps $ VU.fromList $ concatMap roaPayloadToPacked $ MonoidalMap.elems roas
 
 perTA :: PerTA a -> [(TaName, a)]
 perTA (PerTA a) = MonoidalMap.toList a

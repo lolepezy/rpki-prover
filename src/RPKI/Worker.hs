@@ -28,6 +28,7 @@ import           System.Posix.Process
 
 import           RPKI.AppMonad
 import           RPKI.AppTypes
+import           RPKI.Metrics.Memory (getProcessRss)
 import           RPKI.AppContext
 import           RPKI.Config
 import           RPKI.Domain
@@ -147,7 +148,11 @@ data WorkerResult r = WorkerResult {
         payload   :: Either ErrorResult r,        
         cpuTime   :: CPUTime,
         clockTime :: TimeMs,
-        maxMemory :: MaxMemory
+        -- | The Haskell heap of the worker process, as the RTS reports it.
+        maxMemory :: MaxMemory,
+        -- | The worker process as a whole (RSS), which also covers whatever
+        -- SQLite allocated outside the Haskell heap.
+        processMemory :: MaxMemory
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)    
@@ -219,16 +224,17 @@ readWorkerInput = liftIO $ deserialise_ . LBS.toStrict <$> LBS.hGetContents stdi
 execWithStats :: MonadIO m => m (Either ErrorResult r) -> m (WorkerResult r)
 execWithStats f = do        
     (payload, clockTime) <- timedMS f
-    (cpuTime, maxMemory) <- processStat    
+    (cpuTime, maxMemory, processMemory) <- processStat    
     pure WorkerResult {..}
   
 
-processStat :: MonadIO m => m (CPUTime, MaxMemory)
+processStat :: MonadIO m => m (CPUTime, MaxMemory, MaxMemory)
 processStat = do 
     cpuTime <- getCpuTime
     RTSStats {..} <- liftIO getRTSStats
     let maxMemory = MaxMemory $ fromIntegral max_mem_in_use_bytes
-    pure (cpuTime, maxMemory)
+    processMemory <- MaxMemory . fromIntegral . unSize <$> getProcessRss
+    pure (cpuTime, maxMemory, processMemory)
 
 
 writeWorkerOutput :: TheBinary a => a -> IO ()
@@ -248,9 +254,17 @@ rtsN n = "-N" <> Prelude.show n
 rtsMemValue :: Int -> String
 rtsMemValue mb = Prelude.show mb <> "m"
 
--- Don't do idle GC, it only spins the CPU without any purpose
+-- Don't do idle GC, it only spins the CPU without any purpose.
+--
+-- -F and -Fd are pinned to the RTS defaults on purpose. The main process bakes
+-- in a tighter -F/-Fd to keep its own long-lived heap close to its live data,
+-- and since workers are the same executable they would otherwise inherit that
+-- and quietly run under a different GC regime. They are short-lived and bounded
+-- by -M instead, so trading their throughput for residency makes no sense.
+-- Per-worker flags are appended after these and still override them (the rrdp
+-- and rsync workers set -Fd1 of their own).
 defaultRts :: [String]
-defaultRts = [ "-I0" ]
+defaultRts = [ "-I0", "-F2", "-Fd4" ]
 
 parentDiedExitCode, timeoutExitCode, outOfCpuTimeExitCode, outOfMemoryExitCode :: ExitCode
 exitKillByTypedProcess, exceptionExitCode, replacedExecutableExitCode :: ExitCode
@@ -365,4 +379,4 @@ runWorker logger workerInput extraCli workerInfo = do
 logWorkerDone :: (Logger logger, MonadIO m) =>
                 logger -> WorkerId -> WorkerResult r -> m ()
 logWorkerDone logger workerId WorkerResult {..} = do    
-    logDebug logger [i|Worker #{workerId} completed, cpuTime: #{cpuTime}ms, clockTime: #{clockTime}ms, maxMemory: #{maxMemory}.|] 
+    logDebug logger [i|Worker #{workerId} completed, cpuTime: #{cpuTime}ms, clockTime: #{clockTime}ms, maxMemory: #{maxMemory}, processMemory: #{processMemory}.|] 

@@ -49,7 +49,7 @@ data RtrState = RtrState {
 
 data RtrPayloads = RtrPayloads {
         vrps       :: PerTA Vrps,
-        uniqueVrps :: ~(Vector Vrp),
+        uniqueVrps :: Vrps,
         bgpSec     :: Set BGPSecPayload
     }
     deriving stock (Show, Eq, Generic)
@@ -60,6 +60,18 @@ data RtrPayloads = RtrPayloads {
 -- sending to every client every time.
 -- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis-02#section-11
 -- 
+-- | 'cmpVrps' on the packed form, byte for byte the same ordering.
+--
+-- The prefix comparison is reversed (that is what @Down@ does above), and the
+-- IPv6 flag stands in for the 'IpPrefix' constructor tag that derived Ord
+-- compares first, so (flag, address, length) compared lexicographically is
+-- exactly derived Ord on 'IpPrefix'.
+cmpPackedVrps :: PackedVrp -> PackedVrp -> Ordering
+cmpPackedVrps (asn1, f1, hi1, lo1, len1, ml1) (asn2, f2, hi2, lo2, len2, ml2) =
+    compare asn1 asn2
+    <> compare (f2, hi2, lo2, len2) (f1, hi1, lo1, len1)
+    <> compare ml1 ml2
+
 cmpVrps :: Vrp -> Vrp -> Ordering
 cmpVrps (Vrp asn1 p1 ml1) (Vrp asn2 p2 ml2) = 
     compare asn1 asn2 <> 
