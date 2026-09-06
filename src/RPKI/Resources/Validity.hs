@@ -8,7 +8,7 @@ import           Control.Lens
 import           Data.Generics.Labels                  
 
 import           Data.List                as List
-import           Data.Word                (Word8, Word32)
+import           Data.Word                (Word8, Word32, Word64)
 import           Data.Bits
 import           Data.Foldable
 import           Data.Coerce
@@ -52,24 +52,56 @@ data AddressTree a c = AllTogether [c]
     deriving anyclass (NFData)    
     
 
-data QuickCompVrp a = QuickCompVrp a a Vrp
+-- | A VRP as the index stores it: flattened into words, with the interval
+-- edges the tree compares on precomputed.
+--
+-- The tree holds these in lists, so a boxed 'Vrp' cost a cons cell plus the
+-- Vrp and its four sub-boxes -- on the order of 160 bytes to carry the ~10
+-- bytes a VRP actually is. Unpacking happens once per lookup hit, on the
+-- handful of VRPs that cover the queried prefix, rather than being paid for
+-- every VRP in the index for as long as the index exists.
+data StoredVrp4 = StoredVrp4
+        {-# UNPACK #-} !Word32   -- first address of the prefix
+        {-# UNPACK #-} !Word32   -- last address of the prefix
+        {-# UNPACK #-} !Word32   -- ASN
+        {-# UNPACK #-} !Word32   -- prefix address
+        {-# UNPACK #-} !Word8    -- prefix length
+        {-# UNPACK #-} !Word8    -- ROA max length
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (NFData)    
-    
+    deriving anyclass (NFData)
+
+-- | The IPv6 counterpart. The edges stay 'Integer' because that is what the
+-- IPv6 tree compares on, and recomputing them per comparison would allocate.
+data StoredVrp6 = StoredVrp6
+        !Integer                 -- first address of the prefix
+        !Integer                 -- last address of the prefix
+        {-# UNPACK #-} !Word32   -- ASN
+        {-# UNPACK #-} !Word64   -- prefix address, high half
+        {-# UNPACK #-} !Word64   -- prefix address, low half
+        {-# UNPACK #-} !Word8    -- prefix length
+        {-# UNPACK #-} !Word8    -- ROA max length
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (NFData)
+
+storedToVrp4 :: StoredVrp4 -> Vrp
+storedToVrp4 (StoredVrp4 _ _ asn addr len maxLen) =
+    Vrp (ASN asn) (Ipv4P (mkIpv4Prefix addr len)) (PrefixLength maxLen)
+
+storedToVrp6 :: StoredVrp6 -> Vrp
+storedToVrp6 (StoredVrp6 _ _ asn hi lo len maxLen) =
+    Vrp (ASN asn) (Ipv6P (mkIpv6Prefix hi lo len)) (PrefixLength maxLen)
+
 class StoredVrp a where
     type ActuallyStored a :: Type
-    makeStoredVrp :: a -> a -> Vrp -> ActuallyStored a
     prefixEgdes :: ActuallyStored a -> (a, a)
 
 instance StoredVrp Word32 where 
-    type ActuallyStored Word32 = Vrp
-    makeStoredVrp _ _ vrp = vrp
-    prefixEgdes (Vrp _ (Ipv4P p) _) = prefixEdgesV4 p
+    type ActuallyStored Word32 = StoredVrp4
+    prefixEgdes (StoredVrp4 s e _ _ _ _) = (s, e)
 
 instance StoredVrp Integer where 
-    type ActuallyStored Integer = QuickCompVrp Integer
-    makeStoredVrp = QuickCompVrp
-    prefixEgdes (QuickCompVrp s e _) = (s, e)
+    type ActuallyStored Integer = StoredVrp6
+    prefixEgdes (StoredVrp6 s e _ _ _ _ _) = (s, e)
 
 data PrefixIndex = PrefixIndex {
         ipv4 :: Bucket Word32 (ActuallyStored Word32),
@@ -89,19 +121,23 @@ createPrefixIndex :: (Foldable f, Coercible v Vrp) => f v -> PrefixIndex
 createPrefixIndex = foldr (insertVrp . coerce) makePrefixIndex . toList
 
 insertVrp :: Vrp -> PrefixIndex -> PrefixIndex
-insertVrp vrpToInsert@(Vrp _ pp _) t = 
+insertVrp (Vrp (ASN asn) pp (PrefixLength maxLen)) t = 
     case pp of 
         Ipv4P p@(Ipv4Prefix _) -> let 
                 (startToInsert, endToInsert) = prefixEdgesV4 p
-            in t & #ipv4 %~ insertIntoTree startToInsert endToInsert
+                (addr, len) = ipv4PrefixWords p
+                stored = StoredVrp4 startToInsert endToInsert asn addr len maxLen
+            in t & #ipv4 %~ insertIntoTree stored startToInsert endToInsert
 
         Ipv6P p@(Ipv6Prefix _) -> let 
                 (startToInsert, endToInsert) = prefixEdgesV6 p
-            in t & #ipv6 %~ insertIntoTree startToInsert endToInsert
+                (hi, lo, len) = ipv6PrefixWords p
+                stored = StoredVrp6 startToInsert endToInsert asn hi lo len maxLen
+            in t & #ipv6 %~ insertIntoTree stored startToInsert endToInsert
   where    
     
-    insertIntoTree :: (Bits a, Num a, Ord a, StoredVrp a) => a -> a -> Bucket a (ActuallyStored a) -> Bucket a (ActuallyStored a)
-    insertIntoTree startToInsert endToInsert bucket = 
+    insertIntoTree :: (Bits a, Num a, Ord a, StoredVrp a) => ActuallyStored a -> a -> a -> Bucket a (ActuallyStored a) -> Bucket a (ActuallyStored a)
+    insertIntoTree toInsert startToInsert endToInsert bucket = 
         bucket & #subtree %~ \case        
             AllTogether vrps -> let 
                     vrps' = toInsert : vrps
@@ -112,11 +148,10 @@ insertVrp vrpToInsert@(Vrp _ pp _) t =
              
             Divided {..} ->                 
                 case checkInterval startToInsert endToInsert middle of  
-                    Lower    -> Divided { lower = insertIntoTree startToInsert endToInsert lower, .. }
-                    Higher   -> Divided { higher = insertIntoTree startToInsert endToInsert higher, .. }
+                    Lower    -> Divided { lower = insertIntoTree toInsert startToInsert endToInsert lower, .. }
+                    Higher   -> Divided { higher = insertIntoTree toInsert startToInsert endToInsert higher, .. }
                     Overlaps -> Divided { overlapping = toInsert : overlapping, ..}
       where
-        toInsert = makeStoredVrp startToInsert endToInsert vrpToInsert
         newBitSize = bucket ^. #bitSize - 1
         middle = intervalMiddle bucket
 
@@ -142,11 +177,11 @@ lookupVrps prefix PrefixIndex {..} =
     case prefix of
         Ipv4P p@(Ipv4Prefix _) -> let 
                 (start, end) = prefixEdgesV4 p
-            in lookupTree ipv4 start end
+            in map storedToVrp4 $ lookupTree ipv4 start end
 
         Ipv6P p@(Ipv6Prefix _) -> let 
                 (start, end) = prefixEdgesV6 p
-            in map (\(QuickCompVrp _ _ vrp) -> vrp) $ lookupTree ipv6 start end
+            in map storedToVrp6 $ lookupTree ipv6 start end
   where    
     lookupTree bucket start end =         
         case bucket ^. #subtree of 
