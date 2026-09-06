@@ -1573,7 +1573,7 @@ resolveTroubledChildByKey tx db childKey =
                 -- Re-parsing a cached blob can raise a pure exception for a sufficiently 
                 -- broken object. Turn it into a normal validation error so that it stays 
                 -- contained to this child instead of failing the whole TA.
-                fromTryM (\(e :: SomeException) -> 
+                fromTryM (\e -> 
                             parseErr $ "Failed to re-parse the cached object: " <> fmtEx e) $ do
                     parsedRo <- vHoist $ readObjectOfType t blob
                     validatedRo <- vHoist $ prevalidateObject parsedRo

@@ -80,31 +80,13 @@ embedValidatorT s =
 embedState :: Monad m => ValidationState -> ValidatorT m ()
 embedState w = lift $ lift $ modify' (<> w)    
 
--- This one is slightly heuristical: never catch AsyncExceptions.
-fromTry :: Exception exc => 
-            (exc -> AppError) -> 
-            IO r -> 
-            ValidatorT IO r
-fromTry mapErr t = fromTryM mapErr (liftIO t)
+{- | Like `catch`, but deliberately heuristical: an asynchronous exception is 
+   re-thrown rather than handed to the handler.
 
-fromTryM :: Exception exc =>              
-            (exc -> AppError) -> 
-            ValidatorT IO r -> 
-            ValidatorT IO r
-fromTryM mapErr t =
-    t `catch` recoverOrRethrow        
-    where
-        recoverOrRethrow e = 
-            case fromException (toException e) of
-                Just (SomeAsyncException _) -> throwIO e
-                Nothing                     -> appError $ mapErr e
-
-
-{- | Like `catch` for `SomeException`, but re-throws asynchronous exceptions 
-   instead of swallowing them.
-
-   Meant for handlers that turn a failure into a cached "this object is broken" 
-   result: treating a timeout or `ThreadKilled` that way would poison the cache.
+   Everything here that turns an exception into a value -- an `AppError` in 
+   `fromTryM`, a "this object is broken" cache entry at the fetch call sites -- 
+   goes through this, so that a timeout or a `ThreadKilled` is never mistaken 
+   for a failure of the thing that was being cancelled.
 -}
 catchSync :: MonadBaseControl IO m => m a -> (SomeException -> m a) -> m a
 catchSync action handler = 
@@ -113,9 +95,13 @@ catchSync action handler =
             Just (SomeAsyncException _) -> throwIO e
             Nothing                     -> handler e
 
-fromTryEither :: Exception exc =>
-                (exc -> AppError) -> 
-                IO (Either AppError r) -> ValidatorT IO r
+fromTry :: (SomeException -> AppError) -> IO r -> ValidatorT IO r
+fromTry mapErr t = fromTryM mapErr (liftIO t)
+
+fromTryM :: (SomeException -> AppError) -> ValidatorT IO r -> ValidatorT IO r
+fromTryM mapErr t = t `catchSync` (appError . mapErr)
+
+fromTryEither :: (SomeException -> AppError) -> IO (Either AppError r) -> ValidatorT IO r
 fromTryEither mapErr t = do 
     z <- fromTry mapErr t
     fromEitherM $ pure z
