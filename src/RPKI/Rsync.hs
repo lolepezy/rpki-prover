@@ -118,7 +118,7 @@ runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion reposito
             appError $ InternalE $ WorkerError e
         Right (RsyncFetchResult z) -> do     
             logWorkerDone logger workerId wr    
-            pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory processMemory
+            pushSystem logger $ cpuMemMetric "rsync-fetch" cpuTime clockTime maxMemory processMemory
             embedValidatorT $ pure z
     
 
