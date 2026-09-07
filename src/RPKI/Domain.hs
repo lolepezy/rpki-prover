@@ -52,6 +52,7 @@ import           RPKI.Resources.Resources as RS
 import           RPKI.Resources.Types
 import           RPKI.Time
 
+import           RPKI.Domain.Packed
 import           RPKI.Store.Base.Serialisation
 import           RPKI.AppTypes
 
@@ -641,9 +642,9 @@ roaPayloadToVrps (VrpsPerAs asn v4s v6s) =
 roaPayloadToPacked :: VrpsPerAs -> [PackedVrp]
 roaPayloadToPacked (VrpsPerAs (ASN asn) v4s v6s) =
     map (\(Vrp4 p (PrefixLength maxLen)) ->
-            let (w, len) = ipv4PrefixWords p in (asn, 0, fromIntegral w, 0, len, maxLen)) v4s <>
+            let (w, len) = ipv4PrefixWords p in PackedVrp asn 0 (fromIntegral w) 0 len maxLen) v4s <>
     map (\(Vrp6 p (PrefixLength maxLen)) ->
-            let (hi, lo, len) = ipv6PrefixWords p in (asn, 1, hi, lo, len, maxLen)) v6s
+            let (hi, lo, len) = ipv6PrefixWords p in PackedVrp asn 1 hi lo len maxLen) v6s
 
 -- Signed Prefix List normalised payload
 data SplN = SplN ASN IpPrefix
@@ -868,14 +869,7 @@ newtype TaName = TaName { unTaName :: Text }
 instance Show TaName where
     show = show . unTaName
 
--- | One VRP flattened into plain words: ASN, an IPv6 flag, the address as two
--- 64-bit halves, the prefix length and the ROA max length.
---
--- Field order is deliberate: comparing packed VRPs componentwise reproduces
--- derived Ord on 'Vrp' exactly (see 'unpackVrp'). The IPv6 flag stands in for
--- the 'IpPrefix' constructor tag, which derived Ord compares first, and an
--- IPv4 address in the high half compares like the Word32 it is.
-type PackedVrp = (Word32, Word8, Word64, Word64, Word8, Word8)
+
 
 -- | VRPs stored packed, in an unboxed vector.
 --
@@ -886,9 +880,11 @@ type PackedVrp = (Word32, Word8, Word64, Word64, Word8, Word8)
 -- process paid for both representations at once plus the thunks in between.
 -- An unboxed vector cannot hold a thunk, so building one forces the conversion
 -- and lets the 'Roas' go.
+-- Deliberately not 'TheBinary': VRPs are persisted as 'Roas', and 'Vrps' is
+-- only ever derived from them in memory.
 newtype Vrps = Vrps { packedVrps :: VU.Vector PackedVrp }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving newtype (TheBinary, NFData)
+    deriving newtype (NFData)
 
 instance Semigroup Vrps where
     Vrps a <> Vrps b = Vrps (a VU.++ b)
@@ -899,11 +895,11 @@ instance Monoid Vrps where
 packVrp :: Vrp -> PackedVrp
 packVrp (Vrp (ASN asn) prefix (PrefixLength maxLen)) =
     case prefix of
-        Ipv4P p -> let (w, len)        = ipv4PrefixWords p in (asn, 0, fromIntegral w, 0, len, maxLen)
-        Ipv6P p -> let (hi, lo, len)   = ipv6PrefixWords p in (asn, 1, hi, lo, len, maxLen)
+        Ipv4P p -> let (w, len)      = ipv4PrefixWords p in PackedVrp asn 0 (fromIntegral w) 0 len maxLen
+        Ipv6P p -> let (hi, lo, len) = ipv6PrefixWords p in PackedVrp asn 1 hi lo len maxLen
 
 unpackVrp :: PackedVrp -> Vrp
-unpackVrp (asn, isV6, hi, lo, len, maxLen) =
+unpackVrp (PackedVrp asn isV6 hi lo len maxLen) =
     Vrp (ASN asn) prefix (PrefixLength maxLen)
   where
     prefix

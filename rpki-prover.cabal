@@ -154,6 +154,7 @@ library
       RPKI.AppTypes
       RPKI.Config
       RPKI.Domain
+      RPKI.Domain.Packed
       RPKI.Fetch
       RPKI.Http.Api
       RPKI.Http.Dto

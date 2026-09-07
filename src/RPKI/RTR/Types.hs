@@ -14,6 +14,7 @@ import           GHC.Generics
 import           RPKI.AppTypes
 
 import           RPKI.Domain
+import           RPKI.Domain.Packed
 import           RPKI.RTR.Protocol
 
 data Diff a = Diff {
@@ -70,7 +71,7 @@ data RtrPayloads = RtrPayloads {
 -- compares first, so (flag, address, length) compared lexicographically is
 -- exactly derived Ord on 'IpPrefix'.
 cmpPackedVrps :: PackedVrp -> PackedVrp -> Ordering
-cmpPackedVrps (asn1, f1, hi1, lo1, len1, ml1) (asn2, f2, hi2, lo2, len2, ml2) =
+cmpPackedVrps (PackedVrp asn1 f1 hi1 lo1 len1 ml1) (PackedVrp asn2 f2 hi2 lo2 len2 ml2) =
     compare asn1 asn2
     <> compare (f2, hi2, lo2, len2) (f1, hi1, lo1, len1)
     <> compare ml1 ml2
