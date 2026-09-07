@@ -1161,16 +1161,7 @@ data DeletionCriteria = DeletionCriteria
     }
     deriving (Generic)
 
--- | Keep the newest `versionNumberToKeep` versions that actually carry data
--- for each TA, and delete everything older. A version round doesn't
--- necessarily have fresh data for every TA (a TA that failed to fetch just
--- keeps reusing older data), so we can't just keep the last N rounds -- some
--- of the last N rounds may not have moved a given TA forward at all. Instead,
--- for every TA find the round at which it accumulates N *distinct* rounds of
--- real data counting backwards from the newest, and keep everything back to
--- the earliest such round across all TAs (the most demanding one). A TA that
--- never reaches N real rounds in its whole history blocks deletion entirely,
--- same as it would if we kept everything to satisfy it.
+
 deleteOldestVersionsIfNeeded :: MonadIO m
                              => Tx 'RW -> DB -> Natural -> m [WorldVersion]
 deleteOldestVersionsIfNeeded tx@(Tx conn) db versionNumberToKeep =
@@ -1178,10 +1169,12 @@ deleteOldestVersionsIfNeeded tx@(Tx conn) db versionNumberToKeep =
         versions <- versionsBackwards tx db
         let reallyToKeep = max 2 (fromIntegral versionNumberToKeep)
         case NonEmpty.nonEmpty versions of
-            Just neVersions | NonEmpty.length neVersions > reallyToKeep -> do
-                taVersionRows <- query_ conn
+            Just neVersions 
+                | NonEmpty.length neVersions > reallyToKeep -> do
+
+                taVersionRows :: [(Text, WorldVersion)] <- query_ conn
                     "SELECT ta_name, version FROM validation_outcomes WHERE ta_name IS NOT NULL"
-                    :: IO [(Text, WorldVersion)]
+
                 let taRealVersions = MonoidalMap.fromListWith (<>)
                         [ (ta, Set.singleton v) | (ta, v) <- taVersionRows ]
 
@@ -1235,9 +1228,9 @@ deleteStaleContent db DeletionCriteria{..} =
                                 Just wv -> objectIsTooOld wv typ
                                 Nothing -> True
                         in if insertedOld && validatedOld
-                            then acc { sweepToDelete = objectKey : sweepToDelete acc,
-                                       sweepPerType  = Map.insertWith (+) typ 1 (sweepPerType acc) }
-                            else acc { sweepKept = sweepKept acc + 1 }
+                            then acc { sweepToDelete = objectKey : acc.sweepToDelete,
+                                       sweepPerType  = Map.insertWith (+) typ 1 (acc.sweepPerType) }
+                            else acc { sweepKept = acc.sweepKept + 1 }
 
         let validatedBy' = foldr Map.delete validatedBy sweepToDelete
         execute conn "INSERT OR REPLACE INTO validated_by_version(key, value) VALUES (?, ?)"
