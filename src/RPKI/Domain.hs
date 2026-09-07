@@ -639,12 +639,6 @@ roaPayloadToVrps (VrpsPerAs asn v4s v6s) =
     map (\(Vrp4 p len) -> Vrp asn (Ipv4P p) len) v4s <>
     map (\(Vrp6 p len) -> Vrp asn (Ipv6P p) len) v6s
 
-roaPayloadToPacked :: VrpsPerAs -> [PackedVrp]
-roaPayloadToPacked (VrpsPerAs (ASN asn) v4s v6s) =
-    map (\(Vrp4 p (PrefixLength maxLen)) ->
-            let (w, len) = ipv4PrefixWords p in PackedVrp asn 0 (fromIntegral w) 0 len maxLen) v4s <>
-    map (\(Vrp6 p (PrefixLength maxLen)) ->
-            let (hi, lo, len) = ipv6PrefixWords p in PackedVrp asn 1 hi lo len maxLen) v6s
 
 -- Signed Prefix List normalised payload
 data SplN = SplN ASN IpPrefix
@@ -880,62 +874,93 @@ instance Show TaName where
 -- process paid for both representations at once plus the thunks in between.
 -- An unboxed vector cannot hold a thunk, so building one forces the conversion
 -- and lets the 'Roas' go.
+-- | VRPs stored packed, split by address family.
+--
 -- Deliberately not 'TheBinary': VRPs are persisted as 'Roas', and 'Vrps' is
 -- only ever derived from them in memory.
-newtype Vrps = Vrps { packedVrps :: VU.Vector PackedVrp }
+--
+-- Two vectors rather than one uniform one because an IPv4 VRP is 10 bytes of
+-- information and an IPv6 one is 22; a shared layout has to be as wide as the
+-- larger, which wastes 13 bytes on ~85% of the set.
+data Vrps = Vrps {
+        packed4 :: VU.Vector PackedVrp4,
+        packed6 :: VU.Vector PackedVrp6
+    }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving newtype (NFData)
+    deriving anyclass (NFData)
 
 instance Semigroup Vrps where
-    Vrps a <> Vrps b = Vrps (a VU.++ b)
+    Vrps a4 a6 <> Vrps b4 b6 = Vrps (a4 VU.++ b4) (a6 VU.++ b6)
 
 instance Monoid Vrps where
-    mempty = Vrps VU.empty
+    mempty = Vrps VU.empty VU.empty
 
-packVrp :: Vrp -> PackedVrp
-packVrp (Vrp (ASN asn) prefix (PrefixLength maxLen)) =
-    case prefix of
-        Ipv4P p -> let (w, len)      = ipv4PrefixWords p in PackedVrp asn 0 (fromIntegral w) 0 len maxLen
-        Ipv6P p -> let (hi, lo, len) = ipv6PrefixWords p in PackedVrp asn 1 hi lo len maxLen
+pack4 :: ASN -> Ipv4Prefix -> PrefixLength -> PackedVrp4
+pack4 (ASN asn) p (PrefixLength maxLen) =
+    let (addr, len) = ipv4PrefixWords p in PackedVrp4 asn addr len maxLen
 
-unpackVrp :: PackedVrp -> Vrp
-unpackVrp (PackedVrp asn isV6 hi lo len maxLen) =
-    Vrp (ASN asn) prefix (PrefixLength maxLen)
-  where
-    prefix
-        | isV6 == 0 = Ipv4P $ mkIpv4Prefix (fromIntegral hi) len
-        | otherwise = Ipv6P $ mkIpv6Prefix hi lo len
+pack6 :: ASN -> Ipv6Prefix -> PrefixLength -> PackedVrp6
+pack6 (ASN asn) p (PrefixLength maxLen) =
+    let (hi, lo, len) = ipv6PrefixWords p in PackedVrp6 asn hi lo len maxLen
+
+unpack4 :: PackedVrp4 -> Vrp
+unpack4 (PackedVrp4 asn addr len maxLen) =
+    Vrp (ASN asn) (Ipv4P (mkIpv4Prefix addr len)) (PrefixLength maxLen)
+
+unpack6 :: PackedVrp6 -> Vrp
+unpack6 (PackedVrp6 asn hi lo len maxLen) =
+    Vrp (ASN asn) (Ipv6P (mkIpv6Prefix hi lo len)) (PrefixLength maxLen)
 
 -- | Materialise the VRPs. Only worth doing where a consumer genuinely needs
 -- boxed 'Vrp' values; the packed form is what is kept in memory.
 vrpsToVector :: Vrps -> V.Vector Vrp
-vrpsToVector = V.map unpackVrp . V.convert . packedVrps
+vrpsToVector = V.fromList . vrpsToList
 
+-- | All the VRPs, IPv4 first. This is storage order, not any meaningful one --
+-- for the RTR ordering see 'mergeVrpsBy'.
 vrpsToList :: Vrps -> [Vrp]
-vrpsToList = map unpackVrp . VU.toList . packedVrps
+vrpsToList (Vrps v4 v6) = map unpack4 (VU.toList v4) <> map unpack6 (VU.toList v6)
 
 vrpsCount :: Vrps -> Int
-vrpsCount = VU.length . packedVrps
+vrpsCount (Vrps v4 v6) = VU.length v4 + VU.length v6
 
 filterVrps :: (Vrp -> Bool) -> Vrps -> Vrps
-filterVrps f = Vrps . VU.filter (f . unpackVrp) . packedVrps
+filterVrps f (Vrps v4 v6) =
+    Vrps (VU.filter (f . unpack4) v4) (VU.filter (f . unpack6) v6)
 
--- | Sort and deduplicate in the packed form, given a comparator on packed
--- VRPs. Nothing is materialised, so the result costs the same as the input.
-uniqVrpsPackedBy :: (PackedVrp -> PackedVrp -> Ordering) -> Vrps -> Vrps
-uniqVrpsPackedBy cmp (Vrps v)
-    | VU.null v = Vrps VU.empty
-    | otherwise = Vrps $ dedupSorted $ VU.modify (VectorSortU.sortBy cmp) v
+-- | Sort and deduplicate each family in the packed form. Nothing is
+-- materialised, so the result costs the same as the input.
+uniqVrpsPackedBy :: (PackedVrp4 -> PackedVrp4 -> Ordering)
+                 -> (PackedVrp6 -> PackedVrp6 -> Ordering)
+                 -> Vrps -> Vrps
+uniqVrpsPackedBy cmp4 cmp6 (Vrps v4 v6) =
+    Vrps (sortDedup cmp4 v4) (sortDedup cmp6 v6)
+
+sortDedup :: (VU.Unbox a, Eq a) => (a -> a -> Ordering) -> VU.Vector a -> VU.Vector a
+sortDedup cmp v
+    | VU.null v = v
+    | otherwise = let sorted = VU.modify (VectorSortU.sortBy cmp) v
+                  in VU.ifilter (\i x -> i == 0 || sorted VU.! (i - 1) /= x) sorted
+
+-- | Merge two already-sorted families into one sequence.
+--
+-- The caller supplies the cross-family ordering, since which family comes
+-- first for a given key is a property of the ordering being reproduced and not
+-- of the storage (for the RTR order, see 'RPKI.RTR.Types.cmpPacked4Against6').
+mergeVrpsBy :: (PackedVrp4 -> PackedVrp6 -> Ordering) -> Vrps -> [Vrp]
+mergeVrpsBy cross (Vrps v4 v6) = go (VU.toList v4) (VU.toList v6)
   where
-    dedupSorted sorted =
-        VU.ifilter (\i x -> i == 0 || sorted VU.! (i - 1) /= x) sorted
+    go [] bs = map unpack6 bs
+    go as [] = map unpack4 as
+    go as@(a : as') bs@(b : bs') =
+        case cross a b of
+            GT -> unpack6 b : go as bs'
+            _  -> unpack4 a : go as' bs
 
 -- | Number of distinct VRPs, without materialising any of them.
 countUniqueVrps :: Vrps -> Int
-countUniqueVrps (Vrps v)
-    | VU.null v = 0
-    | otherwise = let sorted = VU.modify VectorSortU.sort v
-                  in VU.length $ VU.ifilter (\i x -> i == 0 || sorted VU.! (i - 1) /= x) sorted
+countUniqueVrps (Vrps v4 v6) =
+    VU.length (sortDedup compare v4) + VU.length (sortDedup compare v6)
 
 newtype Roas = Roas { unRoas :: MonoidalMap ObjectKey VrpsPerAs }
     deriving stock (Show, Eq, Ord, Generic)
@@ -1243,7 +1268,11 @@ uniqVrpsListBy cmp = V.toList . uniqVrpsBy cmp
 
 
 createVrps :: Foldable f => f Vrp -> Vrps
-createVrps vrps = Vrps $ VU.fromList $ map packVrp $ toList vrps
+createVrps vrps = Vrps (VU.fromList v4s) (VU.fromList v6s)
+  where
+    (v4s, v6s) = foldr split ([], []) (toList vrps)
+    split (Vrp asn (Ipv4P p) maxLen) (as, bs) = (pack4 asn p maxLen : as, bs)
+    split (Vrp asn (Ipv6P p) maxLen) (as, bs) = (as, pack6 asn p maxLen : bs)
 
 -- | Convert stored ROA payloads into the packed VRP set.
 --
@@ -1252,7 +1281,12 @@ createVrps vrps = Vrps $ VU.fromList $ map packVrp $ toList vrps
 -- the 'Roas' it came from become garbage immediately rather than being kept
 -- alive behind unevaluated elements.
 toVrps :: Roas -> Vrps
-toVrps (Roas roas) = Vrps $ VU.fromList $ concatMap roaPayloadToPacked $ MonoidalMap.elems roas
+toVrps (Roas roas) = Vrps (VU.fromList (concatMap toPacked4 payloads))
+                          (VU.fromList (concatMap toPacked6 payloads))
+  where
+    payloads = MonoidalMap.elems roas
+    toPacked4 (VrpsPerAs asn v4s _) = [ pack4 asn p len | Vrp4 p len <- v4s ]
+    toPacked6 (VrpsPerAs asn _ v6s) = [ pack6 asn p len | Vrp6 p len <- v6s ]
 
 perTA :: PerTA a -> [(TaName, a)]
 perTA (PerTA a) = MonoidalMap.toList a

@@ -70,7 +70,7 @@ data AppState = AppState {
 
 
 mkRtrPayloads :: PerTA Vrps -> Set BGPSecPayload -> RtrPayloads
-mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrpsPackedBy cmpPackedVrps $ allTAs vrps, .. }
+mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrpsPackedBy cmpPacked4 cmpPacked6 $ allTAs vrps, .. }
 
 -- 
 newAppState :: IO AppState

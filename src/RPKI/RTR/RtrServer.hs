@@ -516,7 +516,7 @@ currentCachePayloadBS protocolVersion RtrPayloads {..} =
         $ filter (`compatibleWith` protocolVersion)
         $ vrpPdusAnn <> mconcat bgpSecPdusAnn
   where    
-    vrpPdusAnn    = map (vrpToPdu Announcement) $ vrpsToList uniqueVrps
+    vrpPdusAnn    = map (vrpToPdu Announcement) $ mergeVrpsBy cmpPacked4Against6 uniqueVrps
     bgpSecPdusAnn = map (bgpSecToPdu Announcement) $ Set.toList bgpSec
     
     
