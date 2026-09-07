@@ -492,16 +492,12 @@ saveSnapshot
                                         pure $! UknownObjectType rpkiURL
           where
             tryToParse rpkiURL hash blob type_ = 
-                -- NOTE: the parse/prevalidation result is forced *inside* `runValidatorT`
-                -- (ExceptT's bind pattern-matches the Either and StrictData forces the
-                -- parsed object all the way down), so a pure exception raised by a
-                -- broken object escapes from that call, not from `evaluate` below.
-                -- Both have to be inside the handler.
-                (do 
+                doParse `catchSync` onError
+              where
+                doParse = do 
                     z <- liftIO $ runValidatorT scopes $
-                            inSubLocationScope uri $ vHoist $ do
-                                ro <- readObjectOfType type_ blob
-                                prevalidateObject ro
+                            inSubLocationScope uri $ vHoist $ 
+                                prevalidateObject =<< readObjectOfType type_ blob
                     evaluate $!
                         case z of
                             (Left _, vs) ->
@@ -511,13 +507,12 @@ saveSnapshot
                                     mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
                                 | otherwise ->
                                     mkSaveObject $! WellStructuredRO vro
-                    ) `catchSync`
-                    (\e -> do
-                        (_, vs) <- runValidatorT scopes $ inSubLocationScope uri $
-                            vHoist $ fromEither @() $ Left $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e
-                        pure $! mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
-                    )
-              where
+
+                onError e = do
+                    (_, vs) <- runValidatorT scopes $ inSubLocationScope uri $
+                        vHoist $ fromEither @() $ Left $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e
+                    pure $! mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
+
                 -- Encode/compress the object here, on the parsing (async) thread,
                 -- so the single-threaded DB-writer only has to do the INSERT.
                 mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
@@ -645,16 +640,12 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                                         Nothing    -> pure $! UknownObjectType rpkiURL
           where
             tryToParse rpkiURL hash blob type_ = 
-                -- NOTE: the parse/prevalidation result is forced *inside* `runValidatorT`
-                -- (ExceptT's bind pattern-matches the Either and StrictData forces the
-                -- parsed object all the way down), so a pure exception raised by a
-                -- broken object escapes from that call, not from `evaluate` below.
-                -- Both have to be inside the handler.
-                (do 
+                doParse `catchSync` onError                    
+              where
+                doParse = do 
                     z <- liftIO $ runValidatorT scopes $ 
-                            inSubLocationScope uri $ vHoist $ do 
-                                ro <- readObjectOfType type_ blob
-                                prevalidateObject ro
+                            inSubLocationScope uri $ vHoist $
+                                prevalidateObject =<< readObjectOfType type_ blob
                     evaluate $!
                         case z of 
                             (Left _, vs) ->
@@ -668,13 +659,12 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                                     mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
                                 | otherwise ->
                                     mkSaveObject $! WellStructuredRO vro
-                    ) `catchSync`
-                    (\e ->
-                        pure $! ObjectParsingProblem rpkiURL (VErr $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e)
+
+                onError e = 
+                    pure $! ObjectParsingProblem rpkiURL (VErr $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e)
                                 (ObjectOriginal blob) hash
                                 (ObjectMeta worldVersion type_)
-                    )
-              where
+
                 -- Encode/compress the object here, on the parsing (async) thread,
                 -- so the single-threaded DB-writer only has to do the INSERT.
                 mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
@@ -693,7 +683,6 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
             -- Ignore withdraws and just use the time-based garbage collection
             then deletedObject $ textObjectType $ unURI uri
             else appError $ RrdpE $ NoObjectToWithdraw uri existingHash
-        
 
     addObject db tx uri a = do 
         r <- fromTry (RrdpE . FailedToParseDeltaItem . U.fmtEx) $ wait a
