@@ -423,8 +423,7 @@ validateRoa ::
     PureValidatorT (Validated WellStructuredRoa)
 validateRoa validationRFC now roa parentCert crl verifiedResources = do      
     validateCms validationRFC now roa parentCert crl verifiedResources    
-    checkResources roa.content
-    
+    checkResources roa.content    
     pure $ Validated roa
   where
     checkResources (VrpsPerAs asn v4s v6s) = do 
@@ -526,12 +525,9 @@ validateAspa ::
     PureValidatorT (Validated WellStructuredAspa)
 validateAspa validationRFC now aspa parentCert crl verifiedResources = do    
     validateCms validationRFC now aspa parentCert crl verifiedResources 
-
     validateAspaCore (getResources aspa) aspa.content
-    
     pure $ Validated aspa
     
-
 validateCms ::
     CaParent parent =>
     ValidationRFC ->
@@ -551,7 +547,6 @@ validateUpdateTimes (Now now) thisUpdateTime nextUpdateTime = do
     when (thisUpdateTime >= now) $ vPureError $ ThisUpdateTimeIsInTheFuture {..}
     when (nextUpdateTime < now)  $ vPureError $ NextUpdateTimeIsInThePast {..}
     validateUpdateTimesOrder thisUpdateTime nextUpdateTime
-
 
 validateAIA ::
     WellStructuredCaCert ->
@@ -611,17 +606,8 @@ validateAspaCore resources Aspa { customer, providers } = do
         vError $ AspaAsZeoAndNonZero $ Set.toList providers
 
 
-{- | The ASNs a BGPSec router certificate is valid for.
-
-   The AS resources are expanded into individual ASNs (they end up in RTR Router 
-   Key PDUs one by one), so the number of them has to be bounded: a certificate 
-   declaring 0-4294967295 would otherwise expand into a 2^32-element list and 
-   exhaust the memory of the validation worker.
-
-   Real router certificates carry a handful of ASNs, so the limit is generous.
--}
-maxBgpSecAsns :: Integer
-maxBgpSecAsns = 65536
+maxAllowedAsnPerBgpSecCertificate :: Integer
+maxAllowedAsnPerBgpSecCertificate = 65536
 
 validateBgpCertAsns :: AllResources -> PureValidatorT [ASN]
 validateBgpCertAsns (AllResources _ _ asns) =
@@ -632,8 +618,8 @@ validateBgpCertAsns (AllResources _ _ asns) =
             | otherwise -> do 
                 let asResources = IS.toList i
                 let asnCount = countAsns asResources
-                when (asnCount > maxBgpSecAsns) $ 
-                    vError $ BGPCertTooManyASNs asnCount maxBgpSecAsns
+                when (asnCount > maxAllowedAsnPerBgpSecCertificate) $ 
+                    vError $ BGPCertTooManyASNs asnCount maxAllowedAsnPerBgpSecCertificate
                 pure $! unwrapAsns asResources
 
 
@@ -688,14 +674,14 @@ prevalidateObject rpkiObject = do
     case rpkiObject of
         CerRO ca -> do
             validateCaCertStructure ca
-            pure $ CerRO $ extractCert ca
+            pure $! CerRO $ extractCert ca
         CrlRO crl -> do
             validateCrlStructure crl
-            pure $ CrlRO crl
+            pure $! CrlRO crl
         MftRO mft -> do
             signingTime <- validateCmsStructure id_ct_rpkiManifest mft
             validateMftStructure mft
-            pure $ MftRO $ extractCMSObject signingTime mft
+            pure $! MftRO $ extractCMSObject signingTime mft
         RoaRO roa -> do
             signingTime <- validateCmsStructure id_ct_routeOriginAuthz roa
             pure $! RoaRO $ extractCMSObject signingTime roa
@@ -1057,6 +1043,7 @@ validateCertX509Structure certWS@CertificateWithSignature { cwsX509certificate =
             | curve == SEC_p256r1 -> pure ()
             | otherwise -> vError $ InvalidPublicKey $
                 "EC public key must be on the P-256 curve, got " <> Text.pack (show curve)
+
         PubKeyEC PubKeyEC_Prime {} ->
             vError $ InvalidPublicKey "EC public key must use a named curve, not explicit parameters"
 
