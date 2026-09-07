@@ -961,10 +961,6 @@ validateSignedObjectSia extensions = do
 
 {- | Every certificate in the RPKI is signed by a CA using RSA PKCS#1 v1.5 with 
    SHA-256, https://www.rfc-editor.org/rfc/rfc7935#section-3.
-
-   NOTE: this is about the algorithm the *issuer* signed with, which is unrelated 
-   to the subject's own key. A BGPSec router certificate carries an ECDSA P-256 
-   key (RFC 8608) but is still signed by its parent CA with RSA/SHA-256.
 -}
 validateSignatureAlgorithm :: CertificateWithSignature -> PureValidatorT ()
 validateSignatureAlgorithm certWS = do 

@@ -81,12 +81,7 @@ embedState :: Monad m => ValidationState -> ValidatorT m ()
 embedState w = lift $ lift $ modify' (<> w)    
 
 {- | Like `catch`, but deliberately heuristical: an asynchronous exception is 
-   re-thrown rather than handed to the handler.
-
-   Everything here that turns an exception into a value -- an `AppError` in 
-   `fromTryM`, a "this object is broken" cache entry at the fetch call sites -- 
-   goes through this, so that a timeout or a `ThreadKilled` is never mistaken 
-   for a failure of the thing that was being cancelled.
+   re-thrown rather than handed to the handler. 
 -}
 catchSync :: MonadBaseControl IO m => m a -> (SomeException -> m a) -> m a
 catchSync action handler = 

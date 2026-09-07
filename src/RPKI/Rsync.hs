@@ -285,18 +285,14 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
                             pure $! UknownObjectType rpkiURL filePath
 
           where
-            tryToParse hash blob type_ = do 
-                scopes <- askScopes                           
-                -- NOTE: the parse/prevalidation result is forced *inside* `runValidatorT`
-                -- (ExceptT's bind pattern-matches the Either and StrictData forces the
-                -- parsed object all the way down), so a pure exception raised by a
-                -- broken object escapes from that call, not from `evaluate` below.
-                -- Both have to be inside the handler.
-                (do 
+            tryToParse hash blob type_ = do
+                scopes <- askScopes
+                doParse scopes `catchSync` onError scopes
+              where
+                doParse scopes = do                     
                     z <- liftIO $ runValidatorT scopes $ do
-                            inSubLocationScope (getURL rpkiURL) $ vHoist $ do 
-                                ro <- readObjectOfType type_ blob
-                                prevalidateObject ro
+                            inSubLocationScope (getURL rpkiURL) $ vHoist $ 
+                                prevalidateObject =<< readObjectOfType type_ blob
                     evaluate $!
                         case z of
                             (Left _, vs) ->
@@ -306,13 +302,12 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
                                     mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
                                 | otherwise ->
                                     mkSaveObject $ WellStructuredRO vro
-                    ) `catchSync`
-                    (\e -> do
-                        (_, vs) <- runValidatorT scopes $
-                            vHoist $ fromEither @() $ Left $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e
-                        pure $! mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
-                    )
-              where
+
+                onError scopes e = do
+                    (_, vs) <- runValidatorT scopes $
+                        vHoist $ fromEither @() $ Left $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e
+                    pure $! mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
+
                 -- Encode/compress the object here, on the parsing (async) thread,
                 -- so the single-threaded DB-writer only has to do the INSERT.
                 mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))

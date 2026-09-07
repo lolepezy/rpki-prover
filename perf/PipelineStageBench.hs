@@ -124,7 +124,7 @@ processOne totalsRef scopes uri encodedb64 =
 
                             serialisedBytes <- measure totalsRef ParsePrevalidateSerialise $ do
                                 let (z, vs) = runPureValidator scopes $
-                                        readObjectOfType type_ blob >>= prevalidateObject
+                                                prevalidateObject =<< readObjectOfType type_ blob
                                     lifecycle = case z of
                                         Left _ ->
                                             OriginalRO (ObjectOriginal blob) vs hash_ type_
