@@ -429,36 +429,6 @@ runAll appContext@AppContext {..} tals = do
                 runConcurrentlyIfPossible logger task (workflowShared ^. #runningTasks) (actualAction jobRun) 
                 pure RanBefore
 
-    -- Sample the process's memory every `memoryMetricsInterval` and write it
-    -- to the log as one line of JSON. The RTS only accounts for the Haskell
-    -- heap, so without this the C allocator's share -- SQLite's, mostly -- is
-    -- invisible; having it as a time series is what makes it possible to
-    -- correlate growth with whatever else the log says was happening.
-    logMemoryStatsPeriodically = do
-        let interval = config ^. typed @SystemConfig . #memoryMetricsInterval
-        when (interval > 0) $ forever $ do
-            threadDelay $ toMicroseconds interval
-            stats <- sampleMemory
-            logInfo logger [i|memory-stats #{memoryStatsJson stats}|]
-            trimMallocIfWorthIt stats
-
-    sampleMemory = getMemoryStats =<< DB.preparedStatementCount =<< readTVarIO database
-
-    -- Reading payload BLOBs out of SQLite allocates tens of megabytes at a
-    -- time; freeing them only returns the memory to the C allocator's free
-    -- lists, so it accumulates to the high-water mark of that churn and never
-    -- comes back on its own. Hand it back once it is worth the syscalls.
-    trimMallocIfWorthIt stats = do
-        let thresholdMb = config ^. typed @SystemConfig . #mallocTrimThresholdMb
-        let freeMb = fromIntegral (unSize (stats ^. #mallocFree)) `div` (1024 * 1024 :: Int)
-        when (thresholdMb > 0 && freeMb >= thresholdMb) $ do
-            released <- trimMalloc
-            when released $ do
-                after <- sampleMemory
-                let mb s = unSize (s ^. #processRss) `div` (1024 * 1024)
-                logDebug logger
-                    [i|Trimmed the C allocator sitting on #{freeMb}mb of freed space, RSS #{mb stats}mb -> #{mb after}mb.|]
-
     updateMainResourcesStat = do
         (cpuTime, maxMemory, processMemory) <- processStat
         SystemInfo {..} <- readTVarIO $ appState ^. #system
@@ -665,6 +635,37 @@ runAll appContext@AppContext {..} tals = do
                     workerInfo <- newWorkerInfo (GenericWorker "cache-clean-up") timeout (convert $ show workerId)
                     runWorker logger workerInput arguments workerInfo
         pure (r, workerId)                            
+
+    -- Sample the process's memory every `memoryMetricsInterval` and write it
+    -- to the log as one line of JSON. The RTS only accounts for the Haskell
+    -- heap, so without this the C allocator's share -- SQLite's, mostly -- is
+    -- invisible; having it as a time series is what makes it possible to
+    -- correlate growth with whatever else the log says was happening.
+    logMemoryStatsPeriodically = do
+        let interval = config ^. typed @SystemConfig . #memoryMetricsInterval
+        when (interval > 0) $ forever $ do
+            threadDelay $ toMicroseconds interval
+            stats <- sampleMemory
+            logInfo logger [i|memory-stats #{memoryStatsJson stats}|]
+            trimMallocIfWorthIt stats
+      where
+        sampleMemory = getMemoryStats =<< DB.preparedStatementCount =<< readTVarIO database
+
+        -- Reading payload BLOBs out of SQLite allocates tens of megabytes at a
+        -- time; freeing them only returns the memory to the C allocator's free
+        -- lists, so it accumulates to the high-water mark of that churn and never
+        -- comes back on its own. Hand it back once it is worth the syscalls.
+        trimMallocIfWorthIt stats = do
+            let thresholdMb = config ^. typed @SystemConfig . #mallocTrimThresholdMb
+            let freeMb = fromIntegral (unSize (stats ^. #mallocFree)) `div` (1024 * 1024 :: Int)
+            when (thresholdMb > 0 && freeMb >= thresholdMb) $ do
+                released <- trimMalloc
+                when released $ do
+                    after <- getMemoryStats =<< DB.preparedStatementCount =<< readTVarIO database
+                    let mb s = unSize (s ^. #processRss) `div` (1024 * 1024)
+                    logDebug logger
+                        [i|Trimmed the C allocator sitting on #{freeMb}mb of freed space, RSS #{mb stats}mb -> #{mb after}mb.|]
+
 
 -- To be called by the validation worker process
 runValidation :: AppContext s

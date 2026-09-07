@@ -4,17 +4,6 @@
 {-# LANGUAGE UndecidableInstances  #-}
 
 -- | The packed, unboxed representations of a VRP, one per address family.
---
--- A VRP is an ASN, a prefix and a max length -- 10 bytes of information for
--- IPv4 and 22 for IPv6. Keeping both families in one uniform record meant
--- carrying IPv6-sized address fields for the ~85% of VRPs that are IPv4, at
--- 23 bytes each; split, they cost what they are (measured: 10 and 22 bytes per
--- element, ~11.8 on a realistic mix).
---
--- This lives in its own module because declaring the 'VU.Vector' data family
--- instances re-exports the @Vector@ type constructor from whichever module
--- declares them, and 'RPKI.Domain' has no export list, so it would collide
--- with every other @Vector@ in scope downstream.
 module RPKI.Domain.Packed (
     PackedVrp4(..),
     PackedVrp6(..),
@@ -31,11 +20,6 @@ import qualified Data.Vector.Unboxed         as VU
 
 import           GHC.Generics
 
-
--- | An IPv4 VRP as plain words.
---
--- Field order is load-bearing: derived Ord compares fields in declaration
--- order, and the address compares like the Word32 it is.
 data PackedVrp4 = PackedVrp4 {
         packed4Asn    :: {-# UNPACK #-} !Word32,
         packed4Addr   :: {-# UNPACK #-} !Word32,
@@ -45,9 +29,6 @@ data PackedVrp4 = PackedVrp4 {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (NFData)
 
--- | An IPv6 VRP as plain words, the address split into two 64-bit halves so
--- that comparing (hi, lo) as unsigned words reproduces comparing the four
--- 32-bit words of the address in order.
 data PackedVrp6 = PackedVrp6 {
         packed6Asn    :: {-# UNPACK #-} !Word32,
         packed6AddrHi :: {-# UNPACK #-} !Word64,
@@ -58,9 +39,6 @@ data PackedVrp6 = PackedVrp6 {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (NFData)
 
--- | How they are laid out inside the vector: the same fields in the same
--- order. 'VU.Vector' keeps one dense array per field, so an element costs the
--- sum of the field widths and nothing else.
 type PackedVrp4Repr = (Word32, Word32, Word8, Word8)
 type PackedVrp6Repr = (Word32, Word64, Word64, Word8, Word8)
 
