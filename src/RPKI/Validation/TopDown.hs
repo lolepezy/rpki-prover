@@ -6,7 +6,8 @@ module RPKI.Validation.TopDown (
     TopDownResult(..),
     validateMutlipleTAs,
     TroubledChildLoadPath(..),
-    resolveTroubledChildByKey
+    resolveTroubledChildByKey,
+    revokedShortcutChildren
 )
 where
 
@@ -798,7 +799,7 @@ validateCaNoFetch
 
             -- If MFT shortcut is present, filter children that need validation, 
             -- children that are on the shortcut are already validated.
-            let (newChildren, overlappingChildren0, deletedKeys0) =
+            let (newChildren, overlappingChildren0, deletedKeys) =
                     case mftShortcut of
                         Nothing       -> (nonCrlChildren, [], [])
                         Just mftShort -> manifestDiff mftShort nonCrlChildren
@@ -806,20 +807,21 @@ validateCaNoFetch
             -- If the CRL has changed, children that are not going to be re-validated 
             -- here (i.e. the overlapping ones) still have to be checked for revocation.
             -- New children are checked as a part of their full validation.
-            revokedOverlapping <- 
+            revokedEntries <- 
                 case mftShortcut of 
-                    Just mftShort | crlKey /= mftShort ^. #crlShortcut . #key -> do 
+                    Just mftShort | crlKey /= mftShort.crlShortcut.key -> do 
                         increment topDownCounters.originalCrl
                         checkForRevokedChildren mftShort keyedMft overlappingChildren0 validCrl
-                    _ -> pure mempty
+                    _ -> pure []
 
             -- A revoked child must not contribute any payload (and, if it is a CA, 
             -- its sub-tree must not be traversed), so drop it from the overlapping set.
-            -- Its shortcut entry is deleted as well, so that the next run treats it as 
-            -- a new child, validates it in full and reports the revocation again.
+            -- Its shortcut entry is replaced with a troubled one (see revokedShortcutChildren), 
+            -- so from the next run on it is re-validated in full and the revocation keeps 
+            -- being reported.
+            let revokedKeys = Set.fromList $ map fst revokedEntries
             let overlappingChildren = 
-                    filter (\(T3 _ _ k) -> k `Set.notMember` revokedOverlapping) overlappingChildren0
-            let deletedKeys = deletedKeys0 <> Set.toList revokedOverlapping
+                    filter (\(T3 _ _ k) -> k `Set.notMember` revokedKeys) overlappingChildren0
 
             bumpCounterBy topDownCounters #newChildren (length newChildren)
             bumpCounterBy topDownCounters #overlappingChildren (length overlappingChildren)
@@ -847,8 +849,11 @@ validateCaNoFetch
             -- when some of the children are garbage-collected from the cache 
             -- and some are still there. Do it both in case of successful 
             -- validation or a validation error.
+            -- Note: this uses the unfiltered overlapping list, so that a child that
+            -- was just found revoked still counts as used and is not garbage-collected
+            -- from under the troubled shortcut entry created for it.
             let markAllEntriesAsUsed = do
-                    forM_ (newChildren <> overlappingChildren) $
+                    forM_ (newChildren <> overlappingChildren0) $
                         \(T3 _ _ k) -> markAsUsed topDownContext k
 
             let processChildren = do                                              
@@ -860,7 +865,8 @@ validateCaNoFetch
                             gatherMftEntryResults =<< 
                                 gatherMftEntryValidations fullCa newChildren validCrl
 
-                    let newEntries = makeEntriesWithMap newChildren (Map.fromList childrenShortcuts)
+                    let newEntries = makeEntriesWithMap newChildren (Map.fromList childrenShortcuts) 
+                                        <> revokedEntries
 
                     -- NOTE: nextMftShortcut is only used below to feed the meta-table write
                     -- (updateMftShortcut reads only its meta fields via MftShortcutMeta{..}).
@@ -895,7 +901,8 @@ validateCaNoFetch
                                 -- separately since changes to non-CRL children are less common
                                 -- then updates to metadata, hence we can save quite some 
                                 -- CPU on serialisation.
-                                when (isNothing mftShortcut || not (null newChildren) || not (null deletedKeys)) $ do
+                                when (isNothing mftShortcut || not (null newChildren) 
+                                        || not (null deletedKeys) || not (null revokedEntries)) $ do
                                     updateMftShortcutChildren topDownContext aki newEntries deletedKeys
                                     increment topDownCounters.updateMftChildren
 
@@ -947,26 +954,20 @@ validateCaNoFetch
             entry      <- maybeToList $ Map.lookup key entryMap ]
 
 
-    -- Check which of the shortcut children are revoked by the (new) CRL.
-    -- Returns the keys of the revoked ones, reporting a warning for each.
+    -- Check which of the shortcut children are revoked by the (new) CRL, reporting
+    -- a warning for each. Returns the replacement shortcut entries for them.
     checkForRevokedChildren :: MftShortcut 
                             -> Keyed (Located WellStructuredMft)
                             -> [T3 Text Hash ObjectKey]
                             -> Validated CrlObject
-                            -> ValidatorT IO (Set ObjectKey)
+                            -> ValidatorT IO [(ObjectKey, MftEntry)]
     checkForRevokedChildren mftShortcut (Keyed (Located _ mft) _) children validCrl = do        
         when (isRevoked (getSerial mft) validCrl) $
             vWarn RevokedResourceCertificate   
-        fmap (Set.fromList . catMaybes) $ 
-            forM children $ \(T3 _ _ childKey) -> 
-                case Map.lookup childKey mftShortcut.nonCrlEntries of 
-                    Nothing            -> pure Nothing
-                    Just MftEntry {..} -> 
-                        case getMftChildSerial child of 
-                            Just childSerial | isRevoked childSerial validCrl -> do 
-                                vFocusOn ObjectFocus childKey $ vWarn RevokedResourceCertificate
-                                pure $! Just childKey
-                            _ -> pure Nothing
+        let revoked = revokedShortcutChildren mftShortcut validCrl children
+        forM_ revoked $ \(childKey, _) -> 
+            vFocusOn ObjectFocus childKey $ vWarn RevokedResourceCertificate
+        pure revoked
 
 
     -- this indicates the difference between RFC9286-bis 
@@ -1557,6 +1558,33 @@ manifestDiff mftShortcut newMftChidlren =
                 -- -- new entry, and the old one under the same key stays "deleted"
                 | otherwise ->
                     (t3 : newOnes_, overlapping_, remaining)
+
+
+-- | Of the manifest children that are not going to be re-validated in this round
+-- (i.e. the "overlapping" ones, covered by the manifest shortcut), find the ones
+-- revoked by the CRL of the new manifest.
+--
+-- RFC 6488 section 3 requires the EE certificate of a signed object to be a valid EE
+-- certificate per RFC 6487, and RFC 6487 section 7 counts a certificate whose serial is on
+-- the issuer's current CRL as invalid. So a revoked child must stop contributing
+-- payloads, and a revoked child CA certificate must stop being traversed.
+--
+-- The returned entries replace the children's shortcut entries: a revoked child becomes
+-- a 'TroubledChild', which means it is re-validated in full on every subsequent run
+-- (where 'allowRevoked' reports the revocation and drops the payload again). Merely
+-- skipping it for this round would not be enough: the revocation check only runs when
+-- the CRL object has changed, so on the next run, with the same CRL, the stale shortcut
+-- entry would silently start producing payloads again.
+revokedShortcutChildren :: MftShortcut 
+                        -> Validated CrlObject
+                        -> [T3 Text Hash ObjectKey]
+                        -> [(ObjectKey, MftEntry)]
+revokedShortcutChildren mftShortcut validCrl children = 
+    [ (childKey, makeChildWithIssues childKey fileName)
+    | T3 fileName _ childKey <- children
+    , Just MftEntry { child } <- [ Map.lookup childKey mftShortcut.nonCrlEntries ]
+    , Just childSerial        <- [ getMftChildSerial child ]
+    , isRevoked childSerial validCrl ]
 
 
 resolveTroubledChildByKey :: Tx mode
