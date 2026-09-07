@@ -1137,6 +1137,17 @@ data CleanUpResult = CleanUpResult
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+-- | Accumulator for the objects sweep in 'deleteStaleContent'.
+data SweepAcc = SweepAcc {
+        sweepToDelete :: [ObjectKey],
+        sweepPerType  :: Map.Map RpkiObjectType Integer,
+        sweepKept     :: !Int
+    }
+    deriving (Generic)
+
+emptySweep :: SweepAcc
+emptySweep = SweepAcc [] Map.empty 0
+
 data DeletionCriteria = DeletionCriteria
     { versionIsTooOld :: WorldVersion -> Bool
     , objectIsTooOld  :: WorldVersion -> RpkiObjectType -> Bool
@@ -1198,43 +1209,37 @@ deleteStaleContent db DeletionCriteria{..} =
         forM_ toDelete $ deleteValidationVersion tx db
         pure $ length toDelete
 
+    -- Streamed on purpose: the objects table has ~a million rows, and
+    -- collecting them into a list before looking at any of them was the bulk
+    -- of this worker's heap. Only the accumulator -- the keys actually being
+    -- deleted, plus counters -- outlives a row.
     deleteStaleObjects tx = do
         let Tx conn = tx
         validatedBy <- getValidatedByVersionMap conn
 
-        allObjs <- query_ conn
+        SweepAcc {..} <- SQLite.fold_ conn
             "SELECT object_key, world_version, type FROM objects"
+            emptySweep $ \acc (objectKey, insertedBy, typText) ->
+                pure $! case readMaybe (Text.unpack typText) of
+                    Nothing  -> acc
+                    Just typ ->
+                        let insertedOld  = objectIsTooOld insertedBy typ
+                            validatedOld = case Map.lookup objectKey validatedBy of
+                                Just wv -> objectIsTooOld wv typ
+                                Nothing -> True
+                        in if insertedOld && validatedOld
+                            then acc { sweepToDelete = objectKey : sweepToDelete acc,
+                                       sweepPerType  = Map.insertWith (+) typ 1 (sweepPerType acc) }
+                            else acc { sweepKept = sweepKept acc + 1 }
 
-        deletedPerType <- newTVarIO mempty
-        keptTotal      <- newTVarIO (0 :: Int)
-        keysToDelete   <- fmap catMaybes $ forM allObjs $
-            \(objectKey, insertedBy, typText) -> case readMaybe typText of
-                Nothing  -> pure Nothing
-                Just typ -> do
-                    let insertedOld = objectIsTooOld insertedBy typ
-                        validatedOld = case Map.lookup objectKey validatedBy of
-                            Just wv -> objectIsTooOld wv typ
-                            Nothing -> True
-                    if insertedOld && validatedOld
-                        then do
-                            atomically $ modifyTVar' deletedPerType $
-                                Map.unionWith (+) (Map.singleton typ 1)
-                            pure $ Just objectKey
-                        else do
-                            atomically $ modifyTVar' keptTotal (+1)
-                            pure Nothing
-
-        let validatedBy' = foldr Map.delete validatedBy keysToDelete
+        let validatedBy' = foldr Map.delete validatedBy sweepToDelete
         execute conn "INSERT OR REPLACE INTO validated_by_version(key, value) VALUES (?, ?)"
             (validatedByVersionKey, serialiseCompressed validatedBy')
 
-        deleteObjectByKey tx db keysToDelete
+        deleteObjectByKey tx db sweepToDelete
 
-        atomically $ do
-            deleted <- readTVar deletedPerType
-            let deletedCount = fromIntegral $ sum $ Map.elems deleted
-            kept    <- readTVar keptTotal
-            pure (deletedCount, deleted, kept)
+        let deletedCount = fromIntegral $ sum $ Map.elems sweepPerType
+        pure (deletedCount, sweepPerType, sweepKept)
 
 deleteDanglingUrls :: Tx 'RW -> IO Int
 deleteDanglingUrls (Tx conn) = do

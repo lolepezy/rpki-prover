@@ -12,6 +12,7 @@ import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString                   as BS
 import qualified Data.List                         as List
+import           Data.Maybe                        (isJust, isNothing)
 import qualified Data.Map.Strict                   as Map
 import qualified Data.Set                          as Set
 import qualified Data.Text                         as Text
@@ -103,8 +104,76 @@ txGroup = testGroup "App transaction test"
 dbGroup :: TestTree
 dbGroup = testGroup "App database test"
     [ HU.testCase "Should reopen database without issues" shouldReopenDatabase
+    , dbTestCase "Should delete only objects older than the criteria say"
+        shouldDeleteStaleObjectsOnly
+    , dbTestCase "Should keep an old object that was validated recently"
+        shouldKeepRecentlyValidatedObject
     ]
 
+
+-- | The sweep in `deleteStaleContent` decides per object, from the version it
+-- was inserted at and the version it was last validated at. Nothing covered it
+-- before, and it streams the whole objects table, so it is worth pinning down.
+shouldDeleteStaleObjectsOnly :: IO DB -> HU.Assertion
+shouldDeleteStaleObjectsOnly io = do
+    db <- io
+    Now now <- thisInstant
+    let oldVersion    = instantToVersion $ momentAfter now (Seconds (-100000))
+        recentVersion = instantToVersion now
+
+    oldObj    <- QC.generate QC.arbitrary
+    recentObj <- QC.generate (QC.arbitrary `QC.suchThat` (\o -> getHash o /= getHash oldObj))
+
+    storeAt db oldObj oldVersion
+    storeAt db recentObj recentVersion
+
+    -- "too old" = anything at or before oldVersion
+    r <- DB.deleteStaleContent db DB.DeletionCriteria {
+            versionIsTooOld = const False,
+            objectIsTooOld  = \v _ -> v <= oldVersion
+        }
+
+    HU.assertEqual "should delete exactly the old object" 1 (DB.deletedObjects r)
+    HU.assertEqual "should keep the recent one" 1 (DB.keptObjects r)
+
+    gone <- roTx db $ \tx -> DB.getKeyByHash tx db (getHash oldObj)
+    HU.assertBool "old object must be gone" (isNothing gone)
+    still <- roTx db $ \tx -> DB.getKeyByHash tx db (getHash recentObj)
+    HU.assertBool "recent object must remain" (isJust still)
+
+-- | An object inserted long ago but validated recently must survive: the sweep
+-- deletes only when both the insertion and the last validation are too old.
+shouldKeepRecentlyValidatedObject :: IO DB -> HU.Assertion
+shouldKeepRecentlyValidatedObject io = do
+    db <- io
+    Now now <- thisInstant
+    let oldVersion    = instantToVersion $ momentAfter now (Seconds (-100000))
+        recentVersion = instantToVersion now
+
+    obj <- QC.generate QC.arbitrary
+    key <- storeAt db obj oldVersion
+
+    -- mark it as validated now
+    rwTx db $ \tx -> void $
+        DB.updateValidatedByVersionMap tx db (Map.insert key recentVersion)
+
+    r <- DB.deleteStaleContent db DB.DeletionCriteria {
+            versionIsTooOld = const False,
+            objectIsTooOld  = \v _ -> v <= oldVersion
+        }
+
+    HU.assertEqual "nothing should be deleted" 0 (DB.deletedObjects r)
+    still <- roTx db $ \tx -> DB.getKeyByHash tx db (getHash obj)
+    HU.assertBool "recently validated object must remain" (isJust still)
+
+storeAt :: DB -> ParsedRpkiObject -> WorldVersion -> IO ObjectKey
+storeAt db obj version = rwTx db $ \tx ->
+    DB.saveObject tx db
+        (OriginalRO (ObjectOriginal $ unStorable $ toStorable obj)
+                    mempty
+                    (getHash obj)
+                    (getRpkiObjectType obj))
+        version
 
 shouldMergeObjectLocations :: IO DB -> HU.Assertion
 shouldMergeObjectLocations io = do

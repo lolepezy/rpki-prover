@@ -29,6 +29,7 @@ module RPKI.Store.SQLite (
     -- a raw 'Connection')
     query,
     query_,
+    fold_,
     queryNamed,
     execute,
     execute_,
@@ -236,6 +237,21 @@ query_ :: FromRow r => CachedConn -> Query -> IO [r]
 query_ cc tmpl = do
     stmt <- checkoutStatement cc tmpl
     collectRows stmt `finally` reset stmt
+
+-- | Fold over the result rows without materialising them.
+--
+-- 'query_' collects every row into a list first, which is fine for the small
+-- results most callers want but ruinous for a sweep over the whole objects
+-- table: a million rows of boxed columns is hundreds of megabytes that stay
+-- live for as long as the traversal runs. Here each row is consumed and
+-- becomes garbage immediately, so only the accumulator survives.
+fold_ :: FromRow r => CachedConn -> Query -> a -> (a -> r -> IO a) -> IO a
+fold_ cc tmpl z f = do
+    stmt <- checkoutStatement cc tmpl
+    let go !acc = nextRow stmt >>= \case
+            Nothing  -> pure acc
+            Just row -> go =<< f acc row
+    go z `finally` reset stmt
 
 queryNamed :: FromRow r => CachedConn -> Query -> [NamedParam] -> IO [r]
 queryNamed cc tmpl params = do
