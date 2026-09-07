@@ -1073,6 +1073,13 @@ saveCurrentDatabaseVersion (Tx conn) _ = liftIO $
 
 -- | Shared by updateValidatedByVersionMap and deleteStaleContent's sweep --
 -- both need the same "current validated-by-version map, or empty" read.
+--
+-- Kept as a single compressed blob on purpose, not as a table. Every
+-- validation round touches a large fraction of the entries, so a row per
+-- object would rewrite most of the table's disk pages each time; one blob is
+-- a single sequential write instead. The cost is that the whole map is a
+-- boxed Map in memory while the sweep runs -- do not "fix" that by
+-- normalising it into a table.
 getValidatedByVersionMap :: SQLite.CachedConn -> IO (Map.Map ObjectKey WorldVersion)
 getValidatedByVersionMap conn = do
     rows <- query conn "SELECT value FROM validated_by_version WHERE key = ?"
