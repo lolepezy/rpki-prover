@@ -815,10 +815,7 @@ validateCaNoFetch
                     _ -> pure []
 
             -- A revoked child must not contribute any payload (and, if it is a CA, 
-            -- its sub-tree must not be traversed), so drop it from the overlapping set.
-            -- Its shortcut entry is replaced with a troubled one (see revokedShortcutChildren), 
-            -- so from the next run on it is re-validated in full and the revocation keeps 
-            -- being reported.
+            -- its sub-tree must not be traversed), so drop it from the overlapping set.            
             let revokedKeys = Set.fromList $ map fst revokedEntries
             let overlappingChildren = 
                     filter (\(T3 _ _ k) -> k `Set.notMember` revokedKeys) overlappingChildren0
@@ -845,13 +842,10 @@ validateCaNoFetch
                         then vError issue
                         else vWarn issue
 
-            -- Mark all manifest entries as used to avoid the situation
+            -- Mark _all_ manifest entries as used to avoid the situation
             -- when some of the children are garbage-collected from the cache 
             -- and some are still there. Do it both in case of successful 
             -- validation or a validation error.
-            -- Note: this uses the unfiltered overlapping list, so that a child that
-            -- was just found revoked still counts as used and is not garbage-collected
-            -- from under the troubled shortcut entry created for it.
             let markAllEntriesAsUsed = do
                     forM_ (newChildren <> overlappingChildren0) $
                         \(T3 _ _ k) -> markAsUsed topDownContext k
@@ -867,14 +861,7 @@ validateCaNoFetch
 
                     let newEntries = makeEntriesWithMap newChildren (Map.fromList childrenShortcuts) 
                                         <> revokedEntries
-
-                    -- NOTE: nextMftShortcut is only used below to feed the meta-table write
-                    -- (updateMftShortcut reads only its meta fields via MftShortcutMeta{..}).
-                    -- Its nonCrlEntries field deliberately only holds this round's *new*
-                    -- entries, not the full child set -- children are written to the DB
-                    -- with targeted inserts/deletes (updateMftShortcutChildren below), not
-                    -- as a merged whole-map replace, so there's no need to reconstruct the
-                    -- full merged map here.
+                    
                     let nextMftShortcut = makeMftShortcut mftKey validMft newEntries keyedValidCrl
 
                     case validationAlgorithm of 
@@ -897,14 +884,13 @@ validateCaNoFetch
                                     increment topDownCounters.updateMftMeta
 
                                 -- Update manifest shortcut children in case there are new 
-                                -- or deleted children in the new manifest. They are updated
-                                -- separately since changes to non-CRL children are less common
-                                -- then updates to metadata, hence we can save quite some 
-                                -- CPU on serialisation.
-                                when (isNothing mftShortcut || not (null newChildren) 
-                                        || not (null deletedKeys) || not (null revokedEntries)) $ do
-                                    updateMftShortcutChildren topDownContext aki newEntries deletedKeys
-                                    increment topDownCounters.updateMftChildren
+                                -- or deleted children in the new manifest.
+                                when (isNothing mftShortcut 
+                                    || not (null newChildren) 
+                                    || not (null deletedKeys) 
+                                    || not (null revokedEntries)) $ do
+                                        updateMftShortcutChildren topDownContext aki newEntries deletedKeys
+                                        increment topDownCounters.updateMftChildren
 
                         _  -> pure ()
 
@@ -1559,22 +1545,6 @@ manifestDiff mftShortcut newMftChidlren =
                 | otherwise ->
                     (t3 : newOnes_, overlapping_, remaining)
 
-
--- | Of the manifest children that are not going to be re-validated in this round
--- (i.e. the "overlapping" ones, covered by the manifest shortcut), find the ones
--- revoked by the CRL of the new manifest.
---
--- RFC 6488 section 3 requires the EE certificate of a signed object to be a valid EE
--- certificate per RFC 6487, and RFC 6487 section 7 counts a certificate whose serial is on
--- the issuer's current CRL as invalid. So a revoked child must stop contributing
--- payloads, and a revoked child CA certificate must stop being traversed.
---
--- The returned entries replace the children's shortcut entries: a revoked child becomes
--- a 'TroubledChild', which means it is re-validated in full on every subsequent run
--- (where 'allowRevoked' reports the revocation and drops the payload again). Merely
--- skipping it for this round would not be enough: the revocation check only runs when
--- the CRL object has changed, so on the next run, with the same CRL, the stale shortcut
--- entry would silently start producing payloads again.
 revokedShortcutChildren :: MftShortcut 
                         -> Validated CrlObject
                         -> [T3 Text Hash ObjectKey]
@@ -1608,6 +1578,7 @@ resolveTroubledChildByKey tx db childKey =
                     pure $! Just (TroubledFromOriginal, Keyed (Located locations validatedRo) childKey)
 
         _ -> pure Nothing
+
 getStoredObject :: Tx mode
                     -> DB
                     -> ObjectKey
@@ -1757,9 +1728,8 @@ updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftS
         let !raw = Verbatim $ toStorable $ Compressed $ DB.MftShortcutMeta {..}
         atomically $ writeCQueue shortcutQueue $ UpdateMftShortcut aki raw  
 
--- | Only the new children get inserted (into `shortcuts` and `mft_shortcut_children`)
--- and only the deleted keys get removed -- unchanged ("overlapping") children are
--- never touched.
+-- Only the new children get inserted (into `shortcuts` and `mft_shortcut_children`)
+-- and only the deleted/revoked keys get removed.
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> [(ObjectKey, MftEntry)] -> [ObjectKey] -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki newEntries deletedKeys =
     liftIO $ do
