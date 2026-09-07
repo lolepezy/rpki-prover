@@ -27,6 +27,7 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Store.AppStorage
+import           RPKI.Store.AppSqliteStorage (AppSQLiteEnv, SqliteFlow (..), setupSqliteCache)
 import           RPKI.RRDP.RrdpFetch
 
 import           RPKI.Time
@@ -63,11 +64,11 @@ testSnapshotLoad = do
 
 
 
-createAppContext :: AppLogger -> ValidatorT IO AppLmdbEnv
+createAppContext :: AppLogger -> ValidatorT IO AppSQLiteEnv
 createAppContext logger = do
 
     liftIO $ setCpuCount 6
-    
+
     let parallelism = newParallelism 8
 
     let config = defaultConfig & #parallelism .~ parallelism
@@ -78,28 +79,25 @@ createAppContext logger = do
     _ <- fromEitherM $ first (InitE . InitError) <$> talsDir  rootDir
     _ <- fromEitherM $ first (InitE . InitError) <$> rsyncDir rootDir
     tmpd   <- fromEitherM $ first (InitE . InitError) <$> tmpDir   rootDir
-    cached <- fromEitherM $ first (InitE . InitError) <$> lmdbDir  rootDir
+    cached <- fromEitherM $ first (InitE . InitError) <$> cacheDir rootDir
 
-    lmdbEnv <- setupLmdbCache UseExisting logger cached config
-
-    (db, _) <- fromTry (InitE . InitError . fmtEx) $
-                        Lmdb.createDatabase lmdbEnv logger config Lmdb.DontCheckVersion
+    db <- setupSqliteCache UseExisting logger cached config
 
     -- clean up tmp directory if it's not empty
     cleanDir tmpd
-    
+
     appState <- liftIO newAppState
-    database <- liftIO $ newTVarIO db    
+    database <- liftIO $ newTVarIO db
 
     let executableVersion = thisExecutableVersion
-    pure AppContext {..}    
+    pure AppContext {..}
 
 
-talsDir, rsyncDir, tmpDir, lmdbDir :: FilePath -> IO (Either Text FilePath)
+talsDir, rsyncDir, tmpDir, cacheDir :: FilePath -> IO (Either Text FilePath)
 talsDir root  = checkSubDirectory root "tals"
 rsyncDir root = checkSubDirectory root "rsync"
 tmpDir root   = checkSubDirectory root "tmp"
-lmdbDir root  = checkSubDirectory root "cache"
+cacheDir root = checkSubDirectory root "cache"
 
 checkSubDirectory :: FilePath -> FilePath -> IO (Either Text FilePath)
 checkSubDirectory root sub = do

@@ -8,11 +8,6 @@ import RPKI.Store.Base.Storable (StorageStats(..))
 
 data AppStorageTag
 
--- Backward-compatible alias retained for code paths that still refer to
--- the old LMDB-named environment type.
-type AppLmdbEnv = AppContext AppStorageTag
-
-
 -- | Lifecycle operations for the storage backend.
 -- `s` is kept as a phantom parameter so that existing call-sites that carry
 -- a type-annotated AppContext compile without changes.

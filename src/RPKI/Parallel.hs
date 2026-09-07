@@ -168,7 +168,7 @@ readQueueChunked cq chunkSize f = go
             []    -> pure ()
             chunk -> f chunk >> go  
 
--- Auxialliary stuff for limiting the amount of parallel reading LMDB transactions    
+-- Auxialliary stuff for limiting the amount of parallel reading DB transactions
 data Semaphore = Semaphore { 
         capacity :: Int,
         current  :: TVar Int, 

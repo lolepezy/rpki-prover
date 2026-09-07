@@ -168,7 +168,7 @@ data Task =
     -- delete old objects and old versions
     | CacheCleanupTask    
 
-    -- cleanup files in tmp, stale LMDB reader transactions, run-away child processes, etc.
+    -- cleanup files in tmp, stale storage-backend state, run-away child processes, etc.
     | LeftoversCleanupTask
 
     -- async fetches of slow repositories
@@ -519,7 +519,7 @@ runAll appContext@AppContext {..} tals = do
                             pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxMemory
                             pure $ Right r    
 
-    -- Delete temporary files and LMDB stale reader transactions
+    -- Delete temporary files and any stale storage-backend state
     cleanupLeftovers = do
         -- Cleanup tmp directory, if some fetchers died abruptly 
         -- there may be leftover files.        
@@ -539,14 +539,12 @@ runAll appContext@AppContext {..} tals = do
                 when (ageInSeconds > maxTimeout) $
                     removePathForcibly fullPath                
 
-        -- Cleanup reader table of LMDB cache, it may get littered by 
-        -- dead processes, unfinished/killed transaction, etc.
-        -- All these stale transactions are essentially bugs, but it's 
-        -- easier to just clean them up rather than prevent all 
-        -- possible leakages (even if it were possible to prevent them).
+        -- Give the storage backend a chance to clean up any stale state left
+        -- behind by dead processes or unfinished/killed transactions (a
+        -- no-op for the current SQLite backend; kept for backends that need it).
         cleaned <- cleanUpStaleTx appContext
-        when (cleaned > 0) $ 
-            logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]
+        when (cleaned > 0) $
+            logDebug logger [i|Cleaned #{cleaned} stale readers from the storage backend.|]
         
         -- Kill all orphan workers (including rsync client processes) that may still
         -- be running and refusing to die. Sometimes an rsync process can leak and 
@@ -650,7 +648,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     -- Apply SLURM if it is set in the appState
     (slurmValidations, maybeSlurm) <- reReadSlurm        
 
-    -- Save all the results into LMDB    
+    -- Save all the results into the database
     ((deleted, updatedValidation), elapsed) <- timedMS $ DB.rwTxT database $ \tx db -> do              
                             
         let results' = addVersionPerTA results

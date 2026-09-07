@@ -205,10 +205,10 @@ setCpuCount = setNumCapabilities . fromIntegral
 -- Create 2 times more asyncs/tasks than there're capabilities. In most 
 -- tested cases it seems to be beneficial for the CPU utilisation ¯\_(ツ)_/¯.    
 -- 
--- Hardcoded (not sure it makes sense to make it configurable). Allow for 
--- that many IO operations (http downloads, LMDB reads, etc.) at once.
+-- Hardcoded (not sure it makes sense to make it configurable). Allow for
+-- that many IO operations (http downloads, database reads, etc.) at once.
 --
--- TODO There should be distinction between network operations and file/LMDB IO.
+-- TODO There should be distinction between network operations and file/database IO.
 newParallelism :: Natural -> Parallelism
 newParallelism cpus = makeParallelismF cpus (2 * cpus)
 

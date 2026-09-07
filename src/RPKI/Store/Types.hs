@@ -61,7 +61,7 @@ newtype ObjectOriginal = ObjectOriginal BS.ByteString
     deriving anyclass (TheBinary, NFData)        
 
 
--- | Lifecycle state stored in the 'objects' LMDB map.
+-- | Lifecycle state stored in the 'objects' table.
 --
 -- 'OriginalRO' covers both parse failures and prevalidation failures;
 -- in both cases the raw bytes are retained alongside the merged
