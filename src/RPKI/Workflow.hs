@@ -32,7 +32,6 @@ import qualified Data.Map.Strict                 as Map
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import           Data.Set                        (Set)
 import qualified Data.Set                        as Set
-import qualified Data.Vector                     as V
 import           Data.Maybe                      (fromMaybe, catMaybes, isJust)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
@@ -262,14 +261,13 @@ runAll appContext@AppContext {..} tals = do
 
             withWorkflowShared appContext prometheusMetrics tals $ \workflowShared ->
                 case config ^. #proverRunMode of
-                    ServerMode ->
-                        void $ concurrently
-                            (concurrently
-                                (concurrently
-                                    (runScheduledTasks workflowShared)
-                                    (revalidate workflowShared))
-                                logMemoryStatsPeriodically)
+                    ServerMode -> 
+                        mapConcurrently_ id [
+                            runScheduledTasks workflowShared,
+                            revalidate workflowShared,
+                            logMemoryStatsPeriodically,
                             runRtrIfConfigured
+                        ]                        
 
                     OneOffMode _ ->
                         void $ revalidate workflowShared
@@ -392,7 +390,7 @@ runAll appContext@AppContext {..} tals = do
         persistedJobs <- DB.roTxT database $ \tx db -> Map.fromList <$> DB.allJobs tx db
 
         Now now <- thisInstant
-        forConcurrently (schedules workflowShared) $ \Scheduling { taskDef = (task, action), ..} -> do                        
+        forConcurrently_ (schedules workflowShared) $ \Scheduling { taskDef = (task, action), ..} -> do                        
             let name = fmtGen task
             let (delay, jobRun0) =                  
                     if persistent
