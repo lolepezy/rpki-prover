@@ -746,8 +746,9 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
       where
         addUniqueVRPCount vrps !vs = let
                 vrpCountLens = typed @Metrics . #vrpCounts
-                totalUnique = Count (fromIntegral $ uniqueVrpCount vrps)        
-                perTaUnique = fmap (Count . fromIntegral . countUniqueVrps) (unPerTA vrps)   
+                (perTaCounts, allTasCount) = uniqueVrpCounts vrps
+                totalUnique = Count (fromIntegral allTasCount)
+                perTaUnique = fmap (Count . fromIntegral) perTaCounts
             in vs & vrpCountLens . #totalUnique .~ totalUnique                
                   & vrpCountLens . #perTaUnique .~ perTaUnique
 

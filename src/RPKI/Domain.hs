@@ -7,6 +7,7 @@ module RPKI.Domain where
 
 import           Control.Lens
 import           Control.DeepSeq          (NFData)
+import           Control.Monad.ST         (runST)
 
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
@@ -16,6 +17,7 @@ import qualified Data.Vector              as V
 import qualified Data.Vector.Algorithms.Merge as VectorSort
 import qualified Data.Vector.Algorithms.Intro as VectorSortU
 import qualified Data.Vector.Unboxed      as VU
+import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word                (Word8, Word32, Word64)
 
 import           Data.Generics.Product.Typed
@@ -957,10 +959,80 @@ mergeVrpsBy cross (Vrps v4 v6) = go (VU.toList v4) (VU.toList v6)
             GT -> unpack6 b : go as bs'
             _  -> unpack4 a : go as' bs
 
+-- | Sort in place, without deduplicating.
+sortPacked :: (VU.Unbox a, Ord a) => VU.Vector a -> VU.Vector a
+sortPacked v
+    | VU.null v = v
+    | otherwise = VU.modify VectorSortU.sort v
+
+-- | Number of distinct values in an already sorted vector.
+--
+-- Counting does not need the deduplicated vector that 'sortDedup' builds, and
+-- for a million VRPs that vector is the larger half of the cost.
+countSortedDistinct :: (VU.Unbox a, Eq a) => VU.Vector a -> Int
+countSortedDistinct v
+    | VU.null v = 0
+    | otherwise = go 1 1 (VU.unsafeHead v)
+  where
+    len = VU.length v
+    go !i !n !prev
+        | i >= len  = n
+        | otherwise =
+            let x = VU.unsafeIndex v i
+            in if x == prev then go (i + 1) n prev else go (i + 1) (n + 1) x
+
+-- | Number of distinct values in the union of several already sorted vectors.
+--
+-- A k-way merge, so it is linear in the total length with @k@ (the number of
+-- TAs, five in practice) comparisons per element, and it materialises nothing.
+-- Sorting the concatenation instead would redo, at @n log n@, work the inputs
+-- already carry.
+countDistinctUnion :: (VU.Unbox a, Ord a) => [VU.Vector a] -> Int
+countDistinctUnion vectors =
+    case filter (not . VU.null) vectors of
+        []  -> 0
+        [v] -> countSortedDistinct v
+        vs  -> runST $ do
+            let sources = V.fromList vs
+                k       = V.length sources
+            cursors <- VUM.replicate k (0 :: Int)
+            let
+                -- The source whose next unconsumed value is smallest, or -1
+                -- once every source is exhausted.
+                smallest !i !best
+                    | i >= k    = pure best
+                    | otherwise = do
+                        ci <- VUM.unsafeRead cursors i
+                        let vi = V.unsafeIndex sources i
+                        if ci >= VU.length vi
+                            then smallest (i + 1) best
+                            else if best < 0
+                                then smallest (i + 1) i
+                                else do
+                                    cb <- VUM.unsafeRead cursors best
+                                    let vb = V.unsafeIndex sources best
+                                    smallest (i + 1) $
+                                        if VU.unsafeIndex vi ci < VU.unsafeIndex vb cb
+                                            then i else best
+
+                go !n !seen !prev = do
+                    i <- smallest 0 (-1)
+                    if i < 0
+                        then pure n
+                        else do
+                            ci <- VUM.unsafeRead cursors i
+                            VUM.unsafeWrite cursors i (ci + 1)
+                            let x = VU.unsafeIndex (V.unsafeIndex sources i) ci
+                            if seen && x == prev
+                                then go n seen prev
+                                else go (n + 1) True x
+
+            go 0 False (VU.unsafeHead (V.unsafeHead sources))
+
 -- | Number of distinct VRPs, without materialising any of them.
 countUniqueVrps :: Vrps -> Int
 countUniqueVrps (Vrps v4 v6) =
-    VU.length (sortDedup compare v4) + VU.length (sortDedup compare v6)
+    countSortedDistinct (sortPacked v4) + countSortedDistinct (sortPacked v6)
 
 newtype Roas = Roas { unRoas :: MonoidalMap ObjectKey VrpsPerAs }
     deriving stock (Show, Eq, Ord, Generic)
@@ -1240,10 +1312,30 @@ estimateVrpCountRoas =
   where
     payloadVrpCount (VrpsPerAs _ v4 v6) = length v4 + length v6
 
--- Precise, and now no more expensive than a sort of the packed data:
--- packing is injective, so distinct packed VRPs are distinct VRPs.
+-- | Distinct VRP count per TA and over all TAs together, from a single sort
+-- of each TA's payload.
+--
+-- Both numbers are reported for every validation, and computing them
+-- separately meant sorting everything twice: once per TA, and once more over
+-- the concatenation of all TAs, which is the more expensive of the two. The
+-- per-TA sorted vectors are all the overall count needs, since sorted stays
+-- sorted -- so it is a merge over them rather than a second sort.
+--
+-- Precise, not an estimate: packing is injective, so distinct packed VRPs are
+-- distinct VRPs.
+uniqueVrpCounts :: PerTA Vrps -> (MonoidalMap TaName Int, Int)
+uniqueVrpCounts (PerTA perTaVrps) = (perTaCounts, total)
+  where
+    sorted = MonoidalMap.map (\(Vrps v4 v6) -> (sortPacked v4, sortPacked v6)) perTaVrps
+
+    perTaCounts = MonoidalMap.map
+        (\(v4, v6) -> countSortedDistinct v4 + countSortedDistinct v6) sorted
+
+    total = countDistinctUnion (map fst families) + countDistinctUnion (map snd families)
+    families = MonoidalMap.elems sorted
+
 uniqueVrpCount :: PerTA Vrps -> Int 
-uniqueVrpCount = countUniqueVrps . allTAs
+uniqueVrpCount = snd . uniqueVrpCounts
 
 -- | Sort and deduplicate, in place on the vector.
 --
