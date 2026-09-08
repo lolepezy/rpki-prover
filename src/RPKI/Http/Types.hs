@@ -268,6 +268,21 @@ data PublicationPointsDto = PublicationPointsDto {
     } 
     deriving stock (Eq, Show, Generic)
 
+data ErikPartitionDto = ErikPartitionDto {
+        hash      :: Hash,
+        size      :: Size,
+        partition :: Maybe ErikPartition
+    }
+    deriving stock (Eq, Show, Generic)
+
+data ErikRelayDto = ErikRelayDto {
+        relayKey   :: Text,
+        indexScope :: Text,
+        indexTime  :: Instant,
+        partitions :: [ErikPartitionDto]
+    }
+    deriving stock (Eq, Show, Generic)
+
 data RepositoryDto = RsyncDto RsyncRepositoryDto
                    | RrdpDto RrdpRepositoryDto
     deriving stock (Eq, Show, Generic) 
@@ -275,7 +290,7 @@ data RepositoryDto = RsyncDto RsyncRepositoryDto
 data RsyncRepositoryDto = RsyncRepositoryDto {
         uri         :: RsyncURL,
         meta        :: RepositoryMeta,
-        metrics     :: RsyncMetric,
+        metrics     :: TraverseMetric,
         validations :: [ResolvedVDto]
     }
     deriving stock (Eq, Show, Generic)
@@ -592,7 +607,14 @@ instance ToJSON WorkerInfoDto
 instance ToJSON ResourcesDto
 instance ToSchema SystemDto     
 instance ToSchema WorkerInfoDto     
-instance ToSchema ResourcesDto     
+instance ToSchema ResourcesDto
+
+instance ToJSON ErikPartitionDto
+instance ToSchema ErikPartitionDto where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToJSON ErikRelayDto
+instance ToSchema ErikRelayDto where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToJSON a => ToJSON (ValidationsDto a)
 instance ToSchema a => ToSchema (ValidationsDto a)

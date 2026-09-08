@@ -43,6 +43,9 @@ import qualified RPKI.Store.Database               as DB
 import           RPKI.Validation.ObjectValidation
 import qualified RPKI.Store.SQLite                 as SQLite
 import           RPKI.Store.Types
+import           RPKI.Parse.Internal.Common        (id_sha256)
+import qualified Data.Text.Encoding                as Text
+import qualified RPKI.Util                         as U
 import           RPKI.TestCommons
 import           RPKI.Time
 import           RPKI.Util
@@ -55,6 +58,7 @@ databaseGroup = testGroup "SQLite storage tests"
     , versionStoreGroup
     , txGroup
     , dbGroup
+    , erikStoreGroup
     ]
 
 objectStoreGroup :: TestTree
@@ -76,6 +80,136 @@ objectStoreGroup = testGroup "Object storage test"
     , dbTestCase "Should not report TA certificates as having multiple locations"
         shouldNotCountTaCertificatesAsMultiLocation
     ]
+
+erikStoreGroup :: TestTree
+erikStoreGroup = testGroup "Erik storage test"
+    [ dbTestCase "Should save and get an Erik index per relay and scope" shouldSaveAndGetErikIndex
+    , dbTestCase "Should save and get Erik partitions" shouldSaveAndGetErikPartitions
+    , dbTestCase "Should delete only Erik partitions no index refers to"
+        shouldDeleteOrphanedErikPartitionsOnly
+    ]
+
+
+-- | Indexes are keyed by (relay, scope), so the same scope fetched from two
+-- relays must not collide, and re-saving must overwrite rather than accumulate.
+shouldSaveAndGetErikIndex :: IO DB -> HU.Assertion
+shouldSaveAndGetErikIndex io = do
+    db <- io
+    Now now <- thisInstant
+
+    let relay1 = URI "https://relay-one.example.net"
+    let relay2 = URI "https://relay-two.example.net"
+    let fqdn   = FQDN "ca.example.net"
+
+    let index1 = mkErikIndex now "ca.example.net" [mkPartitionRef 1, mkPartitionRef 2]
+    let index2 = mkErikIndex now "ca.example.net" [mkPartitionRef 3]
+
+    rwTx db $ \tx -> do
+        DB.saveErikIndex tx db relay1 fqdn index1
+        DB.saveErikIndex tx db relay2 fqdn index2
+
+    (got1, got2) <- roTx db $ \tx ->
+        (,) <$> DB.getErikIndex tx db relay1 fqdn
+            <*> DB.getErikIndex tx db relay2 fqdn
+
+    HU.assertEqual "Index for the first relay" (Just index1) got1
+    HU.assertEqual "Index for the second relay" (Just index2) got2
+
+    missing <- roTx db $ \tx -> DB.getErikIndex tx db relay1 (FQDN "other.example.net")
+    HU.assertEqual "Unknown scope has no index" Nothing missing
+
+    -- Overwriting must replace, not add a second row for the same key
+    let index1' = mkErikIndex now "ca.example.net" [mkPartitionRef 7]
+    rwTx db $ \tx -> DB.saveErikIndex tx db relay1 fqdn index1'
+
+    all_ <- roTx db $ \tx -> DB.getAllErikIndexes tx db
+    HU.assertEqual "One row per (relay, scope)" 2 (length all_)
+    HU.assertEqual "Updated index is returned"
+        (Just index1')
+        (lookup (relay1, fqdn) [ ((u, f), ix) | (u, f, ix) <- all_ ])
+
+
+shouldSaveAndGetErikPartitions :: IO DB -> HU.Assertion
+shouldSaveAndGetErikPartitions io = do
+    db <- io
+    Now now <- thisInstant
+
+    let partition = ErikPartition {
+            partitionTime = now,
+            hashAlg       = DigestAlgorithmIdentifier id_sha256,
+            manifestList  = []
+        }
+    let h = mkPartitionHash 42
+
+    rwTx db $ \tx -> DB.saveErikPartition tx db h partition
+    got <- roTx db $ \tx -> DB.getErikPartition tx db h
+    HU.assertEqual "Stored partition" (Just partition) got
+
+    absent <- roTx db $ \tx -> DB.getErikPartition tx db (mkPartitionHash 43)
+    HU.assertEqual "Unknown partition hash" Nothing absent
+
+
+-- | `deleteStaleContent` collects partitions that no index refers to any more.
+-- The referring rows are written by `saveErikIndex`, so this also pins down that
+-- replacing an index drops its old partition membership.
+shouldDeleteOrphanedErikPartitionsOnly :: IO DB -> HU.Assertion
+shouldDeleteOrphanedErikPartitionsOnly io = do
+    db <- io
+    Now now <- thisInstant
+
+    let relay = URI "https://relay.example.net"
+    let fqdn  = FQDN "orphans.example.net"
+
+    let referenced = mkPartitionHash 1
+    let dropped    = mkPartitionHash 2
+    let neverSeen  = mkPartitionHash 3
+
+    let emptyPartition = ErikPartition {
+            partitionTime = now,
+            hashAlg       = DigestAlgorithmIdentifier id_sha256,
+            manifestList  = []
+        }
+
+    rwTx db $ \tx -> do
+        forM_ [referenced, dropped, neverSeen] $ \h ->
+            DB.saveErikPartition tx db h emptyPartition
+        DB.saveErikIndex tx db relay fqdn $
+            mkErikIndex now "orphans.example.net"
+                [ ErikPartitionRef referenced (Size 1), ErikPartitionRef dropped (Size 1) ]
+
+    -- Nothing is orphaned yet: both partitions are still in the index
+    deleted0 <- rwTx db $ \tx -> DB.deleteOrphanedErikPartitions tx
+    HU.assertEqual "Only the never-referenced partition goes" 1 deleted0
+
+    -- A new index drops one of them
+    rwTx db $ \tx ->
+        DB.saveErikIndex tx db relay fqdn $
+            mkErikIndex now "orphans.example.net" [ ErikPartitionRef referenced (Size 1) ]
+
+    deleted1 <- rwTx db $ \tx -> DB.deleteOrphanedErikPartitions tx
+    HU.assertEqual "The de-referenced partition goes" 1 deleted1
+
+    (kept, gone) <- roTx db $ \tx ->
+        (,) <$> DB.getErikPartition tx db referenced
+            <*> DB.getErikPartition tx db dropped
+    HU.assertBool "Referenced partition is kept" (isJust kept)
+    HU.assertEqual "De-referenced partition is deleted" Nothing gone
+
+
+mkErikIndex :: Instant -> Text.Text -> [ErikPartitionRef] -> ErikIndex
+mkErikIndex now scope refs = ErikIndex {
+        indexScope    = scope,
+        indexTime     = now,
+        hashAlg       = DigestAlgorithmIdentifier id_sha256,
+        partitionList = refs
+    }
+
+mkPartitionRef :: Int -> ErikPartitionRef
+mkPartitionRef n = ErikPartitionRef (mkPartitionHash n) (Size $ fromIntegral n)
+
+mkPartitionHash :: Int -> Hash
+mkPartitionHash n = U.sha256s $ Text.encodeUtf8 $ "erik-partition-" <> Text.pack (show n)
+
 
 repositoryStoreGroup :: TestTree
 repositoryStoreGroup = testGroup "Repository storage test"

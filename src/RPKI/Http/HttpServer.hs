@@ -92,6 +92,7 @@ httpServer appContext = genericServe HttpApi {
         originalValidationResults = getValidationsOriginalDto appContext,
         metrics = getMetrics appContext,
         repositories = getPPs appContext,
+        erikRelays = getErikRelays_ appContext,
         jobs = getJobs appContext,
         objectView = getRpkiObject appContext,
         manifests  = getManifests appContext,
@@ -377,6 +378,22 @@ getPPs AppContext {..} = liftIO $ do
     pps <- roTx db $ \tx -> DB.getPublicationPoints tx db
     pure $ toPublicationPointDto pps
 
+getErikRelays_ :: MonadIO m => AppContext s -> m [ErikRelayDto]
+getErikRelays_ AppContext {..} = liftIO $ do
+    db <- readTVarIO database
+    roTx db $ \tx -> do
+        indexes <- DB.getAllErikIndexes tx db
+        forM indexes $ \(URI relayUri, FQDN fqdn, ErikIndex {..}) -> do
+            parts <- forM partitionList $ \ErikPartitionRef { hash = partHash, size } -> do
+                partition <- DB.getErikPartition tx db partHash
+                pure ErikPartitionDto { hash = partHash, size, partition }
+            pure ErikRelayDto {
+                    relayKey   = relayUri <> "-" <> fqdn,
+                    indexScope,
+                    indexTime,
+                    partitions = parts
+                }
+
 getRpkiObject :: (MonadIO m, MonadError ServerError m)
                 => AppContext s
                 -> Maybe Text
@@ -587,7 +604,7 @@ toRepositoryDtos AppContext {..} inputs = do
                 resolved <- forM validationDtos $ resolveOriginalDto tx db
 
                 pure $ fmap (\metrics -> RsyncRepositoryDto { validations = resolved, .. }) 
-                        $ filterRepositoryMetrics (RsyncU uri) $ state ^. typed @Metrics . #rsyncMetrics
+                        $ filterRepositoryMetrics (RsyncU uri) $ state ^. typed @Metrics . #traverseMetrics
 
         pure $ rrdpRepos <> rsyncRepos            
   where
