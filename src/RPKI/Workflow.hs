@@ -647,26 +647,8 @@ runAll appContext@AppContext {..} tals = do
         let interval = config ^. typed @SystemConfig . #memoryMetricsInterval
         when (interval > 0) $ forever $ do
             threadDelay $ toMicroseconds interval
-            stats <- sampleMemory
+            stats <- getMemoryStats =<< DB.preparedStatementCount =<< readTVarIO database
             logInfo logger [i|memory-stats #{memoryStatsJson stats}|]
-            trimMallocIfWorthIt stats
-      where
-        sampleMemory = getMemoryStats =<< DB.preparedStatementCount =<< readTVarIO database
-
-        -- Reading payload BLOBs out of SQLite allocates tens of megabytes at a
-        -- time; freeing them only returns the memory to the C allocator's free
-        -- lists, so it accumulates to the high-water mark of that churn and never
-        -- comes back on its own. Hand it back once it is worth the syscalls.
-        trimMallocIfWorthIt stats = do
-            let thresholdMb = config ^. typed @SystemConfig . #mallocTrimThresholdMb
-            let freeMb = fromIntegral (unSize (stats ^. #mallocFree)) `div` (1024 * 1024 :: Int)
-            when (thresholdMb > 0 && freeMb >= thresholdMb) $ do
-                released <- trimMalloc
-                when released $ do
-                    after <- getMemoryStats =<< DB.preparedStatementCount =<< readTVarIO database
-                    let mb s = unSize (s ^. #processRss) `div` (1024 * 1024)
-                    logDebug logger
-                        [i|Trimmed the C allocator sitting on #{freeMb}mb of freed space, RSS #{mb stats}mb -> #{mb after}mb.|]
 
 
 -- To be called by the validation worker process

@@ -86,9 +86,7 @@ data MemoryStats = MemoryStats {
         -- here against a small 'mallocInUse' means fragmentation rather than
         -- genuine demand.
         mallocFree           :: Size,
-        -- | What malloc_trim could plausibly hand back to the OS.
-        mallocReleasable     :: Size,
-        -- | False when the platform has no mallinfo2 (musl), so that the four
+        -- | False when the platform has no mallinfo2 (musl), so that the three
         -- fields above read 0 because they are unknown, not because they are
         -- genuinely zero.
         mallocStatsAvailable :: Bool,
@@ -111,7 +109,7 @@ emptyMemoryStats = MemoryStats {
         processRssFile = 0, processVmSize = 0,
         rtsInUse = 0, rtsPeakInUse = 0, rtsLive = 0, rtsAllocated = 0,
         rtsGcs = 0, rtsMajorGcs = 0, rtsGcCpuMs = 0, rtsMutatorCpuMs = 0,
-        mallocFromOs = 0, mallocInUse = 0, mallocFree = 0, mallocReleasable = 0,
+        mallocFromOs = 0, mallocInUse = 0, mallocFree = 0,
         mallocStatsAvailable = False,
         sqliteInUse = 0, sqlitePeak = 0, preparedStatements = 0
     }
@@ -130,13 +128,6 @@ gcCpuFraction MemoryStats {..}
     | otherwise  = fromIntegral rtsGcCpuMs / fromIntegral total
   where
     total = rtsGcCpuMs + rtsMutatorCpuMs
-
--- | Freed-but-retained as a fraction of what the allocator holds. Close to 1
--- means almost everything the C allocator is holding is fragmentation.
-mallocFreeRatio :: MemoryStats -> Double
-mallocFreeRatio MemoryStats {..}
-    | unSize mallocFromOs <= 0 = 0
-    | otherwise = fromIntegral (unSize mallocFree) / fromIntegral (unSize mallocFromOs)
 
 
 -- ---------------------------------------------------------------------------
@@ -180,7 +171,6 @@ getMemoryStats preparedStatementCount = liftIO $ do
             mallocFromOs         = mallocField 0 + mallocField 1,
             mallocInUse          = mallocField 2,
             mallocFree           = mallocField 3,
-            mallocReleasable     = mallocField 4,
             mallocStatsAvailable = mallocAvailable,
 
             sqliteInUse        = sqliteUsed,
@@ -246,7 +236,7 @@ readProcStatus = do
                         Right (value, _) -> [(key, value)]
                         Left _           -> []
 
--- | glibc's mallinfo2 as (available, [arena, hblkhd, uordblks, fordblks, keepcost]).
+-- | glibc's mallinfo2 as (available, [arena, hblkhd, uordblks, fordblks]).
 readMallocStats :: IO (Bool, [Int64])
 readMallocStats =
     allocaArray mallocStatsFields $ \ptr -> do
@@ -255,7 +245,7 @@ readMallocStats =
         pure (available == 1, values)
 
 mallocStatsFields :: Int
-mallocStatsFields = 5
+mallocStatsFields = 4
 
 
 -- | Render a sample as one line of JSON, for a log line that later gets
@@ -283,34 +273,19 @@ memoryStatsJson ms@MemoryStats {..} =
             "mallocFromOs"         .= unSize mallocFromOs,
             "mallocInUse"          .= unSize mallocInUse,
             "mallocFree"           .= unSize mallocFree,
-            "mallocReleasable"     .= unSize mallocReleasable,
             "mallocStatsAvailable" .= mallocStatsAvailable,
 
             "sqliteInUse"          .= unSize sqliteInUse,
             "sqlitePeak"           .= unSize sqlitePeak,
             "preparedStatements"   .= preparedStatements,
 
-            -- derived, so that a reader of the log doesn't have to recompute them
-            "nonHaskellMemory"     .= unSize (nonHaskellMemory ms),
-            "mallocFreeRatio"      .= mallocFreeRatio ms
+            -- derived, so that a reader of the log doesn't have to recompute it
+            "nonHaskellMemory"     .= unSize (nonHaskellMemory ms)
         ]
 
 
--- | Ask the C allocator to hand back whatever it is holding but not using.
--- Returns True if anything was actually released.
---
--- Worth doing because the allocator never returns memory on its own: it grows
--- to the high-water mark of transient allocation (reading payload BLOBs out
--- of SQLite, mostly) and keeps it on its free lists indefinitely. 'mallocFree'
--- against 'mallocInUse' says how much is up for grabs.
-trimMalloc :: MonadIO m => m Bool
-trimMalloc = liftIO $ (== 1) <$> c_malloc_trim
-
 foreign import ccall unsafe "rpki_prover_malloc_stats"
     c_malloc_stats :: Ptr Int64 -> IO CInt
-
-foreign import ccall safe "rpki_prover_malloc_trim"
-    c_malloc_trim :: IO CInt
 
 foreign import ccall unsafe "sqlite3_memory_used"
     c_sqlite3_memory_used :: IO Int64
