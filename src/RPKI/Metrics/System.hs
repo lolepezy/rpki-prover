@@ -54,8 +54,12 @@ data ResourceUsage = ResourceUsage {
         latestCpuTime       :: LatestCPUTime,
         aggregatedCpuTime   :: AggregatedCPUTime,
         aggregatedClockTime :: TimeMs,
+        -- | Largest Haskell heap any run under this scope ever reached.
         maxMemory           :: MaxMemory,
         avgMemory           :: AvgMemory,
+        -- | Largest resident size any run under this scope ever reached.
+        -- Same kind of number as 'maxMemory' -- both are high-water marks over
+        -- a whole run -- so the two are directly comparable.
         maxProcessRSS       :: MaxMemory,
         avgProcessRSS       :: AvgMemory
     }

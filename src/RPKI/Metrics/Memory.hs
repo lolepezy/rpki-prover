@@ -178,11 +178,18 @@ getMemoryStats preparedStatementCount = liftIO $ do
             preparedStatements = preparedStatementCount
         }
 
--- | Just the process RSS, for the paths where a full sample would be overkill.
-getProcessRss :: MonadIO m => m Size
-getProcessRss = liftIO $ do
+-- | Peak RSS the process has ever reached (VmHWM), for the paths where a full
+-- sample would be overkill.
+--
+-- The kernel maintains it, so it is a genuine high-water mark rather than
+-- whatever happened to be resident when we asked. That matters where it is
+-- compared against an RTS high-water mark like 'max_mem_in_use_bytes': a
+-- process that has handed memory back to the OS reads far below its own peak,
+-- which made the two look inconsistent.
+getProcessPeakRss :: MonadIO m => m Size
+getProcessPeakRss = liftIO $ do
     procStatus <- readProcStatus
-    pure $ Size $ 1024 * Map.findWithDefault 0 "VmRSS" procStatus
+    pure $ Size $ 1024 * Map.findWithDefault 0 "VmHWM" procStatus
 
 data RtsSample = RtsSample {
         rtsSampleInUse     :: Size,

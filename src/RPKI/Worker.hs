@@ -28,7 +28,7 @@ import           System.Posix.Process
 
 import           RPKI.AppMonad
 import           RPKI.AppTypes
-import           RPKI.Metrics.Memory (getProcessRss)
+import           RPKI.Metrics.Memory (getProcessPeakRss)
 import           RPKI.AppContext
 import           RPKI.Config
 import           RPKI.Domain
@@ -148,10 +148,14 @@ data WorkerResult r = WorkerResult {
         payload   :: Either ErrorResult r,        
         cpuTime   :: CPUTime,
         clockTime :: TimeMs,
-        -- | The Haskell heap of the worker process, as the RTS reports it.
+        -- | The most the Haskell heap ever reached during the run, as the
+        -- RTS reports it (max_mem_in_use_bytes).
         maxMemory :: MaxMemory,
-        -- | The worker process as a whole (RSS), which also covers whatever
-        -- SQLite allocated outside the Haskell heap.
+        -- | The most the worker process as a whole ever reached (VmHWM),
+        -- which also covers whatever SQLite allocated outside the Haskell
+        -- heap. Both are high-water marks over the whole run, so this one is
+        -- the larger of the two whenever the RTS has mapped memory it never
+        -- touched.
         processMemory :: MaxMemory,
         -- | How the CPU time splits between collecting garbage and doing the
         -- actual work. Worth having per run: a validation that is mostly GC
@@ -262,7 +266,7 @@ processStat = do
     statCpuTime <- getCpuTime
     RTSStats {..} <- liftIO getRTSStats
     let statMaxMemory = MaxMemory $ fromIntegral max_mem_in_use_bytes
-    statProcessMemory <- MaxMemory . fromIntegral . unSize <$> getProcessRss
+    statProcessMemory <- MaxMemory . fromIntegral . unSize <$> getProcessPeakRss
     let statGcCpuTime      = TimeMs $ fromIntegral gc_cpu_ns `div` 1000_000
         statMutatorCpuTime = TimeMs $ fromIntegral mutator_cpu_ns `div` 1000_000
         statAllocatedBytes = Size $ fromIntegral allocated_bytes
