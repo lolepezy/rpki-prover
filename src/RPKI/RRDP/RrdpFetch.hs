@@ -530,7 +530,7 @@ saveSnapshot
             Right r -> 
                 case r of 
                     HashExists rpkiURL _ key -> 
-                        DB.linkObjectToUrl tx db rpkiURL key 
+                        DB.linkObjectToUrl tx db rpkiURL key worldVersion
 
                     UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do                    
                         logError logger [i|Skipped object #{rpkiUrl}: #{e}|]
@@ -552,7 +552,7 @@ saveSnapshot
                                 embedState vs
                             WellStructuredRO _ -> pure ()
                         key <- DB.saveStorableObject tx db so worldVersion
-                        DB.linkObjectToUrl tx db rpkiUrl key
+                        DB.linkObjectToUrl tx db rpkiUrl key worldVersion
                         addedObject $ Just $ getRpkiObjectType lifecycle
 
                     other -> 
@@ -706,7 +706,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 let validationScope = newScopes $ unURI $ getURL rpkiUrl
                 let validationState = ValidationState (mError (validationScope ^. typed) e) mempty mempty
                 key <- DB.saveObject tx db (OriginalRO original validationState hash objectMeta.objectType) worldVersion
-                DB.linkObjectToUrl tx db rpkiUrl key
+                DB.linkObjectToUrl tx db rpkiUrl key worldVersion
                 logDebug logger [i||Added original object #{rpkiUrl} with hash #{hash} to the database.|]                 
 
             SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
@@ -720,7 +720,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                         WellStructuredRO _ -> pure ()
                     key <- DB.saveStorableObject tx db so worldVersion
                     addedObject $ Just $ getRpkiObjectType lifecycle
-                    DB.linkObjectToUrl tx db rpkiUrl key
+                    DB.linkObjectToUrl tx db rpkiUrl key worldVersion
 
             other ->
                 logDebug logger [i|Weird thing happened in `addObject` #{other}.|]
@@ -754,7 +754,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 let validationScope = newScopes $ unURI $ getURL rpkiUrl
                 let validationState = ValidationState (mError (validationScope ^. typed) e) mempty mempty
                 key <- DB.saveObject tx db (OriginalRO original validationState hash objectMeta.objectType) worldVersion
-                DB.linkObjectToUrl tx db rpkiUrl key
+                DB.linkObjectToUrl tx db rpkiUrl key worldVersion
 
             SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
                 validateOldHash
@@ -768,7 +768,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                         WellStructuredRO _ -> pure ()
 
                     key <- DB.saveStorableObject tx db so worldVersion
-                    DB.linkObjectToUrl tx db rpkiUrl key
+                    DB.linkObjectToUrl tx db rpkiUrl key worldVersion
                     addedObject $ Just $ getRpkiObjectType lifecycle
 
             other -> 

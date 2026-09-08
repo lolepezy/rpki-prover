@@ -443,7 +443,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                     Right ppAccess ->
                         DB.rwAppTxEx db DB.storageError $ \tx -> do
                             taCertKey <- DB.saveObject tx db (WellStructuredRO (CerRO certToStore)) worldVersion
-                            DB.linkObjectToUrl tx db actualUrl taCertKey
+                            DB.linkObjectToUrl tx db actualUrl taCertKey worldVersion
                             DB.saveTA tx db (StorableTA tal taCertKey (FetchedAt moment) ppAccess actualUrl)
                             pure (locatedTaCert (talCertLocations tal <> toLocations actualUrl) certToUse, ppAccess)
 
@@ -612,7 +612,11 @@ validateCaNoFetch
             vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
                 increment $ topDownCounters.originalCa
                 markAsUsedByHash appContext topDownContext (getHash c)                         
-                validateObjectLocations c
+                -- The TA certificate is the only CA at depth 0 and its locations 
+                -- come from the TAL, which legitimately lists several URLs for it, 
+                -- so there's no point warning about them.
+                unless (currentPathDepth == 0) $ 
+                    validateObjectLocations c
                 ValidityPeriod {..} <- vHoist $ validateObjectValidityPeriod (c ^. #payload) now
                 rememberNotValidAfter topDownContext notAfter
                 oneMoreCert

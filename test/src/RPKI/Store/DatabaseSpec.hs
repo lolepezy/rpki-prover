@@ -73,6 +73,8 @@ objectStoreGroup = testGroup "Object storage test"
     , dbTestCase "Should index certificates on saveObject" shouldIndexCertificateOnSaveObject
     , dbTestCase "Should report distinct min/max/avg object sizes per type"
         shouldComputeObjectSizeStats
+    , dbTestCase "Should not report TA certificates as having multiple locations"
+        shouldNotCountTaCertificatesAsMultiLocation
     ]
 
 repositoryStoreGroup :: TestTree
@@ -111,6 +113,8 @@ dbGroup = testGroup "App database test"
         shouldDeleteStaleObjectsOnly
     , dbTestCase "Should keep an old object that was validated recently"
         shouldKeepRecentlyValidatedObject
+    , dbTestCase "Should expire object-URL links that a newer link superseded"
+        shouldExpireSupersededObjectUrls
     ]
 
 
@@ -132,8 +136,9 @@ shouldDeleteStaleObjectsOnly io = do
 
     -- "too old" = anything at or before oldVersion
     r <- DB.deleteStaleContent db DB.DeletionCriteria {
-            versionIsTooOld = const False,
-            objectIsTooOld  = \v _ -> v <= oldVersion
+            versionIsTooOld   = const False,
+            objectIsTooOld    = \v _ -> v <= oldVersion,
+            objectUrlIsTooOld = const False
         }
 
     HU.assertEqual "should delete exactly the old object" 1 (DB.deletedObjects r)
@@ -161,8 +166,9 @@ shouldKeepRecentlyValidatedObject io = do
         DB.updateValidatedByVersionMap tx db (Map.insert key recentVersion)
 
     r <- DB.deleteStaleContent db DB.DeletionCriteria {
-            versionIsTooOld = const False,
-            objectIsTooOld  = \v _ -> v <= oldVersion
+            versionIsTooOld   = const False,
+            objectIsTooOld    = \v _ -> v <= oldVersion,
+            objectUrlIsTooOld = const False
         }
 
     HU.assertEqual "nothing should be deleted" 0 (DB.deletedObjects r)
@@ -177,6 +183,98 @@ storeAt db obj version = rwTx db $ \tx ->
                     (getHash obj)
                     (getRpkiObjectType obj))
         version
+
+-- | Issue #300: an object that moved between repositories used to keep both
+-- URLs forever and keep warning about having multiple locations. A link is
+-- dropped once it is both past the cutoff and superseded by a newer link of
+-- the same object -- so a migration is forgotten, while an object genuinely
+-- published at several URLs (all refreshed in the same version) keeps all of
+-- them, and an object with a single, ancient link never loses its last one.
+shouldExpireSupersededObjectUrls :: IO DB -> HU.Assertion
+shouldExpireSupersededObjectUrls io = do
+    db <- io
+    Now now <- thisInstant
+    let oldVersion    = instantToVersion $ momentAfter now (Seconds (-100000))
+        recentVersion = instantToVersion now
+
+    [moved, dualHomed, lonely] <- distinctObjects 3
+    [url1, url2, url3, url4] :: [RpkiURL] <-
+        take 4 . List.nub <$> replicateM 20 (QC.generate QC.arbitrary)
+
+    movedKey     <- storeAt db moved     oldVersion
+    dualHomedKey <- storeAt db dualHomed oldVersion
+    lonelyKey    <- storeAt db lonely    oldVersion
+
+    rwTx db $ \tx -> do
+        -- moved from url1 to url2 at some point
+        DB.linkObjectToUrl tx db url1 movedKey oldVersion
+        DB.linkObjectToUrl tx db url2 movedKey recentVersion
+        -- published at both url2 and url3 all along
+        DB.linkObjectToUrl tx db url2 dualHomedKey oldVersion
+        DB.linkObjectToUrl tx db url3 dualHomedKey oldVersion
+        -- only ever seen at url4, and not for a long time
+        DB.linkObjectToUrl tx db url4 lonelyKey oldVersion
+
+    r <- DB.deleteStaleContent db DB.DeletionCriteria {
+            versionIsTooOld   = const False,
+            objectIsTooOld    = \_ _ -> False,
+            objectUrlIsTooOld = (<= oldVersion)
+        }
+
+    HU.assertEqual "should drop exactly the superseded link" 1 (DB.deletedObjectUrls r)
+    HU.assertEqual "should not delete any object" 0 (DB.deletedObjects r)
+
+    let locationsOf k = roTx db $ \tx -> DB.getLocationsByKey tx db k
+    locationsOf movedKey >>= HU.assertEqual
+        "Moved object must be left at its current location only"
+        (Just $ toLocations url2)
+    locationsOf dualHomedKey >>= HU.assertEqual
+        "Genuinely multi-located object must keep all its locations"
+        (Just $ toLocations url2 <> toLocations url3)
+    locationsOf lonelyKey >>= HU.assertEqual
+        "An object must never lose its last location, however old"
+        (Just $ toLocations url4)
+
+    multi <- roTx db $ \tx -> DB.getMultiLocationKeys tx db
+    HU.assertEqual "Only the dual-homed object should still look multi-located"
+        (Set.singleton dualHomedKey) multi
+
+
+-- | A TAL legitimately lists the same certificate at several URLs, so a TA
+-- certificate having multiple locations is normal and must not be warned about.
+shouldNotCountTaCertificatesAsMultiLocation :: IO DB -> HU.Assertion
+shouldNotCountTaCertificatesAsMultiLocation io = do
+    db <- io
+    worldVersion <- newVersion
+
+    [taCert, ordinary] <- distinctObjects 2
+    [url1, url2] :: [RpkiURL] <- take 2 . List.nub <$> replicateM 20 (QC.generate QC.arbitrary)
+
+    taCertKey   <- storeAt db taCert   worldVersion
+    ordinaryKey <- storeAt db ordinary worldVersion
+
+    rwTx db $ \tx@(Tx conn) -> do
+        forM_ [url1, url2] $ \url -> do
+            DB.linkObjectToUrl tx db url taCertKey worldVersion
+            DB.linkObjectToUrl tx db url ordinaryKey worldVersion
+        SQLite.execute conn
+            "INSERT INTO trust_anchors(ta_name, ta_cert_key, data, active) VALUES (?, ?, ?, 1)"
+            ("some-ta" :: Text.Text, taCertKey, "" :: BS.ByteString)
+
+    multi <- roTx db $ \tx -> DB.getMultiLocationKeys tx db
+    HU.assertEqual "Only the non-TA object should be reported as multi-located"
+        (Set.singleton ordinaryKey) multi
+
+
+-- | `n` generated objects with pairwise distinct hashes.
+distinctObjects :: Int -> IO [ParsedRpkiObject]
+distinctObjects n = go []
+  where
+    go acc
+        | length acc == n = pure $ reverse acc
+        | otherwise = do
+            o <- QC.generate QC.arbitrary
+            go $ if any ((getHash o ==) . getHash) acc then acc else o : acc
 
 shouldMergeObjectLocations :: IO DB -> HU.Assertion
 shouldMergeObjectLocations io = do
@@ -195,7 +293,7 @@ shouldMergeObjectLocations io = do
                             (getHash obj)
                             (getRpkiObjectType obj))
                 (instantToVersion now)
-            DB.linkObjectToUrl tx db url k
+            DB.linkObjectToUrl tx db url k (instantToVersion now)
 
     let getIt h = roTx db $ \tx -> DB.getByHash tx db h
 
@@ -244,8 +342,8 @@ shouldOrderManifests io = do
     rwTx db $ \tx -> do
         key1 <- DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft1) worldVersion
         key2 <- DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft2) worldVersion
-        DB.linkObjectToUrl tx db url1 key1
-        DB.linkObjectToUrl tx db url2 key2
+        DB.linkObjectToUrl tx db url1 key1 worldVersion
+        DB.linkObjectToUrl tx db url2 key2 worldVersion
 
     let Just aki1 = getAKI mft1
     [m1, m2] <- roTx db $ \tx -> DB.getMftsForAKI tx db aki1
@@ -470,7 +568,7 @@ shouldIndexCertificateOnSaveObject io = do
 
     key <- rwTx db $ \tx -> do
         k <- DB.saveObject tx db ro wv
-        DB.linkObjectToUrl tx db url k
+        DB.linkObjectToUrl tx db url k wv
         pure k
 
     bySki <- roTx db $ \tx -> DB.getBySKI tx db (getSKI wsCert)

@@ -156,7 +156,7 @@ rwTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 55
+currentDatabaseVersion = 56
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -305,11 +305,16 @@ getLocatedByKey tx db k = liftIO $ runMaybeT $ do
 -- asking per object cost a query and a transaction each -- ~440k of them per
 -- round, to discover that a handful of objects qualify (4 of 793516 in a real
 -- cache). One aggregate up front is ~150ms and answers all of them.
+--
+-- TA certificates are excluded: a TAL legitimately lists several URLs for the
+-- same certificate, so warning about it is only noise.
 getMultiLocationKeys :: MonadIO m => Tx mode -> DB -> m (Set.Set ObjectKey)
 getMultiLocationKeys (Tx conn) _ = liftIO $ do
     rows <- query_ conn
         [sql|
             SELECT object_key FROM object_urls
+            WHERE object_key NOT IN (
+                SELECT ta_cert_key FROM trust_anchors WHERE ta_cert_key IS NOT NULL)
             GROUP BY object_key HAVING COUNT(*) > 1
         |]
     pure $! Set.fromList $ map fromOnly rows
@@ -399,16 +404,23 @@ getObjectMeta (Tx conn) _ k = liftIO $ do
             Nothing  -> Nothing
         _ -> Nothing
 
-linkObjectToUrl :: MonadIO m => Tx 'RW -> DB -> RpkiURL -> ObjectKey -> m ()
-linkObjectToUrl (Tx conn) _ rpkiURL objectKey = liftIO $ do
+-- | Record that the object is published at the given URL as of `worldVersion`.
+--
+-- The version is refreshed on every call, so an association only stays old if
+-- the object stopped being seen at that URL (it moved to another repository,
+-- say). 'deleteStaleObjectUrls' expires those, which is what makes the
+-- "object has multiple locations" warning go away after a migration.
+linkObjectToUrl :: MonadIO m => Tx 'RW -> DB -> RpkiURL -> ObjectKey -> WorldVersion -> m ()
+linkObjectToUrl (Tx conn) _ rpkiURL objectKey worldVersion = liftIO $ do
     [Only urlKey] <- query conn
         [sql|INSERT INTO urls(url) VALUES (?)
              ON CONFLICT(url) DO UPDATE SET url = excluded.url
              RETURNING url_key|]
         (Only (serialiseField rpkiURL))
     execute conn
-        "INSERT OR IGNORE INTO object_urls(object_key, url_key) VALUES (?, ?)"
-        (objectKey, urlKey :: UrlKey)
+        [sql|INSERT INTO object_urls(object_key, url_key, world_version) VALUES (?, ?, ?)
+             ON CONFLICT(object_key, url_key) DO UPDATE SET world_version = excluded.world_version|]
+        (objectKey, urlKey :: UrlKey, worldVersion)
 
 hashExists :: MonadIO m => Tx mode -> DB -> Hash -> m Bool
 hashExists (Tx conn) _ h = liftIO $ do
@@ -1144,11 +1156,12 @@ getObjectsStats (Tx conn) _ = liftIO $ do
 -- ---------------------------------------------------------------------------
 
 data CleanUpResult = CleanUpResult
-    { deletedObjects  :: Int
-    , deletedPerType  :: Map.Map RpkiObjectType Integer
-    , keptObjects     :: Int
-    , deletedURLs     :: Int
-    , deletedVersions :: Int
+    { deletedObjects    :: Int
+    , deletedPerType    :: Map.Map RpkiObjectType Integer
+    , keptObjects       :: Int
+    , deletedObjectUrls :: Int
+    , deletedURLs       :: Int
+    , deletedVersions   :: Int
     }
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -1165,8 +1178,9 @@ emptySweep :: SweepAcc
 emptySweep = SweepAcc [] Map.empty 0
 
 data DeletionCriteria = DeletionCriteria
-    { versionIsTooOld :: WorldVersion -> Bool
-    , objectIsTooOld  :: WorldVersion -> RpkiObjectType -> Bool
+    { versionIsTooOld   :: WorldVersion -> Bool
+    , objectIsTooOld    :: WorldVersion -> RpkiObjectType -> Bool
+    , objectUrlIsTooOld :: WorldVersion -> Bool
     }
     deriving (Generic)
 
@@ -1210,6 +1224,7 @@ deleteStaleContent db DeletionCriteria{..} =
         rwTx db $ \tx -> do
             deletedVersions <- deleteOldVersions tx
             (deletedObjects, deletedPerType, keptObjects) <- deleteStaleObjects tx
+            deletedObjectUrls <- deleteStaleObjectUrls tx objectUrlIsTooOld
             deletedURLs <- deleteDanglingUrls tx
             pure CleanUpResult{..}
   where
@@ -1249,6 +1264,34 @@ deleteStaleContent db DeletionCriteria{..} =
 
         let deletedCount = fromIntegral $ sum $ Map.elems sweepPerType
         pure (deletedCount, sweepPerType, sweepKept)
+
+-- | Forget that an object used to be published at a URL where it hasn't been
+-- seen for a while.
+--
+-- Without this, an object that moved between repositories keeps both URLs
+-- forever and keeps warning about having multiple locations (issue #300).
+--
+-- The newest association of every object is always kept, however old it is:
+-- objects must never end up with zero locations, and refetching does not touch
+-- every object every round (RRDP deltas only mention what changed), so "old"
+-- on its own is not evidence that the object has gone. Only associations that
+-- some *newer* association of the same object has superseded are dropped, and
+-- only once they are past the cutoff. An object genuinely published at several
+-- URLs is refreshed at all of them in the same world version, so none of its
+-- rows supersedes another and they all survive.
+deleteStaleObjectUrls :: Tx 'RW -> (WorldVersion -> Bool) -> IO Int
+deleteStaleObjectUrls (Tx conn) tooOld = do
+    stale <- filter tooOld . map fromOnly <$> query_ conn
+        "SELECT DISTINCT world_version FROM object_urls"
+    fmap sum $ forM (inClauseBatches stale) $ \(placeholders, params) -> do
+        executeNamed conn
+            (fromString $ Text.unpack $
+                "DELETE FROM object_urls AS ou WHERE ou.world_version IN (" <> placeholders <> ")"
+                <> " AND EXISTS (SELECT 1 FROM object_urls newer"
+                <> "             WHERE newer.object_key = ou.object_key"
+                <> "               AND newer.world_version > ou.world_version)")
+            params
+        changes conn
 
 deleteDanglingUrls :: Tx 'RW -> IO Int
 deleteDanglingUrls (Tx conn) = do
