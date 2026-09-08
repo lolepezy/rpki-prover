@@ -28,7 +28,6 @@ import           RPKI.Store.Database      (DB(..), Tx(..))
 import qualified RPKI.Store.Database      as DB
 import qualified RPKI.Store.SQLite        as SQLite
 import           RPKI.Store.SQLite        (SqliteDB(..))
-import           RPKI.Store.Base.Storable (StorageStats(..))
 
 import           System.Directory         (createDirectoryIfMissing, removePathForcibly)
 import           System.FilePath          ((</>))
@@ -56,7 +55,6 @@ instance MaintainableStorage SqliteBackend where
     reopenStorage   _ = pure ()
     cleanUpStaleTx  _ = pure 0
     getCacheFsSize  _ = pure (Size 0)
-    getStorageStats _ = pure (StorageStats mempty)
 
 
 -- ---------------------------------------------------------------------------

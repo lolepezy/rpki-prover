@@ -89,30 +89,7 @@ serialiseCompressed = fromMaybe BS.empty . compress . unStorable . toStorable
 deserialiseCompressed :: AsStorable a => BS.ByteString -> a
 deserialiseCompressed = fromStorable . Storable . fromMaybe "broken binary" . decompress
 
-data SStats = SStats {
-        statSize          :: Size,
-        statKeyBytes      :: Size,        
-        statValueBytes    :: Size,
-        statMaxKeyBytes   :: Size,
-        statMaxValueBytes :: Size
-    } 
-    deriving stock (Show, Eq, Generic)    
-    deriving Monoid via GenericMonoid SStats
-
-instance Semigroup SStats where
-    ss1 <> ss2 = 
-        SStats { 
-            statSize = statSize ss1 + statSize ss2,
-            statKeyBytes = statKeyBytes ss1 + statKeyBytes ss2,
-            statValueBytes = statValueBytes ss1 + statValueBytes ss2,
-            statMaxKeyBytes = statMaxKeyBytes ss1 `max` statMaxKeyBytes ss2,
-            statMaxValueBytes = statMaxValueBytes ss1 `max` statMaxValueBytes ss2
-        }
-
-newtype StorageStats = StorageStats (Map.Map Text.Text SStats)
-    deriving stock (Show, Eq, Generic)    
-
-
+ 
 data ObjectStats = ObjectStats {
         totalObjects :: Size,
         totalSize    :: Size,

@@ -90,8 +90,6 @@ data DBFileStats = DBFileStats {
     fileSize :: Size
 } deriving stock (Show, Eq, Generic)
 
-data TotalDBStats = TotalDBStats {
-    storageStats :: StorageStats,
-    total        :: SStats,
+data TotalDBStats = TotalDBStats {    
     fileStats    :: DBFileStats
 } deriving stock (Show, Eq, Generic)

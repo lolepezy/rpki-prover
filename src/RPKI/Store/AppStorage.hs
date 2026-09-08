@@ -4,7 +4,6 @@ module RPKI.Store.AppStorage where
 
 import RPKI.AppContext
 import RPKI.AppTypes
-import RPKI.Store.Base.Storable (StorageStats(..))
 
 data AppStorageTag
 
@@ -17,7 +16,6 @@ class MaintainableStorage s where
     closeStorage    :: AppContext s -> IO ()
     cleanUpStaleTx  :: AppContext s -> IO Int
     getCacheFsSize  :: AppContext s -> IO Size
-    getStorageStats :: AppContext s -> IO StorageStats
 
 -- | Universal stub instance — real implementations come in AppSqliteStorage.hs (Phase 4).
 instance {-# OVERLAPPABLE #-} MaintainableStorage s where
@@ -26,6 +24,5 @@ instance {-# OVERLAPPABLE #-} MaintainableStorage s where
     closeStorage    _ = pure ()
     cleanUpStaleTx  _ = pure 0
     getCacheFsSize  _ = pure (Size 0)
-    getStorageStats _ = pure (StorageStats mempty)
 
 

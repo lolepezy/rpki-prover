@@ -227,11 +227,6 @@ $(deriveToJSON defaultOptions ''ResourceUsage)
 $(deriveToJSON defaultOptions ''SystemMetrics)
 $(deriveToJSON defaultOptions ''ScopeKind)
 
-
-$(deriveToJSON defaultOptions ''SStats)
-$(deriveToJSON defaultOptions ''DBFileStats)
-$(deriveToJSON defaultOptions ''StorageStats)
-$(deriveToJSON defaultOptions ''TotalDBStats)
 $(deriveToJSON defaultOptions ''VrpCounts)
 $(deriveToJSON defaultOptions ''Metrics)
 

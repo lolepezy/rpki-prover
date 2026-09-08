@@ -51,7 +51,7 @@ module RPKI.Store.Database (
     setJobCompletionTime, allJobs,
     getDatabaseVersion, saveCurrentDatabaseVersion,
     updateValidatedByVersionMap,
-    getObjectsStats, totalStats,
+    getObjectsStats,
     CleanUpResult(..), DeletionCriteria(..),
     deleteOldestVersionsIfNeeded,
     deleteStaleContent, deleteDanglingUrls,
@@ -1117,9 +1117,6 @@ getObjectsStats (Tx conn) _ = liftIO $ do
                         & #totalSizePerType %~ Map.insertWith (+) typ objectSize
                         & #minSizePerType   %~ Map.alter (Just . maybe objectSize (min objectSize)) typ
                         & #maxSizePerType   %~ Map.alter (Just . maybe objectSize (max objectSize)) typ
-
-totalStats :: StorageStats -> SStats
-totalStats (StorageStats s) = mconcat $ Map.elems s
 
 
 -- ---------------------------------------------------------------------------

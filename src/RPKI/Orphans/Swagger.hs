@@ -124,10 +124,6 @@ instance ToSchema AvgMemory where
 instance ToSchema Size where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 
-instance ToSchema DBFileStats
-instance ToSchema StorageStats
-instance ToSchema TotalDBStats
-instance ToSchema SStats
 instance ToSchema ObjectStats
 
 instance ToSchema (ApiSecured a) where
