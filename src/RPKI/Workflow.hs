@@ -57,7 +57,6 @@ import           RPKI.Repository
 import           RPKI.Fetch
 import           RPKI.Logging
 import           RPKI.Metrics.System
-import           RPKI.Metrics.Memory
 import           RPKI.Http.Types
 import           RPKI.Http.Dto
 import qualified RPKI.Store.Database               as DB
@@ -265,7 +264,6 @@ runAll appContext@AppContext {..} tals = do
                         mapConcurrently_ id [
                             runScheduledTasks workflowShared,
                             revalidate workflowShared,
-                            logMemoryStatsPeriodically,
                             runRtrIfConfigured
                         ]                        
 
@@ -431,12 +429,12 @@ runAll appContext@AppContext {..} tals = do
 
     updateMainResourcesStat = do
         ProcessStats { statCpuTime = cpuTime,
-                       statMaxMemory = maxMemory,
-                       statProcessMemory = processMemory } <- processStat
+                       statMaxRtsHeap = maxRtsHeap,
+                       statProcessRss = maxProcessRss } <- processStat
         SystemInfo {..} <- readTVarIO $ appState ^. #system
         Now now <- thisInstant
         let clockTime = durationMs startUpTime now
-        pushSystem logger $ cpuMemMetric "root" cpuTime clockTime maxMemory processMemory
+        pushSystem logger $ cpuMemMetric "root" cpuTime clockTime maxRtsHeap maxProcessRss
 
     validateTAs workflowShared worldVersion talsToValidate = do  
         let taNames = map getTaName talsToValidate
@@ -472,7 +470,7 @@ runAll appContext@AppContext {..} tals = do
                             scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
                             
                             logWorkerDone logger workerId wr
-                            pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory processMemory
+                            pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxRtsHeap maxProcessRss
                         
                             let topDownState = workerVS <> vs
                             logDebug logger [i|Validation result: 
@@ -519,7 +517,7 @@ runAll appContext@AppContext {..} tals = do
                             pure $ Left [i|Cache cleanup process failed: #{message}.|]
                         Right r -> do
                             logWorkerDone logger workerId wr
-                            pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxMemory processMemory
+                            pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxRtsHeap maxProcessRss
                             pure $ Right r    
 
     -- Delete temporary files and any stale storage-backend state
@@ -637,18 +635,6 @@ runAll appContext@AppContext {..} tals = do
                     workerInfo <- newWorkerInfo (GenericWorker "cache-clean-up") timeout (convert $ show workerId)
                     runWorker logger workerInput arguments workerInfo
         pure (r, workerId)                            
-
-    -- Sample the process's memory every `memoryMetricsInterval` and write it
-    -- to the log as one line of JSON. The RTS only accounts for the Haskell
-    -- heap, so without this the C allocator's share -- SQLite's, mostly -- is
-    -- invisible; having it as a time series is what makes it possible to
-    -- correlate growth with whatever else the log says was happening.
-    logMemoryStatsPeriodically = do
-        let interval = config ^. typed @SystemConfig . #memoryMetricsInterval
-        when (interval > 0) $ forever $ do
-            threadDelay $ toMicroseconds interval
-            stats <- getMemoryStats =<< DB.preparedStatementCount =<< readTVarIO database
-            logInfo logger [i|memory-stats #{memoryStatsJson stats}|]
 
 
 -- To be called by the validation worker process

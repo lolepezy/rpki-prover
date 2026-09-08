@@ -190,10 +190,7 @@ data SystemConfig = SystemConfig {
         rsyncWorkerMemoryMb      :: Int,
         rrdpWorkerMemoryMb       :: Int,
         validationWorkerMemoryMb :: Int,
-        cleanupWorkerMemoryMb    :: Int,
-        -- | How often to write a memory sample to the log (see
-        -- 'RPKI.Metrics.Memory'). Zero switches the sampling off.
-        memoryMetricsInterval    :: Seconds
+        cleanupWorkerMemoryMb    :: Int
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -270,8 +267,7 @@ defaultConfig = Config {
         rsyncWorkerMemoryMb      = 1024,
         rrdpWorkerMemoryMb       = 1024,        
         validationWorkerMemoryMb = 2048,
-        cleanupWorkerMemoryMb    = 512,
-        memoryMetricsInterval    = Seconds 60
+        cleanupWorkerMemoryMb    = 512
     },
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {       

@@ -20,7 +20,6 @@ module RPKI.Store.SQLite (
     initConn,
     createDB,
     closeDB,
-    preparedStatementCount,
     -- * Schema
     initSchema,
     dropSchema,
@@ -67,7 +66,7 @@ import qualified Data.Text             as Text
 import Database.SQLite.Simple (
     Connection, Query, Only(..), NamedParam, ToRow, FromRow,
     Statement(..), fromQuery,
-    open, close, withTransaction, withImmediateTransaction,
+    open, close,
     openStatement, closeStatement, bindNamed, reset, withBind, nextRow)
 import qualified Database.SQLite.Simple as Raw
 import Database.SQLite.Simple.QQ (sql)
@@ -100,23 +99,12 @@ newtype Tx (m :: TxMode) = Tx { unTx :: CachedConn }
 data CachedConn = CachedConn
     { rawConn   :: Connection
     , stmtCache :: IORef (Map Text Statement)
-    , stmtCount :: IORef Int
-      -- ^ Shared by every connection of one 'SqliteDB': the total number of
-      -- prepared statements currently alive. Prepared statements cost SQLite
-      -- heap in proportion to their parameter count, and they are only
-      -- released when the connection closes, so this is worth having in the
-      -- memory metrics (see 'RPKI.Metrics.Memory').
     }
 
 data SqliteDB = SqliteDB
     { readPool  :: Pool CachedConn  -- ^ Shared pool for read connections
     , writeConn :: MVar CachedConn  -- ^ Single serialised write connection
-    , stmtTotal :: IORef Int        -- ^ The counter shared by all of the above
     }
-
--- | How many prepared statements are currently cached across all connections.
-preparedStatementCount :: MonadIO m => SqliteDB -> m Int
-preparedStatementCount SqliteDB {..} = liftIO $ readIORef stmtTotal
 
 
 -- ---------------------------------------------------------------------------
@@ -171,14 +159,14 @@ initConn busyTimeoutMs path = do
         , "PRAGMA optimize = 0x10002"
         ]
 
-mkCachedConn :: IORef Int -> Connection -> IO CachedConn
-mkCachedConn stmtCount conn = do
+mkCachedConn :: Connection -> IO CachedConn
+mkCachedConn conn = do
     stmtCache <- newIORef Map.empty
     pure CachedConn { rawConn = conn, .. }
 
-initCachedConn :: IORef Int -> Int -> FilePath -> IO CachedConn
-initCachedConn stmtCount busyTimeoutMs path =
-    mkCachedConn stmtCount =<< initConn busyTimeoutMs path
+initCachedConn :: Int -> FilePath -> IO CachedConn
+initCachedConn busyTimeoutMs path =
+    mkCachedConn =<< initConn busyTimeoutMs path
 
 -- | Finalise every cached prepared statement, then close the connection.
 -- SQLite requires all statements finalised before (or as part of) closing.
@@ -187,19 +175,17 @@ closeCachedConn CachedConn{..} = do
     cached <- readIORef stmtCache
     mapM_ closeStatement (Map.elems cached)
     writeIORef stmtCache Map.empty
-    modifyIORef' stmtCount (subtract (Map.size cached))
     close rawConn
 
 createDB :: FilePath -> Int -> Int -> IO SqliteDB
 createDB path busyTimeoutMs poolSize = do
-    stmtTotal <- newIORef 0
     readPool  <- Pool.newPool $
                     Pool.defaultPoolConfig
-                        (initCachedConn stmtTotal busyTimeoutMs path)
+                        (initCachedConn busyTimeoutMs path)
                         closeCachedConn
                         60      -- idle TTL seconds
                         poolSize
-    writeConn <- newMVar =<< initCachedConn stmtTotal busyTimeoutMs path
+    writeConn <- newMVar =<< initCachedConn busyTimeoutMs path
     pure SqliteDB{..}
 
 closeDB :: SqliteDB -> IO ()
@@ -227,7 +213,6 @@ checkoutStatement CachedConn{..} q = do
         Nothing   -> do
             stmt <- openStatement rawConn q
             modifyIORef' stmtCache (Map.insert (fromQuery q) stmt)
-            modifyIORef' stmtCount (+ 1)
             pure stmt
 
 -- | Drain all rows of an already-bound statement, then leave it reset (ready

@@ -299,8 +299,8 @@ data ResourcesDto = ResourcesDto {
         aggregatedCpuTime   :: CPUTime,
         cpuTimePerClockTime :: Double,
         aggregatedClockTime :: TimeMs,
-        maxMemory           :: MaxMemory,        
-        avgMemory           :: MaxMemory, 
+        maxRtsHeap           :: MaxMemory,        
+        avgRtsHeap           :: MaxMemory, 
         maxProcessRSS    :: MaxMemory,
         avgProcessRSS    :: MaxMemory,
         avgCpuTimeMsPerSecond :: Double

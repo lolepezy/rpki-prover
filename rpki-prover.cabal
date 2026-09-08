@@ -230,8 +230,6 @@ library
       Paths_rpki_prover
   hs-source-dirs:
       src
-  c-sources:
-      cbits/mem_stats.c
   ghc-options:
       -funbox-strict-fields
       -O2

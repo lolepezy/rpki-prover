@@ -11,7 +11,6 @@ module RPKI.Store.Database (
     TxMode(..),
     -- * Transaction runners
     withReadTx, withWriteTx, roTx, rwTx, roTxT, rwTxT,
-    preparedStatementCount,
     -- * ValidatorT integration
     roAppTx, rwAppTx, appTx, roAppTxEx, rwAppTxEx, appTxEx,
     TxRollbackException(..),
@@ -134,11 +133,6 @@ withReadTx (DB sdb) = SQLite.withReadTx sdb
 
 withWriteTx :: MonadIO m => DB -> (Tx 'RW -> IO a) -> m a
 withWriteTx (DB sdb) = SQLite.withWriteTx sdb
-
--- | Prepared statements currently cached across all connections, for the
--- memory metrics (see 'RPKI.Metrics.Memory').
-preparedStatementCount :: MonadIO m => DB -> m Int
-preparedStatementCount (DB sdb) = SQLite.preparedStatementCount sdb
 
 roTx :: MonadIO m => DB -> (Tx 'RO -> IO a) -> m a
 roTx = withReadTx

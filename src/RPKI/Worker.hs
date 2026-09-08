@@ -150,23 +150,8 @@ data WorkerResult r = WorkerResult {
         clockTime :: TimeMs,
         -- | The most the Haskell heap ever reached during the run, as the
         -- RTS reports it (max_mem_in_use_bytes).
-        maxMemory :: MaxMemory,
-        -- | The most the worker process as a whole ever reached (VmHWM),
-        -- which also covers whatever SQLite allocated outside the Haskell
-        -- heap. Both are high-water marks over the whole run, so this one is
-        -- the larger of the two whenever the RTS has mapped memory it never
-        -- touched.
-        processMemory :: MaxMemory,
-        -- | How the CPU time splits between collecting garbage and doing the
-        -- actual work. Worth having per run: a validation that is mostly GC
-        -- is an allocation problem, one that is mostly mutator is not.
-        gcCpuTime      :: TimeMs,
-        mutatorCpuTime :: TimeMs,
-        -- | Everything the worker allocated, not what it held. GC is cheap
-        -- when it all dies young, so this can be tens of gigabytes while
-        -- gcCpuTime stays near zero -- but producing it is mutator time, so
-        -- it is the number to watch when the work looks CPU-bound.
-        allocatedBytes :: Size
+        maxRtsHeap    :: MaxMemory,        
+        maxProcessRss :: MaxMemory
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)    
@@ -241,23 +226,17 @@ execWithStats f = do
     ProcessStats {..} <- processStat
     pure WorkerResult {
             cpuTime = statCpuTime,
-            maxMemory = statMaxMemory,
-            processMemory = statProcessMemory,
-            gcCpuTime = statGcCpuTime,
-            mutatorCpuTime = statMutatorCpuTime,
-            allocatedBytes = statAllocatedBytes,
+            maxRtsHeap = statMaxRtsHeap,
+            maxProcessRss = statProcessRss,
             ..
         }
   
 
 -- | What a process can say about its own resource use.
 data ProcessStats = ProcessStats {
-        statCpuTime        :: CPUTime,
-        statMaxMemory      :: MaxMemory,
-        statProcessMemory  :: MaxMemory,
-        statGcCpuTime      :: TimeMs,
-        statMutatorCpuTime :: TimeMs,
-        statAllocatedBytes :: Size
+        statCpuTime    :: CPUTime,
+        statMaxRtsHeap :: MaxMemory,
+        statProcessRss :: MaxMemory
     }
     deriving stock (Eq, Show, Generic)
 
@@ -265,11 +244,8 @@ processStat :: MonadIO m => m ProcessStats
 processStat = do 
     statCpuTime <- getCpuTime
     RTSStats {..} <- liftIO getRTSStats
-    let statMaxMemory = MaxMemory $ fromIntegral max_mem_in_use_bytes
-    statProcessMemory <- MaxMemory . fromIntegral . unSize <$> getProcessPeakRss
-    let statGcCpuTime      = TimeMs $ fromIntegral gc_cpu_ns `div` 1000_000
-        statMutatorCpuTime = TimeMs $ fromIntegral mutator_cpu_ns `div` 1000_000
-        statAllocatedBytes = Size $ fromIntegral allocated_bytes
+    let statMaxRtsHeap = MaxMemory $ fromIntegral max_mem_in_use_bytes
+    statProcessRss <- MaxMemory . fromIntegral . unSize <$> getProcessPeakRss
     pure ProcessStats {..}
 
 
@@ -416,6 +392,5 @@ logWorkerDone :: (Logger logger, MonadIO m) =>
                 logger -> WorkerId -> WorkerResult r -> m ()
 logWorkerDone logger workerId WorkerResult {..} = do    
     logDebug logger $
-        [i|Worker #{workerId} completed, cpuTime: #{cpuTime}ms (gc #{gcCpuTime}ms, mutator #{mutatorCpuTime}ms), |] <>
-        [i|clockTime: #{clockTime}ms, maxMemory: #{maxMemory}, processMemory: #{processMemory}, |] <>
-        [i|allocated: #{unSize allocatedBytes `div` (1024 * 1024)}mb.|] 
+        [i|Worker #{workerId} completed, cpuTime: #{cpuTime}ms, |] <>
+        [i|clockTime: #{clockTime}ms, maxRtsHeap: #{maxRtsHeap}, maxProcessRss: #{maxProcessRss}.|] 

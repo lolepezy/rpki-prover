@@ -55,10 +55,10 @@ data ResourceUsage = ResourceUsage {
         aggregatedCpuTime   :: AggregatedCPUTime,
         aggregatedClockTime :: TimeMs,
         -- | Largest Haskell heap any run under this scope ever reached.
-        maxMemory           :: MaxMemory,
-        avgMemory           :: AvgMemory,
+        maxRtsHeap           :: MaxMemory,
+        avgRtsHeap           :: AvgMemory,
         -- | Largest resident size any run under this scope ever reached.
-        -- Same kind of number as 'maxMemory' -- both are high-water marks over
+        -- Same kind of number as 'maxRtsHeap' -- both are high-water marks over
         -- a whole run -- so the two are directly comparable.
         maxProcessRSS       :: MaxMemory,
         avgProcessRSS       :: AvgMemory
@@ -88,15 +88,15 @@ newSystemInfo :: Instant -> SystemInfo
 newSystemInfo = SystemInfo mempty 
 
 cpuMemMetric :: Text -> CPUTime -> TimeMs -> MaxMemory -> MaxMemory -> SystemMetrics
-cpuMemMetric scope cpuTime clockTime maxMemory' processMemory' = SystemMetrics {
+cpuMemMetric scope cpuTime clockTime maxRtsHeap' maxProcessRss' = SystemMetrics {
         resources = updateMetricInMap
                         (newScope scope)
                         ((#latestCpuTime %~ (<> LatestCPUTime cpuTime)) .
                          (#aggregatedCpuTime %~ (<> AggregatedCPUTime cpuTime)) .
                          (#aggregatedClockTime %~ (<> clockTime)) .
-                         (#maxMemory %~ (<> maxMemory')) .
-                         (#avgMemory %~ (<> newAvgMemory maxMemory')) .
-                         (#maxProcessRSS %~ (<> processMemory')) .
-                         (#avgProcessRSS %~ (<> newAvgMemory processMemory')))
+                         (#maxRtsHeap %~ (<> maxRtsHeap')) .
+                         (#avgRtsHeap %~ (<> newAvgMemory maxRtsHeap')) .
+                         (#maxProcessRSS %~ (<> maxProcessRss')) .
+                         (#avgProcessRSS %~ (<> newAvgMemory maxProcessRss')))
                         mempty
     }
