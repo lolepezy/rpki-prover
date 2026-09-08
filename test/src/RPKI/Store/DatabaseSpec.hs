@@ -71,6 +71,8 @@ objectStoreGroup = testGroup "Object storage test"
     , dbTestCase "Should merge locations" shouldMergeObjectLocations
     , dbTestCase "Should deduplicate saveObject by hash" shouldDeduplicateSaveObjectByHash
     , dbTestCase "Should index certificates on saveObject" shouldIndexCertificateOnSaveObject
+    , dbTestCase "Should report distinct min/max/avg object sizes per type"
+        shouldComputeObjectSizeStats
     ]
 
 repositoryStoreGroup :: TestTree
@@ -374,6 +376,53 @@ shouldOrderManyRandomManifestsByThisTime io = do
         HU.assertEqual ("Trial " <> show trial <> ": must be ordered by thisTime regardless of mftNumber/nextTime")
             (List.sortOn Down metas)
             ordered
+
+
+{- | The stats query groups by type, so every size aggregate has to be computed 
+   by SQLite. When it only selected SUM(), minSizePerType, maxSizePerType and 
+   totalSizePerType all came back equal to the per-type total, and 
+   avgSizePerType was never populated at all.
+
+   Rows are inserted directly so the blob lengths are exact.
+-}
+shouldComputeObjectSizeStats :: IO DB -> HU.Assertion
+shouldComputeObjectSizeStats io = do
+    db <- io
+    let objects = [ (1 :: Int64, "CER" :: Text.Text, 10 :: Int64)
+                  , (2, "CER", 100)
+                  , (3, "CER", 1000)
+                  , (4, "ROA", 50)
+                  , (5, "ROA", 70) ]
+
+    rwTx db $ \(Tx conn) ->
+        forM_ objects $ \(k, typ, len) ->
+            SQLite.execute conn
+                "INSERT INTO objects (object_key, hash, type, data, world_version) \
+                \VALUES (?, ?, ?, zeroblob(?), 1)"
+                (k, BS.singleton (fromIntegral k), typ, len)
+
+    ObjectStats {..} <- roTx db $ \tx -> DB.getObjectsStats tx db
+
+    let at m k = Map.lookup k m
+
+    HU.assertEqual "Total object count"        (Size 5)    totalObjects
+    HU.assertEqual "Total size"                (Size 1230) totalSize
+
+    HU.assertEqual "CER count"     (Just $ Size 3)    (at countPerType     CER)
+    HU.assertEqual "CER total"     (Just $ Size 1110) (at totalSizePerType CER)
+    HU.assertEqual "CER smallest"  (Just $ Size 10)   (at minSizePerType   CER)
+    HU.assertEqual "CER biggest"   (Just $ Size 1000) (at maxSizePerType   CER)
+    HU.assertEqual "CER average"   (Just $ Size 370)  (at avgSizePerType   CER)
+
+    HU.assertEqual "ROA count"     (Just $ Size 2)   (at countPerType     ROA)
+    HU.assertEqual "ROA total"     (Just $ Size 120) (at totalSizePerType ROA)
+    HU.assertEqual "ROA smallest"  (Just $ Size 50)  (at minSizePerType   ROA)
+    HU.assertEqual "ROA biggest"   (Just $ Size 70)  (at maxSizePerType   ROA)
+    HU.assertEqual "ROA average"   (Just $ Size 60)  (at avgSizePerType   ROA)
+
+    -- The actual regression: these three must not be the same map
+    HU.assertBool "min and max sizes must differ" $ minSizePerType /= maxSizePerType
+    HU.assertBool "min and total sizes must differ" $ minSizePerType /= totalSizePerType
 
 
 shouldDeduplicateSaveObjectByHash :: IO DB -> HU.Assertion

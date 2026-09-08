@@ -1096,27 +1096,47 @@ updateValidatedByVersionMap (Tx conn) _ f = liftIO $ do
 -- Stats
 -- ---------------------------------------------------------------------------
 
+{- | Per-type object statistics.
+
+   NOTE: the query groups by type, so it yields exactly one row per type and 
+   every size aggregate has to be computed by SQLite. Taking `min`/`max` over 
+   the rows in Haskell instead only ever sees one value per type, which is how 
+   minSizePerType, maxSizePerType and totalSizePerType all used to come back 
+   equal to each other.
+
+   `COALESCE(data, original)` is never NULL -- the `objects` table has a CHECK 
+   constraint that at least one of the two is set -- so none of the aggregates 
+   can be NULL either.
+-}
 getObjectsStats :: MonadIO m => Tx mode -> DB -> m ObjectStats
 getObjectsStats (Tx conn) _ = liftIO $ do
     rows <- query_ conn
         [sql|
-            SELECT type, COUNT(*), SUM(LENGTH(COALESCE(data, original)))
+            SELECT type,
+                   COUNT(*),
+                   SUM(LENGTH(COALESCE(data, original))),
+                   MIN(LENGTH(COALESCE(data, original))),
+                   MAX(LENGTH(COALESCE(data, original)))
             FROM objects GROUP BY type
         |]
     pure $ foldr accumulate mempty rows
   where
-    accumulate (typText, cnt, sz) acc =
+    accumulate (typText, cnt, total, smallest, biggest) acc =
         case readMaybe typText of
             Nothing  -> acc
             Just typ ->
-                let count      = Size (fromIntegral (cnt :: Int64))
-                    objectSize = Size (fromIntegral (sz  :: Int64))
+                let count     = Size (fromIntegral (cnt :: Int64))
+                    totalSize = Size (fromIntegral (total :: Int64))
+                    minSize   = Size (fromIntegral (smallest :: Int64))
+                    maxSize   = Size (fromIntegral (biggest :: Int64))
+                    avgSize   = Size $ if cnt == 0 then 0 else total `div` cnt
                 in  acc & #totalObjects %~ (+ count)
-                        & #totalSize    %~ (+ objectSize)
+                        & #totalSize    %~ (+ totalSize)
                         & #countPerType     %~ Map.insertWith (+) typ count
-                        & #totalSizePerType %~ Map.insertWith (+) typ objectSize
-                        & #minSizePerType   %~ Map.alter (Just . maybe objectSize (min objectSize)) typ
-                        & #maxSizePerType   %~ Map.alter (Just . maybe objectSize (max objectSize)) typ
+                        & #totalSizePerType %~ Map.insertWith (+) typ totalSize
+                        & #minSizePerType   %~ Map.insertWith min typ minSize
+                        & #maxSizePerType   %~ Map.insertWith max typ maxSize
+                        & #avgSizePerType   %~ Map.insert typ avgSize
 
 
 -- ---------------------------------------------------------------------------
