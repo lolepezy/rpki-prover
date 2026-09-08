@@ -403,6 +403,31 @@ schemaDDL =
             value BLOB NOT NULL
         )
       |]
+    , [sql|
+        CREATE TABLE IF NOT EXISTS erik_indexes (
+            relay_uri BLOB NOT NULL,
+            fqdn      TEXT NOT NULL,
+            data      BLOB NOT NULL,
+            PRIMARY KEY (relay_uri, fqdn)
+        )
+      |]
+    , [sql|
+        CREATE TABLE IF NOT EXISTS erik_partitions (
+            hash BLOB NOT NULL PRIMARY KEY,
+            data BLOB NOT NULL
+        )
+      |]
+    , [sql|
+        CREATE TABLE IF NOT EXISTS erik_index_partitions (
+            relay_uri      BLOB NOT NULL,
+            fqdn           TEXT NOT NULL,
+            partition_hash BLOB NOT NULL,
+            PRIMARY KEY (relay_uri, fqdn, partition_hash),
+            FOREIGN KEY (relay_uri, fqdn)
+                REFERENCES erik_indexes(relay_uri, fqdn) ON DELETE CASCADE
+        )
+      |]
+    , "CREATE INDEX IF NOT EXISTS idx_erik_index_partitions_hash ON erik_index_partitions(partition_hash)"
     ]
 
 dropDDL :: [Query]
@@ -415,6 +440,7 @@ dropDDL = map (\t -> "DROP TABLE IF EXISTS " <> t)
     , "validations", "metrics", "roas", "spls", "aspas", "gbrs", "bgps"
     , "validation_outcomes", "slurm"
     , "jobs", "metadata", "validated_by_version"
+    , "erik_index_partitions", "erik_partitions", "erik_indexes"
     ]
 
 

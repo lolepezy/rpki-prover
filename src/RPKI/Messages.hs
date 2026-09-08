@@ -21,7 +21,6 @@ import           RPKI.Reporting
 import           RPKI.Util (fmtLocations, hex)
 
 
-
 toMessage :: AppError -> Text
 toMessage = \case
     ParseE (ParseError t) -> t
@@ -34,12 +33,34 @@ toMessage = \case
     StorageE (StorageError t) -> t
     StorageE (DeserialisationError t) -> t
 
+    ErikE e     -> toErikMessage e
     SlurmE r    -> toSlurmMessage r
     InternalE t -> toInternalErrorMessage t
     
     UnspecifiedE context e -> 
         [i|Unspecified error in #{context}, details: #{e}.|]
 
+    ComposeE appErrors -> let 
+        t = mconcat $ List.intersperse "\n" (map toMessage appErrors)
+        in [i|Multiple errors: #{t}.|]
+
+
+toErikMessage :: ErikError -> Text
+toErikMessage = \case
+    Can'tDownloadObject t ->
+        [i|Failed to download Erik object: #{t}.|]
+    ErikHashMismatchError {..} ->
+        [i|Erik object hash mismatch: expected #{expectedHash}, got #{actualHash}.|]
+    ErikIndexScopeMismatch {..} ->
+        [i|Erik index scope mismatch: expected FQDN #{expectedScope}, but index has scope '#{actualScope}'.|]
+    ErikManifestOutsideScope {..} ->
+        [i|ManifestRef location #{location} is outside of Erik scope #{scope}.|]
+    ErikInvalidUrl {..} ->
+        [i|Invalid or unsupported URL for Erik fetch: #{url}.|]
+    ErikDownloadTimeout t ->
+        [i|Could not update Erik relay in #{t}.|]
+    UnknownErikProblem e ->
+        [i|Unknown problem with Erik relay: #{e}.|]
 
 toRsyncMessage :: RsyncError -> Text
 toRsyncMessage = \case 

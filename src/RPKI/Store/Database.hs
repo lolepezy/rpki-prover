@@ -28,6 +28,9 @@ module RPKI.Store.Database (
     saveObject, saveStorableObject,
     getObjectMeta, linkObjectToUrl,
     hashExists, deleteObjectByHash, deleteObjectByKey,
+    -- * Erik protocol functions
+    getErikIndex, saveErikIndex, getAllErikIndexes,
+    getErikPartition, saveErikPartition, deleteOrphanedErikPartitions,
     getMftsForAKI, findAllMftsByAKI, getMftByKey,
     getMftShorcut, getMftShorcutMeta, getMftShorcutChildrenLight, getMftShorcutChildrenFull,
     getMftShortcutChildFileName,
@@ -156,7 +159,7 @@ rwTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 55
+currentDatabaseVersion = 56
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -414,6 +417,64 @@ hashExists :: MonadIO m => Tx mode -> DB -> Hash -> m Bool
 hashExists (Tx conn) _ h = liftIO $ do
     rows <- query conn "SELECT 1 FROM objects WHERE hash = ?" (Only h)
     pure $ not (null (rows :: [Only Int]))
+
+-- ---------------------------------------------------------------------------
+-- Erik protocol functions
+-- https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-erik-protocol/
+-- ---------------------------------------------------------------------------
+
+-- | The last index seen for this (relay, scope) pair, kept so a fetch can tell
+-- whether anything changed since the previous synchronisation.
+getErikIndex :: MonadIO m => Tx mode -> DB -> URI -> FQDN -> m (Maybe ErikIndex)
+getErikIndex (Tx conn) _ relayUri (FQDN fqdn) = liftIO $ do
+    rows <- query conn
+        "SELECT data FROM erik_indexes WHERE relay_uri = ? AND fqdn = ?"
+        (serialiseField relayUri, fqdn)
+    pure $ fmap (deserialiseField . fromOnly) (listToMaybe rows)
+
+-- | Replaces the index and the partition hashes it refers to. The membership
+-- rows are what `deleteOrphanedErikPartitions` reads, so they have to move in
+-- the same transaction as the index itself.
+saveErikIndex :: MonadIO m => Tx 'RW -> DB -> URI -> FQDN -> ErikIndex -> m ()
+saveErikIndex (Tx conn) _ relayUri (FQDN fqdn) index_ = liftIO $ do
+    execute conn
+        "INSERT OR REPLACE INTO erik_indexes(relay_uri, fqdn, data) VALUES (?, ?, ?)"
+        (relayBlob, fqdn, serialiseField index_)
+    execute conn
+        "DELETE FROM erik_index_partitions WHERE relay_uri = ? AND fqdn = ?"
+        (relayBlob, fqdn)
+    executeMany conn
+        [sql|INSERT OR IGNORE INTO erik_index_partitions(relay_uri, fqdn, partition_hash)
+             VALUES (?, ?, ?)|]
+        [ (relayBlob, fqdn, ref ^. #hash) | ref <- index_ ^. #partitionList ]
+  where
+    relayBlob = serialiseField relayUri
+
+getAllErikIndexes :: MonadIO m => Tx mode -> DB -> m [(URI, FQDN, ErikIndex)]
+getAllErikIndexes (Tx conn) _ = liftIO $ do
+    rows <- query_ conn "SELECT relay_uri, fqdn, data FROM erik_indexes"
+    pure [ (deserialiseField relayUri, FQDN fqdn, deserialiseField blob)
+         | (relayUri, fqdn, blob) <- rows ]
+
+getErikPartition :: MonadIO m => Tx mode -> DB -> Hash -> m (Maybe ErikPartition)
+getErikPartition (Tx conn) _ h = liftIO $ do
+    rows <- query conn "SELECT data FROM erik_partitions WHERE hash = ?" (Only h)
+    pure $ fmap (deserialiseField . fromOnly) (listToMaybe rows)
+
+saveErikPartition :: MonadIO m => Tx 'RW -> DB -> Hash -> ErikPartition -> m ()
+saveErikPartition (Tx conn) _ h partition = liftIO $
+    execute conn
+        "INSERT OR REPLACE INTO erik_partitions(hash, data) VALUES (?, ?)"
+        (h, serialiseField partition)
+
+-- | Partitions stop being reachable as soon as an index that referred to them is
+-- replaced, so they are collected the same way dangling URLs are.
+deleteOrphanedErikPartitions :: Tx 'RW -> IO Int
+deleteOrphanedErikPartitions (Tx conn) = do
+    execute_ conn
+        [sql|DELETE FROM erik_partitions
+             WHERE hash NOT IN (SELECT DISTINCT partition_hash FROM erik_index_partitions)|]
+    changes conn
 
 deleteObjectByHash :: MonadIO m => Tx 'RW -> DB -> Hash -> m ()
 deleteObjectByHash tx db h = liftIO $
@@ -1149,6 +1210,7 @@ data CleanUpResult = CleanUpResult
     , keptObjects     :: Int
     , deletedURLs     :: Int
     , deletedVersions :: Int
+    , deletedErikPartitions :: Int
     }
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -1211,6 +1273,8 @@ deleteStaleContent db DeletionCriteria{..} =
             deletedVersions <- deleteOldVersions tx
             (deletedObjects, deletedPerType, keptObjects) <- deleteStaleObjects tx
             deletedURLs <- deleteDanglingUrls tx
+            -- Delete Erik partitions that are not referenced by any index any more
+            deletedErikPartitions <- deleteOrphanedErikPartitions tx
             pure CleanUpResult{..}
   where
     deleteOldVersions tx = do
