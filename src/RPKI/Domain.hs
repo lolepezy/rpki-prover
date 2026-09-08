@@ -894,139 +894,6 @@ instance Semigroup Vrps where
 instance Monoid Vrps where
     mempty = Vrps VU.empty VU.empty
 
-pack4 :: ASN -> Ipv4Prefix -> PrefixLength -> PackedVrp4
-pack4 (ASN asn) p (PrefixLength maxLen) =
-    let (addr, len) = ipv4PrefixWords p in PackedVrp4 asn addr len maxLen
-
-pack6 :: ASN -> Ipv6Prefix -> PrefixLength -> PackedVrp6
-pack6 (ASN asn) p (PrefixLength maxLen) =
-    let (hi, lo, len) = ipv6PrefixWords p in PackedVrp6 asn hi lo len maxLen
-
-unpack4 :: PackedVrp4 -> Vrp
-unpack4 (PackedVrp4 asn addr len maxLen) =
-    Vrp (ASN asn) (Ipv4P (mkIpv4Prefix addr len)) (PrefixLength maxLen)
-
-unpack6 :: PackedVrp6 -> Vrp
-unpack6 (PackedVrp6 asn hi lo len maxLen) =
-    Vrp (ASN asn) (Ipv6P (mkIpv6Prefix hi lo len)) (PrefixLength maxLen)
-
--- | Materialise the VRPs. Only worth doing where a consumer genuinely needs
--- boxed 'Vrp' values; the packed form is what is kept in memory.
-vrpsToVector :: Vrps -> V.Vector Vrp
-vrpsToVector = V.fromList . vrpsToList
-
--- | All the VRPs, IPv4 first. This is storage order, not any meaningful one --
--- for the RTR ordering see 'mergeVrpsBy'.
-vrpsToList :: Vrps -> [Vrp]
-vrpsToList (Vrps v4 v6) = map unpack4 (VU.toList v4) <> map unpack6 (VU.toList v6)
-
-vrpsCount :: Vrps -> Int
-vrpsCount (Vrps v4 v6) = VU.length v4 + VU.length v6
-
-filterVrps :: (Vrp -> Bool) -> Vrps -> Vrps
-filterVrps f (Vrps v4 v6) =
-    Vrps (VU.filter (f . unpack4) v4) (VU.filter (f . unpack6) v6)
-
--- | Sort and deduplicate each family in the packed form. Nothing is
--- materialised, so the result costs the same as the input.
-uniqVrpsPackedBy :: (PackedVrp4 -> PackedVrp4 -> Ordering)
-                 -> (PackedVrp6 -> PackedVrp6 -> Ordering)
-                 -> Vrps -> Vrps
-uniqVrpsPackedBy cmp4 cmp6 (Vrps v4 v6) =
-    Vrps (sortDedup cmp4 v4) (sortDedup cmp6 v6)
-
-sortDedup :: (VU.Unbox a, Eq a) => (a -> a -> Ordering) -> VU.Vector a -> VU.Vector a
-sortDedup cmp v
-    | VU.null v = v
-    | otherwise = let sorted = VU.modify (VectorSortU.sortBy cmp) v
-                  in VU.ifilter (\i x -> i == 0 || sorted VU.! (i - 1) /= x) sorted
-
--- | Merge two already-sorted families into one sequence.
---
--- The caller supplies the cross-family ordering, since which family comes
--- first for a given key is a property of the ordering being reproduced and not
--- of the storage (for the RTR order, see 'RPKI.RTR.Types.cmpPacked4Against6').
-mergeVrpsBy :: (PackedVrp4 -> PackedVrp6 -> Ordering) -> Vrps -> [Vrp]
-mergeVrpsBy cross (Vrps v4 v6) = go (VU.toList v4) (VU.toList v6)
-  where
-    go [] bs = map unpack6 bs
-    go as [] = map unpack4 as
-    go as@(a : as') bs@(b : bs') =
-        case cross a b of
-            GT -> unpack6 b : go as bs'
-            _  -> unpack4 a : go as' bs
-
--- | Sort in place, without deduplicating.
-sortPacked :: (VU.Unbox a, Ord a) => VU.Vector a -> VU.Vector a
-sortPacked v
-    | VU.null v = v
-    | otherwise = VU.modify VectorSortU.sort v
-
--- | Number of distinct values in an already sorted vector.
---
--- Counting does not need the deduplicated vector that 'sortDedup' builds, and
--- for a million VRPs that vector is the larger half of the cost.
-countSortedDistinct :: (VU.Unbox a, Eq a) => VU.Vector a -> Int
-countSortedDistinct v
-    | VU.null v = 0
-    | otherwise = go 1 1 (VU.unsafeHead v)
-  where
-    len = VU.length v
-    go !i !n !prev
-        | i >= len  = n
-        | otherwise =
-            let x = VU.unsafeIndex v i
-            in if x == prev then go (i + 1) n prev else go (i + 1) (n + 1) x
-
--- | Number of distinct values in the union of several already sorted vectors.
---
--- A k-way merge, so it is linear in the total length with @k@ (the number of
--- TAs, five in practice) comparisons per element, and it materialises nothing.
--- Sorting the concatenation instead would redo, at @n log n@, work the inputs
--- already carry.
-countDistinctUnion :: (VU.Unbox a, Ord a) => [VU.Vector a] -> Int
-countDistinctUnion vectors =
-    case filter (not . VU.null) vectors of
-        []  -> 0
-        [v] -> countSortedDistinct v
-        vs  -> runST $ do
-            let sources = V.fromList vs
-                k       = V.length sources
-            cursors <- VUM.replicate k (0 :: Int)
-            let
-                -- The source whose next unconsumed value is smallest, or -1
-                -- once every source is exhausted.
-                smallest !i !best
-                    | i >= k    = pure best
-                    | otherwise = do
-                        ci <- VUM.unsafeRead cursors i
-                        let vi = V.unsafeIndex sources i
-                        if ci >= VU.length vi
-                            then smallest (i + 1) best
-                            else if best < 0
-                                then smallest (i + 1) i
-                                else do
-                                    cb <- VUM.unsafeRead cursors best
-                                    let vb = V.unsafeIndex sources best
-                                    smallest (i + 1) $
-                                        if VU.unsafeIndex vi ci < VU.unsafeIndex vb cb
-                                            then i else best
-
-                go !n !seen !prev = do
-                    i <- smallest 0 (-1)
-                    if i < 0
-                        then pure n
-                        else do
-                            ci <- VUM.unsafeRead cursors i
-                            VUM.unsafeWrite cursors i (ci + 1)
-                            let x = VU.unsafeIndex (V.unsafeIndex sources i) ci
-                            if seen && x == prev
-                                then go n seen prev
-                                else go (n + 1) True x
-
-            go 0 False (VU.unsafeHead (V.unsafeHead sources))
-
-
 newtype Roas = Roas { unRoas :: MonoidalMap ObjectKey VrpsPerAs }
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (TheBinary, NFData)
@@ -1311,9 +1178,6 @@ estimateVrpCountRoas =
 -- the concatenation of all TAs, which is the more expensive of the two. The
 -- per-TA sorted vectors are all the overall count needs, since sorted stays
 -- sorted -- so it is a merge over them rather than a second sort.
---
--- Precise, not an estimate: packing is injective, so distinct packed VRPs are
--- distinct VRPs.
 uniqueVrpCounts :: PerTA Vrps -> (MonoidalMap TaName Int, Int)
 uniqueVrpCounts (PerTA perTaVrps) = (perTaCounts, total)
   where
@@ -1345,7 +1209,6 @@ uniqVrpsBy cmp vrps = dedupSorted $ V.modify (VectorSort.sortBy cmp) (vrpsToVect
   where
     dedupSorted sorted =
         V.ifilter (\i x -> i == 0 || sorted V.! (i - 1) /= x) sorted
-
 
 createVrps :: Foldable f => f Vrp -> Vrps
 createVrps vrps = Vrps (VU.fromList v4s) (VU.fromList v6s)
@@ -1379,3 +1242,135 @@ allTAs (PerTA a) = mconcat $ MonoidalMap.elems a
 
 getForTA :: PerTA a -> TaName -> Maybe a
 getForTA (PerTA a) taName = MonoidalMap.lookup taName a
+
+pack4 :: ASN -> Ipv4Prefix -> PrefixLength -> PackedVrp4
+pack4 (ASN asn) p (PrefixLength maxLen) =
+    let (addr, len) = ipv4PrefixWords p in PackedVrp4 asn addr len maxLen
+
+pack6 :: ASN -> Ipv6Prefix -> PrefixLength -> PackedVrp6
+pack6 (ASN asn) p (PrefixLength maxLen) =
+    let (hi, lo, len) = ipv6PrefixWords p in PackedVrp6 asn hi lo len maxLen
+
+unpack4 :: PackedVrp4 -> Vrp
+unpack4 (PackedVrp4 asn addr len maxLen) =
+    Vrp (ASN asn) (Ipv4P (mkIpv4Prefix addr len)) (PrefixLength maxLen)
+
+unpack6 :: PackedVrp6 -> Vrp
+unpack6 (PackedVrp6 asn hi lo len maxLen) =
+    Vrp (ASN asn) (Ipv6P (mkIpv6Prefix hi lo len)) (PrefixLength maxLen)
+
+-- | Materialise the VRPs. Only worth doing where a consumer genuinely needs
+-- boxed 'Vrp' values; the packed form is what is kept in memory.
+vrpsToVector :: Vrps -> V.Vector Vrp
+vrpsToVector = V.fromList . vrpsToList
+
+-- | All the VRPs, IPv4 first. This is storage order, not any meaningful one --
+-- for the RTR ordering see 'mergeVrpsBy'.
+vrpsToList :: Vrps -> [Vrp]
+vrpsToList (Vrps v4 v6) = map unpack4 (VU.toList v4) <> map unpack6 (VU.toList v6)
+
+vrpsCount :: Vrps -> Int
+vrpsCount (Vrps v4 v6) = VU.length v4 + VU.length v6
+
+filterVrps :: (Vrp -> Bool) -> Vrps -> Vrps
+filterVrps f (Vrps v4 v6) =
+    Vrps (VU.filter (f . unpack4) v4) (VU.filter (f . unpack6) v6)
+
+-- | Sort and deduplicate each family in the packed form. Nothing is
+-- materialised, so the result costs the same as the input.
+uniqVrpsPackedBy :: (PackedVrp4 -> PackedVrp4 -> Ordering)
+                 -> (PackedVrp6 -> PackedVrp6 -> Ordering)
+                 -> Vrps -> Vrps
+uniqVrpsPackedBy cmp4 cmp6 (Vrps v4 v6) =
+    Vrps (sortDedup cmp4 v4) (sortDedup cmp6 v6)
+
+sortDedup :: (VU.Unbox a, Eq a) => (a -> a -> Ordering) -> VU.Vector a -> VU.Vector a
+sortDedup cmp v
+    | VU.null v = v
+    | otherwise = let sorted = VU.modify (VectorSortU.sortBy cmp) v
+                  in VU.ifilter (\i x -> i == 0 || sorted VU.! (i - 1) /= x) sorted
+
+-- | Merge two already-sorted families into one sequence.
+--
+-- The caller supplies the cross-family ordering, since which family comes
+-- first for a given key is a property of the ordering being reproduced and not
+-- of the storage (for the RTR order, see 'RPKI.RTR.Types.cmpPacked4Against6').
+mergeVrpsBy :: (PackedVrp4 -> PackedVrp6 -> Ordering) -> Vrps -> [Vrp]
+mergeVrpsBy cross (Vrps v4 v6) = go (VU.toList v4) (VU.toList v6)
+  where
+    go [] bs = map unpack6 bs
+    go as [] = map unpack4 as
+    go as@(a : as') bs@(b : bs') =
+        case cross a b of
+            GT -> unpack6 b : go as bs'
+            _  -> unpack4 a : go as' bs
+
+-- | Sort in place, without deduplicating.
+sortPacked :: (VU.Unbox a, Ord a) => VU.Vector a -> VU.Vector a
+sortPacked v
+    | VU.null v = v
+    | otherwise = VU.modify VectorSortU.sort v
+
+-- | Number of distinct values in an already sorted vector.
+--
+-- Counting does not need the deduplicated vector that 'sortDedup' builds, and
+-- for a million VRPs that vector is the larger half of the cost.
+countSortedDistinct :: (VU.Unbox a, Eq a) => VU.Vector a -> Int
+countSortedDistinct v
+    | VU.null v = 0
+    | otherwise = go 1 1 (VU.unsafeHead v)
+  where
+    len = VU.length v
+    go !i !n !prev
+        | i >= len  = n
+        | otherwise =
+            let x = VU.unsafeIndex v i
+            in if x == prev then go (i + 1) n prev else go (i + 1) (n + 1) x
+
+-- | Number of distinct values in the union of several already sorted vectors.
+--
+-- A k-way merge, so it is linear in the total length with @k@ (the number of
+-- TAs, five in practice) comparisons per element, and it materialises nothing.
+-- Sorting the concatenation instead would redo, at @n log n@, work the inputs
+-- already carry.
+countDistinctUnion :: (VU.Unbox a, Ord a) => [VU.Vector a] -> Int
+countDistinctUnion vectors =
+    case filter (not . VU.null) vectors of
+        []  -> 0
+        [v] -> countSortedDistinct v
+        vs  -> runST $ do
+            let sources = V.fromList vs
+                k       = V.length sources
+            cursors <- VUM.replicate k (0 :: Int)
+            let
+                -- The source whose next unconsumed value is smallest, or -1
+                -- once every source is exhausted.
+                smallest !i !best
+                    | i >= k    = pure best
+                    | otherwise = do
+                        ci <- VUM.unsafeRead cursors i
+                        let vi = V.unsafeIndex sources i
+                        if ci >= VU.length vi
+                            then smallest (i + 1) best
+                            else if best < 0
+                                then smallest (i + 1) i
+                                else do
+                                    cb <- VUM.unsafeRead cursors best
+                                    let vb = V.unsafeIndex sources best
+                                    smallest (i + 1) $
+                                        if VU.unsafeIndex vi ci < VU.unsafeIndex vb cb
+                                            then i else best
+
+                go !n !seen !prev = do
+                    i <- smallest 0 (-1)
+                    if i < 0
+                        then pure n
+                        else do
+                            ci <- VUM.unsafeRead cursors i
+                            VUM.unsafeWrite cursors i (ci + 1)
+                            let x = VU.unsafeIndex (V.unsafeIndex sources i) ci
+                            if seen && x == prev
+                                then go n seen prev
+                                else go (n + 1) True x
+
+            go 0 False (VU.unsafeHead (V.unsafeHead sources))
