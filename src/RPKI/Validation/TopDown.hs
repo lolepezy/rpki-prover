@@ -1025,12 +1025,13 @@ validateCaNoFetch
                                 Left e              -> InvalidChild e vs' key filename
                                 Right childShortcut -> ValidEntry vs' childShortcut key filename
     
-    forChildren nonCrlChildren = let
-        worthParallelism = length nonCrlChildren > 500
+    forChildren nonCrlChildren = let 
         forAllChildren =
-                if worthParallelism
-                    then forM 
-                    else pooledForConcurrentlyN 2
+                if nonCrlChildren `longerThan` 500
+                    then if nonCrlChildren `longerThan` 5000
+                        then pooledForConcurrentlyN 4
+                        else pooledForConcurrentlyN 2
+                    else forM 
 
         in forAllChildren nonCrlChildren 
 
@@ -1066,7 +1067,7 @@ validateCaNoFetch
 
         -- Make sure all the entries are unique
         let entryMap = Map.fromListWith (<>) $ map (\(MftPair f h) -> (h, [f])) nonCrlChildren
-        let nonUniqueEntries = Map.filter longerThanOne entryMap
+        let nonUniqueEntries = Map.filter (`longerThan` 1) entryMap
 
         -- Don't crash here, it's just a warning, at the moment RFC doesn't say anything 
         -- about uniqueness of manifest entries. 
@@ -1082,11 +1083,7 @@ validateCaNoFetch
                     Nothing  -> vError $ ManifestEntryDoesn'tExist hash fileName
                     Just key -> do
                         validateMftFileName fileName
-                        pure $! T3 fileName hash key
-        where
-            longerThanOne = \case 
-                _:_:_ -> True
-                _     -> False
+                        pure $! T3 fileName hash key        
 
     -- Given MFT entry with hash, filename and its already-resolved key
     -- (from validateMftEntries, which already looked it up), get the
@@ -1370,13 +1367,19 @@ validateCaNoFetch
             let worthParallelism = 
                     caCount `div` 50 + 
                     (totalCount - caCount) `div` 500 > 1
+
+                worthMoreParallelism = 
+                    caCount `div` 500 + 
+                    (totalCount - caCount) `div` 5000 > 1                    
             
             -- let worthParallelism = False
 
             let forAllChildren = 
                     if worthParallelism
-                        then forM 
-                        else pooledForConcurrentlyN 2
+                        then if worthMoreParallelism
+                            then pooledForConcurrentlyN 4
+                            else pooledForConcurrentlyN 2
+                        else forM
 
             scopes <- askScopes
             z <- liftIO $ forAllChildren children $ runValidatorT scopes . f
@@ -1829,3 +1832,6 @@ rememberNotValidAfter TopDownContext {..} notAfter =
 rememberCrlNextUpdate :: MonadIO m => TopDownContext -> Validated CrlObject -> m ()
 rememberCrlNextUpdate topDownContext (Validated (CrlObject { signCrl = SignCRL {..}})) = liftIO $ 
     rememberNotValidAfter topDownContext nextUpdateTime
+
+longerThan :: [a] -> Int -> Bool
+longerThan xs n = not $ null $ drop n xs
