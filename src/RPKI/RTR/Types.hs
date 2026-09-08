@@ -6,7 +6,6 @@ module RPKI.RTR.Types where
 import           Data.Set       (Set)
 import           Data.Monoid.Generic
 import           Data.Ord
-import           Data.Vector    
 import           Deque.Strict   as Deq
 
 import           GHC.Generics

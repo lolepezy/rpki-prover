@@ -9,7 +9,6 @@ import           Data.Foldable  (toList)
 import           Data.Set       (Set, (\\))
 import qualified Data.Set       as Set
 import qualified Data.List      as List
-import qualified Data.Vector    as V
 import qualified Data.Vector.Unboxed as VU
 import           Data.Generics.Labels
 
@@ -130,10 +129,6 @@ setDiff previous current
                 deleted = previous \\ current
             }
 
-setDiffV :: Ord a => V.Vector a -> V.Vector a -> Diff a
-setDiffV previous current = 
-    setDiff (Set.fromList $ V.toList previous)
-            (Set.fromList $ V.toList current) 
 
 -- | Diff two packed VRP sets. Only the delta -- which is normally tiny next to
 -- the sets themselves -- is materialised as 'Vrp'.

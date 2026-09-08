@@ -22,7 +22,6 @@ import qualified Data.HashMap.Strict.InsOrd as IOMap
 
 import           RPKI.AppTypes
 import           RPKI.Domain
-import           RPKI.Store.Types
 import           RPKI.Http.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util (convert)

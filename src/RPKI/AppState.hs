@@ -11,9 +11,7 @@ import           Control.Monad.IO.Class
 import qualified Data.ByteString                  as BS
 
 import           Data.Set                         (Set)
-import qualified Data.List                        as List
 import qualified Data.Map.Strict                  as Map
-import qualified Data.Vector                      as V
 import           GHC.Generics
 import           System.Posix.Types
 import           RPKI.AppMonad
@@ -155,9 +153,6 @@ waitForStuckDb AppState {..} = do
     SystemState {..} <- readTVar systemState
     unless (dbState == DbStuck) retry
 
-dbIsStuck :: AppState -> STM Bool 
-dbIsStuck AppState {..} = do
-    (== DbStuck) . dbState <$> readTVar systemState
         
 removeExpiredWorkers :: MonadIO m => AppState -> m [WorkerInfo]
 removeExpiredWorkers AppState {..} = liftIO $ do 

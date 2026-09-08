@@ -15,7 +15,6 @@ import           Data.Maybe (fromMaybe)
 import           Data.List (nub)
 import           Data.Coerce
 
-import qualified Data.Vector as V
 import qualified Data.Set as Set
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 

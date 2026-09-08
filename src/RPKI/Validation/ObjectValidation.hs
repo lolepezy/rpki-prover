@@ -538,23 +538,6 @@ validateCms validationRFC now cms parentCert crl verifiedResources = do
     void $ validateResources validationRFC verifiedResources cms.eeCert parentCert
 
 
-validateParsedCms ::
-    forall payload parent.
-    CaParent parent =>
-    ValidationRFC ->
-    Now ->
-    CMS payload ->
-    parent ->
-    Validated CrlObject ->
-    Maybe (VerifiedRS PrefixesAndAsns) ->
-    PureValidatorT ()
-validateParsedCms validationRFC now cms parentCert crl verifiedResources = do
-    let eeCert = getEEResourceCert cms
-    signatureCheck $ validateCMSSignature cms
-    void $ validateResourceCert now eeCert parentCert crl
-    void $ validateResources validationRFC verifiedResources eeCert parentCert
-
-
 validateUpdateTimes :: Now -> Instant -> Instant -> PureValidatorT ()
 validateUpdateTimes (Now now) thisUpdateTime nextUpdateTime = do
     when (thisUpdateTime >= now) $ vPureError $ ThisUpdateTimeIsInTheFuture {..}

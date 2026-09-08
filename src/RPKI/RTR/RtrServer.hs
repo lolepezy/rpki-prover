@@ -24,7 +24,6 @@ import qualified Data.ByteString.Builder          as BB
 import           Data.List.Split                  (chunksOf)
 
 import qualified Data.Set                         as Set
-import qualified Data.Vector                      as V
 
 import           Data.Coerce
 import           Data.String.Interpolate.IsString

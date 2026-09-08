@@ -18,7 +18,6 @@ import qualified Data.Vector.Algorithms.Merge as VectorSort
 import qualified Data.Vector.Algorithms.Intro as VectorSortU
 import qualified Data.Vector.Unboxed      as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
-import           Data.Word                (Word8, Word32, Word64)
 
 import           Data.Generics.Product.Typed
 
@@ -56,7 +55,6 @@ import           RPKI.Time
 
 import           RPKI.Domain.Packed
 import           RPKI.Store.Base.Serialisation
-import           RPKI.AppTypes
 
 
 -- There are two validation algorithms for RPKI tree
@@ -866,7 +864,6 @@ instance Show TaName where
     show = show . unTaName
 
 
-
 -- | VRPs stored packed, in an unboxed vector.
 --
 -- This used to be a boxed @V.Vector Vrp@, which cost around 60 bytes per VRP
@@ -1029,10 +1026,6 @@ countDistinctUnion vectors =
 
             go 0 False (VU.unsafeHead (V.unsafeHead sources))
 
--- | Number of distinct VRPs, without materialising any of them.
-countUniqueVrps :: Vrps -> Int
-countUniqueVrps (Vrps v4 v6) =
-    countSortedDistinct (sortPacked v4) + countSortedDistinct (sortPacked v6)
 
 newtype Roas = Roas { unRoas :: MonoidalMap ObjectKey VrpsPerAs }
     deriving stock (Show, Eq, Ord, Generic)
@@ -1279,8 +1272,6 @@ sortRrdpFirst = List.sortBy $ \u1 u2 ->
 sortRrdpFirstNE :: NonEmpty.NonEmpty RpkiURL -> NonEmpty.NonEmpty RpkiURL
 sortRrdpFirstNE = NonEmpty.fromList . sortRrdpFirst . NonEmpty.toList
 
-oneOfLocations :: Locations -> RpkiURL -> Bool
-oneOfLocations (Locations urls) url = url `elem` neSetToList urls
 
 {- 
 https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.2
@@ -1355,9 +1346,6 @@ uniqVrpsBy cmp vrps = dedupSorted $ V.modify (VectorSort.sortBy cmp) (vrpsToVect
     dedupSorted sorted =
         V.ifilter (\i x -> i == 0 || sorted V.! (i - 1) /= x) sorted
 
-uniqVrpsListBy :: (Vrp -> Vrp -> Ordering) -> Vrps -> [Vrp]
-uniqVrpsListBy cmp = V.toList . uniqVrpsBy cmp
-
 
 createVrps :: Foldable f => f Vrp -> Vrps
 createVrps vrps = Vrps (VU.fromList v4s) (VU.fromList v6s)
@@ -1391,6 +1379,3 @@ allTAs (PerTA a) = mconcat $ MonoidalMap.elems a
 
 getForTA :: PerTA a -> TaName -> Maybe a
 getForTA (PerTA a) taName = MonoidalMap.lookup taName a
-
-divSize :: Size -> Size -> Size
-divSize (Size s1) (Size n) = Size $ s1 `div` n

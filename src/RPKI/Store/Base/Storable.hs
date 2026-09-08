@@ -42,17 +42,10 @@ data StorableObject a = StorableObject {
 newtype Verbatim a = Verbatim { unVerbatim :: Storable }
     deriving stock (Show, Eq, Generic)
 
-storableSize :: Storable -> Int              
-storableSize (Storable bs) = BS.length bs
 
 toStorableObject :: AsStorable a => a -> StorableObject a
 toStorableObject a = StorableObject a (toStorable a)
 
-storableValue :: AsStorable v => v -> SValue
-storableValue = SValue . toStorable
-
-storableKey :: AsStorable v => v -> SKey
-storableKey = SKey . toStorable
 
 newtype Compressed a = Compressed { unCompressed :: a }
     deriving stock (Show, Eq, Generic)
@@ -83,9 +76,6 @@ instance {-# OVERLAPPING #-} AsStorable a => AsStorable (Compressed a) where
     fromStorable (Storable b) = 
         Compressed $ fromStorable $ Storable $ fromMaybe "broken binary" $ decompress b
 
-
-restoreFromRaw :: AsStorable a => Verbatim a -> a
-restoreFromRaw = fromStorable . unVerbatim
 
 serialiseField :: AsStorable a => a -> BS.ByteString
 serialiseField = unStorable . toStorable
