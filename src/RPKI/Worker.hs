@@ -152,7 +152,12 @@ data WorkerResult r = WorkerResult {
         maxMemory :: MaxMemory,
         -- | The worker process as a whole (RSS), which also covers whatever
         -- SQLite allocated outside the Haskell heap.
-        processMemory :: MaxMemory
+        processMemory :: MaxMemory,
+        -- | How the CPU time splits between collecting garbage and doing the
+        -- actual work. Worth having per run: a validation that is mostly GC
+        -- is an allocation problem, one that is mostly mutator is not.
+        gcCpuTime      :: TimeMs,
+        mutatorCpuTime :: TimeMs
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)    
@@ -224,17 +229,36 @@ readWorkerInput = liftIO $ deserialise_ . LBS.toStrict <$> LBS.hGetContents stdi
 execWithStats :: MonadIO m => m (Either ErrorResult r) -> m (WorkerResult r)
 execWithStats f = do        
     (payload, clockTime) <- timedMS f
-    (cpuTime, maxMemory, processMemory) <- processStat    
-    pure WorkerResult {..}
+    ProcessStats {..} <- processStat
+    pure WorkerResult {
+            cpuTime = statCpuTime,
+            maxMemory = statMaxMemory,
+            processMemory = statProcessMemory,
+            gcCpuTime = statGcCpuTime,
+            mutatorCpuTime = statMutatorCpuTime,
+            ..
+        }
   
 
-processStat :: MonadIO m => m (CPUTime, MaxMemory, MaxMemory)
+-- | What a process can say about its own resource use.
+data ProcessStats = ProcessStats {
+        statCpuTime        :: CPUTime,
+        statMaxMemory      :: MaxMemory,
+        statProcessMemory  :: MaxMemory,
+        statGcCpuTime      :: TimeMs,
+        statMutatorCpuTime :: TimeMs
+    }
+    deriving stock (Eq, Show, Generic)
+
+processStat :: MonadIO m => m ProcessStats
 processStat = do 
-    cpuTime <- getCpuTime
+    statCpuTime <- getCpuTime
     RTSStats {..} <- liftIO getRTSStats
-    let maxMemory = MaxMemory $ fromIntegral max_mem_in_use_bytes
-    processMemory <- MaxMemory . fromIntegral . unSize <$> getProcessRss
-    pure (cpuTime, maxMemory, processMemory)
+    let statMaxMemory = MaxMemory $ fromIntegral max_mem_in_use_bytes
+    statProcessMemory <- MaxMemory . fromIntegral . unSize <$> getProcessRss
+    let statGcCpuTime      = TimeMs $ fromIntegral gc_cpu_ns `div` 1000_000
+        statMutatorCpuTime = TimeMs $ fromIntegral mutator_cpu_ns `div` 1000_000
+    pure ProcessStats {..}
 
 
 writeWorkerOutput :: TheBinary a => a -> IO ()
@@ -379,4 +403,6 @@ runWorker logger workerInput extraCli workerInfo = do
 logWorkerDone :: (Logger logger, MonadIO m) =>
                 logger -> WorkerId -> WorkerResult r -> m ()
 logWorkerDone logger workerId WorkerResult {..} = do    
-    logDebug logger [i|Worker #{workerId} completed, cpuTime: #{cpuTime}ms, clockTime: #{clockTime}ms, maxMemory: #{maxMemory}, processMemory: #{processMemory}.|] 
+    logDebug logger $
+        [i|Worker #{workerId} completed, cpuTime: #{cpuTime}ms (gc #{gcCpuTime}ms, mutator #{mutatorCpuTime}ms), |] <>
+        [i|clockTime: #{clockTime}ms, maxMemory: #{maxMemory}, processMemory: #{processMemory}.|] 

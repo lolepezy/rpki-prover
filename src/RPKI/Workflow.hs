@@ -430,7 +430,9 @@ runAll appContext@AppContext {..} tals = do
                 pure RanBefore
 
     updateMainResourcesStat = do
-        (cpuTime, maxMemory, processMemory) <- processStat
+        ProcessStats { statCpuTime = cpuTime,
+                       statMaxMemory = maxMemory,
+                       statProcessMemory = processMemory } <- processStat
         SystemInfo {..} <- readTVarIO $ appState ^. #system
         Now now <- thisInstant
         let clockTime = durationMs startUpTime now

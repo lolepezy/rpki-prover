@@ -22,6 +22,7 @@ module RPKI.Store.Database (
     MftShortcutMeta(..),
     -- * Query functions
     getKeyByHash, getObjectKey, getByHash, getKeyedByHash,
+    getMultiLocationKeys,
     getByUri, getKeysByUri,
     getObjectByKey, getLocatedByKey,
     getLocationCountByKey, getLocationsByKey,
@@ -303,6 +304,21 @@ getLocatedByKey tx db k = liftIO $ runMaybeT $ do
     obj       <- MaybeT $ getObjectByKey tx db k
     locations <- MaybeT $ getLocationsByKey tx db k
     pure $ Located locations obj
+
+-- | Keys of every object published at more than one location.
+--
+-- Validation needs to know, per object, whether it has multiple locations, and
+-- asking per object cost a query and a transaction each -- ~440k of them per
+-- round, to discover that a handful of objects qualify (4 of 793516 in a real
+-- cache). One aggregate up front is ~150ms and answers all of them.
+getMultiLocationKeys :: MonadIO m => Tx mode -> DB -> m (Set.Set ObjectKey)
+getMultiLocationKeys (Tx conn) _ = liftIO $ do
+    rows <- query_ conn
+        [sql|
+            SELECT object_key FROM object_urls
+            GROUP BY object_key HAVING COUNT(*) > 1
+        |]
+    pure $! Set.fromList $ map fromOnly rows
 
 getLocationCountByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m Int
 getLocationCountByKey (Tx conn) _ k = liftIO $ do
