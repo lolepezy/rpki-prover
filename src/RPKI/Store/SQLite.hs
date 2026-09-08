@@ -49,7 +49,7 @@ module RPKI.Store.SQLite (
 ) where
 
 import Control.Concurrent.MVar
-import Control.Exception (finally)
+import Control.Exception (finally, mask, onException)
 import Control.Monad (forM_, void)
 import Control.Monad.IO.Class
 
@@ -125,11 +125,28 @@ preparedStatementCount SqliteDB {..} = liftIO $ readIORef stmtTotal
 
 withReadTx :: MonadIO m => SqliteDB -> (Tx 'RO -> IO a) -> m a
 withReadTx SqliteDB{readPool} f = liftIO $ Pool.withResource readPool $ \cc ->
-    withTransaction (rawConn cc) (f (Tx cc))
+    withCachedTransaction cc "BEGIN TRANSACTION" (f (Tx cc))
 
 withWriteTx :: MonadIO m => SqliteDB -> (Tx 'RW -> IO a) -> m a
 withWriteTx SqliteDB{writeConn} f = liftIO $ withMVar writeConn $ \cc ->
-    withImmediateTransaction (rawConn cc) (f (Tx cc))
+    withCachedTransaction cc "BEGIN IMMEDIATE TRANSACTION" (f (Tx cc))
+
+-- | sqlite-simple's own 'withTransaction' issues BEGIN, COMMIT and ROLLBACK on
+-- the raw connection, which compiles and throws away a statement for each of
+-- them. One validation run opens ~164k transactions, so that is ~328k
+-- statements prepared and finalised to say nothing but BEGIN and COMMIT.
+-- Through the statement cache each becomes a reset and a step of one that is
+-- already compiled.
+--
+-- The semantics are sqlite-simple's @withTransactionPrivate@, deliberately
+-- unchanged: masked, rolled back if the action throws, committed otherwise.
+withCachedTransaction :: CachedConn -> Query -> IO a -> IO a
+withCachedTransaction cc begin action =
+    mask $ \restore -> do
+        execute_ cc begin
+        r <- restore action `onException` execute_ cc "ROLLBACK TRANSACTION"
+        execute_ cc "COMMIT TRANSACTION"
+        pure r
 
 withoutTx :: MonadIO m => SqliteDB -> (Tx 'NOTX -> IO a) -> m a
 withoutTx SqliteDB{readPool} f = liftIO $ Pool.withResource readPool $ \cc ->

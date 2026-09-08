@@ -157,7 +157,12 @@ data WorkerResult r = WorkerResult {
         -- actual work. Worth having per run: a validation that is mostly GC
         -- is an allocation problem, one that is mostly mutator is not.
         gcCpuTime      :: TimeMs,
-        mutatorCpuTime :: TimeMs
+        mutatorCpuTime :: TimeMs,
+        -- | Everything the worker allocated, not what it held. GC is cheap
+        -- when it all dies young, so this can be tens of gigabytes while
+        -- gcCpuTime stays near zero -- but producing it is mutator time, so
+        -- it is the number to watch when the work looks CPU-bound.
+        allocatedBytes :: Size
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)    
@@ -236,6 +241,7 @@ execWithStats f = do
             processMemory = statProcessMemory,
             gcCpuTime = statGcCpuTime,
             mutatorCpuTime = statMutatorCpuTime,
+            allocatedBytes = statAllocatedBytes,
             ..
         }
   
@@ -246,7 +252,8 @@ data ProcessStats = ProcessStats {
         statMaxMemory      :: MaxMemory,
         statProcessMemory  :: MaxMemory,
         statGcCpuTime      :: TimeMs,
-        statMutatorCpuTime :: TimeMs
+        statMutatorCpuTime :: TimeMs,
+        statAllocatedBytes :: Size
     }
     deriving stock (Eq, Show, Generic)
 
@@ -258,6 +265,7 @@ processStat = do
     statProcessMemory <- MaxMemory . fromIntegral . unSize <$> getProcessRss
     let statGcCpuTime      = TimeMs $ fromIntegral gc_cpu_ns `div` 1000_000
         statMutatorCpuTime = TimeMs $ fromIntegral mutator_cpu_ns `div` 1000_000
+        statAllocatedBytes = Size $ fromIntegral allocated_bytes
     pure ProcessStats {..}
 
 
@@ -405,4 +413,5 @@ logWorkerDone :: (Logger logger, MonadIO m) =>
 logWorkerDone logger workerId WorkerResult {..} = do    
     logDebug logger $
         [i|Worker #{workerId} completed, cpuTime: #{cpuTime}ms (gc #{gcCpuTime}ms, mutator #{mutatorCpuTime}ms), |] <>
-        [i|clockTime: #{clockTime}ms, maxMemory: #{maxMemory}, processMemory: #{processMemory}.|] 
+        [i|clockTime: #{clockTime}ms, maxMemory: #{maxMemory}, processMemory: #{processMemory}, |] <>
+        [i|allocated: #{unSize allocatedBytes `div` (1024 * 1024)}mb.|] 
