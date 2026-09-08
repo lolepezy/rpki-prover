@@ -25,7 +25,7 @@ module RPKI.Store.Database (
     getMultiLocationKeys,
     getByUri, getKeysByUri,
     getObjectByKey, getLocatedByKey,
-    getLocationCountByKey, getLocationsByKey,
+    getLocationsByKey,
     saveObject, saveStorableObject,
     getObjectMeta, linkObjectToUrl,
     hashExists, deleteObjectByHash, deleteObjectByKey,
@@ -319,13 +319,6 @@ getMultiLocationKeys (Tx conn) _ = liftIO $ do
             GROUP BY object_key HAVING COUNT(*) > 1
         |]
     pure $! Set.fromList $ map fromOnly rows
-
-getLocationCountByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m Int
-getLocationCountByKey (Tx conn) _ k = liftIO $ do
-    rows <- query conn
-        "SELECT COUNT(*) FROM object_urls WHERE object_key = ?"
-        (Only k)
-    pure $ maybe 0 fromOnly (listToMaybe rows)
 
 getLocationsByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe Locations)
 getLocationsByKey (Tx conn) _ k = liftIO $ do
