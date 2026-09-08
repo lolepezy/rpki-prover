@@ -350,14 +350,6 @@ getAllSlurms AppContext {..} =
 
     
 
-getStats :: (MonadIO m, MaintainableStorage s) => AppContext s -> m TotalDBStats
-getStats appContext = liftIO $ do 
-    storageStats <- getStorageStats appContext
-    let total = DB.totalStats storageStats    
-    fileSize <- getCacheFsSize appContext
-    let fileStats = DBFileStats {..}
-    pure TotalDBStats {..}
-
 
 getJobs :: MonadIO m => AppContext s -> m JobsDto
 getJobs AppContext {..} = liftIO $ do
@@ -446,9 +438,11 @@ getSystem AppContext {..} = do
             let AggregatedCPUTime aggregatedCpuTime = resourceUsage ^. #aggregatedCpuTime
             let LatestCPUTime latestCpuTime = resourceUsage ^. #latestCpuTime
             let aggregatedClockTime = resourceUsage ^. #aggregatedClockTime
-            let maxMemory = resourceUsage ^. #maxMemory
+            let maxRtsHeap = resourceUsage ^. #maxRtsHeap
             let avgCpuTimeMsPerSecond = cpuTimePerSecond aggregatedCpuTime (Earlier startUpTime) (Later now)            
-            let avgMemory = getAvgMemory $ resourceUsage ^. #avgMemory
+            let avgRtsHeap = getAvgMemory $ resourceUsage ^. #avgRtsHeap
+            let maxProcessRSS = resourceUsage ^. #maxProcessRSS
+            let avgProcessRSS = getAvgMemory $ resourceUsage ^. #avgProcessRSS
             let cpuTimePerClockTime = let 
                     CPUTime cpuTime = aggregatedCpuTime 
                     TimeMs clockTime = aggregatedClockTime

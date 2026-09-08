@@ -21,9 +21,10 @@ module RPKI.Store.Database (
     MftShortcutMeta(..),
     -- * Query functions
     getKeyByHash, getObjectKey, getByHash, getKeyedByHash,
+    getMultiLocationKeys,
     getByUri, getKeysByUri,
     getObjectByKey, getLocatedByKey,
-    getLocationCountByKey, getLocationsByKey,
+    getLocationsByKey,
     saveObject, saveStorableObject,
     getObjectMeta, linkObjectToUrl,
     hashExists, deleteObjectByHash, deleteObjectByKey,
@@ -71,7 +72,7 @@ import           Control.Monad.Trans.Maybe
 import           Data.Generics.Product.Typed
 
 import qualified Data.List                as List
-import           Data.Maybe               (catMaybes, fromMaybe, listToMaybe)
+import           Data.Maybe               (catMaybes, fromMaybe, listToMaybe, mapMaybe)
 import qualified Data.List.NonEmpty       as NonEmpty
 import qualified Data.Set                 as Set
 import           Data.Text                (Text)
@@ -218,15 +219,30 @@ chunksOf n xs =
 -- | Split `keys` into SQLite-parameter-limit-safe batches (see `chunksOf`),
 -- generating a ":k1, :k2, ..." placeholder list and matching named params
 -- for each batch, ready to splice into an `IN (...)` clause.
+--
+-- Batch sizes are rounded up to a power of two, padding with a repeat of the
+-- first key -- duplicates inside `IN (...)` are harmless. Without the padding
+-- every distinct batch size yields a distinct SQL string, and since prepared
+-- statements are cached per SQL text (see 'RPKI.Store.SQLite.CachedConn'),
+-- a full spread of arities costs ~46mb of SQLite heap per connection against
+-- ~0.5mb for the 10 power-of-two buckets.
 inClauseBatches :: ToField k => [k] -> [(Text, [NamedParam])]
-inClauseBatches = map toBatch . chunksOf 500
+inClauseBatches = mapMaybe toBatch . chunksOf maxBatch
   where
-    toBatch batch =
-        let keyParams = zip [1 :: Int ..] batch
+    maxBatch = 512
+
+    toBatch []             = Nothing
+    toBatch batch@(first : _) =
+        let padded = batch <> replicate (bucketSize (length batch) - length batch) first
+            keyParams = zip [1 :: Int ..] padded
             placeholders = Text.intercalate ", "
                 [":k" <> Text.pack (show i) | (i, _) <- keyParams]
             params = [ (":k" <> Text.pack (show i)) := key | (i, key) <- keyParams ]
-        in (placeholders, params)
+        in Just (placeholders, params)
+
+    -- Round up to the next power of two, so only ~10 distinct arities
+    -- (and so ~10 cached prepared statements) ever exist per call site.
+    bucketSize n = fromMaybe maxBatch $ List.find (>= n) $ takeWhile (<= maxBatch) $ iterate (* 2) 1
 
 -- ---------------------------------------------------------------------------
 -- Object functions
@@ -283,12 +299,20 @@ getLocatedByKey tx db k = liftIO $ runMaybeT $ do
     locations <- MaybeT $ getLocationsByKey tx db k
     pure $ Located locations obj
 
-getLocationCountByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m Int
-getLocationCountByKey (Tx conn) _ k = liftIO $ do
-    rows <- query conn
-        "SELECT COUNT(*) FROM object_urls WHERE object_key = ?"
-        (Only k)
-    pure $ maybe 0 fromOnly (listToMaybe rows)
+-- | Keys of every object published at more than one location.
+--
+-- Validation needs to know, per object, whether it has multiple locations, and
+-- asking per object cost a query and a transaction each -- ~440k of them per
+-- round, to discover that a handful of objects qualify (4 of 793516 in a real
+-- cache). One aggregate up front is ~150ms and answers all of them.
+getMultiLocationKeys :: MonadIO m => Tx mode -> DB -> m (Set.Set ObjectKey)
+getMultiLocationKeys (Tx conn) _ = liftIO $ do
+    rows <- query_ conn
+        [sql|
+            SELECT object_key FROM object_urls
+            GROUP BY object_key HAVING COUNT(*) > 1
+        |]
+    pure $! Set.fromList $ map fromOnly rows
 
 getLocationsByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe Locations)
 getLocationsByKey (Tx conn) _ k = liftIO $ do
@@ -619,81 +643,90 @@ rowsToPerTa :: AsStorable a => [(Text, BS.ByteString)] -> PerTA a
 rowsToPerTa rows = toPerTA
     [ (TaName taName, deserialiseCompressed bs) | (taName, bs) <- rows ]
 
-mkLatestPerTaQuery :: [Text] -> Query
-mkLatestPerTaQuery columns =
-    fromString . Text.unpack $ Text.unlines $
-        [ "WITH ranked AS ("
-        , "    SELECT " <> Text.intercalate ", " (["vo.ta_name"] <> fmap ("vo." <>) columns) <> ","
-        , "           ROW_NUMBER() OVER (PARTITION BY vo.ta_name ORDER BY vo.version DESC) AS rn"
-        , "    FROM validation_outcomes vo"
-        , "    JOIN trust_anchors ta ON ta.ta_name = vo.ta_name"
-        , "    WHERE ta.active = 1"
-        , "      AND vo.version <= :version"
-        ]
-        <> fmap (\column -> "      AND vo." <> column <> " IS NOT NULL") columns
-        <>
-        [ ")"
-        , "SELECT " <> Text.intercalate ", " ("ta_name" : columns)
-        , "FROM ranked"
-        , "WHERE rn = 1"
-        ]
+-- | Which rows of `validation_outcomes` a "latest values" query ranks.
+data OutcomeScope
+    = EveryActiveTA -- ^ per-TA rows of all active TAs, ranked per TA and prefixed with `ta_name`
+    | OneActiveTA   -- ^ per-TA rows of the single active TA bound to `:ta_name`
+    | Common        -- ^ the common, i.e. not TA-specific, rows
 
-mkLatestCommonQuery :: [Text] -> Query
-mkLatestCommonQuery columns =
-    fromString . Text.unpack $ Text.unlines $
+-- | The latest non-NULL values of `columns` at or before `:version`.
+--
+-- All of these queries have the same shape, rank the candidate rows newest
+-- version first and keep the top one of every group:
+--
+-- > WITH ranked AS (
+-- >     SELECT <columns>, ROW_NUMBER() OVER (<partition> ORDER BY vo.version DESC) AS rn
+-- >     FROM validation_outcomes vo <join>
+-- >     WHERE <filters>
+-- > )
+-- > SELECT <columns> FROM ranked WHERE rn = 1
+--
+-- and only differ in the scope they rank within.
+--
+-- A row is only a candidate when every requested column is set, so asking for
+-- several columns at once gives the latest version having all of them rather
+-- than the latest of each column separately.
+latestOutcomeQuery :: OutcomeScope -> [Text] -> Query
+latestOutcomeQuery scope columns =
+    fromString $ Text.unpack $ Text.unlines $ filter (not . Text.null)
         [ "WITH ranked AS ("
-        , "    SELECT " <> Text.intercalate ", " (fmap ("vo." <>) columns) <> ","
-        , "           ROW_NUMBER() OVER (ORDER BY vo.version DESC) AS rn"
+        , "    SELECT " <> commaSeparated (map ("vo." <>) selected) <> ","
+        , "           ROW_NUMBER() OVER (" <> partitionBy <> "ORDER BY vo.version DESC) AS rn"
         , "    FROM validation_outcomes vo"
-        , "    WHERE vo.ta_name IS NULL"
-        , "      AND vo.version <= :version"
-        ]
-        <> fmap (\column -> "      AND vo." <> column <> " IS NOT NULL") columns
-        <>
-        [ ")"
-        , "SELECT " <> Text.intercalate ", " columns
-        , "FROM ranked"
-        , "WHERE rn = 1"
-        ]
-
-mkLatestPayloadForTaQuery :: Text -> Query
-mkLatestPayloadForTaQuery column =
-    fromString . Text.unpack $ Text.unlines
-        [ "WITH ranked AS ("
-        , "    SELECT vo." <> column <> ","
-        , "           ROW_NUMBER() OVER (ORDER BY vo.version DESC) AS rn"
-        , "    FROM validation_outcomes vo"
-        , "    JOIN trust_anchors ta ON ta.ta_name = vo.ta_name"
-        , "    WHERE ta.active = 1"
-        , "      AND vo.ta_name = :ta_name"
-        , "      AND vo.version <= :version"
-        , "      AND vo." <> column <> " IS NOT NULL"
+        , activeTaJoin
+        , "    WHERE " <> Text.intercalate "\n      AND " filters
         , ")"
-        , "SELECT " <> column
+        , "SELECT " <> commaSeparated selected
         , "FROM ranked"
         , "WHERE rn = 1"
         ]
+  where
+    selected = case scope of
+                    EveryActiveTA -> "ta_name" : columns
+                    _             -> columns
+
+    partitionBy = case scope of
+                    EveryActiveTA -> "PARTITION BY vo.ta_name "
+                    _             -> ""
+
+    activeTaJoin = case scope of
+                    Common -> ""
+                    _      -> "    JOIN trust_anchors ta ON ta.ta_name = vo.ta_name AND ta.active = 1"
+
+    filters = taFilter
+           <> [ "vo.version <= :version" ]
+           <> [ "vo." <> column <> " IS NOT NULL" | column <- columns ]
+
+    taFilter = case scope of
+                    EveryActiveTA -> []
+                    OneActiveTA   -> [ "vo.ta_name = :ta_name" ]
+                    Common        -> [ "vo.ta_name IS NULL" ]
+
+    commaSeparated = Text.intercalate ", "
+
+-- | Latest value of one payload column for every active TA.
+getLatestPerTA :: (MonadIO m, AsStorable a) => Tx mode -> Text -> WorldVersion -> m (PerTA a)
+getLatestPerTA (Tx conn) column version = liftIO $
+    rowsToPerTa <$> queryNamed conn
+        (latestOutcomeQuery EveryActiveTA [column])
+        [":version" := version]
+
+-- | Same as `getLatestPerTA`, with the per-TA values merged into one.
+getLatestAcrossTAs :: (MonadIO m, AsStorable a, Monoid a) => Tx mode -> Text -> WorldVersion -> m a
+getLatestAcrossTAs tx column version = allTAs <$> getLatestPerTA tx column version
 
 getValidationsPerTA :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (PerTA Validations)
-getValidationsPerTA (Tx conn) _ version = liftIO $ do
-    rows <- queryNamed conn
-        (mkLatestPerTaQuery ["validations"])
-        [":version" := version]
-    pure $ rowsToPerTa rows
+getValidationsPerTA tx _ = getLatestPerTA tx "validations"
 
 getMetricsPerTA :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (PerTA Metrics)
-getMetricsPerTA (Tx conn) _ version = liftIO $ do
-    rows <- queryNamed conn
-        (mkLatestPerTaQuery ["metrics"])
-        [":version" := version]
-    pure $ rowsToPerTa rows
+getMetricsPerTA tx _ = getLatestPerTA tx "metrics"
 
 getCommonMetrics :: MonadIO m => Tx mode -> DB -> WorldVersion -> m Metrics
-getCommonMetrics (Tx conn) _ version = liftIO $ fmap (fromMaybe mempty) $ do
+getCommonMetrics (Tx conn) _ version = liftIO $ do
     rows <- queryNamed conn
-        (mkLatestCommonQuery ["metrics"])
+        (latestOutcomeQuery Common ["metrics"])
         [":version" := version]
-    pure $ deserialiseCompressed . fromOnly <$> listToMaybe rows
+    pure $ maybe mempty (deserialiseCompressed . fromOnly) (listToMaybe rows)
 
 getValidationOutcomes :: MonadIO m
                       => Tx mode
@@ -702,11 +735,11 @@ getValidationOutcomes :: MonadIO m
                       -> m (Validations, Metrics, PerTA (Validations, Metrics))
 getValidationOutcomes (Tx conn) _ version = liftIO $ do
     commonRows <- queryNamed conn
-                (mkLatestCommonQuery ["validations", "metrics"])
+        (latestOutcomeQuery Common ["validations", "metrics"])
         [":version" := version]
 
     perTaRows <- queryNamed conn
-                (mkLatestPerTaQuery ["validations", "metrics"])
+        (latestOutcomeQuery EveryActiveTA ["validations", "metrics"])
         [":version" := version]
 
     let (commonV, commonM) =
@@ -725,44 +758,24 @@ getVrps tx db version = fmap toVrps <$> getRoas tx db version
 getVrpsForTA :: MonadIO m => Tx mode -> DB -> WorldVersion -> TaName -> m Vrps
 getVrpsForTA (Tx conn) _ version taName = liftIO $ do
     rows <- queryNamed conn
-        (mkLatestPayloadForTaQuery "roas")
+        (latestOutcomeQuery OneActiveTA ["roas"])
         [":ta_name" := unTaName taName, ":version" := version]
     pure $ toVrps $ maybe mempty (deserialiseCompressed . fromOnly) (listToMaybe rows)
 
 getRoas :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (PerTA Roas)
-getRoas (Tx conn) _ version = liftIO $ do
-    rows <- queryNamed conn
-        (mkLatestPerTaQuery ["roas"])
-        [":version" := version]
-    pure $ rowsToPerTa rows
+getRoas tx _ = getLatestPerTA tx "roas"
 
 getAspas :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set Aspa))
-getAspas (Tx conn) _ version = liftIO $ do
-    rows <- queryNamed conn
-        (mkLatestPerTaQuery ["aspa"])
-        [":version" := version]
-    pure $ Just $ allTAs (rowsToPerTa rows)
+getAspas tx _ version = Just <$> getLatestAcrossTAs tx "aspa" version
 
 getGbrs :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set (T2 Hash Gbr)))
-getGbrs (Tx conn) _ version = liftIO $ do
-    rows <- queryNamed conn
-        (mkLatestPerTaQuery ["gbrs"])
-        [":version" := version]
-    pure $ Just $ allTAs (rowsToPerTa rows)
+getGbrs tx _ version = Just <$> getLatestAcrossTAs tx "gbrs" version
 
 getBgps :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set BGPSecPayload))
-getBgps (Tx conn) _ version = liftIO $ do
-    rows <- queryNamed conn
-        (mkLatestPerTaQuery ["bgps"])
-        [":version" := version]
-    pure $ Just $ allTAs (rowsToPerTa rows)
+getBgps tx _ version = Just <$> getLatestAcrossTAs tx "bgps" version
 
 getSpls :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set SplN))
-getSpls (Tx conn) _ version = liftIO $ do
-    rows <- queryNamed conn
-        (mkLatestPerTaQuery ["spls"])
-        [":version" := version]
-    pure $ Just $ allTAs (rowsToPerTa rows)
+getSpls tx _ version = Just <$> getLatestAcrossTAs tx "spls" version
 
 saveValidationVersion :: MonadIO m
                       => Tx 'RW
@@ -1052,6 +1065,13 @@ saveCurrentDatabaseVersion (Tx conn) _ = liftIO $
 
 -- | Shared by updateValidatedByVersionMap and deleteStaleContent's sweep --
 -- both need the same "current validated-by-version map, or empty" read.
+--
+-- Kept as a single compressed blob on purpose, not as a table. Every
+-- validation round touches a large fraction of the entries, so a row per
+-- object would rewrite most of the table's disk pages each time; one blob is
+-- a single sequential write instead. The cost is that the whole map is a
+-- boxed Map in memory while the sweep runs -- do not "fix" that by
+-- normalising it into a table.
 getValidatedByVersionMap :: SQLite.CachedConn -> IO (Map.Map ObjectKey WorldVersion)
 getValidatedByVersionMap conn = do
     rows <- query conn "SELECT value FROM validated_by_version WHERE key = ?"
@@ -1116,22 +1136,24 @@ data CleanUpResult = CleanUpResult
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+-- | Accumulator for the objects sweep in 'deleteStaleContent'.
+data SweepAcc = SweepAcc {
+        sweepToDelete :: [ObjectKey],
+        sweepPerType  :: Map.Map RpkiObjectType Integer,
+        sweepKept     :: !Int
+    }
+    deriving (Generic)
+
+emptySweep :: SweepAcc
+emptySweep = SweepAcc [] Map.empty 0
+
 data DeletionCriteria = DeletionCriteria
     { versionIsTooOld :: WorldVersion -> Bool
     , objectIsTooOld  :: WorldVersion -> RpkiObjectType -> Bool
     }
     deriving (Generic)
 
--- | Keep the newest `versionNumberToKeep` versions that actually carry data
--- for each TA, and delete everything older. A version round doesn't
--- necessarily have fresh data for every TA (a TA that failed to fetch just
--- keeps reusing older data), so we can't just keep the last N rounds -- some
--- of the last N rounds may not have moved a given TA forward at all. Instead,
--- for every TA find the round at which it accumulates N *distinct* rounds of
--- real data counting backwards from the newest, and keep everything back to
--- the earliest such round across all TAs (the most demanding one). A TA that
--- never reaches N real rounds in its whole history blocks deletion entirely,
--- same as it would if we kept everything to satisfy it.
+
 deleteOldestVersionsIfNeeded :: MonadIO m
                              => Tx 'RW -> DB -> Natural -> m [WorldVersion]
 deleteOldestVersionsIfNeeded tx@(Tx conn) db versionNumberToKeep =
@@ -1139,10 +1161,12 @@ deleteOldestVersionsIfNeeded tx@(Tx conn) db versionNumberToKeep =
         versions <- versionsBackwards tx db
         let reallyToKeep = max 2 (fromIntegral versionNumberToKeep)
         case NonEmpty.nonEmpty versions of
-            Just neVersions | NonEmpty.length neVersions > reallyToKeep -> do
-                taVersionRows <- query_ conn
+            Just neVersions 
+                | NonEmpty.length neVersions > reallyToKeep -> do
+
+                taVersionRows :: [(Text, WorldVersion)] <- query_ conn
                     "SELECT ta_name, version FROM validation_outcomes WHERE ta_name IS NOT NULL"
-                    :: IO [(Text, WorldVersion)]
+
                 let taRealVersions = MonoidalMap.fromListWith (<>)
                         [ (ta, Set.singleton v) | (ta, v) <- taVersionRows ]
 
@@ -1177,43 +1201,37 @@ deleteStaleContent db DeletionCriteria{..} =
         forM_ toDelete $ deleteValidationVersion tx db
         pure $ length toDelete
 
+    -- Streamed on purpose: the objects table has ~a million rows, and
+    -- collecting them into a list before looking at any of them was the bulk
+    -- of this worker's heap. Only the accumulator -- the keys actually being
+    -- deleted, plus counters -- outlives a row.
     deleteStaleObjects tx = do
         let Tx conn = tx
         validatedBy <- getValidatedByVersionMap conn
 
-        allObjs <- query_ conn
+        SweepAcc {..} <- SQLite.fold_ conn
             "SELECT object_key, world_version, type FROM objects"
+            emptySweep $ \acc (objectKey, insertedBy, typText) ->
+                pure $! case readMaybe (Text.unpack typText) of
+                    Nothing  -> acc
+                    Just typ ->
+                        let insertedOld  = objectIsTooOld insertedBy typ
+                            validatedOld = case Map.lookup objectKey validatedBy of
+                                Just wv -> objectIsTooOld wv typ
+                                Nothing -> True
+                        in if insertedOld && validatedOld
+                            then acc { sweepToDelete = objectKey : acc.sweepToDelete,
+                                       sweepPerType  = Map.insertWith (+) typ 1 (acc.sweepPerType) }
+                            else acc { sweepKept = acc.sweepKept + 1 }
 
-        deletedPerType <- newTVarIO mempty
-        keptTotal      <- newTVarIO (0 :: Int)
-        keysToDelete   <- fmap catMaybes $ forM allObjs $
-            \(objectKey, insertedBy, typText) -> case readMaybe typText of
-                Nothing  -> pure Nothing
-                Just typ -> do
-                    let insertedOld = objectIsTooOld insertedBy typ
-                        validatedOld = case Map.lookup objectKey validatedBy of
-                            Just wv -> objectIsTooOld wv typ
-                            Nothing -> True
-                    if insertedOld && validatedOld
-                        then do
-                            atomically $ modifyTVar' deletedPerType $
-                                Map.unionWith (+) (Map.singleton typ 1)
-                            pure $ Just objectKey
-                        else do
-                            atomically $ modifyTVar' keptTotal (+1)
-                            pure Nothing
-
-        let validatedBy' = foldr Map.delete validatedBy keysToDelete
+        let validatedBy' = foldr Map.delete validatedBy sweepToDelete
         execute conn "INSERT OR REPLACE INTO validated_by_version(key, value) VALUES (?, ?)"
             (validatedByVersionKey, serialiseCompressed validatedBy')
 
-        deleteObjectByKey tx db keysToDelete
+        deleteObjectByKey tx db sweepToDelete
 
-        atomically $ do
-            deleted <- readTVar deletedPerType
-            let deletedCount = fromIntegral $ sum $ Map.elems deleted
-            kept    <- readTVar keptTotal
-            pure (deletedCount, deleted, kept)
+        let deletedCount = fromIntegral $ sum $ Map.elems sweepPerType
+        pure (deletedCount, sweepPerType, sweepKept)
 
 deleteDanglingUrls :: Tx 'RW -> IO Int
 deleteDanglingUrls (Tx conn) = do

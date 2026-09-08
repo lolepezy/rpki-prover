@@ -571,11 +571,6 @@ scopeList (Scope s) = NonEmpty.toList s
 totalMapCount :: Map a Count -> Count
 totalMapCount m = sum $ Map.elems m
 
-rrdpRepoHasUpdates :: RrdpMetric -> Bool
-rrdpRepoHasUpdates RrdpMetric {..} = anyPositive added || anyPositive deleted   
-
-rsyncRepoHasUpdates :: RsyncMetric -> Bool
-rsyncRepoHasUpdates RsyncMetric {..} = anyPositive processed
 
 rrdpRepoHasSignificantUpdates :: RrdpMetric -> Bool
 rrdpRepoHasSignificantUpdates RrdpMetric {..} = 

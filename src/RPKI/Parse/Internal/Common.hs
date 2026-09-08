@@ -65,16 +65,13 @@ id_authorityKeyId = [2, 5, 29, 35]
 id_crlNumber      = [2, 5, 29, 20]
 
 id_pkcs9, id_contentType, id_messageDigest, id_signingTime, id_binarySigningTime :: OID
-id_sha256, id_sha512, id_ct_signedChecklist, id_ct_aspa, id_ct_rpkiSignedPrefixList :: OID
+id_sha256, id_sha512 :: OID
 
 id_pkcs9                   = [1, 2, 840, 113549, 1, 9]
 id_contentType             = id_pkcs9 <> [3]
 id_messageDigest           = id_pkcs9 <> [4]
 id_signingTime             = id_pkcs9 <> [5]
 id_binarySigningTime       = id_pkcs9 <> [16, 2, 46]
-id_ct_signedChecklist      = id_pkcs9 <> [16, 1, 48]
-id_ct_aspa                 = id_pkcs9 <> [16, 1, 49]
-id_ct_rpkiSignedPrefixList = id_pkcs9 <> [16, 1, 51]
                        
                         
 id_sha256            = [2, 16, 840, 1, 101, 3, 4, 2, 1]
@@ -143,11 +140,6 @@ getAddressFamily message = getNext >>= \case
         pure $ extractAddressaFamily familyType
     a -> parseError message a      
 
-getAddressFamilyMaybe :: ParseASN1 (Maybe AddrFamily)
-getAddressFamilyMaybe = getNext >>= \case 
-    (OctetString familyType) -> 
-        pure $ either (const Nothing) Just $ extractAddressaFamily familyType                
-    _ -> pure Nothing
 
 extractAddressaFamily :: BS.ByteString -> Either BS.ByteString AddrFamily
 extractAddressaFamily familyBS = 
@@ -255,10 +247,6 @@ getManifestUriExt exts = toMaybe . extractURI =<< (extVal exts id_pe_sia >>= (`e
 extractURI :: BS.ByteString -> Either Text URI
 extractURI u =  fmap URI $ first fmtGen $ decodeUtf8' u
 
-getCrlDistributionPoint :: Certificate -> Maybe URI
-getCrlDistributionPoint c = do
-    crlDP <- extVal (getExts c) id_ce_CRLDistributionPoints
-    extractCrlDistributionPoint crlDP    
 
 getCrlDistributionPointExt :: [ExtensionRaw] -> Maybe URI
 getCrlDistributionPointExt exts = extVal exts id_ce_CRLDistributionPoints >>= extractCrlDistributionPoint
@@ -275,10 +263,6 @@ extractCrlDistributionPoint crlDP = do
                                 pure $ toMaybe $ extractURI value
                             _   -> 
                                 pure Nothing
-
-certificatePoliciesToText :: BS.ByteString -> Text
-certificatePoliciesToText bs =
-    either fmtGen fmtGen $ decodeASN1' DER bs
 
 
 toMaybe :: Either b a -> Maybe a

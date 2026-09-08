@@ -28,6 +28,7 @@ module RPKI.Store.SQLite (
     -- a raw 'Connection')
     query,
     query_,
+    fold_,
     queryNamed,
     execute,
     execute_,
@@ -47,7 +48,7 @@ module RPKI.Store.SQLite (
 ) where
 
 import Control.Concurrent.MVar
-import Control.Exception (finally)
+import Control.Exception (finally, mask, onException)
 import Control.Monad (forM_, void)
 import Control.Monad.IO.Class
 
@@ -65,7 +66,7 @@ import qualified Data.Text             as Text
 import Database.SQLite.Simple (
     Connection, Query, Only(..), NamedParam, ToRow, FromRow,
     Statement(..), fromQuery,
-    open, close, withTransaction, withImmediateTransaction,
+    open, close,
     openStatement, closeStatement, bindNamed, reset, withBind, nextRow)
 import qualified Database.SQLite.Simple as Raw
 import Database.SQLite.Simple.QQ (sql)
@@ -112,11 +113,28 @@ data SqliteDB = SqliteDB
 
 withReadTx :: MonadIO m => SqliteDB -> (Tx 'RO -> IO a) -> m a
 withReadTx SqliteDB{readPool} f = liftIO $ Pool.withResource readPool $ \cc ->
-    withTransaction (rawConn cc) (f (Tx cc))
+    withCachedTransaction cc "BEGIN TRANSACTION" (f (Tx cc))
 
 withWriteTx :: MonadIO m => SqliteDB -> (Tx 'RW -> IO a) -> m a
 withWriteTx SqliteDB{writeConn} f = liftIO $ withMVar writeConn $ \cc ->
-    withImmediateTransaction (rawConn cc) (f (Tx cc))
+    withCachedTransaction cc "BEGIN IMMEDIATE TRANSACTION" (f (Tx cc))
+
+-- | sqlite-simple's own 'withTransaction' issues BEGIN, COMMIT and ROLLBACK on
+-- the raw connection, which compiles and throws away a statement for each of
+-- them. One validation run opens ~164k transactions, so that is ~328k
+-- statements prepared and finalised to say nothing but BEGIN and COMMIT.
+-- Through the statement cache each becomes a reset and a step of one that is
+-- already compiled.
+--
+-- The semantics are sqlite-simple's @withTransactionPrivate@, deliberately
+-- unchanged: masked, rolled back if the action throws, committed otherwise.
+withCachedTransaction :: CachedConn -> Query -> IO a -> IO a
+withCachedTransaction cc begin action =
+    mask $ \restore -> do
+        execute_ cc begin
+        r <- restore action `onException` execute_ cc "ROLLBACK TRANSACTION"
+        execute_ cc "COMMIT TRANSACTION"
+        pure r
 
 withoutTx :: MonadIO m => SqliteDB -> (Tx 'NOTX -> IO a) -> m a
 withoutTx SqliteDB{readPool} f = liftIO $ Pool.withResource readPool $ \cc ->
@@ -142,10 +160,13 @@ initConn busyTimeoutMs path = do
         ]
 
 mkCachedConn :: Connection -> IO CachedConn
-mkCachedConn conn = CachedConn conn <$> newIORef Map.empty
+mkCachedConn conn = do
+    stmtCache <- newIORef Map.empty
+    pure CachedConn { rawConn = conn, .. }
 
 initCachedConn :: Int -> FilePath -> IO CachedConn
-initCachedConn busyTimeoutMs path = mkCachedConn =<< initConn busyTimeoutMs path
+initCachedConn busyTimeoutMs path =
+    mkCachedConn =<< initConn busyTimeoutMs path
 
 -- | Finalise every cached prepared statement, then close the connection.
 -- SQLite requires all statements finalised before (or as part of) closing.
@@ -218,6 +239,21 @@ query_ :: FromRow r => CachedConn -> Query -> IO [r]
 query_ cc tmpl = do
     stmt <- checkoutStatement cc tmpl
     collectRows stmt `finally` reset stmt
+
+-- | Fold over the result rows without materialising them.
+--
+-- 'query_' collects every row into a list first, which is fine for the small
+-- results most callers want but ruinous for a sweep over the whole objects
+-- table: a million rows of boxed columns is hundreds of megabytes that stay
+-- live for as long as the traversal runs. Here each row is consumed and
+-- becomes garbage immediately, so only the accumulator survives.
+fold_ :: FromRow r => CachedConn -> Query -> a -> (a -> r -> IO a) -> IO a
+fold_ cc tmpl z f = do
+    stmt <- checkoutStatement cc tmpl
+    let go !acc = nextRow stmt >>= \case
+            Nothing  -> pure acc
+            Just row -> go =<< f acc row
+    go z `finally` reset stmt
 
 queryNamed :: FromRow r => CachedConn -> Query -> [NamedParam] -> IO [r]
 queryNamed cc tmpl params = do

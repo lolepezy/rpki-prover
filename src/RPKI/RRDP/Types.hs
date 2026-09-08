@@ -103,8 +103,6 @@ newRrdpMeta :: SessionId -> RrdpSerial -> RrdpMeta
 newRrdpMeta sessionId serial = 
     RrdpMeta sessionId serial (RrdpIntegrity []) Nothing 
 
-newRrdpIntegrity :: Notification -> RrdpIntegrity
-newRrdpIntegrity Notification {..} = RrdpIntegrity deltas
 
 previousSerial :: RrdpSerial -> RrdpSerial
 previousSerial (RrdpSerial s) = RrdpSerial $ s - 1

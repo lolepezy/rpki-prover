@@ -142,7 +142,12 @@ data AllTasTopDownContext = AllTasTopDownContext {
         visitedKeys          :: TVar (Set ObjectKey),        
         publicationPoints    :: PublicationPoints,
         shortcutQueue        :: ClosableQueue MftShortcutOp,
-        topDownCounters      :: TopDownCounters IORef        
+        topDownCounters      :: TopDownCounters IORef,
+        -- | Objects published at more than one location, read once for the
+        -- whole run. Validating a shortcut needs to know whether its object is
+        -- one of these, and asking per object was ~440k queries per round to
+        -- find the handful that are (4 of 793516 in a real cache).
+        multiLocationKeys    :: Set ObjectKey
     }
     deriving stock (Generic)
 
@@ -214,8 +219,9 @@ newAllTasTopDownContext :: MonadIO m =>
                         WorldVersion
                         -> PublicationPoints 
                         -> ClosableQueue MftShortcutOp
+                        -> Set ObjectKey
                         -> m AllTasTopDownContext
-newAllTasTopDownContext worldVersion publicationPoints shortcutQueue = liftIO $ do 
+newAllTasTopDownContext worldVersion publicationPoints shortcutQueue multiLocationKeys = liftIO $ do 
     let now = Now $ versionToInstant worldVersion
     topDownCounters <- newTopDownCounters
     atomically $ do        
@@ -284,7 +290,8 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
   where
     validateMutlipleTAs' queue = do 
         publicationPoints <- addRsyncPrefetchUrls <$> roTxT database DB.getPublicationPoints            
-        allTas <- newAllTasTopDownContext worldVersion publicationPoints queue
+        multiLocationKeys <- roTxT database DB.getMultiLocationKeys
+        allTas <- newAllTasTopDownContext worldVersion publicationPoints queue multiLocationKeys
         validateThem allTas
             `finally` 
             applyValidationSideEffects appContext allTas
@@ -1125,17 +1132,19 @@ validateCaNoFetch
                     validCrl
 
 
-    -- Optimised version of location validation when all we have is a key of an object
-    -- 
-    validateLocationForShortcut key = do  
-        count <- roTxT database $ \tx db -> DB.getLocationCountByKey tx db key
-        when (count > 1) $ do 
+    -- Location validation when all we have is a key.
+    --
+    -- Only objects with more than one location need anything done, and which
+    -- objects those are was read once for the whole run, so the common case is
+    -- a set lookup rather than a query and a transaction per object.
+    validateLocationForShortcut key =
+        when (key `Set.member` multiLocationKeys) $ do 
             z <- roTxT database $ \tx db -> DB.getLocationsByKey tx db key
             case z of 
                 Nothing -> 
                     -- That's weird and it means DB inconsitency                                
                     integrityError appContext 
-                        [i|Referential integrity error, can't find locations for the object #{key} with positive location count #{count}.|]
+                        [i|Referential integrity error, can't find locations for the object #{key} known to have several.|]
                 Just locations -> 
                     vFocusOn LocationFocus (getURL $ pickLocation locations) $
                         validateObjectLocations locations

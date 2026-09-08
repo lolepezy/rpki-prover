@@ -23,7 +23,9 @@ validityGroup = testGroup "Prefix validity" [
             in checkVrps (makeIndex vrps) vrps
     ]
   where
-    makeIndex = foldr insertVrp makePrefixIndex
+    -- go through the public constructor: it builds with list leaves and
+    -- freezes them into vectors, which is what the running index actually is
+    makeIndex = createPrefixIndex
     checkVrps index = all (\vrp@(Vrp _ prefix _) -> vrp `elem` lookupVrps prefix index)
 
     makeV4Vrps = map (\prefix -> Vrp (ASN 0) (Ipv4P prefix) (PrefixLength 32))

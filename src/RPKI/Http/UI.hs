@@ -505,10 +505,8 @@ genTd, genTh :: Html -> Html
 genTd = td ! A.class_ "gen-t" 
 genTh = th ! A.class_ "gen-t" 
 
-space, arrowUp, arrowRight :: Html
+space :: Html
 space      = preEscapedToMarkup ("&nbsp;" :: Text)
-arrowUp    = preEscapedToMarkup ("&#9650;" :: Text)
-arrowRight = preEscapedToMarkup ("&#10095;" :: Text)
 
 
 instance ToMarkup TimeMs where 

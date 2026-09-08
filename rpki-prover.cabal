@@ -141,6 +141,7 @@ common shared
     , unliftio
     , unordered-containers
     , vector
+    , vector-algorithms
     , warp
     , xeno
 
@@ -153,6 +154,7 @@ library
       RPKI.AppTypes
       RPKI.Config
       RPKI.Domain
+      RPKI.Domain.Packed
       RPKI.Fetch
       RPKI.Http.Api
       RPKI.Http.Dto
@@ -161,6 +163,7 @@ library
       RPKI.Http.UI
       RPKI.Logging
       RPKI.Messages
+      RPKI.Metrics.Memory
       RPKI.Metrics.Metrics
       RPKI.Metrics.Prometheus
       RPKI.Metrics.System
@@ -246,7 +249,7 @@ executable profiler
       -Wall
       -rtsopts
       -funbox-strict-fields
-      "-with-rtsopts=-A16m -AL64m -N2 -qg -T -I0 --disable-delayed-os-memory-return"
+      "-with-rtsopts=-A4m -AL16m -N2 -qg -T -I0 -F1.3 -Fd1 --disable-delayed-os-memory-return"
   build-depends:
       rpki-prover
 
@@ -265,7 +268,7 @@ executable rpki-prover
       -Wall
       -rtsopts
       -funbox-strict-fields
-      "-with-rtsopts=-A16m -AL64m -N2 -qg -T -I0 --disable-delayed-os-memory-return"
+      "-with-rtsopts=-A4m -AL16m -N2 -qg -T -I0 -F1.3 -Fd1 --disable-delayed-os-memory-return"
   build-depends:
       rpki-prover
 

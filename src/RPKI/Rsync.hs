@@ -118,7 +118,7 @@ runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion reposito
             appError $ InternalE $ WorkerError e
         Right (RsyncFetchResult z) -> do     
             logWorkerDone logger workerId wr    
-            pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory
+            pushSystem logger $ cpuMemMetric "rsync-fetch" cpuTime clockTime maxRtsHeap maxProcessRss
             embedValidatorT $ pure z
     
 
@@ -234,8 +234,7 @@ readRsyncProcess logger fetchConfig pc textual = do
 -- | objects into the storage.
 -- 
 -- | Is not supposed to throw exceptions.
-loadRsyncRepository ::                         
-                        AppContext s 
+loadRsyncRepository :: AppContext s 
                     -> WorldVersion 
                     -> RsyncURL 
                     -> FilePath 
@@ -250,7 +249,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
   where        
     cpuParallelism = config ^. typed @Parallelism . #cpuParallelism
 
-    traverseFS= 
+    traverseFS = 
         mapException (AppException . RsyncE . FileReadError . U.fmtEx) <$> 
             traverseDirectory rootPath
 

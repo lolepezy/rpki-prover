@@ -32,7 +32,6 @@ import qualified Data.Map.Strict                 as Map
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import           Data.Set                        (Set)
 import qualified Data.Set                        as Set
-import qualified Data.Vector                     as V
 import           Data.Maybe                      (fromMaybe, catMaybes, isJust)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
@@ -259,17 +258,17 @@ runAll appContext@AppContext {..} tals = do
         (do 
             prometheusMetrics <- createPrometheusMetrics config
 
-            withWorkflowShared appContext prometheusMetrics tals $ \workflowShared ->           
-                case config ^. #proverRunMode of     
+            withWorkflowShared appContext prometheusMetrics tals $ \workflowShared ->
+                case config ^. #proverRunMode of
                     ServerMode -> 
-                        void $ concurrently                    
-                            (concurrently
-                                (runScheduledTasks workflowShared)
-                                (revalidate workflowShared))
-                            runRtrIfConfigured            
+                        mapConcurrently_ id [
+                            runScheduledTasks workflowShared,
+                            revalidate workflowShared,
+                            runRtrIfConfigured
+                        ]                        
 
-                    OneOffMode _ -> 
-                        void $ revalidate workflowShared                                  
+                    OneOffMode _ ->
+                        void $ revalidate workflowShared
         )
   where
     allTaNames = map getTaName tals
@@ -389,7 +388,7 @@ runAll appContext@AppContext {..} tals = do
         persistedJobs <- DB.roTxT database $ \tx db -> Map.fromList <$> DB.allJobs tx db
 
         Now now <- thisInstant
-        forConcurrently (schedules workflowShared) $ \Scheduling { taskDef = (task, action), ..} -> do                        
+        forConcurrently_ (schedules workflowShared) $ \Scheduling { taskDef = (task, action), ..} -> do                        
             let name = fmtGen task
             let (delay, jobRun0) =                  
                     if persistent
@@ -428,12 +427,14 @@ runAll appContext@AppContext {..} tals = do
                 runConcurrentlyIfPossible logger task (workflowShared ^. #runningTasks) (actualAction jobRun) 
                 pure RanBefore
 
-    updateMainResourcesStat = do 
-        (cpuTime, maxMemory) <- processStat
+    updateMainResourcesStat = do
+        ProcessStats { statCpuTime = cpuTime,
+                       statMaxRtsHeap = maxRtsHeap,
+                       statProcessRss = maxProcessRss } <- processStat
         SystemInfo {..} <- readTVarIO $ appState ^. #system
         Now now <- thisInstant
         let clockTime = durationMs startUpTime now
-        pushSystem logger $ cpuMemMetric "root" cpuTime clockTime maxMemory        
+        pushSystem logger $ cpuMemMetric "root" cpuTime clockTime maxRtsHeap maxProcessRss
 
     validateTAs workflowShared worldVersion talsToValidate = do  
         let taNames = map getTaName talsToValidate
@@ -469,7 +470,7 @@ runAll appContext@AppContext {..} tals = do
                             scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
                             
                             logWorkerDone logger workerId wr
-                            pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory
+                            pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxRtsHeap maxProcessRss
                         
                             let topDownState = workerVS <> vs
                             logDebug logger [i|Validation result: 
@@ -516,7 +517,7 @@ runAll appContext@AppContext {..} tals = do
                             pure $ Left [i|Cache cleanup process failed: #{message}.|]
                         Right r -> do
                             logWorkerDone logger workerId wr
-                            pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxMemory
+                            pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxRtsHeap maxProcessRss
                             pure $ Right r    
 
     -- Delete temporary files and any stale storage-backend state
@@ -635,6 +636,7 @@ runAll appContext@AppContext {..} tals = do
                     runWorker logger workerInput arguments workerInfo
         pure (r, workerId)                            
 
+
 -- To be called by the validation worker process
 runValidation :: AppContext s
             -> WorldVersion
@@ -710,12 +712,11 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
    
         pure $ addUniqueVRPCount (toPerTA vrps) slurmValidations
       where
-        -- TODO This is very expensive and _probably_ there's a faster 
-        -- way to do it then Set.fromList
         addUniqueVRPCount vrps !vs = let
                 vrpCountLens = typed @Metrics . #vrpCounts
-                totalUnique = Count (fromIntegral $ uniqueVrpCount vrps)        
-                perTaUnique = fmap (Count . fromIntegral . Set.size . Set.fromList . V.toList . unVrps) (unPerTA vrps)   
+                (perTaCounts, allTasCount) = uniqueVrpCounts vrps
+                totalUnique = Count (fromIntegral allTasCount)
+                perTaUnique = fmap (Count . fromIntegral) perTaCounts
             in vs & vrpCountLens . #totalUnique .~ totalUnique                
                   & vrpCountLens . #perTaUnique .~ perTaUnique
 

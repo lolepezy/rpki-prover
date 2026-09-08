@@ -15,7 +15,6 @@ import           Data.Maybe (fromMaybe)
 import           Data.List (nub)
 import           Data.Coerce
 
-import qualified Data.Vector as V
 import qualified Data.Set as Set
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
@@ -48,10 +47,9 @@ applySlurmToVrps slurm (PerTA vrps) =
     PerTA (MonoidalMap.singleton slurmVrpName assertedVrps)
 
   where     
-    filteredVrps = Vrps . V.filter filterFunc . unVrps
+    filteredVrps = filterVrps filterFunc
 
-    assertedVrps = Vrps 
-        $ V.fromList 
+    assertedVrps = createVrps
         $ map toVrp 
         $ slurm ^. #locallyAddedAssertions . #prefixAssertions
       where

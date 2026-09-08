@@ -9,12 +9,13 @@ import           Data.Foldable  (toList)
 import           Data.Set       (Set, (\\))
 import qualified Data.Set       as Set
 import qualified Data.List      as List
-import qualified Data.Vector    as V
+import qualified Data.Vector.Unboxed as VU
 import           Data.Generics.Labels
 
 import           Deque.Strict   as Deq
 
 import           RPKI.AppTypes
+import           RPKI.Domain     (Vrp, Vrps, packed4, packed6, unpack4, unpack6)
 import           RPKI.Time      (nanosPerSecond)
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
@@ -128,15 +129,25 @@ setDiff previous current
                 deleted = previous \\ current
             }
 
-setDiffV :: Ord a => V.Vector a -> V.Vector a -> Diff a
-setDiffV previous current = 
-    setDiff (Set.fromList $ V.toList previous)
-            (Set.fromList $ V.toList current) 
+
+-- | Diff two packed VRP sets. Only the delta -- which is normally tiny next to
+-- the sets themselves -- is materialised as 'Vrp'.
+setDiffVrps :: Vrps -> Vrps -> Diff Vrp
+setDiffVrps previous current = Diff {
+        added   = Set.map unpack4 (added   diff4) <> Set.map unpack6 (added   diff6),
+        deleted = Set.map unpack4 (deleted diff4) <> Set.map unpack6 (deleted diff6)
+    }
+  where
+    diff4 = setDiff (packedSet (packed4 previous)) (packedSet (packed4 current))
+    diff6 = setDiff (packedSet (packed6 previous)) (packedSet (packed6 current))
+
+packedSet :: (VU.Unbox a, Ord a) => VU.Vector a -> Set a
+packedSet = Set.fromList . VU.toList
 
 evalDiffs :: RtrPayloads -> RtrPayloads -> RtrDiffs
 evalDiffs previous current =
     GenDiffs {
-        vrpDiff    = setDiffV (uniqueVrps previous) (uniqueVrps current),
+        vrpDiff    = setDiffVrps (uniqueVrps previous) (uniqueVrps current),
         bgpSecDiff = setDiff (bgpSec previous) (bgpSec current)
     }
 

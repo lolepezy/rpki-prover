@@ -256,11 +256,6 @@ publicationPointsFromTAL tal cert =
             RsyncU u -> (r, rsyncPP u)           
 
 
--- | Get publication points of the certificate.
--- 
-getPublicationPointsFromCertObject :: CaCerObject -> Either ValidationError PublicationPointAccess
-getPublicationPointsFromCertObject = getPublicationPointsFromCert . cwsX509certificate . getCertWithSignature
-
 getPublicationPointsFromWellStructuredCert :: WellStructuredCert t -> Either ValidationError PublicationPointAccess
 getPublicationPointsFromWellStructuredCert WellStructuredCert {
     certUris = CertUris {
