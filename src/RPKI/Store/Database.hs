@@ -649,81 +649,90 @@ rowsToPerTa :: AsStorable a => [(Text, BS.ByteString)] -> PerTA a
 rowsToPerTa rows = toPerTA
     [ (TaName taName, deserialiseCompressed bs) | (taName, bs) <- rows ]
 
-mkLatestPerTaQuery :: [Text] -> Query
-mkLatestPerTaQuery columns =
-    fromString . Text.unpack $ Text.unlines $
-        [ "WITH ranked AS ("
-        , "    SELECT " <> Text.intercalate ", " (["vo.ta_name"] <> fmap ("vo." <>) columns) <> ","
-        , "           ROW_NUMBER() OVER (PARTITION BY vo.ta_name ORDER BY vo.version DESC) AS rn"
-        , "    FROM validation_outcomes vo"
-        , "    JOIN trust_anchors ta ON ta.ta_name = vo.ta_name"
-        , "    WHERE ta.active = 1"
-        , "      AND vo.version <= :version"
-        ]
-        <> fmap (\column -> "      AND vo." <> column <> " IS NOT NULL") columns
-        <>
-        [ ")"
-        , "SELECT " <> Text.intercalate ", " ("ta_name" : columns)
-        , "FROM ranked"
-        , "WHERE rn = 1"
-        ]
+-- | Which rows of `validation_outcomes` a "latest values" query ranks.
+data OutcomeScope
+    = EveryActiveTA -- ^ per-TA rows of all active TAs, ranked per TA and prefixed with `ta_name`
+    | OneActiveTA   -- ^ per-TA rows of the single active TA bound to `:ta_name`
+    | Common        -- ^ the common, i.e. not TA-specific, rows
 
-mkLatestCommonQuery :: [Text] -> Query
-mkLatestCommonQuery columns =
-    fromString . Text.unpack $ Text.unlines $
+-- | The latest non-NULL values of `columns` at or before `:version`.
+--
+-- All of these queries have the same shape, rank the candidate rows newest
+-- version first and keep the top one of every group:
+--
+-- > WITH ranked AS (
+-- >     SELECT <columns>, ROW_NUMBER() OVER (<partition> ORDER BY vo.version DESC) AS rn
+-- >     FROM validation_outcomes vo <join>
+-- >     WHERE <filters>
+-- > )
+-- > SELECT <columns> FROM ranked WHERE rn = 1
+--
+-- and only differ in the scope they rank within.
+--
+-- A row is only a candidate when every requested column is set, so asking for
+-- several columns at once gives the latest version having all of them rather
+-- than the latest of each column separately.
+latestOutcomeQuery :: OutcomeScope -> [Text] -> Query
+latestOutcomeQuery scope columns =
+    fromString $ Text.unpack $ Text.unlines $ filter (not . Text.null)
         [ "WITH ranked AS ("
-        , "    SELECT " <> Text.intercalate ", " (fmap ("vo." <>) columns) <> ","
-        , "           ROW_NUMBER() OVER (ORDER BY vo.version DESC) AS rn"
+        , "    SELECT " <> commaSeparated (map ("vo." <>) selected) <> ","
+        , "           ROW_NUMBER() OVER (" <> partitionBy <> "ORDER BY vo.version DESC) AS rn"
         , "    FROM validation_outcomes vo"
-        , "    WHERE vo.ta_name IS NULL"
-        , "      AND vo.version <= :version"
-        ]
-        <> fmap (\column -> "      AND vo." <> column <> " IS NOT NULL") columns
-        <>
-        [ ")"
-        , "SELECT " <> Text.intercalate ", " columns
-        , "FROM ranked"
-        , "WHERE rn = 1"
-        ]
-
-mkLatestPayloadForTaQuery :: Text -> Query
-mkLatestPayloadForTaQuery column =
-    fromString . Text.unpack $ Text.unlines
-        [ "WITH ranked AS ("
-        , "    SELECT vo." <> column <> ","
-        , "           ROW_NUMBER() OVER (ORDER BY vo.version DESC) AS rn"
-        , "    FROM validation_outcomes vo"
-        , "    JOIN trust_anchors ta ON ta.ta_name = vo.ta_name"
-        , "    WHERE ta.active = 1"
-        , "      AND vo.ta_name = :ta_name"
-        , "      AND vo.version <= :version"
-        , "      AND vo." <> column <> " IS NOT NULL"
+        , activeTaJoin
+        , "    WHERE " <> Text.intercalate "\n      AND " filters
         , ")"
-        , "SELECT " <> column
+        , "SELECT " <> commaSeparated selected
         , "FROM ranked"
         , "WHERE rn = 1"
         ]
+  where
+    selected = case scope of
+                    EveryActiveTA -> "ta_name" : columns
+                    _             -> columns
+
+    partitionBy = case scope of
+                    EveryActiveTA -> "PARTITION BY vo.ta_name "
+                    _             -> ""
+
+    activeTaJoin = case scope of
+                    Common -> ""
+                    _      -> "    JOIN trust_anchors ta ON ta.ta_name = vo.ta_name AND ta.active = 1"
+
+    filters = taFilter
+           <> [ "vo.version <= :version" ]
+           <> [ "vo." <> column <> " IS NOT NULL" | column <- columns ]
+
+    taFilter = case scope of
+                    EveryActiveTA -> []
+                    OneActiveTA   -> [ "vo.ta_name = :ta_name" ]
+                    Common        -> [ "vo.ta_name IS NULL" ]
+
+    commaSeparated = Text.intercalate ", "
+
+-- | Latest value of one payload column for every active TA.
+getLatestPerTA :: (MonadIO m, AsStorable a) => Tx mode -> Text -> WorldVersion -> m (PerTA a)
+getLatestPerTA (Tx conn) column version = liftIO $
+    rowsToPerTa <$> queryNamed conn
+        (latestOutcomeQuery EveryActiveTA [column])
+        [":version" := version]
+
+-- | Same as `getLatestPerTA`, with the per-TA values merged into one.
+getLatestAcrossTAs :: (MonadIO m, AsStorable a, Monoid a) => Tx mode -> Text -> WorldVersion -> m a
+getLatestAcrossTAs tx column version = allTAs <$> getLatestPerTA tx column version
 
 getValidationsPerTA :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (PerTA Validations)
-getValidationsPerTA (Tx conn) _ version = liftIO $ do
-    rows <- queryNamed conn
-        (mkLatestPerTaQuery ["validations"])
-        [":version" := version]
-    pure $ rowsToPerTa rows
+getValidationsPerTA tx _ = getLatestPerTA tx "validations"
 
 getMetricsPerTA :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (PerTA Metrics)
-getMetricsPerTA (Tx conn) _ version = liftIO $ do
-    rows <- queryNamed conn
-        (mkLatestPerTaQuery ["metrics"])
-        [":version" := version]
-    pure $ rowsToPerTa rows
+getMetricsPerTA tx _ = getLatestPerTA tx "metrics"
 
 getCommonMetrics :: MonadIO m => Tx mode -> DB -> WorldVersion -> m Metrics
-getCommonMetrics (Tx conn) _ version = liftIO $ fmap (fromMaybe mempty) $ do
+getCommonMetrics (Tx conn) _ version = liftIO $ do
     rows <- queryNamed conn
-        (mkLatestCommonQuery ["metrics"])
+        (latestOutcomeQuery Common ["metrics"])
         [":version" := version]
-    pure $ deserialiseCompressed . fromOnly <$> listToMaybe rows
+    pure $ maybe mempty (deserialiseCompressed . fromOnly) (listToMaybe rows)
 
 getValidationOutcomes :: MonadIO m
                       => Tx mode
@@ -732,11 +741,11 @@ getValidationOutcomes :: MonadIO m
                       -> m (Validations, Metrics, PerTA (Validations, Metrics))
 getValidationOutcomes (Tx conn) _ version = liftIO $ do
     commonRows <- queryNamed conn
-                (mkLatestCommonQuery ["validations", "metrics"])
+        (latestOutcomeQuery Common ["validations", "metrics"])
         [":version" := version]
 
     perTaRows <- queryNamed conn
-                (mkLatestPerTaQuery ["validations", "metrics"])
+        (latestOutcomeQuery EveryActiveTA ["validations", "metrics"])
         [":version" := version]
 
     let (commonV, commonM) =
@@ -755,44 +764,24 @@ getVrps tx db version = fmap toVrps <$> getRoas tx db version
 getVrpsForTA :: MonadIO m => Tx mode -> DB -> WorldVersion -> TaName -> m Vrps
 getVrpsForTA (Tx conn) _ version taName = liftIO $ do
     rows <- queryNamed conn
-        (mkLatestPayloadForTaQuery "roas")
+        (latestOutcomeQuery OneActiveTA ["roas"])
         [":ta_name" := unTaName taName, ":version" := version]
     pure $ toVrps $ maybe mempty (deserialiseCompressed . fromOnly) (listToMaybe rows)
 
 getRoas :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (PerTA Roas)
-getRoas (Tx conn) _ version = liftIO $ do
-    rows <- queryNamed conn
-        (mkLatestPerTaQuery ["roas"])
-        [":version" := version]
-    pure $ rowsToPerTa rows
+getRoas tx _ = getLatestPerTA tx "roas"
 
 getAspas :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set Aspa))
-getAspas (Tx conn) _ version = liftIO $ do
-    rows <- queryNamed conn
-        (mkLatestPerTaQuery ["aspa"])
-        [":version" := version]
-    pure $ Just $ allTAs (rowsToPerTa rows)
+getAspas tx _ version = Just <$> getLatestAcrossTAs tx "aspa" version
 
 getGbrs :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set (T2 Hash Gbr)))
-getGbrs (Tx conn) _ version = liftIO $ do
-    rows <- queryNamed conn
-        (mkLatestPerTaQuery ["gbrs"])
-        [":version" := version]
-    pure $ Just $ allTAs (rowsToPerTa rows)
+getGbrs tx _ version = Just <$> getLatestAcrossTAs tx "gbrs" version
 
 getBgps :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set BGPSecPayload))
-getBgps (Tx conn) _ version = liftIO $ do
-    rows <- queryNamed conn
-        (mkLatestPerTaQuery ["bgps"])
-        [":version" := version]
-    pure $ Just $ allTAs (rowsToPerTa rows)
+getBgps tx _ version = Just <$> getLatestAcrossTAs tx "bgps" version
 
 getSpls :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set SplN))
-getSpls (Tx conn) _ version = liftIO $ do
-    rows <- queryNamed conn
-        (mkLatestPerTaQuery ["spls"])
-        [":version" := version]
-    pure $ Just $ allTAs (rowsToPerTa rows)
+getSpls tx _ version = Just <$> getLatestAcrossTAs tx "spls" version
 
 saveValidationVersion :: MonadIO m
                       => Tx 'RW
