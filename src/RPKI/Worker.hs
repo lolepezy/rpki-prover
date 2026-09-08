@@ -81,6 +81,13 @@ data WorkerParams = RrdpFetchParams {
                 rsyncRepository :: RsyncRepository,
                 worldVersion    :: WorldVersion 
             } | 
+            ErikFetchParams {
+                scopes       :: Scopes,
+                fetchConfig  :: FetchConfig,
+                relayUri     :: URI,
+                fqdn         :: FQDN,
+                worldVersion :: WorldVersion
+            } | 
             ValidationParams {                 
                 worldVersion   :: WorldVersion,
                 allTaNames     :: [TaName],
@@ -123,6 +130,11 @@ newtype RrdpFetchResult = RrdpFetchResult
 
 newtype RsyncFetchResult = RsyncFetchResult 
                             (Either AppError RsyncRepository, ValidationState)    
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+newtype ErikFetchResult = ErikFetchResult 
+                            (Either AppError (), ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 

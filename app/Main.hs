@@ -51,7 +51,7 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Reporting
-import           RPKI.RRDP.Http (downloadToFile)
+import           RPKI.Fetch.Http (downloadToFile)
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
 
@@ -63,6 +63,7 @@ import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.RRDP.RrdpFetch
 
+import           RPKI.Fetch.ErikRelay
 import           RPKI.Rsync
 import           RPKI.TAL
 import           RPKI.Util               
@@ -187,6 +188,10 @@ executeWorkerProcess = do
                                     exec resultHandler $ fmap (Right . RsyncFetchResult) $ runValidatorIO scopes $                                     
                                         updateObjectForRsyncRepository appContext fetchConfig 
                                             worldVersion rsyncRepository
+
+                                ErikFetchParams {..} ->
+                                    exec resultHandler $ fmap (Right . ErikFetchResult) $ runValidatorIO scopes $
+                                        fetchErik appContext worldVersion relayUri fqdn
 
                                 ValidationParams {..} -> 
                                     exec resultHandler $ do 
@@ -658,6 +663,9 @@ data CLIOptions = CLIOptions {
         rsyncRefreshInterval     :: Maybe Int64,
         rrdpTimeout              :: Maybe Int64,
         rsyncTimeout             :: Maybe Int64,
+        erikTimeout              :: Maybe Int64,
+        erikRefreshInterval      :: Maybe Int64,
+        erikRelay                :: [String],
         rsyncClientPath          :: Maybe String,
         httpApiPort              :: Maybe Word16,
         sqliteMmapMb             :: Maybe Int64,
@@ -781,6 +789,20 @@ cliOptionsParser = CLIOptions
             <> metavar "SECONDS"
             <> help ("Timeout for rsync repository fetching in seconds (default: " <> show defRsyncTimeout <> "). "
                   <> "If a repository cannot be fetched within this period, it is considered unavailable.")))
+    <*> optional (option auto
+            (  long "erik-timeout"
+            <> metavar "SECONDS"
+            <> help ("Timeout for Erik relay fetching in seconds (default: " <> show defErikTimeout <> "). "
+                  <> "If an Erik relay cannot complete fetching within this period, it is considered unavailable.")))
+    <*> optional (option auto
+            (  long "erik-refresh-interval"
+            <> metavar "SECONDS"
+            <> help ("Time interval for updating repositories via Erik relays in seconds (default: " <> show defErikRefresh <> ").")))
+    <*> many (strOption
+            (  long "erik-relay"
+            <> metavar "URL"
+            <> help ("URL of an Erik relay server. Can be specified multiple times. "
+                  <> "Overrides the default relay list when provided.")))
     <*> optional (strOption
             (  long "rsync-client-path"
             <> metavar "PATH"
@@ -906,6 +928,8 @@ cliOptionsParser = CLIOptions
     Seconds defRsyncRefresh   = cfg ^. #validationConfig . #rsyncRepositoryRefreshInterval
     Seconds defRrdpTimeout    = cfg ^. #rrdpConf . #rrdpTimeout
     Seconds defRsyncTimeout   = cfg ^. #rsyncConf . #rsyncTimeout
+    Seconds defErikTimeout    = cfg ^. #erikConf . #erikTimeout
+    Seconds defErikRefresh    = cfg ^. #erikConf . #erikRefreshInterval
     defHttpApiPort            = cfg ^. #httpApiConf . #port
     defRtrAddress             = rtrCfg ^. #rtrAddress
     defRtrPort                = rtrCfg ^. #rtrPort
@@ -934,6 +958,9 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
         & #rrdpConf . #enabled .~ not noRrdp
         & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
+        & maybeSet (#erikConf . #erikTimeout) (Seconds <$> erikTimeout)
+        & maybeSet (#erikConf . #erikRefreshInterval) (Seconds <$> erikRefreshInterval)
+        & setErikRelays
         & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
         & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
         & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
@@ -961,6 +988,7 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
           & #storageConfig . #sqliteMmapSizeMb .~ sqliteMmapSize
   where
     cpuCount'    = fromMaybe (baseConfig ^. #parallelism . #cpuCount) cpuCount
+
     parallelism  = case fetcherCount of
         Nothing -> newParallelism cpuCount'
         Just fc -> makeParallelismF cpuCount' fc
@@ -971,6 +999,10 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
                     & maybeSet #rtrAddress rtrAddress
                     & #rtrLogFile .~ rtrLogFile
         else Nothing    
+
+    setErikRelays = case erikRelay of
+        [] -> id
+        rs -> #erikConf . #relays .~ map (URI . convert) rs
 
 withLogConfig :: CLIOptions -> (LogConfig -> IO ()) -> IO ()
 withLogConfig CLIOptions{..} f =

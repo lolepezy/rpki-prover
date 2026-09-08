@@ -54,10 +54,11 @@ import qualified Data.ByteString                  as BS
 import           RPKI.AppContext
 import           RPKI.AppState
 import           RPKI.AppMonad
+import           RPKI.AppMonadUtil
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
-import           RPKI.Fetch
+import           RPKI.Fetch.Fetch
 import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Logging
@@ -1129,8 +1130,8 @@ validateCaNoFetch
                                 pure ()
                         pure $! o
 
-        -- The type of the object that is deserialised doesn't correspond 
-        -- to the file extension on the manifest
+        -- The type of the object that is deserialised must 
+        -- correspond to the file extension on the manifest
         let realObjectType = getRpkiObjectType $ ro ^. #object
 
         let complain = vWarn $ ManifestEntryHasWrongFileType hash' filename realObjectType

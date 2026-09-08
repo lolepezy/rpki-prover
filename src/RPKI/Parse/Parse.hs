@@ -9,20 +9,23 @@ module RPKI.Parse.Parse (
     module RPKI.Parse.Internal.SignedObject,
     module RPKI.Parse.Internal.GBR,
     module RPKI.Parse.Internal.RSC,
+    module RPKI.Parse.Internal.Erik,
     readObject,
     readObjectOfType,
     supportedExtension,
-    isSupportedExtension,
+    supportedExtensionByErik,
+    isSupportedExtension,    
     rpkiObjectType,
     urlObjectType,
     textObjectType,
+    nameObjectType,
+    deriveObjectType,
     isOfType
 )
 where
 
 import           Effectful
 import qualified Data.ByteString                  as BS
-import           Data.Char                        (toLower)
 import qualified Data.Text                        as Text
 import           Data.String                      (IsString)
 import           Data.Maybe
@@ -37,6 +40,7 @@ import           RPKI.Parse.Internal.ROA
 import           RPKI.Parse.Internal.SPL
 import           RPKI.Parse.Internal.GBR
 import           RPKI.Parse.Internal.RSC
+import           RPKI.Parse.Internal.Erik
 import           RPKI.Parse.Internal.Aspa
 import           RPKI.Parse.Internal.SignedObject
 
@@ -57,20 +61,32 @@ rpkiObjectType = \case
 
 -- | 
 supportedExtension :: String -> Bool
-supportedExtension filename = 
-    case map toLower $ take 4 $ reverse filename of 
-        [c3, c2, c1, dot] -> dot == '.' && isSupportedExtension [c1, c2, c3]
-        _                 -> False
+supportedExtension = isJust . nameObjectType
+
+supportedExtensionByErik :: String -> Bool
+supportedExtensionByErik filename =
+    case nameObjectType filename of
+        Nothing  -> False
+        -- For now Erik relays don't retransmit GBR objects
+        Just GBR -> False
+        Just _   -> True
 
 isSupportedExtension :: (Eq a, IsString a) => a -> Bool
 isSupportedExtension = isJust . rpkiObjectType
-
+        
 urlObjectType :: RpkiURL -> Maybe RpkiObjectType
 urlObjectType (getURL -> URI u) = textObjectType u
 
 textObjectType :: Text.Text -> Maybe RpkiObjectType
-textObjectType t = rpkiObjectType $ Text.takeEnd 3 t
+textObjectType t = deriveObjectType $ Text.split (== '.') t        
 
+nameObjectType :: String -> Maybe RpkiObjectType
+nameObjectType = textObjectType . Text.pack
+
+deriveObjectType :: (Eq s, IsString s) => [s] -> Maybe RpkiObjectType
+deriveObjectType = \case 
+    _ : x@(_ : _) -> rpkiObjectType $ last x
+    _             -> Nothing
 
 isOfType :: RpkiObjectType -> RpkiObjectType -> Bool
 isOfType t1 t2 = t1 == t2 || t1 == BGPSec && t2 == CER

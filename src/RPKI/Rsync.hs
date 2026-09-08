@@ -7,8 +7,6 @@ import           Effectful
 import           Control.Lens
 import           Data.Generics.Product.Typed
 
-import           Data.Bifunctor
-
 import           Control.Concurrent.STM
 import qualified Control.Exception               as IOExc
 
@@ -20,7 +18,6 @@ import           Control.Monad
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
 import           Data.Maybe (fromMaybe)
-import qualified Data.Map.Strict                  as Map
 import           Data.Proxy
 import           Data.Foldable (for_)
 import           Data.List (stripPrefix)
@@ -31,37 +28,34 @@ import qualified Data.List.NonEmpty               as NonEmpty
 
 import           Data.Hourglass
 
-import           GHC.Generics
-
 import           RPKI.AppContext
 import           RPKI.AppMonad
+import           RPKI.AppMonadUtil
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Metrics.System
-import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Store.Types
 import           RPKI.Store.Base.Storable (StorableObject(..), Compressed(..), toStorableObject)
 import           RPKI.Store.Database     (DB, roTx)
 import qualified RPKI.Store.Database    as DB
+import           RPKI.Fetch.DirectoryTraverse
 import           RPKI.Time
 import qualified RPKI.Util                        as U
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Worker
+import           RPKI.Fetch.DirectoryTraverse
 
-import           System.Directory                 (createDirectoryIfMissing, doesDirectoryExist, getDirectoryContents)
+import           System.Directory                 (createDirectoryIfMissing)
 
 import           System.Exit
 import           System.IO
 import           System.FilePath
 import           System.Process.Typed
-
-import           Streaming                        (lift)
-import qualified Streaming.Prelude                as S
 
 
 checkRsyncInPath :: ValidatorIO es => Maybe FilePath -> Eff es ()
@@ -167,9 +161,8 @@ updateObjectForRsyncRepository
     worldVersion
     repo@(RsyncRepository (RsyncPublicationPoint uri) _) = 
         
-    timedMetric (Proxy :: Proxy RsyncMetric) $ do     
+    timedMetric (Proxy :: Proxy TraverseMetric) $ do     
         let rsyncRoot = configValue $ appContext ^. typed @Config . typed @RsyncConf . typed
-        db <- liftIO $ readTVarIO database        
         destination <- rsyncDestination RsyncDirectory rsyncRoot uri
         let rsync = rsyncProcess config fetchConfig uri destination RsyncDirectory
             
@@ -190,7 +183,7 @@ updateObjectForRsyncRepository
         logInfo logger [i|Finished rsynching #{getURL uri} to #{destination}.|]
         case exitCode of  
             ExitSuccess -> do                 
-                loadRsyncRepository appContext worldVersion uri destination db                             
+                loadRsyncRepository appContext worldVersion uri destination                        
                 pure repo
             ExitFailure errorCode -> do
                 logError logger [i|Rsync process failed: #{rsync} 
@@ -234,129 +227,22 @@ readRsyncProcess logger fetchConfig pc textual = do
         $ setStderr byteStringOutput pc
 
 
-
 -- | Recursively traverse given directory and save all the parseable 
 -- | objects into the storage.
 -- 
 -- | Is not supposed to throw exceptions.
-loadRsyncRepository :: (ValidatorIO es, Concurrent :> es) => AppContext s 
-                    -> WorldVersion 
-                    -> RsyncURL 
-                    -> FilePath 
-                    -> DB
+loadRsyncRepository :: (ValidatorIO es, Concurrent :> es)
+                    => AppContext s
+                    -> WorldVersion
+                    -> RsyncURL
+                    -> FilePath
                     -> Eff es ()
-loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
-    txFoldPipeline 
-            (2 * cpuParallelism)
-            traverseFS
-            (DB.rwAppTx db)
-            saveStorable   
-  where        
-    cpuParallelism = config ^. typed @Parallelism . #cpuParallelism
-
-    traverseFS = 
-        mapException (AppException . RsyncE . FileReadError . U.fmtEx) <$> 
-            traverseDirectory rootPath
-
-    traverseDirectory currentPath = do
-        names <- liftIO $ getDirectoryContents currentPath
-        let properNames = filter (`notElem` [".", ".."]) names
-        forM_ properNames $ \name -> do
-            let path = currentPath </> name
-            liftIO (doesDirectoryExist path) >>= \case
-                True  -> traverseDirectory path
-                False -> 
-                    when (supportedExtension name) $ do         
-                        let uri = restoreUriFromPath repositoryUrl rootPath path
-                        s <- lift askScopes
-                        a <- lift $ async $ evaluate
-                                =<< runValidator s (readAndParseObject path (RsyncU uri))
-                        S.yield (a, uri)
-      where
-        -- Explicit `forall es'`: this is run under a nested `runValidator`,
-        -- which pushes fresh handlers, so with MonoLocalBinds an unsignatured
-        -- (hence monomorphic) binding would not typecheck there.
-        readAndParseObject :: forall es' . ValidatorIO es'
-                           => FilePath -> RpkiURL -> Eff es' RsyncObjectProcessingResult
-        readAndParseObject filePath rpkiURL = 
-            liftIO (getSizeAndContent (config ^. typed) filePath) >>= \case                    
-                Left e          -> pure $! CantReadFile rpkiURL filePath $ VErr e
-                Right (_, blob) ->                     
-                    case urlObjectType rpkiURL of 
-                        Just type_ -> do 
-                            -- Check if the object is already in the storage
-                            -- before parsing ASN1 and serialising it.
-                            let hash = U.sha256s blob  
-                            liftIO (roTx db $ \tx -> DB.getObjectKey tx db hash) >>= \case 
-                                Just key -> pure $! HashExists rpkiURL hash key
-                                Nothing  -> tryToParse hash blob type_                                    
-                        Nothing -> 
-                            pure $! UknownObjectType rpkiURL filePath
-
-          where
-            tryToParse hash blob type_ = do
-                scopes <- askScopes
-                doParse scopes `catchSync` onError scopes
-              where
-                doParse scopes = do                     
-                    z <- runValidator scopes $ do
-                            inSubLocationScope (getURL rpkiURL) $ 
-                                prevalidateObject =<< readObjectOfType type_ blob
-                    evaluate $!
-                        case z of
-                            (Left _, vs) ->
-                                mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
-                            (Right vro, vs)
-                                | hasValidationErrors vs ->
-                                    mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
-                                | otherwise ->
-                                    mkSaveObject $ WellStructuredRO vro
-
-                onError scopes e = do
-                    (_, vs) <- runValidator scopes $
-                        fromEither @() $ Left $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e
-                    pure $! mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
-
-                -- Encode/compress the object here, on the parsing (async) thread,
-                -- so the single-threaded DB-writer only has to do the INSERT.
-                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
-
-    saveStorable tx (a, _) = do 
-        (r, vs) <- fromTryM (UnspecifiedE "Something bad happened in loadRsyncRepository" . U.fmtEx) $ wait a                
-        embedState vs
-        case r of 
-            Left e  -> appWarn e
-            Right z -> case z of 
-                HashExists rpkiURL _ key ->
-                    DB.linkObjectToUrl tx db rpkiURL key worldVersion
-                CantReadFile rpkiUrl filePath (VErr e) -> do                    
-                    logError logger [i|Cannot read file #{filePath}, error #{e} |]
-                    inSubLocationScope (getURL rpkiUrl) $ appWarn e                 
-                UknownObjectType rpkiUrl filePath -> do
-                    logError logger [i|Unknown object type: url = #{rpkiUrl}, path = #{filePath}.|]
-                    inSubLocationScope (getURL rpkiUrl) $ 
-                        appWarn $ RsyncE $ RsyncUnsupportedObjectType $ U.convert rpkiUrl
-
-                ObjectParsingProblem rpkiUrl (VErr e) original hash objectMeta -> do
-                    logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
-                    inSubLocationScope (getURL rpkiUrl) $ appWarn e
-                    key <- DB.saveObject tx db (OriginalRO original vs hash objectMeta.objectType) worldVersion
-                    DB.linkObjectToUrl tx db rpkiUrl key worldVersion
-
-                SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
-                    case lifecycle of
-                        OriginalRO _ vs1 _ _ -> do
-                            logError logger [i|Object #{rpkiUrl} failed parse/prevalidation.|]
-                            embedState vs1
-                        WellStructuredRO _ -> pure ()
-
-                    key <- DB.saveStorableObject tx db so worldVersion
-                    DB.linkObjectToUrl tx db rpkiUrl key worldVersion
-                    updateMetric @RsyncMetric @_ (#processed %~ 
-                        Map.unionWith (+) (Map.singleton (Just $ getRpkiObjectType lifecycle) 1))
-                other -> 
-                    logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                    
-                  
+loadRsyncRepository appContext worldVersion repositoryUrl rootPath =
+    -- An rsync tree mirrors the repository layout, so the path alone determines
+    -- the URL and the parsed object is never needed.
+    loadObjectsFromFS appContext worldVersion
+        (\filePath _ -> Just $ restoreUriFromPath repositoryUrl rootPath filePath)
+        rootPath
 
 data RsyncMode = RsyncOneFile | RsyncDirectory
 
@@ -388,7 +274,7 @@ rsyncDestination :: ValidatorIO es => RsyncMode -> FilePath -> RsyncURL -> Eff e
 rsyncDestination rsyncMode root url@(RsyncURL (RsyncHost (RsyncHostName host) port) path) = do 
     let portPath = maybe "" (\p -> "_" <> show p) port
     let fullPath = ((U.convert host :: String) <> portPath) :| map (U.convert . unRsyncPathChunk) path
-    let mkPath p = foldl (</>) root p
+    let mkPath = foldl' (</>) root
     let pathWithoutLast = NonEmpty.init fullPath
     let target = mkPath $ NonEmpty.toList fullPath
 
@@ -425,23 +311,6 @@ isUnderRoot root target =
         Nothing   -> False
         Just rest -> ".." `notElem` rest
     
-                        
-getSizeAndContent :: ValidationConfig -> FilePath -> IO (Either AppError (Integer, BS.ByteString))
-getSizeAndContent vc path = do 
-    r <- first (RsyncE . FileReadError . U.fmtEx) <$> readSizeAndContet
-    pure $ r >>= \case 
-                (_, Left e)  -> Left e
-                (s, Right b) -> Right (s, b)    
-  where    
-    readSizeAndContet = IOExc.try $ do
-        withFile path ReadMode $ \h -> do
-            size <- hFileSize h
-            case validateSize vc size of
-                Left e  -> pure (size, Left $ ValidationE e)
-                Right _ -> do
-                    r <- BS.hGetContents h                                
-                    pure (size, Right r)
-
 getFileSize :: FilePath -> IO Integer
 getFileSize path = withFile path ReadMode hFileSize 
 
@@ -454,10 +323,3 @@ restoreUriFromPath url@(RsyncURL host rootPath) rsyncRoot filePath =
         Nothing   -> url
         Just diff -> RsyncURL host (rootPath <> map (RsyncPathChunk . U.convert) diff)
     
-data RsyncObjectProcessingResult =           
-          CantReadFile RpkiURL FilePath VIssue
-        | HashExists RpkiURL Hash ObjectKey
-        | UknownObjectType RpkiURL String
-        | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
-        | SaveObject RpkiURL (StorableObject (Compressed RpkiObjectLifecycle))
-    deriving stock (Show, Eq, Generic)

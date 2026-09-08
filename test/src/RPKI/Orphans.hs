@@ -538,6 +538,10 @@ instance Arbitrary TALError where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary ErikError where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary InitError where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -551,7 +555,10 @@ instance Arbitrary SlurmError where
     shrink = genericShrink
 
 instance Arbitrary AppError where
-    arbitrary = genericArbitrary
+    -- `ComposeE [AppError]` is recursive, so the generic generator would happily
+    -- build unboundedly deep errors and never come back. Halving the size at
+    -- every level makes the nested list empty out and the generator terminate.
+    arbitrary = scale (`div` 2) genericArbitrary
     shrink = genericShrink
 
 instance Arbitrary VIssue where
@@ -581,7 +588,7 @@ instance Arbitrary Metrics where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RsyncMetric where
+instance Arbitrary TraverseMetric where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -643,6 +650,10 @@ instance Arbitrary Count where
     shrink = genericShrink
 
 instance Arbitrary HttpStatus where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary FQDN where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

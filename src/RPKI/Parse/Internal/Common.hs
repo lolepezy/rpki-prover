@@ -19,6 +19,7 @@ import qualified Data.List as List
 import Data.Word
 import Data.Char (chr)
 import Data.Maybe
+import Data.Hourglass (DateTime)
 
 import Data.ASN1.OID
 import Data.ASN1.Types
@@ -69,6 +70,7 @@ id_crlNumber      = [2, 5, 29, 20]
 id_pkcs9, id_contentType, id_messageDigest, id_signingTime, id_binarySigningTime :: OID
 id_sha256, id_sha512, id_ct_signedChecklist, id_ct_aspa, id_ct_rpkiSignedPrefixList :: OID
 id_signedData, id_ct_rpkiManifest, id_ct_routeOriginAuthz, id_ct_rpkiGhostbusters :: OID
+id_ct_rpkiErikIndex, id_ct_rpkiErikPartition, id_ct_rpkiErikSegmentIndex :: OID
 
 id_pkcs9                   = [1, 2, 840, 113549, 1, 9]
 id_contentType             = id_pkcs9 <> [3]
@@ -87,7 +89,11 @@ id_ct_rpkiGhostbusters     = id_pkcs9 <> [16, 1, 35]   -- RFC 6493
 id_ct_signedChecklist      = id_pkcs9 <> [16, 1, 48]   -- RFC 9323
 id_ct_aspa                 = id_pkcs9 <> [16, 1, 49]
 id_ct_rpkiSignedPrefixList = id_pkcs9 <> [16, 1, 51]
-                       
+id_ct_rpkiErikIndex        = id_pkcs9 <> [16, 1, 55]
+id_ct_rpkiErikPartition    = id_pkcs9 <> [16, 1, 56]
+-- Temporary OID
+id_ct_rpkiErikSegmentIndex = [1, 3, 6, 1, 4, 1, 41948, 828]
+
                         
 id_sha256            = [2, 16, 840, 1, 101, 3, 4, 2, 1]
 id_sha512            = [2, 16, 840, 1, 101, 3, 4, 2, 3]
@@ -149,6 +155,11 @@ getBitString f m = getNext >>= \case
     BitString (BitArray _ bs) -> f bs
     a                         -> parseError m a
 
+getOctetString :: (BS.ByteString -> ParseASN1 a) -> String -> ParseASN1 a
+getOctetString f m = getNext >>= \case 
+    OctetString bs -> f bs
+    a              -> parseError m a
+
 getAddressFamily :: String -> ParseASN1 (Either BS.ByteString AddrFamily)
 getAddressFamily message = getNext >>= \case 
     (OctetString familyType) -> 
@@ -172,6 +183,11 @@ getDigest =
         OID oid -> pure $ Just oid
         Null    -> pure Nothing
         s       -> throwParseError $ "DigestAlgorithms is wrong " <> show s
+
+getTime :: [Char] -> ParseASN1 DateTime
+getTime message = getNext >>= \case
+        ASN1Time TimeGeneralized dt _ -> pure dt
+        s  -> throwParseError $ message ++ ", got " ++ show s   
 
 -- Certificate utilities
 -- Keep full extension metadata (including critical bit) for profile checks.
@@ -281,6 +297,27 @@ extractCrlDistributionPoint crlDP = do
                                 pure $ toMaybe $ extractURI value
                             _   -> 
                                 pure Nothing
+
+-- | The URI the object itself is published at, read out of the `signedObject`
+-- access description in its EE certificate's SIA. Only CMS-based objects carry
+-- one: a CA certificate's SIA points at the publication point it issues into
+-- rather than at itself, and a CRL has no certificate of its own.
+getSelfPublicationUri :: ParsedRpkiObject -> Maybe URI
+getSelfPublicationUri = \case
+    MftRO c  -> siaOf c
+    RoaRO c  -> siaOf c
+    SplRO c  -> siaOf c
+    GbrRO c  -> siaOf c
+    RscRO c  -> siaOf c
+    AspaRO c -> siaOf c
+    CerRO _  -> Nothing
+    BgpRO _  -> Nothing
+    CrlRO _  -> Nothing
+  where
+    siaOf :: WithRawResourceCertificate a => a -> Maybe URI
+    siaOf o = toMaybe . extractURI
+        =<< (`getSiaValue` id_ad_signedObject)
+                (cwsX509certificate $ certX509 $ getRawCert o)
 
 
 toMaybe :: Either b a -> Maybe a
