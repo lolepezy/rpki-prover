@@ -149,6 +149,7 @@ common shared
     , unordered-containers
     , vector
     , vector-algorithms
+    , wai-extra
     , warp
     , xeno
 

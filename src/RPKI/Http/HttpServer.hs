@@ -19,6 +19,8 @@ import           Servant.Server.StaticFiles
 import           Servant hiding (contentType, URI)
 import           Servant.Swagger.UI
 
+import           Network.Wai.Middleware.Gzip (gzip, defaultGzipSettings)
+
 import           Data.Maybe                       (maybeToList, fromMaybe, catMaybes)
 import qualified Data.Set                         as Set
 import qualified Data.List                        as List
@@ -59,7 +61,7 @@ import           RPKI.Meta.Version
 
 
 httpServer :: MaintainableStorage s => AppContext s -> Application
-httpServer appContext = genericServe HttpApi {
+httpServer appContext = gzip defaultGzipSettings $ genericServe HttpApi {
         api     = apiServer,
         metrics = convert <$> textualMetrics,
         ui      = uiServer appContext,
