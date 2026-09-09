@@ -335,6 +335,7 @@ getLocationsByKey (Tx conn) _ k = liftIO $ do
         [] -> Nothing
         us -> Locations <$> toNESet us
 
+
 saveObject :: MonadIO m
            => Tx 'RW
            -> DB
@@ -343,13 +344,7 @@ saveObject :: MonadIO m
            -> m ObjectKey
 saveObject tx db lifecycle = saveStorableObject tx db (toStorableObject (Compressed lifecycle))
 
--- | Like 'saveObject', but takes an already-built @StorableObject (Compressed
--- RpkiObjectLifecycle)@ (its serialised-and-compressed bytes already forced,
--- via 'toStorableObject' dispatching to the 'Compressed' 'AsStorable'
--- instance) instead of encoding the lifecycle here. Use this from hot paths
--- that parse many objects concurrently and want that (CPU-heavy)
--- serialisation+compression done on the parsing (parallel) thread rather
--- than the single serial DB-writer thread.
+
 saveStorableObject :: MonadIO m
                 => Tx 'RW
                 -> DB
@@ -449,13 +444,7 @@ getMftMetaFromWellStructured WellStructuredCms { content = Manifest {..} } key =
 -- Manifest / Certificate index functions
 -- ---------------------------------------------------------------------------
 
--- | Sorted newest-first by `Ord MftMeta` (thisTime, then nextTime, then
--- mftNumber as a last-resort tiebreaker) -- NOT by manifest_number alone,
--- since manifest serial numbers aren't guaranteed to grow monotonically
--- (e.g. ARIN's don't in practice), so sorting purely by manifest_number
--- can pick the wrong "latest" manifest. Sorted here instead of via SQL
--- `ORDER BY` because thisTime/nextTime live inside the serialised `meta`
--- BLOB, not as their own columns.
+-- | Sorted newest-first by `Ord MftMeta`
 getMftsForAKI :: MonadIO m => Tx mode -> DB -> AKI -> m [MftMeta]
 getMftsForAKI (Tx conn) _ aki_ = liftIO $ do
     rows <- query conn
@@ -1271,16 +1260,10 @@ deleteStaleContent db DeletionCriteria{..} =
 -- seen for a while.
 --
 -- Without this, an object that moved between repositories keeps both URLs
--- forever and keeps warning about having multiple locations (issue #300).
+-- forever and keeps warning about having multiple locations.
 --
 -- The newest association of every object is always kept, however old it is:
--- objects must never end up with zero locations, and refetching does not touch
--- every object every round (RRDP deltas only mention what changed), so "old"
--- on its own is not evidence that the object has gone. Only associations that
--- some *newer* association of the same object has superseded are dropped, and
--- only once they are past the cutoff. An object genuinely published at several
--- URLs is refreshed at all of them in the same world version, so none of its
--- rows supersedes another and they all survive.
+-- objects must never end up with zero locations.
 deleteStaleObjectUrls :: Tx 'RW -> (WorldVersion -> Bool) -> IO Int
 deleteStaleObjectUrls (Tx conn) tooOld = do
     stale <- filter tooOld . map fromOnly <$> query_ conn
