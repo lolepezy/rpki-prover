@@ -21,7 +21,7 @@ module RPKI.Store.Database (
     MftShortcutMeta(..),
     -- * Query functions
     getKeyByHash, getObjectKey, getByHash, getKeyedByHash,
-    getMultiLocationKeys,
+    getMultiLocationShortcutChildren,
     getByUri, getKeysByUri,
     getObjectByKey, getLocatedByKey,
     getLocationsByKey,
@@ -300,22 +300,24 @@ getLocatedByKey tx db k = liftIO $ runMaybeT $ do
     pure $ Located locations obj
 
 -- | Keys of every object published at more than one location.
---
--- Validation needs to know, per object, whether it has multiple locations, and
--- asking per object cost a query and a transaction each -- ~440k of them per
--- round, to discover that a handful of objects qualify (4 of 793516 in a real
--- cache). One aggregate up front is ~150ms and answers all of them.
---
--- TA certificates are excluded: a TAL legitimately lists several URLs for the
--- same certificate, so warning about it is only noise.
-getMultiLocationKeys :: MonadIO m => Tx mode -> DB -> m (Set.Set ObjectKey)
-getMultiLocationKeys (Tx conn) _ = liftIO $ do
+-- Also we only care about objects that are either children of 
+-- manifest shortcuts or manifest shortcuts themselves.
+getMultiLocationShortcutChildren :: MonadIO m => Tx mode -> DB -> m (Set.Set ObjectKey)
+getMultiLocationShortcutChildren (Tx conn) _ = liftIO $ do
     rows <- query_ conn
         [sql|
-            SELECT object_key FROM object_urls
-            WHERE object_key NOT IN (
-                SELECT ta_cert_key FROM trust_anchors WHERE ta_cert_key IS NOT NULL)
-            GROUP BY object_key HAVING COUNT(*) > 1
+            WITH multi_location AS (
+                SELECT object_key FROM object_urls
+                GROUP BY object_key HAVING COUNT(*) > 1
+            )
+            SELECT object_key FROM multi_location m
+            WHERE EXISTS (
+                SELECT 1 FROM mft_shortcut_children 
+                WHERE child_key = m.object_key 
+            ) OR EXISTS (
+                SELECT 1 FROM manifest_meta
+                WHERE object_key = m.object_key
+            )
         |]
     pure $! Set.fromList $ map fromOnly rows
 

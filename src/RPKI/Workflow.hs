@@ -1155,8 +1155,7 @@ scheduleRevalidationOnExpiry AppContext {..} expirationTimes WorkflowShared {..}
 
 -- To be called from the cache cleanup worker
 -- 
-runCacheCleanup ::
-                AppContext s
+runCacheCleanup :: AppContext s
                 -> WorldVersion                
                 -> IO DB.CleanUpResult
 runCacheCleanup AppContext {..} worldVersion = do        

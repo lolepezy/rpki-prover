@@ -205,6 +205,9 @@ shouldExpireSupersededObjectUrls io = do
     dualHomedKey <- storeAt db dualHomed oldVersion
     lonelyKey    <- storeAt db lonely    oldVersion
 
+    -- `getMultiLocationShortcutChildren` only reports objects that manifests refer to
+    mapM_ (markAsManifestChild db) [movedKey, dualHomedKey, lonelyKey]
+
     rwTx db $ \tx -> do
         -- moved from url1 to url2 at some point
         DB.linkObjectToUrl tx db url1 movedKey oldVersion
@@ -235,13 +238,15 @@ shouldExpireSupersededObjectUrls io = do
         "An object must never lose its last location, however old"
         (Just $ toLocations url4)
 
-    multi <- roTx db $ \tx -> DB.getMultiLocationKeys tx db
+    multi <- roTx db $ \tx -> DB.getMultiLocationShortcutChildren tx db
     HU.assertEqual "Only the dual-homed object should still look multi-located"
         (Set.singleton dualHomedKey) multi
 
 
 -- | A TAL legitimately lists the same certificate at several URLs, so a TA
 -- certificate having multiple locations is normal and must not be warned about.
+-- It falls out of `getMultiLocationShortcutChildren` only reporting objects that manifests
+-- refer to: a TA certificate is neither a manifest nor a manifest child.
 shouldNotCountTaCertificatesAsMultiLocation :: IO DB -> HU.Assertion
 shouldNotCountTaCertificatesAsMultiLocation io = do
     db <- io
@@ -252,6 +257,7 @@ shouldNotCountTaCertificatesAsMultiLocation io = do
 
     taCertKey   <- storeAt db taCert   worldVersion
     ordinaryKey <- storeAt db ordinary worldVersion
+    markAsManifestChild db ordinaryKey
 
     rwTx db $ \tx@(Tx conn) -> do
         forM_ [url1, url2] $ \url -> do
@@ -261,9 +267,22 @@ shouldNotCountTaCertificatesAsMultiLocation io = do
             "INSERT INTO trust_anchors(ta_name, ta_cert_key, data, active) VALUES (?, ?, ?, 1)"
             ("some-ta" :: Text.Text, taCertKey, "" :: BS.ByteString)
 
-    multi <- roTx db $ \tx -> DB.getMultiLocationKeys tx db
+    multi <- roTx db $ \tx -> DB.getMultiLocationShortcutChildren tx db
     HU.assertEqual "Only the non-TA object should be reported as multi-located"
         (Set.singleton ordinaryKey) multi
+
+
+-- | Make an object look like something a manifest refers to, which is what
+-- `getMultiLocationShortcutChildren` reports on.
+markAsManifestChild :: DB -> ObjectKey -> IO ()
+markAsManifestChild db key =
+    rwTx db $ \(Tx conn) -> do
+        SQLite.execute conn
+            "INSERT INTO shortcuts(object_key, data) VALUES (?, ?)"
+            (key, "" :: BS.ByteString)
+        SQLite.execute conn
+            "INSERT INTO mft_shortcut_children(aki, file_name, child_key) VALUES (?, ?, ?)"
+            ("" :: BS.ByteString, "child.roa" :: Text.Text, key)
 
 
 -- | `n` generated objects with pairwise distinct hashes.
