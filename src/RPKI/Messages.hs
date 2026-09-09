@@ -204,6 +204,11 @@ toValidationMessage = \case
       ObjectHasMultipleLocations locs -> 
           [i|The same object has multiple locations #{fmtUrlList locs}, this is suspicious.|]
 
+      MftAlreadyValidated (AKI aki) ->
+          [i|Manifests for AKI #{aki} have already been validated in this run, skipping |] <>
+          [i|this occurrence. This CA is reachable by more than one path, so its objects |] <>
+          [i|are validated along the path that reached it first.|]
+
       NoMFT (AKI aki) -> 
           [i|No manifest found for AKI #{aki}.|]
 

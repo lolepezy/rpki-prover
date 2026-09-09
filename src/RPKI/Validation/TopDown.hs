@@ -7,6 +7,7 @@ module RPKI.Validation.TopDown (
     validateMutlipleTAs,
     TroubledChildLoadPath(..),
     resolveTroubledChildByKey,
+    claimAki,
     revokedShortcutChildren
 )
 where
@@ -132,7 +133,14 @@ data TopDownContext = TopDownContext {
         payloadBuilder          :: PayloadBuilder,
         overclaimingHappened    :: Bool,
         fetcheables             :: TVar Fetcheables,
-        earliestNotValidAfter   :: TVar EarliestToExpire
+        earliestNotValidAfter   :: TVar EarliestToExpire,
+        -- | AKIs whose manifests have already been picked up during this TA's
+        -- traversal, see `validateChildrenOf`. Deliberately per-TA and not
+        -- shared through `AllTasTopDownContext`: TAs are validated concurrently
+        -- and their payloads are reported separately, so sharing this would let
+        -- one TA swallow another TA's objects, and which one won would depend
+        -- on a race.
+        visitedAkis             :: TVar (Set AKI)
     }
     deriving stock (Generic)
 
@@ -172,7 +180,8 @@ data TopDownCounters f = TopDownCounters {
         updateMftMeta       :: f Int,
         updateMftChildren   :: f Int,
         readOriginal :: f Int,
-        readParsed   :: f Int
+        readParsed   :: f Int,
+        repeatedAki  :: f Int
     }
     deriving stock (Generic)
     deriving (FunctorB, TraversableB, ApplicativeB, ConstraintsB)
@@ -214,6 +223,7 @@ newTopDownContext taName allTas =
             interruptedByLimit      <- newTVar CanProceed                 
             fetcheables             <- newTVar mempty                 
             earliestNotValidAfter   <- newTVar mempty
+            visitedAkis             <- newTVar mempty
             pure $! TopDownContext {..}
 
 newAllTasTopDownContext :: MonadIO m =>
@@ -254,6 +264,7 @@ newTopDownCounters = do
 
     readOriginal <- newIORef 0   
     readParsed   <- newIORef 0             
+    repeatedAki  <- newIORef 0
    
     pure TopDownCounters {..}
 
@@ -618,7 +629,7 @@ validateCaNoFetch
                 ValidityPeriod {..} <- vHoist $ validateObjectValidityPeriod (c ^. #payload) now
                 rememberNotValidAfter topDownContext notAfter
                 oneMoreCert
-                join $! nextAction $ toAKI $ getSKI c
+                validateChildrenOf $ toAKI $ getSKI c
         CaShort c -> 
             vFocusOn ObjectFocus (c ^. #key) $ do            
                 increment $ topDownCounters.shortcutCa 
@@ -627,7 +638,7 @@ validateCaNoFetch
                 ValidityPeriod {..} <- vHoist $ validateObjectValidityPeriod c now
                 rememberNotValidAfter topDownContext notAfter
                 oneMoreCert
-                join $! nextAction $ toAKI (c ^. #ski)
+                validateChildrenOf $ toAKI (c ^. #ski)
   where    
     validationAlgorithm = config ^. typed @ValidationConfig . typed @ValidationAlgorithm
     validationRFC = config ^. typed @ValidationConfig . typed @ValidationRFC
@@ -636,6 +647,36 @@ validateCaNoFetch
         case validationAlgorithm of 
             FullEveryIteration -> makeNextFullValidationAction
             Incremental        -> makeNextIncrementalAction
+
+    {- | Descend into the children of a CA, at most once per AKI.
+
+       Manifests are found by the AKI of a CA's children, so every CA in the tree
+       funnels through here, and this is the only place where a CA's manifests
+       get picked up.
+
+       The same AKI can be reached more than once in one traversal: nothing stops
+       a parent from issuing several certificates over the same subject key, and
+       each of them leads to the same set of manifests. Without this check the
+       whole sub-tree below is walked once per such certificate, and since
+       `visitedKeys` only ever grows by distinct objects, `maxTotalTreeSize` does
+       not bound that repetition. Nested, it multiplies.
+
+       Skipping the repeat costs nothing in cache retention: the AKI determines
+       the manifest set, so the first visit has already marked exactly the
+       objects this visit would have marked.
+
+       It does mean that a CA genuinely reachable by two paths with different
+       verified resource sets is validated along the path that got there first,
+       which is why this warns rather than passing silently.
+    -}
+    validateChildrenOf :: AKI -> ValidatorT IO ()
+    validateChildrenOf aki = do
+        gotHereFirst <- claimAki visitedAkis aki
+        if gotHereFirst
+            then join $! nextAction aki
+            else do
+                increment topDownCounters.repeatedAki
+                vWarn $ MftAlreadyValidated aki
 
     newShortcut = 
         case validationAlgorithm of 
@@ -1685,6 +1726,25 @@ makeMftShortcut key
             notAfter = nextUpdateTime
         }            
     in MftShortcut { .. }  
+
+{- | Claim an AKI for this traversal: True for whoever gets there first, False
+   for everyone after.
+
+   Split out of `validateChildrenOf` so that the check-and-set can be tested on
+   its own. Manifest children are validated concurrently, so reading the set and
+   writing it back in two steps would let two threads both decide they were
+   first and walk the same sub-tree twice, which is the thing this exists to
+   prevent.
+-}
+claimAki :: MonadIO m => TVar (Set AKI) -> AKI -> m Bool
+claimAki visitedAkis aki = liftIO $ atomically $ do
+    visited <- readTVar visitedAkis
+    if aki `Set.member` visited
+        then pure False
+        else do
+            writeTVar visitedAkis $! Set.insert aki visited
+            pure True
+
 
 -- Same as vFocusOn but it checks that there are no duplicates in the scope focuses, 
 -- i.e. we are not returning to the same object again. That would mean we have detected
