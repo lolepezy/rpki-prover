@@ -158,11 +158,12 @@ mainPage version systemInfo perTaValidations generalValidations fetchDtos metric
 -- operator actually needs before drilling into any table.
 kpiRow :: GroupedMetric ValidationMetric -> PerTA [ResolvedVDto] -> [ResolvedVDto] -> [RepositoryDto] -> Html
 kpiRow grouped perTaValidations generalValidations fetchDtos =
-    H.div ! A.class_ "kpi-grid" $ do
-        kpiTile (withCommas $ total ^. #uniqueVrpNumber) "Unique VRPs"
-            (Just $ withCommas (total ^. #vrpCounter) <> " before dedup") False
+    H.div ! A.class_ "kpi-grid" $ do        
         kpiTile (withCommas $ objectsCount total) "Objects validated"
             (Just $ withCommas (total ^. #validRoaNumber) <> " ROAs") False
+        kpiTile (withCommas $ total ^. #uniqueVrpNumber) "Unique VRPs"
+            (Just $ withCommas (total ^. #vrpCounter) <> " before dedup") False            
+        kpiTile (withCommas $ total ^. #validAspaNumber) "ASPAs" (Nothing :: Maybe String) False
         kpiTile (withCommas errCount) "Open validation errors"
             (Just $ withCommas warnCount <> " warnings") (errCount /= 0)
         kpiTile (withCommas fetchFailures) "Fetch failures"

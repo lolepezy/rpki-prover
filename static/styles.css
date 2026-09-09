@@ -143,7 +143,12 @@ a:hover { text-decoration: underline; }
 .theme-toggle:hover { color: var(--ink); }
 .theme-toggle svg { flex: none; }
 
-.main { flex: 1; margin-left: var(--side-w); padding: 28px 32px 80px; max-width: 1440px; }
+/* min-width: 0 overrides the flex default of min-width: auto, which would
+   otherwise refuse to shrink .main below its widest descendant's natural
+   content width -- exactly the 14-column table this page has -- and grow
+   the whole page horizontally instead of letting that table's own
+   .table-scroll absorb the overflow as a local scrollbar. */
+.main { flex: 1; min-width: 0; margin-left: var(--side-w); padding: 28px 32px 80px; max-width: 1440px; }
 
 /* ---------------------------------------------------------------------
    Page header + KPIs
