@@ -251,6 +251,11 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
 runAll :: MaintainableStorage s =>
                          AppContext s -> [TAL] -> IO ()
 runAll appContext@AppContext {..} tals = do    
+    -- Only the TAs of the TALs given to the validator are active. Everything 
+    -- else left in the database by the previous runs must not be used or 
+    -- reported, so mark it inactive before anything reads it.
+    markActiveTAs
+
     void $ concurrently (
             -- Fill in the current appState if it's not too old.
             -- It is useful in case of restarts.             
@@ -272,7 +277,17 @@ runAll appContext@AppContext {..} tals = do
         )
   where
     allTaNames = map getTaName tals
-    
+
+    markActiveTAs = do 
+        deactivated <- DB.rwTxT database $ \tx db -> do 
+            previouslyActive <- map (getTaName . (^. #tal)) <$> DB.getTAs tx db
+            DB.setActiveTAs tx db allTaNames
+            pure $ filter (`notElem` allTaNames) previouslyActive
+
+        unless (null deactivated) $ 
+            logInfo logger $ [i|TAs #{deactivated} are not in the TALs anymore, |] <>
+                             [i|their data is kept in the cache but will not be used.|]
+
     revalidate workflowShared = do 
         canValidateAgain <- newTVarIO True
         race_ 
