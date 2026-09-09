@@ -2,7 +2,9 @@
 
 module RPKI.Validation.TopDownSpec where
 
-import           Control.Concurrent.STM           (readTVarIO)
+import           Control.Concurrent.Async         (async, wait)
+import           Control.Concurrent.STM
+import           Control.Monad                    (forM, unless)
 import           Control.Lens
 import           Control.Monad.IO.Class           (liftIO)
 
@@ -45,7 +47,7 @@ topDownRegressionGroup =
     testGroup "TopDown regressions"
         [ HU.testCase "Resolves troubled child key from well-structured object" shouldResolveTroubledFromWellStructured
         , HU.testCase "Resolves troubled child key from original object" shouldResolveTroubledFromOriginal
-        , HU.testCase "Replaces revoked shortcut children with troubled entries" shouldReplaceRevokedShortcutChildren
+        , HU.testCase "Replaces revoked shortcut children with troubled entries" shouldReplaceRevokedShortcutChildren        
         ]
 
 

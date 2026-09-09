@@ -81,6 +81,7 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         WeirdCaPublicationPoints [RpkiURL] | 
                         ObjectHasMultipleLocations [RpkiURL] |
                         NoMFT AKI |
+                        MftAlreadyValidated AKI |
                         NoMFTButCachedMft AKI |
                         NoCRLOnMFT AKI |
                         MoreThanOneCRLOnMFT AKI [MftPair] |

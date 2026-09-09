@@ -132,7 +132,8 @@ data TopDownContext = TopDownContext {
         payloadBuilder          :: PayloadBuilder,
         overclaimingHappened    :: Bool,
         fetcheables             :: TVar Fetcheables,
-        earliestNotValidAfter   :: TVar EarliestToExpire
+        earliestNotValidAfter   :: TVar EarliestToExpire,        
+        visitedAkis             :: TVar (Set AKI)
     }
     deriving stock (Generic)
 
@@ -172,7 +173,8 @@ data TopDownCounters f = TopDownCounters {
         updateMftMeta       :: f Int,
         updateMftChildren   :: f Int,
         readOriginal :: f Int,
-        readParsed   :: f Int
+        readParsed   :: f Int,
+        repeatedAki  :: f Int
     }
     deriving stock (Generic)
     deriving (FunctorB, TraversableB, ApplicativeB, ConstraintsB)
@@ -214,6 +216,7 @@ newTopDownContext taName allTas =
             interruptedByLimit      <- newTVar CanProceed                 
             fetcheables             <- newTVar mempty                 
             earliestNotValidAfter   <- newTVar mempty
+            visitedAkis             <- newTVar mempty
             pure $! TopDownContext {..}
 
 newAllTasTopDownContext :: MonadIO m =>
@@ -254,6 +257,7 @@ newTopDownCounters = do
 
     readOriginal <- newIORef 0   
     readParsed   <- newIORef 0             
+    repeatedAki  <- newIORef 0
    
     pure TopDownCounters {..}
 
@@ -618,7 +622,7 @@ validateCaNoFetch
                 ValidityPeriod {..} <- vHoist $ validateObjectValidityPeriod (c ^. #payload) now
                 rememberNotValidAfter topDownContext notAfter
                 oneMoreCert
-                join $! nextAction $ toAKI $ getSKI c
+                validateChildrenOf $ toAKI $ getSKI c
         CaShort c -> 
             vFocusOn ObjectFocus (c ^. #key) $ do            
                 increment $ topDownCounters.shortcutCa 
@@ -627,15 +631,27 @@ validateCaNoFetch
                 ValidityPeriod {..} <- vHoist $ validateObjectValidityPeriod c now
                 rememberNotValidAfter topDownContext notAfter
                 oneMoreCert
-                join $! nextAction $ toAKI (c ^. #ski)
+                validateChildrenOf $ toAKI (c ^. #ski)
   where    
     validationAlgorithm = config ^. typed @ValidationConfig . typed @ValidationAlgorithm
-    validationRFC = config ^. typed @ValidationConfig . typed @ValidationRFC
-
+    validationRFC       = config ^. typed @ValidationConfig . typed @ValidationRFC
+    
     nextAction =
         case validationAlgorithm of 
             FullEveryIteration -> makeNextFullValidationAction
             Incremental        -> makeNextIncrementalAction
+
+    -- Allow validating manifest only once per KI
+    validateChildrenOf aki = 
+        join $ liftIO $ atomically $ do
+            visited <- readTVar visitedAkis
+            if aki `Set.member` visited
+                then pure $ do
+                    increment topDownCounters.repeatedAki
+                    vWarn $ MftAlreadyValidated aki
+                else do
+                    writeTVar visitedAkis $! Set.insert aki visited
+                    pure $ join $ nextAction aki
 
     newShortcut = 
         case validationAlgorithm of 
@@ -643,12 +659,10 @@ validateCaNoFetch
             FullEveryIteration -> const Nothing
             Incremental        -> (Just $!)
 
-    makeNextFullValidationAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextFullValidationAction aki = do 
         mftMetas <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
         pure $! processMfts aki mftMetas
 
-    makeNextIncrementalAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextIncrementalAction aki = do
         z <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
         case z of
@@ -1685,6 +1699,7 @@ makeMftShortcut key
             notAfter = nextUpdateTime
         }            
     in MftShortcut { .. }  
+
 
 -- Same as vFocusOn but it checks that there are no duplicates in the scope focuses, 
 -- i.e. we are not returning to the same object again. That would mean we have detected
