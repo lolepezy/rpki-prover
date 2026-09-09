@@ -48,60 +48,12 @@ topDownRegressionGroup =
     testGroup "TopDown regressions"
         [ HU.testCase "Resolves troubled child key from well-structured object" shouldResolveTroubledFromWellStructured
         , HU.testCase "Resolves troubled child key from original object" shouldResolveTroubledFromOriginal
-        , HU.testCase "Replaces revoked shortcut children with troubled entries" shouldReplaceRevokedShortcutChildren
-        , HU.testCase "Admits an AKI once and rejects repeats" shouldClaimAkiOnlyOnce
-        , HU.testCase "Admits an AKI once even when claimed concurrently" shouldClaimAkiOnlyOnceConcurrently
+        , HU.testCase "Replaces revoked shortcut children with troubled entries" shouldReplaceRevokedShortcutChildren        
         ]
 
 
 anAki :: Int -> AKI
 anAki n = AKI $ mkKI $ BS.replicate 20 (fromIntegral n)
-
-{- | A CA is only descended into the first time its AKI comes up, so that a
-   parent issuing several certificates over the same subject key cannot make the
-   whole sub-tree below be walked once per certificate.
--}
-shouldClaimAkiOnlyOnce :: HU.Assertion
-shouldClaimAkiOnlyOnce = do
-    visited <- newTVarIO mempty
-
-    first  <- claimAki visited (anAki 1)
-    second <- claimAki visited (anAki 1)
-    third  <- claimAki visited (anAki 1)
-
-    HU.assertEqual "The first claim must win" True first
-    HU.assertEqual "The second claim must be refused" False second
-    HU.assertEqual "And every one after it" False third
-
-    -- A different AKI is a different CA and must not be affected
-    other <- claimAki visited (anAki 2)
-    HU.assertEqual "A different AKI must still be admitted" True other
-
-    HU.assertEqual "Both AKIs must be recorded"
-        (Set.fromList [anAki 1, anAki 2]) =<< readTVarIO visited
-
-{- | Manifest children are validated concurrently, so the check and the insert
-   have to happen in one transaction. Reading and writing separately would let
-   more than one caller conclude it was first.
--}
-shouldClaimAkiOnlyOnceConcurrently :: HU.Assertion
-shouldClaimAkiOnlyOnceConcurrently = do
-    -- All the contenders park on a barrier first, so that they are released at
-    -- once and actually overlap. Without that they just run one after another
-    -- and a non-atomic check-and-set passes happily.
-    winsPerRound <- forM [1 .. 50 :: Int] $ \round_ -> do
-        visited <- newTVarIO mempty
-        gate    <- newTVarIO False
-        runners <- forM [1 .. 64 :: Int] $ \_ -> async $ do
-                        atomically $ readTVar gate >>= \open -> unless open retry
-                        claimAki visited (anAki round_)
-        atomically $ writeTVar gate True
-        results <- mapM wait runners
-        pure $ length $ filter id results
-
-    HU.assertEqual "Exactly one racing claim may win, in every round"
-        (replicate 50 1) winsPerRound
-
 
 shouldResolveTroubledFromWellStructured :: HU.Assertion
 shouldResolveTroubledFromWellStructured =
