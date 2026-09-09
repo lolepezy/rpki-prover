@@ -16,6 +16,8 @@ extra-source-files:
     ChangeLog.md
     static/script.js
     static/styles.css
+    static/favicon.ico
+    static/favicon.svg
     src/RPKI/Meta/GitVersionInfo.hs
     src/RPKI/Meta/UniqueId.hs
 
