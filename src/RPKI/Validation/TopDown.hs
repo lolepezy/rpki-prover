@@ -641,35 +641,14 @@ validateCaNoFetch
                 validateChildrenOf $ toAKI (c ^. #ski)
   where    
     validationAlgorithm = config ^. typed @ValidationConfig . typed @ValidationAlgorithm
-    validationRFC = config ^. typed @ValidationConfig . typed @ValidationRFC
+    validationRFC       = config ^. typed @ValidationConfig . typed @ValidationRFC
 
     nextAction =
         case validationAlgorithm of 
             FullEveryIteration -> makeNextFullValidationAction
             Incremental        -> makeNextIncrementalAction
 
-    {- | Descend into the children of a CA, at most once per AKI.
-
-       Manifests are found by the AKI of a CA's children, so every CA in the tree
-       funnels through here, and this is the only place where a CA's manifests
-       get picked up.
-
-       The same AKI can be reached more than once in one traversal: nothing stops
-       a parent from issuing several certificates over the same subject key, and
-       each of them leads to the same set of manifests. Without this check the
-       whole sub-tree below is walked once per such certificate, and since
-       `visitedKeys` only ever grows by distinct objects, `maxTotalTreeSize` does
-       not bound that repetition. Nested, it multiplies.
-
-       Skipping the repeat costs nothing in cache retention: the AKI determines
-       the manifest set, so the first visit has already marked exactly the
-       objects this visit would have marked.
-
-       It does mean that a CA genuinely reachable by two paths with different
-       verified resource sets is validated along the path that got there first,
-       which is why this warns rather than passing silently.
-    -}
-    validateChildrenOf :: AKI -> ValidatorT IO ()
+    -- Allow validating manifest only once per KI
     validateChildrenOf aki = do
         gotHereFirst <- claimAki visitedAkis aki
         if gotHereFirst
@@ -1727,15 +1706,7 @@ makeMftShortcut key
         }            
     in MftShortcut { .. }  
 
-{- | Claim an AKI for this traversal: True for whoever gets there first, False
-   for everyone after.
 
-   Split out of `validateChildrenOf` so that the check-and-set can be tested on
-   its own. Manifest children are validated concurrently, so reading the set and
-   writing it back in two steps would let two threads both decide they were
-   first and walk the same sub-tree twice, which is the thing this exists to
-   prevent.
--}
 claimAki :: MonadIO m => TVar (Set AKI) -> AKI -> m Bool
 claimAki visitedAkis aki = liftIO $ atomically $ do
     visited <- readTVar visitedAkis
