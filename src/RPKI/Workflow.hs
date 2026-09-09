@@ -505,6 +505,7 @@ runAll appContext@AppContext {..} tals = do
                     then [i|in particular #{Map.toList deletedPerType}, |] 
                     else ""
                 logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, #{perType}kept #{keptObjects}, |] <>
+                                 [i|deleted #{deletedObjectUrls} stale object-URL links, |] <>
                                  [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|]
       where
         cleanupOldObjects = do                 
@@ -1154,8 +1155,7 @@ scheduleRevalidationOnExpiry AppContext {..} expirationTimes WorkflowShared {..}
 
 -- To be called from the cache cleanup worker
 -- 
-runCacheCleanup ::
-                AppContext s
+runCacheCleanup :: AppContext s
                 -> WorldVersion                
                 -> IO DB.CleanUpResult
 runCacheCleanup AppContext {..} worldVersion = do        
@@ -1178,7 +1178,11 @@ runCacheCleanup AppContext {..} worldVersion = do
                     -- so they should be removed from the cache sooner than more long-lived objects
                     MFT -> tooOldShortLived version
                     CRL -> tooOldShortLived version
-                    _   -> tooOldLongLived version
+                    _   -> tooOldLongLived version,
+            -- An object that hasn't been seen at a URL for this long has moved 
+            -- on; forgetting the association is what stops the "multiple 
+            -- locations" warning from outliving the migration that caused it.
+            objectUrlIsTooOld = tooOldLongLived
         }
 
 -- | Load the state corresponding to the last completed validation version.

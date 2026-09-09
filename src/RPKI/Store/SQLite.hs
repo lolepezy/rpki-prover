@@ -318,8 +318,12 @@ schemaDDL =
       |]
     , [sql|
         CREATE TABLE IF NOT EXISTS object_urls (
-            object_key INTEGER NOT NULL REFERENCES objects(object_key) ON DELETE CASCADE,
-            url_key    INTEGER NOT NULL REFERENCES urls(url_key)       ON DELETE CASCADE,
+            object_key    INTEGER NOT NULL REFERENCES objects(object_key) ON DELETE CASCADE,
+            url_key       INTEGER NOT NULL REFERENCES urls(url_key)       ON DELETE CASCADE,
+            -- The last world version in which the object was seen at this URL.
+            -- Refreshed by `linkObjectToUrl`, used to expire associations that
+            -- an object has outgrown, e.g. after it moved to another repository.
+            world_version INTEGER NOT NULL,
             PRIMARY KEY (object_key, url_key)
         )
       |]

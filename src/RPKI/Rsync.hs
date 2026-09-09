@@ -319,7 +319,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
             Left e  -> appWarn e
             Right z -> case z of 
                 HashExists rpkiURL _ key ->
-                    DB.linkObjectToUrl tx db rpkiURL key
+                    DB.linkObjectToUrl tx db rpkiURL key worldVersion
                 CantReadFile rpkiUrl filePath (VErr e) -> do                    
                     logError logger [i|Cannot read file #{filePath}, error #{e} |]
                     inSubLocationScope (getURL rpkiUrl) $ appWarn e                 
@@ -332,7 +332,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
                     logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
                     inSubLocationScope (getURL rpkiUrl) $ appWarn e
                     key <- DB.saveObject tx db (OriginalRO original vs hash objectMeta.objectType) worldVersion
-                    DB.linkObjectToUrl tx db rpkiUrl key
+                    DB.linkObjectToUrl tx db rpkiUrl key worldVersion
 
                 SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
                     case lifecycle of
@@ -342,7 +342,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
                         WellStructuredRO _ -> pure ()
 
                     key <- DB.saveStorableObject tx db so worldVersion
-                    DB.linkObjectToUrl tx db rpkiUrl key
+                    DB.linkObjectToUrl tx db rpkiUrl key worldVersion
                     updateMetric @RsyncMetric @_ (#processed %~ 
                         Map.unionWith (+) (Map.singleton (Just $ getRpkiObjectType lifecycle) 1))
                 other -> 

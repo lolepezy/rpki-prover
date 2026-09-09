@@ -291,7 +291,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
   where
     validateMutlipleTAs' queue = do 
         publicationPoints <- addRsyncPrefetchUrls <$> roTxT database DB.getPublicationPoints            
-        multiLocationKeys <- roTxT database DB.getMultiLocationKeys
+        multiLocationKeys <- roTxT database DB.getMultiLocationShortcutChildren
         allTas <- newAllTasTopDownContext worldVersion publicationPoints queue multiLocationKeys
         validateThem allTas
             `finally` 
@@ -443,7 +443,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                     Right ppAccess ->
                         DB.rwAppTxEx db DB.storageError $ \tx -> do
                             taCertKey <- DB.saveObject tx db (WellStructuredRO (CerRO certToStore)) worldVersion
-                            DB.linkObjectToUrl tx db actualUrl taCertKey
+                            DB.linkObjectToUrl tx db actualUrl taCertKey worldVersion
                             DB.saveTA tx db (StorableTA tal taCertKey (FetchedAt moment) ppAccess actualUrl)
                             pure (locatedTaCert (talCertLocations tal <> toLocations actualUrl) certToUse, ppAccess)
 
@@ -612,7 +612,9 @@ validateCaNoFetch
             vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
                 increment $ topDownCounters.originalCa
                 markAsUsedByHash appContext topDownContext (getHash c)                         
-                validateObjectLocations c
+                -- Do not validate locations of the TA certificates, these locations come from TAL
+                -- so there is no point to warn about multiple locations.
+                unless (currentPathDepth == 0) $ validateObjectLocations c
                 ValidityPeriod {..} <- vHoist $ validateObjectValidityPeriod (c ^. #payload) now
                 rememberNotValidAfter topDownContext notAfter
                 oneMoreCert

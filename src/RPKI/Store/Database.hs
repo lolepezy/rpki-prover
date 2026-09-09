@@ -21,7 +21,7 @@ module RPKI.Store.Database (
     MftShortcutMeta(..),
     -- * Query functions
     getKeyByHash, getObjectKey, getByHash, getKeyedByHash,
-    getMultiLocationKeys,
+    getMultiLocationShortcutChildren,
     getByUri, getKeysByUri,
     getObjectByKey, getLocatedByKey,
     getLocationsByKey,
@@ -156,7 +156,7 @@ rwTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 55
+currentDatabaseVersion = 56
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -300,17 +300,24 @@ getLocatedByKey tx db k = liftIO $ runMaybeT $ do
     pure $ Located locations obj
 
 -- | Keys of every object published at more than one location.
---
--- Validation needs to know, per object, whether it has multiple locations, and
--- asking per object cost a query and a transaction each -- ~440k of them per
--- round, to discover that a handful of objects qualify (4 of 793516 in a real
--- cache). One aggregate up front is ~150ms and answers all of them.
-getMultiLocationKeys :: MonadIO m => Tx mode -> DB -> m (Set.Set ObjectKey)
-getMultiLocationKeys (Tx conn) _ = liftIO $ do
+-- Also we only care about objects that are either children of 
+-- manifest shortcuts or manifest shortcuts themselves.
+getMultiLocationShortcutChildren :: MonadIO m => Tx mode -> DB -> m (Set.Set ObjectKey)
+getMultiLocationShortcutChildren (Tx conn) _ = liftIO $ do
     rows <- query_ conn
         [sql|
-            SELECT object_key FROM object_urls
-            GROUP BY object_key HAVING COUNT(*) > 1
+            WITH multi_location AS (
+                SELECT object_key FROM object_urls
+                GROUP BY object_key HAVING COUNT(*) > 1
+            )
+            SELECT object_key FROM multi_location m
+            WHERE EXISTS (
+                SELECT 1 FROM mft_shortcut_children 
+                WHERE child_key = m.object_key 
+            ) OR EXISTS (
+                SELECT 1 FROM manifest_meta
+                WHERE object_key = m.object_key
+            )
         |]
     pure $! Set.fromList $ map fromOnly rows
 
@@ -328,6 +335,7 @@ getLocationsByKey (Tx conn) _ k = liftIO $ do
         [] -> Nothing
         us -> Locations <$> toNESet us
 
+
 saveObject :: MonadIO m
            => Tx 'RW
            -> DB
@@ -336,13 +344,7 @@ saveObject :: MonadIO m
            -> m ObjectKey
 saveObject tx db lifecycle = saveStorableObject tx db (toStorableObject (Compressed lifecycle))
 
--- | Like 'saveObject', but takes an already-built @StorableObject (Compressed
--- RpkiObjectLifecycle)@ (its serialised-and-compressed bytes already forced,
--- via 'toStorableObject' dispatching to the 'Compressed' 'AsStorable'
--- instance) instead of encoding the lifecycle here. Use this from hot paths
--- that parse many objects concurrently and want that (CPU-heavy)
--- serialisation+compression done on the parsing (parallel) thread rather
--- than the single serial DB-writer thread.
+
 saveStorableObject :: MonadIO m
                 => Tx 'RW
                 -> DB
@@ -399,16 +401,23 @@ getObjectMeta (Tx conn) _ k = liftIO $ do
             Nothing  -> Nothing
         _ -> Nothing
 
-linkObjectToUrl :: MonadIO m => Tx 'RW -> DB -> RpkiURL -> ObjectKey -> m ()
-linkObjectToUrl (Tx conn) _ rpkiURL objectKey = liftIO $ do
+-- | Record that the object is published at the given URL as of `worldVersion`.
+--
+-- The version is refreshed on every call, so an association only stays old if
+-- the object stopped being seen at that URL (it moved to another repository,
+-- say). 'deleteStaleObjectUrls' expires those, which is what makes the
+-- "object has multiple locations" warning go away after a migration.
+linkObjectToUrl :: MonadIO m => Tx 'RW -> DB -> RpkiURL -> ObjectKey -> WorldVersion -> m ()
+linkObjectToUrl (Tx conn) _ rpkiURL objectKey worldVersion = liftIO $ do
     [Only urlKey] <- query conn
         [sql|INSERT INTO urls(url) VALUES (?)
              ON CONFLICT(url) DO UPDATE SET url = excluded.url
              RETURNING url_key|]
         (Only (serialiseField rpkiURL))
     execute conn
-        "INSERT OR IGNORE INTO object_urls(object_key, url_key) VALUES (?, ?)"
-        (objectKey, urlKey :: UrlKey)
+        [sql|INSERT INTO object_urls(object_key, url_key, world_version) VALUES (?, ?, ?)
+             ON CONFLICT(object_key, url_key) DO UPDATE SET world_version = excluded.world_version|]
+        (objectKey, urlKey :: UrlKey, worldVersion)
 
 hashExists :: MonadIO m => Tx mode -> DB -> Hash -> m Bool
 hashExists (Tx conn) _ h = liftIO $ do
@@ -435,13 +444,7 @@ getMftMetaFromWellStructured WellStructuredCms { content = Manifest {..} } key =
 -- Manifest / Certificate index functions
 -- ---------------------------------------------------------------------------
 
--- | Sorted newest-first by `Ord MftMeta` (thisTime, then nextTime, then
--- mftNumber as a last-resort tiebreaker) -- NOT by manifest_number alone,
--- since manifest serial numbers aren't guaranteed to grow monotonically
--- (e.g. ARIN's don't in practice), so sorting purely by manifest_number
--- can pick the wrong "latest" manifest. Sorted here instead of via SQL
--- `ORDER BY` because thisTime/nextTime live inside the serialised `meta`
--- BLOB, not as their own columns.
+-- | Sorted newest-first by `Ord MftMeta`
 getMftsForAKI :: MonadIO m => Tx mode -> DB -> AKI -> m [MftMeta]
 getMftsForAKI (Tx conn) _ aki_ = liftIO $ do
     rows <- query conn
@@ -1144,11 +1147,12 @@ getObjectsStats (Tx conn) _ = liftIO $ do
 -- ---------------------------------------------------------------------------
 
 data CleanUpResult = CleanUpResult
-    { deletedObjects  :: Int
-    , deletedPerType  :: Map.Map RpkiObjectType Integer
-    , keptObjects     :: Int
-    , deletedURLs     :: Int
-    , deletedVersions :: Int
+    { deletedObjects    :: Int
+    , deletedPerType    :: Map.Map RpkiObjectType Integer
+    , keptObjects       :: Int
+    , deletedObjectUrls :: Int
+    , deletedURLs       :: Int
+    , deletedVersions   :: Int
     }
     deriving (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -1165,8 +1169,9 @@ emptySweep :: SweepAcc
 emptySweep = SweepAcc [] Map.empty 0
 
 data DeletionCriteria = DeletionCriteria
-    { versionIsTooOld :: WorldVersion -> Bool
-    , objectIsTooOld  :: WorldVersion -> RpkiObjectType -> Bool
+    { versionIsTooOld   :: WorldVersion -> Bool
+    , objectIsTooOld    :: WorldVersion -> RpkiObjectType -> Bool
+    , objectUrlIsTooOld :: WorldVersion -> Bool
     }
     deriving (Generic)
 
@@ -1210,6 +1215,7 @@ deleteStaleContent db DeletionCriteria{..} =
         rwTx db $ \tx -> do
             deletedVersions <- deleteOldVersions tx
             (deletedObjects, deletedPerType, keptObjects) <- deleteStaleObjects tx
+            deletedObjectUrls <- deleteStaleObjectUrls tx objectUrlIsTooOld
             deletedURLs <- deleteDanglingUrls tx
             pure CleanUpResult{..}
   where
@@ -1249,6 +1255,28 @@ deleteStaleContent db DeletionCriteria{..} =
 
         let deletedCount = fromIntegral $ sum $ Map.elems sweepPerType
         pure (deletedCount, sweepPerType, sweepKept)
+
+-- | Forget that an object used to be published at a URL where it hasn't been
+-- seen for a while.
+--
+-- Without this, an object that moved between repositories keeps both URLs
+-- forever and keeps warning about having multiple locations.
+--
+-- The newest association of every object is always kept, however old it is:
+-- objects must never end up with zero locations.
+deleteStaleObjectUrls :: Tx 'RW -> (WorldVersion -> Bool) -> IO Int
+deleteStaleObjectUrls (Tx conn) tooOld = do
+    stale <- filter tooOld . map fromOnly <$> query_ conn
+        "SELECT DISTINCT world_version FROM object_urls"
+    fmap sum $ forM (inClauseBatches stale) $ \(placeholders, params) -> do
+        executeNamed conn
+            (fromString $ Text.unpack $
+                "DELETE FROM object_urls AS ou WHERE ou.world_version IN (" <> placeholders <> ")"
+                <> " AND EXISTS (SELECT 1 FROM object_urls newer"
+                <> "             WHERE newer.object_key = ou.object_key"
+                <> "               AND newer.world_version > ou.world_version)")
+            params
+        changes conn
 
 deleteDanglingUrls :: Tx 'RW -> IO Int
 deleteDanglingUrls (Tx conn) = do

@@ -104,7 +104,7 @@ storeLifecycle :: DB -> WorldVersion -> RpkiObjectLifecycle -> RpkiURL -> IO Obj
 storeLifecycle db worldVersion lifecycle url =
     DB.rwTx db $ \tx -> do
         key <- DB.saveObject tx db lifecycle worldVersion
-        DB.linkObjectToUrl tx db url key
+        DB.linkObjectToUrl tx db url key worldVersion
         pure key
 
 
