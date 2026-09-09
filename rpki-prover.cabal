@@ -1,7 +1,7 @@
 cabal-version: 2.2
 
 name:           rpki-prover
-version:        0.10.1
+version:        0.11.0
 description:    Please see the README on GitHub at <https://github.com/lolepezy/rpki-prover#readme>
 homepage:       https://github.com/lolepezy/rpki-prover#readme
 bug-reports:    https://github.com/lolepezy/rpki-prover/issues
