@@ -663,12 +663,10 @@ validateCaNoFetch
             FullEveryIteration -> const Nothing
             Incremental        -> (Just $!)
 
-    makeNextFullValidationAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextFullValidationAction aki = do 
         mftMetas <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
         pure $! processMfts aki mftMetas
 
-    makeNextIncrementalAction :: AKI -> ValidatorT IO (ValidatorT IO ())
     makeNextIncrementalAction aki = do
         z <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
         case z of
