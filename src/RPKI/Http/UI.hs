@@ -11,12 +11,14 @@ import           Control.Lens hiding (index)
 import           Data.Bits                   ((.&.))
 import           Data.Hashable               (Hashable)
 import qualified Data.Hashable               as Hashable
+import           Data.Int                    (Int64)
 import           Data.Maybe                  (listToMaybe)
 import           Data.Ord
 import           Data.String                 (IsString)
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 import           Numeric                     (showHex)
+import           Text.Printf                 (printf)
 
 import qualified Data.List                   as List
 import qualified Data.Map.Monoidal.Strict    as MonoidalMap
@@ -600,7 +602,16 @@ numTd n =
     in td ! A.class_ (if shown == "0" then "num zero" else "num") $ toHtml (withCommas n)
 
 numTdMs :: TimeMs -> Html
-numTdMs (TimeMs ms) = td ! A.class_ "num" $ toHtml (withCommas ms <> "ms")
+numTdMs (TimeMs ms) = td ! A.class_ "num" $ toHtml (formatDuration ms)
+
+-- | Below a second, "83ms" is unambiguous. At or past it, a thousands
+-- comma ("1,142ms") reads as a decimal point in most of the world --
+-- "1.142" -- so switch to seconds instead of just changing the
+-- punctuation.
+formatDuration :: Int64 -> String
+formatDuration ms
+    | ms < 1000 = show ms <> "ms"
+    | otherwise = printf "%.1fs" (fromIntegral ms / 1000 :: Double)
 
 -- | Thousand-separated rendering of any 'Show'-able integral-looking
 -- value (works uniformly on 'Count', 'Int', 'Int64', ...).
@@ -671,7 +682,7 @@ githubIcon = preEscapedToMarkup
 
 
 instance ToMarkup TimeMs where
-    toMarkup (TimeMs ms) = toMarkup $ show ms <> "ms"
+    toMarkup (TimeMs ms) = toMarkup $ formatDuration ms
 
 instance ToMarkup HttpStatus where
     toMarkup (HttpStatus st) = toMarkup $ show st

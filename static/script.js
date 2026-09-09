@@ -67,6 +67,17 @@ document.addEventListener('DOMContentLoaded', function () {
     wireFilter('rrdpFilter', 'rrdpTable');
     wireFilter('rsyncFilter', 'rsyncTable');
 
+    function openAncestorDetails(el) {
+        for (var node = el; node; node = node.parentElement) {
+            if (node.tagName === 'DETAILS' && !node.open) node.open = true;
+        }
+    }
+    function flashHighlight(el) {
+        el.classList.remove('linked-highlight');
+        void el.offsetWidth; // restart the animation if the same issue is flashed twice in a row
+        el.classList.add('linked-highlight');
+    }
+
     // Deep-linking to a single issue. A #issue-... fragment can point
     // inside a collapsed TA group and/or a collapsed object chain, and
     // plain browser navigation won't open a closed <details> on its
@@ -76,13 +87,9 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!id) return;
         var el = document.getElementById(id);
         if (!el) return;
-        for (var node = el; node; node = node.parentElement) {
-            if (node.tagName === 'DETAILS' && !node.open) node.open = true;
-        }
+        openAncestorDetails(el);
         el.scrollIntoView({ block: 'center' });
-        el.classList.remove('linked-highlight');
-        void el.offsetWidth; // restart the animation if the same link is clicked twice
-        el.classList.add('linked-highlight');
+        flashHighlight(el);
     }
     if (location.hash) {
         window.setTimeout(function () { revealTarget(location.hash.slice(1)); }, 30);
@@ -117,7 +124,11 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!id) return;
             var url = location.origin + location.pathname + location.search + '#' + id;
             history.pushState(null, '', '#' + id);
-            revealTarget(id);
+            // The issue is already on screen -- its own button was just
+            // clicked -- so just flash it; no need to reopen ancestors
+            // or scroll, which would yank the page around under the user.
+            var el = document.getElementById(id);
+            if (el) flashHighlight(el);
             copyText(url).then(function () {
                 btn.classList.add('copied');
                 window.setTimeout(function () { btn.classList.remove('copied'); }, 1200);
