@@ -468,8 +468,9 @@ issuesSection dtos =
                 chevIcon
                 H.span ! A.class_ "ta-name" $ toHtml ta
                 H.span ! A.class_ "counts" $ do
-                    when (e > 0) $ H.span ! A.class_ "pill crit" $ do toHtml e; " err"
-                    when (w > 0) $ H.span ! A.class_ "pill warn" $ do toHtml w; " warn"
+                    let maybePlural s n = if n == 1 then s else s <> "s"
+                    when (e > 0) $ H.span ! A.class_ "pill crit" $ do toHtml e; maybePlural " error" e
+                    when (w > 0) $ H.span ! A.class_ "pill warn" $ do toHtml w; maybePlural " warning" w
             H.div ! A.class_ "body" $ issueRows ta vrs
       where
         (e, w) = countProblemsAll vrs
