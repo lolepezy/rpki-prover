@@ -191,7 +191,13 @@ section { margin-bottom: 44px; }
 .table-card.collapsible[open] > summary .chev { transform: rotate(90deg); }
 .table-card.collapsible > summary .ts-note { margin-left: auto; font-weight: 400; font-size: 12.5px; color: var(--ink-faint); text-align: right; max-width: 46%; }
 .table-card.collapsible > summary + .table-scroll { border-top: 1px solid var(--border-soft); }
-.table-scroll { overflow-x: auto; }
+/* Bounding the height (not just overflow-x) matters for the wide, long
+   tables here: without it the horizontal scrollbar sits at the very
+   bottom of, say, 119 rows -- reachable only after scrolling the whole
+   page past all of them. Capping the height gives every table its own
+   fixed-size frame, so both scrollbars stay within a short reach of
+   whatever rows happen to be on screen. A no-op for short tables. */
+.table-scroll { overflow: auto; max-height: 60vh; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 thead th {
     position: sticky; top: 0; background: var(--surface); z-index: 2;
@@ -297,15 +303,12 @@ tr.total td { border-top: 2px solid var(--ink); border-bottom: none; font-weight
 .copy-link:hover { color: var(--accent); background: var(--surface-2); }
 .copy-link.copied { color: var(--good); }
 
-/* Briefly flash a deep-linked-to issue so it's obvious which one a
-   shared #issue-... URL pointed at. */
-.linked-highlight { animation: issue-flash 2.2s ease; border-radius: 7px; }
-@keyframes issue-flash {
-    0%, 15% { background: var(--accent-soft); }
-    100% { background: transparent; }
-}
-@media (prefers-reduced-motion: reduce) {
-    .linked-highlight { animation: none; background: var(--accent-soft); }
+/* The issue currently pointed at by #fragment (arrived-at or just
+   copy-linked) stays marked -- no timer, so it can't fade before it's
+   been seen. script.js toggles this as the linked issue changes. */
+.issue-row.is-linked {
+    background: var(--accent-soft); border-radius: 7px;
+    box-shadow: inset 3px 0 0 var(--accent);
 }
 .issue-row .path { margin-top: 5px; font-family: "IBM Plex Mono"; font-size: 12.5px; word-break: break-all; }
 

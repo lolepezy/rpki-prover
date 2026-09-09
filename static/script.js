@@ -72,29 +72,37 @@ document.addEventListener('DOMContentLoaded', function () {
             if (node.tagName === 'DETAILS' && !node.open) node.open = true;
         }
     }
-    function flashHighlight(el) {
-        el.classList.remove('linked-highlight');
-        void el.offsetWidth; // restart the animation if the same issue is flashed twice in a row
-        el.classList.add('linked-highlight');
+
+    // Marks the issue an anchor currently points at, persistently --
+    // no timer to fade it before it's been seen. Stays until a
+    // different issue becomes the linked one, or the fragment clears.
+    var linkedIssue = null;
+    function setLinked(el) {
+        if (linkedIssue && linkedIssue !== el) linkedIssue.classList.remove('is-linked');
+        if (el) el.classList.add('is-linked');
+        linkedIssue = el;
     }
 
     // Deep-linking to a single issue. A #issue-... fragment can point
     // inside a collapsed TA group and/or a collapsed object chain, and
     // plain browser navigation won't open a closed <details> on its
     // own -- only Ctrl+F does that -- so open every <details> ancestor
-    // by hand, then scroll to it and give it a brief highlight.
+    // by hand, then scroll to it and mark it as the linked issue.
     function revealTarget(id) {
         if (!id) return;
         var el = document.getElementById(id);
         if (!el) return;
         openAncestorDetails(el);
         el.scrollIntoView({ block: 'center' });
-        flashHighlight(el);
+        setLinked(el);
     }
     if (location.hash) {
         window.setTimeout(function () { revealTarget(location.hash.slice(1)); }, 30);
     }
-    window.addEventListener('hashchange', function () { revealTarget(location.hash.slice(1)); });
+    window.addEventListener('hashchange', function () {
+        var id = location.hash.slice(1);
+        if (id) revealTarget(id); else setLinked(null);
+    });
 
     // Copy-link buttons on individual issues.
     function copyText(text) {
@@ -125,10 +133,10 @@ document.addEventListener('DOMContentLoaded', function () {
             var url = location.origin + location.pathname + location.search + '#' + id;
             history.pushState(null, '', '#' + id);
             // The issue is already on screen -- its own button was just
-            // clicked -- so just flash it; no need to reopen ancestors
-            // or scroll, which would yank the page around under the user.
+            // clicked -- so just mark it as linked; no need to reopen
+            // ancestors or scroll, which would yank the page around.
             var el = document.getElementById(id);
-            if (el) flashHighlight(el);
+            if (el) setLinked(el);
             copyText(url).then(function () {
                 btn.classList.add('copied');
                 window.setTimeout(function () { btn.classList.remove('copied'); }, 1200);
