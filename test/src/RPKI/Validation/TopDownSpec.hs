@@ -39,7 +39,6 @@ import           RPKI.Validation.TopDown
                 ( TroubledChildLoadPath (..)
                 , resolveTroubledChildByKey
                 , revokedShortcutChildren
-                , claimAki
                 )
 
 
@@ -51,9 +50,6 @@ topDownRegressionGroup =
         , HU.testCase "Replaces revoked shortcut children with troubled entries" shouldReplaceRevokedShortcutChildren        
         ]
 
-
-anAki :: Int -> AKI
-anAki n = AKI $ mkKI $ BS.replicate 20 (fromIntegral n)
 
 shouldResolveTroubledFromWellStructured :: HU.Assertion
 shouldResolveTroubledFromWellStructured =

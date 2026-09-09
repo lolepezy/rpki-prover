@@ -7,7 +7,6 @@ module RPKI.Validation.TopDown (
     validateMutlipleTAs,
     TroubledChildLoadPath(..),
     resolveTroubledChildByKey,
-    claimAki,
     revokedShortcutChildren
 )
 where
@@ -636,20 +635,23 @@ validateCaNoFetch
   where    
     validationAlgorithm = config ^. typed @ValidationConfig . typed @ValidationAlgorithm
     validationRFC       = config ^. typed @ValidationConfig . typed @ValidationRFC
-
+    
     nextAction =
         case validationAlgorithm of 
             FullEveryIteration -> makeNextFullValidationAction
             Incremental        -> makeNextIncrementalAction
 
     -- Allow validating manifest only once per KI
-    validateChildrenOf aki = do
-        gotHereFirst <- claimAki visitedAkis aki
-        if gotHereFirst
-            then join $! nextAction aki
-            else do
-                increment topDownCounters.repeatedAki
-                vWarn $ MftAlreadyValidated aki
+    validateChildrenOf aki = 
+        join $ liftIO $ atomically $ do
+            visited <- readTVar visitedAkis
+            if aki `Set.member` visited
+                then pure $ do
+                    increment topDownCounters.repeatedAki
+                    vWarn $ MftAlreadyValidated aki
+                else do
+                    writeTVar visitedAkis $! Set.insert aki visited
+                    pure $ join $ nextAction aki
 
     newShortcut = 
         case validationAlgorithm of 
@@ -1697,16 +1699,6 @@ makeMftShortcut key
             notAfter = nextUpdateTime
         }            
     in MftShortcut { .. }  
-
-
-claimAki :: MonadIO m => TVar (Set AKI) -> AKI -> m Bool
-claimAki visitedAkis aki = liftIO $ atomically $ do
-    visited <- readTVar visitedAkis
-    if aki `Set.member` visited
-        then pure False
-        else do
-            writeTVar visitedAkis $! Set.insert aki visited
-            pure True
 
 
 -- Same as vFocusOn but it checks that there are no duplicates in the scope focuses, 
