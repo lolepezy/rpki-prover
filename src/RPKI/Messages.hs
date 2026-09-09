@@ -190,6 +190,14 @@ toValidationMessage = \case
           
       CertBrokenExtension oid b -> [i|Certificate extension #{fmtOID oid} is broken: #{b}.|]
       UnknownCriticalCertificateExtension oid b -> [i|Unknown critical certificate extension, OID: #{fmtOID  oid}, content #{b}.|]
+      MissingRequiredCertificateExtension oid -> [i|Missing required certificate extension #{fmtOID oid}.|]
+      ExtensionMustBeAbsent oid -> [i|Certificate extension #{fmtOID oid} must not be present.|]
+      CertVersionInvalid v -> [i|Certificate version is #{v + 1}, must be 3.|]
+      TimeNotRepresentable t -> 
+        [i|#{t} is outside of the representable time range (roughly the years 1678 to 2262).|]
+      MissingIPOrASResourcesExtension -> [i|Certificate must contain at least one of IP resources or AS resources extensions.|]
+      CertificateExtensionMustBeCritical oid -> [i|Certificate extension #{fmtOID oid} must be marked critical.|]
+      CertificateExtensionMustBeNonCritical oid -> [i|Certificate extension #{fmtOID oid} must be marked non-critical.|]
       MissingCriticalExtension oid -> [i|Missing critical certificate extension #{fmtOID oid}.|]
       BrokenKeyUsage t -> [i|Broken keyUsage extension: #{t}.|]
 
@@ -324,6 +332,9 @@ toValidationMessage = \case
       AspaOverlappingCustomerProvider customer providers -> 
         [i|ASPA contains customer ASN #{customer} in the list of provider ASNs #{providers}.|]
 
+      AspaAsZeoAndNonZero providers ->
+        [i|ASPA provider set contains both AS0 and non-zero ASNs: #{providers}.|]
+
       BGPCertSIAPresent bs -> 
         [i|SIA extension is present on the BGPSec certificate: #{hex bs}.|]
 
@@ -334,14 +345,78 @@ toValidationMessage = \case
       AspaNoAsn       -> [i|ASN extension is not present on the ASPA EE certificate or has 'inherit' value.|]
       AspaIPv4Present -> [i|IPv4 extension is present on the ASPA EE certificate.|]
       AspaIPv6Present -> [i|IPv6 extension is present on the ASPA EE certificate.|]      
+      AspaNoProviders -> [i|ASPA provider set is empty.|]
       AspaAsNotOnEECert customer eeAsns -> 
-        [i|Customer ASN (#{customer}) is not in the EE certificate AS set (#{eeAsns}).|]      
+        [i|Customer ASN (#{customer}) is not in the EE certificate AS set (#{eeAsns}).|]            
     
       SplAsnNotInResourceSet asn asns ->
         [i|#{asn} is not in the EE certificate AS set (#{asns}).|]      
 
+      BGPCertTooManyASNs asnCount limit -> 
+        [i|BGPSec certificate declares #{asnCount} ASNs, more than the limit of #{limit}.|]
+
       SplNotIpResources prefixes -> 
         [i|Prefix list must not have IP resources on its EE certificate, but has #{prefixes}.|]
+
+      InvalidCMSVersion v ->
+        [i|Invalid CMS SignedData.version #{v}, expected 3.|]
+
+      InvalidSignerInfoVersion v ->
+        [i|Invalid CMS SignerInfo.version #{v}, expected 3.|]
+
+      BinarySigningTimePresent ->
+        [i|CMS signed attributes contain binary-signing-time, which is not allowed.|]
+
+      ContentTypeAttrMissing ->
+        [i|CMS signed attributes are missing contentType.|]
+
+      MessageDigestMissing ->
+        [i|CMS signed attributes are missing messageDigest.|]
+
+      CMSMessageDigestMismatch ->
+        [i|CMS messageDigest does not match the encapsulated content digest.|]
+
+      SigningTimeMissing ->
+        [i|CMS signed attributes are missing signingTime.|]
+
+      DuplicateSignedAttribute oid ->
+        [i|CMS signed attributes contain more than one attribute with OID #{fmtOID oid}, |] <>
+        [i|exactly one is allowed.|]
+
+      UnexpectedSignedAttribute oid ->
+        [i|CMS signed attributes contain unexpected attribute OID #{fmtOID oid}.|]
+
+      EECertSKIMismatch ->
+        [i|CMS SignerInfo SID does not match the embedded EE certificate SKI.|]
+
+      EECertContentTypeMismatch ->
+        [i|CMS contentType attribute does not match encapsulated content type.|]
+
+      WrongSignedDataContentType oid ->
+        [i|CMS ContentInfo contentType is #{fmtOID oid}, expected id-signedData.|]
+
+      WrongEContentType expected actual ->
+        [i|CMS eContentType is #{fmtOID actual}, expected #{fmtOID expected} for this object type.|]
+
+      UnsupportedSignatureAlgorithm t ->
+        [i|Unsupported signature algorithm: #{t}.|]
+
+      SignatureAlgorithmMismatch outer inner ->
+        [i|Certificate signatureAlgorithm #{outer} does not match the signature field #{inner}.|]
+
+      SKINotMatchingPublicKey ->
+        [i|Certificate SKI does not match SHA-1 of subjectPublicKey BIT STRING.|]
+
+      InvalidPublicKey t -> [i|Invalid public key: #{t}.|]
+
+      DuplicateManifestFilenames filenames ->
+        [i|Manifest contains duplicate filenames: #{filenames}.|]
+
+      CertValidityPeriodInvalid ->
+        [i|Certificate validity period is invalid: notBefore is not strictly before notAfter.|]
+
+      SerialNumberOutOfBounds t ->
+        [i|Certificate serial number is out of bounds: #{t}.|]
 
       ReferentialIntegrityError message -> [i|Referential integrity problem: #{message}.|]
 

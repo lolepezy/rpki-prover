@@ -57,7 +57,8 @@ data FetchConfig = FetchConfig {
     deriving anyclass (TheBinary)
 
 data StorageConfig = StorageConfig {
-        rwTransactionTimeout :: Seconds
+    rwTransactionTimeout :: Seconds,
+    sqliteMmapSizeMb     :: Maybe Size
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)    
@@ -84,7 +85,6 @@ data Config = Config {
         versionNumberToKeep       :: Natural,
         storageCompactionInterval :: Seconds,
         rsyncCleanupInterval      :: Seconds,
-        lmdbSizeMb                :: Size,
         localExceptions           :: ApiSecured [FilePath],
         logLevel                  :: LogLevel,
         metricsPrefix             :: Text,
@@ -205,10 +205,10 @@ setCpuCount = setNumCapabilities . fromIntegral
 -- Create 2 times more asyncs/tasks than there're capabilities. In most 
 -- tested cases it seems to be beneficial for the CPU utilisation ¯\_(ツ)_/¯.    
 -- 
--- Hardcoded (not sure it makes sense to make it configurable). Allow for 
--- that many IO operations (http downloads, LMDB reads, etc.) at once.
+-- Hardcoded (not sure it makes sense to make it configurable). Allow for
+-- that many IO operations (http downloads, database reads, etc.) at once.
 --
--- TODO There should be distinction between network operations and file/LMDB IO.
+-- TODO There should be distinction between network operations and file/database IO.
 newParallelism :: Natural -> Parallelism
 newParallelism cpus = makeParallelismF cpus (2 * cpus)
 
@@ -237,7 +237,7 @@ defaultConfig = Config {
     rrdpConf = RrdpConf {
         tmpRoot = Hidden "",
         maxSize = Size $ 1024 * 1024 * 1024,
-        rrdpTimeout = 7 * minutes,
+        rrdpTimeout = 11 * minutes,
         cpuLimit = 30 * minutes,
         enabled = True
     },
@@ -271,14 +271,13 @@ defaultConfig = Config {
     },
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {       
-        -- There should normally be no transactions longer than that 
-        rwTransactionTimeout = 5 * minutes
+        rwTransactionTimeout = 15 * minutes,
+        sqliteMmapSizeMb     = Nothing
     },
     cacheCleanupInterval      = 6 * hours,    
     versionNumberToKeep       = 3,
     storageCompactionInterval = 5 * days,
     rsyncCleanupInterval      = 30 * days,
-    lmdbSizeMb                = Size $ 32 * 1024,
     localExceptions = Hidden [],
     logLevel = defaultsLogLevel,
     metricsPrefix = "rpki_prover_",

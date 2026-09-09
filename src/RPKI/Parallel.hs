@@ -22,7 +22,6 @@ import           Streaming
 import qualified Streaming.Prelude               as S
 
 
-
 atLeastOne :: Natural -> Natural
 atLeastOne n = if n < 2 then 1 else n
 
@@ -60,7 +59,6 @@ foldPipeline parallelism stream mapStream consume accum0 =
                 Just t' -> do 
                     p <- wait t'
                     consume p accum >>= go
-
 
 
 -- | Utility function for a specific case of producer-consumer pair 
@@ -168,7 +166,7 @@ readQueueChunked cq chunkSize f = go
             []    -> pure ()
             chunk -> f chunk >> go  
 
--- Auxialliary stuff for limiting the amount of parallel reading LMDB transactions    
+-- Auxialliary stuff for limiting the amount of parallel reading DB transactions
 data Semaphore = Semaphore { 
         capacity :: Int,
         current  :: TVar Int, 
@@ -176,8 +174,6 @@ data Semaphore = Semaphore {
     }
     deriving (Eq)
 
-newSemaphoreIO :: Int -> IO Semaphore
-newSemaphoreIO = atomically . newSemaphore
 
 newSemaphore :: Int -> STM Semaphore
 newSemaphore n = Semaphore n <$> newTVar 0 <*> newTVar 0
@@ -199,8 +195,6 @@ withSemaphore Semaphore {..} f =
 
     decr _ = atomically $ modifyTVar' current $ \c -> c - 1
 
-getSemaphoreState :: Semaphore -> STM (Int, Int)
-getSemaphoreState Semaphore {..} = (,) <$> readTVar current <*> readTVar highest
 
 -- Execute using a semaphore as a barrier, but if the sempahore 
 -- is not allowing execution, execute after a timeout anyway

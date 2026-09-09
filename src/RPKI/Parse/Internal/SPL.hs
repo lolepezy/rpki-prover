@@ -34,7 +34,7 @@ parseSpl bs = do
   where     
     parseSpls' = onNextContainer Sequence $ do      
         -- TODO Fix it so that it would work with present attestation version
-        asId <- getInteger (pure . fromInteger) "Wrong ASid"        
+        asId <- getInteger (either throwParseError pure . mkAsn) "Wrong ASid"        
         prefixes <- 
             fmap mconcat $ onNextContainer Sequence $ 
                 getMany $ onNextContainer Sequence $ do
@@ -43,7 +43,7 @@ parseSpl bs = do
                         Right Ipv4F -> parsePrefixes Ipv4F
                         Right Ipv6F -> parsePrefixes Ipv6F
                         Left af     -> throwParseError $ "Unsupported address family: " ++ show af
-        pure $ SplPayload (ASN asId) prefixes
+        pure $ SplPayload asId prefixes
 
     parsePrefixes :: AddrFamily -> ParseASN1 [IpPrefix]
     parsePrefixes addressFamily = onNextContainer Sequence $ getMany $
@@ -58,15 +58,15 @@ parseSpl bs = do
 
         case addressFamily of
             Ipv4F 
-                | prefixMaxLength <= 0  -> 
-                    throwParseError [i|Negative or zero value for IPv4 prefix max length: #{prefixMaxLength}|]
+                | prefixMaxLength < 0  -> 
+                    throwParseError [i|Negative value for IPv4 prefix max length: #{prefixMaxLength}|]
                 | prefixMaxLength > 32 -> 
                     throwParseError [i|Too big value for IPv4 prefix max length: #{prefixMaxLength}|]
                 | otherwise ->
                     pure $ mkPrefix nonZeroBitCount prefixMaxLength Ipv4P
             Ipv6F 
-                | prefixMaxLength <= 0  -> 
-                    throwParseError [i|Negative or zero value for IPv6 prefix max length: #{prefixMaxLength}|]
+                | prefixMaxLength < 0  -> 
+                    throwParseError [i|Negative value for IPv6 prefix max length: #{prefixMaxLength}|]
                 | prefixMaxLength > 128 -> 
                     throwParseError [i|Too big value for IPv6 prefix max length: #{prefixMaxLength}|]
                 | otherwise ->

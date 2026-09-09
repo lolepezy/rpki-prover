@@ -10,6 +10,7 @@ import           Control.Monad.Except
 import           Control.Monad.Morph
 import           Control.Monad.Reader
 import           Control.Monad.State.Strict
+import           Control.Monad.Trans.Control  (MonadBaseControl)
 
 import           Data.Bifunctor              (Bifunctor (first))
 import           Data.Generics.Product       (HasField)
@@ -79,29 +80,23 @@ embedValidatorT s =
 embedState :: Monad m => ValidationState -> ValidatorT m ()
 embedState w = lift $ lift $ modify' (<> w)    
 
--- This one is slightly heuristical: never catch AsyncExceptions.
-fromTry :: Exception exc => 
-            (exc -> AppError) -> 
-            IO r -> 
-            ValidatorT IO r
+{- | Like `catch`, but deliberately heuristical: an asynchronous exception is 
+   re-thrown rather than handed to the handler. 
+-}
+catchSync :: MonadBaseControl IO m => m a -> (SomeException -> m a) -> m a
+catchSync action handler = 
+    action `catch` \e -> 
+        case fromException e of 
+            Just (SomeAsyncException _) -> throwIO e
+            Nothing                     -> handler e
+
+fromTry :: (SomeException -> AppError) -> IO r -> ValidatorT IO r
 fromTry mapErr t = fromTryM mapErr (liftIO t)
 
-fromTryM :: Exception exc =>              
-            (exc -> AppError) -> 
-            ValidatorT IO r -> 
-            ValidatorT IO r
-fromTryM mapErr t =
-    t `catch` recoverOrRethrow        
-    where
-        recoverOrRethrow e = 
-            case fromException (toException e) of
-                Just (SomeAsyncException _) -> throwIO e
-                Nothing                     -> appError $ mapErr e
+fromTryM :: (SomeException -> AppError) -> ValidatorT IO r -> ValidatorT IO r
+fromTryM mapErr t = t `catchSync` (appError . mapErr)
 
-
-fromTryEither :: Exception exc =>
-                (exc -> AppError) -> 
-                IO (Either AppError r) -> ValidatorT IO r
+fromTryEither :: (SomeException -> AppError) -> IO (Either AppError r) -> ValidatorT IO r
 fromTryEither mapErr t = do 
     z <- fromTry mapErr t
     fromEitherM $ pure z

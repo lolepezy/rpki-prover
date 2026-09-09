@@ -22,7 +22,6 @@ import           Data.X509                   as X509
 
 import           RPKI.AppTypes
 import           RPKI.Domain                 as Domain
-import           RPKI.Store.Base.Serialisation (LexOrdKey64(..))
 import           RPKI.RRDP.Types             (RrdpSerial)
 import           RPKI.Config
 import           RPKI.Logging
@@ -43,8 +42,6 @@ import           RPKI.RTR.Protocol
 import RPKI.Repository (Fetcheables)
 
 -- ToSchema insrances for Swagger doc generation
-instance ToSchema LexOrdKey64 where
-    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Int)
 instance ToSchema ArtificialKey
 instance ToSchema ObjectKey
 instance ToSchema Focus
@@ -127,10 +124,6 @@ instance ToSchema AvgMemory where
 instance ToSchema Size where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 
-instance ToSchema DBFileStats
-instance ToSchema StorageStats
-instance ToSchema TotalDBStats
-instance ToSchema SStats
 instance ToSchema ObjectStats
 
 instance ToSchema (ApiSecured a) where

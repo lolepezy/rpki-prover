@@ -132,12 +132,43 @@ parseRsyncURL t =
         Just mu -> 
             case mu ^. uriAuthority of 
                 Left _  -> Left "No URL authority, i.e. host" 
-                Right a -> let                                         
-                    hostName = RsyncHostName $ a ^. authHost . unRText
-                    port = RsyncPort . fromIntegral <$> a ^. authPort
-                    host = RsyncHost hostName port
-                    path = map (RsyncPathChunk . (^. unRText)) $ mu ^. uriPath
-                    in Right $ RsyncURL host path
+                Right a -> do 
+                    hostName <- validRsyncHostName $ a ^. authHost
+                    let port = RsyncPort . fromIntegral <$> a ^. authPort
+                    let host = RsyncHost hostName port
+                    path <- mapM validRsyncPathChunk $ mu ^. uriPath
+                    pure $ RsyncURL host path
+
+{- | Rsync URLs are mapped onto local filesystem paths (see `rsyncDestination`), 
+   so every component must be safe to use as a single path segment.
+
+   Note that `MURI.mkURI` percent-decodes path pieces and does *not* remove 
+   dot-segments, so without these checks a URL such as 
+
+       rsync://example.com/a/../../../etc/cron.d/
+       rsync://example.com/%2Fetc%2Fcron.d/
+
+   would escape the rsync root and let a (validly signed) CA certificate point 
+   the rsync client, which runs with --delete, at an arbitrary directory.
+-}
+validRsyncPathChunk :: MURI.RText 'MURI.PathPiece -> Either Text RsyncPathChunk
+validRsyncPathChunk (view unRText -> chunk) = 
+    RsyncPathChunk <$> validPathSegment "path segment" chunk
+
+validRsyncHostName :: MURI.RText 'MURI.Host -> Either Text RsyncHostName
+validRsyncHostName (view unRText -> hostName) = 
+    RsyncHostName <$> validPathSegment "host name" hostName
+
+-- | Reject anything that is not usable as one single file/directory name.
+validPathSegment :: Text -> Text -> Either Text Text
+validPathSegment what segment
+    | Text.null segment          = Left $ "Empty rsync URL " <> what <> "."
+    | segment == "." 
+        || segment == ".."       = Left $ "Dot-segment '" <> segment <> "' in rsync URL " <> what <> "."
+    | Text.any isBadChar segment = Left $ "Unsupported character in rsync URL " <> what <> " '" <> segment <> "'."
+    | otherwise                  = Right segment
+  where
+    isBadChar c = c == '/' || c == '\\' || c == '\0'
 
 getHostname :: Text -> Maybe Text
 getHostname t = 

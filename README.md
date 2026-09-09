@@ -85,18 +85,18 @@ The software can be built using [`cabal`](https://www.haskell.org/cabal/). The e
 
 The instructions below are for Linux but apply equally to \\\*BSD and macOS. Windows is not supported or tested.
 
-* Install prerequisites: `lmdb`, `lzma`, `expat`, `gmp`, and `rsync`.
+* Install prerequisites: `lzma`, `expat`, `gmp`, and `rsync`.
 
   * On Debian-based Linux:
 
     ```
-    sudo apt-get install rsync libz-dev libexpat1-dev liblmdb-dev liblzma-dev libgmp-dev pkg-config
+    sudo apt-get install rsync libz-dev libexpat1-dev liblzma-dev libgmp-dev pkg-config
     ```
     (on RPM-based -- their respective `yum/dnf` versions)
   * On macOS:
 
     ```
-    brew install rsync lmdb xz expat
+    brew install rsync xz expat
     ```
   * For other Unix-like OSes, use the appropriate package manager.
 
@@ -181,15 +181,12 @@ VIRT   RES    SHR
 1.0T   4463M  3920M
 ```
 
-Here, `SHR` is mostly LMDB cache and mmap-ed files. So actual heap usage is around `4463 - 3920 = 543M`.
 
 Memory consumption is determined more by the size of the largest objects than by their count. 3GB RAM is recommended to reduce IOPS during validation. Each validation goes through over 400K objects, \~3KB each, so several hundred MB in FS page cache is beneficial.
 
 Disk usage depends on `--cache-lifetime-hours`. The default of 24 hours results in a \~4GB cache. Periodic compaction requires an extra 30–40% of disk space. Around 2GB may also be needed for `rsync` mirrors. A total of 10GB is recommended.
 
 # Known issues <a name="known-issues"></a>
-
-* As noted, total RSS can reach several GB, mostly mapped to the LMDB cache. However, `rpki-prover` may be killed by the OOM killer unless properly configured.
 
 # Why Haskell? <a name="why-haskell"></a>
 

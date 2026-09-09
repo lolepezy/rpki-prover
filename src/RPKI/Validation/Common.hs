@@ -5,9 +5,6 @@ module RPKI.Validation.Common where
 
 import           Control.Monad
 
-import           Control.Lens
-import           Data.Generics.Product.Typed
-
 import           Data.Foldable
 import qualified Data.Set.NonEmpty                as NESet
 import qualified Data.Set                         as Set
@@ -19,12 +16,26 @@ import           RPKI.Reporting
 import           RPKI.Parse.Parse
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
+
 import qualified RPKI.Util as U
 
+-- Validated and WellStructuredRpkiObject are defined in RPKI.Domain and re-exported
+-- from there so that both Store and Validation layers can use them.
+createVerifiedResources :: WithResources c => c -> VerifiedRS PrefixesAndAsns
+createVerifiedResources c = 
+    VerifiedRS $ toPrefixesAndAsns $ getResources c
 
-createVerifiedResources :: CaCerObject -> VerifiedRS PrefixesAndAsns
-createVerifiedResources certificate = 
-    VerifiedRS $ toPrefixesAndAsns $ getRawCert certificate ^. typed
+class WithCertUris a where
+    getCertUris :: a -> CertUris
+
+instance WithCertUris (WellStructuredCert t) where
+    getCertUris WellStructuredCert { certUris = uris } = uris
+
+instance WithCertUris WellStructuredEECert where
+    getCertUris WellStructuredEECert { certUris = uris } = uris
+
+instance WithCertUris a => WithCertUris (Located a) where
+    getCertUris = getCertUris . payload
 
 validateMftFileName :: Monad m => Text.Text -> ValidatorT m ()
 validateMftFileName filename =                
@@ -44,17 +55,16 @@ validateMftFileName filename =
                         "Filename doesn't have exactly one DOT"      
 
 -- TODO Is there a more reliable way to find it?
-findCrlOnMft :: MftObject -> [MftPair]
-findCrlOnMft mft = filter (\(MftPair name _) -> ".crl" `Text.isSuffixOf` name) $
-    mftEntries $ getCMSContent $ cmsPayload mft
+findCrlOnMft :: Manifest -> [MftPair]
+findCrlOnMft mft = filter (\(MftPair name _) -> ".crl" `Text.isSuffixOf` name) $ mft.mftEntries 
 
 
 -- | Check that manifest URL in the certificate is the same as the one 
 -- the manifest was actually fetched from.
-validateMftLocation :: (WithRawResourceCertificate c, Monad m, WithLocations c, WithLocations mft) =>
+validateMftLocation :: (WithCertUris c, Monad m, WithLocations c, WithLocations mft) =>
                         mft -> c -> ValidatorT m ()
 validateMftLocation mft parentCertficate = 
-    case getManifestUri $ cwsX509certificate $ getCertWithSignature parentCertficate of
+    case manifestUri $ getCertUris parentCertficate of
         Nothing     -> vError NoMFTSIA
         Just mftSIA -> do 
             unless (".mft" `Text.isSuffixOf` (unURI mftSIA)) $ 
@@ -76,11 +86,12 @@ validateObjectLocations (getLocations -> Locations locSet) =
 -- | Check that CRL URL in the certificate is the same as the one 
 -- the CRL was actually fetched from. 
 -- 
-checkCrlLocation :: (Monad m, WithLocations a) => a
-                    -> CertificateWithSignature
+checkCrlLocation :: (Monad m, WithLocations a, WithCertUris c) => a
+                    -> c
                     -> ValidatorT m ()
 checkCrlLocation crl parentCertificate = 
-    for_ (getCrlDistributionPoint $ cwsX509certificate parentCertificate) $ \crlDP -> do
+    for_ (crlDPUri $ getCertUris parentCertificate) $ \crlDP -> do
         let crlLocations = getLocations crl
         when (Set.null $ NESet.filter ((crlDP ==) . getURL) $ unLocations crlLocations) $ 
             vError $ CRLOnDifferentLocation crlDP crlLocations
+

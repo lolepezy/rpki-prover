@@ -43,7 +43,6 @@ import HaskellWorks.Data.Network.Ip.Ip as Ips
 
 import           RPKI.AppTypes
 import           RPKI.Domain                 as Domain
-import           RPKI.Store.Base.Serialisation (LexOrdKey64(..))
 import           RPKI.Config
 
 import           RPKI.Logging
@@ -165,10 +164,10 @@ instance ToJSON Count where
     toJSON (Count s) = toJSON s
 
 instance ToJSON ObjectKey where
-    toJSON (ObjectKey (ArtificialKey (LexOrdKey64 k))) = toJSON k
+    toJSON (ObjectKey (ArtificialKey k)) = toJSON k
 
 instance ToJSONKey ObjectKey where
-    toJSONKey = toJSONKeyText $ \(ObjectKey (ArtificialKey (LexOrdKey64 k))) -> U.fmtGen k
+    toJSONKey = toJSONKeyText $ \(ObjectKey (ArtificialKey k)) -> U.fmtGen k
 
 instance ToJSON Focus
 instance ToJSONKey (Scope 'Metric)
@@ -228,11 +227,6 @@ $(deriveToJSON defaultOptions ''ResourceUsage)
 $(deriveToJSON defaultOptions ''SystemMetrics)
 $(deriveToJSON defaultOptions ''ScopeKind)
 
-
-$(deriveToJSON defaultOptions ''SStats)
-$(deriveToJSON defaultOptions ''DBFileStats)
-$(deriveToJSON defaultOptions ''StorageStats)
-$(deriveToJSON defaultOptions ''TotalDBStats)
 $(deriveToJSON defaultOptions ''VrpCounts)
 $(deriveToJSON defaultOptions ''Metrics)
 

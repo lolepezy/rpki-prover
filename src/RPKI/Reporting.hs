@@ -70,7 +70,13 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         CertNoPolicyExtension |
                         CertBrokenExtension OID BS.ByteString |
                         UnknownCriticalCertificateExtension OID BS.ByteString |
+                        MissingRequiredCertificateExtension OID |
+                        MissingIPOrASResourcesExtension |
+                        CertificateExtensionMustBeCritical OID |
+                        CertificateExtensionMustBeNonCritical OID |
                         MissingCriticalExtension OID |
+                        ExtensionMustBeAbsent OID |
+                        CertVersionInvalid Int |
                         BrokenKeyUsage Text |
                         WeirdCaPublicationPoints [RpkiURL] | 
                         ObjectHasMultipleLocations [RpkiURL] |
@@ -119,17 +125,45 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         InvalidVCardFormatInGbr Text | 
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |
                         RoaPrefixLenghtsIsBiggerThanMaxLength Vrp |
+                        -- ASPA
                         AspaOverlappingCustomerProvider ASN [ASN] | 
+                        AspaAsZeoAndNonZero [ASN] | 
                         AspaAsNotOnEECert ASN [AsResource] | 
                         AspaNoAsn |
                         AspaIPv4Present |
                         AspaIPv6Present |      
+                        AspaNoProviders |      
+                        -- BGPSec
                         BGPCertSIAPresent BS.ByteString | 
                         BGPCertIPv4Present |
                         BGPCertIPv6Present | 
                         BGPCertBrokenASNs  | 
+                        BGPCertTooManyASNs Integer Integer | 
+                        -- SPL
                         SplAsnNotInResourceSet ASN [AsResource] | 
                         SplNotIpResources [IpPrefix] |
+                        -- Self-contained structural validations (checked in prevalidate)
+                        InvalidCMSVersion Int |
+                        InvalidSignerInfoVersion Int |
+                        BinarySigningTimePresent |
+                        ContentTypeAttrMissing |
+                        MessageDigestMissing |
+                        CMSMessageDigestMismatch |
+                        SigningTimeMissing |
+                        DuplicateSignedAttribute OID |
+                        UnexpectedSignedAttribute OID |
+                        EECertSKIMismatch |
+                        EECertContentTypeMismatch |
+                        WrongSignedDataContentType OID |
+                        WrongEContentType { expectedOid :: OID, actualOid :: OID } |
+                        UnsupportedSignatureAlgorithm Text |
+                        SignatureAlgorithmMismatch Text Text |
+                        SKINotMatchingPublicKey |
+                        InvalidPublicKey Text |
+                        DuplicateManifestFilenames [Text] |
+                        CertValidityPeriodInvalid |
+                        TimeNotRepresentable Text |
+                        SerialNumberOutOfBounds Text |
                         ReferentialIntegrityError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -507,6 +541,14 @@ data ValidationState = ValidationState {
     deriving Semigroup via GenericSemigroup ValidationState
     deriving Monoid    via GenericMonoid ValidationState
 
+hasValidationErrors :: ValidationState -> Bool
+hasValidationErrors vs =
+    Prelude.any (Prelude.any isVErr . Set.toList)
+        $ Map.elems $ let Validations m = validations vs in m
+  where
+    isVErr (VErr _) = True
+    isVErr _        = False
+
 mTrace :: Trace -> Set Trace
 mTrace = Set.singleton
 
@@ -538,11 +580,6 @@ scopeList (Scope s) = NonEmpty.toList s
 totalMapCount :: Map a Count -> Count
 totalMapCount m = sum $ Map.elems m
 
-rrdpRepoHasUpdates :: RrdpMetric -> Bool
-rrdpRepoHasUpdates RrdpMetric {..} = anyPositive added || anyPositive deleted   
-
-rsyncRepoHasUpdates :: RsyncMetric -> Bool
-rsyncRepoHasUpdates RsyncMetric {..} = anyPositive processed
 
 rrdpRepoHasSignificantUpdates :: RrdpMetric -> Bool
 rrdpRepoHasSignificantUpdates RrdpMetric {..} = 

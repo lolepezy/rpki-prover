@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_ROOT="${1:?Usage: deploy.sh <root-directory> [--reset]}"
+USAGE="Usage: deploy.sh <root-directory> [--reset] [--with-validity-api] [--with-rtr]"
+
+BASE_ROOT="${1:?$USAGE}"
 BASE_ROOT="$(realpath "$BASE_ROOT")"
 
 RESET=0
+WITH_VALIDITY_API=0
+WITH_RTR=0
 for arg in "${@:2}"; do
-    [ "$arg" = "--reset" ] && RESET=1
+    case "$arg" in
+        --reset)             RESET=1 ;;
+        --with-validity-api) WITH_VALIDITY_API=1 ;;
+        --with-rtr)          WITH_RTR=1 ;;
+        *) echo "Unknown argument: $arg" >&2; echo "$USAGE" >&2; exit 1 ;;
+    esac
 done
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
@@ -18,7 +27,17 @@ mkdir -p "$ROOT"
 # Different branches → different ROOT paths → different ports, no manual bookkeeping needed.
 PORT=$(( 10000 + $(printf '%s' "$ROOT" | cksum | awk '{print $1}') % 50000 ))
 
+# Same idea for the RTR port, which otherwise defaults to 8283 for every branch
+# and would collide. Kept under 32767 because the option is parsed as an Int16.
+RTR_PORT=$(( 20000 + $(printf '%s' "$ROOT/rtr" | cksum | awk '{print $1}') % 12000 ))
+[ "$RTR_PORT" = "$PORT" ] && RTR_PORT=$(( RTR_PORT + 1 ))
+
 PID_FILE="$ROOT/rpki-prover.pid"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+(cd "$SCRIPT_DIR" && ./build-local.sh)
+
+cp "$HOME/.cabal/bin/rpki-prover" "$ROOT/rpki-prover.new"
 
 # Kill the previous instance for this branch, if any.
 if [ -f "$PID_FILE" ]; then
@@ -35,15 +54,14 @@ if [ -f "$PID_FILE" ]; then
     rm -f "$PID_FILE"
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-(cd "$SCRIPT_DIR" && ./build-local.sh)
-
-cp "$HOME/.cabal/bin/rpki-prover" "$ROOT/rpki-prover.new"
 mv "$ROOT/rpki-prover.new" "$ROOT/rpki-prover"
 
 cd "$ROOT"
-RESET_FLAG=""
-[ "$RESET" = "1" ] && RESET_FLAG="--reset-cache"
+
+EXTRA_FLAGS=()
+[ "$RESET" = "1" ]             && EXTRA_FLAGS+=(--reset-cache)
+[ "$WITH_VALIDITY_API" = "1" ] && EXTRA_FLAGS+=(--with-validity-api)
+[ "$WITH_RTR" = "1" ]          && EXTRA_FLAGS+=(--with-rtr --rtr-port "$RTR_PORT")
 
 ./rpki-prover \
     --rpki-root-directory "$ROOT" \
@@ -52,7 +70,7 @@ RESET_FLAG=""
     --http-api-port "$PORT" \
     --allow-overclaiming \
     --show-hidden-config \
-    $RESET_FLAG \
+    "${EXTRA_FLAGS[@]}" \
     > "$ROOT/log" 2>&1 &
 
 echo $! > "$PID_FILE"
@@ -60,5 +78,7 @@ echo $! > "$PID_FILE"
 echo "Branch : $BRANCH"
 echo "Root   : $ROOT"
 echo "Port   : $PORT"
+[ "$WITH_RTR" = "1" ] && echo "RTR    : $RTR_PORT"
+echo "Flags  : ${EXTRA_FLAGS[*]:-(none)}"
 echo "PID    : $(cat "$PID_FILE")"
 echo "Log    : $ROOT/log"
