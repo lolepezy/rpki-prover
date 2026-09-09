@@ -21,6 +21,19 @@ import RPKI.Store.AppSqliteStorage
 import RPKI.Meta.UniqueId
 import RPKI.AppMonad (runValidatorT)
 import RPKI.Reporting (newScopes)
+import RPKI.Resources.Resources (parseIpv4, parseIpv6)
+import RPKI.Resources.Types (Ipv4Prefix, Ipv6Prefix)
+
+
+-- | Parsers for statically known prefixes in tests. Partial on purpose:
+-- a malformed literal in a test is a bug in the test.
+readIp4 :: String -> Ipv4Prefix
+readIp4 (parseIpv4 -> Just p) = p
+readIp4 s = error $ "Not an IPv4 prefix: " <> s
+
+readIp6 :: String -> Ipv6Prefix
+readIp6 (parseIpv6 -> Just p) = p
+readIp6 s = error $ "Not an IPv6 prefix: " <> s
 
 
 testConfig :: Config

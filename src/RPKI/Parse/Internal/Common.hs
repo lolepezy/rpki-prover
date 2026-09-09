@@ -224,11 +224,6 @@ unifyCert signedExact = CertificateWithSignature {
         signed = getSigned signedExact
 
 
-getSiaValue :: Certificate -> OID -> Maybe BS.ByteString
-getSiaValue c oid = do
-    sia  <- getSiaExt c
-    extractSiaValue sia oid    
-
 extractSiaValue :: BS.ByteString -> OID -> Maybe BS.ByteString
 extractSiaValue sia oid = do 
     asns <- toMaybe $ decodeASN1' DER sia
@@ -246,14 +241,9 @@ extractSiaValue sia oid = do
 getSiaExt :: Certificate -> Maybe BS.ByteString
 getSiaExt c = extVal (getExts c) id_pe_sia
 
-getRrdpNotifyUri :: Certificate -> Maybe URI
-getRrdpNotifyUri c = toMaybe . extractURI =<< getSiaValue c id_ad_rpki_notify
 
 getRrdpNotifyUriExt :: [ExtensionRaw] -> Maybe URI
 getRrdpNotifyUriExt exts = toMaybe . extractURI =<< (extVal exts id_pe_sia >>= (`extractSiaValue` id_ad_rpki_notify))
-
-getRepositoryUri :: Certificate -> Maybe URI
-getRepositoryUri c = toMaybe . extractURI =<< getSiaValue c id_ad_rpki_repository
 
 getRepositoryUriExt :: [ExtensionRaw] -> Maybe URI
 getRepositoryUriExt exts = toMaybe . extractURI =<< (extVal exts id_pe_sia >>= (`extractSiaValue` id_ad_rpki_repository))

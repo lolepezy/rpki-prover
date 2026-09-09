@@ -793,10 +793,6 @@ data SignerInfos = SignerInfos {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
-newtype IssuerAndSerialNumber = IssuerAndSerialNumber Text 
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving newtype (TheBinary)
-
 newtype SignerIdentifier = SignerIdentifier BSS.ShortByteString 
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (TheBinary)
@@ -1189,9 +1185,6 @@ uniqueVrpCounts (PerTA perTaVrps) = (perTaCounts, total)
     total = countDistinctUnion (map fst families) + countDistinctUnion (map snd families)
     families = MonoidalMap.elems sorted
 
-uniqueVrpCount :: PerTA Vrps -> Int 
-uniqueVrpCount = snd . uniqueVrpCounts
-
 -- | Sort and deduplicate, in place on the vector.
 --
 -- This used to go through a list -- @V.toList@, @List.sortBy@, dedup, then
@@ -1239,9 +1232,6 @@ toPerTA = PerTA . MonoidalMap.fromList
 
 allTAs :: Monoid a => PerTA a -> a
 allTAs (PerTA a) = mconcat $ MonoidalMap.elems a
-
-getForTA :: PerTA a -> TaName -> Maybe a
-getForTA (PerTA a) taName = MonoidalMap.lookup taName a
 
 pack4 :: ASN -> Ipv4Prefix -> PrefixLength -> PackedVrp4
 pack4 (ASN asn) p (PrefixLength maxLen) =

@@ -24,6 +24,13 @@ import qualified Test.Tasty.HUnit        as HU
 -- so far all the testing is happening on the level of comparing VRP lists.
 
 
+-- | Unwrap what a parser produced, failing the test with the parse error.
+expectParsed :: (Either AppError a, ValidationState) -> IO a
+expectParsed = \case 
+    (Right a, _) -> pure a
+    (Left e, _)  -> HU.assertFailure $ "Failed to parse: " <> show e
+
+
 objectParseSpec :: TestTree
 objectParseSpec = testGroup "Unit tests for object parsing" [
     shoudlParseBGPSec,
@@ -79,8 +86,8 @@ prevalidationSpec = testGroup "Prevalidation of real objects"
 shoudlParseBGPSec :: TestTree
 shoudlParseBGPSec = HU.testCase "Should parse a BGPSec certificate" $ do        
     bs <- BS.readFile "test/data/bgp_router_cert.cer"
-    let (Right (rc, ct, ski, aki, objectHash), _) = 
-            runPureValidator (newScopes "parse") $ parseResourceCertificate bs
+    (rc, ct, ski, aki, objectHash) <- 
+        expectParsed $ runPureValidator (newScopes "parse") $ parseResourceCertificate bs
     let bgpObject = BgpCerObject {
             hash = objectHash,
             ski = ski,
@@ -97,7 +104,7 @@ shoudlParseBGPSec = HU.testCase "Should parse a BGPSec certificate" $ do
 shouldParseAspa :: TestTree
 shouldParseAspa = HU.testCase "Should parse an ASPA object" $ do        
     bs <- BS.readFile "test/data/AS204325.asa"
-    let (Right aspaObject, _) = runPureValidator (newScopes "parse") $ parseAspa bs
+    aspaObject <- expectParsed $ runPureValidator (newScopes "parse") $ parseAspa bs
 
     let Aspa {..} = getCMSContent $ cmsPayload aspaObject
     HU.assertEqual "Wrong customer" customer (ASN 204325)
@@ -106,7 +113,7 @@ shouldParseAspa = HU.testCase "Should parse an ASPA object" $ do
 shouldParseSpl :: TestTree
 shouldParseSpl = HU.testCase "Should parse an SPL object" $ do        
     bs <- BS.readFile "test/data/9X0AhXWTJDl8lJhfOwvnac-42CA.spl"
-    let (Right splObject, _) = runPureValidator (newScopes "parse") $ parseSpl bs
+    splObject <- expectParsed $ runPureValidator (newScopes "parse") $ parseSpl bs
 
     let SplPayload asn prefixes = getCMSContent $ cmsPayload splObject
     HU.assertEqual "Wrong ASN" asn (ASN 15562)

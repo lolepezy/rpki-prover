@@ -22,7 +22,7 @@ import           GHC.Generics
 
 import           RPKI.Domain
 import           RPKI.Resources.Types
-import           RPKI.Orphans.Swagger
+import           RPKI.Orphans.Swagger ()
 import           RPKI.Store.Base.Serialisation
 
 newtype SlurmVersion = SlurmVersion Int
@@ -177,6 +177,6 @@ oneOrBothToJSON these' t1 t2 =
         That b    -> [ t2 .= toJSON b ]
         These a b -> [ t1 .= toJSON a, t2 .= toJSON b ]
 
--- jsonComment :: (ToJSON a) => Maybe a -> [a]
+jsonComment :: (KeyValue e kv, ToJSON a) => Maybe a -> [kv]
 jsonComment Nothing = []
 jsonComment (Just c) = [ "comment" .= toJSON c ]

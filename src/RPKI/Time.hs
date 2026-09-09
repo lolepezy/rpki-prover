@@ -13,7 +13,7 @@ import           Time.System            (dateCurrent)
 import           System.CPUTime
 
 import           RPKI.Store.Base.Serialisation
-import           RPKI.Orphans.Store
+import           RPKI.Orphans.Store ()
 
 
 newtype Instant = Instant Int64

@@ -2,9 +2,7 @@
 
 module RPKI.Validation.TopDownSpec where
 
-import           Control.Concurrent.Async         (async, wait)
 import           Control.Concurrent.STM
-import           Control.Monad                    (forM, unless)
 import           Control.Lens
 import           Control.Monad.IO.Class           (liftIO)
 

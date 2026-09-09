@@ -16,9 +16,9 @@ import qualified Data.Set.NonEmpty                    as NESet
 
 import           Test.QuickCheck hiding ((.&.))
 import           Test.QuickCheck.Arbitrary.Generic
-import           Test.QuickCheck.Instances.ByteString
-import           Test.QuickCheck.Instances.Text
-import           Test.QuickCheck.Instances.Vector
+import           Test.QuickCheck.Instances.ByteString ()
+import           Test.QuickCheck.Instances.Text ()
+import           Test.QuickCheck.Instances.Vector ()
 
 import           Data.ASN1.BitArray
 import           Data.ASN1.Types
@@ -27,7 +27,7 @@ import           Data.Word
 import           Data.X509                            as X509
 import           Data.Tuple.Strict
 
-import           RPKI.Orphans.Generics
+import           RPKI.Orphans.Generics ()
 import           RPKI.Domain
 import           RPKI.Time
 import           RPKI.Repository

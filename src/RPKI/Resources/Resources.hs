@@ -99,7 +99,7 @@ subtractRange f1 l1 f2 l2 r fromRange =
        | f1 <= f2 && l1 < l2  -> below
        | f1 <= f2 && l1 >= l2 -> below <> above
        | f1 > f2  && l1 >= l2 -> above
-       | f1 > f2  && l1 < l2  -> []
+       | otherwise            -> []
   where
     -- The part of [f1, l1] strictly below f2 and strictly above l2.
     -- `succ`/`pred` are partial for the bounded types used here (Word32/Word128 
@@ -282,7 +282,7 @@ subtractAsn (ASRange a0 a1) (ASRange b0 b1) =
         | b0 <= a0 && b1 < a1  = maybeToList $ (`ASRange` a1) <$> succSafe b1
         | b0 > a0 && b1 < a1   = catMaybes [ ASRange a0 <$> predSafe b0, 
                                              (`ASRange` a1) <$> succSafe b1 ]
-        | b0 > a0 && b1 >= a1  = maybeToList $ ASRange a0 <$> predSafe b0
+        | otherwise            = maybeToList $ ASRange a0 <$> predSafe b0
 {-# INLINE subtractAsn #-}    
 
 optimiseAsns :: [AsResource] -> [AsResource]
@@ -372,14 +372,6 @@ prefixLen = \case
     Ipv4P p -> ipv4PrefixLen p
     Ipv6P p -> ipv6PrefixLen p
  
--- These are mainly for statically known values in tests
--- 
-readIp4 :: String -> Ipv4Prefix
-readIp4 (parseIpv4 -> Just p) = p    
-
-readIp6 :: String -> Ipv6Prefix
-readIp6 (parseIpv6 -> Just p) = p    
-    
 parseIpv6 :: String -> Maybe Ipv6Prefix
 parseIpv6 s = 
     readMaybe s >>= 

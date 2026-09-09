@@ -26,22 +26,22 @@ module RPKI.Store.Database (
     getObjectByKey, getLocatedByKey,
     getLocationsByKey,
     saveObject, saveStorableObject,
-    getObjectMeta, linkObjectToUrl,
+    linkObjectToUrl,
     hashExists, deleteObjectByHash, deleteObjectByKey,
     getMftsForAKI, findAllMftsByAKI, getMftByKey,
     getMftShorcut, getMftShorcutMeta, getMftShorcutChildrenLight, getMftShorcutChildrenFull,
     getMftShortcutChildFileName,
     saveMftShorcutMeta, insertMftShortcutChildren, deleteMftShortcutChildren,
-    deleteMftShortcut, getBySKI, getFirstCaCertBySKI, getTaCertByKey,
+    deleteMftShortcut, getBySKI, getTaCertByKey,
     markAsValidated,
-    saveTA, deleteTA, getTA, getTAs, setActiveTAs,
+    saveTA, getTA, getTAs, setActiveTAs,
     versionsBackwards, previousVersion, getLatestVersion,
     getValidationsPerTA, getMetricsPerTA, getCommonMetrics,
     getValidationOutcomes,
     getVrps, getVrpsForTA, getRoas, getAspas, getGbrs, getBgps, getSpls,
     saveValidationVersion, deleteValidationVersion,
     saveSlurm, getSlurm, getLatestVersions,
-    updateRrdpMeta, updateRrdpMetaM,
+    updateRrdpMetaM,
     getPublicationPoints, getRepository,
     getRrdpRepository, getRsyncRepository, getRsyncRepositories,
     getRsyncAnything,
@@ -55,10 +55,10 @@ module RPKI.Store.Database (
     CleanUpResult(..), DeletionCriteria(..),
     deleteOldestVersionsIfNeeded,
     deleteStaleContent, deleteDanglingUrls,
-    getAll, getMftMeta, getGbrObjects, getRtrPayloads,
+    getGbrObjects, getRtrPayloads,
     storageError,
     -- * Encoding helpers (for AppSqliteStorage etc.)
-    encodeSO, decodeSO,
+    decodeSO,
 ) where
 
 import           Control.Concurrent.STM
@@ -189,10 +189,6 @@ instance {-# OVERLAPPING #-} WithValidityPeriod MftShortcutMeta where
 onlyValue :: [Only a] -> Maybe a
 onlyValue []          = Nothing
 onlyValue (Only v : _) = Just v
-
--- | Encode a pre-serialised object wrapper as compressed bytes.
-encodeSO :: AsStorable a => StorableObject a -> BS.ByteString
-encodeSO = unStorable . toStorable . Compressed
 
 -- | Decode a StorableObject from compressed bytes.
 decodeSO :: AsStorable a => BS.ByteString -> StorableObject a
@@ -390,17 +386,6 @@ saveStorableObject (Tx conn) _ StorableObject { object = Compressed lifecycle, s
             pure objectKey
 
 
-getObjectMeta :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe ObjectMeta)
-getObjectMeta (Tx conn) _ k = liftIO $ do
-    rows <- query conn
-        "SELECT world_version, type FROM objects WHERE object_key = ?"
-        (Only k)
-    pure $ case rows of
-        [(wv, typText)] -> case readMaybe typText of
-            Just typ -> Just $ ObjectMeta wv typ
-            Nothing  -> Nothing
-        _ -> Nothing
-
 -- | Record that the object is published at the given URL as of `worldVersion`.
 --
 -- The version is refreshed on every call, so an association only stays old if
@@ -438,6 +423,7 @@ deleteObjectByKey (Tx conn) _ keys = liftIO $
 
 getMftMetaFromWellStructured :: WellStructuredCms Manifest -> ObjectKey -> MftMeta
 getMftMetaFromWellStructured WellStructuredCms { content = Manifest {..} } key = MftMeta {..}
+
 
 
 -- ---------------------------------------------------------------------------
@@ -571,11 +557,6 @@ getBySKI tx@(Tx conn) db ski = liftIO $ do
                 pure $ Just (Located loc c)
             _ -> pure Nothing
 
--- | Backward-compat wrapper: returns the first CA cert matching the SKI.
-getFirstCaCertBySKI :: MonadIO m => Tx mode -> DB -> SKI -> m (Maybe (Located WellStructuredCaCert))
-getFirstCaCertBySKI tx db ski =
-    listToMaybe <$> getBySKI tx db ski
-
 getTaCertByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe WellStructuredCaCert)
 getTaCertByKey tx db k =
     getLocatedByKey tx db k >>= \case
@@ -597,10 +578,6 @@ saveTA (Tx conn) _ ta = liftIO $
     execute conn
         "INSERT OR REPLACE INTO trust_anchors(ta_name, ta_cert_key, data, active) VALUES (?, ?, ?, 1)"
         (unTaName (getTaName (tal ta)), taCertKey ta, serialiseField ta)
-
-deleteTA :: MonadIO m => Tx 'RW -> DB -> TAL -> m ()
-deleteTA (Tx conn) _ t = liftIO $
-    execute conn "DELETE FROM trust_anchors WHERE ta_name = ?" (Only (unTaName (getTaName t)))
 
 getTA :: MonadIO m => Tx mode -> DB -> TaName -> m (Maybe StorableTA)
 getTA (Tx conn) _ name = liftIO $ do
@@ -847,8 +824,6 @@ getLatestVersions (Tx conn) _ = liftIO $ do
 -- Repository functions
 -- ---------------------------------------------------------------------------
 
-updateRrdpMeta :: MonadIO m => Tx 'RW -> DB -> RrdpMeta -> RrdpURL -> m ()
-updateRrdpMeta tx db meta url = liftIO $ updateRrdpMetaM tx db url (const $ pure $ Just meta)
 
 updateRrdpMetaM :: MonadIO m
                 => Tx 'RW
@@ -894,7 +869,7 @@ getRsyncRepository tx db url = Map.lookup url <$> getRsyncRepositories tx db [ur
 
 getRsyncRepositories :: MonadIO m
                      => Tx mode -> DB -> [RsyncURL] -> m (Map.Map RsyncURL RsyncRepository)
-getRsyncRepositories tx db urls =
+getRsyncRepositories tx _ urls =
     getRsyncAnything urls
         (\host -> do
             let Tx conn = tx
@@ -962,7 +937,7 @@ saveRsyncRepositories (Tx conn) _ repos = liftIO $
 
 saveRsyncValidationStates :: MonadIO m
                           => Tx 'RW -> DB -> [(RsyncRepository, ValidationState)] -> m ()
-saveRsyncValidationStates tx db repos = liftIO $
+saveRsyncValidationStates tx _ repos = liftIO $
     saveRsyncAnything repos
         (\host -> do
             let Tx conn = tx
@@ -1271,17 +1246,6 @@ deleteDanglingUrls (Tx conn) = do
     execute_ conn
         "DELETE FROM urls WHERE url_key NOT IN (SELECT DISTINCT url_key FROM object_urls)"
     changes conn
-
-getAll :: MonadIO m => Tx mode -> DB -> m [Located RpkiObjectLifecycle]
-getAll tx db = liftIO $ do
-    let Tx conn = tx
-    rows <- query_ conn "SELECT object_key FROM objects WHERE data IS NOT NULL"
-    catMaybes <$> forM rows (getLocatedByKey tx db . fromOnly)
-
-getMftMeta :: MftObject -> ObjectKey -> MftMeta
-getMftMeta mft key =
-    let Manifest{..} = getCMSContent $ cmsPayload mft
-    in MftMeta{..}
 
 getGbrObjects :: MonadIO m => Tx mode -> DB -> WorldVersion -> m [Located RpkiObjectLifecycle]
 getGbrObjects tx db version = do

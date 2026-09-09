@@ -17,6 +17,7 @@ import qualified Data.Map.Monoidal.Strict    as MonoidalMap
 import           Data.String                 (IsString)
 import           Data.Generics.Product.Fields
 import           Data.Foldable               (for_)
+import           Data.Maybe                  (listToMaybe)
 
 import           Data.String.Interpolate.IsString
 
@@ -400,11 +401,12 @@ validaionIssuesHtml dtos =
                                 toHtml e >> " errors, "
                                 toHtml w >> " warnings"                    
                             H.table ! A.class_ "sub-t" $ do 
-                                let sortedVrs = List.sortBy (comparing (\(ResolvedVDto (ValidationDto{..})) -> Prelude.head path)) vrs
+                                let sortedVrs = List.sortBy (comparing (\(ResolvedVDto (ValidationDto{..})) -> listToMaybe path)) vrs
                                 H.tbody $ forM_ (zip sortedVrs [1 :: Int ..]) vrHtml            
   where      
     vrHtml (ResolvedVDto (ValidationDto{..}), index) = do 
-        let objectUrl : details_ = path         
+        let objectUrl = listToMaybe path
+            details_  = drop 1 path
         forM_ (zip issues [1 :: Int ..]) $ \(pr, jndex) ->                     
             htmlRow (index + jndex) $ do 
                 let (marker, problem) = 
@@ -415,7 +417,7 @@ validaionIssuesHtml dtos =
                     H.span ! A.class_ marker $ ""                    
                     mapM_ (\z -> H.text z >> H.br) $ Text.lines problem
                 td ! A.class_ "sub-t" $ H.details $ do 
-                    H.summary $ focusLink1 objectUrl
+                    H.summary $ mapM_ focusLink1 objectUrl
                     forM_ details_ $ \f -> 
                         focusLink1 f >> H.br
     countProblems = 
@@ -436,7 +438,7 @@ generalIssuesHtml dtos =
                 H.span ! A.class_ "tooltiptext" $ validationPathTootip               
         H.tbody $
             forM_ (zip dtos [1 :: Int ..]) $ \(ResolvedVDto (ValidationDto{..}), index) -> do 
-                let objectUrl = Prelude.head path         
+                let objectUrl = listToMaybe path
                 forM_ (zip issues [1 :: Int ..]) $ \(pr, jndex) ->                     
                     htmlRow (index + jndex) $ do 
                         let (marker, problem) = 
@@ -447,8 +449,8 @@ generalIssuesHtml dtos =
                             H.span ! A.class_ marker $ ""                    
                             mapM_ (\z -> H.text z >> H.br) $ Text.lines problem
                         td ! A.class_ "sub-t" $ H.details $ do 
-                            H.summary $ focusLink1 objectUrl
-                            forM_ (Prelude.tail path) $ \f -> 
+                            H.summary $ mapM_ focusLink1 objectUrl
+                            forM_ (drop 1 path) $ \f -> 
                                 focusLink1 f >> H.br
 
 primaryRepoTooltip :: Html

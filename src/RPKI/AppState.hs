@@ -5,7 +5,7 @@ module RPKI.AppState where
 import           Control.Concurrent.STM    
 import           Control.DeepSeq
 import           Control.Lens hiding (filtered)
-import           Control.Monad (join, unless)
+import           Control.Monad (unless)
 import           Control.Monad.IO.Class
 
 import qualified Data.ByteString                  as BS
@@ -107,11 +107,6 @@ updatePrefixIndex :: AppState -> RtrPayloads -> STM ()
 updatePrefixIndex AppState {..} rtrPayloads = 
     writeTVar prefixIndex $! 
         force $ Just $ createPrefixIndex $ vrpsToList $ rtrPayloads ^. #uniqueVrps
-
-getOrCreateWorldVerion :: AppState -> IO WorldVersion
-getOrCreateWorldVerion AppState {..} = 
-    join $ atomically $ 
-        maybe newWorldVersion pure <$> readTVar world
 
 versionToInstant :: WorldVersion -> Instant
 versionToInstant = Instant . versionToInt

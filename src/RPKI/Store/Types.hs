@@ -16,7 +16,7 @@ import           RPKI.Repository
 import           RPKI.AppTypes
 import           RPKI.Domain
 import           RPKI.Reporting           (ValidationState)
-import           RPKI.Store.Base.Storable
+import           RPKI.Store.Base.Storable ()
 import           RPKI.Store.Base.Serialisation
 
 data StorableTA = StorableTA {
@@ -82,14 +82,3 @@ instance {-# OVERLAPPING #-} WithHash RpkiObjectLifecycle where
 instance WithRpkiObjectType RpkiObjectLifecycle where
     getRpkiObjectType (OriginalRO _ _ _ t)   = t
     getRpkiObjectType (WellStructuredRO vro) = getRpkiObjectType vro
-
-
--- data 
-
-data DBFileStats = DBFileStats {
-    fileSize :: Size
-} deriving stock (Show, Eq, Generic)
-
-data TotalDBStats = TotalDBStats {    
-    fileStats    :: DBFileStats
-} deriving stock (Show, Eq, Generic)

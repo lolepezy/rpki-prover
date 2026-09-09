@@ -14,17 +14,17 @@ import           Test.Tasty.QuickCheck   as QC
 import qualified Test.Tasty.HUnit        as HU
 
 import           RPKI.AppMonad
-import           RPKI.Orphans
+import           RPKI.Orphans ()
 import           RPKI.Reporting
 
 isSemigroup :: Eq s => Semigroup s => (s, s, s) -> Bool
 isSemigroup (s1, s2, s3) = s1 <> (s2 <> s3) == (s1 <> s2) <> s3
 
 
-runValidatorTAndvalidatorTShouldBeId :: QC.Property
-runValidatorTAndvalidatorTShouldBeId = monadicIO $ do
+runValidatorTAndEmbedValidatorTShouldBeId :: QC.Property
+runValidatorTAndEmbedValidatorTShouldBeId = monadicIO $ do
   z :: (Either AppError (), ValidationState) <- pick arbitrary 
-  q <- runValidatorT (newScopes "zzz") $ validatorT $ pure z
+  q <- runValidatorT (newScopes "zzz") $ embedValidatorT $ pure z
   assert $ q == z
 
 forMShouldSavesState :: HU.Assertion
@@ -33,7 +33,7 @@ forMShouldSavesState = do
      
   (_, ValidationState { validations = Validations validationMap }) 
     <- runValidatorT (newScopes "zzz") $ do 
-        validatorT $ pure (Right (), v)
+        embedValidatorT $ pure (Right (), v)
         forM ["x", "y", "z"] $ \x ->
             appWarn $ UnspecifiedE x (x <> "-bla") 
   
@@ -78,7 +78,7 @@ appMonadSpec = testGroup "AppMonad" [
         QC.testProperty "RrdpSource is a semigroup" (isSemigroup @RrdpSource),
         QC.testProperty "HttpStatus is a semigroup" (isSemigroup @HttpStatus),
 
-        QC.testProperty "runValidatorT . validatorT == id" runValidatorTAndvalidatorTShouldBeId,
+        QC.testProperty "runValidatorT . embedValidatorT == id" runValidatorTAndEmbedValidatorTShouldBeId,
             
         HU.testCase "forM saves state" forMShouldSavesState,
         HU.testCase "forM saves state" scopesShouldBeProperlyNested

@@ -9,11 +9,10 @@ import qualified Test.Tasty.QuickCheck as QC
 import qualified Data.List       as List
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import qualified Data.Set        as Set
-import qualified Data.Vector     as V
 import qualified Data.Vector.Unboxed as VU
 
 import           RPKI.Domain
-import           RPKI.Resources.Resources (readIp4)
+import           RPKI.TestCommons (readIp4)
 import           RPKI.Resources.Types (ASN(..), IpPrefix(..), PrefixLength(..))
 
 
@@ -22,7 +21,6 @@ domainCountersGroup =
     testGroup "Domain counters"
         [ HU.testCase "estimateVrpCount counts duplicates" testEstimateVrpCount
         , HU.testCase "estimateVrpCountRoas counts duplicates" testEstimateVrpCountRoas
-        , HU.testCase "uniqueVrpCount deduplicates flattened VRPs" testUniqueVrpCount
         , HU.testCase "uniqueVrpCounts reports per-TA and overall counts" testUniqueVrpCounts
         , HU.testCase "countSortedDistinct handles edge cases" testCountSortedDistinct
         , HU.testCase "countDistinctUnion handles edge cases" testCountDistinctUnion
@@ -40,12 +38,6 @@ testEstimateVrpCountRoas :: HU.Assertion
 testEstimateVrpCountRoas =
     HU.assertEqual "estimateVrpCountRoas must include duplicate ROA payload entries" 5
         $ estimateVrpCountRoas roasFixture
-
-
-testUniqueVrpCount :: HU.Assertion
-testUniqueVrpCount =
-    HU.assertEqual "uniqueVrpCount must deduplicate identical VRPs" 2
-        $ uniqueVrpCount perTaVrps
 
 
 -- Both TAs hold `duplicateVrp`, so the overall count is not the sum of the

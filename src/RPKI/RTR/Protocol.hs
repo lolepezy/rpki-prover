@@ -159,9 +159,11 @@ errorCodes = [
     ]
 
 instance Binary ErrorCode where         
-    put code = let 
-        Just n = lookup code errorCodes
-        in put n
+    put code = 
+        case lookup code errorCodes of 
+            Just n  -> put n
+            -- `errorCodes` covers every constructor, so this cannot happen
+            Nothing -> error $ "No numeric value for error code " <> show code
 
     get = do
         numeric <- get

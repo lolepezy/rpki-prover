@@ -339,7 +339,8 @@ rrdpNextStep RrdpRepository { rrdpMeta = Just rrdpMeta } Notification {..} =
                     ([], _) -> pure $ FetchSnapshot snapshotInfo 
                                     [i|#{localSessionId}, there is no deltas to use.|]
 
-                    (_, []) | nextSerial localSerial < deltaSerial (head sortedDeltas) ->
+                    (_, []) | Just firstSerial <- deltaSerial <$> listToMaybe sortedDeltas
+                            , nextSerial localSerial < firstSerial ->
                                 -- we are too far behind
                                 pure $ FetchSnapshot snapshotInfo 
                                         [i|#{localSessionId}, local serial #{localSerial} is too far behind remote #{serial}.|]
@@ -371,7 +372,7 @@ rrdpNextStep RrdpRepository { rrdpMeta = Just rrdpMeta } Notification {..} =
             chosenDeltas = filter ((> localSerial) . deltaSerial) sortedDeltas
 
             nonConsecutiveDeltas = List.filter (\(s, s') -> nextSerial s /= s') $
-                List.zip sortedSerials (tail sortedSerials)
+                List.zip sortedSerials (drop 1 sortedSerials)
 
             deltaIntegrityIssues = 
                 [ (serial_, hash, previousHash) | 
@@ -648,7 +649,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                                 prevalidateObject =<< readObjectOfType type_ blob
                     evaluate $!
                         case z of 
-                            (Left _, vs) ->
+                            (Left _, _) ->
                                 ObjectParsingProblem rpkiURL (VErr e) 
                                     (ObjectOriginal blob) hash
                                     (ObjectMeta worldVersion type_)

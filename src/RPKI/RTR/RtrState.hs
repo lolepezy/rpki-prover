@@ -10,7 +10,7 @@ import           Data.Set       (Set, (\\))
 import qualified Data.Set       as Set
 import qualified Data.List      as List
 import qualified Data.Vector.Unboxed as VU
-import           Data.Generics.Labels
+import           Data.Generics.Labels ()
 
 import           Deque.Strict   as Deq
 
@@ -23,9 +23,6 @@ import           RPKI.RTR.Protocol
 
 newDiff :: Ord a => Diff a
 newDiff = Diff mempty mempty
-
-newRtrDiff :: RtrDiffs
-newRtrDiff = GenDiffs newDiff newDiff
 
 isEmptyDiff :: Diff a -> Bool
 isEmptyDiff Diff {..} = Set.null added && Set.null deleted

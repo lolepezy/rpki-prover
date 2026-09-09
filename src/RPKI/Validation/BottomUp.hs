@@ -59,14 +59,16 @@ validateBottomUp
     {- Given a chain of certificatees from a TA to the object, 
        proceed with top-down validation along this chain only.
     -}
-    validateTopDownAlongPath db certPath = do
-        -- TODO Make it NonEmpty?
-        let taCert = head certPath        
-        let location = pickLocation $ getLocations taCert
-        vHoist $ vFocusOn LocationFocus (getURL location) 
-               $ validateTaCertAKI taCert location
-        let verifiedResources = createVerifiedResources $ taCert ^. #payload        
-        go verifiedResources certPath
+    -- TODO Make the path NonEmpty?
+    validateTopDownAlongPath db certPath = 
+        case certPath of 
+            [] -> pure ()
+            taCert : _ -> do 
+                let location = pickLocation $ getLocations taCert
+                vHoist $ vFocusOn LocationFocus (getURL location) 
+                       $ validateTaCertAKI taCert location
+                let verifiedResources = createVerifiedResources $ taCert ^. #payload        
+                go verifiedResources certPath
       where                
         go _ [] = pure ()
 
@@ -81,10 +83,9 @@ validateBottomUp
 
                 validateObjectItself bottomCert crl verifiedResources
 
-        go verifiedResources (cert : certs) = do            
+        go verifiedResources (cert : certs@(childCert : _)) = do            
             vFocusOn LocationFocus (getURL $ pickLocation $ getLocations cert) $ do
                 (mft, crl) <- validateManifest db cert
-                let childCert = head certs                
                 validateOnMft mft childCert                            
                 Validated validCert <- vHoist $ validateResourceCert
                                                 now

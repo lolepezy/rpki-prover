@@ -15,7 +15,6 @@ module RPKI.Store.SQLite (
     -- * Transaction runners
     withReadTx,
     withWriteTx,
-    withoutTx,
     -- * Lifecycle
     initConn,
     createDB,
@@ -135,11 +134,6 @@ withCachedTransaction cc begin action =
         r <- restore action `onException` execute_ cc "ROLLBACK TRANSACTION"
         execute_ cc "COMMIT TRANSACTION"
         pure r
-
-withoutTx :: MonadIO m => SqliteDB -> (Tx 'NOTX -> IO a) -> m a
-withoutTx SqliteDB{readPool} f = liftIO $ Pool.withResource readPool $ \cc ->
-    f (Tx cc)
-
 
 -- ---------------------------------------------------------------------------
 -- Lifecycle

@@ -17,11 +17,16 @@ import           RPKI.AppTypes                  (WorldVersion (..))
 import           RPKI.Domain                    (Hash (..), RpkiObjectType (..))
 import           RPKI.Orphans                   ()
 import           RPKI.Store.Base.Storable
-import           RPKI.Store.Database            (DB, Tx (..), roTx, rwTx)
+import           RPKI.Store.Database            (Tx (..), roTx, rwTx)
 import qualified RPKI.Store.Database            as DB
 import qualified RPKI.Store.SQLite              as SQLite
-import           RPKI.Store.Types               (ObjectMeta (..), ObjectOriginal (..), RpkiObjectLifecycle (..))
+import           RPKI.Store.Types               (ObjectOriginal (..), RpkiObjectLifecycle (..))
 import           RPKI.TestCommons               (withTestContext)
+
+
+-- | How `saveObject` writes an object blob: compressed, precomputed bytes.
+encodeSO :: AsStorable a => StorableObject a -> BS.ByteString
+encodeSO = unStorable . toStorable . Compressed
 
 
 storableEncodingSpec :: TestTree
@@ -58,7 +63,7 @@ storableEncodingSpec =
                         (serialiseField wrapped)
             , HU.testCase "Database encode/decode keeps StorableObject precomputed bytes" $
                 let wrapped = StorableObject (111 :: Int64) (toStorable (222 :: Int64))
-                    encoded = DB.encodeSO wrapped
+                    encoded = encodeSO wrapped
                     decoded = DB.decodeSO encoded :: StorableObject Int64
                 in do
                     HU.assertBool "Encoded object blob must be valid LZ4 of embedded bytes"
@@ -79,7 +84,7 @@ storableEncodingSpec =
                         hash = Hash $ BSS.toShort $ BS.pack [1 .. 32]
                         original = ObjectOriginal $ BS.replicate 1024 0xAB
                         lifecycle = OriginalRO original mempty hash CER
-                        expectedBlob = DB.encodeSO (toStorableObject lifecycle)
+                        expectedBlob = encodeSO (toStorableObject lifecycle)
 
                     key <- rwTx db $ \tx -> DB.saveObject tx db lifecycle worldVersion
 

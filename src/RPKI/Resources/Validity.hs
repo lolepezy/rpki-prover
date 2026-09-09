@@ -5,7 +5,7 @@ module RPKI.Resources.Validity where
 
 import           Control.DeepSeq
 import           Control.Lens
-import           Data.Generics.Labels                  
+import           Data.Generics.Labels ()
 
 import           Data.List                as List
 import           Data.Word                (Word8, Word32, Word64)
@@ -23,7 +23,7 @@ import qualified HaskellWorks.Data.Network.Ip.Ipv6     as V6
 
 import           RPKI.Domain
 import           RPKI.Domain.Packed
-import           RPKI.Resources.Types
+import           RPKI.Resources.Types  hiding (start)
 import           RPKI.Resources.Resources
 
 data ValidityPerVrp = InvalidAsn Vrp
@@ -189,7 +189,7 @@ insertVrp (Vrp (ASN asn) pp (PrefixLength maxLen)) t =
                     vrps' = toInsert : vrps
                     updated = AllTogether vrps'
                 in if length vrps' > leafSplitThreshold
-                        then divide updated 
+                        then divide vrps'
                         else updated                
              
             Divided {..} ->                 
@@ -201,7 +201,7 @@ insertVrp (Vrp (ASN asn) pp (PrefixLength maxLen)) t =
         newBitSize = bucket ^. #bitSize - 1
         middle = intervalMiddle bucket
 
-        divide (AllTogether vrps) = let
+        divide vrps = let
             (lowerVrps, higherVrps, overlapping) = 
                 foldr (\vrp (lowers, highers, overlaps) -> let 
                         (vStart, vEnd) = prefixEgdes vrp

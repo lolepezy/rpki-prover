@@ -20,7 +20,7 @@ import           Test.QuickCheck.Gen
 import           RPKI.Domain
 import           RPKI.Repository
 import           RPKI.Util
-import           RPKI.Orphans
+import           RPKI.Orphans ()
 
 
 repositoryGroup :: TestTree
@@ -124,7 +124,9 @@ repositoriesURIs = map (RsyncPublicationPoint . toURL) [
         "different_root"
     ]
   where
-    toURL path = let Right u = parseRsyncURL ("rsync://host1.com/" <> path) in u
+    toURL path = 
+        either (\e -> error $ "Bad rsync URL in test data: " <> show e) id 
+            $ parseRsyncURL ("rsync://host1.com/" <> path)
 
 prop_rsync_tree_commutative :: QC.Property
 prop_rsync_tree_commutative =
@@ -159,7 +161,7 @@ prop_rsync_tree_update =
 
 convertToRepos :: [RsyncURL] -> FetchStatus -> RsyncForest
 convertToRepos urls status = 
-    foldr (\u t -> toRsyncForest u (newMeta status) t) newRsyncForest urls
+    foldr (\u t -> toRsyncForest u (newMeta status) t) newRsyncForestGen urls
 
 
 generateRsyncUrl :: Gen RsyncURL

@@ -12,8 +12,9 @@ import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString                   as BS
 import qualified Data.List                         as List
-import           Data.Maybe                        (isJust, isNothing)
+import           Data.Maybe                        (isJust, isNothing, listToMaybe)
 import qualified Data.Map.Strict                   as Map
+import qualified Data.Map.Monoidal.Strict          as MonoidalMap
 import qualified Data.Set                          as Set
 import qualified Data.Text                         as Text
 import           Data.Proxy                        (Proxy(..))
@@ -131,8 +132,8 @@ shouldDeleteStaleObjectsOnly io = do
     oldObj    <- QC.generate QC.arbitrary
     recentObj <- QC.generate (QC.arbitrary `QC.suchThat` (\o -> getHash o /= getHash oldObj))
 
-    storeAt db oldObj oldVersion
-    storeAt db recentObj recentVersion
+    void $ storeAt db oldObj oldVersion
+    void $ storeAt db recentObj recentVersion
 
     -- "too old" = anything at or before oldVersion
     r <- DB.deleteStaleContent db DB.DeletionCriteria {
@@ -364,7 +365,7 @@ shouldOrderManifests io = do
         DB.linkObjectToUrl tx db url1 key1 worldVersion
         DB.linkObjectToUrl tx db url2 key2 worldVersion
 
-    let Just aki1 = getAKI mft1
+    aki1 <- expectJust "Manifest must have an AKI" (getAKI mft1)
     [m1, m2] <- roTx db $ \tx -> DB.getMftsForAKI tx db aki1
     HU.assertBool "Manifests must be ordered by timing" (m1 ^. #nextTime >= m2 ^. #nextTime)
 
@@ -520,22 +521,22 @@ shouldComputeObjectSizeStats io = do
 
     ObjectStats {..} <- roTx db $ \tx -> DB.getObjectsStats tx db
 
-    let at m k = Map.lookup k m
+    let lookupIn m k = Map.lookup k m
 
     HU.assertEqual "Total object count"        (Size 5)    totalObjects
     HU.assertEqual "Total size"                (Size 1230) totalSize
 
-    HU.assertEqual "CER count"     (Just $ Size 3)    (at countPerType     CER)
-    HU.assertEqual "CER total"     (Just $ Size 1110) (at totalSizePerType CER)
-    HU.assertEqual "CER smallest"  (Just $ Size 10)   (at minSizePerType   CER)
-    HU.assertEqual "CER biggest"   (Just $ Size 1000) (at maxSizePerType   CER)
-    HU.assertEqual "CER average"   (Just $ Size 370)  (at avgSizePerType   CER)
+    HU.assertEqual "CER count"     (Just $ Size 3)    (lookupIn countPerType     CER)
+    HU.assertEqual "CER total"     (Just $ Size 1110) (lookupIn totalSizePerType CER)
+    HU.assertEqual "CER smallest"  (Just $ Size 10)   (lookupIn minSizePerType   CER)
+    HU.assertEqual "CER biggest"   (Just $ Size 1000) (lookupIn maxSizePerType   CER)
+    HU.assertEqual "CER average"   (Just $ Size 370)  (lookupIn avgSizePerType   CER)
 
-    HU.assertEqual "ROA count"     (Just $ Size 2)   (at countPerType     ROA)
-    HU.assertEqual "ROA total"     (Just $ Size 120) (at totalSizePerType ROA)
-    HU.assertEqual "ROA smallest"  (Just $ Size 50)  (at minSizePerType   ROA)
-    HU.assertEqual "ROA biggest"   (Just $ Size 70)  (at maxSizePerType   ROA)
-    HU.assertEqual "ROA average"   (Just $ Size 60)  (at avgSizePerType   ROA)
+    HU.assertEqual "ROA count"     (Just $ Size 2)   (lookupIn countPerType     ROA)
+    HU.assertEqual "ROA total"     (Just $ Size 120) (lookupIn totalSizePerType ROA)
+    HU.assertEqual "ROA smallest"  (Just $ Size 50)  (lookupIn minSizePerType   ROA)
+    HU.assertEqual "ROA biggest"   (Just $ Size 70)  (lookupIn maxSizePerType   ROA)
+    HU.assertEqual "ROA average"   (Just $ Size 60)  (lookupIn avgSizePerType   ROA)
 
     -- The actual regression: these three must not be the same map
     HU.assertBool "min and max sizes must differ" $ minSizePerType /= maxSizePerType
@@ -570,10 +571,13 @@ shouldDeduplicateSaveObjectByHash io = do
             _        -> 0
     HU.assertEqual "Only one object row must exist for the hash" 1 objectsWithHash
 
-    meta <- roTx db $ \tx -> DB.getObjectMeta tx db k1
+    metaRows <- roTx db $ \(Tx conn) ->
+        SQLite.query conn "SELECT world_version, type FROM objects WHERE object_key = ?"
+            (Only (SQLite.toInt64 k1)) :: IO [(WorldVersion, String)]
+
     HU.assertEqual "Object metadata must come from the first insert"
-        (Just $ ObjectMeta wv1 (getRpkiObjectType ro))
-        meta
+        [(wv1, show (getRpkiObjectType ro))]
+        metaRows
 
 
 shouldIndexCertificateOnSaveObject :: IO DB -> HU.Assertion
@@ -601,12 +605,11 @@ shouldIndexCertificateOnSaveObject io = do
             _        -> 0
     HU.assertEqual "Exactly one certificates row must be created" 1 certRows
 
-    fetched <- roTx db $ \tx -> DB.getFirstCaCertBySKI tx db (getSKI wsCert)
-    case fetched of
-        Just (Located _ fetchedCert) ->
+    case bySki of
+        Located _ fetchedCert : _ ->
             HU.assertEqual "Fetched cert by SKI must match the inserted cert" wsCert fetchedCert
-        Nothing ->
-            HU.assertFailure "Expected getFirstCaCertBySKI to return inserted certificate"
+        [] ->
+            HU.assertFailure "Expected getBySKI to return inserted certificate"
 
 
 shouldSaveAndGetRsyncRepositories :: IO DB -> HU.Assertion
@@ -641,9 +644,11 @@ shouldSaveMetaAndValidationAsCorrectSemigroup io = do
   where
     testOneRepository db rsync = do
         rwTx db $ \tx -> DB.saveRsyncRepositories tx db [rsync]
-        let RsyncU url = getRpkiURL $ RsyncR rsync
+        url <- case getRpkiURL $ RsyncR rsync of 
+                    RsyncU u -> pure u
+                    RrdpU u  -> HU.assertFailure $ "Expected an rsync URL, got " <> show u
         rs <- roTx db $ \tx -> DB.getRsyncRepositories tx db [url]
-        let Just r = Map.lookup url rs
+        r <- expectJust "Saved rsync repository must be readable back" (Map.lookup url rs)
         HU.assertEqual "Same repository" r rsync
 
 
@@ -695,7 +700,7 @@ rsyncReposWithCommonHosts n =
 generateRepositories :: IO PublicationPoints
 generateRepositories = do
     rrdpMap :: RrdpMap <- QC.generate QC.arbitrary
-    let pps = PublicationPoints rrdpMap newRsyncForest
+    let pps = PublicationPoints rrdpMap newRsyncForestGen
     pure $ List.foldr mergeRsyncPP pps repositoriesURIs
 
 
@@ -957,7 +962,7 @@ shouldOrderAndLinkVersions io = do
 
     versions <- roTx db $ \tx -> DB.versionsBackwards tx db
     HU.assertEqual "Expected 3 stored versions" 3 (length versions)
-    HU.assertEqual "Latest version should be first in descending list" worldVersion3 (head versions)
+    HU.assertEqual "Latest version should be first in descending list" (Just worldVersion3) (listToMaybe versions)
 
     latest <- roTx db $ \tx -> DB.getLatestVersion tx db
     HU.assertEqual "Latest version mismatch" (Just worldVersion3) latest
@@ -1240,6 +1245,19 @@ toValidatedRpkiObject = \case
     -- established to be unique; here we are deliberately not validating, so fall
     -- back to the epoch when the object doesn't have exactly one signing time.
     extractCms cms = extractCMSObject (fromMaybe (Instant 0) $ cmsSigningTime cms) cms
+
+    cmsSigningTime CMSBasedObject { cmsPayload } =
+        let CMS SignedObject { soContent = SignedData { scSignerInfos = SignerInfos { signedAttrs } } } = cmsPayload
+            SignedAttributes attrs _ = signedAttrs
+        in case [ newInstant dt | SigningTime dt _ <- attrs ] of
+            [st] -> Just st
+            _    -> Nothing
+
+getForTA :: PerTA a -> TaName -> Maybe a
+getForTA perTa taName = List.lookup taName (perTA perTa)
+
+lookupMetric :: MetricScope -> MetricMap a -> Maybe a
+lookupMetric ms mm = MonoidalMap.lookup ms (unMetricMap mm)
 
 newVersion :: MonadIO m => m WorldVersion
 newVersion = instantToVersion . unNow <$> thisInstant

@@ -22,12 +22,12 @@ import           Data.String.Interpolate.IsString
 import           RPKI.Domain
 import           RPKI.AppMonad
 import           RPKI.Reporting
-import           RPKI.Orphans
+import           RPKI.Orphans ()
 import           RPKI.SLURM.Types
 import           RPKI.SLURM.SlurmProcessing
 import           RPKI.Resources.Types
-import           RPKI.Resources.Resources
 import           RPKI.AppState
+import           RPKI.TestCommons (readIp4, readIp6)
 import           RPKI.Util 
 
 slurmGroup :: TestTree
@@ -343,6 +343,7 @@ fullJson = [i|
 mkBase64 :: BS.ByteString -> BS.ByteString
 mkBase64 bs = let EncodedBase64 z = encodeBase64 $ DecodedBase64 bs in z
 
+assertParsed :: (FromJSON a, Eq a, Show a) => a -> LBS.ByteString -> HU.Assertion
 assertParsed slurm t = let
         decoded = Json.eitherDecode t
     in HU.assertEqual ("Not the same: decoded " <> show decoded) (Right slurm) decoded

@@ -3,7 +3,7 @@ module RPKI.Resources.ValiditySpec where
 import           Test.Tasty
 import qualified Test.Tasty.QuickCheck      as QC
 
-import           RPKI.Orphans
+import           RPKI.Orphans ()
 
 import           RPKI.Domain
 import           RPKI.Resources.Types

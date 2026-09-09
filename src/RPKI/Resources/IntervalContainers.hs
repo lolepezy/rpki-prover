@@ -23,9 +23,6 @@ fromList = IntervalSet . V.fromList . normalise
 toList :: IntervalSet a -> [a]
 toList (IntervalSet s) = V.toList s
 
-findIntersections :: Interval a => a -> IntervalSet a -> [a]
-findIntersections a as = concatMap fst $ findFullIntersections a as
-
 instance WithSetOps a => Semigroup (IntervalSet a) where
     is1 <> is2 = fromList $ toList is1 <> toList is2
 

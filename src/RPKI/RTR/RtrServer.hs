@@ -99,7 +99,9 @@ runRtrServer appContext RtrConfig {..} = do
                     addrFlags = [AI_PASSIVE], 
                     addrSocketType = Stream                                        
                 }
-            head <$> getAddrInfo (Just hints) (Just rtrAddress) (Just port)            
+            getAddrInfo (Just hints) (Just rtrAddress) (Just port) >>= \case
+                addr : _ -> pure addr
+                []       -> fail [i|No address to bind to for #{rtrAddress}:#{port}.|]
 
         open addr = do
             sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
@@ -554,5 +556,7 @@ vrpToPdu flags (Vrp asn prefix maxLength) =
 
 bgpSecToPdu :: Flags -> BGPSecPayload -> [Pdu]
 bgpSecToPdu flags BGPSecPayload {..} = 
-    let Right (DecodedBase64 spkiBytes) = decodeBase64 (unSPKI bgpSecSpki) ("WTF broken SPKI" :: Text)
-    in map (\asn -> RouterKeyPdu asn flags bgpSecSki (LBS.fromStrict spkiBytes)) bgpSecAsns    
+    case decodeBase64 (unSPKI bgpSecSpki) ("WTF broken SPKI" :: Text) of 
+        Left e -> error $ "Broken BGPSec SPKI: " <> show e
+        Right (DecodedBase64 spkiBytes) -> 
+            map (\asn -> RouterKeyPdu asn flags bgpSecSki (LBS.fromStrict spkiBytes)) bgpSecAsns    

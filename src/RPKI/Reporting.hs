@@ -8,7 +8,7 @@ import           Control.DeepSeq
 import           Control.Exception.Lifted
 import           Control.Lens
 
-import           Data.Generics.Labels
+import           Data.Generics.Labels ()
 import qualified Data.ByteString             as BS
 import           Data.Int                    (Int64)
 import           Data.Hourglass
@@ -558,9 +558,6 @@ updateMetricInMap :: Monoid a =>
 updateMetricInMap ms f (MetricMap (MonoidalMap mm)) = 
     MetricMap $ MonoidalMap $ Map.alter (Just . f . fromMaybe mempty) ms mm
 
-lookupMetric :: MetricScope -> MetricMap a -> Maybe a
-lookupMetric ms (MetricMap (MonoidalMap mm)) = Map.lookup ms mm
-
 isHttpSuccess :: HttpStatus -> Bool
 isHttpSuccess (HttpStatus s) = s >= 200 && s < 300
 
@@ -588,9 +585,6 @@ rrdpRepoHasSignificantUpdates RrdpMetric {..} =
 
 rsyncRepoHasSignificantUpdates :: RsyncMetric -> Bool
 rsyncRepoHasSignificantUpdates RsyncMetric {..} = anySignificantPositive processed
-
-anyPositive :: (Ord b, Num b) => Map a b -> Bool
-anyPositive m = Prelude.any ((> 0) . snd) $ Map.toList m    
 
 anySignificantPositive :: (Ord b, Num b) => Map (Maybe RpkiObjectType) b -> Bool
 anySignificantPositive m = Prelude.any f $ Map.toList m    

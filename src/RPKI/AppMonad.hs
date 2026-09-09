@@ -63,13 +63,6 @@ vFromEither = fromEither . first ValidationE
 appLift :: Monad m => m r -> ValidatorT m r
 appLift = lift . lift . lift 
 
-validatorT :: Monad m => m (Either AppError r, ValidationState) -> ValidatorT m r
-validatorT s = 
-    lift $ ExceptT $ do
-        (v, w) <- lift s
-        put w
-        pure v
-
 embedValidatorT :: Monad m => m (Either AppError r, ValidationState) -> ValidatorT m r
 embedValidatorT s = 
     lift $ ExceptT $ do

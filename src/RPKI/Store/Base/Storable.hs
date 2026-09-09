@@ -6,9 +6,7 @@
 module RPKI.Store.Base.Storable where
 
 import qualified Data.ByteString as BS
-import qualified Data.Text       as Text
 import           Data.Map.Strict  (Map)
-import qualified Data.Map.Strict as Map
 
 import Control.DeepSeq
 import Codec.Compression.LZ4
@@ -25,12 +23,6 @@ import RPKI.Store.Base.Serialisation
 newtype Storable = Storable { unStorable :: BS.ByteString }    
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass NFData
-
-newtype SValue = SValue { unSValue :: Storable }
-    deriving stock (Eq, Ord, Show)
-
-newtype SKey = SKey { unSKey :: Storable }
-    deriving stock (Eq, Ord, Show)    
 
 data StorableObject a = StorableObject {
         object   :: a, 

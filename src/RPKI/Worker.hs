@@ -125,10 +125,6 @@ newtype RsyncFetchResult = RsyncFetchResult
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-newtype CompactionResult = CompactionResult ()                             
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
-
 data ValidationResult = ValidationResult 
             ValidationState 
             (Map.Map TaName (Fetcheables, EarliestToExpire))

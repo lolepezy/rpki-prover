@@ -56,7 +56,7 @@ import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
 import           RPKI.Store.Base.Storable
 
-import           RPKI.Store.Types
+import           RPKI.Store.Types ()
 import           RPKI.TAL
 import           RPKI.Time
 import qualified RPKI.Util                   as U

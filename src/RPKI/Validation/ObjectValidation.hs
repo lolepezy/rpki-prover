@@ -758,16 +758,6 @@ extractCMSObject signingTime CMSBasedObject { hash, cmsPayload } =
         content     = cContent scEncapContentInfo
     in WellStructuredCms { hash, content, eeCert, signingTime, cmsSignature, signedAttrsBS }
 
--- | The signing time of a CMS object, if it carries exactly one signing-time
--- signed attribute. Total, unlike relying on the invariant implicitly.
-cmsSigningTime :: CMSBasedObject a -> Maybe Instant
-cmsSigningTime CMSBasedObject { cmsPayload } =
-    let CMS SignedObject { soContent = SignedData { scSignerInfos = SignerInfos { signedAttrs } } } = cmsPayload
-        SignedAttributes attrs _ = signedAttrs
-    in case [ newInstant dt | SigningTime dt _ <- attrs ] of
-        [st] -> Just st
-        _    -> Nothing
-
 -- | Validate self-contained structural properties of a CA certificate.
 validateCaCertStructure :: CaCerObject -> PureValidatorT ()
 validateCaCertStructure ca@CaCerObject { ski } = do

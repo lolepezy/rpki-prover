@@ -15,7 +15,7 @@ import           Test.QuickCheck.Arbitrary.Generic
 import           Test.Tasty
 
 import           RPKI.AppState
-import           RPKI.Orphans
+import           RPKI.Orphans ()
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Protocol
@@ -100,7 +100,7 @@ rtrStateGroup = testGroup "RTR state unit tests" [
 
 testEmptyDiff :: TestTree
 testEmptyDiff = HU.testCase "Should squash one diff properly" $    
-    HU.assertEqual "It's a bummer" newRtrDiff $ squashDiffs []
+    HU.assertEqual "It's a bummer" (GenDiffs newDiff newDiff :: RtrDiffs) $ squashDiffs []
 
 testOneDiff :: TestTree
 testOneDiff = HU.testCase "Should squash one diff" $ do
@@ -196,15 +196,13 @@ serialiseAndParseBack protocolVersion pdu =
 
 testRtrStateUpdates :: TestTree
 testRtrStateUpdates = HU.testCase "Should update RTR state and shrink it when needed" $ do    
-    appState <- newAppState
-
     let update rtrState n m = do 
-            newVersion <- getOrCreateWorldVerion appState
+            newVersion <- newWorldVersion
             vrpDiff <- Diff <$> generateVrps n <*> generateVrps m
             bgpSecDiff <- Diff <$> generateBgpSecs n <*> generateBgpSecs m
             pure $! updatedRtrState rtrState newVersion GenDiffs {..}
     
-    worldVersion <- getOrCreateWorldVerion appState
+    worldVersion <- newWorldVersion
     let z = newRtrState worldVersion 10
     let rtrState = z { maxSerialsPerSession = 2, maxTotalDiffSize = 80 }
 

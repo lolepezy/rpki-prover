@@ -5,8 +5,6 @@ module RPKI.Store.AppStorage where
 import RPKI.AppContext
 import RPKI.AppTypes
 
-data AppStorageTag
-
 -- | Lifecycle operations for the storage backend.
 -- `s` is kept as a phantom parameter so that existing call-sites that carry
 -- a type-annotated AppContext compile without changes.

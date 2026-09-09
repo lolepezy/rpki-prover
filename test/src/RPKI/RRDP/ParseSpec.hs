@@ -17,7 +17,7 @@ import           Data.String.Interpolate
 
 import           RPKI.Util                         (convert, hex)
 
-import           RPKI.Orphans
+import           RPKI.Orphans ()
 
 
 rrdpXmlLazyParsingGroup :: TestTree
