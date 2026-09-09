@@ -133,13 +133,7 @@ data TopDownContext = TopDownContext {
         payloadBuilder          :: PayloadBuilder,
         overclaimingHappened    :: Bool,
         fetcheables             :: TVar Fetcheables,
-        earliestNotValidAfter   :: TVar EarliestToExpire,
-        -- | AKIs whose manifests have already been picked up during this TA's
-        -- traversal, see `validateChildrenOf`. Deliberately per-TA and not
-        -- shared through `AllTasTopDownContext`: TAs are validated concurrently
-        -- and their payloads are reported separately, so sharing this would let
-        -- one TA swallow another TA's objects, and which one won would depend
-        -- on a race.
+        earliestNotValidAfter   :: TVar EarliestToExpire,        
         visitedAkis             :: TVar (Set AKI)
     }
     deriving stock (Generic)
