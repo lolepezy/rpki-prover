@@ -658,13 +658,23 @@ data OutcomeScope
 -- version first and keep the top one of every group:
 --
 -- > WITH ranked AS (
--- >     SELECT <columns>, ROW_NUMBER() OVER (<partition> ORDER BY vo.version DESC) AS rn
+-- >     SELECT vo.ta_name, vo.version,
+-- >            ROW_NUMBER() OVER (<partition> ORDER BY vo.version DESC) AS rn
 -- >     FROM validation_outcomes vo <join>
 -- >     WHERE <filters>
 -- > )
--- > SELECT <columns> FROM ranked WHERE rn = 1
+-- > SELECT <columns> FROM ranked r JOIN validation_outcomes vo ON <r identifies vo>
+-- > WHERE r.rn = 1
 --
 -- and only differ in the scope they rank within.
+--
+-- The ranking deliberately carries nothing but the key. Ordering a window
+-- function makes SQLite materialise its input into a temp b-tree, so selecting
+-- the payload columns inside `ranked` copies every candidate version's blobs
+-- only to throw all but the newest away: for `roas` that was ~75mb of reads to
+-- return ~9mb, and it dominated the time to re-read payloads after validation.
+-- Ranking on (ta_name, version) and looking the winners up by primary key
+-- afterwards takes that query from ~360ms to ~1ms on a full cache.
 --
 -- A row is only a candidate when every requested column is set, so asking for
 -- several columns at once gives the latest version having all of them rather
@@ -673,15 +683,18 @@ latestOutcomeQuery :: OutcomeScope -> [Text] -> Query
 latestOutcomeQuery scope columns =
     fromString $ Text.unpack $ Text.unlines $ filter (not . Text.null)
         [ "WITH ranked AS ("
-        , "    SELECT " <> commaSeparated (map ("vo." <>) selected) <> ","
+        , "    SELECT vo.ta_name AS ta_name, vo.version AS version,"
         , "           ROW_NUMBER() OVER (" <> partitionBy <> "ORDER BY vo.version DESC) AS rn"
         , "    FROM validation_outcomes vo"
         , activeTaJoin
         , "    WHERE " <> Text.intercalate "\n      AND " filters
         , ")"
-        , "SELECT " <> commaSeparated selected
-        , "FROM ranked"
-        , "WHERE rn = 1"
+        , "SELECT " <> commaSeparated (map ("vo." <>) selected)
+        , "FROM ranked r"
+        -- `IS` rather than `=` so the Common scope, whose ta_name is NULL,
+        -- matches too. SQLite still uses the (ta_name, version) primary key.
+        , "JOIN validation_outcomes vo ON vo.ta_name IS r.ta_name AND vo.version = r.version"
+        , "WHERE r.rn = 1"
         ]
   where
     selected = case scope of
