@@ -652,33 +652,8 @@ data OutcomeScope
     | OneActiveTA   -- ^ per-TA rows of the single active TA bound to `:ta_name`
     | Common        -- ^ the common, i.e. not TA-specific, rows
 
+
 -- | The latest non-NULL values of `columns` at or before `:version`.
---
--- All of these queries have the same shape, rank the candidate rows newest
--- version first and keep the top one of every group:
---
--- > WITH ranked AS (
--- >     SELECT vo.ta_name, vo.version,
--- >            ROW_NUMBER() OVER (<partition> ORDER BY vo.version DESC) AS rn
--- >     FROM validation_outcomes vo <join>
--- >     WHERE <filters>
--- > )
--- > SELECT <columns> FROM ranked r JOIN validation_outcomes vo ON <r identifies vo>
--- > WHERE r.rn = 1
---
--- and only differ in the scope they rank within.
---
--- The ranking deliberately carries nothing but the key. Ordering a window
--- function makes SQLite materialise its input into a temp b-tree, so selecting
--- the payload columns inside `ranked` copies every candidate version's blobs
--- only to throw all but the newest away: for `roas` that was ~75mb of reads to
--- return ~9mb, and it dominated the time to re-read payloads after validation.
--- Ranking on (ta_name, version) and looking the winners up by primary key
--- afterwards takes that query from ~360ms to ~1ms on a full cache.
---
--- A row is only a candidate when every requested column is set, so asking for
--- several columns at once gives the latest version having all of them rather
--- than the latest of each column separately.
 latestOutcomeQuery :: OutcomeScope -> [Text] -> Query
 latestOutcomeQuery scope columns =
     fromString $ Text.unpack $ Text.unlines $ filter (not . Text.null)
