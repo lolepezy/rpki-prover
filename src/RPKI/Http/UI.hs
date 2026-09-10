@@ -47,6 +47,8 @@ mainPage version systemInfo perTaValidations generalValidations fetchDtos metric
     H.docTypeHtml $ do
         H.head $ do
             H.title $ "RPKI Prover " <> toHtml rpkiProverVersionNumber
+            link ! rel "icon" ! type_ "image/svg+xml" ! href "/static/favicon.svg"
+            link ! rel "icon" ! href "/static/favicon.ico" ! sizes "32x32"
             link ! rel "stylesheet" ! href "/static/styles.css"
             H.script ! src "/static/script.js" $ ""
         H.body $ do        
