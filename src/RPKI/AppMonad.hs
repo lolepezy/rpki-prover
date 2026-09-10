@@ -25,37 +25,26 @@ import           RPKI.Reporting
 import           RPKI.Time
 
 
-{- | The validator effect set.
-
-   This replaces both @Monad m => ValidatorT m@ and @PureValidatorT@ of the
-   old MTL-based stack: with `effectful` there is no difference between a
-   "pure" and an "IO" validator other than whether `IOE` is in scope, so the
-   two collapse into one constraint, and the `vHoist` that used to bridge them
-   is gone entirely.
-
-   NOTE on `Effectful.State.Static.Shared` vs `.Local`: every function in
-   `Effectful.Concurrent.Async` clones the effect environment for the child
-   computation. With `.Local` that means `ValidationState` written inside
-   `async`/`concurrently`/`pooledForConcurrentlyN` is silently dropped; with
-   `.Shared` the rep is an MVar whose reference survives cloning, so it is
-   merged back. `Parallel.hs` relies on this. The two modules export exactly
-   the same names, so switching back is a one-line change here (plus explicit
-   state merging in `Parallel.hs`).
--}
+-- | The validator effect set.
 type Validator es =
     ( Reader Scopes         :> es
     , Error AppError        :> es
     , State ValidationState :> es
     )
 
--- | Validator effects plus IO, forking and timeouts. Replaces @ValidatorT IO@.
-type ValidatorIO es = (Validator es, Concurrent :> es, Timeout :> es, IOE :> es)
+{- | Validator effects plus IO.
+
+   Deliberately does *not* include `Concurrent` or `Timeout`: those are added
+   per function, so a signature says whether it can fork or time out.
+   `AppEffects` still provides both and `runValidatorIO` discharges them.
+-}
+type ValidatorIO es = (Validator es, IOE :> es)
 
 -- | Concrete stack discharged by 'runValidatorIO'.
 type AppEffects =
     '[Reader Scopes, Error AppError, State ValidationState, Concurrent, Timeout, IOE]
 
--- | Concrete stack discharged by 'runPureValidator'.
+-- | Concrete stack discharged by 'runValidatorPure'.
 type PureEffects = '[Reader Scopes, Error AppError, State ValidationState]
 
 
@@ -70,18 +59,18 @@ type PureEffects = '[Reader Scopes, Error AppError, State ValidationState]
    tags its exception with a fresh `Unique` so an inner `throwError` can never
    be caught by an outer `runError`.
 -}
-runValidatorT :: Scopes
-              -> Eff (Reader Scopes : Error AppError : State ValidationState : es) a
-              -> Eff es (Either AppError a, ValidationState)
-runValidatorT scopes = runState mempty . runErrorNoCallStack . runReader scopes
+runValidator :: Scopes
+             -> Eff (Reader Scopes : Error AppError : State ValidationState : es) a
+             -> Eff es (Either AppError a, ValidationState)
+runValidator scopes = runState mempty . runErrorNoCallStack . runReader scopes
 
 -- | Run a validator all the way down to IO. Used at the IO boundary
 -- (`Main`, `Workflow`, tests, benchmarks).
 runValidatorIO :: Scopes -> Eff AppEffects a -> IO (Either AppError a, ValidationState)
-runValidatorIO scopes = runEff . runTimeout . runConcurrent . runValidatorT scopes
+runValidatorIO scopes = runEff . runTimeout . runConcurrent . runValidator scopes
 
-runPureValidator :: Scopes -> Eff PureEffects a -> (Either AppError a, ValidationState)
-runPureValidator scopes = runPureEff . runValidatorT scopes
+runValidatorPure :: Scopes -> Eff PureEffects a -> (Either AppError a, ValidationState)
+runValidatorPure scopes = runPureEff . runValidator scopes
 
 {- | Monomorphic wrappers around the `Reader`/`State` operations.
 
@@ -168,12 +157,6 @@ fromTryEither mapErr t = fromTry mapErr t >>= either appError pure
 
 -- Errors and warnings ----------------------------------------------------------
 
-{- | Record the error against the current validation scope, then short-circuit.
-
-   The `pure*` / `v*` split of the MTL version is gone: there is no longer a
-   separate pure validator monad to mirror, so `appError`/`vError` and
-   `validatorWarning`/`appWarn`/`vWarn` are the whole surface.
--}
 appError :: Validator es => AppError -> Eff es r
 appError e = do
     scopes <- askScopes
@@ -265,15 +248,6 @@ timedMetric p = timedMetric' p (\elapsed -> #totalTimeMs .~ elapsed)
 
 {- | Time an action and record the elapsed time in the metric of the current
    metric scope, whether or not the action failed.
-
-   The old implementation re-ran the action under a nested `runValidatorT` to
-   get a fresh `ValidationState`. That is not possible any more: an action of
-   type @Eff es r@ has its effect indices already resolved against `es`, so it
-   cannot be re-interpreted under freshly pushed handlers. The fresh state is
-   therefore emulated explicitly, which keeps the behaviour identical --
-   `TopDown.validateCa` reads back the issues of the current scope from the
-   state (`thisScopeIssues`) while inside a `timedMetric`, so leaking outer
-   state into that read would suppress manifest shortcut creation.
 -}
 timedMetric' :: forall metric es r .
                 (ValidatorIO es,
@@ -295,13 +269,8 @@ timedMetric' _ f v = do
 
 -- Misc ---------------------------------------------------------------------------
 
-timeoutVT :: ValidatorIO es => Seconds -> Eff es a -> Eff es a -> Eff es a
+timeoutVT :: (ValidatorIO es, Timeout :> es) => Seconds -> Eff es a -> Eff es a -> Eff es a
 timeoutVT s toDo timedOut = do
     let Seconds t = s
     timeout (1_000_000 * fromIntegral t) toDo >>= maybe timedOut pure
 
-andThen :: Eff es a -> Eff es () -> Eff es a
-andThen f action = do
-    !z <- f
-    action
-    pure $! z

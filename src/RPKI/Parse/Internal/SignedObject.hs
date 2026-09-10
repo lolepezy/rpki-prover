@@ -92,7 +92,7 @@ parseSignedObject contentBinaryParse =
                   signature'   <- parseSignature
                   let certWithSig = CertificateWithSignature 
                         eeCertificate sigAlgorithm signature' (toShortBS encodedCert)
-                  case runPureValidator (newScopes "parseEE") (toResourceCert certWithSig) of
+                  case runValidatorPure (newScopes "parseEE") (toResourceCert certWithSig) of
                     (Left e, _) -> 
                         throwParseError $ "EE certificate is broken " <> show e
                     (Right (_,   _,  Nothing), _) -> 

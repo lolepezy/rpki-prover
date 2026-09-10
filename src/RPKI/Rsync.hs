@@ -13,6 +13,7 @@ import           Control.Concurrent.STM
 import qualified Control.Exception               as IOExc
 
 import           Effectful.Concurrent.Async
+import           Effectful.Timeout                (Timeout)
 import           Effectful.Exception
 import           Control.Monad
 
@@ -154,7 +155,7 @@ rsyncRpkiObject AppContext{..} fetchConfig uri = do
 
 -- | Process the whole rsync repository, download it, traverse the directory and 
 -- | add all the relevant objects to the storage.
-updateObjectForRsyncRepository :: ValidatorIO es => 
+updateObjectForRsyncRepository :: (ValidatorIO es, Concurrent :> es, Timeout :> es) => 
                                   AppContext s
                                -> FetchConfig 
                                -> WorldVersion 
@@ -238,7 +239,7 @@ readRsyncProcess logger fetchConfig pc textual = do
 -- | objects into the storage.
 -- 
 -- | Is not supposed to throw exceptions.
-loadRsyncRepository :: ValidatorIO es => AppContext s 
+loadRsyncRepository :: (ValidatorIO es, Concurrent :> es) => AppContext s 
                     -> WorldVersion 
                     -> RsyncURL 
                     -> FilePath 
@@ -269,10 +270,10 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
                         let uri = restoreUriFromPath repositoryUrl rootPath path
                         s <- lift askScopes
                         a <- lift $ async $ evaluate
-                                =<< runValidatorT s (readAndParseObject path (RsyncU uri))
+                                =<< runValidator s (readAndParseObject path (RsyncU uri))
                         S.yield (a, uri)
       where
-        -- Explicit `forall es'`: this is run under a nested `runValidatorT`,
+        -- Explicit `forall es'`: this is run under a nested `runValidator`,
         -- which pushes fresh handlers, so with MonoLocalBinds an unsignatured
         -- (hence monomorphic) binding would not typecheck there.
         readAndParseObject :: forall es' . ValidatorIO es'
@@ -298,7 +299,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
                 doParse scopes `catchSync` onError scopes
               where
                 doParse scopes = do                     
-                    z <- runValidatorT scopes $ do
+                    z <- runValidator scopes $ do
                             inSubLocationScope (getURL rpkiURL) $ 
                                 prevalidateObject =<< readObjectOfType type_ blob
                     evaluate $!
@@ -312,7 +313,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
                                     mkSaveObject $ WellStructuredRO vro
 
                 onError scopes e = do
-                    (_, vs) <- runValidatorT scopes $
+                    (_, vs) <- runValidator scopes $
                         fromEither @() $ Left $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e
                     pure $! mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
 

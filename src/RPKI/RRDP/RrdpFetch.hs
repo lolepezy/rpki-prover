@@ -94,7 +94,7 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
 -- | 
 --  Update RRDP repository, actually saving all the objects in the DB.
 -- 
-updateRrdpRepository :: ValidatorIO es => 
+updateRrdpRepository :: (ValidatorIO es, Concurrent :> es) => 
                         AppContext s 
                     -> WorldVersion 
                     -> RrdpRepository
@@ -409,7 +409,7 @@ nextSerial (RrdpSerial s) = RrdpSerial $ s + 1
         - one thread parses XML, reads base64s and pushes CPU-intensive parsing tasks into the queue 
         - another thread reads parsing tasks, waits for them and saves the results into the DB.
 -} 
-saveSnapshot :: ValidatorIO es => 
+saveSnapshot :: (ValidatorIO es, Concurrent :> es) => 
                 AppContext s        
                 -> WorldVersion         
                 -> RrdpURL
@@ -494,7 +494,7 @@ saveSnapshot
                 doParse `catchSync` onError
               where
                 doParse = do 
-                    z <- runValidatorT scopes $
+                    z <- runValidator scopes $
                             inSubLocationScope uri $ 
                                 prevalidateObject =<< readObjectOfType type_ blob
                     evaluate $!
@@ -508,7 +508,7 @@ saveSnapshot
                                     mkSaveObject $! WellStructuredRO vro
 
                 onError e = do
-                    (_, vs) <- runValidatorT scopes $ inSubLocationScope uri $
+                    (_, vs) <- runValidator scopes $ inSubLocationScope uri $
                         fromEither @() $ Left $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e
                     pure $! mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
 
@@ -568,7 +568,7 @@ saveSnapshot
     a non-existent object, or add an existing one. In all these cases, we
     emit an error and fall back to downloading snapshot.
 -}
-saveDelta :: ValidatorIO es => 
+saveDelta :: (ValidatorIO es, Concurrent :> es) => 
             AppContext s 
             -> WorldVersion         
             -> RrdpURL 
@@ -642,7 +642,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 doParse `catchSync` onError                    
               where
                 doParse = do 
-                    z <- runValidatorT scopes $ 
+                    z <- runValidator scopes $ 
                             inSubLocationScope uri $                                 prevalidateObject =<< readObjectOfType type_ blob
                     evaluate $!
                         case z of 

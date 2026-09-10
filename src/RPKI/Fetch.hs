@@ -4,6 +4,7 @@
 
 module RPKI.Fetch where
 
+import           Effectful.Timeout                (Timeout)
 import           Effectful
 import           Control.Concurrent              as Conc
 import           Control.Concurrent.Async
@@ -117,7 +118,7 @@ updateUriPerTa fetcheablesPerTa uriTa = uriTa'
 -- Returned repository has all the metadata updated (in case of RRDP session and serial).
 -- The metadata is also updated in the database.
 --
-fetchRepository :: ValidatorIO es => AppContext s 
+fetchRepository :: (ValidatorIO es, Timeout :> es) => AppContext s 
                 -> FetchConfig
                 -> WorldVersion
                 -> Repository 
@@ -178,7 +179,7 @@ fetchRepository
 
 -- | Fetch TA certificate based on TAL location(s)
 --
-fetchTACertificate :: ValidatorIO es => AppContext s -> FetchConfig -> TAL -> Eff es (RpkiURL, ParsedRpkiObject)
+fetchTACertificate :: (ValidatorIO es, Timeout :> es) => AppContext s -> FetchConfig -> TAL -> Eff es (RpkiURL, ParsedRpkiObject)
 fetchTACertificate appContext@AppContext {..} fetchConfig tal = 
     go $ sortRrdpFirst $ neSetToList $ unLocations $ talCertLocations tal
   where

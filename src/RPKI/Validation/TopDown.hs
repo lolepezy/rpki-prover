@@ -1,5 +1,5 @@
 -- Local validator helpers are used both at the enclosing effect stack and
--- under nested `runValidatorT` calls (which push fresh Reader/Error/State
+-- under nested `runValidator` calls (which push fresh Reader/Error/State
 -- handlers). GHC2024 implies MonoLocalBinds, which would pin the unsignatured
 -- ones to the enclosing stack; turn it off so they generalise over `es`.
 {-# LANGUAGE NoMonoLocalBinds     #-}
@@ -16,8 +16,9 @@ module RPKI.Validation.TopDown (
 )
 where
 
+import           Effectful.Timeout (Timeout)
 import           Effectful
-import           Effectful.Concurrent.Async      (runConcurrent, forConcurrently, pooledForConcurrentlyN)
+import           Effectful.Concurrent.Async      (Concurrent, runConcurrent, forConcurrently, pooledForConcurrentlyN)
 import           Control.Concurrent.STM
 import           Effectful.Exception
 import           Effectful.Error.Static           (catchError)
@@ -384,7 +385,7 @@ data WhichTA = FetchedTA RpkiURL ParsedRpkiObject | CachedTA StorableTA
 -- | Fetch and validated TA certificate starting from the TAL.
 -- | 
 -- | This function doesn't throw exceptions.
-validateTACertificateFromTAL :: ValidatorIO es => AppContext s
+validateTACertificateFromTAL :: (ValidatorIO es, Timeout :> es) => AppContext s
                                 -> TAL
                                 -> WorldVersion
                                 -> Eff es (Located WellStructuredCaCert, PublicationPointAccess)
@@ -485,7 +486,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
 -- | Do the validation starting from the TA certificate.
 -- | 
 -- | This function doesn't throw exceptions.
-validateFromTACert :: ValidatorIO es => AppContext s ->
+validateFromTACert :: (ValidatorIO es, Concurrent :> es) => AppContext s ->
                     TopDownContext ->
                     PublicationPointAccess ->
                     Located WellStructuredCaCert ->
@@ -508,7 +509,7 @@ validateFromTACert
             Nothing            -> publicationPoints
 
 
-validateCa :: ValidatorIO es => AppContext s ->
+validateCa :: (ValidatorIO es, Concurrent :> es) => AppContext s ->
             TopDownContext ->
             Ca ->
             Eff es ()
@@ -566,7 +567,7 @@ validateCa
     validationConfig = config ^. typed @ValidationConfig
     
 
-validateCaNoLimitChecks :: ValidatorIO es => AppContext s ->
+validateCaNoLimitChecks :: (ValidatorIO es, Concurrent :> es) => AppContext s ->
                         TopDownContext ->
                         Ca ->
                         Eff es ()
@@ -608,7 +609,7 @@ validateCaNoLimitChecks
                 appError $ ValidationE $ WeirdCaPublicationPoints weirdCaUrls                        
 
 
-validateCaNoFetch :: ValidatorIO es => AppContext s
+validateCaNoFetch :: (ValidatorIO es, Concurrent :> es) => AppContext s
                 -> TopDownContext 
                 -> Ca 
                 -> Eff es ()
@@ -709,8 +710,10 @@ validateCaNoFetch
                                                     else do
                                                         reportMftFallback e mft
                                                         onlyCollectPayloads meta
-                        pure $! action `andThen`
-                                (oneMoreMft >> oneMoreCrl >> oneMoreMftShort)
+                        pure $! do 
+                            r <- action
+                            oneMoreMft >> oneMoreCrl >> oneMoreMftShort
+                            pure $! r
 
 
         -- The manifest changed since the last shortcut: run the full diff, which needs
@@ -786,7 +789,7 @@ validateCaNoFetch
     -- and children mentioned in the manifest shortcut. Create a diff between them,
     -- run full validation only for new children and create a new manifest shortcut
     -- with updated set of children.
-    manifestFullValidation :: ValidatorIO es' => Located WellStructuredCaCert
+    manifestFullValidation :: (ValidatorIO es', Concurrent :> es') => Located WellStructuredCaCert
                         -> Keyed (Located WellStructuredMft)
                         -> Maybe MftShortcut 
                         -> AKI
@@ -1011,7 +1014,7 @@ validateCaNoFetch
         forChildren
             nonCrlChildren
             $ \(T3 filename hash' key) -> do
-                (z, vs) <- runValidatorT scopes $ do
+                (z, vs) <- runValidator scopes $ do
                                 ro <- getManifestEntry filename hash' key
                                 -- if failed this one interrupts the whole MFT valdiation
                                 validateMftChild fullCa ro filename validCrl
@@ -1026,7 +1029,7 @@ validateCaNoFetch
         forChildren
             nonCrlChildren
             $ \(T3 filename hash key) -> do
-                (r, vs) <- runValidatorT scopes $ getManifestEntry filename hash key
+                (r, vs) <- runValidator scopes $ getManifestEntry filename hash key
                 case r of
                     Left e -> do 
                         -- Decide if the error is related to the manifest itself 
@@ -1041,7 +1044,7 @@ validateCaNoFetch
                         -- 
                         -- if failed, this one will result in the empty VRP set
                         -- while keeping errors and warning in the `vs'` value.
-                        (z, vs') <- runValidatorT scopes $ validateMftChild fullCa ro filename validCrl
+                        (z, vs') <- runValidator scopes $ validateMftChild fullCa ro filename validCrl
                         pure $! case z of
                                 Left e              -> InvalidChild e vs' key filename
                                 Right childShortcut -> ValidEntry vs' childShortcut key filename
@@ -1181,7 +1184,7 @@ validateCaNoFetch
 
         And return shortcut created for it
     -}
-    validateChildObject :: ValidatorIO es' => 
+    validateChildObject :: (ValidatorIO es', Concurrent :> es') => 
             Located WellStructuredCaCert
             -> Keyed (Located WellStructuredRpkiObject) 
             -> Text
@@ -1194,11 +1197,11 @@ validateCaNoFetch
                 parentScope <- askScopes                
                 {- 
                     Note that recursive validation of the child CA happens in the separate   
-                    runValidatorT (...) call, it is to avoid short-circuit logic implemented by ExceptT:
+                    runValidator (...) call, it is to avoid short-circuit logic implemented by ExceptT:
                     otherwise an error in child validation would interrupt validation of the parent with
                     ExceptT's exception logic.
                 -}
-                (r, validationState) <- runValidatorT parentScope $       
+                (r, validationState) <- runValidator parentScope $       
                     vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
                         -- Check that AIA of the child points to the correct location of the parent
                         -- https://mailarchive.ietf.org/arch/msg/sidrops/wRa88GHsJ8NMvfpuxXsT2_JXQSU/
@@ -1332,7 +1335,7 @@ validateCaNoFetch
             getIssues (scopes ^. typed) (vs ^. typed)
 
 
-    collectPayloads :: ValidatorIO es' => AKI
+    collectPayloads :: (ValidatorIO es', Concurrent :> es') => AKI
                     -> DB.MftShortcutMeta
                     -> Map.Map ObjectKey ChildData
                     -> Maybe [T3 Text Hash ObjectKey]
@@ -1403,7 +1406,7 @@ validateCaNoFetch
                         else forM
 
             scopes <- askScopes
-            z <- forAllChildren children $ runValidatorT scopes . f
+            z <- forAllChildren children $ runValidator scopes . f
             embedState $ mconcat $ map snd z                 
 
         validateTroubledChild caFull fileName (Keyed validCrl _) childKey = do  

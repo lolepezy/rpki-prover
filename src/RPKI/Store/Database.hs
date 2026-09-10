@@ -1322,7 +1322,7 @@ appTx db f txF = do
        `onException` rollback path. The rollback is instead driven explicitly by
        `TxRollbackException`, exactly as before.
 
-       Unlike the MTL version there is no nested `runValidatorT` here: the body
+       Unlike the MTL version there is no nested `runValidator` here: the body
        writes into the enclosing (shared) `ValidationState` directly, and those
        writes survive the error, so there is nothing left to merge back. -}
     r <- withSeqEffToIO $ \unlift ->

@@ -32,7 +32,7 @@ atLeastOne n = if n < 2 then 1 else n
 
 -- Consume a stream, map each element and put asyncs in the queue.
 -- Read the queue and consume asyncs on the other end.
-foldPipeline :: ValidatorIO es =>
+foldPipeline :: (ValidatorIO es, Concurrent :> es) =>
             Natural ->
             Stream (Of s) (Eff es) () ->
             (s -> Eff es p) ->          -- ^ producer
@@ -66,7 +66,7 @@ foldPipeline parallelism stream mapStream consume accum0 =
 -- | Utility function for a specific case of producer-consumer pair 
 -- where consumer works within a transaction (represented as withTx function)
 --  
-txFoldPipeline :: ValidatorIO es =>
+txFoldPipeline :: (ValidatorIO es, Concurrent :> es) =>
             Natural ->
             Stream (Of q) (Eff es) () ->
             ((tx -> Eff es ()) -> Eff es ()) -> -- ^ transaction in which all consumerers are wrapped
