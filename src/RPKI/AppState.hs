@@ -2,11 +2,11 @@
 
 module RPKI.AppState where
     
+import           Effectful
 import           Control.Concurrent.STM    
 import           Control.DeepSeq
 import           Control.Lens hiding (filtered)
 import           Control.Monad (join, unless)
-import           Control.Monad.IO.Class
 
 import qualified Data.ByteString                  as BS
 
@@ -45,8 +45,13 @@ data AppState = AppState {
         -- RTR state for every new client.
         cachedBinaryRtrPdus :: TVar (Map.Map ProtocolVersion BS.ByteString),
 
-        -- Function that re-reads SLURM file(s) after every re-validation
-        readSlurm   :: Maybe (ValidatorT IO Slurm),
+        -- Function that re-reads SLURM file(s) after every re-validation.
+        -- Pinned to the concrete `AppEffects` stack rather than the polymorphic
+        -- `ValidatorIO es => Eff es Slurm`, because a constrained type cannot be
+        -- stored in a record field without impredicativity. Its only consumer
+        -- (`Workflow.reReadSlurm`) runs it with `runValidatorIO`, which expects
+        -- exactly this stack.
+        readSlurm :: Maybe (Eff AppEffects Slurm),
 
         -- Metadata about RTR server
         rtrState    :: TVar (Maybe RtrState),

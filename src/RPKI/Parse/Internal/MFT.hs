@@ -1,6 +1,6 @@
 module RPKI.Parse.Internal.MFT where
 
-import Control.Monad
+import           Effectful
 
 import qualified Data.ByteString          as BS
 import qualified Data.Text                as Text
@@ -19,7 +19,7 @@ import           RPKI.Parse.Internal.SignedObject
 import qualified RPKI.Util                  as U
 
 
-parseMft :: BS.ByteString -> PureValidatorT MftObject
+parseMft :: Validator es => BS.ByteString -> Eff es MftObject
 parseMft bs = do
     asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs
     signedMft <- fromEither $ first (parseErr . U.fmtGen) $ 

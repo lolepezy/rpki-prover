@@ -24,7 +24,7 @@ isSemigroup (s1, s2, s3) = s1 <> (s2 <> s3) == (s1 <> s2) <> s3
 runValidatorTAndvalidatorTShouldBeId :: QC.Property
 runValidatorTAndvalidatorTShouldBeId = monadicIO $ do
   z :: (Either AppError (), ValidationState) <- pick arbitrary 
-  q <- runValidatorT (newScopes "zzz") $ validatorT $ pure z
+  q <- run $ runValidatorIO (newScopes "zzz") $ validatorT $ pure z
   assert $ q == z
 
 forMShouldSavesState :: HU.Assertion
@@ -32,7 +32,7 @@ forMShouldSavesState = do
   v <- QC.generate arbitrary  
      
   (_, ValidationState { validations = Validations validationMap }) 
-    <- runValidatorT (newScopes "zzz") $ do 
+    <- runValidatorIO (newScopes "zzz") $ do 
         validatorT $ pure (Right (), v)
         forM ["x", "y", "z"] $ \x ->
             appWarn $ UnspecifiedE x (x <> "-bla") 
@@ -47,7 +47,7 @@ forMShouldSavesState = do
 scopesShouldBeProperlyNested :: HU.Assertion
 scopesShouldBeProperlyNested = do
     (_, ValidationState { validations = Validations validationMap }) 
-        <- runValidatorT (newScopes "root") $ do
+        <- runValidatorIO (newScopes "root") $ do
             timedMetric (Proxy :: Proxy RrdpMetric) $ do                 
                 appWarn $ UnspecifiedE "Error0" "text 0"
                 vFocusOn TextFocus "snapshot.xml" $ do            
@@ -78,7 +78,7 @@ appMonadSpec = testGroup "AppMonad" [
         QC.testProperty "RrdpSource is a semigroup" (isSemigroup @RrdpSource),
         QC.testProperty "HttpStatus is a semigroup" (isSemigroup @HttpStatus),
 
-        QC.testProperty "runValidatorT . validatorT == id" runValidatorTAndvalidatorTShouldBeId,
+        QC.testProperty "runValidatorIO . validatorT == id" runValidatorTAndvalidatorTShouldBeId,
             
         HU.testCase "forM saves state" forMShouldSavesState,
         HU.testCase "forM saves state" scopesShouldBeProperlyNested

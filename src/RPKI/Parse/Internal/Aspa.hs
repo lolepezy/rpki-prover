@@ -2,6 +2,7 @@
 
 module RPKI.Parse.Internal.Aspa where
 
+import           Effectful
 import qualified Data.ByteString as BS  
 
 import Control.Applicative
@@ -27,7 +28,7 @@ import qualified RPKI.Util as U
 
 -- | Parse ASPA, https://datatracker.ietf.org/doc/draft-ietf-sidrops-aspa-profile/
 -- 
-parseAspa :: BS.ByteString -> PureValidatorT AspaObject
+parseAspa :: Validator es => BS.ByteString -> Eff es AspaObject
 parseAspa bs = do    
     asns       <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs    
     signedAspa <- fromEither $ first (parseErr . U.convert) $ 

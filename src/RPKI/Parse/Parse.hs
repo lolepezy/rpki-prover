@@ -20,6 +20,7 @@ module RPKI.Parse.Parse (
 )
 where
 
+import           Effectful
 import qualified Data.ByteString                  as BS
 import           Data.Char                        (toLower)
 import qualified Data.Text                        as Text
@@ -76,14 +77,14 @@ isOfType t1 t2 = t1 == t2 || t1 == BGPSec && t2 == CER
 
 -- | Parse object from a bytesting containing ASN1 representaton
 -- | Decide which parser to use based on the object's filename
-readObject :: RpkiURL -> BS.ByteString -> PureValidatorT ParsedRpkiObject
+readObject :: Validator es => RpkiURL -> BS.ByteString -> Eff es ParsedRpkiObject
 readObject objectURL bs =     
     case urlObjectType objectURL of 
         Just type_ -> readObjectOfType type_ bs
-        Nothing    -> pureError $ parseErr $ "Could not figure out object type from URL: " <> fmtGen objectURL
+        Nothing    -> appError $ parseErr $ "Could not figure out object type from URL: " <> fmtGen objectURL
 
 
-readObjectOfType :: RpkiObjectType -> BS.ByteString -> PureValidatorT ParsedRpkiObject        
+readObjectOfType :: Validator es => RpkiObjectType -> BS.ByteString -> Eff es ParsedRpkiObject        
 readObjectOfType objectType bs = 
     case objectType of 
         CER -> do 
@@ -96,7 +97,7 @@ readObjectOfType objectType bs =
                     let certificate = TypedCert rc
                     pure $ BgpRO $ BgpCerObject {..}
                 EECert -> 
-                    pureError $ parseErr "Cannot have EE certificate as a separate object."
+                    appError $ parseErr "Cannot have EE certificate as a separate object."
 
         MFT  -> MftRO <$> parseMft bs
         ROA  -> RoaRO <$> parseRoa bs
@@ -105,4 +106,4 @@ readObjectOfType objectType bs =
         GBR  -> GbrRO <$> parseGbr bs            
         RSC  -> RscRO <$> parseRsc bs
         ASPA -> AspaRO <$> parseAspa bs     
-        t    -> pureError $ parseErr $ "Parsing of type " <> fmtGen t <> " is not supported"  
+        t    -> appError $ parseErr $ "Parsing of type " <> fmtGen t <> " is not supported"  

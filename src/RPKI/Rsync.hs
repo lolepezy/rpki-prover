@@ -3,16 +3,18 @@
 
 module RPKI.Rsync where
     
+import           Effectful
 import           Control.Lens
 import           Data.Generics.Product.Typed
 
 import           Data.Bifunctor
 
-import           Control.Concurrent.Async
 import           Control.Concurrent.STM
-import           Control.Exception.Lifted
+import qualified Control.Exception               as IOExc
+
+import           Effectful.Concurrent.Async
+import           Effectful.Exception
 import           Control.Monad
-import           Control.Monad.IO.Class           
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
@@ -57,13 +59,14 @@ import           System.IO
 import           System.FilePath
 import           System.Process.Typed
 
+import           Streaming                        (lift)
 import qualified Streaming.Prelude                as S
 
 
-checkRsyncInPath :: Maybe FilePath -> ValidatorT IO ()
+checkRsyncInPath :: ValidatorIO es => Maybe FilePath -> Eff es ()
 checkRsyncInPath rsyncClientPath = do 
     let client = fromMaybe "rsync" rsyncClientPath    
-    z <- liftIO $ try $ readProcess $ proc client [ "--version" ]
+    z <- liftIO $ IOExc.try $ readProcess $ proc client [ "--version" ]
     case z of
         Left (e :: SomeException) -> do 
             let message = maybe 
@@ -82,11 +85,11 @@ stdout = [#{U.textual stdout'}],
 stderr = [#{U.textual stderr'}]|]
 
 
-runRsyncFetchWorker :: AppContext s 
+runRsyncFetchWorker :: ValidatorIO es => AppContext s 
                     -> FetchConfig
                     -> WorldVersion
                     -> RsyncRepository             
-                    -> ValidatorT IO RsyncRepository
+                    -> Eff es RsyncRepository
 runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion repository = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
@@ -126,10 +129,10 @@ runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion reposito
 -- | Download one file using rsync
 -- | 
 -- | This function doesn't throw exceptions.
-rsyncRpkiObject :: AppContext s -> 
+rsyncRpkiObject :: ValidatorIO es => AppContext s -> 
                 FetchConfig -> 
                 RsyncURL -> 
-                ValidatorT IO ParsedRpkiObject
+                Eff es ParsedRpkiObject
 rsyncRpkiObject AppContext{..} fetchConfig uri = do
     let RsyncConf {..} = rsyncConf config
     destination <- rsyncDestination RsyncOneFile (configValue rsyncRoot) uri
@@ -144,19 +147,19 @@ rsyncRpkiObject AppContext{..} fetchConfig uri = do
             appError $ RsyncE $ RsyncProcessError errorCode $ U.convert err  
         ExitSuccess -> do
             fileSize <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileSize destination
-            void $ vHoist $ validateSizeM (config ^. typed) fileSize
+            void $ validateSizeM (config ^. typed) fileSize
             bs       <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileContent destination
-            vHoist $ readObject (RsyncU uri) bs
+            readObject (RsyncU uri) bs
 
 
 -- | Process the whole rsync repository, download it, traverse the directory and 
 -- | add all the relevant objects to the storage.
-updateObjectForRsyncRepository :: 
+updateObjectForRsyncRepository :: ValidatorIO es => 
                                   AppContext s
                                -> FetchConfig 
                                -> WorldVersion 
                                -> RsyncRepository 
-                               -> ValidatorT IO RsyncRepository
+                               -> Eff es RsyncRepository
 updateObjectForRsyncRepository 
     appContext@AppContext{..} 
     fetchConfig
@@ -221,7 +224,7 @@ readRsyncProcess logger fetchConfig pc textual = do
 
     withWorker pid endOfLife f = do 
         let workerInfo = WorkerInfo pid endOfLife textual RsyncWorker
-        bracket
+        IOExc.bracket
             (registerWorker logger workerInfo)
             (\_ -> deregisterWorker logger pid)   
             (const f)
@@ -235,12 +238,12 @@ readRsyncProcess logger fetchConfig pc textual = do
 -- | objects into the storage.
 -- 
 -- | Is not supposed to throw exceptions.
-loadRsyncRepository :: AppContext s 
+loadRsyncRepository :: ValidatorIO es => AppContext s 
                     -> WorldVersion 
                     -> RsyncURL 
                     -> FilePath 
                     -> DB
-                    -> ValidatorT IO ()
+                    -> Eff es ()
 loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
     txFoldPipeline 
             (2 * cpuParallelism)
@@ -264,11 +267,16 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
                 False -> 
                     when (supportedExtension name) $ do         
                         let uri = restoreUriFromPath repositoryUrl rootPath path
-                        s <- askScopes                     
-                        let task = runValidatorT s (readAndParseObject path (RsyncU uri))
-                        a <- liftIO $ async $ evaluate =<< task
+                        s <- lift askScopes
+                        a <- lift $ async $ evaluate
+                                =<< runValidatorT s (readAndParseObject path (RsyncU uri))
                         S.yield (a, uri)
       where
+        -- Explicit `forall es'`: this is run under a nested `runValidatorT`,
+        -- which pushes fresh handlers, so with MonoLocalBinds an unsignatured
+        -- (hence monomorphic) binding would not typecheck there.
+        readAndParseObject :: forall es' . ValidatorIO es'
+                           => FilePath -> RpkiURL -> Eff es' RsyncObjectProcessingResult
         readAndParseObject filePath rpkiURL = 
             liftIO (getSizeAndContent (config ^. typed) filePath) >>= \case                    
                 Left e          -> pure $! CantReadFile rpkiURL filePath $ VErr e
@@ -290,8 +298,8 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
                 doParse scopes `catchSync` onError scopes
               where
                 doParse scopes = do                     
-                    z <- liftIO $ runValidatorT scopes $ do
-                            inSubLocationScope (getURL rpkiURL) $ vHoist $ 
+                    z <- runValidatorT scopes $ do
+                            inSubLocationScope (getURL rpkiURL) $ 
                                 prevalidateObject =<< readObjectOfType type_ blob
                     evaluate $!
                         case z of
@@ -305,7 +313,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
 
                 onError scopes e = do
                     (_, vs) <- runValidatorT scopes $
-                        vHoist $ fromEither @() $ Left $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e
+                        fromEither @() $ Left $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e
                     pure $! mkSaveObject $ OriginalRO (ObjectOriginal blob) vs hash type_
 
                 -- Encode/compress the object here, on the parsing (async) thread,
@@ -313,7 +321,7 @@ loadRsyncRepository AppContext{..} worldVersion repositoryUrl rootPath db = do
                 mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
 
     saveStorable tx (a, _) = do 
-        (r, vs) <- fromTry (UnspecifiedE "Something bad happened in loadRsyncRepository" . U.fmtEx) $ wait a                
+        (r, vs) <- fromTryM (UnspecifiedE "Something bad happened in loadRsyncRepository" . U.fmtEx) $ wait a                
         embedState vs
         case r of 
             Left e  -> appWarn e
@@ -375,7 +383,7 @@ rsyncProcess Config {..} fetchConfig rsyncURL destination rsyncMode =
    happens, never create directories or point the rsync client (which runs 
    with --delete) outside of `root`.
 -}
-rsyncDestination :: RsyncMode -> FilePath -> RsyncURL -> ValidatorT IO FilePath
+rsyncDestination :: ValidatorIO es => RsyncMode -> FilePath -> RsyncURL -> Eff es FilePath
 rsyncDestination rsyncMode root url@(RsyncURL (RsyncHost (RsyncHostName host) port) path) = do 
     let portPath = maybe "" (\p -> "_" <> show p) port
     let fullPath = ((U.convert host :: String) <> portPath) :| map (U.convert . unRsyncPathChunk) path
@@ -424,7 +432,7 @@ getSizeAndContent vc path = do
                 (_, Left e)  -> Left e
                 (s, Right b) -> Right (s, b)    
   where    
-    readSizeAndContet = try $ do
+    readSizeAndContet = IOExc.try $ do
         withFile path ReadMode $ \h -> do
             size <- hFileSize h
             case validateSize vc size of

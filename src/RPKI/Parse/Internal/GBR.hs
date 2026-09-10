@@ -2,6 +2,7 @@
 
 module RPKI.Parse.Internal.GBR where
 
+import           Effectful
 import Data.ASN1.BinaryEncoding
 import Data.ASN1.Encoding
 import Data.ASN1.Parse
@@ -21,7 +22,7 @@ import qualified RPKI.Util as U
 
 -- | Parse Ghostbusters record (https://tools.ietf.org/html/rfc6493)
 -- 
-parseGbr :: BS.ByteString -> PureValidatorT GbrObject
+parseGbr :: Validator es => BS.ByteString -> Eff es GbrObject
 parseGbr bs = do    
     asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs  
     signedGbr <- fromEither $ first (parseErr . U.convert) $ 

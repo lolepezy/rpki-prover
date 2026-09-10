@@ -11,7 +11,7 @@ module RPKI.Store.Database (
     TxMode(..),
     -- * Transaction runners
     withReadTx, withWriteTx, roTx, rwTx, roTxT, rwTxT,
-    -- * ValidatorT integration
+    -- * Validator integration
     roAppTx, rwAppTx, appTx, roAppTxEx, rwAppTxEx, appTxEx,
     TxRollbackException(..),
     -- * Constants
@@ -61,12 +61,12 @@ module RPKI.Store.Database (
     encodeSO, decodeSO,
 ) where
 
+import           Effectful
+import           Effectful.Error.Static           (tryError)
 import           Control.Concurrent.STM
 import           Control.Exception.Lifted
 import           Control.Lens
 import           Control.Monad
-import           Control.Monad.IO.Class
-import           Control.Monad.Reader     (ask)
 import           Control.Monad.Trans.Maybe
 
 import           Data.Generics.Product.Typed
@@ -1296,63 +1296,72 @@ getRtrPayloads tx db worldVersion = liftIO $ runMaybeT $ do
 
 
 -- ---------------------------------------------------------------------------
--- Transaction wiring (ValidatorT integration)
+-- Transaction wiring (validator integration)
 -- ---------------------------------------------------------------------------
 
-roAppTx :: DB -> (Tx 'RO -> ValidatorT IO a) -> ValidatorT IO a
+roAppTx :: ValidatorIO es => DB -> (Tx 'RO -> Eff es a) -> Eff es a
 roAppTx db f = appTx db f withReadTx
 
-rwAppTx :: DB -> (Tx 'RW -> ValidatorT IO a) -> ValidatorT IO a
+rwAppTx :: ValidatorIO es => DB -> (Tx 'RW -> Eff es a) -> Eff es a
 rwAppTx db f = appTx db f withWriteTx
 
-appTx :: DB
-      -> (Tx mode -> ValidatorT IO a)
+appTx :: ValidatorIO es => DB
+      -> (Tx mode -> Eff es a)
       -> (DB -> (Tx mode -> IO (Either AppError a, ValidationState))
              -> IO (Either AppError a, ValidationState))
-      -> ValidatorT IO a
+      -> Eff es a
 appTx db f txF = do
-    scopes <- ask
-    embedValidatorT $
-        txF db (\tx -> do
-            z@(r, vs) <- runValidatorT scopes (f tx)
-            case r of
-                Left e  -> throwIO (TxRollbackException e vs)
-                Right _ -> pure z)
-        `catch` (\(TxRollbackException e vs) -> pure (Left e, vs))
+    {- The transaction runners take an IO callback, so the validator has to be
+       unlifted. `withSeqEffToIO` is the right strategy: SQLite runs the callback
+       on the calling thread, and SeqUnlift allows repeated *sequential* calls,
+       so nested `roAppTx`/`rwAppTx` still work.
 
-roAppTxEx :: Exception exc
-          => DB
+       Note the `tryError` inside the callback: it turns a validator error into
+       a `Left` *before* it can escape as an exception, which keeps `effectful`'s
+       error (a real, async-classified exception) away from SQLite's
+       `onException` rollback path. The rollback is instead driven explicitly by
+       `TxRollbackException`, exactly as before.
+
+       Unlike the MTL version there is no nested `runValidatorT` here: the body
+       writes into the enclosing (shared) `ValidationState` directly, and those
+       writes survive the error, so there is nothing left to merge back. -}
+    r <- withSeqEffToIO $ \unlift ->
+            txF db (\tx ->
+                unlift (tryError @AppError (f tx)) >>= \case
+                    Left (_, e) -> throwIO (TxRollbackException e mempty)
+                    Right a     -> pure (Right a, mempty))
+            `catch` (\(TxRollbackException e vs) -> pure (Left e, vs))
+    embedValidatorT (pure r)
+
+roAppTxEx :: (ValidatorIO es, Exception exc) => DB
           -> (exc -> AppError)
-          -> (Tx 'RO -> ValidatorT IO a)
-          -> ValidatorT IO a
+          -> (Tx 'RO -> Eff es a)
+          -> Eff es a
 roAppTxEx db err f = appTxEx db err f withReadTx
 
-rwAppTxEx :: Exception exc
-          => DB
+rwAppTxEx :: (ValidatorIO es, Exception exc) => DB
           -> (exc -> AppError)
-          -> (Tx 'RW -> ValidatorT IO a)
-          -> ValidatorT IO a
+          -> (Tx 'RW -> Eff es a)
+          -> Eff es a
 rwAppTxEx db err f = appTxEx db err f withWriteTx
 
-appTxEx :: Exception exc
-        => DB
+appTxEx :: (ValidatorIO es, Exception exc) => DB
         -> (exc -> AppError)
-        -> (Tx mode -> ValidatorT IO a)
+        -> (Tx mode -> Eff es a)
         -> (DB -> (Tx mode -> IO (Either AppError a, ValidationState))
                -> IO (Either AppError a, ValidationState))
-        -> ValidatorT IO a
+        -> Eff es a
 appTxEx db err f txF = do
-    scopes <- ask
-    embedValidatorT $
-        txF db (\tx -> do
-            z@(r, vs) <- runValidatorT scopes (f tx)
-            case r of
-                Left e  -> throwIO (TxRollbackException e vs)
-                Right _ -> pure z)
-        `catches`
-            [ Handler $ \(TxRollbackException e vs) -> pure (Left e, vs)
-            , Handler $ \e                           -> pure (Left (err e), mempty)
-            ]
+    r <- withSeqEffToIO $ \unlift ->
+            txF db (\tx ->
+                unlift (tryError @AppError (f tx)) >>= \case
+                    Left (_, e) -> throwIO (TxRollbackException e mempty)
+                    Right a     -> pure (Right a, mempty))
+            `catches`
+                [ Handler $ \(TxRollbackException e vs) -> pure (Left e, vs)
+                , Handler $ \e                           -> pure (Left (err e), mempty)
+                ]
+    embedValidatorT (pure r)
 
 data TxRollbackException = TxRollbackException AppError ValidationState
     deriving stock (Show, Eq, Ord, Generic)

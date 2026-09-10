@@ -3,9 +3,9 @@
 
 module RPKI.Validation.BottomUp where
 
+import           Effectful
 import           Control.Concurrent.STM
 import           Control.Monad
-import           Control.Monad.IO.Class
 import           Control.Lens
 
 import qualified Data.Map.Strict                  as Map
@@ -28,11 +28,11 @@ import           RPKI.Validation.Common
      - find a path up to a TA certificate
      - validate the chain and the given object     
 -}
-validateBottomUp :: 
+validateBottomUp :: ValidatorIO es => 
                 AppContext s 
                 -> ParsedRpkiObject
                 -> Now
-                -> ValidatorT IO (Validated ParsedRpkiObject, [[Located WellStructuredCaCert]])
+                -> Eff es (Validated ParsedRpkiObject, [[Located WellStructuredCaCert]])
 validateBottomUp 
     AppContext{..}
     object 
@@ -63,7 +63,7 @@ validateBottomUp
         -- TODO Make it NonEmpty?
         let taCert = head certPath        
         let location = pickLocation $ getLocations taCert
-        vHoist $ vFocusOn LocationFocus (getURL location) 
+        vFocusOn LocationFocus (getURL location) 
                $ validateTaCertAKI taCert location
         let verifiedResources = createVerifiedResources $ taCert ^. #payload        
         go verifiedResources certPath
@@ -86,12 +86,12 @@ validateBottomUp
                 (mft, crl) <- validateManifest db cert
                 let childCert = head certs                
                 validateOnMft mft childCert                            
-                Validated validCert <- vHoist $ validateResourceCert
+                Validated validCert <- validateResourceCert
                                                 now
                                                 (childCert ^. #payload)
                                                 (cert ^. #payload)
                                                 crl
-                (childVerifiedResources, _) <- vHoist $ validateResources
+                (childVerifiedResources, _) <- validateResources
                                                     validationRFC
                                                     (Just verifiedResources)
                                                     validCert
@@ -107,26 +107,26 @@ validateBottomUp
 
     validateObjectItself bottomCert crl verifiedResources =
         vFocusOn TextFocus "rpki-object" $ do
-            validatedObject <- vHoist $ prevalidateObject object
+            validatedObject <- prevalidateObject object
             case validatedObject of
                 CerRO child ->
-                    void $ vHoist $ validateResourceCert now child (bottomCert ^. #payload) crl
+                    void $ validateResourceCert now child (bottomCert ^. #payload) crl
                 MftRO mft ->
-                    void $ vHoist $ validateMft validationRFC now mft (bottomCert ^. #payload) crl (Just verifiedResources)
+                    void $ validateMft validationRFC now mft (bottomCert ^. #payload) crl (Just verifiedResources)
                 RoaRO roa ->
-                    void $ vHoist $ validateRoa validationRFC now roa (bottomCert ^. #payload) crl (Just verifiedResources)
+                    void $ validateRoa validationRFC now roa (bottomCert ^. #payload) crl (Just verifiedResources)
                 SplRO spl ->
-                    void $ vHoist $ validateSpl validationRFC now spl (bottomCert ^. #payload) crl (Just verifiedResources)
+                    void $ validateSpl validationRFC now spl (bottomCert ^. #payload) crl (Just verifiedResources)
                 GbrRO gbr ->
-                    void $ vHoist $ validateGbr validationRFC now gbr (bottomCert ^. #payload) crl (Just verifiedResources)
+                    void $ validateGbr validationRFC now gbr (bottomCert ^. #payload) crl (Just verifiedResources)
                 RscRO rsc ->
-                    void $ vHoist $ validateRsc validationRFC now rsc (bottomCert ^. #payload) crl (Just verifiedResources)
+                    void $ validateRsc validationRFC now rsc (bottomCert ^. #payload) crl (Just verifiedResources)
                 AspaRO aspa ->
-                    void $ vHoist $ validateAspa validationRFC now aspa (bottomCert ^. #payload) crl (Just verifiedResources)
+                    void $ validateAspa validationRFC now aspa (bottomCert ^. #payload) crl (Just verifiedResources)
                 BgpRO bgp ->
-                    void $ vHoist $ validateBgpCert now bgp (bottomCert ^. #payload) crl
+                    void $ validateBgpCert now bgp (bottomCert ^. #payload) crl
                 CrlRO childCrl ->
-                    void $ vHoist $ validateCrl now childCrl (bottomCert ^. #payload)
+                    void $ validateCrl now childCrl (bottomCert ^. #payload)
 
 
     -- Given a certificate, find a chain of certificates leading to a TA, 
@@ -193,7 +193,7 @@ validateBottomUp
                             vFocusOn LocationFocus (getURL $ pickLocation crlLocations) $ do 
                                 validateObjectLocations foundCrl
                                 checkCrlLocation foundCrl $ eeCert mft
-                                validCrl <- vHoist $ validateCrl now crl (certificate ^. #payload)
+                                validCrl <- validateCrl now crl (certificate ^. #payload)
                                 pure (mft, validCrl)
 
                         Just _ -> 

@@ -17,6 +17,8 @@ source-repository-package
 -- Pinned Hackage versions (stack.yaml extra-deps)
 constraints:
     hw-ip == 2.4.2.1
+  , effectful >= 2.7 && < 2.8
+  , effectful-core >= 2.7 && < 2.8
   , insert-ordered-containers == 0.2.6
   , servant-swagger == 1.2.1
   , swagger2 == 2.8.9

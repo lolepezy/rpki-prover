@@ -3,6 +3,7 @@
 
 module RPKI.Validation.Common where
 
+import           Effectful
 import           Control.Monad
 
 import           Data.Foldable
@@ -37,7 +38,7 @@ instance WithCertUris WellStructuredEECert where
 instance WithCertUris a => WithCertUris (Located a) where
     getCertUris = getCertUris . payload
 
-validateMftFileName :: Monad m => Text.Text -> ValidatorT m ()
+validateMftFileName :: Validator es => Text.Text -> Eff es ()
 validateMftFileName filename =                
     case Text.splitOn "." filename of 
         [ mainName, extension ] -> do                    
@@ -61,8 +62,8 @@ findCrlOnMft mft = filter (\(MftPair name _) -> ".crl" `Text.isSuffixOf` name) $
 
 -- | Check that manifest URL in the certificate is the same as the one 
 -- the manifest was actually fetched from.
-validateMftLocation :: (WithCertUris c, Monad m, WithLocations c, WithLocations mft) =>
-                        mft -> c -> ValidatorT m ()
+validateMftLocation :: (Validator es, WithCertUris c, WithLocations c, WithLocations mft) =>
+                        mft -> c -> Eff es ()
 validateMftLocation mft parentCertficate = 
     case manifestUri $ getCertUris parentCertficate of
         Nothing     -> vError NoMFTSIA
@@ -78,7 +79,7 @@ validateMftLocation mft parentCertficate =
 
 -- | Validate that the object has only one location: if not, 
 -- it's generally is a warning, not really an error.
-validateObjectLocations :: (WithLocations a, Monad m) => a -> ValidatorT m ()
+validateObjectLocations :: (Validator es, WithLocations a) => a -> Eff es ()
 validateObjectLocations (getLocations -> Locations locSet) =    
     when (NESet.size locSet > 1) $ 
         vWarn $ ObjectHasMultipleLocations $ neSetToList locSet
@@ -86,9 +87,9 @@ validateObjectLocations (getLocations -> Locations locSet) =
 -- | Check that CRL URL in the certificate is the same as the one 
 -- the CRL was actually fetched from. 
 -- 
-checkCrlLocation :: (Monad m, WithLocations a, WithCertUris c) => a
+checkCrlLocation :: (Validator es, WithLocations a, WithCertUris c) => a
                     -> c
-                    -> ValidatorT m ()
+                    -> Eff es ()
 checkCrlLocation crl parentCertificate = 
     for_ (crlDPUri $ getCertUris parentCertificate) $ \crlDP -> do
         let crlLocations = getLocations crl

@@ -2,6 +2,7 @@
 
 module RPKI.Parse.Internal.SignedObject where
 
+import           Effectful
 import qualified Data.ByteString as BS
 
 import Control.Applicative
@@ -149,7 +150,7 @@ parseSignedObject contentBinaryParse =
     parseSignatureAlgorithm = SignatureAlgorithmIdentifier <$> getObject
 
 
-getMetaFromSigned :: SignedObject a -> BS.ByteString -> PureValidatorT Hash
+getMetaFromSigned :: Validator es => SignedObject a -> BS.ByteString -> Eff es Hash
 getMetaFromSigned _ bs = pure $ sha256s bs
 
 

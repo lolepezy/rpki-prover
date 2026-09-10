@@ -17,7 +17,7 @@ import           Data.Hourglass (Seconds(..))
 
 import           Criterion.Main
 
-import           RPKI.AppMonad (runValidatorT, vHoist)
+import           RPKI.AppMonad (runValidatorIO)
 import           RPKI.AppState (instantToVersion)
 import           RPKI.AppTypes (Size(..), WorldVersion)
 import           RPKI.Domain
@@ -172,7 +172,7 @@ loadObjectFromFixture path = do
     let urlText = Text.pack ("rsync://bench.local/" <> path)
     url <- either (fail . show) pure (parseRpkiURL urlText)
 
-    (result, _) <- runValidatorT (newScopes "bench-read") $ vHoist $ readObject url bs
+    (result, _) <- runValidatorIO (newScopes "bench-read") $ readObject url bs
     either (fail . show) (pure . (url,)) result
 
 mkSaveObjectEnv :: IO SaveObjectEnv

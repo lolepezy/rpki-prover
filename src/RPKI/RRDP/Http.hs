@@ -2,6 +2,7 @@
 
 module RPKI.RRDP.Http where
 
+import           Effectful
 import Control.Exception.Lifted
 import Control.Lens
 
@@ -118,10 +119,10 @@ downloadHashedBS config uri@(URI u) eTag expectedHash hashMishmatch = liftIO $ d
 
 -- | Fetch arbitrary file using the streaming implementation
 -- 
-downloadRpkiObject :: AppContext s ->
+downloadRpkiObject :: ValidatorIO es => AppContext s ->
                     FetchConfig ->             
                     RrdpURL ->             
-                    ValidatorT IO ParsedRpkiObject
+                    Eff es ParsedRpkiObject
 downloadRpkiObject appContext _ uri = do
     (content, _, _, _) <- fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
                             downloadToBS 
@@ -129,7 +130,7 @@ downloadRpkiObject appContext _ uri = do
                             (getURL uri) 
                             Nothing
                         
-    vHoist $ readObject (RrdpU uri) content
+    readObject (RrdpU uri) content
 
 
 downloadToFile :: MonadIO m => 

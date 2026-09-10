@@ -602,7 +602,7 @@ runAll appContext@AppContext {..} tals = do
                         rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerMemoryMb) 
                     ])
         
-        r <- runValidatorT 
+        r <- runValidatorIO 
                 (newScopes "validator") $ do 
                     let timeout = config ^. typed @ValidationConfig . #topDownTimeout
                     workerInput <- makeWorkerInput appContext workerId
@@ -625,7 +625,7 @@ runAll appContext@AppContext {..} tals = do
                     rtsAL "64m", 
                     rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerMemoryMb) ]
         
-        r <- runValidatorT             
+        r <- runValidatorIO             
                 (newScopes "cache-clean-up") $ do
                     let timeout = 300
                     workerInput <- makeWorkerInput appContext workerId
@@ -692,7 +692,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
             Nothing       -> pure (mempty, Nothing)
             Just readFunc -> do
                 logInfo logger [i|Re-reading and re-validating SLURM files.|]
-                (z, vs) <- runValidatorT (newScopes "read-slurm") readFunc
+                (z, vs) <- runValidatorIO (newScopes "read-slurm") readFunc
                 case z of
                     Left e -> do
                         logError logger [i|Failed to read SLURM files: #{e}|]
@@ -901,7 +901,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                 ((r, validations), duration) <-                 
                         withFetchLimits fetchConfig repository $ timedMS $ 
-                            runValidatorT (newScopes' RepositoryFocus url) $ do                                 
+                            runValidatorIO (newScopes' RepositoryFocus url) $ do                                 
                                 runConcurrentlyIfPossible logger FetchTask runningTasks 
                                     $ fetchRepository appContext fetchConfig worldVersion repository
 
@@ -958,7 +958,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                         withFetchLimits fetchConfig repository 
                             $ runConcurrentlyIfPossible logger FetchTask runningTasks                                 
                                 $ timedMS
-                                $ runValidatorT (newScopes' RepositoryFocus fallbackUrl) 
+                                $ runValidatorIO (newScopes' RepositoryFocus fallbackUrl) 
                                     $ fetchRepository appContext fetchConfig worldVersion repository                
 
                 updatePrometheusForRepository fallbackUrl duration prometheusMetrics

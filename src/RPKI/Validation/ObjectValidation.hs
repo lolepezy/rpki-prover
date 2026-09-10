@@ -6,6 +6,7 @@
 
 module RPKI.Validation.ObjectValidation where
     
+import           Effectful
 import           Control.Monad
 
 import           Control.Lens
@@ -60,53 +61,53 @@ extractExtensions = getExts . cwsX509certificate . getCertWithSignature
 -- and each present resource extension must be critical.
 -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.10
 -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.11
-validateResourceExtensionsPresenceAndCriticality :: [ExtensionRaw] -> PureValidatorT ()
+validateResourceExtensionsPresenceAndCriticality :: Validator es => [ExtensionRaw] -> Eff es ()
 validateResourceExtensionsPresenceAndCriticality extensions = do
     let ipExt = extRawVal extensions id_pe_ipAddrBlocks
     let asExt = extRawVal extensions id_pe_autonomousSysIds
 
     when (isNothing ipExt && isNothing asExt) $
-        vPureError MissingIPOrASResourcesExtension
+        vError MissingIPOrASResourcesExtension
 
     for_ [ipExt, asExt] $ \case
         Just ExtensionRaw { extRawOID, extRawCritical = False } ->
-            vPureError $ CertificateExtensionMustBeCritical extRawOID
+            vError $ CertificateExtensionMustBeCritical extRawOID
         _ -> pure ()
 
 -- A helper for profile clauses that require an extension to be present and non-critical.
 -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.6
 -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.7
-validateRequiredNonCriticalExtension :: [ExtensionRaw] -> OID -> PureValidatorT BS.ByteString
+validateRequiredNonCriticalExtension :: Validator es => [ExtensionRaw] -> OID -> Eff es BS.ByteString
 validateRequiredNonCriticalExtension extensions oid =
     case extRawVal extensions oid of
-        Nothing -> vPureError $ MissingRequiredCertificateExtension oid
+        Nothing -> vError $ MissingRequiredCertificateExtension oid
         Just ExtensionRaw { extRawCritical = True } ->
-            vPureError $ CertificateExtensionMustBeNonCritical oid
+            vError $ CertificateExtensionMustBeNonCritical oid
         Just ExtensionRaw { extRawContent = bs }
-            | BS.null bs -> vPureError $ CertBrokenExtension oid bs
+            | BS.null bs -> vError $ CertBrokenExtension oid bs
             | otherwise  -> pure bs
 
 -- AIA must contain an id-ad-caIssuers URI, and rsync is mandatory.
 -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.7
-validateAiaCaIssuersUri :: [ExtensionRaw] -> PureValidatorT URI
+validateAiaCaIssuersUri :: Validator es => [ExtensionRaw] -> Eff es URI
 validateAiaCaIssuersUri extensions = do
     aia <- validateRequiredNonCriticalExtension extensions id_pe_aia
     case extractSiaValue aia id_ad_caIssuers >>= either (const Nothing) Just . extractURI of
-        Nothing -> vPureError $ CertBrokenExtension id_pe_aia aia
+        Nothing -> vError $ CertBrokenExtension id_pe_aia aia
         Just uri@(URI url)
             | "rsync://" `Text.isPrefixOf` url -> pure uri
-            | otherwise                        -> vPureError $ UnknownUriType uri
+            | otherwise                        -> vError $ UnknownUriType uri
 
 -- CRLDP must be present and carry a URI with rsync access.
 -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.6
-validatecrlDPUri :: [ExtensionRaw] -> PureValidatorT URI
+validatecrlDPUri :: Validator es => [ExtensionRaw] -> Eff es URI
 validatecrlDPUri extensions = do
     crlDP <- validateRequiredNonCriticalExtension extensions id_ce_CRLDistributionPoints
     case extractCrlDistributionPoint crlDP of
-        Nothing -> vPureError $ CertBrokenExtension id_ce_CRLDistributionPoints crlDP
+        Nothing -> vError $ CertBrokenExtension id_ce_CRLDistributionPoints crlDP
         Just uri@(URI url)
             | "rsync://" `Text.isPrefixOf` url -> pure uri
-            | otherwise                         -> vPureError $ UnknownUriType uri
+            | otherwise                         -> vError $ UnknownUriType uri
 
 getAiaCaIssuersUriExt :: [ExtensionRaw] -> Maybe URI
 getAiaCaIssuersUriExt exts =
@@ -122,31 +123,31 @@ deriveCertUrisFromExtensions extensions =
         rrdpNotifyUri = getRrdpNotifyUriExt extensions
     }
 
-validateDerivedCertUris :: CertUris -> PureValidatorT ()
+validateDerivedCertUris :: Validator es => CertUris -> Eff es ()
 validateDerivedCertUris CertUris {..} = do
     for_ aiaCaIssuersUri $ \uri ->
-        unless (U.isRsyncURI uri) $ vPureError $ UnknownUriType uri
+        unless (U.isRsyncURI uri) $ vError $ UnknownUriType uri
 
     for_ crlDPUri $ \uri ->
-        unless (U.isRsyncURI uri) $ vPureError $ UnknownUriType uri
+        unless (U.isRsyncURI uri) $ vError $ UnknownUriType uri
 
     for_ repositoryUri $ \uri ->
-        unless (U.isRsyncURI uri) $ vPureError $ UnknownUriType uri
+        unless (U.isRsyncURI uri) $ vError $ UnknownUriType uri
 
     for_ manifestUri $ \uri ->
-        unless (U.isRsyncURI uri) $ vPureError $ UnknownUriType uri
+        unless (U.isRsyncURI uri) $ vError $ UnknownUriType uri
 
     for_ rrdpNotifyUri $ \uri ->
-        unless (U.isRrdpURI uri) $ vPureError $ UnknownUriType uri
+        unless (U.isRrdpURI uri) $ vError $ UnknownUriType uri
 
 -- Child certificates must point to issuer material via AIA and CRLDP.
 -- https://www.rfc-editor.org/rfc/rfc6487#section-7.2
-validateRequiredParentPointerExtensions :: [ExtensionRaw] -> PureValidatorT ()
+validateRequiredParentPointerExtensions :: Validator es => [ExtensionRaw] -> Eff es ()
 validateRequiredParentPointerExtensions extensions = do
     void $ validateAiaCaIssuersUri extensions
     void $ validatecrlDPUri extensions
 
-validateCaCertExtensions :: [ExtensionRaw] -> PureValidatorT ()
+validateCaCertExtensions :: Validator es => [ExtensionRaw] -> Eff es ()
 validateCaCertExtensions extensions = do
     validateCaBasicConstraint extensions
     validatePolicyExtension extensions
@@ -158,10 +159,10 @@ validateCaCertExtensions extensions = do
     -- already rejected by validateNoUnknownCriticalExtensions, a non-critical 
     -- one used to pass unnoticed.
     when (isJust $ extRawVal extensions id_ce_extKeyUsage) $
-        vPureError $ ExtensionMustBeAbsent id_ce_extKeyUsage
+        vError $ ExtensionMustBeAbsent id_ce_extKeyUsage
 
 -- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8.9
-validateEeCertExtensions :: [ExtensionRaw] -> PureValidatorT ()
+validateEeCertExtensions :: Validator es => [ExtensionRaw] -> Eff es ()
 validateEeCertExtensions extensions = do
     noBasicContraint extensions
     validatePolicyExtension extensions
@@ -169,24 +170,24 @@ validateEeCertExtensions extensions = do
     validateNoUnknownCriticalExtensions extensions
 
 -- https://datatracker.ietf.org/doc/html/rfc8209#section-3.1.3
-validateBgpCertExtensions :: [ExtensionRaw] -> PureValidatorT ()
+validateBgpCertExtensions :: Validator es => [ExtensionRaw] -> Eff es ()
 validateBgpCertExtensions = validateEeCertExtensions
 
 
 -- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8            
-validateCaBasicConstraint :: [ExtensionRaw] -> PureValidatorT ()
+validateCaBasicConstraint :: Validator es => [ExtensionRaw] -> Eff es ()
 validateCaBasicConstraint extensions = 
     withCriticalExtension extensions id_ce_basicConstraints $ \bs parsed ->
         case parsed of 
             [Start Sequence, Boolean _, End Sequence] -> pure ()                
-            _ -> vPureError $ CertBrokenExtension id_ce_basicConstraints bs
+            _ -> vError $ CertBrokenExtension id_ce_basicConstraints bs
 
-noBasicContraint :: [ExtensionRaw] -> PureValidatorT ()
+noBasicContraint :: Validator es => [ExtensionRaw] -> Eff es ()
 noBasicContraint extensions = 
     for_ (extVal extensions id_ce_basicConstraints) $ \bs -> 
-        vPureError $ UnknownCriticalCertificateExtension id_ce_basicConstraints bs  
+        vError $ UnknownCriticalCertificateExtension id_ce_basicConstraints bs  
 
-validatePolicyExtension :: [ExtensionRaw] -> PureValidatorT ()
+validatePolicyExtension :: Validator es => [ExtensionRaw] -> Eff es ()
 validatePolicyExtension extensions = 
     withCriticalExtension extensions id_ce_certificatePolicies $ \bs parsed ->
         case parsed of 
@@ -209,39 +210,38 @@ validatePolicyExtension extensions =
                 , End Sequence
                 ] | oid == id_cp_ipAddr_asNumber && oidCps == id_cps_qualifier -> pure ()   
 
-            _ -> vPureError $ CertBrokenExtension id_ce_certificatePolicies bs                
+            _ -> vError $ CertBrokenExtension id_ce_certificatePolicies bs                
                 
-validateNoUnknownCriticalExtensions :: [ExtensionRaw] -> PureValidatorT ()
+validateNoUnknownCriticalExtensions :: Validator es => [ExtensionRaw] -> Eff es ()
 validateNoUnknownCriticalExtensions extensions =
     for_ extensions $ \ExtensionRaw {..} -> do 
         when (extRawCritical && extRawOID `notElem` allowedCriticalOIDs) $ 
-            vPureError $ UnknownCriticalCertificateExtension extRawOID extRawContent
+            vError $ UnknownCriticalCertificateExtension extRawOID extRawContent
         
 
 -- | Validate specifically the TA's self-signed certificate.
-validateTACert :: TAL -> RpkiURL -> ParsedRpkiObject -> PureValidatorT WellStructuredCaCert
+validateTACert :: Validator es => TAL -> RpkiURL -> ParsedRpkiObject -> Eff es WellStructuredCaCert
 validateTACert tal u (CerRO taCert) = do
     let spki = getSubjectPublicKeyInfo taCert
     let talSPKI = SPKI $ publicKeyInfo tal
-    unless (talSPKI == spki) $ vPureError $ SPKIMismatch talSPKI spki
+    unless (talSPKI == spki) $ vError $ SPKIMismatch talSPKI spki
     validateTaCertAKI taCert u
     signatureCheck $ validateSignMaterial taCert taCert
     validateCaCertExtensions $ extractExtensions taCert
     pure $ extractCert taCert
 
-validateTACert _ _ _ = vPureError UnknownObjectAsTACert
+validateTACert _ _ _ = vError UnknownObjectAsTACert
 
-validateTaCertAKI ::
-    (WithAKI taCert, WithSKI taCert) =>
+validateTaCertAKI :: (Validator es, WithAKI taCert, WithSKI taCert) =>
     taCert ->
     RpkiURL ->
-    PureValidatorT ()
+    Eff es ()
 validateTaCertAKI taCert u =
     case getAKI taCert of
         Nothing -> pure ()
         Just (AKI ki)
             | SKI ki == getSKI taCert -> pure ()
-            | otherwise -> vPureError $ TACertAKIIsNotEmpty (getURL u)
+            | otherwise -> vError $ TACertAKIIsNotEmpty (getURL u)
 
 --
 -- Use the tiebreaker logic proposed by 
@@ -250,7 +250,7 @@ validateTaCertAKI taCert u =
 -- Emit a warning when deciding to use the cached certificate 
 -- instead of the fetched one.
 -- 
-chooseTaCert :: WellStructuredCaCert -> WellStructuredCaCert -> PureValidatorT WellStructuredCaCert
+chooseTaCert :: Validator es => WellStructuredCaCert -> WellStructuredCaCert -> Eff es WellStructuredCaCert
 chooseTaCert cert cachedCert = do
     let ValidityPeriod notBefore notAfter = getValidityPeriod cert
     let ValidityPeriod cachedNotBefore cachedNotAfter = getValidityPeriod cachedCert
@@ -263,7 +263,7 @@ chooseTaCert cert cachedCert = do
             use the locally cached copy of the retrieved TA.        
         -}
     if | notBefore < cachedNotBefore -> do
-            void $ vPureWarning $ TACertPreferCachedCopy bothValidities
+            void $ vWarn $ TACertPreferCachedCopy bothValidities
             pure cachedCert
 
         {- 
@@ -274,7 +274,7 @@ chooseTaCert cert cachedCert = do
             cached copy of the retrieved TA.        
         -}
         | notBefore == cachedNotBefore && cachedNotAfter < notAfter -> do 
-            void $ vPureWarning $ TACertPreferCachedCopy bothValidities
+            void $ vWarn $ TACertPreferCachedCopy bothValidities
             pure cachedCert            
 
         | otherwise -> pure cert
@@ -288,24 +288,22 @@ chooseTaCert cert cachedCert = do
 --    - check the resource set (needs the parent as well)
 --    - check it's not revoked (needs CRL)
 -- 
-validateResourceCert :: forall child parent .
-    ( SignedCertCore child
-    , CertIssuer parent
-    ) =>
+validateResourceCert :: forall child parent es.
+     (Validator es, SignedCertCore child, CertIssuer parent) =>
     Now ->
     child ->    
     parent ->
     Validated CrlObject ->    
-    PureValidatorT (Validated child)
+    Eff es (Validated child)
 validateResourceCert now cert parentCert vcrl = do
     void $ validateObjectValidityPeriod cert now
 
     signatureCheck $ validateSignMaterial cert parentCert
     when (isRevoked cert vcrl) $ 
-        vPureError RevokedResourceCertificate                
+        vError RevokedResourceCertificate                
 
     unless (correctSkiAki cert parentCert) $    
-        vPureError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
+        vError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
 
     pure $ Validated cert
   where
@@ -313,25 +311,22 @@ validateResourceCert now cert parentCert vcrl = do
         maybe False (\(AKI a) -> a == s) $ getAKI c
 
 
-validateObjectValidityPeriod :: WithValidityPeriod c => c -> Now -> PureValidatorT ValidityPeriod
+validateObjectValidityPeriod :: (Validator es, WithValidityPeriod c) => c -> Now -> Eff es ValidityPeriod
 validateObjectValidityPeriod c (Now now) = do 
     let vp@ValidityPeriod { notBefore, notAfter } = getValidityPeriod c
     when (now < notBefore) $ 
-        vPureError $ ObjectValidityIsInTheFuture notBefore notAfter
+        vError $ ObjectValidityIsInTheFuture notBefore notAfter
     when (now > notAfter) $ 
-        vPureError $ ObjectIsExpired notBefore notAfter
+        vError $ ObjectIsExpired notBefore notAfter
     pure vp
 
 
-validateResources ::
-    ( WithResources child
-    , CaParent parent
-    ) =>
+validateResources :: (Validator es, WithResources child, CaParent parent) =>
     ValidationRFC ->
     Maybe (VerifiedRS PrefixesAndAsns) ->        
     child ->
     parent ->
-    PureValidatorT (VerifiedRS PrefixesAndAsns, Maybe (Overclaiming PrefixesAndAsns))
+    Eff es (VerifiedRS PrefixesAndAsns, Maybe (Overclaiming PrefixesAndAsns))
 validateResources validationRFC verifiedResources childCert parentCert =
     validateChildParentResources
         validationRFC
@@ -341,19 +336,13 @@ validateResources validationRFC verifiedResources childCert parentCert =
 
 
 validateBgpCert ::
-    forall bgpCert parent.
-    ( SignedCertCore bgpCert
-    , WithPubKey bgpCert
-    , WithSKI bgpCert
-    , WithResources bgpCert
-    , bgpCert `OfCertType` BGPCert
-    , CertIssuer parent
-    ) =>
+    forall bgpCert parent es.
+     (Validator es, SignedCertCore bgpCert, WithPubKey bgpCert, WithSKI bgpCert, WithResources bgpCert, bgpCert `OfCertType` BGPCert, CertIssuer parent) =>
     Now ->
     bgpCert ->
     parent ->
     Validated CrlObject ->
-    PureValidatorT (Validated bgpCert, BGPSecPayload)
+    Eff es (Validated bgpCert, BGPSecPayload)
 validateBgpCert now bgpCert parentCert validCrl = do
     -- Validate BGP certificate according to 
     -- https://www.rfc-editor.org/rfc/rfc8209.html#section-3.3    
@@ -371,30 +360,28 @@ validateBgpCert now bgpCert parentCert validCrl = do
     
 
 -- | Validate CRL object with the parent certificate
-validateCrl ::
-    WithIssuerKey parent =>
+validateCrl :: (Validator es, WithIssuerKey parent) =>
     Now ->
     CrlObject ->
     parent ->
-    PureValidatorT (Validated CrlObject)
+    Eff es (Validated CrlObject)
 validateCrl now crlObject@CrlObject{..} parentCert = do
     let SignCRL{..} = signCrl
     signatureCheck $ validateSignMaterial crlObject parentCert
     when (toAKI (getSKI parentCert) /= aki) $
-        vPureError $ CRL_AKI_DifferentFromCertSKI (getSKI parentCert) aki    
+        vError $ CRL_AKI_DifferentFromCertSKI (getSKI parentCert) aki    
     validateUpdateTimes now thisUpdateTime nextUpdateTime
     pure $ Validated crlObject
 
 
-validateMft ::
-    CaParent parent =>
+validateMft :: (Validator es, CaParent parent) =>
     ValidationRFC ->
     Now ->
     WellStructuredMft ->
     parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
-    PureValidatorT (Validated WellStructuredMft)
+    Eff es (Validated WellStructuredMft)
 validateMft validationRFC now mft parentCert crl verifiedResources = do        
     let Manifest{..} = mft.content
     validateUpdateTimes now thisTime nextTime        
@@ -409,18 +396,17 @@ validateMft validationRFC now mft parentCert crl verifiedResources = do
 
   where
     verifyInherit = \case
-        RS _    -> vPureError ResourceSetMustBeInherit
+        RS _    -> vError ResourceSetMustBeInherit
         Inherit -> pure ()    
 
-validateRoa ::
-    CaParent parent =>
+validateRoa :: (Validator es, CaParent parent) =>
     ValidationRFC ->
     Now ->
     WellStructuredRoa ->
     parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
-    PureValidatorT (Validated WellStructuredRoa)
+    Eff es (Validated WellStructuredRoa)
 validateRoa validationRFC now roa parentCert crl verifiedResources = do      
     validateCms validationRFC now roa parentCert crl verifiedResources    
     checkResources roa.content    
@@ -433,32 +419,31 @@ validateRoa validationRFC now roa parentCert crl verifiedResources = do
         for_ v4s $ \(Vrp4 prefix maxLength) -> do
             checkerV4 prefix (RoaPrefixIsOutsideOfResourceSet (Ipv4P prefix))
             when (ipv4PrefixLen prefix > maxLength) $
-                vPureError $ RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp asn (Ipv4P prefix) maxLength)
+                vError $ RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp asn (Ipv4P prefix) maxLength)
         for_ v6s $ \(Vrp6 prefix maxLength) -> do
             checkerV6 prefix (RoaPrefixIsOutsideOfResourceSet (Ipv6P prefix))
             when (ipv6PrefixLen prefix > maxLength) $
-                vPureError $ RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp asn (Ipv6P prefix) maxLength)
+                vError $ RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp asn (Ipv6P prefix) maxLength)
 
     validatedPrefixInRS ::
-        forall a.
-        (Interval a, HasType (IntervalSet a) PrefixesAndAsns) =>
+        forall a es.
+         (Validator es, Interval a, HasType (IntervalSet a) PrefixesAndAsns) =>
         Maybe (VerifiedRS PrefixesAndAsns) ->
-        (a -> (PrefixesAndAsns -> ValidationError) -> PureValidatorT ())
+        (a -> (PrefixesAndAsns -> ValidationError) -> Eff es ())
     validatedPrefixInRS = \case
             Nothing               -> \_ _ -> pure ()
             Just (VerifiedRS vrs) -> \i' errorReport ->
                 unless (isInside i' (vrs ^. typed)) $
-                    vPureError $ errorReport vrs
+                    vError $ errorReport vrs
 
-validateSpl ::
-    CaParent parent =>
+validateSpl :: (Validator es, CaParent parent) =>
     ValidationRFC ->
     Now ->
     WellStructuredSpl ->
     parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
-    PureValidatorT (Validated WellStructuredSpl)
+    Eff es (Validated WellStructuredSpl)
 validateSpl validationRFC now spl parentCert crl verifiedResources = do
     validateCms validationRFC now spl parentCert crl verifiedResources
 
@@ -466,7 +451,7 @@ validateSpl validationRFC now spl parentCert crl verifiedResources = do
     for_ verifiedResources $ \(VerifiedRS vrs) -> do
         let asns = vrs ^. typed
         unless (isInside (AS asn) asns) $
-            vPureError $
+            vError $
                 SplAsnNotInResourceSet asn (IS.toList asns)
 
     let AllResources ipv4 ipv6 _ = getResources spl
@@ -479,34 +464,32 @@ validateSpl validationRFC now spl parentCert crl verifiedResources = do
         RS s -> map f $ IS.toList s
 
 
-validateGbr ::
-    CaParent parent =>
+validateGbr :: (Validator es, CaParent parent) =>
     ValidationRFC ->
     Now ->
     WellStructuredGbr ->
     parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
-    PureValidatorT (Validated WellStructuredGbr)
+    Eff es (Validated WellStructuredGbr)
 validateGbr validationRFC now gbr parentCert crl verifiedResources = do
     validateCms validationRFC now gbr parentCert crl verifiedResources
     let Gbr vcardBS = gbr.content
     case parseVCard $ toNormalBS vcardBS of
-        Left e -> vPureError $ InvalidVCardFormatInGbr e
-        Right (_, Just warnings) -> vPureWarning $ InvalidVCardFormatInGbr warnings
+        Left e -> vError $ InvalidVCardFormatInGbr e
+        Right (_, Just warnings) -> vWarn $ InvalidVCardFormatInGbr warnings
         Right _ -> pure ()
     pure $ Validated gbr
 
 
-validateRsc ::
-    CaParent parent =>
+validateRsc :: (Validator es, CaParent parent) =>
     ValidationRFC ->
     Now ->
     WellStructuredRsc ->
     parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
-    PureValidatorT (Validated WellStructuredRsc)
+    Eff es (Validated WellStructuredRsc)
 validateRsc validationRFC now rsc parentCert crl verifiedResources = do
     validateCms validationRFC now rsc parentCert crl verifiedResources
     let rsc' = rsc.content
@@ -514,56 +497,54 @@ validateRsc validationRFC now rsc parentCert crl verifiedResources = do
     validateNested (rsc' ^. #rscResources) eeCert
     pure $ Validated rsc
 
-validateAspa ::
-    CaParent parent =>
+validateAspa :: (Validator es, CaParent parent) =>
     ValidationRFC ->
     Now ->
     WellStructuredAspa ->
     parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
-    PureValidatorT (Validated WellStructuredAspa)
+    Eff es (Validated WellStructuredAspa)
 validateAspa validationRFC now aspa parentCert crl verifiedResources = do    
     validateCms validationRFC now aspa parentCert crl verifiedResources 
     validateAspaCore (getResources aspa) aspa.content
     pure $ Validated aspa
     
-validateCms ::
-    CaParent parent =>
+validateCms :: (Validator es, CaParent parent) =>
     ValidationRFC ->
     Now ->
     WellStructuredCms payload ->
     parent ->
     Validated CrlObject ->
     Maybe (VerifiedRS PrefixesAndAsns) ->
-    PureValidatorT ()
+    Eff es ()
 validateCms validationRFC now cms parentCert crl verifiedResources = do
     void $ validateResourceCert now cms.eeCert parentCert crl
     void $ validateResources validationRFC verifiedResources cms.eeCert parentCert
 
 
-validateUpdateTimes :: Now -> Instant -> Instant -> PureValidatorT ()
+validateUpdateTimes :: Validator es => Now -> Instant -> Instant -> Eff es ()
 validateUpdateTimes (Now now) thisUpdateTime nextUpdateTime = do
-    when (thisUpdateTime >= now) $ vPureError $ ThisUpdateTimeIsInTheFuture {..}
-    when (nextUpdateTime < now)  $ vPureError $ NextUpdateTimeIsInThePast {..}
+    when (thisUpdateTime >= now) $ vError $ ThisUpdateTimeIsInTheFuture {..}
+    when (nextUpdateTime < now)  $ vError $ NextUpdateTimeIsInThePast {..}
     validateUpdateTimesOrder thisUpdateTime nextUpdateTime
 
-validateAIA ::
+validateAIA :: Validator es => 
     WellStructuredCaCert ->
     Located WellStructuredCaCert ->
-    PureValidatorT ()
+    Eff es ()
 validateAIA cert parentCert = do
     let locations = getLocations parentCert
     -- AIA caIssuers must identify the immediate superior certificate location.
     -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.7
     URI aiaUrl <- case cert.certUris.aiaCaIssuersUri of
-        Nothing -> vPureError $ MissingRequiredCertificateExtension id_pe_aia
+        Nothing -> vError $ MissingRequiredCertificateExtension id_pe_aia
         Just uri
             | U.isRsyncURI uri -> pure uri
-            | otherwise        -> vPureError $ UnknownUriType uri
+            | otherwise        -> vError $ UnknownUriType uri
     let parentUrls = locationsToList locations
     unless (aiaUrl `elem` parentUrls) $
-        vPureWarning $ AIANotSameAsParentLocation aiaUrl locations  
+        vWarn $ AIANotSameAsParentLocation aiaUrl locations  
 
 -- | Check if CMS is on the revocation list
 isRevoked :: WithSerial c => c -> Validated CrlObject -> Bool
@@ -572,17 +553,17 @@ isRevoked (getSerial -> serial) (Validated CrlObject {..}) =
   where
     SignCRL{..} = signCrl
 
-signatureCheck :: SignatureVerification -> PureValidatorT ()
+signatureCheck :: Validator es => SignatureVerification -> Eff es ()
 signatureCheck sv = case sv of
-    SignatureFailed e -> vPureError $ InvalidSignature $ convert $ show e
+    SignatureFailed e -> vError $ InvalidSignature $ convert $ show e
     SignaturePass     -> pure ()
 
-validateUpdateTimesOrder :: Instant -> Instant -> PureValidatorT ()
+validateUpdateTimesOrder :: Validator es => Instant -> Instant -> Eff es ()
 validateUpdateTimesOrder thisUpdateTime nextUpdateTime =
     when (nextUpdateTime <= thisUpdateTime) $
         vError $ NextUpdateTimeBeforeThisUpdateTime nextUpdateTime thisUpdateTime
 
-validateAspaCore :: AllResources -> Aspa -> PureValidatorT ()
+validateAspaCore :: Validator es => AllResources -> Aspa -> Eff es ()
 validateAspaCore resources Aspa { customer, providers } = do
     -- https://www.ietf.org/archive/id/draft-ietf-sidrops-aspa-profile-12.html#name-aspa-validation
     let AllResources ipv4 ipv6 asns = resources
@@ -609,7 +590,7 @@ validateAspaCore resources Aspa { customer, providers } = do
 maxAllowedAsnPerBgpSecCertificate :: Integer
 maxAllowedAsnPerBgpSecCertificate = 65536
 
-validateBgpCertAsns :: AllResources -> PureValidatorT [ASN]
+validateBgpCertAsns :: Validator es => AllResources -> Eff es [ASN]
 validateBgpCertAsns (AllResources _ _ asns) =
     case asns of
         Inherit -> vError BGPCertBrokenASNs
@@ -623,7 +604,7 @@ validateBgpCertAsns (AllResources _ _ asns) =
                 pure $! unwrapAsns asResources
 
 
-validateCmsEeSignatureConsistency :: CMS a -> PureValidatorT ()
+validateCmsEeSignatureConsistency :: Validator es => CMS a -> Eff es ()
 validateCmsEeSignatureConsistency cms = do
     -- EE cert should sign the CMS
     signatureCheck $ validateCMSSignature cms
@@ -639,13 +620,13 @@ validateCmsEeSignatureConsistency cms = do
     -- http://sobornost.net/~job/arin-manifest-issue-2020.08.12.txt
     -- Correct behaviour is to request exact match here.
     unless (eeCertSigAlg == attributeSigAlg) $
-        vPureError $
+        vError $
             CMSSignatureAlgorithmMismatch
                 (Text.pack $ show eeCertSigAlg)
                 (Text.pack $ show attributeSigAlg)
             
 
-validateSizeM :: ValidationConfig -> Integer -> PureValidatorT Integer
+validateSizeM :: Validator es => ValidationConfig -> Integer -> Eff es Integer
 validateSizeM vc s = vFromEither $ validateSize vc s
 
 validateSizeOfBS :: ValidationConfig -> BS.ByteString -> Either ValidationError Integer
@@ -669,7 +650,7 @@ isWithinValidityPeriod (Now now) a =
 Used at object-save time, when only one URL is known and there's no 
 information about relashionships of this object with the other ones.
 -}
-prevalidateObject :: ParsedRpkiObject -> PureValidatorT WellStructuredRpkiObject
+prevalidateObject :: Validator es => ParsedRpkiObject -> Eff es WellStructuredRpkiObject
 prevalidateObject rpkiObject = do
     case rpkiObject of
         CerRO ca -> do
@@ -769,7 +750,7 @@ cmsSigningTime CMSBasedObject { cmsPayload } =
         _    -> Nothing
 
 -- | Validate self-contained structural properties of a CA certificate.
-validateCaCertStructure :: CaCerObject -> PureValidatorT ()
+validateCaCertStructure :: Validator es => CaCerObject -> Eff es ()
 validateCaCertStructure ca@CaCerObject { ski } = do
     let certWS = getCertWithSignature ca
     let extensions = extractExtensions ca
@@ -782,7 +763,7 @@ validateCaCertStructure ca@CaCerObject { ski } = do
 
 
 -- | Validate self-contained structural properties of a BGP security certificate.
-validateBgpCertStructure :: BgpCerObject -> PureValidatorT ()
+validateBgpCertStructure :: Validator es => BgpCerObject -> Eff es ()
 validateBgpCertStructure bgp@BgpCerObject { ski } = do
     let certWS = getCertWithSignature bgp
     let extensions = extractExtensions bgp
@@ -832,7 +813,7 @@ validateBgpCertStructure bgp@BgpCerObject { ski } = do
    `expectedContentType` is the eContentType OID of this particular kind of signed 
    object (RFC 6488 section 2.1.3.1), e.g. id-ct-rpkiManifest for a manifest.
 -}
-validateCmsStructure :: OID -> CMSBasedObject a -> PureValidatorT Instant
+validateCmsStructure :: Validator es => OID -> CMSBasedObject a -> Eff es Instant
 validateCmsStructure expectedContentType cmsObject = do
     let cms@(CMS SignedObject { soContentType, soContent = sd }) = cmsPayload cmsObject
     let SignedData { scVersion, scSignerInfos, scEncapContentInfo, scCertificate } = sd
@@ -936,7 +917,7 @@ validateCmsStructure expectedContentType cmsObject = do
    with an rsync URI, identifying where the signed object itself is published.
    https://www.rfc-editor.org/rfc/rfc6487#section-4.8.8.2
 -}
-validateSignedObjectSia :: [ExtensionRaw] -> PureValidatorT ()
+validateSignedObjectSia :: Validator es => [ExtensionRaw] -> Eff es ()
 validateSignedObjectSia extensions = do 
     sia <- validateRequiredNonCriticalExtension extensions id_pe_sia
     case extractSiaValue sia id_ad_signedObject >>= either (const Nothing) Just . extractURI of 
@@ -948,7 +929,7 @@ validateSignedObjectSia extensions = do
 {- | Every certificate in the RPKI is signed by a CA using RSA PKCS#1 v1.5 with 
    SHA-256, https://www.rfc-editor.org/rfc/rfc7935#section-3.
 -}
-validateSignatureAlgorithm :: CertificateWithSignature -> PureValidatorT ()
+validateSignatureAlgorithm :: Validator es => CertificateWithSignature -> Eff es ()
 validateSignatureAlgorithm certWS = do 
     let SignatureAlgorithmIdentifier sigAlg = cwsSignatureAlgorithm certWS
     let innerSigAlg = certSignatureAlg $ cwsX509certificate certWS
@@ -963,7 +944,7 @@ validateSignatureAlgorithm certWS = do
         _ -> vError $ UnsupportedSignatureAlgorithm $ Text.pack $ show sigAlg
 
 -- | Validate manifest-specific structural invariants.
-validateMftStructure :: MftObject -> PureValidatorT ()
+validateMftStructure :: Validator es => MftObject -> Eff es ()
 validateMftStructure mft = do
     let Manifest { thisTime, nextTime, mftEntries } = getCMSContent (cmsPayload mft)
 
@@ -989,20 +970,20 @@ validateMftStructure mft = do
 
 
 -- | Validate ASPA content invariants.
-validateAspaContent :: AspaObject -> PureValidatorT ()
+validateAspaContent :: Validator es => AspaObject -> Eff es ()
 validateAspaContent aspa = do     
     let payload = getCMSContent aspa.cmsPayload 
     validateAspaCore (getResources aspa) payload
 
 
 -- | Validate CRL structural invariants.
-validateCrlStructure :: CrlObject -> PureValidatorT ()
+validateCrlStructure :: Validator es => CrlObject -> Eff es ()
 validateCrlStructure CrlObject { signCrl = SignCRL { thisUpdateTime, nextUpdateTime } } =    
     validateUpdateTimesOrder thisUpdateTime nextUpdateTime
 
 
 -- | Validate X.509 certificate properties checkable without a parent certificate.
-validateCertX509Structure :: CertificateWithSignature -> PureValidatorT ()
+validateCertX509Structure :: Validator es => CertificateWithSignature -> Eff es ()
 validateCertX509Structure certWS@CertificateWithSignature { cwsX509certificate = cert } = do
     -- https://www.rfc-editor.org/rfc/rfc6487#section-4.1, must be X.509 v3, 
     -- which `certVersion` reports as 2
@@ -1054,9 +1035,9 @@ validateCertX509Structure certWS@CertificateWithSignature { cwsX509certificate =
 
 -- | Verify that the declared SKI equals SHA-1 of the subjectPublicKey bit-string value.
 -- RFC 6487 §4.8.2 / RFC 5280 §4.2.1.2: SKI = SHA-1(subjectPublicKey BIT STRING value).
-validateSKIMatchesPublicKey :: SKI   -- ^ raw bytes of the SKI extension KI
+validateSKIMatchesPublicKey :: Validator es => SKI   -- ^ raw bytes of the SKI extension KI
                             -> CertificateWithSignature
-                            -> PureValidatorT ()
+                            -> Eff es ()
 validateSKIMatchesPublicKey (SKI (KI skiBytes)) certWS = do
     let pubKey = certPubKey $ cwsX509certificate certWS
     -- toASN1 produces the SubjectPublicKeyInfo flat ASN1 sequence.
@@ -1069,7 +1050,7 @@ validateSKIMatchesPublicKey (SKI (KI skiBytes)) certWS = do
             vError $ InvalidKI "Cannot extract subjectPublicKey bit string from public key"
 
 
-resourceSetMustBeEmpty :: RSet (IntervalSet a) -> ValidationError -> PureValidatorT ()
+resourceSetMustBeEmpty :: Validator es => RSet (IntervalSet a) -> ValidationError -> Eff es ()
 resourceSetMustBeEmpty ips errConstructor = 
     case ips of 
         Inherit -> vError errConstructor

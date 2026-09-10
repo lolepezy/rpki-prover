@@ -2,9 +2,9 @@
 
 module RPKI.Worker where
 
+import           Effectful
 import           Control.Exception.Lifted
 import           Control.Monad
-import           Control.Monad.IO.Class
 import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
@@ -291,12 +291,11 @@ exitKillByTypedProcess = ExitFailure (-2)
 
 -- Main entry point to start a worker
 -- 
-runWorker :: (TheBinary r, Show r)
-            => AppLogger 
+runWorker :: (ValidatorIO es, TheBinary r, Show r) => AppLogger 
             -> WorkerInput            
             -> [String] 
             -> WorkerInfo 
-            -> ValidatorT IO r
+            -> Eff es r
 runWorker logger workerInput extraCli workerInfo = do
     let executableToRun = configValue $ workerInput ^. #config . #programBinaryPath
     let worker = 
