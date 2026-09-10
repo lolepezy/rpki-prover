@@ -76,6 +76,13 @@ data Fetchers = Fetchers {
         -- the limit of connections per rsync host
         rsyncPerHostSemaphores  :: TVar (Map RsyncHost Semaphore),
 
+        -- Hard cap on concurrent Erik fetches. Unlike the trusted/untrusted
+        -- semaphores above, which are deliberately soft (a fetch that waits
+        -- too long runs anyway rather than starving), this one is a real
+        -- limit: there is one Erik fetch per FQDN, so without it a round
+        -- spawns a worker process for every publication point at once.
+        erikFetchSemaphore :: Semaphore,
+
         -- Mapping of repositories to the TAs they are mentioned in
         uriByTa :: TVar UriTaIxSet
     }

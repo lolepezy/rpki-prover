@@ -146,6 +146,7 @@ withWorkflowShared AppContext {..} prometheusMetrics tals f = do
                 untrustedFetchSemaphore <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)
                 trustedFetchSemaphore   <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)                            
                 rsyncPerHostSemaphores  <- newTVar mempty                
+                erikFetchSemaphore      <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)
                 pure $ Fetchers {..}                        
 
         tasToValidate <- newTVar mempty
@@ -963,7 +964,11 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
         fetchErikRelays fetchConfig worldVersion repository erikRelays = do            
             ((r, validations), duration) <-                 
-                withFetchLimits fetchConfig repository $ timedMS $ 
+                -- A hard cap, not `withFetchLimits`: that one lets a fetch
+                -- through once it has waited long enough, which is right for
+                -- repository fetches but means nothing bounds the number of
+                -- Erik workers, one per FQDN, started in a single round.
+                withSemaphore (fetchers ^. #erikFetchSemaphore) $ timedMS $ 
                     runValidatorIO (newScopes' RepositoryFocus url) $ do
                         -- TODO Dirty to extract FQDN from fallback rsync URLs instead of 
                         -- RRDP URL, because FQDN comes from SIA of the certificate.
