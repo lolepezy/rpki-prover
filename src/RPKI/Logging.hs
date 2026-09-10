@@ -99,12 +99,32 @@ newtype SystemStatusMessage = SystemStatusMessage SystemState
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)                    
 
+{- | How an Erik fetch worker got on with each relay it was given.
+
+   Relay health is per-worker news rather than a snapshot of global state, so
+   it travels as its own message instead of riding on 'SystemStatusMessage':
+   each worker reports what it saw, and the root process folds those reports
+   together. Sent once per fetch rather than per query, to keep the bus quiet.
+-}
+newtype ErikRelayMessage = ErikRelayMessage [ErikRelayReport]
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+data ErikRelayReport = ErikRelayReport {
+        relay  :: URI,
+        served :: Int,
+        failed :: Int
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
 -- Messages in the queue 
 data BusMessage = LogM LogMessage 
                 | RtrLogM LogMessage 
                 | SystemMetricsM SystemMetrics
                 | WorkerM WorkerMessage
                 | SystemStatusM SystemStatusMessage
+                | ErikRelayM ErikRelayMessage
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -153,7 +173,8 @@ data LogConfig = LogConfig {
         logType             :: LogType,
         metricsHandler      :: SystemMetrics -> IO (), -- ^ what to do with incoming system metrics messages
         workerHandler       :: WorkerMessage -> IO (), -- ^ what to do with incoming worker messages
-        systemStatusHandler :: SystemStatusMessage -> IO () -- ^ what to do with incoming system status messages
+        systemStatusHandler :: SystemStatusMessage -> IO (), -- ^ what to do with incoming system status messages
+        erikRelayHandler    :: ErikRelayMessage -> IO ()      -- ^ what to do with incoming Erik relay reports
     }
     deriving stock (Generic)
 
@@ -165,6 +186,7 @@ newLogConfig logLevel logType = let
     metricsHandler = const $ pure ()
     workerHandler = const $ pure ()
     systemStatusHandler = const $ pure ()
+    erikRelayHandler = const $ pure ()
     in LogConfig {..}
 
 newWorkerInfo :: MonadIO m => WorkerKind -> Seconds -> Text -> m WorkerInfo
@@ -209,6 +231,15 @@ pushSystemStatus :: MonadIO m => AppLogger -> SystemStatusMessage -> m ()
 pushSystemStatus logger sm = 
     liftIO $ atomically $ writeCQueue (getQueue logger) $ MsgQE $ SystemStatusM sm  
 
+pushErikRelayReport :: MonadIO m => AppLogger -> [ErikRelayReport] -> m ()
+pushErikRelayReport logger = liftIO . atomically . pushErikRelayReportSTM logger
+
+-- | Same, but composable with other STM so a report can be emitted in the same
+--   transaction that decides the relay is dead.
+pushErikRelayReportSTM :: AppLogger -> [ErikRelayReport] -> STM ()
+pushErikRelayReportSTM logger reports =
+    writeCQueue (getQueue logger) $ MsgQE $ ErikRelayM $ ErikRelayMessage reports
+
 logBytes :: AppLogger -> BS.ByteString -> IO ()
 logBytes logger bytes = 
     atomically $ writeCQueue (getQueue logger) $ BinQE bytes             
@@ -252,6 +283,7 @@ withLogger LogConfig {..} f = do
             WorkerM workerInfo       -> workerHandler workerInfo
             SystemMetricsM sysMetric -> metricsHandler sysMetric
             SystemStatusM sysStatus  -> systemStatusHandler sysStatus
+            ErikRelayM relayReport   -> erikRelayHandler relayReport
             
     
     let loopMain = loopReadQueue messageQueue $ \case 

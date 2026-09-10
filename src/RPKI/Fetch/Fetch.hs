@@ -4,6 +4,7 @@
 
 module RPKI.Fetch.Fetch where
 
+import           Control.Monad
 import           Effectful.Timeout                (Timeout)
 import           Effectful
 import           Control.Concurrent              as Conc
@@ -30,6 +31,7 @@ import           GHC.Generics
 import           Time.Types
 
 import           RPKI.AppContext
+import           RPKI.AppState
 import           RPKI.AppMonad
 import           RPKI.AppMonadUtil
 import           RPKI.AppTypes
@@ -224,7 +226,13 @@ fetchRepositoryFromErikRelays
     relays
     worldVersion    
     fqdn = do
-        logInfo logger [i|Fetching #{fqdn} from #{length relays} Erik relay(s).|]           
+        -- Relays that the workers before us found dead are left out, so this
+        -- worker does not pay their timeout again.
+        usableRelays <- usableErikRelays appState relays
+        let skipped = length relays - length usableRelays
+        when (skipped > 0) $
+            logDebug logger [i|Skipping #{skipped} Erik relay(s) known to be failing.|]
+        logInfo logger [i|Fetching #{fqdn} from #{length usableRelays} Erik relay(s).|]           
 
         let fetcherTimeout = fetchConfig ^. #erikTimeout
         let totalTimeout = fetcherTimeout + timeToKillItself
@@ -233,7 +241,7 @@ fetchRepositoryFromErikRelays
                 let fetchConfig' = fetchConfig & #erikTimeout .~ fetcherTimeout
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (ErikE . UnknownErikProblem . fmtEx) 
-                                    (runErikFetchWorker appContext fetchConfig' worldVersion relays fqdn)
+                                    (runErikFetchWorker appContext fetchConfig' worldVersion usableRelays fqdn)
                 logInfo logger [i|Fetched #{fqdn} from Erik relays, took #{elapsed}ms.|]
                 pure z)            
             (do 

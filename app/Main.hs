@@ -118,6 +118,8 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                 & #metricsHandler .~ withAppState . mergeSystemMetrics
                 & #workerHandler .~ withAppState . updateRunningWorkers
                 & #systemStatusHandler .~ withAppState . updateSystemStatus
+                & #erikRelayHandler .~ (\(ErikRelayMessage reports) ->
+                        withAppState (`updateErikRelayHealth` reports))
 
         -- This one modifies system metrics in AppState
         -- if appState is actually initialised

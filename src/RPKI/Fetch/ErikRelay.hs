@@ -151,6 +151,13 @@ fetchErik
                     logInfo logger
                         [i|  #{statRelay}: served=#{statServed} failed=#{statFailed} in-flight=#{statInFlight}|]
 
+                -- Failures are reported by the pool as they happen (see
+                -- RelayPool.withRelay); this is the closing summary, which is
+                -- what lets a relay that answered clear its failure count.
+                pushErikRelayReport logger
+                    [ ErikRelayReport statRelay statServed 0
+                    | RelayStat {..} <- stats, statServed > 0 ]
+
                 -- Now traverse all downloaded objects and load them into the storage,
                 -- the same way it happens for rsync-ed repositories.
                 loadObjectsFromFS appContext worldVersion recoverUri indexDir 

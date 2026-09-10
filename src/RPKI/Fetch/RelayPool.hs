@@ -33,6 +33,19 @@ import           RPKI.Parallel
 import           RPKI.Reporting
 
 
+{- | Failures against one relay, within a single worker, before it is reported
+     to the root process.
+
+     This is 1 on purpose. The pool's own ordering sinks a failing relay to the
+     back immediately, so within one worker a dead relay is typically tried
+     exactly once and a higher threshold here would never be reached. Deciding
+     whether a relay is really dead is the root process's job: it is the only
+     place that sees reports from every worker, so that is where they are
+     counted (see 'RPKI.AppState.relayDeadAfterReports').
+-}
+deadRelayThreshold :: Int
+deadRelayThreshold = 1
+
 data Relay = Relay {
         relayUri :: URI,
         -- | Queries running against this relay right now; drives selection.
@@ -112,11 +125,24 @@ withRelay logger pool@RelayPool {..} f
     -- on a validator error.
     counted Relay {..} action = do
         r <- bracket_ (adjust 1) (adjust (-1)) (tryError @AppError action)
+        -- The verdict and the report it triggers happen in one transaction, so
+        -- the root process hears about a dead relay the moment this pool
+        -- concludes it is dead -- not at the end of the fetch, by which time
+        -- every other worker in the round has already started and the news is
+        -- too late to spare them the same timeout.
+        --
+        -- The threshold matters: reporting the first failure would bench a
+        -- healthy relay for one transient 404 or slow object, while a genuinely
+        -- dead relay fails every query and crosses it almost at once. That
+        -- makes it one message per relay per worker, so the bus stays quiet.
         liftIO $ atomically $
             case r of
                 Left _  -> do
                     modifyTVar' failed (+ 1)
                     modifyTVar' consecutiveFailures (+ 1)
+                    n <- readTVar consecutiveFailures
+                    when (n == deadRelayThreshold) $
+                        pushErikRelayReportSTM logger [ ErikRelayReport relayUri 0 1 ]
                 Right _ -> do
                     modifyTVar' served (+ 1)
                     writeTVar consecutiveFailures 0
