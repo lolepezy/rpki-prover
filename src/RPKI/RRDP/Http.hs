@@ -3,13 +3,13 @@
 module RPKI.RRDP.Http where
 
 import           Effectful
-import Control.Exception.Lifted
+import Control.Exception
 import Control.Lens
 
 import Conduit
 import Data.Conduit.Internal (zipSinks)
 import Data.Generics.Product.Typed
-import Data.IORef.Lifted
+import Data.IORef
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS

@@ -10,7 +10,7 @@ import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Concurrent.Async
 
-import           Control.Exception.Lifted
+import           Control.Exception
 
 import           Control.Monad
 import           Control.Monad.IO.Class

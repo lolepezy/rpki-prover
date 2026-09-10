@@ -94,14 +94,12 @@ common shared
     , interpolate
     , ixset-typed
     , lens
-    , lifted-base
     , list-t
     , lz4
     , ram
     , resource-pool
     , sqlite-simple
     , modern-uri
-    , monad-control
     , monoidal-containers
     , mtl
     , network

@@ -5,7 +5,7 @@
 module RPKI.Reporting where
     
 import           Control.DeepSeq    
-import           Control.Exception.Lifted
+import           Control.Exception (Exception)
 import           Control.Lens
 
 import           Data.Generics.Labels

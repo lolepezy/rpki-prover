@@ -171,14 +171,13 @@ readQueueChunked cq chunkSize f = go
 -- Auxialliary stuff for limiting the amount of parallel reading DB transactions
 data Semaphore = Semaphore { 
         capacity :: Int,
-        current  :: TVar Int, 
-        highest  :: TVar Int
+        current  :: TVar Int
     }
     deriving (Eq)
 
 
 newSemaphore :: Int -> STM Semaphore
-newSemaphore n = Semaphore n <$> newTVar 0 <*> newTVar 0
+newSemaphore n = Semaphore n <$> newTVar 0
 
 -- Execute using a semaphore as a barrier
 withSemaphore :: Semaphore -> IO a -> IO a
@@ -189,11 +188,7 @@ withSemaphore Semaphore {..} f =
         c <- readTVar current
         if c >= capacity 
             then retry
-            else do 
-                let c' = c + 1
-                writeTVar current c'
-                h <- readTVar highest 
-                when (c' > h) $ writeTVar highest c'
+            else writeTVar current (c + 1)
 
     decr _ = atomically $ modifyTVar' current $ \c -> c - 1
 

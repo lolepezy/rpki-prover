@@ -5,7 +5,7 @@ module RPKI.Store.DatabaseSpec where
 import           Effectful
 import           Control.Concurrent              (threadDelay)
 import           Control.Concurrent.STM
-import           Control.Exception.Lifted
+import           Control.Exception
 import           Control.Lens
 import           Control.Monad
 import           Control.Monad

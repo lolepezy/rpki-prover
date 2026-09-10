@@ -3,7 +3,8 @@
 module RPKI.Worker where
 
 import           Effectful
-import           Control.Exception.Lifted
+import qualified Control.Exception               as IOExc
+import           Effectful.Exception
 import           Control.Monad
 import           Control.Concurrent
 import           Control.Concurrent.Async
@@ -176,7 +177,7 @@ executeWork input exitWith_ actualWork =
 
             mapM_ (\w -> forkFinally w (const $ pure ())) [
                     (actualWork input writeWorkerOutput >> done ExitSuccess) 
-                        `onException` 
+                        `IOExc.onException` 
                         done exceptionExitCode,
                     dieIfParentDies done,
                     dieOfTiming done
@@ -316,7 +317,7 @@ runWorker logger workerInput extraCli workerInfo = do
     timeout = unTimebox $ workerInput ^. #workerTimeout
     workerId = workerInput ^. #workerId
 
-    waitForProcess conf f = bracket start stop exec
+    waitForProcess conf f = IOExc.bracket start stop exec
       where
         start = do 
             p <- startProcess conf
