@@ -2,12 +2,13 @@
 
 module RPKI.Store.DatabaseSpec where
 
+import           Effectful
 import           Control.Concurrent              (threadDelay)
 import           Control.Concurrent.STM
-import           Control.Exception.Lifted
+import           Control.Exception
 import           Control.Lens
 import           Control.Monad
-import           Control.Monad.Reader
+import           Control.Monad
 import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString                   as BS
@@ -353,8 +354,8 @@ shouldMergeObjectLocations io = do
 shouldOrderManifests :: IO DB -> HU.Assertion
 shouldOrderManifests io = do
     db <- io
-    (Right (url1, mft1), _) <- runValidatorT (newScopes "read1") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
-    (Right (url2, mft2), _) <- runValidatorT (newScopes "read2") $ readObjectFromFile "./test/data/afrinic_mft2.mft"
+    (Right (url1, mft1), _) <- runValidatorIO (newScopes "read1") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
+    (Right (url2, mft2), _) <- runValidatorIO (newScopes "read2") $ readObjectFromFile "./test/data/afrinic_mft2.mft"
 
     worldVersion <- newVersion
 
@@ -1097,15 +1098,15 @@ shouldRollbackAppTx io = do
     Now i2 <- thisInstant
     Now i3 <- thisInstant
 
-    void $ runValidatorT (newScopes "tx-rollback") $ DB.rwAppTx db $ \tx -> do
+    void $ runValidatorIO (newScopes "tx-rollback") $ DB.rwAppTx db $ \tx -> do
         liftIO $ DB.setJobCompletionTime tx db "job-rollback" i1
         appError $ UnspecifiedE "Test" "Rollback requested"
 
-    void $ runValidatorT (newScopes "tx-commit") $ DB.rwAppTx db $ \tx ->
+    void $ runValidatorIO (newScopes "tx-commit") $ DB.rwAppTx db $ \tx ->
         liftIO $ DB.setJobCompletionTime tx db "job-commit" i2
 
     let throwFromTx =
-            void $ runValidatorT (newScopes "tx-throw") $ DB.rwAppTx db $ \tx -> do
+            void $ runValidatorIO (newScopes "tx-throw") $ DB.rwAppTx db $ \tx -> do
                 liftIO $ DB.setJobCompletionTime tx db "job-ex" i3
                 liftIO $ throwIO DivideByZero
 
@@ -1127,7 +1128,7 @@ shouldPreserveStateInAppTx io = do
     let addedObject = updateMetric @RrdpMetric @_ (#added %~ Map.unionWith (+) (Map.singleton (Just CER) 1))
 
     (_, ValidationState { validations = Validations validationMap, .. })
-        <- runValidatorT (newScopes "root") $
+        <- runValidatorIO (newScopes "root") $
             timedMetric (Proxy :: Proxy RrdpMetric) $ do
                 appWarn $ UnspecifiedE "Error0" "text 0"
                 void $ DB.rwAppTx db $ \tx -> do
@@ -1196,7 +1197,7 @@ dbTestCase :: TestName -> (IO DB -> HU.Assertion) -> TestTree
 dbTestCase = ioTestCase
 
 
-readObjectFromFile :: FilePath -> ValidatorT IO (RpkiURL, ParsedRpkiObject)
+readObjectFromFile :: ValidatorIO es => FilePath -> Eff es (RpkiURL, ParsedRpkiObject)
 readObjectFromFile path = do 
     bs <- liftIO $ BS.readFile path
     -- Drop the "./" prefix of the fixture path: `parseRpkiURL` (rightly) rejects 
@@ -1205,7 +1206,7 @@ readObjectFromFile path = do
     url <- case parseRpkiURL $ "rsync://host/" <> urlPath of 
                 Right u -> pure u
                 Left e  -> liftIO $ fail $ "Failed to parse fixture URL: " <> Text.unpack e
-    o <- vHoist $ readObject url bs
+    o <- readObject url bs
     pure (url, o)
 
 replaceAKI :: AKI -> ParsedRpkiObject -> ParsedRpkiObject

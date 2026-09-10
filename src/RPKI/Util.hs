@@ -30,7 +30,7 @@ import           Data.Word
 import           RPKI.Domain
 import           RPKI.AppTypes
 
-import           Data.IORef.Lifted
+import           Data.IORef
 
 import           Numeric.Natural
 

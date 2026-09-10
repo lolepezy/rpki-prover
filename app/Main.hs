@@ -3,13 +3,14 @@
 
 module Main where
 
+import           Effectful
 import           Control.Lens ((^.), (&))
 import           Control.Lens.Setter
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Concurrent.Async
 
-import           Control.Exception.Lifted
+import           Control.Exception
 
 import           Control.Monad
 import           Control.Monad.IO.Class
@@ -125,7 +126,7 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     else [i|Starting #{rpkiProverVersion} as a server.|]
             
             (z, validations) <- do
-                        runValidatorT (newScopes "Startup") $ do
+                        runValidatorIO (newScopes "Startup") $ do
                             checkPreconditions cliOptions
                             createAppContext cliOptions logger (logConfig ^. #logLevel)
             case z of
@@ -168,7 +169,7 @@ executeWorkerProcess = do
 
     executeWork input onExit $ \_ resultHandler -> 
         withLogger logConfig $ \logger -> liftIO $ do
-            (z, validations) <- runValidatorT
+            (z, validations) <- runValidatorIO
                                     (newScopes "worker-create-app-context")
                                     (createWorkerAppContext config logger)
             case z of
@@ -179,11 +180,11 @@ executeWorkerProcess = do
                     let actuallyExecuteWork = 
                             case input ^. #params of
                                 RrdpFetchParams {..} -> 
-                                    exec resultHandler $ fmap (Right . RrdpFetchResult) $ runValidatorT scopes $ 
+                                    exec resultHandler $ fmap (Right . RrdpFetchResult) $ runValidatorIO scopes $ 
                                         updateRrdpRepository appContext worldVersion rrdpRepository
 
                                 RsyncFetchParams {..} -> 
-                                    exec resultHandler $ fmap (Right . RsyncFetchResult) $ runValidatorT scopes $                                     
+                                    exec resultHandler $ fmap (Right . RsyncFetchResult) $ runValidatorIO scopes $                                     
                                         updateObjectForRsyncRepository appContext fetchConfig 
                                             worldVersion rsyncRepository
 
@@ -232,7 +233,7 @@ readTALs AppContext {..} = do
         logError logger message
         throwIO $ AppException $ TAL_E $ TALError message
 
-    (tals, _) <- runValidatorT (newScopes "validation-root") $
+    (tals, _) <- runValidatorIO (newScopes "validation-root") $
         forM talNames $ \(talFilePath, taName) ->
             vFocusOn TAFocus (convert taName) $
                 parseTalFromFile talFilePath (Text.pack taName)    
@@ -247,7 +248,7 @@ readTALs AppContext {..} = do
   where
     parseTalFromFile talFileName taName = do
         talContent <- fromTry (TAL_E . TALError . fmtEx) $ LBS.readFile talFileName
-        vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName            
+        fromEither $ first TAL_E $ parseTAL (convert talContent) taName            
 
 
 runHttpApi :: (MaintainableStorage s) => AppContext s -> IO ()
@@ -258,7 +259,7 @@ runHttpApi appContext@AppContext {..} = do
         (\(e :: SomeException) -> logError logger [i|Interrupted HTTP server: #{e}.|])
 
 
-createAppContext :: CLIOptions -> AppLogger -> LogLevel -> ValidatorT IO AppSQLiteEnv
+createAppContext :: ValidatorIO es => CLIOptions -> AppLogger -> LogLevel -> Eff es AppSQLiteEnv
 createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     programPath <- liftIO getExecutablePath
@@ -387,9 +388,9 @@ createSqliteDatabase cacheDir config resetCache checkVersion = do
         when exists $ removeFile filePath
 
       
-fsLayout :: CLIOptions
+fsLayout :: ValidatorIO es => CLIOptions
         -> AppLogger
-        -> ValidatorT IO (FilePath, FilePath, FilePath, FilePath, FilePath)
+        -> Eff es (FilePath, FilePath, FilePath, FilePath, FilePath)
 fsLayout cliOptions@CLIOptions {..} logger = do
     root <- getRoot cliOptions    
     
@@ -405,13 +406,18 @@ fsLayout cliOptions@CLIOptions {..} logger = do
         logError logger message
         appError $ InitE $ InitError message
 
-    -- For each sub-directory create it if it doesn't exist
-    [cached, rsyncd, tald, tmpd] <- 
-        fromTryM 
-            (\e -> InitE $ InitError [i|Error verifying/creating directories: #{fmtEx e}|])
-            $ forM [cacheDirName, rsyncDirName, talsDirName, tmpDirName] $ \dir -> 
-                fromEitherM $ first (InitE . InitError) <$> 
-                    createSubDirectoryIfNeeded rootDir dir    
+    -- For each sub-directory create it if it doesn't exist.
+    -- Bound one by one rather than by list pattern: `Eff` has no MonadFail
+    -- instance without the `Fail` effect, so a failable pattern won't do.
+    let subDir dir =
+            fromTryM
+                (\e -> InitE $ InitError [i|Error verifying/creating directories: #{fmtEx e}|])
+                $ fromEitherM $ liftIO $ first (InitE . InitError) <$>
+                    createSubDirectoryIfNeeded rootDir dir
+    cached <- subDir cacheDirName
+    rsyncd <- subDir rsyncDirName
+    tald   <- subDir talsDirName
+    tmpd   <- subDir tmpDirName
 
     if refetchRirTals then do 
         if noRirTals then
@@ -466,7 +472,7 @@ fsLayout cliOptions@CLIOptions {..} logger = do
                         Text.intercalate "\n" $ mapMaybe talText httpStatuses                                        
 
 
-getRoot :: CLIOptions -> ValidatorT IO (Either FilePath FilePath)
+getRoot :: ValidatorIO es => CLIOptions -> Eff es (Either FilePath FilePath)
 getRoot cliOptions = do    
     case getRootDirectory cliOptions of 
         Nothing -> do 
@@ -526,7 +532,7 @@ getRootDirectory CLIOptions{..} =
         s  -> Just $ Prelude.last s
 
 -- Set rsync prefetch URLs
-rsyncPrefetches :: CLIOptions -> ValidatorT IO [RsyncURL]
+rsyncPrefetches :: ValidatorIO es => CLIOptions -> Eff es [RsyncURL]
 rsyncPrefetches CLIOptions {..} = do
     let urlsToParse =
             case rsyncPrefetchUrl of
@@ -539,7 +545,7 @@ rsyncPrefetches CLIOptions {..} = do
             Right rsyncURL -> pure rsyncURL
 
 
-createWorkerAppContext :: Config -> AppLogger -> ValidatorT IO AppSQLiteEnv
+createWorkerAppContext :: ValidatorIO es => Config -> AppLogger -> Eff es AppSQLiteEnv
 createWorkerAppContext config logger = do
     db <- fromTry (InitE . InitError . fmtEx) $ openExistingSqliteDatabase cacheDir config
     appState <- createAppState logger (configValue $ config ^. #localExceptions)
@@ -571,10 +577,10 @@ createAppState logger localExceptions = do
 
 
 -- | Check some crucial things before running the validator
-checkPreconditions :: CLIOptions -> ValidatorT IO ()
+checkPreconditions :: ValidatorIO es => CLIOptions -> Eff es ()
 checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
 
-deriveProverRunMode :: CLIOptions -> ValidatorT IO ProverRunMode
+deriveProverRunMode :: ValidatorIO es => CLIOptions -> Eff es ProverRunMode
 deriveProverRunMode CLIOptions {..} = 
     case (once, vrpOutput) of 
         (False, Nothing) -> pure ServerMode  
@@ -590,7 +596,7 @@ executeVerifier cliOptions@CLIOptions {..} = do
         withLogger logConfig $ \logger ->
             withVerifier logger $ \verifyPath rscFile -> do
                 logDebug logger [i|Verifying #{verifyPath} with RSC #{rscFile}.|]
-                (ac, vs) <- runValidatorT (newScopes "Verify RSC") $ do
+                (ac, vs) <- runValidatorIO (newScopes "Verify RSC") $ do
                                 appContext <- createVerifierContext cliOptions logger
                                 rscVerify appContext rscFile verifyPath
                 case ac of
@@ -612,10 +618,10 @@ executeVerifier cliOptions@CLIOptions {..} = do
                     _              -> logError logger "Both directory and list of files are set, leave just one of them to verify."
 
 
-createVerifierContext :: CLIOptions -> AppLogger -> ValidatorT IO AppSQLiteEnv
+createVerifierContext :: ValidatorIO es => CLIOptions -> AppLogger -> Eff es AppSQLiteEnv
 createVerifierContext cliOptions logger = do
     rootDir <- either id id <$> getRoot cliOptions
-    cached <- fromEitherM $ first (InitE . InitError) <$> checkSubDirectory rootDir cacheDirName
+    cached <- fromEitherM $ liftIO $ first (InitE . InitError) <$> checkSubDirectory rootDir cacheDirName
 
     let config = defaultConfig
     (db, _) <- fromTry (InitE . InitError . fmtEx) $

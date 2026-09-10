@@ -2,6 +2,7 @@
 
 module RPKI.Parse.Internal.CRL where
     
+import           Effectful
 import           Control.Monad
 
 import           Data.ASN1.BinaryEncoding
@@ -23,9 +24,9 @@ import           RPKI.Parse.Internal.Common
 import qualified RPKI.Util                  as U
 
 
-parseCrl :: BS.ByteString -> PureValidatorT CrlObject
+parseCrl :: Validator es => BS.ByteString -> Eff es CrlObject
 parseCrl bs = do
-    -- pureError $ parseErr $ "Couldn't parse IP address extension: " <> Text.pack (show e)
+    -- appError $ parseErr $ "Couldn't parse IP address extension: " <> Text.pack (show e)
     asns                   <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs
     (extensions, signCrlF) <- fromEither $ first (parseErr . U.convert) $ runParseASN1 getCrl asns      
 
@@ -35,22 +36,22 @@ parseCrl bs = do
     let allowedCrlExtensionOids = [id_authorityKeyId, id_crlNumber]
     let unsupportedOids = filter (`notElem` allowedCrlExtensionOids) extensionOids
     unless (null unsupportedOids) $
-        pureError $ parseErr $ "Unsupported CRL extension OID(s): " <> Text.pack (show unsupportedOids)
+        appError $ parseErr $ "Unsupported CRL extension OID(s): " <> Text.pack (show unsupportedOids)
 
     when (length extensionOids /= Set.size (Set.fromList extensionOids)) $
-        pureError $ parseErr "Duplicate CRL extensions are not allowed"
+        appError $ parseErr "Duplicate CRL extensions are not allowed"
 
     akiBS <- case extVal extensions id_authorityKeyId of
-                Nothing -> pureError $ parseErr "No AKI in CRL"
+                Nothing -> appError $ parseErr "No AKI in CRL"
                 Just a  -> pure a
 
     aki' <- case decodeASN1' DER akiBS of
-                Left e -> pureError $ parseErr $ "Unknown AKI format: " <> U.fmtGen e
+                Left e -> appError $ parseErr $ "Unknown AKI format: " <> U.fmtGen e
                 Right [Start Sequence, Other Context 0 ki, End Sequence] -> pure ki
-                Right s -> pureError $ parseErr $ "Unknown AKI format: " <> U.fmtGen s
+                Right s -> appError $ parseErr $ "Unknown AKI format: " <> U.fmtGen s
     
     crlNumberBS :: BS.ByteString  <- case extVal extensions id_crlNumber of
-                Nothing -> pureError $ parseErr "No CRL number in CRL"
+                Nothing -> appError $ parseErr "No CRL number in CRL"
                 Just n  -> pure n
 
     numberAsns <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER crlNumberBS
@@ -58,7 +59,7 @@ parseCrl bs = do
                     runParseASN1 (getInteger pure "Wrong CRL number") numberAsns
 
     case makeSerial crlNumber' of 
-        Left e       -> pureError $ parseErr $ Text.pack e
+        Left e       -> appError $ parseErr $ Text.pack e
         Right crlNum -> pure $ newCrl         
                             (AKI $ mkKI aki') 
                             (U.sha256s bs) 

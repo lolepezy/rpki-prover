@@ -2,9 +2,10 @@
 
 module RPKI.Worker where
 
-import           Control.Exception.Lifted
+import           Effectful
+import qualified Control.Exception               as IOExc
+import           Effectful.Exception
 import           Control.Monad
-import           Control.Monad.IO.Class
 import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
@@ -176,7 +177,7 @@ executeWork input exitWith_ actualWork =
 
             mapM_ (\w -> forkFinally w (const $ pure ())) [
                     (actualWork input writeWorkerOutput >> done ExitSuccess) 
-                        `onException` 
+                        `IOExc.onException` 
                         done exceptionExitCode,
                     dieIfParentDies done,
                     dieOfTiming done
@@ -291,12 +292,11 @@ exitKillByTypedProcess = ExitFailure (-2)
 
 -- Main entry point to start a worker
 -- 
-runWorker :: (TheBinary r, Show r)
-            => AppLogger 
+runWorker :: (ValidatorIO es, TheBinary r, Show r) => AppLogger 
             -> WorkerInput            
             -> [String] 
             -> WorkerInfo 
-            -> ValidatorT IO r
+            -> Eff es r
 runWorker logger workerInput extraCli workerInfo = do
     let executableToRun = configValue $ workerInput ^. #config . #programBinaryPath
     let worker = 
@@ -317,7 +317,7 @@ runWorker logger workerInput extraCli workerInfo = do
     timeout = unTimebox $ workerInput ^. #workerTimeout
     workerId = workerInput ^. #workerId
 
-    waitForProcess conf f = bracket start stop exec
+    waitForProcess conf f = IOExc.bracket start stop exec
       where
         start = do 
             p <- startProcess conf

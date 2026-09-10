@@ -12,9 +12,8 @@ module RPKI.Workflow (
 import           Control.Concurrent              as Conc
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
-import           Control.Exception.Lifted
+import           Control.Exception
 import           Control.Monad
-import           Control.Monad.Trans.Control (MonadBaseControl)
 import           Control.Monad.IO.Class
 
 import           Control.Lens hiding (indices, Indexable)
@@ -73,7 +72,8 @@ import           RPKI.Util
 import           RPKI.Time
 import           RPKI.Worker
 import           RPKI.SLURM.Types
-import           UnliftIO (pooledForConcurrentlyN)
+import           UnliftIO (MonadUnliftIO, pooledForConcurrentlyN)
+import qualified UnliftIO.Exception              as UIO
 
 {- 
     Fully asynchronous execution.
@@ -127,12 +127,11 @@ data WorkflowShared = WorkflowShared {
     deriving stock (Generic)
 
 
-withWorkflowShared :: (MonadBaseControl IO m, MonadIO m) 
-                    => AppContext s
+withWorkflowShared :: AppContext s
                     -> PrometheusMetrics 
                     -> [TAL]
-                    -> (WorkflowShared -> m b) 
-                    -> m b
+                    -> (WorkflowShared -> IO b) 
+                    -> IO b
 withWorkflowShared AppContext {..} prometheusMetrics tals f = do
     shared <- liftIO $ atomically $ do 
         deletedAnythingFromDb <- newTVar False
@@ -602,7 +601,7 @@ runAll appContext@AppContext {..} tals = do
                         rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerMemoryMb) 
                     ])
         
-        r <- runValidatorT 
+        r <- runValidatorIO 
                 (newScopes "validator") $ do 
                     let timeout = config ^. typed @ValidationConfig . #topDownTimeout
                     workerInput <- makeWorkerInput appContext workerId
@@ -625,7 +624,7 @@ runAll appContext@AppContext {..} tals = do
                     rtsAL "64m", 
                     rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerMemoryMb) ]
         
-        r <- runValidatorT             
+        r <- runValidatorIO             
                 (newScopes "cache-clean-up") $ do
                     let timeout = 300
                     workerInput <- makeWorkerInput appContext workerId
@@ -692,7 +691,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
             Nothing       -> pure (mempty, Nothing)
             Just readFunc -> do
                 logInfo logger [i|Re-reading and re-validating SLURM files.|]
-                (z, vs) <- runValidatorT (newScopes "read-slurm") readFunc
+                (z, vs) <- runValidatorIO (newScopes "read-slurm") readFunc
                 case z of
                     Left e -> do
                         logError logger [i|Failed to read SLURM files: #{e}|]
@@ -901,7 +900,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                 ((r, validations), duration) <-                 
                         withFetchLimits fetchConfig repository $ timedMS $ 
-                            runValidatorT (newScopes' RepositoryFocus url) $ do                                 
+                            runValidatorIO (newScopes' RepositoryFocus url) $ do                                 
                                 runConcurrentlyIfPossible logger FetchTask runningTasks 
                                     $ fetchRepository appContext fetchConfig worldVersion repository
 
@@ -958,7 +957,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                         withFetchLimits fetchConfig repository 
                             $ runConcurrentlyIfPossible logger FetchTask runningTasks                                 
                                 $ timedMS
-                                $ runValidatorT (newScopes' RepositoryFocus fallbackUrl) 
+                                $ runValidatorIO (newScopes' RepositoryFocus fallbackUrl) 
                                     $ fetchRepository appContext fetchConfig worldVersion repository                
 
                 updatePrometheusForRepository fallbackUrl duration prometheusMetrics
@@ -1237,7 +1236,7 @@ canRunInParallel t1 t2 =
     allTasks = [minBound..maxBound]
         
     
-runConcurrentlyIfPossible :: (MonadIO m, MonadBaseControl IO m) 
+runConcurrentlyIfPossible :: MonadUnliftIO m 
                         => AppLogger -> Task -> Tasks -> m a -> m a
 runConcurrentlyIfPossible logger taskType Tasks {..} action = do 
     {- 
@@ -1261,7 +1260,7 @@ runConcurrentlyIfPossible logger taskType Tasks {..} action = do
             then do 
                 writeTVar running $ Map.insertWith (+) taskType 1 runningTasks_
                 pure $ action
-                        `finally` 
+                        `UIO.finally` 
                         liftIO (atomically (modifyTVar' running $ Map.alter (>>= 
                                     (\count -> if count > 1 then Just (count - 1) else Nothing)
                                 ) taskType))
@@ -1302,12 +1301,10 @@ logException logger logText result =
         Left ex -> logDebug logger [i|logException: #{logText}: #{ex}|]
         Right _ -> pure ()
 
-ignoreSync :: MonadBaseControl IO m => m () -> m ()
-ignoreSync f =     
-    catch f $ \(e :: SomeException) -> 
-        case fromException e of
-            Just (_ :: SomeAsyncException) -> throwIO e
-            Nothing -> pure ()
+-- | Run an action, swallowing synchronous exceptions. Asynchronous ones
+-- still propagate -- that is `UIO.catchAny`'s contract.
+ignoreSync :: MonadUnliftIO m => m () -> m ()
+ignoreSync f = f `UIO.catchAny` const (pure ())
 
 
 killAllWorkers :: AppContext s -> IO ()

@@ -19,7 +19,7 @@ import RPKI.AppContext
 import RPKI.Logging
 import RPKI.Store.AppSqliteStorage
 import RPKI.Meta.UniqueId
-import RPKI.AppMonad (runValidatorT)
+import RPKI.AppMonad (runValidatorIO)
 import RPKI.Reporting (newScopes)
 
 
@@ -49,7 +49,7 @@ withTestContext f = do
                 & #talDirectory .~ Public talDir
                 & #cacheDirectory .~ Public cacheDir        
 
-        (Right db, _) <- runValidatorT (newScopes "create-db") $
+        (Right db, _) <- runValidatorIO (newScopes "create-db") $
                     setupSqliteCache Reset logger cacheDir config
 
         appState <- newAppState

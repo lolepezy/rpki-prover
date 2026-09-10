@@ -398,4 +398,4 @@ constraints: any.Cabal ==3.12.1.0,
              xeno -libxml2 -whitespace-around-equals,
              any.zlib ==0.7.1.1,
              zlib -bundled-c-zlib +non-blocking-ffi +pkg-config
-index-state: hackage.haskell.org 2026-08-06T04:37:23Z
+index-state: hackage.haskell.org 2026-08-27T11:08:33Z

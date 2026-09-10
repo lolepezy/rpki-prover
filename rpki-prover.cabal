@@ -81,6 +81,8 @@ common shared
     , deepseq
     , deque
     , directory
+    , effectful
+    , effectful-core
     , file-embed
     , file-embed-lzma
     , filepath
@@ -99,16 +101,12 @@ common shared
     , interpolate
     , ixset-typed
     , lens
-    , lifted-async
-    , lifted-base
     , list-t
     , lz4
     , ram
     , resource-pool
     , sqlite-simple
-    , mmorph
     , modern-uri
-    , monad-control
     , monoidal-containers
     , mtl
     , network

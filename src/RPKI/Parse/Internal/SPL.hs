@@ -2,6 +2,7 @@
 
 module RPKI.Parse.Internal.SPL where
 
+import           Effectful
 import qualified Data.ByteString as BS  
 
 import Control.Monad
@@ -24,7 +25,7 @@ import qualified RPKI.Util                  as U
 
 -- | Parse ROA, https://tools.ietf.org/html/rfc6482
 -- 
-parseSpl :: BS.ByteString -> PureValidatorT SplObject
+parseSpl :: Validator es => BS.ByteString -> Eff es SplObject
 parseSpl bs = do    
     asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs      
     signedSpl <- fromEither $ first (parseErr . U.convert) 

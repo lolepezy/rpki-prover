@@ -4,12 +4,14 @@
 
 module RPKI.Fetch where
 
+import           Effectful.Timeout                (Timeout)
+import           Effectful
 import           Control.Concurrent              as Conc
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Lens hiding (indices, Indexable)
-import           Control.Monad.Except
+import           Effectful.Error.Static           (catchError)
 
 import qualified Data.List.NonEmpty          as NonEmpty
 
@@ -116,11 +118,11 @@ updateUriPerTa fetcheablesPerTa uriTa = uriTa'
 -- Returned repository has all the metadata updated (in case of RRDP session and serial).
 -- The metadata is also updated in the database.
 --
-fetchRepository :: AppContext s 
+fetchRepository :: (ValidatorIO es, Timeout :> es) => AppContext s 
                 -> FetchConfig
                 -> WorldVersion
                 -> Repository 
-                -> ValidatorT IO (Repository, Maybe RrdpFetchStat)
+                -> Eff es (Repository, Maybe RrdpFetchStat)
 fetchRepository 
     appContext@AppContext {..}
     fetchConfig
@@ -177,12 +179,12 @@ fetchRepository
 
 -- | Fetch TA certificate based on TAL location(s)
 --
-fetchTACertificate :: AppContext s -> FetchConfig -> TAL -> ValidatorT IO (RpkiURL, ParsedRpkiObject)
+fetchTACertificate :: (ValidatorIO es, Timeout :> es) => AppContext s -> FetchConfig -> TAL -> Eff es (RpkiURL, ParsedRpkiObject)
 fetchTACertificate appContext@AppContext {..} fetchConfig tal = 
     go $ sortRrdpFirst $ neSetToList $ unLocations $ talCertLocations tal
   where
     go []         = appError $ TAL_E $ TALError "None of the certificate locations could be fetched."
-    go (u : uris) = tryFetch `catchError` goToNext 
+    go (u : uris) = tryFetch `catchError` (\_cs -> goToNext)
       where 
         tryFetch = 
             timeoutVT timeout fetchTaCert (goToNext timeoutError)

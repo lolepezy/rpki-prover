@@ -4,10 +4,10 @@
 
 module RPKI.RSC.Verifier where
 
+import           Effectful
 import           Control.Concurrent.STM
 
 import           Control.Monad
-import           Control.Monad.IO.Class
 
 
 import           Control.Lens
@@ -54,7 +54,7 @@ data VerifyPath = FileList [FilePath]
     deriving stock (Show, Eq, Ord, Generic)    
 
 
-rscVerify :: AppContext s -> FilePath -> VerifyPath -> ValidatorT IO ()
+rscVerify :: ValidatorIO es => AppContext s -> FilePath -> VerifyPath -> Eff es ()
 rscVerify appContext@AppContext {..} rscFile verifyPath = do
 
     db <- liftIO $ readTVarIO database
@@ -64,7 +64,7 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
     when (isNothing lastVersion) $ appError $ ValidationE NoValidatedVersion    
 
     bs        <- fromTry (ParseE . ParseError . fmtEx) $ BS.readFile rscFile
-    parsedRsc <- vHoist $ parseRsc bs    
+    parsedRsc <- parseRsc bs    
 
     now <- thisInstant
     void $ validateBottomUp appContext (RscRO parsedRsc) now

@@ -10,7 +10,7 @@ import           Control.Lens                     ((^.))
 import           Control.Applicative
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
-import           Control.Exception.Lifted
+import           Control.Exception
 import           Control.Monad
 
 import           Data.Generics.Product.Typed

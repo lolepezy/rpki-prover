@@ -68,7 +68,7 @@ prevalidationSpec = testGroup "Prevalidation of real objects"
     shouldPrevalidate path objectType = 
         HU.testCase ("Should prevalidate " <> path) $ do 
             bs <- BS.readFile path
-            let (r, _) = runPureValidator (newScopes "prevalidate") $ 
+            let (r, _) = runValidatorPure (newScopes "prevalidate") $ 
                             readObjectOfType objectType bs >>= prevalidateObject
             case r of 
                 Right _ -> pure ()
@@ -80,7 +80,7 @@ shoudlParseBGPSec :: TestTree
 shoudlParseBGPSec = HU.testCase "Should parse a BGPSec certificate" $ do        
     bs <- BS.readFile "test/data/bgp_router_cert.cer"
     let (Right (rc, ct, ski, aki, objectHash), _) = 
-            runPureValidator (newScopes "parse") $ parseResourceCertificate bs
+            runValidatorPure (newScopes "parse") $ parseResourceCertificate bs
     let bgpObject = BgpCerObject {
             hash = objectHash,
             ski = ski,
@@ -97,7 +97,7 @@ shoudlParseBGPSec = HU.testCase "Should parse a BGPSec certificate" $ do
 shouldParseAspa :: TestTree
 shouldParseAspa = HU.testCase "Should parse an ASPA object" $ do        
     bs <- BS.readFile "test/data/AS204325.asa"
-    let (Right aspaObject, _) = runPureValidator (newScopes "parse") $ parseAspa bs
+    let (Right aspaObject, _) = runValidatorPure (newScopes "parse") $ parseAspa bs
 
     let Aspa {..} = getCMSContent $ cmsPayload aspaObject
     HU.assertEqual "Wrong customer" customer (ASN 204325)
@@ -106,7 +106,7 @@ shouldParseAspa = HU.testCase "Should parse an ASPA object" $ do
 shouldParseSpl :: TestTree
 shouldParseSpl = HU.testCase "Should parse an SPL object" $ do        
     bs <- BS.readFile "test/data/9X0AhXWTJDl8lJhfOwvnac-42CA.spl"
-    let (Right splObject, _) = runPureValidator (newScopes "parse") $ parseSpl bs
+    let (Right splObject, _) = runValidatorPure (newScopes "parse") $ parseSpl bs
 
     let SplPayload asn prefixes = getCMSContent $ cmsPayload splObject
     HU.assertEqual "Wrong ASN" asn (ASN 15562)

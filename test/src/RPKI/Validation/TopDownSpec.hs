@@ -2,6 +2,7 @@
 
 module RPKI.Validation.TopDownSpec where
 
+import           Effectful
 import           Control.Concurrent.Async         (async, wait)
 import           Control.Concurrent.STM
 import           Control.Monad                    (forM, unless)
@@ -57,12 +58,12 @@ shouldResolveTroubledFromWellStructured =
         db <- readTVarIO $ appContext ^. #database
         worldVersion <- instantToVersion . unNow <$> thisInstant
 
-        (Right (url, _, parsedObject), _) <- runValidatorT (newScopes "fixture-ws") $ readFixtureObject fixturePath
-        (Right expectedObject, _) <- runValidatorT (newScopes "prevalidate-ws") $ vHoist $ prevalidateObject parsedObject
+        (Right (url, _, parsedObject), _) <- runValidatorIO (newScopes "fixture-ws") $ readFixtureObject fixturePath
+        (Right expectedObject, _) <- runValidatorIO (newScopes "prevalidate-ws") $ prevalidateObject parsedObject
 
         key <- storeLifecycle db worldVersion (WellStructuredRO expectedObject) url
 
-        (resolved, _) <- runValidatorT (newScopes "resolve-ws") $
+        (resolved, _) <- runValidatorIO (newScopes "resolve-ws") $
             DB.roAppTx db $ \tx -> resolveTroubledChildByKey tx db key
 
         case resolved of
@@ -79,8 +80,8 @@ shouldResolveTroubledFromOriginal =
         db <- readTVarIO $ appContext ^. #database
         worldVersion <- instantToVersion . unNow <$> thisInstant
 
-        (Right (url, blob, parsedObject), _) <- runValidatorT (newScopes "fixture-orig") $ readFixtureObject fixturePath
-        (Right expectedObject, _) <- runValidatorT (newScopes "prevalidate-orig") $ vHoist $ prevalidateObject parsedObject
+        (Right (url, blob, parsedObject), _) <- runValidatorIO (newScopes "fixture-orig") $ readFixtureObject fixturePath
+        (Right expectedObject, _) <- runValidatorIO (newScopes "prevalidate-orig") $ prevalidateObject parsedObject
 
         let lifecycle =
                 OriginalRO
@@ -91,7 +92,7 @@ shouldResolveTroubledFromOriginal =
 
         key <- storeLifecycle db worldVersion lifecycle url
 
-        (resolved, _) <- runValidatorT (newScopes "resolve-orig") $
+        (resolved, _) <- runValidatorIO (newScopes "resolve-orig") $
             DB.roAppTx db $ \tx -> resolveTroubledChildByKey tx db key
 
         case resolved of
@@ -110,7 +111,7 @@ storeLifecycle db worldVersion lifecycle url =
         pure key
 
 
-readFixtureObject :: FilePath -> ValidatorT IO (RpkiURL, BS.ByteString, ParsedRpkiObject)
+readFixtureObject :: ValidatorIO es => FilePath -> Eff es (RpkiURL, BS.ByteString, ParsedRpkiObject)
 readFixtureObject path = do
     blob <- liftIO $ BS.readFile path
     -- Drop the "./" prefix of the fixture path: `parseRpkiURL` (rightly) rejects 
@@ -120,7 +121,7 @@ readFixtureObject path = do
             case parseRpkiURL $ "rsync://host/" <> urlPath of
                 Right parsedUrl -> parsedUrl
                 Left err -> error $ "Failed to parse fixture URL: " <> Text.unpack err
-    object <- vHoist $ readObject url blob
+    object <- readObject url blob
     pure (url, blob, object)
 
 

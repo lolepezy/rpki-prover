@@ -2,6 +2,7 @@
 
 module RPKI.Parse.Internal.Common where
 
+import           Effectful
 import Data.Bifunctor
 import Control.Applicative
 import Control.Monad
@@ -112,7 +113,7 @@ allowedCriticalOIDs = [
 parseErr :: Text -> AppError
 parseErr = ParseE . ParseError
 
-mapParseErr :: Either String a -> PureValidatorT a       
+mapParseErr :: Validator es => Either String a -> Eff es a       
 mapParseErr = fromEither . first (ParseE . ParseError . Text.pack)
 
 parseError :: String -> ASN1 -> ParseASN1 a
@@ -187,19 +188,19 @@ getExts (certExtensions -> Extensions extensions) = fromMaybe [] extensions
 getExtsSign :: CertificateWithSignature -> [ExtensionRaw]
 getExtsSign = getExts . cwsX509certificate
 
-parseKI :: BS.ByteString -> PureValidatorT KI
+parseKI :: Validator es => BS.ByteString -> Eff es KI
 parseKI bs = 
     case decodeASN1' DER bs of
-        Left e -> pureError $ parseErr $ "Error decoding key identifier: " <> Text.pack (show e)
+        Left e -> appError $ parseErr $ "Error decoding key identifier: " <> Text.pack (show e)
         Right [OctetString bytes] -> makeKI bytes
         Right [Start Sequence, Other Context 0 bytes, End Sequence] -> makeKI bytes    
-        Right s -> pureError $ parseErr $ "Unknown key identifier " <> Text.pack (show s)
+        Right s -> appError $ parseErr $ "Unknown key identifier " <> Text.pack (show s)
   where
     makeKI bytes = 
         let len = BS.length bytes
         in if len == 20
             then pure $ mkKI bytes
-            else pureError $ parseErr $ "KI has wrong length, must be 160 bits, but it is " <> Text.pack (show len)
+            else appError $ parseErr $ "KI has wrong length, must be 160 bits, but it is " <> Text.pack (show len)
 
 -- https://www.rfc-editor.org/rfc/rfc7935.html#section-2
 asSha256Only :: OID -> ParseASN1 HashALG
@@ -417,7 +418,7 @@ setLowerBitsToOne ws setBitsNum allBitsNum =
             List.foldl' (\w i -> w .|. (1 `shiftL` i)) 0 [0..lastBitsNum - 1]
 
 
-parseIpExt :: [ASN1] -> PureValidatorT IpResources
+parseIpExt :: Validator es => [ASN1] -> Eff es IpResources
 parseIpExt asns = mapParseErr $ runParseASN1 
         (onNextContainer Sequence parseIpExt') asns
 
@@ -444,7 +445,7 @@ parseIpExt asns = mapParseErr $ runParseASN1
 
    ASId                ::= INTEGER
 -}
-parseAsnExt :: [ASN1] -> PureValidatorT AsResources
+parseAsnExt :: Validator es => [ASN1] -> Eff es AsResources
 parseAsnExt asnBlocks = mapParseErr $ runParseASN1 
         (onNextContainer Sequence parseAsnExt') asnBlocks 
   where

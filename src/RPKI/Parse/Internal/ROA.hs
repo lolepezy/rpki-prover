@@ -2,6 +2,7 @@
 
 module RPKI.Parse.Internal.ROA where
 
+import           Effectful
 import qualified Data.ByteString as BS  
 
 import Control.Applicative
@@ -25,7 +26,7 @@ import qualified RPKI.Util                  as U
 
 -- | Parse ROA, https://tools.ietf.org/html/rfc6482
 -- 
-parseRoa :: BS.ByteString -> PureValidatorT RoaObject
+parseRoa :: Validator es => BS.ByteString -> Eff es RoaObject
 parseRoa bs = do    
     asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs  
     signedRoa <- fromEither $ first (parseErr . U.convert) 

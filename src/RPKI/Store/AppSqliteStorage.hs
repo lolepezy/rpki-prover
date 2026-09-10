@@ -7,10 +7,10 @@ module RPKI.Store.AppSqliteStorage (
     setupSqliteCache,
 ) where
 
+import           Effectful
 import           Control.Lens
 import           Control.Concurrent.MVar  (withMVar)
 import           Control.Concurrent.STM   (readTVarIO)
-import           Control.Monad.IO.Class   (liftIO)
 
 import           Data.Hourglass
 import           Data.String.Interpolate.IsString
@@ -65,7 +65,7 @@ data SqliteFlow = UseExisting | Reset
 
 -- | Create or reuse the SQLite database at <cacheDir>/rpki-cache.sqlite.
 -- Used for the main process and workers alike; no separate worker variant is needed.
-setupSqliteCache :: SqliteFlow -> AppLogger -> FilePath -> Config -> ValidatorT IO DB
+setupSqliteCache :: ValidatorIO es => SqliteFlow -> AppLogger -> FilePath -> Config -> Eff es DB
 setupSqliteCache flow logger cacheDir config = do
 
     case flow of

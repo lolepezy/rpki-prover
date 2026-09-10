@@ -7,7 +7,7 @@ import           Control.Monad.ST
 import           Control.Monad.Trans
 import           Control.Monad.Trans.Except
 
-import           Control.Exception.Lifted
+import           Control.Exception
 
 import qualified Data.ByteString                  as BS
 import qualified Data.List                        as List
