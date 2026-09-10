@@ -87,15 +87,20 @@ document.addEventListener('DOMContentLoaded', function () {
     // inside a collapsed TA group and/or a collapsed object chain, and
     // plain browser navigation won't open a closed <details> on its
     // own -- only Ctrl+F does that -- so open every <details> ancestor
-    // by hand. The issue row also carries its own collapsed "N more
+    // by hand. An issue row also carries its own collapsed "N more
     // hops to the TA" path-chain as a *descendant* <details>, which a
-    // shared link should land already expanded, not behind a click.
+    // shared link to that issue should land already expanded -- but
+    // only for issue rows: section anchors like #validation-metrics
+    // must stay as plain scroll targets and not pop open every table
+    // nested underneath them.
     function revealTarget(id) {
         if (!id) return;
         var el = document.getElementById(id);
         if (!el) return;
         openAncestorDetails(el);
-        el.querySelectorAll('details').forEach(function (d) { d.open = true; });
+        if (el.classList.contains('issue-row')) {
+            el.querySelectorAll('details').forEach(function (d) { d.open = true; });
+        }
         el.scrollIntoView({ block: 'center' });
         setLinked(el);
     }
