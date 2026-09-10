@@ -16,6 +16,13 @@ extra-source-files:
     ChangeLog.md
     static/script.js
     static/styles.css
+    static/favicon.ico
+    static/favicon.svg
+    static/fonts/IBMPlexSans-Variable.woff2
+    static/fonts/IBMPlexMono-Regular.woff2
+    static/fonts/IBMPlexMono-Medium.woff2
+    static/fonts/IBMPlexMono-SemiBold.woff2
+    static/fonts/OFL.txt
     src/RPKI/Meta/GitVersionInfo.hs
     src/RPKI/Meta/UniqueId.hs
 
@@ -140,6 +147,7 @@ common shared
     , unordered-containers
     , vector
     , vector-algorithms
+    , wai-extra
     , warp
     , xeno
 
