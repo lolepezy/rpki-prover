@@ -296,10 +296,12 @@ getObjectByKey (Tx conn) _ k = liftIO $ do
                      in Just ro
         _         -> Nothing
 
+-- | An object with no locations at all (fetched via an Erik relay) is still
+-- found by key -- it is only the location, not the object, that's optional.
 getLocatedByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe (Located RpkiObjectLifecycle))
 getLocatedByKey tx db k = liftIO $ runMaybeT $ do
     obj       <- MaybeT $ getObjectByKey tx db k
-    locations <- MaybeT $ getLocationsByKey tx db k
+    locations <- MaybeT $ Just <$> getLocationsByKey tx db k
     pure $ Located locations obj
 
 -- | Keys of every object published at more than one location.

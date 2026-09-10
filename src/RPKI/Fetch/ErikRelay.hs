@@ -163,23 +163,12 @@ fetchErik
                 loadObjectsFromFS appContext worldVersion recoverUri indexDir 
       where
     
-        -- Objects come off a relay named by hash, so the path says nothing about
-        -- where they are published. Prefer the URI the object states for itself
-        -- (the SIA signedObject access description of its EE certificate); CA
-        -- certificates and CRLs do not carry one, so those fall back to a
-        -- synthetic path under the scope being fetched.
-        recoverUri filePath object = 
-            case object of                 
-                Nothing -> Nothing
-                Just o  -> 
-                    case getSelfPublicationUri o of 
-                        Just (URI selfUri) -> toRsyncURL selfUri
-                        Nothing -> toRsyncURL $ "rsync://" <> fqdn_ <> "/erik-relay/" <> U.convert (takeFileName filePath)
-          where
-            toRsyncURL u = 
-                case U.parseRsyncURL u of 
-                    Left _   -> Nothing 
-                    Right u_ -> Just u_
+        -- Objects come off a relay named by hash: there is nothing that ties
+        -- them to a real publication point, so they get no location at all
+        -- rather than one reconstructed from the object's own SIA and then
+        -- checked against that very SIA down the line.
+        recoverUri :: FilePath -> Maybe ParsedRpkiObject -> Maybe RsyncURL
+        recoverUri _ _ = Nothing
 
         -- The index is relay state rather than a content-addressed object, so
         -- it is cached per relay: whichever relay the pool ends up serving it
@@ -267,10 +256,9 @@ fetchErik
                         logDebug logger [i|Manifest #{U.hashAsBase64Url hash} already in the database.|]
                         void $ fetchManifestChildren hash (mft ^. #content . #mftEntries)
 
-                    Just (Located objectLocations _) -> do
+                    Just (Located _ _) -> do
                         logDebug logger $ [i|Manifest hash #{U.hashAsBase64Url hash} points to an existing |] <>
-                                        [i|object that is not a manifest #{pickLocation objectLocations}, |] <>
-                                        "it almost surely means broken Erik relay."
+                                        "object that is not a manifest, it almost surely means broken Erik relay."
 
                     Nothing -> do
                         mft <- fetchAndParseManifest manifestRef

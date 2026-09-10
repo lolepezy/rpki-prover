@@ -298,28 +298,6 @@ extractCrlDistributionPoint crlDP = do
                             _   -> 
                                 pure Nothing
 
--- | The URI the object itself is published at, read out of the `signedObject`
--- access description in its EE certificate's SIA. Only CMS-based objects carry
--- one: a CA certificate's SIA points at the publication point it issues into
--- rather than at itself, and a CRL has no certificate of its own.
-getSelfPublicationUri :: ParsedRpkiObject -> Maybe URI
-getSelfPublicationUri = \case
-    MftRO c  -> siaOf c
-    RoaRO c  -> siaOf c
-    SplRO c  -> siaOf c
-    GbrRO c  -> siaOf c
-    RscRO c  -> siaOf c
-    AspaRO c -> siaOf c
-    CerRO _  -> Nothing
-    BgpRO _  -> Nothing
-    CrlRO _  -> Nothing
-  where
-    siaOf :: WithRawResourceCertificate a => a -> Maybe URI
-    siaOf o = toMaybe . extractURI
-        =<< (`getSiaValue` id_ad_signedObject)
-                (cwsX509certificate $ certX509 $ getRawCert o)
-
-
 toMaybe :: Either b a -> Maybe a
 toMaybe = either (const Nothing) Just
 

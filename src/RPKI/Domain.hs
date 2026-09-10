@@ -152,7 +152,7 @@ class WithAKI a where
     getAKI :: a -> Maybe AKI
 
 class WithLocations a where
-    getLocations :: a -> Locations 
+    getLocations :: a -> Maybe Locations
 
 class WithHash a where
     getHash :: a -> Hash
@@ -558,8 +558,11 @@ instance WithRpkiObjectType (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl)
                          (const RSC) (const ASPA) (const BGPSec) (const CRL)
 
 
-data Located a = Located { 
-        locations :: Locations,        
+-- | 'locations' is 'Nothing' for objects fetched from an Erik relay: they
+-- are addressed by content hash, so there is nothing to reconstruct a
+-- location from and no location-based checks apply to them.
+data Located a = Located {
+        locations :: Maybe Locations,
         payload   :: a
     }
     deriving stock (Show, Eq, Generic)
@@ -570,7 +573,7 @@ instance WithLocations (Located a) where
     getLocations Located {..} = locations
 
 instance WithLocations Locations where
-    getLocations = id
+    getLocations = Just
 
 instance {-# OVERLAPPING #-} WithAKI a => WithAKI (Located a) where
     getAKI (Located _ o) = getAKI o    
@@ -1165,7 +1168,15 @@ toLocations = Locations . NESet.singleton
 
 pickLocation :: Locations -> RpkiURL
 pickLocation = NonEmpty.head . sortRrdpFirstNE . NESet.toList . unLocations
-    
+
+-- | Text description of a located object for log messages: its picked
+-- location, or its hash when it doesn't have one (Erik-fetched objects).
+describeLocated :: WithHash a => Located a -> Text
+describeLocated (Located locations x) =
+    case locations of
+        Just ls -> toText $ pickLocation ls
+        Nothing -> "hash:" <> Text.pack (show $ getHash x)
+
 locationsToList :: Locations -> [Text]
 locationsToList = toList . locationsToNEList    
 

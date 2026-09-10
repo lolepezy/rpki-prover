@@ -457,10 +457,10 @@ shouldMergeObjectLocations io = do
     storeIt ro2 url3
 
     Just (Located loc1 _) <- getIt (getHash ro1)
-    HU.assertEqual "Wrong locations 1" loc1 (toLocations url1 <> toLocations url2 <> toLocations url3)
+    HU.assertEqual "Wrong locations 1" loc1 (Just $ toLocations url1 <> toLocations url2 <> toLocations url3)
 
     Just (Located loc2 _) <- getIt (getHash ro2)
-    HU.assertEqual "Wrong locations 2" loc2 (toLocations url3)
+    HU.assertEqual "Wrong locations 2" loc2 (Just $ toLocations url3)
 
     verifyUrlCount db "case 1" 3
 
@@ -474,7 +474,7 @@ shouldMergeObjectLocations io = do
     verifyUrlCount db "case 3" 1
 
     Just (Located loc2' _) <- getIt (getHash ro2)
-    HU.assertEqual "Wrong locations 3" loc2' (toLocations url3)
+    HU.assertEqual "Wrong locations 3" loc2' (Just $ toLocations url3)
   where
     verifyUrlCount db' suffix expected = do
         actual <- roTx db' $ \(Tx conn) -> do

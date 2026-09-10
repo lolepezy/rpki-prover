@@ -8,6 +8,7 @@ import           Control.Concurrent.STM
 import           Control.Monad
 import           Control.Lens
 
+import           Data.Foldable                      (for_)
 import qualified Data.Map.Strict                  as Map
 import           Data.Maybe                        (catMaybes)
 import qualified Data.Text                        as Text
@@ -61,17 +62,17 @@ validateBottomUp
     -}
     validateTopDownAlongPath db certPath = do
         -- TODO Make it NonEmpty?
-        let taCert = head certPath        
-        let location = pickLocation $ getLocations taCert
-        vFocusOn LocationFocus (getURL location) 
-               $ validateTaCertAKI taCert location
-        let verifiedResources = createVerifiedResources $ taCert ^. #payload        
+        let taCert = head certPath
+        vFocusOnLocated taCert $
+            for_ (getLocations taCert) $ \locs ->
+                validateTaCertAKI taCert (pickLocation locs)
+        let verifiedResources = createVerifiedResources $ taCert ^. #payload
         go verifiedResources certPath
       where                
         go _ [] = pure ()
 
-        go verifiedResources [bottomCert] = do            
-            vFocusOn LocationFocus (getURL $ pickLocation $ getLocations bottomCert) $ do
+        go verifiedResources [bottomCert] = do
+            vFocusOnLocated bottomCert $ do
                 (mft, crl) <- validateManifest db bottomCert
 
                 -- RSC objects are not supposed to be on a manifest
@@ -81,8 +82,8 @@ validateBottomUp
 
                 validateObjectItself bottomCert crl verifiedResources
 
-        go verifiedResources (cert : certs) = do            
-            vFocusOn LocationFocus (getURL $ pickLocation $ getLocations cert) $ do
+        go verifiedResources (cert : certs) = do
+            vFocusOnLocated cert $ do
                 (mft, crl) <- validateManifest db cert
                 let childCert = head certs                
                 validateOnMft mft childCert                            
@@ -136,7 +137,7 @@ validateBottomUp
             tas <- DB.getTAs tx db
             fmap (Map.fromList . catMaybes) $ forM tas $ \StorableTA {..} -> do
                 mcert <- DB.getTaCertByKey tx db taCertKey
-                pure $ fmap (\cert -> (getSKI cert, Located (talCertLocations tal) cert)) mcert
+                pure $ fmap (\cert -> (getSKI cert, Located (Just $ talCertLocations tal) cert)) mcert
         go taCerts certificate
       where        
         go taCerts cert = do             
@@ -174,8 +175,8 @@ validateBottomUp
             Just keyedMft -> do
                 -- TODO Decide what to do with nested scopes (we go bottom up, 
                 -- so nesting doesn't work the same way).                            
-                let Keyed locatedMft@(Located mftLocation mft) _ = keyedMft
-                vFocusOn LocationFocus (getURL $ pickLocation mftLocation) $ do                
+                let Keyed locatedMft@(Located _ mft) _ = keyedMft
+                vFocusOnLocated locatedMft $ do
                     validateObjectLocations locatedMft
                     validateMftLocation locatedMft certificate
                     MftPair _ crlHash <- 
@@ -189,8 +190,8 @@ validateBottomUp
                         Nothing -> 
                             vError $ NoCRLExists childrenAki crlHash
 
-                        Just foundCrl@(Located crlLocations (WellStructuredRO (CrlRO crl))) -> do
-                            vFocusOn LocationFocus (getURL $ pickLocation crlLocations) $ do 
+                        Just foundCrl@(Located _ (WellStructuredRO (CrlRO crl))) -> do
+                            vFocusOnLocated foundCrl $ do
                                 validateObjectLocations foundCrl
                                 checkCrlLocation foundCrl $ eeCert mft
                                 validCrl <- validateCrl now crl (certificate ^. #payload)

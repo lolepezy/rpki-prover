@@ -60,39 +60,43 @@ findCrlOnMft :: Manifest -> [MftPair]
 findCrlOnMft mft = filter (\(MftPair name _) -> ".crl" `Text.isSuffixOf` name) $ mft.mftEntries 
 
 
--- | Check that manifest URL in the certificate is the same as the one 
--- the manifest was actually fetched from.
+-- | Check that manifest URL in the certificate is the same as the one
+-- the manifest was actually fetched from. Objects fetched via an Erik
+-- relay have no location at all (see 'RPKI.Domain.Located'), so there is
+-- nothing to compare and this check is silently skipped for them.
 validateMftLocation :: (Validator es, WithCertUris c, WithLocations c, WithLocations mft) =>
                         mft -> c -> Eff es ()
-validateMftLocation mft parentCertficate = 
+validateMftLocation mft parentCertficate =
     case manifestUri $ getCertUris parentCertficate of
         Nothing     -> vError NoMFTSIA
-        Just mftSIA -> do 
-            unless (".mft" `Text.isSuffixOf` (unURI mftSIA)) $ 
+        Just mftSIA -> do
+            unless (".mft" `Text.isSuffixOf` (unURI mftSIA)) $
                 vWarn $ MFTBadSIA mftSIA
-            unless ("rsync://" `Text.isPrefixOf` (unURI mftSIA)) $ 
-                vWarn $ MFTBadSIA mftSIA                
-            let mftLocations = getLocations mft
-            when (Set.null $ NESet.filter ((mftSIA ==) . getURL) $ unLocations mftLocations) $ 
-                vError $ MFTOnDifferentLocation mftSIA mftLocations
+            unless ("rsync://" `Text.isPrefixOf` (unURI mftSIA)) $
+                vWarn $ MFTBadSIA mftSIA
+            for_ (getLocations mft) $ \mftLocations ->
+                when (Set.null $ NESet.filter ((mftSIA ==) . getURL) $ unLocations mftLocations) $
+                    vError $ MFTOnDifferentLocation mftSIA mftLocations
 
 
--- | Validate that the object has only one location: if not, 
--- it's generally is a warning, not really an error.
+-- | Validate that the object has only one location: if not,
+-- it's generally is a warning, not really an error. An object with no
+-- location (Erik) trivially can't have more than one, so nothing to warn.
 validateObjectLocations :: (Validator es, WithLocations a) => a -> Eff es ()
-validateObjectLocations (getLocations -> Locations locSet) =    
-    when (NESet.size locSet > 1) $ 
-        vWarn $ ObjectHasMultipleLocations $ neSetToList locSet
+validateObjectLocations x =
+    for_ (getLocations x) $ \(Locations locSet) ->
+        when (NESet.size locSet > 1) $
+            vWarn $ ObjectHasMultipleLocations $ neSetToList locSet
 
--- | Check that CRL URL in the certificate is the same as the one 
--- the CRL was actually fetched from. 
--- 
+-- | Check that CRL URL in the certificate is the same as the one
+-- the CRL was actually fetched from. Skipped when the CRL has no location
+-- (Erik-fetched).
 checkCrlLocation :: (Validator es, WithLocations a, WithCertUris c) => a
                     -> c
                     -> Eff es ()
-checkCrlLocation crl parentCertificate = 
-    for_ (crlDPUri $ getCertUris parentCertificate) $ \crlDP -> do
-        let crlLocations = getLocations crl
-        when (Set.null $ NESet.filter ((crlDP ==) . getURL) $ unLocations crlLocations) $ 
-            vError $ CRLOnDifferentLocation crlDP crlLocations
+checkCrlLocation crl parentCertificate =
+    for_ (crlDPUri $ getCertUris parentCertificate) $ \crlDP ->
+        for_ (getLocations crl) $ \crlLocations ->
+            when (Set.null $ NESet.filter ((crlDP ==) . getURL) $ unLocations crlLocations) $
+                vError $ CRLOnDifferentLocation crlDP crlLocations
 
