@@ -64,21 +64,14 @@ runValidator :: Scopes
              -> Eff es (Either AppError a, ValidationState)
 runValidator scopes = runState mempty . runErrorNoCallStack . runReader scopes
 
--- | Run a validator all the way down to IO. Used at the IO boundary
--- (`Main`, `Workflow`, tests, benchmarks).
+-- | Run a validator all the way down to IO
 runValidatorIO :: Scopes -> Eff AppEffects a -> IO (Either AppError a, ValidationState)
 runValidatorIO scopes = runEff . runTimeout . runConcurrent . runValidator scopes
 
 runValidatorPure :: Scopes -> Eff PureEffects a -> (Either AppError a, ValidationState)
 runValidatorPure scopes = runPureEff . runValidator scopes
 
-{- | Monomorphic wrappers around the `Reader`/`State` operations.
-
-   Unlike `ReaderT Scopes` / `StateT ValidationState`, the constraints
-   `Reader r :> es` and `State s :> es` do not determine `r`/`s` -- they are
-   not functional dependencies -- so a bare `ask`/`get`/`modify`/`local` in
-   validator code is ambiguous. Always go through these.
--}
+-- | Monomorphic wrappers around the `Reader`/`State` operations.
 askScopes :: Reader Scopes :> es => Eff es Scopes
 askScopes = ask
 
@@ -114,12 +107,6 @@ vFromEither = fromEither . first ValidationE
 
 -- State plumbing --------------------------------------------------------------
 
-validatorT :: Validator es => Eff es (Either AppError r, ValidationState) -> Eff es r
-validatorT s = do
-    (v, w) <- s
-    putVState w
-    fromValue v
-
 embedValidatorT :: Validator es => Eff es (Either AppError r, ValidationState) -> Eff es r
 embedValidatorT s = do
     (v, w) <- s
@@ -135,15 +122,7 @@ embedState w = modifyVState (<> w)
 {- NOTE: `Effectful.Exception.catchSync` is re-exported instead of the
    hand-rolled `catchSync` this module used to define; it has the same
    semantics (catch synchronous exceptions, rethrow asynchronous ones).
-
-   Crucially, `effectful` classifies the exception carrying `throwError` as
-   *asynchronous* (`ErrorWrapper`'s `toException = asyncExceptionToException`),
-   so `catchSync` does not intercept validator errors -- exactly as the old
-   `ExceptT`-based `throwError` was invisible to `catch`. Any handler matching
-   a bare `SomeException` *will* see it, so use `catchSync`/`trySync` rather
-   than `catch` in validator code.
 -}
-
 fromTry :: (Validator es, IOE :> es) => (SomeException -> AppError) -> IO r -> Eff es r
 fromTry mapErr t = fromTryM mapErr (liftIO t)
 
@@ -180,7 +159,6 @@ vWarn = appWarn . ValidationE
 
 trace :: State ValidationState :> es => Trace -> Eff es ()
 trace t = modifyVState $ typed %~ (mTrace t <>)
-
 
 -- Error recovery -----------------------------------------------------------------
 
