@@ -4,6 +4,7 @@ module RPKI.Fetch.ErikRelay where
 
 import           Effectful.Concurrent (Concurrent)
 import           Effectful
+import           GHC.Conc                         (getNumCapabilities, setNumCapabilities)
 import           Effectful.Error.Static           (catchError, rethrowError)
 import           Control.Lens hiding (index, indices, Indexable)
 import           Control.Monad
@@ -53,11 +54,15 @@ runErikFetchWorker appContext@AppContext {..} fetchConfig worldVersion relayUris
     -- are passed as 'ErikFetchParams'.
     let workerId = WorkerId [i|version:#{worldVersion}:erik-fetch:#{fqdn_}|]
 
-    let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
+    -- Start single-threaded. There are a lot of Erik workers alive at once and
+    -- the RTS allocates a nursery per capability, so a worker that turns out to
+    -- have nothing to download never pays for more than one. `fetchErik` raises
+    -- this with 'setNumCapabilities' once the index shows work worth
+    -- parallelising.
     let arguments =
             [ show workerId ] <>
             rtsArguments [
-                rtsN maxCpuAvailable,
+                rtsN 1,
                 rtsA "4m",
                 rtsAL "4m",
                 "-Fd1",
@@ -107,10 +112,25 @@ fetchErik
 
     parallelism = fromIntegral $ config ^. typed @ErikConf . #parallelism
 
+    -- Raise the capability count from the 1 the worker started with, but only
+    -- when there is enough independent work to use it.
+    scaleUpCapabilities partitionCount = do
+        let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
+        let wanted = max 1 $ min maxCpuAvailable partitionCount
+        current <- liftIO getNumCapabilities
+        when (wanted > current) $ do
+            liftIO $ setNumCapabilities wanted
+            logDebug logger
+                [i|Erik worker for #{fqdn_}: #{partitionCount} partition(s), raising -N from #{current} to #{wanted}.|]
+
     doFetch pool =
         withDir indexDir $ \_ -> do 
             U.ifJustM getIndex $ \index@ErikIndex {..} -> do 
                 logInfo logger [i|Erik index for #{fqdn_} updated, downloading partitions from #{length relayUris} relay(s).|]
+
+                -- The worker starts at -N1 to keep its footprint small; now that
+                -- there is more than one partition to pull, give it the cores.
+                scaleUpCapabilities $ length partitionList
                 
                 when (indexScope /= fqdn_) $
                     appError $ ErikE $ ErikIndexScopeMismatch { expectedScope = fqdn, actualScope = indexScope }
