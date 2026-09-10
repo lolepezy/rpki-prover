@@ -303,6 +303,16 @@ data RrdpRepositoryDto = RrdpRepositoryDto {
     }
     deriving stock (Eq, Show, Generic)
 
+-- | Erik fetches are per-FQDN and not per-repository-URL, so they are reported 
+-- separately from RRDP/rsync ones rather than as another 'RepositoryDto' case.
+data ErikRepositoryDto = ErikRepositoryDto {
+        fqdn        :: FQDN,
+        repository  :: ErikRepository,
+        metrics     :: TraverseMetric,
+        validations :: [ResolvedVDto]
+    }
+    deriving stock (Eq, Show, Generic)
+
 newtype JobsDto = JobsDto {
         jobs :: [(Text, Instant)]
     } 
@@ -667,6 +677,9 @@ instance ToJSON PublicationPointsDto
 instance ToJSON RepositoryDto
 instance ToJSON RrdpRepositoryDto
 instance ToJSON RsyncRepositoryDto
+instance ToJSON ErikRelayUsage
+instance ToJSON ErikRepository
+instance ToJSON ErikRepositoryDto
 
 
 instance ToSchema MetricsDto

@@ -134,7 +134,16 @@ newtype RsyncFetchResult = RsyncFetchResult
     deriving anyclass (TheBinary)
 
 newtype ErikFetchResult = ErikFetchResult 
-                            (Either AppError (), ValidationState)    
+                            (Either AppError ErikFetchStat, ValidationState)    
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+-- | What the parent process needs to know about a finished Erik fetch beyond
+-- the validation state: which relays served it, so the UI can show where the
+-- objects actually came from.
+newtype ErikFetchStat = ErikFetchStat {
+        relayUsage :: [ErikRelayUsage]
+    }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 

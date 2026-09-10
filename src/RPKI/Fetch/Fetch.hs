@@ -33,7 +33,6 @@ import           Time.Types
 import           RPKI.AppContext
 import           RPKI.AppState
 import           RPKI.AppMonad
-import           RPKI.AppMonadUtil
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
@@ -48,6 +47,7 @@ import           RPKI.Util
 import           RPKI.Rsync
 import           RPKI.Fetch.Http
 import           RPKI.Fetch.ErikRelay
+import           RPKI.Worker (ErikFetchStat)
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
 
@@ -226,7 +226,7 @@ fetchRepositoryFromErikRelays :: (ValidatorIO es, Timeout :> es) => AppContext s
                             -> [URI]                            
                             -> WorldVersion
                             -> FQDN 
-                            -> Eff es ()
+                            -> Eff es ErikFetchStat
 fetchRepositoryFromErikRelays
     appContext@AppContext {..}
     fetchConfig

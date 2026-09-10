@@ -66,6 +66,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     wireFilter('rrdpFilter', 'rrdpTable');
     wireFilter('rsyncFilter', 'rsyncTable');
+    wireFilter('erikFilter', 'erikTable');
 
     function openAncestorDetails(el) {
         for (var node = el; node; node = node.parentElement) {
