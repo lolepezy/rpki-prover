@@ -111,6 +111,10 @@ data ErikConf = ErikConf {
         relays               :: [URI],
         maxSize              :: Size,
         parallelism          :: Natural,
+        -- | Cap on relay downloads in flight across the whole pool.
+        downloadParallelism  :: Natural,
+        -- | Cap on relay downloads in flight against any single relay.
+        relayParallelism     :: Natural,
         erikTimeout          :: Seconds,
         erikRefreshInterval  :: Seconds,
         cpuLimit             :: Seconds
@@ -259,6 +263,8 @@ defaultConfig = Config {
         relays              = [],
         maxSize             = Size $ 20 * 1024 * 1024,
         parallelism         = 10,
+        downloadParallelism = 50,
+        relayParallelism    = 20,
         erikTimeout         = 15 * minutes,
         erikRefreshInterval = 2 * minutes,
         cpuLimit            = 30 * minutes

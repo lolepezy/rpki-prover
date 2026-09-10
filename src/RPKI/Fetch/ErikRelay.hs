@@ -28,6 +28,7 @@ import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
+import           RPKI.Fetch.RelayPool
 import qualified RPKI.Util as U                       
 import           RPKI.Fetch.Http
 import           RPKI.Fetch.DirectoryTraverse
@@ -43,10 +44,10 @@ data IndexFetch index = SameIndex index | UpdatedIndex index
 runErikFetchWorker :: ValidatorIO es => AppContext s
                     -> FetchConfig
                     -> WorldVersion
-                    -> URI
+                    -> [URI]
                     -> FQDN
                     -> Eff es ()
-runErikFetchWorker appContext@AppContext {..} fetchConfig worldVersion relayUri fqdn@(FQDN fqdn_) = do
+runErikFetchWorker appContext@AppContext {..} fetchConfig worldVersion relayUris fqdn@(FQDN fqdn_) = do
 
     -- This is for humans to read in `top` or `ps`, actual parameters
     -- are passed as 'ErikFetchParams'.
@@ -65,7 +66,7 @@ runErikFetchWorker appContext@AppContext {..} fetchConfig worldVersion relayUri 
 
     scopes <- askScopes
     workerInput <- makeWorkerInput appContext workerId
-                        (ErikFetchParams scopes fetchConfig relayUri fqdn worldVersion)
+                        (ErikFetchParams scopes fetchConfig relayUris fqdn worldVersion)
                         (Timebox $ fetchConfig ^. #erikTimeout)
                         (Just $ asCpuTime $ fetchConfig ^. #cpuLimit)
 
@@ -85,36 +86,50 @@ runErikFetchWorker appContext@AppContext {..} fetchConfig worldVersion relayUri 
 -}
 fetchErik :: (ValidatorIO es, Concurrent :> es) => AppContext s 
             -> WorldVersion
-            -> URI 
+            -> [URI]
             -> FQDN 
             -> Eff es ()
 fetchErik 
     appContext@AppContext {..} 
     worldVersion 
-    relayUri 
+    relayUris 
     fqdn@(FQDN fqdn_) = do
 
-    downloadSemaphore <- newSemaphoreIO 50
-    doFetch downloadSemaphore
+    -- Every relay query goes through this pool: it spreads queries over the
+    -- relays, falls back to the next one on failure, and enforces the
+    -- per-relay and global parallelism caps.
+    pool <- newRelayPool
+                (fromIntegral $ config ^. typed @ErikConf . #downloadParallelism)
+                (fromIntegral $ config ^. typed @ErikConf . #relayParallelism)
+                relayUris
+    doFetch pool
   where 
 
     parallelism = fromIntegral $ config ^. typed @ErikConf . #parallelism
 
-    doFetch downloadSemaphore =
+    doFetch pool =
         withDir indexDir $ \_ -> do 
             U.ifJustM getIndex $ \index@ErikIndex {..} -> do 
-                logInfo logger [i|Erik index for #{fqdn_} updated, downloading partitions from relay #{relayUri}.|]
+                logInfo logger [i|Erik index for #{fqdn_} updated, downloading partitions from #{length relayUris} relay(s).|]
                 
                 when (indexScope /= fqdn_) $
                     appError $ ErikE $ ErikIndexScopeMismatch { expectedScope = fqdn, actualScope = indexScope }
 
-                logDebug logger [i|Erik index from #{indexUri} has #{index}.|]
+                logDebug logger [i|Erik index for #{fqdn_} has #{index}.|]
                 void $ fmap mconcat $ concurrentlyVTLenientN parallelism partitionList $ \partitionRef@ErikPartitionRef {..} -> do
                     partition <- getPartition partitionRef                        
                     logDebug logger [i|Downloaded Erik partition #{U.hashAsBase64Url hash}: #{partition}.|]
                     getManifests indexScope hash partition
 
                 logDebug logger [i|Finished fetching Erik relay #{indexDir} for #{fqdn_}.|]
+
+                -- Per-relay and global query counts, so the spread across
+                -- relays and the effect of fall-back are visible.
+                stats <- relayStats pool
+                logInfo logger [i|Erik relay usage for #{fqdn_}: |] 
+                forM_ stats $ \RelayStat {..} ->
+                    logInfo logger
+                        [i|  #{statRelay}: served=#{statServed} failed=#{statFailed} in-flight=#{statInFlight}|]
 
                 -- Now traverse all downloaded objects and load them into the storage,
                 -- the same way it happens for rsync-ed repositories.
@@ -139,15 +154,19 @@ fetchErik
                     Left _   -> Nothing 
                     Right u_ -> Just u_
 
+        -- The index is relay state rather than a content-addressed object, so
+        -- it is cached per relay: whichever relay the pool ends up serving it
+        -- from is the one the cached copy is compared against.
         getIndex :: ValidatorIO es => Eff es (Maybe ErikIndex)
-        getIndex = do 
+        getIndex = withRelay logger pool $ \relayUri -> do 
             let tmpDir = configValue $ config ^. #tmpDirectory
             let maxSize = config ^. typed @ErikConf . #maxSize
+            let theIndexUri = indexUri relayUri
             (indexBs, _, httpStatus, _ignoreEtag) <- 
                     fromTryM (ErikE . Can'tDownloadObject . U.fmtEx) $                                      
-                        downloadToBS tmpDir indexUri Nothing maxSize
+                        downloadToBS tmpDir theIndexUri Nothing maxSize
             when (httpStatus /= mempty) $ do 
-                appError $ ErikE $ Can'tDownloadObject [i|Could not download index #{indexUri}, http status = #{httpStatus}|]
+                appError $ ErikE $ Can'tDownloadObject [i|Could not download index #{theIndexUri}, http status = #{httpStatus}|]
 
             index <- parseErikIndex indexBs                
             logDebug logger [i|Downloaded Erik index for #{fqdn_}, HTTP status: #{httpStatus}|]
@@ -176,7 +195,7 @@ fetchErik
             z <- DB.roTxT database $ \tx db -> DB.getErikPartition tx db hash
             case z of 
                 Nothing -> do     
-                    logDebug logger [i|No Erik partition #{U.hashAsBase64Url hash} in the database, downloading from relay #{relayUri}.|]
+                    logDebug logger [i|No Erik partition #{U.hashAsBase64Url hash} in the database, downloading from a relay.|]
                     partition <- fetchAndParsePartition
                     DB.rwTxT database $ \tx db -> DB.saveErikPartition tx db hash partition
                     logDebug logger [i|Stored Erik partition #{U.hashAsBase64Url hash} in the database.|]                        
@@ -191,13 +210,12 @@ fetchErik
                 -- It will be cleaned up by the top level
                 liftIO $ createDirectoryIfMissing True (partitionDir hash)
 
-                let partUri = objectByHashUri hash                
                 let partitionFile = partitionDir hash </> "partition-" <> show hash
 
-                logDebug logger [i|Downloading Erik partition #{U.hashAsBase64Url hash} from #{partUri} to #{partitionFile}.|]
-
-                withSemaphoreVT downloadSemaphore $
-                    vFocusOn LocationFocus partUri $ do                        
+                withRelay logger pool $ \relayUri -> do
+                  let partUri = objectByHashUri relayUri hash
+                  logDebug logger [i|Downloading Erik partition #{U.hashAsBase64Url hash} from #{partUri} to #{partitionFile}.|]
+                  vFocusOn LocationFocus partUri $ do                        
                         (partBs, _, _) <-
                             fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
                                 downloadToFileHashed partUri partitionFile hash size
@@ -236,9 +254,9 @@ fetchErik
                 
                 liftIO $ createDirectoryIfMissing True (manifestDir hash)
 
-                let manifestUri = objectByHashUri hash
-                withSemaphoreVT downloadSemaphore $ 
-                    vFocusOn LocationFocus manifestUri $ do
+                withRelay logger pool $ \relayUri -> do
+                  let manifestUri = objectByHashUri relayUri hash
+                  vFocusOn LocationFocus manifestUri $ do
                         let manifestFile = manifestDir hash </> show hash <> ".mft"
                         (manifestBs, _, _) <-
                             fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
@@ -267,11 +285,11 @@ fetchErik
                         pure mempty 
                     else do                                             
                         let childFile = childrenDir_ </> show (U.firstByte hash) </> show hash <> "-" <> Text.unpack fileName
-                        let childUri = objectByHashUri hash                        
                         let maxSize = Size $ fromIntegral $ config ^. #validationConfig . #maxObjectSize                        
 
-                        withSemaphoreVT downloadSemaphore $                                      
-                            vFocusOn LocationFocus childUri $ do                            
+                        withRelay logger pool $ \relayUri -> do
+                          let childUri = objectByHashUri relayUri hash
+                          vFocusOn LocationFocus childUri $ do                            
                                 let fetch = 
                                         fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
                                             downloadToFileHashed_ childUri childFile hash maxSize
@@ -289,9 +307,9 @@ fetchErik
             childrenDir mftHash = manifestDir mftHash </> "ch"
 
 
-    indexUri = URI [i|#{relayUri}/.well-known/erik/index/#{fqdn_}|]
+    indexUri relayUri = URI [i|#{relayUri}/.well-known/erik/index/#{fqdn_}|]
 
-    objectByHashUri hash = let 
+    objectByHashUri relayUri hash = let 
         niHash = U.hashAsBase64Url hash
         in URI [i|#{relayUri}/.well-known/ni/sha-256/#{niHash}|]
 

@@ -30,7 +30,7 @@ testFetchErik = do
         -- let relayUri = URI "http://relay.rpki-servers.org"
 
         (z, _) <- runValidatorIO (newScopes "erik-test") $ 
-            fetchErik testContext worldVersion relayUri fqdn
+            fetchErik testContext worldVersion [relayUri] fqdn
         case z of
             Left err -> HU.assertFailure $ "Failed to fetch Erik index: " <> show err
             Right index -> do
@@ -41,7 +41,7 @@ testFetchErik = do
         -- Now do the same fetch again and expect no actual fetches to happen, 
         -- it should only use cached data
         (z1, _) <- runValidatorIO (newScopes "erik-test-2") $ 
-            fetchErik testContext worldVersion relayUri fqdn
+            fetchErik testContext worldVersion [relayUri] fqdn
         case z1 of
             Left err -> HU.assertFailure $ "Failed to fetch Erik index second time: " <> show err
             Right index -> do

@@ -164,6 +164,7 @@ library
       RPKI.Domain.Packed
       RPKI.Fetch.DirectoryTraverse
       RPKI.Fetch.ErikRelay
+      RPKI.Fetch.RelayPool
       RPKI.Fetch.Fetch
       RPKI.Fetch.Http
       RPKI.Http.Api

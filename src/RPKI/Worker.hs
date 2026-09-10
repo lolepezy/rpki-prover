@@ -84,7 +84,7 @@ data WorkerParams = RrdpFetchParams {
             ErikFetchParams {
                 scopes       :: Scopes,
                 fetchConfig  :: FetchConfig,
-                relayUri     :: URI,
+                relayUris    :: [URI],
                 fqdn         :: FQDN,
                 worldVersion :: WorldVersion
             } | 

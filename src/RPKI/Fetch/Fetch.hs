@@ -224,9 +224,7 @@ fetchRepositoryFromErikRelays
     relays
     worldVersion    
     fqdn = do
-        logInfo logger [i|Fetching #{fqdn}.|]           
-        -- TODO Make some round-robin selection of relays
-        let relay = head relays
+        logInfo logger [i|Fetching #{fqdn} from #{length relays} Erik relay(s).|]           
 
         let fetcherTimeout = fetchConfig ^. #erikTimeout
         let totalTimeout = fetcherTimeout + timeToKillItself
@@ -235,11 +233,11 @@ fetchRepositoryFromErikRelays
                 let fetchConfig' = fetchConfig & #erikTimeout .~ fetcherTimeout
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (ErikE . UnknownErikProblem . fmtEx) 
-                                    (runErikFetchWorker appContext fetchConfig' worldVersion relay fqdn)
-                logInfo logger [i|Fetched #{fqdn} from Erik relay #{relay}, took #{elapsed}ms.|]
+                                    (runErikFetchWorker appContext fetchConfig' worldVersion relays fqdn)
+                logInfo logger [i|Fetched #{fqdn} from Erik relays, took #{elapsed}ms.|]
                 pure z)            
             (do 
-                logError logger [i|Couldn't fetch repository #{fqdn} from Erik relay #{relay} after #{totalTimeout}.|]
+                logError logger [i|Couldn't fetch repository #{fqdn} from Erik relays after #{totalTimeout}.|]
                 trace WorkerTimeoutTrace
                 appError $ ErikE $ ErikDownloadTimeout totalTimeout)                        
            
