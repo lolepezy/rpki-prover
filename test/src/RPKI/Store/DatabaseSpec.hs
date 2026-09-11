@@ -696,6 +696,9 @@ shouldDeduplicateSaveObjectByHash io = do
 
     HU.assertEqual "Saving the same hash twice must return the same key" k1 k2
 
+    hash1 <- roTx db $ \tx -> DB.getHashByKey tx db k1
+    HU.assertEqual "Returned hash is wrong" (Just (getHash ro)) hash1
+
     rows <- roTx db $ \(Tx conn) ->
         SQLite.query conn "SELECT COUNT(*) FROM objects WHERE hash = ?"
             (Only (SQLite.hashToBlob (getHash ro))) :: IO [Only Int64]
@@ -703,6 +706,7 @@ shouldDeduplicateSaveObjectByHash io = do
     let objectsWithHash = case rows of
             [Only n] -> n
             _        -> 0
+
     HU.assertEqual "Only one object row must exist for the hash" 1 objectsWithHash
 
     meta <- roTx db $ \tx -> DB.getObjectMeta tx db k1

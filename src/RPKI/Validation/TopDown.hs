@@ -54,7 +54,6 @@ import qualified Data.ByteString                  as BS
 import           RPKI.AppContext
 import           RPKI.AppState
 import           RPKI.AppMonad
-import           RPKI.AppMonadUtil
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain

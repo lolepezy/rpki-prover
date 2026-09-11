@@ -174,17 +174,10 @@ fetchErik
                     | RelayStat {..} <- stats, statServed > 0 ]
 
                 -- Now traverse all downloaded objects and load them into the storage,
-                -- the same way it happens for rsync-ed repositories.
-                loadObjectsFromFS appContext worldVersion recoverUri indexDir 
+                -- the same way it happens for rsync-ed repositories. Do not try to recover 
+                -- object locations here.
+                loadObjectsFromFS appContext worldVersion (\_ _ -> Nothing) indexDir 
       where
-    
-        -- Objects come off a relay named by hash: there is nothing that ties
-        -- them to a real publication point, so they get no location at all
-        -- rather than one reconstructed from the object's own SIA and then
-        -- checked against that very SIA down the line.
-        recoverUri :: FilePath -> Maybe ParsedRpkiObject -> Maybe RsyncURL
-        recoverUri _ _ = Nothing
-
         -- The index is relay state rather than a content-addressed object, so
         -- it is cached per relay: whichever relay the pool ends up serving it
         -- from is the one the cached copy is compared against.

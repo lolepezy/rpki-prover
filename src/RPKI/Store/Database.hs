@@ -24,7 +24,7 @@ module RPKI.Store.Database (
     getMultiLocationShortcutChildren,
     getByUri, getKeysByUri,
     getObjectByKey, getLocatedByKey,
-    getLocationsByKey,
+    getLocationsByKey, getHashByKey,
     saveObject, saveStorableObject,
     getObjectMeta, linkObjectToUrl,
     hashExists, deleteObjectByHash, deleteObjectByKey,
@@ -272,6 +272,13 @@ getKeyedByHash tx db h = liftIO $ runMaybeT $ do
     z         <- MaybeT $ getLocatedByKey tx db objectKey
     pure $ Keyed z objectKey
 
+getHashByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe Hash)
+getHashByKey (Tx conn) _ k = liftIO $ do
+    rows <- query conn "SELECT hash FROM objects WHERE object_key = ?" (Only k)        
+    pure $ case rows of
+        [Only hash] -> Just hash
+        _           -> Nothing
+
 getByUri :: MonadIO m => Tx mode -> DB -> RpkiURL -> m [Located RpkiObjectLifecycle]
 getByUri tx db uri = liftIO $ do
     keys_ <- getKeysByUri tx db uri
@@ -341,7 +348,6 @@ getLocationsByKey (Tx conn) _ k = liftIO $ do
     pure $ case urls of
         [] -> Nothing
         us -> Locations <$> toNESet us
-
 
 saveObject :: MonadIO m
            => Tx 'RW

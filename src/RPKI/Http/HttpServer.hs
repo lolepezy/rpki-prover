@@ -395,14 +395,14 @@ getErikRelays_ AppContext {..} = liftIO $ do
     roTx db $ \tx -> do
         indexes <- DB.getAllErikIndexes tx db
         forM indexes $ \(URI relayUri, FQDN fqdn, ErikIndex {..}) -> do
-            parts <- forM partitionList $ \ErikPartitionRef { hash = partHash, size } -> do
+            parts_ <- forM partitionList $ \ErikPartitionRef { hash = partHash, size } -> do
                 partition <- DB.getErikPartition tx db partHash
                 pure ErikPartitionDto { hash = partHash, size, partition }
             pure ErikRelayDto {
                     relayKey   = relayUri <> "-" <> fqdn,
                     indexScope,
                     indexTime,
-                    partitions = parts
+                    partitions = parts_
                 }
 
 getRpkiObject :: (MonadIO m, MonadError ServerError m)
@@ -680,9 +680,14 @@ resolveLocations tx db = \case
                                     Nothing  -> pure $ TextDto [i|Can't find key for hash #{hash}|]
                                     Just key -> locations key        
   where
-    locations key = do 
+    locations key =
         DB.getLocationsByKey tx db key >>= \case 
-            Nothing  -> pure $ TextDto [i|Can't find locations for key #{key}|]
             Just loc -> pure $ ObjectLink $ toText $ pickLocation loc
+            Nothing  -> do
+                z <- DB.getHashByKey tx db key
+                pure $ TextDto $ case z of 
+                    Nothing   -> [i|Can't find object for key #{key}|]
+                    Just hash -> [i|Hash: #{hash}|]
+            
 
     
