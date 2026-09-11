@@ -29,6 +29,7 @@ import RPKI.AppContext
 import RPKI.AppMonad
 import RPKI.Config
 import RPKI.Meta.Version
+import RPKI.Metrics.Process (countIncomingTraffic)
 import RPKI.Domain
 import RPKI.Parse.Parse
 import RPKI.Reporting
@@ -199,9 +200,17 @@ downloadConduit (URI u) eTag fileHandle extraSink = do
 
     (z, _) <- runConduitRes 
                     $ httpSource req' getSrc
+                    .| countTraffic
                     .| zipSinks extraSink (sinkHandle fileHandle)    
 
     liftIO $ (z,,) <$> readIORef httpStatus <*> readIORef newETag
+
+
+-- | Add everything that goes through to the process-wide incoming traffic counter.
+countTraffic :: MonadIO m => ConduitT BS.ByteString BS.ByteString m ()
+countTraffic = awaitForever $ \chunk -> do 
+    countIncomingTraffic $ BS.length chunk
+    yield chunk
 
 userAgent :: BS.ByteString
 userAgent = U.convert rpkiProverVersion

@@ -186,11 +186,23 @@ data RtrConfig = RtrConfig {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
+data IoLimits = IoLimits {
+        maxIncomingTrafficMb :: Maybe Int,
+        maxDiskReadMb        :: Maybe Int,
+        maxDiskWriteMb       :: Maybe Int
+    } 
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
 data SystemConfig = SystemConfig {
         rsyncWorkerMemoryMb      :: Int,
         rrdpWorkerMemoryMb       :: Int,
         validationWorkerMemoryMb :: Int,
-        cleanupWorkerMemoryMb    :: Int
+        cleanupWorkerMemoryMb    :: Int,
+        rsyncWorkerIoLimits      :: IoLimits,
+        rrdpWorkerIoLimits       :: IoLimits,
+        validationWorkerIoLimits :: IoLimits,
+        cleanupWorkerIoLimits    :: IoLimits
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -267,7 +279,31 @@ defaultConfig = Config {
         rsyncWorkerMemoryMb      = 1024,
         rrdpWorkerMemoryMb       = 1024,        
         validationWorkerMemoryMb = 2048,
-        cleanupWorkerMemoryMb    = 512
+        cleanupWorkerMemoryMb    = 512,
+        rsyncWorkerIoLimits = IoLimits {
+            maxIncomingTrafficMb = Nothing,
+            maxDiskReadMb        = Just $ 4 * gigabyte,
+            -- 6 mainly because of the SQLite WAL (and other) amplifications
+            maxDiskWriteMb       = Just $ 6 * gigabyte
+        },
+        rrdpWorkerIoLimits = IoLimits {
+            maxIncomingTrafficMb = Just $ 2 * gigabyte,
+            maxDiskReadMb        = Just $ 4 * gigabyte,
+            maxDiskWriteMb       = Just $ 6 * gigabyte
+        },
+        -- Validation reads and writes the whole cache, so it is in a completely
+        -- different league than the fetchers.
+        validationWorkerIoLimits = IoLimits {
+            -- it only downloads TA certificates
+            maxIncomingTrafficMb = Just 64,
+            maxDiskReadMb        = Just $ 10 * gigabyte,
+            maxDiskWriteMb       = Just gigabyte
+        },
+        cleanupWorkerIoLimits = IoLimits {
+            maxIncomingTrafficMb = Nothing,
+            maxDiskReadMb        = Just 32768,
+            maxDiskWriteMb       = Just 32768
+        }
     },
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {       
@@ -291,6 +327,7 @@ defaultConfig = Config {
     hour = hours
     days = 24 * hours
     hours = Seconds $ 60 * 60    
+    gigabyte = 1024 * 1024 * 1024    
 
 
 adjustConfig :: Config -> Config

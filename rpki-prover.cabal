@@ -169,8 +169,8 @@ library
       RPKI.Http.UI
       RPKI.Logging
       RPKI.Messages
-      RPKI.Metrics.Memory
       RPKI.Metrics.Metrics
+      RPKI.Metrics.Process
       RPKI.Metrics.Prometheus
       RPKI.Metrics.System
       RPKI.Orphans.Generics

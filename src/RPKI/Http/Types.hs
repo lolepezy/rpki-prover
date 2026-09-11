@@ -299,11 +299,14 @@ data ResourcesDto = ResourcesDto {
         aggregatedCpuTime   :: CPUTime,
         cpuTimePerClockTime :: Double,
         aggregatedClockTime :: TimeMs,
-        maxRtsHeap           :: MaxMemory,        
-        avgRtsHeap           :: MaxMemory, 
-        maxProcessRSS    :: MaxMemory,
-        avgProcessRSS    :: MaxMemory,
-        avgCpuTimeMsPerSecond :: Double
+        avgCpuTimeMsPerSecond :: Double,
+        maxRtsHeap         :: MaxMemory,        
+        avgRtsHeap         :: MaxMemory, 
+        maxProcessRSS      :: MaxMemory,
+        avgProcessRSS      :: MaxMemory,        
+        maxIncomingTraffic :: Size,
+        maxDiskRead        :: Size,
+        maxDiskWrite       :: Size
     }
     deriving stock (Eq, Show, Generic)
 
