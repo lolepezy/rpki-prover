@@ -58,8 +58,7 @@ data FetchConfig = FetchConfig {
     deriving anyclass (TheBinary)
 
 data StorageConfig = StorageConfig {
-    rwTransactionTimeout :: Seconds,
-    sqliteMmapSizeMb     :: Maybe Size
+    rwTransactionTimeout :: Seconds
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)    
@@ -335,8 +334,7 @@ defaultConfig = Config {
     },
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {       
-        rwTransactionTimeout = 15 * minutes,
-        sqliteMmapSizeMb     = Nothing
+        rwTransactionTimeout = 15 * minutes        
     },
     cacheCleanupInterval      = 6 * hours,    
     versionNumberToKeep       = 3,

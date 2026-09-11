@@ -99,7 +99,7 @@ setupSqliteCache flow logger cacheDir config = do
   where
     dbPath        = cacheDir </> "rpki-cache.sqlite"
     busyTimeoutMs = let Seconds s = config ^. #storageConfig . #rwTransactionTimeout
-                    in fromIntegral $ s * 1000
+                    in fromIntegral $ s * 1000    
     -- Every parsing async (there are up to `cpuParallelism` of them running
     -- concurrently, see `newParallelism`) does at least one read-only query
     -- against this pool (e.g. a hash-exists check) before/while parsing, so
