@@ -51,6 +51,8 @@ module RPKI.Store.Database (
     saveRepositories, saveRepositoryValidationStates,
     saveRsyncRepositories, saveRsyncValidationStates,
     saveRsyncAnything, getRepositories,
+    saveErikRepositories, saveErikRepositoryValidationStates,
+    getErikRepository, getErikRepositories,
     setJobCompletionTime, allJobs,
     getDatabaseVersion, saveCurrentDatabaseVersion,
     updateValidatedByVersionMap,
@@ -1088,6 +1090,44 @@ getRepositories (Tx conn) _ filterF = liftIO $ do
             , Just (_, vs) <- [lookupInRsyncTree path vss]
             ]
     pure $ rrdpResults <> rsyncResults
+
+{- 
+    Erik "repositories" are bookkeeping for the UI and for refresh scheduling: 
+    one row per FQDN, since that is the unit an Erik fetch works on (a relay 
+    serves an index per FQDN, regardless of how many publication points live 
+    under it). They are stored in the same table as the RRDP/rsync ones, under 
+    their own `erik-pp`/`erik-vstate` kinds, and they are not part of 
+    'PublicationPoints' -- nothing in validation looks them up.
+-}
+saveErikRepositories :: MonadIO m => Tx 'RW -> DB -> [ErikRepository] -> m ()
+saveErikRepositories (Tx conn) _ repos = liftIO $
+    executeMany conn
+        "INSERT OR REPLACE INTO repositories(key, kind, data) VALUES (?, 'erik-pp', ?)"
+        [ (serialiseField (r ^. #fqdn), serialiseField r) | r <- repos ]
+
+saveErikRepositoryValidationStates :: MonadIO m
+                                   => Tx 'RW -> DB -> [(ErikRepository, ValidationState)] -> m ()
+saveErikRepositoryValidationStates (Tx conn) _ repos = liftIO $
+    executeMany conn
+        "INSERT OR REPLACE INTO repositories(key, kind, data) VALUES (?, 'erik-vstate', ?)"
+        [ (serialiseField (r ^. #fqdn), serialiseCompressed vs) | (r, vs) <- repos ]
+
+getErikRepository :: MonadIO m => Tx mode -> DB -> FQDN -> m (Maybe ErikRepository)
+getErikRepository (Tx conn) _ fqdn = liftIO $ do
+    rows <- query conn "SELECT data FROM repositories WHERE key = ? AND kind = 'erik-pp'"
+                (Only (serialiseField fqdn))
+    pure $ fmap (deserialiseField . fromOnly) (listToMaybe rows)
+
+getErikRepositories :: MonadIO m
+                    => Tx mode -> DB -> (FQDN -> Bool) -> m [(ErikRepository, ValidationState)]
+getErikRepositories (Tx conn) _ filterF = liftIO $ do
+    ppRows     <- query_ conn "SELECT key, data FROM repositories WHERE kind = 'erik-pp'"
+    vstateRows <- query_ conn "SELECT key, data FROM repositories WHERE kind = 'erik-vstate'"
+    let vstates = Map.fromList vstateRows :: Map.Map BS.ByteString BS.ByteString
+    pure [ (repo, maybe mempty deserialiseCompressed (Map.lookup k vstates))
+         | (k, v) <- ppRows
+         , let repo = deserialiseField v :: ErikRepository
+         , filterF (repo ^. #fqdn) ]
 
 
 -- ---------------------------------------------------------------------------

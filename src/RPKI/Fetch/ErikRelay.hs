@@ -8,8 +8,8 @@ import           GHC.Conc                         (getNumCapabilities, setNumCap
 import           Effectful.Error.Static           (catchError, rethrowError)
 import           Control.Lens hiding (index, indices, Indexable)
 import           Control.Monad
-import           Control.Monad.IO.Class
 import           Data.Generics.Product.Typed
+import           Data.Proxy
 import           Data.String.Interpolate.IsString
 import           Data.Text                       (Text)
 import qualified Data.Text                       as Text
@@ -28,7 +28,7 @@ import           RPKI.Domain
 import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Logging
-import           RPKI.Parallel
+import           RPKI.Repository
 import           RPKI.Fetch.RelayPool
 import qualified RPKI.Util as U                       
 import           RPKI.Fetch.Http
@@ -47,7 +47,7 @@ runErikFetchWorker :: ValidatorIO es => AppContext s
                     -> WorldVersion
                     -> [URI]
                     -> FQDN
-                    -> Eff es ()
+                    -> Eff es ErikFetchStat
 runErikFetchWorker appContext@AppContext {..} fetchConfig worldVersion relayUris fqdn@(FQDN fqdn_) = do
 
     -- This is for humans to read in `top` or `ps`, actual parameters
@@ -93,7 +93,7 @@ fetchErik :: (ValidatorIO es, Concurrent :> es) => AppContext s
             -> WorldVersion
             -> [URI]
             -> FQDN 
-            -> Eff es ()
+            -> Eff es ErikFetchStat
 fetchErik 
     appContext@AppContext {..} 
     worldVersion 
@@ -107,8 +107,23 @@ fetchErik
                 (fromIntegral $ config ^. typed @ErikConf . #downloadParallelism)
                 (fromIntegral $ config ^. typed @ErikConf . #relayParallelism)
                 relayUris
-    doFetch pool
+    -- Same metric rsync fills in: both end up loading a directory tree through
+    -- `loadObjectsFromFS`, which counts the objects into `processed`. Timing it
+    -- here is what gives that metric its `totalTimeMs`.
+    timedMetric (Proxy :: Proxy TraverseMetric) $ doFetch pool
+    -- Whatever happened inside -- a full download, an unchanged index, or a
+    -- failure part-way through -- the pool knows which relays answered.
+    toFetchStat <$> relayStats pool
   where 
+
+    -- Only the relays that actually took part: the pool knows about every
+    -- configured relay, and listing the ones that were never touched says
+    -- nothing about where the objects came from.
+    toFetchStat stats = ErikFetchStat 
+        [ ErikRelayUsage statRelay statServed statFailed 
+        | RelayStat {..} <- stats
+        , statServed > 0 || statFailed > 0 ]
+
 
     parallelism = fromIntegral $ config ^. typed @ErikConf . #parallelism
 

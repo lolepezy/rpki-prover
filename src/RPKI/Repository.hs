@@ -102,6 +102,39 @@ newRepositoryMeta = RepositoryMeta {
         refreshInterval   = Nothing
     }
 
+{- | What is known about one Erik-fetched repository, keyed by the FQDN the
+     Erik index is published under.
+
+     Erik has no session/serial/delta state of its own -- the index is just a
+     list of partitions -- so compared to 'RrdpRepository' this only carries
+     the fetch status and which relays actually answered during the last fetch.
+-}
+data ErikRepository = ErikRepository {
+        fqdn       :: FQDN,
+        meta       :: RepositoryMeta,
+        relayUsage :: [ErikRelayUsage]
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+-- | How much of the last fetch one relay actually served. A fetch spreads its
+-- queries over every configured relay and falls back on failure, so this is a
+-- list rather than a single "the relay it came from".
+data ErikRelayUsage = ErikRelayUsage {
+        relay  :: URI,
+        served :: Int,
+        failed :: Int
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+newErikRepository :: FQDN -> ErikRepository
+newErikRepository fqdn = ErikRepository {
+        meta       = newRepositoryMeta,
+        relayUsage = [],
+        ..
+    }
+
 newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary

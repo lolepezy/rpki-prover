@@ -129,6 +129,14 @@ httpServer appContext = gzip defaultGzipSettings $ genericServe HttpApi {
                             pure $ mconcat $ map (uncurry Set.insert) $ MonoidalMap.toList $ unFetcheables fetcheables
                             
                     fetchesDtos         <- toRepositoryDtos appContext =<< DB.getRepositories tx db (`Set.member` allFetcheables)
+
+                    -- Erik fetches are keyed by FQDN, so they are matched to the 
+                    -- FQDNs of the publication points we are still interested in.
+                    let fetcheableFqdns = Set.fromList 
+                            [ fqdn | u <- Set.toList allFetcheables, Just fqdn <- [getFQDN u] ]
+                    erikFetchesDtos     <- toErikRepositoryDtos appContext 
+                                                =<< DB.getErikRepositories tx db (`Set.member` fetcheableFqdns)
+
                     systemInfo          <- readTVarIO $ appContext ^. #appState . #system
 
                     pure $ mainPage
@@ -137,6 +145,7 @@ httpServer appContext = gzip defaultGzipSettings $ genericServe HttpApi {
                             resolvedValidations
                             resolvedCommons
                             fetchesDtos
+                            erikFetchesDtos
                             metricsDto
 
 
@@ -621,6 +630,19 @@ toRepositoryDtos AppContext {..} inputs = do
 
     relevantToRepository uri (Scope scope) = 
         uri `elem` [ u | RepositoryFocus u <- NonEmpty.toList scope ]
+
+
+toErikRepositoryDtos :: AppContext s -> [(ErikRepository, ValidationState)] -> IO [ErikRepositoryDto]
+toErikRepositoryDtos AppContext {..} inputs =
+    roTxT database $ \tx db ->
+        forM inputs $ \(repository@ErikRepository { fqdn }, state) -> do
+            -- No filtering by scope here, unlike the RRDP/rsync case: the state 
+            -- stored for an FQDN comes from one Erik fetch of exactly this FQDN, 
+            -- everything in it is relevant.
+            let metrics = mconcat $ map snd $ MonoidalMap.toList $ unMetricMap 
+                            $ state ^. typed @Metrics . #traverseMetrics
+            resolved <- forM (toVDtos $ state ^. typed) $ resolveOriginalDto tx db
+            pure ErikRepositoryDto { validations = resolved, .. }
 
 
 resolveOriginalDto :: (MonadIO m) 

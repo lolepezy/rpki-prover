@@ -48,9 +48,10 @@ mainPage :: WorldVersion
         -> PerTA [ResolvedVDto]
         -> [ResolvedVDto]
         -> [RepositoryDto]
+        -> [ErikRepositoryDto]
         -> MetricsDto
         -> Html
-mainPage version systemInfo perTaValidations generalValidations fetchDtos metricsDto =
+mainPage version systemInfo perTaValidations generalValidations fetchDtos erikMetrics metricsDto =
     H.docTypeHtml $ do
         H.head $ do
             H.title $ "RPKI Prover " <> toHtml rpkiProverVersionNumber
@@ -86,6 +87,9 @@ mainPage version systemInfo perTaValidations generalValidations fetchDtos metric
 
             unless (Prelude.null rrdpMetrics) $
                 rrdpMetricsHtml rrdpMetrics
+
+            unless (Prelude.null erikMetrics) $
+                erikMetricsHtml erikMetrics
 
             unless (Prelude.null rsyncMetrics) $
                 rsyncMetricsHtml rsyncMetrics
@@ -141,6 +145,8 @@ mainPage version systemInfo perTaValidations generalValidations fetchDtos metric
                 H.p ! A.class_ "side-label" $ "Fetching"
                 unless (Prelude.null rrdpMetrics) $
                     navLink rrdpIcon "#rrdp-fetches" "RRDP fetches" (Just $ length rrdpMetrics)
+                unless (Prelude.null erikMetrics) $
+                    navLink erikIcon "#erik-fetches" "Erik fetches" (Just $ length erikMetrics)
                 unless (Prelude.null rsyncMetrics) $
                     navLink rsyncIcon "#rsync-fetches" "Rsync fetches" (Just $ length rsyncMetrics)
 
@@ -379,6 +385,78 @@ rrdpMetricsHtml rrdpMetrics =
                 wrap_ $ H.toHtml value_
 
 
+-- | Erik fetches. One row per host name rather than per repository URL,
+-- because that is the granularity a relay serves: an index per FQDN,
+-- covering every publication point under it.
+erikMetricsHtml :: [ErikRepositoryDto] -> Html
+erikMetricsHtml erikMetrics =
+    H.section ! A.id "erik-fetches" $ do
+        H.div ! A.class_ "sec-head" $ do
+            H.h2 $ do
+                "Erik fetches "
+                H.span ! A.class_ "hint num" $ do "("; toHtml (length erikMetrics); ")"
+            H.span ! A.class_ "hint" $ "One fetch per host name, served by any of the configured relays"
+            filterBox "erikFilter"
+        H.div ! A.class_ "table-card" $ do
+            H.div ! A.class_ "table-scroll" $
+                H.table ! A.id "erikTable" $ do
+                    H.thead $ tr $ do
+                        th "Host"
+                        th "Status"
+                        th "Relays"
+                        th "Added"
+                        th "Total"
+
+                    H.tbody $ do
+                        let recentFirst = List.sortOn (\m -> ordering $ m ^. #repository . #meta . #status) erikMetrics
+                        forM_ (zip recentFirst [1 :: Int ..]) $ \(m, index) -> do
+                            htmlClickableRow index erikDetailRow $ do
+                                let (statusCls, statusText) =
+                                        case m ^. #repository . #meta . #status of
+                                            Pending     -> ("pending", "Pending" :: Text)
+                                            FetchedAt t -> ("ok", [i|Fetched at #{instantTimeFormat t}|])
+                                            FailedAt t  -> ("bad", [i|Failed at #{instantTimeFormat t}|])
+
+                                td ! A.class_ "url-cell" $ do
+                                    chevIcon
+                                    H.text $ unFQDN $ m ^. #fqdn
+                                td $ H.span ! A.class_ ("status " <> statusCls) $ do
+                                    H.span ! A.class_ "dot" $ ""
+                                    toHtml statusText
+                                numTd (length $ m ^. #repository . #relayUsage)
+                                numTd (totalMapCount $ m ^. #metrics . #processed)
+                                numTdMs (m ^. #metrics . #totalTimeMs)
+
+                            detailRow m index
+        H.div ! A.style "text-align:right; margin-top:8px;" $
+            H.span ! A.class_ "hint" $ "click a row to see which relays answered and any per-fetch issues"
+  where
+    detailRow :: ErikRepositoryDto -> Int -> H.Html
+    detailRow m index = H.tr ! A.id (H.toValue $ erikDetailRow index)
+                        ! A.class_ "detail-row"
+                        ! A.style "display: none;" $
+        H.td ! A.colspan "5" ! A.class_ "detail-content" $
+            H.div ! A.class_ "detail-panel" $ do
+                H.div ! A.class_ "detail-grid" $ do
+                    detailItem "Refresh interval:"
+                        (maybe "-" show $ m ^. #repository . #meta . #refreshInterval)
+                    -- Which relays actually answered. It is a list and not a single
+                    -- one because the downloads of one fetch are spread over all
+                    -- the relays, with a fallback to the next one on a failure.
+                    forM_ (m ^. #repository . #relayUsage) $ \ErikRelayUsage {..} ->
+                        detailItem (let URI r = relay in Text.unpack r)
+                            [i|#{served} served, #{failed} failed|]
+
+                unless (Prelude.null $ m ^. #validations) $
+                    issuesList m
+      where
+        detailItem :: String -> String -> H.Html
+        detailItem label_ value_ =
+            H.div ! A.class_ "d-i" $ do
+                H.strong (H.toHtml label_)
+                H.span ! A.class_ "no-wrap" $ H.toHtml value_
+
+
 rsyncMetricsHtml :: [RsyncRepositoryDto] -> Html
 rsyncMetricsHtml rsyncMetrics =
     H.section ! A.id "rsync-fetches" $ do
@@ -584,6 +662,9 @@ rrdpDetailRow index = "detail-row-rrdp-" <> show index
 rsyncDetailRow :: Int -> String
 rsyncDetailRow index = "detail-row-rsync-" <> show index
 
+erikDetailRow :: Int -> String
+erikDetailRow index = "detail-row-erik-" <> show index
+
 htmlClickableRow :: (Integral t, ToValue a) => t -> (t -> a) -> Html -> Html
 htmlClickableRow index dataTarget =
     tr ! A.class_ "clickable-row"
@@ -668,6 +749,10 @@ rrdpIcon = preEscapedToMarkup
 rsyncIcon :: Html
 rsyncIcon = preEscapedToMarkup
     ("<svg width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><path d='M17 2l4 4-4 4M3 12v-2a4 4 0 014-4h14M7 22l-4-4 4-4M21 12v2a4 4 0 01-4 4H3'/></svg>" :: Text)
+
+erikIcon :: Html
+erikIcon = preEscapedToMarkup
+    ("<svg width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><circle cx='5' cy='12' r='2'/><circle cx='19' cy='6' r='2'/><circle cx='19' cy='18' r='2'/><path d='M7 11l10-4M7 13l10 4'/></svg>" :: Text)
 
 linkIcon' :: Html
 linkIcon' = preEscapedToMarkup

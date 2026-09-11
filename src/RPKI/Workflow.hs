@@ -962,39 +962,45 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                     -- nothing responded, so just go with the normal exponential backoff thing
                                     pure $ Just interval                
 
-        fetchErikRelays fetchConfig worldVersion repository erikRelays = do            
-            ((r, validations), duration) <-                 
-                -- A hard cap, not `withFetchLimits`: that one lets a fetch
-                -- through once it has waited long enough, which is right for
-                -- repository fetches but means nothing bounds the number of
-                -- Erik workers, one per FQDN, started in a single round.
-                withSemaphore (fetchers ^. #erikFetchSemaphore) $ timedMS $ 
-                    runValidatorIO (newScopes' RepositoryFocus url) $ do
-                        -- TODO Dirty to extract FQDN from fallback rsync URLs instead of 
-                        -- RRDP URL, because FQDN comes from SIA of the certificate.
-                        fallbacks <- fromMaybe mempty <$> liftIO fetchableForUrl            
-                        let fqdns = Set.fromList [ fqdn | f <- Set.toList fallbacks, Just fqdn <- [getFQDN f]]
-                        fqdn <- if Set.null fqdns 
-                                then case getFQDN $ getRpkiURL url of 
-                                        Nothing -> appError $ ErikE $ ErikInvalidUrl url
-                                        Just f  -> pure f
-                                else pure $ Set.findMin fqdns
-
-                        fetchRepositoryFromErikRelays appContext fetchConfig 
-                            erikRelays worldVersion fqdn
-            case r of 
-                Right _ -> do 
-                    let (updatedRepo, interval) = updateRepository fetchConfig
-                            repository worldVersion (FetchedAt (versionToInstant worldVersion)) Nothing duration
-
-                    saveFetchOutcome updatedRepo validations                        
-                    triggerTaRevalidationIf $ hasUpdates validations                                                         
-
-                    pure $ Just interval
-
-                Left e -> do
-                    logWarn logger [i|Erik relay fetch failed for #{url} with error #{e}, falling back to primary fetch.|]
+        fetchErikRelays fetchConfig worldVersion repository erikRelays = 
+            -- The FQDN is derived out here rather than inside the fetch itself, 
+            -- because it is also the key the Erik bookkeeping record is stored under.
+            erikFqdnForUrl >>= \case 
+                Nothing -> do 
+                    logWarn logger [i|Couldn't derive an FQDN for #{url}, fetching it directly.|]
                     fetchPrimary fetchConfig repository worldVersion
+
+                Just fqdn -> do 
+                    ((r, validations), duration) <-                 
+                        -- A hard cap, not `withFetchLimits`: that one lets a fetch
+                        -- through once it has waited long enough, which is right for
+                        -- repository fetches but means nothing bounds the number of
+                        -- Erik workers, one per FQDN, started in a single round.
+                        withSemaphore (fetchers ^. #erikFetchSemaphore) $ timedMS $ 
+                            runValidatorIO (newScopes' RepositoryFocus url) $ 
+                                fetchRepositoryFromErikRelays appContext fetchConfig 
+                                    erikRelays worldVersion fqdn
+                    case r of 
+                        Right ErikFetchStat {..} -> do 
+                            let newStatus = FetchedAt (versionToInstant worldVersion)
+                            let (updatedRepo, interval) = updateRepository fetchConfig
+                                    repository worldVersion newStatus Nothing duration
+
+                            saveFetchOutcome updatedRepo validations                        
+                            saveErikFetchOutcome fqdn newStatus interval relayUsage validations
+                            triggerTaRevalidationIf $ hasUpdates validations                                                         
+
+                            pure $ Just interval
+
+                        Left e -> do
+                            logWarn logger [i|Erik relay fetch failed for #{url} with error #{e}, falling back to primary fetch.|]
+                            let newStatus = FailedAt (versionToInstant worldVersion)
+                            let (_, interval) = updateRepository fetchConfig
+                                    repository worldVersion newStatus Nothing duration
+                            -- Record the failure under the FQDN as well, otherwise the 
+                            -- only trace of it is in the log.
+                            saveErikFetchOutcome fqdn newStatus interval [] validations
+                            fetchPrimary fetchConfig repository worldVersion
 
 
         fetchFallbacks fetchConfig worldVersion fallbacks = do 
@@ -1033,6 +1039,16 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
     fetchableForUrl = do 
         Fetcheables fs <- readTVarIO fetcheables
         pure $ MonoidalMap.lookup url fs
+
+    -- The FQDN an Erik fetch works on.
+    -- TODO Dirty to extract FQDN from fallback rsync URLs instead of 
+    -- RRDP URL, because FQDN comes from SIA of the certificate.
+    erikFqdnForUrl = do 
+        fallbacks <- fromMaybe mempty <$> fetchableForUrl
+        let fqdns = Set.fromList [ fqdn | f <- Set.toList fallbacks, Just fqdn <- [getFQDN f]]
+        pure $ if Set.null fqdns 
+                then getFQDN $ getRpkiURL url
+                else Just $ Set.findMin fqdns
 
 
     updateRepository fetchConfig repo worldVersion newStatus stats duration = (updated, interval)
@@ -1098,6 +1114,21 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         DB.rwTxT database $ \tx db -> do
             DB.saveRepositories tx db [r]
             DB.saveRepositoryValidationStates tx db [(r, validations)]
+
+    -- Erik fetches are keyed by FQDN and not by repository URL, so they are 
+    -- tracked separately from the repository itself. Several repositories can 
+    -- share an FQDN, in which case it is simply the latest fetch that is recorded.
+    saveErikFetchOutcome fqdn newStatus interval relayUsage validations =
+        DB.rwTxT database $ \tx db -> do
+            existing <- fromMaybe (newErikRepository fqdn) <$> DB.getErikRepository tx db fqdn
+            let erikRepository = existing 
+                    & #meta . #status .~ newStatus 
+                    & #meta . #refreshInterval ?~ interval
+                    -- A failed fetch has nothing to say about the relays, so in 
+                    -- that case keep whatever the previous one found out.
+                    & #relayUsage %~ (\previous -> if null relayUsage then previous else relayUsage)
+            DB.saveErikRepositories tx db [erikRepository]
+            DB.saveErikRepositoryValidationStates tx db [(erikRepository, validations)]
 
     
     withFetchLimits :: FetchConfig -> Repository -> IO a -> IO a
