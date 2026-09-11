@@ -57,8 +57,7 @@ data FetchConfig = FetchConfig {
     deriving anyclass (TheBinary)
 
 data StorageConfig = StorageConfig {
-    rwTransactionTimeout :: Seconds,
-    sqliteMmapSizeMb     :: Maybe Size
+    rwTransactionTimeout :: Seconds
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)    
@@ -186,11 +185,23 @@ data RtrConfig = RtrConfig {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
+data IoLimits = IoLimits {
+        maxIncomingTrafficMb :: Maybe Int,
+        maxDiskReadMb        :: Maybe Int,
+        maxDiskWriteMb       :: Maybe Int
+    } 
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
 data SystemConfig = SystemConfig {
         rsyncWorkerMemoryMb      :: Int,
         rrdpWorkerMemoryMb       :: Int,
         validationWorkerMemoryMb :: Int,
-        cleanupWorkerMemoryMb    :: Int
+        cleanupWorkerMemoryMb    :: Int,
+        rsyncWorkerIoLimits      :: IoLimits,
+        rrdpWorkerIoLimits       :: IoLimits,
+        validationWorkerIoLimits :: IoLimits,
+        cleanupWorkerIoLimits    :: IoLimits
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -267,12 +278,34 @@ defaultConfig = Config {
         rsyncWorkerMemoryMb      = 1024,
         rrdpWorkerMemoryMb       = 1024,        
         validationWorkerMemoryMb = 2048,
-        cleanupWorkerMemoryMb    = 512
+        cleanupWorkerMemoryMb    = 512,
+        rsyncWorkerIoLimits = IoLimits {
+            maxIncomingTrafficMb = Nothing,
+            maxDiskReadMb        = Just $ 4 * gigabyte,
+            -- 6 mainly because of the SQLite WAL (and other) amplifications
+            maxDiskWriteMb       = Just $ 6 * gigabyte
+        },
+        rrdpWorkerIoLimits = IoLimits {
+            maxIncomingTrafficMb = Just $ 2 * gigabyte,
+            maxDiskReadMb        = Just $ 4 * gigabyte,
+            maxDiskWriteMb       = Just $ 6 * gigabyte
+        },        
+        validationWorkerIoLimits = IoLimits {
+            -- it only downloads TA certificates
+            maxIncomingTrafficMb = Just 64,
+            maxDiskReadMb        = Just $ 10 * gigabyte,
+            -- Saving payloads and shortcuts is not much 
+            maxDiskWriteMb       = Just gigabyte
+        },
+        cleanupWorkerIoLimits = IoLimits {
+            maxIncomingTrafficMb = Nothing,
+            maxDiskReadMb        = Just 32768,
+            maxDiskWriteMb       = Just 32768
+        }
     },
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {       
-        rwTransactionTimeout = 15 * minutes,
-        sqliteMmapSizeMb     = Nothing
+        rwTransactionTimeout = 15 * minutes        
     },
     cacheCleanupInterval      = 6 * hours,    
     versionNumberToKeep       = 3,
@@ -291,6 +324,7 @@ defaultConfig = Config {
     hour = hours
     days = 24 * hours
     hours = Seconds $ 60 * 60    
+    gigabyte = 1024 * 1024 * 1024    
 
 
 adjustConfig :: Config -> Config

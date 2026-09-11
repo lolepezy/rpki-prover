@@ -13,6 +13,8 @@ import           Control.Concurrent.STM
 import           Control.Lens
 
 import           Conduit
+import           Data.Foldable (for_)
+import           Data.Maybe (isJust)
 import           Data.Text (Text, unpack)
 import qualified Data.ByteString.Lazy       as LBS
 import qualified Data.Map.Strict            as Map
@@ -21,7 +23,6 @@ import           Data.String.Interpolate.IsString
 import           Data.Conduit.Process.Typed
 
 import           GHC.Generics
-import           GHC.Stats
 
 import           System.IO (stdin, stdout)
 import           System.Posix.Types
@@ -29,7 +30,7 @@ import           System.Posix.Process
 
 import           RPKI.AppMonad
 import           RPKI.AppTypes
-import           RPKI.Metrics.Memory (getProcessPeakRss)
+import           RPKI.Metrics.Process
 import           RPKI.AppContext
 import           RPKI.Config
 import           RPKI.Domain
@@ -99,6 +100,7 @@ data WorkerInput = WorkerInput {
         initialParentId         :: ProcessID,
         workerTimeout           :: Timebox,
         cpuLimit                :: Maybe CPUTime,
+        ioLimits                :: IoLimits,
         parentExecutableVersion :: ExecutableVersion
     } 
     deriving stock (Eq, Ord, Show, Generic)
@@ -114,7 +116,13 @@ makeWorkerInput :: (MonadIO m)
 makeWorkerInput AppContext {..} workerId params timeout cpuLimit = do 
     thisProcessId <- liftIO getProcessID    
     pure $ WorkerInput workerId params config thisProcessId 
-                        timeout cpuLimit executableVersion
+                        timeout cpuLimit (ioLimitsFor params) executableVersion
+  where
+    ioLimitsFor = let SystemConfig {..} = config ^. #systemConfig in \case
+        RrdpFetchParams {}    -> rrdpWorkerIoLimits
+        RsyncFetchParams {}   -> rsyncWorkerIoLimits
+        ValidationParams {}   -> validationWorkerIoLimits
+        CacheCleanupParams {} -> cleanupWorkerIoLimits
 
 newtype RrdpFetchResult = RrdpFetchResult 
                             (Either AppError (RrdpRepository, RrdpFetchStat), ValidationState)    
@@ -147,12 +155,8 @@ newtype ErrorResult = ErrorResult Text
 
 data WorkerResult r = WorkerResult {
         payload   :: Either ErrorResult r,        
-        cpuTime   :: CPUTime,
         clockTime :: TimeMs,
-        -- | The most the Haskell heap ever reached during the run, as the
-        -- RTS reports it (max_mem_in_use_bytes).
-        maxRtsHeap    :: MaxMemory,        
-        maxProcessRss :: MaxMemory
+        stats     :: ProcessStats
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)    
@@ -180,7 +184,8 @@ executeWork input exitWith_ actualWork =
                         `IOExc.onException` 
                         done exceptionExitCode,
                     dieIfParentDies done,
-                    dieOfTiming done
+                    dieAfterTimeout done,
+                    dieOfOveruse done
                 ]
                 
             exitWith_ =<< atomically (takeTMVar exitCode)
@@ -194,28 +199,33 @@ executeWork input exitWith_ actualWork =
         when (parentId /= input ^. #initialParentId) $
             done parentDiedExitCode
 
-    -- exit either because the time is up or too much CPU is spent
-    dieOfTiming done = 
-        case input ^. #cpuLimit of
-            Nothing       -> dieAfterTimeout done
-            Just cpuLimit -> either id id <$> race 
-                                (dieAfterTimeout done) 
-                                (dieOutOfCpuTime cpuLimit done)
-
     -- Time bomb. Wait for the certain timeout and then exit.
     dieAfterTimeout done = do
         let Timebox timebox = input ^. #workerTimeout
         threadDelay $ toMicroseconds timebox
         done timeoutExitCode
 
-    -- Exit if the worker consumed too much CPU time
-    dieOutOfCpuTime cpuLimit done = loop
-      where
-        loop = do 
+    -- Exit if the worker has spent more than it is allowed of any of the 
+    -- resources it is supposed to keep an eye on.
+    dieOfOveruse done = forever $ do 
+        let IoLimits {..} = input ^. #ioLimits
+
+        for_ (input ^. #cpuLimit) $ \cpuLimit -> do 
             cpuTime <- getCpuTime
-            if cpuTime > cpuLimit 
-                then done outOfCpuTimeExitCode
-                else threadDelay 1_000_000 >> loop
+            when (cpuTime > cpuLimit) $ done outOfCpuTimeExitCode
+
+        for_ maxIncomingTrafficMb $ \limit -> do 
+            traffic <- getIncomingTraffic
+            when (traffic > mbToSize limit) $ done tooMuchTrafficExitCode
+
+        when (isJust maxDiskReadMb || isJust maxDiskWriteMb) $ do 
+            DiskIO {..} <- getProcessDiskIO
+            for_ maxDiskReadMb $ \limit -> 
+                when (diskRead > mbToSize limit) $ done tooMuchDiskIoExitCode
+            for_ maxDiskWriteMb $ \limit -> 
+                when (diskWrite > mbToSize limit) $ done tooMuchDiskIoExitCode
+
+        threadDelay 1_000_000
 
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
@@ -224,30 +234,8 @@ readWorkerInput = liftIO $ deserialise_ . LBS.toStrict <$> LBS.hGetContents stdi
 execWithStats :: MonadIO m => m (Either ErrorResult r) -> m (WorkerResult r)
 execWithStats f = do        
     (payload, clockTime) <- timedMS f
-    ProcessStats {..} <- processStat
-    pure WorkerResult {
-            cpuTime = statCpuTime,
-            maxRtsHeap = statMaxRtsHeap,
-            maxProcessRss = statProcessRss,
-            ..
-        }
-  
-
--- | What a process can say about its own resource use.
-data ProcessStats = ProcessStats {
-        statCpuTime    :: CPUTime,
-        statMaxRtsHeap :: MaxMemory,
-        statProcessRss :: MaxMemory
-    }
-    deriving stock (Eq, Show, Generic)
-
-processStat :: MonadIO m => m ProcessStats
-processStat = do 
-    statCpuTime <- getCpuTime
-    RTSStats {..} <- liftIO getRTSStats
-    let statMaxRtsHeap = MaxMemory $ fromIntegral max_mem_in_use_bytes
-    statProcessRss <- MaxMemory . fromIntegral . unSize <$> getProcessPeakRss
-    pure ProcessStats {..}
+    stats <- processStat
+    pure WorkerResult {..}
 
 
 writeWorkerOutput :: TheBinary a => a -> IO ()
@@ -281,9 +269,12 @@ defaultRts = [ "-I0", "-F2", "-Fd4" ]
 
 parentDiedExitCode, timeoutExitCode, outOfCpuTimeExitCode, outOfMemoryExitCode :: ExitCode
 exitKillByTypedProcess, exceptionExitCode, replacedExecutableExitCode :: ExitCode
+tooMuchTrafficExitCode, tooMuchDiskIoExitCode :: ExitCode
 exceptionExitCode    = ExitFailure 99
 parentDiedExitCode   = ExitFailure 111
 outOfCpuTimeExitCode = ExitFailure 113
+tooMuchTrafficExitCode = ExitFailure 114
+tooMuchDiskIoExitCode  = ExitFailure 115
 timeoutExitCode      = ExitFailure 122
 replacedExecutableExitCode = ExitFailure 123
 outOfMemoryExitCode  = ExitFailure 251
@@ -357,6 +348,16 @@ runWorker logger workerInput extraCli workerInfo = do
                     logError logger message
                     trace WorkerCpuOveruseTrace
                     appError $ InternalE $ WorkerOutOfCpuTime message                    
+                | exit == tooMuchTrafficExitCode -> do                     
+                    let message = [i|Worker #{workerId} downloaded too much data.|]
+                    logError logger message
+                    trace WorkerIoOveruseTrace
+                    appError $ InternalE $ WorkerTooMuchIO message
+                | exit == tooMuchDiskIoExitCode -> do                     
+                    let message = [i|Worker #{workerId} did too much disk IO.|]
+                    logError logger message
+                    trace WorkerIoOveruseTrace
+                    appError $ InternalE $ WorkerTooMuchIO message
                 | exit == outOfMemoryExitCode -> do                     
                     let message = [i|Worker #{workerId} ran out of memory.|]
                     logError logger message                    
@@ -390,7 +391,10 @@ runWorker logger workerInput extraCli workerInfo = do
 
 logWorkerDone :: (Logger logger, MonadIO m) =>
                 logger -> WorkerId -> WorkerResult r -> m ()
-logWorkerDone logger workerId WorkerResult {..} = do    
+logWorkerDone logger workerId WorkerResult { stats = ProcessStats {..}, ..} = do    
+    let DiskIO {..} = statDiskIO
     logDebug logger $
-        [i|Worker #{workerId} completed, cpuTime: #{cpuTime}ms, |] <>
-        [i|clockTime: #{clockTime}ms, maxRtsHeap: #{maxRtsHeap}, maxProcessRss: #{maxProcessRss}.|] 
+        [i|Worker #{workerId} completed, cpuTime: #{statCpuTime}ms, |] <>
+        [i|clockTime: #{clockTime}ms, maxRtsHeap: #{statMaxRtsHeap}, maxProcessRss: #{statProcessRss}, |] <>
+        [i|incoming traffic: #{sizeMb statIncomingTraffic}mb, |] <>
+        [i|disk read: #{sizeMb diskRead}mb, disk write: #{sizeMb diskWrite}mb.|] 

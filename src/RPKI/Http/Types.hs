@@ -299,11 +299,18 @@ data ResourcesDto = ResourcesDto {
         aggregatedCpuTime   :: CPUTime,
         cpuTimePerClockTime :: Double,
         aggregatedClockTime :: TimeMs,
-        maxRtsHeap           :: MaxMemory,        
-        avgRtsHeap           :: MaxMemory, 
-        maxProcessRSS    :: MaxMemory,
-        avgProcessRSS    :: MaxMemory,
-        avgCpuTimeMsPerSecond :: Double
+        avgCpuTimeMsPerSecond :: Double,
+        maxRtsHeap         :: MaxMemory,        
+        avgRtsHeap         :: MaxMemory, 
+        maxProcessRSS      :: MaxMemory,
+        avgProcessRSS      :: MaxMemory,        
+        maxIncomingTraffic :: Size,
+        maxDiskRead        :: Size,
+        maxDiskWrite       :: Size,
+        -- | Human-readable heads-up when one of the max* fields above has crossed
+        -- half of the corresponding budget in 'RPKI.Config.IoLimits'. Empty for
+        -- scopes an 'IoLimits' isn't configured for (e.g. "root").
+        warnings           :: [Text]
     }
     deriving stock (Eq, Show, Generic)
 

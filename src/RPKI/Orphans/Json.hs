@@ -186,8 +186,11 @@ instance ToJSON AggregatedCPUTime where
 instance ToJSON LatestCPUTime where 
     toJSON (LatestCPUTime (CPUTime s)) = toJSON s
 
-instance ToJSON MaxMemory where 
+instance ToJSON MaxMemory where
     toJSON (MaxMemory s) = toJSON s
+
+instance ToJSON MaxSize where
+    toJSON (MaxSize s) = toJSON s
 
 instance ToJSON AvgMemory where 
     toJSON = toJSON . getAvgMemory
@@ -442,6 +445,7 @@ instance ToJSON TAL
 instance ToJSON HttpApiConfig
 instance ToJSON ValidationConfig
 instance ToJSON RtrConfig
+instance ToJSON IoLimits
 instance ToJSON SystemConfig
 instance ToJSON RrdpConf
 instance ToJSON RsyncConf    

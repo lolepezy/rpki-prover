@@ -55,6 +55,7 @@ import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.Fetch
 import           RPKI.Logging
+import           RPKI.Metrics.Process
 import           RPKI.Metrics.System
 import           RPKI.Http.Types
 import           RPKI.Http.Dto
@@ -427,13 +428,11 @@ runAll appContext@AppContext {..} tals = do
                 pure RanBefore
 
     updateMainResourcesStat = do
-        ProcessStats { statCpuTime = cpuTime,
-                       statMaxRtsHeap = maxRtsHeap,
-                       statProcessRss = maxProcessRss } <- processStat
+        stats <- processStat
         SystemInfo {..} <- readTVarIO $ appState ^. #system
         Now now <- thisInstant
         let clockTime = durationMs startUpTime now
-        pushSystem logger $ cpuMemMetric "root" cpuTime clockTime maxRtsHeap maxProcessRss
+        pushSystem logger $ resourceUsageMetric "root" clockTime stats
 
     validateTAs workflowShared worldVersion talsToValidate = do  
         let taNames = map getTaName talsToValidate
@@ -469,7 +468,7 @@ runAll appContext@AppContext {..} tals = do
                             scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
                             
                             logWorkerDone logger workerId wr
-                            pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxRtsHeap maxProcessRss
+                            pushSystem logger $ resourceUsageMetric "validation" clockTime stats
                         
                             let topDownState = workerVS <> vs
                             logDebug logger [i|Validation result: 
@@ -517,7 +516,7 @@ runAll appContext@AppContext {..} tals = do
                             pure $ Left [i|Cache cleanup process failed: #{message}.|]
                         Right r -> do
                             logWorkerDone logger workerId wr
-                            pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxRtsHeap maxProcessRss
+                            pushSystem logger $ resourceUsageMetric "cache-clean-up" clockTime stats
                             pure $ Right r    
 
     -- Delete temporary files and any stale storage-backend state

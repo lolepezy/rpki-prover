@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE FlexibleInstances #-}
 
 module Main where
 
@@ -344,7 +343,7 @@ newSqliteDB dbPath config = SQLite.createDB dbPath busyTimeoutMs poolSize
   where
     poolSize      = max 2 $ fromIntegral $ config ^. #parallelism . #cpuParallelism
     busyTimeoutMs = let Seconds s = config ^. #storageConfig . #rwTransactionTimeout
-                    in fromIntegral $ s * 1000
+                    in fromIntegral $ s * 1000    
 
 createSqliteDatabase :: FilePath -> Config -> Bool -> Bool -> IO (DB.DB, DbCheckResult)
 createSqliteDatabase cacheDir config resetCache checkVersion = do
@@ -660,7 +659,6 @@ data CLIOptions = CLIOptions {
         rsyncTimeout             :: Maybe Int64,
         rsyncClientPath          :: Maybe String,
         httpApiPort              :: Maybe Word16,
-        sqliteMmapMb             :: Maybe Int64,
         withRtr                  :: Bool,
         rtrAddress               :: Maybe String,
         rtrPort                  :: Maybe Int16,
@@ -682,6 +680,9 @@ data CLIOptions = CLIOptions {
         maxRrdpFetchMemory       :: Maybe Int,
         maxRsyncFetchMemory      :: Maybe Int,
         maxValidationMemory      :: Maybe Int,
+        maxFetchTrafficMb        :: Maybe Int,
+        maxFetchDiskReadMb       :: Maybe Int,
+        maxFetchDiskWriteMb      :: Maybe Int,
         noIncrementalValidation  :: Bool,
         showHiddenConfig         :: Bool,
         withValidityApi          :: Bool,
@@ -789,11 +790,6 @@ cliOptionsParser = CLIOptions
             (  long "http-api-port"
             <> metavar "PORT"
             <> help ("Port for the HTTP API (default: " <> show defHttpApiPort <> ").")))
-    <*> optional (option auto
-            (  long "sqlite-mmap-mb"
-            <> metavar "MB"
-            <> help ("Set SQLite PRAGMA mmap_size in MB for each connection. "
-              <> "Unset by default (mmap disabled by config).")))
     <*> switch
             (  long "with-rtr"
             <> help "Start the RTR server (default: false).")
@@ -878,9 +874,27 @@ cliOptionsParser = CLIOptions
             (  long "max-validation-memory"
             <> metavar "MB"
             <> help ("Maximum memory for the validation process in MB (default: " <> show defMaxValidMem <> ").")))
+    <*> optional (option auto
+            (  long "max-fetch-traffic"
+            <> metavar "MB"
+            <> help ("Maximum amount of data a fetcher process is allowed to download in MB, "
+                  <> "it exits when it downloads more than that (default: " <> defMaxFetchTraffic <> "). "
+                  <> "Only applies to RRDP, what an rsync client downloads is counted "
+                  <> "as disk IO of the rsync fetcher instead.")))
+    <*> optional (option auto
+            (  long "max-fetch-disk-read"
+            <> metavar "MB"
+            <> help ("Maximum amount of data a fetcher process is allowed to read from the disk in MB, "
+                  <> "it exits when it reads more than that (default: " <> defMaxFetchDiskRead <> ").")))
+    <*> optional (option auto
+            (  long "max-fetch-disk-write"
+            <> metavar "MB"
+            <> help ("Maximum amount of data a fetcher process is allowed to write to the disk in MB, "
+                  <> "it exits when it writes more than that (default: " <> defMaxFetchDiskWrite <> ").")))
     <*> switch
             (  long "no-incremental-validation"
-            <> help ("Disable the incremental validation algorithm. "
+            <> help ("Disable the incremental validation algorithm, validation happens without " 
+                  <> "caching any validation results, so the whole hierarchy of objects is validated each time."
                   <> "Incremental validation is enabled by default."))
     <*> switch
             (  long "show-hidden-config"
@@ -919,6 +933,10 @@ cliOptionsParser = CLIOptions
     defMaxRrdpMem             = cfg ^. #systemConfig . #rrdpWorkerMemoryMb
     defMaxRsyncMem            = cfg ^. #systemConfig . #rsyncWorkerMemoryMb
     defMaxValidMem            = cfg ^. #systemConfig . #validationWorkerMemoryMb
+    defMaxFetchTraffic        = showLimit $ cfg ^. #systemConfig . #rrdpWorkerIoLimits . #maxIncomingTrafficMb
+    defMaxFetchDiskRead       = showLimit $ cfg ^. #systemConfig . #rrdpWorkerIoLimits . #maxDiskReadMb
+    defMaxFetchDiskWrite      = showLimit $ cfg ^. #systemConfig . #rrdpWorkerIoLimits . #maxDiskWriteMb
+    showLimit                 = maybe ("unlimited" :: String) show
 
 
 -- | Apply CLI option overrides to a base Config. The base config should
@@ -958,13 +976,17 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
         & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
         & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
-          & #storageConfig . #sqliteMmapSizeMb .~ sqliteMmapSize
+        -- Both fetchers get the same IO budget, they do the same kind of work
+        & maybeSet (#systemConfig . #rrdpWorkerIoLimits . #maxIncomingTrafficMb) (Just <$> maxFetchTrafficMb)
+        & maybeSet (#systemConfig . #rrdpWorkerIoLimits . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
+        & maybeSet (#systemConfig . #rrdpWorkerIoLimits . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
+        & maybeSet (#systemConfig . #rsyncWorkerIoLimits . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
+        & maybeSet (#systemConfig . #rsyncWorkerIoLimits . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)        
   where
     cpuCount'    = fromMaybe (baseConfig ^. #parallelism . #cpuCount) cpuCount
     parallelism  = case fetcherCount of
         Nothing -> newParallelism cpuCount'
-        Just fc -> makeParallelismF cpuCount' fc
-    sqliteMmapSize = maybe (baseConfig ^. #storageConfig . #sqliteMmapSizeMb) (Just . Size) sqliteMmapMb
+        Just fc -> makeParallelismF cpuCount' fc    
     rtrConfig = if withRtr
         then Just $ defaultRtrConfig
                     & maybeSet #rtrPort rtrPort
