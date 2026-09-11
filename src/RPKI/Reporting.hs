@@ -251,6 +251,7 @@ newtype InitError = InitError Text
 data InternalError = WorkerTimeout Text 
                    | WorkerOutOfCpuTime Text 
                    | WorkerOutOfMemory Text 
+                   | WorkerTooMuchIO Text 
                    | WorkerDetectedDifferentExecutable Text 
                    | WorkerError Text 
                    | InternalError Text 
@@ -530,6 +531,7 @@ data Metrics = Metrics {
 
 data Trace = WorkerTimeoutTrace               
            | WorkerCpuOveruseTrace               
+           | WorkerIoOveruseTrace               
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
