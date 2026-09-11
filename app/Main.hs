@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE FlexibleInstances #-}
 
 module Main where
 
@@ -344,7 +343,7 @@ newSqliteDB dbPath config = SQLite.createDB dbPath busyTimeoutMs poolSize
   where
     poolSize      = max 2 $ fromIntegral $ config ^. #parallelism . #cpuParallelism
     busyTimeoutMs = let Seconds s = config ^. #storageConfig . #rwTransactionTimeout
-                    in fromIntegral $ s * 1000
+                    in fromIntegral $ s * 1000    
 
 createSqliteDatabase :: FilePath -> Config -> Bool -> Bool -> IO (DB.DB, DbCheckResult)
 createSqliteDatabase cacheDir config resetCache checkVersion = do
@@ -660,7 +659,6 @@ data CLIOptions = CLIOptions {
         rsyncTimeout             :: Maybe Int64,
         rsyncClientPath          :: Maybe String,
         httpApiPort              :: Maybe Word16,
-        sqliteMmapMb             :: Maybe Int64,
         withRtr                  :: Bool,
         rtrAddress               :: Maybe String,
         rtrPort                  :: Maybe Int16,
@@ -792,11 +790,6 @@ cliOptionsParser = CLIOptions
             (  long "http-api-port"
             <> metavar "PORT"
             <> help ("Port for the HTTP API (default: " <> show defHttpApiPort <> ").")))
-    <*> optional (option auto
-            (  long "sqlite-mmap-mb"
-            <> metavar "MB"
-            <> help ("Set SQLite PRAGMA mmap_size in MB for each connection. "
-              <> "Unset by default (mmap disabled by config).")))
     <*> switch
             (  long "with-rtr"
             <> help "Start the RTR server (default: false).")
@@ -988,14 +981,12 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#systemConfig . #rrdpWorkerIoLimits . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
         & maybeSet (#systemConfig . #rrdpWorkerIoLimits . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
         & maybeSet (#systemConfig . #rsyncWorkerIoLimits . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
-        & maybeSet (#systemConfig . #rsyncWorkerIoLimits . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
-          & #storageConfig . #sqliteMmapSizeMb .~ sqliteMmapSize
+        & maybeSet (#systemConfig . #rsyncWorkerIoLimits . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)        
   where
     cpuCount'    = fromMaybe (baseConfig ^. #parallelism . #cpuCount) cpuCount
     parallelism  = case fetcherCount of
         Nothing -> newParallelism cpuCount'
-        Just fc -> makeParallelismF cpuCount' fc
-    sqliteMmapSize = maybe (baseConfig ^. #storageConfig . #sqliteMmapSizeMb) (Just . Size) sqliteMmapMb
+        Just fc -> makeParallelismF cpuCount' fc    
     rtrConfig = if withRtr
         then Just $ defaultRtrConfig
                     & maybeSet #rtrPort rtrPort
