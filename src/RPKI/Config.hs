@@ -290,13 +290,12 @@ defaultConfig = Config {
             maxIncomingTrafficMb = Just $ 2 * gigabyte,
             maxDiskReadMb        = Just $ 4 * gigabyte,
             maxDiskWriteMb       = Just $ 6 * gigabyte
-        },
-        -- Validation reads and writes the whole cache, so it is in a completely
-        -- different league than the fetchers.
+        },        
         validationWorkerIoLimits = IoLimits {
             -- it only downloads TA certificates
             maxIncomingTrafficMb = Just 64,
             maxDiskReadMb        = Just $ 10 * gigabyte,
+            -- Saving payloads and shortcuts is not much 
             maxDiskWriteMb       = Just gigabyte
         },
         cleanupWorkerIoLimits = IoLimits {

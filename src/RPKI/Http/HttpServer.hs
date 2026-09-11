@@ -40,6 +40,7 @@ import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Logging
 import           RPKI.Metrics.Prometheus
+import           RPKI.Metrics.Process (mbToSize, sizeMb)
 import           RPKI.Metrics.System
 import           RPKI.Time
 import           RPKI.Reporting
@@ -462,13 +463,20 @@ getSystem AppContext {..} = do
             let MaxSize maxIncomingTraffic = resourceUsage ^. #maxIncomingTraffic
             let MaxSize maxDiskRead = resourceUsage ^. #maxDiskRead
             let MaxSize maxDiskWrite = resourceUsage ^. #maxDiskWrite
-            let cpuTimePerClockTime = let 
-                    CPUTime cpuTime = aggregatedCpuTime 
+            let cpuTimePerClockTime = let
+                    CPUTime cpuTime = aggregatedCpuTime
                     TimeMs clockTime = aggregatedClockTime
-                    in if aggregatedClockTime == 0 then 0 
+                    in if aggregatedClockTime == 0 then 0
                        else realToFrac cpuTime / realToFrac clockTime
 
             tag <- fmtScope scope
+            let warnings = case ioLimitsForScope tag of
+                    Nothing     -> []
+                    Just limits -> catMaybes
+                        [ ioLimitWarning "incoming traffic" (limits ^. #maxIncomingTrafficMb) maxIncomingTraffic
+                        , ioLimitWarning "disk read"        (limits ^. #maxDiskReadMb)        maxDiskRead
+                        , ioLimitWarning "disk write"       (limits ^. #maxDiskWriteMb)       maxDiskWrite
+                        ]
             pure ResourcesDto {..}
     
     let wiToDto WorkerInfo {..} = let pid = fromIntegral workerPid in WorkerInfoDto {..}
@@ -480,13 +488,29 @@ getSystem AppContext {..} = do
   where
     fmtScope scope =
         fmap (Text.intercalate "/") $
-            roTxT database $ \tx db -> do         
-                forM (scopeList scope) $ \s -> 
-                    resolvedFocusToText <$> resolveLocations tx db s 
+            roTxT database $ \tx db -> do
+                forM (scopeList scope) $ \s ->
+                    resolvedFocusToText <$> resolveLocations tx db s
 
-    getTALs = do
-        db <- liftIO $ readTVarIO database
-        liftIO $ roTx db $ \tx -> do        
+    ioLimitsForScope = let systemConfig = config ^. #systemConfig in \case
+        "rrdp-fetch"     -> Just $ systemConfig ^. #rrdpWorkerIoLimits
+        "rsync-fetch"    -> Just $ systemConfig ^. #rsyncWorkerIoLimits
+        "validation"     -> Just $ systemConfig ^. #validationWorkerIoLimits
+        "cache-clean-up" -> Just $ systemConfig ^. #cleanupWorkerIoLimits
+        _                -> Nothing
+
+    -- A heads-up once a max* reading has crossed half of its configured budget,
+    -- so it shows up before the worker actually hits the limit and gets killed.
+    ioLimitWarning :: Text -> Maybe Int -> Size -> Maybe Text
+    ioLimitWarning label limitMb currentSize = do
+        limitMb' <- limitMb
+        let limit = mbToSize limitMb'
+        if currentSize * 2 > limit
+            then Just [i|#{label} is at #{sizeMb currentSize}mb, over half of the #{limitMb'}mb limit|]
+            else Nothing
+
+    getTALs =        
+        roTxT database $ \tx db -> do        
             tas <- DB.getTAs tx db     
             pure [ TalDto {..} | StorableTA {..} <- tas, 
                     let repositories = map (toText . getRpkiURL) 

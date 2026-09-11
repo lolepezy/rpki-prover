@@ -900,7 +900,8 @@ cliOptionsParser = CLIOptions
                   <> "it exits when it writes more than that (default: " <> defMaxFetchDiskWrite <> ").")))
     <*> switch
             (  long "no-incremental-validation"
-            <> help ("Disable the incremental validation algorithm. "
+            <> help ("Disable the incremental validation algorithm, validation happens without " 
+                  <> "caching any validation results, so the whole hierarchy of objects is validated each time."
                   <> "Incremental validation is enabled by default."))
     <*> switch
             (  long "show-hidden-config"
