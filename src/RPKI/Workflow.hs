@@ -907,8 +907,14 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 -- using Erik relays (if configured)
                 case (config ^. typed @ErikConf . #relays, getFetchStatus repository) of 
                     (erikRelays, FetchedAt {}) 
-                        | not (null erikRelays) -> 
-                            fetchErikRelays fetchConfig worldVersion repository erikRelays
+                        | not (null erikRelays) -> do 
+                            usableRelays <- usableErikRelays appState erikRelays
+                            case usableRelays of 
+                                [] -> do 
+                                    logWarn logger [i|No usable Erik relays for #{url}, falling back to primary fetch.|]
+                                    fetchPrimary fetchConfig repository worldVersion
+                                _  ->
+                                    fetchErikRelays fetchConfig worldVersion repository usableRelays
                     _ -> 
                             fetchPrimary fetchConfig repository worldVersion
 
@@ -1389,7 +1395,6 @@ logException logger logText result =
 -- still propagate -- that is `UIO.catchAny`'s contract.
 ignoreSync :: MonadUnliftIO m => m () -> m ()
 ignoreSync f = f `UIO.catchAny` const (pure ())
-
 
 killAllWorkers :: AppContext s -> IO ()
 killAllWorkers appContext@AppContext {..} = do

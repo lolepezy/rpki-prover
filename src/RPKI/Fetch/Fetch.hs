@@ -232,14 +232,8 @@ fetchRepositoryFromErikRelays
     fetchConfig
     relays
     worldVersion    
-    fqdn = do
-        -- Relays that the workers before us found dead are left out, so this
-        -- worker does not pay their timeout again.
-        usableRelays <- usableErikRelays appState relays
-        let skipped = length relays - length usableRelays
-        when (skipped > 0) $
-            logDebug logger [i|Skipping #{skipped} Erik relay(s) known to be failing.|]
-        logInfo logger [i|Fetching #{fqdn} from #{length usableRelays} Erik relay(s).|]           
+    fqdn = do        
+        logInfo logger [i|Fetching #{fqdn} from #{length relays} Erik relay(s).|]           
 
         let fetcherTimeout = fetchConfig ^. #erikTimeout
         let totalTimeout = fetcherTimeout + timeToKillItself
@@ -248,7 +242,7 @@ fetchRepositoryFromErikRelays
                 let fetchConfig' = fetchConfig & #erikTimeout .~ fetcherTimeout
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (ErikE . UnknownErikProblem . fmtEx) 
-                                    (runErikFetchWorker appContext fetchConfig' worldVersion usableRelays fqdn)
+                                    (runErikFetchWorker appContext fetchConfig' worldVersion relays fqdn)
                 logInfo logger [i|Fetched #{fqdn} from Erik relays, took #{elapsed}ms.|]
                 pure z)            
             (do 
