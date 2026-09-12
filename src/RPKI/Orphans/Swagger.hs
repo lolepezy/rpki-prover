@@ -95,7 +95,7 @@ instance ToSchema a => ToSchema (MetricMap a)
 instance ToSchema ValidatedBy
 instance ToSchema ValidationMetric
 instance ToSchema RpkiObjectType
-instance ToSchema RsyncMetric
+instance ToSchema TraverseMetric
 instance ToSchema RrdpMetric
 instance ToSchema ResourceUsage
 instance ToSchema SystemMetrics
@@ -133,6 +133,7 @@ instance ToSchema Config
 instance ToSchema Parallelism
 instance ToSchema RsyncConf
 instance ToSchema RrdpConf
+instance ToSchema ErikConf
 instance ToSchema ValidationConfig
 instance ToSchema SystemConfig
 instance ToSchema HttpApiConfig
@@ -175,8 +176,10 @@ instance ToSchema StorageError
 instance ToSchema RsyncError
 instance ToSchema RrdpError where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToSchema ErikError
 instance ToSchema TALError
 instance ToSchema PrefixesAndAsns
+instance ToSchema FQDN
 
 
 instance ToSchema AsResources

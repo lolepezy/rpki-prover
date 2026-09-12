@@ -2,8 +2,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData        #-}
 
-module RPKI.Fetch where
+module RPKI.Fetch.Fetch where
 
+import           Control.Monad
 import           Effectful.Timeout                (Timeout)
 import           Effectful
 import           Control.Concurrent              as Conc
@@ -30,6 +31,7 @@ import           GHC.Generics
 import           Time.Types
 
 import           RPKI.AppContext
+import           RPKI.AppState
 import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
@@ -43,7 +45,9 @@ import           RPKI.Time
 import           RPKI.Parallel
 import           RPKI.Util                       
 import           RPKI.Rsync
-import           RPKI.RRDP.Http
+import           RPKI.Fetch.Http
+import           RPKI.Fetch.ErikRelay
+import           RPKI.Worker (ErikFetchStat)
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
 
@@ -71,6 +75,13 @@ data Fetchers = Fetchers {
         -- Semaphore for rsync fetches per host, used to no exceed 
         -- the limit of connections per rsync host
         rsyncPerHostSemaphores  :: TVar (Map RsyncHost Semaphore),
+
+        -- Hard cap on concurrent Erik fetches. Unlike the trusted/untrusted
+        -- semaphores above, which are deliberately soft (a fetch that waits
+        -- too long runs anyway rather than starving), this one is a real
+        -- limit: there is one Erik fetch per FQDN, so without it a round
+        -- spawns a worker process for every publication point at once.
+        erikFetchSemaphore :: Semaphore,
 
         -- Mapping of repositories to the TAs they are mentioned in
         uriByTa :: TVar UriTaIxSet
@@ -209,6 +220,46 @@ fetchTACertificate appContext@AppContext {..} fetchConfig tal =
             validatorWarning $ VWarning e
             go uris            
 
+
+fetchRepositoryFromErikRelays :: (ValidatorIO es, Timeout :> es) => AppContext s 
+                            -> FetchConfig
+                            -> [URI]                            
+                            -> WorldVersion
+                            -> FQDN 
+                            -> Eff es ErikFetchStat
+fetchRepositoryFromErikRelays
+    appContext@AppContext {..}
+    fetchConfig
+    relays
+    worldVersion    
+    fqdn = do
+        -- Relays that the workers before us found dead are left out, so this
+        -- worker does not pay their timeout again.
+        usableRelays <- usableErikRelays appState relays
+        let skipped = length relays - length usableRelays
+        when (skipped > 0) $
+            logDebug logger [i|Skipping #{skipped} Erik relay(s) known to be failing.|]
+        logInfo logger [i|Fetching #{fqdn} from #{length usableRelays} Erik relay(s).|]           
+
+        let fetcherTimeout = fetchConfig ^. #erikTimeout
+        let totalTimeout = fetcherTimeout + timeToKillItself
+        timeoutVT totalTimeout
+            (do
+                let fetchConfig' = fetchConfig & #erikTimeout .~ fetcherTimeout
+                (z, elapsed) <- timedMS $ fromTryM 
+                                    (ErikE . UnknownErikProblem . fmtEx) 
+                                    (runErikFetchWorker appContext fetchConfig' worldVersion usableRelays fqdn)
+                logInfo logger [i|Fetched #{fqdn} from Erik relays, took #{elapsed}ms.|]
+                pure z)            
+            (do 
+                logError logger [i|Couldn't fetch repository #{fqdn} from Erik relays after #{totalTimeout}.|]
+                trace WorkerTimeoutTrace
+                appError $ ErikE $ ErikDownloadTimeout totalTimeout)                        
+           
+  where    
+    -- Give the process some time to kill itself, 
+    -- before trying to kill it from here
+    timeToKillItself = Seconds 5
 
 
 -- | Check if an URL need to be re-fetched, based on fetch status and current time.

@@ -19,7 +19,7 @@ import           Test.Tasty
 import qualified Test.Tasty.HUnit        as HU
 
 rrdpUpdateSpec :: TestTree
-rrdpUpdateSpec = testGroup "Unit tests for repostory updates" [ 
+rrdpUpdateSpec = testGroup "Unit tests for repository updates" [ 
     testSnapshot, 
     testNoUpdates, 
     testNoDeltaLocalTooOld, 

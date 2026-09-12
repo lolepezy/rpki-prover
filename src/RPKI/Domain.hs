@@ -49,6 +49,7 @@ import           Data.ASN1.Types
 
 import           Data.Set                 (Set)
 
+import           RPKI.AppTypes
 import           RPKI.Resources.Resources as RS
 import           RPKI.Resources.Types
 import           RPKI.Time
@@ -78,7 +79,7 @@ data CertType = CACert | EECert | BGPCert
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-newtype Hash = Hash BSS.ShortByteString 
+newtype Hash = Hash { unHash :: BSS.ShortByteString } 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
@@ -151,7 +152,7 @@ class WithAKI a where
     getAKI :: a -> Maybe AKI
 
 class WithLocations a where
-    getLocations :: a -> Locations 
+    getLocations :: a -> Maybe Locations
 
 class WithHash a where
     getHash :: a -> Hash
@@ -557,8 +558,11 @@ instance WithRpkiObjectType (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl)
                          (const RSC) (const ASPA) (const BGPSec) (const CRL)
 
 
-data Located a = Located { 
-        locations :: Locations,        
+-- | 'locations' is 'Nothing' for objects fetched from an Erik relay: they
+-- are addressed by content hash, so there is nothing to reconstruct a
+-- location from and no location-based checks apply to them.
+data Located a = Located {
+        locations :: Maybe Locations,
         payload   :: a
     }
     deriving stock (Show, Eq, Generic)
@@ -569,7 +573,7 @@ instance WithLocations (Located a) where
     getLocations Located {..} = locations
 
 instance WithLocations Locations where
-    getLocations = id
+    getLocations = Just
 
 instance {-# OVERLAPPING #-} WithAKI a => WithAKI (Located a) where
     getAKI (Located _ o) = getAKI o    
@@ -710,6 +714,67 @@ data BGPSecPayload = BGPSecPayload {
     deriving anyclass (TheBinary, NFData)
 
 
+-- https://datatracker.ietf.org/doc/html/draft-spaghetti-sidrops-rpki-erik-protocol
+
+newtype FQDN = FQDN { unFQDN :: Text }
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+instance Show FQDN where
+    show = Text.unpack . unFQDN
+
+data ErikIndex = ErikIndex {
+        indexScope    :: Text,
+        indexTime     :: Instant,  
+        hashAlg       :: DigestAlgorithmIdentifier,
+        partitionList :: [ErikPartitionRef]
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)   
+
+data ErikPartitionRef = ErikPartitionRef {
+        hash       :: Hash,
+        size       :: Size
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)   
+
+data ErikPartition = ErikPartition {
+        partitionTime :: Instant,   
+        hashAlg       :: DigestAlgorithmIdentifier,
+        manifestList  :: [ErikManifestRef]
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+data ErikManifestRef = ErikManifestRef {
+        hash           :: Hash,
+        size           :: Size,
+        aki            :: AKI,
+        manifestNumber :: Serial,
+        thisUpdate     :: Instant,
+        locations      :: [URI]
+    } 
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)   
+
+data ErikSegmentIndex = ErikSegmentIndex {
+        segmentScope :: Text,
+        segmentTime  :: Instant,
+        hashAlg      :: DigestAlgorithmIdentifier,
+        segmentList  :: [ErikSegmentRef]
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+data ErikSegmentRef = ErikSegmentRef {
+        segment :: Instant,
+        index   :: Hash
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+
 data CertificateWithSignature = CertificateWithSignature {
         cwsX509certificate    :: X509.Certificate,
         cwsSignatureAlgorithm :: SignatureAlgorithmIdentifier,
@@ -730,7 +795,6 @@ data SignedObject a = SignedObject {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
--- deriving instance NFData ASN1
 
 {- 
     SignedData ::= SEQUENCE {
@@ -1088,18 +1152,10 @@ emptyAsResources :: AsResources
 emptyAsResources = AsResources RS.emptyRS
 
 newCrl :: AKI -> Hash -> SignCRL -> CrlObject
-newCrl a h sc = CrlObject {
-        hash = h,    
-        aki = a,
-        signCrl = sc
-    } 
+newCrl aki hash signCrl = CrlObject {..}        
 
 newCMSObject :: Hash -> CMS a -> CMSBasedObject a
-newCMSObject h cms = CMSBasedObject {
-        hash = h,    
-        -- locations = loc,
-        cmsPayload = cms
-    }
+newCMSObject hash cmsPayload = CMSBasedObject {..}        
 
 toShortBS :: BS.ByteString -> BSS.ShortByteString
 toShortBS = BSS.toShort
@@ -1112,7 +1168,15 @@ toLocations = Locations . NESet.singleton
 
 pickLocation :: Locations -> RpkiURL
 pickLocation = NonEmpty.head . sortRrdpFirstNE . NESet.toList . unLocations
-    
+
+-- | Text description of a located object for log messages: its picked
+-- location, or its hash when it doesn't have one (Erik-fetched objects).
+describeLocated :: WithHash a => Located a -> Text
+describeLocated (Located locations x) =
+    case locations of
+        Just ls -> toText $ pickLocation ls
+        Nothing -> "hash:" <> Text.pack (show $ getHash x)
+
 locationsToList :: Locations -> [Text]
 locationsToList = toList . locationsToNEList    
 
@@ -1374,3 +1438,6 @@ countDistinctUnion vectors =
                                 else go (n + 1) True x
 
             go 0 False (VU.unsafeHead (V.unsafeHead sources))
+
+getMftChildren :: MftObject -> [MftPair]
+getMftChildren = mftEntries . getCMSContent . cmsPayload

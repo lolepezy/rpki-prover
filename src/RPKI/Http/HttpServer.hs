@@ -94,6 +94,7 @@ httpServer appContext = gzip defaultGzipSettings $ genericServe HttpApi {
         originalValidationResults = getValidationsOriginalDto appContext,
         metrics = getMetrics appContext,
         repositories = getPPs appContext,
+        erikRelays = getErikRelays_ appContext,
         jobs = getJobs appContext,
         objectView = getRpkiObject appContext,
         manifests  = getManifests appContext,
@@ -128,6 +129,14 @@ httpServer appContext = gzip defaultGzipSettings $ genericServe HttpApi {
                             pure $ mconcat $ map (uncurry Set.insert) $ MonoidalMap.toList $ unFetcheables fetcheables
                             
                     fetchesDtos         <- toRepositoryDtos appContext =<< DB.getRepositories tx db (`Set.member` allFetcheables)
+
+                    -- Erik fetches are keyed by FQDN, so they are matched to the 
+                    -- FQDNs of the publication points we are still interested in.
+                    let fetcheableFqdns = Set.fromList 
+                            [ fqdn | u <- Set.toList allFetcheables, Just fqdn <- [getFQDN u] ]
+                    erikFetchesDtos     <- toErikRepositoryDtos appContext 
+                                                =<< DB.getErikRepositories tx db (`Set.member` fetcheableFqdns)
+
                     systemInfo          <- readTVarIO $ appContext ^. #appState . #system
 
                     pure $ mainPage
@@ -136,6 +145,7 @@ httpServer appContext = gzip defaultGzipSettings $ genericServe HttpApi {
                             resolvedValidations
                             resolvedCommons
                             fetchesDtos
+                            erikFetchesDtos
                             metricsDto
 
 
@@ -379,6 +389,22 @@ getPPs AppContext {..} = liftIO $ do
     pps <- roTx db $ \tx -> DB.getPublicationPoints tx db
     pure $ toPublicationPointDto pps
 
+getErikRelays_ :: MonadIO m => AppContext s -> m [ErikRelayDto]
+getErikRelays_ AppContext {..} = liftIO $ do
+    db <- readTVarIO database
+    roTx db $ \tx -> do
+        indexes <- DB.getAllErikIndexes tx db
+        forM indexes $ \(URI relayUri, FQDN fqdn, ErikIndex {..}) -> do
+            parts_ <- forM partitionList $ \ErikPartitionRef { hash = partHash, size } -> do
+                partition <- DB.getErikPartition tx db partHash
+                pure ErikPartitionDto { hash = partHash, size, partition }
+            pure ErikRelayDto {
+                    relayKey   = relayUri <> "-" <> fqdn,
+                    indexScope,
+                    indexTime,
+                    partitions = parts_
+                }
+
 getRpkiObject :: (MonadIO m, MonadError ServerError m)
                 => AppContext s
                 -> Maybe Text
@@ -589,7 +615,7 @@ toRepositoryDtos AppContext {..} inputs = do
                 resolved <- forM validationDtos $ resolveOriginalDto tx db
 
                 pure $ fmap (\metrics -> RsyncRepositoryDto { validations = resolved, .. }) 
-                        $ filterRepositoryMetrics (RsyncU uri) $ state ^. typed @Metrics . #rsyncMetrics
+                        $ filterRepositoryMetrics (RsyncU uri) $ state ^. typed @Metrics . #traverseMetrics
 
         pure $ rrdpRepos <> rsyncRepos            
   where
@@ -604,6 +630,19 @@ toRepositoryDtos AppContext {..} inputs = do
 
     relevantToRepository uri (Scope scope) = 
         uri `elem` [ u | RepositoryFocus u <- NonEmpty.toList scope ]
+
+
+toErikRepositoryDtos :: AppContext s -> [(ErikRepository, ValidationState)] -> IO [ErikRepositoryDto]
+toErikRepositoryDtos AppContext {..} inputs =
+    roTxT database $ \tx db ->
+        forM inputs $ \(repository@ErikRepository { fqdn }, state) -> do
+            -- No filtering by scope here, unlike the RRDP/rsync case: the state 
+            -- stored for an FQDN comes from one Erik fetch of exactly this FQDN, 
+            -- everything in it is relevant.
+            let metrics = mconcat $ map snd $ MonoidalMap.toList $ unMetricMap 
+                            $ state ^. typed @Metrics . #traverseMetrics
+            resolved <- forM (toVDtos $ state ^. typed) $ resolveOriginalDto tx db
+            pure ErikRepositoryDto { validations = resolved, .. }
 
 
 resolveOriginalDto :: (MonadIO m) 
@@ -641,9 +680,14 @@ resolveLocations tx db = \case
                                     Nothing  -> pure $ TextDto [i|Can't find key for hash #{hash}|]
                                     Just key -> locations key        
   where
-    locations key = do 
+    locations key =
         DB.getLocationsByKey tx db key >>= \case 
-            Nothing  -> pure $ TextDto [i|Can't find locations for key #{key}|]
             Just loc -> pure $ ObjectLink $ toText $ pickLocation loc
+            Nothing  -> do
+                z <- DB.getHashByKey tx db key
+                pure $ TextDto $ case z of 
+                    Nothing   -> [i|Can't find object for key #{key}|]
+                    Just hash -> [i|Hash: #{hash}|]
+            
 
     

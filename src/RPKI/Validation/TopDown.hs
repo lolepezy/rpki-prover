@@ -57,7 +57,7 @@ import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
-import           RPKI.Fetch
+import           RPKI.Fetch.Fetch
 import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Logging
@@ -480,7 +480,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
 
                     pure $ CachedTA cached
 
-    locatedTaCert locations cert = Located locations cert
+    locatedTaCert locations cert = Located (Just locations) cert
 
 
 -- | Do the validation starting from the TA certificate.
@@ -595,7 +595,7 @@ validateCaNoLimitChecks
                                 validateCaNoFetch appContext topDownContext ca
                 case ca of
                     CaFull c ->
-                        vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) validateWithPpScope
+                        vFocusOnLocated c validateWithPpScope
                     CaShort c ->
                         vFocusOn ObjectFocus (c ^. #key) validateWithPpScope
   where
@@ -619,8 +619,8 @@ validateCaNoFetch
     ca = do 
     
     case ca of 
-        CaFull c -> 
-            vFocusOn LocationFocus (getURL $ pickLocation $ getLocations c) $ do
+        CaFull c ->
+            vFocusOnLocated c $ do
                 increment $ topDownCounters.originalCa
                 markAsUsedByHash appContext topDownContext (getHash c)                         
                 -- Do not validate locations of the TA certificates, these locations come from TAL
@@ -776,8 +776,8 @@ validateCaNoFetch
             Nothing  -> integrityError appContext [i|Referential integrity error, can't find a manifest by its key #{key}.|]
             Just mft -> f mft
 
-    reportMftFallback e mft = do 
-        let mftLocation = pickLocation $ getLocations $ mft ^. #object        
+    reportMftFallback e mft = do
+        let mftLocation = describeLocated $ mft ^. #object
         let mftNumber = mft ^. #object . #payload . #content . #mftNumber
         vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e mftNumber
         logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, failed manifest number #{mftNumber}, error: #{toMessage e}|]        
@@ -794,10 +794,13 @@ validateCaNoFetch
                         -> Maybe MftShortcut 
                         -> AKI
                         -> Eff es' [T3 Text Hash ObjectKey]
-    manifestFullValidation fullCa 
-        keyedMft@(Keyed locatedMft@(Located mftLocations mft) mftKey) 
-        mftShortcut childrenAki = do         
-        vUniqueFocusOn LocationFocus (getURL $ pickLocation mftLocations)
+    manifestFullValidation fullCa
+        keyedMft@(Keyed locatedMft@(Located mftLocations mft) mftKey)
+        mftShortcut childrenAki = do
+        let uniqueFocusOn = case mftLocations of
+                Just ls -> vUniqueFocusOn LocationFocus (getURL $ pickLocation ls)
+                Nothing -> vUniqueFocusOn HashFocus (getHash mft)
+        uniqueFocusOn
             doValidate
             (vError $ CircularReference $ KeyIdentity mftKey)
       where
@@ -946,9 +949,9 @@ validateCaNoFetch
                         Nothing -> 
                             vError $ NoCRLExists aki crlHash
 
-                        Just (Keyed locatedCrl@(Located crlLocations (WellStructuredRO (CrlRO crl))) crlKey) -> do
+                        Just (Keyed locatedCrl@(Located _ (WellStructuredRO (CrlRO crl))) crlKey) -> do
                             markAsUsed topDownContext crlKey
-                            inSubLocationScope (getURL $ pickLocation crlLocations) $ do 
+                            vFocusOnLocated locatedCrl $ do
                                 validateObjectLocations locatedCrl
                                 checkCrlLocation locatedCrl mft.eeCert
                                 validatedCrl <- validateCrl now crl fullCa
@@ -1129,8 +1132,8 @@ validateCaNoFetch
                                 pure ()
                         pure $! o
 
-        -- The type of the object that is deserialised doesn't correspond 
-        -- to the file extension on the manifest
+        -- The type of the object that is deserialised must 
+        -- correspond to the file extension on the manifest
         let realObjectType = getRpkiObjectType $ ro ^. #object
 
         let complain = vWarn $ ManifestEntryHasWrongFileType hash' filename realObjectType
@@ -1141,13 +1144,15 @@ validateCaNoFetch
         pure ro                        
 
 
-    validateMftChild caFull child@(Keyed (Located objectLocations _) _) 
+    validateMftChild caFull child@(Keyed (Located objectLocations _) _)
                      filename validCrl = do
-        -- warn about names on the manifest mismatching names in the object URLs        
-        let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) $ 
-                            unLocations objectLocations
-        when (null nameMatches) $
-            vWarn $ ManifestLocationMismatch filename objectLocations
+        -- Warn about names on the manifest mismatching names in the object
+        -- URLs -- skipped for objects with no location at all (Erik).
+        for_ objectLocations $ \locations -> do
+            let nameMatches = NESet.filter ((filename `Text.isSuffixOf`) . toText) $
+                                unLocations locations
+            when (null nameMatches) $
+                vWarn $ ManifestLocationMismatch filename locations
 
         case child.object.payload of
             OriginalRO _ _ _ _ -> do
@@ -1190,8 +1195,8 @@ validateCaNoFetch
             -> Text
             -> Validated CrlObject
             -> Eff es' (Maybe MftEntry)
-    validateChildObject fullCa (Keyed child@(Located locations childRo) childKey) fileName validCrl = do        
-        let focusOnChild = vFocusOn LocationFocus (getURL $ pickLocation locations)
+    validateChildObject fullCa (Keyed child@(Located locations childRo) childKey) fileName validCrl = do
+        let focusOnChild = vFocusOnLocated child
         case childRo of
             CerRO childCert -> do
                 parentScope <- askScopes                
@@ -1201,8 +1206,8 @@ validateCaNoFetch
                     otherwise an error in child validation would interrupt validation of the parent with
                     ExceptT's exception logic.
                 -}
-                (r, validationState) <- runValidator parentScope $       
-                    vFocusOn LocationFocus (getURL $ pickLocation locations) $ do
+                (r, validationState) <- runValidator parentScope $
+                    focusOnChild $ do
                         -- Check that AIA of the child points to the correct location of the parent
                         -- https://mailarchive.ietf.org/arch/msg/sidrops/wRa88GHsJ8NMvfpuxXsT2_JXQSU/
                         --                             
@@ -1230,7 +1235,7 @@ validateCaNoFetch
                             Left e     -> vError e
                             Right ppas -> do 
                                 -- Look at the issues for the child CA to decide if CA shortcut should be made
-                                shortcut <- vFocusOn LocationFocus (getURL $ pickLocation locations) $ 
+                                shortcut <- focusOnChild $
                                                 shortcutIfNoIssues childKey fileName
                                                         (makeCaShortcut childKey (Validated childCert) ppas)
                                 pure $! newShortcut shortcut
@@ -1831,8 +1836,8 @@ getCaLocations :: ValidatorIO es => AppContext s -> Ca -> Eff es (Maybe Location
 getCaLocations AppContext {..} = \case 
     CaShort (CaShortcut {..}) -> 
         roTxT database $ \tx db -> DB.getLocationsByKey tx db key
-    CaFull c -> 
-        pure $! Just $! getLocations c
+    CaFull c ->
+        pure $! getLocations c
 
 
 data ManifestValidity e v = InvalidEntry e v 

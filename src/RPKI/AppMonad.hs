@@ -206,6 +206,12 @@ inSubVScope = vFocusOn TextFocus
 inSubLocationScope :: Reader Scopes :> es => URI -> Eff es r -> Eff es r
 inSubLocationScope = vFocusOn LocationFocus
 
+vFocusOnLocated :: (Reader Scopes :> es, WithHash a) => Located a -> Eff es r -> Eff es r
+vFocusOnLocated (Located locations x) =
+    case locations of
+        Just ls -> vFocusOn LocationFocus (getURL $ pickLocation ls)
+        Nothing -> vFocusOn HashFocus (getHash x)
+
 
 -- Metrics ---------------------------------------------------------------------------
 

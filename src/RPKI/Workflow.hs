@@ -53,7 +53,7 @@ import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Repository
-import           RPKI.Fetch
+import           RPKI.Fetch.Fetch
 import           RPKI.Logging
 import           RPKI.Metrics.System
 import           RPKI.Http.Types
@@ -146,6 +146,7 @@ withWorkflowShared AppContext {..} prometheusMetrics tals f = do
                 untrustedFetchSemaphore <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)
                 trustedFetchSemaphore   <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)                            
                 rsyncPerHostSemaphores  <- newTVar mempty                
+                erikFetchSemaphore      <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)
                 pure $ Fetchers {..}                        
 
         tasToValidate <- newTVar mempty
@@ -505,7 +506,8 @@ runAll appContext@AppContext {..} tals = do
                     else ""
                 logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, #{perType}kept #{keptObjects}, |] <>
                                  [i|deleted #{deletedObjectUrls} stale object-URL links, |] <>
-                                 [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|]
+                                 [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, |] <>
+                                 [i|deleted #{deletedErikPartitions} orphaned Erik partitions, took #{elapsed}ms.|]
       where
         cleanupOldObjects = do                 
             ((z, _), workerId) <- runCleanUpWorker worldVersion      
@@ -533,7 +535,8 @@ runAll appContext@AppContext {..} tals = do
         let Seconds (fromIntegral -> maxTimeout :: NominalDiffTime) = 
                 10 + config ^. #rrdpConf . #rrdpTimeout
 
-        forM_ files $ \file -> 
+        -- Do not touch "erik" subdirectory, it has it's own cleanup mechanism
+        forM_ (filter (/= "erik") files) $ \file ->
             ignoreSync $ do 
                 let fullPath = tmpDir </> file
                 ageInSeconds <- diffUTCTime now <$> getModificationTime fullPath            
@@ -730,6 +733,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     handleValidations tx db validations = do
         forceSnapshotForReferencialIssues tx db validations
         -- other processings if needed
+        -- TODO Add some logic that would reset the cache in case of storage integrity issues
 
     -- https://github.com/lolepezy/rpki-prover/issues/249
     -- This is to handle referential integrity issues, i.e. manifests referring to 
@@ -898,53 +902,107 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 repository <- fromMaybe (newRepository url) <$> 
                                 DB.roTxT database (\tx db -> DB.getRepository tx db url) 
 
-                ((r, validations), duration) <-                 
-                        withFetchLimits fetchConfig repository $ timedMS $ 
-                            runValidatorIO (newScopes' RepositoryFocus url) $ do                                 
-                                runConcurrentlyIfPossible logger FetchTask runningTasks 
-                                    $ fetchRepository appContext fetchConfig worldVersion repository
+                -- TODO It should be refactored to be more systematic: 
+                -- If a repository was successfully fetched before, try to fetch the update 
+                -- using Erik relays (if configured)
+                case (config ^. typed @ErikConf . #relays, getFetchStatus repository) of 
+                    (erikRelays, FetchedAt {}) 
+                        | not (null erikRelays) -> 
+                            fetchErikRelays fetchConfig worldVersion repository erikRelays
+                    _ -> 
+                            fetchPrimary fetchConfig repository worldVersion
 
-                rememberFirstFetchBy worldVersion
-                updatePrometheusForRepository url duration prometheusMetrics
-
-                -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
-                case r of
-                    Right (repository', stats) -> do                         
-                        let (updateRepo, interval) = updateRepository fetchConfig
-                                repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duration
-
-                        saveFetchOutcome updateRepo validations                        
-                        triggerTaRevalidationIf $ hasUpdates validations                                                         
-
-                        pure $ Just interval
-
-                    Left _ -> do
-                        let newStatus = FailedAt $ versionToInstant worldVersion
-                        let (updatedRepo, interval) = updateRepository fetchConfig repository worldVersion newStatus Nothing duration
-                        saveFetchOutcome updatedRepo validations
-
-                        fetchableForUrl >>= \case
-                            Nothing -> 
-                                -- this whole fetcheable is gone
-                                pure Nothing
-                            Just fallbacks -> do  
-                                anyUpdates <- fetchFallbacks fetchConfig worldVersion fallbacks                                                            
-                                triggerTaRevalidationIf anyUpdates
-                                if anyUpdates 
-                                    then do                                        
-                                        pure $ Just $ 
-                                                case [ () | RsyncU _ <- Set.toList fallbacks ] of                                                     
-                                                    -- Not implemented yet, in reality it should never happen, 
-                                                    -- fallbacks can only be rsync in forseable future
-                                                    [] -> interval
-                                                    -- fallbacks managed to get through and it was rsync (duh), 
-                                                    -- so it should be a normal rsync interval then                                                    
-                                                    _  -> max interval (config ^. #validationConfig . #rsyncRepositoryRefreshInterval)
-                                    else 
-                                        -- nothing responded, so just go with the normal exponential backoff thing
-                                        pure $ Just interval                                        
-                                
       where
+        fetchPrimary fetchConfig repository worldVersion = do
+            ((r, validations), duration) <-                 
+                withFetchLimits fetchConfig repository $ timedMS $ 
+                    runValidatorIO (newScopes' RepositoryFocus url) $ do
+                        runConcurrentlyIfPossible logger FetchTask runningTasks 
+                            $ fetchRepository appContext fetchConfig worldVersion repository
+
+            rememberFirstFetchBy worldVersion
+            updatePrometheusForRepository url duration prometheusMetrics
+
+            -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
+            case r of
+                Right (repository', stats) -> do
+                    let (updatedRepo, interval) = updateRepository fetchConfig
+                            repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duration
+
+                    saveFetchOutcome updatedRepo validations                        
+                    triggerTaRevalidationIf $ hasUpdates validations                                                         
+
+                    pure $ Just interval
+
+                Left _ -> do
+                    let newStatus = FailedAt $ versionToInstant worldVersion
+                    let (updatedRepo, interval) = updateRepository fetchConfig 
+                            repository worldVersion newStatus Nothing duration
+                    saveFetchOutcome updatedRepo validations
+
+                    fetchableForUrl >>= \case
+                        Nothing -> 
+                            -- this whole fetcheable is gone
+                            pure Nothing
+                        Just fallbacks -> do  
+                            -- TODO Maybe try Erik relay before trying rsync
+                            anyUpdates <- fetchFallbacks fetchConfig worldVersion fallbacks                                                            
+                            triggerTaRevalidationIf anyUpdates
+                            if anyUpdates 
+                                then do                                        
+                                    pure $ Just $ 
+                                            case [ () | RsyncU _ <- Set.toList fallbacks ] of                                                     
+                                                -- Not implemented yet, in reality it should never happen, 
+                                                -- fallbacks can only be rsync in forseable future
+                                                [] -> interval
+                                                -- fallbacks managed to get through and it was rsync (duh), 
+                                                -- so it should be a normal rsync interval then                                                    
+                                                _  -> max interval (config ^. #validationConfig . #rsyncRepositoryRefreshInterval)
+                                else 
+                                    -- nothing responded, so just go with the normal exponential backoff thing
+                                    pure $ Just interval                
+
+        fetchErikRelays fetchConfig worldVersion repository erikRelays = 
+            -- The FQDN is derived out here rather than inside the fetch itself, 
+            -- because it is also the key the Erik bookkeeping record is stored under.
+            erikFqdnForUrl >>= \case 
+                Nothing -> do 
+                    logWarn logger [i|Couldn't derive an FQDN for #{url}, fetching it directly.|]
+                    fetchPrimary fetchConfig repository worldVersion
+
+                Just fqdn -> do 
+                    ((r, validations), duration) <-                 
+                        -- A hard cap, not `withFetchLimits`: that one lets a fetch
+                        -- through once it has waited long enough, which is right for
+                        -- repository fetches but means nothing bounds the number of
+                        -- Erik workers, one per FQDN, started in a single round.
+                        withSemaphore (fetchers ^. #erikFetchSemaphore) $ timedMS $ 
+                            runValidatorIO (newScopes' RepositoryFocus url) $ 
+                                fetchRepositoryFromErikRelays appContext fetchConfig 
+                                    erikRelays worldVersion fqdn
+                    case r of 
+                        Right ErikFetchStat {..} -> do 
+                            let newStatus = FetchedAt (versionToInstant worldVersion)
+                            let (updatedRepo, interval) = updateRepository fetchConfig
+                                    repository worldVersion newStatus Nothing duration
+
+                            saveFetchOutcome updatedRepo validations                        
+                            saveErikFetchOutcome fqdn newStatus interval relayUsage validations
+                            triggerTaRevalidationIf $ hasUpdates validations                                                         
+
+                            pure $ Just interval
+
+                        Left e -> do
+                            logWarn logger [i|Erik relay fetch failed for #{url} with error #{e}, falling back to primary fetch.|]
+                            let newStatus = FailedAt (versionToInstant worldVersion)
+                            let (_, interval) = updateRepository fetchConfig
+                                    repository worldVersion newStatus Nothing duration
+                            -- Record the failure under the FQDN as well, otherwise the 
+                            -- only trace of it is in the log.
+                            saveErikFetchOutcome fqdn newStatus interval [] validations
+                            fetchPrimary fetchConfig repository worldVersion
+
+
         fetchFallbacks fetchConfig worldVersion fallbacks = do 
             -- TODO Make it a bit smarter based on the overal number and overall load
             let maxThreads = 32
@@ -982,6 +1040,16 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         Fetcheables fs <- readTVarIO fetcheables
         pure $ MonoidalMap.lookup url fs
 
+    -- The FQDN an Erik fetch works on.
+    -- TODO Dirty to extract FQDN from fallback rsync URLs instead of 
+    -- RRDP URL, because FQDN comes from SIA of the certificate.
+    erikFqdnForUrl = do 
+        fallbacks <- fromMaybe mempty <$> fetchableForUrl
+        let fqdns = Set.fromList [ fqdn | f <- Set.toList fallbacks, Just fqdn <- [getFQDN f]]
+        pure $ if Set.null fqdns 
+                then getFQDN $ getRpkiURL url
+                else Just $ Set.findMin fqdns
+
 
     updateRepository fetchConfig repo worldVersion newStatus stats duration = (updated, interval)
       where
@@ -999,13 +1067,12 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                     Nothing                  -> defaultInterval
                     Just RrdpFetchStat {..} -> 
                         case action of 
-                            NothingToFetch _ -> increaseInterval currentInterval 
+                            NothingToFetch _               -> increaseInterval currentInterval 
                             FetchDeltas {..} 
                                 | moreThanOne sortedDeltas -> decreaseInterval currentInterval
                                 | otherwise                -> currentInterval
-                            FetchSnapshot _ _       -> currentInterval
-                            ForcedFetchSnapshot _ _ -> currentInterval
-      where                                    
+                            _                              -> currentInterval
+      where
         currentInterval = 
             fromMaybe defaultInterval (getMeta repository ^. #refreshInterval)
 
@@ -1024,7 +1091,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
         minInterval = 
             case repository of                
-                -- it's signifantly cheaper to use E-Tag and If_No-Mobified-Since, 
+                -- it's signifantly cheaper to use E-Tag and If_No-Modified-Since, 
                 -- so the interval can be smaller
                 RrdpR (RrdpRepository { eTag = Just _ }) -> fetchConfig ^. #minFetchInterval
                 _                                        -> 2 * fetchConfig ^. #minFetchInterval
@@ -1048,6 +1115,21 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             DB.saveRepositories tx db [r]
             DB.saveRepositoryValidationStates tx db [(r, validations)]
 
+    -- Erik fetches are keyed by FQDN and not by repository URL, so they are 
+    -- tracked separately from the repository itself. Several repositories can 
+    -- share an FQDN, in which case it is simply the latest fetch that is recorded.
+    saveErikFetchOutcome fqdn newStatus interval relayUsage validations =
+        DB.rwTxT database $ \tx db -> do
+            existing <- fromMaybe (newErikRepository fqdn) <$> DB.getErikRepository tx db fqdn
+            let erikRepository = existing 
+                    & #meta . #status .~ newStatus 
+                    & #meta . #refreshInterval ?~ interval
+                    -- A failed fetch has nothing to say about the relays, so in 
+                    -- that case keep whatever the previous one found out.
+                    & #relayUsage %~ (\previous -> if null relayUsage then previous else relayUsage)
+            DB.saveErikRepositories tx db [erikRepository]
+            DB.saveErikRepositoryValidationStates tx db [(erikRepository, validations)]
+
     
     withFetchLimits :: FetchConfig -> Repository -> IO a -> IO a
     withFetchLimits fetchConfig repository f = do
@@ -1058,7 +1140,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         timeToWait = fetchConfig ^. #fetchLaunchWaitDuration
 
         semaphoreToUse = 
-            case getMeta repository ^. #status of  
+            case getFetchStatus repository of  
                 -- TODO Add logic "if succeeded more than N times"
                 FetchedAt _ -> fetchers ^. #trustedFetchSemaphore
                 _           -> fetchers ^. #untrustedFetchSemaphore
@@ -1085,7 +1167,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
     hasUpdates validations = let 
             metrics = validations ^. #topDownMetric
             rrdps = MonoidalMap.elems $ unMetricMap $ metrics ^. #rrdpMetrics
-            rsyncs = MonoidalMap.elems $ unMetricMap $ metrics ^. #rsyncMetrics                
+            rsyncs = MonoidalMap.elems $ unMetricMap $ metrics ^. #traverseMetrics                
         in any (\m -> rrdpRepoHasSignificantUpdates (m ^. typed)) rrdps ||
            any (\m -> rsyncRepoHasSignificantUpdates (m ^. typed)) rsyncs
 
@@ -1103,9 +1185,11 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         when (Map.notMember url fff) $ 
             writeTVar firstFinishedFetchBy $ Map.insert url version fff                   
 
--- Keep track of the earliest expiration time for each TA (i.e. the earlist time when some object of the TA will expire).
--- Reschedule revalidation of the TA at the moment right after its earliest expiration time. Since this expiration time
--- in practice keeps receding to the future as new objects are added, the revalidation is most likely not needed at all, 
+
+-- Keep track of the earliest expiration time for each TA (i.e. the earlist time when some 
+-- object of the TA will expire). Reschedule revalidation of the TA at the moment right after 
+-- its earliest expiration time. Since this expiration time in practice keeps receding to the 
+-- future as new objects are added, the revalidation is most likely not needed at all, 
 -- that's why we double-check it once again before revalidation.
 scheduleRevalidationOnExpiry :: AppContext s -> Map TaName EarliestToExpire -> WorkflowShared -> IO ()
 scheduleRevalidationOnExpiry AppContext {..} expirationTimes WorkflowShared {..} = do

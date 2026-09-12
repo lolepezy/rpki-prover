@@ -268,6 +268,21 @@ data PublicationPointsDto = PublicationPointsDto {
     } 
     deriving stock (Eq, Show, Generic)
 
+data ErikPartitionDto = ErikPartitionDto {
+        hash      :: Hash,
+        size      :: Size,
+        partition :: Maybe ErikPartition
+    }
+    deriving stock (Eq, Show, Generic)
+
+data ErikRelayDto = ErikRelayDto {
+        relayKey   :: Text,
+        indexScope :: Text,
+        indexTime  :: Instant,
+        partitions :: [ErikPartitionDto]
+    }
+    deriving stock (Eq, Show, Generic)
+
 data RepositoryDto = RsyncDto RsyncRepositoryDto
                    | RrdpDto RrdpRepositoryDto
     deriving stock (Eq, Show, Generic) 
@@ -275,7 +290,7 @@ data RepositoryDto = RsyncDto RsyncRepositoryDto
 data RsyncRepositoryDto = RsyncRepositoryDto {
         uri         :: RsyncURL,
         meta        :: RepositoryMeta,
-        metrics     :: RsyncMetric,
+        metrics     :: TraverseMetric,
         validations :: [ResolvedVDto]
     }
     deriving stock (Eq, Show, Generic)
@@ -284,6 +299,16 @@ data RrdpRepositoryDto = RrdpRepositoryDto {
         uri         :: RrdpURL,
         repository  :: RrdpRepository,
         metrics     :: RrdpMetric,
+        validations :: [ResolvedVDto]
+    }
+    deriving stock (Eq, Show, Generic)
+
+-- | Erik fetches are per-FQDN and not per-repository-URL, so they are reported 
+-- separately from RRDP/rsync ones rather than as another 'RepositoryDto' case.
+data ErikRepositoryDto = ErikRepositoryDto {
+        fqdn        :: FQDN,
+        repository  :: ErikRepository,
+        metrics     :: TraverseMetric,
         validations :: [ResolvedVDto]
     }
     deriving stock (Eq, Show, Generic)
@@ -592,7 +617,14 @@ instance ToJSON WorkerInfoDto
 instance ToJSON ResourcesDto
 instance ToSchema SystemDto     
 instance ToSchema WorkerInfoDto     
-instance ToSchema ResourcesDto     
+instance ToSchema ResourcesDto
+
+instance ToJSON ErikPartitionDto
+instance ToSchema ErikPartitionDto where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToJSON ErikRelayDto
+instance ToSchema ErikRelayDto where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToJSON a => ToJSON (ValidationsDto a)
 instance ToSchema a => ToSchema (ValidationsDto a)
@@ -645,6 +677,9 @@ instance ToJSON PublicationPointsDto
 instance ToJSON RepositoryDto
 instance ToJSON RrdpRepositoryDto
 instance ToJSON RsyncRepositoryDto
+instance ToJSON ErikRelayUsage
+instance ToJSON ErikRepository
+instance ToJSON ErikRepositoryDto
 
 
 instance ToSchema MetricsDto

@@ -156,12 +156,17 @@ library
   exposed-modules:
       RPKI.AppContext
       RPKI.AppMonad
+      RPKI.AppMonadUtil
       RPKI.AppState
       RPKI.AppTypes
       RPKI.Config
       RPKI.Domain
       RPKI.Domain.Packed
-      RPKI.Fetch
+      RPKI.Fetch.DirectoryTraverse
+      RPKI.Fetch.ErikRelay
+      RPKI.Fetch.RelayPool
+      RPKI.Fetch.Fetch
+      RPKI.Fetch.Http
       RPKI.Http.Api
       RPKI.Http.Dto
       RPKI.Http.HttpServer
@@ -182,6 +187,7 @@ library
       RPKI.Parse.Internal.Cert
       RPKI.Parse.Internal.Common
       RPKI.Parse.Internal.CRL
+      RPKI.Parse.Internal.Erik
       RPKI.Parse.Internal.GBR
       RPKI.Parse.Internal.MFT
       RPKI.Parse.Internal.ROA
@@ -195,7 +201,6 @@ library
       RPKI.Resources.Resources
       RPKI.Resources.Types
       RPKI.Resources.Validity
-      RPKI.RRDP.Http
       RPKI.RRDP.Parse
       RPKI.RRDP.Parse.Common
       RPKI.RRDP.Parse.Xeno
@@ -302,6 +307,8 @@ test-suite rpki-prover-test
   other-modules:
       RPKI.AppMonadSpec
       RPKI.DomainSpec
+      RPKI.Fetch.ErikSpec
+      RPKI.Fetch.HttpSpec
       RPKI.FetchSpec
       RPKI.LoggingSpec
       RPKI.Orphans
@@ -309,7 +316,6 @@ test-suite rpki-prover-test
       RPKI.RepositorySpec
       RPKI.Resources.ResourcesSpec
       RPKI.Resources.ValiditySpec
-      RPKI.RRDP.HttpSpec
       RPKI.RRDP.ParseSpec
       RPKI.RRDP.UpdateSpec
       RPKI.RTR.RtrSpec

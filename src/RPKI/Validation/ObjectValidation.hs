@@ -529,12 +529,11 @@ validateUpdateTimes (Now now) thisUpdateTime nextUpdateTime = do
     when (nextUpdateTime < now)  $ vError $ NextUpdateTimeIsInThePast {..}
     validateUpdateTimesOrder thisUpdateTime nextUpdateTime
 
-validateAIA :: Validator es => 
+validateAIA :: Validator es =>
     WellStructuredCaCert ->
     Located WellStructuredCaCert ->
     Eff es ()
 validateAIA cert parentCert = do
-    let locations = getLocations parentCert
     -- AIA caIssuers must identify the immediate superior certificate location.
     -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8.7
     URI aiaUrl <- case cert.certUris.aiaCaIssuersUri of
@@ -542,9 +541,12 @@ validateAIA cert parentCert = do
         Just uri
             | U.isRsyncURI uri -> pure uri
             | otherwise        -> vError $ UnknownUriType uri
-    let parentUrls = locationsToList locations
-    unless (aiaUrl `elem` parentUrls) $
-        vWarn $ AIANotSameAsParentLocation aiaUrl locations  
+    -- The parent has no location when it was fetched via an Erik relay,
+    -- in which case there is nothing to compare the AIA against.
+    for_ (getLocations parentCert) $ \locations -> do
+        let parentUrls = locationsToList locations
+        unless (aiaUrl `elem` parentUrls) $
+            vWarn $ AIANotSameAsParentLocation aiaUrl locations
 
 -- | Check if CMS is on the revocation list
 isRevoked :: WithSerial c => c -> Validated CrlObject -> Bool

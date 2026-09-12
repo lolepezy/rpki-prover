@@ -8,6 +8,8 @@ import           Control.Concurrent.STM
 import qualified Control.Concurrent.STM.TBQueue  as Q
 import qualified Control.Concurrent.Async        as IOAsync
 import qualified Control.Exception               as IOExc
+import           UnliftIO                        (MonadUnliftIO)
+import qualified UnliftIO.Exception              as UIO
 import           Control.Monad
 
 import           Effectful
@@ -175,14 +177,16 @@ data Semaphore = Semaphore {
     }
     deriving (Eq)
 
+newSemaphoreIO :: MonadIO m => Int -> m Semaphore
+newSemaphoreIO = liftIO . atomically . newSemaphore
 
 newSemaphore :: Int -> STM Semaphore
 newSemaphore n = Semaphore n <$> newTVar 0
 
 -- Execute using a semaphore as a barrier
-withSemaphore :: Semaphore -> IO a -> IO a
+withSemaphore :: MonadUnliftIO m => Semaphore -> m a -> m a
 withSemaphore Semaphore {..} f = 
-    IOExc.bracket incr decr (const f)
+    UIO.bracket (liftIO incr) (liftIO . decr) (const f)
   where 
     incr = atomically $ do 
         c <- readTVar current
