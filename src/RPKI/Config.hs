@@ -112,6 +112,8 @@ data ErikConf = ErikConf {
         parallelism          :: Natural,
         -- | Cap on relay downloads in flight against any single relay.
         relayParallelism     :: Natural,
+        -- How many FQDN to Erik-fetch at once.
+        fqdnParallelism      :: Natural,
         erikRefreshInterval  :: Seconds
     }
     deriving stock (Eq, Ord, Show, Generic)
@@ -279,6 +281,7 @@ defaultConfig = Config {
         maxSize             = Size $ 20 * 1024 * 1024,
         parallelism         = 8,
         relayParallelism    = 3,
+        fqdnParallelism     = 10,
         erikRefreshInterval = Seconds 30
     },
     validationConfig = ValidationConfig {
