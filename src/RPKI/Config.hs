@@ -264,7 +264,7 @@ defaultConfig = Config {
         parallelism         = 8,
         relayParallelism    = 3,
         erikTimeout         = 15 * minutes,
-        erikRefreshInterval = 2 * minutes,
+        erikRefreshInterval = Seconds 30,
         cpuLimit            = 30 * minutes
     },
     validationConfig = ValidationConfig {
