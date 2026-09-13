@@ -72,7 +72,7 @@ fetchErik
     -- relays, falls back to the next one on failure, and enforces the
     -- per-relay and global parallelism caps.
     pool <- newRelayPool
-                (fromIntegral $ config ^. typed @ErikConf . #downloadParallelism)
+                parallelism
                 (fromIntegral $ config ^. typed @ErikConf . #relayParallelism)
                 relayUris
     -- Same metric rsync fills in: both end up loading a directory tree through
@@ -316,5 +316,4 @@ fetchErik
             (createDirectoryIfMissing True dir) 
             (\_ -> liftIO $ removeDirectoryRecursive dir) 
             -- (\_ -> pure ()) 
-            (\_ -> f dir)           
-        
+            (\_ -> f dir)
