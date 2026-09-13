@@ -110,9 +110,8 @@ data RsyncConf = RsyncConf {
 data ErikConf = ErikConf {
         relays               :: [URI],
         maxSize              :: Size,
+        -- | Maximum concurrent Erik work items and relay downloads per worker.
         parallelism          :: Natural,
-        -- | Cap on relay downloads in flight across the whole pool.
-        downloadParallelism  :: Natural,
         -- | Cap on relay downloads in flight against any single relay.
         relayParallelism     :: Natural,
         erikTimeout          :: Seconds,
@@ -262,9 +261,8 @@ defaultConfig = Config {
     erikConf = ErikConf {
         relays              = [],
         maxSize             = Size $ 20 * 1024 * 1024,
-        parallelism         = 10,
-        downloadParallelism = 50,
-        relayParallelism    = 20,
+        parallelism         = 8,
+        relayParallelism    = 3,
         erikTimeout         = 15 * minutes,
         erikRefreshInterval = 2 * minutes,
         cpuLimit            = 30 * minutes
@@ -389,4 +387,4 @@ newFetchConfig config = let
         minFetchInterval = Seconds 30
         maxFetchInterval = Seconds 300
         maxFailedBackoffInterval = Seconds $ 30 * 60
-    in FetchConfig {..}    
+    in FetchConfig {..}
