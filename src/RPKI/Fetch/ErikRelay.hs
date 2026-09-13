@@ -152,8 +152,7 @@ fetchErik
 
                 logDebug logger [i|Erik index for #{fqdn_} has #{index}.|]
                 void $ fmap mconcat $ concurrentlyVTLenientN parallelism partitionList $ \partitionRef@ErikPartitionRef {..} -> do
-                    partition <- getPartition partitionRef                        
-                    logDebug logger [i|Downloaded Erik partition #{U.hashAsBase64Url hash}: #{partition}.|]
+                    partition <- getPartition partitionRef                                            
                     getManifests indexScope hash partition
 
                 logDebug logger [i|Finished fetching Erik relay #{indexDir} for #{fqdn_}.|]
@@ -192,8 +191,8 @@ fetchErik
             when (httpStatus /= mempty) $ do 
                 appError $ ErikE $ Can'tDownloadObject [i|Could not download index #{theIndexUri}, http status = #{httpStatus}|]
 
-            index <- parseErikIndex indexBs                
             logDebug logger [i|Downloaded Erik index for #{fqdn_}, HTTP status: #{httpStatus}|]
+            index <- parseErikIndex indexBs            
 
             join $ DB.rwTxT database $ \tx db -> do 
                 DB.getErikIndex tx db relayUri fqdn >>= \case 
@@ -222,7 +221,7 @@ fetchErik
                     logDebug logger [i|No Erik partition #{U.hashAsBase64Url hash} in the database, downloading from a relay.|]
                     partition <- fetchAndParsePartition
                     DB.rwTxT database $ \tx db -> DB.saveErikPartition tx db hash partition
-                    logDebug logger [i|Stored Erik partition #{U.hashAsBase64Url hash} in the database.|]                        
+                    logDebug logger [i|Stored Erik partition #{U.hashAsBase64Url hash} in the database.|]
                     pure partition
 
                 Just partition -> do 

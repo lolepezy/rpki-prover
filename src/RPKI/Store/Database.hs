@@ -459,13 +459,27 @@ saveErikIndex (Tx conn) _ relayUri (FQDN fqdn) index_ = liftIO $ do
     execute conn
         "INSERT OR REPLACE INTO erik_indexes(relay_uri, fqdn, data) VALUES (?, ?, ?)"
         (relayBlob, fqdn, serialiseField index_)
-    execute conn
-        "DELETE FROM erik_index_partitions WHERE relay_uri = ? AND fqdn = ?"
-        (relayBlob, fqdn)
+
+    existing_ :: [Only Hash] <- query conn
+        "SELECT partition_hash FROM erik_index_partitions WHERE relay_uri = ? AND fqdn = ?"
+        (serialiseField relayUri, fqdn)
+
+    let existing = Set.fromList [ h | Only h <- existing_]
+        new      = Set.fromList [ ref.hash | ref <- index_.partitionList]
+        toDelete = Set.toList (existing `Set.difference` new)
+
+    forM_ (inClauseBatches toDelete) $ \(placeholders, params) ->
+        executeNamed conn
+            (fromString $ Text.unpack $ 
+                "DELETE FROM erik_index_partitions " 
+             <> "WHERE relay_uri = ? AND fqdn = ? AND hash IN (" <> placeholders <> ")")
+            params
+
     executeMany conn
         [sql|INSERT OR IGNORE INTO erik_index_partitions(relay_uri, fqdn, partition_hash)
              VALUES (?, ?, ?)|]
-        [ (relayBlob, fqdn, ref ^. #hash) | ref <- index_ ^. #partitionList ]
+        [ (relayBlob, fqdn, ref.hash) | ref <- index_.partitionList, not $ ref.hash `Set.member` existing ]
+
   where
     relayBlob = serialiseField relayUri
 
