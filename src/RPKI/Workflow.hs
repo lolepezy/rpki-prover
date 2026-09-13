@@ -149,7 +149,7 @@ withWorkflowShared AppContext {..} prometheusMetrics tals f = do
                 untrustedFetchSemaphore <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)
                 trustedFetchSemaphore   <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)                            
                 rsyncPerHostSemaphores  <- newTVar mempty                
-                erikFetchSemaphore      <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)
+                erikFetchSemaphore      <- newSemaphore (fromIntegral $ config ^. #erikConf . #fqdnParallelism)
                 pure $ Fetchers {..}                        
 
         tasToValidate    <- newTVar mempty

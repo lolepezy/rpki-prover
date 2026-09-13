@@ -114,6 +114,8 @@ data ErikConf = ErikConf {
         parallelism          :: Natural,
         -- | Cap on relay downloads in flight against any single relay.
         relayParallelism     :: Natural,
+        -- How many FQDN to Erik-fetch at once.
+        fqdnParallelism      :: Natural,
         erikTimeout          :: Seconds,
         erikRefreshInterval  :: Seconds,
         cpuLimit             :: Seconds
@@ -263,6 +265,7 @@ defaultConfig = Config {
         maxSize             = Size $ 20 * 1024 * 1024,
         parallelism         = 8,
         relayParallelism    = 3,
+        fqdnParallelism     = 10,
         erikTimeout         = 15 * minutes,
         erikRefreshInterval = Seconds 30,
         cpuLimit            = 30 * minutes
