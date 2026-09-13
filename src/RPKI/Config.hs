@@ -279,7 +279,7 @@ defaultConfig = Config {
         maxSize             = Size $ 20 * 1024 * 1024,
         parallelism         = 8,
         relayParallelism    = 3,
-        erikRefreshInterval = 2 * minutes
+        erikRefreshInterval = Seconds 30
     },
     validationConfig = ValidationConfig {
         revalidationInterval           = 15 * minutes,                
