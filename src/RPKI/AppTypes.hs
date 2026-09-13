@@ -19,12 +19,12 @@ import           RPKI.Store.Base.Serialisation
     as 'now' for validity period comparisons. Also, most of the data in the cache is
     associated with a world version (VRPs, metrics, SLURM data, etc.).
    -}
-newtype WorldVersion = WorldVersion LexOrdKey64
+newtype WorldVersion = WorldVersion Int64
     deriving stock (Eq, Ord, Generic)
     deriving newtype (TheBinary, NFData)
 
 instance Show WorldVersion where 
-    show (WorldVersion (LexOrdKey64 nanos)) = show nanos
+    show (WorldVersion nanos) = show nanos
 
 -- Version of the executable, ideally it is supposed to 
 -- be different for every build of the program where 
@@ -38,9 +38,19 @@ newtype ExecutableVersion = ExecutableVersion Text
 newtype Size = Size { unSize :: Int64 }
     deriving stock (Show, Eq, Ord, Generic)
     deriving newtype (Num)
-    deriving anyclass (TheBinary)
+    deriving anyclass (TheBinary, NFData)
     deriving Semigroup via Sum Size
     deriving Monoid via Sum Size
+
+newtype Count = Count { unCount :: Int64 }
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+    deriving newtype (Num)
+    deriving Semigroup via Sum Count
+    deriving Monoid via Sum Count
+
+instance Show Count where 
+    show (Count c) = Prelude.show c
 
 -- TODO Probably move it to some other module
 newtype MaxMemory = MaxMemory Int
@@ -70,7 +80,7 @@ instance Show MaxMemory where
     show (MaxMemory m) = show (m `div` (1024*1024)) <> "mb"
 
 asVersion :: Int64 -> WorldVersion 
-asVersion = WorldVersion . LexOrdKey64
+asVersion = WorldVersion
 
 versionToInt :: WorldVersion -> Int64
-versionToInt (WorldVersion (LexOrdKey64 v)) = v
+versionToInt (WorldVersion v) = v

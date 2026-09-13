@@ -88,8 +88,8 @@ test_full =
 test_reject_full_duplicates :: HU.Assertion
 test_reject_full_duplicates = do
     -- validate overlapping with itself    
-    (z, _) <- runValidatorT (newScopes "test") 
-        $ vHoist $ validateNoOverlaps [("Foo", bigTestSlurm), ("Bar", bigTestSlurm)]
+    (z, _) <- runValidatorIO (newScopes "test") 
+        $ validateNoOverlaps [("Foo", bigTestSlurm), ("Bar", bigTestSlurm)]
     HU.assertEqual 
         ("Wrong validation message " <> show z) 
         (Left (SlurmE (SlurmValidationError 
@@ -123,8 +123,8 @@ test_reject_partial_prefix_duplicates = do
             ]
         }      
     }
-    (z, _) <- runValidatorT (newScopes "test") 
-        $ vHoist $ validateNoOverlaps [("Foo", slurm1), ("Bar", slurm2)]
+    (z, _) <- runValidatorIO (newScopes "test") 
+        $ validateNoOverlaps [("Foo", slurm1), ("Bar", slurm2)]
     HU.assertEqual 
         ("Wrong validation message " <> show z) 
         (Left (SlurmE (SlurmValidationError $
@@ -157,8 +157,8 @@ test_reject_partial_asn_duplicates = do
             ]
         }      
     }
-    (z, _) <- runValidatorT (newScopes "test") 
-        $ vHoist $ validateNoOverlaps [("Foo", slurm1), ("Bar", slurm2)]
+    (z, _) <- runValidatorIO (newScopes "test") 
+        $ validateNoOverlaps [("Foo", slurm1), ("Bar", slurm2)]
     HU.assertEqual 
         ("Wrong validation message " <> show z) 
         (Left (SlurmE (SlurmValidationError

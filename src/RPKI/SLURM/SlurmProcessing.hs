@@ -3,6 +3,7 @@
 
 module RPKI.SLURM.SlurmProcessing where
 
+import           Effectful
 import Control.Lens hiding (contains)
 import Control.Monad
 
@@ -15,7 +16,6 @@ import           Data.Maybe (fromMaybe)
 import           Data.List (nub)
 import           Data.Coerce
 
-import qualified Data.Vector as V
 import qualified Data.Set as Set
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 
@@ -48,10 +48,9 @@ applySlurmToVrps slurm (PerTA vrps) =
     PerTA (MonoidalMap.singleton slurmVrpName assertedVrps)
 
   where     
-    filteredVrps = Vrps . V.filter filterFunc . unVrps
+    filteredVrps = filterVrps filterFunc
 
-    assertedVrps = Vrps 
-        $ V.fromList 
+    assertedVrps = createVrps
         $ map toVrp 
         $ slurm ^. #locallyAddedAssertions . #prefixAssertions
       where
@@ -113,16 +112,16 @@ applySlurmBgpSec slurm bgps =
             in BGPSecPayload {..}            
     
 
-readSlurmFiles :: [String] -> ValidatorT IO Slurm
+readSlurmFiles :: ValidatorIO es => [String] -> Eff es Slurm
 readSlurmFiles slurmFiles = do 
     slurms :: [Slurm] <- 
         forM slurmFiles $ \f -> do
             s <- fromTry (SlurmE . SlurmFileError (Text.pack f) . fmtEx) $ LBS.readFile f
-            vHoist $ fromEither 
+            fromEither 
                    $ first (SlurmE . SlurmParseError (Text.pack f) . Text.pack) 
                    $ Json.eitherDecode s
         
-    vHoist $ validateNoOverlaps $ zip slurmFiles slurms
+    validateNoOverlaps $ zip slurmFiles slurms
     pure $! mconcat slurms        
 
 
@@ -131,7 +130,7 @@ readSlurmFiles slurmFiles = do
 
     This one implement the most naive and inefficient O(N^2) check,
 -}
-validateNoOverlaps :: [(String, Slurm)] -> PureValidatorT ()
+validateNoOverlaps :: Validator es => [(String, Slurm)] -> Eff es ()
 validateNoOverlaps slurms = do 
     let prefixes = [ (fileName, assertPrefixes <> filterPrefixes) |                        
                 (fileName, slurm) <- slurms,
@@ -157,7 +156,7 @@ validateNoOverlaps slurms = do
     checkNoASNOverlap asns                 
 
   where
-    checkNoPrefixOverlap :: [(String, [IpPrefix])] -> PureValidatorT ()
+    checkNoPrefixOverlap :: Validator es => [(String, [IpPrefix])] -> Eff es ()
     checkNoPrefixOverlap [] = pure ()
     checkNoPrefixOverlap ((f, ps) : rest) = do         
         let overlappings = filter (not . null . snd) $ map (second (prefixOverlaps ps)) rest
@@ -168,7 +167,7 @@ validateNoOverlaps slurms = do
                 appError $ SlurmE $ SlurmValidationError 
                         $ mconcat $ map (uncurry fmt) overlappings         
 
-    checkNoASNOverlap :: [(String, [ASN])] -> PureValidatorT ()
+    checkNoASNOverlap :: Validator es => [(String, [ASN])] -> Eff es ()
     checkNoASNOverlap [] = pure ()
     checkNoASNOverlap ((f, as) : rest) = do         
         let overlappings = filter (any (`elem` as) . snd) rest

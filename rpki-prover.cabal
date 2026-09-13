@@ -1,7 +1,7 @@
 cabal-version: 2.2
 
 name:           rpki-prover
-version:        0.10.1
+version:        0.11.0
 description:    Please see the README on GitHub at <https://github.com/lolepezy/rpki-prover#readme>
 homepage:       https://github.com/lolepezy/rpki-prover#readme
 bug-reports:    https://github.com/lolepezy/rpki-prover/issues
@@ -16,6 +16,13 @@ extra-source-files:
     ChangeLog.md
     static/script.js
     static/styles.css
+    static/favicon.ico
+    static/favicon.svg
+    static/fonts/IBMPlexSans-Variable.woff2
+    static/fonts/IBMPlexMono-Regular.woff2
+    static/fonts/IBMPlexMono-Medium.woff2
+    static/fonts/IBMPlexMono-SemiBold.woff2
+    static/fonts/OFL.txt
     src/RPKI/Meta/GitVersionInfo.hs
     src/RPKI/Meta/UniqueId.hs
 
@@ -38,6 +45,7 @@ common shared
     , TypeFamilies
     , TemplateHaskell
     , ViewPatterns
+    , OverloadedRecordDot
   default-language: GHC2024
   ghc-options:
       -j8 +RTS -A256m -AL512m -n4m -qb0 -qn6 -RTS
@@ -63,6 +71,7 @@ common shared
     , conduit
     , conduit-extra
     , containers
+    , cryptohash-sha1
     , cryptohash-sha256
     , cryptohash-sha512
     , crypton
@@ -72,6 +81,8 @@ common shared
     , deepseq
     , deque
     , directory
+    , effectful
+    , effectful-core
     , file-embed
     , file-embed-lzma
     , filepath
@@ -90,15 +101,12 @@ common shared
     , interpolate
     , ixset-typed
     , lens
-    , lifted-async
-    , lifted-base
     , list-t
-    , lmdb-high-level
     , lz4
     , ram
-    , mmorph
+    , resource-pool
+    , sqlite-simple
     , modern-uri
-    , monad-control
     , monoidal-containers
     , mtl
     , network
@@ -138,6 +146,8 @@ common shared
     , unliftio
     , unordered-containers
     , vector
+    , vector-algorithms
+    , wai-extra
     , warp
     , xeno
 
@@ -146,11 +156,17 @@ library
   exposed-modules:
       RPKI.AppContext
       RPKI.AppMonad
+      RPKI.AppMonadUtil
       RPKI.AppState
       RPKI.AppTypes
       RPKI.Config
       RPKI.Domain
-      RPKI.Fetch
+      RPKI.Domain.Packed
+      RPKI.Fetch.DirectoryTraverse
+      RPKI.Fetch.ErikRelay
+      RPKI.Fetch.RelayPool
+      RPKI.Fetch.Fetch
+      RPKI.Fetch.Http
       RPKI.Http.Api
       RPKI.Http.Dto
       RPKI.Http.HttpServer
@@ -158,6 +174,7 @@ library
       RPKI.Http.UI
       RPKI.Logging
       RPKI.Messages
+      RPKI.Metrics.Memory
       RPKI.Metrics.Metrics
       RPKI.Metrics.Prometheus
       RPKI.Metrics.System
@@ -170,6 +187,7 @@ library
       RPKI.Parse.Internal.Cert
       RPKI.Parse.Internal.Common
       RPKI.Parse.Internal.CRL
+      RPKI.Parse.Internal.Erik
       RPKI.Parse.Internal.GBR
       RPKI.Parse.Internal.MFT
       RPKI.Parse.Internal.ROA
@@ -183,7 +201,6 @@ library
       RPKI.Resources.Resources
       RPKI.Resources.Types
       RPKI.Resources.Validity
-      RPKI.RRDP.Http
       RPKI.RRDP.Parse
       RPKI.RRDP.Parse.Common
       RPKI.RRDP.Parse.Xeno
@@ -198,18 +215,12 @@ library
       RPKI.RTR.Types
       RPKI.SLURM.SlurmProcessing
       RPKI.SLURM.Types
-      RPKI.Store.AppLmdbStorage
+      RPKI.Store.AppSqliteStorage
       RPKI.Store.AppStorage
-      RPKI.Store.Base.LMDB
-      RPKI.Store.Base.Map
-      RPKI.Store.Base.MultiMap
-      RPKI.Store.Base.SafeMap
       RPKI.Store.Base.Serialisation
       RPKI.Store.Base.Storable
-      RPKI.Store.Base.Storage
       RPKI.Store.Database
-      RPKI.Store.MakeLmdb
-      RPKI.Store.Sequence
+      RPKI.Store.SQLite
       RPKI.Store.Types
       RPKI.TAL
       RPKI.Time
@@ -249,7 +260,7 @@ executable profiler
       -Wall
       -rtsopts
       -funbox-strict-fields
-      "-with-rtsopts=-A16m -AL64m -N2 -qg -T -I0 --disable-delayed-os-memory-return"
+      "-with-rtsopts=-A4m -AL16m -N2 -qg -T -I0 -F1.3 -Fd1 --disable-delayed-os-memory-return"
   build-depends:
       rpki-prover
 
@@ -260,15 +271,34 @@ executable rpki-prover
       Paths_rpki_prover
   hs-source-dirs:
       app
+  c-sources:
+      cbits/malloc_arenas.c
   ghc-options:
       -threaded
       -O2
       -Wall
       -rtsopts
       -funbox-strict-fields
-      "-with-rtsopts=-A16m -AL64m -N2 -qg -T -I0 --disable-delayed-os-memory-return"
+      "-with-rtsopts=-A4m -AL16m -N2 -qg -T -I0 -F1.3 -Fd1 --disable-delayed-os-memory-return"
   build-depends:
       rpki-prover
+
+benchmark rpki-prover-bench
+  import:          shared
+  type:            exitcode-stdio-1.0
+  main-is:         Main.hs
+  other-modules:
+      Paths_rpki_prover
+  hs-source-dirs:
+      bench
+  ghc-options:
+      -threaded
+      -O2
+      -Wall
+      -rtsopts
+  build-depends:
+      rpki-prover
+    , criterion
 
 test-suite rpki-prover-test
   import:          shared
@@ -277,6 +307,8 @@ test-suite rpki-prover-test
   other-modules:
       RPKI.AppMonadSpec
       RPKI.DomainSpec
+      RPKI.Fetch.ErikSpec
+      RPKI.Fetch.HttpSpec
       RPKI.FetchSpec
       RPKI.LoggingSpec
       RPKI.Orphans
@@ -284,14 +316,14 @@ test-suite rpki-prover-test
       RPKI.RepositorySpec
       RPKI.Resources.ResourcesSpec
       RPKI.Resources.ValiditySpec
-      RPKI.RRDP.HttpSpec
       RPKI.RRDP.ParseSpec
       RPKI.RRDP.UpdateSpec
       RPKI.RTR.RtrSpec
       RPKI.SLURM.SlurmSpec
       RPKI.Store.DatabaseSpec
-      RPKI.Store.SerialisationSpec
+      RPKI.Store.StorableSpec
       RPKI.TestCommons
+      RPKI.Validation.TopDownSpec
       Paths_rpki_prover
   hs-source-dirs:
       test
@@ -319,5 +351,71 @@ benchmark unique-vrp-count-bench
             -rtsopts
             -O2
             -with-rtsopts=-N
+    build-depends:
+            rpki-prover
+
+benchmark save-snapshot-bench
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         SaveSnapshotBench.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -threaded
+            -rtsopts
+            -O2
+            "-with-rtsopts=-N -T"
+    build-depends:
+            rpki-prover
+          , directory
+          , filepath
+          , temporary
+
+benchmark validate-tas-bench
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         ValidateTAsBench.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -threaded
+            -rtsopts
+            -O2
+            "-with-rtsopts=-N -T"
+    build-depends:
+            rpki-prover
+          , directory
+          , filepath
+
+benchmark migrate-urls-to-blob
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         MigrateUrlsToBlob.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -O2
+    build-depends:
+            rpki-prover
+
+benchmark pipeline-stage-bench
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         PipelineStageBench.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -threaded
+            -rtsopts
+            -O2
+            "-with-rtsopts=-N1 -T"
     build-depends:
             rpki-prover

@@ -37,52 +37,67 @@ isInside i is =
 
 -- | Use binary search to find intersections of an interval within an interval set.
 -- | Return both interesections -- '[a]' and the intervals it intersects with -- 'a'.
+--
+-- `intersection` can be expensive (e.g. Ipv6Prefix's goes through hw-ip's
+-- Word128 range-splitting), so every branch below reuses the `intersection`
+-- value it already tested instead of letting goForward/goBackwards recompute
+-- it for the very same index.
 findFullIntersections :: Interval a => a -> IntervalSet a -> [([a], a)]
-findFullIntersections a is@(IntervalSet v) = 
-    if null is 
+findFullIntersections a is@(IntervalSet v) =
+    if null is
         then []
-    else 
-        case V.unsafeIndex v 0 `intersection` a of
-            [] -> case V.unsafeIndex v lastIndex `intersection` a of
-                [] -> goBinarySearch 0 lastIndex
-                _  -> goBackwards lastIndex
-            _  -> goForward 0
-  where 
+    else
+        let first' = V.unsafeIndex v 0
+        in case first' `intersection` a of
+            [] ->
+                let last' = V.unsafeIndex v lastIndex
+                in case last' `intersection` a of
+                    [] -> goBinarySearch 0 lastIndex
+                    lastX -> continueBackwards lastIndex lastX last'
+            firstX -> continueForward 0 firstX first'
+  where
     goBinarySearch b e
         | e <= b = []
-        | otherwise =           
+        | otherwise =
             case middle `intersection` a of
-                [] -> 
+                [] ->
                     case compare (start a) (start middle) of
-                        LT -> goBinarySearch b middleIndex 
+                        LT -> goBinarySearch b middleIndex
                         GT -> goBinarySearch (middleIndex + 1) e
-                        -- this will never happen
-                        EQ -> goBackwards middleIndex <> goForward (middleIndex + 1)
-                _ -> goBackwards middleIndex <> goForward (middleIndex + 1)
-      where                  
+                        -- `middle` itself doesn't intersect (the [] case above),
+                        -- so a backwards search starting at it contributes nothing.
+                        EQ -> goForward (middleIndex + 1)
+                middleX -> continueBackwards middleIndex middleX middle <> goForward (middleIndex + 1)
+      where
         middle = V.unsafeIndex v middleIndex
         middleIndex = fromIntegral ((word b + word e) `div` 2) :: Int
             where
                 word n = fromIntegral n :: Word
                 {-# INLINE word #-}
 
-    goForward index 
+    goForward index
         | index >= len = []
-        | otherwise = 
-            case big `intersection` a of
-                [] -> []
-                is' -> (is', big) : goForward (index + 1)
+        | otherwise = continueForward index (big `intersection` a) big
       where
         big = V.unsafeIndex v index
-    
+
+    -- `x` must be `big \`intersection\` a`, already computed by the caller.
+    continueForward index x big =
+        case x of
+            [] -> []
+            is' -> (is', big) : goForward (index + 1)
+
     goBackwards index
         | index <= 0 = []
-        | otherwise = 
-            case big `intersection` a of
-                [] -> []
-                is' -> goBackwards (index - 1) <> [(is', big)]
+        | otherwise = continueBackwards index (big `intersection` a) big
       where
         big = V.unsafeIndex v index
+
+    -- `x` must be `big \`intersection\` a`, already computed by the caller.
+    continueBackwards index x big =
+        case x of
+            [] -> []
+            is' -> goBackwards (index - 1) <> [(is', big)]
 
     len = V.length v
     lastIndex = len - 1        

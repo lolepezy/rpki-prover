@@ -10,7 +10,7 @@ import           Control.Lens                     ((^.))
 import           Control.Applicative
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
-import           Control.Exception.Lifted
+import           Control.Exception
 import           Control.Monad
 
 import           Data.Generics.Product.Typed
@@ -24,7 +24,6 @@ import qualified Data.ByteString.Builder          as BB
 import           Data.List.Split                  (chunksOf)
 
 import qualified Data.Set                         as Set
-import qualified Data.Vector                      as V
 
 import           Data.Coerce
 import           Data.String.Interpolate.IsString
@@ -50,7 +49,7 @@ import           RPKI.Util                        (convert, hex, decodeBase64)
 
 import           RPKI.AppState
 import           RPKI.AppTypes
-import           RPKI.Store.Base.Storage
+
 import qualified RPKI.Store.Database    as DB
 
 import           System.Timeout                   (timeout)
@@ -60,10 +59,19 @@ import           Time.Types
 data PduLike = TruePdu Pdu | SerialisedPdu BS.ByteString 
     deriving (Show, Eq)
 
+{- | Maximum number of simultaneous RTR client connections.
+
+   An RTR server talks to routers, so a few hundred is already generous, while 
+   an unbounded accept loop lets anyone who can reach the port exhaust threads 
+   and file descriptors.
+-}
+maxRtrConnections :: Int
+maxRtrConnections = 512
+
 -- 
 -- | Main entry point, here we start the RTR server. 
 -- 
-runRtrServer :: Storage s => AppContext s -> RtrConfig -> IO ()
+runRtrServer :: AppContext s -> RtrConfig -> IO ()
 runRtrServer appContext RtrConfig {..} = do         
     -- re-initialise `rtrState` and create a broadcast 
     -- channel to publish update for all clients
@@ -81,7 +89,10 @@ runRtrServer appContext RtrConfig {..} = do
     runSocketBusiness rtrState updateBroadcastChan = 
         withSocketsDo $ do                 
             address <- resolve (show rtrPort)
-            bracket (open address) close loop
+            -- Every accepted connection forks two threads and duplicates the 
+            -- update broadcast channel, so the number of them has to be bounded.
+            connectionCount <- newTVarIO (0 :: Int)
+            bracket (open address) close (loop connectionCount)
       where
         resolve port = do
             let hints = defaultHints {
@@ -98,14 +109,29 @@ runRtrServer appContext RtrConfig {..} = do
             listen sock 1024
             pure sock
 
-        loop sock = forever $ do
+        loop connectionCount sock = forever $ do
             (conn, peer) <- accept sock
-            logInfo logger [i|Connection from #{peer}|]
-            void $ forkFinally 
-                (serveConnection conn peer updateBroadcastChan rtrState) 
-                (\_ -> do 
-                    logInfo logger [i|Closing connection with #{peer}|]
-                    close conn)
+            accepted <- atomically $ do 
+                n <- readTVar connectionCount
+                if n >= maxRtrConnections
+                    then pure False
+                    else do 
+                        writeTVar connectionCount $! n + 1
+                        pure True
+            if accepted 
+                then do 
+                    logInfo logger [i|Connection from #{peer}|]
+                    void $ forkFinally 
+                        (serveConnection conn peer updateBroadcastChan rtrState) 
+                        (\_ -> do 
+                            logInfo logger [i|Closing connection with #{peer}|]
+                            atomically $ modifyTVar' connectionCount (\n -> n - 1)
+                            close conn)
+                else do 
+                    logWarn logger $ 
+                        [i|Rejecting RTR connection from #{peer}, |] <>
+                        [i|already serving the maximum of #{maxRtrConnections} connections.|]
+                    close conn
     
     -- | Block on updates on `appState` and when these update happen
     --
@@ -125,7 +151,7 @@ runRtrServer appContext RtrConfig {..} = do
         -- Do not store more than amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
         rtrPayloads <- atomically $ readRtrPayloads appState
-        let maxStoredDiffs = V.length (rtrPayloads ^. #uniqueVrps)
+        let maxStoredDiffs = vrpsCount (rtrPayloads ^. #uniqueVrps)
                 
         logDebug logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
 
@@ -142,8 +168,8 @@ runRtrServer appContext RtrConfig {..} = do
             let thereAreRtrUpdates = not $ emptyDiffs rtrDiff
 
             let 
-                previousVrpSize = V.length $ previousRtrPayload ^. #uniqueVrps 
-                currentVrpSize  = V.length $ currentRtrPayload ^. #uniqueVrps
+                previousVrpSize = vrpsCount $ previousRtrPayload ^. #uniqueVrps 
+                currentVrpSize  = vrpsCount $ currentRtrPayload ^. #uniqueVrps
                 previousBgpSecSize = Set.size $ previousRtrPayload ^. #bgpSec 
                 currentBgpSecSize  = Set.size $ currentRtrPayload ^. #bgpSec 
                 in logDebug logger $ [i|Notified about an update: #{previousVersion} -> #{newVersion}, |] <> 
@@ -270,11 +296,11 @@ runRtrServer appContext RtrConfig {..} = do
                                 pure $ io <> serveLoop session outboxQueue
 
 
-readRtrPayload :: Storage s => AppContext s -> WorldVersion -> IO RtrPayloads 
+readRtrPayload :: AppContext s -> WorldVersion -> IO RtrPayloads 
 readRtrPayload AppContext {..} worldVersion = do 
     db <- readTVarIO database
 
-    (vrps, bgpSec) <- roTx db $ \tx -> do 
+    (vrps, bgpSec) <- DB.roTx db $ \tx -> do 
                 slurm <- DB.getSlurm tx db worldVersion
                 vrps <- do 
                         vrps_ <- DB.getVrps tx db worldVersion
@@ -289,7 +315,7 @@ readRtrPayload AppContext {..} worldVersion = do
     pure $ mkRtrPayloads vrps bgpSec
 
 
-waitForLatestRtrPayload :: Storage s => AppContext s 
+waitForLatestRtrPayload :: AppContext s 
         -> TVar (Maybe RtrState) 
         -> IO (RtrState, WorldVersion, WorldVersion, RtrPayloads)
 waitForLatestRtrPayload AppContext {..} rtrState = do 
@@ -516,7 +542,7 @@ currentCachePayloadBS protocolVersion RtrPayloads {..} =
         $ filter (`compatibleWith` protocolVersion)
         $ vrpPdusAnn <> mconcat bgpSecPdusAnn
   where    
-    vrpPdusAnn    = map (vrpToPdu Announcement) $ coerce $ V.toList uniqueVrps
+    vrpPdusAnn    = map (vrpToPdu Announcement) $ mergeVrpsBy cmpPacked4Against6 uniqueVrps
     bgpSecPdusAnn = map (bgpSecToPdu Announcement) $ Set.toList bgpSec
     
     

@@ -43,7 +43,6 @@ import HaskellWorks.Data.Network.Ip.Ip as Ips
 
 import           RPKI.AppTypes
 import           RPKI.Domain                 as Domain
-import           RPKI.Store.Base.Serialisation (LexOrdKey64(..))
 import           RPKI.Config
 
 import           RPKI.Logging
@@ -165,10 +164,10 @@ instance ToJSON Count where
     toJSON (Count s) = toJSON s
 
 instance ToJSON ObjectKey where
-    toJSON (ObjectKey (ArtificialKey (LexOrdKey64 k))) = toJSON k
+    toJSON (ObjectKey (ArtificialKey k)) = toJSON k
 
 instance ToJSONKey ObjectKey where
-    toJSONKey = toJSONKeyText $ \(ObjectKey (ArtificialKey (LexOrdKey64 k))) -> U.fmtGen k
+    toJSONKey = toJSONKeyText $ \(ObjectKey (ArtificialKey k)) -> U.fmtGen k
 
 instance ToJSON Focus
 instance ToJSONKey (Scope 'Metric)
@@ -222,17 +221,12 @@ $(deriveToJSON defaultOptions ''ValidationMetric)
 instance ToJSON a => ToJSON (GroupedMetric a)
 
 $(deriveToJSON defaultOptions ''FetchFreshness)
-$(deriveToJSON defaultOptions ''RsyncMetric)
+$(deriveToJSON defaultOptions ''TraverseMetric)
 $(deriveToJSON defaultOptions ''RrdpMetric)
 $(deriveToJSON defaultOptions ''ResourceUsage)
 $(deriveToJSON defaultOptions ''SystemMetrics)
 $(deriveToJSON defaultOptions ''ScopeKind)
 
-
-$(deriveToJSON defaultOptions ''SStats)
-$(deriveToJSON defaultOptions ''DBFileStats)
-$(deriveToJSON defaultOptions ''StorageStats)
-$(deriveToJSON defaultOptions ''TotalDBStats)
 $(deriveToJSON defaultOptions ''VrpCounts)
 $(deriveToJSON defaultOptions ''Metrics)
 
@@ -375,6 +369,14 @@ $(deriveToJSON defaultOptions ''CertificateWithSignature)
 $(deriveToJSON defaultOptions ''RawResourceCertificate)
 $(deriveToJSON defaultOptions ''ResourceCertificate)
 
+instance ToJSON FQDN where
+    toJSON (FQDN t) = toJSON t
+
+$(deriveToJSON defaultOptions ''ErikPartitionRef)
+$(deriveToJSON defaultOptions ''ErikManifestRef)
+$(deriveToJSON defaultOptions ''ErikPartition)
+$(deriveToJSON defaultOptions ''ErikIndex)
+
 -- RPKI Object
 instance ToJSON a => ToJSON (TypedCert a t)
 
@@ -451,5 +453,6 @@ instance ToJSON RtrConfig
 instance ToJSON SystemConfig
 instance ToJSON RrdpConf
 instance ToJSON RsyncConf    
+instance ToJSON ErikConf
 instance ToJSON StorageConfig
 instance ToJSON Config

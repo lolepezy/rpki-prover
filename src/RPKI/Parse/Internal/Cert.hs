@@ -2,6 +2,7 @@
 
 module RPKI.Parse.Internal.Cert where
 
+import           Effectful
 import Control.Monad
 
 import qualified Data.ByteString            as BS
@@ -29,8 +30,8 @@ import           RPKI.Parse.Internal.Common
 {- |
   Parse RPKI certificate object with the IP and ASN resource extensions.
 -}
-parseResourceCertificate :: BS.ByteString 
-                        -> PureValidatorT (RawResourceCertificate, CertType, SKI, Maybe AKI, Hash)
+parseResourceCertificate :: Validator es => BS.ByteString 
+                        -> Eff es (RawResourceCertificate, CertType, SKI, Maybe AKI, Hash)
 parseResourceCertificate bs = do
     cert <- mapParseErr $ decodeSignedObject bs      
     let z = unifyCert cert
@@ -39,8 +40,8 @@ parseResourceCertificate bs = do
     pure (rc, certType, ski_, aki_, U.sha256s bs)
 
 
-toResourceCert :: CertificateWithSignature 
-                -> PureValidatorT (RawResourceCertificate, SKI, Maybe AKI)
+toResourceCert :: Validator es => CertificateWithSignature 
+                -> Eff es (RawResourceCertificate, SKI, Maybe AKI)
 toResourceCert cert = do  
     let exts = getExtsSign cert
     case extVal exts id_subjectKeyId of 
@@ -52,28 +53,28 @@ toResourceCert cert = do
                     Nothing -> pure Nothing
                     Just a  -> Just . AKI <$> parseKI a
         Nothing -> 
-            pureError $ parseErr "No SKI extension"
+            appError $ parseErr "No SKI extension"
 
 
-parseResources :: CertificateWithSignature -> PureValidatorT RawResourceCertificate
+parseResources :: Validator es => CertificateWithSignature -> Eff es RawResourceCertificate
 parseResources x509cert = do    
     let ext' = extVal $ getExtsSign x509cert        
-    ips'  <- maybe (pure emptyIpResources) (parseR parseIpExt) $ ext' id_pe_ipAddrBlocks
-    asns' <- maybe (pure emptyAsResources) (parseR parseAsnExt) $ ext' id_pe_autonomousSysIds
-    pure $ RawResourceCertificate x509cert $ allResources ips' asns'
+    ips_  <- maybe (pure emptyIpResources) (parseR parseIpExt) $ ext' id_pe_ipAddrBlocks
+    asns_ <- maybe (pure emptyAsResources) (parseR parseAsnExt) $ ext' id_pe_autonomousSysIds
+    pure $ RawResourceCertificate x509cert $ allResources ips_ asns_
   where             
     parseR f bs = 
         case decodeASN1' DER bs of 
-            Left e     -> pureError $ parseErr $ "Couldn't parse IP address extension: " <> U.fmtGen e
+            Left e     -> appError $ parseErr $ "Couldn't parse IP address extension: " <> U.fmtGen e
             Right asns -> f asns                  
 
 -- | https://tools.ietf.org/html/rfc5280#page-16
 --
-getSubjectPublicKeyInfo :: Certificate -> SPKI
+getSubjectPublicKeyInfo :: WithPubKey c => c -> SPKI
 getSubjectPublicKeyInfo cert = SPKI $ U.encodeBase64 $ DecodedBase64 $
-  encodeASN1' DER $ (toASN1 $ certPubKey cert) []
+  encodeASN1' DER $ (toASN1 $ getPubKey cert) []
 
-getCertificateType :: [ExtensionRaw] -> PureValidatorT CertType
+getCertificateType :: Validator es => [ExtensionRaw] -> Eff es CertType
 getCertificateType extensions =
     withCriticalExtension extensions id_ce_keyUsage $ \bs parsed ->             
         case parsed of 
@@ -83,20 +84,20 @@ getCertificateType extensions =
             -- Which bits needs to set and where
             -- https://datatracker.ietf.org/doc/html/rfc6487#section-4.8.4
             [BitString ba@(BitArray 7 _)] -> do 
-                unless (bitArrayGetBit ba 5) $ vPureError $ BrokenKeyUsage "keyCertSign bit is not set"
-                unless (bitArrayGetBit ba 6) $ vPureError $ BrokenKeyUsage "cRLSign bit is not set"
+                unless (bitArrayGetBit ba 5) $ vError $ BrokenKeyUsage "keyCertSign bit is not set"
+                unless (bitArrayGetBit ba 6) $ vError $ BrokenKeyUsage "cRLSign bit is not set"
                 for_ [0..4] $ \bit -> 
-                    when (bitArrayGetBit ba bit) $ vPureError $ BrokenKeyUsage 
+                    when (bitArrayGetBit ba bit) $ vError $ BrokenKeyUsage 
                         [i|Bit #{bit} is set, only keyCertSign and cRLSign must be set.|]
 
                 pure CACert            
 
             -- There must be only the `digitalSignature` bit 
             [BitString ba@(BitArray 1 _)] ->                     
-                let badExtKU = vPureError $ CertBrokenExtension id_ce_extKeyUsage bs
+                let badExtKU = vError $ CertBrokenExtension id_ce_extKeyUsage bs
                 in case extVal extensions id_ce_extKeyUsage of
                     Nothing -> do                             
-                        unless (bitArrayGetBit ba 0) $ vPureError $ BrokenKeyUsage "digitalSignature bit is not set"
+                        unless (bitArrayGetBit ba 0) $ vError $ BrokenKeyUsage "digitalSignature bit is not set"
                         pure EECert
                     Just bs1 
                         | BS.null bs1 -> badExtKU
@@ -108,19 +109,22 @@ getCertificateType extensions =
                                     | otherwise -> badExtKU                                            
                                 _ -> badExtKU
                 
-            _ -> vPureError $ UnknownCriticalCertificateExtension id_ce_keyUsage bs
+            _ -> vError $ UnknownCriticalCertificateExtension id_ce_keyUsage bs
 
 
-withCriticalExtension :: [ExtensionRaw]
+withCriticalExtension :: Validator es => [ExtensionRaw]
                     -> OID
-                    -> (BS.ByteString -> [ASN1] -> PureValidatorT r)
-                    -> PureValidatorT r
+                    -> (BS.ByteString -> [ASN1] -> Eff es r)
+                    -> Eff es r
 withCriticalExtension extensions oid f = do 
-    case extVal extensions oid of
-        Nothing -> vPureError $ MissingCriticalExtension oid
-        Just bs 
-            | BS.null bs -> vPureError $ MissingCriticalExtension oid
+    -- Enforce that profile-defined critical extensions are really marked critical.
+    -- https://www.rfc-editor.org/rfc/rfc6487#section-4.8
+    case extRawVal extensions oid of
+        Nothing -> vError $ MissingCriticalExtension oid
+        Just (ExtensionRaw _ isCritical bs)
+            | not isCritical -> vError $ CertificateExtensionMustBeCritical oid
+            | BS.null bs -> vError $ MissingCriticalExtension oid
             | otherwise -> do 
                 case decodeASN1 DER (LBS.fromStrict bs) of
-                    Left _  -> vPureError $ CertBrokenExtension oid bs        
+                    Left _  -> vError $ CertBrokenExtension oid bs        
                     Right z -> f bs z            

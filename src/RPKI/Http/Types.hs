@@ -131,6 +131,7 @@ data ObjectDto = CertificateD (ObjectContentDto CertificateDto)
                 | ASPAD (ObjectContentDto (CMSObjectDto AspaDto))
                 | GBRD (ObjectContentDto (CMSObjectDto GbrDto))
                 | RSCD (ObjectContentDto (CMSObjectDto RscDto))
+                | OriginalBlobD Hash RpkiObjectType EncodedBase64  -- ^ parse/prevalidation failure
     deriving stock (Eq, Show, Generic)
 
 data ObjectContentDto payload = ObjectContentDto {
@@ -144,10 +145,8 @@ data ObjectContentDto payload = ObjectContentDto {
 
 
 data CMSObjectDto cmsPayload = CMSObjectDto {
-        cmsVersion         :: CMSVersion,
-        signedInfoVersion  :: CMSVersion,
+        encapsulatedContentType :: ContentType,    
         contentType        :: ContentType,        
-        encapsulatedContentType :: ContentType,        
         digestAlgorithms   :: DigestAlgorithmIdentifiers,
         signatureAlgorithm :: SignatureAlgorithmIdentifier,
         signerIdentifier   :: SignerIdentifier,        
@@ -173,12 +172,13 @@ data CertificateDto = CertificateDto {
         certSignatureAlg :: Text,
         certIssuerDN     :: Text,
         certSubjectDN    :: Text,
-        notValidBefore   :: Instant,
-        notValidAfter    :: Instant,        
+        notBefore        :: Instant,
+        notAfter         :: Instant,        
         pubKey           :: Either Text PubKeyDto,
         ipv4             :: IntervalSet Ipv4Prefix,        
         ipv6             :: IntervalSet Ipv6Prefix,        
         asn              :: IntervalSet AsResource,
+    certificateUris  :: CertUris,
         extensions       :: ExtensionsDto
     }
     deriving stock (Eq, Show, Generic)
@@ -206,7 +206,7 @@ newtype ExtensionsDto = ExtensionsDto [ExtensionDto]
 
 data CrlDto = CrlDto {
         thisUpdateTime     :: Instant,
-        nextUpdateTime     :: Maybe Instant,
+        nextUpdateTime     :: Instant,
         signatureAlgorithm :: SignatureAlgorithmIdentifier,
         signatureValue     :: SignatureValue,
         crlNumber          :: Serial,
@@ -268,6 +268,21 @@ data PublicationPointsDto = PublicationPointsDto {
     } 
     deriving stock (Eq, Show, Generic)
 
+data ErikPartitionDto = ErikPartitionDto {
+        hash      :: Hash,
+        size      :: Size,
+        partition :: Maybe ErikPartition
+    }
+    deriving stock (Eq, Show, Generic)
+
+data ErikRelayDto = ErikRelayDto {
+        relayKey   :: Text,
+        indexScope :: Text,
+        indexTime  :: Instant,
+        partitions :: [ErikPartitionDto]
+    }
+    deriving stock (Eq, Show, Generic)
+
 data RepositoryDto = RsyncDto RsyncRepositoryDto
                    | RrdpDto RrdpRepositoryDto
     deriving stock (Eq, Show, Generic) 
@@ -275,7 +290,7 @@ data RepositoryDto = RsyncDto RsyncRepositoryDto
 data RsyncRepositoryDto = RsyncRepositoryDto {
         uri         :: RsyncURL,
         meta        :: RepositoryMeta,
-        metrics     :: RsyncMetric,
+        metrics     :: TraverseMetric,
         validations :: [ResolvedVDto]
     }
     deriving stock (Eq, Show, Generic)
@@ -284,6 +299,16 @@ data RrdpRepositoryDto = RrdpRepositoryDto {
         uri         :: RrdpURL,
         repository  :: RrdpRepository,
         metrics     :: RrdpMetric,
+        validations :: [ResolvedVDto]
+    }
+    deriving stock (Eq, Show, Generic)
+
+-- | Erik fetches are per-FQDN and not per-repository-URL, so they are reported 
+-- separately from RRDP/rsync ones rather than as another 'RepositoryDto' case.
+data ErikRepositoryDto = ErikRepositoryDto {
+        fqdn        :: FQDN,
+        repository  :: ErikRepository,
+        metrics     :: TraverseMetric,
         validations :: [ResolvedVDto]
     }
     deriving stock (Eq, Show, Generic)
@@ -299,8 +324,10 @@ data ResourcesDto = ResourcesDto {
         aggregatedCpuTime   :: CPUTime,
         cpuTimePerClockTime :: Double,
         aggregatedClockTime :: TimeMs,
-        maxMemory           :: MaxMemory,        
-        avgMemory           :: MaxMemory, 
+        maxRtsHeap           :: MaxMemory,        
+        avgRtsHeap           :: MaxMemory, 
+        maxProcessRSS    :: MaxMemory,
+        avgProcessRSS    :: MaxMemory,
         avgCpuTimeMsPerSecond :: Double
     }
     deriving stock (Eq, Show, Generic)
@@ -345,16 +372,16 @@ data CaShortcutDto = CaShortcutDto {
         key            :: ObjectKey,        
         ski            :: SKI,
         publicationPoints :: [Text],
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant
+        notBefore :: Instant,
+        notAfter  :: Instant
     }
     deriving stock (Show, Eq, Ord, Generic)
 
 data ManifestShortcutDto = ManifestShortcutDto {
         key            :: ObjectKey,
         nonCrlChildren :: Map.Map ObjectKey ManifestChildDto,
-        notValidBefore :: Instant,
-        notValidAfter  :: Instant,        
+        notBefore :: Instant,
+        notAfter  :: Instant,        
         serial         :: Serial,
         manifestNumber :: Serial,
         crlShortcut    :: CrlShortcut
@@ -454,6 +481,14 @@ instance ToJSON ObjectDto where
         ASPAD v -> object ["type" .= ("ASPA" :: Text), "value" .= toJSON v]
         GBRD v  -> object ["type" .= ("GBR" :: Text), "value" .= toJSON v]
         RSCD v  -> object ["type" .= ("RSC" :: Text), "value" .= toJSON v]
+        OriginalBlobD h t b64 -> object [
+                "type" .= ("original-blob" :: Text),
+                "value" .= object [
+                    "hash" .= toJSON h,
+                    "objectType" .= toJSON t,
+                    "base64" .= toJSON b64
+                ]
+            ]
 
 
 instance ToJSON a => ToJSON (ObjectContentDto a) where
@@ -461,6 +496,7 @@ instance ToJSON a => ToJSON (ObjectContentDto a) where
 
 instance ToJSON a => ToJSON (CMSObjectDto a)
 instance ToJSON CertificateDto
+instance ToJSON CertUris
 instance ToJSON PubKeyDto
 instance ToJSON ExtensionDto where
     toJSON = genericToJSON defaultOptions { omitNothingFields = True }
@@ -539,6 +575,7 @@ instance ToSchema ObjectDto
 instance ToSchema a => ToSchema (ObjectContentDto a)
 instance ToSchema a => ToSchema (CMSObjectDto a)
 instance ToSchema CertificateDto
+instance ToSchema CertUris
 instance ToSchema PubKeyDto
 instance ToSchema ExtensionDto where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
@@ -580,7 +617,14 @@ instance ToJSON WorkerInfoDto
 instance ToJSON ResourcesDto
 instance ToSchema SystemDto     
 instance ToSchema WorkerInfoDto     
-instance ToSchema ResourcesDto     
+instance ToSchema ResourcesDto
+
+instance ToJSON ErikPartitionDto
+instance ToSchema ErikPartitionDto where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToJSON ErikRelayDto
+instance ToSchema ErikRelayDto where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
 instance ToJSON a => ToJSON (ValidationsDto a)
 instance ToSchema a => ToSchema (ValidationsDto a)
@@ -633,6 +677,9 @@ instance ToJSON PublicationPointsDto
 instance ToJSON RepositoryDto
 instance ToJSON RrdpRepositoryDto
 instance ToJSON RsyncRepositoryDto
+instance ToJSON ErikRelayUsage
+instance ToJSON ErikRepository
+instance ToJSON ErikRepositoryDto
 
 
 instance ToSchema MetricsDto

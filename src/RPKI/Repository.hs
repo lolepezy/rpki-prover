@@ -102,6 +102,39 @@ newRepositoryMeta = RepositoryMeta {
         refreshInterval   = Nothing
     }
 
+{- | What is known about one Erik-fetched repository, keyed by the FQDN the
+     Erik index is published under.
+
+     Erik has no session/serial/delta state of its own -- the index is just a
+     list of partitions -- so compared to 'RrdpRepository' this only carries
+     the fetch status and which relays actually answered during the last fetch.
+-}
+data ErikRepository = ErikRepository {
+        fqdn       :: FQDN,
+        meta       :: RepositoryMeta,
+        relayUsage :: [ErikRelayUsage]
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+-- | How much of the last fetch one relay actually served. A fetch spreads its
+-- queries over every configured relay and falls back on failure, so this is a
+-- list rather than a single "the relay it came from".
+data ErikRelayUsage = ErikRelayUsage {
+        relay  :: URI,
+        served :: Int,
+        failed :: Int
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+newErikRepository :: FQDN -> ErikRepository
+newErikRepository fqdn = ErikRepository {
+        meta       = newRepositoryMeta,
+        relayUsage = [],
+        ..
+    }
+
 newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -231,12 +264,12 @@ mergePP (RsyncPP r) = mergeRsyncPP r
 -- | Extract repositories from URIs in TAL and in TA certificate,
 -- | use some reasonable heuristics, but don't try to be very smart.
 -- | Prefer RRDP to rsync for everything.
-publicationPointsFromTAL :: TAL -> CaCerObject -> Either ValidationError PublicationPointAccess
-publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert) = 
+publicationPointsFromTAL :: TAL -> WellStructuredCaCert -> Either ValidationError PublicationPointAccess
+publicationPointsFromTAL tal cert = 
     case tal of 
         PropertiesTAL {..} -> do 
 
-            PublicationPointAccess ppsFromCert <- getPublicationPointsFromCert cert
+            PublicationPointAccess ppsFromCert <- getPublicationPointsFromWellStructuredCert cert
             
             let uniquePrefetchRepos = map (snd . fromURI) prefetchUris
 
@@ -248,7 +281,7 @@ publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert)
                 maybe ppsFromCert (ppsFromCert <>) $ 
                 nonEmpty prefetchReposToUse
 
-        RFC_TAL {} -> getPublicationPointsFromCert cert
+        RFC_TAL {} -> getPublicationPointsFromWellStructuredCert cert
   where        
     fromURI r = 
         case r of
@@ -256,10 +289,31 @@ publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert)
             RsyncU u -> (r, rsyncPP u)           
 
 
--- | Get publication points of the certificate.
--- 
-getPublicationPointsFromCertObject :: CaCerObject -> Either ValidationError PublicationPointAccess
-getPublicationPointsFromCertObject = getPublicationPointsFromCert . cwsX509certificate . getCertWithSignature
+getPublicationPointsFromWellStructuredCert :: WellStructuredCert t -> Either ValidationError PublicationPointAccess
+getPublicationPointsFromWellStructuredCert WellStructuredCert {
+    certUris = CertUris {
+        rrdpNotifyUri = certRrdpNotifyUri,
+        repositoryUri = certRepositoryUri
+    }
+} = do
+    rrdp <- case certRrdpNotifyUri of
+        Just notifyUri
+            | isRrdpURI notifyUri -> Right [rrdpPP $ RrdpURL notifyUri]
+            | otherwise           -> Left $ UnknownUriType notifyUri
+        Nothing -> Right []
+
+    rsync <- case certRepositoryUri of
+        Just repoUri
+            | isRsyncURI repoUri ->
+                case parseRsyncURL (unURI repoUri) of
+                    Left e   -> Left $ BrokenUri (unURI repoUri) e
+                    Right rr -> Right [rsyncPP rr]
+            | otherwise -> Left $ UnknownUriType repoUri
+        Nothing -> Right []
+
+    case nonEmpty (rrdp <> rsync) of
+        Nothing -> Left CertificateDoesntHaveSIA
+        Just ne -> Right $ PublicationPointAccess ne  
 
 getPublicationPointsFromCert :: Certificate -> Either ValidationError PublicationPointAccess
 getPublicationPointsFromCert cert = do 

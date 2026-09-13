@@ -47,6 +47,7 @@ data Parallelism = Parallelism {
 data FetchConfig = FetchConfig {
         rsyncTimeout             :: Seconds,
         rrdpTimeout              :: Seconds,
+        erikTimeout              :: Seconds,
         fetchLaunchWaitDuration  :: Seconds,
         cpuLimit                 :: Seconds,
         minFetchInterval         :: Seconds,
@@ -57,7 +58,8 @@ data FetchConfig = FetchConfig {
     deriving anyclass (TheBinary)
 
 data StorageConfig = StorageConfig {
-        rwTransactionTimeout :: Seconds
+    rwTransactionTimeout :: Seconds,
+    sqliteMmapSizeMb     :: Maybe Size
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)    
@@ -73,6 +75,7 @@ data Config = Config {
         parallelism               :: Parallelism, 
         rsyncConf                 :: RsyncConf,
         rrdpConf                  :: RrdpConf,
+        erikConf                  :: ErikConf,
         validationConfig          :: ValidationConfig,
         systemConfig              :: SystemConfig,
         httpApiConf               :: HttpApiConfig,
@@ -84,7 +87,6 @@ data Config = Config {
         versionNumberToKeep       :: Natural,
         storageCompactionInterval :: Seconds,
         rsyncCleanupInterval      :: Seconds,
-        lmdbSizeMb                :: Size,
         localExceptions           :: ApiSecured [FilePath],
         logLevel                  :: LogLevel,
         metricsPrefix             :: Text,
@@ -103,6 +105,21 @@ data RsyncConf = RsyncConf {
         rsyncPerHostLimit :: Int
     } 
     deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+data ErikConf = ErikConf {
+        relays               :: [URI],
+        maxSize              :: Size,
+        parallelism          :: Natural,
+        -- | Cap on relay downloads in flight across the whole pool.
+        downloadParallelism  :: Natural,
+        -- | Cap on relay downloads in flight against any single relay.
+        relayParallelism     :: Natural,
+        erikTimeout          :: Seconds,
+        erikRefreshInterval  :: Seconds,
+        cpuLimit             :: Seconds
+    }
+    deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
 data RrdpConf = RrdpConf {
@@ -189,6 +206,7 @@ data RtrConfig = RtrConfig {
 data SystemConfig = SystemConfig {
         rsyncWorkerMemoryMb      :: Int,
         rrdpWorkerMemoryMb       :: Int,
+        erikWorkerMemoryMb       :: Int,
         validationWorkerMemoryMb :: Int,
         cleanupWorkerMemoryMb    :: Int
     } 
@@ -205,10 +223,10 @@ setCpuCount = setNumCapabilities . fromIntegral
 -- Create 2 times more asyncs/tasks than there're capabilities. In most 
 -- tested cases it seems to be beneficial for the CPU utilisation ¯\_(ツ)_/¯.    
 -- 
--- Hardcoded (not sure it makes sense to make it configurable). Allow for 
--- that many IO operations (http downloads, LMDB reads, etc.) at once.
+-- Hardcoded (not sure it makes sense to make it configurable). Allow for
+-- that many IO operations (http downloads, database reads, etc.) at once.
 --
--- TODO There should be distinction between network operations and file/LMDB IO.
+-- TODO There should be distinction between network operations and file/database IO.
 newParallelism :: Natural -> Parallelism
 newParallelism cpus = makeParallelismF cpus (2 * cpus)
 
@@ -237,9 +255,19 @@ defaultConfig = Config {
     rrdpConf = RrdpConf {
         tmpRoot = Hidden "",
         maxSize = Size $ 1024 * 1024 * 1024,
-        rrdpTimeout = 7 * minutes,
+        rrdpTimeout = 11 * minutes,
         cpuLimit = 30 * minutes,
         enabled = True
+    },
+    erikConf = ErikConf {
+        relays              = [],
+        maxSize             = Size $ 20 * 1024 * 1024,
+        parallelism         = 10,
+        downloadParallelism = 50,
+        relayParallelism    = 20,
+        erikTimeout         = 15 * minutes,
+        erikRefreshInterval = 2 * minutes,
+        cpuLimit            = 30 * minutes
     },
     validationConfig = ValidationConfig {
         revalidationInterval           = 15 * minutes,
@@ -265,20 +293,20 @@ defaultConfig = Config {
     },    
     systemConfig = SystemConfig {
         rsyncWorkerMemoryMb      = 1024,
-        rrdpWorkerMemoryMb       = 1024,        
+        rrdpWorkerMemoryMb       = 1024,
+        erikWorkerMemoryMb       = 1024,
         validationWorkerMemoryMb = 2048,
         cleanupWorkerMemoryMb    = 512
     },
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {       
-        -- There should normally be no transactions longer than that 
-        rwTransactionTimeout = 5 * minutes
+        rwTransactionTimeout = 15 * minutes,
+        sqliteMmapSizeMb     = Nothing
     },
     cacheCleanupInterval      = 6 * hours,    
     versionNumberToKeep       = 3,
     storageCompactionInterval = 5 * days,
     rsyncCleanupInterval      = 30 * days,
-    lmdbSizeMb                = Size $ 32 * 1024,
     localExceptions = Hidden [],
     logLevel = defaultsLogLevel,
     metricsPrefix = "rpki_prover_",
@@ -352,10 +380,12 @@ newFetchConfig :: Config -> FetchConfig
 newFetchConfig config = let 
         rsyncConfig = config ^. typed @RsyncConf
         rrdpConfig = config ^. typed @RrdpConf
+        erikConfig = config ^. typed @ErikConf
         rsyncTimeout = rsyncConfig ^. #rsyncTimeout
-        rrdpTimeout  = rrdpConfig ^. #rrdpTimeout        
+        rrdpTimeout  = rrdpConfig ^. #rrdpTimeout
+        erikTimeout  = erikConfig ^. #erikTimeout
         fetchLaunchWaitDuration = Seconds 30         
-        cpuLimit = max (rrdpConfig ^. #cpuLimit) (rsyncConfig ^. #cpuLimit)        
+        cpuLimit = max (rrdpConfig ^. #cpuLimit) (rsyncConfig ^. #cpuLimit)
         minFetchInterval = Seconds 30
         maxFetchInterval = Seconds 300
         maxFailedBackoffInterval = Seconds $ 30 * 60

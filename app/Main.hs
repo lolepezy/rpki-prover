@@ -3,13 +3,14 @@
 
 module Main where
 
+import           Effectful
 import           Control.Lens ((^.), (&))
 import           Control.Lens.Setter
 import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Concurrent.Async
 
-import           Control.Exception.Lifted
+import           Control.Exception
 
 import           Control.Monad
 import           Control.Monad.IO.Class
@@ -50,17 +51,19 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Reporting
-import           RPKI.RRDP.Http (downloadToFile)
+import           RPKI.Fetch.Http (downloadToFile)
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
-import           RPKI.Store.Base.Storage
+
 import           RPKI.Store.AppStorage
-import           RPKI.Store.AppLmdbStorage
-import qualified RPKI.Store.MakeLmdb as Lmdb
+import           RPKI.Store.AppSqliteStorage (AppSQLiteEnv)
+import qualified RPKI.Store.Database as DB
+import qualified RPKI.Store.SQLite   as SQLite
 import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.RRDP.RrdpFetch
 
+import           RPKI.Fetch.ErikRelay
 import           RPKI.Rsync
 import           RPKI.TAL
 import           RPKI.Util               
@@ -69,12 +72,6 @@ import           RPKI.Workflow
 import           RPKI.RSC.Verifier
 import           RPKI.Meta.Version
 import           RPKI.Meta.UniqueId
-
-
-import           Network.HTTP.Client
-import           Network.HTTP.Client.TLS
--- import           Network.HTTP.Simple
-import           Network.Connection
 
 
 main :: IO ()
@@ -121,6 +118,8 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                 & #metricsHandler .~ withAppState . mergeSystemMetrics
                 & #workerHandler .~ withAppState . updateRunningWorkers
                 & #systemStatusHandler .~ withAppState . updateSystemStatus
+                & #erikRelayHandler .~ (\(ErikRelayMessage reports) ->
+                        withAppState (`updateErikRelayHealth` reports))
 
         -- This one modifies system metrics in AppState
         -- if appState is actually initialised
@@ -130,7 +129,7 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     else [i|Starting #{rpkiProverVersion} as a server.|]
             
             (z, validations) <- do
-                        runValidatorT (newScopes "Startup") $ do
+                        runValidatorIO (newScopes "Startup") $ do
                             checkPreconditions cliOptions
                             createAppContext cliOptions logger (logConfig ^. #logLevel)
             case z of
@@ -173,7 +172,7 @@ executeWorkerProcess = do
 
     executeWork input onExit $ \_ resultHandler -> 
         withLogger logConfig $ \logger -> liftIO $ do
-            (z, validations) <- runValidatorT
+            (z, validations) <- runValidatorIO
                                     (newScopes "worker-create-app-context")
                                     (createWorkerAppContext config logger)
             case z of
@@ -184,17 +183,17 @@ executeWorkerProcess = do
                     let actuallyExecuteWork = 
                             case input ^. #params of
                                 RrdpFetchParams {..} -> 
-                                    exec resultHandler $ fmap (Right . RrdpFetchResult) $ runValidatorT scopes $ 
+                                    exec resultHandler $ fmap (Right . RrdpFetchResult) $ runValidatorIO scopes $ 
                                         updateRrdpRepository appContext worldVersion rrdpRepository
 
                                 RsyncFetchParams {..} -> 
-                                    exec resultHandler $ fmap (Right . RsyncFetchResult) $ runValidatorT scopes $                                     
+                                    exec resultHandler $ fmap (Right . RsyncFetchResult) $ runValidatorIO scopes $                                     
                                         updateObjectForRsyncRepository appContext fetchConfig 
                                             worldVersion rsyncRepository
 
-                                CompactionParams {..} -> 
-                                    exec resultHandler $ 
-                                        Right . CompactionResult <$> copyLmdbEnvironment appContext targetLmdbEnv
+                                ErikFetchParams {..} ->
+                                    exec resultHandler $ fmap (Right . ErikFetchResult) $ runValidatorIO scopes $
+                                        fetchErik appContext worldVersion relayUris fqdn
 
                                 ValidationParams {..} -> 
                                     exec resultHandler $ do 
@@ -210,7 +209,9 @@ executeWorkerProcess = do
                                     exec @() resultHandler $ do
                                         pushSystemStatus logger $ SystemStatusMessage $ SystemState { dbState = DbStuck }
                                         pure $ Left $ ErrorResult $ fmtGen t)
-                        `finally`                             
+                        `finally` do
+                            -- Clear the ref first so onExit doesn't close the same DB a second time.
+                            atomically $ writeTVar appContextRef Nothing
                             closeStorage appContext
   where    
     exec :: forall r . (WorkerResult r -> IO ()) -> IO (Either ErrorResult r) -> IO ()
@@ -223,7 +224,7 @@ executeWorkerProcess = do
 --     setGlobalManager manager    
 
 
-readTALs :: (Storage s, MaintainableStorage s) => AppContext s -> IO [TAL]
+readTALs :: MaintainableStorage s => AppContext s -> IO [TAL]
 readTALs AppContext {..} = do
     
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
@@ -239,7 +240,7 @@ readTALs AppContext {..} = do
         logError logger message
         throwIO $ AppException $ TAL_E $ TALError message
 
-    (tals, _) <- runValidatorT (newScopes "validation-root") $
+    (tals, _) <- runValidatorIO (newScopes "validation-root") $
         forM talNames $ \(talFilePath, taName) ->
             vFocusOn TAFocus (convert taName) $
                 parseTalFromFile talFilePath (Text.pack taName)    
@@ -254,10 +255,10 @@ readTALs AppContext {..} = do
   where
     parseTalFromFile talFileName taName = do
         talContent <- fromTry (TAL_E . TALError . fmtEx) $ LBS.readFile talFileName
-        vHoist $ fromEither $ first TAL_E $ parseTAL (convert talContent) taName            
+        fromEither $ first TAL_E $ parseTAL (convert talContent) taName            
 
 
-runHttpApi :: (Storage s, MaintainableStorage s) => AppContext s -> IO ()
+runHttpApi :: (MaintainableStorage s) => AppContext s -> IO ()
 runHttpApi appContext@AppContext {..} = do 
     let httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
     Warp.run httpPort (httpServer appContext) 
@@ -265,7 +266,7 @@ runHttpApi appContext@AppContext {..} = do
         (\(e :: SomeException) -> logError logger [i|Interrupted HTTP server: #{e}.|])
 
 
-createAppContext :: CLIOptions -> AppLogger -> LogLevel -> ValidatorT IO AppLmdbEnv
+createAppContext :: ValidatorIO es => CLIOptions -> AppLogger -> LogLevel -> Eff es AppSQLiteEnv
 createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     programPath <- liftIO getExecutablePath
@@ -311,15 +312,9 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
         void $ readSlurms localExceptions
     
     appState <- createAppState logger localExceptions    
-    
-    lmdbEnv <- setupLmdbCache
-                    (if resetCache then Reset else UseExisting)
-                    logger
-                    cached
-                    config
 
-    (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $ 
-                Lmdb.createDatabase lmdbEnv logger config Lmdb.CheckVersion
+    (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $
+                createSqliteDatabase cached config resetCache True
 
     database <- liftIO $ newTVarIO db    
     
@@ -332,7 +327,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
         -- compaction. Not performing it may potentially bloat the database 
         -- (not sure why exactly but it was reproduced multiple times)
         -- until the next compaction that will happen probably in weeks.
-        Lmdb.WasIncompatible -> liftIO $ runMaintenance appContext
+        WasIncompatible -> liftIO $ runMaintenance appContext
 
         -- It may mean two different cases
         --   * empty db
@@ -340,19 +335,69 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
         -- In practice there hardly ever be a non-empty old cache, 
         -- and even if it will be there, it will be compacted in 
         -- a week or so. So don't compact,
-        Lmdb.DidntHaveVersion -> pure ()
+        DidntHaveVersion -> pure ()
 
         -- Nothing special, the cache has the version as expected
-        Lmdb.WasCompatible    -> pure ()
-
+        WasCompatible    -> pure ()
     logInfo logger [i|Created application context with configuration: 
 #{shower (config)}|]
     pure appContext
 
+
+data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion
+
+newSqliteDB :: FilePath -> Config -> IO SQLite.SqliteDB
+newSqliteDB dbPath config = SQLite.createDB dbPath busyTimeoutMs poolSize
+  where
+    poolSize      = max 2 $ fromIntegral $ config ^. #parallelism . #cpuParallelism
+    busyTimeoutMs = let Seconds s = config ^. #storageConfig . #rwTransactionTimeout
+                    in fromIntegral $ s * 1000
+
+createSqliteDatabase :: FilePath -> Config -> Bool -> Bool -> IO (DB.DB, DbCheckResult)
+createSqliteDatabase cacheDir config resetCache checkVersion = do
+    createDirectoryIfMissing True cacheDir
+
+    let dbPath = cacheDir </> "rpki.sqlite"
+    when resetCache $ do
+        removeIfExists dbPath
+        removeIfExists $ dbPath <> "-wal"
+        removeIfExists $ dbPath <> "-shm"
+
+    sdb <- newSqliteDB dbPath config
+    SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> SQLite.initSchema (SQLite.rawConn conn)
+
+    let db = DB.DB sdb
+    dbCheck <-
+        if checkVersion
+            then do
+                existingVersion <- DB.roTx db $ \tx -> DB.getDatabaseVersion tx db
+                case existingVersion of
+                    Nothing -> do
+                        DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx db
+                        pure DidntHaveVersion
+
+                    Just version
+                        | version == DB.currentDatabaseVersion -> pure WasCompatible
+                        | otherwise -> do
+                            SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> do
+                                SQLite.dropSchema (SQLite.rawConn conn)
+                                SQLite.initSchema (SQLite.rawConn conn)
+                            DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx db
+                            pure WasIncompatible
+            else do
+                DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx db
+                pure WasCompatible
+
+    pure (db, dbCheck)
+  where
+    removeIfExists filePath = do
+        exists <- doesFileExist filePath
+        when exists $ removeFile filePath
+
       
-fsLayout :: CLIOptions
+fsLayout :: ValidatorIO es => CLIOptions
         -> AppLogger
-        -> ValidatorT IO (FilePath, FilePath, FilePath, FilePath, FilePath)
+        -> Eff es (FilePath, FilePath, FilePath, FilePath, FilePath)
 fsLayout cliOptions@CLIOptions {..} logger = do
     root <- getRoot cliOptions    
     
@@ -368,13 +413,18 @@ fsLayout cliOptions@CLIOptions {..} logger = do
         logError logger message
         appError $ InitE $ InitError message
 
-    -- For each sub-directory create it if it doesn't exist
-    [cached, rsyncd, tald, tmpd] <- 
-        fromTryM 
-            (\e -> InitE $ InitError [i|Error verifying/creating directories: #{fmtEx e}|])
-            $ forM [cacheDirName, rsyncDirName, talsDirName, tmpDirName] $ \dir -> 
-                fromEitherM $ first (InitE . InitError) <$> 
-                    createSubDirectoryIfNeeded rootDir dir    
+    -- For each sub-directory create it if it doesn't exist.
+    -- Bound one by one rather than by list pattern: `Eff` has no MonadFail
+    -- instance without the `Fail` effect, so a failable pattern won't do.
+    let subDir dir =
+            fromTryM
+                (\e -> InitE $ InitError [i|Error verifying/creating directories: #{fmtEx e}|])
+                $ fromEitherM $ liftIO $ first (InitE . InitError) <$>
+                    createSubDirectoryIfNeeded rootDir dir
+    cached <- subDir cacheDirName
+    rsyncd <- subDir rsyncDirName
+    tald   <- subDir talsDirName
+    tmpd   <- subDir tmpDirName
 
     if refetchRirTals then do 
         if noRirTals then
@@ -429,7 +479,7 @@ fsLayout cliOptions@CLIOptions {..} logger = do
                         Text.intercalate "\n" $ mapMaybe talText httpStatuses                                        
 
 
-getRoot :: CLIOptions -> ValidatorT IO (Either FilePath FilePath)
+getRoot :: ValidatorIO es => CLIOptions -> Eff es (Either FilePath FilePath)
 getRoot cliOptions = do    
     case getRootDirectory cliOptions of 
         Nothing -> do 
@@ -489,7 +539,7 @@ getRootDirectory CLIOptions{..} =
         s  -> Just $ Prelude.last s
 
 -- Set rsync prefetch URLs
-rsyncPrefetches :: CLIOptions -> ValidatorT IO [RsyncURL]
+rsyncPrefetches :: ValidatorIO es => CLIOptions -> Eff es [RsyncURL]
 rsyncPrefetches CLIOptions {..} = do
     let urlsToParse =
             case rsyncPrefetchUrl of
@@ -502,21 +552,22 @@ rsyncPrefetches CLIOptions {..} = do
             Right rsyncURL -> pure rsyncURL
 
 
-createWorkerAppContext :: Config -> AppLogger -> ValidatorT IO AppLmdbEnv
+createWorkerAppContext :: ValidatorIO es => Config -> AppLogger -> Eff es AppSQLiteEnv
 createWorkerAppContext config logger = do
-    lmdbEnv <- setupWorkerLmdbCache
-                    logger
-                    (configValue $ config ^. #cacheDirectory)
-                    config
-
-    (db, _) <- fromTry (InitE . InitError . fmtEx) $ 
-                Lmdb.createDatabase lmdbEnv logger config Lmdb.DontCheckVersion
-
+    db <- fromTry (InitE . InitError . fmtEx) $ openExistingSqliteDatabase cacheDir config
     appState <- createAppState logger (configValue $ config ^. #localExceptions)
     database <- liftIO $ newTVarIO db
     let executableVersion = thisExecutableVersion
-
     pure AppContext {..}
+  where
+    cacheDir = configValue $ config ^. #cacheDirectory
+
+-- | Open an already-initialised SQLite database without touching the schema or version.
+-- Used by worker processes to avoid unnecessary write-transaction contention on startup.
+openExistingSqliteDatabase :: FilePath -> Config -> IO DB.DB
+openExistingSqliteDatabase cacheDir config = do
+    sdb <- newSqliteDB (cacheDir </> "rpki.sqlite") config
+    pure (DB.DB sdb)
 
 createAppState :: MonadIO m => AppLogger -> [String] -> m AppState
 createAppState logger localExceptions = do
@@ -533,10 +584,10 @@ createAppState logger localExceptions = do
 
 
 -- | Check some crucial things before running the validator
-checkPreconditions :: CLIOptions -> ValidatorT IO ()
+checkPreconditions :: ValidatorIO es => CLIOptions -> Eff es ()
 checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
 
-deriveProverRunMode :: CLIOptions -> ValidatorT IO ProverRunMode
+deriveProverRunMode :: ValidatorIO es => CLIOptions -> Eff es ProverRunMode
 deriveProverRunMode CLIOptions {..} = 
     case (once, vrpOutput) of 
         (False, Nothing) -> pure ServerMode  
@@ -552,7 +603,7 @@ executeVerifier cliOptions@CLIOptions {..} = do
         withLogger logConfig $ \logger ->
             withVerifier logger $ \verifyPath rscFile -> do
                 logDebug logger [i|Verifying #{verifyPath} with RSC #{rscFile}.|]
-                (ac, vs) <- runValidatorT (newScopes "Verify RSC") $ do
+                (ac, vs) <- runValidatorIO (newScopes "Verify RSC") $ do
                                 appContext <- createVerifierContext cliOptions logger
                                 rscVerify appContext rscFile verifyPath
                 case ac of
@@ -574,16 +625,14 @@ executeVerifier cliOptions@CLIOptions {..} = do
                     _              -> logError logger "Both directory and list of files are set, leave just one of them to verify."
 
 
-createVerifierContext :: CLIOptions -> AppLogger -> ValidatorT IO AppLmdbEnv
+createVerifierContext :: ValidatorIO es => CLIOptions -> AppLogger -> Eff es AppSQLiteEnv
 createVerifierContext cliOptions logger = do
     rootDir <- either id id <$> getRoot cliOptions
-    cached <- fromEitherM $ first (InitE . InitError) <$> checkSubDirectory rootDir cacheDirName
+    cached <- fromEitherM $ liftIO $ first (InitE . InitError) <$> checkSubDirectory rootDir cacheDirName
 
     let config = defaultConfig
-    lmdbEnv <- setupWorkerLmdbCache logger cached config
-
-    (db, _) <- fromTry (InitE . InitError . fmtEx) $ 
-                Lmdb.createDatabase lmdbEnv logger config Lmdb.DontCheckVersion
+    (db, _) <- fromTry (InitE . InitError . fmtEx) $
+                createSqliteDatabase cached config False False
 
     appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db
@@ -616,9 +665,14 @@ data CLIOptions = CLIOptions {
         rsyncRefreshInterval     :: Maybe Int64,
         rrdpTimeout              :: Maybe Int64,
         rsyncTimeout             :: Maybe Int64,
+        erikTimeout              :: Maybe Int64,
+        erikRefreshInterval      :: Maybe Int64,
+        erikRelay                :: [String],
+        erikDownloadParallelism  :: Maybe Natural,
+        erikRelayParallelism     :: Maybe Natural,
         rsyncClientPath          :: Maybe String,
         httpApiPort              :: Maybe Word16,
-        lmdbSize                 :: Maybe Int64,
+        sqliteMmapMb             :: Maybe Int64,
         withRtr                  :: Bool,
         rtrAddress               :: Maybe String,
         rtrPort                  :: Maybe Int16,
@@ -710,7 +764,7 @@ cliOptionsParser = CLIOptions
             <> help ("Maximum number of concurrent fetchers (default: " <> show defFetcherCount <> ", i.e. cpu-count * 2).")))
     <*> switch
             (  long "reset-cache"
-            <> help "Reset the LMDB cache, removing ~/.rpki/cache/*.mdb files.")
+            <> help "Delete rpki.sqlite (and its -wal/-shm files) from the cache directory before starting.")
     <*> optional (option auto
             (  long "revalidation-interval"
             <> metavar "SECONDS"
@@ -739,6 +793,28 @@ cliOptionsParser = CLIOptions
             <> metavar "SECONDS"
             <> help ("Timeout for rsync repository fetching in seconds (default: " <> show defRsyncTimeout <> "). "
                   <> "If a repository cannot be fetched within this period, it is considered unavailable.")))
+    <*> optional (option auto
+            (  long "erik-timeout"
+            <> metavar "SECONDS"
+            <> help ("Timeout for Erik relay fetching in seconds (default: " <> show defErikTimeout <> "). "
+                  <> "If an Erik relay cannot complete fetching within this period, it is considered unavailable.")))
+    <*> optional (option auto
+            (  long "erik-refresh-interval"
+            <> metavar "SECONDS"
+            <> help ("Time interval for updating repositories via Erik relays in seconds (default: " <> show defErikRefresh <> ").")))
+    <*> many (strOption
+            (  long "erik-relay"
+            <> metavar "URL"
+            <> help ("URL of an Erik relay server. Can be specified multiple times. "
+                  <> "Overrides the default relay list when provided.")))
+    <*> optional (option auto
+            (  long "erik-download-parallelism"
+            <> metavar "COUNT"
+            <> help "Maximum number of Erik relay downloads in flight across all relays together."))
+    <*> optional (option auto
+            (  long "erik-relay-parallelism"
+            <> metavar "COUNT"
+            <> help "Maximum number of Erik relay downloads in flight against any single relay."))
     <*> optional (strOption
             (  long "rsync-client-path"
             <> metavar "PATH"
@@ -748,11 +824,10 @@ cliOptionsParser = CLIOptions
             <> metavar "PORT"
             <> help ("Port for the HTTP API (default: " <> show defHttpApiPort <> ").")))
     <*> optional (option auto
-            (  long "lmdb-size"
+            (  long "sqlite-mmap-mb"
             <> metavar "MB"
-            <> help ("Maximum LMDB cache size in MB (default: " <> show defLmdbSize <> ", i.e. " <> show (defLmdbSize `div` 1024) <> "GB). "
-                  <> "This is an upper limit; actual usage may be less. "
-                  <> "About 1GB of cache is needed for each additional 24 hours of cache lifetime.")))
+            <> help ("Set SQLite PRAGMA mmap_size in MB for each connection. "
+              <> "Unset by default (mmap disabled by config).")))
     <*> switch
             (  long "with-rtr"
             <> help "Start the RTR server (default: false).")
@@ -865,8 +940,9 @@ cliOptionsParser = CLIOptions
     Seconds defRsyncRefresh   = cfg ^. #validationConfig . #rsyncRepositoryRefreshInterval
     Seconds defRrdpTimeout    = cfg ^. #rrdpConf . #rrdpTimeout
     Seconds defRsyncTimeout   = cfg ^. #rsyncConf . #rsyncTimeout
+    Seconds defErikTimeout    = cfg ^. #erikConf . #erikTimeout
+    Seconds defErikRefresh    = cfg ^. #erikConf . #erikRefreshInterval
     defHttpApiPort            = cfg ^. #httpApiConf . #port
-    defLmdbSize               = unSize $ cfg ^. #lmdbSizeMb
     defRtrAddress             = rtrCfg ^. #rtrAddress
     defRtrPort                = rtrCfg ^. #rtrPort
     defMaxTaRepos             = cfg ^. #validationConfig . #maxTaRepositories
@@ -894,6 +970,11 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
         & #rrdpConf . #enabled .~ not noRrdp
         & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
+        & maybeSet (#erikConf . #erikTimeout) (Seconds <$> erikTimeout)
+        & maybeSet (#erikConf . #erikRefreshInterval) (Seconds <$> erikRefreshInterval)
+        & setErikRelays
+        & maybeSet (#erikConf . #downloadParallelism) erikDownloadParallelism
+        & maybeSet (#erikConf . #relayParallelism) erikRelayParallelism
         & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
         & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
         & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
@@ -912,25 +993,30 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#httpApiConf . #port) httpApiPort
         & #rtrConfig .~ rtrConfig
         & maybeSet #longLivedCacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
-        & #lmdbSizeMb .~ lmdbRealSize
         & #localExceptions .~ apiSecured localExceptions
         & #withValidityApi .~ withValidityApi
         & maybeSet #metricsPrefix (convert <$> metricsPrefix)
         & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
         & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
         & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
+          & #storageConfig . #sqliteMmapSizeMb .~ sqliteMmapSize
   where
-    lmdbRealSize = (Size <$> lmdbSize) `orDefault` (baseConfig ^. #lmdbSizeMb)
     cpuCount'    = fromMaybe (baseConfig ^. #parallelism . #cpuCount) cpuCount
+
     parallelism  = case fetcherCount of
         Nothing -> newParallelism cpuCount'
         Just fc -> makeParallelismF cpuCount' fc
+    sqliteMmapSize = maybe (baseConfig ^. #storageConfig . #sqliteMmapSizeMb) (Just . Size) sqliteMmapMb
     rtrConfig = if withRtr
         then Just $ defaultRtrConfig
                     & maybeSet #rtrPort rtrPort
                     & maybeSet #rtrAddress rtrAddress
                     & #rtrLogFile .~ rtrLogFile
         else Nothing    
+
+    setErikRelays = case erikRelay of
+        [] -> id
+        rs -> #erikConf . #relays .~ map (URI . convert) rs
 
 withLogConfig :: CLIOptions -> (LogConfig -> IO ()) -> IO ()
 withLogConfig CLIOptions{..} f =

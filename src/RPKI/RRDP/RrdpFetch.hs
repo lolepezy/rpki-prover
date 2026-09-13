@@ -3,13 +3,13 @@
 
 module RPKI.RRDP.RrdpFetch where
 
+import           Effectful
 import           Control.Concurrent.STM
-import           Control.Concurrent.Async
 import           Control.Lens
-import           Control.Exception.Lifted
+import           Effectful.Concurrent.Async
+import           Effectful.Exception
 import           Control.Monad
-import           Control.Monad.Except
-import           Control.Monad.IO.Class           (liftIO)
+import           Effectful.Error.Static           (catchError)
 import           Data.Generics.Product.Typed
 
 import           Data.Foldable
@@ -40,22 +40,22 @@ import           RPKI.Parallel
 import           RPKI.Time
 import           RPKI.Parse.Parse
 import           RPKI.Repository
-import           RPKI.RRDP.Http
+import           RPKI.Fetch.Http
 import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Store.Types
-import           RPKI.Store.Base.Storable
-import           RPKI.Store.Base.Storage
+import           RPKI.Store.Base.Storable (StorableObject(..), Compressed(..), toStorableObject)
+import           RPKI.Store.Database     (DB, Tx(..), TxMode(..), roTx)
 import qualified RPKI.Store.Database    as DB
 import qualified RPKI.Util              as U
 
 
-runRrdpFetchWorker :: AppContext s 
-            -> FetchConfig
-            -> WorldVersion
-            -> RrdpRepository             
-            -> ValidatorT IO (RrdpRepository, RrdpFetchStat)
+runRrdpFetchWorker :: ValidatorIO es => AppContext s 
+                    -> FetchConfig
+                    -> WorldVersion
+                    -> RrdpRepository             
+                    -> Eff es (RrdpRepository, RrdpFetchStat)
 runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repository = do
         
     -- This is for humans to read in `top` or `ps`, actual parameters
@@ -87,32 +87,34 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
             appError $ InternalE $ WorkerError e
         Right (RrdpFetchResult z) -> do     
             logWorkerDone logger workerId wr
-            pushSystem logger $ cpuMemMetric "fetch" cpuTime clockTime maxMemory
+            pushSystem logger $ cpuMemMetric "rrdp-fetch" cpuTime clockTime maxRtsHeap maxProcessRss
             embedValidatorT $ pure z
 
 
 -- | 
 --  Update RRDP repository, actually saving all the objects in the DB.
 -- 
-updateRrdpRepository :: Storage s => 
+updateRrdpRepository :: (ValidatorIO es, Concurrent :> es) => 
                         AppContext s 
                     -> WorldVersion 
                     -> RrdpRepository
-                    -> ValidatorT IO (RrdpRepository, RrdpFetchStat) 
+                    -> Eff es (RrdpRepository, RrdpFetchStat) 
 updateRrdpRepository     
         appContext@AppContext {..}
         worldVersion 
         repo@RrdpRepository { uri = repoUri, .. } = do
 
   timedMetric (Proxy :: Proxy RrdpMetric) $ do                                   
-    
-    let fetchNotification eTag_ = do 
+        
+    let tmpDir = configValue $ config ^. #tmpDirectory
+        maxSize = config ^. typed @RrdpConf . #maxSize
+        fetchNotification eTag_ = do 
             timedMetric' (Proxy :: Proxy RrdpMetric) 
                 (\t -> #downloadTimeMs %~ (<> t)) $
                 fromTry (RrdpE . CantDownloadNotification . U.fmtEx)
-                    $ downloadToBS (appContext ^. typed) (getURL repoUri) eTag_
+                    $ downloadToBS tmpDir (getURL repoUri) eTag_ maxSize
 
-    let enforcement = 
+        enforcement = 
             case rrdpMeta of 
                 Nothing -> Nothing
                 Just r  -> r ^. #enforcement
@@ -127,7 +129,7 @@ updateRrdpRepository
 
     let forceSnapshot reason notificationXml_ = do 
             notification <- validatedNotification =<< hoistHere (parseNotification notificationXml_)
-            nextStep     <- vHoist $ rrdpNextStep repo notification
+            nextStep     <- rrdpNextStep repo notification
             repo' <- bumpETag newETag $ do
                 usedSource $ RrdpSnapshot $ notification ^. #serial
                 logDebug logger [i|Forced to use snapshot for #{repoUri}, because #{reason}.|]
@@ -153,7 +155,7 @@ updateRrdpRepository
 
         _ -> do 
             notification <- validatedNotification =<< hoistHere (parseNotification notificationXml)
-            nextStep     <- vHoist $ rrdpNextStep repo notification
+            nextStep     <- rrdpNextStep repo notification
 
             repo' <- bumpETag newETag $  
                 case nextStep of
@@ -180,8 +182,7 @@ updateRrdpRepository
 
                                 logDebug logger [i|Going to use deltas for #{repoUri}: #{message}|]
                                 useDeltas sortedDeltas notification)
-                        `catchError` 
-                            \e -> do         
+                        `catchError` \_cs (e :: AppError) -> do         
                                 usedSource $ RrdpSnapshot $ notification ^. #serial
                                 logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
                                 useSnapshot notification nextStep
@@ -191,7 +192,7 @@ updateRrdpRepository
     bumpETag newETag f = (\r -> r { eTag = newETag }) <$> f        
 
     usedSource z = updateMetric @RrdpMetric @_ (#rrdpSource .~ z)        
-    hoistHere    = vHoist . fromEither . first RrdpE
+    hoistHere    = fromEither . first RrdpE
 
     validatedNotification notification = do    
         let repoU = unURI $ getURL repoUri             
@@ -218,13 +219,15 @@ updateRrdpRepository
             (rawContent, _, httpStatus', _) <- 
                 timedMetric' (Proxy :: Proxy RrdpMetric) 
                     (\t -> #downloadTimeMs %~ (<> t)) $ do     
-                    fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ 
-                        downloadHashedBS (appContext ^. typed @Config) uri Nothing expectedHash                                    
+                    fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ do 
+                        let tmpDir = configValue $ config ^. #tmpDirectory
+                        let maxSize = config ^. typed @RrdpConf . #maxSize
+                        downloadHashedBS tmpDir uri Nothing expectedHash maxSize                            
                             (\actualHash -> 
                                 Left $ RrdpE $ SnapshotHashMismatch { 
                                     expectedHash = expectedHash,
                                     actualHash = actualHash                                            
-                                })                                            
+                                })
             updateMetric @RrdpMetric @_ (#lastHttpStatus .~ httpStatus') 
 
             void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
@@ -277,8 +280,10 @@ updateRrdpRepository
             let deltaUri = U.convert uri 
             (rawContent, _, httpStatus', _) <- 
                 inSubVScope deltaUri $ do
-                    fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ 
-                        downloadHashedBS (appContext ^. typed @Config) uri Nothing hash
+                    fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ do 
+                        let tmpDir = configValue $ config ^. #tmpDirectory
+                        let maxSize = config ^. typed @RrdpConf . #maxSize
+                        downloadHashedBS tmpDir uri Nothing hash maxSize
                             (\actualHash -> 
                                 Left $ RrdpE $ DeltaHashMismatch {
                                     actualHash = actualHash,
@@ -311,7 +316,7 @@ updateRrdpRepository
 
 -- | Decides what to do next based on current state of the repository
 -- | and the parsed notification file
-rrdpNextStep :: RrdpRepository -> Notification -> PureValidatorT RrdpAction
+rrdpNextStep :: Validator es => RrdpRepository -> Notification -> Eff es RrdpAction
 
 rrdpNextStep RrdpRepository { rrdpMeta = Nothing } Notification{..} = 
     pure $ FetchSnapshot snapshotInfo "First time seeing repository"
@@ -410,13 +415,13 @@ nextSerial (RrdpSerial s) = RrdpSerial $ s + 1
         - one thread parses XML, reads base64s and pushes CPU-intensive parsing tasks into the queue 
         - another thread reads parsing tasks, waits for them and saves the results into the DB.
 -} 
-saveSnapshot :: Storage s => 
+saveSnapshot :: (ValidatorIO es, Concurrent :> es) => 
                 AppContext s        
                 -> WorldVersion         
                 -> RrdpURL
                 -> Notification 
                 -> BS.ByteString 
-                -> ValidatorT IO ()
+                -> Eff es ()
 saveSnapshot 
     appContext@AppContext {..} 
     worldVersion repoUri notification snapshotContent = do              
@@ -431,7 +436,7 @@ saveSnapshot
     logDebug logger [i|Snapshot #{snapshotUrl} is #{BS.length snapshotContent} bytes.|]   
 
     db <- liftIO $ readTVarIO database    
-    Snapshot _ sessionId serial snapshotItems <- vHoist $         
+    Snapshot _ sessionId serial snapshotItems <-         
         fromEither $ first RrdpE $ parseSnapshot snapshotContent
 
     let notificationSessionId = notification ^. typed @SessionId
@@ -447,17 +452,18 @@ saveSnapshot
                 f tx
                 updateRepositoryMeta tx db repoUri sessionId serial
 
+    scopes <- askScopes
     txFoldPipeline 
             cpuParallelism
-            (S.mapM (newStorable db) $ S.each snapshotItems)
+            (S.mapM (newStorable scopes db) $ S.each snapshotItems)
             savingTx
             (saveStorable db)
   where        
 
-    newStorable db (SnapshotPublish uri encodedb64) =             
+    newStorable scopes db (SnapshotPublish uri encodedb64) =             
         if supportedExtension $ U.convert uri 
             then do 
-                a <- liftIO $ async readBlob
+                a <- async readBlob
                 pure $! Right (uri, a)
             else
                 pure $! Left (RrdpE (RrdpUnsupportedObjectType (U.convert uri)), uri)
@@ -477,41 +483,50 @@ saveSnapshot
                                 case urlObjectType rpkiURL of                                 
                                     Just type_ -> do 
                                         let hash = U.sha256s blob  
-                                        exists <- roTx db $ \tx -> DB.hashExists tx db hash
-                                        if exists                                  
-                                            -- The object is already in cache. Do not parse-serialise
-                                            -- anything, just skip it. We are not afraid of possible 
-                                            -- race-conditions here, it's not a problem to double-insert
-                                            -- an object and delete-insert race will never happen in practice
-                                            -- since deletion is never concurrent with insertion.
-                                            then pure $! HashExists rpkiURL hash
-                                            else 
+                                        roTx db (\tx -> DB.getObjectKey tx db hash) >>= \case
+                                            Just key -> 
+                                                -- The object is already in cache. Do not parse-serialise
+                                                -- anything, just skip it. We are not afraid of possible 
+                                                -- race-conditions here, it's not a problem to double-insert
+                                                -- an object and delete-insert race will never happen in practice
+                                                -- since deletion is never concurrent with insertion.
+                                                pure $! HashExists rpkiURL hash key
+                                            Nothing ->
                                                 tryToParse rpkiURL hash blob type_                                                 
                                     Nothing -> 
                                         pure $! UknownObjectType rpkiURL
           where
-            tryToParse rpkiURL hash blob type_ = do 
-                z <- liftIO $ runValidatorT (newScopes $ unURI uri) $ vHoist $ readObjectOfType type_ blob
-                (evaluate $!
-                    case z of 
-                        (Left e, _) -> 
-                            ObjectParsingProblem rpkiURL (VErr e) 
-                                (ObjectOriginal blob) hash
-                                (ObjectMeta worldVersion type_)                        
-                        (Right ro, _) ->                                     
-                            SuccessParsed rpkiURL (toStorableObject ro) type_                           
-                    ) `catch` 
-                    (\(e :: SomeException) -> 
-                        pure $! ObjectParsingProblem rpkiURL (VErr $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e) 
-                                (ObjectOriginal blob) hash
-                                (ObjectMeta worldVersion type_)
-                    )
+            tryToParse rpkiURL hash blob type_ = 
+                doParse `catchSync` onError
+              where
+                doParse = do 
+                    z <- runValidator scopes $
+                            inSubLocationScope uri $ 
+                                prevalidateObject =<< readObjectOfType type_ blob
+                    evaluate $!
+                        case z of
+                            (Left _, vs) ->
+                                mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
+                            (Right vro, vs)
+                                | hasValidationErrors vs ->
+                                    mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
+                                | otherwise ->
+                                    mkSaveObject $! WellStructuredRO vro
+
+                onError e = do
+                    (_, vs) <- runValidator scopes $ inSubLocationScope uri $
+                        fromEither @() $ Left $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e
+                    pure $! mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
+
+                -- Encode/compress the object here, on the parsing (async) thread,
+                -- so the single-threaded DB-writer only has to do the INSERT.
+                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
 
     saveStorable _ _ (Left (e, uri)) = 
         inSubLocationScope uri $ appWarn e             
     
     saveStorable db tx (Right (uri, a)) = do 
-        z <- liftIO $ waitCatch a        
+        z <- waitCatch a        
         case z of 
             Left e  -> do 
                 logError logger [i|Couldn't parse object #{uri}, error #{e}, will NOTs cache the original object.|]   
@@ -519,8 +534,8 @@ saveSnapshot
                     appWarn $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e
             Right r -> 
                 case r of 
-                    HashExists rpkiURL hash ->
-                        DB.linkObjectToUrl tx db rpkiURL hash
+                    HashExists rpkiURL _ key -> 
+                        DB.linkObjectToUrl tx db rpkiURL key worldVersion
 
                     UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do                    
                         logError logger [i|Skipped object #{rpkiUrl}: #{e}|]
@@ -535,17 +550,15 @@ saveSnapshot
                         inSubLocationScope uri $ 
                             appWarn $ RrdpE $ RrdpUnsupportedObjectType $ U.convert rpkiUrl                   
 
-                    ObjectParsingProblem rpkiUrl (VErr e) original hash objectMeta -> do                    
-                        logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
-                        inSubLocationScope uri $ appWarn e                 
-                        DB.saveOriginal tx db original hash objectMeta
-                        DB.linkObjectToUrl tx db rpkiUrl hash                
-                        addedObject $ Just $ objectMeta ^. #objectType
-
-                    SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do 
-                        DB.saveObject tx db so worldVersion                    
-                        DB.linkObjectToUrl tx db rpkiUrl (getHash object)
-                        addedObject $ Just type_
+                    SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
+                        case lifecycle of
+                            OriginalRO _ vs _ _ -> do
+                                logError logger [i|Object #{rpkiUrl} failed parse/prevalidation, storing original.|]
+                                embedState vs
+                            WellStructuredRO _ -> pure ()
+                        key <- DB.saveStorableObject tx db so worldVersion
+                        DB.linkObjectToUrl tx db rpkiUrl key worldVersion
+                        addedObject $ Just $ getRpkiObjectType lifecycle
 
                     other -> 
                         logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]                                     
@@ -561,19 +574,19 @@ saveSnapshot
     a non-existent object, or add an existing one. In all these cases, we
     emit an error and fall back to downloading snapshot.
 -}
-saveDelta :: Storage s => 
+saveDelta :: (ValidatorIO es, Concurrent :> es) => 
             AppContext s 
             -> WorldVersion         
             -> RrdpURL 
             -> Notification 
             -> RrdpSerial             
             -> BS.ByteString 
-            -> ValidatorT IO ()
+            -> Eff es ()
 saveDelta appContext worldVersion repoUri notification expectedSerial deltaContent = do                
     db <- liftIO $ readTVarIO $ appContext ^. #database    
 
     Delta _ sessionId serial deltaItems <- 
-        vHoist $ fromEither $ first RrdpE $ parseDelta deltaContent    
+        fromEither $ first RrdpE $ parseDelta deltaContent    
 
     let notificationSessionId = notification ^. typed @SessionId
     when (sessionId /= notificationSessionId) $ 
@@ -592,18 +605,20 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 f tx
                 updateRepositoryMeta tx db repoUri sessionId serial
 
+    scopes <- askScopes
+
     txFoldPipeline
             cpuParallelism
-            (S.mapM newStorable $ S.each deltaItems)
+            (S.mapM (newStorable scopes) $ S.each deltaItems)
             savingTx
             (saveStorable db)
   where        
 
-    newStorable item = do 
+    newStorable scopes item = do 
         case item of
             DP (DeltaPublish uri hash encodedb64) -> 
                 processSupportedTypes uri $ do 
-                    a <- liftIO $ async $ readBlob uri encodedb64
+                    a <- async $ readBlob uri encodedb64
                     pure $ Right $ maybe (Add uri a) (Replace uri a) hash
                     
             DW (DeltaWithdraw uri hash) -> 
@@ -629,22 +644,34 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                                         Just type_ -> tryToParse rpkiURL hash blob type_
                                         Nothing    -> pure $! UknownObjectType rpkiURL
           where
-            tryToParse rpkiURL hash blob type_ = do
-                z <- liftIO $ runValidatorT (newScopes $ unURI uri) $ vHoist $ readObjectOfType type_ blob
-                (evaluate $!
-                    case z of 
-                        (Left e, _) -> 
-                            ObjectParsingProblem rpkiURL (VErr e) 
-                                (ObjectOriginal blob) hash
-                                (ObjectMeta worldVersion type_)                        
-                        (Right ro, _) ->                                     
-                            SuccessParsed rpkiURL (toStorableObject ro) type_                    
-                    ) `catch` 
-                    (\(e :: SomeException) -> 
-                        pure $! ObjectParsingProblem rpkiURL (VErr $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e) 
+            tryToParse rpkiURL hash blob type_ = 
+                doParse `catchSync` onError                    
+              where
+                doParse = do 
+                    z <- runValidator scopes $ 
+                            inSubLocationScope uri $                                 prevalidateObject =<< readObjectOfType type_ blob
+                    evaluate $!
+                        case z of 
+                            (Left _, vs) ->
+                                ObjectParsingProblem rpkiURL (VErr e) 
+                                    (ObjectOriginal blob) hash
+                                    (ObjectMeta worldVersion type_)
+                              where
+                                e = ParseE $ ParseError "RRDP object failed prevalidation"
+                            (Right vro, vs)
+                                | hasValidationErrors vs ->
+                                    mkSaveObject $! OriginalRO (ObjectOriginal blob) vs hash type_
+                                | otherwise ->
+                                    mkSaveObject $! WellStructuredRO vro
+
+                onError e = 
+                    pure $! ObjectParsingProblem rpkiURL (VErr $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e)
                                 (ObjectOriginal blob) hash
                                 (ObjectMeta worldVersion type_)
-                    )
+
+                -- Encode/compress the object here, on the parsing (async) thread,
+                -- so the single-threaded DB-writer only has to do the INSERT.
+                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
 
     saveStorable db tx r = 
         case r of 
@@ -660,10 +687,9 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
             -- Ignore withdraws and just use the time-based garbage collection
             then deletedObject $ textObjectType $ unURI uri
             else appError $ RrdpE $ NoObjectToWithdraw uri existingHash
-        
 
     addObject db tx uri a = do 
-        r <- fromTry (RrdpE . FailedToParseDeltaItem . U.fmtEx) $ wait a
+        r <- fromTryM (RrdpE . FailedToParseDeltaItem . U.fmtEx) $ wait a
         case r of         
             UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do
                 logError logger [i|Skipped object #{rpkiUrl}, error #{e} |]
@@ -681,19 +707,26 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
             ObjectParsingProblem rpkiUrl (VErr e) original hash objectMeta -> do
                 logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
                 inSubLocationScope (getURL rpkiUrl) $ appWarn e
-                DB.saveOriginal tx db original hash objectMeta
-                DB.linkObjectToUrl tx db rpkiUrl hash         
+                let validationScope = newScopes $ unURI $ getURL rpkiUrl
+                let validationState = ValidationState (mError (validationScope ^. typed) e) mempty mempty
+                key <- DB.saveObject tx db (OriginalRO original validationState hash objectMeta.objectType) worldVersion
+                DB.linkObjectToUrl tx db rpkiUrl key worldVersion
                 logDebug logger [i||Added original object #{rpkiUrl} with hash #{hash} to the database.|]                 
 
-            SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do            
-                let newHash = getHash object
-                newOneIsAlreadyThere <- DB.hashExists tx db newHash     
-                unless newOneIsAlreadyThere $ do 
-                    DB.saveObject tx db so worldVersion                        
-                    addedObject $ Just type_
-                DB.linkObjectToUrl tx db rpkiUrl newHash            
+            SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
+                let newHash = getHash lifecycle
+                newOneIsAlreadyThere <- DB.hashExists tx db newHash
+                unless newOneIsAlreadyThere $ do
+                    case lifecycle of
+                        OriginalRO _ vs _ _ -> do
+                            logError logger [i|Object #{rpkiUrl} failed parse/prevalidation.|]
+                            embedState vs
+                        WellStructuredRO _ -> pure ()
+                    key <- DB.saveStorableObject tx db so worldVersion
+                    addedObject $ Just $ getRpkiObjectType lifecycle
+                    DB.linkObjectToUrl tx db rpkiUrl key worldVersion
 
-            other -> 
+            other ->
                 logDebug logger [i|Weird thing happened in `addObject` #{other}.|]
 
     replaceObject db tx uri a oldHash = do      
@@ -708,8 +741,8 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                         inSubLocationScope uri $ 
                             appError $ RrdpE $ NoObjectToReplace uri oldHash
 
-        r <- fromTry (RrdpE . FailedToParseDeltaItem . U.fmtEx) $ wait a
-        case r of                    
+        r <- fromTryM (RrdpE . FailedToParseDeltaItem . U.fmtEx) $ wait a
+        case r of
             UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do
                 logError logger [i|Skipped object #{rpkiUrl}, error #{e} |]
                 inSubLocationScope uri $ appWarn e
@@ -722,17 +755,25 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 logError logger [i|Couldn't parse object #{rpkiUrl}, error #{e}, will cache the original object.|]   
                 inSubLocationScope (getURL rpkiUrl) $ appWarn e
                 validateOldHash
-                DB.saveOriginal tx db original hash objectMeta
-                DB.linkObjectToUrl tx db rpkiUrl hash
+                let validationScope = newScopes $ unURI $ getURL rpkiUrl
+                let validationState = ValidationState (mError (validationScope ^. typed) e) mempty mempty
+                key <- DB.saveObject tx db (OriginalRO original validationState hash objectMeta.objectType) worldVersion
+                DB.linkObjectToUrl tx db rpkiUrl key worldVersion
 
-            SuccessParsed rpkiUrl so@StorableObject {..} type_ -> do 
+            SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
                 validateOldHash
-                let newHash = getHash object
+                let newHash = getHash lifecycle
                 newOneIsAlreadyThere <- DB.hashExists tx db newHash
-                unless newOneIsAlreadyThere $ do 
-                    DB.saveObject tx db so worldVersion                        
-                    addedObject $ Just type_
-                DB.linkObjectToUrl tx db rpkiUrl newHash 
+                unless newOneIsAlreadyThere $ do
+                    case lifecycle of
+                        OriginalRO _ vs _ _ -> do
+                            logError logger [i|Object #{rpkiUrl} failed parse/prevalidation.|]
+                            embedState vs
+                        WellStructuredRO _ -> pure ()
+
+                    key <- DB.saveStorableObject tx db so worldVersion
+                    DB.linkObjectToUrl tx db rpkiUrl key worldVersion
+                    addedObject $ Just $ getRpkiObjectType lifecycle
 
             other -> 
                 logDebug logger [i|Weird thing happened in `replaceObject` #{other}.|]                                                                                                
@@ -742,7 +783,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
     validationConfig = appContext ^. typed @Config . typed @ValidationConfig
 
 
-addedObject, deletedObject :: Monad m => Maybe RpkiObjectType -> ValidatorT m ()
+addedObject, deletedObject :: Validator es => Maybe RpkiObjectType -> Eff es ()
 addedObject type_  = updateMetric @RrdpMetric @_ 
     (#added %~ Map.unionWith (+) (Map.singleton type_ 1))
 deletedObject type_ = updateMetric @RrdpMetric @_ 
@@ -752,24 +793,23 @@ deletedObject type_ = updateMetric @RrdpMetric @_
 data RrdpObjectProcessingResult =           
           UnparsableRpkiURL URI VIssue
         | DecodingTrouble RpkiURL VIssue
-        | HashExists RpkiURL Hash
+        | HashExists RpkiURL Hash ObjectKey
         | UknownObjectType RpkiURL    
-        | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta    
-        | SuccessParsed RpkiURL (StorableObject RpkiObject) RpkiObjectType
-    deriving stock (Show, Eq, Generic)    
+        | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
+        | SaveObject RpkiURL (StorableObject (Compressed RpkiObjectLifecycle))
+    deriving stock (Show, Eq, Generic)
 
 data DeltaOp m a = Delete URI Hash 
                 | Add URI (Async a) 
                 | Replace URI (Async a) Hash
 
 
-verifyRrdpMeta :: Storage s
-            => Tx s mode 
-            -> DB.DB s 
+verifyRrdpMeta :: ValidatorIO es => Tx mode
+            -> DB 
             -> RrdpURL 
             -> SessionId 
             -> RrdpSerial 
-            -> ValidatorT IO ()
+            -> Eff es ()
 verifyRrdpMeta tx db repoUri expectedSessionId expectedSerial = do     
     r <- DB.getRrdpRepository tx db repoUri
     for_ r $ \RrdpRepository {..} ->
@@ -784,13 +824,13 @@ verifyRrdpMeta tx db repoUri expectedSessionId expectedSerial = do
                                 expectedSessionId = expectedSessionId, 
                                 expectedSerial    = expectedSerial }
 
-updateRepositoryMeta :: Storage s => 
-                        Tx s 'RW 
-                    -> DB.DB s
+updateRepositoryMeta :: ValidatorIO es => 
+                        Tx 'RW 
+                    -> DB
                     -> RrdpURL 
                     -> SessionId
                     -> RrdpSerial
-                    -> ValidatorT IO ()
+                    -> Eff es ()
 updateRepositoryMeta tx db repoUri sessionsId serial = do                            
     DB.updateRrdpMetaM tx db repoUri $ \case 
         Nothing         -> pure $ Just $ newRrdpMeta sessionsId serial

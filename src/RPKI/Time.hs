@@ -2,6 +2,7 @@ module RPKI.Time where
 
 import           Control.DeepSeq
 import           Data.Int
+import           Data.Maybe             (isJust)
 import           Data.Semigroup
 import           Control.Monad.IO.Class (MonadIO, liftIO)
 
@@ -68,6 +69,28 @@ instance Show CPUTime where
 newInstant :: DateTime -> Instant
 newInstant = Instant . toNanos
 
+{- | `Instant` is Int64 nanoseconds since the epoch, so it can only represent 
+   dates between roughly 1678 and 2262. Outside of that range `toNanos` 
+   silently wraps around, which for a certificate's notAfter turns into an 
+   arbitrary date -- usually in the past, but for some values a plausible 
+   future one.
+
+   Returns Nothing rather than wrapping, so callers can reject the object.
+-}
+newInstantChecked :: DateTime -> Maybe Instant
+newInstantChecked d
+    | seconds < minInstantSeconds || seconds > maxInstantSeconds = Nothing
+    | otherwise                                                  = Just $! Instant $ toNanos d
+  where
+    ElapsedP (Elapsed (Seconds seconds)) _ = timeGetElapsedP d
+
+isRepresentableInstant :: DateTime -> Bool
+isRepresentableInstant = isJust . newInstantChecked
+
+minInstantSeconds, maxInstantSeconds :: Int64
+minInstantSeconds = (minBound :: Int64) `div` nanosPerSecond
+maxInstantSeconds = (maxBound :: Int64) `div` nanosPerSecond
+
 thisInstant :: MonadIO m => m Now
 thisInstant = Now . Instant . toNanos <$> liftIO dateCurrent
 
@@ -108,8 +131,6 @@ toNanos d = nanosPerSecond * seconds + nanos
   where 
     ElapsedP (Elapsed (Seconds seconds)) (NanoSeconds nanos) = timeGetElapsedP d
 
-asSeconds :: Instant -> Int64
-asSeconds (Instant instant) = fromIntegral $ instant `div` nanosPerSecond
 
 fromNanoseconds :: Int64 -> DateTime
 fromNanoseconds totalNanos =    
@@ -139,8 +160,7 @@ instantDateFormat (Instant d) = timePrint format (fromNanoseconds d)
     format = TimeFormatString [
             Format_Year, dash, Format_Month2, dash, Format_Day2,
             Format_Text ' ',
-            Format_Hour, colon, Format_Minute, colon, Format_Second,
-            Format_TimezoneName
+            Format_Hour, colon, Format_Minute, colon, Format_Second
         ]
     dash = Format_Text '-'
     colon = Format_Text ':'   
@@ -149,8 +169,7 @@ instantTimeFormat :: Instant -> String
 instantTimeFormat (Instant d) = timePrint format (fromNanoseconds d)
   where 
     format = TimeFormatString [            
-            Format_Hour, colon, Format_Minute, colon, Format_Second,
-            Format_TimezoneName
+            Format_Hour, colon, Format_Minute, colon, Format_Second
         ]
     colon = Format_Text ':'   
 

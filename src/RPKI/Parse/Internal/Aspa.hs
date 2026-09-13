@@ -2,6 +2,7 @@
 
 module RPKI.Parse.Internal.Aspa where
 
+import           Effectful
 import qualified Data.ByteString as BS  
 
 import Control.Applicative
@@ -27,7 +28,7 @@ import qualified RPKI.Util as U
 
 -- | Parse ASPA, https://datatracker.ietf.org/doc/draft-ietf-sidrops-aspa-profile/
 -- 
-parseAspa :: BS.ByteString -> PureValidatorT AspaObject
+parseAspa :: Validator es => BS.ByteString -> Eff es AspaObject
 parseAspa bs = do    
     asns       <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs    
     signedAspa <- fromEither $ first (parseErr . U.convert) $ 
@@ -47,8 +48,21 @@ parseAspa bs = do
     getVersion = getInteger (pure . fromInteger) "Wrong version"
 
     getAspa = do 
-        customer  <- getInteger (pure . ASN . fromInteger) "Wrong customer AS"        
-        providers <- fmap Set.fromList $
-                        onNextContainer Sequence $ getMany $                             
-                                getInteger (pure . ASN . fromInteger) "Wrong provider AS" 
+        customer     <- getInteger asn "Wrong customer AS"        
+        providerList <- onNextContainer Sequence $ getMany $ 
+                                getInteger asn "Wrong provider AS" 
+
+        -- The providers must be sorted in ascending order and must not contain 
+        -- duplicates. Normalising them silently (which `Set.fromList` alone does) 
+        -- would accept objects that the profile declares invalid.
+        unless (strictlyAscending providerList) $ 
+            throwParseError "ASPA providers must be sorted in ascending order without duplicates"
+
+        let providers = Set.fromList providerList
         pure Aspa {..}
+      where 
+        asn = either throwParseError pure . mkAsn
+
+        strictlyAscending = \case 
+            []       -> True
+            (x : xs) -> and $ zipWith (<) (x : xs) xs

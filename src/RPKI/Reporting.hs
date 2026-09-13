@@ -5,15 +5,13 @@
 module RPKI.Reporting where
     
 import           Control.DeepSeq    
-import           Control.Exception.Lifted
+import           Control.Exception (Exception)
 import           Control.Lens
 
 import           Data.Generics.Labels
 import qualified Data.ByteString             as BS
-import           Data.Int                    (Int64)
 import           Data.Hourglass
 import           Data.Maybe                  (fromMaybe)
-import           Data.Monoid
 import           Data.Text                   as Text
 import qualified Data.List                   as List
 import           Data.List.NonEmpty          (NonEmpty (..))
@@ -70,11 +68,18 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         CertNoPolicyExtension |
                         CertBrokenExtension OID BS.ByteString |
                         UnknownCriticalCertificateExtension OID BS.ByteString |
+                        MissingRequiredCertificateExtension OID |
+                        MissingIPOrASResourcesExtension |
+                        CertificateExtensionMustBeCritical OID |
+                        CertificateExtensionMustBeNonCritical OID |
                         MissingCriticalExtension OID |
+                        ExtensionMustBeAbsent OID |
+                        CertVersionInvalid Int |
                         BrokenKeyUsage Text |
                         WeirdCaPublicationPoints [RpkiURL] | 
                         ObjectHasMultipleLocations [RpkiURL] |
                         NoMFT AKI |
+                        MftAlreadyValidated AKI |
                         NoMFTButCachedMft AKI |
                         NoCRLOnMFT AKI |
                         MoreThanOneCRLOnMFT AKI [MftPair] |
@@ -119,17 +124,45 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         InvalidVCardFormatInGbr Text | 
                         RoaPrefixIsOutsideOfResourceSet IpPrefix PrefixesAndAsns |
                         RoaPrefixLenghtsIsBiggerThanMaxLength Vrp |
+                        -- ASPA
                         AspaOverlappingCustomerProvider ASN [ASN] | 
+                        AspaAsZeoAndNonZero [ASN] | 
                         AspaAsNotOnEECert ASN [AsResource] | 
                         AspaNoAsn |
                         AspaIPv4Present |
                         AspaIPv6Present |      
+                        AspaNoProviders |      
+                        -- BGPSec
                         BGPCertSIAPresent BS.ByteString | 
                         BGPCertIPv4Present |
                         BGPCertIPv6Present | 
                         BGPCertBrokenASNs  | 
+                        BGPCertTooManyASNs Integer Integer | 
+                        -- SPL
                         SplAsnNotInResourceSet ASN [AsResource] | 
                         SplNotIpResources [IpPrefix] |
+                        -- Self-contained structural validations (checked in prevalidate)
+                        InvalidCMSVersion Int |
+                        InvalidSignerInfoVersion Int |
+                        BinarySigningTimePresent |
+                        ContentTypeAttrMissing |
+                        MessageDigestMissing |
+                        CMSMessageDigestMismatch |
+                        SigningTimeMissing |
+                        DuplicateSignedAttribute OID |
+                        UnexpectedSignedAttribute OID |
+                        EECertSKIMismatch |
+                        EECertContentTypeMismatch |
+                        WrongSignedDataContentType OID |
+                        WrongEContentType { expectedOid :: OID, actualOid :: OID } |
+                        UnsupportedSignatureAlgorithm Text |
+                        SignatureAlgorithmMismatch Text Text |
+                        SKINotMatchingPublicKey |
+                        InvalidPublicKey Text |
+                        DuplicateManifestFilenames [Text] |
+                        CertValidityPeriodInvalid |
+                        TimeNotRepresentable Text |
+                        SerialNumberOutOfBounds Text |
                         ReferentialIntegrityError Text 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -192,6 +225,16 @@ data RsyncError = RsyncProcessError Int Text |
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
+data ErikError = Can'tDownloadObject Text |
+                 ErikHashMismatchError { actualHash :: Hash, expectedHash :: Hash } |
+                 ErikIndexScopeMismatch { expectedScope :: FQDN, actualScope :: Text } |
+                 ErikManifestOutsideScope { location :: [URI], scope :: Text } |
+                 ErikInvalidUrl { url :: RpkiURL } |
+                 ErikDownloadTimeout Seconds |
+                 UnknownErikProblem Text
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
 data StorageError = StorageError Text |
                     DeserialisationError Text
     deriving stock (Show, Eq, Ord, Generic)
@@ -224,11 +267,13 @@ data AppError = ParseE (ParseError Text) |
                 TAL_E TALError | 
                 RrdpE RrdpError |
                 RsyncE RsyncError |
+                ErikE ErikError |
                 StorageE StorageError |                     
                 ValidationE ValidationError |
                 InitE InitError |
                 SlurmE SlurmError |
                 InternalE InternalError |
+                ComposeE [AppError] |
                 UnspecifiedE Text Text                
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -247,7 +292,8 @@ newtype AppException = AppException AppError
 instance Exception AppException
 
 {- 
-   Scope keys are pretty long and comparison of them is expensive.
+   Scope keys are pretty long and comparing them is expensive, so using Map looks a bit stupid at first.
+
    However, 
    - HashMap is actually slower in benchmarks with long Scope-like keys ('optimise/app-state-hashmap' branch)
    - using a Trie is much faster in benchmarks but doesn't cause any measurable improvement 
@@ -255,7 +301,7 @@ instance Exception AppException
    - Trying to intern the Scope keys using Symbolize library breaks serialisation ('optimise/focus' branch)
 
    So in reality it's a decent solution. It might also be that the URLs in the scope elements
-   are physically shared in memory so comparisons are actually fast.
+   are physically shared in memory so comparisons are actually pretty fast.
 -}
 newtype Validations = Validations (Map VScope (Set VIssue))
     deriving stock (Show, Eq, Ord, Generic)
@@ -350,16 +396,6 @@ class Monoid metric => MetricC metric where
     -- lens to access the specific metric map in the total metric record    
     metricLens :: Lens' Metrics (MetricMap metric)
 
-newtype Count = Count { unCount :: Int64 }
-    deriving stock (Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-    deriving newtype (Num)
-    deriving Semigroup via Sum Count
-    deriving Monoid via Sum Count
-
-instance Show Count where 
-    show (Count c) = Prelude.show c
-
 newtype HttpStatus = HttpStatus { unHttpStatus :: Int }
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)        
@@ -413,15 +449,15 @@ data RrdpMetric = RrdpMetric {
     deriving Semigroup via GenericSemigroup RrdpMetric   
     deriving Monoid    via GenericMonoid RrdpMetric
 
-data RsyncMetric = RsyncMetric {
+data TraverseMetric = TraverseMetric {
         processed      :: Map (Maybe RpkiObjectType) Count,        
         totalTimeMs    :: TimeMs,
         fetchFreshness :: FetchFreshness
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
-    deriving Semigroup via GenericSemigroup RsyncMetric   
-    deriving Monoid    via GenericMonoid RsyncMetric
+    deriving Semigroup via GenericSemigroup TraverseMetric   
+    deriving Monoid    via GenericMonoid TraverseMetric
 
 newtype ValidatedBy = ValidatedBy { unValidatedBy :: WorldVersion }
     deriving stock (Show, Eq, Ord, Generic)
@@ -456,8 +492,8 @@ data ValidationMetric = ValidationMetric {
 instance MetricC RrdpMetric where
     metricLens = #rrdpMetrics
 
-instance MetricC RsyncMetric where
-    metricLens = #rsyncMetrics
+instance MetricC TraverseMetric where
+    metricLens = #traverseMetrics
 
 instance MetricC ValidationMetric where 
     metricLens = #validationMetrics
@@ -479,7 +515,7 @@ data VrpCounts = VrpCounts {
     deriving Monoid    via GenericMonoid VrpCounts
 
 data Metrics = Metrics {
-        rsyncMetrics      :: MetricMap RsyncMetric,
+        traverseMetrics   :: MetricMap TraverseMetric,
         rrdpMetrics       :: MetricMap RrdpMetric,
         validationMetrics :: MetricMap ValidationMetric,
         vrpCounts         :: VrpCounts
@@ -506,6 +542,14 @@ data ValidationState = ValidationState {
     deriving anyclass (TheBinary)
     deriving Semigroup via GenericSemigroup ValidationState
     deriving Monoid    via GenericMonoid ValidationState
+
+hasValidationErrors :: ValidationState -> Bool
+hasValidationErrors vs =
+    Prelude.any (Prelude.any isVErr . Set.toList)
+        $ Map.elems $ let Validations m = validations vs in m
+  where
+    isVErr (VErr _) = True
+    isVErr _        = False
 
 mTrace :: Trace -> Set Trace
 mTrace = Set.singleton
@@ -538,18 +582,13 @@ scopeList (Scope s) = NonEmpty.toList s
 totalMapCount :: Map a Count -> Count
 totalMapCount m = sum $ Map.elems m
 
-rrdpRepoHasUpdates :: RrdpMetric -> Bool
-rrdpRepoHasUpdates RrdpMetric {..} = anyPositive added || anyPositive deleted   
-
-rsyncRepoHasUpdates :: RsyncMetric -> Bool
-rsyncRepoHasUpdates RsyncMetric {..} = anyPositive processed
 
 rrdpRepoHasSignificantUpdates :: RrdpMetric -> Bool
 rrdpRepoHasSignificantUpdates RrdpMetric {..} = 
     anySignificantPositive added || anySignificantPositive deleted   
 
-rsyncRepoHasSignificantUpdates :: RsyncMetric -> Bool
-rsyncRepoHasSignificantUpdates RsyncMetric {..} = anySignificantPositive processed
+rsyncRepoHasSignificantUpdates :: TraverseMetric -> Bool
+rsyncRepoHasSignificantUpdates TraverseMetric {..} = anySignificantPositive processed
 
 anyPositive :: (Ord b, Num b) => Map a b -> Bool
 anyPositive m = Prelude.any ((> 0) . snd) $ Map.toList m    
