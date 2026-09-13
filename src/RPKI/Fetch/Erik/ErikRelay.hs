@@ -36,6 +36,7 @@ import           RPKI.Fetch.DirectoryTraverse
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 import           RPKI.Worker
+import           RPKI.Time
 
 data IndexFetch index = SameIndex index | UpdatedIndex index
     deriving (Show, Eq, Ord)
@@ -186,10 +187,8 @@ fetchErik
             z <- DB.roTxT database $ \tx -> DB.getErikPartition tx hash
             case z of
                 Nothing -> do
-                    logDebug logger [i|No Erik partition #{U.hashAsBase64Url hash} in the database, downloading from a relay.|]
                     partition <- fetchAndParsePartition
                     DB.rwTxT database $ \tx -> DB.saveErikPartition tx hash partition
-                    logDebug logger [i|Stored Erik partition #{U.hashAsBase64Url hash} in the database.|]
                     pure partition
 
                 Just partition -> do 
@@ -204,18 +203,20 @@ fetchErik
                 let partitionFile = partitionDir hash </> "partition-" <> show hash
 
                 withRelay logger pool $ \relayUri -> do
-                  let partUri = objectByHashUri relayUri hash
-                  logDebug logger [i|Downloading Erik partition #{U.hashAsBase64Url hash} from #{partUri} to #{partitionFile}.|]
-                  vFocusOn LocationFocus partUri $ do                        
-                        (partBs, _, _) <-
-                            fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
-                                downloadToFileHashed partUri partitionFile hash size
-                                    (\actualStatus -> Left $ ErikE $ Can'tDownloadObject 
-                                                        $ U.convert $ "Http status: " <> show actualStatus)
-                                    (\actualHash -> Left $ ErikE $ ErikHashMismatchError { 
-                                        expectedHash = hash, .. })
+                  let partUri = objectByHashUri relayUri hash                  
+                  (partition, ms) <- timedMS $ vFocusOn LocationFocus partUri $ do                        
+                                (partBs, _, _) <-
+                                    fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
+                                        downloadToFileHashed partUri partitionFile hash size
+                                            (\actualStatus -> Left $ ErikE $ Can'tDownloadObject 
+                                                                $ U.convert $ "Http status: " <> show actualStatus)
+                                            (\actualHash -> Left $ ErikE $ ErikHashMismatchError { 
+                                                expectedHash = hash, .. })
 
-                        parseErikPartition partBs                      
+                                parseErikPartition partBs    
+
+                  logDebug logger [i|Downloaded Erik partition #{U.hashAsBase64Url hash} from #{partUri} to #{partitionFile}, took #{ms} ms.|]
+                  pure partition
 
         getManifests :: (ValidatorIO es, Concurrent :> es) => Text -> Hash -> ErikPartition -> Eff es ()
         getManifests scope partitionHash ErikPartition {..} = do            
@@ -227,12 +228,11 @@ fetchErik
                 
                 z <- DB.roTxT database $ \tx -> DB.getByHash tx hash
                 case z of 
-                    Just (Located _ (WellStructuredRO (MftRO mft))) -> do
-                        logDebug logger [i|Manifest #{U.hashAsBase64Url hash} already in the database.|]
+                    Just (Located _ (WellStructuredRO (MftRO mft))) -> 
                         void $ fetchManifestChildren hash (mft ^. #content . #mftEntries)
 
                     Just (Located _ _) -> do
-                        logDebug logger $ [i|Manifest hash #{U.hashAsBase64Url hash} points to an existing |] <>
+                        logDebug logger $ [i|Manifest #{U.hashAsBase64Url hash} (for Erik download #{fqdn}) points to an existing |] <>
                                         "object that is not a manifest, it almost surely means broken Erik relay."
 
                     Nothing -> do
@@ -246,8 +246,8 @@ fetchErik
 
                 withRelay logger pool $ \relayUri -> do
                   let manifestUri = objectByHashUri relayUri hash
-                  vFocusOn LocationFocus manifestUri $ do
-                        let manifestFile = manifestDir hash </> show hash <> ".mft"
+                  let manifestFile = manifestDir hash </> show hash <> ".mft"
+                  (manifest, ms) <- timedMS $ vFocusOn LocationFocus manifestUri $ do                        
                         (manifestBs, _, _) <-
                             fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $ 
                                 downloadToFileHashed manifestUri manifestFile hash size
@@ -256,6 +256,8 @@ fetchErik
                                     (\actualHash -> Left $ ErikE $ ErikHashMismatchError { expectedHash = hash, .. })
                         
                         parseMft manifestBs
+                  logDebug logger [i|Downloaded manifest #{U.hashAsBase64Url hash} from #{manifestUri} to #{manifestFile}, took #{ms} ms.|]
+                  pure manifest
 
 
             fetchManifestChildren :: (ValidatorIO es, Concurrent :> es) => Hash -> [MftPair] -> Eff es (Size, HttpStatus)
