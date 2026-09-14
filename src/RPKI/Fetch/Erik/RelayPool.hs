@@ -56,14 +56,22 @@ deadRelayThreshold = 1
 {- | Consecutive failures before this worker stops handing the relay any more
      work of its own accord.
 
-     Higher than 'deadRelayThreshold', and deliberately so: telling the root
-     process about a suspicious relay is cheap and reversible, while benching
-     one here removes capacity from a fetch that is already in progress. A
-     relay that answers clears the count, so only a sustained run of failures
-     gets it benched.
+     Derived from the thread count rather than fixed, because all of a relay's
+     threads are typically in flight against it at once: a single round of
+     timeouts against an unreachable host produces exactly @perRelayThreads@
+     consecutive failures. A fixed threshold above that number would need a
+     *second* full round of timeouts before the relay was benched, and with a
+     connect timeout measured in minutes that is the difference between a fetch
+     that takes seconds and one that takes five minutes.
+
+     Still higher than 'deadRelayThreshold': telling the root process about a
+     suspicious relay is cheap and reversible, while benching one here removes
+     capacity from a fetch already in progress. A relay that answers clears the
+     count, so only a whole round of failures with nothing served gets it
+     benched.
 -}
-relayBenchThreshold :: Int
-relayBenchThreshold = 5
+benchThreshold :: Relays -> Int
+benchThreshold Relays { perRelayThreads } = max 2 perRelayThreads
 
 data Relay = Relay {
         relayUri            :: URI,
@@ -245,32 +253,56 @@ takeTask Relays {..} WorkPool {..} Relay { relayUri = thisUri, alive = thisAlive
         pure (Just t)
 
 
+{- | Charge one failure to a relay, and say whether this is the call that
+     benched it.
+
+     Shared by the work pool and the index fetch so a relay's health is one
+     account: an index that could not be served is evidence about the relay
+     just as much as an object that could not be, and the work pool needs to
+     hear about it before it starts handing that relay threads.
+
+     Returns the relays that were still alive /before/ this one was benched,
+     since callers need that to decide whether anything is left to try.
+-}
+chargeFailureSTM :: AppLogger -> Relays -> Relay -> Bool -> STM (Bool, [Relay])
+chargeFailureSTM logger relays@Relays { relayList } relay benchNow = do
+    let thisUri = relay.relayUri
+    modifyTVar' relay.failed (+ 1)
+    modifyTVar' relay.consecutiveFailures (+ 1)
+    cf <- readTVar relay.consecutiveFailures
+
+    -- The verdict and the report it triggers happen in one transaction, so the
+    -- root process hears about a suspect relay the moment this fetch concludes
+    -- it is one -- not at the end, by which time every other worker in the
+    -- round has already started and the news is too late to spare them the
+    -- same timeout.
+    when (cf == deadRelayThreshold) $
+        pushErikRelayReportSTM logger [ ErikRelayReport thisUri 0 1 ]
+
+    -- Never bench the last relay standing: a fetch with no live relay cannot
+    -- make progress, and failing each item with its real error is more useful
+    -- than failing all of them with "no relays left".
+    othersAlive <- filterM (\r -> readTVar r.alive)
+                        [ r | r <- relayList, r.relayUri /= thisUri ]
+    -- `wasAlive` makes this a transition rather than a level: without it every
+    -- thread that fails after the threshold benches the relay again and logs
+    -- another warning.
+    wasAlive <- readTVar relay.alive
+    let bench = wasAlive
+                    && (benchNow || cf >= benchThreshold relays)
+                    && not (null othersAlive)
+    when bench $ writeTVar relay.alive False
+    pure (bench, othersAlive)
+
+
 -- | Account for a failed attempt: charge the relay, then either re-queue the
 -- item for another relay or give up on it.
 onFailure :: ValidatorIO es
           => AppLogger -> Relays -> WorkPool t -> Relay -> Task t -> AppError -> Eff es ()
-onFailure logger Relays { relayList } pool relay task e = do
+onFailure logger relays pool relay task e = do
     let thisUri = relay.relayUri
     (gaveUp, benched) <- liftIO $ atomically $ do
-        modifyTVar' relay.failed (+ 1)
-        modifyTVar' relay.consecutiveFailures (+ 1)
-        cf <- readTVar relay.consecutiveFailures
-
-        -- The verdict and the report it triggers happen in one transaction, so
-        -- the root process hears about a suspect relay the moment this pool
-        -- concludes it is one -- not at the end of the fetch, by which time
-        -- every other worker in the round has already started and the news is
-        -- too late to spare them the same timeout.
-        when (cf == deadRelayThreshold) $
-            pushErikRelayReportSTM logger [ ErikRelayReport thisUri 0 1 ]
-
-        -- Never bench the last relay standing: a fetch with no live relay
-        -- cannot make progress, and failing each item with its real error is
-        -- more useful than failing all of them with "no relays left".
-        othersAlive <- filterM (\r -> readTVar r.alive)
-                            [ r | r <- relayList, r.relayUri /= thisUri ]
-        let bench = cf >= relayBenchThreshold && not (null othersAlive)
-        when bench $ writeTVar relay.alive False
+        (bench, othersAlive) <- chargeFailureSTM logger relays relay False
 
         let task' = task { tried    = Set.insert thisUri task.tried
                          , attempts = task.attempts + 1 }
@@ -278,7 +310,7 @@ onFailure logger Relays { relayList } pool relay task e = do
         -- has now been refused by every live relay is not re-queued forever.
         let noRelayLeft = null [ r | r <- othersAlive
                                    , r.relayUri `Set.notMember` task'.tried ]
-            giveUp      = task'.attempts >= length relayList + 1 || noRelayLeft
+            giveUp      = task'.attempts >= length relays.relayList + 1 || noRelayLeft
 
         modifyTVar' pool.active (subtract 1)
         if giveUp
@@ -287,9 +319,10 @@ onFailure logger Relays { relayList } pool relay task e = do
 
         pure (giveUp, bench)
 
-    when benched $
+    when benched $ do
+        let n = benchThreshold relays
         logWarn logger
-            [i|Erik relay #{thisUri} failed #{relayBenchThreshold} times in a row, not using it for the rest of this fetch.|]
+            [i|Erik relay #{thisUri} failed #{n} times in a row, not using it for the rest of this fetch.|]
     if gaveUp
         then do
             -- Only the final verdict becomes a validation warning. A re-queued
@@ -310,16 +343,29 @@ onFailure logger Relays { relayList } pool relay task e = do
      This is for the index: unlike every other Erik download it is relay state
      rather than a content-addressed object, so it is fetched once, up front,
      before there is a queue to put it on.
+
+     A relay that fails here is benched immediately rather than merely charged a
+     failure. The index is the smallest, most certainly present thing a relay
+     serves, and it is fetched once per FQDN -- a relay that cannot produce it
+     is not going to produce the objects underneath it either. Benching it now
+     is what keeps the work pool from starting that relay's threads and paying
+     a second full connect timeout to learn the same thing.
 -}
 withAnyRelay :: ValidatorIO es => AppLogger -> Relays -> (URI -> Eff es a) -> Eff es a
-withAnyRelay logger Relays { relayList } f = do
-    live <- liftIO $ atomically $ filterM (\r -> readTVar r.alive) relayList
-    go [ r.relayUri | r <- live ]
+withAnyRelay logger relays f = do
+    live <- liftIO $ atomically $ filterM (\r -> readTVar r.alive) relays.relayList
+    go live
   where
     go [] = appError $ ErikE $ UnknownErikProblem
                 "All Erik relays failed to answer the query."
-    go (uri : rest) =
-        f uri `catchError` \_cs (e :: AppError) ->
+    go (relay : rest) = do
+        let uri = relay.relayUri
+        f uri `catchError` \_cs (e :: AppError) -> do
+            benched <- liftIO $ atomically $
+                            fst <$> chargeFailureSTM logger relays relay True
+            when benched $
+                logDebug logger
+                    [i|Erik relay #{uri} could not serve the index, not using it for the rest of this fetch.|]
             case rest of
                 [] -> appError e
                 _  -> do
