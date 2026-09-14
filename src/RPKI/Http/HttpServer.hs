@@ -498,9 +498,18 @@ getSystem AppContext {..} = do
 
     workers <- map wiToDto <$> getRunningWorkers appState
 
+    -- Relay health lives in the root process (workers report into it), so this
+    -- is the only place that can see it for all of them at once.
+    erikRelayHealth <-
+        map toRelayHealthDto <$>
+            erikRelayHealthDetails appState (config ^. #erikConf . #relays)
+
     tals <- getTALs
     pure SystemDto {..}  
   where
+    toRelayHealthDto (URI relay, RelayHealth {..}, usable) =
+        ErikRelayHealthDto { .. }
+
     fmtScope scope =
         fmap (Text.intercalate "/") $
             roTxT database $ \tx db -> do         

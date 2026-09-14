@@ -138,6 +138,20 @@ updateErikRelayHealth AppState {..} reports = liftIO $ do
                 totalFailed  = totalFailed + failed
             }
 
+{- | Whether a relay in this state is worth handing to a new fetch worker.
+
+   Split out of 'usableErikRelays' so that anything reporting on relay health
+   (the system API) reaches its verdict through the same rule the fetcher
+   actually uses, instead of a copy that can drift away from it.
+-}
+relayWorthTrying :: Instant -> RelayHealth -> Bool
+relayWorthTrying now RelayHealth {..}
+    | consecutiveFailures < relayDeadAfterReports = True
+    | otherwise =
+        case lastFailure of
+            Nothing -> True
+            Just t  -> not $ closeEnoughMoments (Earlier t) (Later now) relayRetryInterval
+
 {- | The relays worth handing to a new fetch worker, best first.
 
    Relays that have been failing are dropped, unless they have been benched
@@ -145,21 +159,25 @@ updateErikRelayHealth AppState {..} reports = liftIO $ do
    list is returned -- better to try a bad relay than to not fetch at all.
 -}
 usableErikRelays :: MonadIO m => AppState -> [URI] -> m [URI]
-usableErikRelays AppState {..} configured = liftIO $ do
+usableErikRelays appState configured = do
+    details <- erikRelayHealthDetails appState configured
+    let usable = [ relay | (relay, _, True) <- details ]
+    pure $! if null usable then configured else usable
+
+{- | Health of every configured relay, paired with the verdict 'usableErikRelays'
+     would reach for it.
+
+     Every configured relay appears, including ones no worker has touched yet: a
+     relay missing from the list would be indistinguishable from a relay that is
+     working, which is the opposite of what a reader needs to know.
+-}
+erikRelayHealthDetails :: MonadIO m => AppState -> [URI] -> m [(URI, RelayHealth, Bool)]
+erikRelayHealthDetails AppState {..} configured = liftIO $ do
     Now now <- thisInstant
     health <- readTVarIO erikRelayHealth
-    let usable = filter (worthTrying now health) configured
-    pure $! if null usable then configured else usable
-  where
-    worthTrying now health relay =
-        case Map.lookup relay health of
-            Nothing -> True
-            Just RelayHealth {..}
-                | consecutiveFailures < relayDeadAfterReports -> True
-                | otherwise ->
-                    case lastFailure of
-                        Nothing -> True
-                        Just t  -> not $ closeEnoughMoments (Earlier t) (Later now) relayRetryInterval
+    pure [ (relay, h, relayWorthTrying now h)
+         | relay <- configured
+         , let h = fromMaybe newRelayHealth $ Map.lookup relay health ]
 
 newAppState :: IO AppState
 newAppState = do        

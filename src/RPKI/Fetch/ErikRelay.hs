@@ -141,7 +141,22 @@ fetchErik
     timedMetric (Proxy :: Proxy TraverseMetric) $ doFetch relays
     -- Whatever happened inside -- a full download, an unchanged index, or a
     -- failure part-way through -- we know which relays answered.
-    toFetchStat <$> relayStats relays
+    stats <- relayStats relays
+
+    {- Failures are reported by the pool as they happen (see
+       RelayPool.onFailure); this is the closing summary, which is what lets a
+       relay that answered clear its failure count in the root process.
+
+       It has to sit out here rather than beside the download, because the
+       commonest outcome by far is an index that has not changed: that path does
+       no downloading at all, and reporting only from the downloading path would
+       mean a healthy relay was almost never credited with anything.
+    -}
+    pushErikRelayReport logger
+        [ ErikRelayReport statRelay statServed 0
+        | RelayStat {..} <- stats, statServed > 0 ]
+
+    pure $ toFetchStat stats
   where
 
     -- Only the relays that actually took part: we know about every configured
@@ -225,13 +240,6 @@ fetchErik
                 logInfo logger [i|Erik relay usage for #{fqdn_}: |]
                 forM_ stats $ \RelayStat {..} ->
                     logInfo logger [i|  #{statRelay}: served=#{statServed} failed=#{statFailed}|]
-
-                -- Failures are reported by the pool as they happen (see
-                -- RelayPool.onFailure); this is the closing summary, which is
-                -- what lets a relay that answered clear its failure count.
-                pushErikRelayReport logger
-                    [ ErikRelayReport statRelay statServed 0
-                    | RelayStat {..} <- stats, statServed > 0 ]
 
                 -- Now traverse all downloaded objects and load them into the storage,
                 -- the same way it happens for rsync-ed repositories. Do not try to recover
