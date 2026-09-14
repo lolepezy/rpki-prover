@@ -1,18 +1,25 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData        #-}
 
-{- | A pool of Erik relays providing load balancing, fall-back and parallelism
-     limits for relay queries.
+{- | A work queue drained by worker threads bound to Erik relays.
 
      Objects on a relay are content-addressed (@/.well-known/ni/sha-256/<hash>@)
      and the caller verifies them against the expected hash, so any relay may
      serve any object. That is what makes both spreading and retrying safe.
 
-     Tracked per relay and for the pool as a whole:
+     The shape is a thread pool rather than a scheduler:
 
-       * queries in flight, which drive the load-balancing choice,
-       * a parallelism cap, enforced per relay /and/ globally,
-       * served/failed counters, for logging and diagnostics.
+       * every relay gets a fixed number of worker threads, so the per-relay
+         parallelism cap /is/ the thread count -- there is no semaphore to hold
+         and no in-flight counter to sort on,
+       * load balances itself: a fast relay's threads come back for more work
+         sooner, so they drain a larger share of the queue,
+       * a failed item goes back on the queue with the relay recorded, and the
+         next relay to reach for work picks it up. Fall-back therefore never
+         blocks the thread that hit the failure.
+
+     Work is keyed by 'Hash' and deduplicated against everything ever queued,
+     so an object referenced from several places is fetched once.
 -}
 module RPKI.Fetch.RelayPool where
 
@@ -20,151 +27,315 @@ import           Control.Concurrent.STM
 import           Control.Monad
 
 import           Effectful
-import           Effectful.Error.Static            (catchError, rethrowError, tryError)
-import           Effectful.Exception               (bracket_)
+import           Effectful.Concurrent.Async       (Concurrent, pooledForConcurrentlyN)
+import           Effectful.Error.Static           (catchError, tryError)
 
-import           Data.List                        (sortOn)
+import qualified Data.List                        as List
+import qualified Data.Set                         as Set
+import           Data.Set                         (Set)
 import           Data.String.Interpolate.IsString
 
 import           RPKI.AppMonad
 import           RPKI.Domain
 import           RPKI.Logging
-import           RPKI.Parallel
 import           RPKI.Reporting
 
 
 {- | Failures against one relay, within a single worker, before it is reported
      to the root process.
 
-     This is 1 on purpose. The pool's own ordering sinks a failing relay to the
-     back immediately, so within one worker a dead relay is typically tried
-     exactly once and a higher threshold here would never be reached. Deciding
-     whether a relay is really dead is the root process's job: it is the only
-     place that sees reports from every worker, so that is where they are
-     counted (see 'RPKI.AppState.relayDeadAfterReports').
+     This is 1 on purpose. Deciding whether a relay is really dead is the root
+     process's job: it is the only place that sees reports from every worker,
+     so that is where they are counted (see 'RPKI.AppState.relayDeadAfterReports').
+     Reporting early is what lets the other workers in the same round hear about
+     a dead relay before they waste a timeout on it.
 -}
 deadRelayThreshold :: Int
 deadRelayThreshold = 1
 
+{- | Consecutive failures before this worker stops handing the relay any more
+     work of its own accord.
+
+     Higher than 'deadRelayThreshold', and deliberately so: telling the root
+     process about a suspicious relay is cheap and reversible, while benching
+     one here removes capacity from a fetch that is already in progress. A
+     relay that answers clears the count, so only a sustained run of failures
+     gets it benched.
+-}
+relayBenchThreshold :: Int
+relayBenchThreshold = 5
+
 data Relay = Relay {
-        relayUri :: URI,
-        -- | Queries running against this relay right now; drives selection.
-        inFlight :: TVar Int,
-        served   :: TVar Int,
-        failed   :: TVar Int,
-        -- | Failures since this relay last answered successfully. A relay that
-        --   keeps failing sinks to the back of the preference order, so the
-        --   cost of a dead relay is paid a few times, not on every query.
+        relayUri            :: URI,
+        served              :: TVar Int,
+        failed              :: TVar Int,
+        -- | Failures since this relay last answered successfully.
         consecutiveFailures :: TVar Int,
-        -- | Per-relay parallelism cap.
-        relaySem :: Semaphore
+        -- | False once the relay is benched: its workers stop taking work.
+        --   The last live relay is never benched, so the queue always drains.
+        alive               :: TVar Bool
     }
     deriving stock (Eq)
 
-data RelayPool = RelayPool {
-        relays         :: [Relay],
-        -- | Cap on queries in flight across all relays together.
-        globalSem      :: Semaphore,
-        globalInFlight :: TVar Int
+data Relays = Relays {
+        relayList       :: [Relay],
+        -- | Worker threads per relay, i.e. the per-relay parallelism cap.
+        perRelayThreads :: Int
     }
     deriving stock (Eq)
 
 data RelayStat = RelayStat {
-        statRelay    :: URI,
-        statInFlight :: Int,
-        statServed   :: Int,
-        statFailed   :: Int
+        statRelay  :: URI,
+        statServed :: Int,
+        statFailed :: Int
     }
     deriving stock (Eq, Show)
 
+-- | One queued item: what to do, plus which relays have already refused it.
+data Task t = Task {
+        payload  :: t,
+        taskHash :: Hash,
+        tried    :: Set URI,
+        attempts :: Int
+    }
+    deriving stock (Eq, Show)
 
--- | Build a pool. @perRelay@ caps queries against any single relay,
---   @global@ caps them across the pool as a whole.
-newRelayPool :: MonadIO m => Int -> Int -> [URI] -> m RelayPool
-newRelayPool global perRelay uris = liftIO $ atomically $ do
+data WorkPool t = WorkPool {
+        -- | Never attempted; any worker may take these. A stack rather than a
+        --   queue, so the walk goes depth-first and reaches the leaves (which
+        --   are the bulk of the work) without draining a level first.
+        fresh     :: TVar [Task t],
+        -- | Attempted and failed at least once. Stays short, so the linear
+        --   scan for an eligible task costs nothing.
+        retries   :: TVar [Task t],
+        -- | Every hash ever queued, successful or not. The deduplication key.
+        queued    :: TVar (Set Hash),
+        -- | Workers currently holding a task. A task in flight may still
+        --   enqueue more work, so "queue empty" alone does not mean "done".
+        active    :: TVar Int,
+        failures  :: TVar [(Hash, AppError)],
+        succeeded :: TVar Int
+    }
+    deriving stock (Eq)
+
+
+newRelays :: MonadIO m => Int -> [URI] -> m Relays
+newRelays perRelay uris = liftIO $ atomically $ do
     rs <- forM uris $ \uri ->
-            Relay uri <$> newTVar 0 <*> newTVar 0 <*> newTVar 0 <*> newTVar 0
-                      <*> newSemaphore perRelay
-    RelayPool rs <$> newSemaphore global <*> newTVar 0
+            Relay uri <$> newTVar 0 <*> newTVar 0 <*> newTVar 0 <*> newTVar True
+    pure $ Relays rs (max 1 perRelay)
+
+newWorkPool :: MonadIO m => m (WorkPool t)
+newWorkPool = liftIO $ atomically $
+    WorkPool <$> newTVar [] <*> newTVar [] <*> newTVar mempty
+             <*> newTVar 0  <*> newTVar [] <*> newTVar 0
+
+-- | Add work, skipping anything whose hash has been queued before.
+enqueue :: MonadIO m => WorkPool t -> [(Hash, t)] -> m ()
+enqueue pool items = liftIO $ atomically $ enqueueSTM pool items
+
+enqueueSTM :: WorkPool t -> [(Hash, t)] -> STM ()
+enqueueSTM WorkPool {..} items = do
+    q <- readTVar queued
+    -- Deduplicate against what is already queued *and* within `items` itself.
+    let (q', new) = foldl' add (q, []) items
+        add (seen, acc) (h, t)
+            | h `Set.member` seen = (seen, acc)
+            | otherwise           = (Set.insert h seen, Task t h mempty 0 : acc)
+    unless (null new) $ do
+        writeTVar queued $! q'
+        modifyTVar' fresh (new <>)
 
 
-{- | Run a query against the pool.
+{- | Drain the pool.
 
-     The relay with the fewest queries in flight goes first, so load spreads
-     and a slow relay sheds traffic by itself. If the query fails, the failure
-     is recorded as a warning (the way repository fall-back does it) and the
-     next relay is tried. If every relay fails the whole thing is an error.
+     @process@ is handed the relay to talk to and one item, and returns whatever
+     new work that item revealed. Throwing an 'AppError' from it means "this
+     relay could not serve this item": the item is re-queued against another
+     relay, and only when no relay is left to try does it count as a failure.
 
-     Both caps are held for the duration of an attempt, global acquired first
-     so the ordering is the same everywhere and cannot deadlock.
+     Returns once every queued item has either been processed or failed on every
+     relay. An exception (as opposed to an 'AppError') propagates and cancels
+     the other workers, which is what makes the enclosing timeout work.
 -}
-withRelay :: ValidatorIO es => AppLogger -> RelayPool -> (URI -> Eff es a) -> Eff es a
-withRelay logger pool@RelayPool {..} f
-    | null relays = appError $ ErikE $ UnknownErikProblem "No Erik relays configured."
-    | otherwise   = go =<< leastLoadedFirst
+runRelayWorkers :: (ValidatorIO es, Concurrent :> es)
+                => AppLogger
+                -> Relays
+                -> WorkPool t
+                -> (URI -> t -> Eff es [(Hash, t)])
+                -> Eff es ()
+runRelayWorkers logger relays@Relays {..} pool process
+    | null relayList = appError $ ErikE $ UnknownErikProblem "No Erik relays configured."
+    | otherwise      = do
+        let slots = [ r | r <- relayList, _ <- [1 .. perRelayThreads] ]
+        void $ pooledForConcurrentlyN (length slots) slots worker
+        -- Every relay was benched before the queue ran dry. Nothing is going to
+        -- pick these up, so they are failures like any other.
+        leftovers <- liftIO $ atomically $ do
+            f <- readTVar pool.fresh
+            r <- readTVar pool.retries
+            writeTVar pool.fresh []
+            writeTVar pool.retries []
+            pure (f <> r)
+        forM_ leftovers $ \t ->
+            liftIO $ atomically $ modifyTVar' pool.failures
+                ((t.taskHash, ErikE $ UnknownErikProblem
+                    "No usable Erik relay left to fetch the object from.") :)
+  where
+    worker relay = go
+      where
+        go = takeTask relays pool relay >>= \case
+            Nothing   -> pure ()
+            Just task -> do
+                r <- tryError @AppError $ process relay.relayUri task.payload
+                case r of
+                    Right newWork -> do
+                        liftIO $ atomically $ do
+                            modifyTVar' pool.active (subtract 1)
+                            modifyTVar' pool.succeeded (+ 1)
+                            enqueueSTM pool newWork
+                            modifyTVar' relay.served (+ 1)
+                            writeTVar relay.consecutiveFailures 0
+                        go
+                    Left (_, e) -> do
+                        onFailure logger relays pool relay task e
+                        go
+
+
+{- | Take the next item this relay is allowed to work on, blocking while the
+     queue is empty but other workers are still busy, and returning 'Nothing'
+     once the whole pool is drained (or this relay has been benched).
+
+     The eligibility rule for a re-queued item is "prefer a relay that has not
+     tried it, but take it anyway if no other live relay is left to try". The
+     second half is what makes this deadlock-free: it is never possible for the
+     queue to hold an item that no live worker will accept.
+-}
+takeTask :: MonadIO m => Relays -> WorkPool t -> Relay -> m (Maybe (Task t))
+takeTask Relays {..} WorkPool {..} Relay { relayUri = thisUri, alive = thisAlive } =
+    liftIO $ atomically $ do
+        readTVar thisAlive >>= \case
+            False -> pure Nothing
+            True  -> readTVar fresh >>= \case
+                (t : ts) -> do
+                    writeTVar fresh $! ts
+                    took t
+                [] -> do
+                    rs <- readTVar retries
+                    -- Reading every relay's liveness inside the transaction is
+                    -- what wakes a blocked worker when another relay is benched
+                    -- and its share of the queue becomes this one's problem.
+                    liveUris <- Set.fromList . map (\r -> r.relayUri)
+                                    <$> filterM (\r -> readTVar r.alive) relayList
+                    let eligible t =
+                            not (thisUri `Set.member` t.tried)
+                                || Set.null (liveUris `Set.difference` t.tried)
+                    case List.break eligible rs of
+                        (before, t : after) -> do
+                            writeTVar retries $! before <> after
+                            took t
+                        _ -> do
+                            a <- readTVar active
+                            if a == 0 && null rs
+                                then pure Nothing
+                                else retry
+  where
+    took t = do
+        modifyTVar' active (+ 1)
+        pure (Just t)
+
+
+-- | Account for a failed attempt: charge the relay, then either re-queue the
+-- item for another relay or give up on it.
+onFailure :: ValidatorIO es
+          => AppLogger -> Relays -> WorkPool t -> Relay -> Task t -> AppError -> Eff es ()
+onFailure logger Relays { relayList } pool relay task e = do
+    let thisUri = relay.relayUri
+    (gaveUp, benched) <- liftIO $ atomically $ do
+        modifyTVar' relay.failed (+ 1)
+        modifyTVar' relay.consecutiveFailures (+ 1)
+        cf <- readTVar relay.consecutiveFailures
+
+        -- The verdict and the report it triggers happen in one transaction, so
+        -- the root process hears about a suspect relay the moment this pool
+        -- concludes it is one -- not at the end of the fetch, by which time
+        -- every other worker in the round has already started and the news is
+        -- too late to spare them the same timeout.
+        when (cf == deadRelayThreshold) $
+            pushErikRelayReportSTM logger [ ErikRelayReport thisUri 0 1 ]
+
+        -- Never bench the last relay standing: a fetch with no live relay
+        -- cannot make progress, and failing each item with its real error is
+        -- more useful than failing all of them with "no relays left".
+        othersAlive <- filterM (\r -> readTVar r.alive)
+                            [ r | r <- relayList, r.relayUri /= thisUri ]
+        let bench = cf >= relayBenchThreshold && not (null othersAlive)
+        when bench $ writeTVar relay.alive False
+
+        let task' = task { tried    = Set.insert thisUri task.tried
+                         , attempts = task.attempts + 1 }
+        -- `othersAlive` is computed before benching this relay, so an item that
+        -- has now been refused by every live relay is not re-queued forever.
+        let noRelayLeft = null [ r | r <- othersAlive
+                                   , r.relayUri `Set.notMember` task'.tried ]
+            giveUp      = task'.attempts >= length relayList + 1 || noRelayLeft
+
+        modifyTVar' pool.active (subtract 1)
+        if giveUp
+            then modifyTVar' pool.failures ((task'.taskHash, e) :)
+            else modifyTVar' pool.retries (task' :)
+
+        pure (giveUp, bench)
+
+    when benched $
+        logWarn logger
+            [i|Erik relay #{thisUri} failed #{relayBenchThreshold} times in a row, not using it for the rest of this fetch.|]
+    if gaveUp
+        then do
+            -- Only the final verdict becomes a validation warning. A re-queued
+            -- item is not a problem with the fetch -- another relay is about to
+            -- serve it -- so it stays at debug level.
+            let h = task.taskHash
+            logWarn logger
+                [i|No Erik relay could serve #{h}, last error from #{thisUri}: #{e}.|]
+            validatorWarning $ VWarning e
+        else
+            logDebug logger
+                [i|Erik relay #{thisUri} failed with #{e}, re-queueing for another relay.|]
+
+
+{- | Run a one-off query that is not part of the work queue, trying relays in
+     turn until one answers.
+
+     This is for the index: unlike every other Erik download it is relay state
+     rather than a content-addressed object, so it is fetched once, up front,
+     before there is a queue to put it on.
+-}
+withAnyRelay :: ValidatorIO es => AppLogger -> Relays -> (URI -> Eff es a) -> Eff es a
+withAnyRelay logger Relays { relayList } f = do
+    live <- liftIO $ atomically $ filterM (\r -> readTVar r.alive) relayList
+    go [ r.relayUri | r <- live ]
   where
     go [] = appError $ ErikE $ UnknownErikProblem
                 "All Erik relays failed to answer the query."
-    go (r : rest) =
-        runOn r `catchError` \_cs e ->
+    go (uri : rest) =
+        f uri `catchError` \_cs (e :: AppError) ->
             case rest of
                 [] -> appError e
                 _  -> do
-                    let Relay { relayUri = thisUri } = r
                     logWarn logger
-                        [i|Erik relay #{thisUri} failed with #{e}, trying the next relay.|]
+                        [i|Erik relay #{uri} failed with #{e}, trying the next relay.|]
                     validatorWarning $ VWarning e
                     go rest
 
-    runOn relay@Relay {..} =
-        withSemaphore globalSem $
-            withSemaphore relaySem $
-                counted relay (f relayUri)
 
-    -- `bracket_` so the in-flight counters unwind on any exception, not just
-    -- on a validator error.
-    counted Relay {..} action = do
-        r <- bracket_ (adjust 1) (adjust (-1)) (tryError @AppError action)
-        -- The verdict and the report it triggers happen in one transaction, so
-        -- the root process hears about a dead relay the moment this pool
-        -- concludes it is dead -- not at the end of the fetch, by which time
-        -- every other worker in the round has already started and the news is
-        -- too late to spare them the same timeout.
-        --
-        -- The threshold matters: reporting the first failure would bench a
-        -- healthy relay for one transient 404 or slow object, while a genuinely
-        -- dead relay fails every query and crosses it almost at once. That
-        -- makes it one message per relay per worker, so the bus stays quiet.
-        liftIO $ atomically $
-            case r of
-                Left _  -> do
-                    modifyTVar' failed (+ 1)
-                    modifyTVar' consecutiveFailures (+ 1)
-                    n <- readTVar consecutiveFailures
-                    when (n == deadRelayThreshold) $
-                        pushErikRelayReportSTM logger [ ErikRelayReport relayUri 0 1 ]
-                Right _ -> do
-                    modifyTVar' served (+ 1)
-                    writeTVar consecutiveFailures 0
-        either (uncurry rethrowError) pure r
-      where
-        adjust d = liftIO $ atomically $ do
-            modifyTVar' inFlight (+ d)
-            modifyTVar' globalInFlight (+ d)
+relayStats :: MonadIO m => Relays -> m [RelayStat]
+relayStats Relays { relayList } = liftIO $ atomically $
+    forM relayList $ \r ->
+        RelayStat r.relayUri <$> readTVar r.served <*> readTVar r.failed
 
-    -- Prefer a relay that is answering over one that is not, and among
-    -- equals the least busy one. A relay that starts failing therefore drifts
-    -- to the back by itself and drifts forward again once it recovers.
-    leastLoadedFirst = liftIO $ atomically $ do
-        loaded <- forM relays $ \r@Relay { inFlight = n, consecutiveFailures = cf } ->
-                    (,r) <$> ((,) <$> readTVar cf <*> readTVar n)
-        pure $! map snd $ sortOn fst loaded
+poolFailures :: MonadIO m => WorkPool t -> m [(Hash, AppError)]
+poolFailures pool = liftIO $ readTVarIO pool.failures
 
-
-relayStats :: MonadIO m => RelayPool -> m [RelayStat]
-relayStats RelayPool {..} = liftIO $ atomically $
-    forM relays $ \Relay {..} ->
-        RelayStat relayUri <$> readTVar inFlight <*> readTVar served <*> readTVar failed
-
-globalInFlightCount :: MonadIO m => RelayPool -> m Int
-globalInFlightCount RelayPool {..} = liftIO $ readTVarIO globalInFlight
+poolSucceeded :: MonadIO m => WorkPool t -> m Int
+poolSucceeded pool = liftIO $ readTVarIO pool.succeeded

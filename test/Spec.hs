@@ -37,7 +37,8 @@ main = defaultMain $ testGroup "All tests" [
         loggingSpec,
         workflowSpec,
         topDownRegressionGroup,
-        storableEncodingSpec
+        storableEncodingSpec,
+        relayPoolSpec
 
         -- erikSpec
     ]  
