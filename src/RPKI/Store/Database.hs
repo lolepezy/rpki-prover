@@ -27,10 +27,11 @@ module RPKI.Store.Database (
     getLocationsByKey, getHashByKey,
     saveObject, saveStorableObject,
     getObjectMeta, linkObjectToUrl,
-    hashExists, deleteObjectByHash, deleteObjectByKey,
+    hashExists, existingHashes, getObjectsByHashes,
+    deleteObjectByHash, deleteObjectByKey,
     -- * Erik protocol functions
     getErikIndex, saveErikIndex, getAllErikIndexes,
-    getErikPartition, saveErikPartition, deleteOrphanedErikPartitions,
+    getErikPartition, existingErikPartitions, saveErikPartition, deleteOrphanedErikPartitions,
     getMftsForAKI, findAllMftsByAKI, getMftByKey,
     getMftShorcut, getMftShorcutMeta, getMftShorcutChildrenLight, getMftShorcutChildrenFull,
     getMftShortcutChildFileName,
@@ -437,6 +438,37 @@ hashExists (Tx conn) _ h = liftIO $ do
     rows <- query conn "SELECT 1 FROM objects WHERE hash = ?" (Only h)
     pure $ not (null (rows :: [Only Int]))
 
+{- | Which of the given hashes are already in the object store.
+
+     One query per batch of 512 instead of one transaction per hash, which is
+     what makes it affordable for an Erik fetch to ask "what am I missing?"
+     about every object a repository publishes.
+-}
+existingHashes :: MonadIO m => Tx mode -> DB -> [Hash] -> m (Set.Set Hash)
+existingHashes (Tx conn) _ hashes = liftIO $
+    fmap (Set.fromList . concat) $
+        forM (inClauseBatches hashes) $ \(placeholders, params) -> do
+            rows <- queryNamed conn
+                (fromString $ Text.unpack $
+                    "SELECT hash FROM objects WHERE hash IN (" <> placeholders <> ")")
+                params
+            pure $ map fromOnly rows
+
+-- | Bulk 'getObjectByKey' by hash. Hashes with no object, or with a row that
+-- has been stripped of its payload, are simply absent from the result.
+getObjectsByHashes :: MonadIO m => Tx mode -> DB -> [Hash] -> m [(Hash, RpkiObjectLifecycle)]
+getObjectsByHashes (Tx conn) _ hashes = liftIO $
+    fmap concat $
+        forM (inClauseBatches hashes) $ \(placeholders, params) -> do
+            rows <- queryNamed conn
+                (fromString $ Text.unpack $
+                    "SELECT hash, data FROM objects WHERE data IS NOT NULL AND hash IN ("
+                        <> placeholders <> ")")
+                params
+            pure [ (h, ro)
+                 | (h, bs) <- rows
+                 , let StorableObject { object = ro } = decodeSO bs :: StorableObject RpkiObjectLifecycle ]
+
 -- ---------------------------------------------------------------------------
 -- Erik protocol functions
 -- https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-erik-protocol/
@@ -493,6 +525,23 @@ getErikPartition :: MonadIO m => Tx mode -> DB -> Hash -> m (Maybe ErikPartition
 getErikPartition (Tx conn) _ h = liftIO $ do
     rows <- query conn "SELECT data FROM erik_partitions WHERE hash = ?" (Only h)
     pure $ fmap (deserialiseField . fromOnly) (listToMaybe rows)
+
+{- | Which of the partitions an index names are already cached.
+
+     Only the hash column, deliberately: the caller wants to know which
+     partitions to download, and pulling the blobs here would mean holding every
+     manifest list in the index in memory at once.
+-}
+existingErikPartitions :: MonadIO m => Tx mode -> DB -> [Hash] -> m (Set.Set Hash)
+existingErikPartitions (Tx conn) _ hashes = liftIO $
+    fmap (Set.fromList . concat) $
+        forM (inClauseBatches hashes) $ \(placeholders, params) -> do
+            rows <- queryNamed conn
+                (fromString $ Text.unpack $
+                    "SELECT hash FROM erik_partitions WHERE hash IN ("
+                        <> placeholders <> ")")
+                params
+            pure $ map fromOnly rows
 
 saveErikPartition :: MonadIO m => Tx 'RW -> DB -> Hash -> ErikPartition -> m ()
 saveErikPartition (Tx conn) _ h partition = liftIO $
