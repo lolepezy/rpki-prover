@@ -28,7 +28,7 @@ import           Control.Monad
 
 import           Effectful
 import           Effectful.Concurrent.Async       (Concurrent, pooledForConcurrentlyN)
-import           Effectful.Error.Static           (catchError, tryError)
+import           Effectful.Error.Static           (tryError)
 
 import qualified Data.List                        as List
 import qualified Data.Set                         as Set
@@ -360,19 +360,31 @@ withAnyRelay logger relays f = do
                 "All Erik relays failed to answer the query."
     go (relay : rest) = do
         let uri = relay.relayUri
-        f uri `catchError` \_cs (e :: AppError) -> do
-            benched <- liftIO $ atomically $
-                            fst <$> chargeFailureSTM logger relays relay True
-            when benched $
-                logDebug logger
-                    [i|Erik relay #{uri} could not serve the index, not using it for the rest of this fetch.|]
-            case rest of
-                [] -> appError e
-                _  -> do
-                    logWarn logger
-                        [i|Erik relay #{uri} failed with #{e}, trying the next relay.|]
-                    validatorWarning $ VWarning e
-                    go rest
+        tryError @AppError (f uri) >>= \case
+            -- Credit the success as well as charging the failures. Without this
+            -- a relay that serves an index which turns out to be unchanged --
+            -- the steady state, and much the commonest outcome -- is never
+            -- credited with anything, so a healthy relay looks exactly like one
+            -- that has never been tried.
+            Right r -> do
+                liftIO $ atomically $ do
+                    modifyTVar' relay.served (+ 1)
+                    writeTVar relay.consecutiveFailures 0
+                pure r
+
+            Left (_, e) -> do
+                benched <- liftIO $ atomically $
+                                fst <$> chargeFailureSTM logger relays relay True
+                when benched $
+                    logDebug logger
+                        [i|Erik relay #{uri} could not serve the index, not using it for the rest of this fetch.|]
+                case rest of
+                    [] -> appError e
+                    _  -> do
+                        logWarn logger
+                            [i|Erik relay #{uri} failed with #{e}, trying the next relay.|]
+                        validatorWarning $ VWarning e
+                        go rest
 
 
 relayStats :: MonadIO m => Relays -> m [RelayStat]
