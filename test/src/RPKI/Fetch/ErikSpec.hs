@@ -70,7 +70,8 @@ relayPoolSpec = testGroup "Erik relay work pool" [
         poolTestCase "Drains a tree of work and deduplicates by hash" testPoolDrains,
         poolTestCase "Falls back to a relay that answers" testPoolFallsBack,
         poolTestCase "Gives up on an item no relay can serve" testPoolGivesUp,
-        poolTestCase "Benches a failing relay and finishes without it" testPoolBenchesRelay
+        poolTestCase "Benches a failing relay and finishes without it" testPoolBenchesRelay,
+        poolTestCase "Benches a relay that cannot serve the index" testIndexFailureBenches
     ]
 
 {- | A test case with a deadline.
@@ -205,5 +206,40 @@ testPoolBenchesRelay =
                 HU.assertBool
                     ("a benched relay stops taking work, but this one failed "
                         <> show failedCount <> " of 50 items")
-                    (failedCount <= relayBenchThreshold * length (relayList relays))
+                    (failedCount <= benchThreshold relays * length (relayList relays))
             _ -> HU.assertFailure "no relay recorded for the dead URI"
+
+
+{- The index fetch is the first thing a fetch does and the last cheap chance to
+   notice a relay is unusable. A relay that fails it must be out of rotation
+   before the work pool starts, or every one of its threads pays the same
+   connect timeout over again to learn the same thing.
+-}
+testIndexFailureBenches :: HU.Assertion
+testIndexFailureBenches =
+    withQuietLogger $ \logger -> do
+        let deadUri = URI "https://dead"
+        let liveUri = URI "https://alive"
+        relays <- newRelays 3 [deadUri, liveUri]
+        (r, _) <- runValidatorIO (newScopes "index-test") $
+            withAnyRelay logger relays $ \uri ->
+                if uri == deadUri
+                    then appError $ ErikE $ UnknownErikProblem "no index here"
+                    else pure uri
+
+        HU.assertEqual "the live relay served the index" (Right liveUri) r
+
+        case [ relay | relay <- relayList relays, relay.relayUri == deadUri ] of
+            [deadRelay] -> do
+                stillAlive <- readTVarIO deadRelay.alive
+                HU.assertBool
+                    "a relay that cannot serve the index is benched straight away"
+                    (not stillAlive)
+            _ -> HU.assertFailure "no relay recorded for the dead URI"
+
+        -- The live relay answered, so it must still be usable.
+        case [ relay | relay <- relayList relays, relay.relayUri == liveUri ] of
+            [liveRelay] -> do
+                stillAlive <- readTVarIO liveRelay.alive
+                HU.assertBool "the relay that answered stays in rotation" stillAlive
+            _ -> HU.assertFailure "no relay recorded for the live URI"
