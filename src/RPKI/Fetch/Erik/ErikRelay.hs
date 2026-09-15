@@ -17,6 +17,9 @@ import qualified Data.List                       as List
 import           Data.Either                     (partitionEithers)
 import qualified Data.Set                        as Set
 import           Data.Word                       (Word8)
+import           Data.Maybe                      (fromMaybe)
+import           Data.Hourglass                  (Seconds (..))
+import qualified System.Timeout                  as Timeout
 
 import           System.Directory
 import           System.FilePath
@@ -151,6 +154,26 @@ fetchErik
 
     maxChildSize = Size $ fromIntegral $ config ^. #validationConfig . #maxObjectSize
 
+    {- Every single download from a relay -- index, partition, manifest or
+       object -- gets a hard time limit, connection included.
+
+       http-client's own response timeout does not do this: it only bounds the
+       wait for response headers, and it is set very high for the sake of RRDP
+       snapshots. A relay is a different proposition. It exists to be available
+       and quick, and what it serves is small, so a relay that has not delivered
+       within a few seconds is not going to be worth waiting for: timing out
+       charges it a failure like any other, the item moves to the next relay,
+       and a relay that keeps doing it is benched in favour of RRDP and rsync.
+    -}
+    withinDownloadTimeout :: IO (Either AppError r) -> IO (Either AppError r)
+    withinDownloadTimeout download = do
+        let Seconds s = config ^. typed @ErikConf . #downloadTimeout
+        -- Not 'ErikDownloadTimeout': that one means a whole FQDN fetch ran out
+        -- of time, and its message says so. This is one download, and the scope
+        -- it is recorded in already names the URL that did not answer.
+        fromMaybe (Left $ ErikE $ Can'tDownloadObject [i|no response within #{s} seconds|])
+            <$> Timeout.timeout (fromIntegral s * 1_000_000) download
+
     -- Raise the capability count from the 1 the worker started with, but only
     -- when there is enough independent work to use it.
     scaleUpCapabilities partitionCount = do
@@ -247,8 +270,10 @@ fetchErik
             let maxSize = config ^. typed @ErikConf . #maxSize
             let theIndexUri = indexUri relayUri
             (indexBs, _, httpStatus, _ignoreEtag) <-
-                    fromTryM (ErikE . Can'tDownloadObject . U.fmtEx) $
-                        downloadToBS tmpDir theIndexUri Nothing maxSize
+                    vFocusOn LocationFocus theIndexUri $
+                        fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $
+                            withinDownloadTimeout $
+                                Right <$> downloadToBS tmpDir theIndexUri Nothing maxSize
             when (httpStatus /= mempty) $
                 appError $ ErikE $ Can'tDownloadObject [i|Could not download index #{theIndexUri}, http status = #{httpStatus}|]
 
@@ -288,7 +313,7 @@ fetchErik
                     withCleanupOnFailure partitionFile $ do
                         (partBs, _, _) <-
                             fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $
-                                downloadToFileHashed partUri partitionFile hash size
+                                withinDownloadTimeout $ downloadToFileHashed partUri partitionFile hash size
                                     (\actualStatus -> Left $ ErikE $ Can'tDownloadObject
                                                         $ U.convert $ "Http status: " <> show actualStatus)
                                     (\actualHash -> Left $ ErikE $ ErikHashMismatchError {
@@ -372,7 +397,7 @@ fetchErik
                     withCleanupOnFailure manifestFile $ do
                         (manifestBs, _, _) <-
                             fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $
-                                downloadToFileHashed manifestUri manifestFile hash size
+                                withinDownloadTimeout $ downloadToFileHashed manifestUri manifestFile hash size
                                     (\actualStatus -> Left $ ErikE $ Can'tDownloadObject
                                                         $ U.convert $ "Http status: " <> show actualStatus)
                                     (\actualHash -> Left $ ErikE $ ErikHashMismatchError { expectedHash = hash, .. })
@@ -387,7 +412,7 @@ fetchErik
                 vFocusOn LocationFocus childUri $
                     withCleanupOnFailure childFile $
                         fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $
-                            downloadToFileHashed_ childUri childFile hash maxChildSize
+                            withinDownloadTimeout $ downloadToFileHashed_ childUri childFile hash maxChildSize
                                 (\actualStatus -> Left $ ErikE $ Can'tDownloadObject
                                         $ U.convert $ "Http status: " <> show actualStatus)
                                 (\actualHash -> Left $ ErikE $ ErikHashMismatchError {

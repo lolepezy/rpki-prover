@@ -114,6 +114,11 @@ data ErikConf = ErikConf {
         relayParallelism     :: Natural,
         -- How many FQDN to Erik-fetch at once.
         fqdnParallelism      :: Natural,
+        -- | Hard cap on one download from one relay, connection included. A relay
+        --   is only worth talking to while it is fast: one that is not is better
+        --   left to RRDP and rsync than waited on, and everything a relay serves
+        --   is small (an index, a partition, a single object).
+        downloadTimeout      :: Seconds,
         erikRefreshInterval  :: Seconds
     }
     deriving stock (Eq, Ord, Show, Generic)
@@ -282,6 +287,7 @@ defaultConfig = Config {
         parallelism         = 8,
         relayParallelism    = 3,
         fqdnParallelism     = 10,
+        downloadTimeout     = Seconds 10,
         erikRefreshInterval = Seconds 30
     },
     validationConfig = ValidationConfig {
