@@ -1371,8 +1371,8 @@ canRunInParallel t1 t2 =
         TaCertificateTask    -> [ValidationTask, FetchTask, CacheCleanupTask, TaCertificateTask]
 
         CacheCleanupTask     -> [ValidationTask, FetchTask, RsyncCleanupTask, TaCertificateTask]    
-        -- TA certificates can be fetched over rsync, so deleting 
-        -- the local mirror at the same time is a bad idea
+        
+        -- Don't clean up anything while fetches are in progress
         RsyncCleanupTask     -> allExcept [FetchTask, TaCertificateTask]
         LeftoversCleanupTask -> allTasks
   
