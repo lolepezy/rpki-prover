@@ -37,11 +37,11 @@ import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parse.Parse
 import           RPKI.Repository
+import           RPKI.Fetch.DirectoryTraverse
 import           RPKI.Time
 import qualified RPKI.Util                        as U
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Worker
-import           RPKI.Fetch.DirectoryTraverse
 
 import           System.Directory                 (createDirectoryIfMissing)
 
