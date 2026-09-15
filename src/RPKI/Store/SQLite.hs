@@ -395,9 +395,6 @@ schemaDDL =
             ta_cert_key INTEGER REFERENCES objects(object_key),
             data        BLOB    NOT NULL,
             active      INTEGER NOT NULL DEFAULT 1,
-            -- Errors and warnings of the latest TA certificate download and
-            -- validation. They are produced by a background job, so they have
-            -- to be kept here until the next top-down validation picks them up.
             validations BLOB
         )
       |]

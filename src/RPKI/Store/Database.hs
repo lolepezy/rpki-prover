@@ -712,10 +712,6 @@ saveTA (Tx conn) ta = liftIO $
         |]
         (unTaName (getTaName (tal ta)), taCertKey ta, serialiseField ta)
 
--- | Store the issues found while downloading and validating the TA certificate.
--- It is a no-op if there is no TA record yet, i.e. if no download of the TA
--- certificate has ever succeeded: there's nothing to validate for such a TA,
--- and the TA certificate job logs the error every time it tries.
 saveTaValidations :: MonadIO m => Tx 'RW -> TaName -> Validations -> m ()
 saveTaValidations (Tx conn) taName validations = liftIO $
     execute conn
