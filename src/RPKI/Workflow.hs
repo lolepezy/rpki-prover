@@ -197,6 +197,9 @@ newRunningTasks = Tasks <$> newTVar mempty
 -- 
 runValidatorWorkflow :: MaintainableStorage s => AppContext s -> [TAL] -> IO ()
 runValidatorWorkflow appContext@AppContext {..} tals = do    
+    DB.rwTxT database $ \tx ->
+        DB.setActiveTAs tx (map getTaName tals)
+        
     case config ^. #proverRunMode of     
         ServerMode   -> selfRecoveryLoop 0
         OneOffMode _ -> 
@@ -314,18 +317,20 @@ runAll appContext@AppContext {..} tals = do
                 triggeredValidationLoop canValidateAgain RanBefore           
 
             waitForTasToValidate = do 
-                -- On the very first run go ahead with the TAs that already have their 
-                -- certificate in the cache. There's nothing to validate for the rest of 
-                -- them (and, on a cold cache, for any of them) until the TA certificate 
-                -- job has downloaded the certificates, and it triggers the validation 
-                -- itself as soon as it has.
                 readyForFirstRun <- 
                     case (run, config ^. #proverRunMode) of 
                         (RanBefore, _) -> pure []
+
                         -- TA certificates have just been refreshed in the one-off mode,
                         -- so there's nothing to wait for, whatever is missing by now 
                         -- is going to be reported as an error by the validation.
                         (FirstRun, OneOffMode _) -> pure tals
+
+                        -- On the very first run go ahead with the TAs that already have their 
+                        -- certificate in the cache. There's nothing to validate for the rest of 
+                        -- them (and, on a cold cache, for any of them) until the TA certificate 
+                        -- job has downloaded the certificates, and it triggers the validation 
+                        -- itself as soon as it has.                        
                         (FirstRun, ServerMode)   -> do 
                             cached <- DB.roTxT database $ \tx ->
                                 Set.fromList . map (getTaName . (^. #tal)) <$> DB.getTAs tx

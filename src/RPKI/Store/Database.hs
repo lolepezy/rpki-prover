@@ -37,7 +37,7 @@ module RPKI.Store.Database (
     saveMftShorcutMeta, insertMftShortcutChildren, deleteMftShortcutChildren,
     deleteMftShortcut, getBySKI, getFirstCaCertBySKI, getTaCertByKey,
     markAsValidated,
-    saveTA, deleteTA, getTA, getTAs, setActiveTAs,
+    saveTA, getTA, getTAs, setActiveTAs,
     saveTaValidations, getTaValidations,
     versionsBackwards, previousVersion, getLatestVersion,
     getValidationsPerTA, getMetricsPerTA, getCommonMetrics,
@@ -162,7 +162,7 @@ rwTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 60
+currentDatabaseVersion = 61
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -713,9 +713,9 @@ saveTA (Tx conn) ta = liftIO $
         (unTaName (getTaName (tal ta)), taCertKey ta, serialiseField ta)
 
 -- | Store the issues found while downloading and validating the TA certificate.
--- It is a no-op if there is no TA record yet, i.e. if the very first download of
--- the TA certificate failed: in that case top-down validation fetches the
--- certificate itself and reports the same issues.
+-- It is a no-op if there is no TA record yet, i.e. if no download of the TA
+-- certificate has ever succeeded: there's nothing to validate for such a TA,
+-- and the TA certificate job logs the error every time it tries.
 saveTaValidations :: MonadIO m => Tx 'RW -> TaName -> Validations -> m ()
 saveTaValidations (Tx conn) taName validations = liftIO $
     execute conn
@@ -728,10 +728,6 @@ getTaValidations (Tx conn) taName = liftIO $ do
         "SELECT validations FROM trust_anchors WHERE ta_name = ? AND validations IS NOT NULL"
         (Only (unTaName taName))
     pure $ maybe mempty (deserialiseCompressed . fromOnly) (listToMaybe rows)
-
-deleteTA :: MonadIO m => Tx 'RW -> TAL -> m ()
-deleteTA (Tx conn) t = liftIO $
-    execute conn "DELETE FROM trust_anchors WHERE ta_name = ?" (Only (unTaName (getTaName t)))
 
 getTA :: MonadIO m => Tx mode -> TaName -> m (Maybe StorableTA)
 getTA (Tx conn) name = liftIO $ do

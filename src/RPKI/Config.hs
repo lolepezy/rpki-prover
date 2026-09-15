@@ -154,10 +154,6 @@ data ValidationConfig = ValidationConfig {
         -- up-to-date, it just refreshes every time it runs.
         taCertificateRefreshInterval   :: Seconds,
 
-        -- Do not retry to fetch a repository that failed 
-        -- less than this many seconds ago
-        minimalRepositoryRetryInterval :: Seconds,
-
         -- Minimal interval between forced snapshot fetches --
         -- we don't want to overload repositories
         rrdpForcedSnapshotMinInterval :: Seconds,
@@ -291,7 +287,6 @@ defaultConfig = Config {
         rrdpRepositoryRefreshInterval  = 2 * minutes,
         rsyncRepositoryRefreshInterval = 11 * minutes,    
         taCertificateRefreshInterval   = 10 * minutes,
-        minimalRepositoryRetryInterval = Seconds 10,    
         rrdpForcedSnapshotMinInterval  = 12 * hours,                
         topDownTimeout                 = 1 * hour,
         manifestProcessing             = RFC9286,

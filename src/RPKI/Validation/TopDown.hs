@@ -456,8 +456,6 @@ fetchValidateAndStoreTaCert :: (ValidatorIO es, Timeout :> es) => AppContext s
                         -> Eff es ()
 fetchValidateAndStoreTaCert appContext@AppContext {..} tal worldVersion = go
   where
-    moment = versionToInstant worldVersion
-
     go storableTa = do
         db <- liftIO $ readTVarIO database
         cachedTaCertM <- case storableTa of
@@ -495,7 +493,7 @@ fetchValidateAndStoreTaCert appContext@AppContext {..} tal worldVersion = go
                         DB.rwAppTxEx db DB.storageError $ \tx -> do
                             taCertKey <- DB.saveObject tx (WellStructuredRO (CerRO certToStore)) worldVersion
                             DB.linkObjectToUrl tx actualUrl taCertKey worldVersion
-                            DB.saveTA tx (StorableTA tal taCertKey (FetchedAt moment) ppAccess actualUrl)
+                            DB.saveTA tx (StorableTA tal taCertKey ppAccess actualUrl)
 
             -- Nothing was downloaded, the cached copy stays as it is
             CachedTA ->
