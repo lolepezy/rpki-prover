@@ -28,9 +28,11 @@ import           Control.Monad
 
 import           Effectful
 import           Effectful.Concurrent.Async       (Concurrent, pooledForConcurrentlyN)
-import           Effectful.Error.Static           (tryError)
+import           Control.Lens                     ((%~), (&), (^.))
 
+import           Data.Generics.Product.Typed      (typed)
 import qualified Data.List                        as List
+import qualified Data.Map.Strict                  as Map
 import qualified Data.Set                         as Set
 import           Data.Set                         (Set)
 import           Data.String.Interpolate.IsString
@@ -155,12 +157,64 @@ enqueueSTM WorkPool {..} items = do
         modifyTVar' fresh (new <>)
 
 
+{- | Run one attempt against one relay in a validation state of its own.
+
+     'appError' records an error in the validation state before it throws, and
+     catching the throw does not take the record back. Run straight in the
+     caller's state, then, every attempt that failed would leave an error behind
+     even when the next relay served the object -- a repository fetched
+     perfectly well would still show a red issue for it.
+
+     A private state is what makes the outcome decidable afterwards: merged as it
+     is on success, and handed to 'recordFailedAttempt' otherwise. It cannot be
+     done by saving and restoring the caller's state around the attempt, because
+     the pool's threads all share that one state and a restore would wipe out
+     whatever the others recorded in the meantime.
+-}
+attemptIsolated :: ValidatorIO es
+                => (forall es'. ValidatorIO es' => Eff es' a)
+                -> Eff es (Either AppError a, ValidationState)
+attemptIsolated attempt = do
+    scopes <- askScopes
+    runValidator scopes attempt
+
+{- | Fold a failed attempt's validations into the caller.
+
+     When another relay is about to try, the attempt's errors are demoted to
+     warnings: something did go wrong with that relay and that is worth seeing,
+     but it is not a problem with the fetch. When it was the last chance, they
+     stay errors. Either way they keep the scope the attempt recorded them in,
+     which is what tells one relay's failure apart from another's.
+-}
+recordFailedAttempt :: Validator es => Bool -> AppError -> ValidationState -> Eff es ()
+recordFailedAttempt lastChance e vs = do
+    embedState $ if lastChance then vs else vs & typed @Validations %~ demoteErrors
+    -- Attempts normally record their own error. One that threw without doing so
+    -- must still leave a trace, in the caller's scope.
+    unless (recordsError vs) $
+        if lastChance then recordError else appWarn e
+  where
+    recordsError s' = let
+        Validations m = s' ^. typed @Validations
+        in any (Set.member (VErr e)) (Map.elems m)
+
+    recordError = do
+        scopes <- askScopes
+        modifyVState $ typed %~ (mError (scopes ^. typed) e <>)
+
+    demoteErrors (Validations m) = Validations $ Map.map (Set.map demote) m
+    demote (VErr x) = VWarn (VWarning x)
+    demote w        = w
+
+
 {- | Drain the pool.
 
      @process@ is handed the relay to talk to and one item, and returns whatever
      new work that item revealed. Throwing an 'AppError' from it means "this
      relay could not serve this item": the item is re-queued against another
      relay, and only when no relay is left to try does it count as a failure.
+     Each call runs in a validation state of its own (see 'attemptIsolated'),
+     which is why @process@ has to work in any validator stack.
 
      Returns once every queued item has either been processed or failed on every
      relay. An exception (as opposed to an 'AppError') propagates and cancels
@@ -170,7 +224,7 @@ runRelayWorkers :: (ValidatorIO es, Concurrent :> es)
                 => AppLogger
                 -> Relays
                 -> WorkPool t
-                -> (URI -> t -> Eff es [(Hash, t)])
+                -> (forall es'. ValidatorIO es' => URI -> t -> Eff es' [(Hash, t)])
                 -> Eff es ()
 runRelayWorkers logger relays@Relays {..} pool process
     | null relayList = appError $ ErikE $ UnknownErikProblem "No Erik relays configured."
@@ -195,9 +249,10 @@ runRelayWorkers logger relays@Relays {..} pool process
         go = takeTask relays pool relay >>= \case
             Nothing   -> pure ()
             Just task -> do
-                r <- tryError @AppError $ process relay.relayUri task.payload
+                (r, vs) <- attemptIsolated (process relay.relayUri task.payload)
                 case r of
                     Right newWork -> do
+                        embedState vs
                         liftIO $ atomically $ do
                             modifyTVar' pool.active (subtract 1)
                             modifyTVar' pool.succeeded (+ 1)
@@ -205,8 +260,8 @@ runRelayWorkers logger relays@Relays {..} pool process
                             modifyTVar' relay.served (+ 1)
                             writeTVar relay.consecutiveFailures 0
                         go
-                    Left (_, e) -> do
-                        onFailure logger relays pool relay task e
+                    Left e -> do
+                        onFailure logger relays pool relay task e vs
                         go
 
 
@@ -298,8 +353,9 @@ chargeFailureSTM logger relays@Relays { relayList } relay benchNow = do
 -- | Account for a failed attempt: charge the relay, then either re-queue the
 -- item for another relay or give up on it.
 onFailure :: ValidatorIO es
-          => AppLogger -> Relays -> WorkPool t -> Relay -> Task t -> AppError -> Eff es ()
-onFailure logger relays pool relay task e = do
+          => AppLogger -> Relays -> WorkPool t -> Relay -> Task t -> AppError -> ValidationState
+          -> Eff es ()
+onFailure logger relays pool relay task e vs = do
     let thisUri = relay.relayUri
     (gaveUp, benched) <- liftIO $ atomically $ do
         (bench, othersAlive) <- chargeFailureSTM logger relays relay False
@@ -323,15 +379,12 @@ onFailure logger relays pool relay task e = do
         let n = benchThreshold relays
         logWarn logger
             [i|Erik relay #{thisUri} failed #{n} times in a row, not using it for the rest of this fetch.|]
+    recordFailedAttempt gaveUp e vs
     if gaveUp
         then do
-            -- Only the final verdict becomes a validation warning. A re-queued
-            -- item is not a problem with the fetch -- another relay is about to
-            -- serve it -- so it stays at debug level.
             let h = task.taskHash
             logWarn logger
                 [i|No Erik relay could serve #{h}, last error from #{thisUri}: #{e}.|]
-            validatorWarning $ VWarning e
         else
             logDebug logger
                 [i|Erik relay #{thisUri} failed with #{e}, re-queueing for another relay.|]
@@ -351,7 +404,8 @@ onFailure logger relays pool relay task e = do
      is what keeps the work pool from starting that relay's threads and paying
      a second full connect timeout to learn the same thing.
 -}
-withAnyRelay :: ValidatorIO es => AppLogger -> Relays -> (URI -> Eff es a) -> Eff es a
+withAnyRelay :: ValidatorIO es
+             => AppLogger -> Relays -> (forall es'. ValidatorIO es' => URI -> Eff es' a) -> Eff es a
 withAnyRelay logger relays f = do
     live <- liftIO $ atomically $ filterM (\r -> readTVar r.alive) relays.relayList
     go live
@@ -360,30 +414,35 @@ withAnyRelay logger relays f = do
                 "All Erik relays failed to answer the query."
     go (relay : rest) = do
         let uri = relay.relayUri
-        tryError @AppError (f uri) >>= \case
+        (result, vs) <- attemptIsolated (f uri)
+        case result of
             -- Credit the success as well as charging the failures. Without this
             -- a relay that serves an index which turns out to be unchanged --
             -- the steady state, and much the commonest outcome -- is never
             -- credited with anything, so a healthy relay looks exactly like one
             -- that has never been tried.
             Right r -> do
+                embedState vs
                 liftIO $ atomically $ do
                     modifyTVar' relay.served (+ 1)
                     writeTVar relay.consecutiveFailures 0
                 pure r
 
-            Left (_, e) -> do
+            Left e -> do
                 benched <- liftIO $ atomically $
                                 fst <$> chargeFailureSTM logger relays relay True
                 when benched $
                     logDebug logger
                         [i|Erik relay #{uri} could not serve the index, not using it for the rest of this fetch.|]
+                -- One entry per relay that failed: a warning for each that was
+                -- followed by another try, an error for the last. The attempt
+                -- has recorded the error already, so the rethrow must not.
+                recordFailedAttempt (null rest) e vs
                 case rest of
-                    [] -> appError e
+                    [] -> fromValue (Left e)
                     _  -> do
                         logWarn logger
                             [i|Erik relay #{uri} failed with #{e}, trying the next relay.|]
-                        validatorWarning $ VWarning e
                         go rest
 
 
