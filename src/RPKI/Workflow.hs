@@ -1268,10 +1268,9 @@ runCacheCleanup AppContext {..} worldVersion = do
                     MFT -> tooOldShortLived version
                     CRL -> tooOldShortLived version
                     _   -> tooOldLongLived version,
-            -- An object that hasn't been seen at a URL for this long has moved 
-            -- on; forgetting the association is what stops the "multiple 
-            -- locations" warning from outliving the migration that caused it.
-            objectUrlIsTooOld = tooOldLongLived
+
+            -- We don't want the warning about multiple lcoations to hang around for too long
+            objectUrlIsTooOld = tooOldShortLived
         }
 
 -- | Load the state corresponding to the last completed validation version.
