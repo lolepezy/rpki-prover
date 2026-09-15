@@ -10,8 +10,12 @@ import qualified Test.Tasty.HUnit                  as HU
 
 import           Control.Concurrent.STM
 import qualified System.Timeout                    as Timeout
-import           Data.Either                       (isRight)
+import           Control.Lens                      ((^.))
+import           Data.Either                       (isLeft, isRight)
+import           Data.Generics.Product.Typed       (typed)
 import qualified Data.List                         as List
+import qualified Data.Map.Strict                   as Map
+import qualified Data.Set                          as Set
 
 import           Effectful
 
@@ -71,7 +75,9 @@ relayPoolSpec = testGroup "Erik relay work pool" [
         poolTestCase "Falls back to a relay that answers" testPoolFallsBack,
         poolTestCase "Gives up on an item no relay can serve" testPoolGivesUp,
         poolTestCase "Benches a failing relay and finishes without it" testPoolBenchesRelay,
-        poolTestCase "Benches a relay that cannot serve the index" testIndexFailureBenches
+        poolTestCase "Benches a relay that cannot serve the index" testIndexFailureBenches,
+        poolTestCase "An index served after a failed relay records no error" testIndexFallbackRecordsNoError,
+        poolTestCase "An index no relay serves records each failure once" testIndexAllRelaysFailRecordsEachOnce
     ]
 
 {- | A test case with a deadline.
@@ -97,15 +103,22 @@ withQuietLogger = withLogger (newLogConfig ErrorL MainLog)
 runPool :: AppLogger
         -> [URI]
         -> [Int]
-        -> (URI -> Int -> Eff AppEffects [(Hash, Int)])
-        -> IO (Either AppError (), WorkPool Int, Relays)
+        -> (forall es. ValidatorIO es => URI -> Int -> Eff es [(Hash, Int)])
+        -> IO (Either AppError (), WorkPool Int, Relays, ValidationState)
 runPool logger uris initial process = do
     relays <- newRelays 3 uris
     pool   <- newWorkPool
     enqueue pool [ (intHash n, n) | n <- initial ]
-    (r, _) <- runValidatorIO (newScopes "pool-test") $
+    (r, vs) <- runValidatorIO (newScopes "pool-test") $
                 runRelayWorkers logger relays pool process
-    pure (r, pool, relays)
+    pure (r, pool, relays, vs)
+
+-- | (errors, warnings) recorded anywhere in a validation state.
+issueCounts :: ValidationState -> (Int, Int)
+issueCounts vs = let
+    Validations m = vs ^. typed @Validations
+    issues = concatMap Set.toList (Map.elems m)
+    in (length [ () | VErr _ <- issues ], length [ () | VWarn _ <- issues ])
 
 {- A three-level tree in which the two level-1 items share all of their
    children, so half of the fan-out is duplicate references. The queue is keyed
@@ -119,7 +132,7 @@ testPoolDrains =
                 | n < 10    = [20, 21, 22, 23]   -- both roots point at the same children
                 | n < 30    = [100 + n]
                 | otherwise = []
-        (r, pool, _) <- runPool logger [URI "https://a", URI "https://b"] [1, 2] $ \_ n -> do
+        (r, pool, _, _) <- runPool logger [URI "https://a", URI "https://b"] [1, 2] $ \_ n -> do
             liftIO $ atomically $ modifyTVar' seen (n :)
             pure [ (intHash c, c) | c <- children n ]
 
@@ -137,7 +150,7 @@ testPoolFallsBack =
     withQuietLogger $ \logger -> do
         let deadUri = URI "https://dead"
         seen <- newTVarIO ([] :: [Int])
-        (r, pool, _) <- runPool logger [deadUri, URI "https://alive"] [1 .. 20] $ \uri n ->
+        (r, pool, _, vs) <- runPool logger [deadUri, URI "https://alive"] [1 .. 20] $ \uri n ->
             if uri == deadUri
                 then appError $ ErikE $ UnknownErikProblem "nope"
                 else do
@@ -150,6 +163,10 @@ testPoolFallsBack =
             [1 .. 20] (List.sort processed)
         failures <- poolFailures pool
         HU.assertEqual "no item counted as failed" [] (map fst failures)
+        -- The dead relay's refusals are worth seeing, but every item was served
+        -- in the end, so none of them may show up as an error.
+        HU.assertEqual "items another relay served leave no errors behind"
+            0 (fst $ issueCounts vs)
 
 -- | One poisoned item that no relay can serve must end up in `failures` without
 -- stalling the pool or taking the other items down with it.
@@ -157,7 +174,7 @@ testPoolGivesUp :: HU.Assertion
 testPoolGivesUp =
     withQuietLogger $ \logger -> do
         seen <- newTVarIO ([] :: [Int])
-        (r, pool, _) <- runPool logger [URI "https://a", URI "https://b"] [1 .. 10] $ \_ n ->
+        (r, pool, _, vs) <- runPool logger [URI "https://a", URI "https://b"] [1 .. 10] $ \_ n ->
             if n == 7
                 then appError $ ErikE $ UnknownErikProblem "poisoned"
                 else do
@@ -171,6 +188,10 @@ testPoolGivesUp =
         failures <- poolFailures pool
         HU.assertEqual "the poisoned item is reported once"
             [intHash 7] (map fst failures)
+        -- Tried on both relays: the first refusal is a warning, only the last
+        -- one -- after which nothing was left to try -- is an error.
+        HU.assertEqual "the poisoned item leaves exactly one error"
+            1 (fst $ issueCounts vs)
 
 {- A relay failing repeatedly gets benched, and its share of the queue has to
    end up with the relay that is still answering -- including items it had
@@ -182,7 +203,7 @@ testPoolBenchesRelay =
     withQuietLogger $ \logger -> do
         let deadUri = URI "https://dead"
         seen <- newTVarIO ([] :: [Int])
-        (r, pool, relays) <- runPool logger [deadUri, URI "https://alive"] [1 .. 50] $ \uri n ->
+        (r, pool, relays, _) <- runPool logger [deadUri, URI "https://alive"] [1 .. 50] $ \uri n ->
             if uri == deadUri
                 then appError $ ErikE $ UnknownErikProblem "nope"
                 else do
@@ -243,3 +264,36 @@ testIndexFailureBenches =
                 stillAlive <- readTVarIO liveRelay.alive
                 HU.assertBool "the relay that answered stays in rotation" stillAlive
             _ -> HU.assertFailure "no relay recorded for the live URI"
+
+
+-- | The case from the UI: a relay that fails the index before another serves it
+-- used to leave a red issue behind even though the fetch went fine.
+testIndexFallbackRecordsNoError :: HU.Assertion
+testIndexFallbackRecordsNoError =
+    withQuietLogger $ \logger -> do
+        let deadUri = URI "https://dead"
+        let liveUri = URI "https://alive"
+        relays <- newRelays 3 [deadUri, liveUri]
+        (r, vs) <- runValidatorIO (newScopes "index-fallback") $
+            withAnyRelay logger relays $ \uri ->
+                if uri == deadUri
+                    then appError $ ErikE $ UnknownErikProblem "no index here"
+                    else pure uri
+
+        HU.assertEqual "the live relay served the index" (Right liveUri) r
+        HU.assertEqual "the refusal is one warning and no error"
+            (0, 1) (issueCounts vs)
+
+-- | And when nobody serves it, each relay's failure appears once -- the same
+-- failure is no longer recorded both as an error and as a warning.
+testIndexAllRelaysFailRecordsEachOnce :: HU.Assertion
+testIndexAllRelaysFailRecordsEachOnce =
+    withQuietLogger $ \logger -> do
+        relays <- newRelays 3 [URI "https://a", URI "https://b"]
+        (r, vs) <- runValidatorIO (newScopes "index-all-fail") $
+            withAnyRelay logger relays $ \(URI u) ->
+                appError (ErikE $ Can'tDownloadObject ("no index at " <> u)) >> pure ()
+
+        HU.assertBool "the fetch fails" (isLeft r)
+        HU.assertEqual "a warning for the relay that was followed by another try, an error for the last"
+            (1, 1) (issueCounts vs)
