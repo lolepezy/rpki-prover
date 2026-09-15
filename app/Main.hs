@@ -670,6 +670,7 @@ data CLIOptions = CLIOptions {
         erikRelay                :: [String],
         erikParallelism          :: Maybe Natural,
         erikRelayParallelism     :: Maybe Natural,
+        erikDownloadTimeout      :: Maybe Int64,
         rsyncClientPath          :: Maybe String,
         httpApiPort              :: Maybe Word16,
         sqliteMmapMb             :: Maybe Int64,
@@ -815,6 +816,12 @@ cliOptionsParser = CLIOptions
             (  long "erik-relay-parallelism"
             <> metavar "COUNT"
             <> help "Maximum number of Erik relay downloads in flight against any single relay."))
+    <*> optional (option auto
+            (  long "erik-download-timeout"
+            <> metavar "SECONDS"
+            <> help ("Hard time limit in seconds on every single download from an Erik relay, "
+                  <> "connection included (default: " <> show defErikDownloadTimeout <> "). "
+                  <> "A relay that does not answer within it is treated as failing for that download.")))
     <*> optional (strOption
             (  long "rsync-client-path"
             <> metavar "PATH"
@@ -942,6 +949,7 @@ cliOptionsParser = CLIOptions
     Seconds defRsyncTimeout   = cfg ^. #rsyncConf . #rsyncTimeout
     Seconds defErikTimeout    = cfg ^. #erikConf . #erikTimeout
     Seconds defErikRefresh    = cfg ^. #erikConf . #erikRefreshInterval
+    Seconds defErikDownloadTimeout = cfg ^. #erikConf . #downloadTimeout
     defHttpApiPort            = cfg ^. #httpApiConf . #port
     defRtrAddress             = rtrCfg ^. #rtrAddress
     defRtrPort                = rtrCfg ^. #rtrPort
@@ -975,6 +983,7 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & setErikRelays
         & maybeSet (#erikConf . #parallelism) erikParallelism
         & maybeSet (#erikConf . #relayParallelism) erikRelayParallelism
+        & maybeSet (#erikConf . #downloadTimeout) (Seconds <$> erikDownloadTimeout)
         & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
         & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
         & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
