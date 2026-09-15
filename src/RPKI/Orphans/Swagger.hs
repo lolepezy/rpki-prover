@@ -119,6 +119,8 @@ instance ToSchema LatestCPUTime where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 instance ToSchema MaxMemory where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
+instance ToSchema MaxSize where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 instance ToSchema AvgMemory where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)    
 instance ToSchema Size where
@@ -135,6 +137,7 @@ instance ToSchema RsyncConf
 instance ToSchema RrdpConf
 instance ToSchema ErikConf
 instance ToSchema ValidationConfig
+instance ToSchema IoLimits
 instance ToSchema SystemConfig
 instance ToSchema HttpApiConfig
 instance ToSchema RtrConfig

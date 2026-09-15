@@ -87,7 +87,7 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
             appError $ InternalE $ WorkerError e
         Right (RrdpFetchResult z) -> do     
             logWorkerDone logger workerId wr
-            pushSystem logger $ cpuMemMetric "rrdp-fetch" cpuTime clockTime maxRtsHeap maxProcessRss
+            pushSystem logger $ resourceUsageMetric "rrdp-fetch" clockTime stats
             embedValidatorT $ pure z
 
 

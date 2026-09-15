@@ -475,6 +475,7 @@ toInternalErrorMessage = \case
     WorkerTimeout t      -> t
     WorkerOutOfCpuTime t -> t
     WorkerOutOfMemory t  -> t
+    WorkerTooMuchIO t    -> t
     WorkerDetectedDifferentExecutable t  -> t
 
 fmtOID :: OID -> Text

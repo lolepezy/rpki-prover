@@ -9,6 +9,7 @@ import           Data.Semigroup
 import           Data.Text                 (Text)
 import           RPKI.Time
 import           RPKI.AppTypes
+import           RPKI.Metrics.Process
 import           RPKI.Reporting
 import           RPKI.Store.Base.Serialisation
 
@@ -29,6 +30,12 @@ newtype LatestCPUTime = LatestCPUTime CPUTime
 instance Monoid LatestCPUTime where
     mempty = LatestCPUTime $ CPUTime 0
 
+newtype MaxSize = MaxSize Size
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+    deriving newtype (Num, Bounded)
+    deriving Semigroup via Max MaxSize
+    deriving Monoid    via Max MaxSize
 
 data AvgMemory = AvgMemory {
         totalMemory :: Sum MaxMemory,
@@ -61,7 +68,14 @@ data ResourceUsage = ResourceUsage {
         -- Same kind of number as 'maxRtsHeap' -- both are high-water marks over
         -- a whole run -- so the two are directly comparable.
         maxProcessRSS       :: MaxMemory,
-        avgProcessRSS       :: AvgMemory
+        avgProcessRSS       :: AvgMemory,
+        -- | High-water marks over the runs that happened under this scope, i.e.
+        -- the most any single run of it ever downloaded or moved to and from disk.
+        -- They are maxima rather than totals because that is what the per-worker
+        -- limits in 'IoLimits' are set against.
+        maxIncomingTraffic  :: MaxSize,
+        maxDiskRead         :: MaxSize,
+        maxDiskWrite        :: MaxSize
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary)
@@ -87,16 +101,21 @@ data SystemInfo = SystemInfo {
 newSystemInfo :: Instant -> SystemInfo
 newSystemInfo = SystemInfo mempty 
 
-cpuMemMetric :: Text -> CPUTime -> TimeMs -> MaxMemory -> MaxMemory -> SystemMetrics
-cpuMemMetric scope cpuTime clockTime maxRtsHeap' maxProcessRss' = SystemMetrics {
+resourceUsageMetric :: Text -> TimeMs -> ProcessStats -> SystemMetrics
+resourceUsageMetric scope clockTime ProcessStats {..} = let
+        DiskIO { diskRead = readBytes, diskWrite = writtenBytes } = statDiskIO
+    in SystemMetrics {
         resources = updateMetricInMap
                         (newScope scope)
-                        ((#latestCpuTime %~ (<> LatestCPUTime cpuTime)) .
-                         (#aggregatedCpuTime %~ (<> AggregatedCPUTime cpuTime)) .
+                        ((#latestCpuTime %~ (<> LatestCPUTime statCpuTime)) .
+                         (#aggregatedCpuTime %~ (<> AggregatedCPUTime statCpuTime)) .
                          (#aggregatedClockTime %~ (<> clockTime)) .
-                         (#maxRtsHeap %~ (<> maxRtsHeap')) .
-                         (#avgRtsHeap %~ (<> newAvgMemory maxRtsHeap')) .
-                         (#maxProcessRSS %~ (<> maxProcessRss')) .
-                         (#avgProcessRSS %~ (<> newAvgMemory maxProcessRss')))
+                         (#maxRtsHeap %~ (<> statMaxRtsHeap)) .
+                         (#avgRtsHeap %~ (<> newAvgMemory statMaxRtsHeap)) .
+                         (#maxProcessRSS %~ (<> statProcessRss)) .
+                         (#avgProcessRSS %~ (<> newAvgMemory statProcessRss)) .
+                         (#maxIncomingTraffic %~ (<> MaxSize statIncomingTraffic)) .
+                         (#maxDiskRead %~ (<> MaxSize readBytes)) .
+                         (#maxDiskWrite %~ (<> MaxSize writtenBytes)))
                         mempty
     }
