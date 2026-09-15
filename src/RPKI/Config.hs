@@ -148,6 +148,12 @@ data ValidationConfig = ValidationConfig {
         rrdpRepositoryRefreshInterval  :: Seconds,
         rsyncRepositoryRefreshInterval :: Seconds,
 
+        -- How often TA certificates are downloaded and validated.
+        -- It is the only thing that decides how often it happens:
+        -- the job that does it doesn't check for anything being 
+        -- up-to-date, it just refreshes every time it runs.
+        taCertificateRefreshInterval   :: Seconds,
+
         -- Do not retry to fetch a repository that failed 
         -- less than this many seconds ago
         minimalRepositoryRetryInterval :: Seconds,
@@ -284,6 +290,7 @@ defaultConfig = Config {
         revalidationInterval           = 15 * minutes,
         rrdpRepositoryRefreshInterval  = 2 * minutes,
         rsyncRepositoryRefreshInterval = 11 * minutes,    
+        taCertificateRefreshInterval   = 10 * minutes,
         minimalRepositoryRetryInterval = Seconds 10,    
         rrdpForcedSnapshotMinInterval  = 12 * hours,                
         topDownTimeout                 = 1 * hour,

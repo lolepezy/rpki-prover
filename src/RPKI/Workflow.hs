@@ -167,6 +167,9 @@ data Task =
     -- async fetches of slow repositories
     | FetchTask
 
+    -- download and validate TA certificates
+    | TaCertificateTask
+
     -- Delete local rsync mirror once in a long while
     | RsyncCleanupTask
     deriving stock (Show, Eq, Ord, Bounded, Enum, Generic)
@@ -261,7 +264,12 @@ runAll appContext@AppContext {..} tals = do
                             runRtrIfConfigured
                         ]                        
 
-                    OneOffMode _ ->
+                    OneOffMode _ -> do
+                        -- Scheduled jobs don't run in the one-off mode, so the TA 
+                        -- certificates have to be refreshed here, otherwise there 
+                        -- would be nothing to validate at all.
+                        worldVersion <- newWorldVersion
+                        void $ fetchTaCertificates workflowShared worldVersion FirstRun
                         void $ revalidate workflowShared
         )
   where
@@ -305,15 +313,33 @@ runAll appContext@AppContext {..} tals = do
                     (logException logger "Exception in revalidation delay thread")
                 triggeredValidationLoop canValidateAgain RanBefore           
 
-            waitForTasToValidate = atomically $ do
-                (`unless` retry) =<< readTVar canValidateAgain                
-                case run of
-                    FirstRun -> reset >> pure tals
-                    RanBefore -> do 
-                        tas <- readTVar (workflowShared ^. #tasToValidate)
-                        when (Set.null tas) retry
-                        reset
-                        pure $ filter (\tal -> getTaName tal `Set.member` tas) tals                           
+            waitForTasToValidate = do 
+                -- On the very first run go ahead with the TAs that already have their 
+                -- certificate in the cache. There's nothing to validate for the rest of 
+                -- them (and, on a cold cache, for any of them) until the TA certificate 
+                -- job has downloaded the certificates, and it triggers the validation 
+                -- itself as soon as it has.
+                readyForFirstRun <- 
+                    case (run, config ^. #proverRunMode) of 
+                        (RanBefore, _) -> pure []
+                        -- TA certificates have just been refreshed in the one-off mode,
+                        -- so there's nothing to wait for, whatever is missing by now 
+                        -- is going to be reported as an error by the validation.
+                        (FirstRun, OneOffMode _) -> pure tals
+                        (FirstRun, ServerMode)   -> do 
+                            cached <- DB.roTxT database $ \tx ->
+                                Set.fromList . map (getTaName . (^. #tal)) <$> DB.getTAs tx
+                            pure $ filter ((`Set.member` cached) . getTaName) tals
+
+                atomically $ do
+                    (`unless` retry) =<< readTVar canValidateAgain                
+                    case readyForFirstRun of
+                        _ : _ -> reset >> pure readyForFirstRun
+                        []    -> do 
+                            tas <- readTVar (workflowShared ^. #tasToValidate)
+                            when (Set.null tas) retry
+                            reset
+                            pure $ filter (\tal -> getTaName tal `Set.member` tas) tals                           
               where
                 reset = do 
                     writeTVar (workflowShared ^. #tasToValidate) mempty
@@ -370,7 +396,13 @@ runAll appContext@AppContext {..} tals = do
                 initialDelay = toMicroseconds interval `div` 2,                
                 taskDef = (LeftoversCleanupTask, \_ _ -> cleanupLeftovers),
                 persistent = False,
-                ..
+                interval
+            },
+            Scheduling {
+                initialDelay = 0,
+                interval = config ^. typed @ValidationConfig . #taCertificateRefreshInterval,
+                taskDef = (TaCertificateTask, fetchTaCertificates workflowShared),
+                persistent = False
             }
         ]              
 
@@ -484,6 +516,22 @@ runAll appContext@AppContext {..} tals = do
                             updatePrefixIndex appState slurmedPayloads
                         pure (rtrPayloads, slurmedPayloads)
                           
+
+    fetchTaCertificates workflowShared worldVersion _ = do
+        taNames <- fmap catMaybes $ forConcurrently tals $ \tal -> do
+            let taName = getTaName tal
+            (r, elapsed) <- timedMS $ refreshTaCertificate appContext tal worldVersion
+            case r of 
+                Left e -> do
+                    logError logger [i|Failed to download and validate TA certificate for #{taName}: #{e}.|]
+                    pure Nothing
+
+                Right _ -> do 
+                    logDebug logger [i|Downloaded and validated TA certificate for #{taName}, took #{elapsed}ms.|]
+                    pure $ Just taName
+
+        atomically $ modifyTVar' (workflowShared ^. #tasToValidate) $ \tas -> foldr Set.insert tas taNames 
+
     -- Delete objects in the store that were read by top-down validation 
     -- longer than `shortLivedCacheLifeTime` hours ago.
     cacheCleanup _ worldVersion _ = do
@@ -1312,10 +1360,15 @@ canRunInParallel t1 t2 =
         ValidationTask       -> allTasks
 
         -- two different fetches can run in parallel, it's fine    
-        FetchTask            -> [ValidationTask, FetchTask, CacheCleanupTask]
+        FetchTask            -> [ValidationTask, FetchTask, CacheCleanupTask, TaCertificateTask]
 
-        CacheCleanupTask     -> [ValidationTask, FetchTask, RsyncCleanupTask]    
-        RsyncCleanupTask     -> allExcept [FetchTask]
+        -- downloading a TA certificate is just another (tiny) fetch
+        TaCertificateTask    -> [ValidationTask, FetchTask, CacheCleanupTask, TaCertificateTask]
+
+        CacheCleanupTask     -> [ValidationTask, FetchTask, RsyncCleanupTask, TaCertificateTask]    
+        -- TA certificates can be fetched over rsync, so deleting 
+        -- the local mirror at the same time is a bad idea
+        RsyncCleanupTask     -> allExcept [FetchTask, TaCertificateTask]
         LeftoversCleanupTask -> allTasks
   
     allExcept tasks = filter (not . (`elem` tasks)) allTasks

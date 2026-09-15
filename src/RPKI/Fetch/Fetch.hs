@@ -4,7 +4,6 @@
 
 module RPKI.Fetch.Fetch where
 
-import           Control.Monad
 import           Effectful.Timeout                (Timeout)
 import           Effectful
 import           Control.Concurrent              as Conc
@@ -31,7 +30,6 @@ import           GHC.Generics
 import           Time.Types
 
 import           RPKI.AppContext
-import           RPKI.AppState
 import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
@@ -253,24 +251,7 @@ fetchRepositoryFromErikRelays
   where    
     -- Give the process some time to kill itself, 
     -- before trying to kill it from here
-    timeToKillItself = Seconds 5
-
-
--- | Check if an URL need to be re-fetched, based on fetch status and current time.
---
-needsFetching :: WithRpkiURL r => r -> Maybe Seconds -> FetchStatus -> ValidationConfig -> Now -> Bool
-needsFetching r fetchInterval status ValidationConfig {..} (Now now) = 
-    case status of
-        Pending         -> True
-        FetchedAt time  -> tooLongAgo time
-        FailedAt time   -> not $ closeEnoughMoments (Earlier time) (Later now) minimalRepositoryRetryInterval
-  where
-    tooLongAgo momendTnThePast =      
-        not $ closeEnoughMoments (Earlier momendTnThePast) (Later now) (interval $ getRpkiURL r)
-      where 
-        interval url = fromMaybe (defaultInterval url) fetchInterval            
-        defaultInterval (RrdpU _)  = rrdpRepositoryRefreshInterval
-        defaultInterval (RsyncU _) = rsyncRepositoryRefreshInterval          
+    timeToKillItself = Seconds 5       
 
 
 getPrimaryRepositoryUrl :: PublicationPoints 
