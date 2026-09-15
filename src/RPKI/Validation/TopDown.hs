@@ -403,16 +403,6 @@ refreshTaCertificate appContext@AppContext {..} tal worldVersion = do
 
 
 -- | Get the TA certificate to start the top-down validation from.
--- |
--- | Downloading and validating TA certificates is entirely the business of the
--- | background job (`TaCertificateTask` in `RPKI.Workflow`), so all that is left
--- | to do here is to pick up what it has stored, together with the issues it has
--- | found, so that they end up in the same place as the other issues of the TA.
--- |
--- | Not having a TA certificate in the cache is an error and not something to fix
--- | here: the job downloads certificates before anything gets validated and
--- | triggers the validation itself once it has them.
--- |
 -- | This function doesn't throw exceptions.
 taCertificateFromCache :: ValidatorIO es => AppContext s
                         -> TAL
@@ -421,15 +411,16 @@ taCertificateFromCache AppContext {..} tal = do
     db <- liftIO $ readTVarIO database
     ta <- DB.roAppTxEx db DB.storageError $ \tx -> DB.getTA tx taName
     case ta of
-        Nothing -> taCertProblem "there's no TA certificate in the cache yet"
+        Nothing       -> taCertProblem "there's no TA certificate in the cache yet"
         Just storedTa -> do
             -- Issues found by the latest download and validation of the TA certificate
-            taValidations <- DB.roAppTxEx db DB.storageError $ \tx ->
-                    DB.getTaValidations tx taName
+            (taCert, taValidations) <-
+                DB.roAppTxEx db DB.storageError $ \tx ->
+                    (,) <$> DB.getTaCertByKey tx (storedTa ^. #taCertKey)
+                        <*> DB.getTaValidations tx taName
+
             embedState $ mempty & typed .~ taValidations
 
-            taCert <- DB.roAppTxEx db DB.storageError $ \tx ->
-                    DB.getTaCertByKey tx (storedTa ^. #taCertKey)
             case taCert of
                 -- The object is gone from the cache, the next run of the TA
                 -- certificate job will download and store it again.

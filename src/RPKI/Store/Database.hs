@@ -1466,9 +1466,9 @@ appTx db f txF = do
     r <- withSeqEffToIO $ \unlift ->
             txF db (\tx ->
                 unlift (tryError @AppError (f tx)) >>= \case
-                    Left (_, e) -> throwIO (TxRollbackException e mempty)
+                    Left (_, e) -> throwIO $ TxRollbackException e
                     Right a     -> pure (Right a, mempty))
-            `catch` (\(TxRollbackException e vs) -> pure (Left e, vs))
+            `catch` (\(TxRollbackException e) -> pure (Left e, mempty))
     embedValidatorT (pure r)
 
 roAppTxEx :: (ValidatorIO es, Exception exc) => DB
@@ -1493,15 +1493,15 @@ appTxEx db err f txF = do
     r <- withSeqEffToIO $ \unlift ->
             txF db (\tx ->
                 unlift (tryError @AppError (f tx)) >>= \case
-                    Left (_, e) -> throwIO (TxRollbackException e mempty)
+                    Left (_, e) -> throwIO $ TxRollbackException e
                     Right a     -> pure (Right a, mempty))
             `catches`
-                [ Handler $ \(TxRollbackException e vs) -> pure (Left e, vs)
+                [ Handler $ \(TxRollbackException e) -> pure (Left e, mempty)
                 , Handler $ \e                           -> pure (Left (err e), mempty)
                 ]
     embedValidatorT (pure r)
 
-data TxRollbackException = TxRollbackException AppError ValidationState
+data TxRollbackException = TxRollbackException AppError
     deriving stock (Show, Eq, Ord, Generic)
 
 data StorageCorruptedException = StorageCorruptedException Text
