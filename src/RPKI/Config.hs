@@ -149,9 +149,6 @@ data ValidationConfig = ValidationConfig {
         rsyncRepositoryRefreshInterval :: Seconds,
 
         -- How often TA certificates are downloaded and validated.
-        -- It is the only thing that decides how often it happens:
-        -- the job that does it doesn't check for anything being 
-        -- up-to-date, it just refreshes every time it runs.
         taCertificateRefreshInterval   :: Seconds,
 
         -- Minimal interval between forced snapshot fetches --
@@ -178,7 +175,7 @@ data ValidationConfig = ValidationConfig {
         -- Maximal allowed size of an individual object 
         maxObjectSize                  :: Integer,
 
-        -- Manimal allowed size of an individual object 
+        -- Minimal allowed size of an individual object 
         minObjectSize                  :: Integer,
 
         validationRFC                  :: ValidationRFC,
