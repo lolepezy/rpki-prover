@@ -100,12 +100,6 @@ data JobRun = FirstRun | RanBefore
     deriving stock (Show, Eq, Ord, Generic)  
 
 data WorkflowShared = WorkflowShared { 
-        -- Indicates if anything was ever deleted from the DB
-        -- since the start of the server. It helps to avoid 
-        -- unnecessary compaction procedures: no deletions 
-        -- means no compaction is reqired.
-        deletedAnythingFromDb :: TVar Bool,
-
         -- Currently running tasks, it is needed to keep track which 
         -- tasks can run parallel to each other and avoid race conditions.
         runningTasks :: Tasks,
@@ -135,8 +129,7 @@ withWorkflowShared :: AppContext s
                     -> IO b
 withWorkflowShared AppContext {..} prometheusMetrics tals f = do
     shared <- liftIO $ atomically $ do 
-        deletedAnythingFromDb <- newTVar False
-        runningTasks          <- newRunningTasks
+        runningTasks <- newRunningTasks
         fetchers <- do 
                 -- We want to share the fetcheables that are already defined in the appState
                 -- to have it gloabally available (in particular available to the REST API)
@@ -493,13 +486,11 @@ runAll appContext@AppContext {..} tals = do
                           
     -- Delete objects in the store that were read by top-down validation 
     -- longer than `shortLivedCacheLifeTime` hours ago.
-    cacheCleanup workflowShared worldVersion _ = do
+    cacheCleanup _ worldVersion _ = do
         (r, elapsed) <- timedMS cleanupOldObjects
         case r of 
             Left message -> logError logger message
             Right DB.CleanUpResult {..} -> do
-                when (deletedObjects > 0) $ do
-                    atomically $ writeTVar (workflowShared ^. #deletedAnythingFromDb) True
                 let perType :: String = if mempty /= deletedPerType
                     then [i|in particular #{Map.toList deletedPerType}, |]
                     else ""
