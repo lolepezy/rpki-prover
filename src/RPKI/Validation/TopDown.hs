@@ -10,6 +10,7 @@
 module RPKI.Validation.TopDown (
     TopDownResult(..),
     validateMutlipleTAs,
+    refreshTaCertificate,
     TroubledChildLoadPath(..),
     resolveTroubledChildByKey,
     revokedShortcutChildren
@@ -312,7 +313,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals =
         fmap Map.fromList $ 
             forConcurrently tals $ \tal -> do
                 (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $
-                        liftIO $ validateTA appContext tal worldVersion allTas
+                        liftIO $ validateTA appContext tal allTas
                 logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCountRoas roas} VRPs, took #{elapsed}ms|]
                 pure (getTaName tal, r)
                  
@@ -322,10 +323,9 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals =
 --
 validateTA :: AppContext s
             -> TAL
-            -> WorldVersion
             -> AllTasTopDownContext
             -> IO TopDownResult
-validateTA appContext@AppContext{..} tal worldVersion allTas = do
+validateTA appContext@AppContext{..} tal allTas = do
     let maxDuration = config ^. typed @ValidationConfig . #topDownTimeout
     topDownContext <- newTopDownContext taName allTas
     (r, topDownValidations) <- runValidatorIO taContext $
@@ -372,7 +372,7 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
     validateFromTAL topDownContext = do
         timedMetric (Proxy :: Proxy ValidationMetric) $
             vFocusOn LocationFocus (getURL $ getTaCertURL tal) $ do
-                (taCert, repos) <- validateTACertificateFromTAL appContext tal worldVersion    
+                (taCert, repos) <- taCertificateFromCache appContext tal
                 -- This clumsy code is to make it possible to construct topDownContext
                 -- before getting and validating the TA certificate
                 let topDownContext' = topDownContext & #verifiedResources ?~ createVerifiedResources (taCert ^. #payload)
@@ -380,46 +380,74 @@ validateTA appContext@AppContext{..} tal worldVersion allTas = do
 
         
 
-data WhichTA = FetchedTA RpkiURL ParsedRpkiObject | CachedTA StorableTA
+data WhichTA = FetchedTA RpkiURL ParsedRpkiObject | CachedTA
 
--- | Fetch and validated TA certificate starting from the TAL.
--- | 
--- | This function doesn't throw exceptions.
-validateTACertificateFromTAL :: (ValidatorIO es, Timeout :> es) => AppContext s
-                                -> TAL
-                                -> WorldVersion
-                                -> Eff es (Located WellStructuredCaCert, PublicationPointAccess)
-validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
-    let now = Now $ versionToInstant worldVersion
-    let validationConfig = config ^. typed
 
-    db <- liftIO $ readTVarIO database
-    ta <- DB.roAppTxEx db DB.storageError $ \tx -> DB.getTA tx (getTaName tal)
-    case ta of
-        Nothing -> fetchValidateAndStore db now Nothing
-        Just storedTa
-            | needsFetching (getTaCertURL tal) Nothing (storedTa ^. #fetchStatus) validationConfig now ->
-                fetchValidateAndStore db now (Just storedTa)
-            | otherwise -> do
-                logInfo logger [i|Not re-fetching TA certificate #{getURL $ getTaCertURL tal}, it's up-to-date.|]                
-                storedTa' <- updateStoredTal db storedTa
-                let locations = talCertLocations tal <> toLocations (storedTa' ^. #actualUrl)
-                taCert <- DB.roAppTxEx db DB.storageError $ \tx ->
-                    DB.getTaCertByKey tx (storedTa' ^. #taCertKey)
-                case taCert of
-                    Nothing   -> appError $ UnspecifiedE (unTaName $ getTaName tal) "TA cert not found in objects store"
-                    Just cert -> pure (locatedTaCert locations cert, storedTa' ^. #initialRepositories)
+refreshTaCertificate :: AppContext s
+                        -> TAL
+                        -> WorldVersion
+                        -> IO (Either AppError ())
+refreshTaCertificate appContext@AppContext {..} tal worldVersion = do
+    (r, vs) <- runValidatorIO (newScopes' TAFocus (unTaName taName)) $
+                    vFocusOn LocationFocus (getURL $ getTaCertURL tal) $ do
+                        db <- liftIO $ readTVarIO database
+                        storedTa <- DB.roAppTxEx db DB.storageError $ \tx -> DB.getTA tx taName
+                        fetchValidateAndStoreTaCert appContext tal worldVersion storedTa
 
+    -- The issues are stored no matter how it went: they are the only way for the
+    -- top-down validation to find out what happened here.
+    rwTxT database $ \tx -> DB.saveTaValidations tx taName (vs ^. typed)
+    pure r
   where
-    -- Keep persisted TAL metadata in sync so all configured TA cert
-    -- locations (e.g. rsync + https) are retained in cache.    
-    updateStoredTal db storedTa = 
-        DB.rwAppTxEx db DB.storageError $ \tx -> do
-            let updatedTa = storedTa & #tal .~ tal
-            DB.saveTA tx updatedTa
-            pure updatedTa     
-   
-    fetchValidateAndStore db (Now moment) storableTa = do
+    taName = getTaName tal
+
+
+-- | Get the TA certificate to start the top-down validation from.
+-- | This function doesn't throw exceptions.
+taCertificateFromCache :: ValidatorIO es => AppContext s
+                        -> TAL
+                        -> Eff es (Located WellStructuredCaCert, PublicationPointAccess)
+taCertificateFromCache AppContext {..} tal = do
+    db <- liftIO $ readTVarIO database
+    ta <- DB.roAppTxEx db DB.storageError $ \tx -> DB.getTA tx taName
+    case ta of
+        Nothing       -> taCertProblem "there's no TA certificate in the cache yet"
+        Just storedTa -> do
+            (taCert, taValidations) <-
+                DB.roAppTxEx db DB.storageError $ \tx ->
+                    (,) <$> DB.getTaCertByKey tx (storedTa ^. #taCertKey)
+                        <*> DB.getTaValidations tx taName
+
+            embedState $ mempty & typed .~ taValidations
+
+            case taCert of
+                -- The object is gone from the cache, the next run of the TA
+                -- certificate job will download and store it again.
+                Nothing   -> taCertProblem "TA certificate is not in the object cache"
+                Just cert -> do
+                    let locations = talCertLocations tal <> toLocations (storedTa ^. #actualUrl)
+                    pure (locatedTaCert locations cert, storedTa ^. #initialRepositories)
+  where
+    taName = getTaName tal
+    taCertProblem :: Validator es => Text -> Eff es a
+    taCertProblem message = appError $ UnspecifiedE (unTaName taName) message
+
+
+-- | Download the TA certificate using the locations from the TAL, validate it
+-- | and store it together with the initial publication points.
+-- |
+-- | If the download fails, fall back to the cached copy, if there is one.
+-- |
+-- | This function doesn't throw exceptions.
+fetchValidateAndStoreTaCert :: (ValidatorIO es, Timeout :> es) => AppContext s
+                        -> TAL
+                        -> WorldVersion
+                        -> Maybe StorableTA
+                        -> Eff es ()
+fetchValidateAndStoreTaCert appContext@AppContext {..} tal worldVersion = go
+  where
+    go storableTa = do
+        db <- liftIO $ readTVarIO database
         cachedTaCertM <- case storableTa of
             Nothing -> pure Nothing
             Just StorableTA { taCertKey } ->
@@ -455,14 +483,13 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                         DB.rwAppTxEx db DB.storageError $ \tx -> do
                             taCertKey <- DB.saveObject tx (WellStructuredRO (CerRO certToStore)) worldVersion
                             DB.linkObjectToUrl tx actualUrl taCertKey worldVersion
-                            DB.saveTA tx (StorableTA tal taCertKey (FetchedAt moment) ppAccess actualUrl)
-                            pure (locatedTaCert (talCertLocations tal <> toLocations actualUrl) certToUse, ppAccess)
+                            DB.saveTA tx (StorableTA tal taCertKey ppAccess actualUrl)
 
-            CachedTA StorableTA { tal = _, ..} ->
+            -- Nothing was downloaded, the cached copy stays as it is
+            CachedTA ->
                 case cachedTaCertM of
                     Nothing -> appError $ UnspecifiedE (unTaName $ getTaName tal) "Cached TA cert not found in objects store"
-                    Just taCert ->
-                        pure (locatedTaCert (talCertLocations tal <> toLocations actualUrl) taCert, initialRepositories)
+                    Just _  -> pure ()
 
       where
         tryToFallbackToCachedCopy e =
@@ -473,14 +500,16 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                         [i| and there is no cached copy of it.|]
                     appError e
 
-                Just cached -> do  
+                Just _ -> do  
                     logError logger $ 
                         [i|Could not download TA certiicate for #{getTaName tal}, error: #{e}|] <> 
                         [i| will use cached copy.|]                                        
 
-                    pure $ CachedTA cached
+                    pure CachedTA
 
-    locatedTaCert locations cert = Located (Just locations) cert
+
+locatedTaCert :: Locations -> WellStructuredCaCert -> Located WellStructuredCaCert
+locatedTaCert locations cert = Located (Just locations) cert
 
 
 -- | Do the validation starting from the TA certificate.

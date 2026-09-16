@@ -16,13 +16,11 @@ import           RPKI.Repository
 import           RPKI.AppTypes
 import           RPKI.Domain
 import           RPKI.Reporting           (ValidationState)
-import           RPKI.Store.Base.Storable
 import           RPKI.Store.Base.Serialisation
 
 data StorableTA = StorableTA {
         tal                 :: TAL,
         taCertKey           :: ObjectKey,
-        fetchStatus         :: FetchStatus,
         initialRepositories :: PublicationPointAccess,
         actualUrl           :: RpkiURL
     } 

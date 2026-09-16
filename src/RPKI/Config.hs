@@ -148,9 +148,8 @@ data ValidationConfig = ValidationConfig {
         rrdpRepositoryRefreshInterval  :: Seconds,
         rsyncRepositoryRefreshInterval :: Seconds,
 
-        -- Do not retry to fetch a repository that failed 
-        -- less than this many seconds ago
-        minimalRepositoryRetryInterval :: Seconds,
+        -- How often TA certificates are downloaded and validated.
+        taCertificateRefreshInterval   :: Seconds,
 
         -- Minimal interval between forced snapshot fetches --
         -- we don't want to overload repositories
@@ -176,7 +175,7 @@ data ValidationConfig = ValidationConfig {
         -- Maximal allowed size of an individual object 
         maxObjectSize                  :: Integer,
 
-        -- Manimal allowed size of an individual object 
+        -- Minimal allowed size of an individual object 
         minObjectSize                  :: Integer,
 
         validationRFC                  :: ValidationRFC,
@@ -284,7 +283,7 @@ defaultConfig = Config {
         revalidationInterval           = 15 * minutes,
         rrdpRepositoryRefreshInterval  = 2 * minutes,
         rsyncRepositoryRefreshInterval = 11 * minutes,    
-        minimalRepositoryRetryInterval = Seconds 10,    
+        taCertificateRefreshInterval   = 10 * minutes,
         rrdpForcedSnapshotMinInterval  = 12 * hours,                
         topDownTimeout                 = 1 * hour,
         manifestProcessing             = RFC9286,

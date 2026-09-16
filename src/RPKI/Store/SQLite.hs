@@ -394,7 +394,8 @@ schemaDDL =
             ta_name     TEXT    NOT NULL PRIMARY KEY,
             ta_cert_key INTEGER REFERENCES objects(object_key),
             data        BLOB    NOT NULL,
-            active      INTEGER NOT NULL DEFAULT 1
+            active      INTEGER NOT NULL DEFAULT 1,
+            validations BLOB
         )
       |]
     , "CREATE INDEX IF NOT EXISTS idx_trust_anchors_active ON trust_anchors(active)"

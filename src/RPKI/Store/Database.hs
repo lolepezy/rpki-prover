@@ -37,7 +37,8 @@ module RPKI.Store.Database (
     saveMftShorcutMeta, insertMftShortcutChildren, deleteMftShortcutChildren,
     deleteMftShortcut, getBySKI, getFirstCaCertBySKI, getTaCertByKey,
     markAsValidated,
-    saveTA, deleteTA, getTA, getTAs, setActiveTAs,
+    saveTA, getTA, getTAs, setActiveTAs,
+    saveTaValidations, getTaValidations,
     versionsBackwards, previousVersion, getLatestVersion,
     getValidationsPerTA, getMetricsPerTA, getCommonMetrics,
     getValidationOutcomes,
@@ -161,7 +162,7 @@ rwTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 59
+currentDatabaseVersion = 61
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -697,13 +698,32 @@ markAsValidated tx allKeys worldVersion =
 
 saveTA :: MonadIO m => Tx 'RW -> StorableTA -> m ()
 saveTA (Tx conn) ta = liftIO $
+    -- Deliberately not `INSERT OR REPLACE`: that deletes the row and inserts a
+    -- new one, which would wipe the `validations` column written by the TA
+    -- certificate job.
     execute conn
-        "INSERT OR REPLACE INTO trust_anchors(ta_name, ta_cert_key, data, active) VALUES (?, ?, ?, 1)"
+        [sql|
+            INSERT INTO trust_anchors(ta_name, ta_cert_key, data, active)
+            VALUES (?, ?, ?, 1)
+            ON CONFLICT(ta_name) DO UPDATE SET
+                ta_cert_key = excluded.ta_cert_key,
+                data        = excluded.data,
+                active      = 1
+        |]
         (unTaName (getTaName (tal ta)), taCertKey ta, serialiseField ta)
 
-deleteTA :: MonadIO m => Tx 'RW -> TAL -> m ()
-deleteTA (Tx conn) t = liftIO $
-    execute conn "DELETE FROM trust_anchors WHERE ta_name = ?" (Only (unTaName (getTaName t)))
+saveTaValidations :: MonadIO m => Tx 'RW -> TaName -> Validations -> m ()
+saveTaValidations (Tx conn) taName validations = liftIO $
+    execute conn
+        "UPDATE trust_anchors SET validations = ? WHERE ta_name = ?"
+        (serialiseCompressed validations, unTaName taName)
+
+getTaValidations :: MonadIO m => Tx mode -> TaName -> m Validations
+getTaValidations (Tx conn) taName = liftIO $ do
+    rows <- query conn
+        "SELECT validations FROM trust_anchors WHERE ta_name = ? AND validations IS NOT NULL"
+        (Only (unTaName taName))
+    pure $ maybe mempty (deserialiseCompressed . fromOnly) (listToMaybe rows)
 
 getTA :: MonadIO m => Tx mode -> TaName -> m (Maybe StorableTA)
 getTA (Tx conn) name = liftIO $ do
@@ -1335,8 +1355,7 @@ deleteStaleContent db DeletionCriteria{..} =
     -- collecting them into a list before looking at any of them was the bulk
     -- of this worker's heap. Only the accumulator -- the keys actually being
     -- deleted, plus counters -- outlives a row.
-    deleteStaleObjects tx = do
-        let Tx conn = tx
+    deleteStaleObjects tx@(Tx conn) = do
         validatedBy <- getValidatedByVersionMap conn
 
         SweepAcc {..} <- SQLite.fold_ conn
@@ -1447,9 +1466,9 @@ appTx db f txF = do
     r <- withSeqEffToIO $ \unlift ->
             txF db (\tx ->
                 unlift (tryError @AppError (f tx)) >>= \case
-                    Left (_, e) -> throwIO (TxRollbackException e mempty)
+                    Left (_, e) -> throwIO $ TxRollbackException e
                     Right a     -> pure (Right a, mempty))
-            `catch` (\(TxRollbackException e vs) -> pure (Left e, vs))
+            `catch` (\(TxRollbackException e) -> pure (Left e, mempty))
     embedValidatorT (pure r)
 
 roAppTxEx :: (ValidatorIO es, Exception exc) => DB
@@ -1474,15 +1493,15 @@ appTxEx db err f txF = do
     r <- withSeqEffToIO $ \unlift ->
             txF db (\tx ->
                 unlift (tryError @AppError (f tx)) >>= \case
-                    Left (_, e) -> throwIO (TxRollbackException e mempty)
+                    Left (_, e) -> throwIO $ TxRollbackException e
                     Right a     -> pure (Right a, mempty))
             `catches`
-                [ Handler $ \(TxRollbackException e vs) -> pure (Left e, vs)
+                [ Handler $ \(TxRollbackException e) -> pure (Left e, mempty)
                 , Handler $ \e                           -> pure (Left (err e), mempty)
                 ]
     embedValidatorT (pure r)
 
-data TxRollbackException = TxRollbackException AppError ValidationState
+data TxRollbackException = TxRollbackException AppError
     deriving stock (Show, Eq, Ord, Generic)
 
 data StorageCorruptedException = StorageCorruptedException Text
