@@ -64,7 +64,7 @@ shouldResolveTroubledFromWellStructured =
         key <- storeLifecycle db worldVersion (WellStructuredRO expectedObject) url
 
         (resolved, _) <- runValidatorIO (newScopes "resolve-ws") $
-            DB.roAppTx db $ \tx -> resolveTroubledChildByKey tx db key
+            DB.roAppTx db $ \tx -> resolveTroubledChildByKey tx key
 
         case resolved of
             Right (Just (TroubledFromParsed, Keyed (Located _ actualObject) actualKey)) -> do
@@ -93,7 +93,7 @@ shouldResolveTroubledFromOriginal =
         key <- storeLifecycle db worldVersion lifecycle url
 
         (resolved, _) <- runValidatorIO (newScopes "resolve-orig") $
-            DB.roAppTx db $ \tx -> resolveTroubledChildByKey tx db key
+            DB.roAppTx db $ \tx -> resolveTroubledChildByKey tx key
 
         case resolved of
             Right (Just (TroubledFromOriginal, Keyed (Located _ actualObject) actualKey)) -> do
@@ -106,8 +106,8 @@ shouldResolveTroubledFromOriginal =
 storeLifecycle :: DB -> WorldVersion -> RpkiObjectLifecycle -> RpkiURL -> IO ObjectKey
 storeLifecycle db worldVersion lifecycle url =
     DB.rwTx db $ \tx -> do
-        key <- DB.saveObject tx db lifecycle worldVersion
-        DB.linkObjectToUrl tx db url key worldVersion
+        key <- DB.saveObject tx lifecycle worldVersion
+        DB.linkObjectToUrl tx url key worldVersion
         pure key
 
 

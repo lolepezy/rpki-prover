@@ -106,24 +106,24 @@ shouldSaveAndGetErikIndex io = do
     let index2 = mkErikIndex now "ca.example.net" [mkPartitionRef 3]
 
     rwTx db $ \tx -> do
-        DB.saveErikIndex tx db relay1 fqdn index1
-        DB.saveErikIndex tx db relay2 fqdn index2
+        DB.saveErikIndex tx relay1 fqdn index1
+        DB.saveErikIndex tx relay2 fqdn index2
 
     (got1, got2) <- roTx db $ \tx ->
-        (,) <$> DB.getErikIndex tx db relay1 fqdn
-            <*> DB.getErikIndex tx db relay2 fqdn
+        (,) <$> DB.getErikIndex tx relay1 fqdn
+            <*> DB.getErikIndex tx relay2 fqdn
 
     HU.assertEqual "Index for the first relay" (Just index1) got1
     HU.assertEqual "Index for the second relay" (Just index2) got2
 
-    missing <- roTx db $ \tx -> DB.getErikIndex tx db relay1 (FQDN "other.example.net")
+    missing <- roTx db $ \tx -> DB.getErikIndex tx relay1 (FQDN "other.example.net")
     HU.assertEqual "Unknown scope has no index" Nothing missing
 
     -- Overwriting must replace, not add a second row for the same key
     let index1' = mkErikIndex now "ca.example.net" [mkPartitionRef 7]
-    rwTx db $ \tx -> DB.saveErikIndex tx db relay1 fqdn index1'
+    rwTx db $ \tx -> DB.saveErikIndex tx relay1 fqdn index1'
 
-    all_ <- roTx db $ \tx -> DB.getAllErikIndexes tx db
+    all_ <- roTx db $ \tx -> DB.getAllErikIndexes tx
     HU.assertEqual "One row per (relay, scope)" 2 (length all_)
     HU.assertEqual "Updated index is returned"
         (Just index1')
@@ -142,11 +142,11 @@ shouldSaveAndGetErikPartitions io = do
         }
     let h = mkPartitionHash 42
 
-    rwTx db $ \tx -> DB.saveErikPartition tx db h partition
-    got <- roTx db $ \tx -> DB.getErikPartition tx db h
+    rwTx db $ \tx -> DB.saveErikPartition tx h partition
+    got <- roTx db $ \tx -> DB.getErikPartition tx h
     HU.assertEqual "Stored partition" (Just partition) got
 
-    absent <- roTx db $ \tx -> DB.getErikPartition tx db (mkPartitionHash 43)
+    absent <- roTx db $ \tx -> DB.getErikPartition tx (mkPartitionHash 43)
     HU.assertEqual "Unknown partition hash" Nothing absent
 
 
@@ -173,8 +173,8 @@ shouldDeleteOrphanedErikPartitionsOnly io = do
 
     rwTx db $ \tx -> do
         forM_ [referenced, dropped, neverSeen] $ \h ->
-            DB.saveErikPartition tx db h emptyPartition
-        DB.saveErikIndex tx db relay fqdn $
+            DB.saveErikPartition tx h emptyPartition
+        DB.saveErikIndex tx relay fqdn $
             mkErikIndex now "orphans.example.net"
                 [ ErikPartitionRef referenced (Size 1), ErikPartitionRef dropped (Size 1) ]
 
@@ -184,15 +184,15 @@ shouldDeleteOrphanedErikPartitionsOnly io = do
 
     -- A new index drops one of them
     rwTx db $ \tx ->
-        DB.saveErikIndex tx db relay fqdn $
+        DB.saveErikIndex tx relay fqdn $
             mkErikIndex now "orphans.example.net" [ ErikPartitionRef referenced (Size 1) ]
 
     deleted1 <- rwTx db $ \tx -> DB.deleteOrphanedErikPartitions tx
     HU.assertEqual "The de-referenced partition goes" 1 deleted1
 
     (kept, gone) <- roTx db $ \tx ->
-        (,) <$> DB.getErikPartition tx db referenced
-            <*> DB.getErikPartition tx db dropped
+        (,) <$> DB.getErikPartition tx referenced
+            <*> DB.getErikPartition tx dropped
     HU.assertBool "Referenced partition is kept" (isJust kept)
     HU.assertEqual "De-referenced partition is deleted" Nothing gone
 
@@ -279,9 +279,9 @@ shouldDeleteStaleObjectsOnly io = do
     HU.assertEqual "should delete exactly the old object" 1 (DB.deletedObjects r)
     HU.assertEqual "should keep the recent one" 1 (DB.keptObjects r)
 
-    gone <- roTx db $ \tx -> DB.getKeyByHash tx db (getHash oldObj)
+    gone <- roTx db $ \tx -> DB.getKeyByHash tx (getHash oldObj)
     HU.assertBool "old object must be gone" (isNothing gone)
-    still <- roTx db $ \tx -> DB.getKeyByHash tx db (getHash recentObj)
+    still <- roTx db $ \tx -> DB.getKeyByHash tx (getHash recentObj)
     HU.assertBool "recent object must remain" (isJust still)
 
 -- | An object inserted long ago but validated recently must survive: the sweep
@@ -298,7 +298,7 @@ shouldKeepRecentlyValidatedObject io = do
 
     -- mark it as validated now
     rwTx db $ \tx -> void $
-        DB.updateValidatedByVersionMap tx db (Map.insert key recentVersion)
+        DB.updateValidatedByVersionMap tx (Map.insert key recentVersion)
 
     r <- DB.deleteStaleContent db DB.DeletionCriteria {
             versionIsTooOld   = const False,
@@ -307,12 +307,12 @@ shouldKeepRecentlyValidatedObject io = do
         }
 
     HU.assertEqual "nothing should be deleted" 0 (DB.deletedObjects r)
-    still <- roTx db $ \tx -> DB.getKeyByHash tx db (getHash obj)
+    still <- roTx db $ \tx -> DB.getKeyByHash tx (getHash obj)
     HU.assertBool "recently validated object must remain" (isJust still)
 
 storeAt :: DB -> ParsedRpkiObject -> WorldVersion -> IO ObjectKey
 storeAt db obj version = rwTx db $ \tx ->
-    DB.saveObject tx db
+    DB.saveObject tx
         (OriginalRO (ObjectOriginal $ unStorable $ toStorable obj)
                     mempty
                     (getHash obj)
@@ -345,13 +345,13 @@ shouldExpireSupersededObjectUrls io = do
 
     rwTx db $ \tx -> do
         -- moved from url1 to url2 at some point
-        DB.linkObjectToUrl tx db url1 movedKey oldVersion
-        DB.linkObjectToUrl tx db url2 movedKey recentVersion
+        DB.linkObjectToUrl tx url1 movedKey oldVersion
+        DB.linkObjectToUrl tx url2 movedKey recentVersion
         -- published at both url2 and url3 all along
-        DB.linkObjectToUrl tx db url2 dualHomedKey oldVersion
-        DB.linkObjectToUrl tx db url3 dualHomedKey oldVersion
+        DB.linkObjectToUrl tx url2 dualHomedKey oldVersion
+        DB.linkObjectToUrl tx url3 dualHomedKey oldVersion
         -- only ever seen at url4, and not for a long time
-        DB.linkObjectToUrl tx db url4 lonelyKey oldVersion
+        DB.linkObjectToUrl tx url4 lonelyKey oldVersion
 
     r <- DB.deleteStaleContent db DB.DeletionCriteria {
             versionIsTooOld   = const False,
@@ -362,7 +362,7 @@ shouldExpireSupersededObjectUrls io = do
     HU.assertEqual "should drop exactly the superseded link" 1 (DB.deletedObjectUrls r)
     HU.assertEqual "should not delete any object" 0 (DB.deletedObjects r)
 
-    let locationsOf k = roTx db $ \tx -> DB.getLocationsByKey tx db k
+    let locationsOf k = roTx db $ \tx -> DB.getLocationsByKey tx k
     locationsOf movedKey >>= HU.assertEqual
         "Moved object must be left at its current location only"
         (Just $ toLocations url2)
@@ -373,7 +373,7 @@ shouldExpireSupersededObjectUrls io = do
         "An object must never lose its last location, however old"
         (Just $ toLocations url4)
 
-    multi <- roTx db $ \tx -> DB.getMultiLocationShortcutChildren tx db
+    multi <- roTx db $ \tx -> DB.getMultiLocationShortcutChildren tx
     HU.assertEqual "Only the dual-homed object should still look multi-located"
         (Set.singleton dualHomedKey) multi
 
@@ -396,13 +396,13 @@ shouldNotCountTaCertificatesAsMultiLocation io = do
 
     rwTx db $ \tx@(Tx conn) -> do
         forM_ [url1, url2] $ \url -> do
-            DB.linkObjectToUrl tx db url taCertKey worldVersion
-            DB.linkObjectToUrl tx db url ordinaryKey worldVersion
+            DB.linkObjectToUrl tx url taCertKey worldVersion
+            DB.linkObjectToUrl tx url ordinaryKey worldVersion
         SQLite.execute conn
             "INSERT INTO trust_anchors(ta_name, ta_cert_key, data, active) VALUES (?, ?, ?, 1)"
             ("some-ta" :: Text.Text, taCertKey, "" :: BS.ByteString)
 
-    multi <- roTx db $ \tx -> DB.getMultiLocationShortcutChildren tx db
+    multi <- roTx db $ \tx -> DB.getMultiLocationShortcutChildren tx
     HU.assertEqual "Only the non-TA object should be reported as multi-located"
         (Set.singleton ordinaryKey) multi
 
@@ -441,15 +441,15 @@ shouldMergeObjectLocations io = do
     ro2 :: ParsedRpkiObject <- QC.generate QC.arbitrary
 
     let storeIt obj url = rwTx db $ \tx -> do
-            k <- DB.saveObject tx db
+            k <- DB.saveObject tx
                 (OriginalRO (ObjectOriginal $ unStorable $ toStorable obj)
                             mempty
                             (getHash obj)
                             (getRpkiObjectType obj))
                 (instantToVersion now)
-            DB.linkObjectToUrl tx db url k (instantToVersion now)
+            DB.linkObjectToUrl tx url k (instantToVersion now)
 
-    let getIt h = roTx db $ \tx -> DB.getByHash tx db h
+    let getIt h = roTx db $ \tx -> DB.getByHash tx h
 
     storeIt ro1 url1
     storeIt ro1 url2
@@ -464,7 +464,7 @@ shouldMergeObjectLocations io = do
 
     verifyUrlCount db "case 1" 3
 
-    rwTx db $ \tx -> DB.deleteObjectByHash tx db (getHash ro1)
+    rwTx db $ \tx -> DB.deleteObjectByHash tx (getHash ro1)
 
     verifyUrlCount db "case 2" 3
 
@@ -494,18 +494,18 @@ shouldOrderManifests io = do
     worldVersion <- newVersion
 
     rwTx db $ \tx -> do
-        key1 <- DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft1) worldVersion
-        key2 <- DB.saveObject tx db (WellStructuredRO $ toValidatedRpkiObject mft2) worldVersion
-        DB.linkObjectToUrl tx db url1 key1 worldVersion
-        DB.linkObjectToUrl tx db url2 key2 worldVersion
+        key1 <- DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft1) worldVersion
+        key2 <- DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft2) worldVersion
+        DB.linkObjectToUrl tx url1 key1 worldVersion
+        DB.linkObjectToUrl tx url2 key2 worldVersion
 
     let Just aki1 = getAKI mft1
-    [m1, m2] <- roTx db $ \tx -> DB.getMftsForAKI tx db aki1
+    [m1, m2] <- roTx db $ \tx -> DB.getMftsForAKI tx aki1
     HU.assertBool "Manifests must be ordered by timing" (m1 ^. #nextTime >= m2 ^. #nextTime)
 
     Just (Keyed (Located _ mftLatest) _) <- roTx db $ \tx -> do
-        MftMeta{..} : _ <- DB.getMftsForAKI tx db aki1
-        DB.getMftByKey tx db key
+        MftMeta{..} : _ <- DB.getMftsForAKI tx aki1
+        DB.getMftByKey tx key
 
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) (toValidatedRpkiObject mft2)
 
@@ -522,7 +522,7 @@ insertMftMetasFor db aki descriptors = do
     rwTx db $ \tx@(Tx conn) ->
         forM descriptors $ \(mftNumber, thisTime, nextTime) -> do
             ro :: ParsedRpkiObject <- QC.generate QC.arbitrary
-            key <- DB.saveObject tx db
+            key <- DB.saveObject tx
                 (OriginalRO (ObjectOriginal $ unStorable $ toStorable ro) mempty (getHash ro) (getRpkiObjectType ro))
                 worldVersion
             let meta = MftMeta {..}
@@ -553,7 +553,7 @@ shouldOrderManifestsByThisTimeNotNumber io = do
         , (Serial 99, t1, t1)
         ]
 
-    ordered <- roTx db $ \tx -> DB.getMftsForAKI tx db aki
+    ordered <- roTx db $ \tx -> DB.getMftsForAKI tx aki
 
     HU.assertEqual "Must be ordered by thisTime, not manifest_number"
         (List.sortOn Down metas)
@@ -575,7 +575,7 @@ shouldOrderManifestsByNextTimeWhenThisTimeTies io = do
     metas <- insertMftMetasFor db aki
         [ (num, sharedThisTime, next) | (num, next) <- zip shuffledNumbers nextTimes ]
 
-    ordered <- roTx db $ \tx -> DB.getMftsForAKI tx db aki
+    ordered <- roTx db $ \tx -> DB.getMftsForAKI tx aki
 
     HU.assertEqual "Must be ordered by nextTime when thisTime ties"
         (List.sortOn Down metas)
@@ -596,7 +596,7 @@ shouldOrderManifestsByMftNumberWhenTimesTie io = do
     metas <- insertMftMetasFor db aki
         [ (num, sharedTime, sharedTime) | num <- shuffledNumbers ]
 
-    ordered <- roTx db $ \tx -> DB.getMftsForAKI tx db aki
+    ordered <- roTx db $ \tx -> DB.getMftsForAKI tx aki
 
     HU.assertEqual "Must be ordered by manifest_number when thisTime and nextTime both tie"
         (List.sortOn Down metas)
@@ -623,7 +623,7 @@ shouldOrderManyRandomManifestsByThisTime io = do
             descriptors = zip3 shuffledNumbers thisTimes nextTimes
 
         metas <- insertMftMetasFor db aki descriptors
-        ordered <- roTx db $ \tx -> DB.getMftsForAKI tx db aki
+        ordered <- roTx db $ \tx -> DB.getMftsForAKI tx aki
 
         HU.assertEqual ("Trial " <> show trial <> ": must be ordered by thisTime regardless of mftNumber/nextTime")
             (List.sortOn Down metas)
@@ -653,7 +653,7 @@ shouldComputeObjectSizeStats io = do
                 \VALUES (?, ?, ?, zeroblob(?), 1)"
                 (k, BS.singleton (fromIntegral k), typ, len)
 
-    ObjectStats {..} <- roTx db $ \tx -> DB.getObjectsStats tx db
+    ObjectStats {..} <- roTx db $ \tx -> DB.getObjectsStats tx
 
     let at m k = Map.lookup k m
 
@@ -691,12 +691,12 @@ shouldDeduplicateSaveObjectByHash io = do
     threadDelay 10_000
     wv2 <- newVersion
 
-    k1 <- rwTx db $ \tx -> DB.saveObject tx db lifecycle wv1
-    k2 <- rwTx db $ \tx -> DB.saveObject tx db lifecycle wv2
+    k1 <- rwTx db $ \tx -> DB.saveObject tx lifecycle wv1
+    k2 <- rwTx db $ \tx -> DB.saveObject tx lifecycle wv2
 
     HU.assertEqual "Saving the same hash twice must return the same key" k1 k2
 
-    hash1 <- roTx db $ \tx -> DB.getHashByKey tx db k1
+    hash1 <- roTx db $ \tx -> DB.getHashByKey tx k1
     HU.assertEqual "Returned hash is wrong" (Just (getHash ro)) hash1
 
     rows <- roTx db $ \(Tx conn) ->
@@ -709,7 +709,7 @@ shouldDeduplicateSaveObjectByHash io = do
 
     HU.assertEqual "Only one object row must exist for the hash" 1 objectsWithHash
 
-    meta <- roTx db $ \tx -> DB.getObjectMeta tx db k1
+    meta <- roTx db $ \tx -> DB.getObjectMeta tx k1
     HU.assertEqual "Object metadata must come from the first insert"
         (Just $ ObjectMeta wv1 (getRpkiObjectType ro))
         meta
@@ -725,11 +725,11 @@ shouldIndexCertificateOnSaveObject io = do
     let ro = WellStructuredRO $ CerRO wsCert
 
     key <- rwTx db $ \tx -> do
-        k <- DB.saveObject tx db ro wv
-        DB.linkObjectToUrl tx db url k wv
+        k <- DB.saveObject tx ro wv
+        DB.linkObjectToUrl tx url k wv
         pure k
 
-    bySki <- roTx db $ \tx -> DB.getBySKI tx db (getSKI wsCert)
+    bySki <- roTx db $ \tx -> DB.getBySKI tx (getSKI wsCert)
     HU.assertBool "Certificate key must be indexed by SKI" (not $ null bySki)
 
     rows <- roTx db $ \(Tx conn) ->
@@ -740,7 +740,7 @@ shouldIndexCertificateOnSaveObject io = do
             _        -> 0
     HU.assertEqual "Exactly one certificates row must be created" 1 certRows
 
-    fetched <- roTx db $ \tx -> DB.getFirstCaCertBySKI tx db (getSKI wsCert)
+    fetched <- roTx db $ \tx -> DB.getFirstCaCertBySKI tx (getSKI wsCert)
     case fetched of
         Just (Located _ fetchedCert) ->
             HU.assertEqual "Fetched cert by SKI must match the inserted cert" wsCert fetchedCert
@@ -756,10 +756,10 @@ shouldSaveAndGetRsyncRepositories io = do
         <$> replicateM 100 (QC.generate QC.arbitrary)
         <*> rsyncReposWithCommonHosts 100
 
-    rwTx db $ \tx -> DB.saveRsyncRepositories tx db repositories
+    rwTx db $ \tx -> DB.saveRsyncRepositories tx repositories
 
     let urls = [ u | r <- repositories, RsyncU u <- [getRpkiURL $ RsyncR r] ]
-    repositories' <- roTx db $ \tx -> DB.getRsyncRepositories tx db urls
+    repositories' <- roTx db $ \tx -> DB.getRsyncRepositories tx urls
 
     HU.assertEqual "Not the same set of rsync repositories"
         (Set.fromList repositories)
@@ -779,9 +779,9 @@ shouldSaveMetaAndValidationAsCorrectSemigroup io = do
     testOneRepository db $ rsync1 & #meta . #status .~ Pending
   where
     testOneRepository db rsync = do
-        rwTx db $ \tx -> DB.saveRsyncRepositories tx db [rsync]
+        rwTx db $ \tx -> DB.saveRsyncRepositories tx [rsync]
         let RsyncU url = getRpkiURL $ RsyncR rsync
-        rs <- roTx db $ \tx -> DB.getRsyncRepositories tx db [url]
+        rs <- roTx db $ \tx -> DB.getRsyncRepositories tx [url]
         let Just r = Map.lookup url rs
         HU.assertEqual "Same repository" r rsync
 
@@ -800,10 +800,10 @@ shouldSaveAndGetRepositoriesWithValidationStates io = do
     let reposWithStates = zip repos states
 
     rwTx db $ \tx -> do
-        DB.saveRepositories tx db repos
-        DB.saveRepositoryValidationStates tx db reposWithStates
+        DB.saveRepositories tx repos
+        DB.saveRepositoryValidationStates tx reposWithStates
 
-    stored <- roTx db $ \tx -> DB.getRepositories tx db (const True)
+    stored <- roTx db $ \tx -> DB.getRepositories tx (const True)
 
     HU.assertEqual "Should get back all saved repositories with their validation states"
         (byUrl reposWithStates)
@@ -811,7 +811,7 @@ shouldSaveAndGetRepositoriesWithValidationStates io = do
 
     -- Only keep the first half by URL and check the filter predicate is respected.
     let keptUrls = Set.fromList $ map (getRpkiURL . fst) $ take (length repos `div` 2) reposWithStates
-    storedFiltered <- roTx db $ \tx -> DB.getRepositories tx db (`Set.member` keptUrls)
+    storedFiltered <- roTx db $ \tx -> DB.getRepositories tx (`Set.member` keptUrls)
 
     HU.assertEqual "Filter predicate should restrict returned repositories"
         (Map.filterWithKey (\u _ -> u `Set.member` keptUrls) (byUrl reposWithStates))
@@ -865,12 +865,12 @@ shouldSaveAndGetValidationVersion io = do
     commonVS <- QC.generate QC.arbitrary
 
     rwTx db $ \tx ->
-        DB.saveValidationVersion tx db worldVersion perTaResults commonVS
+        DB.saveValidationVersion tx worldVersion perTaResults commonVS
 
-    storedValidations <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion
-    storedMetrics <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion
+    storedValidations <- roTx db $ \tx -> DB.getValidationsPerTA tx worldVersion
+    storedMetrics <- roTx db $ \tx -> DB.getMetricsPerTA tx worldVersion
     (commonValidations, commonMetrics, storedOutcomes) <-
-        roTx db $ \tx -> DB.getValidationOutcomes tx db worldVersion
+        roTx db $ \tx -> DB.getValidationOutcomes tx worldVersion
 
     let expectedValidations = fmap (\(_, vs) -> vs ^. typed) perTaResults
     let expectedMetrics = fmap (\(_, vs) -> vs ^. typed) perTaResults
@@ -909,19 +909,19 @@ shouldSaveAndGetValidationVersionFilledWithPastData io = do
 
     rwTx db $ \tx -> do
         commonVS <- QC.generate QC.arbitrary
-        DB.saveValidationVersion tx db worldVersion1 perTa1 commonVS
+        DB.saveValidationVersion tx worldVersion1 perTa1 commonVS
 
     rwTx db $ \tx -> do
         commonVS <- QC.generate QC.arbitrary
-        DB.saveValidationVersion tx db worldVersion2 perTa2 commonVS
+        DB.saveValidationVersion tx worldVersion2 perTa2 commonVS
 
     rwTx db $ \tx -> do
         commonVS <- QC.generate QC.arbitrary
-        DB.saveValidationVersion tx db worldVersion3 perTa3 commonVS
+        DB.saveValidationVersion tx worldVersion3 perTa3 commonVS
 
-    v1 <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion1
-    v2 <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion2
-    v3 <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion3
+    v1 <- roTx db $ \tx -> DB.getValidationsPerTA tx worldVersion1
+    v2 <- roTx db $ \tx -> DB.getValidationsPerTA tx worldVersion2
+    v3 <- roTx db $ \tx -> DB.getValidationsPerTA tx worldVersion3
 
     let extract (_, vs) = vs ^. typed
 
@@ -963,13 +963,13 @@ shouldReadValidationOutcomePayloadQueries io = do
     commonVS3 <- QC.generate QC.arbitrary
 
     rwTx db $ \tx ->
-        DB.saveValidationVersion tx db worldVersion1 perTa1 commonVS1
+        DB.saveValidationVersion tx worldVersion1 perTa1 commonVS1
 
     rwTx db $ \tx ->
-        DB.saveValidationVersion tx db worldVersion2 perTa2 commonVS2
+        DB.saveValidationVersion tx worldVersion2 perTa2 commonVS2
 
     rwTx db $ \tx ->
-        DB.saveValidationVersion tx db worldVersion3 perTa3 commonVS3
+        DB.saveValidationVersion tx worldVersion3 perTa3 commonVS3
 
     ripeV2 <- expectJust "Missing ripe data in version 2 fixture" (getForTA perTa2 ripe)
     apnicV1 <- expectJust "Missing apnic data in version 1 fixture" (getForTA perTa1 apnic)
@@ -995,25 +995,25 @@ shouldReadValidationOutcomePayloadQueries io = do
             , (afrinic, worldVersion3)
             ]
 
-    commonMetricsV2 <- roTx db $ \tx -> DB.getCommonMetrics tx db worldVersion2
+    commonMetricsV2 <- roTx db $ \tx -> DB.getCommonMetrics tx worldVersion2
     HU.assertEqual "Common metrics should come from latest <= requested version"
         (commonVS2 ^. typed)
         commonMetricsV2
 
-    storedRoasV3 <- roTx db $ \tx -> DB.getRoas tx db worldVersion3
-    storedVrpsV3 <- roTx db $ \tx -> DB.getVrps tx db worldVersion3
-    storedVrpsRipeV3 <- roTx db $ \tx -> DB.getVrpsForTA tx db worldVersion3 ripe
-    storedVrpsApnicV3 <- roTx db $ \tx -> DB.getVrpsForTA tx db worldVersion3 apnic
-    storedVrpsAfrinicV3 <- roTx db $ \tx -> DB.getVrpsForTA tx db worldVersion3 afrinic
-    storedAspasV3 <- roTx db $ \tx -> DB.getAspas tx db worldVersion3
-    storedGbrsV3 <- roTx db $ \tx -> DB.getGbrs tx db worldVersion3
-    storedBgpsV3 <- roTx db $ \tx -> DB.getBgps tx db worldVersion3
-    storedSplsV3 <- roTx db $ \tx -> DB.getSpls tx db worldVersion3
-    storedValidationsV3 <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion3
-    storedMetricsV3 <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion3
+    storedRoasV3 <- roTx db $ \tx -> DB.getRoas tx worldVersion3
+    storedVrpsV3 <- roTx db $ \tx -> DB.getVrps tx worldVersion3
+    storedVrpsRipeV3 <- roTx db $ \tx -> DB.getVrpsForTA tx worldVersion3 ripe
+    storedVrpsApnicV3 <- roTx db $ \tx -> DB.getVrpsForTA tx worldVersion3 apnic
+    storedVrpsAfrinicV3 <- roTx db $ \tx -> DB.getVrpsForTA tx worldVersion3 afrinic
+    storedAspasV3 <- roTx db $ \tx -> DB.getAspas tx worldVersion3
+    storedGbrsV3 <- roTx db $ \tx -> DB.getGbrs tx worldVersion3
+    storedBgpsV3 <- roTx db $ \tx -> DB.getBgps tx worldVersion3
+    storedSplsV3 <- roTx db $ \tx -> DB.getSpls tx worldVersion3
+    storedValidationsV3 <- roTx db $ \tx -> DB.getValidationsPerTA tx worldVersion3
+    storedMetricsV3 <- roTx db $ \tx -> DB.getMetricsPerTA tx worldVersion3
     (commonValidationsV3, commonMetricsV3, storedOutcomesV3) <-
-        roTx db $ \tx -> DB.getValidationOutcomes tx db worldVersion3
-    latestVersionsAll <- roTx db $ \tx -> DB.getLatestVersions tx db
+        roTx db $ \tx -> DB.getValidationOutcomes tx worldVersion3
+    latestVersionsAll <- roTx db $ \tx -> DB.getLatestVersions tx
 
     HU.assertEqual "ROAs should be selected from latest available rows per TA" expectedRoasV3 storedRoasV3
     HU.assertEqual "VRPs should be derived from latest ROAs per TA" expectedVrpsV3 storedVrpsV3
@@ -1039,7 +1039,7 @@ shouldReadValidationOutcomePayloadQueries io = do
         expectedLatestVersionsAll
         latestVersionsAll
 
-    rwTx db $ \tx -> DB.setActiveTAs tx db [ripe, afrinic]
+    rwTx db $ \tx -> DB.setActiveTAs tx [ripe, afrinic]
 
     let expectedPerTaActive = toPerTA
             [ (ripe, ripeV2)
@@ -1054,12 +1054,12 @@ shouldReadValidationOutcomePayloadQueries io = do
             , (afrinic, worldVersion3)
             ]
 
-    filteredRoas <- roTx db $ \tx -> DB.getRoas tx db worldVersion3
-    filteredValidations <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion3
-    filteredMetrics <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion3
-    (_, _, filteredOutcomes) <- roTx db $ \tx -> DB.getValidationOutcomes tx db worldVersion3
-    filteredLatest <- roTx db $ \tx -> DB.getLatestVersions tx db
-    vrpsApnicInactive <- roTx db $ \tx -> DB.getVrpsForTA tx db worldVersion3 apnic
+    filteredRoas <- roTx db $ \tx -> DB.getRoas tx worldVersion3
+    filteredValidations <- roTx db $ \tx -> DB.getValidationsPerTA tx worldVersion3
+    filteredMetrics <- roTx db $ \tx -> DB.getMetricsPerTA tx worldVersion3
+    (_, _, filteredOutcomes) <- roTx db $ \tx -> DB.getValidationOutcomes tx worldVersion3
+    filteredLatest <- roTx db $ \tx -> DB.getLatestVersions tx
+    vrpsApnicInactive <- roTx db $ \tx -> DB.getVrpsForTA tx worldVersion3 apnic
 
     HU.assertEqual "Inactive TA must be excluded from ROAs" expectedRoasActive filteredRoas
     HU.assertEqual "Inactive TA must be excluded from validations" expectedValidationsActive filteredValidations
@@ -1084,26 +1084,26 @@ shouldOrderAndLinkVersions io = do
     rwTx db $ \tx -> do
         common1 <- QC.generate QC.arbitrary
         perTa1  <- QC.generate $ generatePerTa taNames
-        DB.saveValidationVersion tx db worldVersion1 perTa1 common1
+        DB.saveValidationVersion tx worldVersion1 perTa1 common1
 
         common2 <- QC.generate QC.arbitrary
         perTa2  <- QC.generate $ generatePerTa taNames
-        DB.saveValidationVersion tx db worldVersion2 perTa2 common2
+        DB.saveValidationVersion tx worldVersion2 perTa2 common2
 
         common3 <- QC.generate QC.arbitrary
         perTa3  <- QC.generate $ generatePerTa taNames
-        DB.saveValidationVersion tx db worldVersion3 perTa3 common3
+        DB.saveValidationVersion tx worldVersion3 perTa3 common3
 
-    versions <- roTx db $ \tx -> DB.versionsBackwards tx db
+    versions <- roTx db $ \tx -> DB.versionsBackwards tx
     HU.assertEqual "Expected 3 stored versions" 3 (length versions)
     HU.assertEqual "Latest version should be first in descending list" worldVersion3 (head versions)
 
-    latest <- roTx db $ \tx -> DB.getLatestVersion tx db
+    latest <- roTx db $ \tx -> DB.getLatestVersion tx
     HU.assertEqual "Latest version mismatch" (Just worldVersion3) latest
 
-    prev3 <- roTx db $ \tx -> DB.previousVersion tx db worldVersion3
-    prev2 <- roTx db $ \tx -> DB.previousVersion tx db worldVersion2
-    prev1 <- roTx db $ \tx -> DB.previousVersion tx db worldVersion1
+    prev3 <- roTx db $ \tx -> DB.previousVersion tx worldVersion3
+    prev2 <- roTx db $ \tx -> DB.previousVersion tx worldVersion2
+    prev1 <- roTx db $ \tx -> DB.previousVersion tx worldVersion1
 
     HU.assertEqual "Previous of v3 should be v2" (Just worldVersion2) prev3
     HU.assertEqual "Previous of v2 should be v1" (Just worldVersion1) prev2
@@ -1122,21 +1122,21 @@ shouldDeleteValidationVersionData io = do
     let slurm = mempty
 
     rwTx db $ \tx -> do
-        DB.saveValidationVersion tx db worldVersion perTa commonVS
-        DB.saveSlurm tx db worldVersion slurm
+        DB.saveValidationVersion tx worldVersion perTa commonVS
+        DB.saveSlurm tx worldVersion slurm
 
     -- sanity check before delete
-    versionsBefore <- roTx db $ \tx -> DB.versionsBackwards tx db
-    slurmBefore <- roTx db $ \tx -> DB.getSlurm tx db worldVersion
+    versionsBefore <- roTx db $ \tx -> DB.versionsBackwards tx
+    slurmBefore <- roTx db $ \tx -> DB.getSlurm tx worldVersion
     HU.assertBool "Version must exist before deletion" (worldVersion `elem` versionsBefore)
     HU.assertEqual "Slurm must exist before deletion" (Just slurm) slurmBefore
 
-    rwTx db $ \tx -> DB.deleteValidationVersion tx db worldVersion
+    rwTx db $ \tx -> DB.deleteValidationVersion tx worldVersion
 
-    versionsAfter <- roTx db $ \tx -> DB.versionsBackwards tx db
-    slurmAfter <- roTx db $ \tx -> DB.getSlurm tx db worldVersion
-    valsAfter <- roTx db $ \tx -> DB.getValidationsPerTA tx db worldVersion
-    metricsAfter <- roTx db $ \tx -> DB.getMetricsPerTA tx db worldVersion
+    versionsAfter <- roTx db $ \tx -> DB.versionsBackwards tx
+    slurmAfter <- roTx db $ \tx -> DB.getSlurm tx worldVersion
+    valsAfter <- roTx db $ \tx -> DB.getValidationsPerTA tx worldVersion
+    metricsAfter <- roTx db $ \tx -> DB.getMetricsPerTA tx worldVersion
 
     HU.assertBool "Version must be gone after deletion" (worldVersion `notElem` versionsAfter)
     HU.assertEqual "Slurm must be gone" Nothing slurmAfter
@@ -1158,14 +1158,14 @@ shouldDeleteOldestVersionsOnceEveryTAHasEnoughRealData io = do
     forM_ versions $ \wv -> rwTx db $ \tx -> do
         perTa <- QC.generate $ generatePerTa taNames
         commonVS <- QC.generate QC.arbitrary
-        DB.saveValidationVersion tx db wv perTa commonVS
+        DB.saveValidationVersion tx wv perTa commonVS
 
-    deleted <- rwTx db $ \tx -> DB.deleteOldestVersionsIfNeeded tx db 2
+    deleted <- rwTx db $ \tx -> DB.deleteOldestVersionsIfNeeded tx 2
 
     HU.assertEqual "Should delete the three oldest rounds, keeping the newest 2 per TA"
         (List.sort [worldVersion1, worldVersion2, worldVersion3]) (List.sort deleted)
 
-    remaining <- roTx db $ \tx -> DB.versionsBackwards tx db
+    remaining <- roTx db $ \tx -> DB.versionsBackwards tx
     HU.assertEqual "Only the newest 2 versions should remain"
         (List.sort [worldVersion4, worldVersion5]) (List.sort remaining)
 
@@ -1189,18 +1189,18 @@ shouldNotDeleteVersionsBlockedByLaggingTA io = do
     rwTx db $ \tx -> do
         perTa1 <- QC.generate $ generatePerTa taNames
         commonVS1 <- QC.generate QC.arbitrary
-        DB.saveValidationVersion tx db worldVersion1 perTa1 commonVS1
+        DB.saveValidationVersion tx worldVersion1 perTa1 commonVS1
 
     forM_ (drop 1 versions) $ \wv -> rwTx db $ \tx -> do
         perTa <- QC.generate $ generatePerTa [ripe]
         commonVS <- QC.generate QC.arbitrary
-        DB.saveValidationVersion tx db wv perTa commonVS
+        DB.saveValidationVersion tx wv perTa commonVS
 
-    deleted <- rwTx db $ \tx -> DB.deleteOldestVersionsIfNeeded tx db 2
+    deleted <- rwTx db $ \tx -> DB.deleteOldestVersionsIfNeeded tx 2
 
     HU.assertEqual "Nothing should be deleted while apnic never reaches 2 real rounds" [] deleted
 
-    remaining <- roTx db $ \tx -> DB.versionsBackwards tx db
+    remaining <- roTx db $ \tx -> DB.versionsBackwards tx
     HU.assertBool "The round with apnic's only real data must still be present"
         (worldVersion1 `elem` remaining)
 
@@ -1237,15 +1237,15 @@ shouldRollbackAppTx io = do
     Now i3 <- thisInstant
 
     void $ runValidatorIO (newScopes "tx-rollback") $ DB.rwAppTx db $ \tx -> do
-        liftIO $ DB.setJobCompletionTime tx db "job-rollback" i1
+        liftIO $ DB.setJobCompletionTime tx "job-rollback" i1
         appError $ UnspecifiedE "Test" "Rollback requested"
 
     void $ runValidatorIO (newScopes "tx-commit") $ DB.rwAppTx db $ \tx ->
-        liftIO $ DB.setJobCompletionTime tx db "job-commit" i2
+        liftIO $ DB.setJobCompletionTime tx "job-commit" i2
 
     let throwFromTx =
             void $ runValidatorIO (newScopes "tx-throw") $ DB.rwAppTx db $ \tx -> do
-                liftIO $ DB.setJobCompletionTime tx db "job-ex" i3
+                liftIO $ DB.setJobCompletionTime tx "job-ex" i3
                 liftIO $ throwIO DivideByZero
 
     Left (SomeException e) <- try throwFromTx
@@ -1253,7 +1253,7 @@ shouldRollbackAppTx io = do
         (fromException (toException e))
         (Just DivideByZero)
 
-    jobs <- roTx db $ \tx -> DB.allJobs tx db
+    jobs <- roTx db $ \tx -> DB.allJobs tx
     HU.assertEqual "Rolled-back job must not be persisted" Nothing (lookup "job-rollback" jobs)
     HU.assertEqual "Committed job must be persisted" (Just i2) (lookup "job-commit" jobs)
     HU.assertEqual "Exception-rolled job must not be persisted" Nothing (lookup "job-ex" jobs)
@@ -1275,7 +1275,7 @@ shouldPreserveStateInAppTx io = do
                     inSubVScope "nested-1" $
                         appWarn $ UnspecifiedE "Error2" "text 2"
                     -- touch DB inside tx, but assertions are about state preservation
-                    liftIO $ DB.getDatabaseVersion tx db
+                    liftIO $ DB.getDatabaseVersion tx
                 appWarn $ UnspecifiedE "Error4" "text 4"
                 addedObject
 
@@ -1307,12 +1307,12 @@ shouldReopenDatabase =
         db <- readTVarIO $ appContext ^. #database
 
         Now now <- thisInstant
-        rwTx db $ \tx -> DB.setJobCompletionTime tx db "reopen-job" now
+        rwTx db $ \tx -> DB.setJobCompletionTime tx "reopen-job" now
 
         reopenStorage appContext
 
         db' <- readTVarIO $ appContext ^. #database
-        jobs <- roTx db' $ \tx -> DB.allJobs tx db'
+        jobs <- roTx db' $ \tx -> DB.allJobs tx
 
         HU.assertEqual "Persisted data must remain available after reopen"
             (Just now)

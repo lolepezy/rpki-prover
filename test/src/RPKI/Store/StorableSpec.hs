@@ -81,7 +81,7 @@ storableEncodingSpec =
                         lifecycle = OriginalRO original mempty hash CER
                         expectedBlob = DB.encodeSO (toStorableObject lifecycle)
 
-                    key <- rwTx db $ \tx -> DB.saveObject tx db lifecycle worldVersion
+                    key <- rwTx db $ \tx -> DB.saveObject tx lifecycle worldVersion
 
                     rows <- roTx db $ \(Tx conn) ->
                         SQLite.query conn
