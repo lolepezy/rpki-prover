@@ -82,7 +82,7 @@ runErikFetchWorker appContext@AppContext {..} fetchConfig worldVersion relayUris
             appError $ InternalE $ WorkerError e
         Right (ErikFetchResult z) -> do
             logWorkerDone logger workerId wr
-            pushSystem logger $ cpuMemMetric "erik-fetch" cpuTime clockTime maxRtsHeap maxProcessRss
+            pushSystem logger $ resourceUsageMetric "erik-fetch" clockTime stats
             embedValidatorT $ pure z
 
 {- 
