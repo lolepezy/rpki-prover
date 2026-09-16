@@ -81,7 +81,7 @@ setupSqliteCache flow logger cacheDir config = do
         withMVar (writeConn sdb) (SQLite.initSchema . SQLite.rawConn)
         pure (DB sdb)
 
-    version <- liftIO $ DB.roTx db $ \tx -> DB.getDatabaseVersion tx db
+    version <- liftIO $ DB.roTx db DB.getDatabaseVersion
 
     case version of
         Just v | v == DB.currentDatabaseVersion ->
@@ -93,7 +93,7 @@ setupSqliteCache flow logger cacheDir config = do
                     let Tx conn = tx
                     SQLite.dropSchema (SQLite.rawConn conn)
                     SQLite.initSchema (SQLite.rawConn conn)
-                    DB.saveCurrentDatabaseVersion tx db
+                    DB.saveCurrentDatabaseVersion tx
 
     pure db
   where

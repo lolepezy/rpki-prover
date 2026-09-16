@@ -399,7 +399,7 @@ schemaDDL =
     , "CREATE TABLE IF NOT EXISTS slurm       (key INTEGER PRIMARY KEY, value BLOB NOT NULL)"
     , "CREATE TABLE IF NOT EXISTS jobs        (key TEXT NOT NULL PRIMARY KEY, value BLOB NOT NULL)"
     , "CREATE TABLE IF NOT EXISTS metadata    (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)"
-    , [sql|
+    , [sql|        
         CREATE TABLE IF NOT EXISTS validated_by_version (
             key   TEXT NOT NULL PRIMARY KEY,
             value BLOB NOT NULL

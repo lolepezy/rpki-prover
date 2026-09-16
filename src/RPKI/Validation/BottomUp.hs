@@ -42,7 +42,7 @@ validateBottomUp
     case getAKI object of 
         Nothing  -> appError $ ValidationE NoAKI
         Just (AKI ki) -> do 
-            z <- DB.roAppTx db $ \tx -> DB.getBySKI tx db (SKI ki)            
+            z <- DB.roAppTx db $ \tx -> DB.getBySKI tx (SKI ki)
             case z of 
                 []          -> appError $ ValidationE ParentCertificateNotFound
                 parentCerts ->                               
@@ -134,9 +134,9 @@ validateBottomUp
     -- the chain is build based on the SKI - AKI relations
     findPathsToRoot db certificate = do                  
         taCerts <- DB.roAppTx db $ \tx -> do
-            tas <- DB.getTAs tx db
+            tas <- DB.getTAs tx
             fmap (Map.fromList . catMaybes) $ forM tas $ \StorableTA {..} -> do
-                mcert <- DB.getTaCertByKey tx db taCertKey
+                mcert <- DB.getTaCertByKey tx taCertKey
                 pure $ fmap (\cert -> (getSKI cert, Located (Just $ talCertLocations tal) cert)) mcert
         go taCerts certificate
       where        
@@ -148,7 +148,7 @@ validateBottomUp
                         [] -> appError $ ValidationE NoAKI
                         _  -> pure []
                 Just (AKI ki) -> do 
-                    parentCerts <- DB.roAppTx db $ \tx -> DB.getBySKI tx db (SKI ki)
+                    parentCerts <- DB.roAppTx db $ \tx -> DB.getBySKI tx (SKI ki)
                     case parentCerts of 
                         [] ->                       
                             case Map.lookup (SKI ki) taCerts of 
@@ -165,10 +165,10 @@ validateBottomUp
            and don't track visited object or metrics.
          -}
         let childrenAki = toAKI $ getSKI certificate
-        maybeMft <- liftIO $ DB.roTx db $ \tx -> do 
-            DB.getMftsForAKI tx db childrenAki >>= \case
+        maybeMft <- liftIO $ DB.roTx db $ \tx -> do
+            DB.getMftsForAKI tx childrenAki >>= \case
                 [] -> pure Nothing
-                (MftMeta {..} : _) -> DB.getMftByKey tx db key
+                (MftMeta {..} : _) -> DB.getMftByKey tx key
         case maybeMft of 
             Nothing -> 
                 vError $ NoMFT childrenAki
@@ -185,7 +185,7 @@ validateBottomUp
                                 [crl] -> pure crl
                                 crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls
                     
-                    crlObject <- liftIO $ DB.roTx db $ \tx -> DB.getByHash tx db crlHash
+                    crlObject <- liftIO $ DB.roTx db $ \tx -> DB.getByHash tx crlHash
                     case crlObject of 
                         Nothing -> 
                             vError $ NoCRLExists childrenAki crlHash

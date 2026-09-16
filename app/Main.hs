@@ -372,7 +372,7 @@ createSqliteDatabase cacheDir config resetCache checkVersion = do
                 existingVersion <- DB.roTx db $ \tx -> DB.getDatabaseVersion tx db
                 case existingVersion of
                     Nothing -> do
-                        DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx db
+                        DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx
                         pure DidntHaveVersion
 
                     Just version
@@ -381,10 +381,10 @@ createSqliteDatabase cacheDir config resetCache checkVersion = do
                             SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> do
                                 SQLite.dropSchema (SQLite.rawConn conn)
                                 SQLite.initSchema (SQLite.rawConn conn)
-                            DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx db
+                            DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx
                             pure WasIncompatible
             else do
-                DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx db
+                DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx
                 pure WasCompatible
 
     pure (db, dbCheck)

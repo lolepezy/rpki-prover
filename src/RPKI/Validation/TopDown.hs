@@ -67,7 +67,7 @@ import           RPKI.Repository
 import           RPKI.Resources.Types
 
 import           RPKI.Store.Base.Storable
-import           RPKI.Store.Database    (DB, Tx, roTxT, rwTxT)
+import           RPKI.Store.Database    (Tx, roTxT, rwTxT)
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 import           RPKI.TAL
@@ -394,7 +394,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     let validationConfig = config ^. typed
 
     db <- liftIO $ readTVarIO database
-    ta <- DB.roAppTxEx db DB.storageError $ \tx -> DB.getTA tx db (getTaName tal)
+    ta <- DB.roAppTxEx db DB.storageError $ \tx -> DB.getTA tx (getTaName tal)
     case ta of
         Nothing -> fetchValidateAndStore db now Nothing
         Just storedTa
@@ -405,7 +405,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                 storedTa' <- updateStoredTal db storedTa
                 let locations = talCertLocations tal <> toLocations (storedTa' ^. #actualUrl)
                 taCert <- DB.roAppTxEx db DB.storageError $ \tx ->
-                    DB.getTaCertByKey tx db (storedTa' ^. #taCertKey)
+                    DB.getTaCertByKey tx (storedTa' ^. #taCertKey)
                 case taCert of
                     Nothing   -> appError $ UnspecifiedE (unTaName $ getTaName tal) "TA cert not found in objects store"
                     Just cert -> pure (locatedTaCert locations cert, storedTa' ^. #initialRepositories)
@@ -416,7 +416,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
     updateStoredTal db storedTa = 
         DB.rwAppTxEx db DB.storageError $ \tx -> do
             let updatedTa = storedTa & #tal .~ tal
-            DB.saveTA tx db updatedTa
+            DB.saveTA tx updatedTa
             pure updatedTa     
    
     fetchValidateAndStore db (Now moment) storableTa = do
@@ -424,7 +424,7 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
             Nothing -> pure Nothing
             Just StorableTA { taCertKey } ->
                 DB.roAppTxEx db DB.storageError $ \tx ->
-                    DB.getTaCertByKey tx db taCertKey
+                    DB.getTaCertByKey tx taCertKey
 
         z <- (do 
                 (u, ro) <- fetchTACertificate appContext (newFetchConfig config) tal
@@ -453,9 +453,9 @@ validateTACertificateFromTAL appContext@AppContext {..} tal worldVersion = do
                     Left e         -> appError $ ValidationE e
                     Right ppAccess ->
                         DB.rwAppTxEx db DB.storageError $ \tx -> do
-                            taCertKey <- DB.saveObject tx db (WellStructuredRO (CerRO certToStore)) worldVersion
-                            DB.linkObjectToUrl tx db actualUrl taCertKey worldVersion
-                            DB.saveTA tx db (StorableTA tal taCertKey (FetchedAt moment) ppAccess actualUrl)
+                            taCertKey <- DB.saveObject tx (WellStructuredRO (CerRO certToStore)) worldVersion
+                            DB.linkObjectToUrl tx actualUrl taCertKey worldVersion
+                            DB.saveTA tx (StorableTA tal taCertKey (FetchedAt moment) ppAccess actualUrl)
                             pure (locatedTaCert (talCertLocations tal <> toLocations actualUrl) certToUse, ppAccess)
 
             CachedTA StorableTA { tal = _, ..} ->
@@ -667,17 +667,17 @@ validateCaNoFetch
             Incremental        -> (Just $!)
 
     makeNextFullValidationAction aki = do 
-        mftMetas <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
+        mftMetas <- roTxT database $ \tx -> DB.getMftsForAKI tx aki
         pure $! processMfts aki mftMetas
 
     makeNextIncrementalAction aki = do
-        z <- roTxT database $ \tx db -> DB.getMftsForAKI tx db aki
+        z <- roTxT database $ \tx -> DB.getMftsForAKI tx aki
         case z of
             []   -> pure $! vError $ NoMFT aki
             mfts -> actOnMfts mfts
       where
         actOnMfts mftMetas = do
-            z <- roTxT database $ \tx db -> DB.getMftShorcutMeta tx db aki
+            z <- roTxT database $ \tx -> DB.getMftShorcutMeta tx aki
             case z of
                 Nothing -> do
                     increment $ topDownCounters.originalMft
@@ -722,7 +722,7 @@ validateCaNoFetch
             fullCa <- getFullCa appContext topDownContext ca
             let crlKey = crlShortcut.key
             markAsUsed topDownContext crlKey
-            fullChildren <- roTxT database $ \tx db -> DB.getMftShorcutChildrenFull tx db aki
+            fullChildren <- roTxT database $ \tx -> DB.getMftShorcutChildrenFull tx aki
             let mftShortcut = MftShortcut { nonCrlEntries = fullChildren, .. }
             overlappingChildren <- manifestFullValidation fullCa mft (Just mftShortcut) aki
             collectPayloads aki meta (Map.map ChildWithEntry fullChildren) (Just overlappingChildren)
@@ -735,7 +735,7 @@ validateCaNoFetch
         onlyCollectPayloads meta@DB.MftShortcutMeta{..} = do
             let crlKey = crlShortcut.key
             markAsUsed topDownContext crlKey
-            lightChildren <- roTxT database $ \tx db -> DB.getMftShorcutChildrenLight tx db aki
+            lightChildren <- roTxT database $ \tx -> DB.getMftShorcutChildrenLight tx aki
             collectPayloads aki meta (Map.map ChildLight lightChildren) Nothing
                     (Right $ getFullCa appContext topDownContext ca)
                     (getCrlByKey appContext crlKey)
@@ -771,7 +771,7 @@ validateCaNoFetch
             oneMoreMft >> oneMoreCrl         
 
     withMft key f = do 
-        z <- roTxT database $ \tx db -> DB.getMftByKey tx db key
+        z <- roTxT database $ \tx -> DB.getMftByKey tx key
         case z of 
             Nothing  -> integrityError appContext [i|Referential integrity error, can't find a manifest by its key #{key}.|]
             Just mft -> f mft
@@ -940,11 +940,11 @@ validateCaNoFetch
 
         db <- liftIO $ readTVarIO database
         DB.roAppTx db $ \tx -> 
-            DB.getKeyByHash tx db crlHash >>= \case         
+            DB.getKeyByHash tx crlHash >>= \case         
                 Nothing  -> vError $ NoCRLExists aki crlHash
                 Just key -> do           
                     increment $ topDownCounters.readParsed
-                    z <- getStoredObject tx db key
+                    z <- getStoredObject tx key
                     case z of 
                         Nothing -> 
                             vError $ NoCRLExists aki crlHash
@@ -1105,7 +1105,7 @@ validateCaNoFetch
         db <- liftIO $ readTVarIO database
         DB.roAppTx db $ \tx ->
             forM nonCrlChildren $ \(MftPair fileName hash) -> do
-                k <- DB.getKeyByHash tx db hash
+                k <- DB.getKeyByHash tx hash
                 case k of
                     Nothing  -> vError $ ManifestEntryDoesn'tExist hash fileName
                     Just key -> do
@@ -1121,7 +1121,7 @@ validateCaNoFetch
         ro <- DB.roAppTx db $ \tx ->
             vFocusOn ObjectFocus key $ do
                 increment topDownCounters.readParsed
-                getStoredObject tx db key >>= \case
+                getStoredObject tx key >>= \case
                     Nothing -> vError $ ManifestEntryDoesn'tExist hash' filename
                     Just o  -> do
                         case o ^. #object . #payload of
@@ -1172,7 +1172,7 @@ validateCaNoFetch
     -- a set lookup rather than a query and a transaction per object.
     validateLocationForShortcut key =
         when (key `Set.member` multiLocationKeys) $ do 
-            z <- roTxT database $ \tx db -> DB.getLocationsByKey tx db key
+            z <- roTxT database $ \tx -> DB.getLocationsByKey tx key
             case z of 
                 Nothing -> 
                     -- That's weird and it means DB inconsitency                                
@@ -1421,7 +1421,7 @@ validateCaNoFetch
             db <- liftIO $ readTVarIO database            
             resolved <-
                 DB.roAppTx db $ \tx -> do
-                    resolveTroubledChildByKey tx db childKey
+                    resolveTroubledChildByKey tx childKey
 
             childObject <-
                 case resolved of
@@ -1504,8 +1504,8 @@ validateCaNoFetch
                             -- troubled child, which genuinely needs a file_name to build a
                             -- fresh MftEntry on successful re-validation. Look it up on demand
                             -- instead of joining file_name into every bulk read.
-                            mfn <- roTxT database $ \tx db ->
-                                        DB.getMftShortcutChildFileName tx db childrenAki childKey_
+                            mfn <- roTxT database $ \tx ->
+                                        DB.getMftShortcutChildFileName tx childrenAki childKey_
                             case mfn of
                                 Just fn -> pure fn
                                 Nothing -> integrityError appContext
@@ -1590,11 +1590,10 @@ revokedShortcutChildren mftShortcut validCrl children =
 
 
 resolveTroubledChildByKey :: ValidatorIO es => Tx mode
-                            -> DB
                             -> ObjectKey
                             -> Eff es (Maybe (TroubledChildLoadPath, Keyed (Located WellStructuredRpkiObject)))
-resolveTroubledChildByKey tx db childKey =
-    DB.getLocatedByKey tx db childKey >>= \case
+resolveTroubledChildByKey tx childKey =
+    DB.getLocatedByKey tx childKey >>= \case
         Just (Located locations (WellStructuredRO vro)) ->
             pure $! Just (TroubledFromParsed, Keyed (Located locations vro) childKey)
 
@@ -1611,11 +1610,10 @@ resolveTroubledChildByKey tx db childKey =
         _ -> pure Nothing
 
 getStoredObject :: ValidatorIO es => Tx mode
-                    -> DB
                     -> ObjectKey
                     -> Eff es (Maybe (Keyed (Located RpkiObjectLifecycle)))
-getStoredObject tx db key =
-    fmap (`Keyed` key) <$> DB.getLocatedByKey tx db key    
+getStoredObject tx key =
+    fmap (`Keyed` key) <$> DB.getLocatedByKey tx key    
 
 getFullCa :: ValidatorIO es => AppContext s -> TopDownContext -> Ca -> Eff es (Located WellStructuredCaCert)
 getFullCa appContext@AppContext {..} topDownContext = \case    
@@ -1624,7 +1622,7 @@ getFullCa appContext@AppContext {..} topDownContext = \case
         db <- liftIO $ readTVarIO database
         DB.roAppTx db $ \tx -> do 
             increment topDownContext.allTas.topDownCounters.readParsed
-            z <- DB.getLocatedByKey tx db key
+            z <- DB.getLocatedByKey tx key
             case z of 
                 Just (Located locations (WellStructuredRO (CerRO ca_))) -> pure $! Located locations ca_
                 _ -> integrityError appContext 
@@ -1633,7 +1631,7 @@ getFullCa appContext@AppContext {..} topDownContext = \case
 
 getCrlByKey :: ValidatorIO es => AppContext s -> ObjectKey -> Eff es (Keyed (Validated CrlObject))
 getCrlByKey appContext@AppContext {..} crlKey = do        
-    z <- roTxT database $ \tx db -> DB.getObjectByKey tx db crlKey
+    z <- roTxT database $ \tx -> DB.getObjectByKey tx crlKey
     case z of 
         Just (WellStructuredRO (CrlRO c)) -> pure $! Keyed (Validated c) crlKey
         _ -> integrityError appContext [i|Referential integrity error, can't find a CRL by its key #{crlKey}.|]
@@ -1733,7 +1731,7 @@ applyValidationSideEffects
     AllTasTopDownContext {..} = liftIO $ do        
     (visitedSize, elapsed) <- timedMS $ do
         vks <- readTVarIO visitedKeys            
-        rwTxT database $ \tx db -> DB.markAsValidated tx db vks worldVersion        
+        rwTxT database $ \tx -> DB.markAsValidated tx vks worldVersion        
         pure $! Set.size vks
     
     liftIO $ reportCounters appContext topDownCounters        
@@ -1781,15 +1779,15 @@ storeShortcuts :: (MonadIO m) =>
              -> ClosableQueue MftShortcutOp -> m ()
 storeShortcuts AppContext {..} shortcutQueue = liftIO $
     readQueueChunked shortcutQueue 1000 $ \shotcutOps ->
-        rwTxT database $ \tx db ->
+        rwTxT database $ \tx ->
             for_ shotcutOps $ \case
                 UpdateMftShortcut aki s ->
-                    DB.saveMftShorcutMeta tx db aki s
+                    DB.saveMftShorcutMeta tx aki s
                 UpdateMftShortcutChildren aki inserts deletedKeys -> do
-                    unless (null inserts)     $ DB.insertMftShortcutChildren tx db aki inserts
-                    unless (null deletedKeys) $ DB.deleteMftShortcutChildren tx db aki deletedKeys
+                    unless (null inserts)     $ DB.insertMftShortcutChildren tx aki inserts
+                    unless (null deletedKeys) $ DB.deleteMftShortcutChildren tx aki deletedKeys
                 DeleteMftShortcut aki ->
-                    DB.deleteMftShortcut tx db aki
+                    DB.deleteMftShortcut tx aki
 
 
 data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta))
@@ -1808,7 +1806,7 @@ markAsUsed TopDownContext { allTas = AllTasTopDownContext {..} } k =
 markAsUsedByHash :: ValidatorIO es => 
                     AppContext s -> TopDownContext -> Hash -> Eff es ()
 markAsUsedByHash AppContext {..} topDownContext hash = do
-    key <- roTxT database $ \tx db -> DB.getKeyByHash tx db hash
+    key <- roTxT database $ \tx -> DB.getKeyByHash tx hash
     for_ key $ markAsUsed topDownContext              
 
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Validator es => Eff es ()
@@ -1835,7 +1833,7 @@ extractPPAs = \case
 getCaLocations :: ValidatorIO es => AppContext s -> Ca -> Eff es (Maybe Locations)
 getCaLocations AppContext {..} = \case 
     CaShort (CaShortcut {..}) -> 
-        roTxT database $ \tx db -> DB.getLocationsByKey tx db key
+        roTxT database $ \tx -> DB.getLocationsByKey tx key
     CaFull c ->
         pure $! getLocations c
 

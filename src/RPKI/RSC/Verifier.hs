@@ -60,7 +60,7 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
     db <- liftIO $ readTVarIO database
 
     -- First check that there's some validated data
-    lastVersion <- liftIO $ DB.roTx db $ \tx -> DB.getLatestVersion tx db    
+    lastVersion <- liftIO $ DB.roTx db DB.getLatestVersion
     when (isNothing lastVersion) $ appError $ ValidationE NoValidatedVersion    
 
     bs        <- fromTry (ParseE . ParseError . fmtEx) $ BS.readFile rscFile

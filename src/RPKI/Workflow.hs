@@ -328,10 +328,10 @@ runAll appContext@AppContext {..} tals = do
                     
 
     outputVrps vrpOutputFile = do 
-        vrps <- DB.roTxT database $ \tx db -> 
-                DB.getLatestVersion tx db >>= \case 
+        vrps <- DB.roTxT database $ \tx ->
+                DB.getLatestVersion tx >>= \case
                     Nothing            -> pure Nothing
-                    Just latestVersion -> Just <$> DB.getVrps tx db latestVersion
+                    Just latestVersion -> Just <$> DB.getVrps tx latestVersion
         case vrps of
             Nothing -> do
                 logWarn logger [i|Don't have any VRPs, exiting.|]                
@@ -386,7 +386,7 @@ runAll appContext@AppContext {..} tals = do
     --   * run tasks using `runConcurrentlyIfPossible` to make sure 
     --     there is no data races between different tasks
     runScheduledTasks workflowShared = do                
-        persistedJobs <- DB.roTxT database $ \tx db -> Map.fromList <$> DB.allJobs tx db
+        persistedJobs <- DB.roTxT database $ \tx -> Map.fromList <$> DB.allJobs tx
 
         Now now <- thisInstant
         forConcurrently_ (schedules workflowShared) $ \Scheduling { taskDef = (task, action), ..} -> do                        
@@ -420,7 +420,7 @@ runAll appContext@AppContext {..} tals = do
                                 Now endTime <- thisInstant
                                 -- re-read `db` since it could have been changed by the time the
                                 -- job is finished (after compaction, in particular)                                                                
-                                DB.rwTxT database $ \tx db' -> DB.setJobCompletionTime tx db' name endTime
+                                DB.rwTxT database $ \tx -> DB.setJobCompletionTime tx name endTime
                             updateMainResourcesStat
                             logDebug logger [i|Done with task '#{name}'.|])    
 
@@ -450,8 +450,8 @@ runAll appContext@AppContext {..} tals = do
             ((z, workerVS), workerId) <- runValidationWorker worldVersion talsToValidate            
             let reportError message = do 
                     logError logger message
-                    DB.rwTxT database $ \tx db -> do
-                        DB.saveValidationVersion tx db worldVersion mempty workerVS
+                    DB.rwTxT database $ \tx -> do
+                        DB.saveValidationVersion tx worldVersion mempty workerVS
                     updatePrometheus (workerVS ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion
                     pure (mempty, mempty)
 
@@ -481,7 +481,7 @@ runAll appContext@AppContext {..} tals = do
                             pure q
           where
             reReadAndUpdatePayloads maybeSlurm = do 
-                DB.roTxT database (\tx db -> DB.getRtrPayloads tx db worldVersion) >>= \case                         
+                DB.roTxT database (\tx -> DB.getRtrPayloads tx worldVersion) >>= \case
                     Nothing -> do 
                         logError logger [i|Something weird happened, could not re-read VRPs.|]
                         pure (mempty, mempty)
@@ -653,27 +653,27 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     (slurmValidations, maybeSlurm) <- reReadSlurm        
 
     -- Save all the results into the database
-    ((deleted, updatedValidation), elapsed) <- timedMS $ DB.rwTxT database $ \tx db -> do              
-                            
-        let results' = addVersionPerTA results
-        updatedValidation <- addUniqueVrpCountsToMetrics tx db results' slurmValidations                
+    ((deleted, updatedValidation), elapsed) <- timedMS $ DB.rwTxT database $ \tx -> do
 
-        let resultsToSave = toPerTA 
-                $ map (\(ta, r) -> (ta, (r ^. typed, r ^. typed))) 
+        let results' = addVersionPerTA results
+        updatedValidation <- addUniqueVrpCountsToMetrics tx results' slurmValidations
+
+        let resultsToSave = toPerTA
+                $ map (\(ta, r) -> (ta, (r ^. typed, r ^. typed)))
                 $ Map.toList results'
 
-        DB.saveValidationVersion tx db worldVersion
+        DB.saveValidationVersion tx worldVersion
             resultsToSave updatedValidation
-     
-        for_ maybeSlurm $ DB.saveSlurm tx db worldVersion        
- 
+
+        for_ maybeSlurm $ DB.saveSlurm tx worldVersion
+
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.
-        deleted <- DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
+        deleted <- DB.deleteOldestVersionsIfNeeded tx (config ^. #versionNumberToKeep)
 
         let validations = updatedValidation <> snd (allTAs resultsToSave)
 
-        handleValidations tx db (validations ^. typed)        
+        handleValidations tx (validations ^. typed)
 
         pure (deleted, validations)
 
@@ -701,16 +701,16 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                     Right slurm ->
                         pure (vs, Just slurm)     
     
-    addUniqueVrpCountsToMetrics tx db results slurmValidations = do 
+    addUniqueVrpCountsToMetrics tx results slurmValidations = do
 
-        previousVersion <- DB.previousVersion tx db worldVersion        
+        previousVersion <- DB.previousVersion tx worldVersion
 
-        vrps <- forM allTaNames $ \taName -> do 
-            case Map.lookup taName results of 
+        vrps <- forM allTaNames $ \taName -> do
+            case Map.lookup taName results of
                 Just p  -> pure (taName, toVrps $ p ^. typed)
-                Nothing -> case previousVersion of 
-                        Nothing -> pure (taName, mempty) 
-                        Just pv -> (taName, ) <$> DB.getVrpsForTA tx db pv taName    
+                Nothing -> case previousVersion of
+                        Nothing -> pure (taName, mempty)
+                        Just pv -> (taName, ) <$> DB.getVrpsForTA tx pv taName
    
         pure $ addUniqueVRPCount (toPerTA vrps) slurmValidations
       where
@@ -729,8 +729,8 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
 
     -- Here we do anything that needs to be done in case of specific 
     -- fetch/validation issues are present    
-    handleValidations tx db validations = do
-        forceSnapshotForReferencialIssues tx db validations
+    handleValidations tx validations = do
+        forceSnapshotForReferencialIssues tx validations
         -- other processings if needed
         -- TODO Add some logic that would reset the cache in case of storage integrity issues
 
@@ -741,10 +741,10 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     -- or a problem in the repository. In either case we force snapshot fetch 
     -- to recover repository integrity. This is hacky and should be reconsidered 
     -- in the future, but it works well for now.
-    forceSnapshotForReferencialIssues tx db (Validations validations) = do
+    forceSnapshotForReferencialIssues tx (Validations validations) = do
         Now now <- thisInstant
-        for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) -> do 
-            DB.updateRrdpMetaM tx db rrdpUrl $ \case 
+        for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) -> do
+            DB.updateRrdpMetaM tx rrdpUrl $ \case
                 Nothing   -> pure Nothing
                 Just meta -> do 
                     let enforcedSnapshot = meta & #enforcement ?~ 
@@ -870,7 +870,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         pauseIfNeeded now = do 
             f <- fetchableForUrl 
             for_ f $ \_ -> do 
-                r <- DB.roTxT database (\tx db -> DB.getRepository tx db url)
+                r <- DB.roTxT database (\tx -> DB.getRepository tx url)
                 for_ r $ \repository -> do          
                     let status = getMeta repository ^. #status
                     let lastFetchMoment = 
@@ -899,7 +899,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 let fetchConfig = newFetchConfig config
                 worldVersion <- newWorldVersion
                 repository <- fromMaybe (newRepository url) <$> 
-                                DB.roTxT database (\tx db -> DB.getRepository tx db url) 
+                                DB.roTxT database (\tx -> DB.getRepository tx url) 
 
                 -- TODO It should be refactored to be more systematic: 
                 -- If a repository was successfully fetched before, try to fetch the update 
@@ -1014,7 +1014,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             repositories <- pooledForConcurrentlyN maxThreads (Set.toList fallbacks) $ \fallbackUrl -> do 
 
                 repository <- fromMaybe (newRepository fallbackUrl) <$> 
-                                DB.roTxT database (\tx db -> DB.getRepository tx db fallbackUrl)
+                                DB.roTxT database (\tx -> DB.getRepository tx fallbackUrl)
                                 
                 ((r, validations), duration) <- 
                         withFetchLimits fetchConfig repository 
@@ -1034,9 +1034,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             
                 pure (repo, validations)            
 
-            DB.rwTxT database $ \tx db -> do
-                DB.saveRepositories tx db (map fst repositories)
-                DB.saveRepositoryValidationStates tx db repositories
+            DB.rwTxT database $ \tx -> do
+                DB.saveRepositories tx (map fst repositories)
+                DB.saveRepositoryValidationStates tx repositories
 
             pure $ any (hasUpdates . snd) repositories
         
@@ -1116,24 +1116,24 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             in fromIntegral r :: Int64
 
     saveFetchOutcome r validations =
-        DB.rwTxT database $ \tx db -> do
-            DB.saveRepositories tx db [r]
-            DB.saveRepositoryValidationStates tx db [(r, validations)]
+        DB.rwTxT database $ \tx -> do
+            DB.saveRepositories tx [r]
+            DB.saveRepositoryValidationStates tx [(r, validations)]
 
-    -- Erik fetches are keyed by FQDN and not by repository URL, so they are 
-    -- tracked separately from the repository itself. Several repositories can 
+    -- Erik fetches are keyed by FQDN and not by repository URL, so they are
+    -- tracked separately from the repository itself. Several repositories can
     -- share an FQDN, in which case it is simply the latest fetch that is recorded.
     saveErikFetchOutcome fqdn newStatus interval relayUsage validations =
-        DB.rwTxT database $ \tx db -> do
-            existing <- fromMaybe (newErikRepository fqdn) <$> DB.getErikRepository tx db fqdn
-            let erikRepository = existing 
-                    & #meta . #status .~ newStatus 
+        DB.rwTxT database $ \tx -> do
+            existing <- fromMaybe (newErikRepository fqdn) <$> DB.getErikRepository tx fqdn
+            let erikRepository = existing
+                    & #meta . #status .~ newStatus
                     & #meta . #refreshInterval ?~ interval
-                    -- A failed fetch has nothing to say about the relays, so in 
+                    -- A failed fetch has nothing to say about the relays, so in
                     -- that case keep whatever the previous one found out.
                     & #relayUsage %~ (\previous -> if null relayUsage then previous else relayUsage)
-            DB.saveErikRepositories tx db [erikRepository]
-            DB.saveErikRepositoryValidationStates tx db [(erikRepository, validations)]
+            DB.saveErikRepositories tx [erikRepository]
+            DB.saveErikRepositoryValidationStates tx [(erikRepository, validations)]
 
     
     withFetchLimits :: FetchConfig -> Repository -> IO a -> IO a
@@ -1251,8 +1251,8 @@ runCacheCleanup AppContext {..} worldVersion = do
     -- Use the latest completed validation moment as a cutting point.
     -- This is to prevent cleaning up objects actual object if they were 
     -- untouched because prover was stopped for a long period.
-    cutOffVersion <- DB.roTx db $ \tx -> 
-        fromMaybe worldVersion <$> DB.getLatestVersion tx db
+    cutOffVersion <- DB.roTx db $ \tx ->
+        fromMaybe worldVersion <$> DB.getLatestVersion tx
     
     let cutOffMoment = versionToInstant cutOffVersion
         tooOldLongLived  = versionIsOld cutOffMoment (config ^. #longLivedCacheLifeTime)
@@ -1278,8 +1278,8 @@ loadStoredAppState :: AppContext s -> IO (Maybe WorldVersion)
 loadStoredAppState AppContext {..} = do
     Now now' <- thisInstant
     let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval    
-    DB.roTxT database $ \tx db ->
-        DB.getLatestVersion tx db >>= \case
+    DB.roTxT database $ \tx ->
+        DB.getLatestVersion tx >>= \case
             Nothing  -> pure Nothing
 
             Just lastVersion
@@ -1288,9 +1288,9 @@ loadStoredAppState AppContext {..} = do
                     pure Nothing
 
                 | otherwise -> do
-                    (payloads, elapsed) <- timedMS $ do                                            
-                        slurm    <- DB.getSlurm tx db lastVersion
-                        payloads <- DB.getRtrPayloads tx db lastVersion                        
+                    (payloads, elapsed) <- timedMS $ do
+                        slurm    <- DB.getSlurm tx lastVersion
+                        payloads <- DB.getRtrPayloads tx lastVersion
                         for_ payloads $ \payloads' -> do 
                             slurmedPayloads <- atomically $ completeVersion appState lastVersion payloads' slurm                            
                             when (config ^. #withValidityApi) $                                

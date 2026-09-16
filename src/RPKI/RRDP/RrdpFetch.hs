@@ -46,7 +46,7 @@ import           RPKI.RRDP.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Store.Types
 import           RPKI.Store.Base.Storable (StorableObject(..), Compressed(..), toStorableObject)
-import           RPKI.Store.Database     (DB, Tx(..), TxMode(..), roTx)
+import           RPKI.Store.Database     (Tx(..), TxMode(..), roTx)
 import qualified RPKI.Store.Database    as DB
 import qualified RPKI.Util              as U
 
@@ -447,17 +447,17 @@ saveSnapshot
     when (serial /= notificationSerial) $ 
         appError $ RrdpE $ SnapshotSerialMismatch serial notificationSerial
          
-    let savingTx f = 
-            DB.rwAppTx db $ \tx -> do 
+    let savingTx f =
+            DB.rwAppTx db $ \tx -> do
                 f tx
-                updateRepositoryMeta tx db repoUri sessionId serial
+                updateRepositoryMeta tx repoUri sessionId serial
 
     scopes <- askScopes
     txFoldPipeline 
             cpuParallelism
             (S.mapM (newStorable scopes db) $ S.each snapshotItems)
             savingTx
-            (saveStorable db)
+            saveStorable
   where        
 
     newStorable scopes db (SnapshotPublish uri encodedb64) =             
@@ -483,7 +483,7 @@ saveSnapshot
                                 case urlObjectType rpkiURL of                                 
                                     Just type_ -> do 
                                         let hash = U.sha256s blob  
-                                        roTx db (\tx -> DB.getObjectKey tx db hash) >>= \case
+                                        roTx db (\tx -> DB.getObjectKey tx hash) >>= \case
                                             Just key -> 
                                                 -- The object is already in cache. Do not parse-serialise
                                                 -- anything, just skip it. We are not afraid of possible 
@@ -522,10 +522,10 @@ saveSnapshot
                 -- so the single-threaded DB-writer only has to do the INSERT.
                 mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
 
-    saveStorable _ _ (Left (e, uri)) = 
-        inSubLocationScope uri $ appWarn e             
-    
-    saveStorable db tx (Right (uri, a)) = do 
+    saveStorable _ (Left (e, uri)) =
+        inSubLocationScope uri $ appWarn e
+
+    saveStorable tx (Right (uri, a)) = do
         z <- waitCatch a        
         case z of 
             Left e  -> do 
@@ -534,8 +534,8 @@ saveSnapshot
                     appWarn $ RrdpE $ FailedToParseSnapshotItem $ U.fmtEx e
             Right r -> 
                 case r of 
-                    HashExists rpkiURL _ key -> 
-                        DB.linkObjectToUrl tx db rpkiURL key worldVersion
+                    HashExists rpkiURL _ key ->
+                        DB.linkObjectToUrl tx rpkiURL key worldVersion
 
                     UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do                    
                         logError logger [i|Skipped object #{rpkiUrl}: #{e}|]
@@ -556,8 +556,8 @@ saveSnapshot
                                 logError logger [i|Object #{rpkiUrl} failed parse/prevalidation, storing original.|]
                                 embedState vs
                             WellStructuredRO _ -> pure ()
-                        key <- DB.saveStorableObject tx db so worldVersion
-                        DB.linkObjectToUrl tx db rpkiUrl key worldVersion
+                        key <- DB.saveStorableObject tx so worldVersion
+                        DB.linkObjectToUrl tx rpkiUrl key worldVersion
                         addedObject $ Just $ getRpkiObjectType lifecycle
 
                     other -> 
@@ -599,11 +599,11 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
     when (expectedSerial /= serial) $
         appError $ RrdpE $ DeltaSerialMismatch serial notificationSerial
     
-    let savingTx f =            
-            DB.rwAppTx db $ \tx -> do 
-                verifyRrdpMeta tx db repoUri sessionId (previousSerial serial)
+    let savingTx f =
+            DB.rwAppTx db $ \tx -> do
+                verifyRrdpMeta tx repoUri sessionId (previousSerial serial)
                 f tx
-                updateRepositoryMeta tx db repoUri sessionId serial
+                updateRepositoryMeta tx repoUri sessionId serial
 
     scopes <- askScopes
 
@@ -611,7 +611,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
             cpuParallelism
             (S.mapM (newStorable scopes) $ S.each deltaItems)
             savingTx
-            (saveStorable db)
+            saveStorable
   where        
 
     newStorable scopes item = do 
@@ -673,22 +673,22 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 -- so the single-threaded DB-writer only has to do the INSERT.
                 mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
 
-    saveStorable db tx r = 
-        case r of 
-            Left (e, uri)                      -> inSubLocationScope uri $ appWarn e             
-            Right (Add uri a)                  -> addObject db tx uri a 
-            Right (Replace uri a existingHash) -> replaceObject db tx uri a existingHash
-            Right (Delete uri existingHash)    -> deleteObject db tx uri existingHash                                        
-    
+    saveStorable tx r =
+        case r of
+            Left (e, uri)                      -> inSubLocationScope uri $ appWarn e
+            Right (Add uri a)                  -> addObject tx uri a
+            Right (Replace uri a existingHash) -> replaceObject tx uri a existingHash
+            Right (Delete uri existingHash)    -> deleteObject tx uri existingHash
 
-    deleteObject db tx uri existingHash = do 
-        existsLocally <- DB.hashExists tx db existingHash
+
+    deleteObject tx uri existingHash = do
+        existsLocally <- DB.hashExists tx existingHash
         if existsLocally
             -- Ignore withdraws and just use the time-based garbage collection
             then deletedObject $ textObjectType $ unURI uri
             else appError $ RrdpE $ NoObjectToWithdraw uri existingHash
 
-    addObject db tx uri a = do 
+    addObject tx uri a = do
         r <- fromTryM (RrdpE . FailedToParseDeltaItem . U.fmtEx) $ wait a
         case r of         
             UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do
@@ -709,29 +709,29 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 inSubLocationScope (getURL rpkiUrl) $ appWarn e
                 let validationScope = newScopes $ unURI $ getURL rpkiUrl
                 let validationState = ValidationState (mError (validationScope ^. typed) e) mempty mempty
-                key <- DB.saveObject tx db (OriginalRO original validationState hash objectMeta.objectType) worldVersion
-                DB.linkObjectToUrl tx db rpkiUrl key worldVersion
-                logDebug logger [i||Added original object #{rpkiUrl} with hash #{hash} to the database.|]                 
+                key <- DB.saveObject tx (OriginalRO original validationState hash objectMeta.objectType) worldVersion
+                DB.linkObjectToUrl tx rpkiUrl key worldVersion
+                logDebug logger [i||Added original object #{rpkiUrl} with hash #{hash} to the database.|]
 
             SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
                 let newHash = getHash lifecycle
-                newOneIsAlreadyThere <- DB.hashExists tx db newHash
+                newOneIsAlreadyThere <- DB.hashExists tx newHash
                 unless newOneIsAlreadyThere $ do
                     case lifecycle of
                         OriginalRO _ vs _ _ -> do
                             logError logger [i|Object #{rpkiUrl} failed parse/prevalidation.|]
                             embedState vs
                         WellStructuredRO _ -> pure ()
-                    key <- DB.saveStorableObject tx db so worldVersion
+                    key <- DB.saveStorableObject tx so worldVersion
                     addedObject $ Just $ getRpkiObjectType lifecycle
-                    DB.linkObjectToUrl tx db rpkiUrl key worldVersion
+                    DB.linkObjectToUrl tx rpkiUrl key worldVersion
 
             other ->
                 logDebug logger [i|Weird thing happened in `addObject` #{other}.|]
 
-    replaceObject db tx uri a oldHash = do      
-        let validateOldHash = do 
-                oldOneIsAlreadyThere <- DB.hashExists tx db oldHash                           
+    replaceObject tx uri a oldHash = do
+        let validateOldHash = do
+                oldOneIsAlreadyThere <- DB.hashExists tx oldHash
                 if oldOneIsAlreadyThere
                     then do 
                         -- Ignore withdraws and just use the time-based garbage collection
@@ -757,13 +757,13 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 validateOldHash
                 let validationScope = newScopes $ unURI $ getURL rpkiUrl
                 let validationState = ValidationState (mError (validationScope ^. typed) e) mempty mempty
-                key <- DB.saveObject tx db (OriginalRO original validationState hash objectMeta.objectType) worldVersion
-                DB.linkObjectToUrl tx db rpkiUrl key worldVersion
+                key <- DB.saveObject tx (OriginalRO original validationState hash objectMeta.objectType) worldVersion
+                DB.linkObjectToUrl tx rpkiUrl key worldVersion
 
             SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
                 validateOldHash
                 let newHash = getHash lifecycle
-                newOneIsAlreadyThere <- DB.hashExists tx db newHash
+                newOneIsAlreadyThere <- DB.hashExists tx newHash
                 unless newOneIsAlreadyThere $ do
                     case lifecycle of
                         OriginalRO _ vs _ _ -> do
@@ -771,8 +771,8 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                             embedState vs
                         WellStructuredRO _ -> pure ()
 
-                    key <- DB.saveStorableObject tx db so worldVersion
-                    DB.linkObjectToUrl tx db rpkiUrl key worldVersion
+                    key <- DB.saveStorableObject tx so worldVersion
+                    DB.linkObjectToUrl tx rpkiUrl key worldVersion
                     addedObject $ Just $ getRpkiObjectType lifecycle
 
             other -> 
@@ -805,13 +805,12 @@ data DeltaOp m a = Delete URI Hash
 
 
 verifyRrdpMeta :: ValidatorIO es => Tx mode
-            -> DB 
-            -> RrdpURL 
-            -> SessionId 
-            -> RrdpSerial 
+            -> RrdpURL
+            -> SessionId
+            -> RrdpSerial
             -> Eff es ()
-verifyRrdpMeta tx db repoUri expectedSessionId expectedSerial = do     
-    r <- DB.getRrdpRepository tx db repoUri
+verifyRrdpMeta tx repoUri expectedSessionId expectedSerial = do
+    r <- DB.getRrdpRepository tx repoUri
     for_ r $ \RrdpRepository {..} ->
         for_ rrdpMeta $ \rm -> do                    
             when (rm ^. #sessionId /= expectedSessionId || rm ^. #serial /= expectedSerial) $
@@ -824,15 +823,14 @@ verifyRrdpMeta tx db repoUri expectedSessionId expectedSerial = do
                                 expectedSessionId = expectedSessionId, 
                                 expectedSerial    = expectedSerial }
 
-updateRepositoryMeta :: ValidatorIO es => 
-                        Tx 'RW 
-                    -> DB
-                    -> RrdpURL 
+updateRepositoryMeta :: ValidatorIO es =>
+                        Tx 'RW
+                    -> RrdpURL
                     -> SessionId
                     -> RrdpSerial
                     -> Eff es ()
-updateRepositoryMeta tx db repoUri sessionsId serial = do                            
-    DB.updateRrdpMetaM tx db repoUri $ \case 
+updateRepositoryMeta tx repoUri sessionsId serial = do
+    DB.updateRrdpMetaM tx repoUri $ \case
         Nothing         -> pure $ Just $ newRrdpMeta sessionsId serial
         Just currentMeta -> 
             pure $ Just $ currentMeta

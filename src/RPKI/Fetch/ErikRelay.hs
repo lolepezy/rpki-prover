@@ -194,33 +194,33 @@ fetchErik
             logDebug logger [i|Downloaded Erik index for #{fqdn_}, HTTP status: #{httpStatus}|]
             index <- parseErikIndex indexBs            
 
-            join $ DB.rwTxT database $ \tx db -> do 
-                DB.getErikIndex tx db relayUri fqdn >>= \case 
-                    Nothing -> do 
-                        DB.saveErikIndex tx db relayUri fqdn index
-                        pure $ do 
+            join $ DB.rwTxT database $ \tx -> do
+                DB.getErikIndex tx relayUri fqdn >>= \case
+                    Nothing -> do
+                        DB.saveErikIndex tx relayUri fqdn index
+                        pure $ do
                             logInfo logger [i|No Erik index for #{fqdn_} in the database, downloading from relay #{relayUri}.|]
                             pure $ Just index
 
-                    Just existing 
-                        | existing == index -> 
-                            pure $ do 
+                    Just existing
+                        | existing == index ->
+                            pure $ do
                                 logInfo logger [i|Erik index for #{fqdn_} didn't change since the last synchronisation.|]
                                 pure Nothing
-                        | otherwise -> do 
-                            DB.saveErikIndex tx db relayUri fqdn index
+                        | otherwise -> do
+                            DB.saveErikIndex tx relayUri fqdn index
                             pure $ do 
                                 logInfo logger [i|Erik index for #{fqdn_} changed, updating from relay #{relayUri}.|]              
                                 pure $ Just index            
 
         getPartition :: ValidatorIO es => ErikPartitionRef -> Eff es ErikPartition
         getPartition ErikPartitionRef {..} = do 
-            z <- DB.roTxT database $ \tx db -> DB.getErikPartition tx db hash
-            case z of 
-                Nothing -> do     
+            z <- DB.roTxT database $ \tx -> DB.getErikPartition tx hash
+            case z of
+                Nothing -> do
                     logDebug logger [i|No Erik partition #{U.hashAsBase64Url hash} in the database, downloading from a relay.|]
                     partition <- fetchAndParsePartition
-                    DB.rwTxT database $ \tx db -> DB.saveErikPartition tx db hash partition
+                    DB.rwTxT database $ \tx -> DB.saveErikPartition tx hash partition
                     logDebug logger [i|Stored Erik partition #{U.hashAsBase64Url hash} in the database.|]
                     pure partition
 
@@ -257,7 +257,7 @@ fetchErik
                 when (not $ null badLocations) $
                     appError $ ErikE $ ErikManifestOutsideScope { location = badLocations, scope = scope }
                 
-                z <- DB.roTxT database $ \tx db -> DB.getByHash tx db hash
+                z <- DB.roTxT database $ \tx -> DB.getByHash tx hash
                 case z of 
                     Just (Located _ (WellStructuredRO (MftRO mft))) -> do
                         logDebug logger [i|Manifest #{U.hashAsBase64Url hash} already in the database.|]
@@ -302,7 +302,7 @@ fetchErik
                     liftIO $ createDirectoryIfMissing True $ childrenDir_ </> show firstByte
 
                 fmap mconcat $ concurrentlyVTLenientN parallelism mftChildren $ \MftPair {..} -> do 
-                    exists <- DB.roTxT database $ \tx db -> DB.hashExists tx db hash
+                    exists <- DB.roTxT database $ \tx -> DB.hashExists tx hash
                     if exists then 
                         pure mempty 
                     else do                                             

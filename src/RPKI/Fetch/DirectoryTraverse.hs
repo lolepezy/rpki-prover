@@ -108,7 +108,7 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                                 -- Check if the object is already in the storage
                                 -- before parsing ASN1 and serialising it.
                                 let hash = U.sha256s blob
-                                liftIO (roTx db $ \tx -> DB.getObjectKey tx db hash) >>= \case
+                                liftIO (roTx db $ \tx -> DB.getObjectKey tx hash) >>= \case
                                     Just key -> pure $! HashExists rpkiURL hash key
                                     Nothing  -> tryToParse hash blob type_
                             Nothing ->
@@ -164,7 +164,7 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                 Left e  -> appWarn e
                 Right z -> case z of
                     HashExists rpkiURL _ key ->
-                        for_ rpkiURL $ \u -> DB.linkObjectToUrl tx db u key worldVersion
+                        for_ rpkiURL $ \u -> DB.linkObjectToUrl tx u key worldVersion
 
                     CantReadFile rpkiUrl filePath (VErr e) -> do
                         logError logger [i|Cannot read file #{filePath}, error #{e} |]
@@ -182,8 +182,8 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                                 embedState vs1
                             WellStructuredRO _ -> pure ()
 
-                        key <- DB.saveStorableObject tx db so worldVersion
-                        for_ rpkiUrl $ \u -> DB.linkObjectToUrl tx db u key worldVersion
+                        key <- DB.saveStorableObject tx so worldVersion
+                        for_ rpkiUrl $ \u -> DB.linkObjectToUrl tx u key worldVersion
                         updateMetric @TraverseMetric @_ (#processed %~
                             Map.unionWith (+) (Map.singleton (Just $ getRpkiObjectType lifecycle) 1))
                     other ->

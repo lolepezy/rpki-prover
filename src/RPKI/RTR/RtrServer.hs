@@ -300,13 +300,13 @@ readRtrPayload :: AppContext s -> WorldVersion -> IO RtrPayloads
 readRtrPayload AppContext {..} worldVersion = do 
     db <- readTVarIO database
 
-    (vrps, bgpSec) <- DB.roTx db $ \tx -> do 
-                slurm <- DB.getSlurm tx db worldVersion
-                vrps <- do 
-                        vrps_ <- DB.getVrps tx db worldVersion
+    (vrps, bgpSec) <- DB.roTx db $ \tx -> do
+                slurm <- DB.getSlurm tx worldVersion
+                vrps <- do
+                        vrps_ <- DB.getVrps tx worldVersion
                         pure $ maybe vrps_ (`applySlurmToVrps` vrps_) slurm
 
-                bgpSec <- DB.getBgps tx db worldVersion >>= \case 
+                bgpSec <- DB.getBgps tx worldVersion >>= \case
                             Nothing   -> pure mempty
                             Just bgps -> pure $ maybe bgps (`applySlurmBgpSec` bgps) slurm
                 

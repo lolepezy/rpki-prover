@@ -145,15 +145,15 @@ roTx = withReadTx
 rwTx :: MonadIO m => DB -> (Tx 'RW -> IO a) -> m a
 rwTx = withWriteTx
 
-roTxT :: MonadIO m => TVar DB -> (Tx 'RO -> DB -> IO a) -> m a
+roTxT :: MonadIO m => TVar DB -> (Tx 'RO -> IO a) -> m a
 roTxT tdb f = liftIO $ do
     db <- readTVarIO tdb
-    roTx db (\tx -> f tx db)
+    roTx db f
 
-rwTxT :: MonadIO m => TVar DB -> (Tx 'RW -> DB -> IO a) -> m a
+rwTxT :: MonadIO m => TVar DB -> (Tx 'RW -> IO a) -> m a
 rwTxT tdb f = liftIO $ do
     db <- readTVarIO tdb
-    rwTx db (\tx -> f tx db)
+    rwTx db f
 
 -- ---------------------------------------------------------------------------
 -- Constants
@@ -253,39 +253,39 @@ inClauseBatches = mapMaybe toBatch . chunksOf maxBatch
 -- Object functions
 -- ---------------------------------------------------------------------------
 
-getKeyByHash :: MonadIO m => Tx mode -> DB -> Hash -> m (Maybe ObjectKey)
-getKeyByHash (Tx conn) _ h = liftIO $ do
+getKeyByHash :: MonadIO m => Tx mode -> Hash -> m (Maybe ObjectKey)
+getKeyByHash (Tx conn) h = liftIO $ do
     rows <- query conn
         "SELECT object_key FROM objects WHERE hash = ?"
         (Only h)
     pure $ onlyValue rows
 
-getObjectKey :: MonadIO m => Tx mode -> DB -> Hash -> m (Maybe ObjectKey)
+getObjectKey :: MonadIO m => Tx mode -> Hash -> m (Maybe ObjectKey)
 getObjectKey = getKeyByHash
 
-getByHash :: MonadIO m => Tx mode -> DB -> Hash -> m (Maybe (Located RpkiObjectLifecycle))
-getByHash tx db h = ((^. #object) <$>) <$> getKeyedByHash tx db h
+getByHash :: MonadIO m => Tx mode -> Hash -> m (Maybe (Located RpkiObjectLifecycle))
+getByHash tx h = ((^. #object) <$>) <$> getKeyedByHash tx h
 
-getKeyedByHash :: MonadIO m => Tx mode -> DB -> Hash -> m (Maybe (Keyed (Located RpkiObjectLifecycle)))
-getKeyedByHash tx db h = liftIO $ runMaybeT $ do
-    objectKey <- MaybeT $ getKeyByHash tx db h
-    z         <- MaybeT $ getLocatedByKey tx db objectKey
+getKeyedByHash :: MonadIO m => Tx mode -> Hash -> m (Maybe (Keyed (Located RpkiObjectLifecycle)))
+getKeyedByHash tx h = liftIO $ runMaybeT $ do
+    objectKey <- MaybeT $ getKeyByHash tx h
+    z         <- MaybeT $ getLocatedByKey tx objectKey
     pure $ Keyed z objectKey
 
-getHashByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe Hash)
-getHashByKey (Tx conn) _ k = liftIO $ do
-    rows <- query conn "SELECT hash FROM objects WHERE object_key = ?" (Only k)        
+getHashByKey :: MonadIO m => Tx mode -> ObjectKey -> m (Maybe Hash)
+getHashByKey (Tx conn) k = liftIO $ do
+    rows <- query conn "SELECT hash FROM objects WHERE object_key = ?" (Only k)
     pure $ case rows of
         [Only hash] -> Just hash
         _           -> Nothing
 
-getByUri :: MonadIO m => Tx mode -> DB -> RpkiURL -> m [Located RpkiObjectLifecycle]
-getByUri tx db uri = liftIO $ do
-    keys_ <- getKeysByUri tx db uri
-    catMaybes <$> mapM (getLocatedByKey tx db) keys_
+getByUri :: MonadIO m => Tx mode -> RpkiURL -> m [Located RpkiObjectLifecycle]
+getByUri tx uri = liftIO $ do
+    keys_ <- getKeysByUri tx uri
+    catMaybes <$> mapM (getLocatedByKey tx) keys_
 
-getKeysByUri :: MonadIO m => Tx mode -> DB -> RpkiURL -> m [ObjectKey]
-getKeysByUri (Tx conn) _ uri = liftIO $ do
+getKeysByUri :: MonadIO m => Tx mode -> RpkiURL -> m [ObjectKey]
+getKeysByUri (Tx conn) uri = liftIO $ do
     rows <- query conn
         [sql|
             SELECT ou.object_key
@@ -295,8 +295,8 @@ getKeysByUri (Tx conn) _ uri = liftIO $ do
         (Only (serialiseField uri))
     pure $ map fromOnly rows
 
-getObjectByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe RpkiObjectLifecycle)
-getObjectByKey (Tx conn) _ k = liftIO $ do
+getObjectByKey :: MonadIO m => Tx mode -> ObjectKey -> m (Maybe RpkiObjectLifecycle)
+getObjectByKey (Tx conn) k = liftIO $ do
     rows <- query conn
         "SELECT data FROM objects WHERE object_key = ? AND data IS NOT NULL"
         (Only k)
@@ -307,17 +307,17 @@ getObjectByKey (Tx conn) _ k = liftIO $ do
 
 -- | An object with no locations at all (fetched via an Erik relay) is still
 -- found by key -- it is only the location, not the object, that's optional.
-getLocatedByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe (Located RpkiObjectLifecycle))
-getLocatedByKey tx db k = liftIO $ runMaybeT $ do
-    obj       <- MaybeT $ getObjectByKey tx db k
-    locations <- MaybeT $ Just <$> getLocationsByKey tx db k
+getLocatedByKey :: MonadIO m => Tx mode -> ObjectKey -> m (Maybe (Located RpkiObjectLifecycle))
+getLocatedByKey tx k = liftIO $ runMaybeT $ do
+    obj       <- MaybeT $ getObjectByKey tx k
+    locations <- MaybeT $ Just <$> getLocationsByKey tx k
     pure $ Located locations obj
 
 -- | Keys of every object published at more than one location.
--- Also we only care about objects that are either children of 
+-- Also we only care about objects that are either children of
 -- manifest shortcuts or manifest shortcuts themselves.
-getMultiLocationShortcutChildren :: MonadIO m => Tx mode -> DB -> m (Set.Set ObjectKey)
-getMultiLocationShortcutChildren (Tx conn) _ = liftIO $ do
+getMultiLocationShortcutChildren :: MonadIO m => Tx mode -> m (Set.Set ObjectKey)
+getMultiLocationShortcutChildren (Tx conn) = liftIO $ do
     rows <- query_ conn
         [sql|
             WITH multi_location AS (
@@ -326,8 +326,8 @@ getMultiLocationShortcutChildren (Tx conn) _ = liftIO $ do
             )
             SELECT object_key FROM multi_location m
             WHERE EXISTS (
-                SELECT 1 FROM mft_shortcut_children 
-                WHERE child_key = m.object_key 
+                SELECT 1 FROM mft_shortcut_children
+                WHERE child_key = m.object_key
             ) OR EXISTS (
                 SELECT 1 FROM manifest_meta
                 WHERE object_key = m.object_key
@@ -335,8 +335,8 @@ getMultiLocationShortcutChildren (Tx conn) _ = liftIO $ do
         |]
     pure $! Set.fromList $ map fromOnly rows
 
-getLocationsByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe Locations)
-getLocationsByKey (Tx conn) _ k = liftIO $ do
+getLocationsByKey :: MonadIO m => Tx mode -> ObjectKey -> m (Maybe Locations)
+getLocationsByKey (Tx conn) k = liftIO $ do
     rows <- query conn
         [sql|
             SELECT u.url FROM urls u
@@ -351,20 +351,18 @@ getLocationsByKey (Tx conn) _ k = liftIO $ do
 
 saveObject :: MonadIO m
            => Tx 'RW
-           -> DB
            -> RpkiObjectLifecycle
            -> WorldVersion
            -> m ObjectKey
-saveObject tx db lifecycle = saveStorableObject tx db (toStorableObject (Compressed lifecycle))
+saveObject tx lifecycle = saveStorableObject tx (toStorableObject (Compressed lifecycle))
 
 
 saveStorableObject :: MonadIO m
                 => Tx 'RW
-                -> DB
                 -> StorableObject (Compressed RpkiObjectLifecycle)
                 -> WorldVersion
                 -> m ObjectKey
-saveStorableObject (Tx conn) _ StorableObject { object = Compressed lifecycle, storable = Storable dataBs } wv = liftIO $ do
+saveStorableObject (Tx conn) StorableObject { object = Compressed lifecycle, storable = Storable dataBs } wv = liftIO $ do
     let hash_ = getHash lifecycle
 
     existing <- query conn "SELECT object_key FROM objects WHERE hash = ?" (Only hash_)
@@ -403,8 +401,8 @@ saveStorableObject (Tx conn) _ StorableObject { object = Compressed lifecycle, s
             pure objectKey
 
 
-getObjectMeta :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe ObjectMeta)
-getObjectMeta (Tx conn) _ k = liftIO $ do
+getObjectMeta :: MonadIO m => Tx mode -> ObjectKey -> m (Maybe ObjectMeta)
+getObjectMeta (Tx conn) k = liftIO $ do
     rows <- query conn
         "SELECT world_version, type FROM objects WHERE object_key = ?"
         (Only k)
@@ -420,8 +418,8 @@ getObjectMeta (Tx conn) _ k = liftIO $ do
 -- the object stopped being seen at that URL (it moved to another repository,
 -- say). 'deleteStaleObjectUrls' expires those, which is what makes the
 -- "object has multiple locations" warning go away after a migration.
-linkObjectToUrl :: MonadIO m => Tx 'RW -> DB -> RpkiURL -> ObjectKey -> WorldVersion -> m ()
-linkObjectToUrl (Tx conn) _ rpkiURL objectKey worldVersion = liftIO $ do
+linkObjectToUrl :: MonadIO m => Tx 'RW -> RpkiURL -> ObjectKey -> WorldVersion -> m ()
+linkObjectToUrl (Tx conn) rpkiURL objectKey worldVersion = liftIO $ do
     [Only urlKey] <- query conn
         [sql|INSERT INTO urls(url) VALUES (?)
              ON CONFLICT(url) DO UPDATE SET url = excluded.url
@@ -432,8 +430,8 @@ linkObjectToUrl (Tx conn) _ rpkiURL objectKey worldVersion = liftIO $ do
              ON CONFLICT(object_key, url_key) DO UPDATE SET world_version = excluded.world_version|]
         (objectKey, urlKey :: UrlKey, worldVersion)
 
-hashExists :: MonadIO m => Tx mode -> DB -> Hash -> m Bool
-hashExists (Tx conn) _ h = liftIO $ do
+hashExists :: MonadIO m => Tx mode -> Hash -> m Bool
+hashExists (Tx conn) h = liftIO $ do
     rows <- query conn "SELECT 1 FROM objects WHERE hash = ?" (Only h)
     pure $ not (null (rows :: [Only Int]))
 
@@ -444,8 +442,8 @@ hashExists (Tx conn) _ h = liftIO $ do
 
 -- | The last index seen for this (relay, scope) pair, kept so a fetch can tell
 -- whether anything changed since the previous synchronisation.
-getErikIndex :: MonadIO m => Tx mode -> DB -> URI -> FQDN -> m (Maybe ErikIndex)
-getErikIndex (Tx conn) _ relayUri (FQDN fqdn) = liftIO $ do
+getErikIndex :: MonadIO m => Tx mode -> URI -> FQDN -> m (Maybe ErikIndex)
+getErikIndex (Tx conn) relayUri (FQDN fqdn) = liftIO $ do
     rows <- query conn
         "SELECT data FROM erik_indexes WHERE relay_uri = ? AND fqdn = ?"
         (serialiseField relayUri, fqdn)
@@ -454,8 +452,8 @@ getErikIndex (Tx conn) _ relayUri (FQDN fqdn) = liftIO $ do
 -- | Replaces the index and the partition hashes it refers to. The membership
 -- rows are what `deleteOrphanedErikPartitions` reads, so they have to move in
 -- the same transaction as the index itself.
-saveErikIndex :: MonadIO m => Tx 'RW -> DB -> URI -> FQDN -> ErikIndex -> m ()
-saveErikIndex (Tx conn) _ relayUri (FQDN fqdn) index_ = liftIO $ do
+saveErikIndex :: MonadIO m => Tx 'RW -> URI -> FQDN -> ErikIndex -> m ()
+saveErikIndex (Tx conn) relayUri (FQDN fqdn) index_ = liftIO $ do
     execute conn
         "INSERT OR REPLACE INTO erik_indexes(relay_uri, fqdn, data) VALUES (?, ?, ?)"
         (relayBlob, fqdn, serialiseField index_)
@@ -470,8 +468,8 @@ saveErikIndex (Tx conn) _ relayUri (FQDN fqdn) index_ = liftIO $ do
 
     forM_ (inClauseBatches toDelete) $ \(placeholders, params) ->
         executeNamed conn
-            (fromString $ Text.unpack $ 
-                "DELETE FROM erik_index_partitions " 
+            (fromString $ Text.unpack $
+                "DELETE FROM erik_index_partitions "
              <> "WHERE relay_uri = ? AND fqdn = ? AND hash IN (" <> placeholders <> ")")
             params
 
@@ -483,19 +481,19 @@ saveErikIndex (Tx conn) _ relayUri (FQDN fqdn) index_ = liftIO $ do
   where
     relayBlob = serialiseField relayUri
 
-getAllErikIndexes :: MonadIO m => Tx mode -> DB -> m [(URI, FQDN, ErikIndex)]
-getAllErikIndexes (Tx conn) _ = liftIO $ do
+getAllErikIndexes :: MonadIO m => Tx mode -> m [(URI, FQDN, ErikIndex)]
+getAllErikIndexes (Tx conn) = liftIO $ do
     rows <- query_ conn "SELECT relay_uri, fqdn, data FROM erik_indexes"
     pure [ (deserialiseField relayUri, FQDN fqdn, deserialiseField blob)
          | (relayUri, fqdn, blob) <- rows ]
 
-getErikPartition :: MonadIO m => Tx mode -> DB -> Hash -> m (Maybe ErikPartition)
-getErikPartition (Tx conn) _ h = liftIO $ do
+getErikPartition :: MonadIO m => Tx mode -> Hash -> m (Maybe ErikPartition)
+getErikPartition (Tx conn) h = liftIO $ do
     rows <- query conn "SELECT data FROM erik_partitions WHERE hash = ?" (Only h)
     pure $ fmap (deserialiseField . fromOnly) (listToMaybe rows)
 
-saveErikPartition :: MonadIO m => Tx 'RW -> DB -> Hash -> ErikPartition -> m ()
-saveErikPartition (Tx conn) _ h partition = liftIO $
+saveErikPartition :: MonadIO m => Tx 'RW -> Hash -> ErikPartition -> m ()
+saveErikPartition (Tx conn) h partition = liftIO $
     execute conn
         "INSERT OR REPLACE INTO erik_partitions(hash, data) VALUES (?, ?)"
         (h, serialiseField partition)
@@ -509,13 +507,13 @@ deleteOrphanedErikPartitions (Tx conn) = do
              WHERE hash NOT IN (SELECT DISTINCT partition_hash FROM erik_index_partitions)|]
     changes conn
 
-deleteObjectByHash :: MonadIO m => Tx 'RW -> DB -> Hash -> m ()
-deleteObjectByHash tx db h = liftIO $
-    ifJustM (getKeyByHash tx db h) (\k -> deleteObjectByKey tx db [k])
+deleteObjectByHash :: MonadIO m => Tx 'RW -> Hash -> m ()
+deleteObjectByHash tx h = liftIO $
+    ifJustM (getKeyByHash tx h) (\k -> deleteObjectByKey tx [k])
 
 -- | ON DELETE CASCADE handles certificates, manifest_meta, and object_urls.
-deleteObjectByKey :: MonadIO m => Tx 'RW -> DB -> [ObjectKey] -> m ()
-deleteObjectByKey (Tx conn) _ keys = liftIO $
+deleteObjectByKey :: MonadIO m => Tx 'RW -> [ObjectKey] -> m ()
+deleteObjectByKey (Tx conn) keys = liftIO $
     forM_ (inClauseBatches keys) $ \(placeholders, params) ->
         executeNamed conn
             (fromString $ Text.unpack $ "DELETE FROM objects WHERE object_key IN (" <> placeholders <> ")")
@@ -530,36 +528,36 @@ getMftMetaFromWellStructured WellStructuredCms { content = Manifest {..} } key =
 -- ---------------------------------------------------------------------------
 
 -- | Sorted newest-first by `Ord MftMeta`
-getMftsForAKI :: MonadIO m => Tx mode -> DB -> AKI -> m [MftMeta]
-getMftsForAKI (Tx conn) _ aki_ = liftIO $ do
+getMftsForAKI :: MonadIO m => Tx mode -> AKI -> m [MftMeta]
+getMftsForAKI (Tx conn) aki_ = liftIO $ do
     rows <- query conn
         "SELECT meta FROM manifest_meta WHERE aki = ?"
         (Only aki_)
     pure $! List.sortOn Down $ map (deserialiseField . fromOnly) rows
 
 findAllMftsByAKI :: MonadIO m
-                 => Tx mode -> DB -> AKI -> m [(MftMeta, Keyed (Located WellStructuredMft))]
-findAllMftsByAKI tx db aki_ = liftIO $ do
-    metas <- getMftsForAKI tx db aki_
+                 => Tx mode -> AKI -> m [(MftMeta, Keyed (Located WellStructuredMft))]
+findAllMftsByAKI tx aki_ = liftIO $ do
+    metas <- getMftsForAKI tx aki_
     fmap catMaybes $ forM metas $ \meta ->
-        fmap (meta,) <$> getMftByKey tx db (meta ^. #key)
+        fmap (meta,) <$> getMftByKey tx (meta ^. #key)
 
 getMftByKey :: MonadIO m
-            => Tx mode -> DB -> ObjectKey -> m (Maybe (Keyed (Located WellStructuredMft)))
-getMftByKey tx db k = do
-    o <- getLocatedByKey tx db k
+            => Tx mode -> ObjectKey -> m (Maybe (Keyed (Located WellStructuredMft)))
+getMftByKey tx k = do
+    o <- getLocatedByKey tx k
     pure $! case o of
         Just (Located loc (WellStructuredRO (MftRO mft))) -> Just $ Keyed (Located loc mft) k
         _                              -> Nothing
 
-getMftShorcutMeta :: MonadIO m => Tx mode -> DB -> AKI -> m (Maybe MftShortcutMeta)
-getMftShorcutMeta (Tx conn) _ aki = liftIO $ do
+getMftShorcutMeta :: MonadIO m => Tx mode -> AKI -> m (Maybe MftShortcutMeta)
+getMftShorcutMeta (Tx conn) aki = liftIO $ do
     rows <- query conn "SELECT data FROM mft_shortcut_meta WHERE aki = ?" (Only aki)
     pure $! deserialiseCompressed . fromOnly <$> listToMaybe rows
 
 -- | Children without file_name, for the hot "nothing changed" path that never needs it.
-getMftShorcutChildrenLight :: MonadIO m => Tx mode -> DB -> AKI -> m (Map.Map ObjectKey MftChild)
-getMftShorcutChildrenLight (Tx conn) _ aki = liftIO $ do
+getMftShorcutChildrenLight :: MonadIO m => Tx mode -> AKI -> m (Map.Map ObjectKey MftChild)
+getMftShorcutChildrenLight (Tx conn) aki = liftIO $ do
     rows <- query conn
         [sql|
             SELECT c.child_key, s.data
@@ -573,8 +571,8 @@ getMftShorcutChildrenLight (Tx conn) _ aki = liftIO $ do
         | (childKey, dataBs) <- rows ]
 
 -- | Full children incl. file_name, for the diff path that needs to detect renames.
-getMftShorcutChildrenFull :: MonadIO m => Tx mode -> DB -> AKI -> m (Map.Map ObjectKey MftEntry)
-getMftShorcutChildrenFull (Tx conn) _ aki = liftIO $ do
+getMftShorcutChildrenFull :: MonadIO m => Tx mode -> AKI -> m (Map.Map ObjectKey MftEntry)
+getMftShorcutChildrenFull (Tx conn) aki = liftIO $ do
     rows <- query conn
         [sql|
             SELECT c.file_name, c.child_key, s.data
@@ -589,24 +587,24 @@ getMftShorcutChildrenFull (Tx conn) _ aki = liftIO $ do
 
 -- | On-demand single-row lookup, used only by the rare TroubledChild fallback
 -- on the light (file_name-free) read path.
-getMftShortcutChildFileName :: MonadIO m => Tx mode -> DB -> AKI -> ObjectKey -> m (Maybe Text)
-getMftShortcutChildFileName (Tx conn) _ aki childKey = liftIO $ do
+getMftShortcutChildFileName :: MonadIO m => Tx mode -> AKI -> ObjectKey -> m (Maybe Text)
+getMftShortcutChildFileName (Tx conn) aki childKey = liftIO $ do
     rows <- query conn
         "SELECT file_name FROM mft_shortcut_children WHERE aki = ? AND child_key = ?"
         (aki, childKey)
     pure $! fromOnly <$> listToMaybe rows
 
-getMftShorcut :: MonadIO m => Tx mode -> DB -> AKI -> m (Maybe MftShortcut)
-getMftShorcut tx db aki = do
-    metaM <- getMftShorcutMeta tx db aki
+getMftShorcut :: MonadIO m => Tx mode -> AKI -> m (Maybe MftShortcut)
+getMftShorcut tx aki = do
+    metaM <- getMftShorcutMeta tx aki
     case metaM of
         Nothing -> pure Nothing
         Just MftShortcutMeta {..} -> do
-            nonCrlEntries <- getMftShorcutChildrenFull tx db aki
+            nonCrlEntries <- getMftShorcutChildrenFull tx aki
             pure $! Just $! MftShortcut {..}
 
-saveMftShorcutMeta :: MonadIO m => Tx 'RW -> DB -> AKI -> Verbatim (Compressed MftShortcutMeta) -> m ()
-saveMftShorcutMeta (Tx conn) _ aki meta = liftIO $
+saveMftShorcutMeta :: MonadIO m => Tx 'RW -> AKI -> Verbatim (Compressed MftShortcutMeta) -> m ()
+saveMftShorcutMeta (Tx conn) aki meta = liftIO $
     execute conn
         "INSERT OR REPLACE INTO mft_shortcut_meta(aki, data) VALUES (?, ?)"
     (aki, unStorable $ unVerbatim meta)
@@ -615,8 +613,8 @@ saveMftShorcutMeta (Tx conn) _ aki meta = liftIO $
 -- `OR REPLACE` on purpose: a TroubledChild re-validation, or a manifest-entry
 -- rename (same child_key, new file_name), can legitimately overwrite an
 -- existing row for a key that's already cached.
-insertMftShortcutChildren :: MonadIO m => Tx 'RW -> DB -> AKI -> [(ObjectKey, Text, BS.ByteString)] -> m ()
-insertMftShortcutChildren (Tx conn) _ aki newEntries = liftIO $ do
+insertMftShortcutChildren :: MonadIO m => Tx 'RW -> AKI -> [(ObjectKey, Text, BS.ByteString)] -> m ()
+insertMftShortcutChildren (Tx conn) aki newEntries = liftIO $ do
     executeMany conn
         "INSERT OR REPLACE INTO shortcuts(object_key, data) VALUES (?, ?)"
         [ (childKey, dataBs) | (childKey, _, dataBs) <- newEntries ]
@@ -628,77 +626,81 @@ insertMftShortcutChildren (Tx conn) _ aki newEntries = liftIO $ do
 -- `shortcuts` -- an orphaned shortcut is cleaned up by the general objects
 -- cleanup/GC (deleteObjectByKey etc.), which cascades objects -> shortcuts ->
 -- mft_shortcut_children once nothing marks the underlying object as used.
-deleteMftShortcutChildren :: MonadIO m => Tx 'RW -> DB -> AKI -> [ObjectKey] -> m ()
-deleteMftShortcutChildren (Tx conn) _ aki deletedKeys = liftIO $
+deleteMftShortcutChildren :: MonadIO m => Tx 'RW -> AKI -> [ObjectKey] -> m ()
+deleteMftShortcutChildren (Tx conn) aki deletedKeys = liftIO $
     forM_ (inClauseBatches deletedKeys) $ \(placeholders, params) ->
         executeNamed conn
             (fromString $ Text.unpack $
                 "DELETE FROM mft_shortcut_children WHERE aki = :aki AND child_key IN (" <> placeholders <> ")")
             ((":aki" := aki) : params)
 
-deleteMftShortcut :: MonadIO m => Tx 'RW -> DB -> AKI -> m ()
-deleteMftShortcut tx@(Tx conn) db aki = liftIO $ do
+deleteMftShortcut :: MonadIO m => Tx 'RW -> AKI -> m ()
+deleteMftShortcut tx@(Tx conn) aki = liftIO $ do
     childKeys <- map fromOnly <$>
         query conn "SELECT child_key FROM mft_shortcut_children WHERE aki = ?" (Only aki)
     execute conn "DELETE FROM mft_shortcut_meta WHERE aki = ?" (Only aki)
-    deleteMftShortcutChildren tx db aki childKeys
+    deleteMftShortcutChildren tx aki childKeys
 
 -- | Returns all candidates for the SKI; callers must verify signatures.
-getBySKI :: MonadIO m => Tx mode -> DB -> SKI -> m [Located WellStructuredCaCert]
-getBySKI tx@(Tx conn) db ski = liftIO $ do
+getBySKI :: MonadIO m => Tx mode -> SKI -> m [Located WellStructuredCaCert]
+getBySKI tx@(Tx conn) ski = liftIO $ do
     rows <- query conn
         "SELECT object_key FROM certificates WHERE ski = ?"
         (Only ski)
     let objectKeys = map fromOnly rows
     fmap catMaybes $ forM objectKeys $ \k ->
-        getLocatedByKey tx db k >>= \case
+        getLocatedByKey tx k >>= \case
             Just (Located loc (WellStructuredRO (CerRO c))) ->
                 pure $ Just (Located loc c)
             _ -> pure Nothing
 
 -- | Backward-compat wrapper: returns the first CA cert matching the SKI.
-getFirstCaCertBySKI :: MonadIO m => Tx mode -> DB -> SKI -> m (Maybe (Located WellStructuredCaCert))
-getFirstCaCertBySKI tx db ski =
-    listToMaybe <$> getBySKI tx db ski
+getFirstCaCertBySKI :: MonadIO m => Tx mode -> SKI -> m (Maybe (Located WellStructuredCaCert))
+getFirstCaCertBySKI tx ski =
+    listToMaybe <$> getBySKI tx ski
 
-getTaCertByKey :: MonadIO m => Tx mode -> DB -> ObjectKey -> m (Maybe WellStructuredCaCert)
-getTaCertByKey tx db k =
-    getLocatedByKey tx db k >>= \case
+getTaCertByKey :: MonadIO m => Tx mode -> ObjectKey -> m (Maybe WellStructuredCaCert)
+getTaCertByKey tx k =
+    getLocatedByKey tx k >>= \case
         Just (Located _ (WellStructuredRO (CerRO c))) -> pure $ Just c
         _                                             -> pure Nothing
 
+{- This one is intentionally designed as an update of one big blob rather than a row-per-key,
+   because the set of validated keys is expected to be large (every object touched during
+   top-down validation). Upserting these key by key would likely cause largely amplified disk writes.
+-}
 markAsValidated :: MonadIO m
-                => Tx 'RW -> DB -> Set.Set ObjectKey -> WorldVersion -> m ()
-markAsValidated tx db allKeys worldVersion =
-    liftIO $ void $ updateValidatedByVersionMap tx db $ \m ->
+                => Tx 'RW -> Set.Set ObjectKey -> WorldVersion -> m ()
+markAsValidated tx allKeys worldVersion =
+    liftIO $ void $ updateValidatedByVersionMap tx $ \m ->
         foldr (`Map.insert` worldVersion) m allKeys
 
 -- ---------------------------------------------------------------------------
 -- TA functions
 -- ---------------------------------------------------------------------------
 
-saveTA :: MonadIO m => Tx 'RW -> DB -> StorableTA -> m ()
-saveTA (Tx conn) _ ta = liftIO $
+saveTA :: MonadIO m => Tx 'RW -> StorableTA -> m ()
+saveTA (Tx conn) ta = liftIO $
     execute conn
         "INSERT OR REPLACE INTO trust_anchors(ta_name, ta_cert_key, data, active) VALUES (?, ?, ?, 1)"
         (unTaName (getTaName (tal ta)), taCertKey ta, serialiseField ta)
 
-deleteTA :: MonadIO m => Tx 'RW -> DB -> TAL -> m ()
-deleteTA (Tx conn) _ t = liftIO $
+deleteTA :: MonadIO m => Tx 'RW -> TAL -> m ()
+deleteTA (Tx conn) t = liftIO $
     execute conn "DELETE FROM trust_anchors WHERE ta_name = ?" (Only (unTaName (getTaName t)))
 
-getTA :: MonadIO m => Tx mode -> DB -> TaName -> m (Maybe StorableTA)
-getTA (Tx conn) _ name = liftIO $ do
+getTA :: MonadIO m => Tx mode -> TaName -> m (Maybe StorableTA)
+getTA (Tx conn) name = liftIO $ do
     rows <- query conn "SELECT data FROM trust_anchors WHERE ta_name = ?" (Only (unTaName name))
     pure $ fmap (deserialiseField . fromOnly) (listToMaybe rows)
 
-getTAs :: MonadIO m => Tx mode -> DB -> m [StorableTA]
-getTAs (Tx conn) _ = liftIO $ do
+getTAs :: MonadIO m => Tx mode -> m [StorableTA]
+getTAs (Tx conn) = liftIO $ do
     rows <- query_ conn "SELECT data FROM trust_anchors WHERE active = 1"
     pure $ map (deserialiseField . fromOnly) rows
 
-setActiveTAs :: MonadIO m => Tx 'RW -> DB -> [TaName] -> m ()
-setActiveTAs (Tx conn) _ taNames = liftIO $ do
+setActiveTAs :: MonadIO m => Tx 'RW -> [TaName] -> m ()
+setActiveTAs (Tx conn) taNames = liftIO $ do
     execute_ conn "UPDATE trust_anchors SET active = 0"
     forM_ taNames $ \(TaName taName) ->
         execute conn
@@ -713,19 +715,19 @@ setActiveTAs (Tx conn) _ taNames = liftIO $ do
 -- `validation_outcomes` is the ground truth for this -- a version always
 -- gets at least its common (ta_name IS NULL) row written by
 -- `saveValidationVersion`, so there's no need for a separate `versions` table.
-versionsBackwards :: MonadIO m => Tx mode -> DB -> m [WorldVersion]
-versionsBackwards (Tx conn) _ = liftIO $
+versionsBackwards :: MonadIO m => Tx mode -> m [WorldVersion]
+versionsBackwards (Tx conn) = liftIO $
     map fromOnly <$> query_ conn "SELECT DISTINCT version FROM validation_outcomes ORDER BY version DESC"
 
-previousVersion :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe WorldVersion)
-previousVersion tx db version = liftIO $ do
-    vs <- versionsBackwards tx db
+previousVersion :: MonadIO m => Tx mode -> WorldVersion -> m (Maybe WorldVersion)
+previousVersion tx version = liftIO $ do
+    vs <- versionsBackwards tx
     pure $ case filter (< version) vs of
         [] -> Nothing
         xs -> Just $ maximum xs
 
-getLatestVersion :: MonadIO m => Tx mode -> DB -> m (Maybe WorldVersion)
-getLatestVersion tx db = listToMaybe <$> versionsBackwards tx db
+getLatestVersion :: MonadIO m => Tx mode -> m (Maybe WorldVersion)
+getLatestVersion tx = listToMaybe <$> versionsBackwards tx
 
 rowsToPerTa :: AsStorable a => [(Text, BS.ByteString)] -> PerTA a
 rowsToPerTa rows = toPerTA
@@ -791,14 +793,14 @@ getLatestPerTA (Tx conn) column version = liftIO $
 getLatestAcrossTAs :: (MonadIO m, AsStorable a, Monoid a) => Tx mode -> Text -> WorldVersion -> m a
 getLatestAcrossTAs tx column version = allTAs <$> getLatestPerTA tx column version
 
-getValidationsPerTA :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (PerTA Validations)
-getValidationsPerTA tx _ = getLatestPerTA tx "validations"
+getValidationsPerTA :: MonadIO m => Tx mode -> WorldVersion -> m (PerTA Validations)
+getValidationsPerTA tx = getLatestPerTA tx "validations"
 
-getMetricsPerTA :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (PerTA Metrics)
-getMetricsPerTA tx _ = getLatestPerTA tx "metrics"
+getMetricsPerTA :: MonadIO m => Tx mode -> WorldVersion -> m (PerTA Metrics)
+getMetricsPerTA tx = getLatestPerTA tx "metrics"
 
-getCommonMetrics :: MonadIO m => Tx mode -> DB -> WorldVersion -> m Metrics
-getCommonMetrics (Tx conn) _ version = liftIO $ do
+getCommonMetrics :: MonadIO m => Tx mode -> WorldVersion -> m Metrics
+getCommonMetrics (Tx conn) version = liftIO $ do
     rows <- queryNamed conn
         (latestOutcomeQuery Common ["metrics"])
         [":version" := version]
@@ -806,10 +808,9 @@ getCommonMetrics (Tx conn) _ version = liftIO $ do
 
 getValidationOutcomes :: MonadIO m
                       => Tx mode
-                      -> DB
                       -> WorldVersion
                       -> m (Validations, Metrics, PerTA (Validations, Metrics))
-getValidationOutcomes (Tx conn) _ version = liftIO $ do
+getValidationOutcomes (Tx conn) version = liftIO $ do
     commonRows <- queryNamed conn
         (latestOutcomeQuery Common ["validations", "metrics"])
         [":version" := version]
@@ -828,39 +829,38 @@ getValidationOutcomes (Tx conn) _ version = liftIO $ do
             ]
     pure (commonV, commonM, perTa)
 
-getVrps :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (PerTA Vrps)
-getVrps tx db version = fmap toVrps <$> getRoas tx db version
+getVrps :: MonadIO m => Tx mode -> WorldVersion -> m (PerTA Vrps)
+getVrps tx version = fmap toVrps <$> getRoas tx version
 
-getVrpsForTA :: MonadIO m => Tx mode -> DB -> WorldVersion -> TaName -> m Vrps
-getVrpsForTA (Tx conn) _ version taName = liftIO $ do
+getVrpsForTA :: MonadIO m => Tx mode -> WorldVersion -> TaName -> m Vrps
+getVrpsForTA (Tx conn) version taName = liftIO $ do
     rows <- queryNamed conn
         (latestOutcomeQuery OneActiveTA ["roas"])
         [":ta_name" := unTaName taName, ":version" := version]
     pure $ toVrps $ maybe mempty (deserialiseCompressed . fromOnly) (listToMaybe rows)
 
-getRoas :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (PerTA Roas)
-getRoas tx _ = getLatestPerTA tx "roas"
+getRoas :: MonadIO m => Tx mode -> WorldVersion -> m (PerTA Roas)
+getRoas tx = getLatestPerTA tx "roas"
 
-getAspas :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set Aspa))
-getAspas tx _ version = Just <$> getLatestAcrossTAs tx "aspa" version
+getAspas :: MonadIO m => Tx mode -> WorldVersion -> m (Maybe (Set.Set Aspa))
+getAspas tx version = Just <$> getLatestAcrossTAs tx "aspa" version
 
-getGbrs :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set (T2 Hash Gbr)))
-getGbrs tx _ version = Just <$> getLatestAcrossTAs tx "gbrs" version
+getGbrs :: MonadIO m => Tx mode -> WorldVersion -> m (Maybe (Set.Set (T2 Hash Gbr)))
+getGbrs tx version = Just <$> getLatestAcrossTAs tx "gbrs" version
 
-getBgps :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set BGPSecPayload))
-getBgps tx _ version = Just <$> getLatestAcrossTAs tx "bgps" version
+getBgps :: MonadIO m => Tx mode -> WorldVersion -> m (Maybe (Set.Set BGPSecPayload))
+getBgps tx version = Just <$> getLatestAcrossTAs tx "bgps" version
 
-getSpls :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe (Set.Set SplN))
-getSpls tx _ version = Just <$> getLatestAcrossTAs tx "spls" version
+getSpls :: MonadIO m => Tx mode -> WorldVersion -> m (Maybe (Set.Set SplN))
+getSpls tx version = Just <$> getLatestAcrossTAs tx "spls" version
 
 saveValidationVersion :: MonadIO m
                       => Tx 'RW
-                      -> DB
                       -> WorldVersion
                       -> PerTA (Payloads, ValidationState)
                       -> ValidationState
                       -> m ()
-saveValidationVersion (Tx conn) _ validatedBy results commonVS =
+saveValidationVersion (Tx conn) validatedBy results commonVS =
     liftIO $ do
     execute conn "DELETE FROM validation_outcomes WHERE version = ?" (Only validatedBy)
 
@@ -894,25 +894,25 @@ saveValidationVersion (Tx conn) _ validatedBy results commonVS =
             , Just $ serialiseCompressed gbrs
             )
 
-deleteValidationVersion :: MonadIO m => Tx 'RW -> DB -> WorldVersion -> m ()
-deleteValidationVersion (Tx conn) _ worldVersion = liftIO $ do
+deleteValidationVersion :: MonadIO m => Tx 'RW -> WorldVersion -> m ()
+deleteValidationVersion (Tx conn) worldVersion = liftIO $ do
         execute conn "DELETE FROM validation_outcomes WHERE version = ?"
             (Only worldVersion)
         execute conn "DELETE FROM slurm    WHERE key = ?" (Only worldVersion)
 
-saveSlurm :: MonadIO m => Tx 'RW -> DB -> WorldVersion -> Slurm -> m ()
-saveSlurm (Tx conn) _ version slurm = liftIO $
+saveSlurm :: MonadIO m => Tx 'RW -> WorldVersion -> Slurm -> m ()
+saveSlurm (Tx conn) version slurm = liftIO $
     execute conn "INSERT OR REPLACE INTO slurm(key, value) VALUES (?, ?)"
         (version, serialiseCompressed slurm)
 
-getSlurm :: MonadIO m => Tx mode -> DB -> WorldVersion -> m (Maybe Slurm)
-getSlurm (Tx conn) _ version = liftIO $ do
+getSlurm :: MonadIO m => Tx mode -> WorldVersion -> m (Maybe Slurm)
+getSlurm (Tx conn) version = liftIO $ do
     rows <- query conn "SELECT value FROM slurm WHERE key = ?"
                 (Only version)
     pure $ fmap (deserialiseCompressed . fromOnly) (listToMaybe rows)
 
-getLatestVersions :: MonadIO m => Tx mode -> DB -> m (PerTA WorldVersion)
-getLatestVersions (Tx conn) _ = liftIO $ do
+getLatestVersions :: MonadIO m => Tx mode -> m (PerTA WorldVersion)
+getLatestVersions (Tx conn) = liftIO $ do
     rows <- query_ conn
         [sql|
             SELECT vo.ta_name, MAX(vo.version)
@@ -932,16 +932,15 @@ getLatestVersions (Tx conn) _ = liftIO $ do
 -- Repository functions
 -- ---------------------------------------------------------------------------
 
-updateRrdpMeta :: MonadIO m => Tx 'RW -> DB -> RrdpMeta -> RrdpURL -> m ()
-updateRrdpMeta tx db meta url = liftIO $ updateRrdpMetaM tx db url (const $ pure $ Just meta)
+updateRrdpMeta :: MonadIO m => Tx 'RW -> RrdpMeta -> RrdpURL -> m ()
+updateRrdpMeta tx meta url = liftIO $ updateRrdpMetaM tx url (const $ pure $ Just meta)
 
 updateRrdpMetaM :: MonadIO m
                 => Tx 'RW
-                -> DB
                 -> RrdpURL
                 -> (Maybe RrdpMeta -> IO (Maybe RrdpMeta))
                 -> m ()
-updateRrdpMetaM (Tx conn) _ url f = liftIO $ do
+updateRrdpMetaM (Tx conn) url f = liftIO $ do
     let k = serialiseField url
     rows <- query conn "SELECT data FROM repositories WHERE key = ? AND kind = 'rrdp-pp'" (Only k)
     forM_ (listToMaybe rows) $ \(Only bs) -> do
@@ -953,8 +952,8 @@ updateRrdpMetaM (Tx conn) _ url f = liftIO $ do
                     "INSERT OR REPLACE INTO repositories(key, kind, data) VALUES (?, 'rrdp-pp', ?)"
                     (k, serialiseField (repo & #rrdpMeta ?~ newMeta))
 
-getPublicationPoints :: MonadIO m => Tx mode -> DB -> m PublicationPoints
-getPublicationPoints (Tx conn) _ = liftIO $ do
+getPublicationPoints :: MonadIO m => Tx mode -> m PublicationPoints
+getPublicationPoints (Tx conn) = liftIO $ do
     rrdpRows  <- query_ conn "SELECT key, data FROM repositories WHERE kind = 'rrdp-pp'"
     rsyncRows <- query_ conn "SELECT key, data FROM repositories WHERE kind = 'rsync-pp'"
     let rrdps  = [ (deserialiseField k, deserialiseField v) | (k, v) <- rrdpRows ]
@@ -963,23 +962,23 @@ getPublicationPoints (Tx conn) _ = liftIO $ do
         (RrdpMap $ Map.fromList rrdps)
         (RsyncForestGen $ Map.fromList rsyncs)
 
-getRepository :: MonadIO m => Tx mode -> DB -> RpkiURL -> m (Maybe Repository)
-getRepository tx db = \case
-    RrdpU u  -> fmap RrdpR  <$> getRrdpRepository tx db u
-    RsyncU u -> fmap RsyncR <$> getRsyncRepository tx db u
+getRepository :: MonadIO m => Tx mode -> RpkiURL -> m (Maybe Repository)
+getRepository tx = \case
+    RrdpU u  -> fmap RrdpR  <$> getRrdpRepository tx u
+    RsyncU u -> fmap RsyncR <$> getRsyncRepository tx u
 
-getRrdpRepository :: MonadIO m => Tx mode -> DB -> RrdpURL -> m (Maybe RrdpRepository)
-getRrdpRepository (Tx conn) _ url = liftIO $ do
+getRrdpRepository :: MonadIO m => Tx mode -> RrdpURL -> m (Maybe RrdpRepository)
+getRrdpRepository (Tx conn) url = liftIO $ do
     rows <- query conn "SELECT data FROM repositories WHERE key = ? AND kind = 'rrdp-pp'"
                 (Only (serialiseField url))
     pure $ fmap (deserialiseField . fromOnly) (listToMaybe rows)
 
-getRsyncRepository :: MonadIO m => Tx mode -> DB -> RsyncURL -> m (Maybe RsyncRepository)
-getRsyncRepository tx db url = Map.lookup url <$> getRsyncRepositories tx db [url]
+getRsyncRepository :: MonadIO m => Tx mode -> RsyncURL -> m (Maybe RsyncRepository)
+getRsyncRepository tx url = Map.lookup url <$> getRsyncRepositories tx [url]
 
 getRsyncRepositories :: MonadIO m
-                     => Tx mode -> DB -> [RsyncURL] -> m (Map.Map RsyncURL RsyncRepository)
-getRsyncRepositories tx db urls =
+                     => Tx mode -> [RsyncURL] -> m (Map.Map RsyncURL RsyncRepository)
+getRsyncRepositories tx urls =
     getRsyncAnything urls
         (\host -> do
             let Tx conn = tx
@@ -1007,35 +1006,35 @@ getRsyncAnything urls extractTree create = liftIO $ do
                     , Just (path', content) <- [lookupInRsyncTree path tree]
                     , let url' = RsyncURL host path' ]
 
-saveRepositories :: MonadIO m => Tx 'RW -> DB -> [Repository] -> m ()
-saveRepositories tx db repos = liftIO $ do
+saveRepositories :: MonadIO m => Tx 'RW -> [Repository] -> m ()
+saveRepositories tx repos = liftIO $ do
     let (rrdps, rsyncs) = foldr sep ([], []) repos
     let Tx conn = tx
     executeMany conn
         "INSERT OR REPLACE INTO repositories(key, kind, data) VALUES (?, 'rrdp-pp', ?)"
         [ (serialiseField (r ^. #uri), serialiseField r) | r <- rrdps ]
-    saveRsyncRepositories tx db rsyncs
+    saveRsyncRepositories tx rsyncs
   where
     sep (RrdpR r)  (rs, ss) = (r : rs, ss)
     sep (RsyncR r) (rs, ss) = (rs, r : ss)
 
 saveRepositoryValidationStates :: MonadIO m
-                                => Tx 'RW -> DB -> [(Repository, ValidationState)] -> m ()
-saveRepositoryValidationStates tx db repos = liftIO $ do
+                                => Tx 'RW -> [(Repository, ValidationState)] -> m ()
+saveRepositoryValidationStates tx repos = liftIO $ do
     let (rrdps, rsyncs) = foldr sep ([], []) repos
     let Tx conn = tx
     executeMany conn
         "INSERT OR REPLACE INTO repositories(key, kind, data) VALUES (?, 'rrdp-vstate', ?)"
         [ (serialiseField (r ^. #uri), serialiseCompressed vs) | (r, vs) <- rrdps ]
-    saveRsyncValidationStates tx db rsyncs
+    saveRsyncValidationStates tx rsyncs
   where
     sep (RrdpR r,  a) (rs, ss) = ((r, a) : rs, ss)
     sep (RsyncR r, a) (rs, ss) = (rs, (r, a) : ss)
 
-saveRsyncRepositories :: MonadIO m => Tx 'RW -> DB -> [RsyncRepository] -> m ()
-saveRsyncRepositories (Tx conn) _ repos = liftIO $
+saveRsyncRepositories :: MonadIO m => Tx 'RW -> [RsyncRepository] -> m ()
+saveRsyncRepositories (Tx conn) repos = liftIO $
     saveRsyncAnything (map (\r -> (r, r ^. #meta)) repos)
-        (\host -> do            
+        (\host -> do
             rows <- query conn
                 "SELECT data FROM repositories WHERE key = ? AND kind = 'rsync-pp'"
                 (Only (serialiseField host))
@@ -1046,8 +1045,8 @@ saveRsyncRepositories (Tx conn) _ repos = liftIO $
                 (serialiseField host, serialiseField tree))
 
 saveRsyncValidationStates :: MonadIO m
-                          => Tx 'RW -> DB -> [(RsyncRepository, ValidationState)] -> m ()
-saveRsyncValidationStates tx db repos = liftIO $
+                          => Tx 'RW -> [(RsyncRepository, ValidationState)] -> m ()
+saveRsyncValidationStates tx repos = liftIO $
     saveRsyncAnything repos
         (\host -> do
             let Tx conn = tx
@@ -1075,8 +1074,8 @@ saveRsyncAnything repos extractTree saveTree = liftIO $ do
         saveTree host $ foldr (uncurry pathToRsyncTree) startTree pathAndA
 
 getRepositories :: MonadIO m
-                => Tx mode -> DB -> (RpkiURL -> Bool) -> m [(Repository, ValidationState)]
-getRepositories (Tx conn) _ filterF = liftIO $ do
+                => Tx mode -> (RpkiURL -> Bool) -> m [(Repository, ValidationState)]
+getRepositories (Tx conn) filterF = liftIO $ do
     rrdpRows  <- query_ conn "SELECT key, data FROM repositories WHERE kind = 'rrdp-pp'"
     rsyncRows <- query_ conn "SELECT key, data FROM repositories WHERE kind = 'rsync-pp'"
     let rrdps  = [ (deserialiseField k :: RrdpURL,  deserialiseField v) | (k, v) <- rrdpRows ]
@@ -1111,36 +1110,36 @@ getRepositories (Tx conn) _ filterF = liftIO $ do
             ]
     pure $ rrdpResults <> rsyncResults
 
-{- 
-    Erik "repositories" are bookkeeping for the UI and for refresh scheduling: 
-    one row per FQDN, since that is the unit an Erik fetch works on (a relay 
-    serves an index per FQDN, regardless of how many publication points live 
-    under it). They are stored in the same table as the RRDP/rsync ones, under 
-    their own `erik-pp`/`erik-vstate` kinds, and they are not part of 
+{-
+    Erik "repositories" are bookkeeping for the UI and for refresh scheduling:
+    one row per FQDN, since that is the unit an Erik fetch works on (a relay
+    serves an index per FQDN, regardless of how many publication points live
+    under it). They are stored in the same table as the RRDP/rsync ones, under
+    their own `erik-pp`/`erik-vstate` kinds, and they are not part of
     'PublicationPoints' -- nothing in validation looks them up.
 -}
-saveErikRepositories :: MonadIO m => Tx 'RW -> DB -> [ErikRepository] -> m ()
-saveErikRepositories (Tx conn) _ repos = liftIO $
+saveErikRepositories :: MonadIO m => Tx 'RW -> [ErikRepository] -> m ()
+saveErikRepositories (Tx conn) repos = liftIO $
     executeMany conn
         "INSERT OR REPLACE INTO repositories(key, kind, data) VALUES (?, 'erik-pp', ?)"
         [ (serialiseField (r ^. #fqdn), serialiseField r) | r <- repos ]
 
 saveErikRepositoryValidationStates :: MonadIO m
-                                   => Tx 'RW -> DB -> [(ErikRepository, ValidationState)] -> m ()
-saveErikRepositoryValidationStates (Tx conn) _ repos = liftIO $
+                                   => Tx 'RW -> [(ErikRepository, ValidationState)] -> m ()
+saveErikRepositoryValidationStates (Tx conn) repos = liftIO $
     executeMany conn
         "INSERT OR REPLACE INTO repositories(key, kind, data) VALUES (?, 'erik-vstate', ?)"
         [ (serialiseField (r ^. #fqdn), serialiseCompressed vs) | (r, vs) <- repos ]
 
-getErikRepository :: MonadIO m => Tx mode -> DB -> FQDN -> m (Maybe ErikRepository)
-getErikRepository (Tx conn) _ fqdn = liftIO $ do
+getErikRepository :: MonadIO m => Tx mode -> FQDN -> m (Maybe ErikRepository)
+getErikRepository (Tx conn) fqdn = liftIO $ do
     rows <- query conn "SELECT data FROM repositories WHERE key = ? AND kind = 'erik-pp'"
                 (Only (serialiseField fqdn))
     pure $ fmap (deserialiseField . fromOnly) (listToMaybe rows)
 
 getErikRepositories :: MonadIO m
-                    => Tx mode -> DB -> (FQDN -> Bool) -> m [(ErikRepository, ValidationState)]
-getErikRepositories (Tx conn) _ filterF = liftIO $ do
+                    => Tx mode -> (FQDN -> Bool) -> m [(ErikRepository, ValidationState)]
+getErikRepositories (Tx conn) filterF = liftIO $ do
     ppRows     <- query_ conn "SELECT key, data FROM repositories WHERE kind = 'erik-pp'"
     vstateRows <- query_ conn "SELECT key, data FROM repositories WHERE kind = 'erik-vstate'"
     let vstates = Map.fromList vstateRows :: Map.Map BS.ByteString BS.ByteString
@@ -1154,38 +1153,29 @@ getErikRepositories (Tx conn) _ filterF = liftIO $ do
 -- Job / Metadata
 -- ---------------------------------------------------------------------------
 
-setJobCompletionTime :: MonadIO m => Tx 'RW -> DB -> Text -> Instant -> m ()
-setJobCompletionTime (Tx conn) _ job t = liftIO $
+setJobCompletionTime :: MonadIO m => Tx 'RW -> Text -> Instant -> m ()
+setJobCompletionTime (Tx conn) job t = liftIO $
     execute conn "INSERT OR REPLACE INTO jobs(key, value) VALUES (?, ?)"
         (job, serialiseField t)
 
-allJobs :: MonadIO m => Tx mode -> DB -> m [(Text, Instant)]
-allJobs (Tx conn) _ = liftIO $ do
+allJobs :: MonadIO m => Tx mode -> m [(Text, Instant)]
+allJobs (Tx conn) = liftIO $ do
     rows <- query_ conn "SELECT key, value FROM jobs"
     pure [ (k, deserialiseField v) | (k, v) <- rows ]
 
-getDatabaseVersion :: MonadIO m => Tx mode -> DB -> m (Maybe Integer)
-getDatabaseVersion (Tx conn) _ = liftIO $ do
+getDatabaseVersion :: MonadIO m => Tx mode -> m (Maybe Integer)
+getDatabaseVersion (Tx conn) = liftIO $ do
     rows <- query conn "SELECT value FROM metadata WHERE key = ?"
                 (Only databaseVersionKey)
     pure $ case rows of
         [Only t] -> readMaybe (Text.unpack t)
         _        -> Nothing
 
-saveCurrentDatabaseVersion :: MonadIO m => Tx 'RW -> DB -> m ()
-saveCurrentDatabaseVersion (Tx conn) _ = liftIO $
+saveCurrentDatabaseVersion :: MonadIO m => Tx 'RW -> m ()
+saveCurrentDatabaseVersion (Tx conn) = liftIO $
     execute conn "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)"
         (databaseVersionKey, Text.pack $ show currentDatabaseVersion)
 
--- | Shared by updateValidatedByVersionMap and deleteStaleContent's sweep --
--- both need the same "current validated-by-version map, or empty" read.
---
--- Kept as a single compressed blob on purpose, not as a table. Every
--- validation round touches a large fraction of the entries, so a row per
--- object would rewrite most of the table's disk pages each time; one blob is
--- a single sequential write instead. The cost is that the whole map is a
--- boxed Map in memory while the sweep runs -- do not "fix" that by
--- normalising it into a table.
 getValidatedByVersionMap :: SQLite.CachedConn -> IO (Map.Map ObjectKey WorldVersion)
 getValidatedByVersionMap conn = do
     rows <- query conn "SELECT value FROM validated_by_version WHERE key = ?"
@@ -1196,10 +1186,9 @@ getValidatedByVersionMap conn = do
 
 updateValidatedByVersionMap :: MonadIO m
                             => Tx 'RW
-                            -> DB
                             -> (Map.Map ObjectKey WorldVersion -> Map.Map ObjectKey WorldVersion)
                             -> m (Map.Map ObjectKey WorldVersion)
-updateValidatedByVersionMap (Tx conn) _ f = liftIO $ do
+updateValidatedByVersionMap (Tx conn) f = liftIO $ do
     updated <- f <$> getValidatedByVersionMap conn
     execute conn "INSERT OR REPLACE INTO validated_by_version(key, value) VALUES (?, ?)"
         (validatedByVersionKey, serialiseCompressed updated)
@@ -1210,8 +1199,8 @@ updateValidatedByVersionMap (Tx conn) _ f = liftIO $ do
 -- Stats
 -- ---------------------------------------------------------------------------
 
-getObjectsStats :: MonadIO m => Tx mode -> DB -> m ObjectStats
-getObjectsStats (Tx conn) _ = liftIO $ do
+getObjectsStats :: MonadIO m => Tx mode -> m ObjectStats
+getObjectsStats (Tx conn) = liftIO $ do
     rows <- query_ conn
         [sql|
             SELECT type,
@@ -1277,13 +1266,13 @@ data DeletionCriteria = DeletionCriteria
 
 
 deleteOldestVersionsIfNeeded :: MonadIO m
-                             => Tx 'RW -> DB -> Natural -> m [WorldVersion]
-deleteOldestVersionsIfNeeded tx@(Tx conn) db versionNumberToKeep =
+                             => Tx 'RW -> Natural -> m [WorldVersion]
+deleteOldestVersionsIfNeeded tx@(Tx conn) versionNumberToKeep =
     mapException (AppException . storageError) <$> liftIO $ do
-        versions <- versionsBackwards tx db
+        versions <- versionsBackwards tx
         let reallyToKeep = max 2 (fromIntegral versionNumberToKeep)
         case NonEmpty.nonEmpty versions of
-            Just neVersions 
+            Just neVersions
                 | NonEmpty.length neVersions > reallyToKeep -> do
 
                 taVersionRows :: [(Text, WorldVersion)] <- query_ conn
@@ -1305,7 +1294,7 @@ deleteOldestVersionsIfNeeded tx@(Tx conn) db versionNumberToKeep =
 
                     versionsToDelete = filter (< cutoff) versions
 
-                forM_ versionsToDelete $ deleteValidationVersion tx db
+                forM_ versionsToDelete $ deleteValidationVersion tx
                 pure versionsToDelete
             _ -> pure []
 
@@ -1322,8 +1311,8 @@ deleteStaleContent db DeletionCriteria{..} =
             pure CleanUpResult{..}
   where
     deleteOldVersions tx = do
-        toDelete <- filter versionIsTooOld <$> versionsBackwards tx db
-        forM_ toDelete $ deleteValidationVersion tx db
+        toDelete <- filter versionIsTooOld <$> versionsBackwards tx
+        forM_ toDelete $ deleteValidationVersion tx
         pure $ length toDelete
 
     -- Streamed on purpose: the objects table has ~a million rows, and
@@ -1353,7 +1342,7 @@ deleteStaleContent db DeletionCriteria{..} =
         execute conn "INSERT OR REPLACE INTO validated_by_version(key, value) VALUES (?, ?)"
             (validatedByVersionKey, serialiseCompressed validatedBy')
 
-        deleteObjectByKey tx db sweepToDelete
+        deleteObjectByKey tx sweepToDelete
 
         let deletedCount = fromIntegral $ sum $ Map.elems sweepPerType
         pure (deletedCount, sweepPerType, sweepKept)
@@ -1386,26 +1375,26 @@ deleteDanglingUrls (Tx conn) = do
         "DELETE FROM urls WHERE url_key NOT IN (SELECT DISTINCT url_key FROM object_urls)"
     changes conn
 
-getAll :: MonadIO m => Tx mode -> DB -> m [Located RpkiObjectLifecycle]
-getAll tx db = liftIO $ do
+getAll :: MonadIO m => Tx mode -> m [Located RpkiObjectLifecycle]
+getAll tx = liftIO $ do
     let Tx conn = tx
     rows <- query_ conn "SELECT object_key FROM objects WHERE data IS NOT NULL"
-    catMaybes <$> forM rows (getLocatedByKey tx db . fromOnly)
+    catMaybes <$> forM rows (getLocatedByKey tx . fromOnly)
 
 getMftMeta :: MftObject -> ObjectKey -> MftMeta
 getMftMeta mft key =
     let Manifest{..} = getCMSContent $ cmsPayload mft
     in MftMeta{..}
 
-getGbrObjects :: MonadIO m => Tx mode -> DB -> WorldVersion -> m [Located RpkiObjectLifecycle]
-getGbrObjects tx db version = do
-    gbrs <- maybe [] Set.toList <$> getGbrs tx db version
-    fmap catMaybes $ forM gbrs $ \(T2 hash _) -> getByHash tx db hash
+getGbrObjects :: MonadIO m => Tx mode -> WorldVersion -> m [Located RpkiObjectLifecycle]
+getGbrObjects tx version = do
+    gbrs <- maybe [] Set.toList <$> getGbrs tx version
+    fmap catMaybes $ forM gbrs $ \(T2 hash _) -> getByHash tx hash
 
-getRtrPayloads :: MonadIO m => Tx 'RO -> DB -> WorldVersion -> m (Maybe RtrPayloads)
-getRtrPayloads tx db worldVersion = liftIO $ runMaybeT $ do
-    vrps <- MaybeT $ Just <$> getVrps tx db worldVersion
-    bgps <- MaybeT $ getBgps tx db worldVersion
+getRtrPayloads :: MonadIO m => Tx 'RO -> WorldVersion -> m (Maybe RtrPayloads)
+getRtrPayloads tx worldVersion = liftIO $ runMaybeT $ do
+    vrps <- MaybeT $ Just <$> getVrps tx worldVersion
+    bgps <- MaybeT $ getBgps tx worldVersion
     pure $ mkRtrPayloads vrps bgps
 
 
