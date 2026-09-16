@@ -454,6 +454,7 @@ instance ToJSON HttpApiConfig
 instance ToJSON ValidationConfig
 instance ToJSON RtrConfig
 instance ToJSON IoLimits
+instance ToJSON WorkerLimits
 instance ToJSON SystemConfig
 instance ToJSON RrdpConf
 instance ToJSON RsyncConf    

@@ -582,8 +582,8 @@ runAll appContext@AppContext {..} tals = do
         files <- listDirectory tmpDir
 
         -- Temporary RRDP files cannot meaningfully live longer than that
-        let Seconds (fromIntegral -> maxTimeout :: NominalDiffTime) = 
-                10 + config ^. #rrdpConf . #rrdpTimeout
+        let Seconds (fromIntegral -> maxTimeout :: NominalDiffTime) =
+                10 + config ^. typed @SystemConfig . #rrdpWorker . #workerTimeout
 
         -- Do not touch "erik" subdirectory, it has it's own cleanup mechanism
         forM_ (filter (/= "erik") files) $ \file ->
@@ -651,16 +651,15 @@ runAll appContext@AppContext {..} tals = do
                         rtsN maxCpuAvailable, 
                         rtsA "24m", 
                         rtsAL "128m", 
-                        rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerMemoryMb) 
+                        rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorker . #memoryMb)
                     ])
-        
-        r <- runValidatorIO 
-                (newScopes "validator") $ do 
-                    let timeout = config ^. typed @ValidationConfig . #topDownTimeout
+
+        r <- runValidatorIO
+                (newScopes "validator") $ do
+                    let timeout = config ^. typed @SystemConfig . #validationWorker . #workerTimeout
                     workerInput <- makeWorkerInput appContext workerId
                                     ValidationParams {..}
                                     (Timebox timeout)
-                                    Nothing
                     workerInfo <- newWorkerInfo (GenericWorker "validation") timeout (convert $ show workerId)
                     runWorker logger workerInput arguments workerInfo
 
@@ -675,16 +674,15 @@ runAll appContext@AppContext {..} tals = do
                     rtsN 2, 
                     rtsA "24m", 
                     rtsAL "64m", 
-                    rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerMemoryMb) ]
-        
-        r <- runValidatorIO             
+                    rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorker . #memoryMb) ]
+
+        r <- runValidatorIO
                 (newScopes "cache-clean-up") $ do
-                    let timeout = 300
+                    let timeout = config ^. typed @SystemConfig . #cleanupWorker . #workerTimeout
                     workerInput <- makeWorkerInput appContext workerId
                                         (CacheCleanupParams worldVersion)
                                         (Timebox timeout)
-                                        Nothing
-                    
+
                     workerInfo <- newWorkerInfo (GenericWorker "cache-clean-up") timeout (convert $ show workerId)
                     runWorker logger workerInput arguments workerInfo
         pure (r, workerId)                            

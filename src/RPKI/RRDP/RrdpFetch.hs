@@ -71,14 +71,13 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
                 rtsAL "4m", 
                 "-Fd1",
                 "--disable-delayed-os-memory-return",
-                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rrdpWorkerMemoryMb) ]
+                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rrdpWorker . #memoryMb) ]
 
     scopes <- askScopes
 
     workerInput <- makeWorkerInput appContext workerId
-                        (RrdpFetchParams scopes repository worldVersion)                        
-                        (Timebox $ fetchConfig ^. #rrdpTimeout)                                
-                        (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
+                        (RrdpFetchParams scopes repository worldVersion)
+                        (Timebox $ fetchConfig ^. #rrdpTimeout) 
 
     workerInfo <- newWorkerInfo (GenericWorker "rrdp-fetch") (fetchConfig ^. #rrdpTimeout) (U.convert $ show workerId)
     wr@WorkerResult {..} <- runWorker logger workerInput arguments workerInfo

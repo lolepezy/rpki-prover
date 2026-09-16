@@ -326,7 +326,7 @@ validateTA :: AppContext s
             -> AllTasTopDownContext
             -> IO TopDownResult
 validateTA appContext@AppContext{..} tal allTas = do
-    let maxDuration = config ^. typed @ValidationConfig . #topDownTimeout
+    let maxDuration = config ^. typed @SystemConfig . #validationWorker . #workerTimeout
     topDownContext <- newTopDownContext taName allTas
     (r, topDownValidations) <- runValidatorIO taContext $
             timeoutVT

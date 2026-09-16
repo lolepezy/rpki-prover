@@ -113,23 +113,30 @@ data WorkerInput = WorkerInput {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-makeWorkerInput :: (MonadIO m) 
-                => AppContext s 
+makeWorkerInput :: (MonadIO m)
+                => AppContext s
                 -> WorkerId
                 -> WorkerParams
                 -> Timebox
-                -> Maybe CPUTime                
                 -> m WorkerInput
-makeWorkerInput AppContext {..} workerId params timeout cpuLimit = do 
-    thisProcessId <- liftIO getProcessID    
-    pure $ WorkerInput workerId params config thisProcessId 
-                        timeout cpuLimit (ioLimitsFor params) executableVersion
+makeWorkerInput AppContext {..} workerId params timeout = do
+    thisProcessId <- liftIO getProcessID
+    pure $ WorkerInput workerId params config thisProcessId
+                        timeout (Just $ asCpuTime $ limits ^. #cpuLimit)
+                        (limits ^. #ioLimits) executableVersion
   where
-    ioLimitsFor = let SystemConfig {..} = config ^. #systemConfig in \case
-        RrdpFetchParams {}    -> rrdpWorkerIoLimits
-        RsyncFetchParams {}   -> rsyncWorkerIoLimits
-        ValidationParams {}   -> validationWorkerIoLimits
-        CacheCleanupParams {} -> cleanupWorkerIoLimits
+    -- Every kind of worker has its own place in 'SystemConfig' with all of
+    -- its limits (timeout, CPU time, memory, IO) together, so this is the
+    -- one spot that needs a case per 'WorkerParams' constructor -- everywhere
+    -- else derives what it needs from 'limits' instead of matching again.
+    limits = workerLimitsFor params
+
+    workerLimitsFor = let SystemConfig {..} = config ^. #systemConfig in \case
+        RrdpFetchParams {}    -> rrdpWorker
+        RsyncFetchParams {}   -> rsyncWorker
+        ErikFetchParams {}    -> erikWorker
+        ValidationParams {}   -> validationWorker
+        CacheCleanupParams {} -> cleanupWorker
 
 newtype RrdpFetchResult = RrdpFetchResult 
                             (Either AppError (RrdpRepository, RrdpFetchStat), ValidationState)    

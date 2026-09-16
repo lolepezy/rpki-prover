@@ -49,7 +49,6 @@ data FetchConfig = FetchConfig {
         rrdpTimeout              :: Seconds,
         erikTimeout              :: Seconds,
         fetchLaunchWaitDuration  :: Seconds,
-        cpuLimit                 :: Seconds,
         minFetchInterval         :: Seconds,
         maxFetchInterval         :: Seconds,
         maxFailedBackoffInterval :: Seconds
@@ -94,15 +93,17 @@ data Config = Config {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+-- | 'rsyncTimeout' and 'cpuLimit' used to live here (and the matching fields
+-- in 'ErikConf'/'RrdpConf'), one copy per protocol config. They now live in
+-- one place per worker kind, 'SystemConfig' / 'WorkerLimits', alongside
+-- memory and IO limits -- see 'WorkerLimits'.
 data RsyncConf = RsyncConf {
         rsyncClientPath   :: Maybe (ApiSecured FilePath),
         rsyncRoot         :: ApiSecured FilePath,
-        rsyncTimeout      :: Seconds,
-        cpuLimit          :: Seconds,
         enabled           :: Bool,
         rsyncPrefetchUrls :: [RsyncURL],
         rsyncPerHostLimit :: Int
-    } 
+    }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
@@ -114,9 +115,7 @@ data ErikConf = ErikConf {
         downloadParallelism  :: Natural,
         -- | Cap on relay downloads in flight against any single relay.
         relayParallelism     :: Natural,
-        erikTimeout          :: Seconds,
-        erikRefreshInterval  :: Seconds,
-        cpuLimit             :: Seconds
+        erikRefreshInterval  :: Seconds
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -124,8 +123,6 @@ data ErikConf = ErikConf {
 data RrdpConf = RrdpConf {
         tmpRoot     :: ApiSecured FilePath,
         maxSize     :: Size,
-        rrdpTimeout :: Seconds,
-        cpuLimit    :: Seconds,
         enabled     :: Bool
     }
     deriving stock (Eq, Ord, Show, Generic)
@@ -155,9 +152,10 @@ data ValidationConfig = ValidationConfig {
         -- we don't want to overload repositories
         rrdpForcedSnapshotMinInterval :: Seconds,
 
-        -- Maximum time for top-down validation for one TA
-        topDownTimeout                 :: Seconds,
-        
+        -- Maximum time for top-down validation for one TA lives in
+        -- 'SystemConfig' now, as 'validationWorker' . 'workerTimeout',
+        -- alongside the validation worker's other limits.
+
         manifestProcessing             :: ManifestProcessing,
 
         -- Maximal object tree depth measured in number of CAs
@@ -201,25 +199,46 @@ data RtrConfig = RtrConfig {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
+-- | How much IO a worker process is allowed to do before it gives up and
+-- exits, the same way it gives up on CPU time or wall-clock time. 'Nothing'
+-- means "don't watch this one". Note that incoming traffic is only what the
+-- worker downloads itself over HTTP -- an external rsync client is a separate
+-- process, so what it transfers doesn't get counted as traffic, it lands in
+-- the disk IO of the worker that spawned it instead.
 data IoLimits = IoLimits {
         maxIncomingTrafficMb :: Maybe Int,
         maxDiskReadMb        :: Maybe Int,
         maxDiskWriteMb       :: Maybe Int
-    } 
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+-- | Everything one kind of worker process is bounded by: how long it may run
+-- (wall-clock), how much CPU time it may burn, how much memory its RTS is
+-- allowed and how much IO it may do -- all in one place instead of scattered
+-- across 'RsyncConf'\/'RrdpConf'\/'ErikConf', 'ValidationConfig' and
+-- 'SystemConfig' the way they used to be. A worker watches its own timeout,
+-- CPU time and IO the same way ('RPKI.Worker.dieAfterTimeout',
+-- 'RPKI.Worker.dieOfOveruse'); memory is enforced by the RTS itself via the
+-- @-M@ flag built from 'memoryMb'.
+data WorkerLimits = WorkerLimits {
+        -- Named 'workerTimeout', not 'timeout' -- the latter clashes with
+        -- 'System.Timeout.timeout', imported unqualified all over the place.
+        workerTimeout :: Seconds,
+        cpuLimit      :: Seconds,
+        memoryMb      :: Int,
+        ioLimits      :: IoLimits
+    }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
 data SystemConfig = SystemConfig {
-        rsyncWorkerMemoryMb      :: Int,
-        rrdpWorkerMemoryMb       :: Int,
-        erikWorkerMemoryMb       :: Int,
-        validationWorkerMemoryMb :: Int,
-        cleanupWorkerMemoryMb    :: Int,
-        rsyncWorkerIoLimits      :: IoLimits,
-        rrdpWorkerIoLimits       :: IoLimits,
-        validationWorkerIoLimits :: IoLimits,
-        cleanupWorkerIoLimits    :: IoLimits
-    } 
+        rsyncWorker      :: WorkerLimits,
+        rrdpWorker       :: WorkerLimits,
+        erikWorker       :: WorkerLimits,
+        validationWorker :: WorkerLimits,
+        cleanupWorker    :: WorkerLimits
+    }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -256,8 +275,6 @@ defaultConfig = Config {
     rsyncConf = RsyncConf {
         rsyncClientPath = Nothing,
         rsyncRoot    = Hidden "",
-        rsyncTimeout = 11 * 60,
-        cpuLimit = 30 * 60,    
         enabled = True,
         rsyncPrefetchUrls = [],
         rsyncPerHostLimit = 5
@@ -265,8 +282,6 @@ defaultConfig = Config {
     rrdpConf = RrdpConf {
         tmpRoot = Hidden "",
         maxSize = Size $ 1024 * 1024 * 1024,
-        rrdpTimeout = 11 * minutes,
-        cpuLimit = 30 * minutes,
         enabled = True
     },
     erikConf = ErikConf {
@@ -275,60 +290,91 @@ defaultConfig = Config {
         parallelism         = 10,
         downloadParallelism = 50,
         relayParallelism    = 20,
-        erikTimeout         = 15 * minutes,
-        erikRefreshInterval = 2 * minutes,
-        cpuLimit            = 30 * minutes
+        erikRefreshInterval = 2 * minutes
     },
     validationConfig = ValidationConfig {
         revalidationInterval           = 15 * minutes,
         rrdpRepositoryRefreshInterval  = 2 * minutes,
-        rsyncRepositoryRefreshInterval = 11 * minutes,    
+        rsyncRepositoryRefreshInterval = 11 * minutes,
         taCertificateRefreshInterval   = 10 * minutes,
-        rrdpForcedSnapshotMinInterval  = 12 * hours,                
-        topDownTimeout                 = 1 * hour,
+        rrdpForcedSnapshotMinInterval  = 12 * hours,
         manifestProcessing             = RFC9286,
         maxCertificatePathDepth        = 32,
         maxTotalTreeSize               = 5_000_000,
         maxObjectSize                  = 32 * 1024 * 1024,
-        -- every object contains at least 256 bytes of RSA key, 
+        -- every object contains at least 256 bytes of RSA key,
         -- couple of dates and a few extensions
         minObjectSize                  = 300,
         maxTaRepositories              = 1000,
         validationRFC                  = StrictRFC,
-        validationAlgorithm            = FullEveryIteration,        
+        validationAlgorithm            = FullEveryIteration,
         minimalRevalidationInterval    = Seconds 30
     },
     httpApiConf = HttpApiConfig {
         port = 9999
-    },    
+    },
     systemConfig = SystemConfig {
-        rsyncWorkerMemoryMb      = 1024,
-        rrdpWorkerMemoryMb       = 1024,
-        erikWorkerMemoryMb       = 1024,
-        validationWorkerMemoryMb = 2048,
-        cleanupWorkerMemoryMb    = 512,
-        rsyncWorkerIoLimits = IoLimits {
-            maxIncomingTrafficMb = Nothing,
-            maxDiskReadMb        = Just $ 4 * gigabyte,
-            -- 6 mainly because of the SQLite WAL (and other) amplifications
-            maxDiskWriteMb       = Just $ 6 * gigabyte
+        rsyncWorker = WorkerLimits {
+            workerTimeout  = 11 * minutes,
+            cpuLimit = 30 * minutes,
+            memoryMb = 1024,
+            ioLimits = IoLimits {
+                maxIncomingTrafficMb = Nothing,
+                maxDiskReadMb        = Just $ 4 * gigabyte,
+                -- 6 mainly because of the SQLite WAL (and other) amplifications
+                maxDiskWriteMb       = Just $ 6 * gigabyte
+            }
         },
-        rrdpWorkerIoLimits = IoLimits {
-            maxIncomingTrafficMb = Just $ 2 * gigabyte,
-            maxDiskReadMb        = Just $ 4 * gigabyte,
-            maxDiskWriteMb       = Just $ 6 * gigabyte
-        },        
-        validationWorkerIoLimits = IoLimits {
-            -- it only downloads TA certificates
-            maxIncomingTrafficMb = Just 64,
-            maxDiskReadMb        = Just $ 10 * gigabyte,
-            -- Saving payloads and shortcuts is not much 
-            maxDiskWriteMb       = Just gigabyte
+        rrdpWorker = WorkerLimits {
+            workerTimeout  = 11 * minutes,
+            cpuLimit = 30 * minutes,
+            memoryMb = 1024,
+            ioLimits = IoLimits {
+                maxIncomingTrafficMb = Just $ 2 * gigabyte,
+                maxDiskReadMb        = Just $ 4 * gigabyte,
+                maxDiskWriteMb       = Just $ 6 * gigabyte
+            }
         },
-        cleanupWorkerIoLimits = IoLimits {
-            maxIncomingTrafficMb = Nothing,
-            maxDiskReadMb        = Just 32768,
-            maxDiskWriteMb       = Just 32768
+        erikWorker = WorkerLimits {
+            workerTimeout  = 15 * minutes,
+            cpuLimit = 30 * minutes,
+            memoryMb = 1024,
+            ioLimits = IoLimits {
+                -- Same shape as rrdp's: fetches relay bundles over HTTP and feeds
+                -- the same validation pipeline. Not measured against a real run
+                -- yet, unlike rrdp's (see the proc-io-counters memory note).
+                maxIncomingTrafficMb = Just $ 2 * gigabyte,
+                maxDiskReadMb        = Just $ 2 * gigabyte,
+                maxDiskWriteMb       = Just $ 2 * gigabyte
+            }
+        },
+        validationWorker = WorkerLimits {
+            workerTimeout  = 1 * hour,
+            -- Validation runs with as many capabilities as there are CPUs, so
+            -- its CPU time can add up to several times the wall-clock timeout
+            -- above; sized after what's actually been measured (~2.2 of 8
+            -- cores kept busy, see the validation-cpu-hotspots memory note),
+            -- not the theoretical N-times-timeout ceiling.
+            cpuLimit = 3 * hour,
+            memoryMb = 2048,
+            ioLimits = IoLimits {
+                -- it only downloads TA certificates
+                maxIncomingTrafficMb = Just 64,
+                maxDiskReadMb        = Just $ 10 * gigabyte,
+                -- Saving payloads and shortcuts is not much
+                maxDiskWriteMb       = Just gigabyte
+            }
+        },
+        cleanupWorker = WorkerLimits {
+            workerTimeout  = 300,
+            -- Cleanup runs with 2 capabilities (-N2).
+            cpuLimit = 20 * minutes,
+            memoryMb = 512,
+            ioLimits = IoLimits {
+                maxIncomingTrafficMb = Nothing,
+                maxDiskReadMb        = Just 32768,
+                maxDiskWriteMb       = Just 32768
+            }
         }
     },
     rtrConfig                 = Nothing,
@@ -351,8 +397,12 @@ defaultConfig = Config {
     minutes = Seconds 60
     hour = hours
     days = 24 * hours
-    hours = Seconds $ 60 * 60    
-    gigabyte = 1024 * 1024 * 1024    
+    hours = Seconds $ 60 * 60
+    -- The IoLimits fields above are denominated in MB, so this is MB-per-GB,
+    -- not bytes-per-GB -- it was 1024*1024*1024 before, which inflated every
+    -- "N gigabyte" IoLimits default a thousand-fold, into practically no
+    -- limit at all.
+    gigabyte = 1024
 
 
 adjustConfig :: Config -> Config
@@ -410,15 +460,12 @@ defaultTalUrls = [
     ]        
     
 newFetchConfig :: Config -> FetchConfig
-newFetchConfig config = let 
-        rsyncConfig = config ^. typed @RsyncConf
-        rrdpConfig = config ^. typed @RrdpConf
-        erikConfig = config ^. typed @ErikConf
-        rsyncTimeout = rsyncConfig ^. #rsyncTimeout
-        rrdpTimeout  = rrdpConfig ^. #rrdpTimeout
-        erikTimeout  = erikConfig ^. #erikTimeout
-        fetchLaunchWaitDuration = Seconds 30         
-        cpuLimit = max (rrdpConfig ^. #cpuLimit) (rsyncConfig ^. #cpuLimit)
+newFetchConfig config = let
+        SystemConfig {..} = config ^. typed @SystemConfig
+        rsyncTimeout = rsyncWorker ^. #workerTimeout
+        rrdpTimeout  = rrdpWorker ^. #workerTimeout
+        erikTimeout  = erikWorker ^. #workerTimeout
+        fetchLaunchWaitDuration = Seconds 30
         minFetchInterval = Seconds 30
         maxFetchInterval = Seconds 300
         maxFailedBackoffInterval = Seconds $ 30 * 60

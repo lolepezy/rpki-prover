@@ -95,13 +95,12 @@ runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion reposito
                 rtsAL "4m", 
                 "-Fd1",
                 "--disable-delayed-os-memory-return",
-                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rsyncWorkerMemoryMb) ]
+                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rsyncWorker . #memoryMb) ]
 
     vp <- askScopes
     workerInput <- makeWorkerInput appContext workerId
-                        (RsyncFetchParams vp fetchConfig repository worldVersion)                        
+                        (RsyncFetchParams vp fetchConfig repository worldVersion)
                         (Timebox $ fetchConfig ^. #rsyncTimeout)
-                        (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
     
     workerInfo <- newWorkerInfo RsyncWorker (fetchConfig ^. #rsyncTimeout) (U.convert $ show workerId)
 
