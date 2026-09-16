@@ -413,7 +413,6 @@ taCertificateFromCache AppContext {..} tal = do
     case ta of
         Nothing       -> taCertProblem "there's no TA certificate in the cache yet"
         Just storedTa -> do
-            -- Issues found by the latest download and validation of the TA certificate
             (taCert, taValidations) <-
                 DB.roAppTxEx db DB.storageError $ \tx ->
                     (,) <$> DB.getTaCertByKey tx (storedTa ^. #taCertKey)
