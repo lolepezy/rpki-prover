@@ -498,10 +498,6 @@ runAll appContext@AppContext {..} tals = do
                                  [i|deleted #{deletedObjectUrls} stale object-URL links, |] <>
                                  [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, |] <>
                                  [i|deleted #{deletedErikPartitions} orphaned Erik partitions, took #{elapsed}ms.|]
-
-                when (deletedObjects > 0) $ do
-                    ((), maintenanceElapsed) <- timedMS $ runMaintenance appContext
-                    logDebug logger [i|Storage maintenance (WAL checkpoint, incremental vacuum, optimize) took #{maintenanceElapsed}ms.|]
       where
         cleanupOldObjects = do                 
             ((z, _), workerId) <- runCleanUpWorker worldVersion      
@@ -1237,27 +1233,28 @@ scheduleRevalidationOnExpiry AppContext {..} expirationTimes WorkflowShared {..}
 
 
 -- To be called from the cache cleanup worker
--- 
-runCacheCleanup :: AppContext s
-                -> WorldVersion                
+--
+runCacheCleanup :: MaintainableStorage s
+                => AppContext s
+                -> WorldVersion
                 -> IO DB.CleanUpResult
-runCacheCleanup AppContext {..} worldVersion = do        
+runCacheCleanup appContext@AppContext {..} worldVersion = do
     db <- readTVarIO database
     -- Use the latest completed validation moment as a cutting point.
-    -- This is to prevent cleaning up objects actual object if they were 
+    -- This is to prevent cleaning up objects actual object if they were
     -- untouched because prover was stopped for a long period.
     cutOffVersion <- DB.roTx db $ \tx ->
         fromMaybe worldVersion <$> DB.getLatestVersion tx
-    
+
     let cutOffMoment = versionToInstant cutOffVersion
         tooOldLongLived  = versionIsOld cutOffMoment (config ^. #longLivedCacheLifeTime)
         tooOldShortLived = versionIsOld cutOffMoment (config ^. #shortLivedCacheLifeTime)
 
-    DB.deleteStaleContent db DB.DeletionCriteria {
+    r@DB.CleanUpResult {..} <- DB.deleteStaleContent db DB.DeletionCriteria {
             versionIsTooOld  = tooOldLongLived,
-            objectIsTooOld = \version type_ -> 
-                case type_ of 
-                    -- Most of the object churn happens because of the manifest and CRL updates, 
+            objectIsTooOld = \version type_ ->
+                case type_ of
+                    -- Most of the object churn happens because of the manifest and CRL updates,
                     -- so they should be removed from the cache sooner than more long-lived objects
                     MFT -> tooOldShortLived version
                     CRL -> tooOldShortLived version
@@ -1266,6 +1263,12 @@ runCacheCleanup AppContext {..} worldVersion = do
             -- We don't want the warning about multiple lcoations to hang around for too long
             objectUrlIsTooOld = tooOldShortLived
         }
+
+    -- Run storage maintenance (WAL checkpoint, incremental vacuum, optimize)
+    when (deletedObjects > 0) $
+        runMaintenance appContext
+
+    pure r
 
 -- | Load the state corresponding to the last completed validation version.
 -- 
