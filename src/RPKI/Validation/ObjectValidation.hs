@@ -140,12 +140,24 @@ validateDerivedCertUris CertUris {..} = do
     for_ rrdpNotifyUri $ \uri ->
         unless (U.isRrdpURI uri) $ vError $ UnknownUriType uri
 
+-- Presence of AIA and CRLDP depends on whether the certificate is self-signed,
+-- which is only known once the issuer is, so here they are checked only if present.
+validateParentPointerExtensionsIfPresent :: Validator es => [ExtensionRaw] -> Eff es ()
+validateParentPointerExtensionsIfPresent extensions = do
+    when (isJust $ extRawVal extensions id_pe_aia) $
+        void $ validateAiaCaIssuersUri extensions
+    when (isJust $ extRawVal extensions id_ce_CRLDistributionPoints) $
+        void $ validatecrlDPUri extensions
+
 -- Child certificates must point to issuer material via AIA and CRLDP.
 -- https://www.rfc-editor.org/rfc/rfc6487#section-7.2
-validateRequiredParentPointerExtensions :: Validator es => [ExtensionRaw] -> Eff es ()
-validateRequiredParentPointerExtensions extensions = do
-    void $ validateAiaCaIssuersUri extensions
-    void $ validatecrlDPUri extensions
+validateRequiredParentPointers :: (Validator es, WithCertUris c) => c -> Eff es ()
+validateRequiredParentPointers cert = do
+    let CertUris {..} = getCertUris cert
+    when (isNothing aiaCaIssuersUri) $
+        vError $ MissingRequiredCertificateExtension id_pe_aia
+    when (isNothing crlDPUri) $
+        vError $ MissingRequiredCertificateExtension id_ce_CRLDistributionPoints
 
 validateCaCertExtensions :: Validator es => [ExtensionRaw] -> Eff es ()
 validateCaCertExtensions extensions = do
@@ -289,14 +301,19 @@ chooseTaCert cert cachedCert = do
 --    - check it's not revoked (needs CRL)
 -- 
 validateResourceCert :: forall child parent es.
-     (Validator es, SignedCertCore child, CertIssuer parent) =>
+     (Validator es, SignedCertCore child, WithCertUris child, CertIssuer parent) =>
     Now ->
-    child ->    
+    child ->
     parent ->
-    Validated CrlObject ->    
+    Validated CrlObject ->
     Eff es (Validated child)
 validateResourceCert now cert parentCert vcrl = do
     void $ validateObjectValidityPeriod cert now
+
+    -- This one is here and not in "prevalidate" workflow, because
+    -- it only makes sense to call it when we know that parent does exist, so it's 
+    -- not a TA certificate for which validateRequiredParentPointers would fail.
+    validateRequiredParentPointers cert
 
     signatureCheck $ validateSignMaterial cert parentCert
     when (isRevoked cert vcrl) $ 
@@ -337,7 +354,7 @@ validateResources validationRFC verifiedResources childCert parentCert =
 
 validateBgpCert ::
     forall bgpCert parent es.
-     (Validator es, SignedCertCore bgpCert, WithPubKey bgpCert, WithSKI bgpCert, WithResources bgpCert, bgpCert `OfCertType` BGPCert, CertIssuer parent) =>
+     (Validator es, SignedCertCore bgpCert, WithCertUris bgpCert, WithPubKey bgpCert, WithSKI bgpCert, WithResources bgpCert, bgpCert `OfCertType` BGPCert, CertIssuer parent) =>
     Now ->
     bgpCert ->
     parent ->
@@ -759,7 +776,7 @@ validateCaCertStructure ca@CaCerObject { ski } = do
     let certUris = deriveCertUrisFromExtensions extensions
     validateCertX509Structure certWS
     validateSKIMatchesPublicKey ski certWS
-    validateRequiredParentPointerExtensions extensions
+    validateParentPointerExtensionsIfPresent extensions
     validateCaCertExtensions extensions
     validateDerivedCertUris certUris
 
@@ -772,7 +789,7 @@ validateBgpCertStructure bgp@BgpCerObject { ski } = do
     let certUris = deriveCertUrisFromExtensions extensions
     validateCertX509Structure certWS
     validateBgpCertExtensions extensions
-    validateRequiredParentPointerExtensions extensions
+    validateParentPointerExtensionsIfPresent extensions
     validateDerivedCertUris certUris
     let pubKey = certPubKey $ cwsX509certificate certWS
     case pubKey of
@@ -900,7 +917,7 @@ validateCmsStructure expectedContentType cmsObject = do
     validateCertX509Structure (getCertWithSignature scCertificate)
     validateSKIMatchesPublicKey ski (getCertWithSignature scCertificate)
     let eeExtensions = extractExtensions scCertificate
-    validateRequiredParentPointerExtensions eeExtensions
+    validateParentPointerExtensionsIfPresent eeExtensions
     validateEeCertExtensions eeExtensions
     validateDerivedCertUris $ deriveCertUrisFromExtensions eeExtensions
 

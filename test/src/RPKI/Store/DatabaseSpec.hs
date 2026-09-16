@@ -76,6 +76,8 @@ objectStoreGroup = testGroup "Object storage test"
     , dbTestCase "Should merge locations" shouldMergeObjectLocations
     , dbTestCase "Should deduplicate saveObject by hash" shouldDeduplicateSaveObjectByHash
     , dbTestCase "Should index certificates on saveObject" shouldIndexCertificateOnSaveObject
+    , dbTestCase "Should replace an original object with a well-structured one"
+        shouldReplaceOriginalWithWellStructured
     , dbTestCase "Should report distinct min/max/avg object sizes per type"
         shouldComputeObjectSizeStats
     , dbTestCase "Should not report TA certificates as having multiple locations"
@@ -746,6 +748,39 @@ shouldIndexCertificateOnSaveObject io = do
             HU.assertEqual "Fetched cert by SKI must match the inserted cert" wsCert fetchedCert
         Nothing ->
             HU.assertFailure "Expected getFirstCaCertBySKI to return inserted certificate"
+
+
+-- A TA certificate published over RRDP fails prevalidation there and is stored
+-- unparsed, then the TA validation stores the same bytes as a parsed certificate.
+shouldReplaceOriginalWithWellStructured :: IO DB -> HU.Assertion
+shouldReplaceOriginalWithWellStructured io = do
+    db <- io
+    cert <- QC.generate QC.arbitrary :: IO CaCerObject
+    let wsCert = extractCert cert
+    let original = OriginalRO (ObjectOriginal "raw bytes") mempty (getHash wsCert) CER
+
+    wv1 <- newVersion
+    threadDelay 10_000
+    wv2 <- newVersion
+
+    k1 <- rwTx db $ \tx -> DB.saveObject tx original wv1
+    k2 <- rwTx db $ \tx -> DB.saveObject tx (WellStructuredRO $ CerRO wsCert) wv2
+    HU.assertEqual "Must reuse the key of the original object" k1 k2
+
+    taCert <- roTx db $ \tx -> DB.getTaCertByKey tx k2
+    HU.assertEqual "Must read back the well-structured certificate" (Just wsCert) taCert
+
+    bySki <- roTx db $ \tx -> DB.getBySKI tx (getSKI wsCert)
+    HU.assertBool "Certificate must be indexed by SKI" (not $ null bySki)
+
+    meta <- roTx db $ \tx -> DB.getObjectMeta tx k2
+    HU.assertEqual "Must be marked as inserted by the later version" (Just wv2) (view #insertedBy <$> meta)
+
+    -- Saving the original again must not downgrade the object
+    k3 <- rwTx db $ \tx -> DB.saveObject tx original wv2
+    HU.assertEqual "Must reuse the key again" k1 k3
+    taCert' <- roTx db $ \tx -> DB.getTaCertByKey tx k3
+    HU.assertEqual "Must still be the well-structured certificate" (Just wsCert) taCert'
 
 
 shouldSaveAndGetRsyncRepositories :: IO DB -> HU.Assertion
