@@ -1210,18 +1210,6 @@ updateValidatedByVersionMap (Tx conn) _ f = liftIO $ do
 -- Stats
 -- ---------------------------------------------------------------------------
 
-{- | Per-type object statistics.
-
-   NOTE: the query groups by type, so it yields exactly one row per type and 
-   every size aggregate has to be computed by SQLite. Taking `min`/`max` over 
-   the rows in Haskell instead only ever sees one value per type, which is how 
-   minSizePerType, maxSizePerType and totalSizePerType all used to come back 
-   equal to each other.
-
-   `COALESCE(data, original)` is never NULL -- the `objects` table has a CHECK 
-   constraint that at least one of the two is set -- so none of the aggregates 
-   can be NULL either.
--}
 getObjectsStats :: MonadIO m => Tx mode -> DB -> m ObjectStats
 getObjectsStats (Tx conn) _ = liftIO $ do
     rows <- query_ conn
