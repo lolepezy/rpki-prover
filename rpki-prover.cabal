@@ -213,6 +213,7 @@ library
       RPKI.RTR.RtrServer
       RPKI.RTR.RtrState
       RPKI.RTR.Types
+      RPKI.Sandbox
       RPKI.SLURM.SlurmProcessing
       RPKI.SLURM.Types
       RPKI.Store.AppSqliteStorage
@@ -241,6 +242,8 @@ library
       Paths_rpki_prover
   hs-source-dirs:
       src
+  c-sources:
+      cbits/sandbox.c
   ghc-options:
       -funbox-strict-fields
       -O2

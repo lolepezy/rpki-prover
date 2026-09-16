@@ -14,7 +14,8 @@ import           Control.Lens
 
 import           Conduit
 import           Data.Foldable (for_)
-import           Data.Maybe (isJust)
+import           Data.Maybe (fromMaybe, isJust)
+import           Data.Traversable (for)
 import           Data.Text (Text, unpack)
 import qualified Data.ByteString.Lazy       as LBS
 import qualified Data.Map.Strict            as Map
@@ -24,6 +25,8 @@ import           Data.Conduit.Process.Typed
 
 import           GHC.Generics
 
+import           System.Directory (makeAbsolute)
+import           System.Environment (getEnvironment)
 import           System.IO (stdin, stdout)
 import           System.Posix.Types
 import           System.Posix.Process
@@ -37,11 +40,11 @@ import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.RRDP.Types
+import           RPKI.Sandbox
 import           RPKI.TAL
 import           RPKI.Logging
 import           RPKI.Time
-import           RPKI.Util (fmtEx, trimmed)
-import           RPKI.SLURM.Types
+import           RPKI.Util (fmtEx)
 import           RPKI.Store.Base.Serialisation
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Meta.UniqueId
@@ -138,7 +141,44 @@ makeWorkerInput AppContext {..} workerId params timeout = do
         ValidationParams {}   -> validationWorker
         CacheCleanupParams {} -> cleanupWorker
 
-newtype RrdpFetchResult = RrdpFetchResult 
+-- | What a worker is still allowed to access after sandboxing itself (Linux
+-- only, see RPKI.Sandbox), 'Nothing' for workers that are not sandboxed.
+workerSandbox :: WorkerInput -> Maybe WorkerSandbox
+workerSandbox input = case input ^. #params of
+    -- Validation only works with the cache: TA certificates are downloaded and
+    -- SLURM files are read by the main process. Apart from that:
+    --  * /proc/self is for the resource accounting the worker does on itself
+    --    (see RPKI.Metrics.Process).
+    --  * /dev/null is for SQLite: reading the worker input closes stdin, and when
+    --    SQLite gets descriptor 0, 1 or 2 for a database file, it puts /dev/null
+    --    there and tries again, so that stray writes to stdout/stderr can't
+    --    end up in the database. Without it the database can't be opened.
+    ValidationParams {} -> Just WorkerSandbox {
+            readWrite = [cacheDirectory],
+            readOnly  = ["/proc/self", "/dev/null"]
+        }
+    _ -> Nothing
+  where
+    cacheDirectory = configValue $ input ^. #config . #cacheDirectory
+
+-- | The worker gets the parent's environment, minus sandbox settings it may
+-- have inherited itself, plus the sandbox settings for this worker, if any.
+workerEnvironment :: WorkerInput -> IO [(String, String)]
+workerEnvironment input = do
+    inherited <- filter ((`notElem` sandboxVariables) . fst) <$> getEnvironment
+    sandbox <- for (workerSandbox input) $ \WorkerSandbox {..} -> do
+        -- The worker may resolve relative paths differently, don't let it
+        rw <- mapM makeAbsolute readWrite
+        ro <- mapM makeAbsolute readOnly
+        cacheDirectory <- makeAbsolute $ configValue $ input ^. #config . #cacheDirectory
+        pure $ sandboxEnvironment (WorkerSandbox rw ro) <>
+            -- SQLite picks a temporary directory by checking which ones exist
+            -- and are writable, Landlock doesn't show in that check. Point it
+            -- to the cache, the only place it can write to.
+            [("SQLITE_TMPDIR", cacheDirectory)]
+    pure $ Map.toList $ Map.fromList $ inherited <> fromMaybe [] sandbox
+
+newtype RrdpFetchResult = RrdpFetchResult
                             (Either AppError (RrdpRepository, RrdpFetchStat), ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -166,10 +206,9 @@ newtype CompactionResult = CompactionResult ()
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-data ValidationResult = ValidationResult 
-            ValidationState 
+data ValidationResult = ValidationResult
+            ValidationState
             (Map.Map TaName (Fetcheables, EarliestToExpire))
-            (Maybe Slurm) 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -318,13 +357,18 @@ runWorker :: (ValidatorIO es, TheBinary r, Show r) => AppLogger
             -> Eff es r
 runWorker logger workerInput extraCli workerInfo = do
     let executableToRun = configValue $ workerInput ^. #config . #programBinaryPath
+    environment <- liftIO $ workerEnvironment workerInput
     let worker = 
             setStdin (byteStringInput $ LBS.fromStrict $ serialise_ workerInput) $             
             setStderr createSource $
             setStdout byteStringOutput $
+            setEnv environment $
                 proc executableToRun $ [ "--worker" ] <> extraCli
     
-    logDebug logger [i|Running worker: #{trimmed worker} with timeout #{timeout}.|]       
+    -- Not `show worker`: with the environment set explicitly it would log all of it
+    let commandLine = unwords $ executableToRun : "--worker" : extraCli
+    let sandboxed = maybe "" (\sb -> [i|, sandboxed: #{sb}|] :: Text) $ workerSandbox workerInput
+    logDebug logger [i|Running worker: #{commandLine} with timeout #{timeout}#{sandboxed}.|]       
 
     runIt worker `catches` [                    
             Handler $ \e@(SomeAsyncException _) -> throwIO e,

@@ -494,14 +494,22 @@ runAll appContext@AppContext {..} tals = do
                         Left (ErrorResult message) ->
                             reportError [i|Validator process failed: #{message}.|]
 
-                        Right (ValidationResult vs discovered maybeSlurm) -> do                                             
+                        Right (ValidationResult vs discovered) -> do
                             adjustFetchers appContext (fmap fst discovered) workflowShared
                             scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
-                            
+
                             logWorkerDone logger workerId wr
                             pushSystem logger $ resourceUsageMetric "validation" clockTime stats
-                        
-                            let topDownState = workerVS <> vs
+
+                            -- The worker has saved the version, SLURM is read and
+                            -- stored for it here since the worker doesn't read files.
+                            (slurmVS, maybeSlurm) <- reReadSlurm appContext
+                            when (isJust maybeSlurm || slurmVS /= mempty) $
+                                DB.rwTxT database $ \tx -> do
+                                    for_ maybeSlurm $ DB.saveSlurm tx worldVersion
+                                    DB.addCommonValidations tx worldVersion slurmVS
+
+                            let topDownState = workerVS <> vs <> slurmVS
                             logDebug logger [i|Validation result: 
 #{formatValidations (topDownState ^. typed)}.|]
                             updatePrometheus (topDownState ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion                        
@@ -688,24 +696,38 @@ runAll appContext@AppContext {..} tals = do
         pure (r, workerId)                            
 
 
+-- | Read SLURM files, if there are any configured. Only the main process
+-- does it, workers don't read any files that are not their own.
+reReadSlurm :: AppContext s -> IO (ValidationState, Maybe Slurm)
+reReadSlurm AppContext {..} =
+    case appState ^. #readSlurm of
+        Nothing       -> pure (mempty, Nothing)
+        Just readFunc -> do
+            logInfo logger [i|Re-reading and re-validating SLURM files.|]
+            (z, vs) <- runValidatorIO (newScopes "read-slurm") readFunc
+            case z of
+                Left e -> do
+                    logError logger [i|Failed to read SLURM files: #{e}|]
+                    pure (vs, Nothing)
+                Right slurm ->
+                    pure (vs, Just slurm)
+
 -- To be called by the validation worker process
 runValidation :: AppContext s
             -> WorldVersion
             -> [TAL]
             -> [TaName]
-            -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire), Maybe Slurm)
+            -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire))
 runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames = do           
 
     results <- validateMutlipleTAs appContext worldVersion talsToValidate
-        
-    -- Apply SLURM if it is set in the appState
-    (slurmValidations, maybeSlurm) <- reReadSlurm        
 
-    -- Save all the results into the database
+    -- Save all the results into the database. SLURM is not read here, the 
+    -- main process applies it after re-reading the payloads.
     ((deleted, updatedValidation), elapsed) <- timedMS $ DB.rwTxT database $ \tx -> do
 
         let results' = addVersionPerTA results
-        updatedValidation <- addUniqueVrpCountsToMetrics tx results' slurmValidations
+        updatedValidation <- addUniqueVrpCountsToMetrics tx results'
 
         let resultsToSave = toPerTA
                 $ map (\(ta, r) -> (ta, (r ^. typed, r ^. typed)))
@@ -713,8 +735,6 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
 
         DB.saveValidationVersion tx worldVersion
             resultsToSave updatedValidation
-
-        for_ maybeSlurm $ DB.saveSlurm tx worldVersion
 
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.
@@ -732,25 +752,10 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deletedStr} oldest version(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, 
-        Map.map (\r -> (r ^. #discoveredRepositories, r ^. #earliestNotValidAfter)) results, 
-        maybeSlurm)
+        Map.map (\r -> (r ^. #discoveredRepositories, r ^. #earliestNotValidAfter)) results)
 
   where
-
-    reReadSlurm =
-        case appState ^. #readSlurm of
-            Nothing       -> pure (mempty, Nothing)
-            Just readFunc -> do
-                logInfo logger [i|Re-reading and re-validating SLURM files.|]
-                (z, vs) <- runValidatorIO (newScopes "read-slurm") readFunc
-                case z of
-                    Left e -> do
-                        logError logger [i|Failed to read SLURM files: #{e}|]
-                        pure (vs, Nothing)
-                    Right slurm ->
-                        pure (vs, Just slurm)     
-    
-    addUniqueVrpCountsToMetrics tx results slurmValidations = do
+    addUniqueVrpCountsToMetrics tx results = do
 
         previousVersion <- DB.previousVersion tx worldVersion
 
@@ -761,7 +766,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                         Nothing -> pure (taName, mempty)
                         Just pv -> (taName, ) <$> DB.getVrpsForTA tx pv taName
    
-        pure $ addUniqueVRPCount (toPerTA vrps) slurmValidations
+        pure $ addUniqueVRPCount (toPerTA vrps) mempty
       where
         addUniqueVRPCount vrps !vs = let
                 vrpCountLens = typed @Metrics . #vrpCounts
@@ -1331,7 +1336,7 @@ runCacheCleanup appContext@AppContext {..} worldVersion = do
 -- | Load the state corresponding to the last completed validation version.
 -- 
 loadStoredAppState :: AppContext s -> IO (Maybe WorldVersion)
-loadStoredAppState AppContext {..} = do
+loadStoredAppState appContext@AppContext {..} = do
     Now now' <- thisInstant
     let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval    
     DB.roTxT database $ \tx ->
@@ -1345,7 +1350,13 @@ loadStoredAppState AppContext {..} = do
 
                 | otherwise -> do
                     (payloads, elapsed) <- timedMS $ do
-                        slurm    <- DB.getSlurm tx lastVersion
+                        -- SLURM is stored by the main process after the validation 
+                        -- worker has saved the version, so if the main process died in 
+                        -- between, there's none for this version. The files are what 
+                        -- counts anyway, so read them rather than serve unfiltered payloads.
+                        slurm <- DB.getSlurm tx lastVersion >>= \case
+                                    Just stored -> pure $ Just stored
+                                    Nothing     -> snd <$> reReadSlurm appContext
                         payloads <- DB.getRtrPayloads tx lastVersion
                         for_ payloads $ \payloads' -> do 
                             slurmedPayloads <- atomically $ completeVersion appState lastVersion payloads' slurm                            

@@ -55,12 +55,14 @@ import           RPKI.Http.HttpServer
 import           RPKI.Logging
 
 import           RPKI.Store.AppStorage
+import           RPKI.Store.Base.Serialisation (TheBinary)
 import           RPKI.Store.AppSqliteStorage (AppSQLiteEnv)
 import qualified RPKI.Store.Database as DB
 import qualified RPKI.Store.SQLite   as SQLite
 import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.RRDP.RrdpFetch
+import           RPKI.Sandbox
 
 import           RPKI.Fetch.ErikRelay
 import           RPKI.Rsync
@@ -169,8 +171,8 @@ executeWorkerProcess = do
             readTVarIO appContextRef >>= maybe (pure ()) closeStorage
             exitWith exitCode
 
-    executeWork input onExit $ \_ resultHandler -> 
-        withLogger logConfig $ \logger -> liftIO $ do
+    let runWork :: AppLogger -> (forall a . TheBinary a => a -> IO ()) -> IO ()
+        runWork logger resultHandler = do
             (z, validations) <- runValidatorIO
                                     (newScopes "worker-create-app-context")
                                     (createWorkerAppContext config logger)
@@ -196,9 +198,9 @@ executeWorkerProcess = do
 
                                 ValidationParams {..} -> 
                                     exec resultHandler $ do 
-                                        (vs, discoveredRepositories, slurm) <- 
+                                        (vs, discoveredRepositories) <- 
                                             runValidation appContext worldVersion talsToValidate allTaNames
-                                        pure $ Right $ ValidationResult vs discoveredRepositories slurm
+                                        pure $ Right $ ValidationResult vs discoveredRepositories
 
                                 CacheCleanupParams {..} -> 
                                     exec resultHandler $
@@ -212,6 +214,27 @@ executeWorkerProcess = do
                             -- Clear the ref first so onExit doesn't close the same DB a second time.
                             atomically $ writeTVar appContextRef Nothing
                             closeStorage appContext
+
+    executeWork input onExit $ \_ resultHandler -> 
+        withLogger logConfig $ \logger -> liftIO $ do
+            -- Sandboxing (if any) was done before the runtime started, here
+            -- is where we find out how it went.
+            sandbox <- getSandboxStatus
+            case sandbox of
+                NotSandboxed -> 
+                    runWork logger resultHandler
+                Sandboxed abi -> do
+                    logDebug logger [i|Worker is sandboxed, Landlock ABI #{abi}.|]
+                    when (abi < 4) $ 
+                        logWarn logger [i|Landlock ABI #{abi} can't restrict network access, the worker still has it.|]
+                    runWork logger resultHandler
+                SandboxUnsupported message -> do
+                    logWarn logger [i|Worker is not sandboxed: #{message}.|]
+                    runWork logger resultHandler
+                SandboxFailed message ->
+                    -- It was supposed to be sandboxed and it is not, so it doesn't run
+                    exec @() resultHandler $ pure $ Left $ ErrorResult 
+                        [i|Worker could not sandbox itself, refusing to run: #{message}|]
   where    
     exec :: forall r . (WorkerResult r -> IO ()) -> IO (Either ErrorResult r) -> IO ()
     exec resultHandler f = resultHandler =<< execWithStats f    
@@ -554,7 +577,9 @@ rsyncPrefetches CLIOptions {..} = do
 createWorkerAppContext :: ValidatorIO es => Config -> AppLogger -> Eff es AppSQLiteEnv
 createWorkerAppContext config logger = do
     db <- fromTry (InitE . InitError . fmtEx) $ openExistingSqliteDatabase cacheDir config
-    appState <- createAppState logger (configValue $ config ^. #localExceptions)
+    -- No SLURM reading function here: workers don't read SLURM files, 
+    -- the main process does.
+    appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db
     let executableVersion = thisExecutableVersion
     pure AppContext {..}

@@ -358,8 +358,10 @@ defaultConfig = Config {
             cpuLimit = 3 * hour,
             memoryMb = 2048,
             ioLimits = IoLimits {
-                -- it only downloads TA certificates
-                maxIncomingTrafficMb = Just 64,
+                -- It downloads nothing, TA certificates are fetched by the main
+                -- process. Where Landlock isn't there to deny it, this still
+                -- stops a worker that downloads anything at all.
+                maxIncomingTrafficMb = Just 0,
                 maxDiskReadMb        = Just $ 10 * gigabyte,
                 -- Saving payloads and shortcuts is not much
                 maxDiskWriteMb       = Just gigabyte
