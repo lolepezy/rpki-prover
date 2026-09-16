@@ -51,7 +51,12 @@ instance MaintainableStorage SqliteBackend where
     closeStorage AppContext{database} = do
         db <- readTVarIO database
         SQLite.closeDB (unDB db)
-    runMaintenance  _ = pure ()   -- TODO: PRAGMA wal_checkpoint(TRUNCATE)
+    runMaintenance AppContext{database} = do
+        SqliteDB{..} <- unDB <$> readTVarIO database
+        withMVar writeConn $ \cc -> do
+            SQLite.checkpointTruncate cc
+            SQLite.incrementalVacuum cc
+            SQLite.optimize cc
     reopenStorage   _ = pure ()
     cleanUpStaleTx  _ = pure 0
     getCacheFsSize  _ = pure (Size 0)

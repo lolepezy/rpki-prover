@@ -497,16 +497,20 @@ runAll appContext@AppContext {..} tals = do
         (r, elapsed) <- timedMS cleanupOldObjects
         case r of 
             Left message -> logError logger message
-            Right DB.CleanUpResult {..} -> do 
+            Right DB.CleanUpResult {..} -> do
                 when (deletedObjects > 0) $ do
                     atomically $ writeTVar (workflowShared ^. #deletedAnythingFromDb) True
-                let perType :: String = if mempty /= deletedPerType 
-                    then [i|in particular #{Map.toList deletedPerType}, |] 
+                let perType :: String = if mempty /= deletedPerType
+                    then [i|in particular #{Map.toList deletedPerType}, |]
                     else ""
                 logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, #{perType}kept #{keptObjects}, |] <>
                                  [i|deleted #{deletedObjectUrls} stale object-URL links, |] <>
                                  [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, |] <>
                                  [i|deleted #{deletedErikPartitions} orphaned Erik partitions, took #{elapsed}ms.|]
+
+                when (deletedObjects > 0) $ do
+                    ((), maintenanceElapsed) <- timedMS $ runMaintenance appContext
+                    logDebug logger [i|Storage maintenance (WAL checkpoint, incremental vacuum, optimize) took #{maintenanceElapsed}ms.|]
       where
         cleanupOldObjects = do                 
             ((z, _), workerId) <- runCleanUpWorker worldVersion      

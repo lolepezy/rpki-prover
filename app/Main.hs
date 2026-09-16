@@ -369,7 +369,7 @@ createSqliteDatabase cacheDir config resetCache checkVersion = do
     dbCheck <-
         if checkVersion
             then do
-                existingVersion <- DB.roTx db $ \tx -> DB.getDatabaseVersion tx db
+                existingVersion <- DB.roTx db $ \tx -> DB.getDatabaseVersion tx
                 case existingVersion of
                     Nothing -> do
                         DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx

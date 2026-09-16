@@ -298,9 +298,7 @@ runRtrServer appContext RtrConfig {..} = do
 
 readRtrPayload :: AppContext s -> WorldVersion -> IO RtrPayloads 
 readRtrPayload AppContext {..} worldVersion = do 
-    db <- readTVarIO database
-
-    (vrps, bgpSec) <- DB.roTx db $ \tx -> do
+    (vrps, bgpSec) <- DB.roTxT database $ \tx -> do
                 slurm <- DB.getSlurm tx worldVersion
                 vrps <- do
                         vrps_ <- DB.getVrps tx worldVersion

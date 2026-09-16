@@ -20,6 +20,10 @@ module RPKI.Store.SQLite (
     initConn,
     createDB,
     closeDB,
+    -- * Maintenance
+    checkpointTruncate,
+    incrementalVacuum,
+    optimize,
     -- * Schema
     initSchema,
     dropSchema,
@@ -157,6 +161,7 @@ initConn busyTimeoutMs path = do
         , Raw.Query $ Text.pack $ "PRAGMA busy_timeout = " <> show busyTimeoutMs
         , "PRAGMA synchronous = NORMAL"
         , "PRAGMA optimize = 0x10002"
+        , "PRAGMA auto_vacuum = INCREMENTAL"
         ]
 
 mkCachedConn :: Connection -> IO CachedConn
@@ -192,6 +197,26 @@ closeDB :: SqliteDB -> IO ()
 closeDB SqliteDB{..} = do
     Pool.destroyAllResources readPool
     withMVar writeConn closeCachedConn
+
+
+-- | Unlike the automatic passive checkpoint SQLite that runs every 1000 WAL pages, 
+-- this blocks new writers only briefly and is guaranteed to shrink the -wal file 
+-- when it succeeds.
+checkpointTruncate :: CachedConn -> IO ()
+checkpointTruncate CachedConn{rawConn} =
+    Raw.execute_ rawConn "PRAGMA wal_checkpoint(TRUNCATE)"
+
+-- | Reclaim pages freed by deletes back into the OS, a few hundred at a
+-- time so it doesn't stall other writers the way a full 'VACUUM' would.
+incrementalVacuum :: CachedConn -> IO ()
+incrementalVacuum CachedConn{rawConn} =
+    Raw.execute_ rawConn "PRAGMA incremental_vacuum(500)"
+
+-- | Refresh the query planner's statistics. Cheap: internally a no-op
+-- unless enough rows have changed since the last run to be worth it.
+optimize :: CachedConn -> IO ()
+optimize CachedConn{rawConn} =
+    Raw.execute_ rawConn "PRAGMA optimize"
 
 
 -- ---------------------------------------------------------------------------
