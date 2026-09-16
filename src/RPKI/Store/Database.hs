@@ -365,12 +365,24 @@ saveStorableObject :: MonadIO m
 saveStorableObject (Tx conn) StorableObject { object = Compressed lifecycle, storable = Storable dataBs } wv = liftIO $ do
     let hash_ = getHash lifecycle
 
-    existing <- query conn "SELECT object_key FROM objects WHERE hash = ?" (Only hash_)
-    case existing of
-        Only objectKey : _ -> pure objectKey
-        [] -> do
-            let typ    = show (getRpkiObjectType lifecycle)
-                originalBs = case lifecycle of
+    existing <- query conn
+        "SELECT object_key, original IS NOT NULL FROM objects WHERE hash = ?" (Only hash_)
+    case (existing, lifecycle) of
+        -- The same bytes can be stored unparsed first (e.g. a TA certificate
+        -- that failed RRDP prevalidation) and then come as a parsed object.
+        -- Replace the unparsed copy, otherwise the parsed one is never readable.
+        ((objectKey, True) : _, WellStructuredRO _) -> do
+            execute conn
+                [sql|UPDATE objects SET type = ?, data = ?, original = NULL, world_version = ?
+                     WHERE object_key = ?|]
+                (typ, dataBs, wv, objectKey)
+            saveIndexes objectKey
+            pure objectKey
+
+        ((objectKey, _) : _, _) -> pure objectKey
+
+        ([], _) -> do
+            let originalBs = case lifecycle of
                     OriginalRO (ObjectOriginal blob) _ _ _ -> Just blob
                     _                                      -> Nothing
 
@@ -379,26 +391,30 @@ saveStorableObject (Tx conn) StorableObject { object = Compressed lifecycle, sto
                      VALUES (?, ?, ?, ?, ?) RETURNING object_key|]
                 (hash_, typ, dataBs, originalBs, wv)
 
-            case lifecycle of
-                WellStructuredRO (CerRO c) ->
-                    execute conn
-                        [sql|INSERT OR IGNORE INTO certificates(object_key, ski, aki) VALUES (?, ?, ?)|]
-                        (objectKey, getSKI c, getAKI c)
-                WellStructuredRO (MftRO mft) ->
-                    forM_ (getAKI mft) $ \aki_ ->
-                        let meta = getMftMetaFromWellStructured mft objectKey
-                        in execute conn
-                            [sql|
-                                INSERT OR IGNORE INTO manifest_meta(object_key, aki, manifest_number, meta)
-                                VALUES (?, ?, ?, ?)
-                            |]
-                            ( objectKey
-                            , aki_
-                            , let Serial mftNum = meta ^. #mftNumber in serialToBlob mftNum
-                            , serialiseField meta )
-                _ -> pure ()
-
+            saveIndexes objectKey
             pure objectKey
+  where
+    typ = show (getRpkiObjectType lifecycle)
+
+    saveIndexes objectKey =
+        case lifecycle of
+            WellStructuredRO (CerRO c) ->
+                execute conn
+                    [sql|INSERT OR IGNORE INTO certificates(object_key, ski, aki) VALUES (?, ?, ?)|]
+                    (objectKey, getSKI c, getAKI c)
+            WellStructuredRO (MftRO mft) ->
+                forM_ (getAKI mft) $ \aki_ ->
+                    let meta = getMftMetaFromWellStructured mft objectKey
+                    in execute conn
+                        [sql|
+                            INSERT OR IGNORE INTO manifest_meta(object_key, aki, manifest_number, meta)
+                            VALUES (?, ?, ?, ?)
+                        |]
+                        ( objectKey
+                        , aki_
+                        , let Serial mftNum = meta ^. #mftNumber in serialToBlob mftNum
+                        , serialiseField meta )
+            _ -> pure ()
 
 
 getObjectMeta :: MonadIO m => Tx mode -> ObjectKey -> m (Maybe ObjectMeta)

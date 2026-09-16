@@ -61,6 +61,8 @@ prevalidationSpec = testGroup "Prevalidation of real objects"
     , shouldPrevalidate "test/data/smaller.cer"                     CER
     , shouldPrevalidate "test/data/overcleaiming/2R93viIBHX4dV12fmttfjhYOX9k.cer" CER
     , shouldPrevalidate "test/data/overcleaiming/EBA158C223CE11EBA804DD64C4F9AE02.roa" ROA
+    -- Self-signed, so it has no AIA and CRLDP. RIPE publishes it over RRDP as well.
+    , shouldPrevalidate "test/data/ripe-ncc-ta.cer"                 CER
 
     -- Two fixtures are deliberately left out. Both fail on checks that predate 
     -- this test, so they are not "known good" objects:
