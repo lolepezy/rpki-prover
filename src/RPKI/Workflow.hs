@@ -110,9 +110,9 @@ data WorkflowShared = WorkflowShared {
         -- Looping fetcher threads
         fetchers :: Fetchers,
 
-        -- TAs that need to be revalidated because repositories 
+        -- TAs that need to be revalidated because repositories
         -- associated with these TAs have been fetched.
-        tasToValidate :: TVar (Set TaName),
+        tasToValidate :: TVar (Map TaName RevalidationRequest),
 
         -- Earliest expiration time for any object for a TA
         earliestToExpire :: TVar (Map TaName EarliestToExpire),
@@ -120,6 +120,34 @@ data WorkflowShared = WorkflowShared {
         tals :: [TAL]
     }
     deriving stock (Generic)
+
+
+-- What made a TA need revalidation
+data RevalidationReason = FetchedUpdates RpkiURL
+                        | PeriodicRevalidation
+                        | ObjectExpiry
+    deriving stock (Show, Eq, Ord, Generic)
+
+-- A pending request to revalidate a TA. Requests that come while the TA is
+-- still waiting are merged into one that keeps the time and reason of the
+-- first of them, so that it is known how long the TA has been waiting.
+data RevalidationRequest = RevalidationRequest {
+        firstRequestedAt :: Instant,
+        firstReason      :: RevalidationReason,
+        requestCount     :: Int
+    }
+    deriving stock (Show, Eq, Generic)
+
+instance Semigroup RevalidationRequest where
+    r1 <> r2 = earlier & #requestCount .~ r1 ^. #requestCount + r2 ^. #requestCount
+      where
+        earlier = if r2 ^. #firstRequestedAt < r1 ^. #firstRequestedAt then r2 else r1
+
+requestRevalidation :: TVar (Map TaName RevalidationRequest)
+                    -> Instant -> RevalidationReason -> Set TaName -> STM ()
+requestRevalidation tasToValidate now reason tas =
+    modifyTVar' tasToValidate $
+        Map.unionWith (<>) (Map.fromSet (const $ RevalidationRequest now reason 1) tas)
 
 
 withWorkflowShared :: AppContext s
@@ -267,58 +295,84 @@ runAll appContext@AppContext {..} tals = do
   where
     allTaNames = map getTaName tals
     
-    revalidate workflowShared = do 
-        canValidateAgain <- newTVarIO True
-        race_ 
-            (triggeredValidationLoop canValidateAgain FirstRun)
+    revalidate workflowShared = do
+        -- The moment validation is allowed to run again after the previous one,
+        -- `Nothing` while it is not.
+        canValidateAgain <- newTVarIO . Just . unNow =<< thisInstant
+        race_
+            (triggeredValidationLoop canValidateAgain Nothing FirstRun)
             periodicallyRevalidateAllTAs
 
       where
-        periodicallyRevalidateAllTAs = do 
+        periodicallyRevalidateAllTAs = do
             let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
-            forever $ do       
+            forever $ do
                 threadDelay $ toMicroseconds revalidationInterval
-                atomically $ writeTVar
-                    (workflowShared ^. #tasToValidate) (Set.fromList allTaNames)
+                Now now <- thisInstant
+                atomically $ requestRevalidation (workflowShared ^. #tasToValidate)
+                                now PeriodicRevalidation (Set.fromList allTaNames)
 
-        triggeredValidationLoop canValidateAgain run = do 
-            talsToValidate <- waitForTasToValidate            
-            void $ do 
-                worldVersion <- newWorldVersion            
+        triggeredValidationLoop canValidateAgain previousValidationEnd run = do
+            (talsToValidate, requests, validationAllowedAt) <- waitForTasToValidate
+            void $ do
+                worldVersion <- newWorldVersion
+                logRevalidationWaits worldVersion requests previousValidationEnd validationAllowedAt
                 validateTAs workflowShared worldVersion talsToValidate
+                Now validationEnd <- thisInstant
 
-                case config ^. #proverRunMode of     
-                    ServerMode -> scheduleNextAndLoop
-                    OneOffMode vrpOutputFile -> do                        
+                case config ^. #proverRunMode of
+                    ServerMode -> scheduleNextAndLoop validationEnd
+                    OneOffMode vrpOutputFile -> do
                         canStop <- hasValidatedEverythingForEveryTA workflowShared
-                        if canStop then 
+                        if canStop then
                             outputVrps vrpOutputFile
                         else
-                            scheduleNextAndLoop
+                            scheduleNextAndLoop validationEnd
           where
-            scheduleNextAndLoop = do 
-                void $ forkFinally 
-                    (do              
-                        -- If this thread leaks, it's not a biggy, it will exit pretty soon           
+            scheduleNextAndLoop validationEnd = do
+                void $ forkFinally
+                    (do
+                        -- If this thread leaks, it's not a biggy, it will exit pretty soon
                         Conc.threadDelay $ toMicroseconds $ config ^. #validationConfig . #minimalRevalidationInterval
-                        atomically $ writeTVar canValidateAgain True)
+                        Now now <- thisInstant
+                        atomically $ writeTVar canValidateAgain (Just now))
                     (logException logger "Exception in revalidation delay thread")
-                triggeredValidationLoop canValidateAgain RanBefore           
+                triggeredValidationLoop canValidateAgain (Just validationEnd) RanBefore
 
             waitForTasToValidate = atomically $ do
-                (`unless` retry) =<< readTVar canValidateAgain                
-                case run of
-                    FirstRun -> reset >> pure tals
-                    RanBefore -> do 
-                        tas <- readTVar (workflowShared ^. #tasToValidate)
-                        when (Set.null tas) retry
-                        reset
-                        pure $ filter (\tal -> getTaName tal `Set.member` tas) tals                           
-              where
-                reset = do 
-                    writeTVar (workflowShared ^. #tasToValidate) mempty
-                    writeTVar canValidateAgain False
-                    
+                validationAllowedAt <- maybe retry pure =<< readTVar canValidateAgain
+                requests <- readTVar (workflowShared ^. #tasToValidate)
+                talsToValidate <- case run of
+                    FirstRun  -> pure tals
+                    RanBefore -> do
+                        when (Map.null requests) retry
+                        pure $ filter (\tal -> getTaName tal `Map.member` requests) tals
+                writeTVar (workflowShared ^. #tasToValidate) mempty
+                writeTVar canValidateAgain Nothing
+                pure (talsToValidate, requests, validationAllowedAt)
+
+        -- For every TA, report how long it has waited for this validation and
+        -- what it was waiting for: the previous validation to finish, or the
+        -- minimal revalidation interval to pass after it.
+        logRevalidationWaits worldVersion requests previousValidationEnd validationAllowedAt = do
+            let validationStart = versionToInstant worldVersion
+            for_ (Map.toList requests) $ \(taName, RevalidationRequest {..}) -> do
+                let waited = durationMs firstRequestedAt validationStart
+                    (waitedForValidation, waitedAfterIt) =
+                        case previousValidationEnd of
+                            Nothing  -> (0, durationMs firstRequestedAt validationAllowedAt)
+                            Just end -> (durationMs firstRequestedAt end,
+                                         durationMs (max firstRequestedAt end) validationAllowedAt)
+                logInfo logger $
+                    [i|Revalidation of #{taName} waited #{waited}ms: #{max 0 waitedForValidation}ms |] <>
+                    [i|for the previous validation, #{max 0 waitedAfterIt}ms for the minimal revalidation interval; |] <>
+                    [i|#{requestCount} request(s), the first one #{reasonText firstReason}.|]
+
+        reasonText = \case
+            FetchedUpdates url   -> [i|after fetching updates from #{url}|] :: Text.Text
+            PeriodicRevalidation -> "for periodic revalidation"
+            ObjectExpiry         -> "after an object expired"
+
 
     outputVrps vrpOutputFile = do 
         vrps <- DB.roTxT database $ \tx ->
@@ -925,8 +979,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                     let (updatedRepo, interval) = updateRepository fetchConfig
                             repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duration
 
-                    saveFetchOutcome updatedRepo validations                        
-                    triggerTaRevalidationIf $ hasUpdates validations                                                         
+                    saveFetchOutcome updatedRepo validations
+                    logFetchedChanges url (fetchedVia url) validations
+                    triggerTaRevalidationIf $ hasUpdates validations
 
                     pure $ Just interval
 
@@ -982,9 +1037,10 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                             let (updatedRepo, interval) = updateRepository fetchConfig
                                     repository worldVersion newStatus Nothing duration
 
-                            saveFetchOutcome updatedRepo validations                        
+                            saveFetchOutcome updatedRepo validations
                             saveErikFetchOutcome fqdn newStatus interval relayUsage validations
-                            triggerTaRevalidationIf $ hasUpdates validations                                                         
+                            logFetchedChanges url [i|Erik relays for #{fqdn}|] validations
+                            triggerTaRevalidationIf $ hasUpdates validations
 
                             pure $ Just interval
 
@@ -1015,15 +1071,17 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                     $ fetchRepository appContext fetchConfig worldVersion repository                
 
                 updatePrometheusForRepository fallbackUrl duration prometheusMetrics
-                let repo = case r of
-                        Right (repository', _noRrdpStats) -> 
-                            -- realistically at this time the only fallback repositories are rsync, so 
+                repo <- case r of
+                        Right (repository', _noRrdpStats) -> do
+                            logFetchedChanges fallbackUrl
+                                [i|#{fetchedVia fallbackUrl} as a fallback for #{url}|] validations
+                            -- realistically at this time the only fallback repositories are rsync, so
                             -- there's no RrdpFetchStat ever
-                            updateMeta' repository' (#status .~ FetchedAt (versionToInstant worldVersion))
-                        Left _ -> do
-                            updateMeta' repository (#status .~ FailedAt (versionToInstant worldVersion))
-            
-                pure (repo, validations)            
+                            pure $ updateMeta' repository' (#status .~ FetchedAt (versionToInstant worldVersion))
+                        Left _ ->
+                            pure $ updateMeta' repository (#status .~ FailedAt (versionToInstant worldVersion))
+
+                pure (repo, validations)
 
             DB.rwTxT database $ \tx -> do
                 DB.saveRepositories tx (map fst repositories)
@@ -1167,14 +1225,61 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         in any (\m -> rrdpRepoHasSignificantUpdates (m ^. typed)) rrdps ||
            any (\m -> rsyncRepoHasSignificantUpdates (m ^. typed)) rsyncs
 
-    triggerTaRevalidationIf condition = atomically $ do 
-        case config ^. #proverRunMode of         
-            OneOffMode _ -> trigger
-            ServerMode   -> when condition trigger                
+    -- Log which objects, by type, a fetch has added and deleted. That is what
+    -- decides if the fetch triggers revalidation, so it is what to look at
+    -- to figure out how often revalidation actually needs to happen.
+    logFetchedChanges fetchedUrl via validations = do
+        tas :: Set TaName <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVarIO uriByTa
+        let significance :: Text.Text = if hasUpdates validations then "significant" else "not significant"
+        let message =
+                [i|Changes fetched from #{fetchedUrl} via #{via}#{rrdpSource} for TAs #{Set.toList tas}: |] <>
+                [i|added #{fmtCounts added}, deleted #{deletedText}, #{significance}.|]
+        if Map.null added && Map.null deleted
+            then logDebug logger message
+            else logInfo logger message
       where
-        trigger = do 
+        metrics = validations ^. #topDownMetric
+        rrdps   = MonoidalMap.elems $ unMetricMap $ metrics ^. #rrdpMetrics
+        rsyncs  = MonoidalMap.elems $ unMetricMap $ metrics ^. #traverseMetrics
+
+        -- (<>) for Map is a left-biased union, so the counts are added up explicitly
+        added   = Map.unionsWith (+) $ map (^. #added) rrdps <> map (^. #processed) rsyncs
+        deleted = Map.unionsWith (+) $ map (^. #deleted) rrdps
+
+        -- Only RRDP tells which objects are gone, rsync and Erik
+        -- fetches only count the new ones
+        deletedText :: Text.Text
+        deletedText = if null rrdps then "unknown" else fmtCounts deleted
+
+        rrdpSource :: Text.Text
+        rrdpSource
+            | null rrdps = ""
+            | otherwise  = case mconcat $ map (^. #rrdpSource) rrdps of
+                RrdpNoUpdate    -> " (no updates)"
+                RrdpDelta s1 s2
+                    | s1 == s2  -> [i| (delta #{s1})|]
+                    | otherwise -> [i| (deltas #{s1}-#{s2})|]
+                RrdpSnapshot s  -> [i| (snapshot #{s})|]
+
+        fmtCounts :: Map (Maybe RpkiObjectType) Count -> Text.Text
+        fmtCounts counts = "{" <> Text.intercalate ", "
+            [ maybe "unknown" fmtGen type_ <> ": " <> fmtGen c | (type_, c) <- Map.toList counts ] <> "}"
+
+    fetchedVia :: RpkiURL -> Text.Text
+    fetchedVia = \case
+        RrdpU _  -> "RRDP"
+        RsyncU _ -> "rsync"
+
+    triggerTaRevalidationIf condition = do
+        Now now <- thisInstant
+        atomically $
+            case config ^. #proverRunMode of
+                OneOffMode _ -> trigger now
+                ServerMode   -> when condition $ trigger now
+      where
+        trigger now = do
             relevantTas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVar uriByTa
-            modifyTVar' tasToValidate $ (<>) relevantTas            
+            requestRevalidation tasToValidate now (FetchedUpdates url) relevantTas
     
     rememberFirstFetchBy version = atomically $ do 
         fff <- readTVar firstFinishedFetchBy
@@ -1214,7 +1319,10 @@ scheduleRevalidationOnExpiry AppContext {..} expirationTimes WorkflowShared {..}
             void $ forkFinally
                     (do
                         threadDelay $ toMicroseconds timeToWait
-                        let triggerRevalidation = atomically $ modifyTVar' tasToValidate $ Set.insert taName
+                        let triggerRevalidation = do
+                                Now triggeredAt <- thisInstant
+                                atomically $ requestRevalidation tasToValidate
+                                    triggeredAt ObjectExpiry (Set.singleton taName)
                         join $ atomically $ do 
                             e <- readTVar earliestToExpire
                             pure $ case Map.lookup taName e of 
