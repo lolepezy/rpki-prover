@@ -322,6 +322,7 @@ test-suite rpki-prover-test
       RPKI.RRDP.ParseSpec
       RPKI.RRDP.UpdateSpec
       RPKI.RTR.RtrSpec
+      RPKI.SandboxSpec
       RPKI.SLURM.SlurmSpec
       RPKI.Store.DatabaseSpec
       RPKI.Store.StorableSpec

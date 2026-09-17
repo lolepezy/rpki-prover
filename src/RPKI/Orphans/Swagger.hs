@@ -139,6 +139,7 @@ instance ToSchema ErikConf
 instance ToSchema ValidationConfig
 instance ToSchema IoLimits
 instance ToSchema WorkerLimits
+instance ToSchema SandboxMode
 instance ToSchema SystemConfig
 instance ToSchema HttpApiConfig
 instance ToSchema RtrConfig

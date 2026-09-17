@@ -142,41 +142,105 @@ makeWorkerInput AppContext {..} workerId params timeout = do
         CacheCleanupParams {} -> cleanupWorker
 
 -- | What a worker is still allowed to access after sandboxing itself (Linux
--- only, see RPKI.Sandbox), 'Nothing' for workers that are not sandboxed.
-workerSandbox :: WorkerInput -> Maybe WorkerSandbox
-workerSandbox input = case input ^. #params of
-    -- Validation only works with the cache: TA certificates are downloaded and
-    -- SLURM files are read by the main process. Apart from that:
-    --  * /proc/self is for the resource accounting the worker does on itself
-    --    (see RPKI.Metrics.Process).
-    --  * /dev/null is for SQLite: reading the worker input closes stdin, and when
-    --    SQLite gets descriptor 0, 1 or 2 for a database file, it puts /dev/null
-    --    there and tries again, so that stray writes to stdout/stderr can't
-    --    end up in the database. Without it the database can't be opened.
-    ValidationParams {} -> Just WorkerSandbox {
-            readWrite = [cacheDirectory],
-            readOnly  = ["/proc/self", "/dev/null"]
-        }
-    _ -> Nothing
+-- only, see RPKI.Sandbox), 'Nothing' if it is not sandboxed.
+--
+-- Every worker gets
+--  * /proc/self for the resource accounting the worker does on itself
+--    (see RPKI.Metrics.Process).
+--  * /dev/null for SQLite: reading the worker input closes stdin, and when
+--    SQLite gets descriptor 0, 1 or 2 for a database file, it puts /dev/null
+--    there and tries again, so that stray writes to stdout/stderr can't
+--    end up in the database. Without it the database can't be opened.
+--  * /dev/urandom for whatever needs randomness (TLS, SQLite).
+--
+-- Apart from the rsync fetcher, workers can only write to the cache and the
+-- temporary directory, and only fetchers can use the network.
+--
+-- The second argument is where the CA certificates are, if the environment
+-- says so ('certificateOverrides').
+workerSandbox :: WorkerInput -> [FilePath] -> Maybe WorkerSandbox
+workerSandbox input certificateLocations
+    | config ^. #systemConfig . #sandboxMode == NoSandbox = Nothing
+    | otherwise = Just $ case input ^. #params of
+        -- Validation only works with the cache: TA certificates are downloaded
+        -- and SLURM files are read by the main process.
+        ValidationParams {} -> WorkerSandbox {
+                paths   = base <> requiredPaths ReadWrite [cache],
+                network = NoNetwork
+            }
+        CacheCleanupParams {} -> WorkerSandbox {
+                paths   = base <> requiredPaths ReadWrite [cache],
+                network = NoNetwork
+            }
+        RrdpFetchParams {} -> httpFetcher
+        ErikFetchParams {} -> httpFetcher
+
+        -- The worker itself only needs to read the rsync mirror, but the
+        -- rsync client it runs can't have more access than the worker has.
+        -- So the worker gets what the client needs (with the whole mirror
+        -- writable, it creates directories there as well) and the client is
+        -- restricted further by the launcher (see 'rsyncClientSandbox').
+        RsyncFetchParams { rsyncRepository = repository } -> let
+                client = rsyncClientSandbox config (rsyncRepositoryUrl repository)
+                            (rootSubDirectory config rsyncDirName)
+            in client {
+                paths = base
+                    <> requiredPaths ReadWrite [cache]
+                    <> requiredPaths ReadExecute [configValue $ config ^. #programBinaryPath]
+                    <> client ^. #paths
+            }
   where
-    cacheDirectory = configValue $ input ^. #config . #cacheDirectory
+    config = input ^. #config
+    cache  = rootSubDirectory config cacheDirName
+    tmp    = rootSubDirectory config tmpDirName
+
+    base = requiredPaths ReadOnly ["/proc/self", "/dev/null", "/dev/urandom"]
+
+    -- Downloading over HTTP(S) needs to resolve host names and to read CA
+    -- certificates. Snapshots and deltas can be anywhere, so any TCP port.
+    httpFetcher = WorkerSandbox {
+            paths = base
+                <> requiredPaths ReadWrite [cache, tmp]
+                <> optionalPaths ReadOnly (systemLibraries <> resolverFiles)
+                <> optionalPaths ReadOnly (certificateFiles <> certificateLocations),
+            network = AnyNetwork
+        }
+
+    rsyncRepositoryUrl (RsyncRepository (RsyncPublicationPoint url) _) = url
+
+-- | What the rsync client is allowed, it can only write to 'writable'.
+-- The client gets only the port from the URL and DNS.
+rsyncClientSandbox :: Config -> RsyncURL -> FilePath -> WorkerSandbox
+rsyncClientSandbox config (RsyncURL (RsyncHost _ port) _) writable = WorkerSandbox {
+        paths = requiredPaths ReadWrite [writable]
+            <> requiredPaths ReadExecute [rsyncClientExecutable config]
+            <> optionalPaths ReadExecute systemLibraries
+            <> requiredPaths ReadOnly ["/dev/null"]
+            <> optionalPaths ReadOnly resolverFiles,
+        network = TcpConnect [maybe defaultRsyncPort (fromIntegral . unRsyncPort) port, 53]
+    }
+  where
+    defaultRsyncPort = 873
+
+rsyncClientExecutable :: Config -> FilePath
+rsyncClientExecutable config = maybe "rsync" configValue $ config ^. #rsyncConf . #rsyncClientPath
 
 -- | The worker gets the parent's environment, minus sandbox settings it may
 -- have inherited itself, plus the sandbox settings for this worker, if any.
-workerEnvironment :: WorkerInput -> IO [(String, String)]
+-- Also returns the sandbox, as it is going to be applied.
+workerEnvironment :: WorkerInput -> IO ([(String, String)], Maybe WorkerSandbox)
 workerEnvironment input = do
     inherited <- filter ((`notElem` sandboxVariables) . fst) <$> getEnvironment
-    sandbox <- for (workerSandbox input) $ \WorkerSandbox {..} -> do
-        -- The worker may resolve relative paths differently, don't let it
-        rw <- mapM makeAbsolute readWrite
-        ro <- mapM makeAbsolute readOnly
-        cacheDirectory <- makeAbsolute $ configValue $ input ^. #config . #cacheDirectory
-        pure $ sandboxEnvironment (WorkerSandbox rw ro) <>
+    sandbox <- traverse resolveSandbox . workerSandbox input =<< certificateOverrides
+    sandboxVariables' <- for sandbox $ \resolved -> do
+        cacheDirectory <- makeAbsolute $ rootSubDirectory (input ^. #config) cacheDirName
+        pure $ sandboxEnvironment resolved <>
             -- SQLite picks a temporary directory by checking which ones exist
             -- and are writable, Landlock doesn't show in that check. Point it
-            -- to the cache, the only place it can write to.
+            -- to the cache, where every worker can write.
             [("SQLITE_TMPDIR", cacheDirectory)]
-    pure $ Map.toList $ Map.fromList $ inherited <> fromMaybe [] sandbox
+    let environment = Map.toList $ Map.fromList $ inherited <> fromMaybe [] sandboxVariables'
+    pure (environment, sandbox)
 
 newtype RrdpFetchResult = RrdpFetchResult
                             (Either AppError (RrdpRepository, RrdpFetchStat), ValidationState)    
@@ -357,7 +421,7 @@ runWorker :: (ValidatorIO es, TheBinary r, Show r) => AppLogger
             -> Eff es r
 runWorker logger workerInput extraCli workerInfo = do
     let executableToRun = configValue $ workerInput ^. #config . #programBinaryPath
-    environment <- liftIO $ workerEnvironment workerInput
+    (environment, sandbox) <- liftIO $ workerEnvironment workerInput
     let worker = 
             setStdin (byteStringInput $ LBS.fromStrict $ serialise_ workerInput) $             
             setStderr createSource $
@@ -367,7 +431,7 @@ runWorker logger workerInput extraCli workerInfo = do
     
     -- Not `show worker`: with the environment set explicitly it would log all of it
     let commandLine = unwords $ executableToRun : "--worker" : extraCli
-    let sandboxed = maybe "" (\sb -> [i|, sandboxed: #{sb}|] :: Text) $ workerSandbox workerInput
+    let sandboxed = maybe "" (\sb -> [i|, sandboxed: #{sb}|] :: Text) sandbox
     logDebug logger [i|Running worker: #{commandLine} with timeout #{timeout}#{sandboxed}.|]       
 
     runIt worker `catches` [                    

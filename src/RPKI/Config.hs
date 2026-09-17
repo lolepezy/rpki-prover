@@ -23,6 +23,8 @@ import GHC.Generics (Generic)
 
 import RPKI.Store.Base.Serialisation
 
+import System.FilePath ((</>))
+
 data ApiSecured a = Hidden a
                   | Public a
     deriving stock (Eq, Ord, Generic)
@@ -232,15 +234,37 @@ data WorkerLimits = WorkerLimits {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
+-- | Whether worker processes and the rsync client they run are sandboxed
+-- (Landlock, Linux only, see RPKI.Sandbox).
+data SandboxMode
+    = NoSandbox
+    -- | Sandbox where the system supports it, run without it otherwise.
+    | SandboxIfAvailable
+    -- | Refuse to run where the system doesn't support it.
+    | SandboxRequired
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
 data SystemConfig = SystemConfig {
         rsyncWorker      :: WorkerLimits,
         rrdpWorker       :: WorkerLimits,
         erikWorker       :: WorkerLimits,
         validationWorker :: WorkerLimits,
-        cleanupWorker    :: WorkerLimits
+        cleanupWorker    :: WorkerLimits,
+        sandboxMode      :: SandboxMode
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
+
+-- | Sub-directories of 'rootDirectory'
+cacheDirName, rsyncDirName, talsDirName, tmpDirName :: FilePath
+cacheDirName = "cache"
+rsyncDirName = "rsync"
+talsDirName  = "tals"
+tmpDirName   = "tmp"
+
+rootSubDirectory :: Config -> FilePath -> FilePath
+rootSubDirectory config name = configValue (config ^. #rootDirectory) </> name
 
 getRtsCpuCount :: Natural 
 getRtsCpuCount = fromMaybe 1 $ toNatural numCapabilities
@@ -377,7 +401,8 @@ defaultConfig = Config {
                 maxDiskReadMb        = Just 32768,
                 maxDiskWriteMb       = Just 32768
             }
-        }
+        },
+        sandboxMode = SandboxIfAvailable
     },
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {       

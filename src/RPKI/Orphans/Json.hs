@@ -455,6 +455,7 @@ instance ToJSON ValidationConfig
 instance ToJSON RtrConfig
 instance ToJSON IoLimits
 instance ToJSON WorkerLimits
+instance ToJSON SandboxMode
 instance ToJSON SystemConfig
 instance ToJSON RrdpConf
 instance ToJSON RsyncConf    

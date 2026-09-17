@@ -131,7 +131,6 @@ executeMainProcess cliOptions@CLIOptions{..} = do
             
             (z, validations) <- do
                         runValidatorIO (newScopes "Startup") $ do
-                            checkPreconditions cliOptions
                             createAppContext cliOptions logger (logConfig ^. #logLevel)
             case z of
                 Left _ -> do 
@@ -224,13 +223,16 @@ executeWorkerProcess = do
                 NotSandboxed -> 
                     runWork logger resultHandler
                 Sandboxed abi -> do
+                    -- The main process has already warned about ABI < 4 at startup
                     logDebug logger [i|Worker is sandboxed, Landlock ABI #{abi}.|]
-                    when (abi < 4) $ 
-                        logWarn logger [i|Landlock ABI #{abi} can't restrict network access, the worker still has it.|]
                     runWork logger resultHandler
-                SandboxUnsupported message -> do
-                    logWarn logger [i|Worker is not sandboxed: #{message}.|]
-                    runWork logger resultHandler
+                SandboxUnsupported message
+                    | config ^. #systemConfig . #sandboxMode == SandboxRequired ->
+                        exec @() resultHandler $ pure $ Left $ ErrorResult 
+                            [i|Worker is required to be sandboxed, refusing to run: #{message}|]
+                    | otherwise -> do
+                        logWarn logger [i|Worker is not sandboxed: #{message}.|]
+                        runWork logger resultHandler
                 SandboxFailed message ->
                     -- It was supposed to be sandboxed and it is not, so it doesn't run
                     exec @() resultHandler $ pure $ Left $ ErrorResult 
@@ -323,7 +325,12 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & #rrdpConf . #tmpRoot .~ apiSecured tmpd
             & #logLevel .~ derivedLogLevel
 
-    let config = applyCliToConfig baseConfig cliOptions apiSecured           
+    rsyncClient <- findRsyncClient rsyncClientPath
+    let cliConfig = applyCliToConfig baseConfig cliOptions apiSecured
+    sandboxMode' <- effectiveSandboxMode logger $ cliConfig ^. #systemConfig . #sandboxMode
+    let config = cliConfig
+            & #rsyncConf . #rsyncClientPath ?~ apiSecured rsyncClient
+            & #systemConfig . #sandboxMode .~ sandboxMode'
         
     let readSlurms files = do
             logDebug logger [i|Reading SLURM files: #{files}.|]
@@ -517,6 +524,13 @@ getRoot cliOptions = do
             then pure absoluteRoot
             else appError $ InitE $ InitError [i|Root directory #{absoluteRoot} doesn't exist.|]
 
+parseSandboxMode :: String -> Either String SandboxMode
+parseSandboxMode = \case
+    "off"          -> Right NoSandbox
+    "if-available" -> Right SandboxIfAvailable
+    "required"     -> Right SandboxRequired
+    other          -> Left [i|Unknown sandbox mode '#{other}', expected one of off, if-available, required.|]
+
 orDefault :: Maybe a -> a -> a
 m `orDefault` d = fromMaybe d m
 
@@ -533,12 +547,6 @@ listTalFiles talDirectory = do
   where
     cutOffTalExtension s = List.take (List.length s - 4) s
 
-
-cacheDirName, rsyncDirName, talsDirName, tmpDirName :: FilePath
-cacheDirName = "cache"
-rsyncDirName = "rsync"
-talsDirName  = "tals"
-tmpDirName   = "tmp"
 
 checkSubDirectory :: FilePath -> FilePath -> IO (Either Text.Text FilePath)
 checkSubDirectory root sub = do
@@ -607,9 +615,25 @@ createAppState logger localExceptions = do
         readSlurmFiles files
 
 
--- | Check some crucial things before running the validator
-checkPreconditions :: ValidatorIO es => CLIOptions -> Eff es ()
-checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
+-- | What sandboxing is actually going to be used, depending on what is
+-- configured and what the system supports.
+effectiveSandboxMode :: ValidatorIO es => AppLogger -> SandboxMode -> Eff es SandboxMode
+effectiveSandboxMode logger = \case
+    NoSandbox -> do
+        logInfo logger [i|Worker processes and the rsync client are not sandboxed.|]
+        pure NoSandbox
+    mode -> liftIO getLandlockAbi >>= \case
+        Right abi -> do
+            logInfo logger [i|Worker processes and the rsync client are sandboxed, Landlock ABI #{abi}.|]
+            when (abi < 4) $
+                logWarn logger [i|Landlock ABI #{abi} can't restrict network access, sandboxed processes still have it.|]
+            pure mode
+        Left message
+            | mode == SandboxRequired ->
+                appError $ InitE $ InitError [i|Sandboxing is required, but not possible: #{message}.|]
+            | otherwise -> do
+                logWarn logger [i|Worker processes and the rsync client are not sandboxed: #{message}.|]
+                pure NoSandbox
 
 deriveProverRunMode :: ValidatorIO es => CLIOptions -> Eff es ProverRunMode
 deriveProverRunMode CLIOptions {..} = 
@@ -721,6 +745,7 @@ data CLIOptions = CLIOptions {
         maxFetchDiskReadMb       :: Maybe Int,
         maxFetchDiskWriteMb      :: Maybe Int,
         noIncrementalValidation  :: Bool,
+        sandbox                  :: Maybe SandboxMode,
         showHiddenConfig         :: Bool,
         withValidityApi          :: Bool,
         printConfig              :: Bool
@@ -955,6 +980,14 @@ cliOptionsParser = CLIOptions
             <> help ("Disable the incremental validation algorithm, validation happens without " 
                   <> "caching any validation results, so the whole hierarchy of objects is validated each time."
                   <> "Incremental validation is enabled by default."))
+    <*> optional (option (eitherReader parseSandboxMode)
+            (  long "sandbox"
+            <> metavar "off|if-available|required"
+            <> help ("Restrict what worker processes and the rsync client can access with Landlock "
+                  <> "(Linux only): workers can only write to the cache and temporary directories "
+                  <> "(and the rsync fetcher to the rsync mirror), the rsync client only to the "
+                  <> "repository it downloads. `if-available` runs without the sandbox where the system "
+                  <> "doesn't support it, `required` refuses to run then (default: if-available).")))
     <*> switch
             (  long "show-hidden-config"
             <> help ("Show all configuration values in the /api/system HTTP API call. "
@@ -1048,6 +1081,7 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#systemConfig . #rrdpWorker . #ioLimits . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
         & maybeSet (#systemConfig . #rsyncWorker . #ioLimits . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
         & maybeSet (#systemConfig . #rsyncWorker . #ioLimits . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
+        & maybeSet (#systemConfig . #sandboxMode) sandbox
   where
     cpuCount'    = fromMaybe (baseConfig ^. #parallelism . #cpuCount) cpuCount
 
