@@ -241,7 +241,7 @@ data RsyncMode = RsyncOneFile | RsyncDirectory
 
 rsyncProcess :: Config -> FetchConfig -> RsyncURL -> FilePath -> RsyncMode -> ProcessConfig () () ()
 rsyncProcess Config {..} fetchConfig rsyncURL destination rsyncMode = 
-    proc "rsync" $ 
+    proc rsyncBinary $ 
         [ "--update",  "--times" ] <> 
         [ "--timeout=" <> show timeout' ] <>         
         [ "--contimeout=60" ] <>         
@@ -250,11 +250,14 @@ rsyncProcess Config {..} fetchConfig rsyncURL destination rsyncMode =
         extraOptions <> 
         [ sourceUrl, destination ]
     where 
+        rsyncBinary = maybe "rsync" configValue rsyncConf.rsyncClientPath 
+
         Seconds timeout' = fetchConfig ^. #rsyncTimeout
         source = Text.unpack (unURI $ getURL rsyncURL)        
         (sourceUrl, extraOptions) = case rsyncMode of 
             RsyncOneFile   -> (source, [])
             RsyncDirectory -> (addTrailingPathSeparator source, [ "--recursive", "--delete", "--copy-links" ])
+
 
 {- | Map an rsync URL onto a local path under the rsync root.
 

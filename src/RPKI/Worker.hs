@@ -154,12 +154,24 @@ workerSandbox input = case input ^. #params of
     --    there and tries again, so that stray writes to stdout/stderr can't
     --    end up in the database. Without it the database can't be opened.
     ValidationParams {} -> Just WorkerSandbox {
-            readWrite = [cacheDirectory],
-            readOnly  = ["/proc/self", "/dev/null"]
+            readWrite  = [cacheDirectory],
+            readOnly   = ["/proc/self", "/dev/null"],
+            writesOnly = False
+        }
+    -- The rsync fetcher runs the rsync client, which inherits the sandbox, 
+    -- so only writing is restricted: to the cache for the worker and to the 
+    -- rsync mirror for both. Everything else the client needs (the binary,
+    -- libraries, DNS, network) stays available. /dev/null is writable for 
+    -- anything that sends its output there.
+    RsyncFetchParams {} -> Just WorkerSandbox {
+            readWrite  = [cacheDirectory, rsyncDirectory, "/dev/null"],
+            readOnly   = [],
+            writesOnly = True
         }
     _ -> Nothing
   where
     cacheDirectory = configValue $ input ^. #config . #cacheDirectory
+    rsyncDirectory = configValue $ input ^. #config . #rsyncConf . #rsyncRoot
 
 -- | The worker gets the parent's environment, minus sandbox settings it may
 -- have inherited itself, plus the sandbox settings for this worker, if any.
@@ -171,7 +183,7 @@ workerEnvironment input = do
         rw <- mapM makeAbsolute readWrite
         ro <- mapM makeAbsolute readOnly
         cacheDirectory <- makeAbsolute $ configValue $ input ^. #config . #cacheDirectory
-        pure $ sandboxEnvironment (WorkerSandbox rw ro) <>
+        pure $ sandboxEnvironment (WorkerSandbox rw ro writesOnly) <>
             -- SQLite picks a temporary directory by checking which ones exist
             -- and are writable, Landlock doesn't show in that check. Point it
             -- to the cache, the only place it can write to.

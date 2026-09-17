@@ -152,10 +152,7 @@ data ValidationConfig = ValidationConfig {
         -- we don't want to overload repositories
         rrdpForcedSnapshotMinInterval :: Seconds,
 
-        -- Maximum time for top-down validation for one TA lives in
-        -- 'SystemConfig' now, as 'validationWorker' . 'workerTimeout',
-        -- alongside the validation worker's other limits.
-
+        -- This is legacy and will be deleted at some point
         manifestProcessing             :: ManifestProcessing,
 
         -- Maximal object tree depth measured in number of CAs

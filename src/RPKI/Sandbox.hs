@@ -31,9 +31,14 @@ import           GHC.Generics     (Generic)
 
 -- | What a sandboxed worker is still allowed to access. Directories include
 -- everything beneath them. Paths must not contain ':'.
+--
+-- With 'writesOnly' only writing is restricted (to 'readWrite'), reading,
+-- running programs and the network are not, and 'readOnly' is ignored.
+-- Programs the worker runs are restricted in the same way.
 data WorkerSandbox = WorkerSandbox {
-        readWrite :: [FilePath],
-        readOnly  :: [FilePath]
+        readWrite  :: [FilePath],
+        readOnly   :: [FilePath],
+        writesOnly :: Bool
     }
     deriving stock (Eq, Ord, Show, Generic)
 
@@ -50,17 +55,18 @@ data SandboxStatus
 
 -- | Names of the variables @cbits/sandbox.c@ reads.
 sandboxVariables :: [String]
-sandboxVariables = [rwVariable, roVariable]
+sandboxVariables = [rwVariable, roVariable, writesOnlyVariable]
 
-rwVariable, roVariable :: String
+rwVariable, roVariable, writesOnlyVariable :: String
 rwVariable = "RPKI_PROVER_SANDBOX_RW"
 roVariable = "RPKI_PROVER_SANDBOX_RO"
+writesOnlyVariable = "RPKI_PROVER_SANDBOX_WRITES_ONLY"
 
 sandboxEnvironment :: WorkerSandbox -> [(String, String)]
 sandboxEnvironment WorkerSandbox {..} = [
         (rwVariable, intercalate ":" readWrite),
         (roVariable, intercalate ":" readOnly)
-    ]
+    ] <> [ (writesOnlyVariable, "1") | writesOnly ]
 
 foreign import ccall unsafe "rpki_prover_sandbox_status"
     c_sandboxStatus :: IO CInt
