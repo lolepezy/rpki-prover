@@ -522,8 +522,13 @@ runAll appContext@AppContext {..} tals = do
                         pure (rtrPayloads, slurmedPayloads)
                           
 
+    -- Only TAs whose certificate actually changed (a first-ever download, or a
+    -- genuinely new certificate) need to be revalidated. Most refreshes just
+    -- reconfirm the certificate already in the cache, and used to trigger a
+    -- full revalidation of every TA anyway -- wasted CPU, since nothing about
+    -- the TA changed.
     fetchTaCertificates workflowShared worldVersion _ = do
-        taNames <- fmap catMaybes $ forConcurrently tals $ \tal -> do
+        changedTaNames <- fmap catMaybes $ forConcurrently tals $ \tal -> do
             let taName = getTaName tal
             (r, elapsed) <- timedMS $ refreshTaCertificate appContext tal worldVersion
             case r of 
@@ -531,11 +536,13 @@ runAll appContext@AppContext {..} tals = do
                     logError logger [i|Failed to download and validate TA certificate for #{taName}: #{e}.|]
                     pure Nothing
 
-                Right _ -> do 
-                    logDebug logger [i|Downloaded and validated TA certificate for #{taName}, took #{elapsed}ms.|]
-                    pure $ Just taName
+                Right changed -> do 
+                    logDebug logger $ 
+                        [i|Downloaded and validated TA certificate for #{taName}, |] <> 
+                        [i|changed = #{changed}, took #{elapsed}ms.|]
+                    pure $ if changed then Just taName else Nothing
 
-        atomically $ modifyTVar' (workflowShared ^. #tasToValidate) $ \tas -> foldr Set.insert tas taNames 
+        atomically $ modifyTVar' (workflowShared ^. #tasToValidate) $ \tas -> foldr Set.insert tas changedTaNames 
 
     -- Delete objects in the store that were read by top-down validation 
     -- longer than `shortLivedCacheLifeTime` hours ago.
