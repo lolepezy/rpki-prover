@@ -494,7 +494,7 @@ runAll appContext@AppContext {..} tals = do
             [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|]
       where
         processTALs = do
-            ((z, workerVS), workerId) <- runValidationWorker worldVersion talsToValidate            
+            (z, workerVS) <- runValidationWorker worldVersion talsToValidate
             let reportError message = do 
                     logError logger message
                     DB.rwTxT database $ \tx -> do
@@ -506,34 +506,26 @@ runAll appContext@AppContext {..} tals = do
                 Left e -> 
                     reportError [i|Validator process failed: #{e}.|]                    
 
-                Right wr@WorkerResult {..} -> do     
-                    case payload of 
-                        Left (ErrorResult message) ->
-                            reportError [i|Validator process failed: #{message}.|]
+                Right (ValidationResult vs discovered) -> do
+                    adjustFetchers appContext (fmap fst discovered) workflowShared
+                    scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
 
-                        Right (ValidationResult vs discovered) -> do
-                            adjustFetchers appContext (fmap fst discovered) workflowShared
-                            scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
+                    -- The worker has saved the version, SLURM is read and
+                    -- stored for it here since the worker doesn't read files.
+                    (slurmVS, maybeSlurm) <- reReadSlurm appContext
+                    when (isJust maybeSlurm || slurmVS /= mempty) $
+                        DB.rwTxT database $ \tx -> do
+                            for_ maybeSlurm $ DB.saveSlurm tx worldVersion
+                            DB.addCommonValidations tx worldVersion slurmVS
 
-                            logWorkerDone logger workerId wr
-                            pushSystem logger $ resourceUsageMetric "validation" clockTime stats
-
-                            -- The worker has saved the version, SLURM is read and
-                            -- stored for it here since the worker doesn't read files.
-                            (slurmVS, maybeSlurm) <- reReadSlurm appContext
-                            when (isJust maybeSlurm || slurmVS /= mempty) $
-                                DB.rwTxT database $ \tx -> do
-                                    for_ maybeSlurm $ DB.saveSlurm tx worldVersion
-                                    DB.addCommonValidations tx worldVersion slurmVS
-
-                            let topDownState = workerVS <> vs <> slurmVS
-                            logDebug logger [i|Validation result: 
+                    let topDownState = workerVS <> vs <> slurmVS
+                    logDebug logger [i|Validation result: 
 #{formatValidations (topDownState ^. typed)}.|]
-                            updatePrometheus (topDownState ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion                        
-                            
-                            (!q, elapsed) <- timedMS $ reReadAndUpdatePayloads maybeSlurm
-                            logDebug logger [i|Re-read payloads, took #{elapsed}ms.|]
-                            pure q
+                    updatePrometheus (topDownState ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion                        
+                    
+                    (!q, elapsed) <- timedMS $ reReadAndUpdatePayloads maybeSlurm
+                    logDebug logger [i|Re-read payloads, took #{elapsed}ms.|]
+                    pure q
           where
             reReadAndUpdatePayloads maybeSlurm = do 
                 DB.roTxT database (\tx -> DB.getRtrPayloads tx worldVersion) >>= \case
@@ -585,17 +577,10 @@ runAll appContext@AppContext {..} tals = do
                                  [i|deleted #{deletedErikPartitions} orphaned Erik partitions, took #{elapsed}ms.|]
       where
         cleanupOldObjects = do                 
-            ((z, _), workerId) <- runCleanUpWorker worldVersion      
+            (z, _) <- runCleanUpWorker worldVersion
             case z of 
-                Left e -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
-                Right wr@WorkerResult {..} -> do 
-                    case payload of 
-                        Left (ErrorResult message) ->
-                            pure $ Left [i|Cache cleanup process failed: #{message}.|]
-                        Right r -> do
-                            logWorkerDone logger workerId wr
-                            pushSystem logger $ resourceUsageMetric "cache-clean-up" clockTime stats
-                            pure $ Right r    
+                Left e  -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
+                Right r -> pure $ Right r
 
     -- Delete temporary files and any stale storage-backend state
     cleanupLeftovers = do
@@ -659,58 +644,14 @@ runAll appContext@AppContext {..} tals = do
 
     -- Workers for functionality running in separate processes.
     --     
-    runValidationWorker worldVersion talsToValidate = do 
-        let talsStr = Text.intercalate "," $ List.sort $ map (unTaName . getTaName) talsToValidate                    
-            workerId = WorkerId [i|version:#{worldVersion}:validation:#{talsStr}|]
+    runValidationWorker worldVersion talsToValidate =
+        runValidatorIO (newScopes "validator") $
+            runWorker appContext ValidationParams {..} Nothing
 
-            maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
-
-            -- TODO make it a runtime thing, config?
-            -- let profilingFlags = [ "-p", "-hT", "-l" ]
-            profilingFlags = [ ]
-
-            arguments = 
-                [ show workerId ] <>
-                rtsArguments ( 
-                    profilingFlags <> [ 
-                        rtsN maxCpuAvailable, 
-                        rtsA "24m", 
-                        rtsAL "128m", 
-                        rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerLimits . #memoryMb)
-                    ])
-
-        r <- runValidatorIO
-                (newScopes "validator") $ do
-                    let timeout = config ^. typed @SystemConfig . #validationWorkerLimits . #workerTimeout
-                    workerInput <- makeWorkerInput appContext workerId
-                                    ValidationParams {..}
-                                    (Timebox timeout)
-                    workerInfo <- newWorkerInfo (GenericWorker "validation") timeout (convert $ show workerId)
-                    runWorker logger workerInput arguments workerInfo
-
-        pure (r, workerId)
-
-    runCleanUpWorker worldVersion = do             
-        let workerId = WorkerId [i|version:#{worldVersion}:cache-clean-up|]
-        
-        let arguments = 
-                [ show workerId ] <>
-                rtsArguments [ 
-                    rtsN 2, 
-                    rtsA "24m", 
-                    rtsAL "64m", 
-                    rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerLimits . #memoryMb) ]
-
-        r <- runValidatorIO
-                (newScopes "cache-clean-up") $ do
-                    let timeout = config ^. typed @SystemConfig . #cleanupWorkerLimits . #workerTimeout
-                    workerInput <- makeWorkerInput appContext workerId
-                                        (CacheCleanupParams worldVersion)
-                                        (Timebox timeout)
-
-                    workerInfo <- newWorkerInfo (GenericWorker "cache-clean-up") timeout (convert $ show workerId)
-                    runWorker logger workerInput arguments workerInfo
-        pure (r, workerId)                            
+    runCleanUpWorker worldVersion = 
+        runValidatorIO (newScopes "cache-clean-up") $ do
+            CacheCleanupResult r <- runWorker appContext (CacheCleanupParams worldVersion) Nothing
+            pure r
 
 
 -- | Read SLURM files, if there are any configured. Only the main process

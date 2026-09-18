@@ -18,8 +18,11 @@ import           Data.Maybe (fromMaybe, isNothing)
 import           Data.Traversable (for)
 import           Data.Text (Text, unpack)
 import qualified Data.ByteString.Lazy       as LBS
+import qualified Data.List                  as List
 import qualified Data.Map.Strict            as Map
+import qualified Data.Text                  as Text
 
+import           Data.Hourglass (Seconds)
 import           Data.String.Interpolate.IsString
 import           Data.Conduit.Process.Typed
 
@@ -34,6 +37,7 @@ import           System.Posix.Process
 import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Metrics.Process
+import           RPKI.Metrics.System (resourceUsageMetric)
 import           RPKI.AppContext
 import           RPKI.Config
 import           RPKI.Domain
@@ -44,7 +48,7 @@ import           RPKI.Sandbox
 import           RPKI.TAL
 import           RPKI.Logging
 import           RPKI.Time
-import           RPKI.Util (fmtEx)
+import           RPKI.Util (convert, fmtEx)
 import           RPKI.Store.Base.Serialisation
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Meta.UniqueId
@@ -118,33 +122,134 @@ data WorkerInput = WorkerInput {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-makeWorkerInput :: (MonadIO m)
-                => AppContext s
-                -> WorkerId
-                -> WorkerParams
-                -> Timebox
-                -> m WorkerInput
-makeWorkerInput AppContext {..} workerId params timeout = do
-    thisProcessId <- liftIO getProcessID
-    pure $ WorkerInput workerId params config thisProcessId
-                        timeout (Just $ asCpuTime $ limits ^. #cpuLimit)
-                        (limits ^. #maxIncomingTrafficMb)
-                        (limits ^. #maxDiskReadMb)
-                        (limits ^. #maxDiskWriteMb)
-                        executableVersion
-  where
-    -- Every kind of worker has its own place in 'SystemConfig' with all of
-    -- its limits (timeout, CPU time, memory, IO) together, so this is the
-    -- one spot that needs a case per 'WorkerParams' constructor -- everywhere
-    -- else derives what it needs from 'limits' instead of matching again.
-    limits = workerLimitsFor params
+{- | The kinds of worker there are.
 
-    workerLimitsFor = let SystemConfig {..} = config ^. #systemConfig in \case
-        RrdpFetchParams {}    -> rrdpWorkerLimits
-        RsyncFetchParams {}   -> rsyncWorkerLimits
-        ErikFetchParams {}    -> erikWorkerLimits
-        ValidationParams {}   -> validationWorkerLimits
-        CacheCleanupParams {} -> cleanupWorkerLimits
+Everything that differs between them -- the name they are known by, the limits
+they run under, the RTS options they are started with -- hangs off this type,
+so adding a kind of worker means adding a constructor here and filling in the
+handful of functions below, rather than spreading its details over a call site,
+'makeWorkerInput' and the metrics separately.
+-}
+data WorkerType = RrdpFetchWorker | RsyncFetchWorker | ErikFetchWorker
+                | ValidationWorker | CacheCleanupWorker
+    deriving stock (Eq, Ord, Show, Enum, Bounded, Generic)
+
+workerTypeOf :: WorkerParams -> WorkerType
+workerTypeOf = \case
+    RrdpFetchParams {}    -> RrdpFetchWorker
+    RsyncFetchParams {}   -> RsyncFetchWorker
+    ErikFetchParams {}    -> ErikFetchWorker
+    ValidationParams {}   -> ValidationWorker
+    CacheCleanupParams {} -> CacheCleanupWorker
+
+-- | The name a kind of worker is known by. It is used in three places that
+-- have to agree: the worker id (i.e. what shows up in `ps`), the 'WorkerInfo'
+-- the main process keeps for a running worker, and the scope its resource
+-- usage is reported under (see 'resourceUsageMetric').
+workerTypeName :: WorkerType -> Text
+workerTypeName = \case
+    RrdpFetchWorker    -> "rrdp-fetch"
+    RsyncFetchWorker   -> "rsync-fetch"
+    ErikFetchWorker    -> "erik-fetch"
+    ValidationWorker   -> "validation"
+    CacheCleanupWorker -> "cache-clean-up"
+
+-- | Every kind of worker has its own place in 'SystemConfig' with all of its
+-- limits (timeout, CPU time, memory, IO) together.
+workerTypeLimits :: Config -> WorkerType -> WorkerLimits
+workerTypeLimits config = let SystemConfig {..} = config ^. #systemConfig in \case
+    RrdpFetchWorker    -> rrdpWorkerLimits
+    RsyncFetchWorker   -> rsyncWorkerLimits
+    ErikFetchWorker    -> erikWorkerLimits
+    ValidationWorker   -> validationWorkerLimits
+    CacheCleanupWorker -> cleanupWorkerLimits
+
+-- | Limits of the worker kind that reports its resource usage under this
+-- scope, 'Nothing' for a scope no worker kind owns (e.g. "root").
+workerLimitsByName :: Config -> Text -> Maybe WorkerLimits
+workerLimitsByName config name =
+    workerTypeLimits config <$> List.find ((== name) . workerTypeName) [minBound .. maxBound]
+
+-- | Everything that is fixed about one worker run, worked out from its
+-- 'WorkerParams' alone.
+data WorkerSpec = WorkerSpec {
+        name         :: Text,
+        workerId     :: WorkerId,
+        workerKind   :: WorkerKind,
+        params       :: WorkerParams,
+        limits       :: WorkerLimits,
+        cliArguments :: [String]
+    }
+    deriving stock (Show, Generic)
+
+workerSpecFor :: Config -> WorkerParams -> WorkerSpec
+workerSpecFor config params = WorkerSpec {..}
+  where
+    workerType = workerTypeOf params
+    name       = workerTypeName workerType
+    limits     = workerTypeLimits config workerType
+
+    workerKind = case workerType of
+                    RsyncFetchWorker -> RsyncWorker
+                    _                -> GenericWorker name
+
+    -- The worker id is for humans to read in `top` or `ps`, the actual
+    -- parameters are passed to the worker as serialised 'WorkerParams'.
+    workerId = WorkerId $ [i|version:#{worldVersion}:#{name}|] <> maybe "" (":" <>) detail
+
+    -- The world version every worker runs for, plus whatever identifies this
+    -- particular run within its kind.
+    (worldVersion, detail) = case params of
+        RrdpFetchParams { worldVersion = v, rrdpRepository }  ->
+            (v, Just $ unURI $ getURL rrdpRepository)
+        RsyncFetchParams { worldVersion = v, rsyncRepository } ->
+            (v, Just $ unURI $ getURL rsyncRepository)
+        ErikFetchParams { worldVersion = v, fqdn } ->
+            (v, Just $ unFQDN fqdn)
+        ValidationParams { worldVersion = v, talsToValidate } ->
+            (v, Just $ Text.intercalate "," $ List.sort $ map (unTaName . getTaName) talsToValidate)
+        CacheCleanupParams { worldVersion = v } ->
+            (v, Nothing)
+
+    cpuCount :: Int
+    cpuCount = fromIntegral $ config ^. #parallelism . #cpuCount
+
+    -- All three fetchers are tuned the same way and only differ in how many
+    -- capabilities they get. `--disable-delayed-os-memory-return` keeps their
+    -- RSS close to what they actually use, which matters because there are
+    -- many of them alive at once and because RSS is what gets reported.
+    fetcherRts capabilities = [
+            rtsN capabilities, rtsA "4m", rtsAL "4m",
+            "-Fd1", "--disable-delayed-os-memory-return"
+        ]
+
+    rtsOptions = case workerType of
+        RrdpFetchWorker  -> fetcherRts 1
+        RsyncFetchWorker -> fetcherRts cpuCount
+        -- Start single-threaded. There are a lot of Erik workers alive at once
+        -- and the RTS allocates a nursery per capability, so a worker that
+        -- turns out to have nothing to download never pays for more than one.
+        -- `fetchErik` raises this with 'setNumCapabilities' once the index
+        -- shows work worth parallelising.
+        ErikFetchWorker  -> fetcherRts 1
+        -- TODO make profiling a runtime thing, config? It used to be
+        -- [ "-p", "-hT", "-l" ] prepended here.
+        ValidationWorker -> [ rtsN cpuCount, rtsA "24m", rtsAL "128m" ]
+        CacheCleanupWorker -> [ rtsN 2, rtsA "24m", rtsAL "64m" ]
+
+    cliArguments = [ show workerId ] <> rtsArguments
+            (rtsOptions <> [ rtsMaxMemory $ rtsMemValue $ limits ^. #memoryMb ])
+
+-- | 'timeout' rather than the spec's own 'workerTimeout': the caller is allowed
+-- to give a worker less wall-clock time than its kind is configured for.
+makeWorkerInput :: (MonadIO m) => AppContext s -> WorkerSpec -> Timebox -> m WorkerInput
+makeWorkerInput AppContext {..} WorkerSpec { params, workerId, limits } timeout = do
+    thisProcessId <- liftIO getProcessID
+    let WorkerLimits { cpuLimit, maxIncomingTrafficMb, maxDiskReadMb, maxDiskWriteMb } = limits
+    pure $ WorkerInput workerId params config thisProcessId
+                        timeout (Just $ asCpuTime cpuLimit)
+                        maxIncomingTrafficMb maxDiskReadMb maxDiskWriteMb
+                        executableVersion
 
 -- | What a worker is still allowed to access after sandboxing itself (Linux
 -- only, see RPKI.Sandbox), 'Nothing' for workers that are not sandboxed.
@@ -219,10 +324,6 @@ newtype ErikFetchStat = ErikFetchStat {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-newtype CompactionResult = CompactionResult ()                             
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
-
 data ValidationResult = ValidationResult
             ValidationState
             (Map.Map TaName (Fetcheables, EarliestToExpire))
@@ -289,8 +390,8 @@ executeWork input exitWith_ actualWork =
         threadDelay $ toMicroseconds timebox
         done timeoutExitCode
 
-    -- Exit if the worker has spent more than it is allowed of any of the 
-    
+    -- Exit if the worker has spent more than it is allowed of any of 
+    -- the limits (CPU time, traffic, disk IO).
     dieOfOveruse done = loop
       where
         loop = do 
@@ -405,14 +506,43 @@ outOfMemoryExitCode  = ExitFailure 251
 exitKillByTypedProcess = ExitFailure (-2)
 
 
--- Main entry point to start a worker
+{- | Run a worker for the given parameters and hand back its result.
+
+Everything that is the same for every worker happens here: working out the
+worker id, the limits and the RTS options ('workerSpecFor'), registering the
+process while it runs, reporting what it used, and turning a failure reported
+by the worker itself into an 'AppError'.
+-}
+runWorker :: (ValidatorIO es, TheBinary r)
+            => AppContext s
+            -> WorkerParams
+            -> Maybe Seconds -- ^ wall-clock timeout, if it is not the configured one
+            -> Eff es r
+runWorker appContext@AppContext {..} params timeoutOverride = do
+    let spec = workerSpecFor config params
+    let WorkerSpec { name, workerId, workerKind, limits, cliArguments } = spec
+    let timeout = fromMaybe (limits ^. #workerTimeout) timeoutOverride
+
+    workerInput <- makeWorkerInput appContext spec (Timebox timeout)
+    workerInfo  <- newWorkerInfo workerKind timeout (convert $ show workerId)
+
+    wr@WorkerResult {..} <- runWorkerProcess logger workerInput cliArguments workerInfo
+    case payload of
+        Left (ErrorResult e) -> appError $ InternalE $ WorkerError e
+        Right r -> do
+            logWorkerDone logger workerId wr
+            pushSystem logger $ resourceUsageMetric name clockTime stats
+            pure r
+
+-- Start the worker process itself, stream its logs to the parent and 
+-- make sense of the way it exited.
 -- 
-runWorker :: (ValidatorIO es, TheBinary r, Show r) => AppLogger 
+runWorkerProcess :: (ValidatorIO es, TheBinary r) => AppLogger 
             -> WorkerInput            
             -> [String] 
             -> WorkerInfo 
             -> Eff es r
-runWorker logger workerInput extraCli workerInfo = do
+runWorkerProcess logger workerInput extraCli workerInfo = do
     let executableToRun = configValue $ workerInput ^. #config . #programBinaryPath
     environment <- liftIO $ workerEnvironment workerInput
     let worker = 
