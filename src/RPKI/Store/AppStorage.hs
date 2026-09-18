@@ -12,14 +12,15 @@ data AppStorageTag
 -- a type-annotated AppContext compile without changes.
 class MaintainableStorage s where
     runMaintenance  :: AppContext s -> IO ()
+    checkpointDatabase :: AppContext s -> IO ()
     reopenStorage   :: AppContext s -> IO ()
     closeStorage    :: AppContext s -> IO ()
     cleanUpStaleTx  :: AppContext s -> IO Int
     getCacheFsSize  :: AppContext s -> IO Size
 
--- | Universal stub instance — real implementations come in AppSqliteStorage.hs (Phase 4).
 instance {-# OVERLAPPABLE #-} MaintainableStorage s where
     runMaintenance  _ = pure ()
+    checkpointDatabase _ = pure ()
     reopenStorage   _ = pure ()
     closeStorage    _ = pure ()
     cleanUpStaleTx  _ = pure 0

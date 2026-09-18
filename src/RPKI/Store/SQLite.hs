@@ -20,6 +20,8 @@ module RPKI.Store.SQLite (
     initConn,
     createDB,
     closeDB,
+    WalCheckpointing(..),
+    walFileSize,
     -- * Maintenance
     checkpointTruncate,
     incrementalVacuum,
@@ -57,6 +59,7 @@ import Control.Monad (forM_, void)
 import Control.Monad.IO.Class
 
 import Data.IORef
+import System.Directory (doesFileExist, getFileSize)
 import Data.Int (Int64)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -91,15 +94,6 @@ data TxMode = RO | RW | NOTX
 newtype Tx (m :: TxMode) = Tx { unTx :: CachedConn }
 
 -- | A connection plus a cache of its prepared statements, keyed by SQL text.
---
--- 'Database.SQLite.Simple' never caches prepared statements: every 'Raw.query'
--- \/ 'Raw.execute' call does a fresh @sqlite3_prepare_v2@ and finalises the
--- statement afterwards. Snapshot/delta processing runs thousands of the same
--- few statements per second on the single write connection, and re-preparing
--- each one turned out to be the dominant serial cost (see 'perf/SaveSnapshotBench.hs').
--- Caching keeps one prepared 'Statement' per distinct 'Query' text per
--- connection, reset (not finalised) after each use so it's ready to be
--- rebound next time.
 data CachedConn = CachedConn
     { rawConn   :: Connection
     , stmtCache :: IORef (Map Text Statement)
@@ -108,7 +102,17 @@ data CachedConn = CachedConn
 data SqliteDB = SqliteDB
     { readPool  :: Pool CachedConn  -- ^ Shared pool for read connections
     , writeConn :: MVar CachedConn  -- ^ Single serialised write connection
+    , dbPath    :: FilePath         -- ^ To find the -wal file next to it
     }
+
+{- Who folds the WAL back into the database. Workers do not checkpoint 
+  the DB because it distorts their disk read/write stats, so all checkoints 
+  are done by the main process.
+-}
+data WalCheckpointing
+    = CheckpointWhenCommitting
+    | CheckpointedByOthers
+    deriving stock (Show, Eq, Ord)
 
 
 -- ---------------------------------------------------------------------------
@@ -149,8 +153,8 @@ withoutTx SqliteDB{readPool} f = liftIO $ Pool.withResource readPool $ \cc ->
 -- Lifecycle
 -- ---------------------------------------------------------------------------
 
-initConn :: Int -> FilePath -> IO Connection
-initConn busyTimeoutMs path = do
+initConn :: Int -> WalCheckpointing -> FilePath -> IO Connection
+initConn busyTimeoutMs walCheckpointing path = do
     conn <- open path
     forM_ pragmas (Raw.execute_ conn)
     pure conn
@@ -162,16 +166,20 @@ initConn busyTimeoutMs path = do
         , "PRAGMA synchronous = NORMAL"
         , "PRAGMA optimize = 0x10002"
         , "PRAGMA auto_vacuum = INCREMENTAL"
-        ]
+        ] <> checkpoint
+
+    checkpoint = case walCheckpointing of
+                CheckpointWhenCommitting -> []
+                CheckpointedByOthers     -> [ "PRAGMA wal_autocheckpoint = 0" ]
 
 mkCachedConn :: Connection -> IO CachedConn
 mkCachedConn conn = do
     stmtCache <- newIORef Map.empty
     pure CachedConn { rawConn = conn, .. }
 
-initCachedConn :: Int -> FilePath -> IO CachedConn
-initCachedConn busyTimeoutMs path =
-    mkCachedConn =<< initConn busyTimeoutMs path
+initCachedConn :: Int -> WalCheckpointing -> FilePath -> IO CachedConn
+initCachedConn busyTimeoutMs walCheckpointing path =
+    mkCachedConn =<< initConn busyTimeoutMs walCheckpointing path
 
 -- | Finalise every cached prepared statement, then close the connection.
 -- SQLite requires all statements finalised before (or as part of) closing.
@@ -182,16 +190,16 @@ closeCachedConn CachedConn{..} = do
     writeIORef stmtCache Map.empty
     close rawConn
 
-createDB :: FilePath -> Int -> Int -> IO SqliteDB
-createDB path busyTimeoutMs poolSize = do
+createDB :: FilePath -> Int -> WalCheckpointing -> Int -> IO SqliteDB
+createDB path busyTimeoutMs walCheckpointing poolSize = do
     readPool  <- Pool.newPool $
                     Pool.defaultPoolConfig
-                        (initCachedConn busyTimeoutMs path)
+                        (initCachedConn busyTimeoutMs walCheckpointing path)
                         closeCachedConn
                         60      -- idle TTL seconds
                         poolSize
-    writeConn <- newMVar =<< initCachedConn busyTimeoutMs path
-    pure SqliteDB{..}
+    writeConn <- newMVar =<< initCachedConn busyTimeoutMs walCheckpointing path
+    pure SqliteDB{ dbPath = path, .. }
 
 closeDB :: SqliteDB -> IO ()
 closeDB SqliteDB{..} = do
@@ -205,6 +213,14 @@ closeDB SqliteDB{..} = do
 checkpointTruncate :: CachedConn -> IO ()
 checkpointTruncate CachedConn{rawConn} =
     Raw.execute_ rawConn "PRAGMA wal_checkpoint(TRUNCATE)"
+
+-- | Size of the -wal file, i.e. how much is waiting to be checkpointed.
+-- Zero if it isn't there, which is what a checkpoint with TRUNCATE leaves behind.
+walFileSize :: SqliteDB -> IO Integer
+walFileSize SqliteDB{dbPath} = do
+    let wal = dbPath <> "-wal"
+    exists <- doesFileExist wal
+    if exists then getFileSize wal else pure 0
 
 -- | Reclaim pages freed by deletes back into the OS, a few hundred at a
 -- time so it doesn't stall other writers the way a full 'VACUUM' would.

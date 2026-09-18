@@ -11,6 +11,7 @@ import           Effectful
 import           Control.Lens
 import           Control.Concurrent.MVar  (withMVar)
 import           Control.Concurrent.STM   (readTVarIO)
+import           Control.Monad            (when)
 
 import           Data.Hourglass
 import           Data.String.Interpolate.IsString
@@ -21,6 +22,7 @@ import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Logging
 import           RPKI.Reporting
+import           RPKI.Time                (timedMS)
 import           RPKI.Util                (fmtEx)
 
 import           RPKI.Store.AppStorage
@@ -57,6 +59,18 @@ instance MaintainableStorage SqliteBackend where
             SQLite.checkpointTruncate cc
             SQLite.incrementalVacuum cc
             SQLite.optimize cc
+    checkpointDatabase AppContext{database, logger} = do
+        sdb@SqliteDB{..} <- unDB <$> readTVarIO database
+        before <- SQLite.walFileSize sdb
+        -- Nothing to do most of the time, so don't take the write lock for nothing
+        when (before > 0) $ do
+            (_, elapsed) <- timedMS $ withMVar writeConn SQLite.checkpointTruncate
+            after <- SQLite.walFileSize sdb
+            let inMb n = n `div` (1024 * 1024)
+            logDebug logger $ if after == 0
+                then [i|Checkpointed #{inMb before}mb of WAL in #{elapsed}ms.|]
+                else [i|Checkpointed WAL in #{elapsed}ms, #{inMb before}mb before, |] <>
+                     [i|#{inMb after}mb still left (readers are holding it).|]
     reopenStorage   _ = pure ()
     cleanUpStaleTx  _ = pure 0
     getCacheFsSize  _ = pure (Size 0)
@@ -82,7 +96,7 @@ setupSqliteCache flow logger cacheDir config = do
     liftIO $ createDirectoryIfMissing True cacheDir
 
     db <- fromTry (InitE . InitError . fmtEx) $ do
-        sdb <- SQLite.createDB dbPath busyTimeoutMs poolSize
+        sdb <- SQLite.createDB dbPath busyTimeoutMs SQLite.CheckpointWhenCommitting poolSize
         withMVar (writeConn sdb) (SQLite.initSchema . SQLite.rawConn)
         pure (DB sdb)
 

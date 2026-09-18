@@ -369,8 +369,9 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
 data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion
 
-newSqliteDB :: FilePath -> Config -> IO SQLite.SqliteDB
-newSqliteDB dbPath config = SQLite.createDB dbPath busyTimeoutMs poolSize
+newSqliteDB :: FilePath -> Config -> SQLite.WalCheckpointing -> IO SQLite.SqliteDB
+newSqliteDB dbPath config walCheckpointing = 
+    SQLite.createDB dbPath busyTimeoutMs walCheckpointing poolSize
   where
     poolSize      = max 2 $ fromIntegral $ config ^. #parallelism . #cpuParallelism
     busyTimeoutMs = let Seconds s = config ^. #storageConfig . #rwTransactionTimeout
@@ -386,7 +387,7 @@ createSqliteDatabase cacheDir config resetCache checkVersion = do
         removeIfExists $ dbPath <> "-wal"
         removeIfExists $ dbPath <> "-shm"
 
-    sdb <- newSqliteDB dbPath config
+    sdb <- newSqliteDB dbPath config SQLite.CheckpointWhenCommitting
     SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> SQLite.initSchema (SQLite.rawConn conn)
 
     let db = DB.DB sdb
@@ -589,9 +590,12 @@ createWorkerAppContext config logger = do
 
 -- | Open an already-initialised SQLite database without touching the schema or version.
 -- Used by worker processes to avoid unnecessary write-transaction contention on startup.
+-- Workers never checkpoint the WAL: they are killed when they exceed their disk IO
+-- limits, and checkpointing would charge them for writing out a backlog that the 
+-- other processes produced. The main process does it on a timer instead.
 openExistingSqliteDatabase :: FilePath -> Config -> IO DB.DB
 openExistingSqliteDatabase cacheDir config = do
-    sdb <- newSqliteDB (cacheDir </> "rpki.sqlite") config
+    sdb <- newSqliteDB (cacheDir </> "rpki.sqlite") config SQLite.CheckpointedByOthers
     pure (DB.DB sdb)
 
 createAppState :: MonadIO m => AppLogger -> [String] -> m AppState

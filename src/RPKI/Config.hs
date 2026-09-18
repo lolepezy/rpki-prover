@@ -57,7 +57,8 @@ data FetchConfig = FetchConfig {
     deriving anyclass (TheBinary)
 
 data StorageConfig = StorageConfig {
-        rwTransactionTimeout :: Seconds
+        rwTransactionTimeout  :: Seconds,
+        walCheckpointInterval :: Seconds
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)    
@@ -318,7 +319,7 @@ defaultConfig = Config {
             memoryMb = 1024,
             maxIncomingTrafficMb = Just $ 2 * gigabytes,
             maxDiskReadMb        = Just $ 6 * gigabytes,
-            maxDiskWriteMb       = Just $ 8 * gigabytes
+            maxDiskWriteMb       = Just $ 16 * gigabytes
         },
         erikWorkerLimits = WorkerLimits {
             workerTimeout  = 15 * minutes,
@@ -326,7 +327,7 @@ defaultConfig = Config {
             memoryMb = 1024,
             maxIncomingTrafficMb = Just $ 2 * gigabytes,
             maxDiskReadMb        = Just $ 6 * gigabytes,
-            maxDiskWriteMb       = Just $ 8 * gigabytes
+            maxDiskWriteMb       = Just $ 16 * gigabytes
         },
         validationWorkerLimits = WorkerLimits {
             workerTimeout  = 1 * hour,
@@ -350,7 +351,8 @@ defaultConfig = Config {
     },
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {       
-        rwTransactionTimeout = 15 * minutes        
+        rwTransactionTimeout = 15 * minutes,
+        walCheckpointInterval = 1 * minutes
     },
     cacheCleanupInterval      = 6 * hours,    
     versionNumberToKeep       = 3,

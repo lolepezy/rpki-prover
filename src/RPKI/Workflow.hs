@@ -172,6 +172,9 @@ data Task =
 
     -- Delete local rsync mirror once in a long while
     | RsyncCleanupTask
+
+    -- fold the WAL back into the database, nobody else does it
+    | WalCheckpointTask
     deriving stock (Show, Eq, Ord, Bounded, Enum, Generic)
 
 
@@ -267,17 +270,24 @@ runAll appContext@AppContext {..} tals = do
                             runRtrIfConfigured
                         ]                        
 
-                    OneOffMode _ -> do
-                        -- Scheduled jobs don't run in the one-off mode, so the TA 
-                        -- certificates have to be refreshed here, otherwise there 
-                        -- would be nothing to validate at all.
-                        worldVersion <- newWorldVersion
-                        void $ fetchTaCertificates workflowShared worldVersion FirstRun
-                        void $ revalidate workflowShared
+                    OneOffMode _ -> 
+                        -- Scheduled jobs don't run in the one-off mode, so the things 
+                        -- they are responsible for have to happen here: TA certificates 
+                        -- have to be refreshed, otherwise there would be nothing to 
+                        -- validate at all, and the WAL has to be checkpointed, otherwise 
+                        -- it grows to the size of everything the workers write.
+                        race_ checkpointPeriodically $ do 
+                            worldVersion <- newWorldVersion
+                            void $ fetchTaCertificates workflowShared worldVersion FirstRun
+                            void $ revalidate workflowShared
         )
   where
     allTaNames = map getTaName tals
-    
+
+    checkpointPeriodically = forever $ do 
+        threadDelay $ toMicroseconds $ config ^. typed @StorageConfig . #walCheckpointInterval
+        checkpointDatabase appContext
+
     revalidate workflowShared = do 
         canValidateAgain <- newTVarIO True
         race_ 
@@ -408,6 +418,13 @@ runAll appContext@AppContext {..} tals = do
                 interval = config ^. typed @ValidationConfig . #taCertificateRefreshInterval,
                 taskDef = (TaCertificateTask, fetchTaCertificates workflowShared),
                 persistent = False
+            },
+            let interval = config ^. typed @StorageConfig . #walCheckpointInterval
+            in Scheduling {
+                initialDelay = toMicroseconds interval,
+                taskDef = (WalCheckpointTask, \_ _ -> checkpointDatabase appContext),
+                persistent = False,
+                interval
             }
         ]              
 
@@ -1391,6 +1408,10 @@ canRunInParallel t1 t2 =
         -- Don't clean up anything while fetches are in progress
         RsyncCleanupTask     -> allExcept [FetchTask, TaCertificateTask]
         LeftoversCleanupTask -> allTasks
+
+        -- SQLite serialises it against everything else by itself, and it is 
+        -- the only thing that keeps the WAL from growing without bound
+        WalCheckpointTask    -> allTasks
   
     allExcept tasks = filter (not . (`elem` tasks)) allTasks
     allTasks = [minBound..maxBound]
