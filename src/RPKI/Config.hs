@@ -196,20 +196,6 @@ data RtrConfig = RtrConfig {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
--- | How much IO a worker process is allowed to do before it gives up and
--- exits, the same way it gives up on CPU time or wall-clock time. 'Nothing'
--- means "don't watch this one". Note that incoming traffic is only what the
--- worker downloads itself over HTTP -- an external rsync client is a separate
--- process, so what it transfers doesn't get counted as traffic, it lands in
--- the disk IO of the worker that spawned it instead.
-data IoLimits = IoLimits {
-        maxIncomingTrafficMb :: Maybe Int,
-        maxDiskReadMb        :: Maybe Int,
-        maxDiskWriteMb       :: Maybe Int
-    }
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
-
 -- | Everything one kind of worker process is bounded by: how long it may run
 -- (wall-clock), how much CPU time it may burn, how much memory its RTS is
 -- allowed and how much IO it may do -- all in one place instead of scattered
@@ -218,13 +204,23 @@ data IoLimits = IoLimits {
 -- CPU time and IO the same way ('RPKI.Worker.dieAfterTimeout',
 -- 'RPKI.Worker.dieOfOveruse'); memory is enforced by the RTS itself via the
 -- @-M@ flag built from 'memoryMb'.
+--
+-- The @max*Mb@ fields are how much IO a worker process is allowed to do
+-- before it gives up and exits, the same way it gives up on CPU time or
+-- wall-clock time. 'Nothing' means "don't watch this one". Note that
+-- incoming traffic is only what the worker downloads itself over HTTP -- an
+-- external rsync client is a separate process, so what it transfers doesn't
+-- get counted as traffic, it lands in the disk IO of the worker that spawned
+-- it instead.
 data WorkerLimits = WorkerLimits {
         -- Named 'workerTimeout', not 'timeout' -- the latter clashes with
         -- 'System.Timeout.timeout', imported unqualified all over the place.
-        workerTimeout :: Seconds,
-        cpuLimit      :: Seconds,
-        memoryMb      :: Int,
-        ioLimits      :: IoLimits
+        workerTimeout        :: Seconds,
+        cpuLimit             :: Seconds,
+        memoryMb             :: Int,
+        maxIncomingTrafficMb :: Maybe Int,
+        maxDiskReadMb        :: Maybe Int,
+        maxDiskWriteMb       :: Maybe Int
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -315,65 +311,47 @@ defaultConfig = Config {
             workerTimeout  = 11 * minutes,
             cpuLimit = 30 * minutes,
             memoryMb = 1024,
-            ioLimits = IoLimits {
-                maxIncomingTrafficMb = Nothing,
-                maxDiskReadMb        = Just $ 4 * gigabyte,
-                -- 6 mainly because of the SQLite WAL (and other) amplifications
-                maxDiskWriteMb       = Just $ 6 * gigabyte
-            }
+            -- It never downloads anything itself, the external rsync client does that,
+            -- so this is just a sanity check to stop a worker that downloads anything at all.
+            maxIncomingTrafficMb = Just 0,
+            maxDiskReadMb        = Just $ 6 * gigabytes,
+            -- it's pretty large mainly because of the SQLite WAL (and other) amplifications
+            maxDiskWriteMb       = Just $ 8 * gigabytes
         },
         rrdpWorker = WorkerLimits {
             workerTimeout  = 11 * minutes,
             cpuLimit = 30 * minutes,
             memoryMb = 1024,
-            ioLimits = IoLimits {
-                maxIncomingTrafficMb = Just $ 2 * gigabyte,
-                maxDiskReadMb        = Just $ 4 * gigabyte,
-                maxDiskWriteMb       = Just $ 6 * gigabyte
-            }
+            maxIncomingTrafficMb = Just $ 2 * gigabytes,
+            maxDiskReadMb        = Just $ 6 * gigabytes,
+            maxDiskWriteMb       = Just $ 8 * gigabytes
         },
         erikWorker = WorkerLimits {
             workerTimeout  = 15 * minutes,
             cpuLimit = 30 * minutes,
             memoryMb = 1024,
-            ioLimits = IoLimits {
-                -- Same shape as rrdp's: fetches relay bundles over HTTP and feeds
-                -- the same validation pipeline. Not measured against a real run
-                -- yet, unlike rrdp's (see the proc-io-counters memory note).
-                maxIncomingTrafficMb = Just $ 2 * gigabyte,
-                maxDiskReadMb        = Just $ 2 * gigabyte,
-                maxDiskWriteMb       = Just $ 2 * gigabyte
-            }
+            maxIncomingTrafficMb = Just $ 2 * gigabytes,
+            maxDiskReadMb        = Just $ 6 * gigabytes,
+            maxDiskWriteMb       = Just $ 8 * gigabytes
         },
         validationWorker = WorkerLimits {
             workerTimeout  = 1 * hour,
-            -- Validation runs with as many capabilities as there are CPUs, so
-            -- its CPU time can add up to several times the wall-clock timeout
-            -- above; sized after what's actually been measured (~2.2 of 8
-            -- cores kept busy, see the validation-cpu-hotspots memory note),
-            -- not the theoretical N-times-timeout ceiling.
             cpuLimit = 3 * hour,
             memoryMb = 2048,
-            ioLimits = IoLimits {
-                -- It downloads nothing, TA certificates are fetched by the main
-                -- process. Where Landlock isn't there to deny it, this still
-                -- stops a worker that downloads anything at all.
-                maxIncomingTrafficMb = Just 0,
-                maxDiskReadMb        = Just $ 10 * gigabyte,
-                -- Saving payloads and shortcuts is not much
-                maxDiskWriteMb       = Just gigabyte
-            }
+            -- It downloads nothing, TA certificates are fetched by the main process
+            maxIncomingTrafficMb = Just 0,
+            maxDiskReadMb        = Just $ 10 * gigabytes,
+            -- Saving payloads and shortcuts is not much
+            maxDiskWriteMb       = Just gigabytes
         },
         cleanupWorker = WorkerLimits {
             workerTimeout  = 300,
             -- Cleanup runs with 2 capabilities (-N2).
             cpuLimit = 20 * minutes,
             memoryMb = 512,
-            ioLimits = IoLimits {
-                maxIncomingTrafficMb = Nothing,
-                maxDiskReadMb        = Just 32768,
-                maxDiskWriteMb       = Just 32768
-            }
+            maxIncomingTrafficMb = Nothing,
+            maxDiskReadMb        = Just 32768,
+            maxDiskWriteMb       = Just 32768
         }
     },
     rtrConfig                 = Nothing,
@@ -397,11 +375,8 @@ defaultConfig = Config {
     hour = hours
     days = 24 * hours
     hours = Seconds $ 60 * 60
-    -- The IoLimits fields above are denominated in MB, so this is MB-per-GB,
-    -- not bytes-per-GB -- it was 1024*1024*1024 before, which inflated every
-    -- "N gigabyte" IoLimits default a thousand-fold, into practically no
-    -- limit at all.
-    gigabyte = 1024
+    -- The max*Mb fields above are denominated in MB, so this is MB-per-GB
+    gigabytes = 1024
 
 
 adjustConfig :: Config -> Config

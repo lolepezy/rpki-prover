@@ -995,9 +995,9 @@ cliOptionsParser = CLIOptions
     defMaxRrdpMem             = cfg ^. #systemConfig . #rrdpWorker . #memoryMb
     defMaxRsyncMem            = cfg ^. #systemConfig . #rsyncWorker . #memoryMb
     defMaxValidMem            = cfg ^. #systemConfig . #validationWorker . #memoryMb
-    defMaxFetchTraffic        = showLimit $ cfg ^. #systemConfig . #rrdpWorker . #ioLimits . #maxIncomingTrafficMb
-    defMaxFetchDiskRead       = showLimit $ cfg ^. #systemConfig . #rrdpWorker . #ioLimits . #maxDiskReadMb
-    defMaxFetchDiskWrite      = showLimit $ cfg ^. #systemConfig . #rrdpWorker . #ioLimits . #maxDiskWriteMb
+    defMaxFetchTraffic        = showLimit $ cfg ^. #systemConfig . #rrdpWorker . #maxIncomingTrafficMb
+    defMaxFetchDiskRead       = showLimit $ cfg ^. #systemConfig . #rrdpWorker . #maxDiskReadMb
+    defMaxFetchDiskWrite      = showLimit $ cfg ^. #systemConfig . #rrdpWorker . #maxDiskWriteMb
     showLimit                 = maybe ("unlimited" :: String) show
 
 
@@ -1044,11 +1044,11 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#systemConfig . #rrdpWorker . #memoryMb) maxRrdpFetchMemory
         & maybeSet (#systemConfig . #validationWorker . #memoryMb) maxValidationMemory
         -- Both fetchers get the same IO budget, they do the same kind of work
-        & maybeSet (#systemConfig . #rrdpWorker . #ioLimits . #maxIncomingTrafficMb) (Just <$> maxFetchTrafficMb)
-        & maybeSet (#systemConfig . #rrdpWorker . #ioLimits . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
-        & maybeSet (#systemConfig . #rrdpWorker . #ioLimits . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
-        & maybeSet (#systemConfig . #rsyncWorker . #ioLimits . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
-        & maybeSet (#systemConfig . #rsyncWorker . #ioLimits . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
+        & maybeSet (#systemConfig . #rrdpWorker . #maxIncomingTrafficMb) (Just <$> maxFetchTrafficMb)
+        & maybeSet (#systemConfig . #rrdpWorker . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
+        & maybeSet (#systemConfig . #rrdpWorker . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
+        & maybeSet (#systemConfig . #rsyncWorker . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
+        & maybeSet (#systemConfig . #rsyncWorker . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
   where
     cpuCount'    = fromMaybe (baseConfig ^. #parallelism . #cpuCount) cpuCount
 

@@ -110,7 +110,9 @@ data WorkerInput = WorkerInput {
         initialParentId         :: ProcessID,
         workerTimeout           :: Timebox,
         cpuLimit                :: Maybe CPUTime,
-        ioLimits                :: IoLimits,
+        maxIncomingTrafficMb    :: Maybe Int,
+        maxDiskReadMb           :: Maybe Int,
+        maxDiskWriteMb          :: Maybe Int,
         parentExecutableVersion :: ExecutableVersion
     } 
     deriving stock (Eq, Ord, Show, Generic)
@@ -126,7 +128,10 @@ makeWorkerInput AppContext {..} workerId params timeout = do
     thisProcessId <- liftIO getProcessID
     pure $ WorkerInput workerId params config thisProcessId
                         timeout (Just $ asCpuTime $ limits ^. #cpuLimit)
-                        (limits ^. #ioLimits) executableVersion
+                        (limits ^. #maxIncomingTrafficMb)
+                        (limits ^. #maxDiskReadMb)
+                        (limits ^. #maxDiskWriteMb)
+                        executableVersion
   where
     -- Every kind of worker has its own place in 'SystemConfig' with all of
     -- its limits (timeout, CPU time, memory, IO) together, so this is the
@@ -286,10 +291,12 @@ executeWork input exitWith_ actualWork =
 
     -- Exit if the worker has spent more than it is allowed of any of the 
     -- resources it is supposed to keep an eye on.
-    dieOfOveruse done = forever $ do 
-        let IoLimits {..} = input ^. #ioLimits
+    dieOfOveruse done = forever $ do
+        let maxIncomingTrafficMb = input ^. #maxIncomingTrafficMb
+            maxDiskReadMb        = input ^. #maxDiskReadMb
+            maxDiskWriteMb       = input ^. #maxDiskWriteMb
 
-        for_ (input ^. #cpuLimit) $ \cpuLimit -> do 
+        for_ (input ^. #cpuLimit) $ \cpuLimit -> do
             cpuTime <- getCpuTime
             when (cpuTime > cpuLimit) $ done outOfCpuTimeExitCode
 

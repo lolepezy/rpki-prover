@@ -333,8 +333,8 @@ data ResourcesDto = ResourcesDto {
         maxDiskRead        :: Size,
         maxDiskWrite       :: Size,
         -- | Human-readable heads-up when one of the max* fields above has crossed
-        -- half of the corresponding budget in 'RPKI.Config.IoLimits'. Empty for
-        -- scopes an 'IoLimits' isn't configured for (e.g. "root").
+        -- half of the corresponding budget in 'RPKI.Config.WorkerLimits'. Empty for
+        -- scopes a 'RPKI.Config.WorkerLimits' isn't configured for (e.g. "root").
         warnings           :: [Text]
     }
     deriving stock (Eq, Show, Generic)

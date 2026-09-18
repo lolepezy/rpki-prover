@@ -72,7 +72,7 @@ data ResourceUsage = ResourceUsage {
         -- | High-water marks over the runs that happened under this scope, i.e.
         -- the most any single run of it ever downloaded or moved to and from disk.
         -- They are maxima rather than totals because that is what the per-worker
-        -- limits in 'IoLimits' are set against.
+        -- limits in 'RPKI.Config.WorkerLimits' are set against.
         maxIncomingTraffic  :: MaxSize,
         maxDiskRead         :: MaxSize,
         maxDiskWrite        :: MaxSize
