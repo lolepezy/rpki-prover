@@ -327,6 +327,7 @@ test-suite rpki-prover-test
       RPKI.Store.StorableSpec
       RPKI.TestCommons
       RPKI.Validation.TopDownSpec
+      RPKI.WorkerSpec
       Paths_rpki_prover
   hs-source-dirs:
       test

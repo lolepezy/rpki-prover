@@ -33,6 +33,7 @@ import           System.Environment (getEnvironment)
 import           System.IO (stdin, stdout)
 import           System.Posix.Types
 import           System.Posix.Process
+import qualified System.Posix.Signals       as Signals
 
 import           RPKI.AppMonad
 import           RPKI.AppTypes
@@ -350,7 +351,7 @@ data WorkerResult r = WorkerResult {
 -- and do the actual work.
 -- 
 executeWork :: WorkerInput 
-            -> (ExitCode -> IO ()) -- ^ How to exit the worker process.
+            -> (WorkerExit -> IO ()) -- ^ How to exit the worker process.
             -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                            
             -> IO ()
 executeWork input exitWith_ actualWork = 
@@ -359,22 +360,32 @@ executeWork input exitWith_ actualWork =
     -- In this case bail out, it's likely we can do more harm then good
     if input ^. #parentExecutableVersion /= thisExecutableVersion
         then 
-            exitWith_ replacedExecutableExitCode
+            exitWith_ ExecutableReplaced
         else do 
-            exitCode <- newEmptyTMVarIO            
-            let done ec = atomically $ void $ tryPutTMVar exitCode ec
+            workerExit <- newEmptyTMVarIO            
+            let done ec = atomically $ void $ tryPutTMVar workerExit ec
 
             mapM_ (\w -> forkFinally w (const $ pure ())) [
-                    (actualWork input writeWorkerOutput >> done ExitSuccess) 
-                        `IOExc.onException` 
-                        done exceptionExitCode,
+                    doTheWork done,
                     dieIfParentDies done,
                     dieAfterTimeout done,
                     dieOfOveruse done
                 ]
                 
-            exitWith_ =<< atomically (takeTMVar exitCode)
+            exitWith_ =<< atomically (takeTMVar workerExit)
   where            
+    workerId = input ^. #workerId
+
+    -- An exit code on its own says nothing about what went wrong inside, so
+    -- send the exception to the parent before giving up on it.
+    doTheWork done = 
+        (actualWork input writeWorkerOutput >> done WorkerSucceeded)
+            `IOExc.catch` \e -> do 
+                case IOExc.fromException e of 
+                    Just (SomeAsyncException _) -> pure ()
+                    Nothing -> sendLogToParent [i|Worker #{workerId} died with an exception: #{fmtEx e}|]
+                done WorkerException
+
     -- Keep track of who's the current process parent: if it is not the same 
     -- as we started with then parent exited/is killed. Exit the worker as well,
     -- there's no point continuing.
@@ -382,13 +393,13 @@ executeWork input exitWith_ actualWork =
         threadDelay 500_000
         parentId <- getParentProcessID
         when (parentId /= input ^. #initialParentId) $
-            done parentDiedExitCode
+            done ParentDied
 
     -- Time bomb. Wait for the certain timeout and then exit.
     dieAfterTimeout done = do
         let Timebox timebox = input ^. #workerTimeout
         threadDelay $ toMicroseconds timebox
-        done timeoutExitCode
+        done TimedOut
 
     -- Exit if the worker has spent more than it is allowed of any of 
     -- the limits (CPU time, traffic, disk IO).
@@ -402,14 +413,13 @@ executeWork input exitWith_ actualWork =
                 Nothing -> do 
                     threadDelay 1_000_000
                     loop
-                Just (exitCode, reason) -> do 
-                    let workerId = input ^. #workerId
+                Just (workerExit, reason) -> do 
                     sendLogToParent [i|Worker #{workerId} #{reason}, exiting.|]
-                    done exitCode
+                    done workerExit
 
         orNext thisCheck nextCheck = thisCheck >>= maybe nextCheck (pure . Just)
 
-        checkCpuTime :: IO (Maybe (ExitCode, Text))
+        checkCpuTime :: IO (Maybe (WorkerExit, Text))
         checkCpuTime = 
             case input ^. #cpuLimit of 
                 Nothing       -> pure Nothing
@@ -417,10 +427,10 @@ executeWork input exitWith_ actualWork =
                     cpuTime <- getCpuTime
                     pure $ do 
                         guard $ cpuTime > cpuLimit
-                        Just (outOfCpuTimeExitCode, 
+                        Just (OutOfCpuTime, 
                             [i|used #{cpuTime}ms of CPU time, the limit is #{cpuLimit}ms|])
 
-        checkTraffic :: IO (Maybe (ExitCode, Text))
+        checkTraffic :: IO (Maybe (WorkerExit, Text))
         checkTraffic = 
             case input ^. #maxIncomingTrafficMb of 
                 Nothing    -> pure Nothing
@@ -428,10 +438,10 @@ executeWork input exitWith_ actualWork =
                     traffic <- getIncomingTraffic
                     pure $ do 
                         guard $ traffic > mbToSize limit
-                        Just (tooMuchTrafficExitCode, 
+                        Just (TooMuchTraffic, 
                             [i|downloaded #{sizeMb traffic}mb, the limit is #{limit}mb|])
 
-        checkDiskIo :: IO (Maybe (ExitCode, Text))
+        checkDiskIo :: IO (Maybe (WorkerExit, Text))
         checkDiskIo = do 
             let readLimit  = input ^. #maxDiskReadMb
                 writeLimit = input ^. #maxDiskWriteMb
@@ -443,12 +453,12 @@ executeWork input exitWith_ actualWork =
                     let tooMuchRead = do 
                             limit <- readLimit
                             guard $ diskRead > mbToSize limit
-                            Just (tooMuchDiskIoExitCode, 
+                            Just (TooMuchDiskIo, 
                                 [i|read #{sizeMb diskRead}mb from disk, the limit is #{limit}mb|])
                     let tooMuchWritten = do 
                             limit <- writeLimit
                             guard $ diskWrite > mbToSize limit
-                            Just (tooMuchDiskIoExitCode, 
+                            Just (TooMuchDiskIo, 
                                 [i|wrote #{sizeMb diskWrite}mb to disk, the limit is #{limit}mb|])
                     pure $ tooMuchRead <|> tooMuchWritten
 
@@ -492,18 +502,112 @@ rtsMemValue mb = Prelude.show mb <> "m"
 defaultRts :: [String]
 defaultRts = [ "-I0", "-F2", "-Fd4" ]
 
-parentDiedExitCode, timeoutExitCode, outOfCpuTimeExitCode, outOfMemoryExitCode :: ExitCode
-exitKillByTypedProcess, exceptionExitCode, replacedExecutableExitCode :: ExitCode
-tooMuchTrafficExitCode, tooMuchDiskIoExitCode :: ExitCode
-exceptionExitCode    = ExitFailure 99
-parentDiedExitCode   = ExitFailure 111
-outOfCpuTimeExitCode = ExitFailure 113
-tooMuchTrafficExitCode = ExitFailure 114
-tooMuchDiskIoExitCode  = ExitFailure 115
-timeoutExitCode      = ExitFailure 122
-replacedExecutableExitCode = ExitFailure 123
-outOfMemoryExitCode  = ExitFailure 251
-exitKillByTypedProcess = ExitFailure (-2)
+{- | How a worker process ended.
+
+A worker says why it gave up through its exit code, so both sides have to agree
+on the numbers; 'toExitCode' and 'fromExitCode' are that agreement. Every way a
+worker can end is a constructor here, including the ways it doesn't choose
+itself: the RTS's own code for running out of heap, and being killed by a signal.
+-}
+data WorkerExit = WorkerSucceeded
+                -- | The work threw, see 'executeWork'.
+                | WorkerException
+                | ParentDied
+                | OutOfCpuTime
+                | TooMuchTraffic
+                | TooMuchDiskIo
+                | TimedOut
+                | ExecutableReplaced
+                -- | Set by the RTS when the heap grows past @-M@, not by us.
+                | OutOfMemory
+                -- | @System.Process@ reports a process killed by a signal as a
+                -- negative exit code.
+                | KilledBySignal Int
+                | UnknownExit Int
+    deriving stock (Eq, Ord, Show, Generic)
+
+toExitCode :: WorkerExit -> ExitCode
+toExitCode = \case
+    WorkerSucceeded    -> ExitSuccess
+    WorkerException    -> ExitFailure 99
+    ParentDied         -> ExitFailure 111
+    OutOfCpuTime       -> ExitFailure 113
+    TooMuchTraffic     -> ExitFailure 114
+    TooMuchDiskIo      -> ExitFailure 115
+    TimedOut           -> ExitFailure 122
+    ExecutableReplaced -> ExitFailure 123
+    OutOfMemory        -> ExitFailure 251
+    KilledBySignal s   -> ExitFailure (negate s)
+    UnknownExit n      -> ExitFailure n
+
+fromExitCode :: ExitCode -> WorkerExit
+fromExitCode = \case
+    ExitSuccess     -> WorkerSucceeded
+    ExitFailure 99  -> WorkerException
+    ExitFailure 111 -> ParentDied
+    ExitFailure 113 -> OutOfCpuTime
+    ExitFailure 114 -> TooMuchTraffic
+    ExitFailure 115 -> TooMuchDiskIo
+    ExitFailure 122 -> TimedOut
+    ExitFailure 123 -> ExecutableReplaced
+    ExitFailure 251 -> OutOfMemory
+    ExitFailure n
+        | n < 0     -> KilledBySignal (negate n)
+        | otherwise -> UnknownExit n
+
+-- | What the parent says about a worker that came back without a result: the
+-- message to log, the trace to leave behind (if any) and the error to raise
+-- with that same message.
+workerFailure :: WorkerId -> WorkerExit -> (Text, Maybe Trace, Text -> InternalError)
+workerFailure workerId = \case
+    TimedOut ->
+        ([i|Worker #{workerId} execution timed out.|], Just WorkerTimeoutTrace, WorkerTimeout)
+    OutOfCpuTime ->
+        ([i|Worker #{workerId} ran out of CPU time.|], Just WorkerCpuOveruseTrace, WorkerOutOfCpuTime)
+    TooMuchTraffic ->
+        ([i|Worker #{workerId} downloaded too much data.|], Just WorkerIoOveruseTrace, WorkerTooMuchIO)
+    TooMuchDiskIo ->
+        ([i|Worker #{workerId} did too much disk IO.|], Just WorkerIoOveruseTrace, WorkerTooMuchIO)
+    OutOfMemory ->
+        ([i|Worker #{workerId} ran out of memory.|], Nothing, WorkerOutOfMemory)
+    ExecutableReplaced ->
+        ([i|Worker #{workerId} detected that `rpki-prover` binary is different and exited for good.|],
+         Nothing, WorkerDetectedDifferentExecutable)
+    ParentDied ->
+        ([i|Worker #{workerId} exited because its parent process is gone.|], Nothing, InternalError)
+    WorkerException ->
+        -- The worker sends the exception itself over the log bus before it exits,
+        -- so this only has to say that it happened.
+        ([i|Worker #{workerId} died with an exception.|], Nothing, InternalError)
+    KilledBySignal s ->
+        ([i|Worker #{workerId} was killed by #{signalName s}#{killHint s}.|], Nothing, InternalError)
+    UnknownExit n ->
+        ([i|Worker #{workerId} exited with code = #{n}.|], Nothing, InternalError)
+    -- Not reachable from 'runWorkerProcess', which deals with a successful exit
+    -- before it gets here; it is here to keep this function total.
+    WorkerSucceeded ->
+        ([i|Worker #{workerId} exited successfully.|], Nothing, InternalError)
+  where
+    -- Both of these are routine enough to be worth naming: workers that outlive
+    -- their `endOfLife` are SIGKILL-ed by the leftovers cleanup (see
+    -- 'RPKI.Workflow.killWorkers'), and so is a worker the kernel decides to
+    -- reclaim memory from.
+    killHint s | s == sigKILL = ", either by the expired-worker cleanup or by the OOM killer" :: Text
+               | otherwise    = ""
+
+signalName :: Int -> Text
+signalName s = maybe [i|signal #{s}|] (\n -> [i|#{n :: Text} (#{s})|]) $ lookup s knownSignals
+  where
+    knownSignals = [
+            (fromIntegral Signals.sigHUP,  "SIGHUP"),  (fromIntegral Signals.sigINT,  "SIGINT"),
+            (fromIntegral Signals.sigABRT, "SIGABRT"), (fromIntegral Signals.sigKILL, "SIGKILL"),
+            (fromIntegral Signals.sigSEGV, "SIGSEGV"), (fromIntegral Signals.sigPIPE, "SIGPIPE"),
+            (fromIntegral Signals.sigTERM, "SIGTERM"), (fromIntegral Signals.sigXCPU, "SIGXCPU")
+        ]
+
+sigINT, sigKILL :: Int
+sigINT  = fromIntegral Signals.sigINT
+sigKILL = fromIntegral Signals.sigKILL
 
 
 {- | Run a worker for the given parameters and hand back its result.
@@ -589,60 +693,36 @@ runWorkerProcess logger workerInput extraCli workerInfo = do
                     (runConduitRes $ getStderr p .| sinkLog logger)
                     (atomically $ getStdout p)
 
-        case exitCode of  
-            ExitSuccess -> 
+        case fromExitCode exitCode of  
+            WorkerSucceeded -> 
                 case deserialiseOrFail_ $ LBS.toStrict workerStdout of 
                     Left e -> 
                         complain [i|Failed to deserialise stdout, #{e}, worker #{workerId}, stdout = [#{workerStdout}]|]                             
                     Right r -> 
                         pure r            
-            exit@(ExitFailure errorCode)
-                | exit == timeoutExitCode -> do                     
-                    let message = [i|Worker #{workerId} execution timed out.|]
-                    logError logger message
-                    trace WorkerTimeoutTrace
-                    appError $ InternalE $ WorkerTimeout message
-                | exit == outOfCpuTimeExitCode -> do                     
-                    let message = [i|Worker #{workerId} ran out of CPU time.|]
-                    logError logger message
-                    trace WorkerCpuOveruseTrace
-                    appError $ InternalE $ WorkerOutOfCpuTime message                    
-                | exit == tooMuchTrafficExitCode -> do                     
-                    let message = [i|Worker #{workerId} downloaded too much data.|]
-                    logError logger message
-                    trace WorkerIoOveruseTrace
-                    appError $ InternalE $ WorkerTooMuchIO message
-                | exit == tooMuchDiskIoExitCode -> do                     
-                    let message = [i|Worker #{workerId} did too much disk IO.|]
-                    logError logger message
-                    trace WorkerIoOveruseTrace
-                    appError $ InternalE $ WorkerTooMuchIO message
-                | exit == outOfMemoryExitCode -> do                     
-                    let message = [i|Worker #{workerId} ran out of memory.|]
-                    logError logger message                    
-                    appError $ InternalE $ WorkerOutOfMemory message
-                | exit == replacedExecutableExitCode -> do                     
-                    let message = [i|Worker #{workerId} detected that `rpki-prover` binary is different and exited for good.|]
-                    logError logger message                    
-                    appError $ InternalE $ WorkerDetectedDifferentExecutable message                
-                | exit == exitKillByTypedProcess -> do
-                    -- 
-                    -- This is a hack to work around a problem in `readProcess`:
-                    -- it apparently catches an async exception, kills the process (with some signal?)
-                    -- but doesn't rethrow the exception, so all we have is the worker that exited 
-                    -- with error code '-2'.
-                    --
-                    -- TODO try to find a way to fix with `typed-process` features.
-                    -- TODO Otherwise make sure it's safe to assume it's always '-2'.
-                    -- 
-                    -- This logging message is slightly deceiving: it's not that just the worker 
-                    -- was killed, but we also know that there was an asynchronous exception, which 
-                    -- we retrow here to make sure "outer stack" knows about it.
-                    --
-                    logError logger [i|Worker #{workerId} died/killed.|]
-                    throwIO AsyncCancelled                    
-                | otherwise ->     
-                    complain [i|Worker #{workerId} exited with code = #{errorCode}|]
+
+            KilledBySignal s | s == sigINT -> do
+                -- 
+                -- This is a hack to work around a problem in `readProcess`:
+                -- it apparently catches an async exception, kills the process (with some signal?)
+                -- but doesn't rethrow the exception, so all we have is the worker that exited 
+                -- with error code '-2'.
+                --
+                -- TODO try to find a way to fix with `typed-process` features.
+                -- TODO Otherwise make sure it's safe to assume it's always '-2'.
+                -- 
+                -- This logging message is slightly deceiving: it's not that just the worker 
+                -- was killed, but we also know that there was an asynchronous exception, which 
+                -- we retrow here to make sure "outer stack" knows about it.
+                --
+                logError logger [i|Worker #{workerId} died/killed.|]
+                throwIO AsyncCancelled                    
+
+            workerExit -> do 
+                let (message, workerTrace, toError) = workerFailure workerId workerExit
+                logError logger message
+                forM_ workerTrace trace
+                appError $ InternalE $ toError message
 
     complain message = do 
         logError logger message

@@ -167,9 +167,9 @@ executeWorkerProcess = do
     -- turnOffTlsValidation
 
     appContextRef <- newTVarIO Nothing
-    let onExit exitCode = do            
+    let onExit workerExit = do            
             readTVarIO appContextRef >>= maybe (pure ()) closeStorage
-            exitWith exitCode
+            exitWith $ toExitCode workerExit
 
     let runWork :: AppLogger -> (forall a . TheBinary a => a -> IO ()) -> IO ()
         runWork logger resultHandler = do
