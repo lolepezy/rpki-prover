@@ -314,6 +314,7 @@ test-suite rpki-prover-test
       RPKI.Fetch.HttpSpec
       RPKI.FetchSpec
       RPKI.LoggingSpec
+      RPKI.Metrics.ProcessSpec
       RPKI.Orphans
       RPKI.Parse.ObjectParseSpec
       RPKI.RepositorySpec

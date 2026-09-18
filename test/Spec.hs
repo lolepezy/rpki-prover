@@ -20,6 +20,7 @@ import RPKI.Store.StorableSpec
 import RPKI.Validation.TopDownSpec
 import RPKI.Fetch.ErikSpec
 import RPKI.WorkerSpec
+import RPKI.Metrics.ProcessSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
@@ -39,7 +40,8 @@ main = defaultMain $ testGroup "All tests" [
         workflowSpec,
         topDownRegressionGroup,
         storableEncodingSpec,
-        workerSpec
+        workerSpec,
+        processMetricsSpec
 
         -- erikSpec
     ]  
