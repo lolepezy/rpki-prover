@@ -519,11 +519,11 @@ getSystem AppContext {..} = do
                     resolvedFocusToText <$> resolveLocations tx s
 
     ioLimitsForScope = let systemConfig = config ^. #systemConfig in \case
-        "rrdp-fetch"     -> Just $ systemConfig ^. #rrdpWorker
-        "rsync-fetch"    -> Just $ systemConfig ^. #rsyncWorker
-        "erik-fetch"     -> Just $ systemConfig ^. #erikWorker
-        "validation"     -> Just $ systemConfig ^. #validationWorker
-        "cache-clean-up" -> Just $ systemConfig ^. #cleanupWorker
+        "rrdp-fetch"     -> Just $ systemConfig ^. #rrdpWorkerLimits
+        "rsync-fetch"    -> Just $ systemConfig ^. #rsyncWorkerLimits
+        "erik-fetch"     -> Just $ systemConfig ^. #erikWorkerLimits
+        "validation"     -> Just $ systemConfig ^. #validationWorkerLimits
+        "cache-clean-up" -> Just $ systemConfig ^. #cleanupWorkerLimits
         _                -> Nothing
 
     -- A heads-up once a max* reading has crossed half of its configured budget,

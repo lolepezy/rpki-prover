@@ -67,7 +67,7 @@ runErikFetchWorker appContext@AppContext {..} fetchConfig worldVersion relayUris
                 rtsAL "4m",
                 "-Fd1",
                 "--disable-delayed-os-memory-return",
-                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #erikWorker . #memoryMb) ]
+                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #erikWorkerLimits . #memoryMb) ]
 
     scopes <- askScopes
     workerInput <- makeWorkerInput appContext workerId

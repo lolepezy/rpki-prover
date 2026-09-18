@@ -140,11 +140,11 @@ makeWorkerInput AppContext {..} workerId params timeout = do
     limits = workerLimitsFor params
 
     workerLimitsFor = let SystemConfig {..} = config ^. #systemConfig in \case
-        RrdpFetchParams {}    -> rrdpWorker
-        RsyncFetchParams {}   -> rsyncWorker
-        ErikFetchParams {}    -> erikWorker
-        ValidationParams {}   -> validationWorker
-        CacheCleanupParams {} -> cleanupWorker
+        RrdpFetchParams {}    -> rrdpWorkerLimits
+        RsyncFetchParams {}   -> rsyncWorkerLimits
+        ErikFetchParams {}    -> erikWorkerLimits
+        ValidationParams {}   -> validationWorkerLimits
+        CacheCleanupParams {} -> cleanupWorkerLimits
 
 -- | What a worker is still allowed to access after sandboxing itself (Linux
 -- only, see RPKI.Sandbox), 'Nothing' for workers that are not sandboxed.

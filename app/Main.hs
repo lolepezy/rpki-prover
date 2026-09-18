@@ -978,9 +978,9 @@ cliOptionsParser = CLIOptions
     defCacheLifetimeHours     = defCacheLifetime `div` 3600
     Seconds defRrdpRefresh    = cfg ^. #validationConfig . #repositoryRefreshInterval
     Seconds defRsyncRefresh   = cfg ^. #validationConfig . #repositoryRefreshInterval
-    Seconds defRrdpTimeout    = cfg ^. #systemConfig . #rrdpWorker . #workerTimeout
-    Seconds defRsyncTimeout   = cfg ^. #systemConfig . #rsyncWorker . #workerTimeout
-    Seconds defErikTimeout    = cfg ^. #systemConfig . #erikWorker . #workerTimeout
+    Seconds defRrdpTimeout    = cfg ^. #systemConfig . #rrdpWorkerLimits . #workerTimeout
+    Seconds defRsyncTimeout   = cfg ^. #systemConfig . #rsyncWorkerLimits . #workerTimeout
+    Seconds defErikTimeout    = cfg ^. #systemConfig . #erikWorkerLimits . #workerTimeout
     Seconds defErikRefresh    = cfg ^. #erikConf . #erikRefreshInterval
     defHttpApiPort            = cfg ^. #httpApiConf . #port
     defRtrAddress             = rtrCfg ^. #rtrAddress
@@ -990,14 +990,14 @@ cliOptionsParser = CLIOptions
     defMaxTotalTree           = cfg ^. #validationConfig . #maxTotalTreeSize
     defMaxObjSize             = cfg ^. #validationConfig . #maxObjectSize
     defMinObjSize             = cfg ^. #validationConfig . #minObjectSize
-    Seconds defTopDownTimeout = cfg ^. #systemConfig . #validationWorker . #workerTimeout
+    Seconds defTopDownTimeout = cfg ^. #systemConfig . #validationWorkerLimits . #workerTimeout
     defMetricsPrefix          = cfg ^. #metricsPrefix
-    defMaxRrdpMem             = cfg ^. #systemConfig . #rrdpWorker . #memoryMb
-    defMaxRsyncMem            = cfg ^. #systemConfig . #rsyncWorker . #memoryMb
-    defMaxValidMem            = cfg ^. #systemConfig . #validationWorker . #memoryMb
-    defMaxFetchTraffic        = showLimit $ cfg ^. #systemConfig . #rrdpWorker . #maxIncomingTrafficMb
-    defMaxFetchDiskRead       = showLimit $ cfg ^. #systemConfig . #rrdpWorker . #maxDiskReadMb
-    defMaxFetchDiskWrite      = showLimit $ cfg ^. #systemConfig . #rrdpWorker . #maxDiskWriteMb
+    defMaxRrdpMem             = cfg ^. #systemConfig . #rrdpWorkerLimits . #memoryMb
+    defMaxRsyncMem            = cfg ^. #systemConfig . #rsyncWorkerLimits . #memoryMb
+    defMaxValidMem            = cfg ^. #systemConfig . #validationWorkerLimits . #memoryMb
+    defMaxFetchTraffic        = showLimit $ cfg ^. #systemConfig . #rrdpWorkerLimits . #maxIncomingTrafficMb
+    defMaxFetchDiskRead       = showLimit $ cfg ^. #systemConfig . #rrdpWorkerLimits . #maxDiskReadMb
+    defMaxFetchDiskWrite      = showLimit $ cfg ^. #systemConfig . #rrdpWorkerLimits . #maxDiskWriteMb
     showLimit                 = maybe ("unlimited" :: String) show
 
 
@@ -1011,10 +1011,10 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & #parallelism .~ parallelism
         & #rsyncConf . #clientPath .~ fmap apiSecured clientPath
         & #rsyncConf . #enabled .~ not noRsync
-        & maybeSet (#systemConfig . #rsyncWorker . #workerTimeout) (Seconds <$> rsyncTimeout)
+        & maybeSet (#systemConfig . #rsyncWorkerLimits . #workerTimeout) (Seconds <$> rsyncTimeout)
         & #rrdpConf . #enabled .~ not noRrdp
-        & maybeSet (#systemConfig . #rrdpWorker . #workerTimeout) (Seconds <$> rrdpTimeout)
-        & maybeSet (#systemConfig . #erikWorker . #workerTimeout) (Seconds <$> erikTimeout)
+        & maybeSet (#systemConfig . #rrdpWorkerLimits . #workerTimeout) (Seconds <$> rrdpTimeout)
+        & maybeSet (#systemConfig . #erikWorkerLimits . #workerTimeout) (Seconds <$> erikTimeout)
         & maybeSet (#erikConf . #erikRefreshInterval) (Seconds <$> erikRefreshInterval)
         & setErikRelays
         & maybeSet (#erikConf . #downloadParallelism) erikDownloadParallelism
@@ -1028,7 +1028,7 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
                 (if noIncrementalValidation then FullEveryIteration else Incremental)
         & #validationConfig . #validationRFC .~
                 (if allowOverclaiming then ReconsideredRFC else StrictRFC)
-        & maybeSet (#systemConfig . #validationWorker . #workerTimeout) (Seconds <$> topDownTimeout)
+        & maybeSet (#systemConfig . #validationWorkerLimits . #workerTimeout) (Seconds <$> topDownTimeout)
         & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
         & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
         & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
@@ -1040,15 +1040,15 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & #localExceptions .~ apiSecured localExceptions
         & #withValidityApi .~ withValidityApi
         & maybeSet #metricsPrefix (convert <$> metricsPrefix)
-        & maybeSet (#systemConfig . #rsyncWorker . #memoryMb) maxRsyncFetchMemory
-        & maybeSet (#systemConfig . #rrdpWorker . #memoryMb) maxRrdpFetchMemory
-        & maybeSet (#systemConfig . #validationWorker . #memoryMb) maxValidationMemory
+        & maybeSet (#systemConfig . #rsyncWorkerLimits . #memoryMb) maxRsyncFetchMemory
+        & maybeSet (#systemConfig . #rrdpWorkerLimits . #memoryMb) maxRrdpFetchMemory
+        & maybeSet (#systemConfig . #validationWorkerLimits . #memoryMb) maxValidationMemory
         -- Both fetchers get the same IO budget, they do the same kind of work
-        & maybeSet (#systemConfig . #rrdpWorker . #maxIncomingTrafficMb) (Just <$> maxFetchTrafficMb)
-        & maybeSet (#systemConfig . #rrdpWorker . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
-        & maybeSet (#systemConfig . #rrdpWorker . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
-        & maybeSet (#systemConfig . #rsyncWorker . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
-        & maybeSet (#systemConfig . #rsyncWorker . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
+        & maybeSet (#systemConfig . #rrdpWorkerLimits . #maxIncomingTrafficMb) (Just <$> maxFetchTrafficMb)
+        & maybeSet (#systemConfig . #rrdpWorkerLimits . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
+        & maybeSet (#systemConfig . #rrdpWorkerLimits . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
+        & maybeSet (#systemConfig . #rsyncWorkerLimits . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
+        & maybeSet (#systemConfig . #rsyncWorkerLimits . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
   where
     cpuCount'    = fromMaybe (baseConfig ^. #parallelism . #cpuCount) cpuCount
 

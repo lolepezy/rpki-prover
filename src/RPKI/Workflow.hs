@@ -591,7 +591,7 @@ runAll appContext@AppContext {..} tals = do
 
         -- Temporary RRDP files cannot meaningfully live longer than that
         let Seconds (fromIntegral -> maxTimeout :: NominalDiffTime) =
-                10 + config ^. typed @SystemConfig . #rrdpWorker . #workerTimeout
+                10 + config ^. typed @SystemConfig . #rrdpWorkerLimits . #workerTimeout
 
         -- Do not touch "erik" subdirectory, it has it's own cleanup mechanism
         forM_ (filter (/= "erik") files) $ \file ->
@@ -659,12 +659,12 @@ runAll appContext@AppContext {..} tals = do
                         rtsN maxCpuAvailable, 
                         rtsA "24m", 
                         rtsAL "128m", 
-                        rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorker . #memoryMb)
+                        rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerLimits . #memoryMb)
                     ])
 
         r <- runValidatorIO
                 (newScopes "validator") $ do
-                    let timeout = config ^. typed @SystemConfig . #validationWorker . #workerTimeout
+                    let timeout = config ^. typed @SystemConfig . #validationWorkerLimits . #workerTimeout
                     workerInput <- makeWorkerInput appContext workerId
                                     ValidationParams {..}
                                     (Timebox timeout)
@@ -682,11 +682,11 @@ runAll appContext@AppContext {..} tals = do
                     rtsN 2, 
                     rtsA "24m", 
                     rtsAL "64m", 
-                    rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorker . #memoryMb) ]
+                    rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerLimits . #memoryMb) ]
 
         r <- runValidatorIO
                 (newScopes "cache-clean-up") $ do
-                    let timeout = config ^. typed @SystemConfig . #cleanupWorker . #workerTimeout
+                    let timeout = config ^. typed @SystemConfig . #cleanupWorkerLimits . #workerTimeout
                     workerInput <- makeWorkerInput appContext workerId
                                         (CacheCleanupParams worldVersion)
                                         (Timebox timeout)

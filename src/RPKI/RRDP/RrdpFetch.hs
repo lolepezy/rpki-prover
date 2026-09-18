@@ -71,7 +71,7 @@ runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repositor
                 rtsAL "4m", 
                 "-Fd1",
                 "--disable-delayed-os-memory-return",
-                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rrdpWorker . #memoryMb) ]
+                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rrdpWorkerLimits . #memoryMb) ]
 
     scopes <- askScopes
 

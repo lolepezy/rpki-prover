@@ -220,11 +220,11 @@ data WorkerLimits = WorkerLimits {
     deriving anyclass (TheBinary)
 
 data SystemConfig = SystemConfig {
-        rsyncWorker      :: WorkerLimits,
-        rrdpWorker       :: WorkerLimits,
-        erikWorker       :: WorkerLimits,
-        validationWorker :: WorkerLimits,
-        cleanupWorker    :: WorkerLimits
+        rsyncWorkerLimits      :: WorkerLimits,
+        rrdpWorkerLimits       :: WorkerLimits,
+        erikWorkerLimits       :: WorkerLimits,
+        validationWorkerLimits :: WorkerLimits,
+        cleanupWorkerLimits    :: WorkerLimits
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -301,7 +301,7 @@ defaultConfig = Config {
         port = 9999
     },
     systemConfig = SystemConfig {
-        rsyncWorker = WorkerLimits {
+        rsyncWorkerLimits = WorkerLimits {
             workerTimeout  = 11 * minutes,
             cpuLimit = 30 * minutes,
             memoryMb = 1024,
@@ -312,7 +312,7 @@ defaultConfig = Config {
             -- it's pretty large mainly because of the SQLite WAL (and other) amplifications
             maxDiskWriteMb       = Just $ 8 * gigabytes
         },
-        rrdpWorker = WorkerLimits {
+        rrdpWorkerLimits = WorkerLimits {
             workerTimeout  = 11 * minutes,
             cpuLimit = 30 * minutes,
             memoryMb = 1024,
@@ -320,7 +320,7 @@ defaultConfig = Config {
             maxDiskReadMb        = Just $ 6 * gigabytes,
             maxDiskWriteMb       = Just $ 8 * gigabytes
         },
-        erikWorker = WorkerLimits {
+        erikWorkerLimits = WorkerLimits {
             workerTimeout  = 15 * minutes,
             cpuLimit = 30 * minutes,
             memoryMb = 1024,
@@ -328,7 +328,7 @@ defaultConfig = Config {
             maxDiskReadMb        = Just $ 6 * gigabytes,
             maxDiskWriteMb       = Just $ 8 * gigabytes
         },
-        validationWorker = WorkerLimits {
+        validationWorkerLimits = WorkerLimits {
             workerTimeout  = 1 * hour,
             cpuLimit = 3 * hour,
             memoryMb = 2048,
@@ -338,7 +338,7 @@ defaultConfig = Config {
             -- Saving payloads and shortcuts is not much
             maxDiskWriteMb       = Just gigabytes
         },
-        cleanupWorker = WorkerLimits {
+        cleanupWorkerLimits = WorkerLimits {
             workerTimeout  = 300,
             -- Cleanup runs with 2 capabilities (-N2).
             cpuLimit = 20 * minutes,
@@ -430,9 +430,9 @@ defaultTalUrls = [
 newFetchConfig :: Config -> FetchConfig
 newFetchConfig config = let
         SystemConfig {..} = config ^. typed @SystemConfig
-        rsyncTimeout = rsyncWorker ^. #workerTimeout
-        rrdpTimeout  = rrdpWorker ^. #workerTimeout
-        erikTimeout  = erikWorker ^. #workerTimeout
+        rsyncTimeout = rsyncWorkerLimits ^. #workerTimeout
+        rrdpTimeout  = rrdpWorkerLimits ^. #workerTimeout
+        erikTimeout  = erikWorkerLimits ^. #workerTimeout
         fetchLaunchWaitDuration = Seconds 30
         minFetchInterval = Seconds 30
         maxFetchInterval = Seconds 300
