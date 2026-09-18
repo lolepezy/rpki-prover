@@ -9,6 +9,9 @@ module RPKI.Workflow (
     runCacheCleanup
 ) where
 
+import           Effectful                       (Eff, (:>))
+import           Effectful.Timeout               (Timeout)
+
 import           Control.Concurrent              as Conc
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
@@ -646,12 +649,31 @@ runAll appContext@AppContext {..} tals = do
     --     
     runValidationWorker worldVersion talsToValidate =
         runValidatorIO (newScopes "validator") $
-            runWorker appContext ValidationParams {..} Nothing
+            withWorkerTimeout appContext ValidationWorker "Validation" $
+                runWorker appContext ValidationParams {..} Nothing
 
     runCleanUpWorker worldVersion = 
-        runValidatorIO (newScopes "cache-clean-up") $ do
-            CacheCleanupResult r <- runWorker appContext (CacheCleanupParams worldVersion) Nothing
-            pure r
+        runValidatorIO (newScopes "cache-clean-up") $ 
+            withWorkerTimeout appContext CacheCleanupWorker "Cache cleanup" $ do
+                CacheCleanupResult r <- runWorker appContext (CacheCleanupParams worldVersion) Nothing
+                pure r
+
+
+{- | A worker watches its own timeout and exits when it runs out, so normally
+     this never fires. It is the parent's backstop for when the worker can't do
+     that -- otherwise there is nothing to stop the workflow waiting on a wedged
+     process until the leftovers cleanup happens to reap it. The fetchers in
+     'RPKI.Fetch.Fetch' are wrapped the same way.
+-}
+withWorkerTimeout :: (ValidatorIO es, Timeout :> es) 
+                    => AppContext s -> WorkerType -> Text.Text -> Eff es a -> Eff es a
+withWorkerTimeout AppContext {..} workerType what work = do
+    let totalTimeout = workerTypeLimits config workerType ^. #workerTimeout + timeToKillItself
+    timeoutVT totalTimeout work $ do
+        let message = [i|#{what} worker didn't finish after #{totalTimeout}.|]
+        logError logger message
+        trace WorkerTimeoutTrace
+        appError $ InternalE $ WorkerTimeout message
 
 
 -- | Read SLURM files, if there are any configured. Only the main process
