@@ -22,7 +22,7 @@ import qualified Data.List                  as List
 import qualified Data.Map.Strict            as Map
 import qualified Data.Text                  as Text
 
-import           Data.Hourglass (Seconds)
+import           Data.Hourglass (Seconds(..))
 import           Data.String.Interpolate.IsString
 import           Data.Conduit.Process.Typed
 
@@ -201,10 +201,10 @@ workerSpecFor config params = WorkerSpec {..}
     -- The world version every worker runs for, plus whatever identifies this
     -- particular run within its kind.
     (worldVersion, detail) = case params of
-        RrdpFetchParams { worldVersion = v, rrdpRepository }  ->
-            (v, Just $ unURI $ getURL rrdpRepository)
-        RsyncFetchParams { worldVersion = v, rsyncRepository } ->
-            (v, Just $ unURI $ getURL rsyncRepository)
+        RrdpFetchParams { worldVersion = v, rrdpRepository = repo }  ->
+            (v, Just $ unURI $ getURL repo)
+        RsyncFetchParams { worldVersion = v, rsyncRepository = repo } ->
+            (v, Just $ unURI $ getURL repo)
         ErikFetchParams { worldVersion = v, fqdn } ->
             (v, Just $ unFQDN fqdn)
         ValidationParams { worldVersion = v, talsToValidate } ->
@@ -216,13 +216,9 @@ workerSpecFor config params = WorkerSpec {..}
     cpuCount = fromIntegral $ config ^. #parallelism . #cpuCount
 
     -- All three fetchers are tuned the same way and only differ in how many
-    -- capabilities they get. `--disable-delayed-os-memory-return` keeps their
-    -- RSS close to what they actually use, which matters because there are
-    -- many of them alive at once and because RSS is what gets reported.
-    fetcherRts capabilities = [
-            rtsN capabilities, rtsA "4m", rtsAL "4m",
-            "-Fd1", "--disable-delayed-os-memory-return"
-        ]
+    -- capabilities they get: a small nursery, and `-Fd1` to give heap back
+    -- quickly, since they are short-lived and many of them are alive at once.
+    fetcherRts capabilities = [ rtsN capabilities, rtsA "4m", rtsAL "4m", "-Fd1" ]
 
     rtsOptions = case workerType of
         RrdpFetchWorker  -> fetcherRts 1
@@ -340,6 +336,11 @@ newtype ErrorResult = ErrorResult Text
     deriving anyclass (TheBinary)              
 
 data WorkerResult r = WorkerResult {
+        -- | 'Left' carries no @r@, and 'Data.Store' tags the 'Either' before
+        -- either branch, so a parent expecting, say, @WorkerResult RrdpFetchResult@
+        -- can still decode the @WorkerResult ()@ that Main's @exec@ writes when
+        -- the worker fails before it knows what it was going to produce. That is
+        -- relied upon; don't give the error branch a payload of its own.
         payload   :: Either ErrorResult r,        
         clockTime :: TimeMs,
         stats     :: ProcessStats
@@ -362,9 +363,24 @@ executeWork input exitWith_ actualWork =
         then 
             exitWith_ ExecutableReplaced
         else do 
+            Now startedAt <- thisInstant
             workerExit <- newEmptyTMVarIO            
-            let done ec = atomically $ void $ tryPutTMVar workerExit ec
+            -- Whoever gets here first decides how the worker ends; the others
+            -- are too late and must not report anything.
+            firstOut <- newTVarIO True
+            let done ec = do 
+                    mine <- atomically $ stateTVar firstOut $ \isFirst -> (isFirst, False)
+                    when mine $ 
+                        -- Before the exit, not after: as soon as the TMVar is
+                        -- filled the main thread starts shutting the worker down.
+                        reportResourceUsage startedAt ec 
+                            `IOExc.finally` atomically (void $ tryPutTMVar workerExit ec)
 
+            -- 'forkFinally' with a handler that does nothing, rather than
+            -- 'forkIO': an exception escaping one of these threads would
+            -- otherwise reach the default handler, which prints it straight to
+            -- stderr -- and in a worker stderr is the message bus, where raw
+            -- text is not something the parent can read.
             mapM_ (\w -> forkFinally w (const $ pure ())) [
                     doTheWork done,
                     dieIfParentDies done,
@@ -375,6 +391,25 @@ executeWork input exitWith_ actualWork =
             exitWith_ =<< atomically (takeTMVar workerExit)
   where            
     workerId = input ^. #workerId
+
+    {- | A worker that is killed for overuse or times out never gets to return a
+         'WorkerResult', so the resource usage of exactly the runs worth looking
+         at used to be missing from the metrics entirely. Send it over the bus
+         instead, where it lands in the same handler as the usage the parent
+         reports itself for a worker that finished.
+
+         Not done when the work completed (the stats travel in the result) or
+         when the parent is gone (there is nobody left to tell).
+    -}
+    reportResourceUsage startedAt = \case 
+        WorkerSucceeded -> pure ()
+        ParentDied      -> pure ()
+        _ -> do 
+            Now now <- thisInstant
+            stats   <- processStat
+            sendToParent $ SystemMetricsM $ resourceUsageMetric 
+                    (workerTypeName $ workerTypeOf $ input ^. #params)
+                    (durationMs startedAt now) stats
 
     -- An exit code on its own says nothing about what went wrong inside, so
     -- send the exception to the parent before giving up on it.
@@ -492,6 +527,12 @@ rtsMemValue mb = Prelude.show mb <> "m"
 
 -- Don't do idle GC, it only spins the CPU without any purpose.
 --
+-- `--disable-delayed-os-memory-return` applies to every worker: without it the
+-- RTS releases freed memory with MADV_FREE, which leaves the pages counted in
+-- RSS until the kernel actually needs them. Workers are the processes whose RSS
+-- is watched and reported ('statProcessRss'), and comparing those numbers only
+-- makes sense if they all account for memory the same way.
+--
 -- -F and -Fd are pinned to the RTS defaults on purpose. The main process bakes
 -- in a tighter -F/-Fd to keep its own long-lived heap close to its live data,
 -- and since workers are the same executable they would otherwise inherit that
@@ -500,7 +541,7 @@ rtsMemValue mb = Prelude.show mb <> "m"
 -- Per-worker flags are appended after these and still override them (the rrdp
 -- and rsync workers set -Fd1 of their own).
 defaultRts :: [String]
-defaultRts = [ "-I0", "-F2", "-Fd4" ]
+defaultRts = [ "-I0", "-F2", "-Fd4", "--disable-delayed-os-memory-return" ]
 
 {- | How a worker process ended.
 
@@ -609,6 +650,12 @@ sigINT, sigKILL :: Int
 sigINT  = fromIntegral Signals.sigINT
 sigKILL = fromIntegral Signals.sigKILL
 
+
+-- | How much longer than its own timeout the parent gives a worker before
+-- stepping in: enough for the worker to notice and exit by itself, so that its
+-- own, more specific, reason for stopping is the one that gets reported.
+timeToKillItself :: Seconds
+timeToKillItself = Seconds 5
 
 {- | Run a worker for the given parameters and hand back its result.
 
