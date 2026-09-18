@@ -366,6 +366,15 @@ msgToBs msg = let
     EncodedBase64 bs = encodeBase64 $ DecodedBase64 $ serialise_ msg
     in bs
 
+{- Low-level API for the same thing, in case Logger is not available by some reason.
+   Reports errors.
+-}
+sendLogToParent :: MonadIO m => Text -> m ()
+sendLogToParent message = liftIO $ do 
+    logMessage <- createLogMessage ErrorL message
+    C8.hPut stderr $ msgToBs (LogM logMessage) <> C8.singleton eol
+    hFlush stderr
+
 bsToMsg :: BS.ByteString -> Either Text BusMessage
 bsToMsg bs = 
     case decodeBase64 (EncodedBase64 bs) ("Broken base64 input" :: Text) of 

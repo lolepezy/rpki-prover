@@ -13,8 +13,8 @@ import           Control.Concurrent.STM
 import           Control.Lens
 
 import           Conduit
-import           Data.Foldable (for_)
-import           Data.Maybe (fromMaybe, isJust)
+import           Control.Applicative ((<|>))
+import           Data.Maybe (fromMaybe, isNothing)
 import           Data.Traversable (for)
 import           Data.Text (Text, unpack)
 import qualified Data.ByteString.Lazy       as LBS
@@ -290,28 +290,66 @@ executeWork input exitWith_ actualWork =
         done timeoutExitCode
 
     -- Exit if the worker has spent more than it is allowed of any of the 
-    -- resources it is supposed to keep an eye on.
-    dieOfOveruse done = forever $ do
-        let maxIncomingTrafficMb = input ^. #maxIncomingTrafficMb
-            maxDiskReadMb        = input ^. #maxDiskReadMb
-            maxDiskWriteMb       = input ^. #maxDiskWriteMb
+    
+    dieOfOveruse done = loop
+      where
+        loop = do 
+            -- Stop at the first limit that is exceeded, that's the one the 
+            -- exit code is going to be about.
+            overuse <- checkCpuTime `orNext` checkTraffic `orNext` checkDiskIo
+            case overuse of 
+                Nothing -> do 
+                    threadDelay 1_000_000
+                    loop
+                Just (exitCode, reason) -> do 
+                    let workerId = input ^. #workerId
+                    sendLogToParent [i|Worker #{workerId} #{reason}, exiting.|]
+                    done exitCode
 
-        for_ (input ^. #cpuLimit) $ \cpuLimit -> do
-            cpuTime <- getCpuTime
-            when (cpuTime > cpuLimit) $ done outOfCpuTimeExitCode
+        orNext thisCheck nextCheck = thisCheck >>= maybe nextCheck (pure . Just)
 
-        for_ maxIncomingTrafficMb $ \limit -> do 
-            traffic <- getIncomingTraffic
-            when (traffic > mbToSize limit) $ done tooMuchTrafficExitCode
+        checkCpuTime :: IO (Maybe (ExitCode, Text))
+        checkCpuTime = 
+            case input ^. #cpuLimit of 
+                Nothing       -> pure Nothing
+                Just cpuLimit -> do 
+                    cpuTime <- getCpuTime
+                    pure $ do 
+                        guard $ cpuTime > cpuLimit
+                        Just (outOfCpuTimeExitCode, 
+                            [i|used #{cpuTime}ms of CPU time, the limit is #{cpuLimit}ms|])
 
-        when (isJust maxDiskReadMb || isJust maxDiskWriteMb) $ do 
-            DiskIO {..} <- getProcessDiskIO
-            for_ maxDiskReadMb $ \limit -> 
-                when (diskRead > mbToSize limit) $ done tooMuchDiskIoExitCode
-            for_ maxDiskWriteMb $ \limit -> 
-                when (diskWrite > mbToSize limit) $ done tooMuchDiskIoExitCode
+        checkTraffic :: IO (Maybe (ExitCode, Text))
+        checkTraffic = 
+            case input ^. #maxIncomingTrafficMb of 
+                Nothing    -> pure Nothing
+                Just limit -> do 
+                    traffic <- getIncomingTraffic
+                    pure $ do 
+                        guard $ traffic > mbToSize limit
+                        Just (tooMuchTrafficExitCode, 
+                            [i|downloaded #{sizeMb traffic}mb, the limit is #{limit}mb|])
 
-        threadDelay 1_000_000
+        checkDiskIo :: IO (Maybe (ExitCode, Text))
+        checkDiskIo = do 
+            let readLimit  = input ^. #maxDiskReadMb
+                writeLimit = input ^. #maxDiskWriteMb
+            if isNothing readLimit && isNothing writeLimit 
+                then pure Nothing
+                else do 
+                    -- One look at /proc for both of them
+                    DiskIO {..} <- getProcessDiskIO
+                    let tooMuchRead = do 
+                            limit <- readLimit
+                            guard $ diskRead > mbToSize limit
+                            Just (tooMuchDiskIoExitCode, 
+                                [i|read #{sizeMb diskRead}mb from disk, the limit is #{limit}mb|])
+                    let tooMuchWritten = do 
+                            limit <- writeLimit
+                            guard $ diskWrite > mbToSize limit
+                            Just (tooMuchDiskIoExitCode, 
+                                [i|wrote #{sizeMb diskWrite}mb to disk, the limit is #{limit}mb|])
+                    pure $ tooMuchRead <|> tooMuchWritten
 
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
