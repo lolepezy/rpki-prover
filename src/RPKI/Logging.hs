@@ -269,8 +269,11 @@ withLogger LogConfig {..} f = do
     hSetBuffering commonLogStream LineBuffering    
     hSetBuffering rtrLogStream LineBuffering    
     
+    -- One write, not two: the worker's watchdog threads write to the same
+    -- stderr through 'sendToParent' without going through this queue, and a
+    -- message split across two writes could be interleaved with one of theirs.
     let logToStream stream t = 
-            mapM_ (BS.hPut stream) [t, C8.singleton eol]
+            BS.hPut stream $ t <> C8.singleton eol
 
     let logRaw = logToStream commonLogStream
     let logRtr = logToStream rtrLogStream    
@@ -372,7 +375,14 @@ msgToBs msg = let
 sendLogToParent :: MonadIO m => Text -> m ()
 sendLogToParent message = liftIO $ do 
     logMessage <- createLogMessage ErrorL message
-    C8.hPut stderr $ msgToBs (LogM logMessage) <> C8.singleton eol
+    sendToParent $ LogM logMessage
+
+-- | Put a message on the bus without going through the logger, for code that
+-- runs outside 'withLogger' -- i.e. the worker's watchdog threads, which have
+-- no 'AppLogger' to hand. The parent reads it the same way either way.
+sendToParent :: MonadIO m => BusMessage -> m ()
+sendToParent message = liftIO $ do 
+    C8.hPut stderr $ msgToBs message <> C8.singleton eol
     hFlush stderr
 
 bsToMsg :: BS.ByteString -> Either Text BusMessage
