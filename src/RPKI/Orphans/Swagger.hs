@@ -241,10 +241,11 @@ instance ToSchema a => ToSchema (RSet a) where
 
 instance ToSchema RtrState
 instance ToSchema BGPSecPayload
+instance ToSchema Aspa
 instance ToSchema SerialNumber
 instance ToSchema RtrSessionId
 instance ToSchema a => ToSchema (Deq.Deque a) where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
-instance (ToSchema a, ToSchema b) => ToSchema (GenDiffs a b)
+instance (ToSchema a, ToSchema b, ToSchema c) => ToSchema (GenDiffs a b c)
 instance ToSchema a => ToSchema (Diff a)    

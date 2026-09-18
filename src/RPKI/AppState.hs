@@ -79,8 +79,12 @@ data AppState = AppState {
     } deriving stock (Generic)
 
 
-mkRtrPayloads :: PerTA Vrps -> Set BGPSecPayload -> RtrPayloads
-mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrpsPackedBy cmpPacked4 cmpPacked6 $ allTAs vrps, .. }
+mkRtrPayloads :: PerTA Vrps -> Set BGPSecPayload -> Set Aspa -> RtrPayloads
+mkRtrPayloads vrps bgpSec aspas = RtrPayloads { 
+        uniqueVrps = uniqVrpsPackedBy cmpPacked4 cmpPacked6 $ allTAs vrps, 
+        aspas = mergeAspasByCustomer aspas,
+        .. 
+    }
 
 -- 
 {- | What the root process knows about a relay, folded from worker reports.
@@ -272,6 +276,7 @@ filterWithSLURM :: RtrPayloads -> Slurm -> RtrPayloads
 filterWithSLURM RtrPayloads {..} slurm =     
     mkRtrPayloads (slurm `applySlurmToVrps` vrps) 
                   (slurm `applySlurmBgpSec` bgpSec)
+                  aspas
 
 -- TODO Make it more generic for things that need to be recomoputed for each version 
 -- and things that are computed on-demand.

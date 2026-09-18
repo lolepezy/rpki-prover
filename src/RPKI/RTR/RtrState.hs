@@ -25,13 +25,13 @@ newDiff :: Ord a => Diff a
 newDiff = Diff mempty mempty
 
 newRtrDiff :: RtrDiffs
-newRtrDiff = GenDiffs newDiff newDiff
+newRtrDiff = GenDiffs newDiff newDiff newDiff
 
 isEmptyDiff :: Diff a -> Bool
 isEmptyDiff Diff {..} = Set.null added && Set.null deleted
 
 emptyDiffs :: RtrDiffs -> Bool
-emptyDiffs GenDiffs {..} = isEmptyDiff vrpDiff && isEmptyDiff bgpSecDiff
+emptyDiffs GenDiffs {..} = isEmptyDiff vrpDiff && isEmptyDiff bgpSecDiff && isEmptyDiff aspaDiff
 
 
 newRtrState :: WorldVersion -> Int -> RtrState
@@ -67,11 +67,7 @@ updatedRtrState RtrState {..} worldVersion diff =
         (diffs', newTotalSize) =
             shrinkUntilSizeFits
                 (let !z = (newSerial, diff) in Deq.cons z diffs)
-                (let v = vrpDiff diff
-                     b = bgpSecDiff diff
-                    in totalDiffSize +
-                        Set.size (added v) + Set.size (deleted v) +
-                        Set.size (added b) + Set.size (deleted b))
+                (totalDiffSize + diffSize diff)
             where
                 shrinkUntilSizeFits newDiffs@[_] newSize = (newDiffs, newSize)
                 shrinkUntilSizeFits newDiffs newSize =
@@ -79,13 +75,16 @@ updatedRtrState RtrState {..} worldVersion diff =
                         then
                             case Deq.unsnoc newDiffs of
                                 Nothing -> (newDiffs, newSize)
-                                Just ((_, removedDiff), restDiffs) -> let
-                                        v = vrpDiff removedDiff
-                                        b = bgpSecDiff removedDiff
-                                    in shrinkUntilSizeFits restDiffs $
-                                            newSize - Set.size (added v) - Set.size (deleted v) -
-                                                      Set.size (added b) - Set.size (deleted b)
+                                Just ((_, removedDiff), restDiffs) -> 
+                                    shrinkUntilSizeFits restDiffs $ newSize - diffSize removedDiff
                         else (newDiffs, newSize)
+
+
+-- | Total number of payload items added or deleted by the diff.
+diffSize :: GenDiffs a b c -> Int
+diffSize GenDiffs {..} = size vrpDiff + size bgpSecDiff + size aspaDiff
+  where
+    size Diff {..} = Set.size added + Set.size deleted
 
 
 -- | Return all the diffs starting from some serial if we have this data.
@@ -98,13 +97,14 @@ diffsFromSerial RtrState {..} clientSerial =
 
 
 -- | Transform a list of diffs into one diff that doesn't contain duplicates
--- or alternating 'add' and 'remove' operations for the same RTR payload (VRP or BGPSec).
+-- or alternating 'add' and 'remove' operations for the same RTR payload (VRP, BGPSec or ASPA).
 -- 
-squashDiffs :: (Ord a, Ord b) => [(SerialNumber, GenDiffs a b)] -> GenDiffs a b
+squashDiffs :: (Ord a, Ord b, Ord c) => [(SerialNumber, GenDiffs a b c)] -> GenDiffs a b c
 squashDiffs diffs =
     GenDiffs {
         vrpDiff    = foldr (squash . (^. #vrpDiff)) newDiff sortedDiffs,
-        bgpSecDiff = foldr (squash . (^. #bgpSecDiff)) newDiff sortedDiffs
+        bgpSecDiff = foldr (squash . (^. #bgpSecDiff)) newDiff sortedDiffs,
+        aspaDiff   = foldr (squash . (^. #aspaDiff)) newDiff sortedDiffs
     }
   where
     sortedDiffs = map snd $ List.sortOn fst diffs
@@ -148,7 +148,8 @@ evalDiffs :: RtrPayloads -> RtrPayloads -> RtrDiffs
 evalDiffs previous current =
     GenDiffs {
         vrpDiff    = setDiffVrps (uniqueVrps previous) (uniqueVrps current),
-        bgpSecDiff = setDiff (bgpSec previous) (bgpSec current)
+        bgpSecDiff = setDiff (bgpSec previous) (bgpSec current),
+        aspaDiff   = setDiff (aspas previous) (aspas current)
     }
 
 

@@ -1430,7 +1430,8 @@ getRtrPayloads :: MonadIO m => Tx 'RO -> WorldVersion -> m (Maybe RtrPayloads)
 getRtrPayloads tx worldVersion = liftIO $ runMaybeT $ do
     vrps <- MaybeT $ Just <$> getVrps tx worldVersion
     bgps <- MaybeT $ getBgps tx worldVersion
-    pure $ mkRtrPayloads vrps bgps
+    aspas <- MaybeT $ getAspas tx worldVersion
+    pure $ mkRtrPayloads vrps bgps aspas
 
 
 -- ---------------------------------------------------------------------------
