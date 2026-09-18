@@ -621,15 +621,24 @@ validateCaNoLimitChecks
         Right ppAccess -> do                
             let caFetcheables = getFetchables publicationPoints ppAccess
 
+            -- Only the PPs of the protocols that are enabled can be fetched: with 
+            -- '--no-rrdp'/'--no-rsync' the disabled protocol must neither get a fetcher 
+            -- of its own nor be used as a fallback for the other one. If everything is 
+            -- disabled, fall back to the full PP access, it is only used for reporting.
+            let fetcheablePPs = fromMaybe ppAccess $ filterPPAccess config ppAccess
+
             -- Add these PPs to the validation-wide set of fetcheables, 
             -- i.e. all newly discovered publication points/repositories                        
-            mergeFetcheables caFetcheables
+            mergeFetcheables caFetcheables $ 
+                map fst $ getFetchables publicationPoints fetcheablePPs
 
             -- Do not validate if nothing was fetched for this CA
             -- otherwise we'll have a lot of useless errors about 
-            -- missing manifests, so just don't go there
+            -- missing manifests, so just don't go there.
+            -- Note that it is `caFetcheables`, i.e. all the PPs of the CA and not only 
+            -- the fetcheable ones: the cache doesn't care which protocol filled it.
             unless (all ((== Pending) . snd) caFetcheables) $ do   
-                let primaryUrl = getPrimaryRepositoryUrl publicationPoints ppAccess
+                let primaryUrl = getPrimaryRepositoryUrl publicationPoints fetcheablePPs
                 let validateWithPpScope =
                         vFocusOn PPFocus primaryUrl $
                             metricFocusOn PPFocus primaryUrl $
@@ -640,11 +649,17 @@ validateCaNoLimitChecks
                     CaShort c ->
                         vFocusOn ObjectFocus (c ^. #key) validateWithPpScope
   where
-    mergeFetcheables caFetcheables =
+    -- The sanity check is done on all the PPs of the CA, `caFetcheables`, and not on 
+    -- the fetcheable ones, so that it doesn't depend on the configuration.
+    mergeFetcheables caFetcheables fetcheableUrls =
         case map fst caFetcheables of 
             -- Expect either one of two PPs per CA
-            primary : (listToMaybe -> fallback) -> do 
-                liftIO $ atomically $ modifyTVar' fetcheables (<> newFetcheables primary fallback)
+            _ : _ -> 
+                case fetcheableUrls of 
+                    -- Every PP of this CA uses a protocol that is disabled, nothing to fetch
+                    []                                  -> pure ()
+                    primary : (listToMaybe -> fallback) -> 
+                        liftIO $ atomically $ modifyTVar' fetcheables (<> newFetcheables primary fallback)
             weirdCaUrls -> do 
                 logError logger [i|Found CA certificate with uncommon publication points: #{weirdCaUrls}.|]
                 appError $ ValidationE $ WeirdCaPublicationPoints weirdCaUrls                        
