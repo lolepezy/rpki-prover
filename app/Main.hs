@@ -976,8 +976,8 @@ cliOptionsParser = CLIOptions
     Seconds defRevalidation   = cfg ^. #validationConfig . #revalidationInterval
     Seconds defCacheLifetime  = cfg ^. #longLivedCacheLifeTime
     defCacheLifetimeHours     = defCacheLifetime `div` 3600
-    Seconds defRrdpRefresh    = cfg ^. #validationConfig . #repositoryRefreshInterval
-    Seconds defRsyncRefresh   = cfg ^. #validationConfig . #repositoryRefreshInterval
+    Seconds defRrdpRefresh    = cfg ^. #rrdpConf . #repositoryRefreshInterval
+    Seconds defRsyncRefresh   = cfg ^. #rsyncConf . #repositoryRefreshInterval
     Seconds defRrdpTimeout    = cfg ^. #systemConfig . #rrdpWorkerLimits . #workerTimeout
     Seconds defRsyncTimeout   = cfg ^. #systemConfig . #rsyncWorkerLimits . #workerTimeout
     Seconds defErikTimeout    = cfg ^. #systemConfig . #erikWorkerLimits . #workerTimeout
@@ -1020,8 +1020,8 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#erikConf . #downloadParallelism) erikDownloadParallelism
         & maybeSet (#erikConf . #relayParallelism) erikRelayParallelism
         & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
-        & maybeSet (#validationConfig . #repositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
-        & maybeSet (#validationConfig . #repositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
+        & maybeSet (#rrdpConf . #repositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
+        & maybeSet (#rsyncConf . #repositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
         & #validationConfig . #manifestProcessing .~
                 (if strictManifestValidation then RFC6486_Strict else RFC9286)
         & #validationConfig . #validationAlgorithm .~
