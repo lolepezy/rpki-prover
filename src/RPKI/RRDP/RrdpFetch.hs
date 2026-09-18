@@ -231,7 +231,7 @@ updateRrdpRepository
 
         -- Do not thrash the same server with too big amount of parallel 
         -- requests, it's mostly counter-productive and rude. Maybe 8 is still too much?
-        let maxDeltaDownloadSimultaneously = 8                        
+        let maxDeltaDownloadSimultaneously = 4                        
 
         void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
                 (\t -> #saveTimeMs %~ (<> t)) $ 
