@@ -101,7 +101,7 @@ main = do
                     & #tmpDirectory           .~ Public tmpDir
                     & #cacheDirectory         .~ Public cacheDir
                     & #rsyncConf . #rsyncRoot .~ Public rsyncDir
-                    & #rsyncConf . #rsyncPrefetchUrls .~ prefetchUrls
+                    & #rsyncConf . #prefetchUrls .~ prefetchUrls
                     & #rrdpConf  . #tmpRoot   .~ Public tmpDir
                     & #parallelism            .~ newParallelism cpuCount_
 

@@ -53,15 +53,15 @@ import           System.Process.Typed
 
 
 checkRsyncInPath :: ValidatorIO es => Maybe FilePath -> Eff es ()
-checkRsyncInPath rsyncClientPath = do 
-    let client = fromMaybe "rsync" rsyncClientPath    
+checkRsyncInPath clientPath = do 
+    let client = fromMaybe "rsync" clientPath    
     z <- liftIO $ IOExc.try $ readProcess $ proc client [ "--version" ]
     case z of
         Left (e :: SomeException) -> do 
             let message = maybe 
                     [i|rsync client is not in he $PATH, can't proceed: #{U.fmtEx e}|]
                     (\rc -> [i|rsync client #{rc} is not found, can't proceed: #{U.fmtEx e}|])
-                    rsyncClientPath
+                    clientPath
             appError $ InitE $ InitError message
                     
         Right (exit, stdout', stderr') -> 
@@ -250,7 +250,7 @@ rsyncProcess Config {..} fetchConfig rsyncURL destination rsyncMode =
         extraOptions <> 
         [ sourceUrl, destination ]
     where 
-        rsyncBinary = maybe "rsync" configValue rsyncConf.rsyncClientPath 
+        rsyncBinary = maybe "rsync" configValue rsyncConf.clientPath 
 
         Seconds timeout' = fetchConfig ^. #rsyncTimeout
         source = Text.unpack (unURI $ getURL rsyncURL)        

@@ -816,7 +816,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                         Just (ForcedSnaphotAt processedAt)
                             -- If the last forced fetch was less than N hours ago, don't do it again
                             | closeEnoughMoments (Earlier processedAt) (Later now)
-                                (config ^. #validationConfig . #rrdpForcedSnapshotMinInterval) -> 
+                                (config ^. #rrdpConf . #forcedSnapshotMinInterval) -> 
                                     pure $ Just meta
 
                             | otherwise -> do 
@@ -1016,7 +1016,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                                 [] -> interval
                                                 -- fallbacks managed to get through and it was rsync (duh), 
                                                 -- so it should be a normal rsync interval then                                                    
-                                                _  -> max interval (config ^. #validationConfig . #rsyncRepositoryRefreshInterval)
+                                                _  -> max interval (config ^. #rsyncConf . #repositoryRefreshInterval)
                                 else 
                                     -- nothing responded, so just go with the normal exponential backoff thing
                                     pure $ Just interval                
@@ -1142,8 +1142,8 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         moreThanOne = ( > 1) . length . NonEmpty.take 2
 
         defaultInterval = case repository of 
-            RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
-            RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
+            RrdpR _  -> config ^. #rrdpConf . #repositoryRefreshInterval
+            RsyncR _ -> config ^. #rsyncConf . #repositoryRefreshInterval
 
         increaseInterval (Seconds s) = trimInterval $ Seconds $ s + s `div` 5 + kindaRandomness
         decreaseInterval (Seconds s) = trimInterval $ Seconds $ s - s `div` 3 - kindaRandomness
@@ -1213,7 +1213,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                     rsyncS <- readTVar rsyncPerHostSemaphores
                     case Map.lookup host rsyncS of 
                         Nothing -> do 
-                            s <- newSemaphore $ config ^. #rsyncConf . #rsyncPerHostLimit
+                            s <- newSemaphore $ config ^. #rsyncConf . #perHostLimit
                             writeTVar rsyncPerHostSemaphores $ Map.insert host s rsyncS
                             pure s
                         Just s -> 

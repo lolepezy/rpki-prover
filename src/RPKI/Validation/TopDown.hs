@@ -302,7 +302,7 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals =
                     (\_ -> pure ())
   where
     validateMutlipleTAs' queue = do 
-        publicationPoints <- addRsyncPrefetchUrls <$> roTxT database DB.getPublicationPoints            
+        publicationPoints <- addprefetchUrls <$> roTxT database DB.getPublicationPoints            
         multiLocationKeys <- roTxT database DB.getMultiLocationShortcutChildren
         allTas <- newAllTasTopDownContext worldVersion publicationPoints queue multiLocationKeys
         validateThem allTas
@@ -317,8 +317,8 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals =
                 logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCountRoas roas} VRPs, took #{elapsed}ms|]
                 pure (getTaName tal, r)
                  
-    addRsyncPrefetchUrls pps =     
-        foldr (mergePP . rsyncPP) pps (config ^. #rsyncConf . #rsyncPrefetchUrls)
+    addprefetchUrls pps =     
+        foldr (mergePP . rsyncPP) pps (config ^. #rsyncConf . #prefetchUrls)
 
 --
 validateTA :: AppContext s

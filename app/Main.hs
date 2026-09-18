@@ -303,7 +303,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     liftIO $ setCpuCount cpuCount'
 
     proverRunMode     <- deriveProverRunMode cliOptions
-    rsyncPrefetchUrls <- rsyncPrefetches cliOptions
+    prefetchUrls <- rsyncPrefetches cliOptions
 
     let apiSecured :: a -> ApiSecured a
         apiSecured a = if showHiddenConfig then Public a else Hidden a
@@ -320,7 +320,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & #proverRunMode .~ proverRunMode
             & #parallelism . #cpuCount .~ cpuCount'
             & #rsyncConf . #rsyncRoot .~ apiSecured rsyncd
-            & #rsyncConf . #rsyncPrefetchUrls .~ rsyncPrefetchUrls
+            & #rsyncConf . #prefetchUrls .~ prefetchUrls
             & #rrdpConf . #tmpRoot .~ apiSecured tmpd
             & #logLevel .~ derivedLogLevel
 
@@ -610,7 +610,7 @@ createAppState logger localExceptions = do
 
 -- | Check some crucial things before running the validator
 checkPreconditions :: ValidatorIO es => CLIOptions -> Eff es ()
-checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
+checkPreconditions CLIOptions {..} = checkRsyncInPath clientPath
 
 deriveProverRunMode :: ValidatorIO es => CLIOptions -> Eff es ProverRunMode
 deriveProverRunMode CLIOptions {..} = 
@@ -695,7 +695,7 @@ data CLIOptions = CLIOptions {
         erikRelay                :: [String],
         erikDownloadParallelism  :: Maybe Natural,
         erikRelayParallelism     :: Maybe Natural,
-        rsyncClientPath          :: Maybe String,
+        clientPath          :: Maybe String,
         httpApiPort              :: Maybe Word16,
         withRtr                  :: Bool,
         rtrAddress               :: Maybe String,
@@ -976,8 +976,8 @@ cliOptionsParser = CLIOptions
     Seconds defRevalidation   = cfg ^. #validationConfig . #revalidationInterval
     Seconds defCacheLifetime  = cfg ^. #longLivedCacheLifeTime
     defCacheLifetimeHours     = defCacheLifetime `div` 3600
-    Seconds defRrdpRefresh    = cfg ^. #validationConfig . #rrdpRepositoryRefreshInterval
-    Seconds defRsyncRefresh   = cfg ^. #validationConfig . #rsyncRepositoryRefreshInterval
+    Seconds defRrdpRefresh    = cfg ^. #validationConfig . #repositoryRefreshInterval
+    Seconds defRsyncRefresh   = cfg ^. #validationConfig . #repositoryRefreshInterval
     Seconds defRrdpTimeout    = cfg ^. #systemConfig . #rrdpWorker . #workerTimeout
     Seconds defRsyncTimeout   = cfg ^. #systemConfig . #rsyncWorker . #workerTimeout
     Seconds defErikTimeout    = cfg ^. #systemConfig . #erikWorker . #workerTimeout
@@ -1009,7 +1009,7 @@ applyCliToConfig :: Config -> CLIOptions -> (forall a . a -> ApiSecured a) -> Co
 applyCliToConfig baseConfig CLIOptions{..} apiSecured = 
     adjustConfig $ baseConfig
         & #parallelism .~ parallelism
-        & #rsyncConf . #rsyncClientPath .~ fmap apiSecured rsyncClientPath
+        & #rsyncConf . #clientPath .~ fmap apiSecured clientPath
         & #rsyncConf . #enabled .~ not noRsync
         & maybeSet (#systemConfig . #rsyncWorker . #workerTimeout) (Seconds <$> rsyncTimeout)
         & #rrdpConf . #enabled .~ not noRrdp
@@ -1020,8 +1020,8 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#erikConf . #downloadParallelism) erikDownloadParallelism
         & maybeSet (#erikConf . #relayParallelism) erikRelayParallelism
         & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
-        & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
-        & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
+        & maybeSet (#validationConfig . #repositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
+        & maybeSet (#validationConfig . #repositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
         & #validationConfig . #manifestProcessing .~
                 (if strictManifestValidation then RFC6486_Strict else RFC9286)
         & #validationConfig . #validationAlgorithm .~

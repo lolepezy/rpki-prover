@@ -57,7 +57,7 @@ data FetchConfig = FetchConfig {
     deriving anyclass (TheBinary)
 
 data StorageConfig = StorageConfig {
-    rwTransactionTimeout :: Seconds
+        rwTransactionTimeout :: Seconds
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)    
@@ -93,16 +93,13 @@ data Config = Config {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
--- | 'rsyncTimeout' and 'cpuLimit' used to live here (and the matching fields
--- in 'ErikConf'/'RrdpConf'), one copy per protocol config. They now live in
--- one place per worker kind, 'SystemConfig' / 'WorkerLimits', alongside
--- memory and IO limits -- see 'WorkerLimits'.
 data RsyncConf = RsyncConf {
-        rsyncClientPath   :: Maybe (ApiSecured FilePath),
-        rsyncRoot         :: ApiSecured FilePath,
-        enabled           :: Bool,
-        rsyncPrefetchUrls :: [RsyncURL],
-        rsyncPerHostLimit :: Int
+        clientPath                :: Maybe (ApiSecured FilePath),
+        rsyncRoot                 :: ApiSecured FilePath,
+        enabled                   :: Bool,
+        prefetchUrls              :: [RsyncURL],
+        perHostLimit              :: Int,
+        repositoryRefreshInterval :: Seconds
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -121,9 +118,12 @@ data ErikConf = ErikConf {
     deriving anyclass (TheBinary)
 
 data RrdpConf = RrdpConf {
-        tmpRoot     :: ApiSecured FilePath,
-        maxSize     :: Size,
-        enabled     :: Bool
+        tmpRoot                   :: ApiSecured FilePath,
+        maxSize                   :: Size,
+        enabled                   :: Bool,
+        repositoryRefreshInterval :: Seconds,
+        -- Minimal interval between forced snapshot fetches -- we don't want to overload repositories
+        forcedSnapshotMinInterval :: Seconds
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -141,16 +141,10 @@ data ProverRunMode = OneOffMode FilePath | ServerMode
     deriving anyclass (TheBinary)
 
 data ValidationConfig = ValidationConfig {    
-        revalidationInterval           :: Seconds,
-        rrdpRepositoryRefreshInterval  :: Seconds,
-        rsyncRepositoryRefreshInterval :: Seconds,
+        revalidationInterval           :: Seconds,        
 
         -- How often TA certificates are downloaded and validated.
         taCertificateRefreshInterval   :: Seconds,
-
-        -- Minimal interval between forced snapshot fetches --
-        -- we don't want to overload repositories
-        rrdpForcedSnapshotMinInterval :: Seconds,
 
         -- This is legacy and will be deleted at some point
         manifestProcessing             :: ManifestProcessing,
@@ -266,16 +260,19 @@ defaultConfig = Config {
     proverRunMode = ServerMode,
     parallelism = newParallelism 2,
     rsyncConf = RsyncConf {
-        rsyncClientPath = Nothing,
+        clientPath = Nothing,
         rsyncRoot    = Hidden "",
         enabled = True,
-        rsyncPrefetchUrls = [],
-        rsyncPerHostLimit = 5
+        prefetchUrls = [],
+        perHostLimit = 5,
+        repositoryRefreshInterval = 11 * minutes
     },
     rrdpConf = RrdpConf {
+        enabled = True,
         tmpRoot = Hidden "",
-        maxSize = Size $ 1024 * 1024 * 1024,
-        enabled = True
+        maxSize = Size $ 1024 * 1024 * 1024,        
+        repositoryRefreshInterval  = 2 * minutes,
+        forcedSnapshotMinInterval  = 12 * hours
     },
     erikConf = ErikConf {
         relays              = [],
@@ -286,11 +283,8 @@ defaultConfig = Config {
         erikRefreshInterval = 2 * minutes
     },
     validationConfig = ValidationConfig {
-        revalidationInterval           = 15 * minutes,
-        rrdpRepositoryRefreshInterval  = 2 * minutes,
-        rsyncRepositoryRefreshInterval = 11 * minutes,
-        taCertificateRefreshInterval   = 10 * minutes,
-        rrdpForcedSnapshotMinInterval  = 12 * hours,
+        revalidationInterval           = 15 * minutes,                
+        taCertificateRefreshInterval   = 10 * minutes,        
         manifestProcessing             = RFC9286,
         maxCertificatePathDepth        = 32,
         maxTotalTreeSize               = 5_000_000,
