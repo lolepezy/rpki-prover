@@ -487,7 +487,7 @@ fsLayout cliOptions@CLIOptions {..} logger = do
             $ do                
                 httpStatuses <- liftIO $ forConcurrently defaultTalUrls $ \(talName, Text.pack -> talUrl) -> do                    
                         logDebug logger [i|Downloading #{talUrl} to #{tald </> talName}.|]                    
-                        fmap (talName, talUrl, ) $ try $ downloadToFile (URI talUrl) (tald </> talName) (Size 10_000)                        
+                        fmap (talName, talUrl, ) $ try $ downloadTalToTmp (URI talUrl) (tald </> talName)
                 
                 let talText = \case 
                         (talName, talUrl, Left (e :: SomeException)) -> 
@@ -498,9 +498,26 @@ fsLayout cliOptions@CLIOptions {..} logger = do
                                 [i|Failed to download TAL #{talName} from #{talUrl}, HTTP status: #{status}.|]
 
                 let anyFailures = any (\(_, _, s) -> either (const True) (not . isHttpSuccess) s) httpStatuses
-                when anyFailures $  
+                if anyFailures then do
+                    liftIO $ forM_ defaultTalUrls $ \(talName, _) -> removeIfExists (tmpName (tald </> talName))
                     appError $ InitE $ InitError $ 
                         Text.intercalate "\n" $ mapMaybe talText httpStatuses                                        
+                else
+                    -- Only now, with every TAL downloaded in full, put them where the
+                    -- validator looks for them.
+                    liftIO $ forM_ defaultTalUrls $ \(talName, _) ->
+                        renameFile (tmpName (tald </> talName)) (tald </> talName)
+
+    tmpName talFile = talFile <> ".tmp"
+
+    downloadTalToTmp uri talFile = do
+        let tmpFile = tmpName talFile
+        downloadToFile uri tmpFile (Size 10_000)
+            `onException` removeIfExists tmpFile
+
+    removeIfExists filePath = do
+        exists <- doesFileExist filePath
+        when exists $ removeFile filePath
 
 
 getRoot :: ValidatorIO es => CLIOptions -> Eff es (Either FilePath FilePath)
@@ -529,9 +546,14 @@ maybeSet lenz newValue big = maybe big (\val -> big & lenz .~ val) newValue
 listTalFiles :: FilePath -> IO [(FilePath, FilePath)]
 listTalFiles talDirectory = do
     names <- getDirectoryContents talDirectory
-    pure $ map (\f -> (talDirectory </> f, cutOffTalExtension f)) $
-            filter (".tal" `List.isSuffixOf`) $
-            filter (`notElem` [".", ".."]) names
+    let talFiles = filter (".tal" `List.isSuffixOf`) $
+                   filter (`notElem` [".", ".."]) names
+    -- An empty file is not a TAL, it is what an interrupted download used to
+    -- leave behind. Reporting it as absent means the caller downloads the RIR
+    -- TALs again, which is what recovers an installation that already has one,
+    -- rather than throwing a parse error that no restart can get past.
+    nonEmpty <- filterM (fmap (> 0) . System.Directory.getFileSize . (talDirectory </>)) talFiles
+    pure $ map (\f -> (talDirectory </> f, cutOffTalExtension f)) nonEmpty
   where
     cutOffTalExtension s = List.take (List.length s - 4) s
 
