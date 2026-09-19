@@ -2,6 +2,7 @@
 
 module RPKI.Parse.Internal.ROA where
 
+import           Effectful
 import qualified Data.ByteString as BS  
 
 import Control.Applicative
@@ -25,7 +26,7 @@ import qualified RPKI.Util                  as U
 
 -- | Parse ROA, https://tools.ietf.org/html/rfc6482
 -- 
-parseRoa :: BS.ByteString -> PureValidatorT RoaObject
+parseRoa :: Validator es => BS.ByteString -> Eff es RoaObject
 parseRoa bs = do    
     asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs  
     signedRoa <- fromEither $ first (parseErr . U.convert) 
@@ -43,14 +44,31 @@ parseRoa bs = do
         parseRoaWithoutVersion
 
     parseRoaWithoutVersion = do 
-        asId <- getInteger (pure . fromInteger) "Wrong ASid"
-        (v4s, v6s) <- mconcat <$> onNextContainer Sequence (getMany $
+        asId <- getInteger (either throwParseError pure . mkAsn) "Wrong ASid"
+        families <- onNextContainer Sequence $ getMany $
             onNextContainer Sequence $ 
                 getAddressFamily "Expected an address family here" >>= \case 
-                    Right Ipv4F -> (, []) <$> getRoa4
-                    Right Ipv6F -> ([], ) <$> getRoa6
-                    Left af     -> throwParseError $ "Unsupported address family: " ++ show af)
-        pure $! VrpsPerAs (ASN $ fromIntegral asId) v4s v6s
+                    Right Ipv4F -> Left  <$> getRoa4
+                    Right Ipv6F -> Right <$> getRoa6
+                    Left af     -> throwParseError $ "Unsupported address family: " ++ show af
+
+        let v4Blocks = [ v | Left  v <- families ]
+        let v6Blocks = [ v | Right v <- families ]
+
+        {- https://www.rfc-editor.org/rfc/rfc9582#section-4.3
+           ipAddrBlocks is SEQUENCE SIZE (1..MAX), the `addresses` of each 
+           ROAIPAddressFamily likewise, and an AFI must appear at most once.
+        -}
+        when (null families) $ 
+            throwParseError "ROA has no address family blocks"
+        when (length v4Blocks > 1) $ 
+            throwParseError "ROA has more than one IPv4 address family block"
+        when (length v6Blocks > 1) $ 
+            throwParseError "ROA has more than one IPv6 address family block"
+        when (any null v4Blocks || any null v6Blocks) $ 
+            throwParseError "ROA has an address family block without any prefixes"
+
+        pure $! VrpsPerAs asId (concat v4Blocks) (concat v6Blocks)
 
     getRoa4 :: ParseASN1 [Vrp4]
     getRoa4 = onNextContainer Sequence $ getMany $
@@ -76,8 +94,9 @@ parseRoa bs = do
         when (nonZeroBitCount > fromIntegral prefixMaxLength) $
             throwParseError [i|Actual prefix length #{nonZeroBitCount} is bigger than the maximum length #{prefixMaxLength}.|]
         case () of
-            _ | prefixMaxLength <= 0  -> 
-                    throwParseError [i|Negative or zero value for IPv4 prefix max length: #{prefixMaxLength}|]
+            -- maxLength of 0 is only meaningful for a /0 prefix, but it is legal
+            _ | prefixMaxLength < 0  -> 
+                    throwParseError [i|Negative value for IPv4 prefix max length: #{prefixMaxLength}|]
               | prefixMaxLength > 32  -> 
                     throwParseError [i|Too big value for IPv4 prefix max length: #{prefixMaxLength}|]
               | otherwise ->
@@ -88,8 +107,9 @@ parseRoa bs = do
         when (nonZeroBitCount > fromIntegral prefixMaxLength) $
             throwParseError [i|Actual prefix length #{nonZeroBitCount} is bigger than the maximum length #{prefixMaxLength}.|]
         case () of
-            _ | prefixMaxLength <= 0   -> 
-                    throwParseError [i|Negative or zero value for IPv6 prefix max length: #{prefixMaxLength}|]
+            -- maxLength of 0 is only meaningful for a /0 prefix, but it is legal
+            _ | prefixMaxLength < 0  -> 
+                    throwParseError [i|Negative value for IPv6 prefix max length: #{prefixMaxLength}|]
               | prefixMaxLength > 128  -> 
                     throwParseError [i|Too big value for IPv6 prefix max length: #{prefixMaxLength}|]
               | otherwise ->

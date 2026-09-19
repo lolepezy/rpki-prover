@@ -1,5 +1,6 @@
 module RPKI.Validation.ResourceValidation where
 
+import           Effectful
 import           RPKI.Domain
 import           RPKI.AppMonad
 import           RPKI.Reporting
@@ -16,12 +17,12 @@ import           RPKI.Resources.Types
 -- resources are nested into verifiedResources that are, in general case, a 
 -- subset of parent resources.
 -- 
-validateChildParentResources :: 
+validateChildParentResources :: Validator es => 
              ValidationRFC 
           -> AllResources 
           -> AllResources 
           -> Maybe (VerifiedRS PrefixesAndAsns) 
-          -> PureValidatorT (VerifiedRS PrefixesAndAsns, Maybe (Overclaiming PrefixesAndAsns))
+          -> Eff es (VerifiedRS PrefixesAndAsns, Maybe (Overclaiming PrefixesAndAsns))
 validateChildParentResources validationRFC childResources parentResources verifiedResources =                                 
   case validationRFC of 
     StrictRFC       -> verify strict
@@ -33,16 +34,16 @@ validateChildParentResources validationRFC childResources parentResources verifi
       ca <- check childAsns  parentAsns  (\(VerifiedRS (PrefixesAndAsns _ _ r)) -> r)
       validateBasedOnRFC c4 c6 ca
 
-    check :: Interval a =>               
+    check :: (Validator es, Interval a) =>               
             RSet (IntervalSet a) -> 
             RSet (IntervalSet a) -> 
             (VerifiedRS PrefixesAndAsns -> IntervalSet a) -> 
-            PureValidatorT (IS.ResourceCheckResult a)
+            Eff es (IS.ResourceCheckResult a)
     check child parent verifiedSub = 
       case verifiedResources of 
         Nothing -> 
           case (child, parent) of 
-            (_,       Inherit) -> vPureError InheritWithoutParentResources
+            (_,       Inherit) -> vError InheritWithoutParentResources
             (Inherit, RS ps)   -> pure $ Left $ Nested ps
             (RS cs,   RS ps)   -> pure $ IS.subsetCheck cs ps
         Just vr -> 
@@ -56,7 +57,7 @@ validateChildParentResources validationRFC childResources parentResources verifi
       case (q4, q6, qa) of
         (Left (Nested n4), Left (Nested n6), Left (Nested na)) -> 
           pure (VerifiedRS (PrefixesAndAsns n4 n6 na), Nothing)
-        _ -> vPureError $ OverclaimedResources $ 
+        _ -> vError $ OverclaimedResources $ 
           PrefixesAndAsns (overclaimed q4) (overclaimed q6) (overclaimed qa)
  
     reconsidered q4 q6 qa = 
@@ -64,7 +65,7 @@ validateChildParentResources validationRFC childResources parentResources verifi
         (Left (Nested _), Left (Nested _), Left (Nested _)) -> 
           pure (VerifiedRS (PrefixesAndAsns (nested q4) (nested q6) (nested qa)), Nothing)
         _ -> do
-          pureWarning $ VWarning $ ValidationE $ OverclaimedResources $
+          validatorWarning $ VWarning $ ValidationE $ OverclaimedResources $
             PrefixesAndAsns (overclaimed q4) (overclaimed q6) (overclaimed qa)
           pure (VerifiedRS (PrefixesAndAsns (nested q4) (nested q6) (nested qa)),
                 Just $ Overclaiming $ PrefixesAndAsns (overclaimed q4) (overclaimed q6) (overclaimed qa))          
@@ -81,13 +82,13 @@ nested (Left (Nested n)) = n
 nested (Right (Nested n, _)) = n
 
 
-validateNested :: PrefixesAndAsns -> PrefixesAndAsns -> PureValidatorT ()
+validateNested :: Validator es => PrefixesAndAsns -> PrefixesAndAsns -> Eff es ()
 validateNested (PrefixesAndAsns i4 i6 ia) (PrefixesAndAsns o4 o6 oa) = do 
     let i4c = IS.subsetCheck i4 o4
     let i6c = IS.subsetCheck i6 o6
     let ac  = IS.subsetCheck ia oa
     case (i4c, i6c, ac) of
         (Left (Nested _), Left (Nested _), Left (Nested _)) -> pure ()
-        _ -> vPureError $ OverclaimedResources $ 
+        _ -> vError $ OverclaimedResources $ 
                 PrefixesAndAsns (overclaimed i4c) (overclaimed i6c) (overclaimed ac)
 

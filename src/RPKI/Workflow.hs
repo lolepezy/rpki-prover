@@ -9,12 +9,14 @@ module RPKI.Workflow (
     runCacheCleanup
 ) where
 
+import           Effectful                       (Eff, (:>))
+import           Effectful.Timeout               (Timeout)
+
 import           Control.Concurrent              as Conc
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
-import           Control.Exception.Lifted
+import           Control.Exception
 import           Control.Monad
-import           Control.Monad.Trans.Control (MonadBaseControl)
 import           Control.Monad.IO.Class
 
 import           Control.Lens hiding (indices, Indexable)
@@ -32,7 +34,6 @@ import qualified Data.Map.Strict                 as Map
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import           Data.Set                        (Set)
 import qualified Data.Set                        as Set
-import qualified Data.Vector                     as V
 import           Data.Maybe                      (fromMaybe, catMaybes, isJust)
 import           Data.Int                        (Int64)
 import           Data.Hourglass
@@ -55,8 +56,9 @@ import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Repository
-import           RPKI.Fetch
+import           RPKI.Fetch.Fetch
 import           RPKI.Logging
+import           RPKI.Metrics.Process
 import           RPKI.Metrics.System
 import           RPKI.Http.Types
 import           RPKI.Http.Dto
@@ -66,7 +68,6 @@ import           RPKI.Validation.TopDown
 import           RPKI.AppContext
 import           RPKI.Metrics.Prometheus
 import           RPKI.RTR.RtrServer
-import           RPKI.Store.Base.Storage
 import           RPKI.Store.AppStorage
 import           RPKI.RRDP.Types
 import           RPKI.TAL
@@ -75,7 +76,8 @@ import           RPKI.Util
 import           RPKI.Time
 import           RPKI.Worker
 import           RPKI.SLURM.Types
-import           UnliftIO (pooledForConcurrentlyN)
+import           UnliftIO (MonadUnliftIO, pooledForConcurrentlyN)
+import qualified UnliftIO.Exception              as UIO
 
 {- 
     Fully asynchronous execution.
@@ -101,12 +103,6 @@ data JobRun = FirstRun | RanBefore
     deriving stock (Show, Eq, Ord, Generic)  
 
 data WorkflowShared = WorkflowShared { 
-        -- Indicates if anything was ever deleted from the DB
-        -- since the start of the server. It helps to avoid 
-        -- unnecessary compaction procedures: no deletions 
-        -- means no compaction is reqired.
-        deletedAnythingFromDb :: TVar Bool,
-
         -- Currently running tasks, it is needed to keep track which 
         -- tasks can run parallel to each other and avoid race conditions.
         runningTasks :: Tasks,
@@ -129,16 +125,14 @@ data WorkflowShared = WorkflowShared {
     deriving stock (Generic)
 
 
-withWorkflowShared :: (MonadBaseControl IO m, MonadIO m, Storage s) 
-                    => AppContext s
+withWorkflowShared :: AppContext s
                     -> PrometheusMetrics 
                     -> [TAL]
-                    -> (WorkflowShared -> m b) 
-                    -> m b
+                    -> (WorkflowShared -> IO b) 
+                    -> IO b
 withWorkflowShared AppContext {..} prometheusMetrics tals f = do
     shared <- liftIO $ atomically $ do 
-        deletedAnythingFromDb <- newTVar False
-        runningTasks          <- newRunningTasks
+        runningTasks <- newRunningTasks
         fetchers <- do 
                 -- We want to share the fetcheables that are already defined in the appState
                 -- to have it gloabally available (in particular available to the REST API)
@@ -149,6 +143,7 @@ withWorkflowShared AppContext {..} prometheusMetrics tals f = do
                 untrustedFetchSemaphore <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)
                 trustedFetchSemaphore   <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)                            
                 rsyncPerHostSemaphores  <- newTVar mempty                
+                erikFetchSemaphore      <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)
                 pure $ Fetchers {..}                        
 
         tasToValidate <- newTVar mempty
@@ -169,16 +164,20 @@ data Task =
     -- delete old objects and old versions
     | CacheCleanupTask    
 
-    | LmdbCompactTask
-
-    -- cleanup files in tmp, stale LMDB reader transactions, run-away child processes, etc.
+    -- cleanup files in tmp, stale storage-backend state, run-away child processes, etc.
     | LeftoversCleanupTask
 
     -- async fetches of slow repositories
     | FetchTask
 
+    -- download and validate TA certificates
+    | TaCertificateTask
+
     -- Delete local rsync mirror once in a long while
     | RsyncCleanupTask
+
+    -- fold the WAL back into the database, nobody else does it
+    | WalCheckpointTask
     deriving stock (Show, Eq, Ord, Bounded, Enum, Generic)
 
 
@@ -202,8 +201,11 @@ newRunningTasks = Tasks <$> newTVar mempty
 -- The main entry point for the whole validator workflow. Runs multiple threads, 
 -- running validation, RTR server, cleanups, cache maintenance and async fetches.
 -- 
-runValidatorWorkflow :: (Storage s, MaintainableStorage s) => AppContext s -> [TAL] -> IO ()
+runValidatorWorkflow :: MaintainableStorage s => AppContext s -> [TAL] -> IO ()
 runValidatorWorkflow appContext@AppContext {..} tals = do    
+    DB.rwTxT database $ \tx ->
+        DB.setActiveTAs tx (map getTaName tals)
+        
     case config ^. #proverRunMode of     
         ServerMode   -> selfRecoveryLoop 0
         OneOffMode _ -> 
@@ -252,7 +254,7 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
         ]
 
 
-runAll :: (Storage s, MaintainableStorage s) =>
+runAll :: MaintainableStorage s =>
                          AppContext s -> [TAL] -> IO ()
 runAll appContext@AppContext {..} tals = do    
     void $ concurrently (
@@ -262,21 +264,33 @@ runAll appContext@AppContext {..} tals = do
         (do 
             prometheusMetrics <- createPrometheusMetrics config
 
-            withWorkflowShared appContext prometheusMetrics tals $ \workflowShared ->           
-                case config ^. #proverRunMode of     
+            withWorkflowShared appContext prometheusMetrics tals $ \workflowShared ->
+                case config ^. #proverRunMode of
                     ServerMode -> 
-                        void $ concurrently                    
-                            (concurrently
-                                (runScheduledTasks workflowShared)
-                                (revalidate workflowShared))
-                            runRtrIfConfigured            
+                        mapConcurrently_ id [
+                            runScheduledTasks workflowShared,
+                            revalidate workflowShared,
+                            runRtrIfConfigured
+                        ]                        
 
                     OneOffMode _ -> 
-                        void $ revalidate workflowShared                                  
+                        -- Scheduled jobs don't run in the one-off mode, so the things 
+                        -- they are responsible for have to happen here: TA certificates 
+                        -- have to be refreshed, otherwise there would be nothing to 
+                        -- validate at all, and the WAL has to be checkpointed, otherwise 
+                        -- it grows to the size of everything the workers write.
+                        race_ checkpointPeriodically $ do 
+                            worldVersion <- newWorldVersion
+                            void $ fetchTaCertificates workflowShared worldVersion FirstRun
+                            void $ revalidate workflowShared
         )
   where
     allTaNames = map getTaName tals
-    
+
+    checkpointPeriodically = forever $ do 
+        threadDelay $ toMicroseconds $ config ^. typed @StorageConfig . #walCheckpointInterval
+        checkpointDatabase appContext
+
     revalidate workflowShared = do 
         canValidateAgain <- newTVarIO True
         race_ 
@@ -315,15 +329,35 @@ runAll appContext@AppContext {..} tals = do
                     (logException logger "Exception in revalidation delay thread")
                 triggeredValidationLoop canValidateAgain RanBefore           
 
-            waitForTasToValidate = atomically $ do
-                (`unless` retry) =<< readTVar canValidateAgain                
-                case run of
-                    FirstRun -> reset >> pure tals
-                    RanBefore -> do 
-                        tas <- readTVar (workflowShared ^. #tasToValidate)
-                        when (Set.null tas) retry
-                        reset
-                        pure $ filter (\tal -> getTaName tal `Set.member` tas) tals                           
+            waitForTasToValidate = do 
+                readyForFirstRun <- 
+                    case (run, config ^. #proverRunMode) of 
+                        (RanBefore, _) -> pure []
+
+                        -- TA certificates have just been refreshed in the one-off mode,
+                        -- so there's nothing to wait for, whatever is missing by now 
+                        -- is going to be reported as an error by the validation.
+                        (FirstRun, OneOffMode _) -> pure tals
+
+                        -- On the very first run go ahead with the TAs that already have their 
+                        -- certificate in the cache. There's nothing to validate for the rest of 
+                        -- them (and, on a cold cache, for any of them) until the TA certificate 
+                        -- job has downloaded the certificates, and it triggers the validation 
+                        -- itself as soon as it has.                        
+                        (FirstRun, ServerMode)   -> do 
+                            cached <- DB.roTxT database $ \tx ->
+                                Set.fromList . map (getTaName . (^. #tal)) <$> DB.getTAs tx
+                            pure $ filter ((`Set.member` cached) . getTaName) tals
+
+                atomically $ do
+                    (`unless` retry) =<< readTVar canValidateAgain                
+                    case readyForFirstRun of
+                        _ : _ -> reset >> pure readyForFirstRun
+                        []    -> do 
+                            tas <- readTVar (workflowShared ^. #tasToValidate)
+                            when (Set.null tas) retry
+                            reset
+                            pure $ filter (\tal -> getTaName tal `Set.member` tas) tals                           
               where
                 reset = do 
                     writeTVar (workflowShared ^. #tasToValidate) mempty
@@ -331,10 +365,10 @@ runAll appContext@AppContext {..} tals = do
                     
 
     outputVrps vrpOutputFile = do 
-        vrps <- roTxT database $ \tx db -> 
-                DB.getLatestVersion tx db >>= \case 
+        vrps <- DB.roTxT database $ \tx ->
+                DB.getLatestVersion tx >>= \case
                     Nothing            -> pure Nothing
-                    Just latestVersion -> Just <$> DB.getVrps tx db latestVersion
+                    Just latestVersion -> Just <$> DB.getVrps tx latestVersion
         case vrps of
             Nothing -> do
                 logWarn logger [i|Don't have any VRPs, exiting.|]                
@@ -344,7 +378,7 @@ runAll appContext@AppContext {..} tals = do
     hasValidatedEverythingForEveryTA WorkflowShared { fetchers = Fetchers {..}} = do 
         -- check if for every TA the last validation time is later than 
         -- all of the first fetching dates for the repositories
-        versions  <- roTxT database DB.getLatestVersions
+        versions  <- DB.roTxT database DB.getLatestVersions
         fetchedBy <- readTVarIO firstFinishedFetchBy                
         urisByTA  <- readTVarIO uriByTa
         
@@ -368,12 +402,6 @@ runAll appContext@AppContext {..} tals = do
                 interval = config ^. #cacheCleanupInterval,
                 taskDef = (CacheCleanupTask, cacheCleanup workflowShared),
                 persistent = True                
-            },       
-            Scheduling {                 
-                initialDelay = 900 * 1_000_000,
-                interval = config ^. #storageCompactionInterval,
-                taskDef = (LmdbCompactTask, compact workflowShared),
-                persistent = True
             },
             Scheduling {             
                 initialDelay = 1200 * 1_000_000,
@@ -386,7 +414,20 @@ runAll appContext@AppContext {..} tals = do
                 initialDelay = toMicroseconds interval `div` 2,                
                 taskDef = (LeftoversCleanupTask, \_ _ -> cleanupLeftovers),
                 persistent = False,
-                ..
+                interval
+            },
+            Scheduling {
+                initialDelay = 0,
+                interval = config ^. typed @ValidationConfig . #taCertificateRefreshInterval,
+                taskDef = (TaCertificateTask, fetchTaCertificates workflowShared),
+                persistent = False
+            },
+            let interval = config ^. typed @StorageConfig . #walCheckpointInterval
+            in Scheduling {
+                initialDelay = toMicroseconds interval,
+                taskDef = (WalCheckpointTask, \_ _ -> checkpointDatabase appContext),
+                persistent = False,
+                interval
             }
         ]              
 
@@ -395,10 +436,10 @@ runAll appContext@AppContext {..} tals = do
     --   * run tasks using `runConcurrentlyIfPossible` to make sure 
     --     there is no data races between different tasks
     runScheduledTasks workflowShared = do                
-        persistedJobs <- roTxT database $ \tx db -> Map.fromList <$> DB.allJobs tx db
+        persistedJobs <- DB.roTxT database $ \tx -> Map.fromList <$> DB.allJobs tx
 
         Now now <- thisInstant
-        forConcurrently (schedules workflowShared) $ \Scheduling { taskDef = (task, action), ..} -> do                        
+        forConcurrently_ (schedules workflowShared) $ \Scheduling { taskDef = (task, action), ..} -> do                        
             let name = fmtGen task
             let (delay, jobRun0) =                  
                     if persistent
@@ -429,7 +470,7 @@ runAll appContext@AppContext {..} tals = do
                                 Now endTime <- thisInstant
                                 -- re-read `db` since it could have been changed by the time the
                                 -- job is finished (after compaction, in particular)                                                                
-                                rwTxT database $ \tx db' -> DB.setJobCompletionTime tx db' name endTime
+                                DB.rwTxT database $ \tx -> DB.setJobCompletionTime tx name endTime
                             updateMainResourcesStat
                             logDebug logger [i|Done with task '#{name}'.|])    
 
@@ -437,12 +478,12 @@ runAll appContext@AppContext {..} tals = do
                 runConcurrentlyIfPossible logger task (workflowShared ^. #runningTasks) (actualAction jobRun) 
                 pure RanBefore
 
-    updateMainResourcesStat = do 
-        (cpuTime, maxMemory) <- processStat
+    updateMainResourcesStat = do
+        stats <- processStat
         SystemInfo {..} <- readTVarIO $ appState ^. #system
         Now now <- thisInstant
         let clockTime = durationMs startUpTime now
-        pushSystem logger $ cpuMemMetric "root" cpuTime clockTime maxMemory        
+        pushSystem logger $ resourceUsageMetric "root" clockTime stats
 
     validateTAs workflowShared worldVersion talsToValidate = do  
         let taNames = map getTaName talsToValidate
@@ -456,11 +497,11 @@ runAll appContext@AppContext {..} tals = do
             [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|]
       where
         processTALs = do
-            ((z, workerVS), workerId) <- runValidationWorker worldVersion talsToValidate            
+            (z, workerVS) <- runValidationWorker worldVersion talsToValidate
             let reportError message = do 
                     logError logger message
-                    rwTxT database $ \tx db -> do
-                        DB.saveValidationVersion tx db worldVersion allTaNames mempty workerVS
+                    DB.rwTxT database $ \tx -> do
+                        DB.saveValidationVersion tx worldVersion mempty workerVS
                     updatePrometheus (workerVS ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion
                     pure (mempty, mempty)
 
@@ -468,29 +509,29 @@ runAll appContext@AppContext {..} tals = do
                 Left e -> 
                     reportError [i|Validator process failed: #{e}.|]                    
 
-                Right wr@WorkerResult {..} -> do     
-                    case payload of 
-                        Left (ErrorResult message) ->
-                            reportError [i|Validator process failed: #{message}.|]
+                Right (ValidationResult vs discovered) -> do
+                    adjustFetchers appContext (fmap fst discovered) workflowShared
+                    scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
 
-                        Right (ValidationResult vs discovered maybeSlurm) -> do                                             
-                            adjustFetchers appContext (fmap fst discovered) workflowShared
-                            scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
-                            
-                            logWorkerDone logger workerId wr
-                            pushSystem logger $ cpuMemMetric "validation" cpuTime clockTime maxMemory
-                        
-                            let topDownState = workerVS <> vs
-                            logDebug logger [i|Validation result: 
+                    -- The worker has saved the version, SLURM is read and
+                    -- stored for it here since the worker doesn't read files.
+                    (slurmVS, maybeSlurm) <- reReadSlurm appContext
+                    when (isJust maybeSlurm || slurmVS /= mempty) $
+                        DB.rwTxT database $ \tx -> do
+                            for_ maybeSlurm $ DB.saveSlurm tx worldVersion
+                            DB.addCommonValidations tx worldVersion slurmVS
+
+                    let topDownState = workerVS <> vs <> slurmVS
+                    logDebug logger [i|Validation result: 
 #{formatValidations (topDownState ^. typed)}.|]
-                            updatePrometheus (topDownState ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion                        
-                            
-                            (!q, elapsed) <- timedMS $ reReadAndUpdatePayloads maybeSlurm
-                            logDebug logger [i|Re-read payloads, took #{elapsed}ms.|]
-                            pure q
+                    updatePrometheus (topDownState ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion                        
+                    
+                    (!q, elapsed) <- timedMS $ reReadAndUpdatePayloads maybeSlurm
+                    logDebug logger [i|Re-read payloads, took #{elapsed}ms.|]
+                    pure q
           where
             reReadAndUpdatePayloads maybeSlurm = do 
-                roTxT database (\tx db -> DB.getRtrPayloads tx db worldVersion) >>= \case                         
+                DB.roTxT database (\tx -> DB.getRtrPayloads tx worldVersion) >>= \case
                     Nothing -> do 
                         logError logger [i|Something weird happened, could not re-read VRPs.|]
                         pure (mempty, mempty)
@@ -500,46 +541,51 @@ runAll appContext@AppContext {..} tals = do
                             updatePrefixIndex appState slurmedPayloads
                         pure (rtrPayloads, slurmedPayloads)
                           
+
+    -- Only TAs whose certificate actually changed (a first-ever download, or a
+    -- genuinely new certificate) need to be revalidated. Most refreshes just
+    -- reconfirm the certificate already in the cache, and used to trigger a
+    -- full revalidation of every TA anyway -- wasted CPU, since nothing about
+    -- the TA changed.
+    fetchTaCertificates workflowShared worldVersion _ = do
+        changedTaNames <- fmap catMaybes $ forConcurrently tals $ \tal -> do
+            let taName = getTaName tal
+            (r, elapsed) <- timedMS $ refreshTaCertificate appContext tal worldVersion
+            case r of 
+                Left e -> do
+                    logError logger [i|Failed to download and validate TA certificate for #{taName}: #{e}.|]
+                    pure Nothing
+
+                Right changed -> do 
+                    logDebug logger $ 
+                        [i|Downloaded and validated TA certificate for #{taName}, |] <> 
+                        [i|changed = #{changed}, took #{elapsed}ms.|]
+                    pure $ if changed then Just taName else Nothing
+
+        atomically $ modifyTVar' (workflowShared ^. #tasToValidate) $ \tas -> foldr Set.insert tas changedTaNames 
+
     -- Delete objects in the store that were read by top-down validation 
     -- longer than `shortLivedCacheLifeTime` hours ago.
-    cacheCleanup workflowShared worldVersion _ = do
+    cacheCleanup _ worldVersion _ = do
         (r, elapsed) <- timedMS cleanupOldObjects
         case r of 
             Left message -> logError logger message
-            Right DB.CleanUpResult {..} -> do 
-                when (deletedObjects > 0) $ do
-                    atomically $ writeTVar (workflowShared ^. #deletedAnythingFromDb) True
-                let perType :: String = if mempty /= deletedPerType 
-                    then [i|in particular #{Map.toList deletedPerType}, |] 
+            Right DB.CleanUpResult {..} -> do
+                let perType :: String = if mempty /= deletedPerType
+                    then [i|in particular #{Map.toList deletedPerType}, |]
                     else ""
                 logInfo logger $ [i|Cleanup: deleted #{deletedObjects} objects, #{perType}kept #{keptObjects}, |] <>
-                                 [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, took #{elapsed}ms.|]
+                                 [i|deleted #{deletedObjectUrls} stale object-URL links, |] <>
+                                 [i|deleted #{deletedURLs} dangling URLs, #{deletedVersions} old versions, |] <>
+                                 [i|deleted #{deletedErikPartitions} orphaned Erik partitions, took #{elapsed}ms.|]
       where
         cleanupOldObjects = do                 
-            ((z, _), workerId) <- runCleanUpWorker worldVersion      
+            (z, _) <- runCleanUpWorker worldVersion
             case z of 
-                Left e -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
-                Right wr@WorkerResult {..} -> do 
-                    case payload of 
-                        Left (ErrorResult message) ->
-                            pure $ Left [i|Cache cleanup process failed: #{message}.|]
-                        Right r -> do
-                            logWorkerDone logger workerId wr
-                            pushSystem logger $ cpuMemMetric "cache-clean-up" cpuTime clockTime maxMemory
-                            pure $ Right r
+                Left e  -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
+                Right r -> pure $ Right r
 
-    -- Do LMDB compaction
-    compact workflowShared worldVersion _ = do
-        -- Some heuristics first to see if it's obvisouly too early to run compaction:
-        -- if we have never deleted anything, there's no fragmentation, so no compaction needed.
-        deletedAnything <- readTVarIO $ workflowShared ^. #deletedAnythingFromDb
-        if deletedAnything then do
-            (_, elapsed) <- timedMS $ runMaintenance appContext
-            logInfo logger [i|Done with compacting the storage, version #{worldVersion}, took #{elapsed}ms.|]
-        else 
-            logDebug logger [i|Nothing has been deleted from the storage, compaction is not needed.|]
-
-    -- Delete temporary files and LMDB stale reader transactions
+    -- Delete temporary files and any stale storage-backend state
     cleanupLeftovers = do
         -- Cleanup tmp directory, if some fetchers died abruptly 
         -- there may be leftover files.        
@@ -549,24 +595,23 @@ runAll appContext@AppContext {..} tals = do
         files <- listDirectory tmpDir
 
         -- Temporary RRDP files cannot meaningfully live longer than that
-        let Seconds (fromIntegral -> maxTimeout :: NominalDiffTime) = 
-                10 + config ^. #rrdpConf . #rrdpTimeout
+        let Seconds (fromIntegral -> maxTimeout :: NominalDiffTime) =
+                10 + config ^. typed @SystemConfig . #rrdpWorkerLimits . #workerTimeout
 
-        forM_ files $ \file -> 
+        -- Do not touch "erik" subdirectory, it has it's own cleanup mechanism
+        forM_ (filter (/= "erik") files) $ \file ->
             ignoreSync $ do 
                 let fullPath = tmpDir </> file
                 ageInSeconds <- diffUTCTime now <$> getModificationTime fullPath            
                 when (ageInSeconds > maxTimeout) $
                     removePathForcibly fullPath                
 
-        -- Cleanup reader table of LMDB cache, it may get littered by 
-        -- dead processes, unfinished/killed transaction, etc.
-        -- All these stale transactions are essentially bugs, but it's 
-        -- easier to just clean them up rather than prevent all 
-        -- possible leakages (even if it were possible to prevent them).
+        -- Give the storage backend a chance to clean up any stale state left
+        -- behind by dead processes or unfinished/killed transactions (a
+        -- no-op for the current SQLite backend; kept for backends that need it).
         cleaned <- cleanUpStaleTx appContext
-        when (cleaned > 0) $ 
-            logDebug logger [i|Cleaned #{cleaned} stale readers from LMDB cache.|]
+        when (cleaned > 0) $
+            logDebug logger [i|Cleaned #{cleaned} stale readers from the storage backend.|]
         
         -- Kill all orphan workers (including rsync client processes) that may still
         -- be running and refusing to die. Sometimes an rsync process can leak and 
@@ -602,97 +647,82 @@ runAll appContext@AppContext {..} tals = do
 
     -- Workers for functionality running in separate processes.
     --     
-    runValidationWorker worldVersion talsToValidate = do 
-        let talsStr = Text.intercalate "," $ List.sort $ map (unTaName . getTaName) talsToValidate                    
-            workerId = WorkerId [i|version:#{worldVersion}:validation:#{talsStr}|]
+    runValidationWorker worldVersion talsToValidate =
+        runValidatorIO (newScopes "validator") $
+            withWorkerTimeout appContext ValidationWorker "Validation" $
+                runWorker appContext ValidationParams {..} Nothing
 
-            maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
+    runCleanUpWorker worldVersion = 
+        runValidatorIO (newScopes "cache-clean-up") $ 
+            withWorkerTimeout appContext CacheCleanupWorker "Cache cleanup" $ do
+                CacheCleanupResult r <- runWorker appContext (CacheCleanupParams worldVersion) Nothing
+                pure r
 
-            -- TODO make it a runtime thing, config?
-            -- let profilingFlags = [ "-p", "-hT", "-l" ]
-            profilingFlags = [ ]
 
-            arguments = 
-                [ show workerId ] <>
-                rtsArguments ( 
-                    profilingFlags <> [ 
-                        rtsN maxCpuAvailable, 
-                        rtsA "24m", 
-                        rtsAL "128m", 
-                        rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #validationWorkerMemoryMb) 
-                    ])
-        
-        r <- runValidatorT 
-                (newScopes "validator") $ do 
-                    let timeout = config ^. typed @ValidationConfig . #topDownTimeout
-                    workerInput <- makeWorkerInput appContext workerId
-                                    ValidationParams {..}
-                                    (Timebox timeout)
-                                    Nothing
-                    workerInfo <- newWorkerInfo (GenericWorker "validation") timeout (convert $ show workerId)
-                    runWorker logger workerInput arguments workerInfo
+{- | A worker watches its own timeout and exits when it runs out, so normally
+     this never fires. It is the parent's backstop for when the worker can't do
+     that -- otherwise there is nothing to stop the workflow waiting on a wedged
+     process until the leftovers cleanup happens to reap it. The fetchers in
+     'RPKI.Fetch.Fetch' are wrapped the same way.
+-}
+withWorkerTimeout :: (ValidatorIO es, Timeout :> es) 
+                    => AppContext s -> WorkerType -> Text.Text -> Eff es a -> Eff es a
+withWorkerTimeout AppContext {..} workerType what work = do
+    let totalTimeout = workerTypeLimits config workerType ^. #workerTimeout + timeToKillItself
+    timeoutVT totalTimeout work $ do
+        let message = [i|#{what} worker didn't finish after #{totalTimeout}.|]
+        logError logger message
+        trace WorkerTimeoutTrace
+        appError $ InternalE $ WorkerTimeout message
 
-        pure (r, workerId)
 
-    runCleanUpWorker worldVersion = do             
-        let workerId = WorkerId [i|version:#{worldVersion}:cache-clean-up|]
-        
-        let arguments = 
-                [ show workerId ] <>
-                rtsArguments [ 
-                    rtsN 2, 
-                    rtsA "24m", 
-                    rtsAL "64m", 
-                    rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #cleanupWorkerMemoryMb) ]
-        
-        r <- runValidatorT             
-                (newScopes "cache-clean-up") $ do
-                    let timeout = 300
-                    workerInput <- makeWorkerInput appContext workerId
-                                        (CacheCleanupParams worldVersion)
-                                        (Timebox timeout)
-                                        Nothing
-                    
-                    workerInfo <- newWorkerInfo (GenericWorker "cache-clean-up") timeout (convert $ show workerId)
-                    runWorker logger workerInput arguments workerInfo
-        pure (r, workerId)                            
+-- | Read SLURM files, if there are any configured. Only the main process
+-- does it, workers don't read any files that are not their own.
+reReadSlurm :: AppContext s -> IO (ValidationState, Maybe Slurm)
+reReadSlurm AppContext {..} =
+    case appState ^. #readSlurm of
+        Nothing       -> pure (mempty, Nothing)
+        Just readFunc -> do
+            logInfo logger [i|Re-reading and re-validating SLURM files.|]
+            (z, vs) <- runValidatorIO (newScopes "read-slurm") readFunc
+            case z of
+                Left e -> do
+                    logError logger [i|Failed to read SLURM files: #{e}|]
+                    pure (vs, Nothing)
+                Right slurm ->
+                    pure (vs, Just slurm)
 
 -- To be called by the validation worker process
-runValidation :: Storage s =>
-                AppContext s
+runValidation :: AppContext s
             -> WorldVersion
             -> [TAL]
             -> [TaName]
-            -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire), Maybe Slurm)
+            -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire))
 runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames = do           
 
     results <- validateMutlipleTAs appContext worldVersion talsToValidate
-        
-    -- Apply SLURM if it is set in the appState
-    (slurmValidations, maybeSlurm) <- reReadSlurm        
 
-    -- Save all the results into LMDB    
-    ((deleted, updatedValidation), elapsed) <- timedMS $ rwTxT database $ \tx db -> do              
-                            
+    -- Save all the results into the database. SLURM is not read here, the 
+    -- main process applies it after re-reading the payloads.
+    ((deleted, updatedValidation), elapsed) <- timedMS $ DB.rwTxT database $ \tx -> do
+
         let results' = addVersionPerTA results
-        updatedValidation <- addUniqueVrpCountsToMetrics tx db results' slurmValidations                
+        updatedValidation <- addUniqueVrpCountsToMetrics tx results'
 
-        let resultsToSave = toPerTA 
-                $ map (\(ta, r) -> (ta, (r ^. typed, r ^. typed))) 
+        let resultsToSave = toPerTA
+                $ map (\(ta, r) -> (ta, (r ^. typed, r ^. typed)))
                 $ Map.toList results'
 
-        DB.saveValidationVersion tx db worldVersion 
-            allTaNames resultsToSave updatedValidation                            
-     
-        for_ maybeSlurm $ DB.saveSlurm tx db worldVersion        
- 
+        DB.saveValidationVersion tx worldVersion
+            resultsToSave updatedValidation
+
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.
-        deleted <- DB.deleteOldestVersionsIfNeeded tx db (config ^. #versionNumberToKeep)
+        deleted <- DB.deleteOldestVersionsIfNeeded tx (config ^. #versionNumberToKeep)
 
         let validations = updatedValidation <> snd (allTAs resultsToSave)
 
-        handleValidations tx db (validations ^. typed)        
+        handleValidations tx (validations ^. typed)
 
         pure (deleted, validations)
 
@@ -702,43 +732,27 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deletedStr} oldest version(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, 
-        Map.map (\r -> (r ^. #discoveredRepositories, r ^. #earliestNotValidAfter)) results, 
-        maybeSlurm)
+        Map.map (\r -> (r ^. #discoveredRepositories, r ^. #earliestNotValidAfter)) results)
 
   where
+    addUniqueVrpCountsToMetrics tx results = do
 
-    reReadSlurm =
-        case appState ^. #readSlurm of
-            Nothing       -> pure (mempty, Nothing)
-            Just readFunc -> do
-                logInfo logger [i|Re-reading and re-validating SLURM files.|]
-                (z, vs) <- runValidatorT (newScopes "read-slurm") readFunc
-                case z of
-                    Left e -> do
-                        logError logger [i|Failed to read SLURM files: #{e}|]
-                        pure (vs, Nothing)
-                    Right slurm ->
-                        pure (vs, Just slurm)     
-    
-    addUniqueVrpCountsToMetrics tx db results slurmValidations = do 
+        previousVersion <- DB.previousVersion tx worldVersion
 
-        previousVersion <- DB.previousVersion tx db worldVersion        
-
-        vrps <- forM allTaNames $ \taName -> do 
-            case Map.lookup taName results of 
+        vrps <- forM allTaNames $ \taName -> do
+            case Map.lookup taName results of
                 Just p  -> pure (taName, toVrps $ p ^. typed)
-                Nothing -> case previousVersion of 
-                        Nothing -> pure (taName, mempty) 
-                        Just pv -> (taName, ) <$> DB.getVrpsForTA tx db pv taName    
+                Nothing -> case previousVersion of
+                        Nothing -> pure (taName, mempty)
+                        Just pv -> (taName, ) <$> DB.getVrpsForTA tx pv taName
    
-        pure $ addUniqueVRPCount (toPerTA vrps) slurmValidations
+        pure $ addUniqueVRPCount (toPerTA vrps) mempty
       where
-        -- TODO This is very expensive and _probably_ there's a faster 
-        -- way to do it then Set.fromList
         addUniqueVRPCount vrps !vs = let
                 vrpCountLens = typed @Metrics . #vrpCounts
-                totalUnique = Count (fromIntegral $ uniqueVrpCount vrps)        
-                perTaUnique = fmap (Count . fromIntegral . Set.size . Set.fromList . V.toList . unVrps) (unPerTA vrps)   
+                (perTaCounts, allTasCount) = uniqueVrpCounts vrps
+                totalUnique = Count (fromIntegral allTasCount)
+                perTaUnique = fmap (Count . fromIntegral) perTaCounts
             in vs & vrpCountLens . #totalUnique .~ totalUnique                
                   & vrpCountLens . #perTaUnique .~ perTaUnique
 
@@ -749,9 +763,10 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
 
     -- Here we do anything that needs to be done in case of specific 
     -- fetch/validation issues are present    
-    handleValidations tx db validations = do
-        forceSnapshotForReferencialIssues tx db validations
+    handleValidations tx validations = do
+        forceSnapshotForReferencialIssues tx validations
         -- other processings if needed
+        -- TODO Add some logic that would reset the cache in case of storage integrity issues
 
     -- https://github.com/lolepezy/rpki-prover/issues/249
     -- This is to handle referential integrity issues, i.e. manifests referring to 
@@ -760,10 +775,10 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     -- or a problem in the repository. In either case we force snapshot fetch 
     -- to recover repository integrity. This is hacky and should be reconsidered 
     -- in the future, but it works well for now.
-    forceSnapshotForReferencialIssues tx db (Validations validations) = do
+    forceSnapshotForReferencialIssues tx (Validations validations) = do
         Now now <- thisInstant
-        for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) -> do 
-            DB.updateRrdpMetaM tx db rrdpUrl $ \case 
+        for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) -> do
+            DB.updateRrdpMetaM tx rrdpUrl $ \case
                 Nothing   -> pure Nothing
                 Just meta -> do 
                     let enforcedSnapshot = meta & #enforcement ?~ 
@@ -781,7 +796,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                         Just (ForcedSnaphotAt processedAt)
                             -- If the last forced fetch was less than N hours ago, don't do it again
                             | closeEnoughMoments (Earlier processedAt) (Later now)
-                                (config ^. #validationConfig . #rrdpForcedSnapshotMinInterval) -> 
+                                (config ^. #rrdpConf . #forcedSnapshotMinInterval) -> 
                                     pure $ Just meta
 
                             | otherwise -> do 
@@ -818,7 +833,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
 -- | Adjust running fetchers to the latest discovered repositories
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
-adjustFetchers :: Storage s => AppContext s -> Map TaName Fetcheables -> WorkflowShared -> IO ()
+adjustFetchers :: AppContext s -> Map TaName Fetcheables -> WorkflowShared -> IO ()
 adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@WorkflowShared { fetchers = Fetchers {..} } = do
     (currentFetchers, toStop, toStart) <- atomically $ do            
 
@@ -861,7 +876,7 @@ adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@W
                 foldr Map.delete addedNewAsyncs $ Set.toList toStop
                         
 -- | Create a new fetcher for the given URL and run it.
-newFetcher :: Storage s => AppContext s -> WorkflowShared -> RpkiURL -> IO ()
+newFetcher :: AppContext s -> WorkflowShared -> RpkiURL -> IO ()
 newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetchers {..}, ..} url = do
     ignoreSync $ go `finally` dropFetcher fetchers url    
   where
@@ -889,7 +904,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         pauseIfNeeded now = do 
             f <- fetchableForUrl 
             for_ f $ \_ -> do 
-                r <- roTxT database (\tx db -> DB.getRepository tx db url)
+                r <- DB.roTxT database (\tx -> DB.getRepository tx url)
                 for_ r $ \repository -> do          
                     let status = getMeta repository ^. #status
                     let lastFetchMoment = 
@@ -918,68 +933,128 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 let fetchConfig = newFetchConfig config
                 worldVersion <- newWorldVersion
                 repository <- fromMaybe (newRepository url) <$> 
-                                roTxT database (\tx db -> DB.getRepository tx db url) 
+                                DB.roTxT database (\tx -> DB.getRepository tx url) 
 
-                ((r, validations), duration) <-                 
-                        withFetchLimits fetchConfig repository $ timedMS $ 
-                            runValidatorT (newScopes' RepositoryFocus url) $ do                                 
-                                runConcurrentlyIfPossible logger FetchTask runningTasks 
-                                    $ fetchRepository appContext fetchConfig worldVersion repository
+                -- TODO It should be refactored to be more systematic: 
+                -- If a repository was successfully fetched before, try to fetch the update 
+                -- using Erik relays (if configured)
+                case (config ^. typed @ErikConf . #relays, getFetchStatus repository) of 
+                    (erikRelays, FetchedAt {}) 
+                        | not (null erikRelays) -> do 
+                            usableRelays <- usableErikRelays appState erikRelays
+                            case usableRelays of 
+                                [] -> do 
+                                    logWarn logger [i|No usable Erik relays for #{url}, falling back to primary fetch.|]
+                                    fetchPrimary fetchConfig repository worldVersion
+                                _  ->
+                                    fetchErikRelays fetchConfig worldVersion repository usableRelays
+                    _ -> 
+                            fetchPrimary fetchConfig repository worldVersion
 
-                rememberFirstFetchBy worldVersion
-                updatePrometheusForRepository url duration prometheusMetrics
-
-                -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
-                case r of
-                    Right (repository', stats) -> do                         
-                        let (updateRepo, interval) = updateRepository fetchConfig
-                                repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duration
-
-                        saveFetchOutcome updateRepo validations                        
-                        triggerTaRevalidationIf $ hasUpdates validations                                                         
-
-                        pure $ Just interval
-
-                    Left _ -> do
-                        let newStatus = FailedAt $ versionToInstant worldVersion
-                        let (updatedRepo, interval) = updateRepository fetchConfig repository worldVersion newStatus Nothing duration
-                        saveFetchOutcome updatedRepo validations
-
-                        fetchableForUrl >>= \case
-                            Nothing -> 
-                                -- this whole fetcheable is gone
-                                pure Nothing
-                            Just fallbacks -> do  
-                                anyUpdates <- fetchFallbacks fetchConfig worldVersion fallbacks                                                            
-                                triggerTaRevalidationIf anyUpdates
-                                if anyUpdates 
-                                    then do                                        
-                                        pure $ Just $ 
-                                                case [ () | RsyncU _ <- Set.toList fallbacks ] of                                                     
-                                                    -- Not implemented yet, in reality it should never happen, 
-                                                    -- fallbacks can only be rsync in forseable future
-                                                    [] -> interval
-                                                    -- fallbacks managed to get through and it was rsync (duh), 
-                                                    -- so it should be a normal rsync interval then                                                    
-                                                    _  -> max interval (config ^. #validationConfig . #rsyncRepositoryRefreshInterval)
-                                    else 
-                                        -- nothing responded, so just go with the normal exponential backoff thing
-                                        pure $ Just interval                                        
-                                
       where
+        fetchPrimary fetchConfig repository worldVersion = do
+            ((r, validations), duration) <-                 
+                withFetchLimits fetchConfig repository $ timedMS $ 
+                    runValidatorIO (newScopes' RepositoryFocus url) $ do
+                        runConcurrentlyIfPossible logger FetchTask runningTasks 
+                            $ fetchRepository appContext fetchConfig worldVersion repository
+
+            rememberFirstFetchBy worldVersion
+            updatePrometheusForRepository url duration prometheusMetrics
+
+            -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
+            case r of
+                Right (repository', stats) -> do
+                    let (updatedRepo, interval) = updateRepository fetchConfig
+                            repository' worldVersion (FetchedAt (versionToInstant worldVersion)) stats duration
+
+                    saveFetchOutcome updatedRepo validations                        
+                    triggerTaRevalidationIf $ hasUpdates validations                                                         
+
+                    pure $ Just interval
+
+                Left _ -> do
+                    let newStatus = FailedAt $ versionToInstant worldVersion
+                    let (updatedRepo, interval) = updateRepository fetchConfig 
+                            repository worldVersion newStatus Nothing duration
+                    saveFetchOutcome updatedRepo validations
+
+                    fetchableForUrl >>= \case
+                        Nothing -> 
+                            -- this whole fetcheable is gone
+                            pure Nothing
+                        Just fallbacks -> do  
+                            -- TODO Maybe try Erik relay before trying rsync
+                            anyUpdates <- fetchFallbacks fetchConfig worldVersion fallbacks                                                            
+                            triggerTaRevalidationIf anyUpdates
+                            if anyUpdates 
+                                then do                                        
+                                    pure $ Just $ 
+                                            case [ () | RsyncU _ <- Set.toList fallbacks ] of                                                     
+                                                -- Not implemented yet, in reality it should never happen, 
+                                                -- fallbacks can only be rsync in forseable future
+                                                [] -> interval
+                                                -- fallbacks managed to get through and it was rsync (duh), 
+                                                -- so it should be a normal rsync interval then                                                    
+                                                _  -> max interval (config ^. #rsyncConf . #repositoryRefreshInterval)
+                                else 
+                                    -- nothing responded, so just go with the normal exponential backoff thing
+                                    pure $ Just interval                
+
+        fetchErikRelays fetchConfig worldVersion repository erikRelays = 
+            -- The FQDN is derived out here rather than inside the fetch itself, 
+            -- because it is also the key the Erik bookkeeping record is stored under.
+            erikFqdnForUrl >>= \case 
+                Nothing -> do 
+                    logWarn logger [i|Couldn't derive an FQDN for #{url}, fetching it directly.|]
+                    fetchPrimary fetchConfig repository worldVersion
+
+                Just fqdn -> do 
+                    ((r, validations), duration) <-                 
+                        -- A hard cap, not `withFetchLimits`: that one lets a fetch
+                        -- through once it has waited long enough, which is right for
+                        -- repository fetches but means nothing bounds the number of
+                        -- Erik workers, one per FQDN, started in a single round.
+                        withSemaphore (fetchers ^. #erikFetchSemaphore) $ timedMS $ 
+                            runValidatorIO (newScopes' RepositoryFocus url) $ 
+                                fetchRepositoryFromErikRelays appContext fetchConfig 
+                                    erikRelays worldVersion fqdn
+                    case r of 
+                        Right ErikFetchStat {..} -> do 
+                            let newStatus = FetchedAt (versionToInstant worldVersion)
+                            let (updatedRepo, interval) = updateRepository fetchConfig
+                                    repository worldVersion newStatus Nothing duration
+
+                            saveFetchOutcome updatedRepo validations                        
+                            saveErikFetchOutcome fqdn newStatus interval relayUsage validations
+                            triggerTaRevalidationIf $ hasUpdates validations                                                         
+
+                            pure $ Just interval
+
+                        Left e -> do
+                            logWarn logger [i|Erik relay fetch failed for #{url} with error #{e}, falling back to primary fetch.|]
+                            let newStatus = FailedAt (versionToInstant worldVersion)
+                            let (_, interval) = updateRepository fetchConfig
+                                    repository worldVersion newStatus Nothing duration
+                            -- Record the failure under the FQDN as well, otherwise the 
+                            -- only trace of it is in the log.
+                            saveErikFetchOutcome fqdn newStatus interval [] validations
+                            fetchPrimary fetchConfig repository worldVersion
+
+
         fetchFallbacks fetchConfig worldVersion fallbacks = do 
             -- TODO Make it a bit smarter based on the overal number and overall load
             let maxThreads = 32
             repositories <- pooledForConcurrentlyN maxThreads (Set.toList fallbacks) $ \fallbackUrl -> do 
 
                 repository <- fromMaybe (newRepository fallbackUrl) <$> 
-                                roTxT database (\tx db -> DB.getRepository tx db fallbackUrl)
+                                DB.roTxT database (\tx -> DB.getRepository tx fallbackUrl)
                                 
                 ((r, validations), duration) <- 
                         withFetchLimits fetchConfig repository 
                             $ runConcurrentlyIfPossible logger FetchTask runningTasks                                 
                                 $ timedMS
-                                $ runValidatorT (newScopes' RepositoryFocus fallbackUrl) 
+                                $ runValidatorIO (newScopes' RepositoryFocus fallbackUrl) 
                                     $ fetchRepository appContext fetchConfig worldVersion repository                
 
                 updatePrometheusForRepository fallbackUrl duration prometheusMetrics
@@ -993,9 +1068,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             
                 pure (repo, validations)            
 
-            rwTxT database $ \tx db -> do
-                DB.saveRepositories tx db (map fst repositories)
-                DB.saveRepositoryValidationStates tx db repositories
+            DB.rwTxT database $ \tx -> do
+                DB.saveRepositories tx (map fst repositories)
+                DB.saveRepositoryValidationStates tx repositories
 
             pure $ any (hasUpdates . snd) repositories
         
@@ -1003,6 +1078,16 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
     fetchableForUrl = do 
         Fetcheables fs <- readTVarIO fetcheables
         pure $ MonoidalMap.lookup url fs
+
+    -- The FQDN an Erik fetch works on.
+    -- TODO Dirty to extract FQDN from fallback rsync URLs instead of 
+    -- RRDP URL, because FQDN comes from SIA of the certificate.
+    erikFqdnForUrl = do 
+        fallbacks <- fromMaybe mempty <$> fetchableForUrl
+        let fqdns = Set.fromList [ fqdn | f <- Set.toList fallbacks, Just fqdn <- [getFQDN f]]
+        pure $ if Set.null fqdns 
+                then getFQDN $ getRpkiURL url
+                else Just $ Set.findMin fqdns
 
 
     updateRepository fetchConfig repo worldVersion newStatus stats duration = (updated, interval)
@@ -1021,13 +1106,12 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                     Nothing                  -> defaultInterval
                     Just RrdpFetchStat {..} -> 
                         case action of 
-                            NothingToFetch _ -> increaseInterval currentInterval 
+                            NothingToFetch _               -> increaseInterval currentInterval 
                             FetchDeltas {..} 
                                 | moreThanOne sortedDeltas -> decreaseInterval currentInterval
                                 | otherwise                -> currentInterval
-                            FetchSnapshot _ _       -> currentInterval
-                            ForcedFetchSnapshot _ _ -> currentInterval
-      where                                    
+                            _                              -> currentInterval
+      where
         currentInterval = 
             fromMaybe defaultInterval (getMeta repository ^. #refreshInterval)
 
@@ -1038,15 +1122,15 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         moreThanOne = ( > 1) . length . NonEmpty.take 2
 
         defaultInterval = case repository of 
-            RrdpR _  -> config ^. #validationConfig . #rrdpRepositoryRefreshInterval
-            RsyncR _ -> config ^. #validationConfig . #rsyncRepositoryRefreshInterval
+            RrdpR _  -> config ^. #rrdpConf . #repositoryRefreshInterval
+            RsyncR _ -> config ^. #rsyncConf . #repositoryRefreshInterval
 
         increaseInterval (Seconds s) = trimInterval $ Seconds $ s + s `div` 5 + kindaRandomness
         decreaseInterval (Seconds s) = trimInterval $ Seconds $ s - s `div` 3 - kindaRandomness
 
         minInterval = 
             case repository of                
-                -- it's signifantly cheaper to use E-Tag and If_No-Mobified-Since, 
+                -- it's signifantly cheaper to use E-Tag and If_No-Modified-Since, 
                 -- so the interval can be smaller
                 RrdpR (RrdpRepository { eTag = Just _ }) -> fetchConfig ^. #minFetchInterval
                 _                                        -> 2 * fetchConfig ^. #minFetchInterval
@@ -1066,9 +1150,24 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             in fromIntegral r :: Int64
 
     saveFetchOutcome r validations =
-        rwTxT database $ \tx db -> do
-            DB.saveRepositories tx db [r]
-            DB.saveRepositoryValidationStates tx db [(r, validations)]
+        DB.rwTxT database $ \tx -> do
+            DB.saveRepositories tx [r]
+            DB.saveRepositoryValidationStates tx [(r, validations)]
+
+    -- Erik fetches are keyed by FQDN and not by repository URL, so they are
+    -- tracked separately from the repository itself. Several repositories can
+    -- share an FQDN, in which case it is simply the latest fetch that is recorded.
+    saveErikFetchOutcome fqdn newStatus interval relayUsage validations =
+        DB.rwTxT database $ \tx -> do
+            existing <- fromMaybe (newErikRepository fqdn) <$> DB.getErikRepository tx fqdn
+            let erikRepository = existing
+                    & #meta . #status .~ newStatus
+                    & #meta . #refreshInterval ?~ interval
+                    -- A failed fetch has nothing to say about the relays, so in
+                    -- that case keep whatever the previous one found out.
+                    & #relayUsage %~ (\previous -> if null relayUsage then previous else relayUsage)
+            DB.saveErikRepositories tx [erikRepository]
+            DB.saveErikRepositoryValidationStates tx [(erikRepository, validations)]
 
     
     withFetchLimits :: FetchConfig -> Repository -> IO a -> IO a
@@ -1080,7 +1179,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         timeToWait = fetchConfig ^. #fetchLaunchWaitDuration
 
         semaphoreToUse = 
-            case getMeta repository ^. #status of  
+            case getFetchStatus repository of  
                 -- TODO Add logic "if succeeded more than N times"
                 FetchedAt _ -> fetchers ^. #trustedFetchSemaphore
                 _           -> fetchers ^. #untrustedFetchSemaphore
@@ -1094,7 +1193,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                     rsyncS <- readTVar rsyncPerHostSemaphores
                     case Map.lookup host rsyncS of 
                         Nothing -> do 
-                            s <- newSemaphore $ config ^. #rsyncConf . #rsyncPerHostLimit
+                            s <- newSemaphore $ config ^. #rsyncConf . #perHostLimit
                             writeTVar rsyncPerHostSemaphores $ Map.insert host s rsyncS
                             pure s
                         Just s -> 
@@ -1107,7 +1206,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
     hasUpdates validations = let 
             metrics = validations ^. #topDownMetric
             rrdps = MonoidalMap.elems $ unMetricMap $ metrics ^. #rrdpMetrics
-            rsyncs = MonoidalMap.elems $ unMetricMap $ metrics ^. #rsyncMetrics                
+            rsyncs = MonoidalMap.elems $ unMetricMap $ metrics ^. #traverseMetrics                
         in any (\m -> rrdpRepoHasSignificantUpdates (m ^. typed)) rrdps ||
            any (\m -> rsyncRepoHasSignificantUpdates (m ^. typed)) rsyncs
 
@@ -1125,11 +1224,13 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         when (Map.notMember url fff) $ 
             writeTVar firstFinishedFetchBy $ Map.insert url version fff                   
 
--- Keep track of the earliest expiration time for each TA (i.e. the earlist time when some object of the TA will expire).
--- Reschedule revalidation of the TA at the moment right after its earliest expiration time. Since this expiration time
--- in practice keeps receding to the future as new objects are added, the revalidation is most likely not needed at all, 
+
+-- Keep track of the earliest expiration time for each TA (i.e. the earlist time when some 
+-- object of the TA will expire). Reschedule revalidation of the TA at the moment right after 
+-- its earliest expiration time. Since this expiration time in practice keeps receding to the 
+-- future as new objects are added, the revalidation is most likely not needed at all, 
 -- that's why we double-check it once again before revalidation.
-scheduleRevalidationOnExpiry :: Storage s => AppContext s -> Map TaName EarliestToExpire -> WorkflowShared -> IO ()
+scheduleRevalidationOnExpiry :: AppContext s -> Map TaName EarliestToExpire -> WorkflowShared -> IO ()
 scheduleRevalidationOnExpiry AppContext {..} expirationTimes WorkflowShared {..} = do
     Now now <- thisInstant
 
@@ -1175,42 +1276,51 @@ scheduleRevalidationOnExpiry AppContext {..} expirationTimes WorkflowShared {..}
 
 
 -- To be called from the cache cleanup worker
--- 
-runCacheCleanup :: Storage s =>
-                AppContext s
-                -> WorldVersion                
+--
+runCacheCleanup :: MaintainableStorage s
+                => AppContext s
+                -> WorldVersion
                 -> IO DB.CleanUpResult
-runCacheCleanup AppContext {..} worldVersion = do        
+runCacheCleanup appContext@AppContext {..} worldVersion = do
     db <- readTVarIO database
     -- Use the latest completed validation moment as a cutting point.
-    -- This is to prevent cleaning up objects actual object if they were 
+    -- This is to prevent cleaning up objects actual object if they were
     -- untouched because prover was stopped for a long period.
-    cutOffVersion <- roTx db $ \tx -> 
-        fromMaybe worldVersion <$> DB.getLatestVersion tx db
-    
+    cutOffVersion <- DB.roTx db $ \tx ->
+        fromMaybe worldVersion <$> DB.getLatestVersion tx
+
     let cutOffMoment = versionToInstant cutOffVersion
         tooOldLongLived  = versionIsOld cutOffMoment (config ^. #longLivedCacheLifeTime)
         tooOldShortLived = versionIsOld cutOffMoment (config ^. #shortLivedCacheLifeTime)
 
-    DB.deleteStaleContent db DB.DeletionCriteria {
+    r@DB.CleanUpResult {..} <- DB.deleteStaleContent db DB.DeletionCriteria {
             versionIsTooOld  = tooOldLongLived,
-            objectIsTooOld = \version type_ -> 
-                case type_ of 
-                    -- Most of the object churn happens because of the manifest and CRL updates, 
+            objectIsTooOld = \version type_ ->
+                case type_ of
+                    -- Most of the object churn happens because of the manifest and CRL updates,
                     -- so they should be removed from the cache sooner than more long-lived objects
                     MFT -> tooOldShortLived version
                     CRL -> tooOldShortLived version
-                    _   -> tooOldLongLived version
+                    _   -> tooOldLongLived version,
+
+            -- We don't want the warning about multiple lcoations to hang around for too long
+            objectUrlIsTooOld = tooOldShortLived
         }
+
+    -- Run storage maintenance (WAL checkpoint, incremental vacuum, optimize)
+    when (deletedObjects > 0) $
+        runMaintenance appContext
+
+    pure r
 
 -- | Load the state corresponding to the last completed validation version.
 -- 
-loadStoredAppState :: Storage s => AppContext s -> IO (Maybe WorldVersion)
-loadStoredAppState AppContext {..} = do
+loadStoredAppState :: AppContext s -> IO (Maybe WorldVersion)
+loadStoredAppState appContext@AppContext {..} = do
     Now now' <- thisInstant
     let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval    
-    roTxT database $ \tx db ->
-        DB.getLatestVersion tx db >>= \case
+    DB.roTxT database $ \tx ->
+        DB.getLatestVersion tx >>= \case
             Nothing  -> pure Nothing
 
             Just lastVersion
@@ -1219,9 +1329,15 @@ loadStoredAppState AppContext {..} = do
                     pure Nothing
 
                 | otherwise -> do
-                    (payloads, elapsed) <- timedMS $ do                                            
-                        slurm    <- DB.getSlurm tx db lastVersion
-                        payloads <- DB.getRtrPayloads tx db lastVersion                        
+                    (payloads, elapsed) <- timedMS $ do
+                        -- SLURM is stored by the main process after the validation 
+                        -- worker has saved the version, so if the main process died in 
+                        -- between, there's none for this version. The files are what 
+                        -- counts anyway, so read them rather than serve unfiltered payloads.
+                        slurm <- DB.getSlurm tx lastVersion >>= \case
+                                    Just stored -> pure $ Just stored
+                                    Nothing     -> snd <$> reReadSlurm appContext
+                        payloads <- DB.getRtrPayloads tx lastVersion
                         for_ payloads $ \payloads' -> do 
                             slurmedPayloads <- atomically $ completeVersion appState lastVersion payloads' slurm                            
                             when (config ^. #withValidityApi) $                                
@@ -1242,22 +1358,29 @@ canRunInParallel t1 t2 =
     t2 `elem` canRunWith t1 || t1 `elem` canRunWith t2
   where    
     canRunWith = \case 
-        ValidationTask       -> allExcept [LmdbCompactTask]
+        ValidationTask       -> allTasks
 
         -- two different fetches can run in parallel, it's fine    
-        FetchTask            -> [ValidationTask, FetchTask, CacheCleanupTask]
+        FetchTask            -> [ValidationTask, FetchTask, CacheCleanupTask, TaCertificateTask]
 
-        CacheCleanupTask     -> [ValidationTask, FetchTask, RsyncCleanupTask]    
-        RsyncCleanupTask     -> allExcept [FetchTask]
-        LeftoversCleanupTask -> allExcept [LmdbCompactTask]
-    
-        -- this one can only run alone
-        LmdbCompactTask     -> []
+        -- downloading a TA certificate is just another (tiny) fetch
+        TaCertificateTask    -> [ValidationTask, FetchTask, CacheCleanupTask, TaCertificateTask]
+
+        CacheCleanupTask     -> [ValidationTask, FetchTask, RsyncCleanupTask, TaCertificateTask]    
+        
+        -- Don't clean up anything while fetches are in progress
+        RsyncCleanupTask     -> allExcept [FetchTask, TaCertificateTask]
+        LeftoversCleanupTask -> allTasks
+
+        -- SQLite serialises it against everything else by itself, and it is 
+        -- the only thing that keeps the WAL from growing without bound
+        WalCheckpointTask    -> allTasks
   
-    allExcept tasks = filter (not . (`elem` tasks)) [minBound..maxBound]
+    allExcept tasks = filter (not . (`elem` tasks)) allTasks
+    allTasks = [minBound..maxBound]
         
     
-runConcurrentlyIfPossible :: (MonadIO m, MonadBaseControl IO m) 
+runConcurrentlyIfPossible :: MonadUnliftIO m 
                         => AppLogger -> Task -> Tasks -> m a -> m a
 runConcurrentlyIfPossible logger taskType Tasks {..} action = do 
     {- 
@@ -1281,7 +1404,7 @@ runConcurrentlyIfPossible logger taskType Tasks {..} action = do
             then do 
                 writeTVar running $ Map.insertWith (+) taskType 1 runningTasks_
                 pure $ action
-                        `finally` 
+                        `UIO.finally` 
                         liftIO (atomically (modifyTVar' running $ Map.alter (>>= 
                                     (\count -> if count > 1 then Just (count - 1) else Nothing)
                                 ) taskType))
@@ -1322,13 +1445,10 @@ logException logger logText result =
         Left ex -> logDebug logger [i|logException: #{logText}: #{ex}|]
         Right _ -> pure ()
 
-ignoreSync :: MonadBaseControl IO m => m () -> m ()
-ignoreSync f =     
-    catch f $ \(e :: SomeException) -> 
-        case fromException e of
-            Just (_ :: SomeAsyncException) -> throwIO e
-            Nothing -> pure ()
-
+-- | Run an action, swallowing synchronous exceptions. Asynchronous ones
+-- still propagate -- that is `UIO.catchAny`'s contract.
+ignoreSync :: MonadUnliftIO m => m () -> m ()
+ignoreSync f = f `UIO.catchAny` const (pure ())
 
 killAllWorkers :: AppContext s -> IO ()
 killAllWorkers appContext@AppContext {..} = do

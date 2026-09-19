@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+<style>
+  .tile  { fill: #141416 }
+  .frame { stroke: #4a4a52 }
+  .op    { stroke: #8e8e93 }
+  .term  { stroke: #f5f5f5 }
+  @media (prefers-color-scheme: light) {
+    .tile  { fill: #f2f2f0 }
+    .frame { stroke: #cfcfcf }
+    .op    { stroke: #8a8a8f }
+    .term  { stroke: #141416 }
+  }
+</style>
+<rect width="256" height="256" rx="54" class="tile"/>
+<rect x="14" y="14" width="228" height="228" rx="44" fill="none" stroke-width="12" class="frame"/>
+<g transform="translate(128.0 128.0) scale(0.86) translate(-128.0 -128.0)"
+   fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <g stroke-width="21" class="op"><path d="M64 74 V182"/><path d="M64 128 H112"/></g>
+  <g stroke-width="25" class="term"><path d="M138 190 L172 72 L206 190"/></g>
+</g>
+</svg>

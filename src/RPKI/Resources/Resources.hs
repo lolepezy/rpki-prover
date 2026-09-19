@@ -93,13 +93,31 @@ ipv6RangeToPrefixes :: Word128 -> Word128 -> [Ipv6Prefix]
 ipv6RangeToPrefixes w1 w2 = map Ipv6Prefix $ V6.rangeToBlocks $ Range (V6.IpAddress w1) (V6.IpAddress w2)
 
     
-subtractRange :: (Enum a, Ord a) => a -> a -> a -> a -> r -> (Range a -> [r]) -> [r]
+subtractRange :: (Enum a, Ord a, Bounded a) => a -> a -> a -> a -> r -> (Range a -> [r]) -> [r]
 subtractRange f1 l1 f2 l2 r fromRange = 
     if | f2 > l1  || l2 <= f1 -> [r]
-       | f1 <= f2 && l1 < l2  -> fromRange $ Range f1 (pred f2)
-       | f1 <= f2 && l1 >= l2 -> fromRange (Range f1 (pred f2)) <> fromRange (Range (succ l2) l1)
-       | f1 > f2  && l1 >= l2 -> fromRange (Range l2 l1)
+       | f1 <= f2 && l1 < l2  -> below
+       | f1 <= f2 && l1 >= l2 -> below <> above
+       | f1 > f2  && l1 >= l2 -> above
        | f1 > f2  && l1 < l2  -> []
+  where
+    -- The part of [f1, l1] strictly below f2 and strictly above l2.
+    -- `succ`/`pred` are partial for the bounded types used here (Word32/Word128 
+    -- based IP addresses), so an empty part must not be computed at all.
+    below = maybe [] (fromRange . Range f1) $ predSafe f2
+    above = maybe [] (\l2' -> fromRange $ Range l2' l1) $ succSafe l2
+
+-- | 'succ' that yields Nothing instead of throwing at 'maxBound'.
+succSafe :: (Enum a, Eq a, Bounded a) => a -> Maybe a
+succSafe a | a == maxBound = Nothing
+           | otherwise     = Just $! succ a
+{-# INLINE succSafe #-}
+
+-- | 'pred' that yields Nothing instead of throwing at 'minBound'.
+predSafe :: (Enum a, Eq a, Bounded a) => a -> Maybe a
+predSafe a | a == minBound = Nothing
+           | otherwise     = Just $! pred a
+{-# INLINE predSafe #-}
 
 ipRangesIntersection :: Ord a => r -> r -> (r -> r -> (a, a, a, a)) -> (Range a -> [r]) -> [r]
 ipRangesIntersection p1 p2 getEnds fromRange = 
@@ -157,24 +175,28 @@ normaliseAsns asns =
             Nothing     -> r0 : mergeAsRanges (r1 : rs)
             Just merged -> mergeAsRanges (merged : rs)      
       where
+        -- NOTE: `succ` is partial for ASN (Word32), so every adjacency test goes 
+        -- through `succSafe`. An AS block such as {0-4294967295, 10-20} used to 
+        -- throw `Enum.succ{Word32}` here, i.e. during parsing of a certificate.
         tryMerge (AS a0) (AS a1) 
-            | a0      == a1 = Just $ AS a0
-            | succ a0 == a1 = Just $ ASRange a0 a1
-            | otherwise     = Nothing          
+            | a0 == a1             = Just $ AS a0
+            | succSafe a0 == Just a1 = Just $ ASRange a0 a1
+            | otherwise            = Nothing          
 
         tryMerge (AS a0) r@(ASRange a10 a11) 
-            | a0 >= a10 && a0 <= a11 = Just r
-            | succ a0 == a10         = Just $ ASRange a0 a11
-            | otherwise              = Nothing 
+            | a0 >= a10 && a0 <= a11  = Just r
+            | succSafe a0 == Just a10 = Just $ ASRange a0 a11
+            | otherwise               = Nothing 
 
         tryMerge r@(ASRange a00 a01) (AS a1) 
-            | a1 >= a00 && a1 <= a01 = Just r        
-            | succ a01 == a1         = Just $ ASRange a00 a1
-            | otherwise              = Nothing 
+            | a1 >= a00 && a1 <= a01  = Just r        
+            | succSafe a01 == Just a1 = Just $ ASRange a00 a1
+            | otherwise               = Nothing 
 
         tryMerge (ASRange a00 a01) (ASRange a10 a11) 
-            | succ a01 >= a10 = Just $ ASRange a00 (max a01 a11)
-            | otherwise       = Nothing         
+            -- `succ a01 >= a10` where a01 == maxBound is vacuously true
+            | maybe True (>= a10) (succSafe a01) = Just $ ASRange a00 (max a01 a11)
+            | otherwise                          = Nothing         
 
     rangeStart = \case
         AS a        -> a 
@@ -245,9 +267,10 @@ subtractAsn (AS a) (ASRange b0 b1)
     | otherwise          = [AS a]          
 
 subtractAsn (ASRange a0 a1) (AS b)
-    | a0 == b           = optimiseAsns [ASRange (succ a0) a1]
-    | a1 == b           = optimiseAsns [ASRange a0 (pred b) ]
-    | a0 < b && b <= a1 = optimiseAsns [ASRange a0 (pred b), ASRange (succ b) a1]
+    | a0 == b           = optimiseAsns $ maybeToList $ (`ASRange` a1) <$> succSafe a0
+    | a1 == b           = optimiseAsns $ maybeToList $ ASRange a0 <$> predSafe b
+    | a0 < b && b <= a1 = optimiseAsns $ catMaybes [ ASRange a0 <$> predSafe b, 
+                                                     (`ASRange` a1) <$> succSafe b ]
     | otherwise         = []
 
 subtractAsn (ASRange a0 a1) (ASRange b0 b1) = 
@@ -256,9 +279,10 @@ subtractAsn (ASRange a0 a1) (ASRange b0 b1) =
     go
         | a1 < b0 || a0 > b1   = [ASRange a0 a1]
         | b0 <= a0 && b1 >= a1 = []
-        | b0 <= a0 && b1 < a1  = [ASRange (succ b1) a1]
-        | b0 > a0 && b1 < a1   = [ASRange a0 (pred b0), ASRange (succ b1) a1]
-        | b0 > a0 && b1 >= a1  = [ASRange a0 (pred b0)]
+        | b0 <= a0 && b1 < a1  = maybeToList $ (`ASRange` a1) <$> succSafe b1
+        | b0 > a0 && b1 < a1   = catMaybes [ ASRange a0 <$> predSafe b0, 
+                                             (`ASRange` a1) <$> succSafe b1 ]
+        | b0 > a0 && b1 >= a1  = maybeToList $ ASRange a0 <$> predSafe b0
 {-# INLINE subtractAsn #-}    
 
 optimiseAsns :: [AsResource] -> [AsResource]
@@ -271,14 +295,27 @@ optimiseAsns = mapMaybe f
             | otherwise = Just r
 {-# INLINE optimiseAsns #-}    
 
+-- | Expand AS resources into individual ASNs. 
+-- NOTE: this can produce up to 2^32 elements, so callers must bound the input 
+-- first, see `countAsns`.
 unwrapAsns :: [AsResource] -> [ASN]
 unwrapAsns = mconcat . map (
     \case
         AS asn          -> [asn]
         ASRange a1 a2
-            | a1 >= a2  -> []
+            | a1 > a2   -> []
             | otherwise -> [ a1 .. a2 ])
 {-# INLINE unwrapAsns #-}                
+
+-- | How many individual ASNs a list of AS resources covers, without 
+-- materialising them (which `unwrapAsns` would).
+countAsns :: [AsResource] -> Integer
+countAsns = sum . map count
+  where
+    count (AS _) = 1
+    count (ASRange (ASN a) (ASN b))
+        | a > b     = 0
+        | otherwise = toInteger b - toInteger a + 1
 
 
 -- Bits munching

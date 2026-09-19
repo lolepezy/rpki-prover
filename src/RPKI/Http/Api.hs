@@ -22,7 +22,6 @@ import qualified Data.HashMap.Strict.InsOrd as IOMap
 
 import           RPKI.AppTypes
 import           RPKI.Domain
-import           RPKI.Store.Types
 import           RPKI.Http.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util (convert)
@@ -86,19 +85,17 @@ data API api = API {
                             :> QueryParam "version" Text 
                             :> Get '[JSON] MetricsDto,                
 
-        lmdbStats :: api :- "lmdb-stats" :> Get '[JSON] TotalDBStats,
         jobs :: api      :- "jobs" :> Get '[JSON] JobsDto,
         system :: api    :- "system" :> Get '[JSON] SystemDto,
 
         repositories :: api :- "repositories" :> Get '[JSON] PublicationPointsDto,        
 
+        erikRelays :: api :- "erik-relays" :> Get '[JSON] [ErikRelayDto],
+
         objectView :: api :- "object" :> QueryParam "uri" Text 
                                       :> QueryParam "hash" Text 
                                       :> QueryParam "key" Text 
                                       :> Get '[JSON] [RObject],
-
-        originals :: api :- "original" :> QueryParam "hash" Text 
-                                       :> Get '[ObjectBlob] ObjectOriginal,
 
         manifests :: api :- "manifests" :> QueryParam "aki" Text 
                                         :> Get '[JSON] ManifestsDto,
@@ -139,9 +136,9 @@ data HttpApi route = HttpApi {
 -- 
 swaggerDoc :: Swagger
 swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
-    & info.title    .~ "RPKI Prover API"
-    & info.version  .~ convert rpkiProverVersion
-    & info.description  ?~ ("Note: at the moment this API does not generate a proper API schema, " <> 
+    & info . title    .~ "RPKI Prover API"
+    & info . version  .~ convert rpkiProverVersion
+    & info . description  ?~ ("Note: at the moment this API does not generate a proper API schema, " <> 
                             "this UI is only good for documentation and examples." )
     & basePath          ?~ "/api"
     & paths .~ IOMap.fromList 
@@ -185,6 +182,9 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
                 "Metrics for the latest validation run (object counts, repository statuses, etc.)"),
 
             ("/repositories", mempty & get ?~ jsonOn200 "Statuses of the repositories"),
+
+            ("/erik-relays", mempty & get ?~ jsonOn200 
+                "Erik relay indexes and their partitions cached in the database"),
 
             ("/object", mempty 
                 & get ?~ jsonOn200 
@@ -238,7 +238,6 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             ("/slurms", mempty & get ?~ jsonOn200 
                         "Returns all SLURMs (RFC 8416) for every version"),
 
-            ("/lmdb-stats", mempty & get ?~ jsonOn200 "LMDB cache statistics per key-value map"),
             ("/jobs", mempty & get ?~ jsonOn200 "List of latest job runs"),
             ("/system", mempty & get ?~ jsonOn200 "State of RPKI prover instance itself, some metrics and config"),
             ("/rtr", mempty & get ?~ jsonOn200 "State of the RTR server"),

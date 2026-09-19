@@ -3,14 +3,18 @@
 
 module RPKI.Parallel where
 
-import           Control.Concurrent
+import           Control.Concurrent              (threadDelay)
 import           Control.Concurrent.STM
 import qualified Control.Concurrent.STM.TBQueue  as Q
-import           Control.Concurrent.Async.Lifted
-import           Control.Exception.Lifted
+import qualified Control.Concurrent.Async        as IOAsync
+import qualified Control.Exception               as IOExc
+import           UnliftIO                        (MonadUnliftIO)
+import qualified UnliftIO.Exception              as UIO
 import           Control.Monad
-import           Control.Monad.Reader
-import           Control.Monad.Trans.Control
+
+import           Effectful
+import           Effectful.Concurrent.Async
+import           Effectful.Exception             (finally)
 
 import           Data.Hourglass
 import           Data.Foldable (for_)
@@ -22,7 +26,6 @@ import           Streaming
 import qualified Streaming.Prelude               as S
 
 
-
 atLeastOne :: Natural -> Natural
 atLeastOne n = if n < 2 then 1 else n
 
@@ -31,13 +34,13 @@ atLeastOne n = if n < 2 then 1 else n
 
 -- Consume a stream, map each element and put asyncs in the queue.
 -- Read the queue and consume asyncs on the other end.
-foldPipeline :: (MonadBaseControl IO m, MonadIO m) =>
+foldPipeline :: (ValidatorIO es, Concurrent :> es) =>
             Natural ->
-            Stream (Of s) (ValidatorTCurried m) () ->
-            (s -> ValidatorT m p) ->          -- ^ producer
-            (p -> r -> ValidatorT m r) ->     -- ^ consumer, called for every item of the traversed argument
+            Stream (Of s) (Eff es) () ->
+            (s -> Eff es p) ->          -- ^ producer
+            (p -> r -> Eff es r) ->     -- ^ consumer, called for every item of the traversed argument
             r ->                              -- ^ fold initial value
-            ValidatorT m r
+            Eff es r
 foldPipeline parallelism stream mapStream consume accum0 =
     snd <$> bracketChanClosable
                 (atLeastOne parallelism)
@@ -62,16 +65,15 @@ foldPipeline parallelism stream mapStream consume accum0 =
                     consume p accum >>= go
 
 
-
 -- | Utility function for a specific case of producer-consumer pair 
 -- where consumer works within a transaction (represented as withTx function)
 --  
-txFoldPipeline :: (MonadBaseControl IO m, MonadIO m) =>
+txFoldPipeline :: (ValidatorIO es, Concurrent :> es) =>
             Natural ->
-            Stream (Of q) (ValidatorTCurried m) () ->
-            ((tx -> ValidatorT m ()) -> ValidatorT m ()) -> -- ^ transaction in which all consumerers are wrapped
-            (tx -> q -> ValidatorT m ()) ->           -- ^ consumer, called for every item of the traversed argument            
-            ValidatorT m ()
+            Stream (Of q) (Eff es) () ->
+            ((tx -> Eff es ()) -> Eff es ()) -> -- ^ transaction in which all consumerers are wrapped
+            (tx -> q -> Eff es ()) ->           -- ^ consumer, called for every item of the traversed argument            
+            Eff es ()
 txFoldPipeline parallelism stream withTx consume =
     snd <$> bracketChanClosable
                 (atLeastOne parallelism)
@@ -96,12 +98,12 @@ txFoldPipeline parallelism stream withTx consume =
 -- 'kill' is used to kill an item in the queue in case
 -- the whole thing is interrupted with an exception.
 --    
-bracketChanClosable :: (MonadBaseControl IO m, MonadIO m) =>
+bracketChanClosable :: (Concurrent :> es, IOE :> es) =>
                         Natural ->
-                        (ClosableQueue t -> m b) ->
-                        (ClosableQueue t -> m c) ->
-                        (t -> m w) ->
-                        m (b, c)
+                        (ClosableQueue t -> Eff es b) ->
+                        (ClosableQueue t -> Eff es c) ->
+                        (t -> Eff es w) ->
+                        Eff es (b, c)
 bracketChanClosable size produce consume kill = do     
     queue <- liftIO $ atomically $ newCQueue size
     let closeQ = liftIO $ atomically $ closeCQueue queue
@@ -168,49 +170,42 @@ readQueueChunked cq chunkSize f = go
             []    -> pure ()
             chunk -> f chunk >> go  
 
--- Auxialliary stuff for limiting the amount of parallel reading LMDB transactions    
+-- Auxialliary stuff for limiting the amount of parallel reading DB transactions
 data Semaphore = Semaphore { 
         capacity :: Int,
-        current  :: TVar Int, 
-        highest  :: TVar Int
+        current  :: TVar Int
     }
     deriving (Eq)
 
-newSemaphoreIO :: Int -> IO Semaphore
-newSemaphoreIO = atomically . newSemaphore
+newSemaphoreIO :: MonadIO m => Int -> m Semaphore
+newSemaphoreIO = liftIO . atomically . newSemaphore
 
 newSemaphore :: Int -> STM Semaphore
-newSemaphore n = Semaphore n <$> newTVar 0 <*> newTVar 0
+newSemaphore n = Semaphore n <$> newTVar 0
 
 -- Execute using a semaphore as a barrier
-withSemaphore :: Semaphore -> IO a -> IO a
+withSemaphore :: MonadUnliftIO m => Semaphore -> m a -> m a
 withSemaphore Semaphore {..} f = 
-    bracket incr decr (const f)
+    UIO.bracket (liftIO incr) (liftIO . decr) (const f)
   where 
     incr = atomically $ do 
         c <- readTVar current
         if c >= capacity 
             then retry
-            else do 
-                let c' = c + 1
-                writeTVar current c'
-                h <- readTVar highest 
-                when (c' > h) $ writeTVar highest c'
+            else writeTVar current (c + 1)
 
     decr _ = atomically $ modifyTVar' current $ \c -> c - 1
 
-getSemaphoreState :: Semaphore -> STM (Int, Int)
-getSemaphoreState Semaphore {..} = (,) <$> readTVar current <*> readTVar highest
 
 -- Execute using a semaphore as a barrier, but if the sempahore 
 -- is not allowing execution, execute after a timeout anyway
 withSemaphoreOrTimeout :: Semaphore -> Seconds -> IO a -> IO a
 withSemaphoreOrTimeout Semaphore {..} timeout f =     
-    bracket aquireSlot releaseSlot (const f)
+    IOExc.bracket aquireSlot releaseSlot (const f)
   where  
     aquireSlot = 
         either (const True) (const False) <$> 
-            race 
+            IOAsync.race 
                 (atomically thereIsSpaceToRun)
                 (threadDelay $ let Seconds s = timeout in fromIntegral $ s * 1000_000)
 

@@ -2,14 +2,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData        #-}
 
-module RPKI.Fetch where
+module RPKI.Fetch.Fetch where
 
+import           Effectful.Timeout                (Timeout)
+import           Effectful
 import           Control.Concurrent              as Conc
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Lens hiding (indices, Indexable)
-import           Control.Monad.Except
+import           Effectful.Error.Static           (catchError)
 
 import qualified Data.List.NonEmpty          as NonEmpty
 
@@ -25,7 +27,6 @@ import qualified Data.IxSet.Typed                as IxSet
 
 import           GHC.Generics
 
-import           Time.Types
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -36,12 +37,14 @@ import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Repository
 import           RPKI.RRDP.Types
-import           RPKI.Store.Base.Storage
+
 import           RPKI.Time
 import           RPKI.Parallel
 import           RPKI.Util                       
 import           RPKI.Rsync
-import           RPKI.RRDP.Http
+import           RPKI.Fetch.Http
+import           RPKI.Fetch.ErikRelay
+import           RPKI.Worker (ErikFetchStat, timeToKillItself)
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
 
@@ -69,6 +72,13 @@ data Fetchers = Fetchers {
         -- Semaphore for rsync fetches per host, used to no exceed 
         -- the limit of connections per rsync host
         rsyncPerHostSemaphores  :: TVar (Map RsyncHost Semaphore),
+
+        -- Hard cap on concurrent Erik fetches. Unlike the trusted/untrusted
+        -- semaphores above, which are deliberately soft (a fetch that waits
+        -- too long runs anyway rather than starving), this one is a real
+        -- limit: there is one Erik fetch per FQDN, so without it a round
+        -- spawns a worker process for every publication point at once.
+        erikFetchSemaphore :: Semaphore,
 
         -- Mapping of repositories to the TAs they are mentioned in
         uriByTa :: TVar UriTaIxSet
@@ -116,12 +126,11 @@ updateUriPerTa fetcheablesPerTa uriTa = uriTa'
 -- Returned repository has all the metadata updated (in case of RRDP session and serial).
 -- The metadata is also updated in the database.
 --
-fetchRepository :: (Storage s) => 
-                    AppContext s 
+fetchRepository :: (ValidatorIO es, Timeout :> es) => AppContext s 
                 -> FetchConfig
                 -> WorldVersion
                 -> Repository 
-                -> ValidatorT IO (Repository, Maybe RrdpFetchStat)
+                -> Eff es (Repository, Maybe RrdpFetchStat)
 fetchRepository 
     appContext@AppContext {..}
     fetchConfig
@@ -137,19 +146,14 @@ fetchRepository
                 pure (RrdpR r', Just stat)                
   where
     repoURL = getRpkiURL repo    
-    -- Give the process some time to kill itself, 
-    -- before trying to kill it from here
-    timeToKillItself = Seconds 5
-    
+
     fetchRrdpRepository r = do 
-        let fetcherTimeout = fetchConfig ^. #rrdpTimeout
-        let totalTimeout = fetcherTimeout + timeToKillItself
+        let totalTimeout = fetchConfig ^. #rrdpTimeout + timeToKillItself
         timeoutVT totalTimeout
             (do
-                let fetchConfig' = fetchConfig & #rrdpTimeout .~ fetcherTimeout
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RrdpE . UnknownRrdpProblem . fmtEx) 
-                                    (runRrdpFetchWorker appContext fetchConfig' worldVersion r)
+                                    (runRrdpFetchWorker appContext fetchConfig worldVersion r)
                 logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)            
             (do 
@@ -158,15 +162,13 @@ fetchRepository
                 appError $ RrdpE $ RrdpDownloadTimeout totalTimeout)
 
     fetchRsyncRepository r = do 
-        let fetcherTimeout = fetchConfig ^. #rsyncTimeout
-        let totalTimeout = fetcherTimeout + timeToKillItself
+        let totalTimeout = fetchConfig ^. #rsyncTimeout + timeToKillItself
         timeoutVT 
             totalTimeout
             (do
-                let fetchConfig' = fetchConfig & #rsyncTimeout .~ fetcherTimeout
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RsyncE . UnknownRsyncProblem . fmtEx) 
-                                    (runRsyncFetchWorker appContext fetchConfig' worldVersion r)
+                                    (runRsyncFetchWorker appContext fetchConfig worldVersion r)
                 logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)
             (do 
@@ -178,12 +180,12 @@ fetchRepository
 
 -- | Fetch TA certificate based on TAL location(s)
 --
-fetchTACertificate :: AppContext s -> FetchConfig -> TAL -> ValidatorT IO (RpkiURL, RpkiObject)
+fetchTACertificate :: (ValidatorIO es, Timeout :> es) => AppContext s -> FetchConfig -> TAL -> Eff es (RpkiURL, ParsedRpkiObject)
 fetchTACertificate appContext@AppContext {..} fetchConfig tal = 
     go $ sortRrdpFirst $ neSetToList $ unLocations $ talCertLocations tal
   where
     go []         = appError $ TAL_E $ TALError "None of the certificate locations could be fetched."
-    go (u : uris) = tryFetch `catchError` goToNext 
+    go (u : uris) = tryFetch `catchError` (\_cs -> goToNext)
       where 
         tryFetch = 
             timeoutVT timeout fetchTaCert (goToNext timeoutError)
@@ -209,22 +211,32 @@ fetchTACertificate appContext@AppContext {..} fetchConfig tal =
             go uris            
 
 
+fetchRepositoryFromErikRelays :: (ValidatorIO es, Timeout :> es) => AppContext s 
+                            -> FetchConfig
+                            -> [URI]                            
+                            -> WorldVersion
+                            -> FQDN 
+                            -> Eff es ErikFetchStat
+fetchRepositoryFromErikRelays
+    appContext@AppContext {..}
+    fetchConfig
+    relays
+    worldVersion    
+    fqdn = do        
+        logInfo logger [i|Fetching #{fqdn} from #{length relays} Erik relay(s).|]           
 
--- | Check if an URL need to be re-fetched, based on fetch status and current time.
---
-needsFetching :: WithRpkiURL r => r -> Maybe Seconds -> FetchStatus -> ValidationConfig -> Now -> Bool
-needsFetching r fetchInterval status ValidationConfig {..} (Now now) = 
-    case status of
-        Pending         -> True
-        FetchedAt time  -> tooLongAgo time
-        FailedAt time   -> not $ closeEnoughMoments (Earlier time) (Later now) minimalRepositoryRetryInterval
-  where
-    tooLongAgo momendTnThePast =      
-        not $ closeEnoughMoments (Earlier momendTnThePast) (Later now) (interval $ getRpkiURL r)
-      where 
-        interval url = fromMaybe (defaultInterval url) fetchInterval            
-        defaultInterval (RrdpU _)  = rrdpRepositoryRefreshInterval
-        defaultInterval (RsyncU _) = rsyncRepositoryRefreshInterval          
+        let totalTimeout = fetchConfig ^. #erikTimeout + timeToKillItself
+        timeoutVT totalTimeout
+            (do
+                (z, elapsed) <- timedMS $ fromTryM 
+                                    (ErikE . UnknownErikProblem . fmtEx) 
+                                    (runErikFetchWorker appContext fetchConfig worldVersion relays fqdn)
+                logInfo logger [i|Fetched #{fqdn} from Erik relays, took #{elapsed}ms.|]
+                pure z)            
+            (do 
+                logError logger [i|Couldn't fetch repository #{fqdn} from Erik relays after #{totalTimeout}.|]
+                trace WorkerTimeoutTrace
+                appError $ ErikE $ ErikDownloadTimeout totalTimeout)
 
 
 getPrimaryRepositoryUrl :: PublicationPoints 

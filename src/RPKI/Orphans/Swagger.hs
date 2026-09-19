@@ -22,7 +22,6 @@ import           Data.X509                   as X509
 
 import           RPKI.AppTypes
 import           RPKI.Domain                 as Domain
-import           RPKI.Store.Base.Serialisation (LexOrdKey64(..))
 import           RPKI.RRDP.Types             (RrdpSerial)
 import           RPKI.Config
 import           RPKI.Logging
@@ -43,8 +42,6 @@ import           RPKI.RTR.Protocol
 import RPKI.Repository (Fetcheables)
 
 -- ToSchema insrances for Swagger doc generation
-instance ToSchema LexOrdKey64 where
-    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Int)
 instance ToSchema ArtificialKey
 instance ToSchema ObjectKey
 instance ToSchema Focus
@@ -98,7 +95,7 @@ instance ToSchema a => ToSchema (MetricMap a)
 instance ToSchema ValidatedBy
 instance ToSchema ValidationMetric
 instance ToSchema RpkiObjectType
-instance ToSchema RsyncMetric
+instance ToSchema TraverseMetric
 instance ToSchema RrdpMetric
 instance ToSchema ResourceUsage
 instance ToSchema SystemMetrics
@@ -122,15 +119,13 @@ instance ToSchema LatestCPUTime where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 instance ToSchema MaxMemory where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
+instance ToSchema MaxSize where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 instance ToSchema AvgMemory where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)    
 instance ToSchema Size where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Integer)
 
-instance ToSchema DBFileStats
-instance ToSchema StorageStats
-instance ToSchema TotalDBStats
-instance ToSchema SStats
 instance ToSchema ObjectStats
 
 instance ToSchema (ApiSecured a) where
@@ -140,7 +135,9 @@ instance ToSchema Config
 instance ToSchema Parallelism
 instance ToSchema RsyncConf
 instance ToSchema RrdpConf
+instance ToSchema ErikConf
 instance ToSchema ValidationConfig
+instance ToSchema WorkerLimits
 instance ToSchema SystemConfig
 instance ToSchema HttpApiConfig
 instance ToSchema RtrConfig
@@ -182,8 +179,10 @@ instance ToSchema StorageError
 instance ToSchema RsyncError
 instance ToSchema RrdpError where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToSchema ErikError
 instance ToSchema TALError
 instance ToSchema PrefixesAndAsns
+instance ToSchema FQDN
 
 
 instance ToSchema AsResources
@@ -242,10 +241,11 @@ instance ToSchema a => ToSchema (RSet a) where
 
 instance ToSchema RtrState
 instance ToSchema BGPSecPayload
+instance ToSchema Aspa
 instance ToSchema SerialNumber
 instance ToSchema RtrSessionId
 instance ToSchema a => ToSchema (Deq.Deque a) where
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 
-instance (ToSchema a, ToSchema b) => ToSchema (GenDiffs a b)
+instance (ToSchema a, ToSchema b, ToSchema c) => ToSchema (GenDiffs a b c)
 instance ToSchema a => ToSchema (Diff a)    
