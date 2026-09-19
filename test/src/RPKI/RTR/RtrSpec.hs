@@ -4,6 +4,7 @@ module RPKI.RTR.RtrSpec where
 
 import           Control.Monad
 
+import qualified Data.ByteString.Lazy              as LBS
 import qualified Data.List                         as List
 import           Data.Set                          (Set)
 import qualified Data.Set                          as Set
@@ -20,7 +21,9 @@ import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Protocol
 
+import           RPKI.RTR.RtrServer                (PduLike (..), diffPayloadPdus)
 import           RPKI.RTR.Types
+import           RPKI.Resources.Types
 
 import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
@@ -41,7 +44,9 @@ rtrDiffsGroup = testGroup "RTR diff unit tests" [
         testTwoIndependentDiffs,
         testTwoDependentDiffs,
         testThreeDiffs,
-        testGenerateDiffs                
+        testGenerateDiffs,
+        testMergeAspasByCustomer,
+        testAspaDiffPdus
     ]
 
 rtrPduParseGroup :: TestTree 
@@ -85,6 +90,16 @@ rtrPduParseGroup = testGroup "RTR PDU parser tests" [
             $ \asn flags ski bs -> serialiseAndParseBack V1
                 $ RouterKeyPdu asn flags ski bs,
 
+        QC.testProperty "Should create, serialise and parse back ASPA announcement PDU in V2" 
+            $ QC.forAll genValidAspaAnnouncement $ serialiseAndParseBack V2,
+
+        QC.testProperty "Should create, serialise and parse back ASPA withdrawal PDU in V2" 
+            $ \customer -> serialiseAndParseBack V2 $ AspaPdu Withdrawal customer [],
+
+        testSerialiseAspaPdu,
+        testAspaPduOnlyInV2,
+        testRejectInvalidAspaPdus,
+
         QC.testProperty "Should create, serialise and parse back ErrorPdu" 
             $ \code message brokenPdu protocol -> let 
                 message' = if Text.null message then Nothing else Just message
@@ -104,7 +119,7 @@ testEmptyDiff = HU.testCase "Should squash one diff properly" $
 
 testOneDiff :: TestTree
 testOneDiff = HU.testCase "Should squash one diff" $ do
-    let diff :: GenDiffs Int Int = mkNewDiff [1,2] [3,4]
+    let diff :: GenDiffs Int Int Int = mkNewDiff [1,2] [3,4]
     HU.assertEqual "It's a bummer"                 
         diff
         $ squash [diff]
@@ -112,7 +127,7 @@ testOneDiff = HU.testCase "Should squash one diff" $ do
 testTwoIndependentDiffs :: TestTree
 testTwoIndependentDiffs = HU.testCase "Should squash two unrelated diffs" $
     HU.assertEqual "It's a bummer"                 
-        (mkNewDiff [1, 2, 10, 20] [3, 4, 30] :: GenDiffs Int Int)
+        (mkNewDiff [1, 2, 10, 20] [3, 4, 30] :: GenDiffs Int Int Int)
         $ squash [
             mkNewDiff [1,2] [3,4],
             mkNewDiff [10,20] [30]
@@ -121,7 +136,7 @@ testTwoIndependentDiffs = HU.testCase "Should squash two unrelated diffs" $
 testTwoDependentDiffs :: TestTree
 testTwoDependentDiffs = HU.testCase "Should squash two related diffs" $
     HU.assertEqual "It's a bummer"                             
-        (mkNewDiff [1, 4, 5] [2, 3] :: GenDiffs Int Int)
+        (mkNewDiff [1, 4, 5] [2, 3] :: GenDiffs Int Int Int)
         $ squash [
             mkNewDiff [1,2] [3,4],
             mkNewDiff [4,5] [2]            
@@ -130,7 +145,7 @@ testTwoDependentDiffs = HU.testCase "Should squash two related diffs" $
 testThreeDiffs :: TestTree
 testThreeDiffs = HU.testCase "Should squash three diffs properly" $     
     HU.assertEqual "It's a bummer"                 
-        (mkNewDiff [2, 3, 4, 5] [1, 6] :: GenDiffs Int Int)
+        (mkNewDiff [2, 3, 4, 5] [1, 6] :: GenDiffs Int Int Int)
         $ squash [
             mkNewDiff [1,2] [3,4],
             mkNewDiff [4,5] [2],            
@@ -138,17 +153,18 @@ testThreeDiffs = HU.testCase "Should squash three diffs properly" $
         ]
 
 
-squash :: (Ord a, Ord b) => [GenDiffs a b] -> GenDiffs a b
+squash :: (Ord a, Ord b, Ord c) => [GenDiffs a b c] -> GenDiffs a b c
 squash diffs = squashDiffs $ map (\(i, d) -> (SerialNumber i, d)) $ zip [1..] diffs
 
-mkNewDiff :: (Ord a, Ord b) => [a] -> [a] -> GenDiffs a b
+mkNewDiff :: (Ord a, Ord b, Ord c) => [a] -> [a] -> GenDiffs a b c
 mkNewDiff added deleted = 
     GenDiffs {
         vrpDiff = Diff { 
                 added = Set.fromList added, 
                 deleted = Set.fromList deleted
             },
-        bgpSecDiff = newDiff
+        bgpSecDiff = newDiff,
+        aspaDiff = newDiff
     }
 
 
@@ -187,6 +203,84 @@ testParseErrorPdu = HU.testCase "Should parse Error PDU from rtrclient program" 
         (bytesToVersionedPdu bytes)    
 
 
+genValidAspaAnnouncement :: QC.Gen Pdu
+genValidAspaAnnouncement = do 
+    customer  <- arbitrary
+    providers <- QC.listOf1 arbitrary
+    let providers' = Set.toAscList $ Set.fromList providers
+    -- AS0 is only allowed as the sole provider
+    pure $ AspaPdu Announcement customer $ 
+        case providers' of 
+            [_] -> providers'
+            _   -> filter (/= ASN 0) providers'
+                    <> [ASN 1 | all (== ASN 0) providers']
+
+testSerialiseAspaPdu :: TestTree
+testSerialiseAspaPdu = HU.testCase "Should serialise ASPA PDUs exactly as in the draft" $ do
+    HU.assertEqual "Wrong announcement bytes"
+        (LBS.pack [2, 11, 1, 0,  0, 0, 0, 20,  0, 0, 0xFD, 0xE8,  0, 0, 0, 1,  0, 0, 0, 2])
+        (pduToBytes (AspaPdu Announcement (ASN 65000) [ASN 1, ASN 2]) V2)
+    HU.assertEqual "Wrong withdrawal bytes"
+        (LBS.pack [2, 11, 0, 0,  0, 0, 0, 12,  0, 0, 0xFD, 0xE8])
+        (pduToBytes (AspaPdu Withdrawal (ASN 65000) []) V2)
+
+testAspaPduOnlyInV2 :: TestTree
+testAspaPduOnlyInV2 = HU.testCase "ASPA PDU should only be sent to V2 clients" $ do
+    let pdu = AspaPdu Announcement (ASN 1) [ASN 2]
+    HU.assertBool "V0" $ not $ compatibleWith pdu V0
+    HU.assertBool "V1" $ not $ compatibleWith pdu V1
+    HU.assertBool "V2" $ compatibleWith pdu V2
+    -- and it's not accepted if it comes in V1 
+    HU.assertBool "Parsed in V1" $ 
+        either (const True) (const False) $ bytesToVersionedPdu $ 
+            LBS.pack [1, 11, 1, 0,  0, 0, 0, 16,  0, 0, 0, 1,  0, 0, 0, 2]
+
+testRejectInvalidAspaPdus :: TestTree
+testRejectInvalidAspaPdus = HU.testCase "Should not parse invalid ASPA PDUs" $ do
+    let parses pdu = either (const False) (const True) $ 
+                        bytesToVersionedPdu $ pduToBytes pdu V2
+    HU.assertBool "Announcement without providers" $ 
+        not $ parses $ AspaPdu Announcement (ASN 1) []
+    HU.assertBool "Withdrawal with providers" $ 
+        not $ parses $ AspaPdu Withdrawal (ASN 1) [ASN 2]
+    HU.assertBool "AS0 with other providers" $ 
+        not $ parses $ AspaPdu Announcement (ASN 1) [ASN 0, ASN 2]
+    HU.assertBool "Not ascending providers" $ 
+        not $ parses $ AspaPdu Announcement (ASN 1) [ASN 3, ASN 2]
+    HU.assertBool "Duplicate providers" $ 
+        not $ parses $ AspaPdu Announcement (ASN 1) [ASN 2, ASN 2]
+    HU.assertBool "AS0 alone is fine" $ 
+        parses $ AspaPdu Announcement (ASN 1) [ASN 0]
+
+testMergeAspasByCustomer :: TestTree
+testMergeAspasByCustomer = HU.testCase "Should have one ASPA per customer" $ do
+    let aspa c ps = Aspa (ASN c) (Set.fromList $ map ASN ps)
+    HU.assertEqual "Wrong merge" 
+        (Set.fromList [aspa 1 [2, 3, 4], aspa 5 [0], aspa 6 [7]])
+        (mergeAspasByCustomer $ Set.fromList [
+            aspa 1 [2, 3], aspa 1 [3, 4], 
+            aspa 5 [0], 
+            aspa 6 [0, 7], 
+            aspa 8 []])
+
+testAspaDiffPdus :: TestTree
+testAspaDiffPdus = HU.testCase "Should generate ASPA PDUs for a diff" $ do
+    let aspa c ps = Aspa (ASN c) (Set.fromList $ map ASN ps)
+    let diff = newRtrDiff { 
+            aspaDiff = Diff {
+                -- 1 has changed providers, 2 is new, 3 and 4 are gone
+                added   = Set.fromList [aspa 2 [10], aspa 1 [5, 6]],
+                deleted = Set.fromList [aspa 4 [7], aspa 1 [5], aspa 3 [8], aspa 3 [9]]
+            }
+        }
+    HU.assertEqual "Wrong PDUs" 
+        [ TruePdu $ AspaPdu Announcement (ASN 1) [ASN 5, ASN 6]
+        , TruePdu $ AspaPdu Announcement (ASN 2) [ASN 10]
+        , TruePdu $ AspaPdu Withdrawal (ASN 3) []
+        , TruePdu $ AspaPdu Withdrawal (ASN 4) []
+        ]
+        (diffPayloadPdus diff)
+
 serialiseAndParseBack :: ProtocolVersion -> Pdu -> Bool
 serialiseAndParseBack protocolVersion pdu =     
     let bytes = pduToBytes pdu protocolVersion
@@ -202,7 +296,7 @@ testRtrStateUpdates = HU.testCase "Should update RTR state and shrink it when ne
             newVersion <- getOrCreateWorldVerion appState
             vrpDiff <- Diff <$> generateVrps n <*> generateVrps m
             bgpSecDiff <- Diff <$> generateBgpSecs n <*> generateBgpSecs m
-            pure $! updatedRtrState rtrState newVersion GenDiffs {..}
+            pure $! updatedRtrState rtrState newVersion GenDiffs {aspaDiff = newDiff, ..}
     
     worldVersion <- getOrCreateWorldVerion appState
     let z = newRtrState worldVersion 10
@@ -222,6 +316,14 @@ testRtrStateUpdates = HU.testCase "Should update RTR state and shrink it when ne
 
     HU.assertEqual "There should be only one big diff" 1 (List.length $ diffs rtrState4)
 
+    -- ASPAs count towards the size of the diffs as well
+    aspas1 <- generateAspas 10
+    aspas2 <- generateAspas 5
+    version <- getOrCreateWorldVerion appState
+    let withAspas = updatedRtrState (newRtrState version 10) version 
+                        newRtrDiff { aspaDiff = Diff aspas1 aspas2 }
+    HU.assertEqual "Wrong total size" (Set.size aspas1 + Set.size aspas2) (totalDiffSize withAspas)
+
 
 -- rtrToStr RtrState {..} = 
 --     "[currentSerial = " <> show currentSerial 
@@ -235,3 +337,6 @@ generateVrps n = Set.fromList <$> replicateM n (QC.generate arbitrary)
 
 generateBgpSecs :: Int -> IO (Set BGPSecPayload)
 generateBgpSecs n = Set.fromList <$> replicateM n (QC.generate arbitrary)
+
+generateAspas :: Int -> IO (Set Aspa)
+generateAspas n = Set.fromList <$> replicateM n (QC.generate arbitrary)

@@ -4,6 +4,8 @@
 module RPKI.RTR.Types where
 
 import           Data.Set       (Set)
+import qualified Data.Set       as Set
+import qualified Data.Map.Strict as Map
 import           Data.Monoid.Generic
 import           Data.Ord
 import           Deque.Strict   as Deq
@@ -14,6 +16,7 @@ import           RPKI.AppTypes
 
 import           RPKI.Domain
 import           RPKI.Domain.Packed
+import           RPKI.Resources.Types
 import           RPKI.RTR.Protocol
 
 data Diff a = Diff {
@@ -23,16 +26,17 @@ data Diff a = Diff {
     deriving stock (Show, Eq, Ord, Generic)
 
 -- This generic type is only usefull for testing, 
--- when a and b can be some primitive types instead of real VRPs
--- or BGPSec certificates.
-data GenDiffs a b = GenDiffs {
+-- when a, b and c can be some primitive types instead of real VRPs,
+-- BGPSec certificates or ASPAs.
+data GenDiffs a b c = GenDiffs {
         vrpDiff    :: Diff a,
-        bgpSecDiff :: Diff b
+        bgpSecDiff :: Diff b,
+        aspaDiff   :: Diff c
     }
     deriving stock (Show, Eq, Ord)
     deriving stock Generic
 
-type RtrDiffs = GenDiffs Vrp BGPSecPayload        
+type RtrDiffs = GenDiffs Vrp BGPSecPayload Aspa
 
 
 data RtrState = RtrState {
@@ -53,11 +57,32 @@ data RtrPayloads = RtrPayloads {
         -- the deduplicated set unless RTR or the validity API is running, and
         -- the thunk only closes over `vrps`, which is retained anyway.
         uniqueVrps :: ~Vrps,
-        bgpSec     :: Set BGPSecPayload
+        bgpSec     :: Set BGPSecPayload,
+        -- At most one ASPA per customer AS, see 'mergeAspasByCustomer'
+        aspas      :: Set Aspa
     }
     deriving stock (Show, Eq, Generic)
     deriving Semigroup via GenericSemigroup RtrPayloads   
     deriving Monoid    via GenericMonoid RtrPayloads           
+
+-- | RTR cache can have at most one ASPA record per customer AS
+-- (https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis#section-5.12),
+-- while there may be several validated ASPA objects for the same customer,
+-- e.g. from different TAs. Their provider sets are united.
+--
+-- The result also satisfies the rest of the PDU constraints: 
+-- there is at least one provider and AS0 is only allowed as the sole provider.
+mergeAspasByCustomer :: Set Aspa -> Set Aspa
+mergeAspasByCustomer = 
+    Set.fromList
+        . Prelude.filter (not . Set.null . providers) 
+        . map (\(Aspa customer ps) -> Aspa customer (dropAs0IfNotAlone ps)) 
+        . Map.elems 
+        . Map.fromListWith (\(Aspa c ps1) (Aspa _ ps2) -> Aspa c (ps1 <> ps2)) 
+        . map (\a -> (customer a, a)) 
+        . Set.toList
+  where
+    dropAs0IfNotAlone ps = if Set.size ps > 1 then Set.delete (ASN 0) ps else ps
 
 -- We store VRPs sorteed in a specific way, so that we don't have to sort them before 
 -- sending to every client every time.

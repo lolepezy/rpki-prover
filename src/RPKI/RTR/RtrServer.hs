@@ -16,6 +16,7 @@ import           Control.Monad
 import           Data.Generics.Product.Typed
 
 import           Data.Foldable                    (for_)
+import           Data.Maybe                       (fromMaybe)
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
@@ -172,9 +173,12 @@ runRtrServer appContext RtrConfig {..} = do
                 currentVrpSize  = vrpsCount $ currentRtrPayload ^. #uniqueVrps
                 previousBgpSecSize = Set.size $ previousRtrPayload ^. #bgpSec 
                 currentBgpSecSize  = Set.size $ currentRtrPayload ^. #bgpSec 
+                previousAspaSize   = Set.size $ previousRtrPayload ^. #aspas 
+                currentAspaSize    = Set.size $ currentRtrPayload ^. #aspas 
                 in logDebug logger $ [i|Notified about an update: #{previousVersion} -> #{newVersion}, |] <> 
                               [i|VRPs: #{previousVrpSize} -> #{currentVrpSize}, |] <>
-                              [i|BGPSecs: #{previousBgpSecSize} -> #{currentBgpSecSize}.|]
+                              [i|BGPSecs: #{previousBgpSecSize} -> #{currentBgpSecSize}, |] <>
+                              [i|ASPAs: #{previousAspaSize} -> #{currentAspaSize}.|]
 
             -- force evaluation of the new RTR state so that the old ones could be GC-ed.
             let !nextRtrState = if thereAreRtrUpdates
@@ -203,7 +207,8 @@ runRtrServer appContext RtrConfig {..} = do
             
             let diffText =
                     [i|VRPs: added #{Set.size $ added vrpDiff}, deleted #{Set.size $ deleted vrpDiff}, |] <>
-                    [i|BGPSecs: added #{Set.size $ added bgpSecDiff}, deleted #{Set.size $ deleted bgpSecDiff}|] :: Text
+                    [i|BGPSecs: added #{Set.size $ added bgpSecDiff}, deleted #{Set.size $ deleted bgpSecDiff}, |] <>
+                    [i|ASPAs: added #{Set.size $ added aspaDiff}, deleted #{Set.size $ deleted aspaDiff}|] :: Text
 
             logDebug logger [i|Generated new diff, #{diffText}.|]            
 
@@ -298,7 +303,7 @@ runRtrServer appContext RtrConfig {..} = do
 
 readRtrPayload :: AppContext s -> WorldVersion -> IO RtrPayloads 
 readRtrPayload AppContext {..} worldVersion = do 
-    (vrps, bgpSec) <- DB.roTxT database $ \tx -> do
+    (vrps, bgpSec, aspas) <- DB.roTxT database $ \tx -> do
                 slurm <- DB.getSlurm tx worldVersion
                 vrps <- do
                         vrps_ <- DB.getVrps tx worldVersion
@@ -308,9 +313,11 @@ readRtrPayload AppContext {..} worldVersion = do
                             Nothing   -> pure mempty
                             Just bgps -> pure $ maybe bgps (`applySlurmBgpSec` bgps) slurm
                 
-                pure (vrps, bgpSec)
+                aspas <- fromMaybe mempty <$> DB.getAspas tx worldVersion
 
-    pure $ mkRtrPayloads vrps bgpSec
+                pure (vrps, bgpSec, aspas)
+
+    pure $ mkRtrPayloads vrps bgpSec aspas
 
 
 waitForLatestRtrPayload :: AppContext s 
@@ -523,12 +530,27 @@ pduLengthL protocolVersion = \case
 diffPayloadPdus :: RtrDiffs -> [PduLike]
 diffPayloadPdus GenDiffs {..} = 
     map TruePdu $ vrpWithdrawn <> vrpPdusAnn <> 
-                  mconcat bgpSecWithdrawn <> mconcat bgpSecPdusAnn
+                  mconcat bgpSecWithdrawn <> mconcat bgpSecPdusAnn <>
+                  aspaPdusAnn <> aspaWithdrawn
   where
     vrpWithdrawn = map (vrpToPdu Withdrawal) (coerce $ Set.toList $ vrpDiff ^. #deleted)
     vrpPdusAnn   = map (vrpToPdu Announcement) $ coerce $ Set.toAscList $ vrpDiff ^. #added 
     bgpSecWithdrawn = map (bgpSecToPdu Withdrawal) $ Set.toList $ bgpSecDiff ^. #deleted
     bgpSecPdusAnn   = map (bgpSecToPdu Announcement) $ Set.toList $ bgpSecDiff ^. #added
+
+    -- An ASPA announcement replaces the previous record of the same customer AS, 
+    -- and a withdrawal removes the whole record. So when the providers of a customer
+    -- changed (the old record is in 'deleted', the new one is in 'added') only 
+    -- the announcement must be sent, otherwise the withdrawal would remove the new record.
+    -- Squashed diffs can have several deleted records of the same customer, so 
+    -- withdrawals are per customer. 
+    -- Announcements go first, then withdrawals, both by ascending customer AS
+    -- (https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis#section-11.2.3).
+    aspaAnnounced   = Set.map customer $ aspaDiff ^. #added
+    aspaPdusAnn     = map aspaToPdu $ Set.toAscList $ aspaDiff ^. #added
+    aspaWithdrawn   = map (\c -> AspaPdu Withdrawal c []) 
+                        $ Set.toAscList 
+                        $ Set.map customer (aspaDiff ^. #deleted) `Set.difference` aspaAnnounced
 
     
 currentCachePayloadBS :: ProtocolVersion -> RtrPayloads -> BS.ByteString
@@ -538,10 +560,11 @@ currentCachePayloadBS protocolVersion RtrPayloads {..} =
         $ mconcat 
         $ map (\pdu -> BB.lazyByteString $ pduToBytes pdu protocolVersion) 
         $ filter (`compatibleWith` protocolVersion)
-        $ vrpPdusAnn <> mconcat bgpSecPdusAnn
+        $ vrpPdusAnn <> mconcat bgpSecPdusAnn <> aspaPdusAnn
   where    
     vrpPdusAnn    = map (vrpToPdu Announcement) $ mergeVrpsBy cmpPacked4Against6 uniqueVrps
     bgpSecPdusAnn = map (bgpSecToPdu Announcement) $ Set.toList bgpSec
+    aspaPdusAnn   = map aspaToPdu $ Set.toAscList aspas
     
     
 vrpToPdu :: Flags -> Vrp -> Pdu
@@ -554,3 +577,7 @@ bgpSecToPdu :: Flags -> BGPSecPayload -> [Pdu]
 bgpSecToPdu flags BGPSecPayload {..} = 
     let Right (DecodedBase64 spkiBytes) = decodeBase64 (unSPKI bgpSecSpki) ("WTF broken SPKI" :: Text)
     in map (\asn -> RouterKeyPdu asn flags bgpSecSki (LBS.fromStrict spkiBytes)) bgpSecAsns    
+
+-- | ASPA announcement PDU. Providers are already ordered ascending in the set.
+aspaToPdu :: Aspa -> Pdu
+aspaToPdu Aspa {..} = AspaPdu Announcement customer (Set.toAscList providers)

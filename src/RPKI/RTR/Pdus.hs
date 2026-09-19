@@ -13,7 +13,7 @@ import           Data.Binary.Put          (runPut, putLazyByteString, putByteStr
 
 import           Data.Int
 
-import           Control.Monad            (unless)
+import           Control.Monad            (unless, when, replicateM)
 import           RPKI.Domain              (toNormalBS, KI (..), SKI (..), skiLen, toShortBS)
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
@@ -36,6 +36,7 @@ toPduCode EndOfDataPdu {}     = PduCode 7
 toPduCode CacheResetPdu       = PduCode 8
 toPduCode RouterKeyPdu {}     = PduCode 9     
 toPduCode ErrorPdu {}         = PduCode 10    
+toPduCode AspaPdu {}          = PduCode 11
 
 -- 
 pduLength :: Pdu -> ProtocolVersion -> Word32 
@@ -47,7 +48,11 @@ pduLength IPv4PrefixPdu {}  _   = 20
 pduLength IPv6PrefixPdu {}  _   = 32
 pduLength EndOfDataPdu {} V0    = 12
 pduLength EndOfDataPdu {} V1    = 24
+pduLength EndOfDataPdu {} V2    = 24
 pduLength CacheResetPdu _       = 8
+
+pduLength (AspaPdu _ _ providers) _ = 
+    12 + 4 * fromIntegral (length providers)
 
 pduLength (RouterKeyPdu _ _ ski bs2) _ = 
     fromIntegral $ 12 + (fromIntegral (skiLen ski) :: Int64) + LBS.length bs2
@@ -106,6 +111,7 @@ pduToBytes pdu protocolVersion =
                 case protocolVersion of 
                     V0 -> pure ()
                     V1 -> put intervals
+                    V2 -> put intervals
 
             CacheResetPdu -> 
                 put (0 :: Word16) >> put pduLen
@@ -118,6 +124,14 @@ pduToBytes pdu protocolVersion =
                 putByteString $ toNormalBS ski
                 put asn'
                 putLazyByteString spki                
+
+            -- This is illegal to use for V0 and V1, but we are not going to complain here
+            AspaPdu flags customer providers -> do
+                put flags
+                put (0 :: Word8)
+                put pduLen
+                put customer
+                mapM_ put providers
 
             ErrorPdu errorCode causingPdu errorText -> do                
                 put errorCode
@@ -141,8 +155,10 @@ pduToBytes pdu protocolVersion =
 compatibleWith :: Pdu -> ProtocolVersion -> Bool
 -- V0 doesn't support router keys
 -- https://datatracker.ietf.org/doc/html/rfc6810#section-5
--- V1 supports everything we care about at the moment
+-- V1 supports everything except ASPA, which is only defined in V2
+-- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis
 compatibleWith RouterKeyPdu{} V0 = False
+compatibleWith AspaPdu{} version = version >= V2
 compatibleWith _ _               = True
 
 -- 
@@ -238,7 +254,7 @@ parseVersionedPdu protocolVersion pduType =
                     -- not going to be used anyway in V0 protocol.
                     -- 2) Normally we are not even supposed to parse this type of PDUs                    
                     pure $ EndOfDataPdu sessionId serial defIntervals
-                V1 -> do                        
+                _ -> do                        
                     intervals <- get
                     assertLength len 24
                     pure $ EndOfDataPdu sessionId serial intervals
@@ -267,6 +283,29 @@ parseVersionedPdu protocolVersion pduType =
             pure $ RouterKeyPdu asn' flags 
                     (SKI (KI $ toShortBS ski)) 
                     (LBS.fromStrict spki)
+
+        PduCode 11 -> do
+            when (protocolVersion < V2) $ fail "ASPA PDU is only supported in V2"
+            flags         <- get
+            zero :: Word8 <- get
+            unless (zero == 0) $ fail "Field must be zero for AspaPdu"
+            len :: Word32 <- get
+            customer      <- get
+            unless (len >= 12 && (len - 12) `mod` 4 == 0) $ 
+                fail $ "Wrong length " <> show len <> " for AspaPdu"
+            providers :: [ASN] <- replicateM (fromIntegral ((len - 12) `div` 4)) get
+            case flags of 
+                Withdrawal -> 
+                    unless (null providers) $ 
+                        fail "Withdrawal AspaPdu must not have providers"
+                Announcement -> do
+                    when (null providers) $ 
+                        fail "Announcement AspaPdu must have at least one provider"
+                    when (length providers > 1 && ASN 0 `elem` providers) $ 
+                        fail "AspaPdu with multiple providers must not contain AS0"
+                    unless (and $ zipWith (<) providers (drop 1 providers)) $ 
+                        fail "Providers in AspaPdu must be unique and in ascending order"
+            pure $ AspaPdu flags customer providers
 
         PduCode 10 -> do 
             errorCode                    <- get

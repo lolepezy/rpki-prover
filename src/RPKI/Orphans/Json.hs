@@ -408,7 +408,7 @@ instance ToJSON Vrp
 instance ToJSON a => ToJSON (Deq.Deque a) where
     toJSON = toJSON . toList
 
-instance (ToJSON a, ToJSON b) => ToJSON (GenDiffs a b)
+instance (ToJSON a, ToJSON b, ToJSON c) => ToJSON (GenDiffs a b c)
 instance ToJSON a => ToJSON (Diff a)
 
 

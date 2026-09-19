@@ -184,6 +184,7 @@ test_apply_slurm = do
                     mkBgpSec "bar" [ASN 64497, ASN 111] "445566",
                     mkBgpSec "1122" [ASN 234] "112233"
                 ])
+                mempty
 
     let filtered_ = filterWithSLURM rtrPayloads bigTestSlurm
 
@@ -205,6 +206,7 @@ test_apply_slurm = do
                     mkBgpSec "<some base64 SKI>"
                         [ASN 64496] "PHNvbWUgYmFzZTY0IHB1YmxpYyBrZXk+"
                 ])
+                mempty
     HU.assertEqual "Wrong BGPSecs:" (expected ^. #bgpSec) (filtered_ ^. #bgpSec)
     HU.assertEqual "Wrong VRPs:" (expected ^. #vrps) (filtered_ ^. #vrps)    
   where
