@@ -336,8 +336,7 @@ defaultConfig = Config {
             -- It downloads nothing, TA certificates are fetched by the main process
             maxIncomingTrafficMb = Just 0,
             maxDiskReadMb        = Just $ 10 * gigabytes,
-            -- Saving payloads and shortcuts is not much
-            maxDiskWriteMb       = Just gigabytes
+            maxDiskWriteMb       = Just $ 3 * gigabytes
         },
         cleanupWorkerLimits = WorkerLimits {
             workerTimeout  = 300,
