@@ -622,23 +622,21 @@ toRepositoryDtos AppContext {..} inputs = do
 
     roTxT database $ \tx -> do
         rrdpRepos <- 
-            fmap (fmap RrdpDto . catMaybes)
-            $ forM rrdps $ \(repository@RrdpRepository {..}, state) -> do
+            forM rrdps $ \(repository@RrdpRepository {..}, state) -> do
                 let validationDtos = toVDtos $ filterRepositoryValidations (RrdpU uri) $ state ^. typed
                 -- TODO That is probably not needed at all, there's nothing to resolve?
                 resolved <- forM validationDtos $ resolveOriginalDto tx                 
 
-                pure $ fmap (\metrics -> RrdpRepositoryDto { validations = resolved, .. }) 
-                        $ filterRepositoryMetrics (RrdpU uri) $ state ^. typed @Metrics . #rrdpMetrics
+                let metrics = filterRepositoryMetrics (RrdpU uri) $ state ^. typed @Metrics . #rrdpMetrics
+                pure $ RrdpDto RrdpRepositoryDto { validations = resolved, .. }
 
         rsyncRepos <- 
-            fmap (fmap RsyncDto . catMaybes)
-            $ forM rsyncs $ \(RsyncRepository { repoPP = RsyncPublicationPoint {..}, ..}, state) -> do
+            forM rsyncs $ \(RsyncRepository { repoPP = RsyncPublicationPoint {..}, ..}, state) -> do
                 let validationDtos = toVDtos $ filterRepositoryValidations (RsyncU uri) $ state ^. typed
                 resolved <- forM validationDtos $ resolveOriginalDto tx
 
-                pure $ fmap (\metrics -> RsyncRepositoryDto { validations = resolved, .. }) 
-                        $ filterRepositoryMetrics (RsyncU uri) $ state ^. typed @Metrics . #traverseMetrics
+                let metrics = filterRepositoryMetrics (RsyncU uri) $ state ^. typed @Metrics . #traverseMetrics
+                pure $ RsyncDto RsyncRepositoryDto { validations = resolved, .. }
 
         pure $ rrdpRepos <> rsyncRepos            
   where
@@ -646,10 +644,13 @@ toRepositoryDtos AppContext {..} inputs = do
     filterRepositoryValidations uri (Validations vs) = 
         Validations $ Map.filterWithKey (\scope _ -> relevantToRepository uri scope) vs
 
+    -- A worker that was stopped before it finished (too much traffic, out of 
+    -- memory, timed out, etc.) reports no metrics at all, but its failure is still
+    -- recorded for the repository and must be shown, so no metrics is just empty metrics.
     filterRepositoryMetrics uri (MetricMap m) = 
         case [ metric | (scope, metric) <- MonoidalMap.toList m, relevantToRepository uri scope ] of 
-            []        -> Nothing
-            metric: _ -> Just metric
+            []        -> mempty
+            metric: _ -> metric
 
     relevantToRepository uri (Scope scope) = 
         uri `elem` [ u | RepositoryFocus u <- NonEmpty.toList scope ]
