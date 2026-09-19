@@ -27,7 +27,6 @@ import qualified Data.ByteString.Char8         as C8
 import           GHC.Generics
 import           GHC.Stats
 
-import           System.Directory              (listDirectory)
 import           System.IO.Unsafe              (unsafePerformIO)
 
 import           RPKI.AppTypes
@@ -51,19 +50,17 @@ The kernel offers two views of that and neither of them alone is enough:
 So each direction here is the larger of the two, which counts no byte twice and 
 still notices both the mmap-ed storage and the temporary files on tmpfs.
 
-The counters are read per thread, from /proc/self/task/<tid>/io, and added up, 
-rather than taken from /proc/self/io. The two agree on what this process did, but 
-/proc/self/io also has the counters of every child process that has been reaped 
-folded into it. That would make an rsync fetcher count what the rsync client did as 
-its own -- including the bytes rsync read off its socket, which are not disk IO at 
-all. Everything here is meant to be about this process alone, same as the CPU time 
-and the peak RSS, so the per-thread counters are the ones to use.
+The kernel adds the counters of reaped children to the ones of the parent, and a 
+child's own reaped children were already in its counters, so this covers a whole 
+tree of processes, as long as they have exited and been waited for. That is on 
+purpose: what an rsync client process did counts as the rsync fetcher's, since that
+is where the disk IO of an rsync fetch actually happens. It also means that rsync
+reading its socket lands in `rchar`, i.e. for the rsync fetcher 'diskRead' includes 
+what rsync pulled off the network. What it doesn't see is a child that is still 
+running: its IO only shows up once it has exited.
 
-What this doesn't see is IO done by threads of this process that have since exited: 
-when a thread goes, the kernel moves its counters out of the thread and into the 
-process-wide ones. Measured over real workers -- including validation workers doing 
-gigabytes of it -- that came to nothing, because the RTS holds on to its worker 
-threads, but it is why the two views can drift apart at all.
+This is different from the CPU time and the peak RSS, which are about this process
+alone.
 -}
 data DiskIO = DiskIO {
         diskRead  :: Size,
@@ -106,35 +103,27 @@ getProcessPeakRss = liftIO $
         "VmHWM" -> Just const
         _       -> Nothing)
 
--- | The counters taken out of one /proc/<tid>/io file, or the sum of them 
--- over several.
-data IoCounters = IoCounters {
-        rchar      :: Size,
-        wchar      :: Size,
-        readBytes  :: Size,
-        writeBytes :: Size
-    }
-    deriving stock (Show, Eq, Generic)
-    deriving Semigroup via GenericSemigroup IoCounters
-    deriving Monoid    via GenericMonoid IoCounters
-
--- | Total amount of data the process has read from and written to files.
+-- | Total amount of data the process, and the children it has reaped, have 
+-- read from and written to files.
 -- Works only on Linux with procfs, returns zeros otherwise
 getProcessDiskIO :: MonadIO m => m DiskIO
 getProcessDiskIO = liftIO $ do
-    threads <- either (const []) id <$> try @SomeException (listDirectory "/proc/self/task")
-    -- A thread can be gone by the time we get to its file, in which case 
-    -- there is nothing to read and we are out by whatever that thread did.
-    IoCounters {..} <- mconcat <$> mapM threadIo threads
-    pure $ DiskIO (max rchar readBytes) (max wchar writeBytes)
-  where
-    threadIo tid = foldProcNumbers ("/proc/self/task/" <> tid <> "/io") mempty $ \case
+    IoCounters {..} <- foldProcNumbers "/proc/self/io" (IoCounters 0 0 0 0) $ \case
         -- Whole keys, not prefixes: the file also has a `cancelled_write_bytes`.
         "rchar"       -> Just $ \v c -> c { rchar      = Size v }
         "wchar"       -> Just $ \v c -> c { wchar      = Size v }
         "read_bytes"  -> Just $ \v c -> c { readBytes  = Size v }
         "write_bytes" -> Just $ \v c -> c { writeBytes = Size v }
         _             -> Nothing
+    pure $ DiskIO (max rchar readBytes) (max wchar writeBytes)
+
+-- | The counters of /proc/self/io that 'getProcessDiskIO' is made of.
+data IoCounters = IoCounters {
+        rchar      :: Size,
+        wchar      :: Size,
+        readBytes  :: Size,
+        writeBytes :: Size
+    }
 
 
 {- | Scan the "key: <number> [unit]" lines that procfs files are made of, 
