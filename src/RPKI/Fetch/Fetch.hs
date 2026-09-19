@@ -27,7 +27,6 @@ import qualified Data.IxSet.Typed                as IxSet
 
 import           GHC.Generics
 
-import           Time.Types
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -45,7 +44,7 @@ import           RPKI.Util
 import           RPKI.Rsync
 import           RPKI.Fetch.Http
 import           RPKI.Fetch.ErikRelay
-import           RPKI.Worker (ErikFetchStat)
+import           RPKI.Worker (ErikFetchStat, timeToKillItself)
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
 
@@ -147,19 +146,14 @@ fetchRepository
                 pure (RrdpR r', Just stat)                
   where
     repoURL = getRpkiURL repo    
-    -- Give the process some time to kill itself, 
-    -- before trying to kill it from here
-    timeToKillItself = Seconds 5
-    
+
     fetchRrdpRepository r = do 
-        let fetcherTimeout = fetchConfig ^. #rrdpTimeout
-        let totalTimeout = fetcherTimeout + timeToKillItself
+        let totalTimeout = fetchConfig ^. #rrdpTimeout + timeToKillItself
         timeoutVT totalTimeout
             (do
-                let fetchConfig' = fetchConfig & #rrdpTimeout .~ fetcherTimeout
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RrdpE . UnknownRrdpProblem . fmtEx) 
-                                    (runRrdpFetchWorker appContext fetchConfig' worldVersion r)
+                                    (runRrdpFetchWorker appContext fetchConfig worldVersion r)
                 logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)            
             (do 
@@ -168,15 +162,13 @@ fetchRepository
                 appError $ RrdpE $ RrdpDownloadTimeout totalTimeout)
 
     fetchRsyncRepository r = do 
-        let fetcherTimeout = fetchConfig ^. #rsyncTimeout
-        let totalTimeout = fetcherTimeout + timeToKillItself
+        let totalTimeout = fetchConfig ^. #rsyncTimeout + timeToKillItself
         timeoutVT 
             totalTimeout
             (do
-                let fetchConfig' = fetchConfig & #rsyncTimeout .~ fetcherTimeout
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (RsyncE . UnknownRsyncProblem . fmtEx) 
-                                    (runRsyncFetchWorker appContext fetchConfig' worldVersion r)
+                                    (runRsyncFetchWorker appContext fetchConfig worldVersion r)
                 logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
                 pure z)
             (do 
@@ -233,25 +225,18 @@ fetchRepositoryFromErikRelays
     fqdn = do        
         logInfo logger [i|Fetching #{fqdn} from #{length relays} Erik relay(s).|]           
 
-        let fetcherTimeout = fetchConfig ^. #erikTimeout
-        let totalTimeout = fetcherTimeout + timeToKillItself
+        let totalTimeout = fetchConfig ^. #erikTimeout + timeToKillItself
         timeoutVT totalTimeout
             (do
-                let fetchConfig' = fetchConfig & #erikTimeout .~ fetcherTimeout
                 (z, elapsed) <- timedMS $ fromTryM 
                                     (ErikE . UnknownErikProblem . fmtEx) 
-                                    (runErikFetchWorker appContext fetchConfig' worldVersion relays fqdn)
+                                    (runErikFetchWorker appContext fetchConfig worldVersion relays fqdn)
                 logInfo logger [i|Fetched #{fqdn} from Erik relays, took #{elapsed}ms.|]
                 pure z)            
             (do 
                 logError logger [i|Couldn't fetch repository #{fqdn} from Erik relays after #{totalTimeout}.|]
                 trace WorkerTimeoutTrace
-                appError $ ErikE $ ErikDownloadTimeout totalTimeout)                        
-           
-  where    
-    -- Give the process some time to kill itself, 
-    -- before trying to kill it from here
-    timeToKillItself = Seconds 5       
+                appError $ ErikE $ ErikDownloadTimeout totalTimeout)
 
 
 getPrimaryRepositoryUrl :: PublicationPoints 

@@ -35,7 +35,6 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
-import           RPKI.Metrics.System
 import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Time
@@ -79,39 +78,12 @@ runRsyncFetchWorker :: ValidatorIO es => AppContext s
                     -> WorldVersion
                     -> RsyncRepository             
                     -> Eff es RsyncRepository
-runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion repository = do
-        
-    -- This is for humans to read in `top` or `ps`, actual parameters
-    -- are passed as 'RsyncFetchResult'.
-    let (URI u) = getURL repository
-    let workerId = WorkerId [i|version:#{worldVersion}:rsync-fetch:#{u}|]    
-
-    let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
-    let arguments = 
-            [ show workerId ] <> 
-            rtsArguments [ 
-                rtsN maxCpuAvailable, 
-                rtsA "4m", 
-                rtsAL "4m", 
-                "-Fd1",
-                "--disable-delayed-os-memory-return",
-                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rsyncWorkerLimits . #memoryMb) ]
-
-    vp <- askScopes
-    workerInput <- makeWorkerInput appContext workerId
-                        (RsyncFetchParams vp fetchConfig repository worldVersion)
-                        (Timebox $ fetchConfig ^. #rsyncTimeout)
-    
-    workerInfo <- newWorkerInfo RsyncWorker (fetchConfig ^. #rsyncTimeout) (U.convert $ show workerId)
-
-    wr@WorkerResult {..} <- runWorker logger workerInput arguments workerInfo    
-    case payload of 
-        Left (ErrorResult e) -> do 
-            appError $ InternalE $ WorkerError e
-        Right (RsyncFetchResult z) -> do     
-            logWorkerDone logger workerId wr    
-            pushSystem logger $ resourceUsageMetric "rsync-fetch" clockTime stats
-            embedValidatorT $ pure z
+runRsyncFetchWorker appContext fetchConfig worldVersion repository = do
+    scopes <- askScopes
+    RsyncFetchResult z <- runWorker appContext
+                            (RsyncFetchParams scopes fetchConfig repository worldVersion)
+                            (Just $ fetchConfig ^. #rsyncTimeout)
+    embedValidatorT $ pure z
     
 
 -- | Download one file using rsync

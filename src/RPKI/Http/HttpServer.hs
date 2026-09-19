@@ -39,6 +39,7 @@ import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Logging
+import           RPKI.Worker             (workerLimitsByName)
 import           RPKI.Metrics.Prometheus
 import           RPKI.Metrics.Process (mbToSize, sizeMb)
 import           RPKI.Metrics.System
@@ -518,13 +519,7 @@ getSystem AppContext {..} = do
                 forM (scopeList scope) $ \s ->
                     resolvedFocusToText <$> resolveLocations tx s
 
-    ioLimitsForScope = let systemConfig = config ^. #systemConfig in \case
-        "rrdp-fetch"     -> Just $ systemConfig ^. #rrdpWorkerLimits
-        "rsync-fetch"    -> Just $ systemConfig ^. #rsyncWorkerLimits
-        "erik-fetch"     -> Just $ systemConfig ^. #erikWorkerLimits
-        "validation"     -> Just $ systemConfig ^. #validationWorkerLimits
-        "cache-clean-up" -> Just $ systemConfig ^. #cleanupWorkerLimits
-        _                -> Nothing
+    ioLimitsForScope = workerLimitsByName config
 
     -- A heads-up once a max* reading has crossed half of its configured budget,
     -- so it shows up before the worker actually hits the limit and gets killed.

@@ -314,6 +314,7 @@ test-suite rpki-prover-test
       RPKI.Fetch.HttpSpec
       RPKI.FetchSpec
       RPKI.LoggingSpec
+      RPKI.Metrics.ProcessSpec
       RPKI.Orphans
       RPKI.Parse.ObjectParseSpec
       RPKI.RepositorySpec
@@ -327,6 +328,7 @@ test-suite rpki-prover-test
       RPKI.Store.StorableSpec
       RPKI.TestCommons
       RPKI.Validation.TopDownSpec
+      RPKI.WorkerSpec
       Paths_rpki_prover
   hs-source-dirs:
       test

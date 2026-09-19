@@ -6,14 +6,15 @@
  *
  *   RPKI_PROVER_SANDBOX_RW  ':'-separated paths with full read/write access
  *   RPKI_PROVER_SANDBOX_RO  ':'-separated paths with read-only access
- *   RPKI_PROVER_SANDBOX_WRITES_ONLY  "1" to restrict only writing
+ *   RPKI_PROVER_SANDBOX_ONLY_RESTRICT_WRITES  "1" to restrict only writing
  *
  * If RW or RO is set, everything else on the filesystem is denied, as are
  * TCP bind/connect, abstract unix sockets and signals to other processes
  * (as far as the kernel's Landlock version supports these).
  *
- * With WRITES_ONLY, only writing anywhere but the RW paths is denied (creating,
- * changing, removing and renaming files), and nothing else is restricted.
+ * With ONLY_RESTRICT_WRITES, only writing anywhere but the RW paths is denied
+ * (creating, changing, removing and renaming files), and nothing else is
+ * restricted.
  * RO is meaningless then. It's for workers that run other programs, such as
  * the rsync client: they are restricted in the same way.
  *
@@ -111,7 +112,7 @@ struct ll_path_beneath_attr {
 
 #define ENV_RW "RPKI_PROVER_SANDBOX_RW"
 #define ENV_RO "RPKI_PROVER_SANDBOX_RO"
-#define ENV_WRITES_ONLY "RPKI_PROVER_SANDBOX_WRITES_ONLY"
+#define ENV_ONLY_RESTRICT_WRITES "RPKI_PROVER_SANDBOX_ONLY_RESTRICT_WRITES"
 
 static void fail(const char *what, const char *path)
 {
@@ -155,9 +156,9 @@ static void preload_libraries(void)
 #endif
 }
 
-static uint64_t fs_rights_for_abi(int abi, int writes_only)
+static uint64_t fs_rights_for_abi(int abi, int only_restrict_writes)
 {
-    if (writes_only) {
+    if (only_restrict_writes) {
         uint64_t rights = LL_FS_WRITE_ABI_1;
         if (abi >= 2) rights |= LL_FS_REFER;
         if (abi >= 3) rights |= LL_FS_TRUNCATE;
@@ -235,11 +236,11 @@ static void rpki_prover_sandbox(void)
     char rw[8192], ro[8192];
     snprintf(rw, sizeof rw, "%s", rw_env != NULL ? rw_env : "");
     snprintf(ro, sizeof ro, "%s", ro_env != NULL ? ro_env : "");
-    const char *writes_only_env = getenv(ENV_WRITES_ONLY);
-    int writes_only = writes_only_env != NULL && strcmp(writes_only_env, "1") == 0;
+    const char *only_restrict_writes_env = getenv(ENV_ONLY_RESTRICT_WRITES);
+    int only_restrict_writes = only_restrict_writes_env != NULL && strcmp(only_restrict_writes_env, "1") == 0;
     unsetenv(ENV_RW);
     unsetenv(ENV_RO);
-    unsetenv(ENV_WRITES_ONLY);
+    unsetenv(ENV_ONLY_RESTRICT_WRITES);
 
     if (!is_worker_process())
         return;
@@ -260,11 +261,11 @@ static void rpki_prover_sandbox(void)
 
     preload_libraries();
 
-    uint64_t fs_rights = fs_rights_for_abi(abi, writes_only);
+    uint64_t fs_rights = fs_rights_for_abi(abi, only_restrict_writes);
     struct ll_ruleset_attr attr = {
         .handled_access_fs  = fs_rights,
-        .handled_access_net = abi >= 4 && !writes_only ? (LL_NET_BIND_TCP | LL_NET_CONNECT_TCP) : 0,
-        .scoped             = abi >= 6 && !writes_only ? (LL_SCOPE_ABSTRACT_UNIX_SOCKET | LL_SCOPE_SIGNAL) : 0
+        .handled_access_net = abi >= 4 && !only_restrict_writes ? (LL_NET_BIND_TCP | LL_NET_CONNECT_TCP) : 0,
+        .scoped             = abi >= 6 && !only_restrict_writes ? (LL_SCOPE_ABSTRACT_UNIX_SOCKET | LL_SCOPE_SIGNAL) : 0
     };
 
     int ruleset = (int) syscall(__NR_landlock_create_ruleset, &attr, sizeof attr, 0);
@@ -273,9 +274,9 @@ static void rpki_prover_sandbox(void)
         return;
     }
 
-    /* Reading isn't restricted with writes_only, so there's nothing to allow */
+    /* Reading isn't restricted with only_restrict_writes, so there's nothing to allow */
     if (add_rules(ruleset, rw, fs_rights) &&
-        (writes_only || add_rules(ruleset, ro, LL_FS_READ_FILE | LL_FS_READ_DIR))) {
+        (only_restrict_writes || add_rules(ruleset, ro, LL_FS_READ_FILE | LL_FS_READ_DIR))) {
 
         if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0)
             fail("prctl(PR_SET_NO_NEW_PRIVS)", NULL);
