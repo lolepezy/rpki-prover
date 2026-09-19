@@ -225,6 +225,7 @@ repositoryStoreGroup = testGroup "Repository storage test"
 versionStoreGroup :: TestTree
 versionStoreGroup = testGroup "Version storage test"
     [ dbTestCase "Should insert and get a version" shouldSaveAndGetValidationVersion
+    , dbTestCase "Should add common validations to a saved version" shouldAddCommonValidations
     , dbTestCase "Should insert and get a version with data from previous versions"
         shouldSaveAndGetValidationVersionFilledWithPastData
     , dbTestCase "Should read payload getters with fallback and active TA filtering"
@@ -920,6 +921,44 @@ shouldSaveAndGetValidationVersion io = do
         (commonVS ^. typed)
         commonMetrics
     HU.assertEqual "Validation outcomes don't match" expectedOutcomes storedOutcomes
+
+
+-- What the main process does with SLURM problems after the validation worker
+-- has saved the version.
+shouldAddCommonValidations :: IO DB -> HU.Assertion
+shouldAddCommonValidations io = do
+    db <- io
+
+    worldVersion <- newVersion
+    let taNames = map TaName ["ripe", "apnic"]
+    seedActiveTaNames db taNames
+
+    perTaResults <- QC.generate $ toPerTA . zip taNames <$> QC.vectorOf 2 QC.arbitrary
+    commonVS <- QC.generate QC.arbitrary
+    addedVS  <- QC.generate QC.arbitrary
+
+    rwTx db $ \tx -> DB.saveValidationVersion tx worldVersion perTaResults commonVS
+    (_, _, outcomesBefore) <- roTx db $ \tx -> DB.getValidationOutcomes tx worldVersion
+
+    rwTx db $ \tx -> DB.addCommonValidations tx worldVersion addedVS
+    (commonValidations, commonMetrics, outcomesAfter) <-
+        roTx db $ \tx -> DB.getValidationOutcomes tx worldVersion
+
+    HU.assertEqual "Common validations are not merged"
+        (commonVS ^. typed @Validations <> addedVS ^. typed)
+        commonValidations
+    HU.assertEqual "Common metrics are not merged"
+        (commonVS ^. typed @Metrics <> addedVS ^. typed)
+        commonMetrics
+    HU.assertEqual "Per-TA outcomes changed" outcomesBefore outcomesAfter
+
+    -- A version the worker never saved gets a common row of its own
+    otherVersion <- newVersion
+    rwTx db $ \tx -> DB.addCommonValidations tx otherVersion addedVS
+    (otherValidations, _, _) <- roTx db $ \tx -> DB.getValidationOutcomes tx otherVersion
+    HU.assertEqual "Common validations are not saved for a new version"
+        (addedVS ^. typed @Validations)
+        otherValidations
 
 
 shouldSaveAndGetValidationVersionFilledWithPastData :: IO DB -> HU.Assertion

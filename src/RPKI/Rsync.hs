@@ -35,7 +35,6 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
-import           RPKI.Metrics.System
 import           RPKI.Parse.Parse
 import           RPKI.Repository
 import           RPKI.Time
@@ -53,15 +52,15 @@ import           System.Process.Typed
 
 
 checkRsyncInPath :: ValidatorIO es => Maybe FilePath -> Eff es ()
-checkRsyncInPath rsyncClientPath = do 
-    let client = fromMaybe "rsync" rsyncClientPath    
+checkRsyncInPath clientPath = do 
+    let client = fromMaybe "rsync" clientPath    
     z <- liftIO $ IOExc.try $ readProcess $ proc client [ "--version" ]
     case z of
         Left (e :: SomeException) -> do 
             let message = maybe 
                     [i|rsync client is not in he $PATH, can't proceed: #{U.fmtEx e}|]
                     (\rc -> [i|rsync client #{rc} is not found, can't proceed: #{U.fmtEx e}|])
-                    rsyncClientPath
+                    clientPath
             appError $ InitE $ InitError message
                     
         Right (exit, stdout', stderr') -> 
@@ -79,40 +78,12 @@ runRsyncFetchWorker :: ValidatorIO es => AppContext s
                     -> WorldVersion
                     -> RsyncRepository             
                     -> Eff es RsyncRepository
-runRsyncFetchWorker appContext@AppContext {..} fetchConfig worldVersion repository = do
-        
-    -- This is for humans to read in `top` or `ps`, actual parameters
-    -- are passed as 'RsyncFetchResult'.
-    let (URI u) = getURL repository
-    let workerId = WorkerId [i|version:#{worldVersion}:rsync-fetch:#{u}|]    
-
-    let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
-    let arguments = 
-            [ show workerId ] <> 
-            rtsArguments [ 
-                rtsN maxCpuAvailable, 
-                rtsA "4m", 
-                rtsAL "4m", 
-                "-Fd1",
-                "--disable-delayed-os-memory-return",
-                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rsyncWorkerMemoryMb) ]
-
-    vp <- askScopes
-    workerInput <- makeWorkerInput appContext workerId
-                        (RsyncFetchParams vp fetchConfig repository worldVersion)                        
-                        (Timebox $ fetchConfig ^. #rsyncTimeout)
-                        (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
-    
-    workerInfo <- newWorkerInfo RsyncWorker (fetchConfig ^. #rsyncTimeout) (U.convert $ show workerId)
-
-    wr@WorkerResult {..} <- runWorker logger workerInput arguments workerInfo    
-    case payload of 
-        Left (ErrorResult e) -> do 
-            appError $ InternalE $ WorkerError e
-        Right (RsyncFetchResult z) -> do     
-            logWorkerDone logger workerId wr    
-            pushSystem logger $ resourceUsageMetric "rsync-fetch" clockTime stats
-            embedValidatorT $ pure z
+runRsyncFetchWorker appContext fetchConfig worldVersion repository = do
+    scopes <- askScopes
+    RsyncFetchResult z <- runWorker appContext
+                            (RsyncFetchParams scopes fetchConfig repository worldVersion)
+                            (Just $ fetchConfig ^. #rsyncTimeout)
+    embedValidatorT $ pure z
     
 
 -- | Download one file using rsync
@@ -242,7 +213,7 @@ data RsyncMode = RsyncOneFile | RsyncDirectory
 
 rsyncProcess :: Config -> FetchConfig -> RsyncURL -> FilePath -> RsyncMode -> ProcessConfig () () ()
 rsyncProcess Config {..} fetchConfig rsyncURL destination rsyncMode = 
-    proc "rsync" $ 
+    proc rsyncBinary $ 
         [ "--update",  "--times" ] <> 
         [ "--timeout=" <> show timeout' ] <>         
         [ "--contimeout=60" ] <>         
@@ -251,11 +222,14 @@ rsyncProcess Config {..} fetchConfig rsyncURL destination rsyncMode =
         extraOptions <> 
         [ sourceUrl, destination ]
     where 
+        rsyncBinary = maybe "rsync" configValue rsyncConf.clientPath 
+
         Seconds timeout' = fetchConfig ^. #rsyncTimeout
         source = Text.unpack (unURI $ getURL rsyncURL)        
         (sourceUrl, extraOptions) = case rsyncMode of 
             RsyncOneFile   -> (source, [])
             RsyncDirectory -> (addTrailingPathSeparator source, [ "--recursive", "--delete", "--copy-links" ])
+
 
 {- | Map an rsync URL onto a local path under the rsync root.
 

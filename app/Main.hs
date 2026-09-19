@@ -55,12 +55,14 @@ import           RPKI.Http.HttpServer
 import           RPKI.Logging
 
 import           RPKI.Store.AppStorage
+import           RPKI.Store.Base.Serialisation (TheBinary)
 import           RPKI.Store.AppSqliteStorage (AppSQLiteEnv)
 import qualified RPKI.Store.Database as DB
 import qualified RPKI.Store.SQLite   as SQLite
 import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.RRDP.RrdpFetch
+import           RPKI.Sandbox
 
 import           RPKI.Fetch.ErikRelay
 import           RPKI.Rsync
@@ -165,12 +167,12 @@ executeWorkerProcess = do
     -- turnOffTlsValidation
 
     appContextRef <- newTVarIO Nothing
-    let onExit exitCode = do            
+    let onExit workerExit = do            
             readTVarIO appContextRef >>= maybe (pure ()) closeStorage
-            exitWith exitCode
+            exitWith $ toExitCode workerExit
 
-    executeWork input onExit $ \_ resultHandler -> 
-        withLogger logConfig $ \logger -> liftIO $ do
+    let runWork :: AppLogger -> (forall a . TheBinary a => a -> IO ()) -> IO ()
+        runWork logger resultHandler = do
             (z, validations) <- runValidatorIO
                                     (newScopes "worker-create-app-context")
                                     (createWorkerAppContext config logger)
@@ -196,9 +198,9 @@ executeWorkerProcess = do
 
                                 ValidationParams {..} -> 
                                     exec resultHandler $ do 
-                                        (vs, discoveredRepositories, slurm) <- 
+                                        (vs, discoveredRepositories) <- 
                                             runValidation appContext worldVersion talsToValidate allTaNames
-                                        pure $ Right $ ValidationResult vs discoveredRepositories slurm
+                                        pure $ Right $ ValidationResult vs discoveredRepositories
 
                                 CacheCleanupParams {..} -> 
                                     exec resultHandler $
@@ -212,6 +214,28 @@ executeWorkerProcess = do
                             -- Clear the ref first so onExit doesn't close the same DB a second time.
                             atomically $ writeTVar appContextRef Nothing
                             closeStorage appContext
+
+    executeWork input onExit $ \_ resultHandler -> 
+        withLogger logConfig $ \logger -> liftIO $ do
+            -- Sandboxing (if any) was done before the runtime started, here
+            -- is where we find out how it went.
+            sandbox <- getSandboxStatus
+            case sandbox of
+                NotSandboxed -> 
+                    runWork logger resultHandler
+                Sandboxed abi -> do
+                    logDebug logger [i|Worker is sandboxed, Landlock ABI #{abi}.|]
+                    -- A writes-only sandbox doesn't restrict network access anyway
+                    when (abi < 4 && maybe False (not . onlyRestrictWrites) (workerSandbox input)) $ 
+                        logWarn logger [i|Landlock ABI #{abi} can't restrict network access, the worker still has it.|]
+                    runWork logger resultHandler
+                SandboxUnsupported message -> do
+                    logWarn logger [i|Worker is not sandboxed: #{message}.|]
+                    runWork logger resultHandler
+                SandboxFailed message ->
+                    -- It was supposed to be sandboxed and it is not, so it doesn't run
+                    exec @() resultHandler $ pure $ Left $ ErrorResult 
+                        [i|Worker could not sandbox itself, refusing to run: #{message}|]
   where    
     exec :: forall r . (WorkerResult r -> IO ()) -> IO (Either ErrorResult r) -> IO ()
     exec resultHandler f = resultHandler =<< execWithStats f    
@@ -279,7 +303,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     liftIO $ setCpuCount cpuCount'
 
     proverRunMode     <- deriveProverRunMode cliOptions
-    rsyncPrefetchUrls <- rsyncPrefetches cliOptions
+    prefetchUrls <- rsyncPrefetches cliOptions
 
     let apiSecured :: a -> ApiSecured a
         apiSecured a = if showHiddenConfig then Public a else Hidden a
@@ -296,7 +320,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & #proverRunMode .~ proverRunMode
             & #parallelism . #cpuCount .~ cpuCount'
             & #rsyncConf . #rsyncRoot .~ apiSecured rsyncd
-            & #rsyncConf . #rsyncPrefetchUrls .~ rsyncPrefetchUrls
+            & #rsyncConf . #prefetchUrls .~ prefetchUrls
             & #rrdpConf . #tmpRoot .~ apiSecured tmpd
             & #logLevel .~ derivedLogLevel
 
@@ -345,8 +369,9 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
 data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion
 
-newSqliteDB :: FilePath -> Config -> IO SQLite.SqliteDB
-newSqliteDB dbPath config = SQLite.createDB dbPath busyTimeoutMs poolSize
+newSqliteDB :: FilePath -> Config -> SQLite.WalCheckpointing -> IO SQLite.SqliteDB
+newSqliteDB dbPath config walCheckpointing = 
+    SQLite.createDB dbPath busyTimeoutMs walCheckpointing poolSize
   where
     poolSize      = max 2 $ fromIntegral $ config ^. #parallelism . #cpuParallelism
     busyTimeoutMs = let Seconds s = config ^. #storageConfig . #rwTransactionTimeout
@@ -362,7 +387,7 @@ createSqliteDatabase cacheDir config resetCache checkVersion = do
         removeIfExists $ dbPath <> "-wal"
         removeIfExists $ dbPath <> "-shm"
 
-    sdb <- newSqliteDB dbPath config
+    sdb <- newSqliteDB dbPath config SQLite.CheckpointWhenCommitting
     SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> SQLite.initSchema (SQLite.rawConn conn)
 
     let db = DB.DB sdb
@@ -554,7 +579,9 @@ rsyncPrefetches CLIOptions {..} = do
 createWorkerAppContext :: ValidatorIO es => Config -> AppLogger -> Eff es AppSQLiteEnv
 createWorkerAppContext config logger = do
     db <- fromTry (InitE . InitError . fmtEx) $ openExistingSqliteDatabase cacheDir config
-    appState <- createAppState logger (configValue $ config ^. #localExceptions)
+    -- No SLURM reading function here: workers don't read SLURM files, 
+    -- the main process does.
+    appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db
     let executableVersion = thisExecutableVersion
     pure AppContext {..}
@@ -563,9 +590,12 @@ createWorkerAppContext config logger = do
 
 -- | Open an already-initialised SQLite database without touching the schema or version.
 -- Used by worker processes to avoid unnecessary write-transaction contention on startup.
+-- Workers never checkpoint the WAL: they are killed when they exceed their disk IO
+-- limits, and checkpointing would charge them for writing out a backlog that the 
+-- other processes produced. The main process does it on a timer instead.
 openExistingSqliteDatabase :: FilePath -> Config -> IO DB.DB
 openExistingSqliteDatabase cacheDir config = do
-    sdb <- newSqliteDB (cacheDir </> "rpki.sqlite") config
+    sdb <- newSqliteDB (cacheDir </> "rpki.sqlite") config SQLite.CheckpointedByOthers
     pure (DB.DB sdb)
 
 createAppState :: MonadIO m => AppLogger -> [String] -> m AppState
@@ -584,7 +614,7 @@ createAppState logger localExceptions = do
 
 -- | Check some crucial things before running the validator
 checkPreconditions :: ValidatorIO es => CLIOptions -> Eff es ()
-checkPreconditions CLIOptions {..} = checkRsyncInPath rsyncClientPath
+checkPreconditions CLIOptions {..} = checkRsyncInPath clientPath
 
 deriveProverRunMode :: ValidatorIO es => CLIOptions -> Eff es ProverRunMode
 deriveProverRunMode CLIOptions {..} = 
@@ -669,7 +699,7 @@ data CLIOptions = CLIOptions {
         erikRelay                :: [String],
         erikDownloadParallelism  :: Maybe Natural,
         erikRelayParallelism     :: Maybe Natural,
-        rsyncClientPath          :: Maybe String,
+        clientPath          :: Maybe String,
         httpApiPort              :: Maybe Word16,
         withRtr                  :: Bool,
         rtrAddress               :: Maybe String,
@@ -950,11 +980,11 @@ cliOptionsParser = CLIOptions
     Seconds defRevalidation   = cfg ^. #validationConfig . #revalidationInterval
     Seconds defCacheLifetime  = cfg ^. #longLivedCacheLifeTime
     defCacheLifetimeHours     = defCacheLifetime `div` 3600
-    Seconds defRrdpRefresh    = cfg ^. #validationConfig . #rrdpRepositoryRefreshInterval
-    Seconds defRsyncRefresh   = cfg ^. #validationConfig . #rsyncRepositoryRefreshInterval
-    Seconds defRrdpTimeout    = cfg ^. #rrdpConf . #rrdpTimeout
-    Seconds defRsyncTimeout   = cfg ^. #rsyncConf . #rsyncTimeout
-    Seconds defErikTimeout    = cfg ^. #erikConf . #erikTimeout
+    Seconds defRrdpRefresh    = cfg ^. #rrdpConf . #repositoryRefreshInterval
+    Seconds defRsyncRefresh   = cfg ^. #rsyncConf . #repositoryRefreshInterval
+    Seconds defRrdpTimeout    = cfg ^. #systemConfig . #rrdpWorkerLimits . #workerTimeout
+    Seconds defRsyncTimeout   = cfg ^. #systemConfig . #rsyncWorkerLimits . #workerTimeout
+    Seconds defErikTimeout    = cfg ^. #systemConfig . #erikWorkerLimits . #workerTimeout
     Seconds defErikRefresh    = cfg ^. #erikConf . #erikRefreshInterval
     defHttpApiPort            = cfg ^. #httpApiConf . #port
     defRtrAddress             = rtrCfg ^. #rtrAddress
@@ -964,14 +994,14 @@ cliOptionsParser = CLIOptions
     defMaxTotalTree           = cfg ^. #validationConfig . #maxTotalTreeSize
     defMaxObjSize             = cfg ^. #validationConfig . #maxObjectSize
     defMinObjSize             = cfg ^. #validationConfig . #minObjectSize
-    Seconds defTopDownTimeout = cfg ^. #validationConfig . #topDownTimeout
+    Seconds defTopDownTimeout = cfg ^. #systemConfig . #validationWorkerLimits . #workerTimeout
     defMetricsPrefix          = cfg ^. #metricsPrefix
-    defMaxRrdpMem             = cfg ^. #systemConfig . #rrdpWorkerMemoryMb
-    defMaxRsyncMem            = cfg ^. #systemConfig . #rsyncWorkerMemoryMb
-    defMaxValidMem            = cfg ^. #systemConfig . #validationWorkerMemoryMb
-    defMaxFetchTraffic        = showLimit $ cfg ^. #systemConfig . #rrdpWorkerIoLimits . #maxIncomingTrafficMb
-    defMaxFetchDiskRead       = showLimit $ cfg ^. #systemConfig . #rrdpWorkerIoLimits . #maxDiskReadMb
-    defMaxFetchDiskWrite      = showLimit $ cfg ^. #systemConfig . #rrdpWorkerIoLimits . #maxDiskWriteMb
+    defMaxRrdpMem             = cfg ^. #systemConfig . #rrdpWorkerLimits . #memoryMb
+    defMaxRsyncMem            = cfg ^. #systemConfig . #rsyncWorkerLimits . #memoryMb
+    defMaxValidMem            = cfg ^. #systemConfig . #validationWorkerLimits . #memoryMb
+    defMaxFetchTraffic        = showLimit $ cfg ^. #systemConfig . #rrdpWorkerLimits . #maxIncomingTrafficMb
+    defMaxFetchDiskRead       = showLimit $ cfg ^. #systemConfig . #rrdpWorkerLimits . #maxDiskReadMb
+    defMaxFetchDiskWrite      = showLimit $ cfg ^. #systemConfig . #rrdpWorkerLimits . #maxDiskWriteMb
     showLimit                 = maybe ("unlimited" :: String) show
 
 
@@ -983,26 +1013,26 @@ applyCliToConfig :: Config -> CLIOptions -> (forall a . a -> ApiSecured a) -> Co
 applyCliToConfig baseConfig CLIOptions{..} apiSecured = 
     adjustConfig $ baseConfig
         & #parallelism .~ parallelism
-        & #rsyncConf . #rsyncClientPath .~ fmap apiSecured rsyncClientPath
+        & #rsyncConf . #clientPath .~ fmap apiSecured clientPath
         & #rsyncConf . #enabled .~ not noRsync
-        & maybeSet (#rsyncConf . #rsyncTimeout) (Seconds <$> rsyncTimeout)
+        & maybeSet (#systemConfig . #rsyncWorkerLimits . #workerTimeout) (Seconds <$> rsyncTimeout)
         & #rrdpConf . #enabled .~ not noRrdp
-        & maybeSet (#rrdpConf . #rrdpTimeout) (Seconds <$> rrdpTimeout)
-        & maybeSet (#erikConf . #erikTimeout) (Seconds <$> erikTimeout)
+        & maybeSet (#systemConfig . #rrdpWorkerLimits . #workerTimeout) (Seconds <$> rrdpTimeout)
+        & maybeSet (#systemConfig . #erikWorkerLimits . #workerTimeout) (Seconds <$> erikTimeout)
         & maybeSet (#erikConf . #erikRefreshInterval) (Seconds <$> erikRefreshInterval)
         & setErikRelays
         & maybeSet (#erikConf . #downloadParallelism) erikDownloadParallelism
         & maybeSet (#erikConf . #relayParallelism) erikRelayParallelism
         & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
-        & maybeSet (#validationConfig . #rrdpRepositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
-        & maybeSet (#validationConfig . #rsyncRepositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
+        & maybeSet (#rrdpConf . #repositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
+        & maybeSet (#rsyncConf . #repositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)
         & #validationConfig . #manifestProcessing .~
                 (if strictManifestValidation then RFC6486_Strict else RFC9286)
         & #validationConfig . #validationAlgorithm .~
                 (if noIncrementalValidation then FullEveryIteration else Incremental)
         & #validationConfig . #validationRFC .~
                 (if allowOverclaiming then ReconsideredRFC else StrictRFC)
-        & maybeSet (#validationConfig . #topDownTimeout) (Seconds <$> topDownTimeout)
+        & maybeSet (#systemConfig . #validationWorkerLimits . #workerTimeout) (Seconds <$> topDownTimeout)
         & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
         & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
         & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
@@ -1014,15 +1044,15 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & #localExceptions .~ apiSecured localExceptions
         & #withValidityApi .~ withValidityApi
         & maybeSet #metricsPrefix (convert <$> metricsPrefix)
-        & maybeSet (#systemConfig . #rsyncWorkerMemoryMb) maxRsyncFetchMemory
-        & maybeSet (#systemConfig . #rrdpWorkerMemoryMb) maxRrdpFetchMemory
-        & maybeSet (#systemConfig . #validationWorkerMemoryMb) maxValidationMemory
+        & maybeSet (#systemConfig . #rsyncWorkerLimits . #memoryMb) maxRsyncFetchMemory
+        & maybeSet (#systemConfig . #rrdpWorkerLimits . #memoryMb) maxRrdpFetchMemory
+        & maybeSet (#systemConfig . #validationWorkerLimits . #memoryMb) maxValidationMemory
         -- Both fetchers get the same IO budget, they do the same kind of work
-        & maybeSet (#systemConfig . #rrdpWorkerIoLimits . #maxIncomingTrafficMb) (Just <$> maxFetchTrafficMb)
-        & maybeSet (#systemConfig . #rrdpWorkerIoLimits . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
-        & maybeSet (#systemConfig . #rrdpWorkerIoLimits . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
-        & maybeSet (#systemConfig . #rsyncWorkerIoLimits . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
-        & maybeSet (#systemConfig . #rsyncWorkerIoLimits . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)        
+        & maybeSet (#systemConfig . #rrdpWorkerLimits . #maxIncomingTrafficMb) (Just <$> maxFetchTrafficMb)
+        & maybeSet (#systemConfig . #rrdpWorkerLimits . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
+        & maybeSet (#systemConfig . #rrdpWorkerLimits . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
+        & maybeSet (#systemConfig . #rsyncWorkerLimits . #maxDiskReadMb) (Just <$> maxFetchDiskReadMb)
+        & maybeSet (#systemConfig . #rsyncWorkerLimits . #maxDiskWriteMb) (Just <$> maxFetchDiskWriteMb)
   where
     cpuCount'    = fromMaybe (baseConfig ^. #parallelism . #cpuCount) cpuCount
 

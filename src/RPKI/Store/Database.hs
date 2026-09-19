@@ -44,7 +44,7 @@ module RPKI.Store.Database (
     getValidationOutcomes,
     getVrps, getVrpsForTA, getRoas, getAspas, getGbrs, getBgps, getSpls,
     saveValidationVersion, deleteValidationVersion,
-    saveSlurm, getSlurm, getLatestVersions,
+    saveSlurm, getSlurm, addCommonValidations, getLatestVersions,
     updateRrdpMeta, updateRrdpMetaM,
     getPublicationPoints, getRepository,
     getRrdpRepository, getRsyncRepository, getRsyncRepositories,
@@ -940,6 +940,31 @@ saveSlurm :: MonadIO m => Tx 'RW -> WorldVersion -> Slurm -> m ()
 saveSlurm (Tx conn) version slurm = liftIO $
     execute conn "INSERT OR REPLACE INTO slurm(key, value) VALUES (?, ?)"
         (version, serialiseCompressed slurm)
+
+-- | Merge validations and metrics into the common (not TA-specific) outcome
+-- of an already saved version. Used for what the main process finds out after
+-- the validation worker has saved the version, i.e. SLURM problems.
+addCommonValidations :: MonadIO m => Tx 'RW -> WorldVersion -> ValidationState -> m ()
+addCommonValidations (Tx conn) version vs = liftIO $ do
+    rows <- query conn
+        "SELECT validations, metrics FROM validation_outcomes WHERE version = ? AND ta_name IS NULL"
+        (Only version)
+    let (validations, metrics) = case rows of
+            (v, m) : _ -> (maybe mempty deserialiseCompressed v, maybe mempty deserialiseCompressed m)
+            []         -> mempty
+    let newValidations = serialiseCompressed $ validations <> vs ^. typed @Validations
+    let newMetrics     = serialiseCompressed $ metrics <> vs ^. typed @Metrics
+    case rows of
+        [] -> execute conn
+                [sql|
+                    INSERT INTO validation_outcomes
+                        (ta_name, version, validations, metrics, roas, spls, aspa, bgps, gbrs)
+                    VALUES (NULL, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
+                |]
+                (version, newValidations, newMetrics)
+        _  -> execute conn
+                "UPDATE validation_outcomes SET validations = ?, metrics = ? WHERE version = ? AND ta_name IS NULL"
+                (newValidations, newMetrics, version)
 
 getSlurm :: MonadIO m => Tx mode -> WorldVersion -> m (Maybe Slurm)
 getSlurm (Tx conn) version = liftIO $ do

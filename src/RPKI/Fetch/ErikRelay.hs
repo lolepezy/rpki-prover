@@ -36,8 +36,6 @@ import           RPKI.Fetch.DirectoryTraverse
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 import           RPKI.Worker
-import           RPKI.Time
-import           RPKI.Metrics.System
 
 data IndexFetch index = SameIndex index | UpdatedIndex index
     deriving (Show, Eq, Ord)
@@ -48,42 +46,12 @@ runErikFetchWorker :: ValidatorIO es => AppContext s
                     -> [URI]
                     -> FQDN
                     -> Eff es ErikFetchStat
-runErikFetchWorker appContext@AppContext {..} fetchConfig worldVersion relayUris fqdn@(FQDN fqdn_) = do
-
-    -- This is for humans to read in `top` or `ps`, actual parameters
-    -- are passed as 'ErikFetchParams'.
-    let workerId = WorkerId [i|version:#{worldVersion}:erik-fetch:#{fqdn_}|]
-
-    -- Start single-threaded. There are a lot of Erik workers alive at once and
-    -- the RTS allocates a nursery per capability, so a worker that turns out to
-    -- have nothing to download never pays for more than one. `fetchErik` raises
-    -- this with 'setNumCapabilities' once the index shows work worth
-    -- parallelising.
-    let arguments =
-            [ show workerId ] <>
-            rtsArguments [
-                rtsN 1,
-                rtsA "4m",
-                rtsAL "4m",
-                "-Fd1",
-                "--disable-delayed-os-memory-return",
-                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #erikWorkerMemoryMb) ]
-
+runErikFetchWorker appContext fetchConfig worldVersion relayUris fqdn = do
     scopes <- askScopes
-    workerInput <- makeWorkerInput appContext workerId
-                        (ErikFetchParams scopes fetchConfig relayUris fqdn worldVersion)
-                        (Timebox $ fetchConfig ^. #erikTimeout)
-                        (Just $ asCpuTime $ fetchConfig ^. #cpuLimit)
-
-    workerInfo <- newWorkerInfo (GenericWorker "erik-fetch") (fetchConfig ^. #erikTimeout) (U.convert $ show workerId)
-    wr@WorkerResult {..} <- runWorker logger workerInput arguments workerInfo
-    case payload of
-        Left (ErrorResult e) ->
-            appError $ InternalE $ WorkerError e
-        Right (ErikFetchResult z) -> do
-            logWorkerDone logger workerId wr
-            pushSystem logger $ resourceUsageMetric "erik-fetch" clockTime stats
-            embedValidatorT $ pure z
+    ErikFetchResult z <- runWorker appContext
+                            (ErikFetchParams scopes fetchConfig relayUris fqdn worldVersion)
+                            (Just $ fetchConfig ^. #erikTimeout)
+    embedValidatorT $ pure z
 
 {- 
     Implementation of the Erik relay fetcher.

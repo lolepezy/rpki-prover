@@ -19,6 +19,8 @@ import RPKI.SLURM.SlurmSpec
 import RPKI.Store.StorableSpec
 import RPKI.Validation.TopDownSpec
 import RPKI.Fetch.ErikSpec
+import RPKI.WorkerSpec
+import RPKI.Metrics.ProcessSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
@@ -37,7 +39,9 @@ main = defaultMain $ testGroup "All tests" [
         loggingSpec,
         workflowSpec,
         topDownRegressionGroup,
-        storableEncodingSpec
+        storableEncodingSpec,
+        workerSpec,
+        processMetricsSpec
 
         -- erikSpec
     ]  

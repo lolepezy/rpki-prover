@@ -34,7 +34,6 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
-import           RPKI.Metrics.System
 import           RPKI.Worker
 import           RPKI.Parallel
 import           RPKI.Time
@@ -56,39 +55,12 @@ runRrdpFetchWorker :: ValidatorIO es => AppContext s
                     -> WorldVersion
                     -> RrdpRepository             
                     -> Eff es (RrdpRepository, RrdpFetchStat)
-runRrdpFetchWorker appContext@AppContext {..} fetchConfig worldVersion repository = do
-        
-    -- This is for humans to read in `top` or `ps`, actual parameters
-    -- are passed as 'RrdpFetchParams'.
-    let (URI u) = getURL repository
-    let workerId = WorkerId [i|version:#{worldVersion}:rrdp-fetch:#{u}|]
-
-    let arguments = 
-            [ show workerId ] <>
-            rtsArguments [ 
-                rtsN 1, 
-                rtsA "4m", 
-                rtsAL "4m", 
-                "-Fd1",
-                "--disable-delayed-os-memory-return",
-                rtsMaxMemory $ rtsMemValue (config ^. typed @SystemConfig . #rrdpWorkerMemoryMb) ]
-
+runRrdpFetchWorker appContext fetchConfig worldVersion repository = do
     scopes <- askScopes
-
-    workerInput <- makeWorkerInput appContext workerId
-                        (RrdpFetchParams scopes repository worldVersion)                        
-                        (Timebox $ fetchConfig ^. #rrdpTimeout)                                
-                        (Just $ asCpuTime $ fetchConfig ^. #cpuLimit) 
-
-    workerInfo <- newWorkerInfo (GenericWorker "rrdp-fetch") (fetchConfig ^. #rrdpTimeout) (U.convert $ show workerId)
-    wr@WorkerResult {..} <- runWorker logger workerInput arguments workerInfo
-    case payload of 
-        Left (ErrorResult e) -> do 
-            appError $ InternalE $ WorkerError e
-        Right (RrdpFetchResult z) -> do     
-            logWorkerDone logger workerId wr
-            pushSystem logger $ resourceUsageMetric "rrdp-fetch" clockTime stats
-            embedValidatorT $ pure z
+    RrdpFetchResult z <- runWorker appContext
+                            (RrdpFetchParams scopes repository worldVersion)
+                            (Just $ fetchConfig ^. #rrdpTimeout)
+    embedValidatorT $ pure z
 
 
 -- | 
