@@ -268,10 +268,7 @@ withLogger LogConfig {..} f = do
     -- TODO Figure out why removing it leads to the whole process getting stuck
     hSetBuffering commonLogStream LineBuffering    
     hSetBuffering rtrLogStream LineBuffering    
-    
-    -- One write, not two: the worker's watchdog threads write to the same
-    -- stderr through 'sendToParent' without going through this queue, and a
-    -- message split across two writes could be interleaved with one of theirs.
+        
     let logToStream stream t = 
             BS.hPut stream $ t <> C8.singleton eol
 

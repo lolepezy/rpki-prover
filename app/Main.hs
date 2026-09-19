@@ -226,7 +226,7 @@ executeWorkerProcess = do
                 Sandboxed abi -> do
                     logDebug logger [i|Worker is sandboxed, Landlock ABI #{abi}.|]
                     -- A writes-only sandbox doesn't restrict network access anyway
-                    when (abi < 4 && maybe False (not . writesOnly) (workerSandbox input)) $ 
+                    when (abi < 4 && maybe False (not . onlyRestrictWrites) (workerSandbox input)) $ 
                         logWarn logger [i|Landlock ABI #{abi} can't restrict network access, the worker still has it.|]
                     runWork logger resultHandler
                 SandboxUnsupported message -> do

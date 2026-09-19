@@ -98,7 +98,6 @@ processStat = do
 -- Works only on Linux with procfs, returns 0 otherwise
 getProcessPeakRss :: MonadIO m => m Size
 getProcessPeakRss = liftIO $
-    -- /proc/self/status is some 60 lines and exactly one of them is wanted.
     Size . (* 1024) <$> foldProcNumbers "/proc/self/status" 0 (\case
         "VmHWM" -> Just const
         _       -> Nothing)
@@ -109,7 +108,6 @@ getProcessPeakRss = liftIO $
 getProcessDiskIO :: MonadIO m => m DiskIO
 getProcessDiskIO = liftIO $ do
     IoCounters {..} <- foldProcNumbers "/proc/self/io" (IoCounters 0 0 0 0) $ \case
-        -- Whole keys, not prefixes: the file also has a `cancelled_write_bytes`.
         "rchar"       -> Just $ \v c -> c { rchar      = Size v }
         "wchar"       -> Just $ \v c -> c { wchar      = Size v }
         "read_bytes"  -> Just $ \v c -> c { readBytes  = Size v }
@@ -117,7 +115,6 @@ getProcessDiskIO = liftIO $ do
         _             -> Nothing
     pure $ DiskIO (max rchar readBytes) (max wchar writeBytes)
 
--- | The counters of /proc/self/io that 'getProcessDiskIO' is made of.
 data IoCounters = IoCounters {
         rchar      :: Size,
         wchar      :: Size,
@@ -151,8 +148,6 @@ foldProcNumbers file initial wanted =
                     case wanted key of
                         Nothing  -> acc
                         Just set ->
-                            -- Whitespace, not just spaces: /proc/self/io separates
-                            -- the two with a space but /proc/self/status uses a tab.
                             case C8.readInt $ C8.dropWhile isSpace $ BS.drop 1 rest of
                                 Just (value, _) -> set (fromIntegral value) acc
                                 Nothing         -> acc
@@ -160,12 +155,9 @@ foldProcNumbers file initial wanted =
 
 {- | Bytes this process has pulled in over the network so far.
 
-It is a process-global counter rather than something in the AppState because the 
-places that download things (`downloadConduit`) have no AppContext at hand, and 
-because the worker's self-monitoring thread only has its `WorkerInput`.
-
-It only counts HTTP response bodies, i.e. it doesn't include headers, TLS overhead 
-or whatever an external rsync client process transfers on its own.
+It is a process-global counter of everything using `downloadConduit`. It only 
+counts HTTP response bodies, i.e. it doesn't include headers, TLS overhead or 
+whatever an external rsync client process transfers on its own.
 -}
 incomingTrafficCounter :: IORef Size
 incomingTrafficCounter = unsafePerformIO $ newIORef 0

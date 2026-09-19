@@ -123,14 +123,6 @@ data WorkerInput = WorkerInput {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
-{- | The kinds of worker there are.
-
-Everything that differs between them -- the name they are known by, the limits
-they run under, the RTS options they are started with -- hangs off this type,
-so adding a kind of worker means adding a constructor here and filling in the
-handful of functions below, rather than spreading its details over a call site,
-'makeWorkerInput' and the metrics separately.
--}
 data WorkerType = RrdpFetchWorker | RsyncFetchWorker | ErikFetchWorker
                 | ValidationWorker | CacheCleanupWorker
     deriving stock (Eq, Ord, Show, Enum, Bounded, Generic)
@@ -143,10 +135,6 @@ workerTypeOf = \case
     ValidationParams {}   -> ValidationWorker
     CacheCleanupParams {} -> CacheCleanupWorker
 
--- | The name a kind of worker is known by. It is used in three places that
--- have to agree: the worker id (i.e. what shows up in `ps`), the 'WorkerInfo'
--- the main process keeps for a running worker, and the scope its resource
--- usage is reported under (see 'resourceUsageMetric').
 workerTypeName :: WorkerType -> Text
 workerTypeName = \case
     RrdpFetchWorker    -> "rrdp-fetch"
@@ -155,8 +143,6 @@ workerTypeName = \case
     ValidationWorker   -> "validation"
     CacheCleanupWorker -> "cache-clean-up"
 
--- | Every kind of worker has its own place in 'SystemConfig' with all of its
--- limits (timeout, CPU time, memory, IO) together.
 workerTypeLimits :: Config -> WorkerType -> WorkerLimits
 workerTypeLimits config = let SystemConfig {..} = config ^. #systemConfig in \case
     RrdpFetchWorker    -> rrdpWorkerLimits
@@ -212,23 +198,21 @@ workerSpecFor config params = WorkerSpec {..}
         CacheCleanupParams { worldVersion = v } ->
             (v, Nothing)
 
-    cpuCount :: Int
-    cpuCount = fromIntegral $ config ^. #parallelism . #cpuCount
+    cpuCount :: Int = fromIntegral $ config ^. #parallelism . #cpuCount
 
     -- All three fetchers are tuned the same way and only differ in how many
     -- capabilities they get: a small nursery, and `-Fd1` to give heap back
     -- quickly, since they are short-lived and many of them are alive at once.
     fetcherRts capabilities = [ rtsN capabilities, rtsA "4m", rtsAL "4m", "-Fd1" ]
 
+    -- RRDP and Erik workers start single-threaded to save memory while download is 
+    -- happening and set their max capabilities according to the cpuCount when they
+    -- get to the stage of parsing-validating-saving objects.
     rtsOptions = case workerType of
         RrdpFetchWorker  -> fetcherRts 1
-        RsyncFetchWorker -> fetcherRts cpuCount
-        -- Start single-threaded. There are a lot of Erik workers alive at once
-        -- and the RTS allocates a nursery per capability, so a worker that
-        -- turns out to have nothing to download never pays for more than one.
-        -- `fetchErik` raises this with 'setNumCapabilities' once the index
-        -- shows work worth parallelising.
         ErikFetchWorker  -> fetcherRts 1
+        RsyncFetchWorker -> fetcherRts cpuCount
+        
         -- TODO make profiling a runtime thing, config? It used to be
         -- [ "-p", "-hT", "-l" ] prepended here.
         ValidationWorker -> [ rtsN cpuCount, rtsA "24m", rtsAL "128m" ]
@@ -261,9 +245,9 @@ workerSandbox input = case input ^. #params of
     --    there and tries again, so that stray writes to stdout/stderr can't
     --    end up in the database. Without it the database can't be opened.
     ValidationParams {} -> Just WorkerSandbox {
-            readWrite  = [cacheDirectory],
-            readOnly   = ["/proc/self", "/dev/null"],
-            writesOnly = False
+            readWrite          = [cacheDirectory],
+            readOnly           = ["/proc/self", "/dev/null"],
+            onlyRestrictWrites = False
         }
     -- The rsync fetcher runs the rsync client, which inherits the sandbox, 
     -- so only writing is restricted: to the cache for the worker and to the 
@@ -271,9 +255,9 @@ workerSandbox input = case input ^. #params of
     -- libraries, DNS, network) stays available. /dev/null is writable for 
     -- anything that sends its output there.
     RsyncFetchParams {} -> Just WorkerSandbox {
-            readWrite  = [cacheDirectory, rsyncDirectory, "/dev/null"],
-            readOnly   = [],
-            writesOnly = True
+            readWrite          = [cacheDirectory, rsyncDirectory, "/dev/null"],
+            readOnly           = [],
+            onlyRestrictWrites = True
         }
     _ -> Nothing
   where
@@ -290,7 +274,7 @@ workerEnvironment input = do
         rw <- mapM makeAbsolute readWrite
         ro <- mapM makeAbsolute readOnly
         cacheDirectory <- makeAbsolute $ configValue $ input ^. #config . #cacheDirectory
-        pure $ sandboxEnvironment (WorkerSandbox rw ro writesOnly) <>
+        pure $ sandboxEnvironment (WorkerSandbox rw ro onlyRestrictWrites) <>
             -- SQLite picks a temporary directory by checking which ones exist
             -- and are writable, Landlock doesn't show in that check. Point it
             -- to the cache, the only place it can write to.
@@ -371,16 +355,9 @@ executeWork input exitWith_ actualWork =
             let done ec = do 
                     mine <- atomically $ stateTVar firstOut $ \isFirst -> (isFirst, False)
                     when mine $ 
-                        -- Before the exit, not after: as soon as the TMVar is
-                        -- filled the main thread starts shutting the worker down.
                         reportResourceUsage startedAt ec 
                             `IOExc.finally` atomically (void $ tryPutTMVar workerExit ec)
 
-            -- 'forkFinally' with a handler that does nothing, rather than
-            -- 'forkIO': an exception escaping one of these threads would
-            -- otherwise reach the default handler, which prints it straight to
-            -- stderr -- and in a worker stderr is the message bus, where raw
-            -- text is not something the parent can read.
             mapM_ (\w -> forkFinally w (const $ pure ())) [
                     doTheWork done,
                     dieIfParentDies done,
@@ -392,15 +369,6 @@ executeWork input exitWith_ actualWork =
   where            
     workerId = input ^. #workerId
 
-    {- | A worker that is killed for overuse or times out never gets to return a
-         'WorkerResult', so the resource usage of exactly the runs worth looking
-         at used to be missing from the metrics entirely. Send it over the bus
-         instead, where it lands in the same handler as the usage the parent
-         reports itself for a worker that finished.
-
-         Not done when the work completed (the stats travel in the result) or
-         when the parent is gone (there is nobody left to tell).
-    -}
     reportResourceUsage startedAt = \case 
         WorkerSucceeded -> pure ()
         ParentDied      -> pure ()
