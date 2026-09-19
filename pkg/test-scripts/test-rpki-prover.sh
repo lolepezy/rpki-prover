@@ -127,7 +127,11 @@ wait_for_http() {
 wait_for_journal() {  # wait_for_journal <extended regex>
     local i=0
     while [ "${i}" -lt "${SERVICE_TIMEOUT}" ]; do
-        if journalctl -u rpki-prover --no-pager | grep -qE "$1"; then return 0; fi
+        # Not "journalctl | grep -q": grep exits at the first match, journalctl
+        # is killed by SIGPIPE, and under `set -o pipefail` the pipeline reports
+        # 141 even though the line was there. The bigger the journal, the more
+        # likely that is, so the check would fail exactly when it matters.
+        if grep -qE "$1" <<< "$(journalctl -u rpki-prover --no-pager)"; then return 0; fi
         sleep 2
         i=$((i + 2))
     done

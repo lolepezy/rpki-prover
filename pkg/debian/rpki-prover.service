@@ -50,7 +50,12 @@ RestrictRealtime=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
 SystemCallArchitectures=native
-SystemCallFilter=@system-service
+# The landlock_* syscalls are spelled out because @system-service only started
+# pulling in @sandbox, which holds them, in systemd 253. On bookworm's 252 they
+# are otherwise denied, the worker's Landlock sandbox can't be set up, and the
+# worker falls back to running unsandboxed with only a warning in the log.
+# @sandbox itself cannot be named here: 252 does not know that set at all.
+SystemCallFilter=@system-service landlock_create_ruleset landlock_add_rule landlock_restrict_self
 SystemCallErrorNumber=EPERM
 # NOTE: MemoryDenyWriteExecute is deliberately *not* set. The GHC runtime uses
 # libffi to build closures for "foreign import ccall wrapper" callbacks, which
