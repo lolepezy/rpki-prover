@@ -728,6 +728,7 @@ data CLIOptions = CLIOptions {
         rtrPort                  :: Maybe Int16,
         rtrLogFile               :: Maybe String,
         logLevel                 :: Maybe String,
+        logFormat                :: Maybe String,
         strictManifestValidation :: Bool,
         allowOverclaiming        :: Bool,
         localExceptions          :: [String],
@@ -895,6 +896,14 @@ cliOptionsParser = CLIOptions
             (  long "log-level"
             <> metavar "LEVEL"
             <> help "Log level: 'error', 'warn', 'info', or 'debug' (case-insensitive, default: info)."))
+    <*> optional (strOption
+            (  long "log-format"
+            <> metavar "FORMAT"
+            <> help ("Log line layout: 'auto', 'plain' or 'journald' (default: auto). "
+                  <> "With 'journald' the timestamp is left out and the log level is written as "
+                  <> "the '<N>' syslog priority prefix that systemd files the entry under, since "
+                  <> "the journal records both itself. 'auto' picks it by checking whether the "
+                  <> "output is the journal, which is normally what you want.")))
     <*> switch
             (  long "strict-manifest-validation"
             <> help ("Use strict RFC 6486 manifest validation "
@@ -1094,17 +1103,29 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
 
 withLogConfig :: CLIOptions -> (LogConfig -> IO ()) -> IO ()
 withLogConfig CLIOptions{..} f =
-    case logLevel of
-        Nothing -> run defaultsLogLevel
-        Just s  ->
-            case Text.toLower $ Text.pack s of
-                "error" -> run ErrorL
-                "warn"  -> run WarnL
-                "info"  -> run InfoL
-                "debug" -> run DebugL
-                other   -> hPutStrLn stderr $ "Invalid log level: " <> Text.unpack other
+    case parsedLogFormat of
+        Nothing ->
+            hPutStrLn stderr $ "Invalid log format: " <> fromMaybe "" logFormat
+        Just format ->
+            case logLevel of
+                Nothing -> run format defaultsLogLevel
+                Just s  ->
+                    case Text.toLower $ Text.pack s of
+                        "error" -> run format ErrorL
+                        "warn"  -> run format WarnL
+                        "info"  -> run format InfoL
+                        "debug" -> run format DebugL
+                        other   -> hPutStrLn stderr $ "Invalid log level: " <> Text.unpack other
   where
-    run logLev = f $ newLogConfig logLev logType
+    parsedLogFormat = case logFormat of
+        Nothing -> Just AutoFormat
+        Just s  -> case Text.toLower $ Text.pack s of
+            "auto"     -> Just AutoFormat
+            "plain"    -> Just ForcePlain
+            "journald" -> Just ForceJournald
+            _          -> Nothing
+
+    run format logLev = f $ newLogConfig logLev logType & #logFormat .~ format
       where
         logType = case (rtrLogFile, worker) of 
             (Just fs, Nothing) -> MainLogWithRtr fs

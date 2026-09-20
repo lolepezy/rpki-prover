@@ -27,7 +27,11 @@ import GHC.Generics (Generic)
 
 import System.Posix.Types
 import System.Posix.Process
+import System.Posix.Files (getFdStatus, deviceID, fileID)
+import System.Posix.IO (stdOutput)
+import System.Environment (lookupEnv)
 import System.IO
+import Text.Read (readMaybe)
 
 import RPKI.AppTypes
 import RPKI.Domain
@@ -69,6 +73,34 @@ instance Show LogLevel where
         WarnL  -> "Warn"
         InfoL  -> "Info"
         DebugL -> "Debug"
+
+-- | The syslog priority journald files a message under, given as the `<N>`
+-- prefix systemd parses off the front of a line (see 'JournaldLog').
+syslogPriority :: LogLevel -> Int
+syslogPriority = \case
+    ErrorL -> 3
+    WarnL  -> 4
+    InfoL  -> 6
+    DebugL -> 7
+
+-- | How a log line is laid out, which depends on what is reading it.
+data LogFormat
+    = PlainLog
+    -- | For output going straight into the systemd journal. journald stamps
+    -- every entry with its own timestamp and stores the level as structured
+    -- metadata, so a line that carries both again reads as
+    -- @... rpki-prover[812626]: Info [pid 812626] 2026-09-19 22:55:08.731Z ...@
+    -- with the time in it twice. Here the timestamp is left out and the level
+    -- becomes the `<N>` priority prefix that systemd strips off and files the
+    -- entry under, which is what makes @journalctl -p warning@ work.
+    | JournaldLog
+    deriving stock (Eq, Ord, Show, Generic)
+
+-- | What the user asked for on the command line. 'AutoFormat' is the default
+-- and gets it right on its own; the other two are for when it doesn't, such as
+-- output piped through something that re-exports @$JOURNAL_STREAM@.
+data LogFormatOption = AutoFormat | ForcePlain | ForceJournald
+    deriving stock (Eq, Ord, Show, Generic)
 
 data AppLogger = AppLogger {
         commonLogger :: CommonLogger,
@@ -171,6 +203,7 @@ instance Logger AppLogger where
 data LogConfig = LogConfig {
         logLevel            :: LogLevel,
         logType             :: LogType,
+        logFormat           :: LogFormatOption,
         metricsHandler      :: SystemMetrics -> IO (), -- ^ what to do with incoming system metrics messages
         workerHandler       :: WorkerMessage -> IO (), -- ^ what to do with incoming worker messages
         systemStatusHandler :: SystemStatusMessage -> IO (), -- ^ what to do with incoming system status messages
@@ -183,6 +216,7 @@ data LogType = WorkerLog | MainLog | MainLogWithRtr String
 
 newLogConfig :: LogLevel -> LogType -> LogConfig
 newLogConfig logLevel logType = let 
+    logFormat = AutoFormat
     metricsHandler = const $ pure ()
     workerHandler = const $ pure ()
     systemStatusHandler = const $ pure ()
@@ -265,6 +299,18 @@ withLogger LogConfig {..} f = do
                 MainLogWithRtr rtrLog -> 
                     (stdout, ) <$> openFile rtrLog WriteMode    
      
+    -- Resolved per stream rather than once: with --rtr-log the RTR stream is a
+    -- file, which is never the journal and always wants its own timestamps,
+    -- while the common stream next to it may well be the journal.
+    (commonFormat, rtrFormat) <-
+            case logType of
+                WorkerLog -> pure (PlainLog, PlainLog)
+                MainLog   -> do
+                    format <- resolveLogFormat logFormat stdOutput
+                    pure (format, format)
+                MainLogWithRtr _ ->
+                    (, PlainLog) <$> resolveLogFormat logFormat stdOutput
+
     -- TODO Figure out why removing it leads to the whole process getting stuck
     hSetBuffering commonLogStream LineBuffering    
     hSetBuffering rtrLogStream LineBuffering    
@@ -278,8 +324,8 @@ withLogger LogConfig {..} f = do
     -- Process queue messages in the main process, i.e. 
     -- output them to stdout or a separate RTR log
     let processMessageInMainProcess = \case
-            LogM logMessage          -> logRaw $ messageToText logMessage
-            RtrLogM logMessage       -> logRtr $ messageToText logMessage
+            LogM logMessage          -> logRaw $ messageToText commonFormat logMessage
+            RtrLogM logMessage       -> logRtr $ messageToText rtrFormat logMessage
             WorkerM workerInfo       -> workerHandler workerInfo
             SystemMetricsM sysMetric -> metricsHandler sysMetric
             SystemStatusM sysStatus  -> systemStatusHandler sysStatus
@@ -290,7 +336,7 @@ withLogger LogConfig {..} f = do
             BinQE b -> 
                 case bsToMsg b of 
                     Left e ->                                     
-                        logRaw . messageToText =<< 
+                        logRaw . messageToText commonFormat =<<
                             createLogMessage ErrorL [i|Problem deserialising binary log message: [#{b}], error: #{e}.|]
                     Right z -> 
                         processMessageInMainProcess z                        
@@ -325,11 +371,53 @@ withLogger LogConfig {..} f = do
     finallyCloseQ queue g = 
         g `finally` atomically (closeCQueue queue)
 
-    messageToText LogMessage { logLevel = logLevel', .. } = let
+    messageToText format LogMessage { logLevel = logLevel', .. } = let
             level = justifyLeft 6 ' ' [i|#{logLevel'}|]
             pid   = justifyLeft 16 ' ' [i|[pid #{processId}]|]     
-        in [i|#{level}  #{pid}  #{timestamp}  #{message}|] 
+        in case format of
+            PlainLog -> [i|#{level}  #{pid}  #{timestamp}  #{message}|]
+            -- The pid stays: journald records the pid of whoever wrote the
+            -- line, which for anything a worker logged is the main process
+            -- that relayed it rather than the worker it came from.
+            -- Every line gets the prefix, not just the first: a message can
+            -- span several lines (a validation report, an exception with a
+            -- backtrace), journald reads each as its own entry, and the ones
+            -- without a prefix would land at the default priority.
+            JournaldLog ->
+                let prefix = [i|<#{syslogPriority logLevel'}>|]
+                in C8.intercalate (C8.singleton eol)
+                        [ prefix <> [i|#{pid}  #{line}|]
+                        | line <- C8.lines [i|#{message}|] ]
 
+
+{- | Work out whether a stream is the systemd journal.
+
+systemd sets @$JOURNAL_STREAM@ to the device and inode of the service's
+stdout/stderr when those go to journald, for precisely this purpose: so that a
+service can tell it is talking to the journal directly and leave out what the
+journal adds itself. Comparing it against the actual descriptor matters, since
+the variable is inherited by anything the process starts, including a pipeline
+whose far end is no longer the journal.
+-}
+resolveLogFormat :: LogFormatOption -> Fd -> IO LogFormat
+resolveLogFormat AutoFormat fd = do
+    journalStream <- lookupEnv "JOURNAL_STREAM"
+    case journalStream >>= parseDevIno of
+        Nothing -> pure PlainLog
+        Just (device, inode) -> do
+            status <- try @SomeException $ getFdStatus fd
+            pure $ case status of
+                Left _  -> PlainLog
+                Right s
+                    | deviceID s == device && fileID s == inode -> JournaldLog
+                    | otherwise -> PlainLog
+  where
+    parseDevIno s = case span (/= ':') s of
+        (device, ':' : inode) ->
+            (,) <$> readMaybe device <*> readMaybe inode
+        _ -> Nothing
+resolveLogFormat ForcePlain    _ = pure PlainLog
+resolveLogFormat ForceJournald _ = pure JournaldLog
 
 drainLog :: MonadIO m => AppLogger -> m ()
 drainLog (getQueue -> queue) =     
