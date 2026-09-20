@@ -21,7 +21,7 @@ import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Protocol
 
-import           RPKI.RTR.RtrServer                (PduLike (..), diffPayloadPdus)
+import           RPKI.RTR.RtrServer                (PduLike (..), compatiblePduLike, diffPayloadPdus)
 import           RPKI.RTR.Types
 import           RPKI.Resources.Types
 
@@ -103,7 +103,7 @@ rtrPduParseGroup = testGroup "RTR PDU parser tests" [
         QC.testProperty "Should create, serialise and parse back ErrorPdu" 
             $ \code message brokenPdu protocol -> let 
                 message' = if Text.null message then Nothing else Just message
-                errorPdu = ErrorPdu code (Just $ pduToBytes brokenPdu protocol) message'
+                errorPdu = ErrorPdu code (Just $ pduToBytes $ VersionedPdu brokenPdu protocol) message'
                 in serialiseAndParseBack protocol errorPdu
     ]
 
@@ -219,10 +219,10 @@ testSerialiseAspaPdu :: TestTree
 testSerialiseAspaPdu = HU.testCase "Should serialise ASPA PDUs exactly as in the draft" $ do
     HU.assertEqual "Wrong announcement bytes"
         (LBS.pack [2, 11, 1, 0,  0, 0, 0, 20,  0, 0, 0xFD, 0xE8,  0, 0, 0, 1,  0, 0, 0, 2])
-        (pduToBytes (AspaPdu Announcement (ASN 65000) [ASN 1, ASN 2]) V2)
+        (pduToBytes $ VersionedPdu (AspaPdu Announcement (ASN 65000) [ASN 1, ASN 2]) V2)
     HU.assertEqual "Wrong withdrawal bytes"
         (LBS.pack [2, 11, 0, 0,  0, 0, 0, 12,  0, 0, 0xFD, 0xE8])
-        (pduToBytes (AspaPdu Withdrawal (ASN 65000) []) V2)
+        (pduToBytes $ VersionedPdu (AspaPdu Withdrawal (ASN 65000) []) V2)
 
 testAspaPduOnlyInV2 :: TestTree
 testAspaPduOnlyInV2 = HU.testCase "ASPA PDU should only be sent to V2 clients" $ do
@@ -230,6 +230,11 @@ testAspaPduOnlyInV2 = HU.testCase "ASPA PDU should only be sent to V2 clients" $
     HU.assertBool "V0" $ not $ compatibleWith pdu V0
     HU.assertBool "V1" $ not $ compatibleWith pdu V1
     HU.assertBool "V2" $ compatibleWith pdu V2
+    -- ... and the same decision taken from the version a PDU is framed with,
+    -- which is how the server filters what it puts on a connection
+    HU.assertBool "Framed V0" $ not $ compatiblePduLike $ TruePdu $ VersionedPdu pdu V0
+    HU.assertBool "Framed V1" $ not $ compatiblePduLike $ TruePdu $ VersionedPdu pdu V1
+    HU.assertBool "Framed V2" $ compatiblePduLike $ TruePdu $ VersionedPdu pdu V2
     -- and it's not accepted if it comes in V1 
     HU.assertBool "Parsed in V1" $ 
         either (const True) (const False) $ bytesToVersionedPdu $ 
@@ -238,7 +243,7 @@ testAspaPduOnlyInV2 = HU.testCase "ASPA PDU should only be sent to V2 clients" $
 testRejectInvalidAspaPdus :: TestTree
 testRejectInvalidAspaPdus = HU.testCase "Should not parse invalid ASPA PDUs" $ do
     let parses pdu = either (const False) (const True) $ 
-                        bytesToVersionedPdu $ pduToBytes pdu V2
+                        bytesToVersionedPdu $ pduToBytes $ VersionedPdu pdu V2
     HU.assertBool "Announcement without providers" $ 
         not $ parses $ AspaPdu Announcement (ASN 1) []
     HU.assertBool "Withdrawal with providers" $ 
@@ -274,18 +279,23 @@ testAspaDiffPdus = HU.testCase "Should generate ASPA PDUs for a diff" $ do
             }
         }
     HU.assertEqual "Wrong PDUs" 
-        [ TruePdu $ AspaPdu Announcement (ASN 1) [ASN 5, ASN 6]
-        , TruePdu $ AspaPdu Announcement (ASN 2) [ASN 10]
-        , TruePdu $ AspaPdu Withdrawal (ASN 3) []
-        , TruePdu $ AspaPdu Withdrawal (ASN 4) []
+        [ TruePdu $ VersionedPdu (AspaPdu Announcement (ASN 1) [ASN 5, ASN 6]) V2
+        , TruePdu $ VersionedPdu (AspaPdu Announcement (ASN 2) [ASN 10]) V2
+        , TruePdu $ VersionedPdu (AspaPdu Withdrawal (ASN 3) []) V2
+        , TruePdu $ VersionedPdu (AspaPdu Withdrawal (ASN 4) []) V2
         ]
-        (diffPayloadPdus diff)
+        (diffPayloadPdus V2 diff)
+
+    -- The same diff for a V1 session yields PDUs the send loop drops
+    HU.assertEqual "V1 should not get ASPA PDUs"
+        []
+        (filter compatiblePduLike $ diffPayloadPdus V1 diff)
 
 serialiseAndParseBack :: ProtocolVersion -> Pdu -> Bool
 serialiseAndParseBack protocolVersion pdu =     
-    let bytes = pduToBytes pdu protocolVersion
-        parsed = bytesToVersionedPdu bytes
-        in parsed == Right (VersionedPdu pdu protocolVersion)
+    let versionedPdu = VersionedPdu pdu protocolVersion
+        parsed = bytesToVersionedPdu $ pduToBytes versionedPdu
+        in parsed == Right versionedPdu
 
 
 testRtrStateUpdates :: TestTree

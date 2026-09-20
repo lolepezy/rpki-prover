@@ -38,35 +38,42 @@ toPduCode RouterKeyPdu {}     = PduCode 9
 toPduCode ErrorPdu {}         = PduCode 10    
 toPduCode AspaPdu {}          = PduCode 11
 
+-- | Value of the "length" field of a PDU, i.e. the total size of its 
+-- serialised form. Must always agree with what 'pduToBytes' actually writes,
+-- which is why both take the PDU and its version as one inseparable value.
 -- 
-pduLength :: Pdu -> ProtocolVersion -> Word32 
-pduLength NotifyPdu {} _        = 12
-pduLength SerialQueryPdu {} _   = 12
-pduLength ResetQueryPdu       _ = 8
-pduLength CacheResponsePdu {} _ = 8
-pduLength IPv4PrefixPdu {}  _   = 20
-pduLength IPv6PrefixPdu {}  _   = 32
-pduLength EndOfDataPdu {} V0    = 12
-pduLength EndOfDataPdu {} V1    = 24
-pduLength EndOfDataPdu {} V2    = 24
-pduLength CacheResetPdu _       = 8
+pduLength :: VersionedPdu -> Word32 
+pduLength (VersionedPdu pdu protocolVersion) = case pdu of     
+    NotifyPdu {}        -> 12
+    SerialQueryPdu {}   -> 12
+    ResetQueryPdu       -> 8
+    CacheResponsePdu {} -> 8
+    IPv4PrefixPdu {}    -> 20
+    IPv6PrefixPdu {}    -> 32
+    CacheResetPdu       -> 8
 
-pduLength (AspaPdu _ _ providers) _ = 
-    12 + 4 * fromIntegral (length providers)
+    -- Intervals are only sent starting from V1
+    EndOfDataPdu {} -> case protocolVersion of 
+                            V0 -> 12
+                            V1 -> 24
+                            V2 -> 24
 
-pduLength (RouterKeyPdu _ _ ski bs2) _ = 
-    fromIntegral $ 12 + (fromIntegral (skiLen ski) :: Int64) + LBS.length bs2
+    AspaPdu _ _ providers -> 
+        12 + 4 * fromIntegral (length providers)
 
-pduLength (ErrorPdu _ pduBytes errorMessage) _ = 
-    fromIntegral $ 16 + 
-                    maybe 0 LBS.length pduBytes + 
-                    maybe 0 (fromIntegral . BS.length . encodeUtf8) errorMessage
+    RouterKeyPdu _ _ ski spki -> 
+        fromIntegral $ 12 + (fromIntegral (skiLen ski) :: Int64) + LBS.length spki
+
+    ErrorPdu _ pduBytes errorMessage -> 
+        fromIntegral $ 16 + 
+                        maybe 0 LBS.length pduBytes + 
+                        maybe 0 (fromIntegral . BS.length . encodeUtf8) errorMessage
 
 -- 
 -- | Serialise PDU into bytes according to the RTR protocal 
 -- 
-pduToBytes :: Pdu -> ProtocolVersion -> LBS.ByteString
-pduToBytes pdu protocolVersion = 
+pduToBytes :: VersionedPdu -> LBS.ByteString
+pduToBytes versionedPdu@(VersionedPdu pdu protocolVersion) = 
     runPut $ pduHeader >> pduContent
     where
         pduHeader = put protocolVersion >> put (toPduCode pdu)            
@@ -148,18 +155,21 @@ pduToBytes pdu protocolVersion =
                         put (fromIntegral (BS.length encodedError) :: Word32)
                         putByteString encodedError
     
-        pduLen = pduLength pdu protocolVersion :: Word32
+        pduLen = pduLength versionedPdu :: Word32
 
 
 -- Decide with PDUs are to be sent to a connection supporting specific RTR version 
 compatibleWith :: Pdu -> ProtocolVersion -> Bool
+
 -- V0 doesn't support router keys
 -- https://datatracker.ietf.org/doc/html/rfc6810#section-5
--- V1 supports everything except ASPA, which is only defined in V2
+compatibleWith RouterKeyPdu{} version = version > V0
+
+-- ASPA is only defined in V2
 -- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis
-compatibleWith RouterKeyPdu{} V0 = False
 compatibleWith AspaPdu{} version = version >= V2
-compatibleWith _ _               = True
+
+compatibleWith _ _ = True
 
 -- 
 -- | Parse PDUs from bytestrings according to the RTR protocal 

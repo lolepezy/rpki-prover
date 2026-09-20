@@ -32,9 +32,9 @@ data Pdu = NotifyPdu RtrSessionId SerialNumber
         | IPv6PrefixPdu Flags Ipv6Prefix ASN PrefixLength    
         | EndOfDataPdu RtrSessionId SerialNumber Intervals
         | CacheResetPdu
+        -- | Only exists in V1 and further
         | RouterKeyPdu ASN Flags SKI LBS.ByteString
-        -- | Only exists in V2. Customer AS and its providers in ascending order,
-        -- the provider list is empty for withdrawals.
+        -- | Only exists in V2
         | AspaPdu Flags ASN [ASN]
         | ErrorPdu ErrorCode (Maybe LBS.ByteString) (Maybe Text)
     deriving stock (Show, Eq, Ord, Generic)
