@@ -56,9 +56,9 @@ import           RPKI.Logging
 
 import           RPKI.Store.AppStorage
 import           RPKI.Store.Base.Serialisation (TheBinary)
-import           RPKI.Store.AppSqliteStorage (AppSQLiteEnv)
-import qualified RPKI.Store.Database as DB
-import qualified RPKI.Store.SQLite   as SQLite
+import           RPKI.Store.AppSqliteStorage (AppSQLiteEnv, DbCheckResult(..),
+                                              cleanUpCacheDirectory, createSqliteDatabase,
+                                              openExistingSqliteDatabase)
 import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.RRDP.RrdpFetch
@@ -336,6 +336,10 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     
     appState <- createAppState logger localExceptions    
 
+    -- Before opening the database, get rid of whatever else is lying around in the
+    -- cache directory, most notably the LMDB cache of versions before 0.11.
+    liftIO $ cleanUpCacheDirectory logger cached
+
     (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $
                 createSqliteDatabase cached config resetCache True
 
@@ -367,58 +371,6 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     pure appContext
 
 
-data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion
-
-newSqliteDB :: FilePath -> Config -> SQLite.WalCheckpointing -> IO SQLite.SqliteDB
-newSqliteDB dbPath config walCheckpointing = 
-    SQLite.createDB dbPath busyTimeoutMs walCheckpointing poolSize
-  where
-    poolSize      = max 2 $ fromIntegral $ config ^. #parallelism . #cpuParallelism
-    busyTimeoutMs = let Seconds s = config ^. #storageConfig . #rwTransactionTimeout
-                    in fromIntegral $ s * 1000    
-
-createSqliteDatabase :: FilePath -> Config -> Bool -> Bool -> IO (DB.DB, DbCheckResult)
-createSqliteDatabase cacheDir config resetCache checkVersion = do
-    createDirectoryIfMissing True cacheDir
-
-    let dbPath = cacheDir </> "rpki.sqlite"
-    when resetCache $ do
-        removeIfExists dbPath
-        removeIfExists $ dbPath <> "-wal"
-        removeIfExists $ dbPath <> "-shm"
-
-    sdb <- newSqliteDB dbPath config SQLite.CheckpointWhenCommitting
-    SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> SQLite.initSchema (SQLite.rawConn conn)
-
-    let db = DB.DB sdb
-    dbCheck <-
-        if checkVersion
-            then do
-                existingVersion <- DB.roTx db $ \tx -> DB.getDatabaseVersion tx
-                case existingVersion of
-                    Nothing -> do
-                        DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx
-                        pure DidntHaveVersion
-
-                    Just version
-                        | version == DB.currentDatabaseVersion -> pure WasCompatible
-                        | otherwise -> do
-                            SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> do
-                                SQLite.dropSchema (SQLite.rawConn conn)
-                                SQLite.initSchema (SQLite.rawConn conn)
-                            DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx
-                            pure WasIncompatible
-            else do
-                DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx
-                pure WasCompatible
-
-    pure (db, dbCheck)
-  where
-    removeIfExists filePath = do
-        exists <- doesFileExist filePath
-        when exists $ removeFile filePath
-
-      
 fsLayout :: ValidatorIO es => CLIOptions
         -> AppLogger
         -> Eff es (FilePath, FilePath, FilePath, FilePath, FilePath)
@@ -609,16 +561,6 @@ createWorkerAppContext config logger = do
     pure AppContext {..}
   where
     cacheDir = configValue $ config ^. #cacheDirectory
-
--- | Open an already-initialised SQLite database without touching the schema or version.
--- Used by worker processes to avoid unnecessary write-transaction contention on startup.
--- Workers never checkpoint the WAL: they are killed when they exceed their disk IO
--- limits, and checkpointing would charge them for writing out a backlog that the 
--- other processes produced. The main process does it on a timer instead.
-openExistingSqliteDatabase :: FilePath -> Config -> IO DB.DB
-openExistingSqliteDatabase cacheDir config = do
-    sdb <- newSqliteDB (cacheDir </> "rpki.sqlite") config SQLite.CheckpointedByOthers
-    pure (DB.DB sdb)
 
 createAppState :: MonadIO m => AppLogger -> [String] -> m AppState
 createAppState logger localExceptions = do

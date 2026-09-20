@@ -49,8 +49,7 @@ withTestContext f = do
                 & #talDirectory .~ Public talDir
                 & #cacheDirectory .~ Public cacheDir        
 
-        (Right db, _) <- runValidatorIO (newScopes "create-db") $
-                    setupSqliteCache Reset logger cacheDir config
+        (db, _) <- createSqliteDatabase cacheDir config True False
 
         appState <- newAppState
         database <- newTVarIO db
