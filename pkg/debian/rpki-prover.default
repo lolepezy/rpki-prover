@@ -36,5 +36,4 @@ RPKI_PROVER_ARGS="--cpu-count 2 --http-api-port 9999"
 #   --with-rtr --rtr-address 0.0.0.0 --rtr-port 8283
 #   --revalidation-interval 600
 #   --cache-lifetime-hours 48
-#   --lmdb-size 16384
 #   --local-exceptions /etc/rpki-prover/slurm.json

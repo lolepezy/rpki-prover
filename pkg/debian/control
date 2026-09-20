@@ -11,11 +11,7 @@ Build-Depends:
  debhelper-compat (= 13),
  pkg-config,
  help2man,
- libexpat1-dev,
- libffi-dev,
  libgmp-dev,
- liblmdb-dev,
- liblz4-dev,
  liblzma-dev,
  zlib1g-dev
 Standards-Version: 4.6.2

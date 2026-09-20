@@ -1,7 +1,7 @@
 # Build environment for the rpki-prover Debian packages.
 #
 # One image per Debian release, so that the resulting binary is linked against
-# exactly the libc/liblmdb/liblzma/... of that release and dpkg-shlibdeps can
+# exactly the libc/libgmp/liblzma/... of that release and dpkg-shlibdeps can
 # derive correct, release-specific dependencies.
 #
 # Build context is the repository root:
@@ -31,11 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config \
         rsync \
         xz-utils \
-        libexpat1-dev \
-        libffi-dev \
         libgmp-dev \
-        liblmdb-dev \
-        liblz4-dev \
         liblzma-dev \
         libncurses-dev \
         libnuma-dev \

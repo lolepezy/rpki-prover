@@ -30,7 +30,7 @@ Packages end up in `pkg/packages/<codename>/`.
 For each release this builds a container image from that release's base image
 and runs `dpkg-buildpackage` inside it. Building in the target release's own
 container is the point of the exercise: the binary is then linked against that
-release's `libc`, `liblmdb`, `liblzma` and so on, and `dpkg-shlibdeps` derives
+release's `libc`, `libgmp`, `liblzma` and so on, and `dpkg-shlibdeps` derives
 a `Depends:` line that is correct for it. A single binary built once and
 shipped to every release would either over-constrain or silently under-declare
 those dependencies.
