@@ -30,7 +30,7 @@ Issues are tracked [here](https://github.com/lolepezy/rpki-prover/issues). You c
 * UI for reporting metrics and problems
 * REST API covering most validation and reporting operations
 * Output of VRPs in CSV and JSON formats
-* RTR server supporting versions 0 and 1
+* RTR server supporting versions 0, 1 and 2
 * Implements RFC 8360 validation reconsidered behavior
 * Support for SLURM (RFC 8416)
 * Validates ASPA objects and exposes them in output
