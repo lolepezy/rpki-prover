@@ -3,7 +3,7 @@
 module RPKI.Fetch.ErikSpec where
 
 import           RPKI.TestCommons
-import           RPKI.Fetch.ErikRelay
+import           RPKI.Fetch.Erik.ErikRelay
 import           Test.Tasty
 import qualified Test.Tasty.HUnit                  as HU
 

@@ -64,7 +64,7 @@ import           RPKI.SLURM.SlurmProcessing
 import           RPKI.RRDP.RrdpFetch
 import           RPKI.Sandbox
 
-import           RPKI.Fetch.ErikRelay
+import           RPKI.Fetch.Erik.ErikRelay
 import           RPKI.Rsync
 import           RPKI.TAL
 import           RPKI.Util               

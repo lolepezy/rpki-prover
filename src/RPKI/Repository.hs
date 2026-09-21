@@ -241,9 +241,15 @@ repositoryFromPP pps pp =
     merged = mergePP pp pps        
     
 
+-- Add the PP to the set if it's not there yet. It must not touch the meta of
+-- a repository that is already known: `toRsyncForest` overwrites the meta of an
+-- exactly matching leaf, so using it directly would reset the fetch status of
+-- every repository whose URL is the PP URL back to `Pending`.
 mergeRsyncPP :: RsyncPublicationPoint -> PublicationPoints -> PublicationPoints
-mergeRsyncPP (RsyncPublicationPoint u) pps = 
-    pps & typed @RsyncForest %~ toRsyncForest u newRepositoryMeta
+mergeRsyncPP (RsyncPublicationPoint u) pps =
+    case lookupInRsyncForest u (pps ^. typed @RsyncForest) of
+        Just _  -> pps
+        Nothing -> pps & typed @RsyncForest %~ toRsyncForest u newRepositoryMeta
 
 mergeRrdp :: RrdpRepository -> PublicationPoints -> PublicationPoints
 mergeRrdp r@RrdpRepository {..} pps =
