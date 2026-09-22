@@ -2,7 +2,7 @@
 module RPKI.Meta.GitVersionInfo where
 
 gitBranch :: String
-gitBranch = "release-0.11"
+gitBranch = "fix-no-rrdp"
 
 gitHash :: String
 gitHash = "0e74bb32fa046c8b4352829d2fcd92b577ed1bd9"
