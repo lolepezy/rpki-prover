@@ -20,9 +20,10 @@ module Main where
 import           Control.Concurrent.STM  (newTVarIO)
 import           Control.Exception       (bracket, evaluate)
 import           Control.Lens            ((&), (.~), (^.))
-import           Control.Monad           (forM_)
+import           Control.Monad           (forM, forM_)
 
 import qualified Data.ByteString         as BS
+import           Data.IORef              (newIORef, readIORef)
 import qualified Data.List               as List
 import qualified Data.Text               as Text
 
@@ -38,7 +39,7 @@ import           System.IO.Temp          (createTempDirectory)
 import           Text.Printf             (printf)
 
 import           RPKI.AppContext
-import           RPKI.AppMonad           (runValidatorT)
+import           RPKI.AppMonad           (runValidatorIO)
 import           RPKI.AppState           (instantToVersion, newAppState)
 import           RPKI.Config
 import           RPKI.Domain
@@ -73,29 +74,48 @@ main = do
 
     content <- BS.readFile snapshotPath
 
-    -- Time the XML/RRDP parse in isolation (single-threaded, no ASN.1
-    -- object parsing, no DB) to get a floor for "is the XML parser the
-    -- bottleneck". Force every publish element's base64 payload (not just
-    -- the list spine) so this actually pays the full parsing cost --
-    -- `parseSnapshot`'s accumulator builds each payload via repeated
-    -- `BS.concat`, and those thunks would otherwise only get forced lazily
-    -- wherever the pipeline first touches them.
-    parseWall0 <- getMonotonicTimeNSec
     Snapshot _ sessionId serial snapshotItems <-
         either (\e -> error $ "Failed to parse " <> snapshotPath <> ": " <> show e) pure $
             parseSnapshot content
-    let totalBase64Bytes = List.foldl'
-            (\acc (SnapshotPublish _ (EncodedBase64 b)) -> acc + BS.length b)
-            0 snapshotItems
-    _ <- evaluate totalBase64Bytes
-    parseWall1 <- getMonotonicTimeNSec
 
     caps <- getNumCapabilities
     statsEnabled <- getRTSStatsEnabled
     printf "snapshot: %s (%d bytes, %d publish elements)\n"
         snapshotPath (BS.length content) (length snapshotItems)
-    printf "xml parse only: %.3fs (%d base64 bytes across all publishes)\n"
-        (fromIntegral (parseWall1 - parseWall0) / 1e9 :: Double) totalBase64Bytes
+
+    -- Time the XML/RRDP parse in isolation (single-threaded, no ASN.1
+    -- object parsing, no DB) to get a floor for "is the XML parser the
+    -- bottleneck". Force every publish element's base64 payload (not just
+    -- the list spine) so this actually pays the full parsing cost.
+    --
+    -- Every timed repeat reads its input from an IORef, so that GHC can't
+    -- share one evaluated result between repeats (or with the parse above).
+    contentRef <- newIORef content
+    parseSec <- bestOf 3 $ do
+        content' <- readIORef contentRef
+        Snapshot _ _ _ items <-
+            either (\e -> error $ "Failed to parse " <> snapshotPath <> ": " <> show e) pure $
+                parseSnapshot content'
+        evaluate $ List.foldl'
+            (\acc (SnapshotPublish _ (EncodedBase64 b)) -> acc + BS.length b) (0 :: Int) items
+    printf "xml parse only: %.3fs\n" parseSec
+
+    -- Base64-decode the already parsed payloads, still single-threaded.
+    -- Where the whitespace stripping happens (parser or decoder) is an
+    -- implementation detail, so parse + decode is the sum to compare
+    -- across parser changes.
+    itemsRef <- newIORef snapshotItems
+    decodeSec <- bestOf 3 $ do
+        items <- readIORef itemsRef
+        evaluate $ List.foldl'
+            (\acc (SnapshotPublish uri encoded) ->
+                case U.decodeBase64 encoded uri of
+                    Left e                     -> error $ show e
+                    Right (DecodedBase64 blob) -> acc + BS.length blob)
+            (0 :: Int) items
+    printf "base64 decode only: %.3fs\n" decodeSec
+    printf "xml parse + base64 decode: %.3fs\n" (parseSec + decodeSec)
+
     printf "capabilities (RTS -N): %d, +RTS -T stats enabled: %s\n" caps (show statsEnabled)
     printf "repeats: %d\n\n" repeats
 
@@ -104,6 +124,13 @@ main = do
             bracket (mkBenchContext logger) cleanupBenchContext $ \appContext ->
                 runIteration i appContext sessionId serial content
   where
+    bestOf :: Int -> IO a -> IO Double
+    bestOf n action = fmap minimum $ forM [1 .. n] $ \_ -> do
+        t0 <- getMonotonicTimeNSec
+        _  <- action
+        t1 <- getMonotonicTimeNSec
+        pure (fromIntegral (t1 - t0) / 1e9)
+
     readMaybe s = case reads s of
         [(n, "")] -> Just n
         _         -> Nothing
@@ -131,9 +158,7 @@ mkBenchContext logger = do
             & #cacheDirectory  .~ Public cacheDir
             & #parallelism     .~ newParallelism cpuCount_
 
-    (dbResult, _) <- runValidatorT (newScopes "save-snapshot-bench-db") $
-        setupSqliteCache Reset logger cacheDir config
-    db <- either (\e -> error $ "Failed to set up SQLite cache: " <> show e) pure dbResult
+    (db, _) <- createSqliteDatabase cacheDir config True False
 
     appState <- newAppState
     database <- newTVarIO db
@@ -163,7 +188,7 @@ runIteration i (_, appContext) sessionId serial content = do
 
     cpu0  <- getCPUTime
     wall0 <- getMonotonicTimeNSec
-    (result, vs) <- runValidatorT (newScopes "save-snapshot-bench") $
+    (result, vs) <- runValidatorIO (newScopes "save-snapshot-bench") $
         saveSnapshot appContext worldVersion repoUri notification content
     wall1 <- getMonotonicTimeNSec
     cpu1  <- getCPUTime
