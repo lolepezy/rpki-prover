@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings  #-}
 
-module RPKI.Fetch.ErikRelay where
+module RPKI.Fetch.Erik.ErikRelay where
 
 import           Effectful.Concurrent (Concurrent)
 import           Effectful
@@ -29,7 +29,7 @@ import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Repository
-import           RPKI.Fetch.RelayPool
+import           RPKI.Fetch.Erik.RelayPool
 import qualified RPKI.Util as U                       
 import           RPKI.Fetch.Http
 import           RPKI.Fetch.DirectoryTraverse

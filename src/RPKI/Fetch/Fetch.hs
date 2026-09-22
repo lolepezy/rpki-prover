@@ -43,7 +43,7 @@ import           RPKI.Parallel
 import           RPKI.Util                       
 import           RPKI.Rsync
 import           RPKI.Fetch.Http
-import           RPKI.Fetch.ErikRelay
+import           RPKI.Fetch.Erik.ErikRelay
 import           RPKI.Worker (ErikFetchStat, timeToKillItself)
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch

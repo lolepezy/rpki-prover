@@ -14,7 +14,7 @@
        * a parallelism cap, enforced per relay /and/ globally,
        * served/failed counters, for logging and diagnostics.
 -}
-module RPKI.Fetch.RelayPool where
+module RPKI.Fetch.Erik.RelayPool where
 
 import           Control.Concurrent.STM
 import           Control.Monad
