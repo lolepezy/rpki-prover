@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE LambdaCase          #-}
 
 -- | Per-stage allocation/time breakdown for the RRDP object-processing
 -- pipeline (the part of `saveSnapshot` that runs on the parsing/async
@@ -40,7 +41,7 @@ import           GHC.Stats               (allocated_bytes, getRTSStats, getRTSSt
 import           System.Environment      (getArgs)
 import           Text.Printf             (printf)
 
-import           RPKI.AppMonad           (runPureValidator)
+import           RPKI.AppMonad           (runValidatorPure)
 import           RPKI.Domain
 import           RPKI.Parse.Parse        (readObjectOfType, urlObjectType)
 import           RPKI.Reporting          (Scopes, newScopes, hasValidationErrors)
@@ -52,7 +53,18 @@ import           RPKI.Validation.ObjectValidation (prevalidateObject)
 import qualified RPKI.Util               as U
 
 
-data Stage = Base64Decode | Sha256Hash | ParsePrevalidateSerialise | Compress
+-- Parsed and well-structured objects have no NFData instances, so parsing
+-- and prevalidation are forced by serialising their result. The same result
+-- is then serialised a second time, which (now that every thunk has been
+-- forced) measures serialisation alone, so e.g.
+--   parse cost = ParseAndSerialise - SerialiseParsed
+data Stage = Base64Decode 
+           | Sha256Hash 
+           | ParseAndSerialise 
+           | SerialiseParsed
+           | PrevalidateAndSerialise 
+           | SerialiseWellStructured
+           | Compress
     deriving (Eq, Ord, Show, Enum, Bounded)
 
 data Totals = Totals { tCount :: !Int, tNs :: !Word64, tAlloc :: !Word64 }
@@ -104,7 +116,7 @@ defaultSnapshotPath :: FilePath
 defaultSnapshotPath = "/Users/mpuzanov/tmp/ripe-snapshot.xml"
 
 
-processOne :: IORef (Map Stage Totals) -> Scopes -> URI -> EncodedBase64 -> IO ()
+processOne :: IORef (Map (Stage, String) Totals) -> Scopes -> URI -> EncodedBase64 -> IO ()
 processOne totalsRef scopes uri encodedb64 =
     case U.parseRpkiURL (unURI uri) of
         Left _         -> pure ()
@@ -112,7 +124,7 @@ processOne totalsRef scopes uri encodedb64 =
             case urlObjectType rpkiURL of
                 Nothing    -> pure ()
                 Just type_ -> do
-                    decoded <- measure totalsRef Base64Decode $
+                    decoded <- measure totalsRef (show type_) Base64Decode $
                         pure $! case U.decodeBase64 encodedb64 rpkiURL of
                             Left _                     -> Nothing
                             Right (DecodedBase64 blob) -> Just blob
@@ -120,35 +132,47 @@ processOne totalsRef scopes uri encodedb64 =
                         Nothing   -> pure ()
                         Just blob -> do
                             let hash_ = U.sha256s blob
-                            _ <- measure totalsRef Sha256Hash $ evaluate hash_
+                            _ <- measure totalsRef (show type_) Sha256Hash $ evaluate hash_
 
-                            serialisedBytes <- measure totalsRef ParsePrevalidateSerialise $ do
-                                let (z, vs) = runPureValidator scopes $
-                                                prevalidateObject =<< readObjectOfType type_ blob
-                                    lifecycle = case z of
-                                        Left _ ->
-                                            OriginalRO (ObjectOriginal blob) vs hash_ type_
-                                        Right vro
-                                            | hasValidationErrors vs ->
-                                                OriginalRO (ObjectOriginal blob) vs hash_ type_
-                                            | otherwise ->
-                                                WellStructuredRO vro
-                                    Storable bytes = toStorable lifecycle
-                                evaluate bytes
+                            let measure' stage = measure totalsRef (show type_) stage
+                            let (parsedZ, parseVs) = runValidatorPure scopes $ readObjectOfType type_ blob
+                            _ <- measure' ParseAndSerialise $ serialiseParsed parsedZ
+                            _ <- measure' SerialiseParsed $ serialiseParsed parsedZ
 
-                            _ <- measure totalsRef Compress $ do
+                            let lifecycle = case parsedZ of
+                                    Left _ -> OriginalRO (ObjectOriginal blob) parseVs hash_ type_
+                                    Right parsed -> 
+                                        let (z, vs) = runValidatorPure scopes $ prevalidateObject parsed
+                                        in case z of
+                                            Left _ ->
+                                                OriginalRO (ObjectOriginal blob) (parseVs <> vs) hash_ type_
+                                            Right vro
+                                                | hasValidationErrors vs ->
+                                                    OriginalRO (ObjectOriginal blob) (parseVs <> vs) hash_ type_
+                                                | otherwise ->
+                                                    WellStructuredRO vro
+                            _ <- measure' PrevalidateAndSerialise $ serialiseLifecycle lifecycle
+                            serialisedBytes <- measure' SerialiseWellStructured $ serialiseLifecycle lifecycle
+
+                            _ <- measure totalsRef (show type_) Compress $ do
                                 let Storable compressed =
                                         toStorable (Compressed (Storable serialisedBytes))
                                 evaluate compressed
                             pure ()
+  where
+    serialiseParsed = \case
+        Left _       -> evaluate BS.empty
+        Right parsed -> let Storable bytes = toStorable parsed in evaluate bytes
+    serialiseLifecycle lifecycle = 
+        let Storable bytes = toStorable lifecycle in evaluate bytes
 
 
 -- | Time + allocation-delta wrapper around one stage. Uses `GHC.Stats`
 -- (needs `+RTS -T`, on by default for this executable) rather than a
 -- separate allocation-counter API so it works the same whether or not RTS
 -- stats happen to be enabled.
-measure :: IORef (Map Stage Totals) -> Stage -> IO a -> IO a
-measure ref stage act = do
+measure :: IORef (Map (Stage, String) Totals) -> String -> Stage -> IO a -> IO a
+measure ref objectType stage act = do
     before <- getRTSStats
     t0 <- getMonotonicTimeNSec
     !r <- act
@@ -156,27 +180,30 @@ measure ref stage act = do
     after <- getRTSStats
     let elapsed = t1 - t0
         allocDelta = allocated_bytes after - allocated_bytes before
-    modifyIORef' ref (Map.insertWith (<>) stage (Totals 1 elapsed allocDelta))
+    modifyIORef' ref (Map.insertWith (<>) (stage, objectType) (Totals 1 elapsed allocDelta))
     pure r
 
 
-report :: Map Stage Totals -> IO ()
-report totals = do
-    let grandNs    = sum [tNs t | t <- Map.elems totals]
-        grandAlloc = sum [tAlloc t | t <- Map.elems totals]
-    printf "%-28s %8s %10s %12s %10s  %8s %8s\n"
-        ("stage" :: String) ("count" :: String) ("wall(s)" :: String)
-        ("alloc(MB)" :: String) ("MB/obj" :: String) ("%time" :: String) ("%alloc" :: String)
-    forM_ [minBound .. maxBound] $ \stage ->
-        case Map.lookup stage totals of
-            Nothing -> pure ()
-            Just (Totals cnt ns alloc) ->
-                printf "%-28s %8d %10.3f %12.1f %10.4f  %7.1f%% %7.1f%%\n"
-                    (show stage) cnt (nsToSec ns) (bytesToMb alloc)
-                    (bytesToMb alloc / fromIntegral (max 1 cnt))
-                    (100 * nsToSec ns / nsToSec grandNs)
-                    (100 * bytesToMb alloc / bytesToMb grandAlloc)
-    printf "%-28s %8s %10.3f %12.1f\n" ("TOTAL" :: String) ("" :: String) (nsToSec grandNs) (bytesToMb grandAlloc)
+report :: Map (Stage, String) Totals -> IO ()
+report totalsByType = do
+    let byStage = Map.mapKeysWith (<>) fst totalsByType
+    table byStage show
+    putStrLn ""
+    table totalsByType (\(stage, type_) -> type_ <> " " <> show stage)
   where
+    table :: Map k Totals -> (k -> String) -> IO ()
+    table totals name = do
+        let grandNs    = sum [tNs t | t <- Map.elems totals]
+            grandAlloc = sum [tAlloc t | t <- Map.elems totals]
+        printf "%-32s %8s %10s %12s %10s  %8s %8s\n"
+            ("stage" :: String) ("count" :: String) ("wall(s)" :: String)
+            ("alloc(MB)" :: String) ("KB/obj" :: String) ("%time" :: String) ("%alloc" :: String)
+        forM_ (Map.toList totals) $ \(k, Totals cnt ns alloc) ->
+            printf "%-32s %8d %10.3f %12.1f %10.1f  %7.1f%% %7.1f%%\n"
+                (name k) cnt (nsToSec ns) (bytesToMb alloc)
+                (bytesToMb alloc * 1024 / fromIntegral (max 1 cnt))
+                (100 * nsToSec ns / nsToSec grandNs)
+                (100 * bytesToMb alloc / bytesToMb grandAlloc)
+        printf "%-32s %8s %10.3f %12.1f\n" ("TOTAL" :: String) ("" :: String) (nsToSec grandNs) (bytesToMb grandAlloc)
     nsToSec n = fromIntegral n / 1e9 :: Double
     bytesToMb n = fromIntegral n / (1024 * 1024) :: Double

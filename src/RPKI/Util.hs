@@ -12,7 +12,6 @@ import qualified Crypto.Hash.SHA256          as S256
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Base16      as Hex
-import qualified Data.ByteString.Char8       as C
 import qualified Data.ByteString.Short       as BSS
 import qualified Data.ByteString.Base64      as B64
 import qualified Data.ByteString.Base64.URL  as B64U
@@ -100,8 +99,12 @@ isValidFileNameCharacter c = isAsciiLower c || isAsciiUpper c || isDigit c || c 
 trimmed :: Show a => a -> Text
 trimmed = Text.strip . Text.pack . show
 
+-- | Most inputs either have no whitespace at all or have the first line
+-- break close to the beginning, so check before paying for a copy.
 removeSpaces :: BS.ByteString -> BS.ByteString
-removeSpaces = C.filter (not . isSpace)
+removeSpaces bs 
+    | BS.any isSpace_ bs = BS.filter (not . isSpace_) bs
+    | otherwise          = bs
 
 {-# INLINE isSpace_ #-}
 isSpace_ :: Word8 -> Bool
@@ -210,7 +213,7 @@ decodeBase64 (EncodedBase64 bs) context =
     bimap 
         (\e -> e <> " for " <> Text.pack (show context) <> ": " <> convert bs)
         DecodedBase64
-        $ B64.decodeBase64Untyped bs 
+        $ B64.decodeBase64Untyped $ removeSpaces bs 
 
 encodeBase64 :: DecodedBase64 -> EncodedBase64
 encodeBase64 (DecodedBase64 bs) = EncodedBase64 $ B64T.extractBase64 $ B64.encodeBase64' bs
