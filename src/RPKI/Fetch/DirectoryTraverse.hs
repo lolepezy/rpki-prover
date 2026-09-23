@@ -93,9 +93,6 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                 liftIO (getSizeAndContent (config ^. typed) filePath) >>= \case
                     Left e          -> pure $! CantReadFile rpkiURL filePath $ VErr e
                     Right (_, blob) ->
-                        -- The file name is the only thing both callers can rely on:
-                        -- Erik names files by hash, so there is no URL to take the
-                        -- extension from.
                         case nameObjectType (takeFileName filePath) of
                             Just type_ -> do
                                 -- Check if the object is already in the storage

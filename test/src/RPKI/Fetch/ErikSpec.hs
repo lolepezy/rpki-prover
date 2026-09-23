@@ -7,6 +7,11 @@ import           RPKI.TestCommons
 import           RPKI.Fetch.Erik.ErikRelay
 import           Test.Tasty
 import qualified Test.Tasty.HUnit                  as HU
+import qualified Test.Tasty.QuickCheck             as QC
+
+import qualified Data.ByteString                   as BS
+import qualified Data.ByteString.Lazy              as LBS
+import           Data.Word                         (Word8)
 
 import           Control.Concurrent.STM
 import qualified System.Timeout                    as Timeout
@@ -62,6 +67,14 @@ testFetchErik = do
                 HU.assertBool "Erik index should not be empty" True
         
     
+
+erikSpillSpec :: TestTree
+erikSpillSpec = testGroup "Erik spill file" [
+        QC.testProperty "Records come back exactly as they were written" $ \(chunks :: [[Word8]]) ->
+            let records = map BS.pack chunks
+                file    = LBS.fromChunks $ concat [ [encodeLength (BS.length r), r] | r <- records ]
+            in spillRecords file == records
+    ]
 
 {- Tests for the Erik work pool.
 

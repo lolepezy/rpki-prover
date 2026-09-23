@@ -6,8 +6,14 @@ import           Effectful.Concurrent (Concurrent)
 import           Effectful
 import           GHC.Conc                         (getNumCapabilities, setNumCapabilities)
 import           Effectful.Error.Static           (catchError, rethrowError)
+import           Control.Concurrent.MVar          (MVar, newMVar, withMVar)
+import           Control.Concurrent.STM           (readTVarIO)
+import           Control.Exception                (evaluate)
 import           Control.Lens hiding (index, indices, Indexable)
 import           Control.Monad
+import qualified Data.ByteString                 as BS
+import qualified Data.ByteString.Builder         as BB
+import qualified Data.ByteString.Lazy            as LBS
 import           Data.Generics.Product.Typed
 import           Data.Proxy
 import           Data.String.Interpolate.IsString
@@ -15,14 +21,15 @@ import           Data.Text                       (Text)
 import qualified Data.Text                       as Text
 import qualified Data.List                       as List
 import           Data.Either                     (partitionEithers)
+import qualified Data.Map.Strict                 as Map
 import qualified Data.Set                        as Set
-import           Data.Word                       (Word8)
 import           Data.Maybe                      (fromMaybe)
 import           Data.Hourglass                  (Seconds (..))
 import qualified System.Timeout                  as Timeout
 
 import           System.Directory
 import           System.FilePath
+import           System.IO                       (Handle, IOMode (..), hClose, openBinaryFile)
 import           UnliftIO (tryAny)
 
 import           RPKI.AppContext
@@ -40,6 +47,8 @@ import qualified RPKI.Util as U
 import           RPKI.Fetch.Http
 import           RPKI.Fetch.DirectoryTraverse
 import qualified RPKI.Store.Database    as DB
+import           RPKI.Store.Base.Serialisation   (serialise_, deserialise_)
+import           RPKI.Store.Base.Storable        (Compressed (..), toStorableObject)
 import           RPKI.Store.Types
 import           RPKI.Worker
 import           RPKI.Time
@@ -67,6 +76,22 @@ workHash = \case
     ExpandPartition h   -> h
     FetchManifest ref   -> ref.hash
     FetchChild h _      -> h
+
+-- | The spill file is a sequence of records, each preceded by its length as
+-- 8 bytes little-endian.
+encodeLength :: Int -> BS.ByteString
+encodeLength = LBS.toStrict . BB.toLazyByteString . BB.word64LE . fromIntegral
+
+-- | Split a spill file back into its records, lazily, so that it is streamed
+-- rather than held.
+spillRecords :: LBS.ByteString -> [BS.ByteString]
+spillRecords bs
+    | LBS.null bs = []
+    | otherwise   =
+        let (lengthBytes, rest) = LBS.splitAt 8 bs
+            len                 = LBS.foldr (\b acc -> acc * 256 + fromIntegral b) 0 lengthBytes
+            (record, rest')     = LBS.splitAt len rest
+        in LBS.toStrict record : spillRecords rest'
 
 runErikFetchWorker :: ValidatorIO es => AppContext s
                     -> FetchConfig
@@ -101,15 +126,15 @@ fetchErik :: (ValidatorIO es, Concurrent :> es) => AppContext s
             -> FQDN
             -> Eff es ErikFetchStat
 fetchErik
-    appContext@AppContext {..}
+    AppContext {..}
     worldVersion
     relayUris
     fqdn@(FQDN fqdn_) = do
 
     relays <- newRelays perRelayThreads relayUris
-    -- Same metric rsync fills in: both end up loading a directory tree through
-    -- `loadObjectsFromFS`, which counts the objects into `processed`. Timing it
-    -- here is what gives that metric its `totalTimeMs`.
+    -- Same metric rsync fills in: objects stored are counted into `processed`
+    -- as they are for an rsync directory load. Timing it here is what gives
+    -- that metric its `totalTimeMs`.
     timedMetric (Proxy :: Proxy TraverseMetric) $ doFetch relays
     -- Whatever happened inside -- a full download, an unchanged index, or a
     -- failure part-way through -- we know which relays answered.
@@ -199,13 +224,7 @@ fetchErik
 
                 logDebug logger [i|Erik index for #{fqdn_} has #{index}.|]
 
-                -- Every downloaded object lands in one of 256 buckets by the
-                -- first byte of its hash, so no directory grows unmanageable and
-                -- the whole tree is created once rather than per download.
-                liftIO $ do
-                    createDirectoryIfMissing True partitionDir
-                    forM_ [minBound .. maxBound :: Word8] $ \b ->
-                        createDirectoryIfMissing True (objectDir b)
+                liftIO $ createDirectoryIfMissing True partitionDir
 
                 pool <- newWorkPool
 
@@ -220,7 +239,10 @@ fetchErik
                                 then ExpandPartition ref.hash
                                 else FetchPartition ref ]
 
-                runRelayWorkers logger relays pool (processWork indexScope)
+                bracketVT
+                    (openBinaryFile preparedObjectsFile WriteMode >>= newMVar)
+                    (\spill -> liftIO $ withMVar spill hClose)
+                    (\spill -> runRelayWorkers logger relays pool (processWork spill indexScope))
 
                 failures <- poolFailures pool
                 done     <- poolSucceeded pool
@@ -233,11 +255,7 @@ fetchErik
                 forM_ stats $ \RelayStat {..} ->
                     logInfo logger [i|  #{statRelay}: served=#{statServed} failed=#{statFailed}|]
 
-                -- Now traverse all downloaded objects and load them into the storage,
-                -- the same way it happens for rsync-ed repositories. Do not try to recover
-                -- object locations here.
-                (_, loadMs) <- timedMS $
-                    loadObjectsFromFS appContext worldVersion (const Nothing) indexDir
+                (_, loadMs) <- timedMS storePreparedObjects
                 logInfo logger [i|Stored downloaded Erik objects for #{fqdn_}, took #{loadMs} ms.|]
 
                 {- Only a fetch that got everything may record the index as the
@@ -300,8 +318,8 @@ fetchErik
            item": 'runRelayWorkers' re-queues it against another relay. That is
            why nothing in here retries by itself.
         -}
-        processWork :: ValidatorIO es => Text -> URI -> ErikWork -> Eff es [(Hash, ErikWork)]
-        processWork scope relayUri = \case
+        processWork :: ValidatorIO es => MVar Handle -> Text -> URI -> ErikWork -> Eff es [(Hash, ErikWork)]
+        processWork spill scope relayUri = \case
             FetchPartition ref   -> fetchPartition ref
             ExpandPartition h    -> expandCachedPartition h
             FetchManifest ref    -> fetchManifest ref
@@ -392,33 +410,35 @@ fetchErik
                             appWarn $ ErikE $ ErikManifestOutsideScope { location = bad, scope = scope }
                             pure False
 
+            {- The manifest is parsed exactly once, here: the same parse yields
+               the children to queue and the row to store. A manifest that does
+               not parse at all has no children to offer, so that is a failed
+               item, the way it always was; one that parses but fails
+               prevalidation is stored like any other broken object.
+            -}
             fetchManifest ErikManifestRef {..} = do
                 let manifestUri = objectByHashUri relayUri hash
-                let manifestFile = objectDir (U.firstByte hash) </> show hash <> ".mft"
-                (mft, ms) <- timedMS $ vFocusOn LocationFocus manifestUri $
-                    withCleanupOnFailure manifestFile $ do
-                        (manifestBs, _, _) <-
-                            fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $
-                                withinDownloadTimeout $ downloadToFileHashed manifestUri manifestFile hash size
-                                    (\actualStatus -> Left $ ErikE $ Can'tDownloadObject
-                                                        $ U.convert $ "Http status: " <> show actualStatus)
-                                    (\actualHash -> Left $ ErikE $ ErikHashMismatchError { expectedHash = hash, .. })
-                        parseMft manifestBs
+                (mft, ms) <- timedMS $ vFocusOn LocationFocus manifestUri $ do
+                    bytes <- downloadObject manifestUri hash size
+                    parseAndPrevalidate MFT hash bytes Nothing >>= \case
+                        (Right (MftRO mft), lifecycle) -> mft <$ prepareForStorage spill hash lifecycle
+                        (Right _, _) -> appError $ ErikE $ UnknownErikProblem
+                                            [i|Manifest #{U.hashAsBase64Url hash} parsed as something else.|]
+                        (Left e, _)  -> appError e
 
-                logDebug logger [i|Downloaded manifest #{U.hashAsBase64Url hash} from #{manifestUri} to #{manifestFile}, took #{ms} ms.|]
+                logDebug logger [i|Downloaded manifest #{U.hashAsBase64Url hash} from #{manifestUri}, took #{ms} ms.|]
                 childrenToFetch $ getMftChildren mft
 
             fetchChild hash fileName = do
                 let childUri = objectByHashUri relayUri hash
-                let childFile = objectDir (U.firstByte hash) </> show hash <> "-" <> Text.unpack fileName
                 vFocusOn LocationFocus childUri $
-                    withCleanupOnFailure childFile $
-                        fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $
-                            withinDownloadTimeout $ downloadToFileHashed_ childUri childFile hash maxChildSize
-                                (\actualStatus -> Left $ ErikE $ Can'tDownloadObject
-                                        $ U.convert $ "Http status: " <> show actualStatus)
-                                (\actualHash -> Left $ ErikE $ ErikHashMismatchError {
-                                    expectedHash = hash, .. })
+                    case nameObjectType $ Text.unpack fileName of
+                        Nothing    -> appError $ ErikE $ UnknownErikProblem
+                                        [i|Manifest child #{fileName} is not of a type Erik fetches.|]
+                        Just type_ -> do
+                            bytes          <- downloadObject childUri hash maxChildSize
+                            (_, lifecycle) <- parseAndPrevalidate type_ hash bytes Nothing
+                            prepareForStorage spill hash lifecycle
 
             -- | Which of these manifest entries are not in the store yet, in one
             -- query for the whole manifest (or for a whole partition's worth of
@@ -430,13 +450,67 @@ fetchErik
                 pure [ (e.hash, FetchChild e.hash e.fileName)
                      | e <- mftChildren, not (e.hash `Set.member` have) ]
 
-    {- A half-written file has to go.
+    -- | Download an object and check it against its hash. Objects are small
+    -- enough to hold, and staying off the disk matters: a file per object costs
+    -- several syscalls each, which adds up over a hundred thousand of them.
+    downloadObject :: ValidatorIO es' => URI -> Hash -> Size -> Eff es' BS.ByteString
+    downloadObject uri hash maxSize =
+        fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $
+            withinDownloadTimeout $ downloadHashedToMemory uri hash maxSize
+                (\actualStatus -> ErikE $ Can'tDownloadObject
+                                    $ U.convert $ "Http status: " <> show actualStatus)
+                (\actualHash -> ErikE $ ErikHashMismatchError { expectedHash = hash, .. })
 
-       The retry is what makes this matter: the next relay writes to the same
-       path, and a truncated `<hash>.mft` left behind by a failed attempt is a
-       supported extension, so `loadObjectsFromFS` would otherwise pick it up and
-       record it as an unparseable object.
+    {- Reduce a parsed object to the rows it will be stored as, and append them
+       to the spill file for 'storePreparedObjects'.
+
+       This is all the work that storing it used to involve apart from the
+       INSERTs themselves -- serialising, compressing, extracting what the
+       index tables need -- done now, on a download thread, so that none of it
+       happens inside the write transaction. It goes to disk rather than
+       staying in memory, since the objects of a big FQDN add up to more than a
+       worker should hold, and to one file rather than one per object, so it
+       is a buffered write and not a round of syscalls.
     -}
+    prepareForStorage :: ValidatorIO es' => MVar Handle -> Hash -> RpkiObjectLifecycle -> Eff es' ()
+    prepareForStorage spill hash lifecycle = do
+        case lifecycle of
+            OriginalRO _ vs _ _ -> do
+                logError logger [i|Object #{U.hashAsBase64Url hash} failed parse/prevalidation.|]
+                embedState vs
+            WellStructuredRO _ -> pure ()
+        -- Everything expensive happens before the lock is taken.
+        let !record = serialise_ $ DB.prepareObject $ toStorableObject $ Compressed lifecycle
+        liftIO $ withMVar spill $ \h -> do
+            BS.hPut h $ encodeLength $ BS.length record
+            BS.hPut h record
+
+    {- Store everything the download prepared, in one transaction.
+
+       Parsing and serialising have all happened by now, so the transaction
+       only streams the spill file back and does the inserts.
+
+       Anything going wrong here fails the whole transaction, and with it the
+       fetch: a record that cannot be read back is an object that would
+       otherwise be silently missing, and failing means the index is not
+       recorded, so the next round tries again.
+    -}
+    storePreparedObjects :: ValidatorIO es' => Eff es' ()
+    storePreparedObjects = do
+        db      <- liftIO $ readTVarIO database
+        records <- liftIO $ spillRecords <$> LBS.readFile preparedObjectsFile
+        DB.rwAppTx db $ \tx ->
+            forM_ records $ \record -> do
+                prepared <- fromTry (ErikE . UnknownErikProblem . U.fmtEx) $
+                                evaluate $ deserialise_ @PreparedObject record
+                void $ DB.insertPreparedObject tx prepared worldVersion
+                updateMetric @TraverseMetric @_ $
+                    #processed %~ Map.unionWith (+) (Map.singleton (Just prepared.objectType) 1)
+
+    preparedObjectsFile = indexDir </> "prepared-objects"
+
+    -- A half-written download has to go: the retry against the next relay
+    -- writes to the same path.
     withCleanupOnFailure file f =
         f `catchError` \cs (e :: AppError) -> do
             void $ liftIO $ tryAny $ removeFile file
@@ -454,11 +528,7 @@ fetchErik
         tmpDir = configValue $ config ^. #tmpDirectory
         in tmpDir </> "erik" </> U.convert fqdn_
 
-    -- Partitions are not RPKI objects: they are named without an extension so
-    -- `loadObjectsFromFS` walks straight past them.
     partitionDir = indexDir </> "p"
-
-    objectDir firstByte = indexDir </> "o" </> show firstByte
 
     withDir dir f =
         bracketVT
