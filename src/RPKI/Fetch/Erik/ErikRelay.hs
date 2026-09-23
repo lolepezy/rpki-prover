@@ -237,7 +237,7 @@ fetchErik
                 -- the same way it happens for rsync-ed repositories. Do not try to recover
                 -- object locations here.
                 (_, loadMs) <- timedMS $
-                    loadObjectsFromFS appContext worldVersion (\_ _ -> Nothing) indexDir
+                    loadObjectsFromFS appContext worldVersion (const Nothing) indexDir
                 logInfo logger [i|Stored downloaded Erik objects for #{fqdn_}, took #{loadMs} ms.|]
 
                 {- Only a fetch that got everything may record the index as the

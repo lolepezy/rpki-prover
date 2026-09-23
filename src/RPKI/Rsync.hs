@@ -203,10 +203,9 @@ loadRsyncRepository :: (ValidatorIO es, Concurrent :> es)
                     -> FilePath
                     -> Eff es ()
 loadRsyncRepository appContext worldVersion repositoryUrl rootPath =
-    -- An rsync tree mirrors the repository layout, so the path alone determines
-    -- the URL and the parsed object is never needed.
+    -- An rsync tree mirrors the repository layout, so the path determines the URL.
     loadObjectsFromFS appContext worldVersion
-        (\filePath _ -> Just $ restoreUriFromPath repositoryUrl rootPath filePath)
+        (Just . restoreUriFromPath repositoryUrl rootPath)
         rootPath
 
 data RsyncMode = RsyncOneFile | RsyncDirectory
