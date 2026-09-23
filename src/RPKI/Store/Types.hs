@@ -82,6 +82,29 @@ instance WithRpkiObjectType RpkiObjectLifecycle where
     getRpkiObjectType (WellStructuredRO vro) = getRpkiObjectType vro
 
 
+-- | One object reduced to exactly what its rows in 'objects' and the index
+-- tables need, so that storing it is only the INSERTs. The object itself is
+-- gone by this point: nothing here needs decoding again.
+data PreparedObject = PreparedObject {
+        hash       :: Hash,
+        objectType :: RpkiObjectType,
+        -- | The compressed, serialised lifecycle: the `data` column.
+        payload    :: BS.ByteString,
+        -- | Raw bytes, only for an object that did not make it to well-structured.
+        original   :: Maybe BS.ByteString,
+        indexEntry :: Maybe ObjectIndexEntry
+    }
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+data ObjectIndexEntry
+    = CertificateIndex SKI (Maybe AKI)
+    -- | The rest of 'MftMeta', which also needs the object key the INSERT assigns.
+    | ManifestIndex AKI Serial Instant Instant
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+
 -- data 
 
 data DBFileStats = DBFileStats {

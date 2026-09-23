@@ -25,7 +25,7 @@ module RPKI.Store.Database (
     getByUri, getKeysByUri,
     getObjectByKey, getLocatedByKey,
     getLocationsByKey, getHashByKey,
-    saveObject, saveStorableObject,
+    saveObject, saveStorableObject, prepareObject, insertPreparedObject,
     getObjectMeta, linkObjectToUrl,
     hashExists, existingHashes, getObjectsByHashes,
     deleteObjectByHash, deleteObjectByKey,
@@ -364,59 +364,77 @@ saveStorableObject :: MonadIO m
                 -> StorableObject (Compressed RpkiObjectLifecycle)
                 -> WorldVersion
                 -> m ObjectKey
-saveStorableObject (Tx conn) StorableObject { object = Compressed lifecycle, storable = Storable dataBs } wv = liftIO $ do
-    let hash_ = getHash lifecycle
+saveStorableObject tx so = insertPreparedObject tx (prepareObject so)
 
+
+-- | Everything about storing an object that does not need the transaction.
+-- Pure, so a caller can run it on whatever thread did the parsing.
+prepareObject :: StorableObject (Compressed RpkiObjectLifecycle) -> PreparedObject
+prepareObject StorableObject { object = Compressed lifecycle, storable = Storable payload } =
+    PreparedObject {..}
+  where
+    hash       = getHash lifecycle
+    objectType = getRpkiObjectType lifecycle
+    original   = case lifecycle of
+                    OriginalRO (ObjectOriginal blob) _ _ _ -> Just blob
+                    WellStructuredRO _                     -> Nothing
+    indexEntry = case lifecycle of
+                    WellStructuredRO (CerRO c)   -> Just $ CertificateIndex (getSKI c) (getAKI c)
+                    WellStructuredRO (MftRO mft) ->
+                        let Manifest {..} = mft ^. #content
+                        in (\aki_ -> ManifestIndex aki_ mftNumber thisTime nextTime) <$> getAKI mft
+                    _                            -> Nothing
+
+
+insertPreparedObject :: MonadIO m
+                     => Tx 'RW
+                     -> PreparedObject
+                     -> WorldVersion
+                     -> m ObjectKey
+insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
     existing <- query conn
-        "SELECT object_key, original IS NOT NULL FROM objects WHERE hash = ?" (Only hash_)
-    case (existing, lifecycle) of
+        "SELECT object_key, original IS NOT NULL FROM objects WHERE hash = ?" (Only hash)
+    case (existing, original) of
         -- The same bytes can be stored unparsed first (e.g. a TA certificate
         -- that failed RRDP prevalidation) and then come as a parsed object.
         -- Replace the unparsed copy, otherwise the parsed one is never readable.
-        ((objectKey, True) : _, WellStructuredRO _) -> do
+        ((objectKey, True) : _, Nothing) -> do
             execute conn
                 [sql|UPDATE objects SET type = ?, data = ?, original = NULL, world_version = ?
                      WHERE object_key = ?|]
-                (typ, dataBs, wv, objectKey)
+                (typ, payload, wv, objectKey)
             saveIndexes objectKey
             pure objectKey
 
         ((objectKey, _) : _, _) -> pure objectKey
 
         ([], _) -> do
-            let originalBs = case lifecycle of
-                    OriginalRO (ObjectOriginal blob) _ _ _ -> Just blob
-                    _                                      -> Nothing
-
             [Only objectKey] <- query conn
                 [sql|INSERT INTO objects(hash, type, data, original, world_version)
                      VALUES (?, ?, ?, ?, ?) RETURNING object_key|]
-                (hash_, typ, dataBs, originalBs, wv)
+                (hash, typ, payload, original, wv)
 
             saveIndexes objectKey
             pure objectKey
   where
-    typ = show (getRpkiObjectType lifecycle)
+    typ = show objectType
 
     saveIndexes objectKey =
-        case lifecycle of
-            WellStructuredRO (CerRO c) ->
+        case indexEntry of
+            Just (CertificateIndex ski aki_) ->
                 execute conn
                     [sql|INSERT OR IGNORE INTO certificates(object_key, ski, aki) VALUES (?, ?, ?)|]
-                    (objectKey, getSKI c, getAKI c)
-            WellStructuredRO (MftRO mft) ->
-                forM_ (getAKI mft) $ \aki_ ->
-                    let meta = getMftMetaFromWellStructured mft objectKey
-                    in execute conn
-                        [sql|
-                            INSERT OR IGNORE INTO manifest_meta(object_key, aki, manifest_number, meta)
-                            VALUES (?, ?, ?, ?)
-                        |]
-                        ( objectKey
-                        , aki_
-                        , let Serial mftNum = meta ^. #mftNumber in serialToBlob mftNum
-                        , serialiseField meta )
-            _ -> pure ()
+                    (objectKey, ski, aki_)
+            Just (ManifestIndex aki_ mftNumber thisTime nextTime) ->
+                let meta = MftMeta { key = objectKey, .. }
+                    Serial mftNum = mftNumber
+                in execute conn
+                    [sql|
+                        INSERT OR IGNORE INTO manifest_meta(object_key, aki, manifest_number, meta)
+                        VALUES (?, ?, ?, ?)
+                    |]
+                    (objectKey, aki_, serialToBlob mftNum, serialiseField meta)
+            Nothing -> pure ()
 
 
 getObjectMeta :: MonadIO m => Tx mode -> ObjectKey -> m (Maybe ObjectMeta)
@@ -584,9 +602,6 @@ deleteObjectByKey (Tx conn) keys = liftIO $
         executeNamed conn
             (fromString $ Text.unpack $ "DELETE FROM objects WHERE object_key IN (" <> placeholders <> ")")
             params
-
-getMftMetaFromWellStructured :: WellStructuredCms Manifest -> ObjectKey -> MftMeta
-getMftMetaFromWellStructured WellStructuredCms { content = Manifest {..} } key = MftMeta {..}
 
 
 -- ---------------------------------------------------------------------------
