@@ -160,6 +160,7 @@ library
       RPKI.AppState
       RPKI.AppTypes
       RPKI.Config
+      RPKI.Cpu
       RPKI.Domain
       RPKI.Domain.Packed
       RPKI.Fetch.DirectoryTraverse
@@ -316,6 +317,7 @@ test-suite rpki-prover-test
       RPKI.LoggingSpec
       RPKI.Metrics.ProcessSpec
       RPKI.Orphans
+      RPKI.ParallelSpec
       RPKI.Parse.ObjectParseSpec
       RPKI.RepositorySpec
       RPKI.Resources.ResourcesSpec

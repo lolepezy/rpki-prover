@@ -21,6 +21,7 @@ import RPKI.Validation.TopDownSpec
 import RPKI.Fetch.ErikSpec
 import RPKI.WorkerSpec
 import RPKI.Metrics.ProcessSpec
+import RPKI.ParallelSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
@@ -43,7 +44,8 @@ main = defaultMain $ testGroup "All tests" [
         workerSpec,
         processMetricsSpec,
         relayPoolSpec,
-        erikSpillSpec
+        erikSpillSpec,
+        parallelSpec
 
         -- erikSpec
     ]  

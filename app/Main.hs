@@ -47,6 +47,7 @@ import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.Config
+import           RPKI.Cpu                         (getAvailableCpuCount)
 import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Reporting
@@ -99,10 +100,12 @@ main = do
                     executeWorkerProcess
   where
     printConf cliOptions = do 
+        cpuCount <- defaultCpuCount
         putStrLn "CLI options:"
         putStrLn $ shower cliOptions
         putStrLn "Configuration:"
-        putStrLn $ shower $ applyCliToConfig defaultConfig cliOptions Hidden                            
+        putStrLn $ shower $ applyCliToConfig 
+            (defaultConfig & #parallelism . #cpuCount .~ cpuCount) cliOptions Hidden                            
 
 
 executeMainProcess :: CLIOptions -> IO ()
@@ -297,9 +300,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     -- Create (or make sure exist) necessary directories in the root directory
     (root, tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger
 
-    -- Set capabilities to the values from the CLI or to all available CPUs,
-    -- (disregard the HT issue for now it needs more testing).
-    let cpuCount' = fromMaybe getRtsCpuCount cpuCount
+    -- Set capabilities to the value from the CLI or the detected default
+    cpuCount' <- maybe (liftIO defaultCpuCount) pure cpuCount
     liftIO $ setCpuCount cpuCount'
 
     proverRunMode     <- deriveProverRunMode cliOptions
@@ -753,12 +755,13 @@ cliOptionsParser = CLIOptions
     <*> optional (option auto
             (  long "cpu-count"
             <> metavar "N"
-            <> help ("Number of CPUs available to the program (default: " <> show defCpuCount <> "). "
+            <> help ("Number of CPUs available to the program (default: on Linux, the physical CPU cores "
+                  <> "the process can use within its cgroup CPU quota, otherwise " <> show defCpuCount <> "). "
                   <> "It is recommended to use the number of physical CPU cores rather than hyper-threads.")))
     <*> optional (option auto
             (  long "fetcher-count"
             <> metavar "N"
-            <> help ("Maximum number of concurrent fetchers (default: " <> show defFetcherCount <> ", i.e. cpu-count * 2).")))
+            <> help "Maximum number of concurrent fetchers (default: cpu-count * 2)."))
     <*> switch
             (  long "reset-cache"
             <> help "Delete rpki.sqlite (and its -wal/-shm files) from the cache directory before starting.")
@@ -956,7 +959,6 @@ cliOptionsParser = CLIOptions
     cfg    = defaultConfig
     rtrCfg = defaultRtrConfig
     defCpuCount               = cfg ^. #parallelism . #cpuCount
-    defFetcherCount           = cfg ^. #parallelism . #fetchParallelism
     Seconds defRevalidation   = cfg ^. #validationConfig . #revalidationInterval
     Seconds defCacheLifetime  = cfg ^. #longLivedCacheLifeTime
     defCacheLifetimeHours     = defCacheLifetime `div` 3600
@@ -985,6 +987,11 @@ cliOptionsParser = CLIOptions
     defMaxFetchDiskWrite      = showLimit $ cfg ^. #systemConfig . #rrdpWorkerLimits . #maxDiskWriteMb
     showLimit                 = maybe ("unlimited" :: String) show
 
+
+-- | Where it can be detected (Linux), the physical cores the process can 
+-- use within its cgroup CPU quota, otherwise the -N the binary is built with.
+defaultCpuCount :: IO Natural
+defaultCpuCount = fromMaybe getRtsCpuCount <$> getAvailableCpuCount
 
 -- | Apply CLI option overrides to a base Config. The base config should
 -- already contain any IO-derived values (paths, run mode, etc.).

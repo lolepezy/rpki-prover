@@ -4,6 +4,8 @@
 module RPKI.Parallel where
 
 import           Control.Concurrent              (threadDelay)
+import           Control.Concurrent.MVar
+import           Control.Concurrent.QSem
 import           Control.Concurrent.STM
 import qualified Control.Concurrent.STM.TBQueue  as Q
 import qualified Control.Concurrent.Async        as IOAsync
@@ -14,7 +16,11 @@ import           Control.Monad
 
 import           Effectful
 import           Effectful.Concurrent.Async
-import           Effectful.Exception             (finally)
+import           Effectful.Exception             (finally, throwIO)
+
+import           Data.IORef
+import qualified Data.Vector                     as V
+import           GHC.Conc                        (getNumCapabilities)
 
 import           Data.Hourglass
 import           Data.Foldable (for_)
@@ -91,6 +97,96 @@ txFoldPipeline parallelism stream withTx consume =
         go tx = do                
             a <- liftIO $ atomically $ readCQueue queue
             for_ a $ \a' -> consume tx a' >> go tx
+
+-- | Process every item of a list with a pool of worker threads and feed the
+-- results to a single consumer running inside one transaction. The consumer 
+-- is called exactly once for every item, either in the order of the items 
+-- (an RRDP delta, where a later item may depend on an earlier one) or in the 
+-- order they are ready (a snapshot). Keeping the order costs a snapshot ~6%:
+-- the consumer is nearly saturated, and it can't make up for the time it 
+-- spends waiting for the oldest item.
+--
+-- Made for saving an RRDP snapshot, where the workers do CPU-heavy parsing and
+-- the consumer is the SQLite writer, which is one thread by necessity. What
+-- limited `txFoldPipeline` there to ~6 busy cores of 16 was not SQLite:
+--
+--   * Every SQLite call is a safe foreign call, which gives the capability
+--     away and has to win it back on return. With parsing threads on every
+--     capability that wait, not the SQL, was most of the writer's time, ~6
+--     calls per object. So the consumer gets capability 0 to itself and the
+--     workers are pinned to the others.
+--
+--   * A producer forking one thread per item is queued behind those same
+--     threads on its own capability and starves the pipeline. The workers here
+--     just take the next item from a shared list.
+--
+--   * Results are handed over through MVars, not a `TBQueue`. A consumer 
+--     blocking in STM once per item leaked TVar watch queue entries
+--     and transaction records that the GC keeps on the mutable list and
+--     rescans on every minor GC; with one worker (-N2) that more than doubled
+--     the run time, and it gets worse the longer the run.
+--
+txPoolPipeline :: (ValidatorIO es, Concurrent :> es) =>
+            ResultOrder ->
+            [s] ->
+            (s -> Eff es p) ->                  -- ^ worker, an exception here fails the whole pipeline
+            ((tx -> Eff es ()) -> Eff es ()) -> -- ^ transaction in which the consumer runs
+            (tx -> p -> Eff es ()) ->           -- ^ consumer
+            Eff es ()
+txPoolPipeline order items process withTx consume = do
+    caps <- liftIO getNumCapabilities
+    let !itemCount  = length items
+        consumerCap = 0
+        workerCaps  = if caps > 1 then [1 .. caps - 1] else [0]
+        window      = 16 * length workerCaps
+
+    -- Items are numbered as they are taken and in item order, each result 
+    -- goes to the slot for its number, which the consumer empties in order. 
+    -- A worker holds one of `window` permits from taking an item until the 
+    -- consumer takes its result, so no more than `window` items are ever in 
+    -- flight and the slot of each of them has already been emptied. In 
+    -- completion order all results go through the same slot.
+    remaining <- liftIO $ newIORef (0 :: Int, items)
+    slots     <- liftIO $ V.replicateM window newEmptyMVar
+    permits   <- liftIO $ newQSem window
+    let slot i = case order of
+            ItemOrder       -> slots V.! (i `mod` window)
+            CompletionOrder -> slots V.! 0
+
+    let worker = do
+            liftIO $ waitQSem permits
+            next <- liftIO $ atomicModifyIORef' remaining $ \case
+                        (i, s : ss) -> ((i + 1, ss), Just (i, s))
+                        done        -> (done, Nothing)
+            case next of
+                Nothing     -> liftIO $ signalQSem permits
+                Just (i, s) -> do
+                    p <- process s
+                    liftIO $ putMVar (slot i) p
+                    worker
+
+    let consumer = withTx $ \tx ->
+            for_ [0 .. itemCount - 1] $ \i -> do
+                p <- liftIO $ takeMVar (slot i) <* signalQSem permits
+                consume tx p
+
+    withAsyncOn consumerCap consumer $ \c ->
+        withAsyncsOn workerCaps worker $ \ws ->
+            waitAllOrThrow (c : ws)
+  where
+    withAsyncsOn [] _ k = k []
+    withAsyncsOn (cap : caps) f k =
+        withAsyncOn cap f $ \a -> withAsyncsOn caps f $ \as -> k (a : as)
+
+    -- Any failure is rethrown right away, which cancels everything
+    -- else on the way out of the `withAsyncOn` brackets.
+    waitAllOrThrow [] = pure ()
+    waitAllOrThrow as = do
+        (done, r) <- waitAnyCatch as
+        either throwIO (const $ waitAllOrThrow $ filter (/= done) as) r
+
+data ResultOrder = ItemOrder | CompletionOrder
+    deriving stock (Eq, Show)
 
 -- 
 -- | Create two threads and queue between then. Calls

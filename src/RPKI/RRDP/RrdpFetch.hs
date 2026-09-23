@@ -22,6 +22,7 @@ import qualified Data.Map.Strict                  as Map
 import           Data.String.Interpolate.IsString
 import           Data.Proxy
 import           Data.Maybe
+import           Numeric.Natural                  (Natural)
 
 import           GHC.Generics
 
@@ -31,6 +32,7 @@ import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
+import           RPKI.Cpu                         (getAvailableCpuCount)
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
@@ -383,9 +385,9 @@ nextSerial (RrdpSerial s) = RrdpSerial $ s + 1
 
 
 {- 
-    Snapshot case, done in parallel by two thread
-        - one thread parses XML, reads base64s and pushes CPU-intensive parsing tasks into the queue 
-        - another thread reads parsing tasks, waits for them and saves the results into the DB.
+    Snapshot case: the XML is parsed up front, then a pool of worker threads 
+    decodes and parses the objects while a single thread saves them into the DB,
+    see `txPoolPipeline`.
 -} 
 saveSnapshot :: (ValidatorIO es, Concurrent :> es) => 
                 AppContext s        
@@ -398,14 +400,10 @@ saveSnapshot
     appContext@AppContext {..} 
     worldVersion repoUri notification snapshotContent = do              
 
-    -- If we are going for the snapshot we are going to need a lot of CPU
-    -- time, so bump the number of CPUs to the maximum possible values    
-    let maxCpuAvailable = appContext ^. typed @Config . typed @Parallelism . #cpuCount
-    liftIO $ setCpuCount maxCpuAvailable
-    let cpuParallelism = newParallelism maxCpuAvailable ^. #cpuParallelism
+    snapshotCpus <- liftIO $ useAvailableCpus appContext
     
     let snapshotUrl = notification ^. #snapshotInfo . typed @URI
-    logDebug logger [i|Snapshot #{snapshotUrl} is #{BS.length snapshotContent} bytes.|]   
+    logDebug logger [i|Snapshot #{snapshotUrl} is #{BS.length snapshotContent} bytes, using #{snapshotCpus} CPUs.|]   
 
     db <- liftIO $ readTVarIO database    
     Snapshot _ sessionId serial snapshotItems <-         
@@ -425,22 +423,25 @@ saveSnapshot
                 updateRepositoryMeta tx repoUri sessionId serial
 
     scopes <- askScopes
-    txFoldPipeline 
-            cpuParallelism
-            (S.mapM (newStorable scopes db) $ S.each snapshotItems)
+    txPoolPipeline 
+            CompletionOrder
+            snapshotItems
+            (newStorable scopes db)
             savingTx
             saveStorable
   where        
 
+    -- Runs on a worker thread. An exception while decoding or parsing is 
+    -- handed to `saveStorable` to report, it must not take the worker down.
     newStorable scopes db (SnapshotPublish uri encodedb64) =             
         if supportedExtension $ U.convert uri 
             then do 
-                a <- async readBlob
-                pure $! Right (uri, a)
+                r <- trySync $ readBlob scopes db uri encodedb64
+                pure $! Right (uri, r)
             else
                 pure $! Left (RrdpE (RrdpUnsupportedObjectType (U.convert uri)), uri)
-      where 
-        readBlob = case U.parseRpkiURL $ unURI uri of
+
+    readBlob scopes db uri encodedb64 = case U.parseRpkiURL $ unURI uri of
             Left e -> 
                 pure $! UnparsableRpkiURL uri $ VWarn $ VWarning $ RrdpE $ BadURL $ U.convert e
 
@@ -497,8 +498,7 @@ saveSnapshot
     saveStorable _ (Left (e, uri)) =
         inSubLocationScope uri $ appWarn e
 
-    saveStorable tx (Right (uri, a)) = do
-        z <- waitCatch a        
+    saveStorable tx (Right (uri, z)) = do
         case z of 
             Left e  -> do 
                 logError logger [i|Couldn't parse object #{uri}, error #{e}, will NOTs cache the original object.|]   
@@ -577,21 +577,26 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 f tx
                 updateRepositoryMeta tx repoUri sessionId serial
 
+    void $ liftIO $ useAvailableCpus appContext
     scopes <- askScopes
 
-    txFoldPipeline
-            cpuParallelism
-            (S.mapM (newStorable scopes) $ S.each deltaItems)
+    -- Unlike in a snapshot, the order of items in a delta matters
+    txPoolPipeline
+            ItemOrder
+            deltaItems
+            (newStorable scopes)
             savingTx
             saveStorable
   where        
 
+    -- Runs on a worker thread. An exception while decoding or parsing is 
+    -- handed to `saveStorable`, it must not take the worker down.
     newStorable scopes item = do 
         case item of
             DP (DeltaPublish uri hash encodedb64) -> 
                 processSupportedTypes uri $ do 
-                    a <- async $ readBlob uri encodedb64
-                    pure $ Right $ maybe (Add uri a) (Replace uri a) hash
+                    r <- trySync $ readBlob uri encodedb64
+                    pure $ Right $ maybe (Add uri r) (Replace uri r) hash
                     
             DW (DeltaWithdraw uri hash) -> 
                 processSupportedTypes uri $ pure $ Right $ Delete uri hash                    
@@ -661,7 +666,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
             else appError $ RrdpE $ NoObjectToWithdraw uri existingHash
 
     addObject tx uri a = do
-        r <- fromTryM (RrdpE . FailedToParseDeltaItem . U.fmtEx) $ wait a
+        r <- fromEither $ first (RrdpE . FailedToParseDeltaItem . U.fmtEx) a
         case r of         
             UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do
                 logError logger [i|Skipped object #{rpkiUrl}, error #{e} |]
@@ -713,7 +718,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                         inSubLocationScope uri $ 
                             appError $ RrdpE $ NoObjectToReplace uri oldHash
 
-        r <- fromTryM (RrdpE . FailedToParseDeltaItem . U.fmtEx) $ wait a
+        r <- fromEither $ first (RrdpE . FailedToParseDeltaItem . U.fmtEx) a
         case r of
             UnparsableRpkiURL rpkiUrl (VWarn (VWarning e)) -> do
                 logError logger [i|Skipped object #{rpkiUrl}, error #{e} |]
@@ -751,8 +756,22 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 logDebug logger [i|Weird thing happened in `replaceObject` #{other}.|]                                                                                                
 
     logger           = appContext ^. typed @AppLogger           
-    cpuParallelism   = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism    
     validationConfig = appContext ^. typed @Config . typed @ValidationConfig
+
+
+-- | Saving a snapshot or a big delta needs a lot of CPU time, so bump the 
+-- number of capabilities to the configured CPU count (RRDP workers start with 
+-- one), but not above what the process can actually use: physical cores within
+-- the cgroup quota. Parsing is memory-bound and the second hyper-thread of 
+-- a core only slows it down (ARIN snapshot on 8 cores with 16 threads: 19s 
+-- with 8 capabilities, 25-28s with 16).
+useAvailableCpus :: AppContext s -> IO Natural
+useAvailableCpus appContext = do
+    availableCpus <- getAvailableCpuCount
+    let configuredCpus = appContext ^. typed @Config . typed @Parallelism . #cpuCount
+        cpus           = maybe configuredCpus (min configuredCpus) availableCpus
+    setCpuCount cpus
+    pure cpus
 
 
 addedObject, deletedObject :: Validator es => Maybe RpkiObjectType -> Eff es ()
@@ -771,9 +790,9 @@ data RrdpObjectProcessingResult =
         | SaveObject RpkiURL (StorableObject (Compressed RpkiObjectLifecycle))
     deriving stock (Show, Eq, Generic)
 
-data DeltaOp m a = Delete URI Hash 
-                | Add URI (Async a) 
-                | Replace URI (Async a) Hash
+data DeltaOp a = Delete URI Hash 
+               | Add URI a 
+               | Replace URI a Hash
 
 
 verifyRrdpMeta :: ValidatorIO es => Tx mode
