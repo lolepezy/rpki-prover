@@ -236,7 +236,9 @@ fetchErik
                 -- Now traverse all downloaded objects and load them into the storage,
                 -- the same way it happens for rsync-ed repositories. Do not try to recover
                 -- object locations here.
-                loadObjectsFromFS appContext worldVersion (\_ _ -> Nothing) indexDir
+                (_, loadMs) <- timedMS $
+                    loadObjectsFromFS appContext worldVersion (\_ _ -> Nothing) indexDir
+                logInfo logger [i|Stored downloaded Erik objects for #{fqdn_}, took #{loadMs} ms.|]
 
                 {- Only a fetch that got everything may record the index as the
                    current one.
