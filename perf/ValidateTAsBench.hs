@@ -44,19 +44,19 @@ import           System.Directory        (createDirectoryIfMissing, doesFileExis
 import           System.CPUTime          (getCPUTime)
 import           System.Environment      (getArgs)
 import           System.FilePath         ((</>))
+import           Debug.Trace             (traceMarkerIO)
 import           Text.Printf             (printf)
 
 import           RPKI.AppContext
-import           RPKI.AppMonad           (runValidatorT)
 import           RPKI.AppState           (instantToVersion, newAppState)
-import           RPKI.AppTypes           (Size (..))
+import           RPKI.AppTypes           (Count (..), Size (..))
 import           RPKI.Config
 import           RPKI.Domain             (TaName (..), URI (..), estimateVrpCountRoas)
 import           RPKI.Logging
 import           RPKI.Meta.UniqueId      (thisExecutableVersion)
 import           RPKI.Messages           (formatValidations)
-import           RPKI.Reporting          (Validations (..), newScopes, MetricMap (..), Count (..))
-import           RPKI.RRDP.Http          (downloadToFile)
+import           RPKI.Fetch.Http         (downloadToFile)
+import           RPKI.Reporting          (Validations (..), MetricMap (..))
 import           RPKI.Store.AppSqliteStorage
 import           RPKI.TAL                (TAL, getTaName, parseTAL)
 import           RPKI.Time               (thisInstant, unNow, TimeMs (..))
@@ -104,10 +104,16 @@ main = do
                     & #rsyncConf . #prefetchUrls .~ prefetchUrls
                     & #rrdpConf  . #tmpRoot   .~ Public tmpDir
                     & #parallelism            .~ newParallelism cpuCount_
+                    -- What the program runs with unless --no-incremental-validation 
+                    -- is given, `defaultConfig` has the other one
+                    & #validationConfig . #validationAlgorithm .~ Incremental
 
-        (dbResult, _) <- runValidatorT (newScopes "validate-tas-bench-db") $
-            setupSqliteCache UseExisting logger cacheDir config
-        db <- either (\e -> error $ "Failed to set up SQLite cache: " <> show e) pure dbResult
+        -- An incompatible cache gets wiped, which would quietly turn this into
+        -- a benchmark of validating nothing.
+        (db, dbCheck) <- createSqliteDatabase cacheDir config False True
+        case dbCheck of
+            WasIncompatible -> error $ "The cache in " <> cacheDir <> " is of another version and was wiped."
+            _               -> pure ()
 
         appState <- newAppState
         database <- newTVarIO db
@@ -157,11 +163,14 @@ runIteration i appContext tals = do
     statsEnabled <- getRTSStatsEnabled
     statsBefore  <- if statsEnabled then Just <$> getRTSStats else pure Nothing
 
+    -- Markers bracket the run in the eventlog (`+RTS -l`)
+    traceMarkerIO "validation start"
     cpu0  <- getCPUTime
     wall0 <- getMonotonicTimeNSec
     results <- validateMutlipleTAs appContext worldVersion tals
     wall1 <- getMonotonicTimeNSec
     cpu1  <- getCPUTime
+    traceMarkerIO "validation end"
 
     caps <- getNumCapabilities
     let wallSec = fromIntegral (wall1 - wall0) / 1e9 :: Double
@@ -198,21 +207,12 @@ runIteration i appContext tals = do
 
     printf "          %d TAs validated, %d total VRPs\n" (Map.size results) totalVrps
 
-    -- Aggregate wall-clock time metrics the app already tracks per fetch/validation
-    -- phase (see RPKI.Reporting: RrdpMetric.downloadTimeMs/saveTimeMs, RsyncMetric,
-    -- ValidationMetric.totalTimeMs), summed across all repositories/TAs. These are
-    -- wall-clock, and phases run concurrently (across repos, and within a TA's
-    -- object tree), so sums don't add up to the run's wall time -- but the relative
-    -- split (fetch/network vs parse+store vs the rest of top-down, i.e. signature
-    -- verification and tree walking) is exactly what tells us where to look next.
+    -- Validation works with the cache only, so the one time metric here is
+    -- ValidationMetric.totalTimeMs, summed across TAs. TAs are validated
+    -- concurrently, so the sum doesn't add up to the run's wall time.
     let topDownMetric = allValidations ^. #topDownMetric
-        rrdpMs   = MonoidalMap.elems $ unMetricMap (topDownMetric ^. #rrdpMetrics)
-        rsyncMs  = MonoidalMap.elems $ unMetricMap (topDownMetric ^. #rsyncMetrics)
         validMs  = MonoidalMap.elems $ unMetricMap (topDownMetric ^. #validationMetrics)
 
-        totalDownloadMs = sum [ unTimeMs (m ^. #downloadTimeMs) | m <- rrdpMs ]  :: Int64
-        totalRrdpSaveMs = sum [ unTimeMs (m ^. #saveTimeMs)     | m <- rrdpMs ]  :: Int64
-        totalRsyncMs    = sum [ unTimeMs (m ^. #totalTimeMs)    | m <- rsyncMs ] :: Int64
         totalValidateMs = sum [ unTimeMs (m ^. #totalTimeMs)    | m <- validMs ] :: Int64
 
         totalCerts     = sum [ unCount (m ^. #validCertNumber)   | m <- validMs ] :: Int64
@@ -221,8 +221,8 @@ runIteration i appContext tals = do
         totalCrls      = sum [ unCount (m ^. #validCrlNumber)    | m <- validMs ] :: Int64
         totalShortcuts = sum [ unCount (m ^. #mftShortcutNumber) | m <- validMs ] :: Int64
 
-    printf "          [aggregate wall-ms, summed across concurrent repos/TAs] rrdp_download=%dms rrdp_save=%dms rsync=%dms validate_total=%dms\n"
-        totalDownloadMs totalRrdpSaveMs totalRsyncMs totalValidateMs
+    printf "          [aggregate wall-ms, summed across concurrent TAs] validate_total=%dms\n"
+        totalValidateMs
     printf "          [object counts] certs=%d roas=%d mfts=%d crls=%d mft_shortcuts_hit=%d\n"
         totalCerts totalRoas totalMfts totalCrls totalShortcuts
 
