@@ -19,7 +19,7 @@
 -- matters for the write transaction is "Stored downloaded Erik objects".
 module Main where
 
-import           Control.Concurrent.STM  (newTVarIO)
+import           Control.Concurrent.STM  (newTVarIO, readTVarIO)
 import           Control.Exception       (bracket)
 import           Control.Lens            ((&), (.~), (^.))
 
@@ -41,6 +41,7 @@ import           Text.Read               (readMaybe)
 import           RPKI.AppContext
 import           RPKI.AppMonad           (runValidatorIO)
 import           RPKI.AppState           (instantToVersion, newAppState)
+import           RPKI.AppTypes           (Size (..))
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Fetch.Erik.ErikRelay (fetchErik)
@@ -48,6 +49,8 @@ import           RPKI.Logging
 import           RPKI.Meta.UniqueId      (thisExecutableVersion)
 import           RPKI.Reporting
 import           RPKI.Store.AppSqliteStorage
+import           RPKI.Store.Base.Storable (ObjectStats (..))
+import qualified RPKI.Store.Database     as DB
 import           RPKI.Time               (thisInstant, unNow)
 
 
@@ -126,6 +129,15 @@ runFetch (_, appContext) fqdn relayUris = do
                 (mb $ max_mem_in_use_bytes s)
                 (fromIntegral (gc_cpu_ns s) / 1e9 :: Double) (major_gcs s)
         else putStrLn "RTS stats disabled, run with +RTS -T"
+
+    -- What was stored, so two runs over the same snapshot can be checked for
+    -- having stored the same thing, not just for how long it took.
+    db <- readTVarIO $ appContext ^. #database
+    ObjectStats {..} <- DB.roTx db DB.getObjectsStats
+    let Size objects = totalObjects
+        Size bytes   = totalSize
+    printf "stored: %d objects, %d bytes; per type: %s\n" objects bytes
+        (show [ (t, n) | (t, Size n) <- Map.toList countPerType ])
 
     let Validations issues = vs ^. #validations
     printf "validation scopes with issues: %d\n" (Map.size issues)
