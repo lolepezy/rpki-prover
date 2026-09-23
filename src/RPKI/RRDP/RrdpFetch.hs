@@ -3,10 +3,6 @@
 
 module RPKI.RRDP.RrdpFetch where
 
-import GHC.Clock (getMonotonicTimeNSec)
-import Data.IORef
-import Data.Word (Word64)
-import System.IO.Unsafe (unsafePerformIO)
 import           Effectful
 import           Control.Concurrent.STM
 import           Control.Lens
@@ -429,19 +425,11 @@ saveSnapshot
                 updateRepositoryMeta tx repoUri sessionId serial
 
     scopes <- askScopes
-    liftIO $ writeIORef tmpWaitNs 0 >> writeIORef tmpDbNs 0
-    tStart <- liftIO getMonotonicTimeNSec
     txFoldPipeline 
             cpuParallelism
             (S.mapM (newStorable scopes db) $ S.each snapshotItems)
             savingTx
             saveStorable
-    tEnd <- liftIO getMonotonicTimeNSec
-    w <- liftIO $ readIORef tmpWaitNs
-    d <- liftIO $ readIORef tmpDbNs
-    liftIO $ putStrLn $ "TMP pipeline total=" <> show (fromIntegral (tEnd - tStart) / 1e9 :: Double) 
-        <> "s writer waiting for parse=" <> show (fromIntegral w / 1e9 :: Double) 
-        <> "s writer db=" <> show (fromIntegral d / 1e9 :: Double) <> "s"
   where        
 
     newStorable scopes db (SnapshotPublish uri encodedb64) =             
@@ -510,15 +498,7 @@ saveSnapshot
         inSubLocationScope uri $ appWarn e
 
     saveStorable tx (Right (uri, a)) = do
-        t0 <- liftIO getMonotonicTimeNSec
         z <- waitCatch a        
-        t1 <- liftIO getMonotonicTimeNSec
-        liftIO $ atomicModifyIORef' tmpWaitNs (\x -> (x + (t1 - t0), ()))
-        saveStorable' tx uri z
-        t2 <- liftIO getMonotonicTimeNSec
-        liftIO $ atomicModifyIORef' tmpDbNs (\x -> (x + (t2 - t1), ()))
-
-    saveStorable' tx uri z = 
         case z of 
             Left e  -> do 
                 logError logger [i|Couldn't parse object #{uri}, error #{e}, will NOTs cache the original object.|]   
@@ -774,14 +754,6 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
     cpuParallelism   = appContext ^. typed @Config . typed @Parallelism . #cpuParallelism    
     validationConfig = appContext ^. typed @Config . typed @ValidationConfig
 
-
-{-# NOINLINE tmpWaitNs #-}
-tmpWaitNs :: IORef Word64
-tmpWaitNs = unsafePerformIO $ newIORef 0
-
-{-# NOINLINE tmpDbNs #-}
-tmpDbNs :: IORef Word64
-tmpDbNs = unsafePerformIO $ newIORef 0
 
 addedObject, deletedObject :: Validator es => Maybe RpkiObjectType -> Eff es ()
 addedObject type_  = updateMetric @RrdpMetric @_ 
