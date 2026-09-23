@@ -479,7 +479,6 @@ fetchErik
                 logError logger [i|Object #{U.hashAsBase64Url hash} failed parse/prevalidation.|]
                 embedState vs
             WellStructuredRO _ -> pure ()
-        -- Everything expensive happens before the lock is taken.
         let !record = serialise_ $ DB.prepareObject $ toStorableObject $ Compressed lifecycle
         liftIO $ withMVar spill $ \h -> do
             BS.hPut h $ encodeLength $ BS.length record
