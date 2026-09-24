@@ -12,6 +12,7 @@ import           Control.Monad.IO.Class           (liftIO)
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Short            as BSS
 import           Data.Int                         (Int64)
+import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Set                         as Set
 import qualified Data.Text                        as Text
@@ -27,6 +28,7 @@ import           RPKI.AppTypes                    (WorldVersion)
 import           RPKI.Domain
 import           RPKI.Parse.Parse
 import           RPKI.Reporting                   (newScopes)
+import           RPKI.Repository                  (PublicationPointAccess (..), rsyncPP)
 import           RPKI.Resources.Types
 import           RPKI.Store.Database              (DB)
 import qualified RPKI.Store.Database              as DB
@@ -143,13 +145,15 @@ shouldReplaceRevokedShortcutChildren = do
         revokedGbrKey = objectKey 3
         troubledKey   = objectKey 4
         notOnShortcut = objectKey 5
+        revokedCaKey  = objectKey 6
 
     let mftShortcut = testMftShortcut
-            [ (revokedRoaKey, MftEntry "revoked.roa"  (RoaChild (testRoaShortcut revokedRoaKey) (Serial 100)))
-            , (liveRoaKey,    MftEntry "live.roa"     (RoaChild (testRoaShortcut liveRoaKey)    (Serial 200)))
-            , (revokedGbrKey, MftEntry "revoked.gbr"  (GbrChild (testGbrShortcut revokedGbrKey) (Serial 300)))
+            [ (revokedRoaKey, MftEntry "revoked.roa"  (RoaChild (testRoaShortcut revokedRoaKey) (Serial 100)) Nothing)
+            , (liveRoaKey,    MftEntry "live.roa"     (RoaChild (testRoaShortcut liveRoaKey)    (Serial 200)) Nothing)
+            , (revokedGbrKey, MftEntry "revoked.gbr"  (GbrChild (testGbrShortcut revokedGbrKey) (Serial 300)) Nothing)
+            , (revokedCaKey,  MftEntry "revoked.cer"  (CaChild (testCaShortcut revokedCaKey)    (Serial 400)) (Just ValidCaChild))
             -- A troubled child carries no serial, it is re-validated in full anyway
-            , (troubledKey,   MftEntry "troubled.roa" (TroubledChild troubledKey))
+            , (troubledKey,   MftEntry "troubled.roa" (TroubledChild troubledKey) Nothing)
             ]
 
     let mftChildren =
@@ -159,14 +163,17 @@ shouldReplaceRevokedShortcutChildren = do
             , T3 "troubled.roa" (testHash "h4") troubledKey
             -- Not on the shortcut at all, so not this function's business
             , T3 "new.roa"      (testHash "h5") notOnShortcut
+            , T3 "revoked.cer"  (testHash "h6") revokedCaKey
             ]
 
-    -- The new CRL revokes the ROA and the GBR, plus a serial that belongs to nothing here
+    -- The new CRL revokes the ROA, the GBR and the CA, plus a serial that belongs to 
+    -- nothing here. A revoked CA certificate stays a CA certificate, an invalid one.
     HU.assertEqual "Wrong set of revoked children"
-        [ (revokedRoaKey, MftEntry "revoked.roa" (TroubledChild revokedRoaKey))
-        , (revokedGbrKey, MftEntry "revoked.gbr" (TroubledChild revokedGbrKey))
+        [ (revokedRoaKey, MftEntry "revoked.roa" (TroubledChild revokedRoaKey) Nothing)
+        , (revokedGbrKey, MftEntry "revoked.gbr" (TroubledChild revokedGbrKey) Nothing)
+        , (revokedCaKey,  MftEntry "revoked.cer" (TroubledChild revokedCaKey)  (Just InvalidCaChild))
         ]
-        (revokedShortcutChildren mftShortcut (testCrl [Serial 100, Serial 300, Serial 999]) mftChildren)
+        (revokedShortcutChildren mftShortcut (testCrl [Serial 100, Serial 300, Serial 400, Serial 999]) mftChildren)
 
     HU.assertEqual "Nothing may be revoked by a CRL that lists none of these serials"
         []
@@ -219,8 +226,23 @@ testMftShortcut entries = MftShortcut {
         notAfter       = Instant 1,
         serial         = Serial 1,
         manifestNumber = Serial 1,
-        crlShortcut    = CrlShortcut (objectKey 101) (Instant 0) (Instant 1)
+        crlShortcut    = CrlShortcut (objectKey 101) (Instant 0) (Instant 1),
+        hasIssues      = False
     }
+
+testCaShortcut :: ObjectKey -> CaShortcut
+testCaShortcut key = CaShortcut {
+        key       = key,
+        ski       = SKI (mkKI "01234567890123456789"),
+        ppas      = PublicationPointAccess $ NonEmpty.singleton $ rsyncPP testRsyncUrl,
+        notBefore = Instant 0,
+        notAfter  = Instant 1,
+        resources = AllResources Inherit Inherit Inherit
+    }
+  where
+    testRsyncUrl = case parseRpkiURL "rsync://host/repo/" of
+                        Right (RsyncU u) -> u
+                        other            -> error $ "Not an rsync URL: " <> show other
 
 testRoaShortcut :: ObjectKey -> RoaShortcut
 testRoaShortcut key = RoaShortcut {

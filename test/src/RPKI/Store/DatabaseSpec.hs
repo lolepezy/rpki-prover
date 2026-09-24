@@ -42,6 +42,7 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Database               (DB(..), Tx(..), roTx, rwTx)
 import qualified RPKI.Store.Database               as DB
 import           RPKI.Validation.ObjectValidation
+import           RPKI.Validation.Types
 import qualified RPKI.Store.SQLite                 as SQLite
 import           RPKI.Store.Types
 import           RPKI.Parse.Internal.Common        (id_sha256)
@@ -82,6 +83,8 @@ objectStoreGroup = testGroup "Object storage test"
         shouldComputeObjectSizeStats
     , dbTestCase "Should not report TA certificates as having multiple locations"
         shouldNotCountTaCertificatesAsMultiLocation
+    , dbTestCase "Should keep CA and payload shortcut children in their own tables"
+        shouldKeepShortcutChildrenInTheirTables
     ]
 
 erikStoreGroup :: TestTree
@@ -410,6 +413,71 @@ shouldNotCountTaCertificatesAsMultiLocation io = do
         (Set.singleton ordinaryKey) multi
 
 
+-- | CA certificates go to `mft_shortcut_ca_children` together with their 
+-- validity, everything else to `mft_shortcut_payload_children`. Reads bring 
+-- both back, deletes clear both, and deleting the object cascades into both.
+shouldKeepShortcutChildrenInTheirTables :: IO DB -> HU.Assertion
+shouldKeepShortcutChildrenInTheirTables io = do
+    db <- io
+    worldVersion <- instantToVersion . unNow <$> thisInstant
+    [roaObject, caObject, unindexedObject] <- distinctObjects 3
+    roaKey       <- storeAt db roaObject worldVersion
+    caKey        <- storeAt db caObject worldVersion
+    unindexedKey <- storeAt db unindexedObject worldVersion
+
+    -- Every parsed CA certificate has a `certificates` row
+    rwTx db $ \(Tx conn) ->
+        SQLite.execute conn "INSERT INTO certificates(object_key, ski, aki) VALUES (?, ?, NULL)"
+            (caKey, "01234567890123456789" :: BS.ByteString)
+
+    let aki = AKI (mkKI "98765432109876543210")
+    let row k fileName caCert = 
+            DB.ShortcutChildRow k fileName caCert (unStorable $ toStorable $ Compressed $ TroubledChild k)
+    let entry k fileName caCert = MftEntry fileName (TroubledChild k) caCert
+
+    rwTx db $ \tx -> DB.insertMftShortcutChildren tx aki
+        [ row roaKey "a.roa" Nothing
+        , row caKey "b.cer" (Just ValidCaChild)
+        -- No `certificates` row, so it can't be in the CA table, the 
+        -- foreign key would fail the transaction. It goes to the payload one.
+        , row unindexedKey "c.cer" (Just InvalidCaChild)
+        ]
+
+    full <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Children must come back with what they are"
+        (Map.fromList [ (roaKey,       entry roaKey "a.roa" Nothing)
+                      , (caKey,        entry caKey "b.cer" (Just ValidCaChild))
+                      , (unindexedKey, entry unindexedKey "c.cer" Nothing) ])
+        full
+
+    caRows <- roTx db $ \(Tx conn) ->
+        SQLite.query conn "SELECT child_key, valid FROM mft_shortcut_ca_children WHERE aki = ?" (Only aki)
+    HU.assertEqual "Only the indexed CA certificate is in the CA table" [(caKey, 1 :: Int)] caRows
+
+    -- A CA certificate that turned invalid is written over its row
+    rwTx db $ \tx -> DB.insertMftShortcutChildren tx aki [row caKey "b.cer" (Just InvalidCaChild)]
+    light <- roTx db $ \tx -> DB.getMftShorcutChildrenLight tx aki
+    HU.assertEqual "The CA certificate must be invalid now"
+        (Just (TroubledChild caKey, Just InvalidCaChild)) (Map.lookup caKey light)
+    HU.assertEqual "There must be no duplicates" 3 (Map.size light)
+
+    fileNames <- roTx db $ \tx -> forM [roaKey, caKey] $ DB.getMftShortcutChildFileName tx aki
+    HU.assertEqual "File names come from both tables" [Just "a.roa", Just "b.cer"] fileNames
+
+    rwTx db $ \tx -> DB.deleteMftShortcutChildren tx aki [roaKey, caKey]
+    afterDelete <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Deleted children must be gone from both tables" [unindexedKey] (Map.keys afterDelete)
+
+    rwTx db $ \tx -> DB.insertMftShortcutChildren tx aki [row caKey "b.cer" (Just ValidCaChild)]
+    rwTx db $ \tx -> DB.deleteObjectByKey tx [caKey]
+    afterCascade <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Deleting the object must cascade into the CA table" [unindexedKey] (Map.keys afterCascade)
+
+    rwTx db $ \tx -> DB.deleteMftShortcut tx aki
+    afterShortcutDelete <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Deleting the shortcut must delete all its children" Map.empty afterShortcutDelete
+
+
 -- | Make an object look like something a manifest refers to, which is what
 -- `getMultiLocationShortcutChildren` reports on.
 markAsManifestChild :: DB -> ObjectKey -> IO ()
@@ -419,7 +487,7 @@ markAsManifestChild db key =
             "INSERT INTO shortcuts(object_key, data) VALUES (?, ?)"
             (key, "" :: BS.ByteString)
         SQLite.execute conn
-            "INSERT INTO mft_shortcut_children(aki, file_name, child_key) VALUES (?, ?, ?)"
+            "INSERT INTO mft_shortcut_payload_children(aki, file_name, child_key) VALUES (?, ?, ?)"
             ("" :: BS.ByteString, "child.roa" :: Text.Text, key)
 
 

@@ -396,15 +396,30 @@ schemaDDL =
             data       BLOB    NOT NULL
         )
       |]
+    -- Children of manifest shortcuts that are not CA certificates
     , [sql|
-        CREATE TABLE IF NOT EXISTS mft_shortcut_children (
+        CREATE TABLE IF NOT EXISTS mft_shortcut_payload_children (
             aki       BLOB    NOT NULL,
             file_name TEXT    NOT NULL,
             child_key INTEGER NOT NULL REFERENCES shortcuts(object_key) ON DELETE CASCADE,
             PRIMARY KEY (aki, child_key)
         )
       |]
-    , "CREATE INDEX IF NOT EXISTS idx_mft_shortcut_children_child_key ON mft_shortcut_children(child_key)"
+    , "CREATE INDEX IF NOT EXISTS idx_mft_shortcut_payload_children_child_key ON mft_shortcut_payload_children(child_key)"
+    -- Children of manifest shortcuts that are CA certificates, valid or not. 
+    -- It's the CA tree, the CCR walk reads only this table. The child's shortcut 
+    -- itself is in `shortcuts`, as for the other children.
+    , [sql|
+        CREATE TABLE IF NOT EXISTS mft_shortcut_ca_children (
+            aki       BLOB    NOT NULL,
+            file_name TEXT    NOT NULL,
+            child_key INTEGER NOT NULL REFERENCES certificates(object_key) ON DELETE CASCADE,
+            valid     INTEGER NOT NULL,
+            PRIMARY KEY (aki, child_key)
+        )
+      |]
+    -- Deleting an object cascades into this table by child_key
+    , "CREATE INDEX IF NOT EXISTS idx_mft_shortcut_ca_children_child_key ON mft_shortcut_ca_children(child_key)"
     , [sql|
         CREATE TABLE IF NOT EXISTS trust_anchors (
             ta_name     TEXT    NOT NULL PRIMARY KEY,
@@ -477,7 +492,8 @@ schemaDDL =
 dropDDL :: [Query]
 dropDDL = map (\t -> "DROP TABLE IF EXISTS " <> t)
     [ "object_urls", "certificates", "manifest_meta"
-    , "mft_shortcut_children", "shortcuts", "mft_shortcut_meta"
+    , "mft_shortcut_payload_children", "mft_shortcut_ca_children", "mft_shortcut_children",
+      "shortcuts", "mft_shortcut_meta"
     , "trust_anchors"
     , "objects", "urls"
     , "repositories"

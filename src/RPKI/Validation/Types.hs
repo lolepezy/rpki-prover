@@ -33,10 +33,22 @@ data MftChild = CaChild CaShortcut Serial
     deriving anyclass (TheBinary)
 
 
-data MftEntry = MftEntry {        
+data MftEntry = MftEntry {
         fileName :: Text,
-        child    :: MftChild
+        child    :: MftChild,
+        -- | `Just` for a child that parsed as a CA certificate, `Nothing` for
+        -- anything else. It's independent of `child`: a valid CA certificate
+        -- with warnings is a `TroubledChild`, so that it's re-validated and its
+        -- warnings are reported every time, but it's still `Just ValidCaChild`.
+        caCert   :: Maybe CaChildValidity
     }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+-- | Whether a CA certificate on a manifest passed validation: signature,
+-- validity period, revocation and resources. A valid one is a subordinate of
+-- the manifest's issuer in a CCR, whether or not its own publication point is fine.
+data CaChildValidity = ValidCaChild | InvalidCaChild
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
@@ -56,12 +68,16 @@ data MftShortcut = MftShortcut {
         notAfter  :: {-# UNPACK #-} Instant,        
         serial         :: {-# UNPACK #-} Serial,
         manifestNumber :: {-# UNPACK #-} Serial,
-        crlShortcut    :: CrlShortcut        
+        crlShortcut    :: CrlShortcut,
+        -- | The manifest was accepted with warnings. Its shortcut is kept, so
+        -- that it describes the tree, but it's validated in full every time,
+        -- so that the warnings are reported every time.
+        hasIssues      :: Bool
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-data CaShortcut = CaShortcut { 
+data CaShortcut = CaShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
         ski            :: SKI,
         ppas           :: PublicationPointAccess,

@@ -53,7 +53,6 @@ import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
-import qualified Data.ByteString                  as BS
 
 
 import           RPKI.AppContext
@@ -762,58 +761,68 @@ validateCaNoFetch
         pure $! processMfts aki mftMetas
 
     makeNextIncrementalAction aki = do
-        z <- roTxT database $ \tx -> DB.getMftsForAKI tx aki
-        case z of
-            []   -> pure $! vError $ NoMFT aki
-            mfts -> actOnMfts mfts
+        (mftMetas, shortcutMeta) <- roTxT database $ \tx -> 
+            (,) <$> DB.getMftsForAKI tx aki <*> DB.getMftShorcutMeta tx aki
+        let validate = 
+                case mftMetas of
+                    [] -> vError $ NoMFT aki
+                    _  -> join $ actOnMfts mftMetas shortcutMeta
+        -- Shortcuts describe the tree as it was validated, so a CA that ends 
+        -- up without an accepted manifest mustn't keep one.
+        pure $! case shortcutMeta of 
+            Nothing -> validate
+            Just _  -> validate `catchError` \_cs (e :: AppError) -> do 
+                            deleteMftShortcut topDownContext aki
+                            appError e
       where
-        actOnMfts mftMetas = do
-            z <- roTxT database $ \tx -> DB.getMftShorcutMeta tx aki
-            case z of
-                Nothing -> do
-                    increment $ topDownCounters.originalMft
+        actOnMfts mftMetas = \case
+            Nothing -> do
+                increment $ topDownCounters.originalMft
+                pure $! processMfts aki mftMetas
+
+            Just meta -> do
+                -- Shortcuts stored before `manifestValidityPeriod` only carry 
+                -- the validity of the manifest's EE certificate. A manifest 
+                -- that's past its nextUpdate stays unchanged, and so does its 
+                -- shortcut, so the manifest's own nextUpdate is checked here.
+                let shortcutMftNextUpdate = 
+                        (.nextTime) <$> List.find ((== meta.key) . (.key)) mftMetas
+                let shortcutExpired =
+                        not (isWithinValidityPeriod now meta) ||
+                        not (isWithinValidityPeriod now meta.crlShortcut) ||
+                        maybe False (< unNow now) shortcutMftNextUpdate
+
+                if shortcutExpired then do
+                    increment topDownCounters.originalMft
                     pure $! processMfts aki mftMetas
+                else do
+                    markAsUsed topDownContext meta.key
+                    for_ shortcutMftNextUpdate $ rememberNotValidAfter topDownContext
+                    increment topDownCounters.shortcutMft
+                    action <- case mftsNotInFuture mftMetas of
+                        [] -> vError $ NoMFT aki
+                        mft_ : _
+                            | mft_.key == meta.key ->
+                                pure $! useShortcut meta
+                            | otherwise -> pure $! do
+                                markAsUsed topDownContext mft_.key
+                                withMft mft_.key $ \mft ->
+                                    tryOneMftWithShortcut meta mft
+                                        `catchError` \_cs (e :: AppError) -> do
+                                            reportMftFallback e mft
+                                            useShortcut meta
+                    pure $! do 
+                        r <- action
+                        oneMoreMft >> oneMoreCrl >> oneMoreMftShort
+                        pure $! r
 
-                Just meta -> do
-                    -- Shortcuts stored before `manifestValidityPeriod` only carry
-                    -- the validity of the manifest's EE certificate. A manifest
-                    -- that's past its nextUpdate stays unchanged, and so does its
-                    -- shortcut, so the manifest's own nextUpdate is checked here.
-                    let shortcutMftNextUpdate =
-                            (.nextTime) <$> List.find ((== meta.key) . (.key)) mftMetas
-                    let shortcutExpired =
-                            not (isWithinValidityPeriod now meta) ||
-                            not (isWithinValidityPeriod now meta.crlShortcut) ||
-                            maybe False (< unNow now) shortcutMftNextUpdate
-
-                    if shortcutExpired then do
-                        increment topDownCounters.originalMft
-                        pure $! processMfts aki mftMetas
-                    else do
-                        markAsUsed topDownContext meta.key
-                        for_ shortcutMftNextUpdate $ rememberNotValidAfter topDownContext
-                        increment topDownCounters.shortcutMft
-                        action <- case mftsNotInFuture mftMetas of
-                            [] -> vError $ NoMFT aki
-                            mft_ : otherMfts
-                                | mft_.key == meta.key ->
-                                    pure $! onlyCollectPayloads meta
-                                | otherwise -> pure $! do
-                                    markAsUsed topDownContext mft_.key
-                                    withMft mft_.key $ \mft ->
-                                        tryOneMftWithShortcut meta mft
-                                            `catchError` \_cs (e :: AppError) ->
-                                                if shortcutExpired
-                                                    then
-                                                        tryMfts aki otherMfts
-                                                    else do
-                                                        reportMftFallback e mft
-                                                        onlyCollectPayloads meta
-                        pure $! do 
-                            r <- action
-                            oneMoreMft >> oneMoreCrl >> oneMoreMftShort
-                            pure $! r
-
+        -- Use the manifest that the shortcut is for. One that was accepted with 
+        -- warnings is validated in full against its own shortcut, so that the 
+        -- warnings are reported again. If that fails, there's nothing to fall 
+        -- back to. For the other ones it's enough to collect the payloads.
+        useShortcut meta
+            | meta.hasIssues = withMft meta.key $ tryOneMftWithShortcut meta
+            | otherwise      = onlyCollectPayloads meta
 
         -- The manifest changed since the last shortcut: run the full diff, which needs
         -- file_name (to detect renames), so fetch the full children map.
@@ -842,7 +851,7 @@ validateCaNoFetch
             let fullCa = case ca of
                     CaFull c  -> Left c
                     CaShort _ -> Right $ getFullCa appContext topDownContext ca
-            collectPayloads aki meta (Map.map ChildLight lightChildren) Nothing
+            collectPayloads aki meta (Map.map (uncurry ChildLight) lightChildren) Nothing
                     fullCa
                     (getCrlByKey appContext crlKey)
                     (getResources ca)
@@ -995,8 +1004,6 @@ validateCaNoFetch
 
                     let newEntries = makeEntriesWithMap newChildren (Map.fromList childrenShortcuts) 
                                         <> revokedEntries
-                    
-                    let nextMftShortcut = makeMftShortcut mftKey validMft newEntries keyedValidCrl
 
                     case validationAlgorithm of 
                         -- Only create shortcuts for case of incremental validation.
@@ -1005,35 +1012,35 @@ validateCaNoFetch
                         -- the previous valid manifest will not work, since there are no
                         -- shortcuts of previous manifests to fall back to.                  
                         Incremental -> do  
-                            issues <- thisScopeIssues
-                            -- Do no create shortcuts for manifests with warnings 
-                            -- (or errors, obviously)
-                            when (Set.null issues) $ do
-                                let aki = toAKI $ getSKI fullCa
+                            -- A manifest accepted with warnings gets a shortcut as well, 
+                            -- shortcuts describe the whole tree as it was validated. It's 
+                            -- marked, so that it's validated in full every time and the 
+                            -- warnings are reported every time.
+                            hasIssues <- not . Set.null <$> thisScopeIssues
+                            let aki = toAKI $ getSKI fullCa
+                            let nextMftShortcut = makeMftShortcut mftKey validMft newEntries keyedValidCrl hasIssues
 
-                                case mftShortcut of
-                                    -- There's nothing to diff against, so all the children
-                                    -- are new. Replace the whole shortcut: an expired one can
-                                    -- still have children that are not on this manifest.
-                                    Nothing -> do
-                                        replaceMftShortcut topDownContext aki nextMftShortcut
+                            case mftShortcut of 
+                                -- There's nothing to diff against, so all the children 
+                                -- are new. Replace the whole shortcut: an expired one can 
+                                -- still have children that are not on this manifest.
+                                Nothing -> do 
+                                    replaceMftShortcut topDownContext aki nextMftShortcut
+                                    increment topDownCounters.updateMftMeta
+                                    increment topDownCounters.updateMftChildren
+
+                                Just mftShort -> do 
+                                    when (mftShort.key /= mftKey || mftShort.hasIssues /= hasIssues) $ do
+                                        updateMftShortcut topDownContext aki nextMftShortcut
                                         increment topDownCounters.updateMftMeta
-                                        increment topDownCounters.updateMftChildren
 
-                                    Just mftShort -> do
-                                        -- If manifest key is not the same as the shortcut key,
-                                        -- we need to replace the shortcut with the new one
-                                        when (mftShort.key /= mftKey) $ do
-                                            updateMftShortcut topDownContext aki nextMftShortcut
-                                            increment topDownCounters.updateMftMeta
-
-                                        -- Update manifest shortcut children in case there are new
-                                        -- or deleted children in the new manifest.
-                                        when (not (null newChildren)
-                                            || not (null deletedKeys)
-                                            || not (null revokedEntries)) $ do
-                                                updateMftShortcutChildren topDownContext aki newEntries deletedKeys
-                                                increment topDownCounters.updateMftChildren
+                                    -- Update manifest shortcut children in case there are new 
+                                    -- or deleted children in the new manifest.
+                                    when (not (null newChildren) 
+                                        || not (null deletedKeys) 
+                                        || not (null revokedEntries)) $ do
+                                            updateMftShortcutChildren topDownContext aki newEntries deletedKeys
+                                            increment topDownCounters.updateMftChildren
 
                         _  -> pure ()
 
@@ -1155,7 +1162,7 @@ validateCaNoFetch
                         -- reported issues. It's a bit hacky, but it works nicely.                        
                         let manifestIssues = getIssues (scopes ^. typed) (vs ^. typed )
                         pure $! if Set.null manifestIssues 
-                            then InvalidChild e vs key filename
+                            then InvalidChild e vs key filename Nothing
                             else InvalidEntry e vs
                     Right ro -> do
                         -- We are cheating here a little by faking empty payload set.
@@ -1163,8 +1170,11 @@ validateCaNoFetch
                         -- if failed, this one will result in the empty VRP set
                         -- while keeping errors and warning in the `vs'` value.
                         (z, vs') <- runValidator scopes $ validateMftChild fullCa ro filename validCrl
+                        let caCert = case ro ^. #object . #payload of
+                                        WellStructuredRO (CerRO _) -> Just InvalidCaChild
+                                        _                          -> Nothing
                         pure $! case z of
-                                Left e              -> InvalidChild e vs' key filename
+                                Left e              -> InvalidChild e vs' key filename caCert
                                 Right childShortcut -> ValidEntry vs' childShortcut key filename
     
     -- A child CA is a whole sub-tree to validate and a task of its own, 
@@ -1178,18 +1188,22 @@ validateCaNoFetch
                 InvalidEntry e vs -> do
                     embedState vs
                     appError e
-                InvalidChild _ vs key fileName -> do
+                InvalidChild _ vs key fileName caCert -> do
                     embedState vs
-                    pure $! T2 key (Just $! makeChildWithIssues key fileName) : childrenShortcuts
+                    pure $! T2 key (Just $! makeChildWithIssues key fileName caCert) : childrenShortcuts
                 ValidEntry vs childShortcut key fileName -> do 
                     embedState vs
                     -- Don't create shortcuts for objects having either errors or warnings,
-                    -- otherwise warnings will disappear after the first validation 
+                    -- otherwise warnings will disappear after the first validation.
+                    -- A CA certificate stays what it is, e.g. a valid one with a 
+                    -- warning somewhere in its sub-tree is still a valid one.
                     if emptyValidations (vs ^. typed)
                         then do                            
                             pure $! T2 key childShortcut : childrenShortcuts
                         else do 
-                            pure $! T2 key (Just $! makeChildWithIssues key fileName) : childrenShortcuts
+                            let troubled = maybe (makeChildWithIssues key fileName Nothing) 
+                                                 (asTroubled key) childShortcut
+                            pure $! T2 key (Just $! troubled) : childrenShortcuts
             ) mempty
 
         
@@ -1266,7 +1280,7 @@ validateCaNoFetch
 
         case child.object.payload of
             OriginalRO _ _ _ _ -> do
-                pure $! newShortcut (makeChildWithIssues child.key filename)
+                pure $! newShortcut (makeChildWithIssues child.key filename Nothing)
             WellStructuredRO wellStructuredChild ->
                 validateChildObject
                     caFull
@@ -1316,39 +1330,49 @@ validateCaNoFetch
                     otherwise an error in child validation would interrupt validation of the parent with
                     ExceptT's exception logic.
                 -}
-                (r, validationState) <- runValidator parentScope $
+                --
+                -- The certificate itself and its sub-tree are validated separately: a 
+                -- valid certificate stays valid (and a subordinate in a CCR) even if 
+                -- there's something wrong with its publication point.
+                (certResult, certState) <- runValidator parentScope $
                     focusOnChild $ do
                         -- Check that AIA of the child points to the correct location of the parent
                         -- https://mailarchive.ietf.org/arch/msg/sidrops/wRa88GHsJ8NMvfpuxXsT2_JXQSU/
                         --                             
                         validateAIA childCert fullCa
  
-                        (childVerifiedResources, overlclaiming) 
-                            <- do
-                                void $ validateResourceCert now childCert fullCa validCrl
-                                validateResources (config ^. #validationConfig . typed) 
-                                    verifiedResources childCert (fullCa ^. #payload)
+                        void $ validateResourceCert now childCert fullCa validCrl
+                        validateResources (config ^. #validationConfig . typed) 
+                            verifiedResources childCert (fullCa ^. #payload)
 
+                case certResult of 
+                    Left _ -> do 
+                        embedState certState
+                        pure $! Just $! makeChildWithIssues childKey fileName (Just InvalidCaChild)
+
+                    Right (childVerifiedResources, overlclaiming) -> do 
                         let childTopDownContext = topDownContext
                                 & #verifiedResources ?~ childVerifiedResources
                                 & #currentPathDepth %~ (+ 1)
                                 & #overclaimingHappened .~ isJust overlclaiming
 
-                        validateCa appContext childTopDownContext (CaFull (Located locations childCert))
+                        (r, subTreeState) <- runValidator parentScope $
+                            focusOnChild $ 
+                                validateCa appContext childTopDownContext (CaFull (Located locations childCert))
 
-                embedState validationState
-                case r of 
-                    Left _  -> pure $! Just $! makeChildWithIssues childKey fileName
-                    Right _  -> do 
-                        case getPublicationPointsFromWellStructuredCert childCert of 
-                            -- It's not going to happen?
-                            Left e     -> vError e
-                            Right ppas -> do 
-                                -- Look at the issues for the child CA to decide if CA shortcut should be made
-                                shortcut <- focusOnChild $
-                                                shortcutIfNoIssues childKey fileName
-                                                        (makeCaShortcut childKey (Validated childCert) ppas)
-                                pure $! newShortcut shortcut
+                        embedState $ certState <> subTreeState
+                        case r of 
+                            Left _  -> pure $! Just $! makeChildWithIssues childKey fileName (Just ValidCaChild)
+                            Right _ -> do 
+                                case getPublicationPointsFromWellStructuredCert childCert of 
+                                    -- It's not going to happen?
+                                    Left e     -> vError e
+                                    Right ppas -> do 
+                                        -- Look at the issues for the child CA to decide if CA shortcut should be made
+                                        shortcut <- focusOnChild $
+                                                        shortcutIfNoIssues childKey fileName (Just ValidCaChild)
+                                                                (makeCaShortcut childKey (Validated childCert) ppas)
+                                        pure $! newShortcut shortcut
             RoaRO roa -> 
                 focusOnChild $ do
                     validateObjectLocations child                    
@@ -1358,7 +1382,7 @@ validateCaNoFetch
                         oneMoreRoa
                         moreVrps $ Count $ fromIntegral $ length (roaV4 roaPayload) + length (roaV6 roaPayload)
                         increment $ topDownCounters.originalRoa                        
-                        shortcut <- shortcutIfNoIssues childKey fileName 
+                        shortcut <- shortcutIfNoIssues childKey fileName Nothing
                                             (makeRoaShortcut childKey validRoa roaPayload)                        
                         rememberPayloads typed (T2 roaPayload childKey :)
                         pure $! newShortcut shortcut                  
@@ -1371,7 +1395,7 @@ validateCaNoFetch
                         let spls = spl.content
                         oneMoreSpl                        
                         increment $ topDownCounters.originalSpl
-                        shortcut <- shortcutIfNoIssues childKey fileName 
+                        shortcut <- shortcutIfNoIssues childKey fileName Nothing
                                             (makeSplShortcut childKey validSpl spls)
                         rememberPayloads typed (spls :)
                         pure $! newShortcut shortcut                        
@@ -1384,7 +1408,7 @@ validateCaNoFetch
                         oneMoreAspa
                         let aspaPayload = aspa.content
                         increment $ topDownCounters.originalAspa
-                        shortcut <- shortcutIfNoIssues childKey fileName
+                        shortcut <- shortcutIfNoIssues childKey fileName Nothing
                                             (makeAspaShortcut childKey validAspa aspaPayload)                        
                         rememberPayloads typed (aspaPayload :)    
                         pure $! newShortcut shortcut
@@ -1395,7 +1419,7 @@ validateCaNoFetch
                     allowRevoked $ do
                         (validaBgpCert, bgpPayload) <- validateBgpCert now bgpCert fullCa.payload validCrl
                         oneMoreBgp
-                        shortcut <- shortcutIfNoIssues childKey fileName
+                        shortcut <- shortcutIfNoIssues childKey fileName Nothing
                                             (makeBgpSecShortcut childKey validaBgpCert bgpPayload)    
                         
                         rememberPayloads typed (bgpPayload :)
@@ -1409,7 +1433,7 @@ validateCaNoFetch
                         oneMoreGbr
                         let gbr' = gbr.content
                         let gbrPayload = T2 (getHash gbr) gbr'                        
-                        shortcut <- shortcutIfNoIssues childKey fileName
+                        shortcut <- shortcutIfNoIssues childKey fileName Nothing
                                             (makeGbrShortcut childKey validGbr gbrPayload)
                         rememberPayloads typed (gbrPayload :)                        
                         pure $! newShortcut shortcut       
@@ -1419,7 +1443,7 @@ validateCaNoFetch
             _somethingElse -> 
                 focusOnChild $ do
                     logWarn logger [i|Unsupported type of object: #{locations}.|]                
-                    pure $! newShortcut (makeChildWithIssues childKey fileName)
+                    pure $! newShortcut (makeChildWithIssues childKey fileName Nothing)
 
         where
             -- In case of RevokedResourceCertificate error, the whole manifest is not to be considered 
@@ -1430,7 +1454,7 @@ validateCaNoFetch
             allowRevoked f =
                 catchAndEraseError f isRevokedCertError $ do
                     vWarn RevokedResourceCertificate
-                    pure $! newShortcut (makeChildWithIssues childKey fileName)
+                    pure $! newShortcut (makeChildWithIssues childKey fileName Nothing)
                 where
                     isRevokedCertError (ValidationE RevokedResourceCertificate) = True
                     isRevokedCertError _ = False
@@ -1438,11 +1462,11 @@ validateCaNoFetch
     -- Don't create shortcuts for objects with warnings in their scope, 
     -- otherwise warnings will be reported only once for the original 
     -- and never for shortcuts.
-    shortcutIfNoIssues key fileName makeShortcut = do 
+    shortcutIfNoIssues key fileName caCert makeShortcut = do 
         issues <- thisScopeIssues
         pure $! if Set.null issues 
                     then makeShortcut fileName
-                    else makeChildWithIssues key fileName
+                    else makeChildWithIssues key fileName caCert
 
     thisScopeIssues :: Validator es' => Eff es' (Set VIssue)
     thisScopeIssues = 
@@ -1535,12 +1559,12 @@ validateCaNoFetch
 
             validateChildObject caFull childObject fileName validCrl
 
-        -- Rare fallback: the light (file_name-free) read path needs a file_name
-        -- to write a child's entry. Look it up on demand instead of joining
+        -- Rare fallback: the light (file_name-free) read path needs a file_name 
+        -- to write a child's entry. Look it up on demand instead of joining 
         -- file_name into every bulk read.
         childFileName childKey = \case
             ChildWithEntry MftEntry {..} -> pure fileName
-            ChildLight _ -> do
+            ChildLight _ _ -> do
                 mfn <- roTxT database $ \tx ->
                             DB.getMftShortcutChildFileName tx childrenAki childKey
                 case mfn of
@@ -1548,8 +1572,10 @@ validateCaNoFetch
                     Nothing -> integrityError appContext
                         [i|Referential integrity error, can't find file_name for child #{childKey}.|]
 
+        -- The stored entry of a child follows what validation found, 
+        -- otherwise the shortcuts wouldn't describe the tree as it was validated.
         storeChildIfChanged childKey childData newEntry =
-            unless (newEntry.child == childOf childData) $
+            unless (newEntry.child == childOf childData && newEntry.caCert == caCertOf childData) $
                 updateMftShortcutChildren topDownContext childrenAki [(childKey, newEntry)] []
 
         getChildPayloads troubledValidation (childKey, childData) = do
@@ -1562,6 +1588,14 @@ validateCaNoFetch
                                     caShortcut.resources 
                                     parentCaResources 
                                     verifiedResources
+                            `catchError` \_cs (e :: AppError) -> do 
+                                -- The parent has fewer resources now (under the same key), 
+                                -- the child isn't valid anymore. Expiry doesn't need this,
+                                -- it's checked against the validity period every time.
+                                fileName <- childFileName childKey childData
+                                storeChildIfChanged childKey childData 
+                                    (makeChildWithIssues childKey fileName (Just InvalidCaChild))
+                                appError e
                     
                     let childTopDownContext = topDownContext
                             & #currentPathDepth %~ (+ 1)                                        
@@ -1607,8 +1641,8 @@ validateCaNoFetch
                 TroubledChild childKey_ -> do
                     increment topDownCounters.shortcutTroubled
                     fileName <- childFileName childKey_ childData
-                    -- A troubled child can come out of re-validation clean, 
-                    -- then it doesn't need to be validated in full anymore.
+                    -- A troubled child can come out of re-validation clean, or a 
+                    -- valid CA certificate can become an invalid one, e.g. revoked.
                     newEntry <- troubledValidation childKey_ fileName
                     for_ newEntry $ storeChildIfChanged childKey_ childData
     
@@ -1641,7 +1675,7 @@ validateCaNoFetch
                         -- may not check its resources again (e.g. the CA is a shortcut 
                         -- by then), so it has to be validated in full from now on.
                         fileName <- childFileName key childData
-                        storeChildIfChanged key childData (makeChildWithIssues key fileName)
+                        storeChildIfChanged key childData (makeChildWithIssues key fileName Nothing)
                         appError e
             
 
@@ -1657,11 +1691,15 @@ validateCaNoFetch
 
 -- Either a full manifest entry (file_name known, from the diff-path's full read)
 -- or just the child's shortcut payload (from the hot, file_name-free light read).
-data ChildData = ChildWithEntry MftEntry | ChildLight MftChild
+data ChildData = ChildWithEntry MftEntry | ChildLight MftChild (Maybe CaChildValidity)
 
 childOf :: ChildData -> MftChild
 childOf (ChildWithEntry MftEntry {..}) = child
-childOf (ChildLight c)                 = c
+childOf (ChildLight c _)               = c
+
+caCertOf :: ChildData -> Maybe CaChildValidity
+caCertOf (ChildWithEntry MftEntry {..}) = caCert
+caCertOf (ChildLight _ caCert)          = caCert
 
 
 -- Calculate difference bentween a manifest shortcut
@@ -1695,10 +1733,10 @@ revokedShortcutChildren :: MftShortcut
                         -> [T3 Text Hash ObjectKey]
                         -> [(ObjectKey, MftEntry)]
 revokedShortcutChildren mftShortcut validCrl children = 
-    [ (childKey, makeChildWithIssues childKey fileName)
-    | T3 fileName _ childKey <- children
-    , Just MftEntry { child } <- [ Map.lookup childKey mftShortcut.nonCrlEntries ]
-    , Just childSerial        <- [ getMftChildSerial child ]
+    [ (childKey, makeChildWithIssues childKey fileName (InvalidCaChild <$ caCert))
+    | T3 fileName _ childKey        <- children
+    , Just MftEntry { child, caCert } <- [ Map.lookup childKey mftShortcut.nonCrlEntries ]
+    , Just childSerial              <- [ getMftChildSerial child ]
     , isRevoked childSerial validCrl ]
 
 
@@ -1762,6 +1800,7 @@ makeCaShortcut key (Validated certificate) ppas fileName = let
         serial = getSerial certificate
         resources = getResources certificate
         child = CaChild (CaShortcut {..}) serial
+        caCert = Just ValidCaChild
     in MftEntry {..}
 
 makeRoaShortcut :: ObjectKey -> Validated WellStructuredRoa -> VrpsPerAs -> Text -> MftEntry
@@ -1770,6 +1809,7 @@ makeRoaShortcut key (Validated roa) roaPayload fileName = let
         serial = getSerial roa
         resources = getResources roa
         child = RoaChild (RoaShortcut {..}) serial
+        caCert = Nothing
     in MftEntry {..}    
 
 makeSplShortcut :: ObjectKey -> Validated WellStructuredSpl -> SplPayload -> Text -> MftEntry
@@ -1778,6 +1818,7 @@ makeSplShortcut key (Validated spl) splPayload fileName = let
         serial = getSerial spl
         resources = getResources spl
         child = SplChild (SplShortcut {..}) serial
+        caCert = Nothing
     in MftEntry {..}    
 
 makeAspaShortcut :: ObjectKey -> Validated WellStructuredAspa -> Aspa -> Text -> MftEntry
@@ -1786,6 +1827,7 @@ makeAspaShortcut key (Validated aspaObject) aspa fileName = let
         serial = getSerial aspaObject
         resources = getResources aspaObject
         child = AspaChild (AspaShortcut {..}) serial
+        caCert = Nothing
     in MftEntry {..}    
 
 makeGbrShortcut :: ObjectKey -> Validated WellStructuredGbr -> T2 Hash Gbr -> Text -> MftEntry
@@ -1794,6 +1836,7 @@ makeGbrShortcut key (Validated gbrObject) gbr fileName = let
         serial = getSerial gbrObject
         resources = getResources gbrObject
         child = GbrChild (GbrShortcut {..}) serial       
+        caCert = Nothing
     in MftEntry {..}    
 
 makeBgpSecShortcut :: ObjectKey -> Validated WellStructuredBgpCert -> BGPSecPayload -> Text -> MftEntry
@@ -1802,15 +1845,17 @@ makeBgpSecShortcut key (Validated bgpCert) bgpSec fileName = let
         serial = getSerial bgpCert
         resources = getResources bgpCert
         child = BgpSecChild (BgpSecShortcut {..}) serial
+        caCert = Nothing
     in MftEntry {..}    
 
 makeMftShortcut :: ObjectKey 
                 -> Validated WellStructuredMft -> [(ObjectKey, MftEntry)] 
                 -> Keyed (Validated CrlObject) 
+                -> Bool
                 -> MftShortcut   
 makeMftShortcut key 
     (Validated mftObject) (Map.fromList -> nonCrlEntries) 
-    (Keyed (Validated validCrl) crlKey) = 
+    (Keyed (Validated validCrl) crlKey) hasIssues = 
   let
     ValidityPeriod {..} = manifestValidityPeriod mftObject
     serial = getSerial mftObject
@@ -1884,14 +1929,14 @@ updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftS
 
 -- Replace the whole shortcut, i.e. the meta and all the children, with this one.
 replaceMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
-replaceMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} =
-    liftIO $ do
+replaceMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
+    liftIO $ do 
         let !raw = Verbatim $ toStorable $ Compressed $ DB.MftShortcutMeta {..}
         let !children = shortcutChildRows $ Map.toList nonCrlEntries
         atomically $ writeCQueue shortcutQueue $ ReplaceMftShortcut aki raw children
 
--- Only the new children get inserted (into `shortcuts` and `mft_shortcut_children`)
--- and only the deleted/revoked keys get removed.
+-- Only the new children get inserted (into `shortcuts` and one of the children
+-- tables) and only the deleted/revoked keys get removed.
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> [(ObjectKey, MftEntry)] -> [ObjectKey] -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki newEntries deletedKeys =
     liftIO $ do
@@ -1901,9 +1946,14 @@ updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } 
 
 -- Pre-serialise each child's data so the heavy lifting happens on this
 -- (validation) thread, not on the DB-writer thread.
-shortcutChildRows :: [(ObjectKey, MftEntry)] -> [(ObjectKey, Text, BS.ByteString)]
-shortcutChildRows entries =
-    [ (k, fileName, unStorable $ toStorable $ Compressed child)
+shortcutChildRows :: [(ObjectKey, MftEntry)] -> [DB.ShortcutChildRow]
+shortcutChildRows entries = 
+    [ DB.ShortcutChildRow { 
+            childKey = k, 
+            fileName = fileName, 
+            caCert   = caCert, 
+            shortcut = unStorable $ toStorable $ Compressed child 
+        }
     | (k, MftEntry {..}) <- entries ]
 
 deleteMftShortcut :: MonadIO m => TopDownContext -> AKI -> m ()
@@ -1931,8 +1981,8 @@ storeShortcuts AppContext {..} shortcutQueue = liftIO $
 
 
 data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta))
-                   | UpdateMftShortcutChildren AKI [(ObjectKey, Text, BS.ByteString)] [ObjectKey]
-                   | ReplaceMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta)) [(ObjectKey, Text, BS.ByteString)]
+                   | UpdateMftShortcutChildren AKI [DB.ShortcutChildRow] [ObjectKey]
+                   | ReplaceMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta)) [DB.ShortcutChildRow]
                    | DeleteMftShortcut AKI
 
 -- Do whatever is required to notify other subsystems that the object was touched 
@@ -1979,13 +2029,18 @@ getCaLocations AppContext {..} = \case
         pure $! getLocations c
 
 
-data ManifestValidity e v = InvalidEntry e v 
-                          | InvalidChild e v ObjectKey Text
+data ManifestValidity e v = InvalidEntry e v
+                          -- The last field is what the child is if it's a CA certificate
+                          | InvalidChild e v ObjectKey Text (Maybe CaChildValidity)
                           | ValidEntry v (Maybe MftEntry) ObjectKey Text
 
-makeChildWithIssues :: ObjectKey -> Text -> MftEntry
-makeChildWithIssues childKey fileName = 
-    MftEntry { child = TroubledChild childKey, .. }     
+makeChildWithIssues :: ObjectKey -> Text -> Maybe CaChildValidity -> MftEntry
+makeChildWithIssues childKey fileName caCert =
+    MftEntry { child = TroubledChild childKey, .. }
+
+-- | The same entry, but to be re-validated every time.
+asTroubled :: ObjectKey -> MftEntry -> MftEntry
+asTroubled childKey entry = entry & #child .~ TroubledChild childKey
 
 
 bumpCounterBy :: (MonadIO m, Num a) =>
