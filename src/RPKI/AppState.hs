@@ -27,6 +27,7 @@ import           Data.Hourglass (Seconds(..))
 import           RPKI.Metrics.System
 import           RPKI.RTR.Protocol
 import           RPKI.RTR.Types
+import           RPKI.CCR                (CcrFile)
 import           RPKI.Resources.Validity
 
 data AppState = AppState {
@@ -69,6 +70,9 @@ data AppState = AppState {
         -- Index for searching VRPs by a prefix used
         -- by the validity check
         prefixIndex :: TVar (Maybe PrefixIndex),
+
+        -- The latest CCR written to the disk (with --with-ccr)
+        ccrFile :: TVar (Maybe CcrFile),
 
         runningWorkers :: TVar (Map.Map CPid WorkerInfo),
 
@@ -193,6 +197,7 @@ newAppState = do
         rtrState    <- newTVar Nothing        
         system      <- newTVar (newSystemInfo now)        
         prefixIndex <- newTVar Nothing
+        ccrFile     <- newTVar Nothing
         cachedBinaryRtrPdus <- newTVar mempty
         runningWorkers <- newTVar mempty
         fetcheables <- newTVar mempty

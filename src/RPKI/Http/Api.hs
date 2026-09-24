@@ -66,6 +66,10 @@ data API api = API {
         bgpCertsFiltered :: api :- "bgpsec-filtered" :> QueryParam "version" Text 
                                                      :> Get '[JSON] [BgpCertDto],
 
+        -- The latest CCR file, served as it is
+        ccr   :: api :- "ccr" :> Raw,
+        ccrGz :: api :- "ccr.gz" :> Raw,
+
         slurm :: api :- "slurm" :> Get '[JSON] Slurm,
         slurms :: api :- "slurms" :> Get '[JSON] [(WorldVersion, Slurm)],
                 
@@ -166,6 +170,17 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             ("/bgpsec", mempty & get ?~ jsonOn200 "List of all valid BGPSec certificates found in repositories"),
             ("/bgpsec-filtered", mempty & get ?~ jsonOn200 
                 "List of all valid BGPSec certificates found in repositories filtered with SLURM"),
+
+            ("/ccr", mempty & get ?~ (ccrOn200 "application/rpki-ccr" 
+                    [i|The latest RPKI Canonical Cache Representation (draft-ietf-sidrops-rpki-ccr). 
+                       It describes the validated cache before SLURM is applied. 
+                       Supports ETag/If-None-Match and Range requests.|]
+                    & at 404 ?~ "CCR is not enabled, it's enabled with --with-ccr"
+                    & at 503 ?~ "No CCR has been produced yet")),
+            ("/ccr.gz", mempty & get ?~ (ccrOn200 "application/rpki-ccr+gzip" 
+                    "The same as /ccr, gzipped"
+                    & at 404 ?~ "CCR is not enabled, it's enabled with --with-ccr"
+                    & at 503 ?~ "No CCR has been produced yet")),
 
             ("/validations", mempty & get ?~ jsonOn200 
                 "Validation results for the latest validation run"),
@@ -290,4 +305,7 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
                     & at 200 ?~ txt
     csvOn200 txt = mempty
                     & produces ?~ MimeList ["text/csv"]
+                    & at 200 ?~ txt
+    ccrOn200 mimeType txt = mempty
+                    & produces ?~ MimeList [mimeType]
                     & at 200 ?~ txt

@@ -147,8 +147,10 @@ common shared
     , unordered-containers
     , vector
     , vector-algorithms
+    , wai
     , wai-extra
     , warp
+    , zlib
     , xeno
 
 library
@@ -160,6 +162,7 @@ library
       RPKI.AppState
       RPKI.AppTypes
       RPKI.CCR
+      RPKI.CCR.Build
       RPKI.CCR.Walk
       RPKI.Config
       RPKI.Cpu

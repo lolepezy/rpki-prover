@@ -19,6 +19,8 @@ module RPKI.CCR (
     CcrTaState(..),
     RouterKey(..),
     Ccr(..),
+    CcrFile(..),
+    CcrFileVariant(..),
     encodeCcr,
     signedObjectLocations,
     ccrContentType
@@ -47,7 +49,7 @@ import           Text.Printf                 (printf)
 import qualified HaskellWorks.Data.Network.Ip.Ipv4 as V4
 import qualified HaskellWorks.Data.Network.Ip.Ipv6 as V6
 
-import           RPKI.AppTypes               (Size(..))
+import           RPKI.AppTypes               (Size(..), WorldVersion)
 import           RPKI.Domain
 import           RPKI.Resources.Types
 import           RPKI.RTR.Types              (mergeAspasByCustomer)
@@ -105,6 +107,25 @@ data Ccr = Ccr {
         aspas        :: [Aspa],
         trustAnchors :: [SKI],
         routerKeys   :: [RouterKey]
+    }
+    deriving stock (Show, Eq, Generic)
+
+
+-- | A CCR written to the disk, as a file and gzipped.
+data CcrFile = CcrFile {
+        -- | The version of the validation it describes
+        version    :: WorldVersion,
+        producedAt :: Instant,
+        plain      :: CcrFileVariant,
+        gzipped    :: CcrFileVariant
+    }
+    deriving stock (Show, Eq, Generic)
+
+data CcrFileVariant = CcrFileVariant {
+        path :: FilePath,
+        -- | Hex of the SHA-256 of the file
+        etag :: Text,
+        size :: Int64
     }
     deriving stock (Show, Eq, Generic)
 
