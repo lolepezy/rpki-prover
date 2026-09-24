@@ -23,10 +23,12 @@ module RPKI.CCR (
     CcrFileVariant(..),
     encodeCcr,
     signedObjectLocations,
+    signedObjectAccessDescriptions,
     ccrContentType
 ) where
 
 import           Control.Applicative         ((<|>))
+import           Control.Monad               (guard)
 import           Control.DeepSeq
 import           Data.Bits                   (shiftL, shiftR, (.&.), (.|.))
 import qualified Data.ByteString             as BS
@@ -281,6 +283,49 @@ signedObjectLocations uris =
     LBS.toStrict $ toLazyByteString $ derSequence [
         derSequence [ rawDer idAdSignedObject, primitive 0x86 $ Text.encodeUtf8 uri ]
         | uri <- uris ]
+
+
+-- | Only the id-ad-signedObject AccessDescriptions of the value of an EE 
+-- certificate's SIA extension, byte for byte, or `Nothing` if there are none
+-- or it's not DER. RFC 6487 allows only those in an EE certificate, but some 
+-- CAs add others (e.g. AFRINIC adds id-ad-rpkiNotify), and implementations 
+-- produce the same CCR only if everything else is left out.
+signedObjectAccessDescriptions :: BS.ByteString -> Maybe BS.ByteString
+signedObjectAccessDescriptions sia = do
+    (0x30, content, rest) <- derElement sia
+    guard $ BS.null rest
+    accessDescriptions <- derElements content
+    let signedObjects = [ ad | ad <- accessDescriptions, isSignedObject ad ]
+    guard $ not $ null signedObjects
+    pure $ LBS.toStrict $ toLazyByteString $ derSequence $ map rawDer signedObjects
+  where
+    isSignedObject ad = 
+        case derElement ad of
+            Just (0x30, adContent, _) -> idAdSignedObject `BS.isPrefixOf` adContent
+            _                         -> False
+
+    -- Split DER into its elements
+    derElements bs 
+        | BS.null bs = Just []
+        | otherwise  = do 
+            (_, _, rest) <- derElement bs
+            let first = BS.take (BS.length bs - BS.length rest) bs
+            (first :) <$> derElements rest
+
+    -- The tag, the content and whatever comes after the first element
+    derElement bs = do 
+        (tag, afterTag) <- BS.uncons bs
+        (lengthByte, afterLengthByte) <- BS.uncons afterTag
+        (contentLength, afterLength) <- 
+            if lengthByte < 0x80 
+                then Just (fromIntegral lengthByte, afterLengthByte)
+                else do 
+                    let n = fromIntegral (lengthByte .&. 0x7f)
+                    guard $ n > 0 && n <= 4 && BS.length afterLengthByte >= n
+                    let len = BS.foldl' (\a w -> a * 256 + fromIntegral w) 0 $ BS.take n afterLengthByte
+                    Just (len, BS.drop n afterLengthByte)
+        guard $ BS.length afterLength >= contentLength
+        pure (tag, BS.take contentLength afterLength, BS.drop contentLength afterLength)
 
 
 -- id-ct-rpkiCanonicalCacheRepresentation, 1.2.840.113549.1.9.16.1.54

@@ -34,7 +34,26 @@ ccrGroup = testGroup "CCR"
         shouldMergeDuplicates
     , QC.testProperty "Doesn't depend on the order of the input"
         prop_orderDoesNotMatter
+    , HU.testCase "Keeps only signed object locations of an EE certificate"
+        shouldKeepOnlySignedObjectLocations
     ]
+
+
+-- | E.g. AFRINIC's manifest EE certificates have an id-ad-rpkiNotify 
+-- AccessDescription after the id-ad-signedObject one.
+shouldKeepOnlySignedObjectLocations :: HU.Assertion
+shouldKeepOnlySignedObjectLocations = do
+    let signedObject = signedObjectLocations ["rsync://rpki.example.net/repo/manifest.mft"]
+    -- SEQUENCE { SEQUENCE { id-ad-rpkiNotify, [6] "https://rrdp.example.net/notification.xml" } }
+    let notifyUri = "https://rrdp.example.net/notification.xml" :: BS.ByteString
+    let notify = BS.pack [0x30, fromIntegral (BS.length notifyUri + 12), 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x0d, 0x86, fromIntegral (BS.length notifyUri)] <> notifyUri
+    let withNotify = BS.pack [0x30, fromIntegral (BS.length (BS.drop 2 signedObject) + BS.length notify)] 
+                        <> BS.drop 2 signedObject <> notify
+    HU.assertEqual "Only the signed object" (Just signedObject) (signedObjectAccessDescriptions withNotify)
+    HU.assertEqual "Nothing to leave out" (Just signedObject) (signedObjectAccessDescriptions signedObject)
+    HU.assertEqual "No signed object at all" Nothing 
+        (signedObjectAccessDescriptions $ BS.pack [0x30, fromIntegral (BS.length notify)] <> notify)
+    HU.assertEqual "Not DER" Nothing (signedObjectAccessDescriptions $ BS.take 10 withNotify)
 
 
 -- | Appendix B of the draft, built from the values the draft lists for it.

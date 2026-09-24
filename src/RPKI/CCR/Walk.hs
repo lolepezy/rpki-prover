@@ -88,7 +88,7 @@ walkShortcuts tx now maxDepth taCertKey = do
                         | not (isCurrent validity && isCurrent crlValidity) ->
                             pure $ Right Nothing
                         | otherwise ->
-                            case (size, eeSia) of
+                            case (size, signedObjectAccessDescriptions =<< eeSia) of
                                 (Just size_, Just locations) -> do
                                     children <- DB.getCaChildren tx aki
                                     let subordinates = Set.fromList
@@ -105,4 +105,4 @@ walkShortcuts tx now maxDepth taCertKey = do
                                             subordinates   = subordinates
                                         }
                                 _ ->
-                                    pure $ Left [i|Manifest #{mftKey} of #{ski} has no size or SIA stored.|]
+                                    pure $ Left [i|Manifest #{mftKey} of #{ski} has no size or no signed object location stored.|]
