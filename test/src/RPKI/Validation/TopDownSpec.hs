@@ -38,6 +38,7 @@ import           RPKI.Validation.ObjectValidation (prevalidateObject)
 import           RPKI.Validation.Types
 import           RPKI.Validation.TopDown
                 ( TroubledChildLoadPath (..)
+                , manifestValidityPeriod
                 , resolveTroubledChildByKey
                 , revokedShortcutChildren
                 )
@@ -48,7 +49,8 @@ topDownRegressionGroup =
     testGroup "TopDown regressions"
         [ HU.testCase "Resolves troubled child key from well-structured object" shouldResolveTroubledFromWellStructured
         , HU.testCase "Resolves troubled child key from original object" shouldResolveTroubledFromOriginal
-        , HU.testCase "Replaces revoked shortcut children with troubled entries" shouldReplaceRevokedShortcutChildren        
+        , HU.testCase "Replaces revoked shortcut children with troubled entries" shouldReplaceRevokedShortcutChildren
+        , HU.testCase "Bounds manifest validity by thisUpdate and nextUpdate" shouldBoundManifestValidityByUpdateTimes
         ]
 
 
@@ -169,6 +171,38 @@ shouldReplaceRevokedShortcutChildren = do
     HU.assertEqual "Nothing may be revoked by a CRL that lists none of these serials"
         []
         (revokedShortcutChildren mftShortcut (testCrl [Serial 999]) mftChildren)
+
+
+-- | A manifest can be used only while its EE certificate is valid and the
+-- manifest is current, whichever ends first. Manifest shortcuts used to take
+-- only the EE certificate's validity, so the fast path accepted a manifest past
+-- its nextUpdate when its EE certificate lived longer.
+shouldBoundManifestValidityByUpdateTimes :: HU.Assertion
+shouldBoundManifestValidityByUpdateTimes = do
+    (Right (_, _, parsedObject), _) <- runValidatorIO (newScopes "fixture-mft") $ readFixtureObject fixturePath
+    (Right wellStructured, _) <- runValidatorIO (newScopes "prevalidate-mft") $ prevalidateObject parsedObject
+    mft <- case wellStructured of
+                MftRO m -> pure m
+                other   -> HU.assertFailure $ "Expected a manifest, got: " <> show other
+
+    let ValidityPeriod eeNotBefore eeNotAfter = getValidityPeriod mft
+    let withUpdateTimes thisTime nextTime =
+            mft & #content . #thisTime .~ thisTime
+                & #content . #nextTime .~ nextTime
+
+    -- Current for a shorter time than the EE certificate is valid
+    let current = ValidityPeriod (shift eeNotBefore hour) (shift eeNotAfter (-hour))
+    HU.assertEqual "thisUpdate and nextUpdate must bound the period"
+        current
+        (manifestValidityPeriod $ withUpdateTimes current.notBefore current.notAfter)
+
+    -- The EE certificate is valid for a shorter time than the manifest is current
+    HU.assertEqual "The EE certificate's validity must bound the period"
+        (ValidityPeriod eeNotBefore eeNotAfter)
+        (manifestValidityPeriod $ withUpdateTimes (shift eeNotBefore (-hour)) (shift eeNotAfter hour))
+  where
+    hour = 3600
+    shift (Instant t) seconds = Instant (t + seconds * nanosPerSecond)
 
 
 objectKey :: Int64 -> ObjectKey

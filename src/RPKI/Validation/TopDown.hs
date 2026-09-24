@@ -13,7 +13,8 @@ module RPKI.Validation.TopDown (
     refreshTaCertificate,
     TroubledChildLoadPath(..),
     resolveTroubledChildByKey,
-    revokedShortcutChildren
+    revokedShortcutChildren,
+    manifestValidityPeriod
 )
 where
 
@@ -774,15 +775,23 @@ validateCaNoFetch
                     pure $! processMfts aki mftMetas
 
                 Just meta -> do
+                    -- Shortcuts stored before `manifestValidityPeriod` only carry
+                    -- the validity of the manifest's EE certificate. A manifest
+                    -- that's past its nextUpdate stays unchanged, and so does its
+                    -- shortcut, so the manifest's own nextUpdate is checked here.
+                    let shortcutMftNextUpdate =
+                            (.nextTime) <$> List.find ((== meta.key) . (.key)) mftMetas
                     let shortcutExpired =
                             not (isWithinValidityPeriod now meta) ||
-                            not (isWithinValidityPeriod now meta.crlShortcut)
+                            not (isWithinValidityPeriod now meta.crlShortcut) ||
+                            maybe False (< unNow now) shortcutMftNextUpdate
 
                     if shortcutExpired then do
                         increment topDownCounters.originalMft
                         pure $! processMfts aki mftMetas
                     else do
                         markAsUsed topDownContext meta.key
+                        for_ shortcutMftNextUpdate $ rememberNotValidAfter topDownContext
                         increment topDownCounters.shortcutMft
                         action <- case mftsNotInFuture mftMetas of
                             [] -> vError $ NoMFT aki
@@ -908,7 +917,7 @@ validateCaNoFetch
             validMft <- validateMft (config ^. #validationConfig . typed) 
                                     now mft (fullCa ^. #payload) validCrl verifiedResources
 
-            let ValidityPeriod { notAfter = mftNotAfter } = getValidityPeriod mft
+            let ValidityPeriod { notAfter = mftNotAfter } = manifestValidityPeriod mft
             rememberNotValidAfter topDownContext mftNotAfter
             rememberCrlNextUpdate topDownContext validCrl
 
@@ -1765,8 +1774,8 @@ makeMftShortcut :: ObjectKey
 makeMftShortcut key 
     (Validated mftObject) (Map.fromList -> nonCrlEntries) 
     (Keyed (Validated validCrl) crlKey) = 
-  let 
-    ValidityPeriod {..} = getValidityPeriod mftObject        
+  let
+    ValidityPeriod {..} = manifestValidityPeriod mftObject
     serial = getSerial mftObject
     manifestNumber = mftObject.content.mftNumber
     crlShortcut = let 
@@ -1776,7 +1785,18 @@ makeMftShortcut key
             notBefore = thisUpdateTime,
             notAfter = nextUpdateTime
         }            
-    in MftShortcut { .. }  
+    in MftShortcut { .. }
+
+
+-- | The period in which a manifest can be used: its EE certificate has to be
+-- valid and the manifest itself has to be current, i.e. between thisUpdate and
+-- nextUpdate (https://www.rfc-editor.org/rfc/rfc9286.html#section-6.3).
+-- `getValidityPeriod` of a manifest is only the EE certificate's.
+manifestValidityPeriod :: WellStructuredMft -> ValidityPeriod
+manifestValidityPeriod mft =
+    let ValidityPeriod eeNotBefore eeNotAfter = getValidityPeriod mft
+        Manifest { thisTime, nextTime } = mft.content
+    in ValidityPeriod (max eeNotBefore thisTime) (min eeNotAfter nextTime)
 
 
 -- Same as vFocusOn but it checks that there are no duplicates in the scope focuses, 
