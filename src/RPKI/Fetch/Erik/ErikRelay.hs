@@ -4,7 +4,7 @@ module RPKI.Fetch.Erik.ErikRelay where
 
 import           Effectful.Concurrent (Concurrent)
 import           Effectful
-import           GHC.Conc                         (getNumCapabilities, setNumCapabilities)
+import           GHC.Conc                         (getNumCapabilities)
 import           Effectful.Error.Static           (catchError, rethrowError)
 import           Control.Concurrent.MVar          (MVar, newMVar, withMVar)
 import           Control.Concurrent.STM           (readTVarIO)
@@ -37,6 +37,7 @@ import           RPKI.AppMonad
 import           RPKI.AppMonadUtil
 import           RPKI.AppTypes
 import           RPKI.Config
+import           RPKI.Cpu                        (useAvailableCpus)
 import           RPKI.Domain
 import           RPKI.Parse.Parse
 import           RPKI.Reporting
@@ -200,15 +201,16 @@ fetchErik
             <$> Timeout.timeout (fromIntegral s * 1_000_000) download
 
     -- Raise the capability count from the 1 the worker started with, but only
-    -- when there is enough independent work to use it.
+    -- when there is enough independent work to use it, and not above the cores
+    -- available (see `useAvailableCpus`).
     scaleUpCapabilities partitionCount = do
-        let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
-        let wanted = max 1 $ min maxCpuAvailable partitionCount
+        let configured = config ^. typed @Parallelism . #cpuCount
+            wanted     = max 1 $ min configured (fromIntegral partitionCount)
         current <- liftIO getNumCapabilities
-        when (wanted > current) $ do
-            liftIO $ setNumCapabilities wanted
+        when (fromIntegral wanted > current) $ do
+            cpus <- liftIO $ useAvailableCpus wanted
             logDebug logger
-                [i|Erik worker for #{fqdn_}: #{partitionCount} partition(s), raising -N from #{current} to #{wanted}.|]
+                [i|Erik worker for #{fqdn_}: #{partitionCount} partition(s), raising -N from #{current} to #{cpus}.|]
 
     doFetch relays =
         withDir indexDir $ \_ ->
@@ -226,13 +228,13 @@ fetchErik
 
                 liftIO $ createDirectoryIfMissing True partitionDir
 
-                pool <- newWorkPool
+                queue <- newWorkQueue
 
                 -- The one query that starts everything: which of the partitions
                 -- this index names do we already have?
                 cached <- DB.roTxT database $ \tx ->
                             DB.existingErikPartitions tx [ ref.hash | ref <- partitionList ]
-                enqueue pool
+                enqueue queue
                     [ (workHash w, w)
                     | ref <- partitionList
                     , let w = if ref.hash `Set.member` cached
@@ -242,10 +244,10 @@ fetchErik
                 bracketVT
                     (openBinaryFile preparedObjectsFile WriteMode >>= newMVar)
                     (\spill -> liftIO $ withMVar spill hClose)
-                    (\spill -> runRelayWorkers logger relays pool (processWork spill indexScope))
+                    (\spill -> runRelayWorkers logger relays queue (processWork spill indexScope))
 
-                failures <- poolFailures pool
-                done     <- poolSucceeded pool
+                failures <- queueFailures queue
+                done     <- queueSucceeded queue
                 logDebug logger [i|Finished fetching Erik relay #{indexDir} for #{fqdn_}: #{done} item(s), #{length failures} failure(s).|]
 
                 -- Per-relay query counts, so the spread across relays and the

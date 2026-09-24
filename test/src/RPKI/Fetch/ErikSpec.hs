@@ -76,14 +76,14 @@ erikSpillSpec = testGroup "Erik spill file" [
             in spillRecords file == records
     ]
 
-{- Tests for the Erik work pool.
+{- Tests for the Erik work queue.
 
-   These use the pool directly with synthetic work rather than a relay, since
+   These use the queue directly with synthetic work rather than a relay, since
    what is worth pinning down is the concurrency contract: it drains, it stops,
    it deduplicates, and a relay that refuses an item does not lose it.
 -}
 relayPoolSpec :: TestTree
-relayPoolSpec = testGroup "Erik relay work pool" [
+relayPoolSpec = testGroup "Erik relay work queue" [
         poolTestCase "Drains a tree of work and deduplicates by hash" testPoolDrains,
         poolTestCase "Falls back to a relay that answers" testPoolFallsBack,
         poolTestCase "Gives up on an item no relay can serve" testPoolGivesUp,
@@ -95,7 +95,7 @@ relayPoolSpec = testGroup "Erik relay work pool" [
 
 {- | A test case with a deadline.
 
-     A bug in the termination or eligibility rule shows up as a pool that never
+     A bug in the termination or eligibility rule shows up as a queue that never
      returns, and a hung test that fails is worth something where a hung test
      suite is not.
 -}
@@ -103,7 +103,7 @@ poolTestCase :: String -> HU.Assertion -> TestTree
 poolTestCase name assertion = HU.testCase name $
     Timeout.timeout 30_000_000 assertion >>= \case
         Just () -> pure ()
-        Nothing -> HU.assertFailure "timed out: the work pool did not terminate"
+        Nothing -> HU.assertFailure "timed out: the work queue did not terminate"
 
 -- | Work items are plain ints; the hash is derived from the int, so "same item"
 -- and "same hash" coincide the way they do for content-addressed objects.
@@ -117,14 +117,14 @@ runPool :: AppLogger
         -> [URI]
         -> [Int]
         -> (forall es. ValidatorIO es => URI -> Int -> Eff es [(Hash, Int)])
-        -> IO (Either AppError (), WorkPool Int, Relays, ValidationState)
+        -> IO (Either AppError (), WorkQueue Int, Relays, ValidationState)
 runPool logger uris initial process = do
     relays <- newRelays 3 uris
-    pool   <- newWorkPool
-    enqueue pool [ (intHash n, n) | n <- initial ]
+    queue  <- newWorkQueue
+    enqueue queue [ (intHash n, n) | n <- initial ]
     (r, vs) <- runValidatorIO (newScopes "pool-test") $
-                runRelayWorkers logger relays pool process
-    pure (r, pool, relays, vs)
+                runRelayWorkers logger relays queue process
+    pure (r, queue, relays, vs)
 
 -- | (errors, warnings) recorded anywhere in a validation state.
 issueCounts :: ValidationState -> (Int, Int)
@@ -145,7 +145,7 @@ testPoolDrains =
                 | n < 10    = [20, 21, 22, 23]   -- both roots point at the same children
                 | n < 30    = [100 + n]
                 | otherwise = []
-        (r, pool, _, _) <- runPool logger [URI "https://a", URI "https://b"] [1, 2] $ \_ n -> do
+        (r, queue, _, _) <- runPool logger [URI "https://a", URI "https://b"] [1, 2] $ \_ n -> do
             liftIO $ atomically $ modifyTVar' seen (n :)
             pure [ (intHash c, c) | c <- children n ]
 
@@ -154,7 +154,7 @@ testPoolDrains =
         let expected = [1, 2] <> [20, 21, 22, 23] <> [120, 121, 122, 123]
         HU.assertEqual "every item processed exactly once"
             (List.sort expected) (List.sort processed)
-        failures <- poolFailures pool
+        failures <- queueFailures queue
         HU.assertEqual "no failures" [] (map fst failures)
 
 -- | The first relay refuses everything; the second answers. Nothing may be lost.
@@ -163,7 +163,7 @@ testPoolFallsBack =
     withQuietLogger $ \logger -> do
         let deadUri = URI "https://dead"
         seen <- newTVarIO ([] :: [Int])
-        (r, pool, _, vs) <- runPool logger [deadUri, URI "https://alive"] [1 .. 20] $ \uri n ->
+        (r, queue, _, vs) <- runPool logger [deadUri, URI "https://alive"] [1 .. 20] $ \uri n ->
             if uri == deadUri
                 then appError $ ErikE $ UnknownErikProblem "nope"
                 else do
@@ -174,7 +174,7 @@ testPoolFallsBack =
         processed <- readTVarIO seen
         HU.assertEqual "every item served by the live relay"
             [1 .. 20] (List.sort processed)
-        failures <- poolFailures pool
+        failures <- queueFailures queue
         HU.assertEqual "no item counted as failed" [] (map fst failures)
         -- The dead relay's refusals are worth seeing, but every item was served
         -- in the end, so none of them may show up as an error.
@@ -182,12 +182,12 @@ testPoolFallsBack =
             0 (fst $ issueCounts vs)
 
 -- | One poisoned item that no relay can serve must end up in `failures` without
--- stalling the pool or taking the other items down with it.
+-- stalling the queue or taking the other items down with it.
 testPoolGivesUp :: HU.Assertion
 testPoolGivesUp =
     withQuietLogger $ \logger -> do
         seen <- newTVarIO ([] :: [Int])
-        (r, pool, _, vs) <- runPool logger [URI "https://a", URI "https://b"] [1 .. 10] $ \_ n ->
+        (r, queue, _, vs) <- runPool logger [URI "https://a", URI "https://b"] [1 .. 10] $ \_ n ->
             if n == 7
                 then appError $ ErikE $ UnknownErikProblem "poisoned"
                 else do
@@ -198,7 +198,7 @@ testPoolGivesUp =
         processed <- readTVarIO seen
         HU.assertEqual "everything except the poisoned item went through"
             ([1 .. 6] <> [8 .. 10]) (List.sort processed)
-        failures <- poolFailures pool
+        failures <- queueFailures queue
         HU.assertEqual "the poisoned item is reported once"
             [intHash 7] (map fst failures)
         -- Tried on both relays: the first refusal is a warning, only the last
@@ -216,7 +216,7 @@ testPoolBenchesRelay =
     withQuietLogger $ \logger -> do
         let deadUri = URI "https://dead"
         seen <- newTVarIO ([] :: [Int])
-        (r, pool, relays, _) <- runPool logger [deadUri, URI "https://alive"] [1 .. 50] $ \uri n ->
+        (r, queue, relays, _) <- runPool logger [deadUri, URI "https://alive"] [1 .. 50] $ \uri n ->
             if uri == deadUri
                 then appError $ ErikE $ UnknownErikProblem "nope"
                 else do
@@ -227,7 +227,7 @@ testPoolBenchesRelay =
         processed <- readTVarIO seen
         HU.assertEqual "nothing is stranded on the benched relay"
             [1 .. 50] (List.sort processed)
-        failures <- poolFailures pool
+        failures <- queueFailures queue
         HU.assertEqual "no item counted as failed" [] (map fst failures)
 
         -- The point of benching: the dead relay is taken out of rotation rather
@@ -246,7 +246,7 @@ testPoolBenchesRelay =
 
 {- The index fetch is the first thing a fetch does and the last cheap chance to
    notice a relay is unusable. A relay that fails it must be out of rotation
-   before the work pool starts, or every one of its threads pays the same
+   before the work queue starts, or every one of its threads pays the same
    connect timeout over again to learn the same thing.
 -}
 testIndexFailureBenches :: HU.Assertion
