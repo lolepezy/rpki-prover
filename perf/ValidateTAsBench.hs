@@ -20,17 +20,22 @@
 -- data instead of a cold, empty cache.
 --
 -- Usage:
---   cabal run validate-tas-bench -- [benchRoot] [repeats]
+--   cabal run validate-tas-bench -- [benchRoot] [repeats] [--now=UNIX_SECONDS]
 --   cabal run validate-tas-bench -- /path/to/bench-root 3 +RTS -N8 -RTS
+--
+-- `--now` validates as of that moment instead of the current one, so that
+-- runs over a copy of a cache see the same objects valid or expired and
+-- their results can be compared.
 module Main where
 
 import           Control.Concurrent.STM  (newTVarIO)
 import           Control.Lens            ((&), (.~), (^.))
-import           Control.Monad           (forM, forM_, unless)
+import           Control.Monad           (forM, forM_, unless, (<=<))
 
 import qualified Data.ByteString.Lazy     as LBS
 import           Data.Either              (rights)
 import           Data.Int                 (Int64)
+import           Data.Maybe               (listToMaybe)
 import qualified Data.List                as List
 import qualified Data.Map.Strict          as Map
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
@@ -59,7 +64,7 @@ import           RPKI.Fetch.Http         (downloadToFile)
 import           RPKI.Reporting          (Validations (..), MetricMap (..))
 import           RPKI.Store.AppSqliteStorage
 import           RPKI.TAL                (TAL, getTaName, parseTAL)
-import           RPKI.Time               (thisInstant, unNow, TimeMs (..))
+import           RPKI.Time               (Instant (..), thisInstant, unNow, TimeMs (..))
 import           RPKI.Util               (convert, parseRsyncURL)
 import           RPKI.Validation.TopDown (TopDownResult (..), validateMutlipleTAs)
 
@@ -77,8 +82,11 @@ defaultRepeats = 3
 
 main :: IO ()
 main = do
-    args <- getArgs
-    let (benchRoot, repeats) = case args of
+    (flags, args) <- List.partition ("--" `List.isPrefixOf`) <$> getArgs
+    let fixedNow = listToMaybe
+            [ Instant (seconds * 1_000_000_000)
+            | Just seconds <- map (readMaybe <=< List.stripPrefix "--now=") flags ]
+        (benchRoot, repeats) = case args of
             []          -> (defaultBenchRoot, defaultRepeats)
             [r]         -> (r, defaultRepeats)
             (r : n : _) -> (r, maybe defaultRepeats id (readMaybe n))
@@ -133,7 +141,7 @@ main = do
         printf "repeats: %d\n\n" repeats
 
         forM_ [1 .. repeats] $ \i ->
-            runIteration i appContext tals
+            runIteration i appContext fixedNow tals
   where
     readMaybe s = case reads s of
         [(n, "")] -> Just n
@@ -160,9 +168,9 @@ ensureTals logger talDir =
     dropTalExtension f = take (length f - 4) f
 
 
-runIteration :: Int -> AppContext SqliteBackend -> [TAL] -> IO ()
-runIteration i appContext tals = do
-    now <- unNow <$> thisInstant
+runIteration :: Int -> AppContext SqliteBackend -> Maybe Instant -> [TAL] -> IO ()
+runIteration i appContext fixedNow tals = do
+    now <- maybe (unNow <$> thisInstant) pure fixedNow
     let worldVersion = instantToVersion now
 
     statsEnabled <- getRTSStatsEnabled

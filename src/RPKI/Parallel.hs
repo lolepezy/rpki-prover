@@ -231,11 +231,12 @@ withWorkers pool caps f =
 
 submitTask :: WorkPool -> IO a -> IO (PoolTask a)
 submitTask WorkPool {..} action = do
-    taken  <- newIORef False
     result <- newEmptyMVar
-    let runIfNotTaken = do
-            won <- atomicModifyIORef' taken (\t -> (True, not t))
-            when won $ UIO.tryAny action >>= putMVar result
+    -- Emptied by whoever takes the task. A task stays in the queue until
+    -- a worker gets to it, even when it's been run by whoever waited for it,
+    -- and the queue shouldn't keep the action and its result all that time.
+    toRun  <- newIORef $ Just $ UIO.tryAny action >>= putMVar result
+    let runIfNotTaken = atomicModifyIORef' toRun (Nothing, ) >>= sequence_
     atomicModifyIORef' queue $ \q -> (q Seq.|> runIfNotTaken, ())
     signalQSem available
     pure PoolTask {..}
@@ -258,14 +259,15 @@ waitTask PoolTask {..} = readMVar result
 pollTask :: PoolTask a -> IO (Maybe (Either SomeException a))
 pollTask PoolTask {..} = tryReadMVar result
 
--- | The oldest task: the ones submitted early are likely to be the biggest
--- (a CA higher up in the tree), best to be taken by a worker with nothing to do.
+-- | The newest task. Taking the oldest, CAs higher up in the tree, goes 
+-- through the tree breadth first, with more of it in progress at once: ~20%
+-- more live data in a first validation of all five RIRs, and no faster.
 takeQueued :: WorkPool -> IO (Maybe (IO ()))
 takeQueued WorkPool {..} =
     atomicModifyIORef' queue $ \q ->
-        case Seq.viewl q of
-            Seq.EmptyL    -> (q, Nothing)
-            t Seq.:< rest -> (rest, Just t)
+        case Seq.viewr q of
+            Seq.EmptyR    -> (q, Nothing)
+            rest Seq.:> t -> (rest, Just t)
 
 -- | `forM` for a task of the pool. The items that `isHeavy` picks are tasks of
 -- their own, the others go in tasks of `chunkSize` items. With just one task
@@ -287,8 +289,8 @@ forInPool pool chunkSize isHeavy items f =
                 tasks <- forM units $ \unit ->
                     submitTask pool $ forM unit $ \(i, x) -> (i, ) <$> unlift (f x)
 
-                -- Newest first: this thread goes through the light chunks while
-                -- idle workers take the heavy ones, submitted first.
+                -- Newest first, the way workers take them too, so that child
+                -- CAs, submitted first, are started last.
                 results <- reverse <$> mapM (awaitTask pool) (reverse tasks)
                 case sequence results of
                     Left e   -> IOExc.throwIO e
