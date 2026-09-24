@@ -492,7 +492,7 @@ saveSnapshot
 
                 -- Encode/compress the object here, on the parsing (async) thread,
                 -- so the single-threaded DB-writer only has to do the INSERT.
-                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
+                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle)) (Just $ Size $ fromIntegral $ BS.length blob)
 
     saveStorable _ (Left (e, uri)) =
         inSubLocationScope uri $ appWarn e
@@ -521,13 +521,13 @@ saveSnapshot
                         inSubLocationScope uri $ 
                             appWarn $ RrdpE $ RrdpUnsupportedObjectType $ U.convert rpkiUrl                   
 
-                    SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
+                    SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } size -> do
                         case lifecycle of
                             OriginalRO _ vs _ _ -> do
                                 logError logger [i|Object #{rpkiUrl} failed parse/prevalidation, storing original.|]
                                 embedState vs
                             WellStructuredRO _ -> pure ()
-                        key <- DB.saveStorableObject tx so worldVersion
+                        key <- DB.saveStorableObject tx so size worldVersion
                         DB.linkObjectToUrl tx rpkiUrl key worldVersion
                         addedObject $ Just $ getRpkiObjectType lifecycle
 
@@ -647,7 +647,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
 
                 -- Encode/compress the object here, on the parsing (async) thread,
                 -- so the single-threaded DB-writer only has to do the INSERT.
-                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
+                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle)) (Just $ Size $ fromIntegral $ BS.length blob)
 
     saveStorable tx r =
         case r of
@@ -685,11 +685,11 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 inSubLocationScope (getURL rpkiUrl) $ appWarn e
                 let validationScope = newScopes $ unURI $ getURL rpkiUrl
                 let validationState = ValidationState (mError (validationScope ^. typed) e) mempty mempty
-                key <- DB.saveObject tx (OriginalRO original validationState hash objectMeta.objectType) worldVersion
+                key <- DB.saveObject tx (OriginalRO original validationState hash objectMeta.objectType) Nothing worldVersion
                 DB.linkObjectToUrl tx rpkiUrl key worldVersion
                 logDebug logger [i||Added original object #{rpkiUrl} with hash #{hash} to the database.|]
 
-            SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
+            SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } size -> do
                 let newHash = getHash lifecycle
                 newOneIsAlreadyThere <- DB.hashExists tx newHash
                 unless newOneIsAlreadyThere $ do
@@ -698,7 +698,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                             logError logger [i|Object #{rpkiUrl} failed parse/prevalidation.|]
                             embedState vs
                         WellStructuredRO _ -> pure ()
-                    key <- DB.saveStorableObject tx so worldVersion
+                    key <- DB.saveStorableObject tx so size worldVersion
                     addedObject $ Just $ getRpkiObjectType lifecycle
                     DB.linkObjectToUrl tx rpkiUrl key worldVersion
 
@@ -733,10 +733,10 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 validateOldHash
                 let validationScope = newScopes $ unURI $ getURL rpkiUrl
                 let validationState = ValidationState (mError (validationScope ^. typed) e) mempty mempty
-                key <- DB.saveObject tx (OriginalRO original validationState hash objectMeta.objectType) worldVersion
+                key <- DB.saveObject tx (OriginalRO original validationState hash objectMeta.objectType) Nothing worldVersion
                 DB.linkObjectToUrl tx rpkiUrl key worldVersion
 
-            SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
+            SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } size -> do
                 validateOldHash
                 let newHash = getHash lifecycle
                 newOneIsAlreadyThere <- DB.hashExists tx newHash
@@ -747,7 +747,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                             embedState vs
                         WellStructuredRO _ -> pure ()
 
-                    key <- DB.saveStorableObject tx so worldVersion
+                    key <- DB.saveStorableObject tx so size worldVersion
                     DB.linkObjectToUrl tx rpkiUrl key worldVersion
                     addedObject $ Just $ getRpkiObjectType lifecycle
 
@@ -771,7 +771,7 @@ data RrdpObjectProcessingResult =
         | HashExists RpkiURL Hash ObjectKey
         | UknownObjectType RpkiURL    
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
-        | SaveObject RpkiURL (StorableObject (Compressed RpkiObjectLifecycle))
+        | SaveObject RpkiURL (StorableObject (Compressed RpkiObjectLifecycle)) (Maybe Size)
     deriving stock (Show, Eq, Generic)
 
 data DeltaOp a = Delete URI Hash 

@@ -92,6 +92,10 @@ data PreparedObject = PreparedObject {
         payload    :: BS.ByteString,
         -- | Raw bytes, only for an object that did not make it to well-structured.
         original   :: Maybe BS.ByteString,
+        -- | Size of the object's DER, when it's known.
+        size       :: Maybe Size,
+        -- | The object's effective validity period, `Nothing` for one that isn't parsed.
+        validity   :: Maybe ValidityPeriod,
         indexEntry :: Maybe ObjectIndexEntry
     }
     deriving stock (Show, Eq, Generic)
@@ -99,8 +103,9 @@ data PreparedObject = PreparedObject {
 
 data ObjectIndexEntry
     = CertificateIndex SKI (Maybe AKI)
-    -- | The rest of 'MftMeta', which also needs the object key the INSERT assigns.
-    | ManifestIndex AKI Serial Instant Instant
+    -- | The rest of 'MftMeta', which also needs the object key the INSERT assigns,
+    -- and the value of the EE certificate's SIA extension.
+    | ManifestIndex AKI Serial Instant Instant (Maybe BS.ByteString)
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary, NFData)
 

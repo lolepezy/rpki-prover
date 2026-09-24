@@ -24,6 +24,9 @@ import           Data.Ord                          (Down(..))
 import           Data.Hourglass                    (Seconds(..))
 
 import           Database.SQLite.Simple            (Only(..))
+import           Data.ASN1.Encoding                (decodeASN1')
+import           Data.ASN1.BinaryEncoding          (DER(..))
+import qualified Data.ASN1.Types                   as ASN1
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit                  as HU
@@ -85,6 +88,8 @@ objectStoreGroup = testGroup "Object storage test"
         shouldNotCountTaCertificatesAsMultiLocation
     , dbTestCase "Should keep CA and payload shortcut children in their own tables"
         shouldKeepShortcutChildrenInTheirTables
+    , dbTestCase "Should store the size, validity window and EE SIA of a manifest"
+        shouldStoreWhatCcrNeedsOfManifest
     ]
 
 erikStoreGroup :: TestTree
@@ -323,6 +328,7 @@ storeAt db obj version = rwTx db $ \tx ->
                     mempty
                     (getHash obj)
                     (getRpkiObjectType obj))
+        Nothing
         version
 
 -- | Issue #300: an object that moved between repositories used to keep both
@@ -411,6 +417,41 @@ shouldNotCountTaCertificatesAsMultiLocation io = do
     multi <- roTx db $ \tx -> DB.getMultiLocationShortcutChildren tx
     HU.assertEqual "Only the non-TA object should be reported as multi-located"
         (Set.singleton ordinaryKey) multi
+
+
+-- | What a CCR needs of a manifest is stored when the manifest is saved: the 
+-- size of its DER, its effective validity window and the value of the SIA 
+-- extension of its EE certificate.
+shouldStoreWhatCcrNeedsOfManifest :: IO DB -> HU.Assertion
+shouldStoreWhatCcrNeedsOfManifest io = do
+    db <- io
+    worldVersion <- instantToVersion . unNow <$> thisInstant
+    blob <- BS.readFile "test/data/afrinic_mft1.mft"
+    url <- either (HU.assertFailure . show) pure $ parseRpkiURL "rsync://host/afrinic_mft1.mft"
+    (parsed, _) <- runValidatorIO (newScopes "mft") $ readObject url blob
+    (prevalidated, _) <- runValidatorIO (newScopes "mft") $ prevalidateObject =<< fromEither parsed
+    mft <- case prevalidated of
+                Right (MftRO m) -> pure m
+                other           -> HU.assertFailure $ "Not a manifest: " <> show other
+
+    key <- rwTx db $ \tx -> 
+        DB.saveObject tx (WellStructuredRO (MftRO mft)) (Just $ Size $ fromIntegral $ BS.length blob) worldVersion
+
+    rows <- roTx db $ \(Tx conn) ->
+        SQLite.query conn "SELECT size, not_before, not_after FROM objects WHERE object_key = ?" (Only key)
+    let ValidityPeriod notBefore notAfter = manifestValidityPeriod mft
+    HU.assertEqual "Size and validity window" 
+        [(BS.length blob, toNanoseconds notBefore, toNanoseconds notAfter)] rows
+
+    [Only sia] <- roTx db $ \(Tx conn) ->
+        SQLite.query conn "SELECT ee_sia FROM manifest_meta WHERE object_key = ?" (Only key)
+    case decodeASN1' DER <$> sia of
+        Just (Right [ ASN1.Start ASN1.Sequence, ASN1.Start ASN1.Sequence, 
+                      ASN1.OID [1,3,6,1,5,5,7,48,11], ASN1.Other ASN1.Context 6 uri, 
+                      ASN1.End ASN1.Sequence, ASN1.End ASN1.Sequence ]) ->
+            HU.assertBool "The signed object location is the manifest" (".mft" `BS.isSuffixOf` uri)
+        other -> 
+            HU.assertFailure $ "Not the SIA of a manifest EE certificate: " <> show other
 
 
 -- | CA certificates go to `mft_shortcut_ca_children` together with their 
@@ -517,6 +558,7 @@ shouldMergeObjectLocations io = do
                             mempty
                             (getHash obj)
                             (getRpkiObjectType obj))
+                Nothing
                 (instantToVersion now)
             DB.linkObjectToUrl tx url k (instantToVersion now)
 
@@ -565,8 +607,8 @@ shouldOrderManifests io = do
     worldVersion <- newVersion
 
     rwTx db $ \tx -> do
-        key1 <- DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft1) worldVersion
-        key2 <- DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft2) worldVersion
+        key1 <- DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft1) Nothing worldVersion
+        key2 <- DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft2) Nothing worldVersion
         DB.linkObjectToUrl tx url1 key1 worldVersion
         DB.linkObjectToUrl tx url2 key2 worldVersion
 
@@ -595,6 +637,7 @@ insertMftMetasFor db aki descriptors = do
             ro :: ParsedRpkiObject <- QC.generate QC.arbitrary
             key <- DB.saveObject tx
                 (OriginalRO (ObjectOriginal $ unStorable $ toStorable ro) mempty (getHash ro) (getRpkiObjectType ro))
+                Nothing
                 worldVersion
             let meta = MftMeta {..}
             SQLite.execute conn
@@ -762,8 +805,8 @@ shouldDeduplicateSaveObjectByHash io = do
     threadDelay 10_000
     wv2 <- newVersion
 
-    k1 <- rwTx db $ \tx -> DB.saveObject tx lifecycle wv1
-    k2 <- rwTx db $ \tx -> DB.saveObject tx lifecycle wv2
+    k1 <- rwTx db $ \tx -> DB.saveObject tx lifecycle Nothing wv1
+    k2 <- rwTx db $ \tx -> DB.saveObject tx lifecycle Nothing wv2
 
     HU.assertEqual "Saving the same hash twice must return the same key" k1 k2
 
@@ -796,7 +839,7 @@ shouldIndexCertificateOnSaveObject io = do
     let ro = WellStructuredRO $ CerRO wsCert
 
     key <- rwTx db $ \tx -> do
-        k <- DB.saveObject tx ro wv
+        k <- DB.saveObject tx ro Nothing wv
         DB.linkObjectToUrl tx url k wv
         pure k
 
@@ -832,8 +875,8 @@ shouldReplaceOriginalWithWellStructured io = do
     threadDelay 10_000
     wv2 <- newVersion
 
-    k1 <- rwTx db $ \tx -> DB.saveObject tx original wv1
-    k2 <- rwTx db $ \tx -> DB.saveObject tx (WellStructuredRO $ CerRO wsCert) wv2
+    k1 <- rwTx db $ \tx -> DB.saveObject tx original Nothing wv1
+    k2 <- rwTx db $ \tx -> DB.saveObject tx (WellStructuredRO $ CerRO wsCert) Nothing wv2
     HU.assertEqual "Must reuse the key of the original object" k1 k2
 
     taCert <- roTx db $ \tx -> DB.getTaCertByKey tx k2
@@ -846,7 +889,7 @@ shouldReplaceOriginalWithWellStructured io = do
     HU.assertEqual "Must be marked as inserted by the later version" (Just wv2) (view #insertedBy <$> meta)
 
     -- Saving the original again must not downgrade the object
-    k3 <- rwTx db $ \tx -> DB.saveObject tx original wv2
+    k3 <- rwTx db $ \tx -> DB.saveObject tx original Nothing wv2
     HU.assertEqual "Must reuse the key again" k1 k3
     taCert' <- roTx db $ \tx -> DB.getTaCertByKey tx k3
     HU.assertEqual "Must still be the well-structured certificate" (Just wsCert) taCert'

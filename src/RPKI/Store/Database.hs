@@ -100,6 +100,7 @@ import           Database.SQLite.Simple.QQ (sql)
 import           Database.SQLite.Simple.ToField (ToField)
 import           Data.Bits                (shiftR, (.&.))
 import qualified Data.ByteString       as BS
+import qualified Data.ByteString.Short as BSS
 
 import           RPKI.Domain
 import           RPKI.Reporting
@@ -120,6 +121,7 @@ import           RPKI.Store.Types
 import           RPKI.Validation.Types
 
 import           RPKI.Util                (ifJustM, fmtEx)
+import           RPKI.Parse.Internal.Common (tbsSiaExt)
 import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.AppTypes
@@ -369,6 +371,7 @@ getLocationsByKey (Tx conn) k = liftIO $ do
 saveObject :: MonadIO m
            => Tx 'RW
            -> RpkiObjectLifecycle
+           -> Maybe Size
            -> WorldVersion
            -> m ObjectKey
 saveObject tx lifecycle = saveStorableObject tx (toStorableObject (Compressed lifecycle))
@@ -377,15 +380,19 @@ saveObject tx lifecycle = saveStorableObject tx (toStorableObject (Compressed li
 saveStorableObject :: MonadIO m
                 => Tx 'RW
                 -> StorableObject (Compressed RpkiObjectLifecycle)
+                -> Maybe Size
                 -> WorldVersion
                 -> m ObjectKey
-saveStorableObject tx so = insertPreparedObject tx (prepareObject so)
+saveStorableObject tx so size = insertPreparedObject tx (prepareObject so size)
 
 
 -- | Everything about storing an object that does not need the transaction.
 -- Pure, so a caller can run it on whatever thread did the parsing.
-prepareObject :: StorableObject (Compressed RpkiObjectLifecycle) -> PreparedObject
-prepareObject StorableObject { object = Compressed lifecycle, storable = Storable payload } =
+--
+-- The size of the object's DER is whatever the caller knows, the bytes of an 
+-- unparsed object are here anyway.
+prepareObject :: StorableObject (Compressed RpkiObjectLifecycle) -> Maybe Size -> PreparedObject
+prepareObject StorableObject { object = Compressed lifecycle, storable = Storable payload } knownSize =
     PreparedObject {..}
   where
     hash       = getHash lifecycle
@@ -393,11 +400,18 @@ prepareObject StorableObject { object = Compressed lifecycle, storable = Storabl
     original   = case lifecycle of
                     OriginalRO (ObjectOriginal blob) _ _ _ -> Just blob
                     WellStructuredRO _                     -> Nothing
+    size       = case lifecycle of
+                    OriginalRO (ObjectOriginal blob) _ _ _ -> Just $ Size $ fromIntegral $ BS.length blob
+                    WellStructuredRO _                     -> knownSize
+    validity   = case lifecycle of
+                    OriginalRO {}        -> Nothing
+                    WellStructuredRO ro  -> Just $ effectiveValidityPeriod ro
     indexEntry = case lifecycle of
                     WellStructuredRO (CerRO c)   -> Just $ CertificateIndex (getSKI c) (getAKI c)
                     WellStructuredRO (MftRO mft) ->
                         let Manifest {..} = mft ^. #content
-                        in (\aki_ -> ManifestIndex aki_ mftNumber thisTime nextTime) <$> getAKI mft
+                            sia = tbsSiaExt $ BSS.fromShort $ mft ^. #eeCert . #encoded
+                        in (\aki_ -> ManifestIndex aki_ mftNumber thisTime nextTime sia) <$> getAKI mft
                     _                            -> Nothing
 
 
@@ -415,9 +429,10 @@ insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
         -- Replace the unparsed copy, otherwise the parsed one is never readable.
         ((objectKey, True) : _, Nothing) -> do
             execute conn
-                [sql|UPDATE objects SET type = ?, data = ?, original = NULL, world_version = ?
+                [sql|UPDATE objects SET type = ?, data = ?, original = NULL, world_version = ?,
+                                        not_before = ?, not_after = ?
                      WHERE object_key = ?|]
-                (typ, payload, wv, objectKey)
+                (typ, payload, wv, notBefore, notAfter, objectKey)
             saveIndexes objectKey
             pure objectKey
 
@@ -425,14 +440,17 @@ insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
 
         ([], _) -> do
             [Only objectKey] <- query conn
-                [sql|INSERT INTO objects(hash, type, data, original, world_version)
-                     VALUES (?, ?, ?, ?, ?) RETURNING object_key|]
-                (hash, typ, payload, original, wv)
+                [sql|INSERT INTO objects(hash, type, size, not_before, not_after, data, original, world_version)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING object_key|]
+                ((hash, typ, unSize <$> size, notBefore, notAfter) :. (payload, original, wv))
 
             saveIndexes objectKey
             pure objectKey
   where
     typ = show objectType
+
+    notBefore = toNanoseconds . (.notBefore) <$> validity
+    notAfter  = toNanoseconds . (.notAfter)  <$> validity
 
     saveIndexes objectKey =
         case indexEntry of
@@ -440,15 +458,15 @@ insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
                 execute conn
                     [sql|INSERT OR IGNORE INTO certificates(object_key, ski, aki) VALUES (?, ?, ?)|]
                     (objectKey, ski, aki_)
-            Just (ManifestIndex aki_ mftNumber thisTime nextTime) ->
+            Just (ManifestIndex aki_ mftNumber thisTime nextTime eeSia) ->
                 let meta = MftMeta { key = objectKey, .. }
                     Serial mftNum = mftNumber
                 in execute conn
                     [sql|
-                        INSERT OR IGNORE INTO manifest_meta(object_key, aki, manifest_number, meta)
-                        VALUES (?, ?, ?, ?)
+                        INSERT OR IGNORE INTO manifest_meta(object_key, aki, manifest_number, meta, ee_sia)
+                        VALUES (?, ?, ?, ?, ?)
                     |]
-                    (objectKey, aki_, serialToBlob mftNum, serialiseField meta)
+                    (objectKey, aki_, serialToBlob mftNum, serialiseField meta, eeSia)
             Nothing -> pure ()
 
 

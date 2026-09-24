@@ -40,7 +40,6 @@ import           RPKI.Validation.ObjectValidation (prevalidateObject)
 import           RPKI.Validation.Types
 import           RPKI.Validation.TopDown
                 ( TroubledChildLoadPath (..)
-                , manifestValidityPeriod
                 , resolveTroubledChildByKey
                 , revokedShortcutChildren
                 )
@@ -110,7 +109,7 @@ shouldResolveTroubledFromOriginal =
 storeLifecycle :: DB -> WorldVersion -> RpkiObjectLifecycle -> RpkiURL -> IO ObjectKey
 storeLifecycle db worldVersion lifecycle url =
     DB.rwTx db $ \tx -> do
-        key <- DB.saveObject tx lifecycle worldVersion
+        key <- DB.saveObject tx lifecycle Nothing worldVersion
         DB.linkObjectToUrl tx url key worldVersion
         pure key
 

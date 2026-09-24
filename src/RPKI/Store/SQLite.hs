@@ -345,6 +345,14 @@ schemaDDL =
             object_key    INTEGER PRIMARY KEY,
             hash          BLOB    NOT NULL UNIQUE,
             type          TEXT    NOT NULL,
+            -- Size of the object's DER, NULL when it wasn't known when saving it
+            size          INTEGER,
+            -- The object's effective validity period in nanoseconds since the epoch, 
+            -- NULL for an object that isn't parsed. These are before the blobs on 
+            -- purpose: a column after a blob that spills onto overflow pages can 
+            -- cost reading those pages.
+            not_before    INTEGER,
+            not_after     INTEGER,
             data          BLOB,
             original      BLOB,
             world_version INTEGER NOT NULL,
@@ -380,7 +388,9 @@ schemaDDL =
             object_key      INTEGER NOT NULL PRIMARY KEY REFERENCES objects(object_key) ON DELETE CASCADE,
             aki             BLOB    NOT NULL,
             manifest_number BLOB    NOT NULL,
-            meta            BLOB    NOT NULL
+            meta            BLOB    NOT NULL,
+            -- Value of the EE certificate's SIA extension, DER of SEQUENCE OF AccessDescription
+            ee_sia          BLOB
         )
       |]
     , "CREATE INDEX IF NOT EXISTS idx_mft_aki ON manifest_meta(aki)"

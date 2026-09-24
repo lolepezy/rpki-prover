@@ -423,7 +423,7 @@ fetchErik
                 (mft, ms) <- timedMS $ vFocusOn LocationFocus manifestUri $ do
                     bytes <- downloadObject manifestUri hash size
                     parseAndPrevalidate MFT hash bytes Nothing >>= \case
-                        (Right (MftRO mft), lifecycle) -> mft <$ prepareForStorage spill hash lifecycle
+                        (Right (MftRO mft), lifecycle) -> mft <$ prepareForStorage spill hash bytes lifecycle
                         (Right _, _) -> appError $ ErikE $ UnknownErikProblem
                                             [i|Manifest #{U.hashAsBase64Url hash} parsed as something else.|]
                         (Left e, _)  -> appError e
@@ -440,7 +440,7 @@ fetchErik
                         Just type_ -> do
                             bytes          <- downloadObject childUri hash maxChildSize
                             (_, lifecycle) <- parseAndPrevalidate type_ hash bytes Nothing
-                            prepareForStorage spill hash lifecycle
+                            prepareForStorage spill hash bytes lifecycle
 
             -- | Which of these manifest entries are not in the store yet, in one
             -- query for the whole manifest (or for a whole partition's worth of
@@ -474,14 +474,15 @@ fetchErik
        worker should hold, and to one file rather than one per object, so it
        is a buffered write and not a round of syscalls.
     -}
-    prepareForStorage :: ValidatorIO es' => MVar Handle -> Hash -> RpkiObjectLifecycle -> Eff es' ()
-    prepareForStorage spill hash lifecycle = do
+    prepareForStorage :: ValidatorIO es' => MVar Handle -> Hash -> BS.ByteString -> RpkiObjectLifecycle -> Eff es' ()
+    prepareForStorage spill hash bytes lifecycle = do
         case lifecycle of
             OriginalRO _ vs _ _ -> do
                 logError logger [i|Object #{U.hashAsBase64Url hash} failed parse/prevalidation.|]
                 embedState vs
             WellStructuredRO _ -> pure ()
-        let !record = serialise_ $ DB.prepareObject $ toStorableObject $ Compressed lifecycle
+        let !record = serialise_ $ DB.prepareObject (toStorableObject $ Compressed lifecycle) 
+                                                    (Just $ Size $ fromIntegral $ BS.length bytes)
         liftIO $ withMVar spill $ \h -> do
             BS.hPut h $ encodeLength $ BS.length record
             BS.hPut h record

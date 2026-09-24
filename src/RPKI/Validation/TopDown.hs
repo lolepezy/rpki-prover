@@ -13,8 +13,7 @@ module RPKI.Validation.TopDown (
     refreshTaCertificate,
     TroubledChildLoadPath(..),
     resolveTroubledChildByKey,
-    revokedShortcutChildren,
-    manifestValidityPeriod
+    revokedShortcutChildren
 )
 where
 
@@ -526,7 +525,7 @@ fetchValidateAndStoreTaCert appContext@AppContext {..} tal worldVersion = go
                     Left e         -> appError $ ValidationE e
                     Right ppAccess -> do
                         DB.rwAppTxEx db DB.storageError $ \tx -> do
-                            taCertKey <- DB.saveObject tx (WellStructuredRO (CerRO certToStore)) worldVersion
+                            taCertKey <- DB.saveObject tx (WellStructuredRO (CerRO certToStore)) Nothing worldVersion
                             DB.linkObjectToUrl tx actualUrl taCertKey worldVersion
                             DB.saveTA tx (StorableTA tal taCertKey ppAccess actualUrl)
                         pure changed
@@ -1870,15 +1869,6 @@ makeMftShortcut key
     in MftShortcut { .. }
 
 
--- | The period in which a manifest can be used: its EE certificate has to be
--- valid and the manifest itself has to be current, i.e. between thisUpdate and
--- nextUpdate (https://www.rfc-editor.org/rfc/rfc9286.html#section-6.3).
--- `getValidityPeriod` of a manifest is only the EE certificate's.
-manifestValidityPeriod :: WellStructuredMft -> ValidityPeriod
-manifestValidityPeriod mft =
-    let ValidityPeriod eeNotBefore eeNotAfter = getValidityPeriod mft
-        Manifest { thisTime, nextTime } = mft.content
-    in ValidityPeriod (max eeNotBefore thisTime) (min eeNotAfter nextTime)
 
 
 -- Same as vFocusOn but it checks that there are no duplicates in the scope focuses, 
