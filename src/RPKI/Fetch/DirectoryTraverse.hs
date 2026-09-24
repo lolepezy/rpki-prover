@@ -47,19 +47,12 @@ import           RPKI.Validation.ObjectValidation
 
 
 -- | Recursively traverse a directory and save every parseable object into the
--- storage.
---
--- Both rsync and Erik end up with a tree of RPKI objects on local disk and need
--- exactly the same work done on it; the only thing they differ in is how a file
--- maps back to the URL the object is published at. `restoreUrl` gets the path
--- first and -- for callers that cannot tell from the path alone, i.e. Erik,
--- which names files by hash -- a second chance once the object has been parsed
--- and a URL can be read out of it.
+-- storage. `restoreUrl` maps a file back to the URL the object is published at.
 --
 -- Is not supposed to throw exceptions.
 loadObjectsFromFS :: (ValidatorIO es, Concurrent :> es) => AppContext s
                   -> WorldVersion
-                  -> (FilePath -> Maybe ParsedRpkiObject -> Maybe RsyncURL)
+                  -> (FilePath -> Maybe RsyncURL)
                   -> FilePath
                   -> Eff es ()
 loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
@@ -88,7 +81,7 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                     True  -> traverseDirectory path
                     False ->
                         when (supportedExtension name) $ do
-                            let !uri = restoreUrl path Nothing
+                            let !uri = restoreUrl path
                             s <- lift askScopes
                             a <- lift $ async $ evaluate
                                     =<< runValidator s (readAndParseObject path (RsyncU <$> uri))
@@ -100,9 +93,6 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                 liftIO (getSizeAndContent (config ^. typed) filePath) >>= \case
                     Left e          -> pure $! CantReadFile rpkiURL filePath $ VErr e
                     Right (_, blob) ->
-                        -- The file name is the only thing both callers can rely on:
-                        -- Erik names files by hash, so there is no URL to take the
-                        -- extension from.
                         case nameObjectType (takeFileName filePath) of
                             Just type_ -> do
                                 -- Check if the object is already in the storage
@@ -110,52 +100,14 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                                 let hash = U.sha256s blob
                                 liftIO (roTx db $ \tx -> DB.getObjectKey tx hash) >>= \case
                                     Just key -> pure $! HashExists rpkiURL hash key
-                                    Nothing  -> tryToParse hash blob type_
+                                    Nothing  -> do
+                                        (_, lifecycle) <- parseAndPrevalidate type_ hash blob rpkiURL
+                                        -- Encode/compress the object here, on the parsing
+                                        -- (async) thread, so the single-threaded DB-writer
+                                        -- only has to do the INSERT.
+                                        pure $! SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
                             Nothing ->
                                 pure $! UknownObjectType rpkiURL filePath
-
-              where
-                tryToParse hash blob type_ =
-                    doParse scopes `catchSync` onError scopes
-                  where
-                    scopes =
-                        case rpkiURL of
-                            Just u  -> newScopes' LocationFocus $ getURL u
-                            Nothing -> newScopes' HashFocus hash
-
-                    inObjectScope =
-                        case rpkiURL of
-                            Just u  -> inSubLocationScope (getURL u)
-                            Nothing -> vFocusOn HashFocus hash
-
-                    doParse scopes_ = do
-                        z <- runValidator scopes_ $ do
-                                parsed <- readObjectOfType type_ blob
-                                vro    <- inObjectScope $ prevalidateObject parsed
-                                pure (parsed, vro)
-                        evaluate $!
-                            case z of
-                                (Left _, vs) ->
-                                    mkSaveObject Nothing $ OriginalRO (ObjectOriginal blob) vs hash type_
-                                (Right (parsed, vro), vs)
-                                    | hasValidationErrors vs ->
-                                        mkSaveObject (Just parsed) $ OriginalRO (ObjectOriginal blob) vs hash type_
-                                    | otherwise ->
-                                        mkSaveObject (Just parsed) $ WellStructuredRO vro
-
-                    onError scopes_ e = do
-                        (_, vs) <- runValidator scopes_ $
-                            fromEither @() $ Left $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e
-                        pure $! mkSaveObject Nothing $ OriginalRO (ObjectOriginal blob) vs hash type_
-
-                    -- Encode/compress the object here, on the parsing (async) thread,
-                    -- so the single-threaded DB-writer only has to do the INSERT.
-                    -- The URL is recovered here too, for the same reason: this is the
-                    -- last point at which the parsed object is still in hand.
-                    mkSaveObject parsed lifecycle =
-                        SaveObject
-                            (maybe (RsyncU <$> restoreUrl filePath parsed) Just rpkiURL)
-                            (toStorableObject (Compressed lifecycle))
 
         saveStorable tx (a, _) = do
             (r, vs) <- fromTryM (UnspecifiedE "Something bad happened in loadObjectsFromFS" . U.fmtEx) $ wait a
@@ -193,6 +145,53 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                 case rpkiUrl of
                     Just u  -> inSubLocationScope (getURL u) f
                     Nothing -> vFocusOn TextFocus (U.convert filePath) f
+
+
+{- | Parse and prevalidate one object, and work out what gets stored for it.
+
+     Bytes that do not make a well-structured object are still stored, as
+     'OriginalRO' together with the issues that held them back. The parsed
+     object is returned on its own as well, since it can be there even when
+     prevalidation failed, and a caller may need it regardless: Erik reads a
+     manifest's children from it.
+-}
+parseAndPrevalidate :: IOE :> es
+                    => RpkiObjectType
+                    -> Hash
+                    -> BS.ByteString
+                    -> Maybe RpkiURL
+                    -> Eff es (Either AppError ParsedRpkiObject, RpkiObjectLifecycle)
+parseAndPrevalidate type_ hash blob rpkiURL =
+    doParse `catchSync` onError
+  where
+    scopes =
+        case rpkiURL of
+            Just u  -> newScopes' LocationFocus $ getURL u
+            Nothing -> newScopes' HashFocus hash
+
+    inObjectScope =
+        case rpkiURL of
+            Just u  -> inSubLocationScope (getURL u)
+            Nothing -> vFocusOn HashFocus hash
+
+    doParse =
+        runValidator scopes (readObjectOfType type_ blob) >>= \case
+            (Left e, vs) -> pure (Left e, original vs)
+            (Right parsed, parseVs) -> do
+                (vro, prevalidationVs) <- runValidator scopes $ inObjectScope $ prevalidateObject parsed
+                let vs = parseVs <> prevalidationVs
+                evaluate $!
+                    case vro of
+                        Right wellStructured
+                            | not (hasValidationErrors vs) -> (Right parsed, WellStructuredRO wellStructured)
+                        _                                  -> (Right parsed, original vs)
+
+    onError e = do
+        let err = RsyncE $ RsyncFailedToParseObject $ U.fmtEx e
+        (_, vs) <- runValidator scopes $ fromEither @() $ Left err
+        pure (Left err, original vs)
+
+    original vs = OriginalRO (ObjectOriginal blob) vs hash type_
 
 
 getSizeAndContent :: ValidationConfig -> FilePath -> IO (Either AppError (Integer, BS.ByteString))

@@ -41,7 +41,9 @@ main = defaultMain $ testGroup "All tests" [
         topDownRegressionGroup,
         storableEncodingSpec,
         workerSpec,
-        processMetricsSpec
+        processMetricsSpec,
+        relayPoolSpec,
+        erikSpillSpec
 
         -- erikSpec
     ]  

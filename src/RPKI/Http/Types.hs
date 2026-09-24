@@ -346,14 +346,32 @@ data WorkerInfoDto = WorkerInfoDto {
     }
     deriving stock (Eq, Show, Generic)
 
+{- | What the root process knows about one configured Erik relay.
+
+     'usable' is the verdict a new fetch worker would get, so it is the field
+     that says whether the relay is actually in rotation right now. Note that
+     when /every/ relay is unusable the fetcher tries them all anyway rather
+     than not fetching at all, so all-false does not mean Erik is switched off.
+-}
+data ErikRelayHealthDto = ErikRelayHealthDto {
+        relay               :: Text,
+        usable              :: Bool,
+        consecutiveFailures :: Int,
+        lastFailure         :: Maybe Instant,
+        totalServed         :: Int,
+        totalFailed         :: Int
+    }
+    deriving stock (Eq, Show, Generic)
+
 data SystemDto = SystemDto {
-        proverVersion :: Text,
-        gitInfo       :: Text,
-        config        :: Config,
-        startUpTime   :: Instant,
-        tals          :: [TalDto],
-        resources     :: [ResourcesDto],
-        workers       :: [WorkerInfoDto]
+        proverVersion   :: Text,
+        gitInfo         :: Text,
+        config          :: Config,
+        startUpTime     :: Instant,
+        tals            :: [TalDto],
+        resources       :: [ResourcesDto],
+        workers         :: [WorkerInfoDto],
+        erikRelayHealth :: [ErikRelayHealthDto]
     }
     deriving stock (Eq, Show, Generic)
 
@@ -621,6 +639,8 @@ instance ToJSON JobsDto
 instance ToSchema JobsDto   
 instance ToJSON SystemDto  
 instance ToJSON WorkerInfoDto  
+instance ToJSON ErikRelayHealthDto
+instance ToSchema ErikRelayHealthDto
 instance ToJSON ResourcesDto
 instance ToSchema SystemDto     
 instance ToSchema WorkerInfoDto     

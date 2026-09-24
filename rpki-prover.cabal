@@ -424,3 +424,22 @@ benchmark pipeline-stage-bench
             "-with-rtsopts=-N1 -T"
     build-depends:
             rpki-prover
+
+benchmark erik-fetch-bench
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         ErikFetchBench.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -threaded
+            -rtsopts
+            -O2
+            "-with-rtsopts=-N1 -A4m -AL4m -Fd1 -T"
+    build-depends:
+            rpki-prover
+          , directory
+          , filepath
+          , temporary

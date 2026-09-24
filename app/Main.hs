@@ -661,8 +661,9 @@ data CLIOptions = CLIOptions {
         erikTimeout              :: Maybe Int64,
         erikRefreshInterval      :: Maybe Int64,
         erikRelay                :: [String],
-        erikDownloadParallelism  :: Maybe Natural,
+        erikParallelism          :: Maybe Natural,
         erikRelayParallelism     :: Maybe Natural,
+        erikDownloadTimeout      :: Maybe Int64,
         clientPath          :: Maybe String,
         httpApiPort              :: Maybe Word16,
         withRtr                  :: Bool,
@@ -804,13 +805,19 @@ cliOptionsParser = CLIOptions
             <> help ("URL of an Erik relay server. Can be specified multiple times. "
                   <> "Overrides the default relay list when provided.")))
     <*> optional (option auto
-            (  long "erik-download-parallelism"
+            (  long "erik-parallelism"
             <> metavar "COUNT"
-            <> help "Maximum number of Erik relay downloads in flight across all relays together."))
+            <> help "Maximum concurrent Erik work items and relay downloads per worker."))
     <*> optional (option auto
             (  long "erik-relay-parallelism"
             <> metavar "COUNT"
             <> help "Maximum number of Erik relay downloads in flight against any single relay."))
+    <*> optional (option auto
+            (  long "erik-download-timeout"
+            <> metavar "SECONDS"
+            <> help ("Hard time limit in seconds on every single download from an Erik relay, "
+                  <> "connection included (default: " <> show defErikDownloadTimeout <> "). "
+                  <> "A relay that does not answer within it is treated as failing for that download.")))
     <*> optional (strOption
             (  long "rsync-client-path"
             <> metavar "PATH"
@@ -959,6 +966,7 @@ cliOptionsParser = CLIOptions
     Seconds defRsyncTimeout   = cfg ^. #systemConfig . #rsyncWorkerLimits . #workerTimeout
     Seconds defErikTimeout    = cfg ^. #systemConfig . #erikWorkerLimits . #workerTimeout
     Seconds defErikRefresh    = cfg ^. #erikConf . #erikRefreshInterval
+    Seconds defErikDownloadTimeout = cfg ^. #erikConf . #downloadTimeout
     defHttpApiPort            = cfg ^. #httpApiConf . #port
     defRtrAddress             = rtrCfg ^. #rtrAddress
     defRtrPort                = rtrCfg ^. #rtrPort
@@ -994,8 +1002,9 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#systemConfig . #erikWorkerLimits . #workerTimeout) (Seconds <$> erikTimeout)
         & maybeSet (#erikConf . #erikRefreshInterval) (Seconds <$> erikRefreshInterval)
         & setErikRelays
-        & maybeSet (#erikConf . #downloadParallelism) erikDownloadParallelism
+        & maybeSet (#erikConf . #parallelism) erikParallelism
         & maybeSet (#erikConf . #relayParallelism) erikRelayParallelism
+        & maybeSet (#erikConf . #downloadTimeout) (Seconds <$> erikDownloadTimeout)
         & maybeSet (#validationConfig . #revalidationInterval) (Seconds <$> revalidationInterval)
         & maybeSet (#rrdpConf . #repositoryRefreshInterval) (Seconds <$> rrdpRefreshInterval)
         & maybeSet (#rsyncConf . #repositoryRefreshInterval) (Seconds <$> rsyncRefreshInterval)

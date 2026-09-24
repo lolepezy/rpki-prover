@@ -108,11 +108,17 @@ data RsyncConf = RsyncConf {
 data ErikConf = ErikConf {
         relays               :: [URI],
         maxSize              :: Size,
+        -- | Maximum concurrent Erik work items and relay downloads per worker.
         parallelism          :: Natural,
-        -- | Cap on relay downloads in flight across the whole pool.
-        downloadParallelism  :: Natural,
         -- | Cap on relay downloads in flight against any single relay.
         relayParallelism     :: Natural,
+        -- How many FQDN to Erik-fetch at once.
+        fqdnParallelism      :: Natural,
+        -- | Hard cap on one download from one relay, connection included. A relay
+        --   is only worth talking to while it is fast: one that is not is better
+        --   left to RRDP and rsync than waited on, and everything a relay serves
+        --   is small (an index, a partition, a single object).
+        downloadTimeout      :: Seconds,
         erikRefreshInterval  :: Seconds
     }
     deriving stock (Eq, Ord, Show, Generic)
@@ -278,10 +284,11 @@ defaultConfig = Config {
     erikConf = ErikConf {
         relays              = [],
         maxSize             = Size $ 20 * 1024 * 1024,
-        parallelism         = 10,
-        downloadParallelism = 50,
-        relayParallelism    = 20,
-        erikRefreshInterval = 2 * minutes
+        parallelism         = 8,
+        relayParallelism    = 3,
+        fqdnParallelism     = 10,
+        downloadTimeout     = Seconds 10,
+        erikRefreshInterval = Seconds 30
     },
     validationConfig = ValidationConfig {
         revalidationInterval           = 15 * minutes,                
@@ -438,4 +445,4 @@ newFetchConfig config = let
         minFetchInterval = Seconds 30
         maxFetchInterval = Seconds 300
         maxFailedBackoffInterval = Seconds $ 30 * 60
-    in FetchConfig {..}    
+    in FetchConfig {..}

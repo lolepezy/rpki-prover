@@ -215,8 +215,38 @@ downloadConduit :: (MonadIO m, MonadUnliftIO m) =>
                     -> Handle 
                     -> ConduitT BS.ByteString Void (ResourceT m) t
                     -> m (t, HttpStatus, Maybe ETag)
-downloadConduit (URI u) eTag fileHandle extraSink = do 
-    req <- liftIO $ parseRequest $ Text.unpack u    
+downloadConduit uri eTag fileHandle extraSink =
+    downloadToSink uri eTag $ fst <$> zipSinks extraSink (sinkHandle fileHandle)
+
+
+-- | Download an object that is small enough to hold in memory, checking its
+-- size and hash on the way, without touching the disk.
+downloadHashedToMemory :: MonadIO m
+                       => URI
+                       -> Hash
+                       -> Size
+                       -> (HttpStatus -> e)
+                       -> (Hash -> e)
+                       -> m (Either e BS.ByteString)
+downloadHashedToMemory uri expectedHash maxSize httpStatusNotOk hashMismatch = liftIO $ do
+    (((actualHash, _), body), status, _) <-
+        downloadToSink uri Nothing $
+            zipSinks (sinkGenSize uri maxSize S256.init S256.update (U.mkHash . S256.finalize))
+                     sinkLazy
+    pure $ if status /= mempty
+        then Left $ httpStatusNotOk status
+        else if actualHash /= expectedHash
+            then Left $ hashMismatch actualHash
+            else Right $! LBS.toStrict body
+
+
+downloadToSink :: (MonadIO m, MonadUnliftIO m) =>
+                  URI
+                  -> Maybe ETag
+                  -> ConduitT BS.ByteString Void (ResourceT m) t
+                  -> m (t, HttpStatus, Maybe ETag)
+downloadToSink (URI u) eTag sink = do
+    req <- liftIO $ parseRequest $ Text.unpack u
 
     let eTagHeader = case eTag of 
             Nothing          -> []
@@ -243,10 +273,10 @@ downloadConduit (URI u) eTag fileHandle extraSink = do
                     e : _ -> writeIORef newETag $ Just $ ETag e
             getResponseBody r
 
-    (z, _) <- runConduitRes 
-                    $ httpSource req' getSrc
-                    .| countTraffic
-                    .| zipSinks extraSink (sinkHandle fileHandle)    
+    z <- runConduitRes
+            $ httpSource req' getSrc
+            .| countTraffic
+            .| sink
 
     liftIO $ (z,,) <$> readIORef httpStatus <*> readIORef newETag
 

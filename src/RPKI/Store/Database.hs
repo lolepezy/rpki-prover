@@ -25,12 +25,13 @@ module RPKI.Store.Database (
     getByUri, getKeysByUri,
     getObjectByKey, getLocatedByKey,
     getLocationsByKey, getHashByKey,
-    saveObject, saveStorableObject,
+    saveObject, saveStorableObject, prepareObject, insertPreparedObject,
     getObjectMeta, linkObjectToUrl,
-    hashExists, deleteObjectByHash, deleteObjectByKey,
+    hashExists, existingHashes, getObjectsByHashes,
+    deleteObjectByHash, deleteObjectByKey,
     -- * Erik protocol functions
     getErikIndex, saveErikIndex, getAllErikIndexes,
-    getErikPartition, saveErikPartition, deleteOrphanedErikPartitions,
+    getErikPartition, existingErikPartitions, saveErikPartition, deleteOrphanedErikPartitions,
     getMftsForAKI, findAllMftsByAKI, getMftByKey,
     getMftShorcut, getMftShorcutMeta, getMftShorcutChildrenLight, getMftShorcutChildrenFull,
     getMftShortcutChildFileName,
@@ -363,59 +364,77 @@ saveStorableObject :: MonadIO m
                 -> StorableObject (Compressed RpkiObjectLifecycle)
                 -> WorldVersion
                 -> m ObjectKey
-saveStorableObject (Tx conn) StorableObject { object = Compressed lifecycle, storable = Storable dataBs } wv = liftIO $ do
-    let hash_ = getHash lifecycle
+saveStorableObject tx so = insertPreparedObject tx (prepareObject so)
 
+
+-- | Everything about storing an object that does not need the transaction.
+-- Pure, so a caller can run it on whatever thread did the parsing.
+prepareObject :: StorableObject (Compressed RpkiObjectLifecycle) -> PreparedObject
+prepareObject StorableObject { object = Compressed lifecycle, storable = Storable payload } =
+    PreparedObject {..}
+  where
+    hash       = getHash lifecycle
+    objectType = getRpkiObjectType lifecycle
+    original   = case lifecycle of
+                    OriginalRO (ObjectOriginal blob) _ _ _ -> Just blob
+                    WellStructuredRO _                     -> Nothing
+    indexEntry = case lifecycle of
+                    WellStructuredRO (CerRO c)   -> Just $ CertificateIndex (getSKI c) (getAKI c)
+                    WellStructuredRO (MftRO mft) ->
+                        let Manifest {..} = mft ^. #content
+                        in (\aki_ -> ManifestIndex aki_ mftNumber thisTime nextTime) <$> getAKI mft
+                    _                            -> Nothing
+
+
+insertPreparedObject :: MonadIO m
+                     => Tx 'RW
+                     -> PreparedObject
+                     -> WorldVersion
+                     -> m ObjectKey
+insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
     existing <- query conn
-        "SELECT object_key, original IS NOT NULL FROM objects WHERE hash = ?" (Only hash_)
-    case (existing, lifecycle) of
+        "SELECT object_key, original IS NOT NULL FROM objects WHERE hash = ?" (Only hash)
+    case (existing, original) of
         -- The same bytes can be stored unparsed first (e.g. a TA certificate
         -- that failed RRDP prevalidation) and then come as a parsed object.
         -- Replace the unparsed copy, otherwise the parsed one is never readable.
-        ((objectKey, True) : _, WellStructuredRO _) -> do
+        ((objectKey, True) : _, Nothing) -> do
             execute conn
                 [sql|UPDATE objects SET type = ?, data = ?, original = NULL, world_version = ?
                      WHERE object_key = ?|]
-                (typ, dataBs, wv, objectKey)
+                (typ, payload, wv, objectKey)
             saveIndexes objectKey
             pure objectKey
 
         ((objectKey, _) : _, _) -> pure objectKey
 
         ([], _) -> do
-            let originalBs = case lifecycle of
-                    OriginalRO (ObjectOriginal blob) _ _ _ -> Just blob
-                    _                                      -> Nothing
-
             [Only objectKey] <- query conn
                 [sql|INSERT INTO objects(hash, type, data, original, world_version)
                      VALUES (?, ?, ?, ?, ?) RETURNING object_key|]
-                (hash_, typ, dataBs, originalBs, wv)
+                (hash, typ, payload, original, wv)
 
             saveIndexes objectKey
             pure objectKey
   where
-    typ = show (getRpkiObjectType lifecycle)
+    typ = show objectType
 
     saveIndexes objectKey =
-        case lifecycle of
-            WellStructuredRO (CerRO c) ->
+        case indexEntry of
+            Just (CertificateIndex ski aki_) ->
                 execute conn
                     [sql|INSERT OR IGNORE INTO certificates(object_key, ski, aki) VALUES (?, ?, ?)|]
-                    (objectKey, getSKI c, getAKI c)
-            WellStructuredRO (MftRO mft) ->
-                forM_ (getAKI mft) $ \aki_ ->
-                    let meta = getMftMetaFromWellStructured mft objectKey
-                    in execute conn
-                        [sql|
-                            INSERT OR IGNORE INTO manifest_meta(object_key, aki, manifest_number, meta)
-                            VALUES (?, ?, ?, ?)
-                        |]
-                        ( objectKey
-                        , aki_
-                        , let Serial mftNum = meta ^. #mftNumber in serialToBlob mftNum
-                        , serialiseField meta )
-            _ -> pure ()
+                    (objectKey, ski, aki_)
+            Just (ManifestIndex aki_ mftNumber thisTime nextTime) ->
+                let meta = MftMeta { key = objectKey, .. }
+                    Serial mftNum = mftNumber
+                in execute conn
+                    [sql|
+                        INSERT OR IGNORE INTO manifest_meta(object_key, aki, manifest_number, meta)
+                        VALUES (?, ?, ?, ?)
+                    |]
+                    (objectKey, aki_, serialToBlob mftNum, serialiseField meta)
+            Nothing -> pure ()
 
 
 getObjectMeta :: MonadIO m => Tx mode -> ObjectKey -> m (Maybe ObjectMeta)
@@ -451,6 +470,37 @@ hashExists :: MonadIO m => Tx mode -> Hash -> m Bool
 hashExists (Tx conn) h = liftIO $ do
     rows <- query conn "SELECT 1 FROM objects WHERE hash = ?" (Only h)
     pure $ not (null (rows :: [Only Int]))
+
+{- | Which of the given hashes are already in the object store.
+
+     One query per batch of 512 instead of one transaction per hash, which is
+     what makes it affordable for an Erik fetch to ask "what am I missing?"
+     about every object a repository publishes.
+-}
+existingHashes :: MonadIO m => Tx mode -> [Hash] -> m (Set.Set Hash)
+existingHashes (Tx conn) hashes = liftIO $
+    fmap (Set.fromList . concat) $
+        forM (inClauseBatches hashes) $ \(placeholders, params) -> do
+            rows <- queryNamed conn
+                (fromString $ Text.unpack $
+                    "SELECT hash FROM objects WHERE hash IN (" <> placeholders <> ")")
+                params
+            pure $ map fromOnly rows
+
+-- | Bulk 'getObjectByKey' by hash. Hashes with no object, or with a row that
+-- has been stripped of its payload, are simply absent from the result.
+getObjectsByHashes :: MonadIO m => Tx mode -> [Hash] -> m [(Hash, RpkiObjectLifecycle)]
+getObjectsByHashes (Tx conn) hashes = liftIO $
+    fmap concat $
+        forM (inClauseBatches hashes) $ \(placeholders, params) -> do
+            rows <- queryNamed conn
+                (fromString $ Text.unpack $
+                    "SELECT hash, data FROM objects WHERE data IS NOT NULL AND hash IN ("
+                        <> placeholders <> ")")
+                params
+            pure [ (h, ro)
+                 | (h, bs) <- rows
+                 , let StorableObject { object = ro } = decodeSO bs :: StorableObject RpkiObjectLifecycle ]
 
 -- ---------------------------------------------------------------------------
 -- Erik protocol functions
@@ -509,6 +559,23 @@ getErikPartition (Tx conn) h = liftIO $ do
     rows <- query conn "SELECT data FROM erik_partitions WHERE hash = ?" (Only h)
     pure $ fmap (deserialiseField . fromOnly) (listToMaybe rows)
 
+{- | Which of the partitions an index names are already cached.
+
+     Only the hash column, deliberately: the caller wants to know which
+     partitions to download, and pulling the blobs here would mean holding every
+     manifest list in the index in memory at once.
+-}
+existingErikPartitions :: MonadIO m => Tx mode -> [Hash] -> m (Set.Set Hash)
+existingErikPartitions (Tx conn) hashes = liftIO $
+    fmap (Set.fromList . concat) $
+        forM (inClauseBatches hashes) $ \(placeholders, params) -> do
+            rows <- queryNamed conn
+                (fromString $ Text.unpack $
+                    "SELECT hash FROM erik_partitions WHERE hash IN ("
+                        <> placeholders <> ")")
+                params
+            pure $ map fromOnly rows
+
 saveErikPartition :: MonadIO m => Tx 'RW -> Hash -> ErikPartition -> m ()
 saveErikPartition (Tx conn) h partition = liftIO $
     execute conn
@@ -535,9 +602,6 @@ deleteObjectByKey (Tx conn) keys = liftIO $
         executeNamed conn
             (fromString $ Text.unpack $ "DELETE FROM objects WHERE object_key IN (" <> placeholders <> ")")
             params
-
-getMftMetaFromWellStructured :: WellStructuredCms Manifest -> ObjectKey -> MftMeta
-getMftMetaFromWellStructured WellStructuredCms { content = Manifest {..} } key = MftMeta {..}
 
 
 -- ---------------------------------------------------------------------------

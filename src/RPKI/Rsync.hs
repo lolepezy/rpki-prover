@@ -37,11 +37,11 @@ import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parse.Parse
 import           RPKI.Repository
+import           RPKI.Fetch.DirectoryTraverse
 import           RPKI.Time
 import qualified RPKI.Util                        as U
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Worker
-import           RPKI.Fetch.DirectoryTraverse
 
 import           System.Directory                 (createDirectoryIfMissing)
 
@@ -203,10 +203,9 @@ loadRsyncRepository :: (ValidatorIO es, Concurrent :> es)
                     -> FilePath
                     -> Eff es ()
 loadRsyncRepository appContext worldVersion repositoryUrl rootPath =
-    -- An rsync tree mirrors the repository layout, so the path alone determines
-    -- the URL and the parsed object is never needed.
+    -- An rsync tree mirrors the repository layout, so the path determines the URL.
     loadObjectsFromFS appContext worldVersion
-        (\filePath _ -> Just $ restoreUriFromPath repositoryUrl rootPath filePath)
+        (Just . restoreUriFromPath repositoryUrl rootPath)
         rootPath
 
 data RsyncMode = RsyncOneFile | RsyncDirectory
