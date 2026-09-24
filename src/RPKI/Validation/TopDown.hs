@@ -19,9 +19,12 @@ where
 
 import           Effectful.Timeout (Timeout)
 import           Effectful
-import           Effectful.Concurrent.Async      (Concurrent, runConcurrent, forConcurrently, pooledForConcurrentlyN)
+import           Effectful.Concurrent.Async      (Concurrent)
 import           Control.Concurrent.STM
-import           Effectful.Exception
+import qualified Control.Concurrent.Async         as Async
+import qualified Control.Exception                as IOExc
+import           GHC.Conc                         (getNumCapabilities, setNumCapabilities)
+import           System.Timeout                   (timeout)
 import           Effectful.Error.Static           (catchError)
 import           Control.Monad
 
@@ -155,7 +158,10 @@ data AllTasTopDownContext = AllTasTopDownContext {
         -- whole run. Validating a shortcut needs to know whether its object is
         -- one of these, and asking per object was ~440k queries per round to
         -- find the handful that are (4 of 793516 in a real cache).
-        multiLocationKeys    :: Set ObjectKey
+        multiLocationKeys    :: Set ObjectKey,
+        -- | Validating a CA with all its sub-tree, or a chunk of objects, 
+        -- is a task in this pool, for all the TAs together
+        workPool             :: WorkPool
     }
     deriving stock (Generic)
 
@@ -230,8 +236,9 @@ newAllTasTopDownContext :: MonadIO m =>
                         -> PublicationPoints 
                         -> ClosableQueue MftShortcutOp
                         -> Set ObjectKey
+                        -> WorkPool
                         -> m AllTasTopDownContext
-newAllTasTopDownContext worldVersion publicationPoints shortcutQueue multiLocationKeys = liftIO $ do 
+newAllTasTopDownContext worldVersion publicationPoints shortcutQueue multiLocationKeys workPool = liftIO $ do 
     let now = Now $ versionToInstant worldVersion
     topDownCounters <- newTopDownCounters
     atomically $ do        
@@ -287,35 +294,71 @@ verifyLimit hitTheLimit limit =
 
 -- | It is the main entry point for the top-down validation. 
 -- Validates a bunch of TAs starting from their TALs.  
+--
+-- All the TAs are validated by one pool of workers (see `WorkPool`), one on 
+-- every capability. The writer of manifest shortcuts, the only thread writing
+-- to the database here, gets an extra capability of its own. Every SQLite call
+-- is a safe foreign call, and on a capability shared with a worker it has to 
+-- win the capability back after each one. In a first validation, with ~450k 
+-- rows to write, the writer is the bottleneck: 15-18s for the five RIRs at -N8 
+-- when sharing, 11-12s with its own capability. Taking a capability away from 
+-- the workers instead slows down every later validation, where there's little
+-- to write, and doubles the time at -N2.
 validateMutlipleTAs :: AppContext s
                     -> WorldVersion
                     -> [TAL]
                     -> IO (Map TaName TopDownResult)
-validateMutlipleTAs appContext@AppContext {..} worldVersion tals =
-    -- The producer/consumer pair below forks, so it needs the `Concurrent`
-    -- effect; everything under it is plain IO plus per-TA `runValidatorIO`.
-    runEff $ runConcurrent $
-        fst <$> bracketChanClosable
-                    5000
-                    validateMutlipleTAs'
-                    (storeShortcuts appContext)
-                    (\_ -> pure ())
+validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
+    shortcutQueue <- newCQueueIO 5000
+    let closeQueue = atomically $ closeCQueue shortcutQueue
+    caps <- getNumCapabilities
+    let writerCap  = caps
+        workerCaps = [0 .. caps - 1]
+    setNumCapabilities (caps + 1)
+    (`IOExc.finally` setNumCapabilities caps) $
+        Async.withAsyncOn writerCap (storeShortcuts appContext shortcutQueue `IOExc.finally` closeQueue) $ \writer ->
+            Async.withAsync (validateAll shortcutQueue workerCaps `IOExc.finally` closeQueue) $ \validation ->
+                fst <$> Async.waitBoth validation writer
   where
-    validateMutlipleTAs' queue = do 
+    validateAll shortcutQueue workerCaps = do 
         publicationPoints <- addprefetchUrls <$> roTxT database DB.getPublicationPoints            
         multiLocationKeys <- roTxT database DB.getMultiLocationShortcutChildren
-        allTas <- newAllTasTopDownContext worldVersion publicationPoints queue multiLocationKeys
-        validateThem allTas
-            `finally` 
+        workPool <- newWorkPool
+        allTas <- newAllTasTopDownContext worldVersion publicationPoints shortcutQueue multiLocationKeys workPool
+        withWorkers workPool workerCaps (validateThem allTas)
+            `IOExc.finally` 
             applyValidationSideEffects appContext allTas
     
-    validateThem allTas =
-        fmap Map.fromList $ 
-            forConcurrently tals $ \tal -> do
+    validateThem allTas = do
+        tas <- forM tals $ \tal -> do
+            topDownContext <- newTopDownContext (getTaName tal) allTas
+            task <- submitTask (allTas ^. #workPool) $ do
                 (r@TopDownResult{ payloads = Payloads {..}}, elapsed) <- timedMS $
-                        liftIO $ validateTA appContext tal allTas
+                        validateTA appContext tal topDownContext
                 logInfo logger [i|Validated TA '#{getTaName tal}', got #{estimateVrpCountRoas roas} VRPs, took #{elapsed}ms|]
-                pure (getTaName tal, r)
+                pure r
+            pure (tal, topDownContext, task)
+
+        -- One timeout for all of them: tasks of different TAs run on the same 
+        -- threads, so there's no interrupting just one TA. 
+        void $ timeout (toMicroseconds maxDuration) $ 
+            forM_ tas $ \(_, _, task) -> waitTask task
+
+        fmap Map.fromList $ forM tas $ \(tal, topDownContext, task) -> 
+            fmap (getTaName tal, ) $ 
+                pollTask task >>= \case
+                    Just r  -> either IOExc.throwIO pure r
+                    Nothing -> timedOut tal topDownContext
+
+    timedOut tal topDownContext = do
+        let taName = getTaName tal
+        logError logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
+        (_, validations) <- runValidatorIO (taScopes taName) $ 
+                                (appError $ ValidationE $ ValidationTimeout maxDuration :: Eff AppEffects ())
+        discoveredRepositories <- readTVarIO $ topDownContext ^. #fetcheables
+        pure $ fromValidations validations & #discoveredRepositories .~ discoveredRepositories
+
+    maxDuration = config ^. typed @SystemConfig . #validationWorkerLimits . #workerTimeout
                  
     addprefetchUrls pps =     
         foldr (mergePP . rsyncPP) pps (config ^. #rsyncConf . #prefetchUrls)
@@ -323,18 +366,10 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals =
 --
 validateTA :: AppContext s
             -> TAL
-            -> AllTasTopDownContext
+            -> TopDownContext
             -> IO TopDownResult
-validateTA appContext@AppContext{..} tal allTas = do
-    let maxDuration = config ^. typed @SystemConfig . #validationWorkerLimits . #workerTimeout
-    topDownContext <- newTopDownContext taName allTas
-    (r, topDownValidations) <- runValidatorIO taContext $
-            timeoutVT
-                maxDuration
-                (validateFromTAL topDownContext)
-                (do
-                    logError logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
-                    appError $ ValidationE $ ValidationTimeout maxDuration)    
+validateTA appContext@AppContext{..} tal topDownContext = do
+    (r, topDownValidations) <- runValidatorIO (taScopes taName) validateFromTAL
 
     (discoveredRepositories, earliestNotValidAfter) <- 
         atomically $ (,) <$>
@@ -367,9 +402,8 @@ validateTA appContext@AppContext{..} tal allTas = do
 
   where
     taName = getTaName tal
-    taContext = newScopes' TAFocus $ unTaName taName
 
-    validateFromTAL topDownContext = do
+    validateFromTAL = do
         timedMetric (Proxy :: Proxy ValidationMetric) $
             vFocusOn LocationFocus (getURL $ getTaCertURL tal) $ do
                 (taCert, repos) <- taCertificateFromCache appContext tal
@@ -378,6 +412,8 @@ validateTA appContext@AppContext{..} tal allTas = do
                 let topDownContext' = topDownContext & #verifiedResources ?~ createVerifiedResources (taCert ^. #payload)
                 validateFromTACert appContext topDownContext' repos taCert
 
+taScopes :: TaName -> Scopes
+taScopes = newScopes' TAFocus . unTaName
         
 
 data WhichTA = FetchedTA RpkiURL ParsedRpkiObject | CachedTA
@@ -1108,15 +1144,10 @@ validateCaNoFetch
                                 Left e              -> InvalidChild e vs' key filename
                                 Right childShortcut -> ValidEntry vs' childShortcut key filename
     
-    forChildren nonCrlChildren = let 
-        forAllChildren =
-                if nonCrlChildren `longerThan` 500
-                    then if nonCrlChildren `longerThan` 5000
-                        then pooledForConcurrentlyN 4
-                        else pooledForConcurrentlyN 2
-                    else forM 
-
-        in forAllChildren nonCrlChildren 
+    -- A child CA is a whole sub-tree to validate and a task of its own, 
+    -- other objects are validated in chunks.
+    forChildren = forInPool workPool 64 $ \(T3 fileName _ _) -> 
+                    textObjectType fileName == Just CER
 
     gatherMftEntryResults =        
         foldM (\childrenShortcuts r -> do                 
@@ -1412,13 +1443,9 @@ validateCaNoFetch
                     Nothing -> Map.toList childrenMap
                     Just ch -> catMaybes [ (k,) <$> Map.lookup k childrenMap | T3 _ _ k <- ch ]
 
-        let T3 !caCount !troubledCount !totalCount =
-                foldr (\(_, childData) (T3 cas troubled total) ->
-                        case childOf childData of
-                            CaChild {}       -> T3 (cas + 1) troubled       (total + 1)
-                            TroubledChild {} -> T3 cas       (troubled + 1) (total + 1)
-                            _                -> T3 cas       troubled       (total + 1)
-                    ) (T3 0 0 0 :: T3 Int Int Int) filteredChildren
+        let anyTroubled = 
+                or [ True | (_, childData) <- filteredChildren, 
+                            TroubledChild {} <- [childOf childData] ]
 
         vFocusOn ObjectFocus meta.key $ do
             validateLocationForShortcut meta.key
@@ -1432,43 +1459,29 @@ validateCaNoFetch
             -- to full validation, for that we beed the parent CA and a valid CRL.
             -- Construct the validation function for such problematic children
             troubledValidation <-
-                    case troubledCount of 
-                        0 -> pure $ \_ _ -> 
-                                -- Should never happen, there are no troubled children
-                                integrityError appContext [i|Impossible happened!|]
-                        _ -> do 
+                    if anyTroubled 
+                        then do 
                             caFull   <- either pure id findFullCa
                             validCrl <- findValidCrl
                             pure $ \childKey fileName -> 
                                     validateTroubledChild caFull fileName validCrl childKey                        
+                        else pure $ \_ _ -> 
+                                -- Should never happen, there are no troubled children
+                                integrityError appContext [i|Impossible happened!|]
 
-            collectResultsInParallel caCount totalCount 
-                filteredChildren (getChildPayloads troubledValidation)
+            collectResults filteredChildren (getChildPayloads troubledValidation)
 
       where
-        collectResultsInParallel caCount totalCount children f = do 
-            -- Pick up some good parallelism to avoid too many threads, 
-            -- but also process big manifests quicker            
-            let worthParallelism = 
-                    caCount `div` 50 + 
-                    (totalCount - caCount) `div` 500 > 1
-
-                worthMoreParallelism = 
-                    caCount `div` 500 + 
-                    (totalCount - caCount) `div` 5000 > 1                    
-            
-            -- let worthParallelism = False
-
-            let forAllChildren = 
-                    if worthParallelism
-                        then if worthMoreParallelism
-                            then pooledForConcurrentlyN 4
-                            else pooledForConcurrentlyN 2
-                        else forM
-
+        -- A child CA is a whole sub-tree to validate and a task of its own, 
+        -- other objects are cheap to go through and go in big chunks. 
+        collectResults children f = do 
             scopes <- askScopes
-            z <- forAllChildren children $ runValidator scopes . f
+            z <- forInPool workPool 500 isCa children $ runValidator scopes . f
             embedState $ mconcat $ map snd z                 
+          where
+            isCa (_, childData) = case childOf childData of
+                                    CaChild {} -> True
+                                    _          -> False
 
         validateTroubledChild caFull fileName (Keyed validCrl _) childKey = do  
             -- Troubled entries may point either to an original blob or to a

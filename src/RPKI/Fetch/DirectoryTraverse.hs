@@ -13,7 +13,6 @@ import qualified Control.Exception               as IOExc
 import           Effectful.Exception
 import           Control.Lens
 import           Control.Monad
-import           Control.Monad.IO.Class
 
 import qualified Data.ByteString                  as BS
 import           Data.Bifunctor
@@ -33,6 +32,7 @@ import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
+import           RPKI.Cpu                         (useAvailableCpus)
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
@@ -64,135 +64,127 @@ loadObjectsFromFS :: (ValidatorIO es, Concurrent :> es) => AppContext s
                   -> Eff es ()
 loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
     db <- liftIO $ readTVarIO database
-    doLoad db
+    -- Erik fetchers start with one capability
+    void $ liftIO $ useAvailableCpus $ config ^. typed @Parallelism . #cpuCount
+    scopes <- askScopes
+    txPoolPipeline
+        CompletionOrder
+        (objectFiles rootPath)
+        (\(path, uri) -> trySync $ 
+            evaluate =<< runValidator scopes (readAndParseObject db path (RsyncU <$> uri)))
+        (DB.rwAppTx db)
+        saveStorable
   where
-    doLoad db =
-        txFoldPipeline
-            (2 * cpuParallelism)
-            traverseFS
-            (DB.rwAppTx db)
-            saveStorable
+    -- Files of supported types in the tree and the URLs their paths tell, 
+    -- one directory at a time
+    objectFiles currentPath = do
+        names <- lift $ getDirectoryContents currentPath
+        forM_ (filter (`notElem` [".", ".."]) names) $ \name -> do
+            let path = currentPath </> name
+            lift (doesDirectoryExist path) >>= \case
+                True  -> objectFiles path
+                False -> when (supportedExtension name) $ 
+                            S.yield (path, restoreUrl path Nothing)
+
+    readAndParseObject :: forall es' . ValidatorIO es'
+                        => DB -> FilePath -> Maybe RpkiURL -> Eff es' ObjectProcessingResult
+    readAndParseObject db filePath rpkiURL =
+        liftIO (getSizeAndContent (config ^. typed) filePath) >>= \case
+            Left e          -> pure $! CantReadFile rpkiURL filePath $ VErr e
+            Right (_, blob) ->
+                -- The file name is the only thing both callers can rely on:
+                -- Erik names files by hash, so there is no URL to take the
+                -- extension from.
+                case nameObjectType (takeFileName filePath) of
+                    Just type_ -> do
+                        -- Check if the object is already in the storage
+                        -- before parsing ASN1 and serialising it.
+                        let hash = U.sha256s blob
+                        liftIO (roTx db $ \tx -> DB.getObjectKey tx hash) >>= \case
+                            Just key -> pure $! HashExists rpkiURL hash key
+                            Nothing  -> tryToParse hash blob type_
+                    Nothing ->
+                        pure $! UknownObjectType rpkiURL filePath
+
       where
-        cpuParallelism = config ^. typed @Parallelism . #cpuParallelism
-
-        traverseFS =
-            mapException (AppException . RsyncE . FileReadError . U.fmtEx) <$>
-                traverseDirectory rootPath
-
-        traverseDirectory currentPath = do
-            names <- liftIO $ getDirectoryContents currentPath
-            let properNames = filter (`notElem` [".", ".."]) names
-            forM_ properNames $ \name -> do
-                let path = currentPath </> name
-                liftIO (doesDirectoryExist path) >>= \case
-                    True  -> traverseDirectory path
-                    False ->
-                        when (supportedExtension name) $ do
-                            let !uri = restoreUrl path Nothing
-                            s <- lift askScopes
-                            a <- lift $ async $ evaluate
-                                    =<< runValidator s (readAndParseObject path (RsyncU <$> uri))
-                            S.yield (a, uri)
+        tryToParse hash blob type_ =
+            doParse scopes `catchSync` onError scopes
           where
-            readAndParseObject :: forall es' . ValidatorIO es'
-                               => FilePath -> Maybe RpkiURL -> Eff es' ObjectProcessingResult
-            readAndParseObject filePath rpkiURL =
-                liftIO (getSizeAndContent (config ^. typed) filePath) >>= \case
-                    Left e          -> pure $! CantReadFile rpkiURL filePath $ VErr e
-                    Right (_, blob) ->
-                        -- The file name is the only thing both callers can rely on:
-                        -- Erik names files by hash, so there is no URL to take the
-                        -- extension from.
-                        case nameObjectType (takeFileName filePath) of
-                            Just type_ -> do
-                                -- Check if the object is already in the storage
-                                -- before parsing ASN1 and serialising it.
-                                let hash = U.sha256s blob
-                                liftIO (roTx db $ \tx -> DB.getObjectKey tx hash) >>= \case
-                                    Just key -> pure $! HashExists rpkiURL hash key
-                                    Nothing  -> tryToParse hash blob type_
-                            Nothing ->
-                                pure $! UknownObjectType rpkiURL filePath
+            scopes =
+                case rpkiURL of
+                    Just u  -> newScopes' LocationFocus $ getURL u
+                    Nothing -> newScopes' HashFocus hash
 
-              where
-                tryToParse hash blob type_ =
-                    doParse scopes `catchSync` onError scopes
-                  where
-                    scopes =
-                        case rpkiURL of
-                            Just u  -> newScopes' LocationFocus $ getURL u
-                            Nothing -> newScopes' HashFocus hash
+            inObjectScope =
+                case rpkiURL of
+                    Just u  -> inSubLocationScope (getURL u)
+                    Nothing -> vFocusOn HashFocus hash
 
-                    inObjectScope =
-                        case rpkiURL of
-                            Just u  -> inSubLocationScope (getURL u)
-                            Nothing -> vFocusOn HashFocus hash
+            doParse scopes_ = do
+                z <- runValidator scopes_ $ do
+                        parsed <- readObjectOfType type_ blob
+                        vro    <- inObjectScope $ prevalidateObject parsed
+                        pure (parsed, vro)
+                evaluate $!
+                    case z of
+                        (Left _, vs) ->
+                            mkSaveObject Nothing $ OriginalRO (ObjectOriginal blob) vs hash type_
+                        (Right (parsed, vro), vs)
+                            | hasValidationErrors vs ->
+                                mkSaveObject (Just parsed) $ OriginalRO (ObjectOriginal blob) vs hash type_
+                            | otherwise ->
+                                mkSaveObject (Just parsed) $ WellStructuredRO vro
 
-                    doParse scopes_ = do
-                        z <- runValidator scopes_ $ do
-                                parsed <- readObjectOfType type_ blob
-                                vro    <- inObjectScope $ prevalidateObject parsed
-                                pure (parsed, vro)
-                        evaluate $!
-                            case z of
-                                (Left _, vs) ->
-                                    mkSaveObject Nothing $ OriginalRO (ObjectOriginal blob) vs hash type_
-                                (Right (parsed, vro), vs)
-                                    | hasValidationErrors vs ->
-                                        mkSaveObject (Just parsed) $ OriginalRO (ObjectOriginal blob) vs hash type_
-                                    | otherwise ->
-                                        mkSaveObject (Just parsed) $ WellStructuredRO vro
+            onError scopes_ e = do
+                (_, vs) <- runValidator scopes_ $
+                    fromEither @() $ Left $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e
+                pure $! mkSaveObject Nothing $ OriginalRO (ObjectOriginal blob) vs hash type_
 
-                    onError scopes_ e = do
-                        (_, vs) <- runValidator scopes_ $
-                            fromEither @() $ Left $ RsyncE $ RsyncFailedToParseObject $ U.fmtEx e
-                        pure $! mkSaveObject Nothing $ OriginalRO (ObjectOriginal blob) vs hash type_
+            -- Encode/compress the object here, on the parsing (async) thread,
+            -- so the single-threaded DB-writer only has to do the INSERT.
+            -- The URL is recovered here too, for the same reason: this is the
+            -- last point at which the parsed object is still in hand.
+            mkSaveObject parsed lifecycle =
+                SaveObject
+                    (maybe (RsyncU <$> restoreUrl filePath parsed) Just rpkiURL)
+                    (toStorableObject (Compressed lifecycle))
 
-                    -- Encode/compress the object here, on the parsing (async) thread,
-                    -- so the single-threaded DB-writer only has to do the INSERT.
-                    -- The URL is recovered here too, for the same reason: this is the
-                    -- last point at which the parsed object is still in hand.
-                    mkSaveObject parsed lifecycle =
-                        SaveObject
-                            (maybe (RsyncU <$> restoreUrl filePath parsed) Just rpkiURL)
-                            (toStorableObject (Compressed lifecycle))
+    saveStorable tx processed = do
+        (r, vs) <- either (appError . UnspecifiedE "Something bad happened in loadObjectsFromFS" . U.fmtEx) pure processed
+        embedState vs
+        case r of
+            Left e  -> appWarn e
+            Right z -> case z of
+                HashExists rpkiURL _ key ->
+                    for_ rpkiURL $ \u -> DB.linkObjectToUrl tx u key worldVersion
 
-        saveStorable tx (a, _) = do
-            (r, vs) <- fromTryM (UnspecifiedE "Something bad happened in loadObjectsFromFS" . U.fmtEx) $ wait a
-            embedState vs
-            case r of
-                Left e  -> appWarn e
-                Right z -> case z of
-                    HashExists rpkiURL _ key ->
-                        for_ rpkiURL $ \u -> DB.linkObjectToUrl tx u key worldVersion
+                CantReadFile rpkiUrl filePath (VErr e) -> do
+                    logError logger [i|Cannot read file #{filePath}, error #{e} |]
+                    atObject rpkiUrl filePath $ appWarn e
 
-                    CantReadFile rpkiUrl filePath (VErr e) -> do
-                        logError logger [i|Cannot read file #{filePath}, error #{e} |]
-                        atObject rpkiUrl filePath $ appWarn e
+                UknownObjectType rpkiUrl filePath -> do
+                    logError logger [i|Unknown object type: url = #{rpkiUrl}, path = #{filePath}.|]
+                    atObject rpkiUrl filePath $
+                        appWarn $ RsyncE $ RsyncUnsupportedObjectType $ U.convert filePath
 
-                    UknownObjectType rpkiUrl filePath -> do
-                        logError logger [i|Unknown object type: url = #{rpkiUrl}, path = #{filePath}.|]
-                        atObject rpkiUrl filePath $
-                            appWarn $ RsyncE $ RsyncUnsupportedObjectType $ U.convert filePath
+                SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
+                    case lifecycle of
+                        OriginalRO _ vs1 _ _ -> do
+                            logError logger [i|Object #{rpkiUrl} failed parse/prevalidation.|]
+                            embedState vs1
+                        WellStructuredRO _ -> pure ()
 
-                    SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
-                        case lifecycle of
-                            OriginalRO _ vs1 _ _ -> do
-                                logError logger [i|Object #{rpkiUrl} failed parse/prevalidation.|]
-                                embedState vs1
-                            WellStructuredRO _ -> pure ()
-
-                        key <- DB.saveStorableObject tx so worldVersion
-                        for_ rpkiUrl $ \u -> DB.linkObjectToUrl tx u key worldVersion
-                        updateMetric @TraverseMetric @_ (#processed %~
-                            Map.unionWith (+) (Map.singleton (Just $ getRpkiObjectType lifecycle) 1))
-                    other ->
-                        logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]
-          where
-            atObject rpkiUrl filePath f =
-                case rpkiUrl of
-                    Just u  -> inSubLocationScope (getURL u) f
-                    Nothing -> vFocusOn TextFocus (U.convert filePath) f
+                    key <- DB.saveStorableObject tx so worldVersion
+                    for_ rpkiUrl $ \u -> DB.linkObjectToUrl tx u key worldVersion
+                    updateMetric @TraverseMetric @_ (#processed %~
+                        Map.unionWith (+) (Map.singleton (Just $ getRpkiObjectType lifecycle) 1))
+                other ->
+                    logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]
+      where
+        atObject rpkiUrl filePath f =
+            case rpkiUrl of
+                Just u  -> inSubLocationScope (getURL u) f
+                Nothing -> vFocusOn TextFocus (U.convert filePath) f
 
 
 getSizeAndContent :: ValidationConfig -> FilePath -> IO (Either AppError (Integer, BS.ByteString))

@@ -10,6 +10,7 @@ otherwise a container with `--cpus=2` on a big host gets throttled.
 All of it is Linux only, read from procfs and sysfs.
 -}
 module RPKI.Cpu (
+    useAvailableCpus,
     getAvailableCpuCount,
     getPhysicalCpuCount,
     getCgroupCpuLimit,
@@ -29,9 +30,24 @@ import qualified Data.List             as List
 import           Data.Maybe            (catMaybes, listToMaybe)
 import qualified Data.Set              as Set
 
+import           GHC.Conc              (setNumCapabilities)
 import           Numeric.Natural
 import           System.FilePath       (dropTrailingPathSeparator, normalise, splitDirectories, 
                                         takeDirectory, (</>))
+
+
+-- | Set the number of capabilities to the configured CPU count, but not above 
+-- `getAvailableCpuCount`, for CPU-heavy work in a process that starts with 
+-- fewer: RRDP and Erik fetchers start with one, to save memory while they are
+-- downloading. Parsing is memory-bound and the second hyper-thread of a core 
+-- only slows it down (ARIN snapshot on 8 cores with 16 threads: 19s with 8 
+-- capabilities, 25-28s with 16).
+useAvailableCpus :: Natural -> IO Natural
+useAvailableCpus configuredCpus = do
+    availableCpus <- getAvailableCpuCount
+    let cpus = maybe configuredCpus (min configuredCpus) availableCpus
+    setNumCapabilities $ fromIntegral cpus
+    pure cpus
 
 
 -- | How many CPUs this process can make use of, when that can be told: the 

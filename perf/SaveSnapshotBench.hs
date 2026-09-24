@@ -81,6 +81,7 @@ import           RPKI.Meta.UniqueId      (thisExecutableVersion)
 import           RPKI.Messages           (formatValidations)
 import           RPKI.Reporting          (newScopes, Validations (..))
 import           RPKI.Parallel           (ResultOrder (..), txPoolPipeline)
+import qualified Streaming.Prelude       as S
 import           RPKI.Parse.Parse        (readObjectOfType, urlObjectType)
 import           RPKI.RRDP.Parse         (parseDelta, parseSnapshot)
 import           RPKI.RRDP.RrdpFetch     (saveDelta, saveSnapshot)
@@ -433,7 +434,7 @@ cpuOnly items = do
     cpu0  <- getCPUTime
     wall0 <- getMonotonicTimeNSec
     (_, _) <- runValidatorIO scopes $
-        txPoolPipeline CompletionOrder items (liftIO . work) ($ ()) (\_ _ -> pure ())
+        txPoolPipeline CompletionOrder (S.each items) (liftIO . work) ($ ()) (\_ _ -> pure ())
     wall1 <- getMonotonicTimeNSec
     cpu1  <- getCPUTime
     let wallSec = fromIntegral (wall1 - wall0) / 1e9 :: Double
