@@ -110,10 +110,15 @@ main = do
 
         -- An incompatible cache gets wiped, which would quietly turn this into
         -- a benchmark of validating nothing.
-        (db, dbCheck) <- createSqliteDatabase cacheDir config False True
+        (_, dbCheck) <- createSqliteDatabase cacheDir config False True
         case dbCheck of
             WasIncompatible -> error $ "The cache in " <> cacheDir <> " is of another version and was wiped."
             _               -> pure ()
+
+        -- Opened as the validation worker opens it: workers leave checkpointing 
+        -- the WAL to the main process, and a checkpoint on commit would stall 
+        -- the writer of manifest shortcuts for up to a second.
+        db <- openExistingSqliteDatabase cacheDir config
 
         appState <- newAppState
         database <- newTVarIO db

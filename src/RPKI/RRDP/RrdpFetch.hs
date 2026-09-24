@@ -22,7 +22,6 @@ import qualified Data.Map.Strict                  as Map
 import           Data.String.Interpolate.IsString
 import           Data.Proxy
 import           Data.Maybe
-import           Numeric.Natural                  (Natural)
 
 import           GHC.Generics
 
@@ -32,7 +31,7 @@ import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
-import           RPKI.Cpu                         (getAvailableCpuCount)
+import           RPKI.Cpu                         (useAvailableCpus)
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
@@ -400,7 +399,7 @@ saveSnapshot
     appContext@AppContext {..} 
     worldVersion repoUri notification snapshotContent = do              
 
-    snapshotCpus <- liftIO $ useAvailableCpus appContext
+    snapshotCpus <- liftIO $ useAvailableCpus $ config ^. typed @Parallelism . #cpuCount
     
     let snapshotUrl = notification ^. #snapshotInfo . typed @URI
     logDebug logger [i|Snapshot #{snapshotUrl} is #{BS.length snapshotContent} bytes, using #{snapshotCpus} CPUs.|]   
@@ -425,7 +424,7 @@ saveSnapshot
     scopes <- askScopes
     txPoolPipeline 
             CompletionOrder
-            snapshotItems
+            (S.each snapshotItems)
             (newStorable scopes db)
             savingTx
             saveStorable
@@ -577,13 +576,13 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 f tx
                 updateRepositoryMeta tx repoUri sessionId serial
 
-    void $ liftIO $ useAvailableCpus appContext
+    void $ liftIO $ useAvailableCpus $ appContext ^. typed @Config . typed @Parallelism . #cpuCount
     scopes <- askScopes
 
     -- Unlike in a snapshot, the order of items in a delta matters
     txPoolPipeline
             ItemOrder
-            deltaItems
+            (S.each deltaItems)
             (newStorable scopes)
             savingTx
             saveStorable
@@ -757,21 +756,6 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
 
     logger           = appContext ^. typed @AppLogger           
     validationConfig = appContext ^. typed @Config . typed @ValidationConfig
-
-
--- | Saving a snapshot or a big delta needs a lot of CPU time, so bump the 
--- number of capabilities to the configured CPU count (RRDP workers start with 
--- one), but not above what the process can actually use: physical cores within
--- the cgroup quota. Parsing is memory-bound and the second hyper-thread of 
--- a core only slows it down (ARIN snapshot on 8 cores with 16 threads: 19s 
--- with 8 capabilities, 25-28s with 16).
-useAvailableCpus :: AppContext s -> IO Natural
-useAvailableCpus appContext = do
-    availableCpus <- getAvailableCpuCount
-    let configuredCpus = appContext ^. typed @Config . typed @Parallelism . #cpuCount
-        cpus           = maybe configuredCpus (min configuredCpus) availableCpus
-    setCpuCount cpus
-    pure cpus
 
 
 addedObject, deletedObject :: Validator es => Maybe RpkiObjectType -> Eff es ()
