@@ -159,6 +159,7 @@ library
       RPKI.AppMonadUtil
       RPKI.AppState
       RPKI.AppTypes
+      RPKI.CCR
       RPKI.Config
       RPKI.Cpu
       RPKI.Domain
@@ -310,6 +311,7 @@ test-suite rpki-prover-test
   main-is:         Spec.hs
   other-modules:
       RPKI.AppMonadSpec
+      RPKI.CCRSpec
       RPKI.DomainSpec
       RPKI.Fetch.ErikSpec
       RPKI.Fetch.HttpSpec
