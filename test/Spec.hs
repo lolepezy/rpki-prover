@@ -23,6 +23,7 @@ import RPKI.WorkerSpec
 import RPKI.Metrics.ProcessSpec
 import RPKI.ParallelSpec
 import RPKI.CCRSpec
+import RPKI.CCR.WalkSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
@@ -47,7 +48,8 @@ main = defaultMain $ testGroup "All tests" [
         relayPoolSpec,
         erikSpillSpec,
         parallelSpec,
-        ccrGroup
+        ccrGroup,
+        walkGroup
 
         -- erikSpec
     ]  

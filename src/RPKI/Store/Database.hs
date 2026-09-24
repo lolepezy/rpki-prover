@@ -63,6 +63,8 @@ module RPKI.Store.Database (
     deleteOldestVersionsIfNeeded,
     deleteStaleContent, deleteDanglingUrls,
     getAll, getMftMeta, getGbrObjects, getRtrPayloads,
+    getCcrManifest, getObjectValidity, getCertificateSkiAndValidity, getCaChildren,
+    saveCcrStates, getCcrStates,
     storageError,
     -- * Encoding helpers (for AppSqliteStorage etc.)
     encodeSO, decodeSO,
@@ -119,6 +121,7 @@ import           RPKI.Store.SQLite            (Tx(..), SqliteDB(..), TxMode(..),
 import qualified RPKI.Store.SQLite            as SQLite
 import           RPKI.Store.Types
 import           RPKI.Validation.Types
+import           RPKI.CCR                 (CcrTaState)
 
 import           RPKI.Util                (ifJustM, fmtEx)
 import           RPKI.Parse.Internal.Common (tbsSiaExt)
@@ -809,6 +812,69 @@ deleteMftShortcut (Tx conn) aki = liftIO $ do
     execute conn "DELETE FROM mft_shortcut_payload_children WHERE aki = ?" (Only aki)
     execute conn "DELETE FROM mft_shortcut_ca_children WHERE aki = ?" (Only aki)
 
+-- | What a CCR needs of a manifest that is stored under this key: its hash, 
+-- the size of its DER, its effective validity window, its `MftMeta` and the
+-- value of its EE certificate's SIA extension. 
+getCcrManifest :: MonadIO m => Tx mode -> ObjectKey 
+                -> m (Maybe (Hash, Maybe Size, Maybe ValidityPeriod, MftMeta, Maybe BS.ByteString))
+getCcrManifest (Tx conn) key = liftIO $ do
+    rows <- query conn
+        [sql|
+            SELECT o.hash, o.size, o.not_before, o.not_after, m.meta, m.ee_sia
+            FROM objects o
+            JOIN manifest_meta m ON m.object_key = o.object_key
+            WHERE o.object_key = ?
+        |]
+        (Only key)
+    pure $! case rows of
+        [(hash, size, notBefore, notAfter, meta, eeSia)] ->
+            Just (hash, Size <$> size, validityOf notBefore notAfter, deserialiseField meta, eeSia)
+        _ -> Nothing
+
+-- | The effective validity window of an object, `Nothing` if the object 
+-- isn't there or isn't parsed.
+getObjectValidity :: MonadIO m => Tx mode -> ObjectKey -> m (Maybe ValidityPeriod)
+getObjectValidity (Tx conn) key = liftIO $ do
+    rows <- query conn "SELECT not_before, not_after FROM objects WHERE object_key = ?" (Only key)
+    pure $! case rows of
+        [(notBefore, notAfter)] -> validityOf notBefore notAfter
+        _                       -> Nothing
+
+-- | The SKI and the validity window of a certificate.
+getCertificateSkiAndValidity :: MonadIO m => Tx mode -> ObjectKey -> m (Maybe (SKI, Maybe ValidityPeriod))
+getCertificateSkiAndValidity (Tx conn) key = liftIO $ do
+    rows <- query conn
+        [sql|
+            SELECT c.ski, o.not_before, o.not_after
+            FROM certificates c
+            JOIN objects o ON o.object_key = c.object_key
+            WHERE c.object_key = ?
+        |]
+        (Only key)
+    pure $! case rows of
+        [(ski, notBefore, notAfter)] -> Just (ski, validityOf notBefore notAfter)
+        _                            -> Nothing
+
+-- | The CA certificates on the manifest of the CA with this key identifier: 
+-- their SKIs, validity windows and whether they were valid when validated.
+getCaChildren :: MonadIO m => Tx mode -> AKI -> m [(SKI, Maybe ValidityPeriod, CaChildValidity)]
+getCaChildren (Tx conn) aki = liftIO $ do
+    rows <- query conn
+        [sql|
+            SELECT c.ski, o.not_before, o.not_after, cc.valid
+            FROM mft_shortcut_ca_children cc
+            JOIN certificates c ON c.object_key = cc.child_key
+            JOIN objects o      ON o.object_key = cc.child_key
+            WHERE cc.aki = ?
+        |]
+        (Only aki)
+    pure [ (ski, validityOf notBefore notAfter, caChildValidity valid) 
+         | (ski, notBefore, notAfter, valid) <- rows ]
+
+validityOf :: Maybe Int64 -> Maybe Int64 -> Maybe ValidityPeriod
+validityOf notBefore notAfter = 
+    ValidityPeriod <$> (Instant <$> notBefore) <*> (Instant <$> notAfter)
+
 -- | Returns all candidates for the SKI; callers must verify signatures.
 getBySKI :: MonadIO m => Tx mode -> SKI -> m [Located WellStructuredCaCert]
 getBySKI tx@(Tx conn) ski = liftIO $ do
@@ -1080,6 +1146,18 @@ saveValidationVersion (Tx conn) validatedBy results commonVS =
             , Just $ serialiseCompressed bgpCerts
             , Just $ serialiseCompressed gbrs
             )
+
+-- | The part of the CCR that the walk of each TA's shortcuts found, 
+-- for the version that was just saved.
+saveCcrStates :: MonadIO m => Tx 'RW -> WorldVersion -> [(TaName, CcrTaState)] -> m ()
+saveCcrStates (Tx conn) version states = liftIO $
+    executeMany conn 
+        "UPDATE validation_outcomes SET ccr = ? WHERE ta_name = ? AND version = ?"
+        [ (serialiseCompressed state, unTaName taName, version) | (taName, state) <- states ]
+
+-- | The latest CCR part of every active TA at or before the version. 
+getCcrStates :: MonadIO m => Tx mode -> WorldVersion -> m (PerTA CcrTaState)
+getCcrStates tx = getLatestPerTA tx "ccr"
 
 deleteValidationVersion :: MonadIO m => Tx 'RW -> WorldVersion -> m ()
 deleteValidationVersion (Tx conn) worldVersion = liftIO $ do

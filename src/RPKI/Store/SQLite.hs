@@ -459,6 +459,8 @@ schemaDDL =
                     aspa        BLOB,
                     bgps        BLOB,
                     gbrs        BLOB,
+                    -- The part of the CCR that the walk of the TA's shortcuts found
+                    ccr         BLOB,
                     PRIMARY KEY (ta_name, version)
             )
         |]

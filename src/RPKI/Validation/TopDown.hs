@@ -56,6 +56,8 @@ import           Data.Proxy
 
 import           RPKI.AppContext
 import           RPKI.AppState
+import           RPKI.CCR                         (CcrTaState)
+import           RPKI.CCR.Walk                    (walkShortcuts)
 import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
@@ -200,14 +202,17 @@ data TopDownResult = TopDownResult {
         roas                   :: Roas,
         topDownValidations     :: ValidationState,
         discoveredRepositories :: Fetcheables,
-        earliestNotValidAfter  :: EarliestToExpire
+        earliestNotValidAfter  :: EarliestToExpire,
+        -- | What the walk of the TA's shortcuts found for a CCR, `Nothing` 
+        -- when there was no walk (no CCR, or the validation didn't finish)
+        ccr                    :: Maybe CcrTaState
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving Semigroup via GenericSemigroup TopDownResult
     deriving Monoid    via GenericMonoid TopDownResult
 
 fromValidations :: ValidationState -> TopDownResult
-fromValidations vs = TopDownResult mempty mempty vs mempty mempty
+fromValidations vs = TopDownResult mempty mempty vs mempty mempty Nothing
 
 data TroubledChildLoadPath = TroubledFromParsed | TroubledFromOriginal
     deriving stock (Show, Eq, Ord, Generic)
@@ -312,11 +317,41 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
     let writerCap  = caps
         workerCaps = [0 .. caps - 1]
     setNumCapabilities (caps + 1)
-    (`IOExc.finally` setNumCapabilities caps) $
+    results <- (`IOExc.finally` setNumCapabilities caps) $
         Async.withAsyncOn writerCap (storeShortcuts appContext shortcutQueue `IOExc.finally` closeQueue) $ \writer ->
             Async.withAsync (validateAll shortcutQueue workerCaps `IOExc.finally` closeQueue) $ \validation ->
                 fst <$> Async.waitBoth validation writer
+
+    -- All the shortcut writes are flushed now, so the shortcuts are the tree 
+    -- as this validation found it, and the CCR walk can read them.
+    if config ^. #withCcr
+        then Map.traverseWithKey walkShortcutsOf results
+        else pure $ Map.map fst results
   where
+    walkShortcutsOf taName (result, walkable)
+        -- A TA interrupted by a timeout or a limit keeps what its last walk found
+        | not walkable = pure result
+        | otherwise    = do
+            (z, elapsed) <- timedMS $ roTxT database $ \tx -> 
+                DB.getTA tx taName >>= \case
+                    Nothing -> pure Nothing
+                    Just StorableTA { taCertKey } -> 
+                        Just <$> walkShortcuts tx now maxDepth taCertKey
+            case z of
+                Nothing -> do 
+                    logError logger [i|No TA certificate for #{taName}, there's nothing to walk for a CCR.|]
+                    pure result
+                Just (ccrState, problems) -> do
+                    for_ problems $ \problem -> 
+                        logError logger [i|CCR walk of #{taName}: #{problem}|]
+                    let manifestCount = length $ ccrState ^. #manifests
+                    logInfo logger $ [i|Walked the shortcuts of TA '#{taName}' for a CCR, |] <> 
+                                     [i|found #{manifestCount} manifests, took #{elapsed}ms.|]
+                    pure $ result & #ccr ?~ ccrState
+
+    now      = Now $ versionToInstant worldVersion
+    maxDepth = fromIntegral $ config ^. typed @ValidationConfig . #maxCertificatePathDepth
+
     validateAll shortcutQueue workerCaps = do 
         publicationPoints <- addprefetchUrls <$> roTxT database DB.getPublicationPoints            
         multiLocationKeys <- roTxT database DB.getMultiLocationShortcutChildren
@@ -341,11 +376,15 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         void $ timeout (toMicroseconds maxDuration) $ 
             forM_ tas $ \(_, _, task) -> waitTask task
 
+        -- Every TA with whether its validation got through the whole tree
         fmap Map.fromList $ forM tas $ \(tal, topDownContext, task) -> 
             fmap (getTaName tal, ) $ 
                 pollTask task >>= \case
-                    Just r  -> either IOExc.throwIO pure r
-                    Nothing -> timedOut tal topDownContext
+                    Just r  -> do 
+                        result <- either IOExc.throwIO pure r
+                        limited <- readTVarIO $ topDownContext ^. #interruptedByLimit
+                        pure (result, limited == CanProceed)
+                    Nothing -> (, False) <$> timedOut tal topDownContext
 
     timedOut tal topDownContext = do
         let taName = getTaName tal
@@ -394,6 +433,8 @@ validateTA appContext@AppContext{..} tal topDownContext = do
                             map (\(T2 roaPayload k) -> (k, roaPayload)) vrps 
 
             let payloads = Payloads {..}                    
+            -- The CCR walk comes later, once the shortcuts are written
+            let ccr = Nothing
             
             pure $ TopDownResult {..}
 

@@ -720,6 +720,9 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
         DB.saveValidationVersion tx worldVersion
             resultsToSave updatedValidation
 
+        DB.saveCcrStates tx worldVersion 
+            [ (ta, ccrState) | (ta, TopDownResult { ccr = Just ccrState }) <- Map.toList results ]
+
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.
         deleted <- DB.deleteOldestVersionsIfNeeded tx (config ^. #versionNumberToKeep)

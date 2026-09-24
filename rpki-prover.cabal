@@ -160,6 +160,7 @@ library
       RPKI.AppState
       RPKI.AppTypes
       RPKI.CCR
+      RPKI.CCR.Walk
       RPKI.Config
       RPKI.Cpu
       RPKI.Domain
@@ -311,6 +312,7 @@ test-suite rpki-prover-test
   main-is:         Spec.hs
   other-modules:
       RPKI.AppMonadSpec
+      RPKI.CCR.WalkSpec
       RPKI.CCRSpec
       RPKI.DomainSpec
       RPKI.Fetch.ErikSpec

@@ -16,6 +16,7 @@ and length.
 -}
 module RPKI.CCR (
     ManifestInstance(..),
+    CcrTaState(..),
     RouterKey(..),
     Ccr(..),
     encodeCcr,
@@ -23,6 +24,7 @@ module RPKI.CCR (
     ccrContentType
 ) where
 
+import           Control.Applicative         ((<|>))
 import           Control.DeepSeq
 import           Data.Bits                   (shiftL, shiftR, (.&.), (.|.))
 import qualified Data.ByteString             as BS
@@ -70,6 +72,21 @@ data ManifestInstance = ManifestInstance {
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
+
+-- | The part of a CCR that comes from one TA's tree: its TA certificate, if 
+-- it's valid, and the manifests under it.
+data CcrTaState = CcrTaState {
+        trustAnchor :: Maybe SKI,
+        manifests   :: [ManifestInstance]
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+instance Semigroup CcrTaState where
+    CcrTaState ta1 ms1 <> CcrTaState ta2 ms2 = CcrTaState (ta1 <|> ta2) (ms1 <> ms2)
+
+instance Monoid CcrTaState where
+    mempty = CcrTaState Nothing []
 
 data RouterKey = RouterKey {
         asn  :: ASN,
