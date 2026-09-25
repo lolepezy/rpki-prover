@@ -1153,13 +1153,10 @@ validateCaNoFetch
                     pure $! (key, entry) : childrenShortcuts
                 ValidEntry vs key entry -> do 
                     embedState vs
-                    -- Don't create shortcuts for objects having either errors or warnings,
-                    -- otherwise warnings will disappear after the first validation 
-                    if emptyValidations (vs ^. typed)
-                        then do                            
-                            pure $! (key, entry) : childrenShortcuts
-                        else do 
-                            pure $! (key, makeChildWithIssues key entry.fileName) : childrenShortcuts
+                    -- Issues about the child in the scope of the manifest, e.g. its
+                    -- name not matching its location, don't make it troubled: they
+                    -- stop the manifest shortcut from being made at all.
+                    pure $! (key, entry) : childrenShortcuts
             ) mempty
 
         
