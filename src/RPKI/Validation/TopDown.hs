@@ -1282,7 +1282,6 @@ validateCaNoFetch
             -> Validated CrlObject
             -> Eff es' (Maybe MftEntry)
     validateChildObject fullCa (Keyed child@(Located locations childRo) childKey) fileName validCrl = do
-        let focusOnChild = vFocusOnLocated child
         case childRo of
             CerRO childCert -> do
                 parentScope <- askScopes                
@@ -1325,70 +1324,26 @@ validateCaNoFetch
                                                 shortcutIfNoIssues childKey fileName
                                                         (makeCaShortcut childKey (Validated childCert) ppas)
                                 pure $! newShortcut shortcut
-            RoaRO roa -> 
-                focusOnChild $ do
-                    validateObjectLocations child                    
-                    allowRevoked $ do
-                        validRoa <- validateRoa validationRFC now roa fullCa.payload validCrl verifiedResources
-                        let roaPayload = roa.content
-                        oneMoreRoa
-                        moreVrps $ Count $ fromIntegral $ length (roaV4 roaPayload) + length (roaV6 roaPayload)
-                        increment $ topDownCounters.originalRoa                        
-                        shortcut <- shortcutIfNoIssues childKey fileName 
-                                            (makeRoaShortcut childKey validRoa roaPayload)                        
-                        rememberPayloads typed (T2 roaPayload childKey :)
-                        pure $! newShortcut shortcut                  
 
-            SplRO spl -> 
-                focusOnChild $ do
-                    validateObjectLocations child                    
-                    allowRevoked $ do
-                        validSpl <- validateSpl validationRFC now spl fullCa.payload validCrl verifiedResources
-                        let spls = spl.content
-                        oneMoreSpl                        
-                        increment $ topDownCounters.originalSpl
-                        shortcut <- shortcutIfNoIssues childKey fileName 
-                                            (makeSplShortcut childKey validSpl spls)
-                        rememberPayloads typed (spls :)
-                        pure $! newShortcut shortcut                        
+            RoaRO roa -> validLeaf $ do
+                validRoa <- validateRoa validationRFC now roa fullCa.payload validCrl verifiedResources
+                pure $! makeRoaShortcut childKey validRoa roa.content
 
-            AspaRO aspa -> 
-                focusOnChild $ do
-                    validateObjectLocations child                    
-                    allowRevoked $ do
-                        validAspa <- validateAspa validationRFC now aspa fullCa.payload validCrl verifiedResources
-                        oneMoreAspa
-                        let aspaPayload = aspa.content
-                        increment $ topDownCounters.originalAspa
-                        shortcut <- shortcutIfNoIssues childKey fileName
-                                            (makeAspaShortcut childKey validAspa aspaPayload)                        
-                        rememberPayloads typed (aspaPayload :)    
-                        pure $! newShortcut shortcut
+            SplRO spl -> validLeaf $ do
+                validSpl <- validateSpl validationRFC now spl fullCa.payload validCrl verifiedResources
+                pure $! makeSplShortcut childKey validSpl spl.content
 
-            BgpRO bgpCert ->
-                focusOnChild $ do
-                    validateObjectLocations child
-                    allowRevoked $ do
-                        (validaBgpCert, bgpPayload) <- validateBgpCert now bgpCert fullCa.payload validCrl
-                        oneMoreBgp
-                        shortcut <- shortcutIfNoIssues childKey fileName
-                                            (makeBgpSecShortcut childKey validaBgpCert bgpPayload)    
-                        
-                        rememberPayloads typed (bgpPayload :)
-                        pure $! newShortcut shortcut
+            AspaRO aspa -> validLeaf $ do
+                validAspa <- validateAspa validationRFC now aspa fullCa.payload validCrl verifiedResources
+                pure $! makeAspaShortcut childKey validAspa aspa.content
 
-            GbrRO gbr ->                 
-                focusOnChild $ do
-                    validateObjectLocations child                    
-                    allowRevoked $ do
-                        validGbr <- validateGbr validationRFC now gbr fullCa.payload validCrl verifiedResources
-                        oneMoreGbr
-                        let gbr' = gbr.content
-                        let gbrPayload = T2 (getHash gbr) gbr'                        
-                        shortcut <- shortcutIfNoIssues childKey fileName
-                                            (makeGbrShortcut childKey validGbr gbrPayload)
-                        rememberPayloads typed (gbrPayload :)                        
-                        pure $! newShortcut shortcut       
+            BgpRO bgpCert -> validLeaf $ do
+                (validBgpCert, bgpPayload) <- validateBgpCert now bgpCert fullCa.payload validCrl
+                pure $! makeBgpSecShortcut childKey validBgpCert bgpPayload
+
+            GbrRO gbr -> validLeaf $ do
+                validGbr <- validateGbr validationRFC now gbr fullCa.payload validCrl verifiedResources
+                pure $! makeGbrShortcut childKey validGbr (T2 (getHash gbr) gbr.content)
 
             -- Any new type of object should be added here, otherwise
             -- they will emit a warning.
@@ -1398,6 +1353,20 @@ validateCaNoFetch
                     pure $! newShortcut (makeChildWithIssues childKey fileName)
 
         where
+            focusOnChild = vFocusOnLocated child
+
+            -- Validate an object other than a CA certificate, which gives
+            -- its shortcut, and take it the same way the shortcut is taken
+            -- in the next rounds
+            validLeaf validate =
+                focusOnChild $ do
+                    validateObjectLocations child
+                    allowRevoked $ do
+                        leaf <- validate
+                        acceptLeaf topDownContext FromObject leaf
+                        shortcut <- shortcutIfNoIssues childKey fileName leaf
+                        pure $! newShortcut shortcut
+
             -- In case of RevokedResourceCertificate error, the whole manifest is not to be considered 
             -- invalid, only the object with the revoked certificate is considered invalid.
             -- Replace RevokedResourceCertificate error with a warning and don't break the 
@@ -1414,10 +1383,10 @@ validateCaNoFetch
     -- Don't create shortcuts for objects with warnings in their scope, 
     -- otherwise warnings will be reported only once for the original 
     -- and never for shortcuts.
-    shortcutIfNoIssues key fileName makeShortcut = do 
+    shortcutIfNoIssues key fileName child = do 
         issues <- thisScopeIssues
         pure $! if Set.null issues 
-                    then makeShortcut fileName
+                    then MftEntry fileName child
                     else makeChildWithIssues key fileName
 
     thisScopeIssues :: Validator es' => Eff es' (Set VIssue)
@@ -1546,39 +1515,11 @@ validateCaNoFetch
                             
                     validateCa appContext childTopDownContext (CaShort caShortcut)
                         
-                RoaChild r@RoaShortcut {..} _ -> 
-                    vFocusOn ObjectFocus childKey $ do                    
-                        validateShortcut childData r key (validateRoaPrefixes verifiedResources roaPayload)                   
-                        oneMoreRoa                        
-                        moreVrps $ Count $ fromIntegral $ length (roaV4 roaPayload) + length (roaV6 roaPayload)
-                        increment topDownCounters.shortcutRoa
-                        rememberPayloads typed (T2 roaPayload childKey :)
-
-                SplChild s@SplShortcut {..} _ -> 
-                    vFocusOn ObjectFocus childKey $ do
-                        validateShortcut childData s key (validateSplAsn verifiedResources splPayload)
-                        oneMoreSpl                        
-                        increment topDownCounters.shortcutSpl
-                        rememberPayloads typed (splPayload :)
-                
-                AspaChild a@AspaShortcut {..} _ -> 
-                    vFocusOn ObjectFocus childKey $ do 
-                        validateShortcut childData a key (pure ())
-                        oneMoreAspa 
-                        increment topDownCounters.shortcutAspa
-                        rememberPayloads typed (aspa :)                        
-
-                BgpSecChild b@BgpSecShortcut {..} _ -> 
-                    vFocusOn ObjectFocus childKey $ do 
-                        validateShortcut childData b key (pure ())
-                        oneMoreBgp                
-                        rememberPayloads typed (bgpSec :)
-
-                GbrChild g@GbrShortcut {..} _ -> 
-                    vFocusOn ObjectFocus childKey $ do
-                        validateShortcut childData g key (pure ()) 
-                        oneMoreGbr                 
-                        rememberPayloads typed (gbr :)
+                RoaChild r _    -> recheckLeaf r (validateRoaPrefixes verifiedResources r.roaPayload)
+                SplChild s _    -> recheckLeaf s (validateSplAsn verifiedResources s.splPayload)
+                AspaChild a _   -> recheckLeaf a (pure ())
+                BgpSecChild b _ -> recheckLeaf b (pure ())
+                GbrChild g _    -> recheckLeaf g (pure ())
 
                 TroubledChild childKey_ -> do
                     increment topDownCounters.shortcutTroubled
@@ -1587,6 +1528,13 @@ validateCaNoFetch
                     -- then it doesn't need to be validated in full anymore.
                     newEntry <- troubledValidation childKey_ fileName
                     for_ newEntry $ storeChildIfChanged childKey_ childData
+          where
+            -- Recheck the shortcut of an object other than a CA certificate, and
+            -- take it the same way as the object is taken when validated in full
+            recheckLeaf shortcut validatePayload =
+                vFocusOn ObjectFocus childKey $ do
+                    validateShortcut childData shortcut childKey validatePayload
+                    acceptLeaf topDownContext FromShortcut (childOf childData)
     
         -- `validatePayload` is what full validation checks of the payload against 
         -- the resources of the CA, on top of the resources of the EE certificate.
@@ -1621,14 +1569,46 @@ validateCaNoFetch
                         appError e
             
 
-    -- TODO This is pretty bad, it's easy to forget to do it
-    rememberPayloads :: forall m a . MonadIO m 
-                    => Getting (IORef a) PayloadBuilder (IORef a) 
-                    -> (a -> a) 
-                    -> m ()
-    rememberPayloads lens_ f = do
-        let builder = topDownContext ^. #payloadBuilder . lens_        
-        liftIO $! atomicModifyIORef' builder $ \b -> let !z = f b in (z, ())
+-- | Where a valid child comes from: its object validated in full, or its shortcut.
+data ChildSource = FromObject | FromShortcut
+
+-- | Count a valid manifest child that is not a CA certificate and keep its
+-- payload. It's done here only, the same for a child validated in full and
+-- for a child taken from its shortcut.
+acceptLeaf :: ValidatorIO es => TopDownContext -> ChildSource -> MftChild -> Eff es ()
+acceptLeaf topDownContext source = \case
+    RoaChild r _ -> do
+        oneMoreRoa
+        moreVrps $ Count $ fromIntegral $ length (roaV4 r.roaPayload) + length (roaV6 r.roaPayload)
+        count (.originalRoa) (.shortcutRoa)
+        keep #vrps $ T2 r.roaPayload r.key
+    SplChild s _ -> do
+        oneMoreSpl
+        count (.originalSpl) (.shortcutSpl)
+        keep #spls s.splPayload
+    AspaChild a _ -> do
+        oneMoreAspa
+        count (.originalAspa) (.shortcutAspa)
+        keep #aspas a.aspa
+    BgpSecChild b _ -> do
+        oneMoreBgp
+        keep #bgpCerts b.bgpSec
+    GbrChild g _ -> do
+        oneMoreGbr
+        keep #gbrs g.gbr
+    -- A CA gives the payloads of its sub-tree
+    CaChild {} -> pure ()
+    -- A troubled child is validated in full and accepted as what that gives
+    TroubledChild _ -> pure ()
+  where
+    counters = topDownContext.allTas.topDownCounters
+    count original shortcut = increment $ case source of
+        FromObject   -> original counters
+        FromShortcut -> shortcut counters
+
+    keep :: MonadIO m => Getting (IORef [a]) PayloadBuilder (IORef [a]) -> a -> m ()
+    keep field a = liftIO $
+        atomicModifyIORef' (topDownContext.payloadBuilder ^. field) $ \as -> (a : as, ())
 
 
 -- | How to validate the manifest of a CA.
@@ -1788,54 +1768,48 @@ integrityError AppContext {..} message = do
     logError logger message
     appError $ ValidationE $ ReferentialIntegrityError message  
 
-makeCaShortcut :: ObjectKey -> Validated WellStructuredCaCert -> PublicationPointAccess -> Text -> MftEntry
-makeCaShortcut key (Validated certificate) ppas fileName = let 
+makeCaShortcut :: ObjectKey -> Validated WellStructuredCaCert -> PublicationPointAccess -> MftChild
+makeCaShortcut key (Validated certificate) ppas = let 
         ValidityPeriod {..} = getValidityPeriod certificate            
         ski = getSKI certificate
         serial = getSerial certificate
         resources = getResources certificate
-        child = CaChild (CaShortcut {..}) serial
-    in MftEntry {..}
+    in CaChild (CaShortcut {..}) serial
 
-makeRoaShortcut :: ObjectKey -> Validated WellStructuredRoa -> VrpsPerAs -> Text -> MftEntry
-makeRoaShortcut key (Validated roa) roaPayload fileName = let
+makeRoaShortcut :: ObjectKey -> Validated WellStructuredRoa -> VrpsPerAs -> MftChild
+makeRoaShortcut key (Validated roa) roaPayload = let
         ValidityPeriod {..} = getValidityPeriod roa    
         serial = getSerial roa
         resources = getResources roa
-        child = RoaChild (RoaShortcut {..}) serial
-    in MftEntry {..}    
+    in RoaChild (RoaShortcut {..}) serial
 
-makeSplShortcut :: ObjectKey -> Validated WellStructuredSpl -> SplPayload -> Text -> MftEntry
-makeSplShortcut key (Validated spl) splPayload fileName = let 
+makeSplShortcut :: ObjectKey -> Validated WellStructuredSpl -> SplPayload -> MftChild
+makeSplShortcut key (Validated spl) splPayload = let 
         ValidityPeriod {..} = getValidityPeriod spl
         serial = getSerial spl
         resources = getResources spl
-        child = SplChild (SplShortcut {..}) serial
-    in MftEntry {..}    
+    in SplChild (SplShortcut {..}) serial
 
-makeAspaShortcut :: ObjectKey -> Validated WellStructuredAspa -> Aspa -> Text -> MftEntry
-makeAspaShortcut key (Validated aspaObject) aspa fileName = let 
+makeAspaShortcut :: ObjectKey -> Validated WellStructuredAspa -> Aspa -> MftChild
+makeAspaShortcut key (Validated aspaObject) aspa = let 
         ValidityPeriod {..} = getValidityPeriod aspaObject            
         serial = getSerial aspaObject
         resources = getResources aspaObject
-        child = AspaChild (AspaShortcut {..}) serial
-    in MftEntry {..}    
+    in AspaChild (AspaShortcut {..}) serial
 
-makeGbrShortcut :: ObjectKey -> Validated WellStructuredGbr -> T2 Hash Gbr -> Text -> MftEntry
-makeGbrShortcut key (Validated gbrObject) gbr fileName = let 
+makeGbrShortcut :: ObjectKey -> Validated WellStructuredGbr -> T2 Hash Gbr -> MftChild
+makeGbrShortcut key (Validated gbrObject) gbr = let 
         ValidityPeriod {..} = getValidityPeriod gbrObject    
         serial = getSerial gbrObject
         resources = getResources gbrObject
-        child = GbrChild (GbrShortcut {..}) serial       
-    in MftEntry {..}    
+    in GbrChild (GbrShortcut {..}) serial
 
-makeBgpSecShortcut :: ObjectKey -> Validated WellStructuredBgpCert -> BGPSecPayload -> Text -> MftEntry
-makeBgpSecShortcut key (Validated bgpCert) bgpSec fileName = let         
+makeBgpSecShortcut :: ObjectKey -> Validated WellStructuredBgpCert -> BGPSecPayload -> MftChild
+makeBgpSecShortcut key (Validated bgpCert) bgpSec = let         
         ValidityPeriod {..} = getValidityPeriod bgpCert                  
         serial = getSerial bgpCert
         resources = getResources bgpCert
-        child = BgpSecChild (BgpSecShortcut {..}) serial
-    in MftEntry {..}    
+    in BgpSecChild (BgpSecShortcut {..}) serial
 
 makeMftShortcut :: ObjectKey 
                 -> Validated WellStructuredMft -> [(ObjectKey, MftEntry)] 
