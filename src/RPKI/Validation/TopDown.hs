@@ -835,8 +835,15 @@ validateCaNoFetch
             let crlKey = crlShortcut.key
             markAsUsed topDownContext crlKey
             lightChildren <- roTxT database $ \tx -> DB.getMftShorcutChildrenLight tx aki
+            -- A CA certificate validated in full is a new one (or a troubled one) and its
+            -- resources may be different from the ones the shortcuts of its children were
+            -- made with, e.g. it's re-issued with fewer resources. Then the resources of
+            -- the children have to be checked again, which is what `Left` tells.
+            let fullCa = case ca of
+                    CaFull c  -> Left c
+                    CaShort _ -> Right $ getFullCa appContext topDownContext ca
             collectPayloads aki meta (Map.map ChildLight lightChildren) Nothing
-                    (Right $ getFullCa appContext topDownContext ca)
+                    fullCa
                     (getCrlByKey appContext crlKey)
                     (getResources ca)
 
@@ -1528,6 +1535,23 @@ validateCaNoFetch
 
             void $ validateChildObject caFull childObject fileName validCrl
 
+        -- Rare fallback: the light (file_name-free) read path needs a file_name
+        -- to write a child's entry. Look it up on demand instead of joining
+        -- file_name into every bulk read.
+        childFileName childKey = \case
+            ChildWithEntry MftEntry {..} -> pure fileName
+            ChildLight _ -> do
+                mfn <- roTxT database $ \tx ->
+                            DB.getMftShortcutChildFileName tx childrenAki childKey
+                case mfn of
+                    Just fn -> pure fn
+                    Nothing -> integrityError appContext
+                        [i|Referential integrity error, can't find file_name for child #{childKey}.|]
+
+        storeChildIfChanged childKey childData newEntry =
+            unless (newEntry.child == childOf childData) $
+                updateMftShortcutChildren topDownContext childrenAki [(childKey, newEntry)] []
+
         getChildPayloads troubledValidation (childKey, childData) = do
             markAsUsed topDownContext childKey
             case childOf childData of
@@ -1548,7 +1572,7 @@ validateCaNoFetch
                         
                 RoaChild r@RoaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do                    
-                        validateShortcut r key                   
+                        validateShortcut childData r key                   
                         oneMoreRoa                        
                         moreVrps $ Count $ fromIntegral $ length (roaV4 roaPayload) + length (roaV6 roaPayload)
                         increment topDownCounters.shortcutRoa
@@ -1556,49 +1580,38 @@ validateCaNoFetch
 
                 SplChild s@SplShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do
-                        validateShortcut s key
+                        validateShortcut childData s key
                         oneMoreSpl                        
                         increment topDownCounters.shortcutSpl
                         rememberPayloads typed (splPayload :)
                 
                 AspaChild a@AspaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do 
-                        validateShortcut a key
+                        validateShortcut childData a key
                         oneMoreAspa 
                         increment topDownCounters.shortcutAspa
                         rememberPayloads typed (aspa :)                        
 
                 BgpSecChild b@BgpSecShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do 
-                        validateShortcut b key
+                        validateShortcut childData b key
                         oneMoreBgp                
                         rememberPayloads typed (bgpSec :)
 
                 GbrChild g@GbrShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do
-                        validateShortcut g key 
+                        validateShortcut childData g key 
                         oneMoreGbr                 
                         rememberPayloads typed (gbr :)
 
                 TroubledChild childKey_ -> do
                     increment topDownCounters.shortcutTroubled
-                    fileName <- case childData of
-                        ChildWithEntry MftEntry {..} -> pure fileName
-                        ChildLight _ -> do
-                            -- Rare fallback: the light (file_name-free) read path hit a
-                            -- troubled child, which genuinely needs a file_name to build a
-                            -- fresh MftEntry on successful re-validation. Look it up on demand
-                            -- instead of joining file_name into every bulk read.
-                            mfn <- roTxT database $ \tx ->
-                                        DB.getMftShortcutChildFileName tx childrenAki childKey_
-                            case mfn of
-                                Just fn -> pure fn
-                                Nothing -> integrityError appContext
-                                    [i|Referential integrity error, can't find file_name for troubled child #{childKey_}.|]
+                    fileName <- childFileName childKey_ childData
                     troubledValidation childKey_ fileName
     
-        validateShortcut :: (ValidatorIO es', WithValidityPeriod s, WithResources s) => s -> ObjectKey -> Eff es' ()
-        validateShortcut shortcut key = do
+        validateShortcut :: (ValidatorIO es', Concurrent :> es', WithValidityPeriod s, WithResources s) 
+                         => ChildData -> s -> ObjectKey -> Eff es' ()
+        validateShortcut childData shortcut key = do
             validateLocationForShortcut key            
             ValidityPeriod {..} <- validateObjectValidityPeriod shortcut now
             rememberNotValidAfter topDownContext notAfter            
@@ -1614,7 +1627,14 @@ validateCaNoFetch
                         ReconsideredRFC -> potentiallyNewResources || overclaimingHappened
             when revalidateResources $             
                 void $ validateChildParentResources validationRFC 
-                    (getResources shortcut) parentCaResources verifiedResources
+                        (getResources shortcut) parentCaResources verifiedResources
+                    `catchError` \_cs (e :: AppError) -> do 
+                        -- The shortcut isn't valid anymore and later validations 
+                        -- may not check its resources again (e.g. the CA is a shortcut 
+                        -- by then), so it has to be validated in full from now on.
+                        fileName <- childFileName key childData
+                        storeChildIfChanged key childData (makeChildWithIssues key fileName)
+                        appError e
             
 
     -- TODO This is pretty bad, it's easy to forget to do it
