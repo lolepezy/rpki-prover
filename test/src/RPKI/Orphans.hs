@@ -29,7 +29,6 @@ import           Data.Tuple.Strict
 
 import           RPKI.Orphans.Generics
 import           RPKI.Domain
-import           RPKI.Store.Base.Serialisation (LexOrdKey64(..))
 import           RPKI.Time
 import           RPKI.Repository
 import           RPKI.Resources.Resources
@@ -291,7 +290,7 @@ instance Arbitrary ResourceCertificate where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RpkiObject where
+instance Arbitrary ParsedRpkiObject where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -491,9 +490,6 @@ instance Arbitrary RrdpMap where
 
 -- errors and warnings
 
-instance Arbitrary LexOrdKey64 where
-    arbitrary = LexOrdKey64 <$> arbitrary
-
 instance Arbitrary ArtificialKey where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -542,6 +538,10 @@ instance Arbitrary TALError where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary ErikError where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary InitError where
     arbitrary = genericArbitrary
     shrink = genericShrink
@@ -555,7 +555,10 @@ instance Arbitrary SlurmError where
     shrink = genericShrink
 
 instance Arbitrary AppError where
-    arbitrary = genericArbitrary
+    -- `ComposeE [AppError]` is recursive, so the generic generator would happily
+    -- build unboundedly deep errors and never come back. Halving the size at
+    -- every level makes the nested list empty out and the generator terminate.
+    arbitrary = scale (`div` 2) genericArbitrary
     shrink = genericShrink
 
 instance Arbitrary VIssue where
@@ -585,7 +588,7 @@ instance Arbitrary Metrics where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary RsyncMetric where
+instance Arbitrary TraverseMetric where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
@@ -647,6 +650,10 @@ instance Arbitrary Count where
     shrink = genericShrink
 
 instance Arbitrary HttpStatus where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
+instance Arbitrary FQDN where
     arbitrary = genericArbitrary
     shrink = genericShrink
 

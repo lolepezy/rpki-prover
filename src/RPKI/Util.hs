@@ -1,6 +1,6 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleInstances    #-}
 
 module RPKI.Util where
 
@@ -15,6 +15,7 @@ import qualified Data.ByteString.Base16      as Hex
 import qualified Data.ByteString.Char8       as C
 import qualified Data.ByteString.Short       as BSS
 import qualified Data.ByteString.Base64      as B64
+import qualified Data.ByteString.Base64.URL  as B64U
 import qualified Data.Base64.Types           as B64T
 import           Data.Char
 import qualified Data.List                   as List
@@ -29,8 +30,9 @@ import           Data.Bifunctor
 import           Data.Word
 import           RPKI.Domain
 import           RPKI.AppTypes
+import           RPKI.Store.Base.Serialisation
 
-import           Data.IORef.Lifted
+import           Data.IORef
 
 import           Numeric.Natural
 
@@ -52,10 +54,20 @@ mkHash = Hash . BSS.toShort
 
 unhex :: BS.ByteString -> Maybe BS.ByteString
 unhex hexed = either (const Nothing) Just $ Hex.decode hexed    
+{-# INLINE unhex #-}
 
 hex :: BS.ByteString -> BS.ByteString
 hex = Hex.encode    
 {-# INLINE hex #-}
+
+hashHex :: Hash -> BS.ByteString
+hashHex (Hash h) = Hex.encode $ BSS.fromShort h 
+{-# INLINE hashHex #-}
+
+-- | Base64url encoding without padding, as required by RFC 6920 (Named Information URIs).
+hashAsBase64Url :: Hash -> BS.ByteString
+hashAsBase64Url (Hash h) = B64T.extractBase64 $ B64U.encodeBase64Unpadded' $ BSS.fromShort h
+{-# INLINE hashAsBase64Url #-}
 
 class ConvertibleAsSomethingString s1 s2 where
     convert :: s1 -> s2
@@ -95,12 +107,15 @@ removeSpaces = C.filter (not . isSpace)
 isSpace_ :: Word8 -> Bool
 isSpace_ = isSpace . chr . fromEnum
 
+{-# INLINE fmtEx #-}
 fmtEx :: SomeException -> Text
 fmtEx = Text.pack . show
 
+{-# INLINE fmtGen #-}
 fmtGen :: Show a => a -> Text
 fmtGen = Text.pack . show
 
+{-# INLINE toNatural #-}
 toNatural :: Int -> Maybe Natural 
 toNatural i | i > 0     = Just (fromIntegral i :: Natural)
             | otherwise = Nothing
@@ -132,12 +147,43 @@ parseRsyncURL t =
         Just mu -> 
             case mu ^. uriAuthority of 
                 Left _  -> Left "No URL authority, i.e. host" 
-                Right a -> let                                         
-                    hostName = RsyncHostName $ a ^. authHost . unRText
-                    port = RsyncPort . fromIntegral <$> a ^. authPort
-                    host = RsyncHost hostName port
-                    path = map (RsyncPathChunk . (^. unRText)) $ mu ^. uriPath
-                    in Right $ RsyncURL host path
+                Right a -> do 
+                    hostName <- validRsyncHostName $ a ^. authHost
+                    let port = RsyncPort . fromIntegral <$> a ^. authPort
+                    let host = RsyncHost hostName port
+                    path <- mapM validRsyncPathChunk $ mu ^. uriPath
+                    pure $ RsyncURL host path
+
+{- | Rsync URLs are mapped onto local filesystem paths (see `rsyncDestination`), 
+   so every component must be safe to use as a single path segment.
+
+   Note that `MURI.mkURI` percent-decodes path pieces and does *not* remove 
+   dot-segments, so without these checks a URL such as 
+
+       rsync://example.com/a/../../../etc/cron.d/
+       rsync://example.com/%2Fetc%2Fcron.d/
+
+   would escape the rsync root and let a (validly signed) CA certificate point 
+   the rsync client, which runs with --delete, at an arbitrary directory.
+-}
+validRsyncPathChunk :: MURI.RText 'MURI.PathPiece -> Either Text RsyncPathChunk
+validRsyncPathChunk (view unRText -> chunk) = 
+    RsyncPathChunk <$> validPathSegment "path segment" chunk
+
+validRsyncHostName :: MURI.RText 'MURI.Host -> Either Text RsyncHostName
+validRsyncHostName (view unRText -> hostName) = 
+    RsyncHostName <$> validPathSegment "host name" hostName
+
+-- | Reject anything that is not usable as one single file/directory name.
+validPathSegment :: Text -> Text -> Either Text Text
+validPathSegment what segment
+    | Text.null segment          = Left $ "Empty rsync URL " <> what <> "."
+    | segment == "." 
+        || segment == ".."       = Left $ "Dot-segment '" <> segment <> "' in rsync URL " <> what <> "."
+    | Text.any isBadChar segment = Left $ "Unsupported character in rsync URL " <> what <> " '" <> segment <> "'."
+    | otherwise                  = Right segment
+  where
+    isBadChar c = c == '/' || c == '\\' || c == '\0'
 
 getHostname :: Text -> Maybe Text
 getHostname t = 
@@ -147,6 +193,11 @@ getHostname t =
             case mu ^. uriAuthority of
                 Left _  -> Nothing
                 Right a -> Just $ a ^. authHost . unRText
+
+
+getFQDN :: RpkiURL -> Maybe FQDN
+getFQDN (RsyncU (RsyncURL (RsyncHost (RsyncHostName host) _) _)) = Just $ FQDN host
+getFQDN (RrdpU (RrdpURL (URI u))) = FQDN <$> getHostname u
 
 increment :: (MonadIO m, Num a) => IORef a -> m ()
 increment counter = liftIO $ atomicModifyIORef' counter $ \c -> (c + 1, ())            
@@ -177,3 +228,7 @@ fmtLocations = mconcat .
 
 parseWorldVersion :: Text -> Either Text WorldVersion
 parseWorldVersion t = asVersion <$> first Text.pack (readEither $ Text.unpack t)
+
+firstByte :: Hash -> Word8
+firstByte (Hash h) = BSS.head h
+        

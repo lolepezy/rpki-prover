@@ -205,8 +205,8 @@ def aggregate_resources(raw_system) -> dict:
             continue
         out[tag] = {
             "avg_cpu":    r.get("avgCpuTimeMsPerSecond", 0.0),
-            "avg_memory": r.get("avgMemory", 0),
-            "max_memory": r.get("maxMemory", 0),
+            "avg_memory": r.get("avgRtsHeap", 0),
+            "max_memory": r.get("maxRtsHeap", 0),
         }
     return out
 

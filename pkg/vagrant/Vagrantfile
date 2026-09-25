@@ -1,0 +1,100 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+#
+# Throwaway VMs for testing the rpki-prover Debian/Ubuntu packages against
+# real systemd. Packages are expected in pkg/packages/<codename>/ -- build
+# them first with pkg/build-packages.sh.
+#
+#   cd pkg/vagrant
+#   vagrant up bookworm            # boots and runs the full test suite
+#   vagrant provision bookworm     # re-run the tests on a running VM
+#   vagrant destroy -f bookworm
+#
+# To also exercise the upgrade path, drop the previous release's package into
+# pkg/packages/<codename>/old/.
+#
+# Boxes can be overridden, which is how you point "sid" at an actual sid box:
+#   RPKI_PROVER_BOX_SID=my/sid64 vagrant up sid
+
+REPO_ROOT = File.expand_path("../..", __dir__)
+PKG_DIR   = File.join(REPO_ROOT, "pkg")
+
+MACHINES = {
+  # codename    box                                                    memory  cpus
+  "bookworm" => [ENV.fetch("RPKI_PROVER_BOX_BOOKWORM", "debian/bookworm64"), 4096, 2],
+  "trixie"   => [ENV.fetch("RPKI_PROVER_BOX_TRIXIE",   "debian/trixie64"),   4096, 2],
+  # Debian does not publish an official "sid" box; debian/testing64 tracks the
+  # current testing suite and is the closest thing that is always available.
+  "sid"      => [ENV.fetch("RPKI_PROVER_BOX_SID",      "debian/testing64"),  4096, 2],
+  "jammy"    => [ENV.fetch("RPKI_PROVER_BOX_JAMMY",    "ubuntu/jammy64"),    4096, 2],
+  "noble"    => [ENV.fetch("RPKI_PROVER_BOX_NOBLE",    "ubuntu/noble64"),    4096, 2],
+}
+
+# Give the daemon room: a cold start pulls the whole RPKI repository set.
+SERVICE_TIMEOUT = ENV.fetch("RPKI_PROVER_SERVICE_TIMEOUT", "180")
+
+Vagrant.configure("2") do |config|
+  config.vm.box_check_update = false
+
+  MACHINES.each do |codename, (box, memory, cpus)|
+    config.vm.define codename, autostart: false do |node|
+      node.vm.box = box
+      node.vm.hostname = "rpki-prover-#{codename}"
+
+      # rsync works with every provider and keeps the VM disposable.
+      node.vm.synced_folder PKG_DIR, "/opt/rpki-prover-pkg",
+        type: "rsync",
+        rsync__exclude: [".git/"],
+        rsync__args: ["-a", "--delete"]
+
+      node.vm.provider "libvirt" do |lv|
+        lv.memory = memory
+        lv.cpus   = cpus
+      end
+
+      node.vm.provider "virtualbox" do |vb|
+        vb.memory = memory
+        vb.cpus   = cpus
+        vb.name   = "rpki-prover-#{codename}"
+      end
+
+      node.vm.provision "shell",
+        env: {
+          "CODENAME"        => codename,
+          "SERVICE_TIMEOUT" => SERVICE_TIMEOUT,
+        },
+        inline: <<-'SHELL'
+          set -euo pipefail
+
+          PKG_DIR="/opt/rpki-prover-pkg/packages/${CODENAME}"
+
+          if [ ! -d "${PKG_DIR}" ]; then
+            echo "No packages for ${CODENAME}: expected ${PKG_DIR}." >&2
+            echo "Run pkg/build-packages.sh ${CODENAME} on the host first." >&2
+            exit 1
+          fi
+
+          DEB=$(find "${PKG_DIR}" -maxdepth 1 -name 'rpki-prover_*.deb' | sort | tail -1)
+          if [ -z "${DEB}" ]; then
+            echo "No rpki-prover_*.deb in ${PKG_DIR}" >&2
+            exit 1
+          fi
+
+          OLD_DEB=$(find "${PKG_DIR}/old" -maxdepth 1 -name 'rpki-prover_*.deb' 2>/dev/null | sort | tail -1)
+
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+
+          ARGS=(--deb "${DEB}" --service-timeout "${SERVICE_TIMEOUT}")
+          if [ -n "${OLD_DEB}" ]; then
+            echo "Upgrade test will use ${OLD_DEB}"
+            ARGS+=(--old-deb "${OLD_DEB}")
+          else
+            echo "No package in ${PKG_DIR}/old, skipping the upgrade test."
+          fi
+
+          exec /opt/rpki-prover-pkg/test-scripts/test-rpki-prover.sh "${ARGS[@]}" all
+        SHELL
+    end
+  end
+end

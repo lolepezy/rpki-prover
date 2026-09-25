@@ -1,0 +1,39 @@
+# Command line options for the rpki-prover systemd service.
+#
+# rpki-prover has no configuration file; everything is a command line option.
+# "rpki-prover --help" lists all of them, and rpki-prover(1) has the same list.
+#
+# --rpki-root-directory /var/lib/rpki-prover is always passed by the unit file
+# and must not be repeated here.
+#
+# The value is split on whitespace by systemd, so options containing spaces
+# cannot be expressed here; use a systemd drop-in
+# (systemctl edit rpki-prover) for those.
+
+RPKI_PROVER_ARGS="--cpu-count 2 --http-api-port 9999"
+
+# Trust anchor locators
+# ---------------------
+# On the first start, when /var/lib/rpki-prover/tals is empty and
+# --extra-tals-directory is not set, rpki-prover downloads the five RIR TALs
+# from the RIRs themselves. That is the default and needs no configuration.
+#
+# To use the TALs from the Debian archive instead, install the
+# rpki-trust-anchors package and add
+#
+#   --extra-tals-directory /etc/tals
+#
+# to RPKI_PROVER_ARGS above. Setting it also switches off the automatic
+# download, so make sure the directory really has the TALs you want. Note that
+# Debian 12 (bookworm) ships rpki-trust-anchors without the ARIN TAL.
+#
+# Locally added or replacement TALs can always be dropped into
+# /var/lib/rpki-prover/tals/ , which is scanned on every start.
+
+# Some other things you may want in RPKI_PROVER_ARGS:
+#
+#   --log-level debug
+#   --with-rtr --rtr-address 0.0.0.0 --rtr-port 8283
+#   --revalidation-interval 600
+#   --cache-lifetime-hours 48
+#   --local-exceptions /etc/rpki-prover/slurm.json

@@ -43,7 +43,6 @@ import HaskellWorks.Data.Network.Ip.Ip as Ips
 
 import           RPKI.AppTypes
 import           RPKI.Domain                 as Domain
-import           RPKI.Store.Base.Serialisation (LexOrdKey64(..))
 import           RPKI.Config
 
 import           RPKI.Logging
@@ -165,10 +164,10 @@ instance ToJSON Count where
     toJSON (Count s) = toJSON s
 
 instance ToJSON ObjectKey where
-    toJSON (ObjectKey (ArtificialKey (LexOrdKey64 k))) = toJSON k
+    toJSON (ObjectKey (ArtificialKey k)) = toJSON k
 
 instance ToJSONKey ObjectKey where
-    toJSONKey = toJSONKeyText $ \(ObjectKey (ArtificialKey (LexOrdKey64 k))) -> U.fmtGen k
+    toJSONKey = toJSONKeyText $ \(ObjectKey (ArtificialKey k)) -> U.fmtGen k
 
 instance ToJSON Focus
 instance ToJSONKey (Scope 'Metric)
@@ -187,8 +186,11 @@ instance ToJSON AggregatedCPUTime where
 instance ToJSON LatestCPUTime where 
     toJSON (LatestCPUTime (CPUTime s)) = toJSON s
 
-instance ToJSON MaxMemory where 
+instance ToJSON MaxMemory where
     toJSON (MaxMemory s) = toJSON s
+
+instance ToJSON MaxSize where
+    toJSON (MaxSize s) = toJSON s
 
 instance ToJSON AvgMemory where 
     toJSON = toJSON . getAvgMemory
@@ -222,17 +224,12 @@ $(deriveToJSON defaultOptions ''ValidationMetric)
 instance ToJSON a => ToJSON (GroupedMetric a)
 
 $(deriveToJSON defaultOptions ''FetchFreshness)
-$(deriveToJSON defaultOptions ''RsyncMetric)
+$(deriveToJSON defaultOptions ''TraverseMetric)
 $(deriveToJSON defaultOptions ''RrdpMetric)
 $(deriveToJSON defaultOptions ''ResourceUsage)
 $(deriveToJSON defaultOptions ''SystemMetrics)
 $(deriveToJSON defaultOptions ''ScopeKind)
 
-
-$(deriveToJSON defaultOptions ''SStats)
-$(deriveToJSON defaultOptions ''DBFileStats)
-$(deriveToJSON defaultOptions ''StorageStats)
-$(deriveToJSON defaultOptions ''TotalDBStats)
 $(deriveToJSON defaultOptions ''VrpCounts)
 $(deriveToJSON defaultOptions ''Metrics)
 
@@ -375,6 +372,14 @@ $(deriveToJSON defaultOptions ''CertificateWithSignature)
 $(deriveToJSON defaultOptions ''RawResourceCertificate)
 $(deriveToJSON defaultOptions ''ResourceCertificate)
 
+instance ToJSON FQDN where
+    toJSON (FQDN t) = toJSON t
+
+$(deriveToJSON defaultOptions ''ErikPartitionRef)
+$(deriveToJSON defaultOptions ''ErikManifestRef)
+$(deriveToJSON defaultOptions ''ErikPartition)
+$(deriveToJSON defaultOptions ''ErikIndex)
+
 -- RPKI Object
 instance ToJSON a => ToJSON (TypedCert a t)
 
@@ -403,7 +408,7 @@ instance ToJSON Vrp
 instance ToJSON a => ToJSON (Deq.Deque a) where
     toJSON = toJSON . toList
 
-instance (ToJSON a, ToJSON b) => ToJSON (GenDiffs a b)
+instance (ToJSON a, ToJSON b, ToJSON c) => ToJSON (GenDiffs a b c)
 instance ToJSON a => ToJSON (Diff a)
 
 
@@ -448,8 +453,10 @@ instance ToJSON TAL
 instance ToJSON HttpApiConfig
 instance ToJSON ValidationConfig
 instance ToJSON RtrConfig
+instance ToJSON WorkerLimits
 instance ToJSON SystemConfig
 instance ToJSON RrdpConf
 instance ToJSON RsyncConf    
+instance ToJSON ErikConf
 instance ToJSON StorageConfig
 instance ToJSON Config

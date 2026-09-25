@@ -42,17 +42,10 @@ data StorableObject a = StorableObject {
 newtype Verbatim a = Verbatim { unVerbatim :: Storable }
     deriving stock (Show, Eq, Generic)
 
-storableSize :: Storable -> Int              
-storableSize (Storable bs) = BS.length bs
 
 toStorableObject :: AsStorable a => a -> StorableObject a
 toStorableObject a = StorableObject a (toStorable a)
 
-storableValue :: AsStorable v => v -> SValue
-storableValue = SValue . toStorable
-
-storableKey :: AsStorable v => v -> SKey
-storableKey = SKey . toStorable
 
 newtype Compressed a = Compressed { unCompressed :: a }
     deriving stock (Show, Eq, Generic)
@@ -84,33 +77,19 @@ instance {-# OVERLAPPING #-} AsStorable a => AsStorable (Compressed a) where
         Compressed $ fromStorable $ Storable $ fromMaybe "broken binary" $ decompress b
 
 
-restoreFromRaw :: AsStorable a => Verbatim a -> a
-restoreFromRaw = fromStorable . unVerbatim
+serialiseField :: AsStorable a => a -> BS.ByteString
+serialiseField = unStorable . toStorable
 
-data SStats = SStats {
-        statSize          :: Size,
-        statKeyBytes      :: Size,        
-        statValueBytes    :: Size,
-        statMaxKeyBytes   :: Size,
-        statMaxValueBytes :: Size
-    } 
-    deriving stock (Show, Eq, Generic)    
-    deriving Monoid via GenericMonoid SStats
+deserialiseField :: AsStorable a => BS.ByteString -> a
+deserialiseField = fromStorable . Storable
 
-instance Semigroup SStats where
-    ss1 <> ss2 = 
-        SStats { 
-            statSize = statSize ss1 + statSize ss2,
-            statKeyBytes = statKeyBytes ss1 + statKeyBytes ss2,
-            statValueBytes = statValueBytes ss1 + statValueBytes ss2,
-            statMaxKeyBytes = statMaxKeyBytes ss1 `max` statMaxKeyBytes ss2,
-            statMaxValueBytes = statMaxValueBytes ss1 `max` statMaxValueBytes ss2
-        }
+serialiseCompressed :: AsStorable a => a -> BS.ByteString
+serialiseCompressed = fromMaybe BS.empty . compress . unStorable . toStorable
 
-newtype StorageStats = StorageStats (Map.Map Text.Text SStats)
-    deriving stock (Show, Eq, Generic)    
+deserialiseCompressed :: AsStorable a => BS.ByteString -> a
+deserialiseCompressed = fromStorable . Storable . fromMaybe "broken binary" . decompress
 
-
+ 
 data ObjectStats = ObjectStats {
         totalObjects :: Size,
         totalSize    :: Size,

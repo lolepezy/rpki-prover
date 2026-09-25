@@ -1,0 +1,45 @@
+# A Debian container that actually runs systemd, so that the package's unit
+# file, enable/start behaviour and postinst/postrm can be exercised without
+# booting a VM.
+#
+# This is the fast feedback loop; pkg/vagrant is the real thing and is what
+# should be run before tagging a release.
+
+ARG BASE_IMAGE=debian:bookworm-slim
+FROM ${BASE_IMAGE}
+
+ENV container=docker \
+    DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        dbus \
+        procps \
+        systemd \
+        systemd-sysv \
+    && rm -rf /var/lib/apt/lists/* \
+    && find /lib/systemd/system/sysinit.target.wants/ \
+            -name 'systemd-tmpfiles-setup.service' -delete \
+    && rm -f /lib/systemd/system/multi-user.target.wants/* \
+             /etc/systemd/system/*.wants/* \
+             /lib/systemd/system/local-fs.target.wants/* \
+             /lib/systemd/system/sockets.target.wants/*udev* \
+             /lib/systemd/system/sockets.target.wants/*initctl* \
+             /lib/systemd/system/basic.target.wants/*
+
+# Debian's Docker images ship a policy-rc.d that makes every "apt-get install"
+# skip starting the service it just installed. That is right for image builds
+# and exactly wrong here: whether the service starts on install is one of the
+# things being tested.
+RUN rm -f /usr/sbin/policy-rc.d
+
+# The official images also tell dpkg to throw away /usr/share/man and
+# /usr/share/doc as it unpacks -- Debian's images call that file "docker",
+# Ubuntu's call it "excludes". Whether the package ships a man page and its
+# copyright file is part of what is being tested, so put dpkg back to normal.
+RUN rm -f /etc/dpkg/dpkg.cfg.d/docker /etc/dpkg/dpkg.cfg.d/excludes
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

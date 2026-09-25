@@ -1,0 +1,34 @@
+#!/bin/sh
+set -e
+
+RPKI_PROVER_USER=rpki-prover
+RPKI_PROVER_GROUP=rpki-prover
+RPKI_PROVER_HOME=/var/lib/rpki-prover
+
+case "$1" in
+    purge)
+        # Per Debian policy the cache and other state are removed on purge
+        # only; a plain "remove" keeps them so that reinstalling does not
+        # force a cold start.
+        rm -rf "${RPKI_PROVER_HOME}"
+
+        if getent passwd "${RPKI_PROVER_USER}" >/dev/null; then
+            deluser --system --quiet "${RPKI_PROVER_USER}" || true
+        fi
+        if getent group "${RPKI_PROVER_GROUP}" >/dev/null; then
+            delgroup --system --quiet "${RPKI_PROVER_GROUP}" || true
+        fi
+        ;;
+
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+
+    *)
+        echo "postrm called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

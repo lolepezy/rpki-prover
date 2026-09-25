@@ -10,12 +10,11 @@ import           Control.Lens                     ((^.))
 import           Control.Applicative
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
-import           Control.Exception.Lifted
+import           Control.Exception
 import           Control.Monad
 
-import           Data.Generics.Product.Typed
-
 import           Data.Foldable                    (for_)
+import           Data.Maybe                       (fromMaybe)
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
@@ -24,7 +23,6 @@ import qualified Data.ByteString.Builder          as BB
 import           Data.List.Split                  (chunksOf)
 
 import qualified Data.Set                         as Set
-import qualified Data.Vector                      as V
 
 import           Data.Coerce
 import           Data.String.Interpolate.IsString
@@ -50,25 +48,61 @@ import           RPKI.Util                        (convert, hex, decodeBase64)
 
 import           RPKI.AppState
 import           RPKI.AppTypes
-import           RPKI.Store.Base.Storage
+
 import qualified RPKI.Store.Database    as DB
 
 import           System.Timeout                   (timeout)
 import           Time.Types
 
 
-data PduLike = TruePdu Pdu | SerialisedPdu BS.ByteString 
+{- | Something that can be sent to a client: either a PDU still to be 
+   serialised, or a blob already serialised by 'currentCachePayloadBS'.
+
+   Both carry the protocol version they are framed with, so that a PDU cannot 
+   be rendered with, nor a cached blob handed to, a connection that speaks a 
+   different version.
+-}
+data PduLike = TruePdu VersionedPdu 
+             | SerialisedPdu ProtocolVersion BS.ByteString 
     deriving (Show, Eq)
+
+{- | Protocol version used to frame responses sent before the session's version 
+   has been negotiated, i.e. errors provoked by the very first PDU of a 
+   connection.
+
+   NB: this means a router that spoke V1 or V2 gets a V0-framed Error Report for 
+   a malformed or unexpected first PDU. That is the behaviour this server has 
+   always had; whether it is what RFC 8210 section 7 wants is a separate 
+   question from where the version is threaded.
+-}
+preNegotiationVersion :: ProtocolVersion
+preNegotiationVersion = V0
+
+-- | Frame a PDU for a client whose protocol version is not known yet.
+preNegotiated :: Pdu -> PduLike
+preNegotiated pdu = TruePdu $ VersionedPdu pdu preNegotiationVersion
+
+{- | Maximum number of simultaneous RTR client connections.
+
+   An RTR server talks to routers, so a few hundred is already generous, while 
+   an unbounded accept loop lets anyone who can reach the port exhaust threads 
+   and file descriptors.
+-}
+maxRtrConnections :: Int
+maxRtrConnections = 512
 
 -- 
 -- | Main entry point, here we start the RTR server. 
 -- 
-runRtrServer :: Storage s => AppContext s -> RtrConfig -> IO ()
+runRtrServer :: AppContext s -> RtrConfig -> IO ()
 runRtrServer appContext RtrConfig {..} = do         
     -- re-initialise `rtrState` and create a broadcast 
     -- channel to publish update for all clients
     let rtrState = appContext ^. #appState . #rtrState
-    updateBroadcastChan <- atomically newBroadcastTChan 
+    -- The channel is shared by all connections, which may be at different 
+    -- protocol versions, so it carries the content of a Serial Notify rather 
+    -- than a rendered PDU. Every connection frames its own.
+    updateBroadcastChan :: TChan (RtrSessionId, SerialNumber) <- atomically newBroadcastTChan 
 
     void $ race 
             (runSocketBusiness rtrState updateBroadcastChan)
@@ -81,7 +115,10 @@ runRtrServer appContext RtrConfig {..} = do
     runSocketBusiness rtrState updateBroadcastChan = 
         withSocketsDo $ do                 
             address <- resolve (show rtrPort)
-            bracket (open address) close loop
+            -- Every accepted connection forks two threads and duplicates the 
+            -- update broadcast channel, so the number of them has to be bounded.
+            connectionCount <- newTVarIO (0 :: Int)
+            bracket (open address) close (loop connectionCount)
       where
         resolve port = do
             let hints = defaultHints {
@@ -98,14 +135,29 @@ runRtrServer appContext RtrConfig {..} = do
             listen sock 1024
             pure sock
 
-        loop sock = forever $ do
+        loop connectionCount sock = forever $ do
             (conn, peer) <- accept sock
-            logInfo logger [i|Connection from #{peer}|]
-            void $ forkFinally 
-                (serveConnection conn peer updateBroadcastChan rtrState) 
-                (\_ -> do 
-                    logInfo logger [i|Closing connection with #{peer}|]
-                    close conn)
+            accepted <- atomically $ do 
+                n <- readTVar connectionCount
+                if n >= maxRtrConnections
+                    then pure False
+                    else do 
+                        writeTVar connectionCount $! n + 1
+                        pure True
+            if accepted 
+                then do 
+                    logInfo logger [i|Connection from #{peer}|]
+                    void $ forkFinally 
+                        (serveConnection conn peer updateBroadcastChan rtrState) 
+                        (\_ -> do 
+                            logInfo logger [i|Closing connection with #{peer}|]
+                            atomically $ modifyTVar' connectionCount (\n -> n - 1)
+                            close conn)
+                else do 
+                    logWarn logger $ 
+                        [i|Rejecting RTR connection from #{peer}, |] <>
+                        [i|already serving the maximum of #{maxRtrConnections} connections.|]
+                    close conn
     
     -- | Block on updates on `appState` and when these update happen
     --
@@ -125,7 +177,7 @@ runRtrServer appContext RtrConfig {..} = do
         -- Do not store more than amound of VRPs in the diffs as the initial size.
         -- It's totally heuristical way of avoiding memory bloat
         rtrPayloads <- atomically $ readRtrPayloads appState
-        let maxStoredDiffs = V.length (rtrPayloads ^. #uniqueVrps)
+        let maxStoredDiffs = vrpsCount (rtrPayloads ^. #uniqueVrps)
                 
         logDebug logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
 
@@ -142,13 +194,16 @@ runRtrServer appContext RtrConfig {..} = do
             let thereAreRtrUpdates = not $ emptyDiffs rtrDiff
 
             let 
-                previousVrpSize = V.length $ previousRtrPayload ^. #uniqueVrps 
-                currentVrpSize  = V.length $ currentRtrPayload ^. #uniqueVrps
+                previousVrpSize = vrpsCount $ previousRtrPayload ^. #uniqueVrps 
+                currentVrpSize  = vrpsCount $ currentRtrPayload ^. #uniqueVrps
                 previousBgpSecSize = Set.size $ previousRtrPayload ^. #bgpSec 
                 currentBgpSecSize  = Set.size $ currentRtrPayload ^. #bgpSec 
+                previousAspaSize   = Set.size $ previousRtrPayload ^. #aspas 
+                currentAspaSize    = Set.size $ currentRtrPayload ^. #aspas 
                 in logDebug logger $ [i|Notified about an update: #{previousVersion} -> #{newVersion}, |] <> 
                               [i|VRPs: #{previousVrpSize} -> #{currentVrpSize}, |] <>
-                              [i|BGPSecs: #{previousBgpSecSize} -> #{currentBgpSecSize}.|]
+                              [i|BGPSecs: #{previousBgpSecSize} -> #{currentBgpSecSize}, |] <>
+                              [i|ASPAs: #{previousAspaSize} -> #{currentAspaSize}.|]
 
             -- force evaluation of the new RTR state so that the old ones could be GC-ed.
             let !nextRtrState = if thereAreRtrUpdates
@@ -169,15 +224,16 @@ runRtrServer appContext RtrConfig {..} = do
                 sendNotify <- maybe True moreThanMinuteAgo <$> readTVar lastTimeNotified                 
 
                 when (sendNotify && thereAreRtrUpdates) $ do                    
-                    let notifyPdu = NotifyPdu (nextRtrState ^. #currentSessionId) (nextRtrState ^. #currentSerial)
-                    writeTChan updateBroadcastChan [TruePdu notifyPdu]
+                    writeTChan updateBroadcastChan 
+                        (nextRtrState ^. #currentSessionId, nextRtrState ^. #currentSerial)
                     writeTVar lastTimeNotified $ Just now
         where
           logDiff GenDiffs {..} = do 
             
             let diffText =
                     [i|VRPs: added #{Set.size $ added vrpDiff}, deleted #{Set.size $ deleted vrpDiff}, |] <>
-                    [i|BGPSecs: added #{Set.size $ added bgpSecDiff}, deleted #{Set.size $ deleted bgpSecDiff}|] :: Text
+                    [i|BGPSecs: added #{Set.size $ added bgpSecDiff}, deleted #{Set.size $ deleted bgpSecDiff}, |] <>
+                    [i|ASPAs: added #{Set.size $ added aspaDiff}, deleted #{Set.size $ deleted aspaDiff}|] :: Text
 
             logDebug logger [i|Generated new diff, #{diffText}.|]            
 
@@ -197,16 +253,19 @@ runRtrServer appContext RtrConfig {..} = do
         let (errorPdu, logMessage, versionedPdu) = 
                 analyzePdu peer firstPduLazyBS $ bytesToVersionedPdu firstPduLazyBS        
 
-        for_ errorPdu $ sendAll connection . pduBytesL V0
+        -- The version is not negotiated yet (and may not even have parsed), 
+        -- so anything that goes wrong here is reported in 'preNegotiationVersion'.
+        for_ errorPdu $ sendAll connection . pduBytesL . preNegotiated
         for_ logMessage $ logError logger
 
         for_ versionedPdu $ \versionedPdu' -> do
             case processFirstPdu rtrState' (appContext ^. #appState) versionedPdu' firstPduLazyBS of 
                 Left (errorPdu', errorMessage) -> do
-                    let errorBytes = pduBytesL V0 errorPdu'
+                    let errorPduL = preNegotiated errorPdu'
+                    let errorBytes = pduBytesL errorPduL
                     logError logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <> 
-                                      [i|error PDU: #{errorPdu'}, errorBytes = #{hex errorBytes}, length = #{pduLengthL V0 errorPdu'}|]
-                    sendAll connection $ pduBytesL V0 errorPdu'
+                                      [i|error PDU: #{errorPdu'}, errorBytes = #{hex errorBytes}, length = #{pduLengthL errorPduL}|]
+                    sendAll connection $ pduBytesL errorPduL
 
                 Right (createPdus, session, warning) -> do
                     for_ warning $ logWarn logger                     
@@ -226,22 +285,20 @@ runRtrServer appContext RtrConfig {..} = do
             sendFromQueuesToClient session outboxQueue =
                 loop =<< atomically (dupTChan updateBroadcastChan)
               where
+                notifyPdus (sessionId, serial) = 
+                    [TruePdu $ toVersioned session $ NotifyPdu sessionId serial]
+
                 loop stateUpdateChan = do                         
                     -- wait for queued PDUs or for state updates
                     r <- atomically $ 
                                 readCQueue outboxQueue 
-                            <|> (Just <$> readTChan stateUpdateChan)
+                            <|> (Just . notifyPdus <$> readTChan stateUpdateChan)
                     
-
                     for_ r $ \pdus -> do 
-                        let protocolVersion = session ^. typed @ProtocolVersion
-                        let pdusToSend = 
-                                filter (\case 
-                                    TruePdu pdu     -> compatibleWith pdu protocolVersion
-                                    SerialisedPdu _ -> True) pdus
+                        let pdusToSend = filter compatiblePduLike pdus
 
                         for_ (chunksOf 3000 pdusToSend) $ \chunk ->                           
-                            sendMany connection $ map (pduBytesL protocolVersion) chunk
+                            sendMany connection $ map pduBytesL chunk
 
                         loop stateUpdateChan
             
@@ -270,26 +327,26 @@ runRtrServer appContext RtrConfig {..} = do
                                 pure $ io <> serveLoop session outboxQueue
 
 
-readRtrPayload :: Storage s => AppContext s -> WorldVersion -> IO RtrPayloads 
+readRtrPayload :: AppContext s -> WorldVersion -> IO RtrPayloads 
 readRtrPayload AppContext {..} worldVersion = do 
-    db <- readTVarIO database
-
-    (vrps, bgpSec) <- roTx db $ \tx -> do 
-                slurm <- DB.getSlurm tx db worldVersion
-                vrps <- do 
-                        vrps_ <- DB.getVrps tx db worldVersion
+    (vrps, bgpSec, aspas) <- DB.roTxT database $ \tx -> do
+                slurm <- DB.getSlurm tx worldVersion
+                vrps <- do
+                        vrps_ <- DB.getVrps tx worldVersion
                         pure $ maybe vrps_ (`applySlurmToVrps` vrps_) slurm
 
-                bgpSec <- DB.getBgps tx db worldVersion >>= \case 
+                bgpSec <- DB.getBgps tx worldVersion >>= \case
                             Nothing   -> pure mempty
                             Just bgps -> pure $ maybe bgps (`applySlurmBgpSec` bgps) slurm
                 
-                pure (vrps, bgpSec)
+                aspas <- fromMaybe mempty <$> DB.getAspas tx worldVersion
 
-    pure $ mkRtrPayloads vrps bgpSec
+                pure (vrps, bgpSec, aspas)
+
+    pure $ mkRtrPayloads vrps bgpSec aspas
 
 
-waitForLatestRtrPayload :: Storage s => AppContext s 
+waitForLatestRtrPayload :: AppContext s 
         -> TVar (Maybe RtrState) 
         -> IO (RtrState, WorldVersion, WorldVersion, RtrPayloads)
 waitForLatestRtrPayload AppContext {..} rtrState = do 
@@ -323,14 +380,15 @@ responseAction logger peer session rtrState appState pduBytes =
         
         logError' = maybe mempty (logError logger) message
 
-        errorResponse = maybe mempty (: []) errorPdu
+        -- The version is negotiated by now, so errors go back framed with it
+        errorResponse = maybe mempty ((: []) . TruePdu . toVersioned session) errorPdu
                 
         response pdu = let 
             r = respondToPdu rtrState appState (toVersioned session pdu) pduBytesLazy session
             in case r of 
                 Left (errorPdu', message') -> let
                     ioAction = logDebug logger [i|Parsed PDU: #{pdu}, error = #{message'}, responding with #{errorPdu}.|]
-                    in Left ([errorPdu'], ioAction)                                     
+                    in Left ([TruePdu $ toVersioned session errorPdu'], ioAction)                                     
                 Right (pdus, warning) -> let
                     ioAction = do 
                         for_ warning $ logWarn logger
@@ -353,11 +411,11 @@ analyzePdu :: Show peer =>
                peer 
             -> LBS.ByteString 
             -> Either PduParseError VersionedPdu 
-            -> (Maybe PduLike, Maybe Text, Maybe VersionedPdu)
+            -> (Maybe Pdu, Maybe Text, Maybe VersionedPdu)
 analyzePdu peer pduBytes = \case
         Left (ParsedNothing errorCode errorMessage) -> let
             errorPdu = ErrorPdu errorCode (Just $ convert pduBytes) (Just $ convert errorMessage)
-            in (Just $ TruePdu errorPdu, 
+            in (Just errorPdu, 
                 Just [i|PDU from the #{peer} was broken: #{errorMessage}, error PDU: #{errorPdu}|], 
                 Nothing)
 
@@ -366,7 +424,7 @@ analyzePdu peer pduBytes = \case
             in if pduType == errorPduType
                 then let 
                     errorPdu = ErrorPdu errorCode (Just $ convert pduBytes) (Just $ convert errorMessage)
-                    in (Just $ TruePdu errorPdu, Just message, Nothing)                        
+                    in (Just errorPdu, Just message, Nothing)                        
                 else 
                     -- Do no send an error PDU as a response to an error PDU, it's prohibited by RFC                        
                     (Nothing, Just message, Nothing)                            
@@ -384,7 +442,7 @@ processFirstPdu :: Maybe RtrState
                 -> AppState
                 -> VersionedPdu
                 -> LBS.ByteString 
-                -> Either (PduLike, Text) (STM [PduLike], Session, Maybe Text)
+                -> Either (Pdu, Text) (STM [PduLike], Session, Maybe Text)
 processFirstPdu 
     rtrState 
     appState 
@@ -404,7 +462,7 @@ processFirstPdu
         otherPdu -> let 
             text = convert $ "First received PDU must be SerialQueryPdu or ResetQueryPdu, " <> 
                              "but received " <> show otherPdu
-            in Left (TruePdu $ ErrorPdu InvalidRequest (Just $ convert pduBytes) (Just $ convert text), text)
+            in Left (ErrorPdu InvalidRequest (Just $ convert pduBytes) (Just $ convert text), text)
 
 
 -- | Generate PDUs that would be an appropriate response the request PDU.
@@ -414,48 +472,49 @@ respondToPdu :: Maybe RtrState
                 -> VersionedPdu 
                 -> LBS.ByteString                 
                 -> Session
-                -> Either (PduLike, Text) (STM [PduLike], Maybe Text)
+                -> Either (Pdu, Text) (STM [PduLike], Maybe Text)
 respondToPdu 
     rtrState    
     appState
     (VersionedPdu pdu pduProtocol)     
     pduBytes     
-    (Session sessionProtocol) =
+    session@(Session sessionProtocol) =
         case rtrState of 
             Nothing -> let
                 text :: Text = "VRP set is empty, the RTR cache is not ready yet."
-                in Left (TruePdu $ ErrorPdu NoDataAvailable (Just $ convert pduBytes) (Just $ convert text), text)
+                in Left (ErrorPdu NoDataAvailable (Just $ convert pduBytes) (Just $ convert text), text)
             Just rtrState'@RtrState {..} ->             
                 case pdu of 
                     SerialQueryPdu sessionId clientSerial -> 
                         withProtocolVersionCheck pdu $ withSessionIdCheck currentSessionId sessionId $
                             if clientSerial == currentSerial 
                                 then let 
-                                    pdus = [TruePdu $ CacheResponsePdu sessionId] 
-                                        <> [TruePdu $ EndOfDataPdu sessionId currentSerial defIntervals]
+                                    pdus = [out $ CacheResponsePdu sessionId] 
+                                        <> [out $ EndOfDataPdu sessionId currentSerial defIntervals]
                                     in Right (pure pdus, Nothing)
                                 else 
                                     case diffsFromSerial rtrState' clientSerial of
                                         Nothing -> 
                                             -- we don't have the data, you are too far behind
                                             Right (
-                                                pure [TruePdu $ CacheResetPdu], 
+                                                pure [out CacheResetPdu], 
                                                 Just [i|No data for serial #{clientSerial}.|])
                                         Just diffs' -> let                                            
-                                            pdus = [TruePdu $ CacheResponsePdu sessionId] 
-                                                    <> diffPayloadPdus (squashDiffs diffs')
+                                            pdus = [out $ CacheResponsePdu sessionId] 
+                                                    <> diffPayloadPdus sessionProtocol (squashDiffs diffs')
                                                     -- TODO Figure out how to instantiate intervals
                                                     -- Should they be configurable?                                                                     
-                                                    <> [TruePdu $ EndOfDataPdu sessionId currentSerial defIntervals]
+                                                    <> [out $ EndOfDataPdu sessionId currentSerial defIntervals]
                                             in Right (pure pdus, Nothing)
 
                     ResetQueryPdu -> 
                         withProtocolVersionCheck pdu $ let 
                             action = do 
-                                bs <- cachedPduBinary appState pduProtocol (currentCachePayloadBS pduProtocol)
-                                pure $ [TruePdu $ CacheResponsePdu currentSessionId] 
-                                    <> [SerialisedPdu bs]
-                                    <> [TruePdu $ EndOfDataPdu currentSessionId currentSerial defIntervals]                                    
+                                bs <- cachedPduBinary appState sessionProtocol 
+                                        (currentCachePayloadBS sessionProtocol)
+                                pure $ [out $ CacheResponsePdu currentSessionId] 
+                                    <> [SerialisedPdu sessionProtocol bs]
+                                    <> [out $ EndOfDataPdu currentSessionId currentSerial defIntervals]                                    
                             in Right (action, Nothing) 
 
                     -- TODO Refactor that stuff 
@@ -467,44 +526,71 @@ respondToPdu
 
                     other -> let
                         text = "Unexpected PDU received from the client: " <> show other
-                        in Left (TruePdu $ ErrorPdu NoDataAvailable (Just $ convert pduBytes) (Just $ convert text), convert text)
+                        in Left (ErrorPdu NoDataAvailable (Just $ convert pduBytes) (Just $ convert text), convert text)
                                 
     where        
+        -- Everything sent back to the client is framed with the version of the 
+        -- session it is sent on, never with the version of the incoming PDU.
+        out = TruePdu . toVersioned session
+
         withProtocolVersionCheck _ respond = 
             if sessionProtocol == pduProtocol
                 then respond
                 else do            
                     let text :: Text = [i|Protocol version is not the same.|]                                
-                    Left (TruePdu $ ErrorPdu UnexpectedProtocolVersion (Just $ convert pduBytes) (Just $ convert text), text)
+                    Left (ErrorPdu UnexpectedProtocolVersion (Just $ convert pduBytes) (Just $ convert text), text)
 
         withSessionIdCheck currentSessionId sessionId respond =
             if currentSessionId == sessionId
                 then respond
                 else let 
                     text = [i|Wrong sessionId from PDU #{sessionId}, cache sessionId is #{currentSessionId}.|]
-                    in Left (TruePdu $ ErrorPdu CorruptData (Just $ convert pduBytes) (Just $ convert text), text)
+                    in Left (ErrorPdu CorruptData (Just $ convert pduBytes) (Just $ convert text), text)
 
 
-pduBytesL :: ProtocolVersion -> PduLike -> BS.ByteString
-pduBytesL protocolVersion = \case
-    TruePdu pdu      -> LBS.toStrict $ pduToBytes pdu protocolVersion
-    SerialisedPdu bs -> bs
+pduBytesL :: PduLike -> BS.ByteString
+pduBytesL = \case
+    TruePdu versionedPdu -> LBS.toStrict $ pduToBytes versionedPdu
+    SerialisedPdu _ bs   -> bs
 
-pduLengthL :: ProtocolVersion -> PduLike -> Int
-pduLengthL protocolVersion = \case
-    TruePdu pdu      -> fromIntegral $ pduLength pdu protocolVersion
-    SerialisedPdu bs -> BS.length bs 
+pduLengthL :: PduLike -> Int
+pduLengthL = \case
+    TruePdu versionedPdu -> fromIntegral $ pduLength versionedPdu
+    SerialisedPdu _ bs   -> BS.length bs 
 
--- Create VRP PDUs 
-diffPayloadPdus :: RtrDiffs -> [PduLike]
-diffPayloadPdus GenDiffs {..} = 
-    map TruePdu $ vrpWithdrawn <> vrpPdusAnn <> 
-                  mconcat bgpSecWithdrawn <> mconcat bgpSecPdusAnn
+-- | Whether a PDU is allowed at the protocol version it is framed with.
+compatiblePduLike :: PduLike -> Bool
+compatiblePduLike = \case
+    TruePdu (VersionedPdu pdu protocolVersion) -> compatibleWith pdu protocolVersion
+    -- 'currentCachePayloadBS' only renders PDUs compatible with its version
+    SerialisedPdu _ _                          -> True
+
+-- Create VRP PDUs framed with the protocol version of the session they are for
+diffPayloadPdus :: ProtocolVersion -> RtrDiffs -> [PduLike]
+diffPayloadPdus protocolVersion GenDiffs {..} = 
+    map (TruePdu . (`VersionedPdu` protocolVersion)) $ 
+                  vrpWithdrawn <> vrpPdusAnn <> 
+                  mconcat bgpSecWithdrawn <> mconcat bgpSecPdusAnn <>
+                  aspaPdusAnn <> aspaWithdrawn
   where
     vrpWithdrawn = map (vrpToPdu Withdrawal) (coerce $ Set.toList $ vrpDiff ^. #deleted)
     vrpPdusAnn   = map (vrpToPdu Announcement) $ coerce $ Set.toAscList $ vrpDiff ^. #added 
     bgpSecWithdrawn = map (bgpSecToPdu Withdrawal) $ Set.toList $ bgpSecDiff ^. #deleted
     bgpSecPdusAnn   = map (bgpSecToPdu Announcement) $ Set.toList $ bgpSecDiff ^. #added
+
+    -- An ASPA announcement replaces the previous record of the same customer AS, 
+    -- and a withdrawal removes the whole record. So when the providers of a customer
+    -- changed (the old record is in 'deleted', the new one is in 'added') only 
+    -- the announcement must be sent, otherwise the withdrawal would remove the new record.
+    -- Squashed diffs can have several deleted records of the same customer, so 
+    -- withdrawals are per customer. 
+    -- Announcements go first, then withdrawals, both by ascending customer AS
+    -- (https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis#section-11.2.3).
+    aspaAnnounced   = Set.map customer $ aspaDiff ^. #added
+    aspaPdusAnn     = map aspaToPdu $ Set.toAscList $ aspaDiff ^. #added
+    aspaWithdrawn   = map (\c -> AspaPdu Withdrawal c []) 
+                        $ Set.toAscList 
+                        $ Set.map customer (aspaDiff ^. #deleted) `Set.difference` aspaAnnounced
 
     
 currentCachePayloadBS :: ProtocolVersion -> RtrPayloads -> BS.ByteString
@@ -512,12 +598,13 @@ currentCachePayloadBS protocolVersion RtrPayloads {..} =
     LBS.toStrict 
         $ BB.toLazyByteString 
         $ mconcat 
-        $ map (\pdu -> BB.lazyByteString $ pduToBytes pdu protocolVersion) 
+        $ map (\pdu -> BB.lazyByteString $ pduToBytes $ VersionedPdu pdu protocolVersion) 
         $ filter (`compatibleWith` protocolVersion)
-        $ vrpPdusAnn <> mconcat bgpSecPdusAnn
+        $ vrpPdusAnn <> mconcat bgpSecPdusAnn <> aspaPdusAnn
   where    
-    vrpPdusAnn    = map (vrpToPdu Announcement) $ coerce $ V.toList uniqueVrps
+    vrpPdusAnn    = map (vrpToPdu Announcement) $ mergeVrpsBy cmpPacked4Against6 uniqueVrps
     bgpSecPdusAnn = map (bgpSecToPdu Announcement) $ Set.toList bgpSec
+    aspaPdusAnn   = map aspaToPdu $ Set.toAscList aspas
     
     
 vrpToPdu :: Flags -> Vrp -> Pdu
@@ -530,3 +617,7 @@ bgpSecToPdu :: Flags -> BGPSecPayload -> [Pdu]
 bgpSecToPdu flags BGPSecPayload {..} = 
     let Right (DecodedBase64 spkiBytes) = decodeBase64 (unSPKI bgpSecSpki) ("WTF broken SPKI" :: Text)
     in map (\asn -> RouterKeyPdu asn flags bgpSecSki (LBS.fromStrict spkiBytes)) bgpSecAsns    
+
+-- | ASPA announcement PDU. Providers are already ordered ascending in the set.
+aspaToPdu :: Aspa -> Pdu
+aspaToPdu Aspa {..} = AspaPdu Announcement customer (Set.toAscList providers)

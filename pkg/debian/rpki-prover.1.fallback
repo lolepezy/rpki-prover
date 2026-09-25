@@ -1,0 +1,25 @@
+.TH RPKI-PROVER 1 "" "rpki-prover @VERSION@" "User Commands"
+.SH NAME
+rpki-prover \- RPKI relying party software
+.SH SYNOPSIS
+.B rpki-prover
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B rpki-prover
+validates the RPKI certificate tree and serves the results over an HTTP API,
+a web UI, Prometheus metrics and the RTR protocol.
+.PP
+Run
+.B rpki-prover --help
+for the full list of options; there is no configuration file.  When run as the
+packaged systemd service the options come from
+.BR /etc/default/rpki-prover .
+.SH FILES
+.TP
+.B /etc/default/rpki-prover
+Command line options used by the systemd unit.
+.TP
+.B /var/lib/rpki-prover/
+State directory of the service.
+.SH SEE ALSO
+https://github.com/lolepezy/rpki-prover

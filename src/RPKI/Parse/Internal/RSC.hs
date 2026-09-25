@@ -2,6 +2,7 @@
 
 module RPKI.Parse.Internal.RSC where
 
+import           Effectful
 import qualified Data.ByteString as BS  
 
 import Data.ASN1.Types
@@ -27,7 +28,7 @@ import qualified RPKI.Util                  as U
 
 -- | Parse RSC, https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-rsc/
 -- 
-parseRsc :: BS.ByteString -> PureValidatorT RscObject
+parseRsc :: Validator es => BS.ByteString -> Eff es RscObject
 parseRsc bs = do    
     asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs      
     signedRsc <- fromEither $ first (parseErr . U.convert) $ 

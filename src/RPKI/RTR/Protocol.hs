@@ -19,10 +19,11 @@ import           RPKI.Resources.Types
 data ProtocolVersion = 
     V0 -- | as defined by https://tools.ietf.org/rfc/rfc6810
   | V1 -- | as defined by https://tools.ietf.org/rfc/rfc8210
+  | V2 -- | as defined by https://datatracker.ietf.org/doc/draft-ietf-sidrops-8210bis
   deriving stock (Show, Eq, Ord, Generic)
 
 
--- | PDUs cover both V0 and V1 versions
+-- | PDUs cover all of V0, V1 and V2 versions
 data Pdu = NotifyPdu RtrSessionId SerialNumber
         | SerialQueryPdu RtrSessionId SerialNumber
         | ResetQueryPdu
@@ -31,7 +32,10 @@ data Pdu = NotifyPdu RtrSessionId SerialNumber
         | IPv6PrefixPdu Flags Ipv6Prefix ASN PrefixLength    
         | EndOfDataPdu RtrSessionId SerialNumber Intervals
         | CacheResetPdu
+        -- | Only exists in V1 and further
         | RouterKeyPdu ASN Flags SKI LBS.ByteString
+        -- | Only exists in V2
+        | AspaPdu Flags ASN [ASN]
         | ErrorPdu ErrorCode (Maybe LBS.ByteString) (Maybe Text)
     deriving stock (Show, Eq, Ord, Generic)
 
@@ -59,6 +63,7 @@ data ErrorCode = CorruptData
         | WithdrawalOfUnknownRecord
         | DuplicateAnnouncementReceived
         | UnexpectedProtocolVersion
+        | AspaProviderListError
     deriving  (Show, Eq, Ord, Generic)
 
 
@@ -104,12 +109,14 @@ instance Binary ProtocolVersion where
     put f = put $ case f of 
         V0 -> 0 :: Word8
         V1 -> 1
+        V2 -> 2
 
     get = do 
         n :: Word8 <- get
         case n of 
             0 -> pure V0
             1 -> pure V1            
+            2 -> pure V2
             _ -> fail $ "No error code value for " <> show n
 
 instance Binary Flags where 
@@ -155,7 +162,8 @@ errorCodes = [
         (UnsupportedPduType,            5),
         (WithdrawalOfUnknownRecord,     6),
         (DuplicateAnnouncementReceived, 7),
-        (UnexpectedProtocolVersion,     8)
+        (UnexpectedProtocolVersion,     8),
+        (AspaProviderListError,         9)
     ]
 
 instance Binary ErrorCode where         
