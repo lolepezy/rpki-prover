@@ -1,6 +1,6 @@
-# Build environment for the rpki-prover Debian packages.
+# Build environment for the rpki-prover Debian/Ubuntu packages.
 #
-# One image per Debian release, so that the resulting binary is linked against
+# One image per target release, so that the resulting binary is linked against
 # exactly the libc/libgmp/liblzma/... of that release and dpkg-shlibdeps can
 # derive correct, release-specific dependencies.
 #

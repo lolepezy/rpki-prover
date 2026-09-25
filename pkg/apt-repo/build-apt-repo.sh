@@ -102,7 +102,7 @@ for suite_dir in "${PACKAGES_DIR}"/*/; do
         -o "APT::FTPArchive::Release::Codename=${codename}" \
         -o "APT::FTPArchive::Release::Components=main" \
         -o "APT::FTPArchive::Release::Architectures=$(echo ${architectures} | tr '\n' ' ' | sed 's/ *$//')" \
-        -o "APT::FTPArchive::Release::Description=rpki-prover packages for Debian ${codename}" \
+        -o "APT::FTPArchive::Release::Description=rpki-prover packages for ${codename}" \
         release "dists/${codename}" ) > "${release_tmp}"
     mv "${release_tmp}" "${OUTPUT_DIR}/dists/${codename}/Release"
 
@@ -165,7 +165,7 @@ cat > "${OUTPUT_DIR}/index.html" <<HTMLDOC
   code { font-family: ui-monospace, monospace; }
 </style>
 <h1>rpki-prover APT repository</h1>
-<p>Debian packages of
+<p>Debian/Ubuntu packages of
 <a href="https://github.com/lolepezy/rpki-prover">rpki-prover</a>
 for: <strong>${suites_list% }</strong>.</p>
 

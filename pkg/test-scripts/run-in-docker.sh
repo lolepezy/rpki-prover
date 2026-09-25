@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Runs pkg/test-scripts/test-rpki-prover.sh inside a systemd-enabled Debian
-# container. Much faster than the Vagrant VMs, and enough to catch packaging
+# Runs pkg/test-scripts/test-rpki-prover.sh inside a systemd-enabled Debian or
+# Ubuntu container. Much faster than the Vagrant VMs, and enough to catch packaging
 # mistakes; pkg/vagrant is still what should be run before tagging a release.
 #
 #   ./pkg/test-scripts/run-in-docker.sh bookworm

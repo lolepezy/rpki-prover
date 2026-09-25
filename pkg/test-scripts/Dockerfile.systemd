@@ -35,10 +35,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # things being tested.
 RUN rm -f /usr/sbin/policy-rc.d
 
-# The "slim" images also tell dpkg to throw away /usr/share/man and
-# /usr/share/doc as it unpacks. Whether the package ships a man page and its
+# The official images also tell dpkg to throw away /usr/share/man and
+# /usr/share/doc as it unpacks -- Debian's images call that file "docker",
+# Ubuntu's call it "excludes". Whether the package ships a man page and its
 # copyright file is part of what is being tested, so put dpkg back to normal.
-RUN rm -f /etc/dpkg/dpkg.cfg.d/docker
+RUN rm -f /etc/dpkg/dpkg.cfg.d/docker /etc/dpkg/dpkg.cfg.d/excludes
 
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]

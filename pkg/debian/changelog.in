@@ -1,6 +1,6 @@
 rpki-prover (@DEB_VERSION@) @DISTRIBUTION@; urgency=medium
 
-  * rpki-prover @UPSTREAM_VERSION@ built for Debian @CODENAME@.
+  * rpki-prover @UPSTREAM_VERSION@ built for @CODENAME@.
     Upstream release notes:
     https://github.com/lolepezy/rpki-prover/releases
 
