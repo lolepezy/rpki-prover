@@ -34,11 +34,13 @@ import           RPKI.Util                        (parseRpkiURL)
 import           RPKI.Validation.ObjectValidation (prevalidateObject)
 import           RPKI.Validation.Types
 import           RPKI.Validation.TopDown
+                ( TroubledChildLoadPath (..)
+                , resolveTroubledChildByKey
+                )
+import           RPKI.Validation.TopDown.Shortcuts
                 ( MftPlan (..)
-                , TroubledChildLoadPath (..)
                 , manifestValidityPeriod
                 , planManifests
-                , resolveTroubledChildByKey
                 , revokedShortcutChildren
                 )
 

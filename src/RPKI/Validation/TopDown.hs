@@ -12,15 +12,10 @@ module RPKI.Validation.TopDown (
     validateMutlipleTAs,
     refreshTaCertificate,
     TroubledChildLoadPath(..),
-    MftPlan(..),
-    planManifests,
-    resolveTroubledChildByKey,
-    revokedShortcutChildren,
-    manifestValidityPeriod
+    resolveTroubledChildByKey
 )
 where
 
-import           Effectful.Timeout (Timeout)
 import           Effectful
 import           Effectful.Concurrent.Async      (Concurrent)
 import           Control.Concurrent.STM
@@ -32,8 +27,6 @@ import           Effectful.Error.Static           (catchError)
 import           Control.Monad
 
 import           Control.Lens hiding (children)
-
-import           Barbies
 
 import           Data.Generics.Product.Typed
 import           GHC.Generics
@@ -47,7 +40,6 @@ import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Monoid.Generic
-import qualified Data.List                        as List
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
 import           Data.String.Interpolate.IsString
@@ -55,11 +47,8 @@ import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
-import qualified Data.ByteString                  as BS
-
 
 import           RPKI.AppContext
-import           RPKI.AppState
 import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
@@ -73,8 +62,7 @@ import           RPKI.Parallel
 import           RPKI.Repository
 import           RPKI.Resources.Types
 
-import           RPKI.Store.Base.Storable
-import           RPKI.Store.Database    (Tx, roTxT, rwTxT)
+import           RPKI.Store.Database    (Tx, roTxT)
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 import           RPKI.TAL
@@ -84,120 +72,45 @@ import           RPKI.Validation.Common
 import           RPKI.Validation.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Validation.ResourceValidation
+import           RPKI.Validation.TopDown.Context
+import           RPKI.Validation.TopDown.Shortcuts
+import           RPKI.Validation.TopDown.TaCert
 
 
 {-
 This module implements the top-down validation algorithm.
 
 Validation starts from the Trust Anchor (TA) certificate. The process of downloading 
-and selecting the certificate implements the tie-breaking logic described 
-in https://datatracker.ietf.org/doc/draft-spaghetti-sidrops-rpki-ta-tiebreaker/.
+and selecting the certificate (RPKI.Validation.TopDown.TaCert) implements the 
+tie-breaking logic described in 
+https://datatracker.ietf.org/doc/draft-spaghetti-sidrops-rpki-ta-tiebreaker/.
 
 After that, validation is recursive for each CA:
 
-- Manifests and manifest shortcuts (see below) are found.
-- Depending on the freshness of the shortcut and the manifest, we either use 
-  the shortcut data or re-validate using the new manifest.
+- Manifests and the manifest shortcut (see below) are found, and `planManifests` 
+  decides how to use them: the shortcut when the manifest hasn't changed, a diff 
+  of a new manifest against the shortcut, or the manifests in full.
+- Each child on the manifest is either validated in full (`validateChildObject`) 
+  or taken from its shortcut (`collectPayloads`). A CA child is validated with 
+  its sub-tree, any other child is taken in one place, `acceptLeaf`.
 - For new manifests, shortcuts are re-created and saved into a separate queue.
 
 The idea behind shortcuts is as follows:
 
  - We store minimal representations of objects and their payloads to cache their 
    essential information. This avoids re-validating everything on each run.
- - Manifest shortcuts contain basic manifest metadata plus a list of their children. 
-   Children are embedded into the manifest shortcut (TODO: They should also be referred 
-   to by ObjectKey for big manifests). This structure avoids re-validating manifest 
-   children that have already been validated.
- - This is why the logic in validateCa is very long and tedious.
+ - Manifest shortcuts contain basic manifest metadata plus the shortcuts of their 
+   children, stored by ObjectKey. This avoids re-validating manifest children that 
+   have already been validated.
+ - A child that is invalid or has issues gets a troubled entry instead, so that it's 
+   validated in full, and its issues reported, every time.
+ - RPKI.Validation.TopDown.Shortcuts makes, uses and writes shortcuts, and 
+   RPKI.Validation.TopDown.Context has the state of a validation run.
  
  Validation is designed to be non-interfering with other processes, so it's safe to run 
  concurrently with fetching or cleanup operations (both of which are atomic).
 
 -}
-
-data PayloadBuilder = PayloadBuilder {
-        vrps     :: IORef [T2 VrpsPerAs ObjectKey],
-        spls     :: IORef [SplPayload],        
-        aspas    :: IORef [Aspa],
-        gbrs     :: IORef [T2 Hash Gbr],
-        bgpCerts :: IORef [BGPSecPayload]
-    }
-    deriving stock (Generic)        
-
-newPayloadBuilder :: IO PayloadBuilder 
-newPayloadBuilder = PayloadBuilder <$> 
-            newIORef mempty <*>
-            newIORef mempty <*>
-            newIORef mempty <*>
-            newIORef mempty <*>
-            newIORef mempty
-    
-
--- Auxiliarry structure used in top-down validation. It has a lot of global variables 
--- but it's lifetime is limited to one top-down validation run.
-data TopDownContext = TopDownContext {
-        verifiedResources       :: Maybe (VerifiedRS PrefixesAndAsns),
-        taName                  :: TaName,
-        allTas                  :: AllTasTopDownContext,
-        currentPathDepth        :: Int,
-        interruptedByLimit      :: TVar Limited,
-        payloadBuilder          :: PayloadBuilder,
-        overclaimingHappened    :: Bool,
-        fetcheables             :: TVar Fetcheables,
-        earliestNotValidAfter   :: TVar EarliestToExpire,        
-        visitedAkis             :: TVar (Set AKI)
-    }
-    deriving stock (Generic)
-
-
-data AllTasTopDownContext = AllTasTopDownContext {
-        now                  :: Now,
-        worldVersion         :: WorldVersion,
-        visitedKeys          :: TVar (Set ObjectKey),        
-        publicationPoints    :: PublicationPoints,
-        shortcutQueue        :: ClosableQueue MftShortcutOp,
-        topDownCounters      :: TopDownCounters IORef,
-        -- | Objects published at more than one location, read once for the
-        -- whole run. Validating a shortcut needs to know whether its object is
-        -- one of these, and asking per object was ~440k queries per round to
-        -- find the handful that are (4 of 793516 in a real cache).
-        multiLocationKeys    :: Set ObjectKey,
-        -- | Validating a CA with all its sub-tree, or a chunk of objects, 
-        -- is a task in this pool, for all the TAs together
-        workPool             :: WorkPool
-    }
-    deriving stock (Generic)
-
-
-data TopDownCounters f = TopDownCounters {
-        originalCa   :: f Int,
-        shortcutCa   :: f Int,
-        originalMft  :: f Int,
-        shortcutMft  :: f Int,
-        originalCrl  :: f Int,
-        shortcutCrl  :: f Int,        
-        originalRoa  :: f Int,
-        originalSpl  :: f Int,
-        originalAspa :: f Int,        
-        shortcutRoa  :: f Int,
-        shortcutSpl  :: f Int,
-        shortcutAspa :: f Int,        
-        shortcutTroubled    :: f Int,
-        newChildren         :: f Int,
-        overlappingChildren :: f Int,
-        updateMftMeta       :: f Int,
-        updateMftChildren   :: f Int,
-        readOriginal :: f Int,
-        readParsed   :: f Int,
-        repeatedAki  :: f Int
-    }
-    deriving stock (Generic)
-    deriving (FunctorB, TraversableB, ApplicativeB, ConstraintsB)
-
-deriving instance AllBF Show f TopDownCounters => Show (TopDownCounters f)
-
-data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
-    deriving stock (Show, Eq, Ord, Generic)
 
 data TopDownResult = TopDownResult {
         payloads               :: Payloads,
@@ -215,84 +128,6 @@ fromValidations vs = TopDownResult mempty mempty vs mempty mempty
 
 data TroubledChildLoadPath = TroubledFromParsed | TroubledFromOriginal
     deriving stock (Show, Eq, Ord, Generic)
-
-newTopDownContext :: MonadIO m =>
-                    TaName
-                    -> AllTasTopDownContext
-                    -> m TopDownContext
-newTopDownContext taName allTas = 
-    liftIO $ do 
-        payloadBuilder <- newPayloadBuilder
-        atomically $ do
-            let verifiedResources = Nothing
-                currentPathDepth = 0
-                overclaimingHappened = False       
-            interruptedByLimit      <- newTVar CanProceed                 
-            fetcheables             <- newTVar mempty                 
-            earliestNotValidAfter   <- newTVar mempty
-            visitedAkis             <- newTVar mempty
-            pure $! TopDownContext {..}
-
-newAllTasTopDownContext :: MonadIO m =>
-                        WorldVersion
-                        -> PublicationPoints 
-                        -> ClosableQueue MftShortcutOp
-                        -> Set ObjectKey
-                        -> WorkPool
-                        -> m AllTasTopDownContext
-newAllTasTopDownContext worldVersion publicationPoints shortcutQueue multiLocationKeys workPool = liftIO $ do 
-    let now = Now $ versionToInstant worldVersion
-    topDownCounters <- newTopDownCounters
-    atomically $ do        
-        visitedKeys    <- newTVar mempty 
-        pure $! AllTasTopDownContext {..}
-
-
-newTopDownCounters :: IO (TopDownCounters IORef)
-newTopDownCounters = do 
-    originalCa <- newIORef 0
-    shortcutCa <- newIORef 0
-    originalMft <- newIORef 0
-    shortcutMft <- newIORef 0
-    originalCrl <- newIORef 0
-    shortcutCrl <- newIORef 0
-    newChildren <- newIORef 0
-    overlappingChildren <- newIORef 0
-    updateMftMeta     <- newIORef 0
-    updateMftChildren <- newIORef 0    
-
-    shortcutRoa  <- newIORef 0        
-    shortcutSpl  <- newIORef 0        
-    shortcutAspa <- newIORef 0            
-    shortcutTroubled <- newIORef 0        
-
-    originalRoa  <- newIORef 0        
-    originalSpl  <- newIORef 0        
-    originalAspa <- newIORef 0        
-
-    readOriginal <- newIORef 0   
-    readParsed   <- newIORef 0             
-    repeatedAki  <- newIORef 0
-   
-    pure TopDownCounters {..}
-
-verifyLimit :: STM Bool -> TVar Limited -> STM Limited
-verifyLimit hitTheLimit limit =
-    readTVar limit >>= \case
-        CanProceed -> do
-            h <- hitTheLimit
-            if h then do
-                writeTVar limit FirstToHitLimit
-                pure FirstToHitLimit
-            else
-                pure CanProceed
-        FirstToHitLimit -> do
-            writeTVar limit AlreadyReportedLimit
-            pure AlreadyReportedLimit
-        AlreadyReportedLimit ->
-            pure AlreadyReportedLimit
-
-
 
 -- | It is the main entry point for the top-down validation. 
 -- Validates a bunch of TAs starting from their TALs.  
@@ -415,150 +250,6 @@ validateTA appContext@AppContext{..} tal topDownContext = do
 taScopes :: TaName -> Scopes
 taScopes = newScopes' TAFocus . unTaName
         
-
-data WhichTA = FetchedTA RpkiURL ParsedRpkiObject | CachedTA
-
-
--- | Refresh the TA certificate for the given TAL. Returns whether the
--- | certificate actually changed (a fresh download that differs from the
--- | cached copy, or there was no cached copy at all) -- callers use that to
--- | decide whether the TA needs to be revalidated.
-refreshTaCertificate :: AppContext s
-                        -> TAL
-                        -> WorldVersion
-                        -> IO (Either AppError Bool)
-refreshTaCertificate appContext@AppContext {..} tal worldVersion = do
-    (r, vs) <- runValidatorIO (newScopes' TAFocus (unTaName taName)) $
-                    vFocusOn LocationFocus (getURL $ getTaCertURL tal) $ do
-                        db <- liftIO $ readTVarIO database
-                        storedTa <- DB.roAppTxEx db DB.storageError $ \tx -> DB.getTA tx taName
-                        fetchValidateAndStoreTaCert appContext tal worldVersion storedTa
-
-    -- The issues are stored no matter how it went: they are the only way for the
-    -- top-down validation to find out what happened here.
-    rwTxT database $ \tx -> DB.saveTaValidations tx taName (vs ^. typed)
-    pure r
-  where
-    taName = getTaName tal
-
-
--- | Get the TA certificate to start the top-down validation from.
--- | This function doesn't throw exceptions.
-taCertificateFromCache :: ValidatorIO es => AppContext s
-                        -> TAL
-                        -> Eff es (Located WellStructuredCaCert, PublicationPointAccess)
-taCertificateFromCache AppContext {..} tal = do
-    db <- liftIO $ readTVarIO database
-    ta <- DB.roAppTxEx db DB.storageError $ \tx -> DB.getTA tx taName
-    case ta of
-        Nothing       -> taCertProblem "there's no TA certificate in the cache yet"
-        Just storedTa -> do
-            (taCert, taValidations) <-
-                DB.roAppTxEx db DB.storageError $ \tx ->
-                    (,) <$> DB.getTaCertByKey tx (storedTa ^. #taCertKey)
-                        <*> DB.getTaValidations tx taName
-
-            embedState $ mempty & typed .~ taValidations
-
-            case taCert of
-                -- The object is gone from the cache, the next run of the TA
-                -- certificate job will download and store it again.
-                Nothing   -> taCertProblem "TA certificate is not in the object cache"
-                Just cert -> do
-                    let locations = talCertLocations tal <> toLocations (storedTa ^. #actualUrl)
-                    pure (locatedTaCert locations cert, storedTa ^. #initialRepositories)
-  where
-    taName = getTaName tal
-    taCertProblem :: Validator es => Text -> Eff es a
-    taCertProblem message = appError $ UnspecifiedE (unTaName taName) message
-
-
--- | Download the TA certificate using the locations from the TAL, validate it
--- | and store it together with the initial publication points.
--- |
--- | If the download fails, fall back to the cached copy, if there is one.
--- |
--- | This function doesn't throw exceptions.
--- | Download and validate the TA certificate, then store it (or keep the
--- | cached one, if that's what validation prefers). Returns whether the
--- | certificate on file after this call is different from the one that was
--- | cached before it: `True` for a first-ever download or a genuine change,
--- | `False` when the refresh reconfirmed the cached certificate (the common
--- | case, since these RRDP/rsync objects change rarely and are re-fetched
--- | on every refresh) or fell back to it after a download failure.
-fetchValidateAndStoreTaCert :: (ValidatorIO es, Timeout :> es) => AppContext s
-                        -> TAL
-                        -> WorldVersion
-                        -> Maybe StorableTA
-                        -> Eff es Bool
-fetchValidateAndStoreTaCert appContext@AppContext {..} tal worldVersion = go
-  where
-    go storableTa = do
-        db <- liftIO $ readTVarIO database
-        cachedTaCertM <- case storableTa of
-            Nothing -> pure Nothing
-            Just StorableTA { taCertKey } ->
-                DB.roAppTxEx db DB.storageError $ \tx ->
-                    DB.getTaCertByKey tx taCertKey
-
-        z <- (do 
-                (u, ro) <- fetchTACertificate appContext (newFetchConfig config) tal
-                pure $ FetchedTA u ro)
-            `catchError`
-                (\_cs -> tryToFallbackToCachedCopy)
-
-        case z of     
-            FetchedTA actualUrl object -> do                                 
-                fetchedCert <- validateTACert tal actualUrl object
-
-                (certToUse, certToStore, changed) <- case cachedTaCertM of
-                    Nothing  -> pure (fetchedCert, fetchedCert, True)
-                    Just cachedTaCert ->
-                        (do
-                            cert <- chooseTaCert fetchedCert cachedTaCert
-                            pure $ if cert == cachedTaCert
-                                then (cachedTaCert, cachedTaCert, False)
-                                else (fetchedCert, fetchedCert, True))
-                        `catchError`
-                            (\_cs (e :: AppError) -> do
-                                logError logger [i|Fetched TA certificate is invalid with error #{e}, will use cached copy.|]
-                                pure (cachedTaCert, cachedTaCert, False))
-
-                case publicationPointsFromTAL tal certToUse of
-                    Left e         -> appError $ ValidationE e
-                    Right ppAccess -> do
-                        DB.rwAppTxEx db DB.storageError $ \tx -> do
-                            taCertKey <- DB.saveObject tx (WellStructuredRO (CerRO certToStore)) worldVersion
-                            DB.linkObjectToUrl tx actualUrl taCertKey worldVersion
-                            DB.saveTA tx (StorableTA tal taCertKey ppAccess actualUrl)
-                        pure changed
-
-            -- Nothing was downloaded, the cached copy stays as it is
-            CachedTA ->
-                case cachedTaCertM of
-                    Nothing -> appError $ UnspecifiedE (unTaName $ getTaName tal) "Cached TA cert not found in objects store"
-                    Just _  -> pure False
-
-      where
-        tryToFallbackToCachedCopy e =
-            case storableTa of
-                Nothing -> do 
-                    logError logger $
-                        [i|Could not download TA certiicate for #{getTaName tal}, error: #{e}|] <>
-                        [i| and there is no cached copy of it.|]
-                    appError e
-
-                Just _ -> do  
-                    logError logger $ 
-                        [i|Could not download TA certiicate for #{getTaName tal}, error: #{e}|] <> 
-                        [i| will use cached copy.|]                                        
-
-                    pure CachedTA
-
-
-locatedTaCert :: Locations -> WellStructuredCaCert -> Located WellStructuredCaCert
-locatedTaCert locations cert = Located (Just locations) cert
-
 
 -- | Do the validation starting from the TA certificate.
 -- | 
@@ -1007,7 +698,7 @@ manifestFullValidation
                                 -- are new. Replace the whole shortcut: an expired one can
                                 -- still have children that are not on this manifest.
                                 Nothing -> do
-                                    replaceMftShortcut topDownContext aki nextMftShortcut
+                                    replaceMftShortcut shortcutQueue aki nextMftShortcut
                                     increment topDownCounters.updateMftMeta
                                     increment topDownCounters.updateMftChildren
 
@@ -1015,7 +706,7 @@ manifestFullValidation
                                     -- If manifest key is not the same as the shortcut key,
                                     -- we need to replace the shortcut with the new one
                                     when (mftShort.key /= mftKey) $ do
-                                        updateMftShortcut topDownContext aki nextMftShortcut
+                                        updateMftShortcut shortcutQueue aki nextMftShortcut
                                         increment topDownCounters.updateMftMeta
 
                                     -- Update manifest shortcut children in case there are new
@@ -1023,7 +714,7 @@ manifestFullValidation
                                     when (not (null newChildren)
                                         || not (null deletedKeys)
                                         || not (null revokedEntries)) $ do
-                                            updateMftShortcutChildren topDownContext aki newEntries deletedKeys
+                                            updateMftShortcutChildren shortcutQueue aki newEntries deletedKeys
                                             increment topDownCounters.updateMftChildren
 
                     _  -> pure ()
@@ -1554,7 +1245,7 @@ collectPayloads
                 Nothing -> do
                     -- Something is wrong with the references in the database. Normally it should never happen,
                     -- but if it does, we have to delete the shortcut and report the error.
-                    deleteMftShortcut topDownContext $ toAKI $ getSKI caFull
+                    deleteMftShortcut shortcutQueue $ toAKI $ getSKI caFull
                     logError logger [i|Troubled child #{childKey} not found in the database, will delete manifest shortcut.|]
                     integrityError appContext
                         [i|Referential integrity error, can't find a troubled child by its key #{childKey}.|]
@@ -1576,7 +1267,7 @@ collectPayloads
 
     storeChildIfChanged childKey childData newEntry =
         unless (newEntry.child == childOf childData) $
-            updateMftShortcutChildren topDownContext childrenAki [(childKey, newEntry)] []
+            updateMftShortcutChildren shortcutQueue childrenAki [(childKey, newEntry)] []
 
     getChildPayloads troubledValidation (childKey, childData) = do
         markAsUsed topDownContext childKey
@@ -1650,154 +1341,6 @@ collectPayloads
                     appError e
 
 
--- | Where a valid child comes from: its object validated in full, or its shortcut.
-data ChildSource = FromObject | FromShortcut
-
--- | Count a valid manifest child that is not a CA certificate and keep its
--- payload. It's done here only, the same for a child validated in full and
--- for a child taken from its shortcut.
-acceptLeaf :: ValidatorIO es => TopDownContext -> ChildSource -> MftChild -> Eff es ()
-acceptLeaf topDownContext source = \case
-    RoaChild r _ -> do
-        oneMoreRoa
-        moreVrps $ Count $ fromIntegral $ length (roaV4 r.roaPayload) + length (roaV6 r.roaPayload)
-        count (.originalRoa) (.shortcutRoa)
-        keep #vrps $ T2 r.roaPayload r.key
-    SplChild s _ -> do
-        oneMoreSpl
-        count (.originalSpl) (.shortcutSpl)
-        keep #spls s.splPayload
-    AspaChild a _ -> do
-        oneMoreAspa
-        count (.originalAspa) (.shortcutAspa)
-        keep #aspas a.aspa
-    BgpSecChild b _ -> do
-        oneMoreBgp
-        keep #bgpCerts b.bgpSec
-    GbrChild g _ -> do
-        oneMoreGbr
-        keep #gbrs g.gbr
-    -- A CA gives the payloads of its sub-tree
-    CaChild {} -> pure ()
-    -- A troubled child is validated in full and accepted as what that gives
-    TroubledChild _ -> pure ()
-  where
-    counters = topDownContext.allTas.topDownCounters
-    count original shortcut = increment $ case source of
-        FromObject   -> original counters
-        FromShortcut -> shortcut counters
-
-    -- These lists live until the TA is validated, so what goes into them is 
-    -- evaluated first, not a thunk that holds on to the whole shortcut
-    keep :: MonadIO m => Getting (IORef [a]) PayloadBuilder (IORef [a]) -> a -> m ()
-    keep field !a = liftIO $
-        atomicModifyIORef' (topDownContext.payloadBuilder ^. field) $ \as -> (a : as, ())
-
-
--- | How to validate the manifest of a CA.
-data MftPlan
-    = NoManifest
-    -- | There's no shortcut that can be used: validate the manifests in full,
-    -- one after another until one of them is valid.
-    | InFull [MftMeta]
-    -- | The manifest of the shortcut is still the latest one, so the shortcut
-    -- has everything.
-    | UseShortcut DB.MftShortcutMeta
-    -- | There's no manifest to use but the shortcut is still valid. It is the
-    -- cached data of the last successful fetch, which is to be used until it
-    -- becomes stale (RFC 9286, 6.6).
-    | OnlyShortcut DB.MftShortcutMeta
-    -- | There's a newer manifest than the one of the shortcut: validate only
-    -- what changed, and fall back to the shortcut if the manifest is not valid.
-    | DiffWithShortcut DB.MftShortcutMeta MftMeta
-    deriving stock (Show, Eq)
-
--- | Given the manifests of a CA, newest first, and its manifest shortcut
--- (`Nothing` when shortcuts are not used), decide how to validate it.
---
--- Also returns the manifests from the future that are passed over for
--- older data, since they are failed fetches to report (RFC 9286, 6.3).
-planManifests :: Now -> [MftMeta] -> Maybe DB.MftShortcutMeta -> (MftPlan, [MftMeta])
-planManifests now mfts shortcut =
-    case shortcut of
-        Just meta | not (shortcutExpired meta) ->
-            let plan = case current of
-                    -- A shortcut is only made for a manifest that is not in the
-                    -- future, so the manifest of this one is gone from the cache
-                    []                        -> OnlyShortcut meta
-                    m : _ | m.key == meta.key -> UseShortcut meta
-                          | otherwise         -> DiffWithShortcut meta m
-            in (plan, premature)
-        _   | null mfts    -> (NoManifest, [])
-            -- If there are only manifests from the future, validate
-            -- them anyway to have a meaningful error message
-            | null current -> (InFull premature, [])
-            | otherwise    -> (InFull current, premature)
-  where
-    (current, premature) = List.partition (\m -> m.thisTime <= unNow now) mfts
-
-    -- Shortcuts stored before `manifestValidityPeriod` only carry the validity
-    -- of the manifest's EE certificate. A manifest that's past its nextUpdate
-    -- stays unchanged, and so does its shortcut, so the manifest's own
-    -- nextUpdate is checked here.
-    shortcutExpired meta =
-        not (isWithinValidityPeriod now meta) ||
-        not (isWithinValidityPeriod now meta.crlShortcut) ||
-        maybe False (< unNow now) (shortcutMftNextUpdate mfts meta)
-
--- | nextUpdate of the manifest of the shortcut, if it's still in the cache.
-shortcutMftNextUpdate :: [MftMeta] -> DB.MftShortcutMeta -> Maybe Instant
-shortcutMftNextUpdate mfts meta =
-    (.nextTime) <$> List.find ((== meta.key) . (.key)) mfts
-
-
--- Either a full manifest entry (file_name known, from the diff-path's full read)
--- or just the child's shortcut payload (from the hot, file_name-free light read).
-data ChildData = ChildWithEntry MftEntry | ChildLight MftChild
-
-childOf :: ChildData -> MftChild
-childOf (ChildWithEntry MftEntry {..}) = child
-childOf (ChildLight c)                 = c
-
-
--- Calculate difference bentween a manifest shortcut
--- and the list of children of the new manifest object.
-manifestDiff :: MftShortcut
-            -> [T3 Text a ObjectKey]
-            -> ([T3 Text a ObjectKey], [T3 Text a ObjectKey], [ObjectKey])
-manifestDiff mftShortcut newMftChidlren =
-    (List.reverse newOnes, List.reverse overlapping, Map.keys deletedEntries)
-  where
-    (newOnes, overlapping, deletedEntries) =
-        foldl' go ([], [], mftShortcut.nonCrlEntries) newMftChidlren
-
-    -- If we delete everything from mftShortcut.nonCrlEntries that is present in
-    -- newMftChidlren, we only have the entries that are not present on the new manifest,
-    -- i.e. the deleted ones.
-    go (!newOnes_, !overlapping_, !remaining) t3@(T3 fileName _ key_) =
-        case Map.lookup key_ mftShortcut.nonCrlEntries of
-            -- it's not in the map of shortcut children -- new entry
-            Nothing -> (t3 : newOnes_, overlapping_, remaining)
-            Just e
-                | e.fileName == fileName ->
-                    (newOnes_, t3 : overlapping_, Map.delete key_ remaining)
-                -- it has changed its name (very unlikely but can happen in theory)
-                -- -- new entry, and the old one under the same key stays "deleted"
-                | otherwise ->
-                    (t3 : newOnes_, overlapping_, remaining)
-
-revokedShortcutChildren :: MftShortcut 
-                        -> Validated CrlObject
-                        -> [T3 Text Hash ObjectKey]
-                        -> [(ObjectKey, MftEntry)]
-revokedShortcutChildren mftShortcut validCrl children = 
-    [ (childKey, makeChildWithIssues childKey fileName)
-    | T3 fileName _ childKey <- children
-    , Just MftEntry { child } <- [ Map.lookup childKey mftShortcut.nonCrlEntries ]
-    , Just childSerial        <- [ getMftChildSerial child ]
-    , isRevoked childSerial validCrl ]
-
-
 resolveTroubledChildByKey :: ValidatorIO es => Tx mode
                             -> ObjectKey
                             -> Eff es (Maybe (TroubledChildLoadPath, Keyed (Located WellStructuredRpkiObject)))
@@ -1851,81 +1394,6 @@ integrityError AppContext {..} message = do
     logError logger message
     appError $ ValidationE $ ReferentialIntegrityError message  
 
-makeCaShortcut :: ObjectKey -> Validated WellStructuredCaCert -> PublicationPointAccess -> MftChild
-makeCaShortcut key (Validated certificate) ppas = let 
-        ValidityPeriod {..} = getValidityPeriod certificate            
-        ski = getSKI certificate
-        serial = getSerial certificate
-        resources = getResources certificate
-    in CaChild (CaShortcut {..}) serial
-
-makeRoaShortcut :: ObjectKey -> Validated WellStructuredRoa -> VrpsPerAs -> MftChild
-makeRoaShortcut key (Validated roa) roaPayload = let
-        ValidityPeriod {..} = getValidityPeriod roa    
-        serial = getSerial roa
-        resources = getResources roa
-    in RoaChild (RoaShortcut {..}) serial
-
-makeSplShortcut :: ObjectKey -> Validated WellStructuredSpl -> SplPayload -> MftChild
-makeSplShortcut key (Validated spl) splPayload = let 
-        ValidityPeriod {..} = getValidityPeriod spl
-        serial = getSerial spl
-        resources = getResources spl
-    in SplChild (SplShortcut {..}) serial
-
-makeAspaShortcut :: ObjectKey -> Validated WellStructuredAspa -> Aspa -> MftChild
-makeAspaShortcut key (Validated aspaObject) aspa = let 
-        ValidityPeriod {..} = getValidityPeriod aspaObject            
-        serial = getSerial aspaObject
-        resources = getResources aspaObject
-    in AspaChild (AspaShortcut {..}) serial
-
-makeGbrShortcut :: ObjectKey -> Validated WellStructuredGbr -> T2 Hash Gbr -> MftChild
-makeGbrShortcut key (Validated gbrObject) gbr = let 
-        ValidityPeriod {..} = getValidityPeriod gbrObject    
-        serial = getSerial gbrObject
-        resources = getResources gbrObject
-    in GbrChild (GbrShortcut {..}) serial
-
-makeBgpSecShortcut :: ObjectKey -> Validated WellStructuredBgpCert -> BGPSecPayload -> MftChild
-makeBgpSecShortcut key (Validated bgpCert) bgpSec = let         
-        ValidityPeriod {..} = getValidityPeriod bgpCert                  
-        serial = getSerial bgpCert
-        resources = getResources bgpCert
-    in BgpSecChild (BgpSecShortcut {..}) serial
-
-makeMftShortcut :: ObjectKey 
-                -> Validated WellStructuredMft -> [(ObjectKey, MftEntry)] 
-                -> Keyed (Validated CrlObject) 
-                -> MftShortcut   
-makeMftShortcut key 
-    (Validated mftObject) (Map.fromList -> nonCrlEntries) 
-    (Keyed (Validated validCrl) crlKey) = 
-  let
-    ValidityPeriod {..} = manifestValidityPeriod mftObject
-    serial = getSerial mftObject
-    manifestNumber = mftObject.content.mftNumber
-    crlShortcut = let 
-        SignCRL {..} = validCrl.signCrl
-        in CrlShortcut {
-            key = crlKey,
-            notBefore = thisUpdateTime,
-            notAfter = nextUpdateTime
-        }            
-    in MftShortcut { .. }
-
-
--- | The period in which a manifest can be used: its EE certificate has to be
--- valid and the manifest itself has to be current, i.e. between thisUpdate and
--- nextUpdate (https://www.rfc-editor.org/rfc/rfc9286.html#section-6.3).
--- `getValidityPeriod` of a manifest is only the EE certificate's.
-manifestValidityPeriod :: WellStructuredMft -> ValidityPeriod
-manifestValidityPeriod mft =
-    let ValidityPeriod eeNotBefore eeNotAfter = getValidityPeriod mft
-        Manifest { thisTime, nextTime } = mft.content
-    in ValidityPeriod (max eeNotBefore thisTime) (min eeNotAfter nextTime)
-
-
 -- Same as vFocusOn but it checks that there are no duplicates in the scope focuses, 
 -- i.e. we are not returning to the same object again. That would mean we have detected
 -- a loop in references.
@@ -1936,125 +1404,6 @@ vUniqueFocusOn c a f nonUniqueError = do
     when (focus `elem` vs) nonUniqueError
     vFocusOn c a f 
         
-
--- | Mark validated objects in the database, i.e.
-applyValidationSideEffects :: (MonadIO m) =>
-                              AppContext s -> AllTasTopDownContext -> m ()
-applyValidationSideEffects
-    appContext@AppContext {..}
-    AllTasTopDownContext {..} = liftIO $ do        
-    (visitedSize, elapsed) <- timedMS $ do
-        vks <- readTVarIO visitedKeys            
-        rwTxT database $ \tx -> DB.markAsValidated tx vks worldVersion        
-        pure $! Set.size vks
-    
-    liftIO $ reportCounters appContext topDownCounters        
-    logDebug logger [i|Marked #{visitedSize} objects as used, took #{elapsed}ms.|]
-
-
--- This is to be able to print all counters as Int, not Identity Int
-newtype IdenticalShow a = IdenticalShow a
-    deriving stock (Generic)
-    deriving (Functor)
-
-instance Show a => Show (IdenticalShow a) where
-    show (IdenticalShow a) = show a
-
-reportCounters :: AppContext s -> TopDownCounters IORef -> IO ()
-reportCounters AppContext {..} counters = do
-    c <- btraverse (fmap IdenticalShow . readIORef) counters
-    logDebug logger $ fmtGen c
-                       
-   
-updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
-updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
-    liftIO $ do 
-        let !raw = Verbatim $ toStorable $ Compressed $ DB.MftShortcutMeta {..}
-        atomically $ writeCQueue shortcutQueue $ UpdateMftShortcut aki raw
-
--- Replace the whole shortcut, i.e. the meta and all the children, with this one.
-replaceMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
-replaceMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} =
-    liftIO $ do
-        let !raw = Verbatim $ toStorable $ Compressed $ DB.MftShortcutMeta {..}
-        let !children = shortcutChildRows $ Map.toList nonCrlEntries
-        atomically $ writeCQueue shortcutQueue $ ReplaceMftShortcut aki raw children
-
--- Only the new children get inserted (into `shortcuts` and `mft_shortcut_children`)
--- and only the deleted/revoked keys get removed.
-updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> [(ObjectKey, MftEntry)] -> [ObjectKey] -> m ()
-updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki newEntries deletedKeys =
-    liftIO $ do
-        let !inserts = shortcutChildRows newEntries
-        unless (null inserts && null deletedKeys) $
-            atomically $ writeCQueue shortcutQueue $ UpdateMftShortcutChildren aki inserts deletedKeys
-
--- Pre-serialise each child's data so the heavy lifting happens on this
--- (validation) thread, not on the DB-writer thread.
-shortcutChildRows :: [(ObjectKey, MftEntry)] -> [(ObjectKey, Text, BS.ByteString)]
-shortcutChildRows entries =
-    [ (k, fileName, unStorable $ toStorable $ Compressed child)
-    | (k, MftEntry {..}) <- entries ]
-
-deleteMftShortcut :: MonadIO m => TopDownContext -> AKI -> m ()
-deleteMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki = 
-    liftIO $ atomically $ writeCQueue shortcutQueue $ DeleteMftShortcut aki
-
-storeShortcuts :: (MonadIO m) => 
-                AppContext s 
-             -> ClosableQueue MftShortcutOp -> m ()
-storeShortcuts AppContext {..} shortcutQueue = liftIO $
-    readQueueChunked shortcutQueue 1000 $ \shotcutOps ->
-        rwTxT database $ \tx ->
-            for_ shotcutOps $ \case
-                UpdateMftShortcut aki s ->
-                    DB.saveMftShorcutMeta tx aki s
-                UpdateMftShortcutChildren aki inserts deletedKeys -> do
-                    unless (null inserts)     $ DB.insertMftShortcutChildren tx aki inserts
-                    unless (null deletedKeys) $ DB.deleteMftShortcutChildren tx aki deletedKeys
-                ReplaceMftShortcut aki s children -> do
-                    DB.deleteMftShortcut tx aki
-                    DB.saveMftShorcutMeta tx aki s
-                    DB.insertMftShortcutChildren tx aki children
-                DeleteMftShortcut aki ->
-                    DB.deleteMftShortcut tx aki
-
-
-data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta))
-                   | UpdateMftShortcutChildren AKI [(ObjectKey, Text, BS.ByteString)] [ObjectKey]
-                   | ReplaceMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta)) [(ObjectKey, Text, BS.ByteString)]
-                   | DeleteMftShortcut AKI
-
--- Do whatever is required to notify other subsystems that the object was touched 
--- during top-down validation. It doesn't mean that the object is valid, just that 
--- we read it from the database and looked at it. It will be used to decide when 
--- to GC this object from the cache -- if it's not visited for too long, it is 
--- removed.
-markAsUsed :: ValidatorIO es => TopDownContext -> ObjectKey -> Eff es ()
-markAsUsed TopDownContext { allTas = AllTasTopDownContext {..} } k = 
-    liftIO $ atomically $ modifyTVar' visitedKeys (Set.insert k)
-
-markAsUsedByHash :: ValidatorIO es => 
-                    AppContext s -> TopDownContext -> Hash -> Eff es ()
-markAsUsedByHash AppContext {..} topDownContext hash = do
-    key <- roTxT database $ \tx -> DB.getKeyByHash tx hash
-    for_ key $ markAsUsed topDownContext              
-
-oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Validator es => Eff es ()
-oneMoreGbr, oneMoreAspa, oneMoreBgp, oneMoreSpl :: Validator es => Eff es ()
-oneMoreMftShort :: Validator es => Eff es ()
-oneMoreCert = updateMetric @ValidationMetric @_ (#validCertNumber %~ (+1))
-oneMoreRoa  = updateMetric @ValidationMetric @_ (#validRoaNumber %~ (+1))
-oneMoreSpl  = updateMetric @ValidationMetric @_ (#validSplNumber %~ (+1))
-oneMoreMft  = updateMetric @ValidationMetric @_ (#validMftNumber %~ (+1))
-oneMoreCrl  = updateMetric @ValidationMetric @_ (#validCrlNumber %~ (+1))
-oneMoreGbr  = updateMetric @ValidationMetric @_ (#validGbrNumber %~ (+1))
-oneMoreAspa = updateMetric @ValidationMetric @_ (#validAspaNumber %~ (+1))
-oneMoreBgp  = updateMetric @ValidationMetric @_ (#validBgpNumber %~ (+1))
-oneMoreMftShort = updateMetric @ValidationMetric @_ (#mftShortcutNumber %~ (+1))
-
-moreVrps :: Validator es => Count -> Eff es ()
-moreVrps n = updateMetric @ValidationMetric @_ (#vrpCounter %~ (+n))
 
 extractPPAs :: Ca -> Either ValidationError PublicationPointAccess
 extractPPAs = \case 
@@ -2072,25 +1421,6 @@ getCaLocations AppContext {..} = \case
 data ManifestValidity e v = InvalidEntry e v 
                           | InvalidChild e v ObjectKey Text
                           | ValidEntry v ObjectKey MftEntry
-
-makeChildWithIssues :: ObjectKey -> Text -> MftEntry
-makeChildWithIssues childKey fileName = 
-    MftEntry { child = TroubledChild childKey, .. }     
-
-
-bumpCounterBy :: (MonadIO m, Num a) =>
-                s -> Getting (IORef a) s (IORef a) -> a -> m ()
-bumpCounterBy counters counterLens n = liftIO $     
-    atomicModifyIORef' (counters ^. counterLens) $ \c -> (c + n, ())        
-
-
-rememberNotValidAfter :: MonadIO m => TopDownContext -> Instant -> m ()
-rememberNotValidAfter TopDownContext {..} notAfter = 
-    liftIO $ atomically $ modifyTVar' earliestNotValidAfter (<> EarliestToExpire notAfter)
-
-rememberCrlNextUpdate :: MonadIO m => TopDownContext -> Validated CrlObject -> m ()
-rememberCrlNextUpdate topDownContext (Validated (CrlObject { signCrl = SignCRL {..}})) = liftIO $ 
-    rememberNotValidAfter topDownContext nextUpdateTime
 
 longerThan :: [a] -> Int -> Bool
 longerThan xs n = not $ null $ drop n xs
