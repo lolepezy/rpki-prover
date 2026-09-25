@@ -143,7 +143,10 @@ data TopDownContext = TopDownContext {
         overclaimingHappened    :: Bool,
         fetcheables             :: TVar Fetcheables,
         earliestNotValidAfter   :: TVar EarliestToExpire,        
-        visitedAkis             :: TVar (Set AKI)
+        visitedAkis             :: TVar (Set AKI),
+        -- | Some CA wasn't validated because none of its repositories has been
+        -- fetched yet, i.e. the tree is not complete (e.g. on a cold cache)
+        waitingForRepositories  :: TVar Bool
     }
     deriving stock (Generic)
 
@@ -233,6 +236,7 @@ newTopDownContext taName allTas =
             fetcheables             <- newTVar mempty                 
             earliestNotValidAfter   <- newTVar mempty
             visitedAkis             <- newTVar mempty
+            waitingForRepositories  <- newTVar False
             pure $! TopDownContext {..}
 
 newAllTasTopDownContext :: MonadIO m =>
@@ -329,7 +333,9 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
         else pure $ Map.map fst results
   where
     walkShortcutsOf taName (result, walkable)
-        -- A TA interrupted by a timeout or a limit keeps what its last walk found
+        -- A TA interrupted by a timeout or a limit, or one with repositories 
+        -- that haven't been fetched even once yet, keeps what its last walk found. 
+        -- A CCR of an incomplete tree would look as if a part of it had vanished.
         | not walkable = pure result
         | otherwise    = do
             (z, elapsed) <- timedMS $ roTxT database $ \tx -> 
@@ -382,8 +388,10 @@ validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
                 pollTask task >>= \case
                     Just r  -> do 
                         result <- either IOExc.throwIO pure r
-                        limited <- readTVarIO $ topDownContext ^. #interruptedByLimit
-                        pure (result, limited == CanProceed)
+                        (limited, waiting) <- atomically $ (,) 
+                                    <$> readTVar (topDownContext ^. #interruptedByLimit)
+                                    <*> readTVar (topDownContext ^. #waitingForRepositories)
+                        pure (result, limited == CanProceed && not waiting)
                     Nothing -> (, False) <$> timedOut tal topDownContext
 
     timedOut tal topDownContext = do
@@ -711,7 +719,13 @@ validateCaNoLimitChecks
             -- missing manifests, so just don't go there.
             -- Note that it is `caFetcheables`, i.e. all the PPs of the CA and not only 
             -- the fetcheable ones: the cache doesn't care which protocol filled it.
-            unless (all ((== Pending) . snd) caFetcheables) $ do   
+            if all ((== Pending) . snd) caFetcheables
+              then 
+                -- A CA that uses only disabled protocols is never going to be 
+                -- fetched, the tree is as complete as it can be without it
+                when (isJust $ filterPPAccess config ppAccess) $ 
+                    liftIO $ atomically $ writeTVar waitingForRepositories True
+              else do   
                 let primaryUrl = getPrimaryRepositoryUrl publicationPoints fetcheablePPs
                 let validateWithPpScope =
                         vFocusOn PPFocus primaryUrl $
