@@ -1572,7 +1572,7 @@ validateCaNoFetch
                         
                 RoaChild r@RoaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do                    
-                        validateShortcut childData r key                   
+                        validateShortcut childData r key (validateRoaPrefixes verifiedResources roaPayload)                   
                         oneMoreRoa                        
                         moreVrps $ Count $ fromIntegral $ length (roaV4 roaPayload) + length (roaV6 roaPayload)
                         increment topDownCounters.shortcutRoa
@@ -1580,27 +1580,27 @@ validateCaNoFetch
 
                 SplChild s@SplShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do
-                        validateShortcut childData s key
+                        validateShortcut childData s key (validateSplAsn verifiedResources splPayload)
                         oneMoreSpl                        
                         increment topDownCounters.shortcutSpl
                         rememberPayloads typed (splPayload :)
                 
                 AspaChild a@AspaShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do 
-                        validateShortcut childData a key
+                        validateShortcut childData a key (pure ())
                         oneMoreAspa 
                         increment topDownCounters.shortcutAspa
                         rememberPayloads typed (aspa :)                        
 
                 BgpSecChild b@BgpSecShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do 
-                        validateShortcut childData b key
+                        validateShortcut childData b key (pure ())
                         oneMoreBgp                
                         rememberPayloads typed (bgpSec :)
 
                 GbrChild g@GbrShortcut {..} _ -> 
                     vFocusOn ObjectFocus childKey $ do
-                        validateShortcut childData g key 
+                        validateShortcut childData g key (pure ()) 
                         oneMoreGbr                 
                         rememberPayloads typed (gbr :)
 
@@ -1612,9 +1612,11 @@ validateCaNoFetch
                     newEntry <- troubledValidation childKey_ fileName
                     for_ newEntry $ storeChildIfChanged childKey_ childData
     
+        -- `validatePayload` is what full validation checks of the payload against 
+        -- the resources of the CA, on top of the resources of the EE certificate.
         validateShortcut :: (ValidatorIO es', Concurrent :> es', WithValidityPeriod s, WithResources s) 
-                         => ChildData -> s -> ObjectKey -> Eff es' ()
-        validateShortcut childData shortcut key = do
+                         => ChildData -> s -> ObjectKey -> Eff es' () -> Eff es' ()
+        validateShortcut childData shortcut key validatePayload = do
             validateLocationForShortcut key            
             ValidityPeriod {..} <- validateObjectValidityPeriod shortcut now
             rememberNotValidAfter topDownContext notAfter            
@@ -1628,10 +1630,13 @@ validateCaNoFetch
                     in case validationRFC of 
                         StrictRFC       -> potentiallyNewResources
                         ReconsideredRFC -> potentiallyNewResources || overclaimingHappened
-            when revalidateResources $             
-                void $ validateChildParentResources validationRFC 
-                        (getResources shortcut) parentCaResources verifiedResources
-                    `catchError` \_cs (e :: AppError) -> do 
+            when revalidateResources $ do            
+                    void $ validateChildParentResources validationRFC 
+                            (getResources shortcut) parentCaResources verifiedResources
+                    -- With the reconsidered algorithm an EE certificate with resources 
+                    -- the CA doesn't have anymore is only a warning, the payload isn't.
+                    validatePayload
+                `catchError` \_cs (e :: AppError) -> do 
                         -- The shortcut isn't valid anymore and later validations 
                         -- may not check its resources again (e.g. the CA is a shortcut 
                         -- by then), so it has to be validated in full from now on.

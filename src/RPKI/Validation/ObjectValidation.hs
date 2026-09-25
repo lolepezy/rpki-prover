@@ -426,22 +426,26 @@ validateRoa :: (Validator es, CaParent parent) =>
     Eff es (Validated WellStructuredRoa)
 validateRoa validationRFC now roa parentCert crl verifiedResources = do      
     validateCms validationRFC now roa parentCert crl verifiedResources    
-    checkResources roa.content    
+    validateRoaPrefixes verifiedResources roa.content    
     pure $ Validated roa
-  where
-    checkResources (VrpsPerAs asn v4s v6s) = do 
-        let checkerV4 = validatedPrefixInRS @Ipv4Prefix verifiedResources
-        let checkerV6 = validatedPrefixInRS @Ipv6Prefix verifiedResources
-        
-        for_ v4s $ \(Vrp4 prefix maxLength) -> do
-            checkerV4 prefix (RoaPrefixIsOutsideOfResourceSet (Ipv4P prefix))
-            when (ipv4PrefixLen prefix > maxLength) $
-                vError $ RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp asn (Ipv4P prefix) maxLength)
-        for_ v6s $ \(Vrp6 prefix maxLength) -> do
-            checkerV6 prefix (RoaPrefixIsOutsideOfResourceSet (Ipv6P prefix))
-            when (ipv6PrefixLen prefix > maxLength) $
-                vError $ RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp asn (Ipv6P prefix) maxLength)
 
+-- | The prefixes of a ROA have to be within the verified resources of its CA.
+-- With the reconsidered algorithm that's not implied by the EE certificate 
+-- being valid, so a ROA shortcut has to be checked with this as well.
+validateRoaPrefixes :: Validator es => Maybe (VerifiedRS PrefixesAndAsns) -> VrpsPerAs -> Eff es ()
+validateRoaPrefixes verifiedResources (VrpsPerAs asn v4s v6s) = do 
+    let checkerV4 = validatedPrefixInRS @Ipv4Prefix verifiedResources
+    let checkerV6 = validatedPrefixInRS @Ipv6Prefix verifiedResources
+    
+    for_ v4s $ \(Vrp4 prefix maxLength) -> do
+        checkerV4 prefix (RoaPrefixIsOutsideOfResourceSet (Ipv4P prefix))
+        when (ipv4PrefixLen prefix > maxLength) $
+            vError $ RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp asn (Ipv4P prefix) maxLength)
+    for_ v6s $ \(Vrp6 prefix maxLength) -> do
+        checkerV6 prefix (RoaPrefixIsOutsideOfResourceSet (Ipv6P prefix))
+        when (ipv6PrefixLen prefix > maxLength) $
+            vError $ RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp asn (Ipv6P prefix) maxLength)
+  where
     validatedPrefixInRS ::
         forall a es.
          (Validator es, Interval a, HasType (IntervalSet a) PrefixesAndAsns) =>
@@ -464,12 +468,7 @@ validateSpl :: (Validator es, CaParent parent) =>
 validateSpl validationRFC now spl parentCert crl verifiedResources = do
     validateCms validationRFC now spl parentCert crl verifiedResources
 
-    let SplPayload asn _ = spl.content
-    for_ verifiedResources $ \(VerifiedRS vrs) -> do
-        let asns = vrs ^. typed
-        unless (isInside (AS asn) asns) $
-            vError $
-                SplAsnNotInResourceSet asn (IS.toList asns)
+    validateSplAsn verifiedResources spl.content
 
     let AllResources ipv4 ipv6 _ = getResources spl
     resourceSetMustBeEmpty ipv4 (SplNotIpResources (ipToList Ipv4P ipv4))
@@ -479,6 +478,16 @@ validateSpl validationRFC now spl parentCert crl verifiedResources = do
     ipToList f = \case
         Inherit -> []
         RS s -> map f $ IS.toList s
+
+-- | The ASN of an SPL has to be within the verified resources of its CA, 
+-- the same as the prefixes of a ROA (see `validateRoaPrefixes`).
+validateSplAsn :: Validator es => Maybe (VerifiedRS PrefixesAndAsns) -> SplPayload -> Eff es ()
+validateSplAsn verifiedResources (SplPayload asn _) = 
+    for_ verifiedResources $ \(VerifiedRS vrs) -> do
+        let asns = vrs ^. typed
+        unless (isInside (AS asn) asns) $
+            vError $
+                SplAsnNotInResourceSet asn (IS.toList asns)
 
 
 validateGbr :: (Validator es, CaParent parent) =>
