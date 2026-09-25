@@ -28,6 +28,9 @@
 #   later        12 hours later, 2 rounds: expired manifests and shortcuts
 #   full         --no-incremental-validation, 1 round
 #   cold-strict  cold, with strict RFC resource checks and strict manifests
+#   lost-mfts    the manifests of 50 CAs with shortcuts deleted, as the cleanup
+#                does when validation doesn't get to a CA for a day, 2 rounds
+#   earlier      2 hours before the copy, 2 rounds: manifests from the future
 #
 # All but cold-strict run with --allow-overclaiming, which is what the
 # instances under ~/tmp/rpki run with, so the shortcuts they made are
@@ -51,7 +54,7 @@ shift 4
 if [ $# -gt 0 ]; then
     SCENARIOS=("$@")
 else
-    SCENARIOS=(live cold later full cold-strict)
+    SCENARIOS=(live cold later full cold-strict lost-mfts earlier)
 fi
 
 mkdir -p "$WORK_DIR"
@@ -109,16 +112,35 @@ c.close()
 EOF
 }
 
+# Delete the manifests of some CAs with a manifest shortcut, the way the
+# cache cleanup does when validation doesn't get to a CA for long enough
+lose_manifests() {
+    python3 - "$1" <<'EOF'
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+c.execute('PRAGMA foreign_keys = ON')
+c.execute('''
+    DELETE FROM objects WHERE object_key IN (
+        SELECT object_key FROM manifest_meta WHERE aki IN (
+            SELECT aki FROM mft_shortcut_meta ORDER BY aki LIMIT 50))
+''')
+c.commit()
+c.close()
+EOF
+}
+
 # run_scenario SCENARIO BUILD BIN
 run_scenario() {
     local scenario=$1 build=$2 bin=$3
-    local rounds=2 offset=0 flags=(--reconsidered) cold=no
+    local rounds=2 offset=0 flags=(--reconsidered) cold=no lose=no
     case "$scenario" in
         live)        ;;
         cold)        cold=yes ;;
         later)       offset=$((12 * 3600)) ;;
         full)        rounds=1; flags+=(--full) ;;
         cold-strict) cold=yes; flags=(--strict-manifests) ;;
+        lost-mfts)   lose=yes ;;
+        earlier)     offset=$((-2 * 3600)) ;;
         *)           echo "Unknown scenario $scenario"; exit 1 ;;
     esac
 
@@ -130,6 +152,9 @@ run_scenario() {
     cp "$SOURCE_DB" "$root/cache/rpki.sqlite"
     if [ "$cold" = yes ]; then
         wipe_shortcuts "$root/cache/rpki.sqlite"
+    fi
+    if [ "$lose" = yes ]; then
+        lose_manifests "$root/cache/rpki.sqlite"
     fi
 
     for round in $(seq 1 "$rounds"); do

@@ -215,44 +215,55 @@ shouldPlanManifests = do
         older  = mftMeta 1 (atHour 90)  (atHour 114)
         shortcut = shortcutMeta 1 (atHour 90) (atHour 114)
 
+    -- The plan, and the manifests from the future passed over for older data
     HU.assertEqual "There are no manifests"
-        NoManifest
-        (planManifests now [] (Just shortcut))
+        (NoManifest, [])
+        (planManifests now [] Nothing)
 
     HU.assertEqual "Without a shortcut, the manifests not in the future are validated in full"
-        (InFull [newer, older])
+        (InFull [newer, older], [future])
         (planManifests now [future, newer, older] Nothing)
 
     HU.assertEqual "When all of them are in the future, all of them are tried, for the error"
-        (InFull [future])
+        (InFull [future], [])
         (planManifests now [future] Nothing)
 
     HU.assertEqual "The manifest of the shortcut is the latest one not in the future"
-        (UseShortcut shortcut)
+        (UseShortcut shortcut, [future])
         (planManifests now [future, older] (Just shortcut))
 
     HU.assertEqual "There's a newer manifest than the one of the shortcut"
-        (DiffWithShortcut shortcut newer)
+        (DiffWithShortcut shortcut newer, [future])
         (planManifests now [future, newer, older] (Just shortcut))
 
     HU.assertEqual "An expired shortcut is not used"
-        (InFull [newer, older])
+        (InFull [newer, older], [])
         (planManifests now [newer, older] (Just $ shortcut & #notAfter .~ atHour 99))
 
     HU.assertEqual "A shortcut with an expired CRL is not used"
-        (InFull [newer, older])
+        (InFull [newer, older], [])
         (planManifests now [newer, older] (Just $ shortcut & #crlShortcut . #notAfter .~ atHour 99))
 
     -- Shortcuts made before `manifestValidityPeriod` have only the 
     -- validity of the EE certificate of the manifest
     let stale = mftMeta 1 (atHour 90) (atHour 99)
     HU.assertEqual "A shortcut of a manifest past its nextUpdate is not used"
-        (InFull [stale])
+        (InFull [stale], [])
         (planManifests now [stale] (Just $ shortcut & #notAfter .~ atHour 200))
 
-    HU.assertEqual "The manifest of a valid shortcut is gone from the cache"
-        NoManifest
+    -- The manifest of a shortcut can be gone from the cache when validation 
+    -- didn't get to the CA for longer than the cache keeps manifests
+    HU.assertEqual "A valid shortcut is used when there are no manifests"
+        (OnlyShortcut shortcut, [])
+        (planManifests now [] (Just shortcut))
+
+    HU.assertEqual "A valid shortcut is used when there are only manifests from the future"
+        (OnlyShortcut shortcut, [future])
         (planManifests now [future] (Just shortcut))
+
+    HU.assertEqual "An expired shortcut is not used when there are no manifests"
+        (NoManifest, [])
+        (planManifests now [] (Just $ shortcut & #notAfter .~ atHour 99))
   where
     atHour hours = Instant (hours * 3600 * nanosPerSecond)
     mftMeta k thisTime_ nextTime_ = MftMeta {

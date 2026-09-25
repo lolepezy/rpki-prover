@@ -761,7 +761,15 @@ validateCaNoFetch
                         FullEveryIteration -> pure Nothing
                         Incremental        -> DB.getMftShorcutMeta tx aki
 
-        case planManifests now mfts shortcut of
+        let (plan, premature) = planManifests now mfts shortcut
+
+        -- A manifest from the future is a failed fetch (RFC 9286, 6.3) that
+        -- has to be reported when an older one is used instead of it
+        for_ premature $ \m ->
+            withMft m.key $ reportMftFallback $
+                ValidationE $ ThisUpdateTimeIsInTheFuture m.thisTime (unNow now)
+
+        case plan of
             NoManifest ->
                 vError $ NoMFT aki
 
@@ -770,6 +778,11 @@ validateCaNoFetch
                 tryMfts aki mftMetas
 
             UseShortcut meta ->
+                fromShortcut mfts meta $
+                    onlyCollectPayloads meta
+
+            OnlyShortcut meta -> do
+                vWarn $ NoMFTButCachedMft aki
                 fromShortcut mfts meta $
                     onlyCollectPayloads meta
 
@@ -1627,6 +1640,10 @@ data MftPlan
     -- | The manifest of the shortcut is still the latest one, so the shortcut
     -- has everything.
     | UseShortcut DB.MftShortcutMeta
+    -- | There's no manifest to use but the shortcut is still valid. It is the
+    -- cached data of the last successful fetch, which is to be used until it
+    -- becomes stale (RFC 9286, 6.6).
+    | OnlyShortcut DB.MftShortcutMeta
     -- | There's a newer manifest than the one of the shortcut: validate only
     -- what changed, and fall back to the shortcut if the manifest is not valid.
     | DiffWithShortcut DB.MftShortcutMeta MftMeta
@@ -1634,22 +1651,27 @@ data MftPlan
 
 -- | Given the manifests of a CA, newest first, and its manifest shortcut
 -- (`Nothing` when shortcuts are not used), decide how to validate it.
-planManifests :: Now -> [MftMeta] -> Maybe DB.MftShortcutMeta -> MftPlan
-planManifests now mfts shortcut
-    | null mfts = NoManifest
-    | Just meta <- shortcut, not (shortcutExpired meta) =
-        case current of
-            -- A shortcut is only made for a manifest that is not in the future,
-            -- so the manifest of this one is gone from the cache
-            []                        -> NoManifest
-            m : _ | m.key == meta.key -> UseShortcut meta
-                  | otherwise         -> DiffWithShortcut meta m
-    -- If there are only manifests in the future, use them
-    -- anyway to have a meaningful error message
-    | null current = InFull mfts
-    | otherwise    = InFull current
+--
+-- Also returns the manifests from the future that are passed over for
+-- older data, since they are failed fetches to report (RFC 9286, 6.3).
+planManifests :: Now -> [MftMeta] -> Maybe DB.MftShortcutMeta -> (MftPlan, [MftMeta])
+planManifests now mfts shortcut =
+    case shortcut of
+        Just meta | not (shortcutExpired meta) ->
+            let plan = case current of
+                    -- A shortcut is only made for a manifest that is not in the
+                    -- future, so the manifest of this one is gone from the cache
+                    []                        -> OnlyShortcut meta
+                    m : _ | m.key == meta.key -> UseShortcut meta
+                          | otherwise         -> DiffWithShortcut meta m
+            in (plan, premature)
+        _   | null mfts    -> (NoManifest, [])
+            -- If there are only manifests from the future, validate
+            -- them anyway to have a meaningful error message
+            | null current -> (InFull premature, [])
+            | otherwise    -> (InFull current, premature)
   where
-    current = filter (\m -> m.thisTime <= unNow now) mfts
+    (current, premature) = List.partition (\m -> m.thisTime <= unNow now) mfts
 
     -- Shortcuts stored before `manifestValidityPeriod` only carry the validity
     -- of the manifest's EE certificate. A manifest that's past its nextUpdate
