@@ -12,6 +12,8 @@ module RPKI.Validation.TopDown (
     validateMutlipleTAs,
     refreshTaCertificate,
     TroubledChildLoadPath(..),
+    MftPlan(..),
+    planManifests,
     resolveTroubledChildByKey,
     revokedShortcutChildren,
     manifestValidityPeriod
@@ -732,11 +734,6 @@ validateCaNoFetch
   where    
     validationAlgorithm = config ^. typed @ValidationConfig . typed @ValidationAlgorithm
     validationRFC       = config ^. typed @ValidationConfig . typed @ValidationRFC
-    
-    nextAction =
-        case validationAlgorithm of 
-            FullEveryIteration -> makeNextFullValidationAction
-            Incremental        -> makeNextIncrementalAction
 
     -- Allow validating manifest only once per KI
     validateChildrenOf aki = 
@@ -748,7 +745,7 @@ validateCaNoFetch
                     vWarn $ MftAlreadyValidated aki
                 else do
                     writeTVar visitedAkis $! Set.insert aki visited
-                    pure $ join $ nextAction aki
+                    pure $ validateManifests aki
 
     newShortcut = 
         case validationAlgorithm of 
@@ -756,63 +753,44 @@ validateCaNoFetch
             FullEveryIteration -> const Nothing
             Incremental        -> (Just $!)
 
-    makeNextFullValidationAction aki = do 
-        mftMetas <- roTxT database $ \tx -> DB.getMftsForAKI tx aki
-        pure $! processMfts aki mftMetas
+    -- Validate the manifest of the CA with its children, the way `planManifests` says.
+    validateManifests aki = do
+        (mfts, shortcut) <- roTxT database $ \tx ->
+            (,) <$> DB.getMftsForAKI tx aki
+                <*> case validationAlgorithm of
+                        FullEveryIteration -> pure Nothing
+                        Incremental        -> DB.getMftShorcutMeta tx aki
 
-    makeNextIncrementalAction aki = do
-        z <- roTxT database $ \tx -> DB.getMftsForAKI tx aki
-        case z of
-            []   -> pure $! vError $ NoMFT aki
-            mfts -> actOnMfts mfts
+        case planManifests now mfts shortcut of
+            NoManifest ->
+                vError $ NoMFT aki
+
+            InFull mftMetas -> do
+                increment topDownCounters.originalMft
+                tryMfts aki mftMetas
+
+            UseShortcut meta ->
+                fromShortcut mfts meta $
+                    onlyCollectPayloads meta
+
+            DiffWithShortcut meta mftMeta ->
+                fromShortcut mfts meta $ do
+                    markAsUsed topDownContext mftMeta.key
+                    withMft mftMeta.key $ \mft ->
+                        tryOneMftWithShortcut meta mft
+                            `catchError` \_cs (e :: AppError) -> do
+                                -- The shortcut is valid, so it is the latest
+                                -- valid manifest to fall back to
+                                reportMftFallback e mft
+                                onlyCollectPayloads meta
       where
-        actOnMfts mftMetas = do
-            z <- roTxT database $ \tx -> DB.getMftShorcutMeta tx aki
-            case z of
-                Nothing -> do
-                    increment $ topDownCounters.originalMft
-                    pure $! processMfts aki mftMetas
-
-                Just meta -> do
-                    -- Shortcuts stored before `manifestValidityPeriod` only carry
-                    -- the validity of the manifest's EE certificate. A manifest
-                    -- that's past its nextUpdate stays unchanged, and so does its
-                    -- shortcut, so the manifest's own nextUpdate is checked here.
-                    let shortcutMftNextUpdate =
-                            (.nextTime) <$> List.find ((== meta.key) . (.key)) mftMetas
-                    let shortcutExpired =
-                            not (isWithinValidityPeriod now meta) ||
-                            not (isWithinValidityPeriod now meta.crlShortcut) ||
-                            maybe False (< unNow now) shortcutMftNextUpdate
-
-                    if shortcutExpired then do
-                        increment topDownCounters.originalMft
-                        pure $! processMfts aki mftMetas
-                    else do
-                        markAsUsed topDownContext meta.key
-                        for_ shortcutMftNextUpdate $ rememberNotValidAfter topDownContext
-                        increment topDownCounters.shortcutMft
-                        action <- case mftsNotInFuture mftMetas of
-                            [] -> vError $ NoMFT aki
-                            mft_ : otherMfts
-                                | mft_.key == meta.key ->
-                                    pure $! onlyCollectPayloads meta
-                                | otherwise -> pure $! do
-                                    markAsUsed topDownContext mft_.key
-                                    withMft mft_.key $ \mft ->
-                                        tryOneMftWithShortcut meta mft
-                                            `catchError` \_cs (e :: AppError) ->
-                                                if shortcutExpired
-                                                    then
-                                                        tryMfts aki otherMfts
-                                                    else do
-                                                        reportMftFallback e mft
-                                                        onlyCollectPayloads meta
-                        pure $! do 
-                            r <- action
-                            oneMoreMft >> oneMoreCrl >> oneMoreMftShort
-                            pure $! r
-
+        fromShortcut mfts meta validate = do
+            markAsUsed topDownContext meta.key
+            for_ (shortcutMftNextUpdate mfts meta) $ rememberNotValidAfter topDownContext
+            increment topDownCounters.shortcutMft
+            r <- validate
+            oneMoreMft >> oneMoreCrl >> oneMoreMftShort
+            pure r
 
         -- The manifest changed since the last shortcut: run the full diff, which needs
         -- file_name (to detect renames), so fetch the full children map.
@@ -846,19 +824,7 @@ validateCaNoFetch
                     (getCrlByKey appContext crlKey)
                     (getResources ca)
 
-    processMfts childrenAki mfts = do
-        case (mftsNotInFuture mfts, mfts) of             
-            ([], []) -> vError $ NoMFT childrenAki
-
-            -- if there are only manifest(s) in the future, use them 
-            -- anyway to have a meaningful error message
-            ([], _) -> tryMfts childrenAki mfts
-
-            -- If there're manifests that are not in the future, 
-            -- use only them and ignore the future ones
-            (relevantMfts, _) -> tryMfts childrenAki relevantMfts
-      
-
+    -- Validate the manifests in full, falling back to the next one until one is valid
     tryMfts aki []              = vError $ NoMFT aki
     tryMfts aki (m : mftsMetas_) = 
         withMft (m ^. #key) $ \mft -> do 
@@ -886,8 +852,6 @@ validateCaNoFetch
         let mftNumber = mft ^. #object . #payload . #content . #mftNumber
         vFocusOn ObjectFocus (mft ^. #key) $ vWarn $ MftFallback e mftNumber
         logWarn logger [i|Falling back to the previous manifest for #{mftLocation}, failed manifest number #{mftNumber}, error: #{toMessage e}|]        
-
-    mftsNotInFuture = filter (\MftMeta {..} -> thisTime <= unNow now)
 
 
     -- Proceed with full validation for children mentioned in the full manifest 
@@ -1652,6 +1616,54 @@ validateCaNoFetch
     rememberPayloads lens_ f = do
         let builder = topDownContext ^. #payloadBuilder . lens_        
         liftIO $! atomicModifyIORef' builder $ \b -> let !z = f b in (z, ())
+
+
+-- | How to validate the manifest of a CA.
+data MftPlan
+    = NoManifest
+    -- | There's no shortcut that can be used: validate the manifests in full,
+    -- one after another until one of them is valid.
+    | InFull [MftMeta]
+    -- | The manifest of the shortcut is still the latest one, so the shortcut
+    -- has everything.
+    | UseShortcut DB.MftShortcutMeta
+    -- | There's a newer manifest than the one of the shortcut: validate only
+    -- what changed, and fall back to the shortcut if the manifest is not valid.
+    | DiffWithShortcut DB.MftShortcutMeta MftMeta
+    deriving stock (Show, Eq)
+
+-- | Given the manifests of a CA, newest first, and its manifest shortcut
+-- (`Nothing` when shortcuts are not used), decide how to validate it.
+planManifests :: Now -> [MftMeta] -> Maybe DB.MftShortcutMeta -> MftPlan
+planManifests now mfts shortcut
+    | null mfts = NoManifest
+    | Just meta <- shortcut, not (shortcutExpired meta) =
+        case current of
+            -- A shortcut is only made for a manifest that is not in the future,
+            -- so the manifest of this one is gone from the cache
+            []                        -> NoManifest
+            m : _ | m.key == meta.key -> UseShortcut meta
+                  | otherwise         -> DiffWithShortcut meta m
+    -- If there are only manifests in the future, use them
+    -- anyway to have a meaningful error message
+    | null current = InFull mfts
+    | otherwise    = InFull current
+  where
+    current = filter (\m -> m.thisTime <= unNow now) mfts
+
+    -- Shortcuts stored before `manifestValidityPeriod` only carry the validity
+    -- of the manifest's EE certificate. A manifest that's past its nextUpdate
+    -- stays unchanged, and so does its shortcut, so the manifest's own
+    -- nextUpdate is checked here.
+    shortcutExpired meta =
+        not (isWithinValidityPeriod now meta) ||
+        not (isWithinValidityPeriod now meta.crlShortcut) ||
+        maybe False (< unNow now) (shortcutMftNextUpdate mfts meta)
+
+-- | nextUpdate of the manifest of the shortcut, if it's still in the cache.
+shortcutMftNextUpdate :: [MftMeta] -> DB.MftShortcutMeta -> Maybe Instant
+shortcutMftNextUpdate mfts meta =
+    (.nextTime) <$> List.find ((== meta.key) . (.key)) mfts
 
 
 -- Either a full manifest entry (file_name known, from the diff-path's full read)
