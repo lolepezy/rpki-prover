@@ -96,7 +96,7 @@ prop_orderDoesNotMatter =
   where
     shuffled = do
         manifests    <- QC.shuffle draftExample.manifests
-        vrps         <- QC.shuffle draftExample.vrps
+        vrps         <- createVrps <$> QC.shuffle (vrpsToList draftExample.vrps)
         aspas        <- QC.shuffle draftExample.aspas
         trustAnchors <- QC.shuffle draftExample.trustAnchors
         routerKeys   <- QC.shuffle draftExample.routerKeys
@@ -122,7 +122,7 @@ draftExample = Ccr {
                 "FACBD02CA47E3BD9666FCBD823B37DEDD0BCEE00" 0x0203 1778803207
                 "rsync://example.net/ca2/z0nzVS7SOB_9y6tapHk7-YuKkm8.mft" []
         ],
-        vrps = [
+        vrps = createVrps [
             Vrp (ASN 0)     (v4 0xc0000200 24) (PrefixLength 24),
             Vrp (ASN 65536) (v4 0xc6336400 24) (PrefixLength 28),
             Vrp (ASN 65536) (v6 (0x20010db8, 0, 0, 0) 48) (PrefixLength 48),

@@ -44,15 +44,15 @@ import           Data.Set                    (Set)
 import qualified Data.Set                    as Set
 import           Data.Text                   (Text)
 import qualified Data.Text.Encoding          as Text
-import           Data.Word                   (Word8, Word32)
+import qualified Data.Vector.Unboxed         as VU
+import           Data.Word                   (Word8, Word32, Word64)
 import           GHC.Generics
 import           Text.Printf                 (printf)
 
-import qualified HaskellWorks.Data.Network.Ip.Ipv4 as V4
-import qualified HaskellWorks.Data.Network.Ip.Ipv6 as V6
 
 import           RPKI.AppTypes               (Size(..), WorldVersion)
 import           RPKI.Domain
+import           RPKI.Domain.Packed          (PackedVrp4(..), PackedVrp6(..))
 import           RPKI.Resources.Types
 import           RPKI.RTR.Types              (mergeAspasByCustomer)
 import           RPKI.Store.Base.Serialisation
@@ -105,7 +105,7 @@ data RouterKey = RouterKey {
 data Ccr = Ccr {
         producedAt   :: Instant,
         manifests    :: [ManifestInstance],
-        vrps         :: [Vrp],
+        vrps         :: Vrps,
         aspas        :: [Aspa],
         trustAnchors :: [SKI],
         routerKeys   :: [RouterKey]
@@ -160,7 +160,7 @@ manifestState instances =
                 (\a b -> a { subordinates = a.subordinates <> b.subordinates })
                 [ (mi.hash, mi) | mi <- instances ]
 
-    mis = derSequence $ map manifestInstance $ Map.elems byHash
+    mis = derSequence $ map (strictDer . manifestInstance) $ Map.elems byHash
 
     mostRecentUpdate =
         case map (.thisUpdate) $ Map.elems byHash of
@@ -188,47 +188,47 @@ manifestState instances =
 -- RFC 9582, section 4.3.3: IPv4 before IPv6, sorted by address, prefix
 -- length and maximum length, unique, and no maxLength that equals the
 -- prefix length.
-roaPayloadState :: [Vrp] -> Der
-roaPayloadState vrps =
-    stateWithHash (derSequence $ map roaPayloadSet $ Map.toAscList perAsn) []
+--
+-- The packed VRPs sort in exactly that order (AS first), so sorting them as
+-- unboxed vectors puts every AS in one slice of each family, and every AS
+-- is encoded into its own bytes straight away. A million VRPs never become
+-- boxed values.
+roaPayloadState :: Vrps -> Der
+roaPayloadState (Vrps v4 v6) =
+    stateWithHash (derSequence $ map (strictDer . roaPayloadSet) $ 
+                    byAsn (sortDedup compare v4) (sortDedup compare v6)) []
   where
-    perAsn = Map.fromListWith (<>)
-                [ (vrpAsn, roaAddress prefix maxLen) | Vrp vrpAsn prefix maxLen <- vrps ]
+    byAsn s4 s6 = 
+        case [ a | Just a <- [packed4Asn <$> s4 VU.!? 0, packed6Asn <$> s6 VU.!? 0] ] of
+            []   -> []
+            asns -> 
+                let asn      = minimum asns
+                    (g4, r4) = VU.span ((== asn) . packed4Asn) s4
+                    (g6, r6) = VU.span ((== asn) . packed6Asn) s6
+                in (asn, g4, g6) : byAsn r4 r6
 
-    roaAddress prefix (PrefixLength maxLen) =
-        case prefix of
-            Ipv4P (Ipv4Prefix (V4.IpBlock (V4.IpAddress w) (V4.IpNetMask len))) ->
-                (Set.singleton $ RoaAddress (word32Bytes w) (fromIntegral len) (fromIntegral maxLen), mempty)
-            Ipv6P (Ipv6Prefix (V6.IpBlock (V6.IpAddress (w1, w2, w3, w4)) (V6.IpNetMask len))) ->
-                (mempty, Set.singleton $ RoaAddress (foldMap word32Bytes [w1, w2, w3, w4]) (fromIntegral len) (fromIntegral maxLen))
-
-    roaPayloadSet (vrpAsn, (v4, v6)) =
+    roaPayloadSet (asn, g4, g6) =
         derSequence [
-            asnInteger vrpAsn,
+            integer $ fromIntegral asn,
             derSequence $
-                [ addressFamily ipv4Afi v4 | not (Set.null v4) ] <>
-                [ addressFamily ipv6Afi v6 | not (Set.null v6) ]
+                [ addressFamily ipv4Afi $ map v4Address $ VU.toList g4 | not (VU.null g4) ] <>
+                [ addressFamily ipv6Afi $ map v6Address $ VU.toList g6 | not (VU.null g6) ]
         ]
 
-    addressFamily afi addresses =
-        derSequence [ octetString afi, derSequence $ map roaIpAddress $ Set.toAscList addresses ]
+    v4Address (PackedVrp4 _ address len maxLen) = 
+        roaIpAddress (word32Bytes address) len maxLen
+    v6Address (PackedVrp6 _ hi lo len maxLen) = 
+        roaIpAddress (word64Bytes hi <> word64Bytes lo) len maxLen
 
-    roaIpAddress a =
+    addressFamily afi addresses = derSequence [ octetString afi, derSequence addresses ]
+
+    roaIpAddress address len maxLen =
         derSequence $
-            [ prefixBitString a.prefixLength a.address ] <>
-            [ integer $ fromIntegral a.maxLength | a.maxLength /= a.prefixLength ]
+            [ prefixBitString (fromIntegral len) address ] <>
+            [ integer $ fromIntegral maxLen | maxLen /= len ]
 
     ipv4Afi = BS.pack [0, 1]
     ipv6Afi = BS.pack [0, 2]
-
--- | The fields are in the order of the RFC 9582 comparator: an address of
--- a fixed width as bytes compares the same way as the address as an integer.
-data RoaAddress = RoaAddress {
-        address      :: BS.ByteString,
-        prefixLength :: Int,
-        maxLength    :: Int
-    }
-    deriving stock (Eq, Ord)
 
 
 -- ASPAPayloadState ::= SEQUENCE { aps, hash }
@@ -427,6 +427,14 @@ prefixBitString len address =
     masked
         | unused == 0 = bytes
         | otherwise   = BS.snoc (BS.init bytes) (BS.last bytes .&. (0xff `shiftL` unused))
+
+word64Bytes :: Word64 -> BS.ByteString
+word64Bytes w = BS.pack [ fromIntegral (w `shiftR` s) | s <- [56, 48 .. 0] ]
+
+-- | Encode it now and keep only the bytes rather than a Builder that holds on 
+-- to everything the element was made of.
+strictDer :: Der -> Der
+strictDer = rawDer . LBS.toStrict . toLazyByteString
 
 word32Bytes :: Word32 -> BS.ByteString
 word32Bytes w = BS.pack [ fromIntegral (w `shiftR` s) | s <- [24, 16, 8, 0] ]
