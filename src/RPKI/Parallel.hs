@@ -10,7 +10,6 @@ import           Control.Concurrent.STM
 import qualified Control.Concurrent.STM.TBQueue  as Q
 import qualified Control.Concurrent.Async        as IOAsync
 import qualified Control.Exception               as IOExc
-import           UnliftIO                        (MonadUnliftIO)
 import qualified UnliftIO.Exception              as UIO
 import           Control.Monad
 

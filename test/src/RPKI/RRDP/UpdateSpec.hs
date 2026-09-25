@@ -84,16 +84,6 @@ testNonConsecutive =
     HU.testCase "Should generate error when deltas are not consecutive" $ do
         let sessionId = SessionId "something"
         let serial = RrdpSerial 13
-        let repo = RrdpRepository { 
-                        uri = RrdpURL $ URI "http://rrdp.ripe.net/notification.xml",
-                        rrdpMeta = Just $ newRrdpMeta sessionId serial,
-                        meta = RepositoryMeta {
-                                status = Pending,
-                                refreshInterval = Nothing
-                            },
-                        eTag = Nothing
-                    } 
-
         let repo = defaultRepo & typed ?~ newRrdpMeta sessionId serial
 
         let (nextStep, _) = runValidatorPure (newScopes "test") $ 

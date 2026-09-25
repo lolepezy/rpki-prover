@@ -8,7 +8,6 @@ import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Lens
 import           Control.Monad
-import           Control.Monad
 import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString                   as BS
@@ -44,7 +43,6 @@ import qualified RPKI.Store.Database               as DB
 import           RPKI.Validation.ObjectValidation
 import qualified RPKI.Store.SQLite                 as SQLite
 import           RPKI.Store.Types
-import           RPKI.Parse.Internal.Common        (id_sha256)
 import qualified Data.Text.Encoding                as Text
 import qualified RPKI.Util                         as U
 import           RPKI.TestCommons

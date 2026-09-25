@@ -72,9 +72,8 @@ downloadToBS :: (Blob bs, MonadIO m) =>
                 m (bs, Size, HttpStatus, Maybe ETag)
 downloadToBS tmpDir uri@(URI u) eTag maxSize = liftIO $ do    
     let tmpFileName = U.convert $ U.normalizeUri u
-    -- let tmpDir = configValue $ config ^. #tmpDirectory
     withTempFile tmpDir tmpFileName $ \name fd -> do
-        ((_, size), status, newETag) <- 
+        ((_, size), status, newETag) <-
                 downloadConduit uri eTag fd 
                     (sinkGenSize uri maxSize () (\_ _ -> ()) id)
         hClose fd                    
@@ -97,7 +96,6 @@ downloadHashedBS tmpDir uri@(URI u) eTag expectedHash maxSize hashMishmatch = li
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
     let tmpFileName = U.convert $ U.normalizeUri u
-    -- let tmpDir = configValue $ config ^. #tmpDirectory      
     withTempFile tmpDir tmpFileName $ \name fd -> do
         ((actualHash, size), status, newETag) <- 
                 downloadConduit uri eTag fd 

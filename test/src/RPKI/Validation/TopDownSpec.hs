@@ -3,11 +3,8 @@
 module RPKI.Validation.TopDownSpec where
 
 import           Effectful
-import           Control.Concurrent.Async         (async, wait)
 import           Control.Concurrent.STM
-import           Control.Monad                    (forM, unless)
 import           Control.Lens
-import           Control.Monad.IO.Class           (liftIO)
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Short            as BSS

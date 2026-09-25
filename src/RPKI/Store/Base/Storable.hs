@@ -6,9 +6,7 @@
 module RPKI.Store.Base.Storable where
 
 import qualified Data.ByteString as BS
-import qualified Data.Text       as Text
 import           Data.Map.Strict  (Map)
-import qualified Data.Map.Strict as Map
 
 import Control.DeepSeq
 import Codec.Compression.LZ4

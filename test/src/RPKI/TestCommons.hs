@@ -19,8 +19,6 @@ import RPKI.AppContext
 import RPKI.Logging
 import RPKI.Store.AppSqliteStorage
 import RPKI.Meta.UniqueId
-import RPKI.AppMonad (runValidatorIO)
-import RPKI.Reporting (newScopes)
 
 
 testConfig :: Config

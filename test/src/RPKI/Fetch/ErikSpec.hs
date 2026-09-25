@@ -52,7 +52,7 @@ testFetchErik = do
             fetchErik testContext worldVersion [relayUri] fqdn
         case z of
             Left err -> HU.assertFailure $ "Failed to fetch Erik index: " <> show err
-            Right index -> do
+            Right _ -> do
                 HU.assertBool "Erik index should not be empty" True
 
         logInfo logger "Fetched Erik index once."
@@ -63,7 +63,7 @@ testFetchErik = do
             fetchErik testContext worldVersion [relayUri] fqdn
         case z1 of
             Left err -> HU.assertFailure $ "Failed to fetch Erik index second time: " <> show err
-            Right index -> do
+            Right _ -> do
                 HU.assertBool "Erik index should not be empty" True
         
     

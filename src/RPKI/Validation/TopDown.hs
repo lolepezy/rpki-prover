@@ -222,7 +222,6 @@ newTopDownContext taName allTas =
     liftIO $ do 
         payloadBuilder <- newPayloadBuilder
         atomically $ do
-            -- let verifiedResources = Just $ createVerifiedResources certificate
             let verifiedResources = Nothing
                 currentPathDepth = 0
                 overclaimingHappened = False       

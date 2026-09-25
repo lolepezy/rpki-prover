@@ -29,7 +29,6 @@ import           Data.Bifunctor
 import           Data.Word
 import           RPKI.Domain
 import           RPKI.AppTypes
-import           RPKI.Store.Base.Serialisation
 
 import           Data.IORef
 

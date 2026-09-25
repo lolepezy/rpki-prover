@@ -1,12 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 {- | How many CPUs the process can actually make use of.
-
-Physical cores rather than hardware threads: the CPU-heavy work here is 
-memory-bound and the second hyper-thread of a core mostly competes with the 
-first for the same caches. And no more than the cgroup CPU quota allows, 
-otherwise a container with `--cpus=2` on a big host gets throttled. 
-
 All of it is Linux only, read from procfs and sysfs.
 -}
 module RPKI.Cpu (
@@ -36,12 +30,8 @@ import           System.FilePath       (dropTrailingPathSeparator, normalise, sp
                                         takeDirectory, (</>))
 
 
--- | Set the number of capabilities to the configured CPU count, but not above 
--- `getAvailableCpuCount`, for CPU-heavy work in a process that starts with 
--- fewer: RRDP and Erik fetchers start with one, to save memory while they are
--- downloading. Parsing is memory-bound and the second hyper-thread of a core 
--- only slows it down (ARIN snapshot on 8 cores with 16 threads: 19s with 8 
--- capabilities, 25-28s with 16).
+-- | Set the number of capabilities to the configured CPU count, 
+-- but not above `getAvailableCpuCount`
 useAvailableCpus :: Natural -> IO Natural
 useAvailableCpus configuredCpus = do
     availableCpus <- getAvailableCpuCount

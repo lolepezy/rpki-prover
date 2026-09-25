@@ -17,10 +17,10 @@ import           RPKI.AppTypes                  (WorldVersion (..))
 import           RPKI.Domain                    (Hash (..), RpkiObjectType (..))
 import           RPKI.Orphans                   ()
 import           RPKI.Store.Base.Storable
-import           RPKI.Store.Database            (DB, Tx (..), roTx, rwTx)
+import           RPKI.Store.Database            (Tx (..), roTx, rwTx)
 import qualified RPKI.Store.Database            as DB
 import qualified RPKI.Store.SQLite              as SQLite
-import           RPKI.Store.Types               (ObjectMeta (..), ObjectOriginal (..), RpkiObjectLifecycle (..))
+import           RPKI.Store.Types               (ObjectOriginal (..), RpkiObjectLifecycle (..))
 import           RPKI.TestCommons               (withTestContext)
 
 

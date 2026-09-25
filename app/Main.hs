@@ -12,7 +12,6 @@ import           Control.Concurrent.Async
 import           Control.Exception
 
 import           Control.Monad
-import           Control.Monad.IO.Class
 
 import           Data.Foldable
 import           Data.Generics.Product.Typed
@@ -166,8 +165,6 @@ executeWorkerProcess = do
     input <- readWorkerInput    
     let config = adjustWorkerConfig (input ^. typed @Config) (input ^. #workerTimeout)
     let logConfig = newLogConfig (config ^. #logLevel) WorkerLog
-                    
-    -- turnOffTlsValidation
 
     appContextRef <- newTVarIO Nothing
     let onExit workerExit = do            
@@ -241,13 +238,7 @@ executeWorkerProcess = do
                         [i|Worker could not sandbox itself, refusing to run: #{message}|]
   where    
     exec :: forall r . (WorkerResult r -> IO ()) -> IO (Either ErrorResult r) -> IO ()
-    exec resultHandler f = resultHandler =<< execWithStats f    
-
-
--- turnOffTlsValidation :: IO ()
--- turnOffTlsValidation = do 
---     manager <- newManager $ mkManagerSettings (TLSSettingsSimple True True True) Nothing 
---     setGlobalManager manager    
+    exec resultHandler f = resultHandler =<< execWithStats f
 
 
 readTALs :: MaintainableStorage s => AppContext s -> IO [TAL]

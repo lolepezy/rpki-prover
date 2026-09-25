@@ -628,8 +628,8 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                             inSubLocationScope uri $                                 prevalidateObject =<< readObjectOfType type_ blob
                     evaluate $!
                         case z of 
-                            (Left _, vs) ->
-                                ObjectParsingProblem rpkiURL (VErr e) 
+                            (Left _, _) ->
+                                ObjectParsingProblem rpkiURL (VErr e)
                                     (ObjectOriginal blob) hash
                                     (ObjectMeta worldVersion type_)
                               where
