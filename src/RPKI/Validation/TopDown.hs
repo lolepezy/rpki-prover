@@ -1533,7 +1533,7 @@ validateCaNoFetch
                         integrityError appContext
                             [i|Referential integrity error, can't find a troubled child by its key #{childKey}.|]
 
-            void $ validateChildObject caFull childObject fileName validCrl
+            validateChildObject caFull childObject fileName validCrl
 
         -- Rare fallback: the light (file_name-free) read path needs a file_name
         -- to write a child's entry. Look it up on demand instead of joining
@@ -1607,7 +1607,10 @@ validateCaNoFetch
                 TroubledChild childKey_ -> do
                     increment topDownCounters.shortcutTroubled
                     fileName <- childFileName childKey_ childData
-                    troubledValidation childKey_ fileName
+                    -- A troubled child can come out of re-validation clean, 
+                    -- then it doesn't need to be validated in full anymore.
+                    newEntry <- troubledValidation childKey_ fileName
+                    for_ newEntry $ storeChildIfChanged childKey_ childData
     
         validateShortcut :: (ValidatorIO es', Concurrent :> es', WithValidityPeriod s, WithResources s) 
                          => ChildData -> s -> ObjectKey -> Eff es' ()
