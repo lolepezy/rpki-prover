@@ -1132,9 +1132,13 @@ validateCaNoFetch
                         -- if failed, this one will result in the empty VRP set
                         -- while keeping errors and warning in the `vs'` value.
                         (z, vs') <- runValidator scopes $ validateMftChild fullCa ro filename validCrl
+                        -- What reading the object reported, e.g. the errors stored with
+                        -- an object that failed to parse, is kept with what validating
+                        -- it reports
+                        let allVs = vs <> vs'
                         pure $! case z of
-                                Left e              -> InvalidChild e vs' key filename
-                                Right entry -> ValidEntry vs' key entry
+                                Left e              -> InvalidChild e allVs key filename
+                                Right entry -> ValidEntry allVs key entry
     
     -- A child CA is a whole sub-tree to validate and a task of its own, 
     -- other objects are validated in chunks.
