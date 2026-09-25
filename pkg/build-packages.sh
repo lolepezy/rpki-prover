@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Builds rpki-prover Debian packages, one per target release, each inside a
+# Builds rpki-prover Debian/Ubuntu packages, one per target release, each inside a
 # container based on that release.
 #
 #   ./pkg/build-packages.sh                 # every release in pkg/releases.conf

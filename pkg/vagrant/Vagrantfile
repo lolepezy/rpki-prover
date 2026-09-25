@@ -1,9 +1,9 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 #
-# Throwaway VMs for testing the rpki-prover Debian packages against real
-# systemd. Packages are expected in pkg/packages/<codename>/ -- build them
-# first with pkg/build-packages.sh.
+# Throwaway VMs for testing the rpki-prover Debian/Ubuntu packages against
+# real systemd. Packages are expected in pkg/packages/<codename>/ -- build
+# them first with pkg/build-packages.sh.
 #
 #   cd pkg/vagrant
 #   vagrant up bookworm            # boots and runs the full test suite
@@ -26,6 +26,8 @@ MACHINES = {
   # Debian does not publish an official "sid" box; debian/testing64 tracks the
   # current testing suite and is the closest thing that is always available.
   "sid"      => [ENV.fetch("RPKI_PROVER_BOX_SID",      "debian/testing64"),  4096, 2],
+  "jammy"    => [ENV.fetch("RPKI_PROVER_BOX_JAMMY",    "ubuntu/jammy64"),    4096, 2],
+  "noble"    => [ENV.fetch("RPKI_PROVER_BOX_NOBLE",    "ubuntu/noble64"),    4096, 2],
 }
 
 # Give the daemon room: a cold start pulls the whole RPKI repository set.

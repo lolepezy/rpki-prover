@@ -1,7 +1,7 @@
-# Debian packaging for rpki-prover
+# Debian/Ubuntu packaging for rpki-prover
 
 Everything needed to build, test and publish `.deb` packages of `rpki-prover`
-for the current Debian releases.
+for the current Debian and Ubuntu LTS releases.
 
 ```
 pkg/
@@ -123,9 +123,12 @@ upstream version orders correctly across suites:
 0.10.1-1~deb12u1  <  0.10.1-1~deb13u1  <  0.10.1-1
 ```
 
-(bookworm, trixie, sid). The mapping lives in `pkg/releases.conf`, which is
-the single source of truth for the build script, the container test harness
-and the CI matrix. Adding a release means adding one line there.
+(bookworm, trixie, sid). Ubuntu releases use the analogous
+`~ubuntu22.04u1` / `~ubuntu24.04u1` (jammy, noble) -- only LTS releases are
+targeted, since this is a long-running daemon rather than something users
+reinstall every six months. The mapping lives in `pkg/releases.conf`, which
+is the single source of truth for the build script, the container test
+harness and the CI matrix. Adding a release means adding one line there.
 
 ## Publishing an APT repository
 

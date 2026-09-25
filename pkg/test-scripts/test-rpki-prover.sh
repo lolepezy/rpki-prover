@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Install / upgrade / remove / purge tests for the rpki-prover Debian package.
+# Install / upgrade / remove / purge tests for the rpki-prover Debian/Ubuntu package.
 #
 # Must run as root on a throwaway machine with systemd (see pkg/vagrant).
 #
