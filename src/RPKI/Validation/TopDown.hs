@@ -1001,23 +1001,32 @@ validateCaNoFetch
                             issues <- thisScopeIssues
                             -- Do no create shortcuts for manifests with warnings 
                             -- (or errors, obviously)
-                            when (Set.null issues) $ do   
-                                let aki = toAKI $ getSKI fullCa                  
+                            when (Set.null issues) $ do
+                                let aki = toAKI $ getSKI fullCa
 
-                                -- If manifest key is not the same as the shortcut key,
-                                -- we need to replace the shortcut with the new one      
-                                when (maybe True ((/= mftKey) . (.key)) mftShortcut) $ do                                
-                                    updateMftShortcut topDownContext aki nextMftShortcut
-                                    increment topDownCounters.updateMftMeta
-
-                                -- Update manifest shortcut children in case there are new 
-                                -- or deleted children in the new manifest.
-                                when (isNothing mftShortcut 
-                                    || not (null newChildren) 
-                                    || not (null deletedKeys) 
-                                    || not (null revokedEntries)) $ do
-                                        updateMftShortcutChildren topDownContext aki newEntries deletedKeys
+                                case mftShortcut of
+                                    -- There's nothing to diff against, so all the children
+                                    -- are new. Replace the whole shortcut: an expired one can
+                                    -- still have children that are not on this manifest.
+                                    Nothing -> do
+                                        replaceMftShortcut topDownContext aki nextMftShortcut
+                                        increment topDownCounters.updateMftMeta
                                         increment topDownCounters.updateMftChildren
+
+                                    Just mftShort -> do
+                                        -- If manifest key is not the same as the shortcut key,
+                                        -- we need to replace the shortcut with the new one
+                                        when (mftShort.key /= mftKey) $ do
+                                            updateMftShortcut topDownContext aki nextMftShortcut
+                                            increment topDownCounters.updateMftMeta
+
+                                        -- Update manifest shortcut children in case there are new
+                                        -- or deleted children in the new manifest.
+                                        when (not (null newChildren)
+                                            || not (null deletedKeys)
+                                            || not (null revokedEntries)) $ do
+                                                updateMftShortcutChildren topDownContext aki newEntries deletedKeys
+                                                increment topDownCounters.updateMftChildren
 
                         _  -> pure ()
 
@@ -1843,19 +1852,31 @@ updateMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
 updateMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} = 
     liftIO $ do 
         let !raw = Verbatim $ toStorable $ Compressed $ DB.MftShortcutMeta {..}
-        atomically $ writeCQueue shortcutQueue $ UpdateMftShortcut aki raw  
+        atomically $ writeCQueue shortcutQueue $ UpdateMftShortcut aki raw
+
+-- Replace the whole shortcut, i.e. the meta and all the children, with this one.
+replaceMftShortcut :: MonadIO m => TopDownContext -> AKI -> MftShortcut -> m ()
+replaceMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki MftShortcut {..} =
+    liftIO $ do
+        let !raw = Verbatim $ toStorable $ Compressed $ DB.MftShortcutMeta {..}
+        let !children = shortcutChildRows $ Map.toList nonCrlEntries
+        atomically $ writeCQueue shortcutQueue $ ReplaceMftShortcut aki raw children
 
 -- Only the new children get inserted (into `shortcuts` and `mft_shortcut_children`)
 -- and only the deleted/revoked keys get removed.
 updateMftShortcutChildren :: MonadIO m => TopDownContext -> AKI -> [(ObjectKey, MftEntry)] -> [ObjectKey] -> m ()
 updateMftShortcutChildren TopDownContext { allTas = AllTasTopDownContext {..} } aki newEntries deletedKeys =
     liftIO $ do
-        -- Pre-serialise each new child's data so the heavy lifting happens on this
-        -- (validation) thread, not on the DB-writer thread.
-        let !inserts = [ (k, fileName, unStorable $ toStorable $ Compressed child)
-                       | (k, MftEntry {..}) <- newEntries ]
+        let !inserts = shortcutChildRows newEntries
         unless (null inserts && null deletedKeys) $
             atomically $ writeCQueue shortcutQueue $ UpdateMftShortcutChildren aki inserts deletedKeys
+
+-- Pre-serialise each child's data so the heavy lifting happens on this
+-- (validation) thread, not on the DB-writer thread.
+shortcutChildRows :: [(ObjectKey, MftEntry)] -> [(ObjectKey, Text, BS.ByteString)]
+shortcutChildRows entries =
+    [ (k, fileName, unStorable $ toStorable $ Compressed child)
+    | (k, MftEntry {..}) <- entries ]
 
 deleteMftShortcut :: MonadIO m => TopDownContext -> AKI -> m ()
 deleteMftShortcut TopDownContext { allTas = AllTasTopDownContext {..} } aki = 
@@ -1873,12 +1894,17 @@ storeShortcuts AppContext {..} shortcutQueue = liftIO $
                 UpdateMftShortcutChildren aki inserts deletedKeys -> do
                     unless (null inserts)     $ DB.insertMftShortcutChildren tx aki inserts
                     unless (null deletedKeys) $ DB.deleteMftShortcutChildren tx aki deletedKeys
+                ReplaceMftShortcut aki s children -> do
+                    DB.deleteMftShortcut tx aki
+                    DB.saveMftShorcutMeta tx aki s
+                    DB.insertMftShortcutChildren tx aki children
                 DeleteMftShortcut aki ->
                     DB.deleteMftShortcut tx aki
 
 
 data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta))
                    | UpdateMftShortcutChildren AKI [(ObjectKey, Text, BS.ByteString)] [ObjectKey]
+                   | ReplaceMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta)) [(ObjectKey, Text, BS.ByteString)]
                    | DeleteMftShortcut AKI
 
 -- Do whatever is required to notify other subsystems that the object was touched 
