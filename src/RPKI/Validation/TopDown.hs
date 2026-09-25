@@ -747,12 +747,6 @@ validateCaNoFetch
                     writeTVar visitedAkis $! Set.insert aki visited
                     pure $ validateManifests aki
 
-    newShortcut = 
-        case validationAlgorithm of 
-            -- Do not create shortctus when validation algorithm is not incremental
-            FullEveryIteration -> const Nothing
-            Incremental        -> (Just $!)
-
     -- Validate the manifest of the CA with its children, the way `planManifests` says.
     validateManifests aki = do
         (mfts, shortcut) <- roTxT database $ \tx ->
@@ -965,9 +959,8 @@ validateCaNoFetch
                     -- and the shortcut objects for these children
                     --                                            
                     childrenShortcuts <- 
-                        fmap (\shortcuts -> [ (k, s) | T2 k (Just s) <- shortcuts ]) $
-                            gatherMftEntryResults =<< 
-                                gatherMftEntryValidations fullCa newChildren validCrl
+                        gatherMftEntryResults =<< 
+                            gatherMftEntryValidations fullCa newChildren validCrl
 
                     let newEntries = makeEntriesWithMap newChildren (Map.fromList childrenShortcuts) 
                                         <> revokedEntries
@@ -1116,7 +1109,7 @@ validateCaNoFetch
                     -- In this case invalid child is considered invalid entry 
                     -- and the whole manifest is invalid
                     Left e              -> InvalidEntry e vs
-                    Right childShortcut -> ValidEntry vs childShortcut key filename   
+                    Right entry -> ValidEntry vs key entry
     
     independentMftChildrenResults fullCa nonCrlChildren validCrl = do
         scopes <- askScopes
@@ -1141,7 +1134,7 @@ validateCaNoFetch
                         (z, vs') <- runValidator scopes $ validateMftChild fullCa ro filename validCrl
                         pure $! case z of
                                 Left e              -> InvalidChild e vs' key filename
-                                Right childShortcut -> ValidEntry vs' childShortcut key filename
+                                Right entry -> ValidEntry vs' key entry
     
     -- A child CA is a whole sub-tree to validate and a task of its own, 
     -- other objects are validated in chunks.
@@ -1156,16 +1149,17 @@ validateCaNoFetch
                     appError e
                 InvalidChild _ vs key fileName -> do
                     embedState vs
-                    pure $! T2 key (Just $! makeChildWithIssues key fileName) : childrenShortcuts
-                ValidEntry vs childShortcut key fileName -> do 
+                    let !entry = makeChildWithIssues key fileName
+                    pure $! (key, entry) : childrenShortcuts
+                ValidEntry vs key entry -> do 
                     embedState vs
                     -- Don't create shortcuts for objects having either errors or warnings,
                     -- otherwise warnings will disappear after the first validation 
                     if emptyValidations (vs ^. typed)
                         then do                            
-                            pure $! T2 key childShortcut : childrenShortcuts
+                            pure $! (key, entry) : childrenShortcuts
                         else do 
-                            pure $! T2 key (Just $! makeChildWithIssues key fileName) : childrenShortcuts
+                            pure $! (key, makeChildWithIssues key entry.fileName) : childrenShortcuts
             ) mempty
 
         
@@ -1242,7 +1236,7 @@ validateCaNoFetch
 
         case child.object.payload of
             OriginalRO _ _ _ _ -> do
-                pure $! newShortcut (makeChildWithIssues child.key filename)
+                pure $! makeChildWithIssues child.key filename
             WellStructuredRO wellStructuredChild ->
                 validateChildObject
                     caFull
@@ -1273,57 +1267,17 @@ validateCaNoFetch
         Validate manifest child according to 
         https://datatracker.ietf.org/doc/rfc9286/
 
-        And return shortcut created for it
+        And return the entry of the manifest shortcut for it
     -}
     validateChildObject :: (ValidatorIO es', Concurrent :> es') => 
             Located WellStructuredCaCert
             -> Keyed (Located WellStructuredRpkiObject) 
             -> Text
             -> Validated CrlObject
-            -> Eff es' (Maybe MftEntry)
-    validateChildObject fullCa (Keyed child@(Located locations childRo) childKey) fileName validCrl = do
-        case childRo of
-            CerRO childCert -> do
-                parentScope <- askScopes                
-                {- 
-                    Note that recursive validation of the child CA happens in the separate   
-                    runValidator (...) call, it is to avoid short-circuit logic implemented by ExceptT:
-                    otherwise an error in child validation would interrupt validation of the parent with
-                    ExceptT's exception logic.
-                -}
-                (r, validationState) <- runValidator parentScope $
-                    focusOnChild $ do
-                        -- Check that AIA of the child points to the correct location of the parent
-                        -- https://mailarchive.ietf.org/arch/msg/sidrops/wRa88GHsJ8NMvfpuxXsT2_JXQSU/
-                        --                             
-                        validateAIA childCert fullCa
- 
-                        (childVerifiedResources, overlclaiming) 
-                            <- do
-                                void $ validateResourceCert now childCert fullCa validCrl
-                                validateResources (config ^. #validationConfig . typed) 
-                                    verifiedResources childCert (fullCa ^. #payload)
-
-                        let childTopDownContext = topDownContext
-                                & #verifiedResources ?~ childVerifiedResources
-                                & #currentPathDepth %~ (+ 1)
-                                & #overclaimingHappened .~ isJust overlclaiming
-
-                        validateCa appContext childTopDownContext (CaFull (Located locations childCert))
-
-                embedState validationState
-                case r of 
-                    Left _  -> pure $! Just $! makeChildWithIssues childKey fileName
-                    Right _  -> do 
-                        case getPublicationPointsFromWellStructuredCert childCert of 
-                            -- It's not going to happen?
-                            Left e     -> vError e
-                            Right ppas -> do 
-                                -- Look at the issues for the child CA to decide if CA shortcut should be made
-                                shortcut <- focusOnChild $
-                                                shortcutIfNoIssues childKey fileName
-                                                        (makeCaShortcut childKey (Validated childCert) ppas)
-                                pure $! newShortcut shortcut
+            -> Eff es' MftEntry
+    validateChildObject fullCa (Keyed child@(Located locations childRo) childKey) fileName validCrl =
+        vFocusOnLocated child $ entryFor =<< case childRo of
+            CerRO childCert -> validCaChild childCert
 
             RoaRO roa -> validLeaf $ do
                 validRoa <- validateRoa validationRFC now roa fullCa.payload validCrl verifiedResources
@@ -1347,25 +1301,66 @@ validateCaNoFetch
 
             -- Any new type of object should be added here, otherwise
             -- they will emit a warning.
-            _somethingElse -> 
-                focusOnChild $ do
-                    logWarn logger [i|Unsupported type of object: #{locations}.|]                
-                    pure $! newShortcut (makeChildWithIssues childKey fileName)
+            _somethingElse -> do
+                logWarn logger [i|Unsupported type of object: #{locations}.|]
+                pure Nothing
 
         where
-            focusOnChild = vFocusOnLocated child
+            -- What is stored for a child validated in full: its shortcut when it's 
+            -- valid and there are no issues in its scope, a troubled entry otherwise. 
+            -- A troubled child is validated in full again next time, so its issues 
+            -- are reported every time, and not only this once.
+            entryFor valid = do
+                issues <- thisScopeIssues
+                pure $! case valid of
+                    Just shortcut | Set.null issues -> MftEntry fileName shortcut
+                    _                               -> makeChildWithIssues childKey fileName
+
+            validCaChild childCert = do
+                scopes <- askScopes
+                {- 
+                    Note that recursive validation of the child CA happens in the separate   
+                    runValidator (...) call, it is to avoid short-circuit logic implemented by ExceptT:
+                    otherwise an error in child validation would interrupt validation of the parent with
+                    ExceptT's exception logic.
+                -}
+                (r, validationState) <- runValidator scopes $ do
+                    -- Check that AIA of the child points to the correct location of the parent
+                    -- https://mailarchive.ietf.org/arch/msg/sidrops/wRa88GHsJ8NMvfpuxXsT2_JXQSU/
+                    --                             
+                    validateAIA childCert fullCa
+
+                    (childVerifiedResources, overlclaiming) 
+                        <- do
+                            void $ validateResourceCert now childCert fullCa validCrl
+                            validateResources (config ^. #validationConfig . typed) 
+                                verifiedResources childCert (fullCa ^. #payload)
+
+                    let childTopDownContext = topDownContext
+                            & #verifiedResources ?~ childVerifiedResources
+                            & #currentPathDepth %~ (+ 1)
+                            & #overclaimingHappened .~ isJust overlclaiming
+
+                    validateCa appContext childTopDownContext (CaFull (Located locations childCert))
+
+                embedState validationState
+                case r of 
+                    Left _  -> pure Nothing
+                    Right _ ->
+                        case getPublicationPointsFromWellStructuredCert childCert of 
+                            -- It's not going to happen?
+                            Left e     -> vError e
+                            Right ppas -> pure $ Just $ makeCaShortcut childKey (Validated childCert) ppas
 
             -- Validate an object other than a CA certificate, which gives
             -- its shortcut, and take it the same way the shortcut is taken
             -- in the next rounds
-            validLeaf validate =
-                focusOnChild $ do
-                    validateObjectLocations child
-                    allowRevoked $ do
-                        leaf <- validate
-                        acceptLeaf topDownContext FromObject leaf
-                        shortcut <- shortcutIfNoIssues childKey fileName leaf
-                        pure $! newShortcut shortcut
+            validLeaf validate = do
+                validateObjectLocations child
+                allowRevoked $ do
+                    leaf <- validate
+                    acceptLeaf topDownContext FromObject leaf
+                    pure $ Just leaf
 
             -- In case of RevokedResourceCertificate error, the whole manifest is not to be considered 
             -- invalid, only the object with the revoked certificate is considered invalid.
@@ -1375,19 +1370,10 @@ validateCaNoFetch
             allowRevoked f =
                 catchAndEraseError f isRevokedCertError $ do
                     vWarn RevokedResourceCertificate
-                    pure $! newShortcut (makeChildWithIssues childKey fileName)
+                    pure Nothing
                 where
                     isRevokedCertError (ValidationE RevokedResourceCertificate) = True
                     isRevokedCertError _ = False
-
-    -- Don't create shortcuts for objects with warnings in their scope, 
-    -- otherwise warnings will be reported only once for the original 
-    -- and never for shortcuts.
-    shortcutIfNoIssues key fileName child = do 
-        issues <- thisScopeIssues
-        pure $! if Set.null issues 
-                    then MftEntry fileName child
-                    else makeChildWithIssues key fileName
 
     thisScopeIssues :: Validator es' => Eff es' (Set VIssue)
     thisScopeIssues = 
@@ -1527,7 +1513,7 @@ validateCaNoFetch
                     -- A troubled child can come out of re-validation clean, 
                     -- then it doesn't need to be validated in full anymore.
                     newEntry <- troubledValidation childKey_ fileName
-                    for_ newEntry $ storeChildIfChanged childKey_ childData
+                    storeChildIfChanged childKey_ childData newEntry
           where
             -- Recheck the shortcut of an object other than a CA certificate, and
             -- take it the same way as the object is taken when validated in full
@@ -1606,8 +1592,10 @@ acceptLeaf topDownContext source = \case
         FromObject   -> original counters
         FromShortcut -> shortcut counters
 
+    -- These lists live until the TA is validated, so what goes into them is 
+    -- evaluated first, not a thunk that holds on to the whole shortcut
     keep :: MonadIO m => Getting (IORef [a]) PayloadBuilder (IORef [a]) -> a -> m ()
-    keep field a = liftIO $
+    keep field !a = liftIO $
         atomicModifyIORef' (topDownContext.payloadBuilder ^. field) $ \as -> (a : as, ())
 
 
@@ -1988,7 +1976,7 @@ getCaLocations AppContext {..} = \case
 
 data ManifestValidity e v = InvalidEntry e v 
                           | InvalidChild e v ObjectKey Text
-                          | ValidEntry v (Maybe MftEntry) ObjectKey Text
+                          | ValidEntry v ObjectKey MftEntry
 
 makeChildWithIssues :: ObjectKey -> Text -> MftEntry
 makeChildWithIssues childKey fileName = 
