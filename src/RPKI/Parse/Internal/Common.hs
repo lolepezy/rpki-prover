@@ -263,6 +263,21 @@ extractSiaValue sia oid = do
 getSiaExt :: Certificate -> Maybe BS.ByteString
 getSiaExt c = extVal (getExts c) id_pe_sia
 
+-- | The value of the SIA extension of a certificate given as the DER of its
+-- TBSCertificate, which is what `WellStructuredEECert` keeps. It is DER of
+-- SEQUENCE OF AccessDescription.
+tbsSiaExt :: BS.ByteString -> Maybe BS.ByteString
+tbsSiaExt tbs = do
+    asns <- toMaybe $ decodeASN1' DER tbs
+    -- `fromASN1` of a certificate wants what is inside the TBSCertificate SEQUENCE
+    inside <- case asns of
+                Start Sequence : rest -> case List.unsnoc rest of
+                                            Just (fields, End Sequence) -> Just fields
+                                            _                           -> Nothing
+                _                     -> Nothing
+    (cert, _) <- toMaybe $ fromASN1 inside
+    getSiaExt cert
+
 getRrdpNotifyUri :: Certificate -> Maybe URI
 getRrdpNotifyUri c = toMaybe . extractURI =<< getSiaValue c id_ad_rpki_notify
 

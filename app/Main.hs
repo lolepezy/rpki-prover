@@ -580,7 +580,12 @@ createAppState logger localExceptions = do
 
 -- | Check some crucial things before running the validator
 checkPreconditions :: ValidatorIO es => CLIOptions -> Eff es ()
-checkPreconditions CLIOptions {..} = checkRsyncInPath clientPath
+checkPreconditions CLIOptions {..} = do 
+    checkRsyncInPath clientPath
+    -- A CCR is made from the manifest shortcuts, and only incremental validation keeps them
+    when (withCcr && noIncrementalValidation) $ 
+        appError $ UnspecifiedE "options"
+            [i|Options `--with-ccr` and `--no-incremental-validation` can't be used together: a CCR is made from the manifest shortcuts that only incremental validation keeps.|]
 
 deriveProverRunMode :: ValidatorIO es => CLIOptions -> Eff es ProverRunMode
 deriveProverRunMode CLIOptions {..} = 
@@ -696,6 +701,7 @@ data CLIOptions = CLIOptions {
         noIncrementalValidation  :: Bool,
         showHiddenConfig         :: Bool,
         withValidityApi          :: Bool,
+        withCcr                  :: Bool,
         printConfig              :: Bool
     }
     deriving stock (Show, Generic)
@@ -953,6 +959,11 @@ cliOptionsParser = CLIOptions
                   <> "Increases memory usage (about 200-300MB in the main process) "
                   <> "and CPU usage (about 2 seconds per validation cycle)."))
     <*> switch
+            (  long "with-ccr"
+            <> help ("Produce an RPKI Canonical Cache Representation (CCR, draft-ietf-sidrops-rpki-ccr) "
+                  <> "after every validation and serve it at /api/ccr and /api/ccr.gz (default: false). "
+                  <> "Requires incremental validation."))
+    <*> switch
             (  long "print-config"
             <> help "Print the effective configuration derived from CLI options and exit.")
   where
@@ -1032,6 +1043,7 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet #longLivedCacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
         & #localExceptions .~ apiSecured localExceptions
         & #withValidityApi .~ withValidityApi
+        & #withCcr .~ withCcr
         & maybeSet #metricsPrefix (convert <$> metricsPrefix)
         & maybeSet (#systemConfig . #rsyncWorkerLimits . #memoryMb) maxRsyncFetchMemory
         & maybeSet (#systemConfig . #rrdpWorkerLimits . #memoryMb) maxRrdpFetchMemory

@@ -49,6 +49,7 @@ import           System.FilePath                  ((</>))
 import           System.Posix.Signals
 
 import           RPKI.AppState
+import           RPKI.CCR.Build                   (runCcrBuilder)
 import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
@@ -274,7 +275,8 @@ runAll appContext@AppContext {..} tals = do
                         mapConcurrently_ id [
                             runScheduledTasks workflowShared,
                             revalidate workflowShared,
-                            runRtrIfConfigured
+                            runRtrIfConfigured,
+                            runCcrBuilderIfConfigured
                         ]                        
 
                     OneOffMode _ -> 
@@ -290,6 +292,9 @@ runAll appContext@AppContext {..} tals = do
         )
   where
     allTaNames = map getTaName tals
+
+    runCcrBuilderIfConfigured = 
+        when (config ^. #withCcr) $ runCcrBuilder appContext
 
     checkpointPeriodically = forever $ do 
         threadDelay $ toMicroseconds $ config ^. typed @StorageConfig . #walCheckpointInterval
@@ -719,6 +724,9 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
 
         DB.saveValidationVersion tx worldVersion
             resultsToSave updatedValidation
+
+        DB.saveCcrStates tx worldVersion 
+            [ (ta, ccrState) | (ta, TopDownResult { ccr = Just ccrState }) <- Map.toList results ]
 
         -- We want to keep not more than certain number of latest versions in the DB,
         -- so after adding one, check if the oldest one(s) should be deleted.

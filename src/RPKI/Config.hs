@@ -89,7 +89,9 @@ data Config = Config {
         localExceptions           :: ApiSecured [FilePath],
         logLevel                  :: LogLevel,
         metricsPrefix             :: Text,
-        withValidityApi           :: Bool
+        withValidityApi           :: Bool,
+        -- | Produce a CCR (RPKI Canonical Cache Representation) after every validation
+        withCcr                   :: Bool
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -374,6 +376,7 @@ defaultConfig = Config {
     logLevel = defaultsLogLevel,
     metricsPrefix = "rpki_prover_",
     withValidityApi = False,
+    withCcr = False,
     ..
 }
   where

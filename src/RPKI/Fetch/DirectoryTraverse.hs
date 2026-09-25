@@ -96,7 +96,7 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                                 (_, lifecycle) <- parseAndPrevalidate type_ hash blob rpkiURL
                                 -- Encode/compress the object here, on a worker, so
                                 -- the single-threaded DB-writer only has to do the INSERT.
-                                pure $! SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
+                                pure $! SaveObject rpkiURL (toStorableObject (Compressed lifecycle)) (Just $ Size $ fromIntegral $ BS.length blob)
                     Nothing ->
                         pure $! UknownObjectType rpkiURL filePath
 
@@ -118,14 +118,14 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                     atObject rpkiUrl filePath $
                         appWarn $ RsyncE $ RsyncUnsupportedObjectType $ U.convert filePath
 
-                SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
+                SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } size -> do
                     case lifecycle of
                         OriginalRO _ vs1 _ _ -> do
                             logError logger [i|Object #{rpkiUrl} failed parse/prevalidation.|]
                             embedState vs1
                         WellStructuredRO _ -> pure ()
 
-                    key <- DB.saveStorableObject tx so worldVersion
+                    key <- DB.saveStorableObject tx so size worldVersion
                     for_ rpkiUrl $ \u -> DB.linkObjectToUrl tx u key worldVersion
                     updateMetric @TraverseMetric @_ (#processed %~
                         Map.unionWith (+) (Map.singleton (Just $ getRpkiObjectType lifecycle) 1))
@@ -205,5 +205,5 @@ data ObjectProcessingResult =
           CantReadFile (Maybe RpkiURL) FilePath VIssue
         | HashExists (Maybe RpkiURL) Hash ObjectKey
         | UknownObjectType (Maybe RpkiURL) FilePath
-        | SaveObject (Maybe RpkiURL) (StorableObject (Compressed RpkiObjectLifecycle))
+        | SaveObject (Maybe RpkiURL) (StorableObject (Compressed RpkiObjectLifecycle)) (Maybe Size)
     deriving stock (Show, Eq, Generic)

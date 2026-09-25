@@ -147,8 +147,10 @@ common shared
     , unordered-containers
     , vector
     , vector-algorithms
+    , wai
     , wai-extra
     , warp
+    , zlib
     , xeno
 
 library
@@ -159,6 +161,9 @@ library
       RPKI.AppMonadUtil
       RPKI.AppState
       RPKI.AppTypes
+      RPKI.CCR
+      RPKI.CCR.Build
+      RPKI.CCR.Walk
       RPKI.Config
       RPKI.Cpu
       RPKI.Domain
@@ -310,6 +315,8 @@ test-suite rpki-prover-test
   main-is:         Spec.hs
   other-modules:
       RPKI.AppMonadSpec
+      RPKI.CCR.WalkSpec
+      RPKI.CCRSpec
       RPKI.DomainSpec
       RPKI.Fetch.ErikSpec
       RPKI.Fetch.HttpSpec

@@ -345,6 +345,14 @@ schemaDDL =
             object_key    INTEGER PRIMARY KEY,
             hash          BLOB    NOT NULL UNIQUE,
             type          TEXT    NOT NULL,
+            -- Size of the object's DER, NULL when it wasn't known when saving it
+            size          INTEGER,
+            -- The object's effective validity period in nanoseconds since the epoch, 
+            -- NULL for an object that isn't parsed. These are before the blobs on 
+            -- purpose: a column after a blob that spills onto overflow pages can 
+            -- cost reading those pages.
+            not_before    INTEGER,
+            not_after     INTEGER,
             data          BLOB,
             original      BLOB,
             world_version INTEGER NOT NULL,
@@ -380,7 +388,9 @@ schemaDDL =
             object_key      INTEGER NOT NULL PRIMARY KEY REFERENCES objects(object_key) ON DELETE CASCADE,
             aki             BLOB    NOT NULL,
             manifest_number BLOB    NOT NULL,
-            meta            BLOB    NOT NULL
+            meta            BLOB    NOT NULL,
+            -- Value of the EE certificate's SIA extension, DER of SEQUENCE OF AccessDescription
+            ee_sia          BLOB
         )
       |]
     , "CREATE INDEX IF NOT EXISTS idx_mft_aki ON manifest_meta(aki)"
@@ -396,15 +406,30 @@ schemaDDL =
             data       BLOB    NOT NULL
         )
       |]
+    -- Children of manifest shortcuts that are not CA certificates
     , [sql|
-        CREATE TABLE IF NOT EXISTS mft_shortcut_children (
+        CREATE TABLE IF NOT EXISTS mft_shortcut_payload_children (
             aki       BLOB    NOT NULL,
             file_name TEXT    NOT NULL,
             child_key INTEGER NOT NULL REFERENCES shortcuts(object_key) ON DELETE CASCADE,
             PRIMARY KEY (aki, child_key)
         )
       |]
-    , "CREATE INDEX IF NOT EXISTS idx_mft_shortcut_children_child_key ON mft_shortcut_children(child_key)"
+    , "CREATE INDEX IF NOT EXISTS idx_mft_shortcut_payload_children_child_key ON mft_shortcut_payload_children(child_key)"
+    -- Children of manifest shortcuts that are CA certificates, valid or not. 
+    -- It's the CA tree, the CCR walk reads only this table. The child's shortcut 
+    -- itself is in `shortcuts`, as for the other children.
+    , [sql|
+        CREATE TABLE IF NOT EXISTS mft_shortcut_ca_children (
+            aki       BLOB    NOT NULL,
+            file_name TEXT    NOT NULL,
+            child_key INTEGER NOT NULL REFERENCES certificates(object_key) ON DELETE CASCADE,
+            valid     INTEGER NOT NULL,
+            PRIMARY KEY (aki, child_key)
+        )
+      |]
+    -- Deleting an object cascades into this table by child_key
+    , "CREATE INDEX IF NOT EXISTS idx_mft_shortcut_ca_children_child_key ON mft_shortcut_ca_children(child_key)"
     , [sql|
         CREATE TABLE IF NOT EXISTS trust_anchors (
             ta_name     TEXT    NOT NULL PRIMARY KEY,
@@ -434,6 +459,8 @@ schemaDDL =
                     aspa        BLOB,
                     bgps        BLOB,
                     gbrs        BLOB,
+                    -- The part of the CCR that the walk of the TA's shortcuts found
+                    ccr         BLOB,
                     PRIMARY KEY (ta_name, version)
             )
         |]
@@ -477,7 +504,8 @@ schemaDDL =
 dropDDL :: [Query]
 dropDDL = map (\t -> "DROP TABLE IF EXISTS " <> t)
     [ "object_urls", "certificates", "manifest_meta"
-    , "mft_shortcut_children", "shortcuts", "mft_shortcut_meta"
+    , "mft_shortcut_payload_children", "mft_shortcut_ca_children", "mft_shortcut_children",
+      "shortcuts", "mft_shortcut_meta"
     , "trust_anchors"
     , "objects", "urls"
     , "repositories"

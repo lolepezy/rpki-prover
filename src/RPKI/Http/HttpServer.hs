@@ -20,6 +20,11 @@ import           Servant hiding (contentType, URI)
 import           Servant.Swagger.UI
 
 import           Network.Wai.Middleware.Gzip (gzip, defaultGzipSettings)
+import           Network.Wai                 (responseFile, responseLBS, requestHeaders)
+import           Network.HTTP.Types          (status200, status304, status404, status503, 
+                                              hContentType, hETag, hIfNoneMatch)
+import qualified Data.ByteString             as BS
+import qualified Data.Text.Encoding          as Text
 
 import           Data.Maybe                       (maybeToList, fromMaybe, catMaybes)
 import qualified Data.Set                         as Set
@@ -37,6 +42,7 @@ import           Text.Read                        (readMaybe)
 import           RPKI.AppContext
 import           RPKI.AppTypes
 import           RPKI.AppState
+import           RPKI.CCR                (CcrFile, CcrFileVariant)
 import           RPKI.Domain
 import           RPKI.Logging
 import           RPKI.Worker             (workerLimitsByName)
@@ -87,6 +93,9 @@ httpServer appContext = gzip defaultGzipSettings $ genericServe HttpApi {
         aspas = getAspas_ appContext,
         bgpCerts = getBgps_ appContext,
         bgpCertsFiltered = getBGPCertsFiltered_ appContext,
+
+        ccr   = Tagged $ serveCcr appContext (^. #plain) "application/rpki-ccr",
+        ccrGz = Tagged $ serveCcr appContext (^. #gzipped) "application/rpki-ccr+gzip",
 
         slurm = getSlurm appContext,
         slurms = getAllSlurms appContext,
@@ -214,6 +223,31 @@ getRoasValidatedRaw appContext version =
                             pure $! [ VrpExtDto { vrp = toVrpDto vrp taName, .. }
                                     | vrp <- roaPayloadToVrps roaPayload
                                     ]
+
+-- | Serve the latest CCR file, or its gzipped copy. It is a file on the disk, 
+-- so Warp does the rest: sendfile, Content-Length, HEAD and Range requests.
+serveCcr :: AppContext s -> (CcrFile -> CcrFileVariant) -> BS.ByteString -> Application
+serveCcr AppContext {..} variant mimeType request sendResponse
+    | not (config ^. #withCcr) = 
+        sendResponse $ responseLBS status404 textPlain "CCR is not enabled, it's enabled with --with-ccr."
+    | otherwise = 
+        readTVarIO (appState ^. #ccrFile) >>= \case
+            Nothing -> 
+                sendResponse $ responseLBS status503 textPlain "No CCR has been produced yet."
+            Just ccrFile -> do
+                let file = variant ccrFile
+                let etag = "\"" <> Text.encodeUtf8 (file ^. #etag) <> "\""
+                if etag `elem` ifNoneMatch
+                    then sendResponse $ responseLBS status304 [(hETag, etag)] ""
+                    else sendResponse $ responseFile status200 
+                            [(hContentType, mimeType), (hETag, etag)] (file ^. #path) Nothing
+  where
+    textPlain = [(hContentType, "text/plain")]
+    ifNoneMatch = 
+        [ BS.dropWhile (== 32) tag 
+        | Just value <- [lookup hIfNoneMatch (requestHeaders request)]
+        , tag <- BS.split 44 value ]
+
 
 asMaybe :: (Eq a, Monoid a) => a -> Maybe a
 asMaybe a = if mempty == a then Nothing else Just a

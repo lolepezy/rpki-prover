@@ -24,6 +24,9 @@ import           Data.Ord                          (Down(..))
 import           Data.Hourglass                    (Seconds(..))
 
 import           Database.SQLite.Simple            (Only(..))
+import           Data.ASN1.Encoding                (decodeASN1')
+import           Data.ASN1.BinaryEncoding          (DER(..))
+import qualified Data.ASN1.Types                   as ASN1
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit                  as HU
@@ -42,6 +45,7 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Database               (DB(..), Tx(..), roTx, rwTx)
 import qualified RPKI.Store.Database               as DB
 import           RPKI.Validation.ObjectValidation
+import           RPKI.Validation.Types
 import qualified RPKI.Store.SQLite                 as SQLite
 import           RPKI.Store.Types
 import           RPKI.Parse.Internal.Common        (id_sha256)
@@ -82,6 +86,10 @@ objectStoreGroup = testGroup "Object storage test"
         shouldComputeObjectSizeStats
     , dbTestCase "Should not report TA certificates as having multiple locations"
         shouldNotCountTaCertificatesAsMultiLocation
+    , dbTestCase "Should keep CA and payload shortcut children in their own tables"
+        shouldKeepShortcutChildrenInTheirTables
+    , dbTestCase "Should store the size, validity window and EE SIA of a manifest"
+        shouldStoreWhatCcrNeedsOfManifest
     ]
 
 erikStoreGroup :: TestTree
@@ -320,6 +328,7 @@ storeAt db obj version = rwTx db $ \tx ->
                     mempty
                     (getHash obj)
                     (getRpkiObjectType obj))
+        Nothing
         version
 
 -- | Issue #300: an object that moved between repositories used to keep both
@@ -410,6 +419,106 @@ shouldNotCountTaCertificatesAsMultiLocation io = do
         (Set.singleton ordinaryKey) multi
 
 
+-- | What a CCR needs of a manifest is stored when the manifest is saved: the 
+-- size of its DER, its effective validity window and the value of the SIA 
+-- extension of its EE certificate.
+shouldStoreWhatCcrNeedsOfManifest :: IO DB -> HU.Assertion
+shouldStoreWhatCcrNeedsOfManifest io = do
+    db <- io
+    worldVersion <- instantToVersion . unNow <$> thisInstant
+    blob <- BS.readFile "test/data/afrinic_mft1.mft"
+    url <- either (HU.assertFailure . show) pure $ parseRpkiURL "rsync://host/afrinic_mft1.mft"
+    (parsed, _) <- runValidatorIO (newScopes "mft") $ readObject url blob
+    (prevalidated, _) <- runValidatorIO (newScopes "mft") $ prevalidateObject =<< fromEither parsed
+    mft <- case prevalidated of
+                Right (MftRO m) -> pure m
+                other           -> HU.assertFailure $ "Not a manifest: " <> show other
+
+    key <- rwTx db $ \tx -> 
+        DB.saveObject tx (WellStructuredRO (MftRO mft)) (Just $ Size $ fromIntegral $ BS.length blob) worldVersion
+
+    rows <- roTx db $ \(Tx conn) ->
+        SQLite.query conn "SELECT size, not_before, not_after FROM objects WHERE object_key = ?" (Only key)
+    let ValidityPeriod notBefore notAfter = manifestValidityPeriod mft
+    HU.assertEqual "Size and validity window" 
+        [(BS.length blob, toNanoseconds notBefore, toNanoseconds notAfter)] rows
+
+    [Only sia] <- roTx db $ \(Tx conn) ->
+        SQLite.query conn "SELECT ee_sia FROM manifest_meta WHERE object_key = ?" (Only key)
+    case decodeASN1' DER <$> sia of
+        Just (Right [ ASN1.Start ASN1.Sequence, ASN1.Start ASN1.Sequence, 
+                      ASN1.OID [1,3,6,1,5,5,7,48,11], ASN1.Other ASN1.Context 6 uri, 
+                      ASN1.End ASN1.Sequence, ASN1.End ASN1.Sequence ]) ->
+            HU.assertBool "The signed object location is the manifest" (".mft" `BS.isSuffixOf` uri)
+        other -> 
+            HU.assertFailure $ "Not the SIA of a manifest EE certificate: " <> show other
+
+
+-- | CA certificates go to `mft_shortcut_ca_children` together with their 
+-- validity, everything else to `mft_shortcut_payload_children`. Reads bring 
+-- both back, deletes clear both, and deleting the object cascades into both.
+shouldKeepShortcutChildrenInTheirTables :: IO DB -> HU.Assertion
+shouldKeepShortcutChildrenInTheirTables io = do
+    db <- io
+    worldVersion <- instantToVersion . unNow <$> thisInstant
+    [roaObject, caObject, unindexedObject] <- distinctObjects 3
+    roaKey       <- storeAt db roaObject worldVersion
+    caKey        <- storeAt db caObject worldVersion
+    unindexedKey <- storeAt db unindexedObject worldVersion
+
+    -- Every parsed CA certificate has a `certificates` row
+    rwTx db $ \(Tx conn) ->
+        SQLite.execute conn "INSERT INTO certificates(object_key, ski, aki) VALUES (?, ?, NULL)"
+            (caKey, "01234567890123456789" :: BS.ByteString)
+
+    let aki = AKI (mkKI "98765432109876543210")
+    let row k fileName caCert = 
+            DB.ShortcutChildRow k fileName caCert (unStorable $ toStorable $ Compressed $ TroubledChild k)
+    let entry k fileName caCert = MftEntry fileName (TroubledChild k) caCert
+
+    rwTx db $ \tx -> DB.insertMftShortcutChildren tx aki
+        [ row roaKey "a.roa" Nothing
+        , row caKey "b.cer" (Just ValidCaChild)
+        -- No `certificates` row, so it can't be in the CA table, the 
+        -- foreign key would fail the transaction. It goes to the payload one.
+        , row unindexedKey "c.cer" (Just InvalidCaChild)
+        ]
+
+    full <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Children must come back with what they are"
+        (Map.fromList [ (roaKey,       entry roaKey "a.roa" Nothing)
+                      , (caKey,        entry caKey "b.cer" (Just ValidCaChild))
+                      , (unindexedKey, entry unindexedKey "c.cer" Nothing) ])
+        full
+
+    caRows <- roTx db $ \(Tx conn) ->
+        SQLite.query conn "SELECT child_key, valid FROM mft_shortcut_ca_children WHERE aki = ?" (Only aki)
+    HU.assertEqual "Only the indexed CA certificate is in the CA table" [(caKey, 1 :: Int)] caRows
+
+    -- A CA certificate that turned invalid is written over its row
+    rwTx db $ \tx -> DB.insertMftShortcutChildren tx aki [row caKey "b.cer" (Just InvalidCaChild)]
+    light <- roTx db $ \tx -> DB.getMftShorcutChildrenLight tx aki
+    HU.assertEqual "The CA certificate must be invalid now"
+        (Just (TroubledChild caKey, Just InvalidCaChild)) (Map.lookup caKey light)
+    HU.assertEqual "There must be no duplicates" 3 (Map.size light)
+
+    fileNames <- roTx db $ \tx -> forM [roaKey, caKey] $ DB.getMftShortcutChildFileName tx aki
+    HU.assertEqual "File names come from both tables" [Just "a.roa", Just "b.cer"] fileNames
+
+    rwTx db $ \tx -> DB.deleteMftShortcutChildren tx aki [roaKey, caKey]
+    afterDelete <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Deleted children must be gone from both tables" [unindexedKey] (Map.keys afterDelete)
+
+    rwTx db $ \tx -> DB.insertMftShortcutChildren tx aki [row caKey "b.cer" (Just ValidCaChild)]
+    rwTx db $ \tx -> DB.deleteObjectByKey tx [caKey]
+    afterCascade <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Deleting the object must cascade into the CA table" [unindexedKey] (Map.keys afterCascade)
+
+    rwTx db $ \tx -> DB.deleteMftShortcut tx aki
+    afterShortcutDelete <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Deleting the shortcut must delete all its children" Map.empty afterShortcutDelete
+
+
 -- | Make an object look like something a manifest refers to, which is what
 -- `getMultiLocationShortcutChildren` reports on.
 markAsManifestChild :: DB -> ObjectKey -> IO ()
@@ -419,7 +528,7 @@ markAsManifestChild db key =
             "INSERT INTO shortcuts(object_key, data) VALUES (?, ?)"
             (key, "" :: BS.ByteString)
         SQLite.execute conn
-            "INSERT INTO mft_shortcut_children(aki, file_name, child_key) VALUES (?, ?, ?)"
+            "INSERT INTO mft_shortcut_payload_children(aki, file_name, child_key) VALUES (?, ?, ?)"
             ("" :: BS.ByteString, "child.roa" :: Text.Text, key)
 
 
@@ -449,6 +558,7 @@ shouldMergeObjectLocations io = do
                             mempty
                             (getHash obj)
                             (getRpkiObjectType obj))
+                Nothing
                 (instantToVersion now)
             DB.linkObjectToUrl tx url k (instantToVersion now)
 
@@ -497,8 +607,8 @@ shouldOrderManifests io = do
     worldVersion <- newVersion
 
     rwTx db $ \tx -> do
-        key1 <- DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft1) worldVersion
-        key2 <- DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft2) worldVersion
+        key1 <- DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft1) Nothing worldVersion
+        key2 <- DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft2) Nothing worldVersion
         DB.linkObjectToUrl tx url1 key1 worldVersion
         DB.linkObjectToUrl tx url2 key2 worldVersion
 
@@ -527,6 +637,7 @@ insertMftMetasFor db aki descriptors = do
             ro :: ParsedRpkiObject <- QC.generate QC.arbitrary
             key <- DB.saveObject tx
                 (OriginalRO (ObjectOriginal $ unStorable $ toStorable ro) mempty (getHash ro) (getRpkiObjectType ro))
+                Nothing
                 worldVersion
             let meta = MftMeta {..}
             SQLite.execute conn
@@ -694,8 +805,8 @@ shouldDeduplicateSaveObjectByHash io = do
     threadDelay 10_000
     wv2 <- newVersion
 
-    k1 <- rwTx db $ \tx -> DB.saveObject tx lifecycle wv1
-    k2 <- rwTx db $ \tx -> DB.saveObject tx lifecycle wv2
+    k1 <- rwTx db $ \tx -> DB.saveObject tx lifecycle Nothing wv1
+    k2 <- rwTx db $ \tx -> DB.saveObject tx lifecycle Nothing wv2
 
     HU.assertEqual "Saving the same hash twice must return the same key" k1 k2
 
@@ -728,7 +839,7 @@ shouldIndexCertificateOnSaveObject io = do
     let ro = WellStructuredRO $ CerRO wsCert
 
     key <- rwTx db $ \tx -> do
-        k <- DB.saveObject tx ro wv
+        k <- DB.saveObject tx ro Nothing wv
         DB.linkObjectToUrl tx url k wv
         pure k
 
@@ -764,8 +875,8 @@ shouldReplaceOriginalWithWellStructured io = do
     threadDelay 10_000
     wv2 <- newVersion
 
-    k1 <- rwTx db $ \tx -> DB.saveObject tx original wv1
-    k2 <- rwTx db $ \tx -> DB.saveObject tx (WellStructuredRO $ CerRO wsCert) wv2
+    k1 <- rwTx db $ \tx -> DB.saveObject tx original Nothing wv1
+    k2 <- rwTx db $ \tx -> DB.saveObject tx (WellStructuredRO $ CerRO wsCert) Nothing wv2
     HU.assertEqual "Must reuse the key of the original object" k1 k2
 
     taCert <- roTx db $ \tx -> DB.getTaCertByKey tx k2
@@ -778,7 +889,7 @@ shouldReplaceOriginalWithWellStructured io = do
     HU.assertEqual "Must be marked as inserted by the later version" (Just wv2) (view #insertedBy <$> meta)
 
     -- Saving the original again must not downgrade the object
-    k3 <- rwTx db $ \tx -> DB.saveObject tx original wv2
+    k3 <- rwTx db $ \tx -> DB.saveObject tx original Nothing wv2
     HU.assertEqual "Must reuse the key again" k1 k3
     taCert' <- roTx db $ \tx -> DB.getTaCertByKey tx k3
     HU.assertEqual "Must still be the well-structured certificate" (Just wsCert) taCert'

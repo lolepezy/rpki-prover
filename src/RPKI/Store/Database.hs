@@ -18,7 +18,7 @@ module RPKI.Store.Database (
     currentDatabaseVersion,
     databaseVersionKey, validatedByVersionKey,
     -- * DTOs
-    MftShortcutMeta(..),
+    MftShortcutMeta(..), ShortcutChildRow(..),
     -- * Query functions
     getKeyByHash, getObjectKey, getByHash, getKeyedByHash,
     getMultiLocationShortcutChildren,
@@ -63,6 +63,8 @@ module RPKI.Store.Database (
     deleteOldestVersionsIfNeeded,
     deleteStaleContent, deleteDanglingUrls,
     getAll, getMftMeta, getGbrObjects, getRtrPayloads,
+    getCcrManifest, getObjectValidity, getCertificateSkiAndValidity, getCaChildren,
+    saveCcrStates, getCcrStates,
     storageError,
     -- * Encoding helpers (for AppSqliteStorage etc.)
     encodeSO, decodeSO,
@@ -100,6 +102,7 @@ import           Database.SQLite.Simple.QQ (sql)
 import           Database.SQLite.Simple.ToField (ToField)
 import           Data.Bits                (shiftR, (.&.))
 import qualified Data.ByteString       as BS
+import qualified Data.ByteString.Short as BSS
 
 import           RPKI.Domain
 import           RPKI.Reporting
@@ -118,8 +121,10 @@ import           RPKI.Store.SQLite            (Tx(..), SqliteDB(..), TxMode(..),
 import qualified RPKI.Store.SQLite            as SQLite
 import           RPKI.Store.Types
 import           RPKI.Validation.Types
+import           RPKI.CCR                 (CcrTaState)
 
 import           RPKI.Util                (ifJustM, fmtEx)
+import           RPKI.Parse.Internal.Common (tbsSiaExt)
 import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.AppTypes
@@ -163,7 +168,7 @@ rwTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 61
+currentDatabaseVersion = 62
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -181,9 +186,21 @@ data MftShortcutMeta = MftShortcutMeta
     , serial         :: Serial
     , manifestNumber :: Serial
     , crlShortcut    :: CrlShortcut
+    , hasIssues      :: Bool
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
+
+-- | One child of a manifest shortcut, as it's written: its shortcut goes to
+-- `shortcuts`, the row itself to `mft_shortcut_ca_children` for a CA
+-- certificate and to `mft_shortcut_payload_children` otherwise.
+data ShortcutChildRow = ShortcutChildRow
+    { childKey :: ObjectKey
+    , fileName :: Text
+    , caCert   :: Maybe CaChildValidity
+    , shortcut :: BS.ByteString
+    }
+    deriving stock (Show, Eq, Generic)
 
 instance {-# OVERLAPPING #-} WithValidityPeriod MftShortcutMeta where
     getValidityPeriod MftShortcutMeta {..} = ValidityPeriod notBefore notAfter
@@ -328,7 +345,10 @@ getMultiLocationShortcutChildren (Tx conn) = liftIO $ do
             )
             SELECT object_key FROM multi_location m
             WHERE EXISTS (
-                SELECT 1 FROM mft_shortcut_children
+                SELECT 1 FROM mft_shortcut_payload_children
+                WHERE child_key = m.object_key
+            ) OR EXISTS (
+                SELECT 1 FROM mft_shortcut_ca_children
                 WHERE child_key = m.object_key
             ) OR EXISTS (
                 SELECT 1 FROM manifest_meta
@@ -354,6 +374,7 @@ getLocationsByKey (Tx conn) k = liftIO $ do
 saveObject :: MonadIO m
            => Tx 'RW
            -> RpkiObjectLifecycle
+           -> Maybe Size
            -> WorldVersion
            -> m ObjectKey
 saveObject tx lifecycle = saveStorableObject tx (toStorableObject (Compressed lifecycle))
@@ -362,15 +383,19 @@ saveObject tx lifecycle = saveStorableObject tx (toStorableObject (Compressed li
 saveStorableObject :: MonadIO m
                 => Tx 'RW
                 -> StorableObject (Compressed RpkiObjectLifecycle)
+                -> Maybe Size
                 -> WorldVersion
                 -> m ObjectKey
-saveStorableObject tx so = insertPreparedObject tx (prepareObject so)
+saveStorableObject tx so size = insertPreparedObject tx (prepareObject so size)
 
 
 -- | Everything about storing an object that does not need the transaction.
 -- Pure, so a caller can run it on whatever thread did the parsing.
-prepareObject :: StorableObject (Compressed RpkiObjectLifecycle) -> PreparedObject
-prepareObject StorableObject { object = Compressed lifecycle, storable = Storable payload } =
+--
+-- The size of the object's DER is whatever the caller knows, the bytes of an 
+-- unparsed object are here anyway.
+prepareObject :: StorableObject (Compressed RpkiObjectLifecycle) -> Maybe Size -> PreparedObject
+prepareObject StorableObject { object = Compressed lifecycle, storable = Storable payload } knownSize =
     PreparedObject {..}
   where
     hash       = getHash lifecycle
@@ -378,11 +403,18 @@ prepareObject StorableObject { object = Compressed lifecycle, storable = Storabl
     original   = case lifecycle of
                     OriginalRO (ObjectOriginal blob) _ _ _ -> Just blob
                     WellStructuredRO _                     -> Nothing
+    size       = case lifecycle of
+                    OriginalRO (ObjectOriginal blob) _ _ _ -> Just $ Size $ fromIntegral $ BS.length blob
+                    WellStructuredRO _                     -> knownSize
+    validity   = case lifecycle of
+                    OriginalRO {}        -> Nothing
+                    WellStructuredRO ro  -> Just $ effectiveValidityPeriod ro
     indexEntry = case lifecycle of
                     WellStructuredRO (CerRO c)   -> Just $ CertificateIndex (getSKI c) (getAKI c)
                     WellStructuredRO (MftRO mft) ->
                         let Manifest {..} = mft ^. #content
-                        in (\aki_ -> ManifestIndex aki_ mftNumber thisTime nextTime) <$> getAKI mft
+                            sia = tbsSiaExt $ BSS.fromShort $ mft ^. #eeCert . #encoded
+                        in (\aki_ -> ManifestIndex aki_ mftNumber thisTime nextTime sia) <$> getAKI mft
                     _                            -> Nothing
 
 
@@ -400,9 +432,10 @@ insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
         -- Replace the unparsed copy, otherwise the parsed one is never readable.
         ((objectKey, True) : _, Nothing) -> do
             execute conn
-                [sql|UPDATE objects SET type = ?, data = ?, original = NULL, world_version = ?
+                [sql|UPDATE objects SET type = ?, data = ?, original = NULL, world_version = ?,
+                                        not_before = ?, not_after = ?
                      WHERE object_key = ?|]
-                (typ, payload, wv, objectKey)
+                (typ, payload, wv, notBefore, notAfter, objectKey)
             saveIndexes objectKey
             pure objectKey
 
@@ -410,14 +443,17 @@ insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
 
         ([], _) -> do
             [Only objectKey] <- query conn
-                [sql|INSERT INTO objects(hash, type, data, original, world_version)
-                     VALUES (?, ?, ?, ?, ?) RETURNING object_key|]
-                (hash, typ, payload, original, wv)
+                [sql|INSERT INTO objects(hash, type, size, not_before, not_after, data, original, world_version)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING object_key|]
+                ((hash, typ, unSize <$> size, notBefore, notAfter) :. (payload, original, wv))
 
             saveIndexes objectKey
             pure objectKey
   where
     typ = show objectType
+
+    notBefore = toNanoseconds . (.notBefore) <$> validity
+    notAfter  = toNanoseconds . (.notAfter)  <$> validity
 
     saveIndexes objectKey =
         case indexEntry of
@@ -425,15 +461,15 @@ insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
                 execute conn
                     [sql|INSERT OR IGNORE INTO certificates(object_key, ski, aki) VALUES (?, ?, ?)|]
                     (objectKey, ski, aki_)
-            Just (ManifestIndex aki_ mftNumber thisTime nextTime) ->
+            Just (ManifestIndex aki_ mftNumber thisTime nextTime eeSia) ->
                 let meta = MftMeta { key = objectKey, .. }
                     Serial mftNum = mftNumber
                 in execute conn
                     [sql|
-                        INSERT OR IGNORE INTO manifest_meta(object_key, aki, manifest_number, meta)
-                        VALUES (?, ?, ?, ?)
+                        INSERT OR IGNORE INTO manifest_meta(object_key, aki, manifest_number, meta, ee_sia)
+                        VALUES (?, ?, ?, ?, ?)
                     |]
-                    (objectKey, aki_, serialToBlob mftNum, serialiseField meta)
+                    (objectKey, aki_, serialToBlob mftNum, serialiseField meta, eeSia)
             Nothing -> pure ()
 
 
@@ -637,43 +673,69 @@ getMftShorcutMeta (Tx conn) aki = liftIO $ do
     pure $! deserialiseCompressed . fromOnly <$> listToMaybe rows
 
 -- | Children without file_name, for the hot "nothing changed" path that never needs it.
-getMftShorcutChildrenLight :: MonadIO m => Tx mode -> AKI -> m (Map.Map ObjectKey MftChild)
+getMftShorcutChildrenLight :: MonadIO m => Tx mode -> AKI -> m (Map.Map ObjectKey (MftChild, Maybe CaChildValidity))
 getMftShorcutChildrenLight (Tx conn) aki = liftIO $ do
     rows <- query conn
         [sql|
-            SELECT c.child_key, s.data
-            FROM mft_shortcut_children c
+            SELECT c.child_key, s.data, NULL
+            FROM mft_shortcut_payload_children c
+            JOIN shortcuts s ON s.object_key = c.child_key
+            WHERE c.aki = ?
+            UNION ALL
+            SELECT c.child_key, s.data, c.valid
+            FROM mft_shortcut_ca_children c
             JOIN shortcuts s ON s.object_key = c.child_key
             WHERE c.aki = ?
         |]
-        (Only aki)
+        (aki, aki)
     pure $! Map.fromList
-        [ (childKey, deserialiseCompressed dataBs)
-        | (childKey, dataBs) <- rows ]
+        [ (childKey, (deserialiseCompressed dataBs, caChildValidity <$> valid))
+        | (childKey, dataBs, valid) <- rows ]
 
 -- | Full children incl. file_name, for the diff path that needs to detect renames.
 getMftShorcutChildrenFull :: MonadIO m => Tx mode -> AKI -> m (Map.Map ObjectKey MftEntry)
 getMftShorcutChildrenFull (Tx conn) aki = liftIO $ do
     rows <- query conn
         [sql|
-            SELECT c.file_name, c.child_key, s.data
-            FROM mft_shortcut_children c
+            SELECT c.file_name, c.child_key, s.data, NULL
+            FROM mft_shortcut_payload_children c
+            JOIN shortcuts s ON s.object_key = c.child_key
+            WHERE c.aki = ?
+            UNION ALL
+            SELECT c.file_name, c.child_key, s.data, c.valid
+            FROM mft_shortcut_ca_children c
             JOIN shortcuts s ON s.object_key = c.child_key
             WHERE c.aki = ?
         |]
-        (Only aki)
+        (aki, aki)
     pure $! Map.fromList
-        [ (childKey, MftEntry { fileName = fileName_, child = deserialiseCompressed dataBs })
-        | (fileName_, childKey, dataBs) <- rows ]
+        [ (childKey, MftEntry { fileName = fileName_,
+                                child    = deserialiseCompressed dataBs,
+                                caCert   = caChildValidity <$> valid })
+        | (fileName_, childKey, dataBs, valid) <- rows ]
 
 -- | On-demand single-row lookup, used only by the rare TroubledChild fallback
 -- on the light (file_name-free) read path.
 getMftShortcutChildFileName :: MonadIO m => Tx mode -> AKI -> ObjectKey -> m (Maybe Text)
 getMftShortcutChildFileName (Tx conn) aki childKey = liftIO $ do
     rows <- query conn
-        "SELECT file_name FROM mft_shortcut_children WHERE aki = ? AND child_key = ?"
-        (aki, childKey)
+        [sql|
+            SELECT file_name FROM mft_shortcut_payload_children WHERE aki = ? AND child_key = ?
+            UNION ALL
+            SELECT file_name FROM mft_shortcut_ca_children WHERE aki = ? AND child_key = ?
+        |]
+        (aki, childKey, aki, childKey)
     pure $! fromOnly <$> listToMaybe rows
+
+caChildValidity :: Int -> CaChildValidity
+caChildValidity = \case
+    0 -> InvalidCaChild
+    _ -> ValidCaChild
+
+caChildValidityField :: CaChildValidity -> Int
+caChildValidityField = \case
+    InvalidCaChild -> 0
+    ValidCaChild   -> 1
 
 getMftShorcut :: MonadIO m => Tx mode -> AKI -> m (Maybe MftShortcut)
 getMftShorcut tx aki = do
@@ -694,33 +756,124 @@ saveMftShorcutMeta (Tx conn) aki meta = liftIO $
 -- `OR REPLACE` on purpose: a TroubledChild re-validation, or a manifest-entry
 -- rename (same child_key, new file_name), can legitimately overwrite an
 -- existing row for a key that's already cached.
-insertMftShortcutChildren :: MonadIO m => Tx 'RW -> AKI -> [(ObjectKey, Text, BS.ByteString)] -> m ()
+--
+-- A CA certificate goes to `mft_shortcut_ca_children`, which references
+-- `certificates`. Every parsed CA certificate has a row there, but if one
+-- didn't, the foreign key would fail the whole write transaction, so such
+-- a child goes to the payload table instead. An object that was stored
+-- unparsed first and parsed later can move from the payload table to the
+-- CA one, never the other way.
+insertMftShortcutChildren :: MonadIO m => Tx 'RW -> AKI -> [ShortcutChildRow] -> m ()
 insertMftShortcutChildren (Tx conn) aki newEntries = liftIO $ do
     executeMany conn
         "INSERT OR REPLACE INTO shortcuts(object_key, data) VALUES (?, ?)"
-        [ (childKey, dataBs) | (childKey, _, dataBs) <- newEntries ]
+        [ (childKey, shortcut) | ShortcutChildRow {..} <- newEntries ]
     executeMany conn
-        "INSERT OR REPLACE INTO mft_shortcut_children(aki, file_name, child_key) VALUES (?, ?, ?)"
-        [ (aki, fileName_, childKey) | (childKey, fileName_, _) <- newEntries ]
+        "INSERT OR REPLACE INTO mft_shortcut_payload_children(aki, file_name, child_key) VALUES (?, ?, ?)"
+        [ (aki, fileName, childKey) | ShortcutChildRow { caCert = Nothing, .. } <- newEntries ]
+
+    let caChildren = [ (childKey, fileName, validity)
+                     | ShortcutChildRow { caCert = Just validity, .. } <- newEntries ]
+    unless (null caChildren) $ do
+        executeMany conn
+            "DELETE FROM mft_shortcut_payload_children WHERE aki = ? AND child_key = ?"
+            [ (aki, childKey) | (childKey, _, _) <- caChildren ]
+        executeMany conn
+            [sql|
+                INSERT OR REPLACE INTO mft_shortcut_ca_children(aki, file_name, child_key, valid)
+                SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM certificates WHERE object_key = ?)
+            |]
+            [ (aki, fileName, childKey, caChildValidityField validity, childKey)
+            | (childKey, fileName, validity) <- caChildren ]
+        executeMany conn
+            [sql|
+                INSERT OR REPLACE INTO mft_shortcut_payload_children(aki, file_name, child_key)
+                SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM certificates WHERE object_key = ?)
+            |]
+            [ (aki, fileName, childKey, childKey) | (childKey, fileName, _) <- caChildren ]
 
 -- | Delete only this AKI's (aki, child_key) membership rows. Never touches
 -- `shortcuts` -- an orphaned shortcut is cleaned up by the general objects
 -- cleanup/GC (deleteObjectByKey etc.), which cascades objects -> shortcuts ->
--- mft_shortcut_children once nothing marks the underlying object as used.
+-- mft_shortcut_payload_children (and objects -> certificates ->
+-- mft_shortcut_ca_children) once nothing marks the underlying object as used.
 deleteMftShortcutChildren :: MonadIO m => Tx 'RW -> AKI -> [ObjectKey] -> m ()
 deleteMftShortcutChildren (Tx conn) aki deletedKeys = liftIO $
     forM_ (inClauseBatches deletedKeys) $ \(placeholders, params) ->
-        executeNamed conn
-            (fromString $ Text.unpack $
-                "DELETE FROM mft_shortcut_children WHERE aki = :aki AND child_key IN (" <> placeholders <> ")")
-            ((":aki" := aki) : params)
+        forM_ ["mft_shortcut_payload_children", "mft_shortcut_ca_children"] $ \table ->
+            executeNamed conn
+                (fromString $ Text.unpack $
+                    "DELETE FROM " <> table <> " WHERE aki = :aki AND child_key IN (" <> placeholders <> ")")
+                ((":aki" := aki) : params)
 
 deleteMftShortcut :: MonadIO m => Tx 'RW -> AKI -> m ()
-deleteMftShortcut tx@(Tx conn) aki = liftIO $ do
-    childKeys <- map fromOnly <$>
-        query conn "SELECT child_key FROM mft_shortcut_children WHERE aki = ?" (Only aki)
+deleteMftShortcut (Tx conn) aki = liftIO $ do
     execute conn "DELETE FROM mft_shortcut_meta WHERE aki = ?" (Only aki)
-    deleteMftShortcutChildren tx aki childKeys
+    execute conn "DELETE FROM mft_shortcut_payload_children WHERE aki = ?" (Only aki)
+    execute conn "DELETE FROM mft_shortcut_ca_children WHERE aki = ?" (Only aki)
+
+-- | What a CCR needs of a manifest that is stored under this key: its hash, 
+-- the size of its DER, its effective validity window, its `MftMeta` and the
+-- value of its EE certificate's SIA extension. 
+getCcrManifest :: MonadIO m => Tx mode -> ObjectKey 
+                -> m (Maybe (Hash, Maybe Size, Maybe ValidityPeriod, MftMeta, Maybe BS.ByteString))
+getCcrManifest (Tx conn) key = liftIO $ do
+    rows <- query conn
+        [sql|
+            SELECT o.hash, o.size, o.not_before, o.not_after, m.meta, m.ee_sia
+            FROM objects o
+            JOIN manifest_meta m ON m.object_key = o.object_key
+            WHERE o.object_key = ?
+        |]
+        (Only key)
+    pure $! case rows of
+        [(hash, size, notBefore, notAfter, meta, eeSia)] ->
+            Just (hash, Size <$> size, validityOf notBefore notAfter, deserialiseField meta, eeSia)
+        _ -> Nothing
+
+-- | The effective validity window of an object, `Nothing` if the object 
+-- isn't there or isn't parsed.
+getObjectValidity :: MonadIO m => Tx mode -> ObjectKey -> m (Maybe ValidityPeriod)
+getObjectValidity (Tx conn) key = liftIO $ do
+    rows <- query conn "SELECT not_before, not_after FROM objects WHERE object_key = ?" (Only key)
+    pure $! case rows of
+        [(notBefore, notAfter)] -> validityOf notBefore notAfter
+        _                       -> Nothing
+
+-- | The SKI and the validity window of a certificate.
+getCertificateSkiAndValidity :: MonadIO m => Tx mode -> ObjectKey -> m (Maybe (SKI, Maybe ValidityPeriod))
+getCertificateSkiAndValidity (Tx conn) key = liftIO $ do
+    rows <- query conn
+        [sql|
+            SELECT c.ski, o.not_before, o.not_after
+            FROM certificates c
+            JOIN objects o ON o.object_key = c.object_key
+            WHERE c.object_key = ?
+        |]
+        (Only key)
+    pure $! case rows of
+        [(ski, notBefore, notAfter)] -> Just (ski, validityOf notBefore notAfter)
+        _                            -> Nothing
+
+-- | The CA certificates on the manifest of the CA with this key identifier: 
+-- their SKIs, validity windows and whether they were valid when validated.
+getCaChildren :: MonadIO m => Tx mode -> AKI -> m [(SKI, Maybe ValidityPeriod, CaChildValidity)]
+getCaChildren (Tx conn) aki = liftIO $ do
+    rows <- query conn
+        [sql|
+            SELECT c.ski, o.not_before, o.not_after, cc.valid
+            FROM mft_shortcut_ca_children cc
+            JOIN certificates c ON c.object_key = cc.child_key
+            JOIN objects o      ON o.object_key = cc.child_key
+            WHERE cc.aki = ?
+        |]
+        (Only aki)
+    pure [ (ski, validityOf notBefore notAfter, caChildValidity valid) 
+         | (ski, notBefore, notAfter, valid) <- rows ]
+
+validityOf :: Maybe Int64 -> Maybe Int64 -> Maybe ValidityPeriod
+validityOf notBefore notAfter = 
+    ValidityPeriod <$> (Instant <$> notBefore) <*> (Instant <$> notAfter)
 
 -- | Returns all candidates for the SKI; callers must verify signatures.
 getBySKI :: MonadIO m => Tx mode -> SKI -> m [Located WellStructuredCaCert]
@@ -993,6 +1146,18 @@ saveValidationVersion (Tx conn) validatedBy results commonVS =
             , Just $ serialiseCompressed bgpCerts
             , Just $ serialiseCompressed gbrs
             )
+
+-- | The part of the CCR that the walk of each TA's shortcuts found, 
+-- for the version that was just saved.
+saveCcrStates :: MonadIO m => Tx 'RW -> WorldVersion -> [(TaName, CcrTaState)] -> m ()
+saveCcrStates (Tx conn) version states = liftIO $
+    executeMany conn 
+        "UPDATE validation_outcomes SET ccr = ? WHERE ta_name = ? AND version = ?"
+        [ (serialiseCompressed state, unTaName taName, version) | (taName, state) <- states ]
+
+-- | The latest CCR part of every active TA at or before the version. 
+getCcrStates :: MonadIO m => Tx mode -> WorldVersion -> m (PerTA CcrTaState)
+getCcrStates tx = getLatestPerTA tx "ccr"
 
 deleteValidationVersion :: MonadIO m => Tx 'RW -> WorldVersion -> m ()
 deleteValidationVersion (Tx conn) worldVersion = liftIO $ do

@@ -1122,6 +1122,33 @@ instance {-# OVERLAPPING #-} WithSerial (WellStructuredCms a) where
     getSerial (WellStructuredCms { eeCert = WellStructuredEECert { serial } }) = serial
 
 
+-- | The period in which a manifest can be used: its EE certificate has to be
+-- valid and the manifest itself has to be current, i.e. between thisUpdate and
+-- nextUpdate (https://www.rfc-editor.org/rfc/rfc9286.html#section-6.3).
+-- `getValidityPeriod` of a manifest is only the EE certificate's.
+manifestValidityPeriod :: WellStructuredMft -> ValidityPeriod
+manifestValidityPeriod mft =
+    let ValidityPeriod eeNotBefore eeNotAfter = getValidityPeriod mft
+        Manifest { thisTime, nextTime } = mft.content
+    in ValidityPeriod (max eeNotBefore thisTime) (min eeNotAfter nextTime)
+
+-- | The period in which an object can be valid as far as the object itself 
+-- is concerned: the intersection of all of its own time limits, as validation 
+-- checks them.
+effectiveValidityPeriod :: WellStructuredRpkiObject -> ValidityPeriod
+effectiveValidityPeriod = \case
+    CerRO c  -> getValidityPeriod c
+    MftRO m  -> manifestValidityPeriod m
+    RoaRO r  -> getValidityPeriod r
+    SplRO s  -> getValidityPeriod s
+    GbrRO g  -> getValidityPeriod g
+    RscRO r  -> getValidityPeriod r
+    AspaRO a -> getValidityPeriod a
+    BgpRO b  -> getValidityPeriod b
+    CrlRO c  -> let SignCRL { thisUpdateTime, nextUpdateTime } = c.signCrl
+                in ValidityPeriod thisUpdateTime nextUpdateTime
+
+
 -- Small utility functions that don't have anywhere else to go
 
 asKey :: Int64 -> ArtificialKey
