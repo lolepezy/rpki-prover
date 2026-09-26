@@ -2,6 +2,7 @@ module RPKI.Store.DatabaseSpec where
 
 import           Effectful
 import           Control.Concurrent              (threadDelay)
+import           Control.Concurrent.Async        (withAsync)
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Lens
@@ -19,6 +20,7 @@ import           Data.Maybe                        (fromMaybe)
 import           Data.Int                          (Int64)
 import           Data.Ord                          (Down(..))
 import           Data.Hourglass                    (Seconds(..))
+import           Data.IORef
 
 import           Database.SQLite.Simple            (Only(..))
 
@@ -34,7 +36,6 @@ import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.RepositorySpec
-import           RPKI.Store.AppStorage
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Database               (DB(..), Tx(..), roTx, rwTx)
 import qualified RPKI.Store.Database               as DB
@@ -242,7 +243,10 @@ txGroup = testGroup "App transaction test"
 
 dbGroup :: TestTree
 dbGroup = testGroup "App database test"
-    [ HU.testCase "Should reopen database without issues" shouldReopenDatabase
+    [ HU.testCase "Should roll back a write transaction that runs for too long" 
+        shouldRollBackLongWriteTransaction
+    , HU.testCase "Should interrupt a statement that runs for too long" 
+        shouldInterruptLongStatement
     , dbTestCase "Should delete only objects older than the criteria say"
         shouldDeleteStaleObjectsOnly
     , dbTestCase "Should keep an old object that was validated recently"
@@ -1371,22 +1375,60 @@ shouldPreserveStateInAppTx io = do
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
 
 
-shouldReopenDatabase :: HU.Assertion
-shouldReopenDatabase =
+-- | Any transaction running for a second or more is stuck.
+abortAllStuck :: DB -> IORef [SQLite.TxKind] -> IO ()
+abortAllStuck db reported = 
+    SQLite.watchTransactions (unDB db) (SQLite.TxTimeouts 0 0) $ \stuck -> do 
+        atomicModifyIORef' reported $ \ks -> (stuck.kind : ks, ())
+        SQLite.abortTransaction stuck
+
+expectTimedOut :: SQLite.TxKind -> Either SQLite.TransactionTimedOut () -> HU.Assertion
+expectTimedOut kind = \case 
+    Left (SQLite.TransactionTimedOut k _) -> HU.assertEqual "Wrong kind of transaction" kind k
+    Right _                               -> HU.assertFailure "The transaction should have timed out"
+
+shouldRollBackLongWriteTransaction :: HU.Assertion
+shouldRollBackLongWriteTransaction =
     withTestContext $ \appContext -> do
         db <- readTVarIO $ appContext ^. #database
-
+        reported <- newIORef []
         Now now <- thisInstant
-        rwTx db $ \tx -> DB.setJobCompletionTime tx "reopen-job" now
 
-        reopenStorage appContext
+        r <- withAsync (abortAllStuck db reported) $ \_ -> 
+                -- Transactions that finish in time are left alone
+                withAsync (forever $ roTx db DB.allJobs >> threadDelay 10_000) $ \_ ->
+                    try $ rwTx db $ \tx -> do
+                        DB.setJobCompletionTime tx "stuck-job" now
+                        threadDelay 30_000_000
 
-        db' <- readTVarIO $ appContext ^. #database
-        jobs <- roTx db' $ \tx -> DB.allJobs tx
+        expectTimedOut SQLite.WriteTx r
+        HU.assertEqual "Only the stuck transaction must be reported, once" 
+            [SQLite.WriteTx] =<< readIORef reported
 
-        HU.assertEqual "Persisted data must remain available after reopen"
-            (Just now)
-            (lookup "reopen-job" jobs)
+        jobs <- roTx db DB.allJobs
+        HU.assertEqual "What the stuck transaction wrote must be rolled back"
+            Nothing (lookup "stuck-job" jobs)
+
+        -- The write connection is still usable
+        rwTx db $ \tx -> DB.setJobCompletionTime tx "next-job" now
+        jobs' <- roTx db DB.allJobs
+        HU.assertEqual "The next transaction must work" (Just now) (lookup "next-job" jobs')
+
+-- | Stuck inside SQLite, where an asynchronous exception doesn't get to it. 
+shouldInterruptLongStatement :: HU.Assertion
+shouldInterruptLongStatement =
+    withTestContext $ \appContext -> do
+        db <- readTVarIO $ appContext ^. #database
+        reported <- newIORef []
+
+        r <- withAsync (abortAllStuck db reported) $ \_ -> 
+                try $ roTx db $ \(Tx conn) -> void $ 
+                    SQLite.query_ @(Only Int64) conn 
+                        "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c"
+
+        expectTimedOut SQLite.ReadTx r
+        -- Read transactions still work
+        void $ roTx db DB.allJobs
 
 
 stripTime :: metric -> metric

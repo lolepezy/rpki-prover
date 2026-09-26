@@ -107,6 +107,7 @@ common shared
     , ram
     , resource-pool
     , sqlite-simple
+    , direct-sqlite
     , modern-uri
     , monoidal-containers
     , mtl

@@ -17,7 +17,6 @@ import RPKI.Domain
 import RPKI.AppTypes
 import RPKI.Logging
 import RPKI.Util (toNatural)
-import RPKI.Time 
 import GHC.Generics (Generic)
 
 import RPKI.Store.Base.Serialisation
@@ -55,8 +54,13 @@ data FetchConfig = FetchConfig {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+-- | 'txTimeout' is how long one database transaction, read or write, may run
+-- from BEGIN on, in the main process and in every worker alike. A worker with 
+-- a transaction running longer than that gives up and exits 
+-- ('RPKI.Worker.dieOfLongTransactions'), the main process rolls the 
+-- transaction back ('RPKI.Workflow.rollBackLongTransactions').
 data StorageConfig = StorageConfig {
-        rwTransactionTimeout  :: Seconds,
+        txTimeout             :: Seconds,
         walCheckpointInterval :: Seconds
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -362,7 +366,7 @@ defaultConfig = Config {
     },
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {       
-        rwTransactionTimeout = 15 * minutes,
+        txTimeout             = 10 * minutes,
         walCheckpointInterval = 1 * minutes
     },
     cacheCleanupInterval      = 6 * hours,    
@@ -394,14 +398,6 @@ adjustConfig config = config
         -- to accomodate for a weird case of longLivedCacheLifeTime < shortLivedCacheLifeTime
         -- we still want some correctness here, so the "short" one should be shorter
         & #shortLivedCacheLifeTime %~ (`min` (config ^. #longLivedCacheLifeTime))
-
-adjustWorkerConfig :: Config -> Timebox -> Config
-adjustWorkerConfig config (Timebox timeout) = config
-        -- There's no point in having RW-transaction timeout
-        -- longer than the worker timeout
-        & #storageConfig . #rwTransactionTimeout %~ (`min` safeTimeout)
-  where
-    safeTimeout = max (Seconds 1) (timeout - Seconds 1)
 
 defaultsLogLevel :: LogLevel
 defaultsLogLevel = InfoL

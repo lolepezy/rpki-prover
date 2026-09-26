@@ -4,7 +4,8 @@
 module RPKI.Workflow (
     runValidatorWorkflow,
     runValidation,
-    runCacheCleanup
+    runCacheCleanup,
+    rollBackLongTransactions
 ) where
 
 import           Effectful                       (Eff, (:>))
@@ -61,6 +62,7 @@ import           RPKI.Metrics.System
 import           RPKI.Http.Types
 import           RPKI.Http.Dto
 import qualified RPKI.Store.Database               as DB
+import qualified RPKI.Store.SQLite                 as SQLite
 import           RPKI.Validation.TopDown
 
 import           RPKI.AppContext
@@ -208,49 +210,10 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
     DB.rwTxT database $ \tx ->
         DB.setActiveTAs tx (map getTaName tals)
         
-    case config ^. #proverRunMode of     
-        ServerMode   -> selfRecoveryLoop 0
-        OneOffMode _ -> 
-            -- Don't try to automatically resolve DB locking issues in the one-off mode
-            runAll appContext tals
-                `catches` handlers (die "Database problem: read-write transaction has timed out, exiting.")
-  where
-    maxRecoveryAttempts = 10 :: Int
-
-    selfRecoveryLoop recoveryAttempts = do
-        let txTimeoutHandler = 
-                if recoveryAttempts >= maxRecoveryAttempts
-                then die [i|Database problem: read-write transaction has timed out #{recoveryAttempts + 1} times, giving up.|]
-                else tryToFixStuckDb
-
-        race_ (runAll appContext tals) monitorDbState
-            `catches` 
-            handlers txTimeoutHandler
-
-        selfRecoveryLoop (recoveryAttempts + 1)
-
-    monitorDbState = forever $ do 
-        -- We can get a signal from a worker process that the DB is stuck 
-        atomically $ waitForStuckDb appState
-        throwIO TxTimeout
-    
-    tryToFixStuckDb =
-        join $ atomically $ do             
-            let systemState = appState ^. #systemState
-            modifyTVar' systemState (#dbState .~ DbTryingToFix)
-            pure $ do 
-                logInfo logger "Database read-write transaction has timed out, restarting all workers and reopening storage."
-                killAllWorkers appContext                                
-                logInfo logger "Killed all worker processes."
-                reopenStorage appContext 
-                logInfo logger "Database re-opened after deleting the lock file."
-                atomically $ modifyTVar' systemState (#dbState .~ DbOperational)
-    
-    handlers txTimeoutAction = [
+    runAll appContext tals
+        `catches` [
             Handler $ \(AppException seriousProblem) ->
                 die [i|Something really bad happened: #{seriousProblem}, exiting.|],
-            Handler $ \(_ :: TxTimeout) -> 
-                txTimeoutAction,
             Handler $ \(_ :: AsyncCancelled) -> 
                 die [i|Interrupted with Ctrl-C, exiting.|]            
         ]
@@ -492,6 +455,8 @@ runAll appContext@AppContext {..} tals = do
         logInfo logger [i|Validating TAs #{taNames}, world version #{worldVersion} |]
         
         ((rtrPayloads, slurmedPayloads), elapsed) <- timedMS processTALs            
+        -- The ones that came before there was any version to add them to
+        saveSystemProblems appContext
         let vrps = rtrPayloads ^. #vrps
         let slurmedVrps = slurmedPayloads ^. #vrps
         logInfo logger $
@@ -608,13 +573,6 @@ runAll appContext@AppContext {..} tals = do
                 when (ageInSeconds > maxTimeout) $
                     removePathForcibly fullPath                
 
-        -- Give the storage backend a chance to clean up any stale state left
-        -- behind by dead processes or unfinished/killed transactions (a
-        -- no-op for the current SQLite backend; kept for backends that need it).
-        cleaned <- cleanUpStaleTx appContext
-        when (cleaned > 0) $
-            logDebug logger [i|Cleaned #{cleaned} stale readers from the storage backend.|]
-        
         -- Kill all orphan workers (including rsync client processes) that may still
         -- be running and refusing to die. Sometimes an rsync process can leak and 
         -- linger, kill the expired ones
@@ -676,6 +634,54 @@ withWorkerTimeout AppContext {..} workerType what work = do
         logError logger message
         trace WorkerTimeoutTrace
         appError $ InternalE $ WorkerTimeout message
+
+
+{- | The main process's side of transaction timeouts. A worker with a transaction 
+     running for too long just exits ('dieOfLongTransactions'); the main process 
+     rolls the transaction back instead, whoever started it gets 
+     'SQLite.TransactionTimedOut'. It is also reported as a problem of the latest 
+     version, to be seen in the UI and not only in the log.
+-}
+rollBackLongTransactions :: AppContext s -> IO ()
+rollBackLongTransactions appContext@AppContext {..} = do
+    db <- readTVarIO database
+    SQLite.watchTransactions (DB.unDB db) timeouts $ 
+        \stuck@SQLite.StuckTx { kind, runningFor, limit } -> do
+            let message = [i|A #{SQLite.txKindName kind} transaction of the main process has been running |] <> 
+                          [i|for #{runningFor}, the limit is #{limit}, rolling it back.|]
+            logError logger message
+            SQLite.abortTransaction stuck
+            reportSystemProblem appContext $ StorageE $ StorageError message
+  where
+    timeouts = let t = config ^. #storageConfig . #txTimeout in SQLite.TxTimeouts t t
+
+-- | Add a problem of the main process, one that isn't about any TA, to the 
+-- common validations of the latest version, where the UI shows it. If there 
+-- is no version yet, it waits in 'systemProblems' for the next validation.
+reportSystemProblem :: AppContext s -> AppError -> IO ()
+reportSystemProblem appContext@AppContext {..} problem = do
+    atomically $ modifyTVar' (appState ^. #systemProblems) (<> mError (newScope "storage") problem)
+    -- Doesn't wait for it: it takes a write transaction, and the one
+    -- that is being rolled back may well be holding the lock yet.
+    void $ forkIO $ saveSystemProblems appContext
+
+saveSystemProblems :: AppContext s -> IO ()
+saveSystemProblems AppContext {..} = do
+    let systemProblems = appState ^. #systemProblems
+    problems <- atomically $ stateTVar systemProblems (, mempty)
+    when (problems /= mempty) $ do
+        saved <- UIO.tryAny $ DB.rwTxT database $ \tx -> 
+            DB.getLatestVersion tx >>= \case 
+                Nothing      -> pure False
+                Just version -> do 
+                    DB.addCommonValidations tx version (mempty & typed .~ problems)
+                    pure True
+        case saved of 
+            Right True  -> pure ()
+            Right False -> atomically $ modifyTVar' systemProblems (problems <>)
+            Left e      -> do 
+                logError logger [i|Could not save problems of the main process: #{fmtEx e}.|]
+                atomically $ modifyTVar' systemProblems (problems <>)
 
 
 -- | Read SLURM files, if there are any configured. Only the main process
@@ -1478,10 +1484,6 @@ logException logger logText result =
 -- still propagate -- that is `UIO.catchAny`'s contract.
 ignoreSync :: MonadUnliftIO m => m () -> m ()
 ignoreSync f = f `UIO.catchAny` const (pure ())
-
-killAllWorkers :: AppContext s -> IO ()
-killAllWorkers appContext@AppContext {..} = do
-    killWorkers appContext =<< removeAllRunningWorkers appState    
 
 killWorkers :: AppContext s -> [WorkerInfo] -> IO ()
 killWorkers AppContext {..} workers = do

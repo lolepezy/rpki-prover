@@ -254,6 +254,8 @@ data InternalError = WorkerTimeout Text
                    | WorkerDetectedDifferentExecutable Text 
                    | WorkerError Text 
                    | InternalError Text 
+                   -- Last, to keep the serialised form of the ones above 
+                   | WorkerTxTimeout Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 

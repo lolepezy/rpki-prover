@@ -50,6 +50,7 @@ import           RPKI.Time
 import           RPKI.Util (convert, fmtEx)
 import           RPKI.Store.Base.Serialisation
 import qualified RPKI.Store.Database    as DB
+import qualified RPKI.Store.SQLite      as SQLite
 import           RPKI.Meta.UniqueId
 
 
@@ -330,12 +331,16 @@ data WorkerResult r = WorkerResult {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)    
 
+-- | How a worker gives up on something it watches itself: why, to be sent to
+-- the parent, and the exit code that says it.
+type GiveUp = WorkerExit -> Text -> IO ()
+
 -- Entry point for a worker. It is supposed to run within a worker process 
 -- and do the actual work.
 -- 
 executeWork :: WorkerInput 
             -> (WorkerExit -> IO ()) -- ^ How to exit the worker process.
-            -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> IO ()) -- ^ Actual work to be executed.                            
+            -> (WorkerInput -> (forall a . TheBinary a => a -> IO ()) -> GiveUp -> IO ()) -- ^ Actual work to be executed.                            
             -> IO ()
 executeWork input exitWith_ actualWork = 
     -- Check if version of the executable has changed compared to the parent.
@@ -355,12 +360,15 @@ executeWork input exitWith_ actualWork =
                     when mine $ 
                         reportResourceUsage startedAt ec 
                             `IOExc.finally` atomically (void $ tryPutTMVar workerExit ec)
+            let giveUp ec reason = do 
+                    sendLogToParent [i|Worker #{workerId} #{reason}, exiting.|]
+                    done ec
 
             mapM_ (\w -> forkFinally w (const $ pure ())) [
-                    doTheWork done,
+                    doTheWork done giveUp,
                     dieIfParentDies done,
                     dieAfterTimeout done,
-                    dieOfOveruse done
+                    dieOfOveruse giveUp
                 ]
                 
             exitWith_ =<< atomically (takeTMVar workerExit)
@@ -379,8 +387,8 @@ executeWork input exitWith_ actualWork =
 
     -- An exit code on its own says nothing about what went wrong inside, so
     -- send the exception to the parent before giving up on it.
-    doTheWork done = 
-        (actualWork input writeWorkerOutput >> done WorkerSucceeded)
+    doTheWork done giveUp = 
+        (actualWork input writeWorkerOutput giveUp >> done WorkerSucceeded)
             `IOExc.catch` \e -> do 
                 case IOExc.fromException e of 
                     Just (SomeAsyncException _) -> pure ()
@@ -404,7 +412,7 @@ executeWork input exitWith_ actualWork =
 
     -- Exit if the worker has spent more than it is allowed of any of 
     -- the limits (CPU time, traffic, disk IO).
-    dieOfOveruse done = loop
+    dieOfOveruse giveUp = loop
       where
         loop = do 
             -- Stop at the first limit that is exceeded, that's the one the 
@@ -414,9 +422,8 @@ executeWork input exitWith_ actualWork =
                 Nothing -> do 
                     threadDelay 1_000_000
                     loop
-                Just (workerExit, reason) -> do 
-                    sendLogToParent [i|Worker #{workerId} #{reason}, exiting.|]
-                    done workerExit
+                Just (workerExit, reason) -> 
+                    giveUp workerExit reason
 
         orNext thisCheck nextCheck = thisCheck >>= maybe nextCheck (pure . Just)
 
@@ -462,6 +469,23 @@ executeWork input exitWith_ actualWork =
                             Just (TooMuchDiskIo, 
                                 [i|wrote #{sizeMb diskWrite}mb to disk, the limit is #{limit}mb|])
                     pure $ tooMuchRead <|> tooMuchWritten
+
+
+{- | Give up as soon as any database transaction of the worker has been running 
+   for longer than 'txTimeout', the same way as for any other limit. Nothing is rolled back explicitly: an unfinished transaction 
+   goes away with the process.
+
+   Unlike the other limits, it needs the database to watch, so it isn't started 
+   by 'executeWork', but by the work itself.
+-}
+dieOfLongTransactions :: WorkerInput -> AppContext s -> GiveUp -> IO ()
+dieOfLongTransactions input AppContext {..} giveUp = do
+    db <- readTVarIO database
+    SQLite.watchTransactions (DB.unDB db) timeouts $ \SQLite.StuckTx { kind, runningFor, limit } -> 
+        giveUp TxTimedOut 
+            [i|had a #{SQLite.txKindName kind} transaction running for #{runningFor}, the limit is #{limit}|]
+  where
+    timeouts = let t = input ^. #config . #storageConfig . #txTimeout in SQLite.TxTimeouts t t
 
 
 readWorkerInput :: (MonadIO m) => m WorkerInput
@@ -524,6 +548,9 @@ data WorkerExit = WorkerSucceeded
                 | TooMuchTraffic
                 | TooMuchDiskIo
                 | TimedOut
+                -- | A database transaction ran for longer than allowed, see
+                -- 'dieOfLongTransactions'.
+                | TxTimedOut
                 | ExecutableReplaced
                 -- | Set by the RTS when the heap grows past @-M@, not by us.
                 | OutOfMemory
@@ -541,6 +568,7 @@ toExitCode = \case
     OutOfCpuTime       -> ExitFailure 113
     TooMuchTraffic     -> ExitFailure 114
     TooMuchDiskIo      -> ExitFailure 115
+    TxTimedOut         -> ExitFailure 116
     TimedOut           -> ExitFailure 122
     ExecutableReplaced -> ExitFailure 123
     OutOfMemory        -> ExitFailure 251
@@ -555,6 +583,7 @@ fromExitCode = \case
     ExitFailure 113 -> OutOfCpuTime
     ExitFailure 114 -> TooMuchTraffic
     ExitFailure 115 -> TooMuchDiskIo
+    ExitFailure 116 -> TxTimedOut
     ExitFailure 122 -> TimedOut
     ExitFailure 123 -> ExecutableReplaced
     ExitFailure 251 -> OutOfMemory
@@ -575,6 +604,8 @@ workerFailure workerId = \case
         ([i|Worker #{workerId} downloaded too much data.|], Just WorkerIoOveruseTrace, WorkerTooMuchIO)
     TooMuchDiskIo ->
         ([i|Worker #{workerId} did too much disk IO.|], Just WorkerIoOveruseTrace, WorkerTooMuchIO)
+    TxTimedOut ->
+        ([i|Worker #{workerId} had a database transaction running for too long.|], Nothing, WorkerTxTimeout)
     OutOfMemory ->
         ([i|Worker #{workerId} ran out of memory.|], Nothing, WorkerOutOfMemory)
     ExecutableReplaced ->
