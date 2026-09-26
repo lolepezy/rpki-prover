@@ -9,6 +9,7 @@ import           Effectful.Concurrent.Async
 import           Effectful.Exception
 import           Control.Monad
 import           Effectful.Error.Static           (catchError)
+import           Effectful.Timeout                (Timeout)
 import           Data.Generics.Product.Typed
 
 import           Data.Foldable
@@ -50,7 +51,7 @@ import qualified RPKI.Store.Database    as DB
 import qualified RPKI.Util              as U
 
 
-runRrdpFetchWorker :: ValidatorIO es => AppContext s 
+runRrdpFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext s 
                     -> FetchConfig
                     -> WorldVersion
                     -> RrdpRepository             

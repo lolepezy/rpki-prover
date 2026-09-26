@@ -4,6 +4,7 @@ import           Effectful.Concurrent (Concurrent)
 import           Effectful
 import           GHC.Conc                         (getNumCapabilities)
 import           Effectful.Error.Static           (catchError, rethrowError)
+import           Effectful.Timeout                (Timeout)
 import           Control.Concurrent.MVar          (MVar, newMVar, withMVar)
 import           Control.Concurrent.STM           (readTVarIO)
 import           Control.Exception                (evaluate)
@@ -92,7 +93,7 @@ spillRecords bs
             (record, rest')     = LBS.splitAt len rest
         in LBS.toStrict record : spillRecords rest'
 
-runErikFetchWorker :: ValidatorIO es => AppContext s
+runErikFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext s
                     -> FetchConfig
                     -> WorldVersion
                     -> [URI]

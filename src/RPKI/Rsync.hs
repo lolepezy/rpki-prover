@@ -72,7 +72,7 @@ stdout = [#{U.textual stdout'}],
 stderr = [#{U.textual stderr'}]|]
 
 
-runRsyncFetchWorker :: ValidatorIO es => AppContext s 
+runRsyncFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext s 
                     -> FetchConfig
                     -> WorldVersion
                     -> RsyncRepository             

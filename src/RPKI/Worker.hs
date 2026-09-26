@@ -3,6 +3,8 @@ module RPKI.Worker where
 import           Effectful
 import qualified Control.Exception               as IOExc
 import           Effectful.Exception
+import           Effectful.Error.Static (tryError, rethrowError)
+import           Effectful.Timeout (Timeout)
 import           Control.Monad
 import           Control.Concurrent
 import           Control.Concurrent.Async
@@ -658,10 +660,11 @@ timeToKillItself = Seconds 5
 
 Everything that is the same for every worker happens here: working out the
 worker id, the limits and the RTS options ('workerSpecFor'), registering the
-process while it runs, reporting what it used, and turning a failure reported
-by the worker itself into an 'AppError'.
+process while it runs, reporting what it used, turning a failure reported
+by the worker itself into an 'AppError' and remembering the workers that 
+exceeded their limits ('rememberLimitProblems').
 -}
-runWorker :: (ValidatorIO es, TheBinary r)
+runWorker :: (ValidatorIO es, Timeout :> es, TheBinary r)
             => AppContext s
             -> WorkerParams
             -> Maybe Seconds -- ^ wall-clock timeout, if it is not the configured one
@@ -674,13 +677,50 @@ runWorker appContext@AppContext {..} params timeoutOverride = do
     workerInput <- makeWorkerInput appContext spec (Timebox timeout)
     workerInfo  <- newWorkerInfo workerKind timeout (convert $ show workerId)
 
-    wr@WorkerResult {..} <- runWorkerProcess logger workerInput cliArguments workerInfo
+    -- The worker watches its own timeout and exits when it runs out, so normally
+    -- this one never fires. It is the parent's backstop for when the worker can't
+    -- do that -- otherwise there is nothing to stop the caller waiting on a wedged
+    -- process until the leftovers cleanup happens to reap it.
+    let backstop = timeout + timeToKillItself
+    wr@WorkerResult {..} <- 
+        rememberLimitProblems appContext name $ 
+            timeoutVT backstop 
+                (runWorkerProcess logger workerInput cliArguments workerInfo)
+                (do 
+                    let message = [i|Worker #{workerId} didn't finish after #{backstop}.|]
+                    logError logger message
+                    trace WorkerTimeoutTrace
+                    appError $ InternalE $ WorkerTimeout message)
     case payload of
         Left (ErrorResult e) -> appError $ InternalE $ WorkerError e
         Right r -> do
             logWorkerDone logger workerId wr
             pushSystem logger $ resourceUsageMetric name clockTime stats
             pure r
+
+{- | Remember the error of a worker that exceeded one of its limits, so that it
+     is shown with the common validations (see 'workerLimitProblems'). It is
+     forgotten after the next run of the same kind of worker in the same scope,
+     unless that one exceeds its limits too.
+-}
+rememberLimitProblems :: ValidatorIO es => AppContext s -> Text -> Eff es r -> Eff es r
+rememberLimitProblems AppContext {..} name work = do
+    scope <- (^. #validationScope) <$> askScopes
+    r <- tryError @AppError work
+    let problem = case r of 
+            Left (_, e) | exceededLimit e -> Just $ mError scope e
+            _                             -> Nothing
+    liftIO $ atomically $ modifyTVar' (appState ^. #workerLimits) $ 
+        Map.alter (const problem) (name, scope)
+    either (uncurry rethrowError) pure r
+  where
+    exceededLimit = \case
+        InternalE (WorkerTimeout _)      -> True
+        InternalE (WorkerOutOfCpuTime _) -> True
+        InternalE (WorkerOutOfMemory _)  -> True
+        InternalE (WorkerTooMuchIO _)    -> True
+        InternalE (WorkerTxTimeout _)    -> True
+        _                                -> False
 
 -- Start the worker process itself, stream its logs to the parent and 
 -- make sense of the way it exited.

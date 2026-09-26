@@ -8,9 +8,6 @@ module RPKI.Workflow (
     rollBackLongTransactions
 ) where
 
-import           Effectful                       (Eff, (:>))
-import           Effectful.Timeout               (Timeout)
-
 import           Control.Concurrent              as Conc
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
@@ -465,11 +462,18 @@ runAll appContext@AppContext {..} tals = do
       where
         processTALs = do
             (z, workerVS) <- runValidationWorker worldVersion talsToValidate
+
+            -- Workers that exceeded their limits are not about any TA, 
+            -- so they go to the common validations of the version.
+            limitsVS <- atomically $ (\problems -> mempty & typed .~ problems) 
+                                        <$> workerLimitProblems appState
+
             let reportError message = do 
                     logError logger message
+                    let commonVS = workerVS <> limitsVS
                     DB.rwTxT database $ \tx -> do
-                        DB.saveValidationVersion tx worldVersion mempty workerVS
-                    updatePrometheus (workerVS ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion
+                        DB.saveValidationVersion tx worldVersion mempty commonVS
+                    updatePrometheus (commonVS ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion
                     pure (mempty, mempty)
 
             case z of 
@@ -482,13 +486,15 @@ runAll appContext@AppContext {..} tals = do
 
                     -- The worker has saved the version, SLURM is read and
                     -- stored for it here since the worker doesn't read files.
+                    -- Workers' limit problems are added to it here as well.
                     (slurmVS, maybeSlurm) <- reReadSlurm appContext
-                    when (isJust maybeSlurm || slurmVS /= mempty) $
+                    let commonVS = slurmVS <> limitsVS
+                    when (isJust maybeSlurm || commonVS /= mempty) $
                         DB.rwTxT database $ \tx -> do
                             for_ maybeSlurm $ DB.saveSlurm tx worldVersion
-                            DB.addCommonValidations tx worldVersion slurmVS
+                            DB.addCommonValidations tx worldVersion commonVS
 
-                    let topDownState = workerVS <> vs <> slurmVS
+                    let topDownState = workerVS <> vs <> commonVS
                     logDebug logger [i|Validation result: 
 #{formatValidations (topDownState ^. typed)}.|]
                     updatePrometheus (topDownState ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion                        
@@ -609,31 +615,12 @@ runAll appContext@AppContext {..} tals = do
     --     
     runValidationWorker worldVersion talsToValidate =
         runValidatorIO (newScopes "validator") $
-            withWorkerTimeout appContext ValidationWorker "Validation" $
-                runWorker appContext ValidationParams {..} Nothing
+            runWorker appContext ValidationParams {..} Nothing
 
     runCleanUpWorker worldVersion = 
-        runValidatorIO (newScopes "cache-clean-up") $ 
-            withWorkerTimeout appContext CacheCleanupWorker "Cache cleanup" $ do
-                CacheCleanupResult r <- runWorker appContext (CacheCleanupParams worldVersion) Nothing
-                pure r
-
-
-{- | A worker watches its own timeout and exits when it runs out, so normally
-     this never fires. It is the parent's backstop for when the worker can't do
-     that -- otherwise there is nothing to stop the workflow waiting on a wedged
-     process until the leftovers cleanup happens to reap it. The fetchers in
-     'RPKI.Fetch.Fetch' are wrapped the same way.
--}
-withWorkerTimeout :: (ValidatorIO es, Timeout :> es) 
-                    => AppContext s -> WorkerType -> Text.Text -> Eff es a -> Eff es a
-withWorkerTimeout AppContext {..} workerType what work = do
-    let totalTimeout = workerTypeLimits config workerType ^. #workerTimeout + timeToKillItself
-    timeoutVT totalTimeout work $ do
-        let message = [i|#{what} worker didn't finish after #{totalTimeout}.|]
-        logError logger message
-        trace WorkerTimeoutTrace
-        appError $ InternalE $ WorkerTimeout message
+        runValidatorIO (newScopes "cache-clean-up") $ do
+            CacheCleanupResult r <- runWorker appContext (CacheCleanupParams worldVersion) Nothing
+            pure r
 
 
 {- | The main process's side of transaction timeouts. A worker with a transaction 
