@@ -1,6 +1,4 @@
-{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE OverloadedStrings    #-}
 
 module RPKI.RSC.Verifier where
 

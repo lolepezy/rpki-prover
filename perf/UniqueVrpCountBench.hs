@@ -1,6 +1,3 @@
-{-# LANGUAGE BangPatterns      #-}
-{-# LANGUAGE OverloadedStrings #-}
-
 -- | How long it takes to count distinct VRPs, per TA and over all TAs.
 --
 -- Both numbers go into the metrics of every validation run, and the validation

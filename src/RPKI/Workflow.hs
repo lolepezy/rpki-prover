@@ -1,7 +1,5 @@
 {-# LANGUAGE StrictData           #-}
-{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE OverloadedStrings    #-}
 
 module RPKI.Workflow (
     runValidatorWorkflow,

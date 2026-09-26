@@ -1,5 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE StrictData        #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Fetch.DirectoryTraverse where
 

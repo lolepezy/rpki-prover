@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Parse.Internal.CRL where
     
 import           Effectful

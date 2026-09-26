@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Parse.Parse (
     module RPKI.Parse.Internal.Common,
     module RPKI.Parse.Internal.Cert,

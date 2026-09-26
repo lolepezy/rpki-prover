@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings   #-}
-
 module RPKI.RRDP.UpdateSpec where
 
 import           Control.Lens

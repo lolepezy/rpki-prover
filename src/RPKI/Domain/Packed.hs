@@ -1,7 +1,4 @@
-{-# LANGUAGE DerivingVia           #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE UndecidableInstances  #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | The packed, unboxed representations of a VRP, one per address family.
 module RPKI.Domain.Packed (

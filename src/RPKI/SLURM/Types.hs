@@ -1,6 +1,5 @@
-{-# LANGUAGE CPP                #-}
-{-# LANGUAGE StrictData         #-}
-{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE CPP        #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.SLURM.Types where
 

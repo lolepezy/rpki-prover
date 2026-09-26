@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.RRDP.Parse.Xeno where
 
 import           Control.Monad.Primitive

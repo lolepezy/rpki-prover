@@ -1,7 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE OverloadedLabels  #-}
-{-# LANGUAGE RecordWildCards   #-}
-
 -- | Standalone benchmark for `loadObjectsFromFS`: reading, parsing and saving
 -- every object of an rsync-ed tree on local disk, what the rsync fetcher does
 -- after downloading.

@@ -1,6 +1,4 @@
-{-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE FlexibleInstances    #-}
 
 module RPKI.Util where
 

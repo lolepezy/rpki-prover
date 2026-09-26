@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.ParallelSpec where
 
 import           Control.Concurrent      (threadDelay)

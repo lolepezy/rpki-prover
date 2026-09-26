@@ -1,6 +1,3 @@
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE NumericUnderscores  #-}
-
 module RPKI.Fetch.ErikSpec where
 
 import           RPKI.TestCommons

@@ -3,7 +3,6 @@
 -- handlers). GHC2024 implies MonoLocalBinds, which would pin the unsignatured
 -- ones to the enclosing stack; turn it off so they generalise over `es`.
 {-# LANGUAGE NoMonoLocalBinds     #-}
-{-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE StrictData           #-}
 {-# LANGUAGE UndecidableInstances #-}
 

@@ -1,5 +1,4 @@
-{-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE StrictData           #-}
+{-# LANGUAGE StrictData #-}
 
 -- | Manifest shortcuts: making them from validated objects, deciding how to
 -- validate a manifest with them, and writing them to the database.

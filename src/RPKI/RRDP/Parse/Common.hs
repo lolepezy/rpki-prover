@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.RRDP.Parse.Common where
 
 import           Control.Monad.ST

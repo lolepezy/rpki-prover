@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Validation.TopDownSpec where
 
 import           Effectful
