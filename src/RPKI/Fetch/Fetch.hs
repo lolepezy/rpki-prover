@@ -42,7 +42,7 @@ import           RPKI.Util
 import           RPKI.Rsync
 import           RPKI.Fetch.Http
 import           RPKI.Fetch.Erik.ErikRelay
-import           RPKI.Worker (ErikFetchStat, timeToKillItself)
+import           RPKI.Worker (ErikFetchStat)
 import           RPKI.TAL
 import           RPKI.RRDP.RrdpFetch
 
@@ -145,34 +145,21 @@ fetchRepository
   where
     repoURL = getRpkiURL repo    
 
+    -- The worker's own timeout, and the parent's backstop for it, 
+    -- are taken care of by 'runWorker'.
     fetchRrdpRepository r = do 
-        let totalTimeout = fetchConfig ^. #rrdpTimeout + timeToKillItself
-        timeoutVT totalTimeout
-            (do
-                (z, elapsed) <- timedMS $ fromTryM 
-                                    (RrdpE . UnknownRrdpProblem . fmtEx) 
-                                    (runRrdpFetchWorker appContext fetchConfig worldVersion r)
-                logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
-                pure z)            
-            (do 
-                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{totalTimeout}.|]
-                trace WorkerTimeoutTrace
-                appError $ RrdpE $ RrdpDownloadTimeout totalTimeout)
+        (z, elapsed) <- timedMS $ fromTryM 
+                            (RrdpE . UnknownRrdpProblem . fmtEx) 
+                            (runRrdpFetchWorker appContext fetchConfig worldVersion r)
+        logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
+        pure z
 
     fetchRsyncRepository r = do 
-        let totalTimeout = fetchConfig ^. #rsyncTimeout + timeToKillItself
-        timeoutVT 
-            totalTimeout
-            (do
-                (z, elapsed) <- timedMS $ fromTryM 
-                                    (RsyncE . UnknownRsyncProblem . fmtEx) 
-                                    (runRsyncFetchWorker appContext fetchConfig worldVersion r)
-                logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
-                pure z)
-            (do 
-                logError logger [i|Couldn't fetch repository #{getURL repoURL} after #{totalTimeout}.|]
-                trace WorkerTimeoutTrace
-                appError $ RsyncE $ RsyncDownloadTimeout totalTimeout)        
+        (z, elapsed) <- timedMS $ fromTryM 
+                            (RsyncE . UnknownRsyncProblem . fmtEx) 
+                            (runRsyncFetchWorker appContext fetchConfig worldVersion r)
+        logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
+        pure z
           
 
 
@@ -223,18 +210,11 @@ fetchRepositoryFromErikRelays
     fqdn = do        
         logInfo logger [i|Fetching #{fqdn} from #{length relays} Erik relay(s).|]           
 
-        let totalTimeout = fetchConfig ^. #erikTimeout + timeToKillItself
-        timeoutVT totalTimeout
-            (do
-                (z, elapsed) <- timedMS $ fromTryM 
-                                    (ErikE . UnknownErikProblem . fmtEx) 
-                                    (runErikFetchWorker appContext fetchConfig worldVersion relays fqdn)
-                logInfo logger [i|Fetched #{fqdn} from Erik relays, took #{elapsed}ms.|]
-                pure z)            
-            (do 
-                logError logger [i|Couldn't fetch repository #{fqdn} from Erik relays after #{totalTimeout}.|]
-                trace WorkerTimeoutTrace
-                appError $ ErikE $ ErikDownloadTimeout totalTimeout)
+        (z, elapsed) <- timedMS $ fromTryM 
+                            (ErikE . UnknownErikProblem . fmtEx) 
+                            (runErikFetchWorker appContext fetchConfig worldVersion relays fqdn)
+        logInfo logger [i|Fetched #{fqdn} from Erik relays, took #{elapsed}ms.|]
+        pure z
 
 
 getPrimaryRepositoryUrl :: PublicationPoints 

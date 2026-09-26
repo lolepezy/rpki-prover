@@ -11,8 +11,12 @@ import           Data.Maybe (fromMaybe)
 
 import qualified Data.ByteString                  as BS
 
+import           Data.Foldable                    (toList)
 import           Data.Set                         (Set)
+import qualified Data.Set                         as Set
 import qualified Data.Map.Strict                  as Map
+import qualified Data.Map.Monoidal.Strict         as MonoidalMap
+import           Data.Text                        (Text)
 import           GHC.Generics
 import           System.Posix.Types
 import           RPKI.AppMonad
@@ -22,7 +26,7 @@ import           RPKI.Logging
 import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
 import           RPKI.Repository
-import           RPKI.Reporting (Validations)
+import           RPKI.Reporting
 import           RPKI.Time
 import           Data.Hourglass (Seconds(..))
 import           RPKI.Metrics.System
@@ -75,10 +79,15 @@ data AppState = AppState {
 
         fetcheables :: TVar Fetcheables,
 
-        -- Problems of the main process that are not about any TA, e.g. a 
-        -- transaction that had to be rolled back, waiting to be added to the 
+        -- Problems of the main process that are not about any TA, e.g. a
+        -- transaction that had to be rolled back, waiting to be added to the
         -- common validations of the latest version (see 'RPKI.Workflow.reportSystemProblem').
-        systemProblems :: TVar Validations
+        systemProblems :: TVar Validations,
+
+        -- Workers whose last run exceeded one of their limits, keyed by
+        -- the worker type name and the scope the worker ran in, see
+        -- 'workerLimitProblems'.
+        workerLimits :: TVar (Map.Map (Text, VScope) Validations)
         
     } deriving stock (Generic)
 
@@ -202,9 +211,28 @@ newAppState = do
         fetcheables <- newTVar mempty
         systemProblems <- newTVar mempty
         erikRelayHealth <- newTVar mempty
+        workerLimits <- newTVar mempty
         let readSlurm = Nothing
         pure AppState {..}
                     
+
+{- | Errors of the workers whose last run exceeded one of their limits.
+
+   They are not associated with any TA and every validation version adds them
+   to its common validations, so that they show up in the UI and in
+   /api/validations. An error stays there until the same kind of worker runs
+   in the same scope again and doesn't exceed its limits (see 'runWorker'), 
+   or until the repository it was fetching is not fetched anymore.
+-}
+workerLimitProblems :: AppState -> STM Validations
+workerLimitProblems AppState {..} = do
+    Fetcheables fs <- readTVar fetcheables
+    let fetched = Set.fromList $ concat [ url : toList fallbacks | (url, fallbacks) <- MonoidalMap.toList fs ]
+    let stillFetched (_, Scope scope) = 
+            all (`Set.member` fetched) [ url | RepositoryFocus url <- toList scope ]
+    problems <- Map.filterWithKey (\k _ -> stillFetched k) <$> readTVar workerLimits
+    writeTVar workerLimits problems
+    pure $ mconcat $ Map.elems problems
 
 newWorldVersion :: IO WorldVersion
 newWorldVersion = instantToVersion . unNow <$> thisInstant        
