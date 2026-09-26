@@ -1,4 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 module RPKI.Validation.BottomUp where
@@ -50,7 +49,6 @@ validateBottomUp
                     $ fmap mconcat 
                     $ forM parentCerts $ \pc -> do 
                         pathsToRoot <- findPathsToRoot db pc
-                        -- certPath <- reverse . (pc :) <$> findPathsToRoot db pc
                         forM pathsToRoot $ \path -> do
                             let topDownPath = reverse $ pc : path
                             validateTopDownAlongPath db topDownPath

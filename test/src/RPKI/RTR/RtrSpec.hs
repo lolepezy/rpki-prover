@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings   #-}
-
 module RPKI.RTR.RtrSpec where
 
 import           Control.Monad

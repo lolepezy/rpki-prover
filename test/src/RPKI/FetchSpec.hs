@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.FetchSpec where
 
 import           Data.Text (Text)

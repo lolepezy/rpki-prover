@@ -46,6 +46,7 @@ common shared
     , TemplateHaskell
     , ViewPatterns
     , OverloadedRecordDot
+    , OverloadedStrings
   default-language: GHC2024
   ghc-options:
       -j8 +RTS -A256m -AL512m -n4m -qb0 -qn6 -RTS
@@ -160,6 +161,7 @@ library
       RPKI.AppState
       RPKI.AppTypes
       RPKI.Config
+      RPKI.Cpu
       RPKI.Domain
       RPKI.Domain.Packed
       RPKI.Fetch.DirectoryTraverse
@@ -233,6 +235,9 @@ library
       RPKI.Validation.ObjectValidation
       RPKI.Validation.ResourceValidation
       RPKI.Validation.TopDown
+      RPKI.Validation.TopDown.Context
+      RPKI.Validation.TopDown.Shortcuts
+      RPKI.Validation.TopDown.TaCert
       RPKI.Validation.Types
       RPKI.Meta.GitVersionInfo
       RPKI.Meta.Version
@@ -316,6 +321,7 @@ test-suite rpki-prover-test
       RPKI.LoggingSpec
       RPKI.Metrics.ProcessSpec
       RPKI.Orphans
+      RPKI.ParallelSpec
       RPKI.Parse.ObjectParseSpec
       RPKI.RepositorySpec
       RPKI.Resources.ResourcesSpec
@@ -363,6 +369,25 @@ benchmark save-snapshot-bench
     import:          shared
     type:            exitcode-stdio-1.0
     main-is:         SaveSnapshotBench.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -threaded
+            -rtsopts
+            -O2
+            "-with-rtsopts=-N -T"
+    build-depends:
+            rpki-prover
+          , directory
+          , filepath
+          , temporary
+
+benchmark load-objects-bench
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         LoadObjectsBench.hs
     other-modules:
             Paths_rpki_prover
     hs-source-dirs:

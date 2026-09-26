@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.RepositorySpec where
 
 import Control.Monad (replicateM)

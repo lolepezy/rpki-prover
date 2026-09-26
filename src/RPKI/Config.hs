@@ -1,5 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE StrictData        #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Config where
 
@@ -285,8 +284,14 @@ defaultConfig = Config {
         relays              = [],
         maxSize             = Size $ 20 * 1024 * 1024,
         parallelism         = 8,
-        relayParallelism    = 3,
-        fqdnParallelism     = 10,
+        -- Up to fqdnParallelism * relayParallelism downloads can be in flight
+        -- against one relay, 32 here. A download is mostly round trips, so a
+        -- big FQDN takes time inversely proportional to relayParallelism:
+        -- rpki.afrinic.net takes 69s with 3 and 27s with 8. A relay 4ms away
+        -- answered in ~12ms with anything up to 16 of our downloads in flight,
+        -- and started to queue them somewhere above 24.
+        relayParallelism    = 8,
+        fqdnParallelism     = 4,
         downloadTimeout     = Seconds 10,
         erikRefreshInterval = Seconds 30
     },

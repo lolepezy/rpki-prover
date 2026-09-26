@@ -1,7 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE OverloadedLabels  #-}
-{-# LANGUAGE RecordWildCards   #-}
-
 -- | Standalone (non-criterion) benchmark for `validateMutlipleTAs`: the
 -- top-down validation entry point that fetches, parses and validates the
 -- whole RPKI tree for a set of TAs. Criterion isn't a good fit here for the
@@ -20,20 +16,37 @@
 -- data instead of a cold, empty cache.
 --
 -- Usage:
---   cabal run validate-tas-bench -- [benchRoot] [repeats]
+--   cabal run validate-tas-bench -- [benchRoot] [repeats] [--now=UNIX_SECONDS]
 --   cabal run validate-tas-bench -- /path/to/bench-root 3 +RTS -N8 -RTS
+--
+-- `--now` validates as of that moment instead of the current one, so that
+-- runs over a copy of a cache see the same objects valid or expired and
+-- their results can be compared.
+--
+-- `--dump=DIR` writes what the validation produced into DIR (DIR/<run> for
+-- more than one run) as sorted text, one item per line and without timings,
+-- so that two builds can be compared with `diff`; see perf/topdown-diff.sh.
+--
+-- `--debug` logs TopDown's counters of the paths it took.
+--
+-- `--full`, `--reconsidered` and `--strict-manifests` are what
+-- `--no-incremental-validation`, `--allow-overclaiming` and
+-- `--strict-manifest-validation` are to the program.
 module Main where
 
 import           Control.Concurrent.STM  (newTVarIO)
 import           Control.Lens            ((&), (.~), (^.))
-import           Control.Monad           (forM, forM_, unless)
+import           Control.Monad           (forM, forM_, unless, (<=<))
 
 import qualified Data.ByteString.Lazy     as LBS
 import           Data.Either              (rights)
 import           Data.Int                 (Int64)
+import           Data.Maybe               (listToMaybe)
 import qualified Data.List                as List
+import           Data.Map.Strict          (Map)
 import qualified Data.Map.Strict          as Map
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
+import qualified Data.Set                 as Set
 import qualified Data.Text                as Text
 
 import           GHC.Clock               (getMonotonicTimeNSec)
@@ -44,22 +57,23 @@ import           System.Directory        (createDirectoryIfMissing, doesFileExis
 import           System.CPUTime          (getCPUTime)
 import           System.Environment      (getArgs)
 import           System.FilePath         ((</>))
+import           Debug.Trace             (traceMarkerIO)
 import           Text.Printf             (printf)
 
 import           RPKI.AppContext
-import           RPKI.AppMonad           (runValidatorT)
 import           RPKI.AppState           (instantToVersion, newAppState)
-import           RPKI.AppTypes           (Size (..))
+import           RPKI.AppTypes           (Count (..), Size (..), WorldVersion)
 import           RPKI.Config
-import           RPKI.Domain             (TaName (..), URI (..), estimateVrpCountRoas)
+import           RPKI.Domain             (Roas (..), TaName (..), URI (..), ValidationRFC (..), estimateVrpCountRoas)
 import           RPKI.Logging
 import           RPKI.Meta.UniqueId      (thisExecutableVersion)
 import           RPKI.Messages           (formatValidations)
-import           RPKI.Reporting          (Validations (..), newScopes, MetricMap (..), Count (..))
-import           RPKI.RRDP.Http          (downloadToFile)
+import           RPKI.Fetch.Http         (downloadToFile)
+import           RPKI.Reporting          (Validations (..), MetricMap (..))
 import           RPKI.Store.AppSqliteStorage
+import qualified RPKI.Store.Database     as DB
 import           RPKI.TAL                (TAL, getTaName, parseTAL)
-import           RPKI.Time               (thisInstant, unNow, TimeMs (..))
+import           RPKI.Time               (Instant (..), thisInstant, unNow, TimeMs (..))
 import           RPKI.Util               (convert, parseRsyncURL)
 import           RPKI.Validation.TopDown (TopDownResult (..), validateMutlipleTAs)
 
@@ -77,8 +91,20 @@ defaultRepeats = 3
 
 main :: IO ()
 main = do
-    args <- getArgs
-    let (benchRoot, repeats) = case args of
+    (flags, args) <- List.partition ("--" `List.isPrefixOf`) <$> getArgs
+    let knownFlag f = f `elem` ["--full", "--reconsidered", "--strict-manifests", "--debug"]
+                   || any (`List.isPrefixOf` f) ["--now=", "--dump="]
+    -- A mistyped flag would quietly compare the wrong things
+    case filter (not . knownFlag) flags of
+        []      -> pure ()
+        unknown -> error $ "Unknown flags: " <> unwords unknown
+
+    let fixedNow = listToMaybe
+            [ Instant (seconds * 1_000_000_000)
+            | Just seconds <- map (readMaybe <=< List.stripPrefix "--now=") flags ]
+        dumpDir = listToMaybe [ d | Just d <- map (List.stripPrefix "--dump=") flags ]
+        hasFlag f = f `elem` flags
+        (benchRoot, repeats) = case args of
             []          -> (defaultBenchRoot, defaultRepeats)
             [r]         -> (r, defaultRepeats)
             (r : n : _) -> (r, maybe defaultRepeats id (readMaybe n))
@@ -90,7 +116,9 @@ main = do
 
     mapM_ (createDirectoryIfMissing True) [cacheDir, talDir, rsyncDir, tmpDir]
 
-    withLogger (newLogConfig InfoL MainLog) $ \logger -> do
+    -- At debug level validation only adds TopDown's counters of what it did
+    let logLevel = if hasFlag "--debug" then DebugL else InfoL
+    withLogger (newLogConfig logLevel MainLog) $ \logger -> do
         tals <- ensureTals logger talDir
 
         cpuCount_ <- fromIntegral <$> getNumCapabilities
@@ -104,10 +132,26 @@ main = do
                     & #rsyncConf . #prefetchUrls .~ prefetchUrls
                     & #rrdpConf  . #tmpRoot   .~ Public tmpDir
                     & #parallelism            .~ newParallelism cpuCount_
+                    -- What the program runs with unless --no-incremental-validation
+                    -- is given, `defaultConfig` has the other one
+                    & #validationConfig . #validationAlgorithm .~
+                        (if hasFlag "--full" then FullEveryIteration else Incremental)
+                    & #validationConfig . #validationRFC .~
+                        (if hasFlag "--reconsidered" then ReconsideredRFC else StrictRFC)
+                    & #validationConfig . #manifestProcessing .~
+                        (if hasFlag "--strict-manifests" then RFC6486_Strict else RFC9286)
 
-        (dbResult, _) <- runValidatorT (newScopes "validate-tas-bench-db") $
-            setupSqliteCache UseExisting logger cacheDir config
-        db <- either (\e -> error $ "Failed to set up SQLite cache: " <> show e) pure dbResult
+        -- An incompatible cache gets wiped, which would quietly turn this into
+        -- a benchmark of validating nothing.
+        (_, dbCheck) <- createSqliteDatabase cacheDir config False True
+        case dbCheck of
+            WasIncompatible -> error $ "The cache in " <> cacheDir <> " is of another version and was wiped."
+            _               -> pure ()
+
+        -- Opened as the validation worker opens it: workers leave checkpointing 
+        -- the WAL to the main process, and a checkpoint on commit would stall 
+        -- the writer of manifest shortcuts for up to a second.
+        db <- openExistingSqliteDatabase cacheDir config
 
         appState <- newAppState
         database <- newTVarIO db
@@ -121,8 +165,9 @@ main = do
         printf "capabilities (RTS -N): %d, +RTS -T stats enabled: %s\n" caps (show statsEnabled)
         printf "repeats: %d\n\n" repeats
 
-        forM_ [1 .. repeats] $ \i ->
-            runIteration i appContext tals
+        forM_ [1 .. repeats] $ \i -> do
+            let dumpTo d = if repeats == 1 then d else d </> show i
+            runIteration i appContext fixedNow (dumpTo <$> dumpDir) tals
   where
     readMaybe s = case reads s of
         [(n, "")] -> Just n
@@ -149,19 +194,22 @@ ensureTals logger talDir =
     dropTalExtension f = take (length f - 4) f
 
 
-runIteration :: Int -> AppContext SqliteBackend -> [TAL] -> IO ()
-runIteration i appContext tals = do
-    now <- unNow <$> thisInstant
+runIteration :: Int -> AppContext SqliteBackend -> Maybe Instant -> Maybe FilePath -> [TAL] -> IO ()
+runIteration i appContext fixedNow dumpDir tals = do
+    now <- maybe (unNow <$> thisInstant) pure fixedNow
     let worldVersion = instantToVersion now
 
     statsEnabled <- getRTSStatsEnabled
     statsBefore  <- if statsEnabled then Just <$> getRTSStats else pure Nothing
 
+    -- Markers bracket the run in the eventlog (`+RTS -l`)
+    traceMarkerIO "validation start"
     cpu0  <- getCPUTime
     wall0 <- getMonotonicTimeNSec
     results <- validateMutlipleTAs appContext worldVersion tals
     wall1 <- getMonotonicTimeNSec
     cpu1  <- getCPUTime
+    traceMarkerIO "validation end"
 
     caps <- getNumCapabilities
     let wallSec = fromIntegral (wall1 - wall0) / 1e9 :: Double
@@ -198,21 +246,12 @@ runIteration i appContext tals = do
 
     printf "          %d TAs validated, %d total VRPs\n" (Map.size results) totalVrps
 
-    -- Aggregate wall-clock time metrics the app already tracks per fetch/validation
-    -- phase (see RPKI.Reporting: RrdpMetric.downloadTimeMs/saveTimeMs, RsyncMetric,
-    -- ValidationMetric.totalTimeMs), summed across all repositories/TAs. These are
-    -- wall-clock, and phases run concurrently (across repos, and within a TA's
-    -- object tree), so sums don't add up to the run's wall time -- but the relative
-    -- split (fetch/network vs parse+store vs the rest of top-down, i.e. signature
-    -- verification and tree walking) is exactly what tells us where to look next.
+    -- Validation works with the cache only, so the one time metric here is
+    -- ValidationMetric.totalTimeMs, summed across TAs. TAs are validated
+    -- concurrently, so the sum doesn't add up to the run's wall time.
     let topDownMetric = allValidations ^. #topDownMetric
-        rrdpMs   = MonoidalMap.elems $ unMetricMap (topDownMetric ^. #rrdpMetrics)
-        rsyncMs  = MonoidalMap.elems $ unMetricMap (topDownMetric ^. #rsyncMetrics)
         validMs  = MonoidalMap.elems $ unMetricMap (topDownMetric ^. #validationMetrics)
 
-        totalDownloadMs = sum [ unTimeMs (m ^. #downloadTimeMs) | m <- rrdpMs ]  :: Int64
-        totalRrdpSaveMs = sum [ unTimeMs (m ^. #saveTimeMs)     | m <- rrdpMs ]  :: Int64
-        totalRsyncMs    = sum [ unTimeMs (m ^. #totalTimeMs)    | m <- rsyncMs ] :: Int64
         totalValidateMs = sum [ unTimeMs (m ^. #totalTimeMs)    | m <- validMs ] :: Int64
 
         totalCerts     = sum [ unCount (m ^. #validCertNumber)   | m <- validMs ] :: Int64
@@ -221,10 +260,57 @@ runIteration i appContext tals = do
         totalCrls      = sum [ unCount (m ^. #validCrlNumber)    | m <- validMs ] :: Int64
         totalShortcuts = sum [ unCount (m ^. #mftShortcutNumber) | m <- validMs ] :: Int64
 
-    printf "          [aggregate wall-ms, summed across concurrent repos/TAs] rrdp_download=%dms rrdp_save=%dms rsync=%dms validate_total=%dms\n"
-        totalDownloadMs totalRrdpSaveMs totalRsyncMs totalValidateMs
+    printf "          [aggregate wall-ms, summed across concurrent TAs] validate_total=%dms\n"
+        totalValidateMs
     printf "          [object counts] certs=%d roas=%d mfts=%d crls=%d mft_shortcuts_hit=%d\n"
         totalCerts totalRoas totalMfts totalCrls totalShortcuts
 
     unless (null problems) $
         putStrLn $ "          validation issues:\n" <> Text.unpack (formatValidations (allValidations ^. #validations))
+
+    forM_ dumpDir $ \dir -> do
+        dumpResults dir appContext worldVersion results
+        printf "          dumped to %s\n" dir
+
+
+-- | Everything a validation produced, as sorted text with one item per line
+-- and without timings, so that runs of two builds can be compared with `diff`.
+dumpResults :: FilePath -> AppContext SqliteBackend -> WorldVersion -> Map TaName TopDownResult -> IO ()
+dumpResults dir AppContext {..} worldVersion results = do
+    createDirectoryIfMissing True dir
+    writeLines "vrps.txt"
+        [ line [ta, show k, show vrps]
+        | (ta, r) <- tas
+        , (k, vrps) <- MonoidalMap.toList $ unRoas $ r ^. #payloads . #roas ]
+    writeLines "payloads.txt" $ concat
+        [ [ line [ta, "spl",    show x] | x <- Set.toList $ r ^. #payloads . #spls ] <>
+          [ line [ta, "aspa",   show x] | x <- Set.toList $ r ^. #payloads . #aspas ] <>
+          [ line [ta, "gbr",    show x] | x <- Set.toList $ r ^. #payloads . #gbrs ] <>
+          [ line [ta, "bgpsec", show x] | x <- Set.toList $ r ^. #payloads . #bgpCerts ]
+        | (ta, r) <- tas ]
+    writeLines "issues.txt"
+        [ line [ta, show scope, show issue]
+        | (ta, r) <- tas
+        , let Validations vs = r ^. #topDownValidations . #validations
+        , (scope, issues) <- Map.toList vs
+        , issue <- Set.toList issues ]
+    writeLines "metrics.txt" $ concat
+        [ [ line [ta, show scope, show (m & #totalTimeMs .~ TimeMs 0)]
+          | (scope, m) <- MonoidalMap.toList $ unMetricMap $ metrics ^. #validationMetrics ] <>
+          [ line [ta, "vrpCounts", show $ metrics ^. #vrpCounts]
+          , line [ta, "traces", show $ r ^. #topDownValidations . #traces] ]
+        | (ta, r) <- tas
+        , let metrics = r ^. #topDownValidations . #topDownMetric ]
+    writeLines "repositories.txt"
+        [ line [ta, show (r ^. #discoveredRepositories), show (r ^. #earliestNotValidAfter)]
+        | (ta, r) <- tas ]
+
+    -- The objects marked as used by this run, i.e. the ones the cleanup would
+    -- keep. It only reads the map, writing it back unchanged.
+    validatedBy <- DB.rwTxT database $ \tx -> DB.updateValidatedByVersionMap tx id
+    writeLines "visited.txt"
+        [ show k | (k, v) <- Map.toList validatedBy, v == worldVersion ]
+  where
+    tas = [ (Text.unpack $ unTaName ta, r) | (ta, r) <- Map.toList results ]
+    line = List.intercalate "\t"
+    writeLines f = writeFile (dir </> f) . unlines

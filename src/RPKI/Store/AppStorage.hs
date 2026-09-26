@@ -1,5 +1,3 @@
-{-# LANGUAGE FlexibleInstances #-}
-
 module RPKI.Store.AppStorage where
 
 import RPKI.AppContext
