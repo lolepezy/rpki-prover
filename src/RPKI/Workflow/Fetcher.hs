@@ -272,7 +272,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
          
 
         fetchFallbacks worldVersion fallbacks = do 
-            -- TODO Make it a bit smarter based on the overal number and overall load
+            -- TODO Make it a bit smarter based on the overall number and overall load
             let maxThreads = 32
             repositories <- pooledForConcurrentlyN maxThreads (Set.toList fallbacks) $ \fallbackUrl -> do 
 
@@ -362,7 +362,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         in any (\m -> rrdpRepoHasSignificantUpdates (m ^. typed)) rrdps ||
            any (\m -> rsyncRepoHasSignificantUpdates (m ^. typed)) rsyncs
 
-    triggerTaRevalidationIf condition = atomically $ do 
+    -- In the one-off mode there is no next round, so every finished fetch has 
+    -- to be able to unblock the validation, whether it found anything or not.
+    triggerTaRevalidationIf condition = atomically $ 
         case config ^. #proverRunMode of         
             OneOffMode _ -> trigger
             ServerMode   -> when condition trigger                

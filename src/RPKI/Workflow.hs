@@ -300,9 +300,9 @@ runAll appContext@AppContext {..} tals = do
 
             let delayInSeconds = delay `div` 1_000_000
             let delayText :: Text.Text 
-                    | delay == 0 = [i|for ASAP execution|] 
-                    | delay < 0  = [i|for ASAP execution (it is #{-delayInSeconds}s due)|] 
-                    | otherwise  = [i|with initial delay #{delayInSeconds}s|]
+                delayText | delay == 0 = [i|for ASAP execution|] 
+                          | delay < 0  = [i|for ASAP execution (it is #{-delayInSeconds}s due)|] 
+                          | otherwise  = [i|with initial delay #{delayInSeconds}s|]
             logDebug logger [i|Scheduling task '#{name}' #{delayText} and interval #{interval}.|] 
 
             when (delay > 0) $
@@ -577,7 +577,7 @@ runValidation :: AppContext s
             -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire))
 runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames = do           
 
-    results <- validateMutlipleTAs appContext worldVersion talsToValidate
+    results <- validateMultipleTAs appContext worldVersion talsToValidate
 
     -- Save all the results into the database. SLURM is not read here, the 
     -- main process applies it after re-reading the payloads.
@@ -691,12 +691,12 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                 ]        
           where
             manifestIntegrityError = \case                
-                VErr (ValidationE e)             -> isRefentialIntegrityError e
-                VWarn (VWarning (ValidationE e)) -> isRefentialIntegrityError e                    
+                VErr (ValidationE e)             -> isReferentialIntegrityError e
+                VWarn (VWarning (ValidationE e)) -> isReferentialIntegrityError e                    
                 _                                -> False
               where
-                isRefentialIntegrityError = \case
-                    MftFallback (ValidationE e) _    -> isRefentialIntegrityError e
+                isReferentialIntegrityError = \case
+                    MftFallback (ValidationE e) _    -> isReferentialIntegrityError e
                     ManifestEntryDoesn'tExist _ _    -> True
                     NoCRLExists _ _                  -> True                
                     ManifestEntryHasWrongFileType {} -> True                
@@ -770,7 +770,7 @@ runCacheCleanup appContext@AppContext {..} worldVersion = do
                     CRL -> tooOldShortLived version
                     _   -> tooOldLongLived version,
 
-            -- We don't want the warning about multiple lcoations to hang around for too long
+            -- We don't want the warning about multiple locations to hang around for too long
             objectUrlIsTooOld = tooOldShortLived
         }
 
