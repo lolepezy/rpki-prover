@@ -23,7 +23,6 @@ import qualified Data.ByteString.Lazy            as LBS
 
 import           Data.Foldable                   (for_)
 import qualified Data.Text                       as Text
-import qualified Data.List                       as List
 import qualified Data.List.NonEmpty              as NonEmpty
 import           Data.Map.Strict                 (Map)
 import qualified Data.Map.Strict                 as Map
@@ -165,10 +164,13 @@ data Task =
 
 
 data Scheduling = Scheduling {        
+        task         :: Task,
         initialDelay :: Int,
         interval     :: Seconds,
-        taskDef      :: (Task, WorldVersion -> JobRun -> IO ()),
-        persistent   :: Bool        
+        -- Whether the completion time is stored in the database, so that
+        -- the interval survives restarts instead of starting over.
+        persistent   :: Bool,
+        action       :: WorldVersion -> JobRun -> IO ()
     }
     deriving stock (Generic)
 
@@ -265,12 +267,10 @@ runAll appContext@AppContext {..} tals = do
                             scheduleNextAndLoop
           where
             scheduleNextAndLoop = do 
-                void $ forkFinally 
-                    (do              
-                        -- If this thread leaks, it's not a biggy, it will exit pretty soon           
-                        Conc.threadDelay $ toMicroseconds $ config ^. #validationConfig . #minimalRevalidationInterval
-                        atomically $ writeTVar canValidateAgain True)
-                    (logException logger "Exception in revalidation delay thread")
+                -- If this thread leaks, it's not a biggy, it will exit pretty soon           
+                forkLogged logger "Exception in revalidation delay thread" $ do              
+                    Conc.threadDelay $ toMicroseconds $ config ^. #validationConfig . #minimalRevalidationInterval
+                    atomically $ writeTVar canValidateAgain True
                 triggeredValidationLoop canValidateAgain RanBefore           
 
             waitForTasToValidate = do 
@@ -326,51 +326,51 @@ runAll appContext@AppContext {..} tals = do
         fetchedBy <- readTVarIO firstFinishedFetchBy                
         urisByTA  <- readTVarIO uriByTa
         
-        let allValidationsAreLaterThanFetches = 
-                all (\(ta, validatedBy) -> 
-                    case [ Map.lookup uri fetchedBy | uri <- IxSet.indexKeys $ IxSet.getEQ ta urisByTA ] of 
-                        [] -> False
-                        z  -> let 
-                            (fetchedAtLeastOnce, notFetched) = List.partition isJust z
-                            in case notFetched of 
-                                [] -> all (validatedBy >) $ catMaybes fetchedAtLeastOnce
-                                _  -> False
-                    ) $ perTA versions
-
-        pure allValidationsAreLaterThanFetches
+        -- Every repository of the TA must have been fetched at least once, and 
+        -- the TA must have been validated after all of those first fetches.
+        pure $ all (\(ta, validatedBy) -> 
+                let urls = IxSet.indexKeys $ IxSet.getEQ ta urisByTA
+                in not (null urls) && 
+                   all (\url -> maybe False (validatedBy >) $ Map.lookup url fetchedBy) urls
+            ) $ perTA versions
 
 
     schedules workflowShared = [            
             Scheduling {                                 
+                task         = CacheCleanupTask,
                 initialDelay = 600 * 1_000_000,
-                interval = config ^. #cacheCleanupInterval,
-                taskDef = (CacheCleanupTask, cacheCleanup workflowShared),
-                persistent = True                
+                interval     = config ^. #cacheCleanupInterval,
+                persistent   = True,
+                action       = cacheCleanup workflowShared
             },
             Scheduling {             
+                task         = RsyncCleanupTask,
                 initialDelay = 1200 * 1_000_000,
-                interval = config ^. #rsyncCleanupInterval,
-                taskDef = (RsyncCleanupTask, rsyncCleanup),
-                persistent = True
+                interval     = config ^. #rsyncCleanupInterval,
+                persistent   = True,
+                action       = rsyncCleanup
             },
             let interval = config ^. typed @ValidationConfig . #revalidationInterval
             in Scheduling {                 
+                task         = LeftoversCleanupTask,
                 initialDelay = toMicroseconds interval `div` 2,                
-                taskDef = (LeftoversCleanupTask, \_ _ -> cleanupLeftovers),
-                persistent = False,
+                persistent   = False,
+                action       = \_ _ -> cleanupLeftovers,
                 interval
             },
             Scheduling {
+                task         = TaCertificateTask,
                 initialDelay = 0,
-                interval = config ^. typed @ValidationConfig . #taCertificateRefreshInterval,
-                taskDef = (TaCertificateTask, fetchTaCertificates workflowShared),
-                persistent = False
+                interval     = config ^. typed @ValidationConfig . #taCertificateRefreshInterval,
+                persistent   = False,
+                action       = fetchTaCertificates workflowShared
             },
             let interval = config ^. typed @StorageConfig . #walCheckpointInterval
             in Scheduling {
+                task         = WalCheckpointTask,
                 initialDelay = toMicroseconds interval,
-                taskDef = (WalCheckpointTask, \_ _ -> checkpointDatabase appContext),
-                persistent = False,
+                persistent   = False,
+                action       = \_ _ -> checkpointDatabase appContext,
                 interval
             }
         ]              
@@ -383,29 +383,29 @@ runAll appContext@AppContext {..} tals = do
         persistedJobs <- DB.roTxT database $ \tx -> Map.fromList <$> DB.allJobs tx
 
         Now now <- thisInstant
-        forConcurrently_ (schedules workflowShared) $ \Scheduling { taskDef = (task, action), ..} -> do                        
+        forConcurrently_ (schedules workflowShared) $ \Scheduling {..} -> do                        
             let name = fmtGen task
-            let (delay, jobRun0) =                  
-                    if persistent
-                    then case Map.lookup name persistedJobs of 
-                        Nothing -> 
-                            (initialDelay, FirstRun)
+            -- A persistent task remembers when it last completed, so after a 
+            -- restart it waits out the rest of its interval instead of the 
+            -- initial delay, and it is not a first run any more.
+            let (delay, firstRun) = 
+                    case guard persistent >> Map.lookup name persistedJobs of 
+                        Nothing           -> (initialDelay, FirstRun)
                         Just lastExecuted -> 
                             (fromIntegral $ leftToWaitMicros (Earlier lastExecuted) (Later now) interval, RanBefore)
-                    else (initialDelay, FirstRun)
 
             let delayInSeconds = delay `div` 1_000_000
-            let delayText :: Text.Text = 
-                    case () of 
-                      _ | delay == 0 -> [i|for ASAP execution|] 
-                        | delay < 0  -> [i|for ASAP execution (it is #{-delayInSeconds}s due)|] 
-                        | otherwise  -> [i|with initial delay #{delayInSeconds}s|]                     
+            let delayText :: Text.Text 
+                    | delay == 0 = [i|for ASAP execution|] 
+                    | delay < 0  = [i|for ASAP execution (it is #{-delayInSeconds}s due)|] 
+                    | otherwise  = [i|with initial delay #{delayInSeconds}s|]
             logDebug logger [i|Scheduling task '#{name}' #{delayText} and interval #{interval}.|] 
 
             when (delay > 0) $
                 threadDelay delay
 
-            let actualAction jobRun = do
+            periodically interval firstRun $ \jobRun -> 
+                runConcurrentlyIfPossible logger task (workflowShared ^. #runningTasks) $ do 
                     logDebug logger [i|Running task '#{name}'.|]
                     worldVersion <- newWorldVersion
                     action worldVersion jobRun 
@@ -417,10 +417,6 @@ runAll appContext@AppContext {..} tals = do
                                 DB.rwTxT database $ \tx -> DB.setJobCompletionTime tx name endTime
                             updateMainResourcesStat
                             logDebug logger [i|Done with task '#{name}'.|])    
-
-            periodically interval jobRun0 $ \jobRun -> do                 
-                runConcurrentlyIfPossible logger task (workflowShared ^. #runningTasks) (actualAction jobRun) 
-                pure RanBefore
 
     updateMainResourcesStat = do
         stats <- processStat
@@ -517,7 +513,7 @@ runAll appContext@AppContext {..} tals = do
                         [i|changed = #{changed}, took #{elapsed}ms.|]
                     pure $ if changed then Just taName else Nothing
 
-        atomically $ modifyTVar' (workflowShared ^. #tasToValidate) $ \tas -> foldr Set.insert tas changedTaNames 
+        requestRevalidation (workflowShared ^. #tasToValidate) $ Set.fromList changedTaNames
 
     -- Delete objects in the store that were read by top-down validation 
     -- longer than `shortLivedCacheLifeTime` hours ago.
@@ -847,10 +843,8 @@ adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@W
                             (newFetcher appContext workflowShared url)
                             (logException logger [i|Exception in fetcher thread for #{url}|])
 
-        atomically $ do
-            modifyTVar' runningFetchers $ \r -> do 
-                let addedNewAsyncs = foldr (uncurry Map.insert) r threads
-                foldr Map.delete addedNewAsyncs $ Set.toList toStop
+        atomically $ modifyTVar' runningFetchers $ \r -> 
+            foldr Map.delete (foldr (uncurry Map.insert) r threads) (Set.toList toStop)
                         
 -- | Create a new fetcher for the given URL and run it.
 newFetcher :: AppContext s -> WorkflowShared -> RpkiURL -> IO ()
@@ -871,26 +865,18 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                     logInfo logger [i|Fetcher for #{url} is not needed and will be deleted.|]
                 Just interval -> do 
                     logDebug logger [i|Fetcher for #{url} finished, next fetch in #{interval}.|]
-                    Now end <- thisInstant
-                    let pause = leftToWaitMicros (Earlier start) (Later end) interval
-                    when (pause > 0) $
-                        threadDelay $ fromIntegral pause
-
+                    delayUntilNext start interval
                     fetchLoop 
 
+        -- A fetcher that has just been (re)started must not fetch straight away 
+        -- if the repository was fetched recently: wait out the rest of its interval.
         pauseIfNeeded now = do 
             f <- fetchableForUrl 
             for_ f $ \_ -> do 
                 r <- DB.roTxT database (\tx -> DB.getRepository tx url)
                 for_ r $ \repository -> do          
                     let status = getMeta repository ^. #status
-                    let lastFetchMoment = 
-                            case status of
-                                FetchedAt t -> Just t
-                                FailedAt t  -> Just t
-                                _           -> Nothing
-                    
-                    for_ lastFetchMoment $ \lastFetch -> do 
+                    for_ (fetchMoment status) $ \lastFetch -> do 
                         worldVersion <- newWorldVersion
                         let interval = refreshInterval (newFetchConfig config) repository worldVersion status Nothing 0
                         let pause = leftToWaitMicros (Earlier lastFetch) (Later now) interval                                        
@@ -1221,7 +1207,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
       where
         trigger = do 
             relevantTas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVar uriByTa
-            modifyTVar' tasToValidate $ (<>) relevantTas            
+            modifyTVar' tasToValidate (<> relevantTas)
     
     rememberFirstFetchBy version = atomically $ do 
         fff <- readTVar firstFinishedFetchBy
@@ -1238,45 +1224,30 @@ scheduleRevalidationOnExpiry :: AppContext s -> Map TaName EarliestToExpire -> W
 scheduleRevalidationOnExpiry AppContext {..} expirationTimes WorkflowShared {..} = do
     Now now <- thisInstant
 
-    -- Filter out TAs for which expiration time hasn't changed
-    onlyUpdatedExpirations <- 
-        fmap catMaybes $ atomically $ do         
-            forM (Map.toList expirationTimes) $ \(taName, expiration) -> do 
-                let updateIt = do 
-                        modifyTVar' earliestToExpire $ Map.insert taName expiration
-                        pure $ Just (taName, expiration)
+    -- Only the TAs whose expiration time actually changed need a new trigger
+    updatedExpirations <- atomically $ stateTVar earliestToExpire $ \known -> 
+            (Map.toList $ Map.differenceWith keepIfChanged expirationTimes known, 
+             Map.union expirationTimes known)
 
-                m <- readTVar earliestToExpire
-                case Map.lookup taName m of
-                    Nothing -> updateIt
-                    Just e
-                        | e == expiration -> pure Nothing
-                        | otherwise       -> updateIt
-
-    for_ onlyUpdatedExpirations $ \(taName, expiration@(EarliestToExpire expiresAt)) -> do
+    for_ updatedExpirations $ \(taName, expiration@(EarliestToExpire expiresAt)) -> do
         let timeToWait = instantDiff (Earlier now) (Later expiresAt)
         let expiresSoonEnough = timeToWait < config ^. #validationConfig . #revalidationInterval
         when (now < expiresAt && expiration /= mempty && expiresSoonEnough) $ do
             logDebug logger [i|The first object for #{taName} will expire at #{expiresAt}, will schedule re-validation right after.|]
-            void $ forkFinally
-                    (do
-                        threadDelay $ toMicroseconds timeToWait
-                        let triggerRevalidation = atomically $ modifyTVar' tasToValidate $ Set.insert taName
-                        join $ atomically $ do 
-                            e <- readTVar earliestToExpire
-                            pure $ case Map.lookup taName e of 
-                                Just t 
-                                    -- expiration time changed since the trigger was scheduled, 
-                                    -- so don't do anything, there're a later trigger for this TA
-                                    | t > expiration -> do
-                                        logDebug logger [i|Will cancel the re-validation for #{taName} scheduled after expiration at #{expiresAt}, new expiration time is #{t}.|]
-                                        pure ()
-                                    | otherwise      -> do 
-                                        logDebug logger [i|Will not cancel re-validation for #{taName} scheduled after expiration at #{expiresAt}, new expiration time is #{t}.|]
-                                        triggerRevalidation
-                                Nothing              -> triggerRevalidation
-                    )                        
-                    (const $ pure ())
+            forkLogged logger [i|Exception in the expiration trigger for #{taName}|] $ do
+                threadDelay $ toMicroseconds timeToWait
+                latest <- Map.lookup taName <$> readTVarIO earliestToExpire
+                case latest of 
+                    -- The expiration time moved on since the trigger was scheduled, 
+                    -- so there is a later trigger for this TA and this one can go.
+                    Just t | t > expiration -> 
+                        logDebug logger [i|Will cancel the re-validation for #{taName} scheduled after expiration at #{expiresAt}, new expiration time is #{t}.|]
+                    _ -> do 
+                        for_ latest $ \t -> 
+                            logDebug logger [i|Will not cancel re-validation for #{taName} scheduled after expiration at #{expiresAt}, new expiration time is #{t}.|]
+                        requestRevalidation tasToValidate $ Set.singleton taName
+  where
+    keepIfChanged new old = if new == old then Nothing else Just new
 
 
 -- To be called from the cache cleanup worker
@@ -1346,9 +1317,8 @@ loadStoredAppState appContext@AppContext {..} = do
                             slurmedPayloads <- atomically $ completeVersion appState lastVersion payloads' slurm                            
                             when (config ^. #withValidityApi) $                                
                                 -- do it in a separate thread to speed up the startup
-                                void $ forkFinally 
-                                        (atomically $ updatePrefixIndex appState slurmedPayloads) 
-                                        (logException logger [i|Exception in updating prefix index for #{lastVersion}|])
+                                forkLogged logger [i|Exception in updating prefix index for #{lastVersion}|]
+                                    $ atomically $ updatePrefixIndex appState slurmedPayloads
                         pure payloads
                     for_ payloads $ \p -> do 
                         let vrps = p ^. #vrps
@@ -1405,19 +1375,18 @@ versionIsOld now period version =
     in not $ closeEnoughMoments (Earlier validatedAt) (Later now) period
 
 
-periodically :: Seconds -> a -> (a -> IO a) -> IO a
-periodically interval a0 action = do         
-    go a0
+-- | Run the action every `interval`, measured from the start of one run to 
+-- the start of the next, so a run that takes longer than the interval simply 
+-- starts the next one immediately. Only the very first run gets the given 
+-- 'JobRun', every one after it 'RanBefore'.
+periodically :: Seconds -> JobRun -> (JobRun -> IO ()) -> IO a
+periodically interval firstRun action = go firstRun
   where
-    go a = do
+    go jobRun = do
         Now start <- thisInstant        
-        a' <- action a
-        Now end <- thisInstant
-        let pause = leftToWaitMicros (Earlier start) (Later end) interval
-        when (pause > 0) $
-            threadDelay $ fromIntegral pause
-        
-        go a'        
+        action jobRun
+        delayUntilNext start interval
+        go RanBefore
 
 
 leftToWaitMicros :: Earlier -> Later -> Seconds -> Int64
@@ -1426,6 +1395,29 @@ leftToWaitMicros (Earlier earlier) (Later later) (Seconds interval) =
   where
     executionTimeNs = toNanoseconds later - toNanoseconds earlier
     timeToWaitNs = nanosPerSecond * interval - executionTimeNs    
+
+-- | Sleep until `interval` has passed since `start`, or return at once if it 
+-- already has.
+delayUntilNext :: MonadIO m => Instant -> Seconds -> m ()
+delayUntilNext start interval = do 
+    Now now <- thisInstant
+    let pause = leftToWaitMicros (Earlier start) (Later now) interval
+    when (pause > 0) $
+        liftIO $ threadDelay $ fromIntegral pause
+
+-- | Fork a thread that is not waited for and whose failure is only worth a 
+-- log line.
+forkLogged :: MonadIO m => AppLogger -> Text.Text -> IO () -> m ()
+forkLogged logger message action = 
+    liftIO $ void $ forkFinally action (logException logger message)
+
+-- | Ask the validation loop to (re)validate these TAs on its next round. 
+-- This is the one signal the whole triggered-validation design turns on: 
+-- fetches that found updates, TA certificates that changed and objects 
+-- that are about to expire all end up here.
+requestRevalidation :: MonadIO m => TVar (Set TaName) -> Set TaName -> m ()
+requestRevalidation tasToValidate tas = 
+    liftIO $ atomically $ modifyTVar' tasToValidate (<> tas)
 
 logException :: MonadIO m => AppLogger -> Text.Text -> Either SomeException a -> m ()
 logException logger logText result = 
