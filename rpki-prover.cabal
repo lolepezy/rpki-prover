@@ -244,6 +244,7 @@ library
       RPKI.Meta.Version
       RPKI.Worker
       RPKI.Workflow
+      RPKI.Workflow.Task
   other-modules:
       Paths_rpki_prover
   hs-source-dirs:
