@@ -92,8 +92,9 @@ data Config = Config {
         localExceptions           :: ApiSecured [FilePath],
         logLevel                  :: LogLevel,
         metricsPrefix             :: Text,
-        withValidityApi           :: Bool
-    } 
+        withValidityApi           :: Bool,
+        withGhcMetrics            :: Bool
+    }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
@@ -377,6 +378,7 @@ defaultConfig = Config {
     logLevel = defaultsLogLevel,
     metricsPrefix = "rpki_prover_",
     withValidityApi = False,
+    withGhcMetrics = False,
     ..
 }
   where

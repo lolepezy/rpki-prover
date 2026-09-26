@@ -684,6 +684,7 @@ data CLIOptions = CLIOptions {
         noIncrementalValidation  :: Bool,
         showHiddenConfig         :: Bool,
         withValidityApi          :: Bool,
+        withGhcMetrics           :: Bool,
         printConfig              :: Bool
     }
     deriving stock (Show, Generic)
@@ -941,6 +942,10 @@ cliOptionsParser = CLIOptions
                   <> "Increases memory usage (about 200-300MB in the main process) "
                   <> "and CPU usage (about 2 seconds per validation cycle)."))
     <*> switch
+            (  long "with-ghc-metrics"
+            <> help ("Register GHC runtime system metrics (memory, GC, etc.) in Prometheus "
+                  <> "(default: false)."))
+    <*> switch
             (  long "print-config"
             <> help "Print the effective configuration derived from CLI options and exit.")
   where
@@ -1020,6 +1025,7 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet #longLivedCacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
         & #localExceptions .~ apiSecured localExceptions
         & #withValidityApi .~ withValidityApi
+        & #withGhcMetrics .~ withGhcMetrics
         & maybeSet #metricsPrefix (convert <$> metricsPrefix)
         & maybeSet (#systemConfig . #rsyncWorkerLimits . #memoryMb) maxRsyncFetchMemory
         & maybeSet (#systemConfig . #rrdpWorkerLimits . #memoryMb) maxRrdpFetchMemory
