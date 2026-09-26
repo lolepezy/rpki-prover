@@ -8,6 +8,7 @@ import           Control.Concurrent              as Conc
 import           Control.Concurrent.Async
 import           Control.Concurrent.STM
 import           Control.Exception
+import           Control.Monad
 import           Control.Lens hiding (indices, Indexable)
 import           Effectful.Error.Static           (catchError)
 
@@ -98,14 +99,42 @@ instance Indexable Indexes UrlTA where
 deleteByIx :: (Indexable ixs a, IsIndexOf ix ixs) => ix -> IxSet ixs a -> IxSet ixs a
 deleteByIx ix_ s = foldr IxSet.delete s $ IxSet.getEQ ix_ s
 
+-- | Deregister a fetcher that is exiting. It is called by the fetcher thread
+-- itself, so it must not try to cancel anything: throwing to yourself raises
+-- the exception immediately and everything after it is dead code. It must
+-- also only remove its own registration, since 'adjustFetchers' may already
+-- have started a replacement fetcher for the same URL.
 dropFetcher :: Fetchers -> RpkiURL -> IO ()
-dropFetcher Fetchers {..} url = mask_ $ do
-    readTVarIO runningFetchers >>= \running -> do
-        for_ (Map.lookup url running) $ \thread -> do
-            Conc.throwTo thread AsyncCancelled
-            atomically $ do
-                modifyTVar' runningFetchers $ Map.delete url
-                modifyTVar' uriByTa $ deleteByIx url
+dropFetcher Fetchers {..} url = do
+    me <- Conc.myThreadId
+    atomically $ do
+        running <- readTVar runningFetchers
+        when (Map.lookup url running == Just me) $ do
+            writeTVar runningFetchers $ Map.delete url running
+            modifyTVar' uriByTa $ deleteByIx url
+
+-- | Cancel every running fetcher, for shutdown only. Fetchers deregister
+-- themselves through 'dropFetcher' as they die.
+stopAllFetchers :: Fetchers -> IO ()
+stopAllFetchers Fetchers {..} = mask_ $ do
+    threads <- atomically $ Map.elems <$> readTVar runningFetchers
+    for_ threads $ \thread -> Conc.throwTo thread AsyncCancelled
+
+-- | All the shared state the fetchers need. The 'Fetcheables' are not created
+-- here but taken from the 'AppState', so that they are globally available,
+-- in particular to the REST API.
+newFetchers :: Config -> TVar Fetcheables -> STM Fetchers
+newFetchers config fetcheables = do
+    runningFetchers      <- newTVar mempty
+    firstFinishedFetchBy <- newTVar mempty
+    uriByTa              <- newTVar mempty
+    rsyncPerHostSemaphores  <- newTVar mempty
+    untrustedFetchSemaphore <- newSemaphore fetchParallelism
+    trustedFetchSemaphore   <- newSemaphore fetchParallelism
+    erikFetchSemaphore      <- newSemaphore (fromIntegral $ config ^. #erikConf . #fqdnParallelism)
+    pure Fetchers {..}
+  where
+    fetchParallelism = fromIntegral $ config ^. #parallelism . #fetchParallelism
 
 updateUriPerTa :: Map TaName Fetcheables -> UriTaIxSet -> UriTaIxSet
 updateUriPerTa fetcheablesPerTa uriTa = uriTa'

@@ -132,29 +132,14 @@ withWorkflowShared :: AppContext s
                     -> IO b
 withWorkflowShared AppContext {..} prometheusMetrics tals f = do
     shared <- liftIO $ atomically $ do 
-        runningTasks <- newRunningTasks
-        fetchers <- do 
-                -- We want to share the fetcheables that are already defined in the appState
-                -- to have it gloabally available (in particular available to the REST API)
-                let fetcheables = appState ^. #fetcheables
-                runningFetchers    <- newTVar mempty
-                firstFinishedFetchBy <- newTVar mempty
-                uriByTa            <- newTVar mempty
-                untrustedFetchSemaphore <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)
-                trustedFetchSemaphore   <- newSemaphore (fromIntegral $ config ^. #parallelism . #fetchParallelism)                            
-                rsyncPerHostSemaphores  <- newTVar mempty                
-                erikFetchSemaphore      <- newSemaphore (fromIntegral $ config ^. #erikConf . #fqdnParallelism)
-                pure $ Fetchers {..}                        
-
+        runningTasks     <- newRunningTasks
+        fetchers         <- newFetchers config (appState ^. #fetcheables)
         tasToValidate    <- newTVar mempty
         lastFqdnFetch    <- newTVar mempty
         earliestToExpire <- newTVar mempty
         pure WorkflowShared {..}
 
-    f shared `finally`
-        liftIO (mask_ $ do
-            fs <- atomically $ Map.elems <$> readTVar (shared ^. #fetchers . #runningFetchers)
-            for_ fs $ \thread -> Conc.throwTo thread AsyncCancelled)
+    f shared `finally` liftIO (stopAllFetchers (shared ^. #fetchers))
 
 
 -- Different types of periodic tasks that may run 
