@@ -15,6 +15,9 @@ import           Effectful.Error.Static           (catchError)
 import qualified Data.List.NonEmpty          as NonEmpty
 
 import           Data.Data
+import           Data.Hourglass                   (Seconds(..))
+import qualified Data.Hashable                   as Hashable
+import           Data.Int                         (Int64)
 import           Data.Foldable                   (for_)
 import           Data.Maybe 
 import           Data.Map.Strict                 (Map)
@@ -147,6 +150,112 @@ updateUriPerTa fetcheablesPerTa uriTa = uriTa'
                 (ta, Fetcheables fs) <- Map.toList fetcheablesPerTa,
                 url <- MonoidalMap.keys fs
             ] cleanedUpPerTa 
+
+{- | How long to wait before fetching this repository again.
+
+    A failed fetch backs off exponentially. After a successful one the current
+    interval is nudged by what the fetch actually found: nothing new means it
+    can grow, more than one delta means the repository is busy and it should
+    shrink. The result is trimmed to the configured bounds and scattered by a
+    pseudorandom amount, so that repositories do not all come due at once.
+-}
+nextRefreshInterval :: Config
+                    -> Repository
+                    -> WorldVersion
+                    -> FetchStatus
+                    -> Maybe RrdpFetchStat
+                    -> TimeMs
+                    -> Seconds
+nextRefreshInterval config repository worldVersion newStatus rrdpStats duration =
+    case newStatus of
+        FailedAt _ -> exponentialBackoff currentInterval
+        _ ->
+            case rrdpStats of
+                Nothing                 -> defaultInterval
+                Just RrdpFetchStat {..} ->
+                    case action of
+                        NothingToFetch _               -> increaseInterval currentInterval
+                        FetchDeltas {..}
+                            | moreThanOne sortedDeltas -> decreaseInterval currentInterval
+                            | otherwise                -> currentInterval
+                        _                              -> currentInterval
+  where
+    fetchConfig = newFetchConfig config
+
+    currentInterval =
+        fromMaybe defaultInterval (getMeta repository ^. #refreshInterval)
+
+    exponentialBackoff (Seconds s) = min
+        (Seconds $ s + s `div` 2 + 2 * kindaRandomness)
+        ((fetchConfig ^. #maxFailedBackoffInterval) + 3 * Seconds kindaRandomness)
+
+    moreThanOne = ( > 1) . length . NonEmpty.take 2
+
+    defaultInterval = case repository of
+        RrdpR _  -> config ^. #rrdpConf . #repositoryRefreshInterval
+        RsyncR _ -> config ^. #rsyncConf . #repositoryRefreshInterval
+
+    increaseInterval (Seconds s) = trimInterval $ Seconds $ s + s `div` 5 + kindaRandomness
+    decreaseInterval (Seconds s) = trimInterval $ Seconds $ s - s `div` 3 - kindaRandomness
+
+    minInterval =
+        case repository of
+            -- it's significantly cheaper to use E-Tag and If-None-Match,
+            -- so the interval can be smaller
+            RrdpR (RrdpRepository { eTag = Just _ }) -> fetchConfig ^. #minFetchInterval
+            _                                        -> 2 * fetchConfig ^. #minFetchInterval
+
+    trimInterval interval =
+        max minInterval
+            (min ((fetchConfig ^. #maxFetchInterval) + Seconds kindaRandomness) interval)
+
+    -- Pseudorandom stuff is added to spread repositories over time more or less
+    -- uniformly and avoid having peaks of activity. It's just something looking
+    -- relatively random without IO. This one will return a number from 0 to 19.
+    kindaRandomness = let
+        h :: Integer = fromIntegral $ Hashable.hash $ getRpkiURL repository
+        w :: Integer = fromIntegral $ let (WorldVersion w_) = worldVersion in Hashable.hash w_
+        d :: Integer = fromIntegral $ unTimeMs duration
+        r = (w `mod` 83 + h `mod` 77 + d `mod` 37) `mod` 20
+        in fromIntegral r :: Int64
+
+
+{- | Wait for a slot to fetch this repository in.
+
+    Repositories that have been fetched successfully before get their own
+    semaphore, so that a crowd of new or broken ones cannot squeeze them out.
+    Both are deliberately soft: a fetch that has waited long enough runs
+    anyway rather than starving. Rsync is additionally limited per host,
+    since hosts limit the number of connections they accept.
+-}
+withFetchLimits :: Fetchers -> Config -> Repository -> IO a -> IO a
+withFetchLimits Fetchers {..} config repository f =
+    case repository of
+        RrdpR _                   -> withLaunchSlot
+        RsyncR (getRsyncURL -> r) -> rsyncFetch r
+  where
+    timeToWait = newFetchConfig config ^. #fetchLaunchWaitDuration
+
+    semaphoreToUse =
+        case getFetchStatus repository of
+            -- TODO Add logic "if succeeded more than N times"
+            FetchedAt _ -> trustedFetchSemaphore
+            _           -> untrustedFetchSemaphore
+
+    withLaunchSlot = withSemaphoreOrTimeout semaphoreToUse timeToWait f
+
+    rsyncFetch (RsyncURL host _) = do
+        hostSemaphore <- atomically $ do
+            semaphores <- readTVar rsyncPerHostSemaphores
+            case Map.lookup host semaphores of
+                Just s  -> pure s
+                Nothing -> do
+                    s <- newSemaphore $ config ^. #rsyncConf . #perHostLimit
+                    writeTVar rsyncPerHostSemaphores $ Map.insert host s semaphores
+                    pure s
+
+        withSemaphore hostSemaphore withLaunchSlot
+
 
 -- Fetch one individual repository. 
 -- 
