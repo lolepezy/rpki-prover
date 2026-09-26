@@ -144,11 +144,8 @@ withWorkflowShared AppContext {..} prometheusMetrics tals f = do
 
 -- Different types of periodic tasks that may run 
 data Task =
-    -- top-down validation and sync fetches
-    ValidationTask
-
     -- delete old objects and old versions
-    | CacheCleanupTask    
+    CacheCleanupTask    
 
     -- cleanup files in tmp, stale storage-backend state, run-away child processes, etc.
     | LeftoversCleanupTask
@@ -164,7 +161,7 @@ data Task =
 
     -- fold the WAL back into the database, nobody else does it
     | WalCheckpointTask
-    deriving stock (Show, Eq, Ord, Bounded, Enum, Generic)
+    deriving stock (Show, Eq, Ord, Generic)
 
 
 data Scheduling = Scheduling {        
@@ -1360,62 +1357,46 @@ loadStoredAppState appContext@AppContext {..} = do
                     pure $ Just lastVersion
 
 
+{- | Which tasks must not run at the same time.
+
+    Almost everything may run concurrently with everything else: fetches with
+    each other, cleanups with fetches, and the WAL checkpoint with anything
+    (SQLite serialises it by itself, and it is the only thing that keeps the
+    WAL from growing without bound). The one real rule is that the local rsync
+    mirror must not be deleted while anything is fetching into it, and
+    downloading a TA certificate is just another (tiny) fetch.
+-}
 canRunInParallel :: Task -> Task -> Bool
-canRunInParallel t1 t2 = 
-    t2 `elem` canRunWith t1 || t1 `elem` canRunWith t2
-  where    
-    canRunWith = \case 
-        ValidationTask       -> allTasks
+canRunInParallel t1 t2 = not (conflict t1 t2 || conflict t2 t1)
+  where
+    conflict RsyncCleanupTask FetchTask         = True
+    conflict RsyncCleanupTask TaCertificateTask = True
+    conflict _                _                 = False
 
-        -- two different fetches can run in parallel, it's fine    
-        FetchTask            -> [ValidationTask, FetchTask, CacheCleanupTask, TaCertificateTask]
 
-        -- downloading a TA certificate is just another (tiny) fetch
-        TaCertificateTask    -> [ValidationTask, FetchTask, CacheCleanupTask, TaCertificateTask]
-
-        CacheCleanupTask     -> [ValidationTask, FetchTask, RsyncCleanupTask, TaCertificateTask]    
-        
-        -- Don't clean up anything while fetches are in progress
-        RsyncCleanupTask     -> allExcept [FetchTask, TaCertificateTask]
-        LeftoversCleanupTask -> allTasks
-
-        -- SQLite serialises it against everything else by itself, and it is 
-        -- the only thing that keeps the WAL from growing without bound
-        WalCheckpointTask    -> allTasks
-  
-    allExcept tasks = filter (not . (`elem` tasks)) allTasks
-    allTasks = [minBound..maxBound]
-        
-    
 runConcurrentlyIfPossible :: MonadUnliftIO m 
                         => AppLogger -> Task -> Tasks -> m a -> m a
 runConcurrentlyIfPossible logger taskType Tasks {..} action = do 
     {- 
         Theoretically, exclusive maintenance tasks can starve indefinitely and 
-        never get picked up because of fechers running all the time.
+        never get picked up because of fetchers running all the time.
         But in practice that is very unlikely to happen, so we'll gamble for now.
     -}    
-    let canRunWith runningTasks =             
-            all (canRunInParallel taskType . fst) $ Map.toList runningTasks
+    blockedBy <- liftIO $ atomically $ filter conflicting . Map.toList <$> readTVar running
+    unless (null blockedBy) $ 
+        logDebug logger [i|Task #{taskType} cannot run concurrently with #{blockedBy} and has to wait.|]        
 
-    (runningTasks, canRun) <- liftIO $ atomically $ do 
-                runningTasks <- readTVar running
-                pure (Map.toList runningTasks, canRunWith runningTasks)
+    UIO.bracket_ (liftIO $ atomically acquire) (liftIO $ atomically release) action
+  where
+    conflicting = not . canRunInParallel taskType . fst
 
-    unless canRun $ 
-        logDebug logger [i|Task #{taskType} cannot run concurrently with #{runningTasks} and has to wait.|]        
+    acquire = do 
+        runningTasks <- readTVar running
+        when (any conflicting $ Map.toList runningTasks) retry
+        writeTVar running $ Map.insertWith (+) taskType 1 runningTasks
 
-    join $ liftIO $ atomically $ do 
-        runningTasks_ <- readTVar running
-        if canRunWith runningTasks_
-            then do 
-                writeTVar running $ Map.insertWith (+) taskType 1 runningTasks_
-                pure $ action
-                        `UIO.finally` 
-                        liftIO (atomically (modifyTVar' running $ Map.alter (>>= 
-                                    (\count -> if count > 1 then Just (count - 1) else Nothing)
-                                ) taskType))
-            else retry
+    release = modifyTVar' running $ 
+        Map.update (\count -> if count > 1 then Just (count - 1) else Nothing) taskType
 
 
 versionIsOld :: Instant -> Seconds -> WorldVersion -> Bool
