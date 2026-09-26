@@ -63,8 +63,6 @@ instance MaintainableStorage SqliteBackend where
                 then [i|Checkpointed #{inMb before}mb of WAL in #{elapsed}ms.|]
                 else [i|Checkpointed WAL in #{elapsed}ms, #{inMb before}mb before, |] <>
                      [i|#{inMb after}mb still left (readers are holding it).|]
-    reopenStorage   _ = pure ()
-    cleanUpStaleTx  _ = pure 0
     getCacheFsSize  _ = pure (Size 0)
 
 
@@ -114,7 +112,10 @@ newSqliteDB dbPath config walCheckpointing =
     SQLite.createDB dbPath busyTimeoutMs walCheckpointing poolSize
   where
     poolSize      = max 2 $ fromIntegral $ config ^. #parallelism . #cpuParallelism
-    busyTimeoutMs = let Seconds s = config ^. #storageConfig . #rwTransactionTimeout
+    -- The longest anybody may hold the write lock is how long a writer may
+    -- have to wait for it. A little more than that, to give whoever is holding
+    -- the lock time to be noticed and rolled back or killed.
+    busyTimeoutMs = let Seconds s = config ^. #storageConfig . #txTimeout + Seconds 10
                     in fromIntegral $ s * 1000    
 
 

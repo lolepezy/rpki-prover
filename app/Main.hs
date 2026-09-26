@@ -118,7 +118,6 @@ executeMainProcess cliOptions@CLIOptions{..} = do
         let logConfig = logConfig_
                 & #metricsHandler .~ withAppState . mergeSystemMetrics
                 & #workerHandler .~ withAppState . updateRunningWorkers
-                & #systemStatusHandler .~ withAppState . updateSystemStatus
                 & #erikRelayHandler .~ (\(ErikRelayMessage reports) ->
                         withAppState (`updateErikRelayHealth` reports))
 
@@ -144,7 +143,7 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     exitFailure
                 Right appContext -> do 
                     atomically $ writeTVar appStateHolder $ Just $ appContext ^. #appState
-                    runMainProcess
+                    race_ (rollBackLongTransactions appContext) runMainProcess
                         `finally` 
                         closeStorage appContext
                   where
@@ -161,16 +160,20 @@ executeMainProcess cliOptions@CLIOptions{..} = do
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
     input <- readWorkerInput    
-    let config = adjustWorkerConfig (input ^. typed @Config) (input ^. #workerTimeout)
+    let config = input ^. typed @Config
     let logConfig = newLogConfig (config ^. #logLevel) WorkerLog
 
     appContextRef <- newTVarIO Nothing
     let onExit workerExit = do            
-            readTVarIO appContextRef >>= maybe (pure ()) closeStorage
+            -- Closing waits for the write connection, which the transaction 
+            -- that timed out may still be holding. Nothing is lost by not 
+            -- closing: the transaction goes away with the process either way.
+            when (workerExit /= TxTimedOut) $ 
+                readTVarIO appContextRef >>= maybe (pure ()) closeStorage
             exitWith $ toExitCode workerExit
 
-    let runWork :: AppLogger -> (forall a . TheBinary a => a -> IO ()) -> IO ()
-        runWork logger resultHandler = do
+    let runWork :: AppLogger -> (forall a . TheBinary a => a -> IO ()) -> GiveUp -> IO ()
+        runWork logger resultHandler giveUp = do
             (z, validations) <- runValidatorIO
                                     (newScopes "worker-create-app-context")
                                     (createWorkerAppContext config logger)
@@ -203,33 +206,29 @@ executeWorkerProcess = do
                                 CacheCleanupParams {..} -> 
                                     exec resultHandler $
                                         Right . CacheCleanupResult <$> runCacheCleanup appContext worldVersion
-                    actuallyExecuteWork
-                        `catch` (\(t :: TxTimeout) -> 
-                                    exec @() resultHandler $ do
-                                        pushSystemStatus logger $ SystemStatusMessage $ SystemState { dbState = DbStuck }
-                                        pure $ Left $ ErrorResult $ fmtGen t)
+                    race_ (dieOfLongTransactions input appContext giveUp) actuallyExecuteWork
                         `finally` do
                             -- Clear the ref first so onExit doesn't close the same DB a second time.
                             atomically $ writeTVar appContextRef Nothing
                             closeStorage appContext
 
-    executeWork input onExit $ \_ resultHandler -> 
+    executeWork input onExit $ \_ resultHandler giveUp -> 
         withLogger logConfig $ \logger -> liftIO $ do
             -- Sandboxing (if any) was done before the runtime started, here
             -- is where we find out how it went.
             sandbox <- getSandboxStatus
             case sandbox of
                 NotSandboxed -> 
-                    runWork logger resultHandler
+                    runWork logger resultHandler giveUp
                 Sandboxed abi -> do
                     logDebug logger [i|Worker is sandboxed, Landlock ABI #{abi}.|]
                     -- A writes-only sandbox doesn't restrict network access anyway
                     when (abi < 4 && maybe False (not . onlyRestrictWrites) (workerSandbox input)) $ 
                         logWarn logger [i|Landlock ABI #{abi} can't restrict network access, the worker still has it.|]
-                    runWork logger resultHandler
+                    runWork logger resultHandler giveUp
                 SandboxUnsupported message -> do
                     logWarn logger [i|Worker is not sandboxed: #{message}.|]
-                    runWork logger resultHandler
+                    runWork logger resultHandler giveUp
                 SandboxFailed message ->
                     -- It was supposed to be sandboxed and it is not, so it doesn't run
                     exec @() resultHandler $ pure $ Left $ ErrorResult 

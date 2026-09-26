@@ -11,6 +11,14 @@ module RPKI.Store.SQLite (
     withReadTx,
     withWriteTx,
     withoutTx,
+    -- * Transaction timeouts
+    TxKind(..),
+    txKindName,
+    TxTimeouts(..),
+    StuckTx(..),
+    TransactionTimedOut(..),
+    watchTransactions,
+    abortTransaction,
     -- * Lifecycle
     initConn,
     createDB,
@@ -48,12 +56,19 @@ module RPKI.Store.SQLite (
     blobToHash,
 ) where
 
+import Control.Concurrent (ThreadId, forkIO, myThreadId, threadDelay, throwTo)
 import Control.Concurrent.MVar
-import Control.Exception (finally, mask, onException)
-import Control.Monad (forM_, void)
+import Control.Exception (Exception(..), asyncExceptionFromException, asyncExceptionToException,
+                          finally, handleJust, mask, onException, throwIO)
+import Control.Monad (forM_, forever, void, when)
 import Control.Monad.IO.Class
 
+import Data.Hourglass (Seconds(..))
 import Data.IORef
+import Data.IntMap.Strict (IntMap)
+import qualified Data.IntMap.Strict as IntMap
+import Data.Word (Word64)
+import GHC.Clock (getMonotonicTimeNSec)
 import System.Directory (doesFileExist, getFileSize)
 import Data.Int (Int64)
 import Data.Map.Strict (Map)
@@ -66,7 +81,7 @@ import Data.Text (Text)
 import qualified Data.Text             as Text
 
 import Database.SQLite.Simple (
-    Connection, Query, Only(..), NamedParam, ToRow, FromRow,
+    Connection(..), Query, Only(..), NamedParam, ToRow, FromRow,
     Statement(..), fromQuery,
     open, close,
     openStatement, closeStatement, bindNamed, reset, withBind, nextRow)
@@ -74,6 +89,7 @@ import qualified Database.SQLite.Simple as Raw
 import Database.SQLite.Simple.QQ (sql)
 import Database.SQLite.Simple.ToField (ToField(..))
 import Database.SQLite.Simple.FromField (FromField(..))
+import qualified Database.SQLite3.Direct as Direct
 
 import RPKI.AppTypes (WorldVersion(..))
 import RPKI.Domain   (ArtificialKey(..), ObjectKey(..), UrlKey(..), SKI(..), AKI(..), Hash(..), KI(..))
@@ -92,12 +108,16 @@ newtype Tx (m :: TxMode) = Tx { unTx :: CachedConn }
 data CachedConn = CachedConn
     { rawConn   :: Connection
     , stmtCache :: IORef (Map Text Statement)
+    , connId    :: Int              -- ^ Unique within its 'SqliteDB'
+    , txSlot    :: IORef TxSlot     -- ^ The transaction it is running, for 'watchTransactions'
     }
 
 data SqliteDB = SqliteDB
-    { readPool  :: Pool CachedConn  -- ^ Shared pool for read connections
-    , writeConn :: MVar CachedConn  -- ^ Single serialised write connection
-    , dbPath    :: FilePath         -- ^ To find the -wal file next to it
+    { readPool    :: Pool CachedConn  -- ^ Shared pool for read connections
+    , writeConn   :: MVar CachedConn  -- ^ Single serialised write connection
+    , dbPath      :: FilePath         -- ^ To find the -wal file next to it
+    , connections :: IORef (IntMap CachedConn) -- ^ Every open connection, for 'watchTransactions'
+    , nextConnId  :: IORef Int
     }
 
 {- Who folds the WAL back into the database. Workers do not checkpoint 
@@ -116,11 +136,11 @@ data WalCheckpointing
 
 withReadTx :: MonadIO m => SqliteDB -> (Tx 'RO -> IO a) -> m a
 withReadTx SqliteDB{readPool} f = liftIO $ Pool.withResource readPool $ \cc ->
-    withCachedTransaction cc "BEGIN TRANSACTION" (f (Tx cc))
+    withCachedTransaction ReadTx cc "BEGIN TRANSACTION" (f (Tx cc))
 
 withWriteTx :: MonadIO m => SqliteDB -> (Tx 'RW -> IO a) -> m a
 withWriteTx SqliteDB{writeConn} f = liftIO $ withMVar writeConn $ \cc ->
-    withCachedTransaction cc "BEGIN IMMEDIATE TRANSACTION" (f (Tx cc))
+    withCachedTransaction WriteTx cc "BEGIN IMMEDIATE TRANSACTION" (f (Tx cc))
 
 -- | sqlite-simple's own 'withTransaction' issues BEGIN, COMMIT and ROLLBACK on
 -- the raw connection, which compiles and throws away a statement for each of
@@ -129,15 +149,157 @@ withWriteTx SqliteDB{writeConn} f = liftIO $ withMVar writeConn $ \cc ->
 -- Through the statement cache each becomes a reset and a step of one that is
 -- already compiled.
 --
--- The semantics are sqlite-simple's @withTransactionPrivate@, deliberately
--- unchanged: masked, rolled back if the action throws, committed otherwise.
-withCachedTransaction :: CachedConn -> Query -> IO a -> IO a
-withCachedTransaction cc begin action =
-    mask $ \restore -> do
-        execute_ cc begin
-        r <- restore action `onException` execute_ cc "ROLLBACK TRANSACTION"
-        execute_ cc "COMMIT TRANSACTION"
-        pure r
+-- The semantics are sqlite-simple's @withTransactionPrivate@: masked, rolled
+-- back if the action throws, committed otherwise. On top of that the
+-- transaction is visible to 'watchTransactions' from BEGIN on, and if
+-- 'abortTransaction' aborts it, the caller gets 'TransactionTimedOut'.
+withCachedTransaction :: TxKind -> CachedConn -> Query -> IO a -> IO a
+withCachedTransaction kind cc begin action =
+    handleJust ownAbort (throwIO . TransactionTimedOut kind) $
+        mask $ \restore -> do
+            execute_ cc begin
+            watched kind cc $ do
+                r <- restore action `onException` rollback cc
+                execute_ cc "COMMIT TRANSACTION"
+                pure r
+  where
+    ownAbort (TxAborted aborted runningFor)
+        | aborted == connId cc = Just runningFor
+        | otherwise            = Nothing
+
+rollback :: CachedConn -> IO ()
+rollback cc = do
+    autoCommit <- Direct.getAutoCommit $ connectionHandle $ rawConn cc
+    when (not autoCommit) $
+        execute_ cc "ROLLBACK TRANSACTION"
+
+
+-- ---------------------------------------------------------------------------
+-- Transaction timeouts
+--
+-- Every connection has a slot saying which transaction it is running, if
+-- any. 'watchTransactions' looks at all of them once a second and hands the
+-- ones running for too long to whoever started it: a worker gives up and
+-- exits, the main process aborts them with 'abortTransaction'.
+--
+-- That costs a transaction two writes to an IORef that no other thread
+-- touches unless the transaction is stuck, which is next to nothing next to
+-- the BEGIN and COMMIT themselves. A timer per transaction ('timeout' or
+-- direct-sqlite's 'interruptibly') is a thread or a timer manager entry per
+-- transaction, and a validation run has ~164k of them.
+-- ---------------------------------------------------------------------------
+
+data TxKind = ReadTx | WriteTx
+    deriving stock (Show, Eq, Ord)
+
+txKindName :: TxKind -> Text
+txKindName = \case
+    ReadTx  -> "read"
+    WriteTx -> "write"
+
+-- | How long a transaction may run, from BEGIN on. Waiting for the write lock
+-- before that is 'busy_timeout'\'s business.
+data TxTimeouts = TxTimeouts
+    { readTxTimeout  :: Seconds
+    , writeTxTimeout :: Seconds
+    }
+    deriving stock (Show, Eq, Ord)
+
+data TxSlot
+    = NoTx
+    | InTx RunningTx
+    -- | 'abortTransaction' is throwing 'TxAborted' to the owner, the MVar is
+    -- filled once it has. The owner doesn't leave the transaction before
+    -- that, so the exception can't land anywhere else.
+    | AbortingTx (MVar ())
+
+data RunningTx = RunningTx
+    { kind      :: TxKind
+    , startedAt :: Word64    -- ^ 'getMonotonicTimeNSec'
+    , owner     :: ThreadId
+    , reported  :: Bool      -- ^ Already handed to the 'watchTransactions' callback
+    }
+
+-- | A transaction that has been running for longer than it is allowed to.
+data StuckTx = StuckTx
+    { kind       :: TxKind
+    , runningFor :: Seconds
+    , limit      :: Seconds
+    , conn       :: CachedConn
+    , startedAt  :: Word64
+    , owner      :: ThreadId
+    }
+
+-- | What the caller of a transaction gets when 'abortTransaction' aborted it.
+-- The transaction is rolled back, unless it was aborted while committing.
+data TransactionTimedOut = TransactionTimedOut TxKind Seconds
+    deriving stock (Show, Eq, Ord)
+
+instance Exception TransactionTimedOut
+
+-- | Thrown to the owner of an aborted transaction, 'withCachedTransaction'
+-- turns it into 'TransactionTimedOut'. It is asynchronous so that catch-alls
+-- inside the transaction let it through.
+data TxAborted = TxAborted Int Seconds
+    deriving stock (Show)
+
+instance Exception TxAborted where
+    toException   = asyncExceptionToException
+    fromException = asyncExceptionFromException
+
+watched :: TxKind -> CachedConn -> IO a -> IO a
+watched kind CachedConn{txSlot} io = do
+    startedAt <- getMonotonicTimeNSec
+    owner     <- myThreadId
+    writeIORef txSlot $ InTx RunningTx { reported = False, .. }
+    io `finally` unwatch
+  where
+    unwatch =
+        atomicModifyIORef' txSlot (NoTx,) >>= \case
+            -- Interruptible, so if the abort hasn't landed yet, it lands here
+            AbortingTx thrown -> readMVar thrown
+            _                 -> pure ()
+
+-- | Check all transactions once a second, forever, and call 'onStuck' once
+-- for every transaction running for longer than 'TxTimeouts' allow.
+watchTransactions :: SqliteDB -> TxTimeouts -> (StuckTx -> IO ()) -> IO ()
+watchTransactions SqliteDB{connections} TxTimeouts{..} onStuck = forever $ do
+    threadDelay 1_000_000
+    now   <- getMonotonicTimeNSec
+    conns <- readIORef connections
+    forM_ conns $ \conn@CachedConn{txSlot} -> do
+        -- Looking and marking it as reported is one step, so that a
+        -- transaction is reported once and not after it has finished.
+        stuck <- atomicModifyIORef' txSlot $ \case
+            InTx tx@RunningTx{..}
+                | not reported && runningFor > limit ->
+                    (InTx tx { reported = True }, Just StuckTx {..})
+              where
+                runningFor = Seconds $ fromIntegral $ (now - startedAt) `div` 1_000_000_000
+                limit      = case kind of
+                                ReadTx  -> readTxTimeout
+                                WriteTx -> writeTxTimeout
+            slot -> (slot, Nothing)
+        forM_ stuck onStuck
+
+-- | Roll a stuck transaction back: interrupt whatever SQLite is doing on its
+-- connection and throw 'TxAborted' to its owner, which gets
+-- 'TransactionTimedOut' out of the transaction. Does nothing if the
+-- transaction has finished by now.
+--
+-- Doesn't wait for any of it: 'throwTo' blocks for as long as the owner is
+-- in a foreign call or masked.
+abortTransaction :: StuckTx -> IO ()
+abortTransaction StuckTx{ conn = CachedConn{..}, .. } = do
+    thrown <- newEmptyMVar
+    aborting <- atomicModifyIORef' txSlot $ \case
+        InTx tx | tx.startedAt == startedAt && tx.owner == owner -> (AbortingTx thrown, True)
+        slot                                                     -> (slot, False)
+    when aborting $ void $ forkIO $ do
+        -- The owner waits for 'thrown' before it leaves the transaction, so
+        -- the connection can't be running anybody else's statements by now.
+        Direct.interrupt $ connectionHandle rawConn
+        throwTo owner (TxAborted connId runningFor) `finally` putMVar thrown ()
 
 withoutTx :: MonadIO m => SqliteDB -> (Tx 'NOTX -> IO a) -> m a
 withoutTx SqliteDB{readPool} f = liftIO $ Pool.withResource readPool $ \cc ->
@@ -167,19 +329,23 @@ initConn busyTimeoutMs walCheckpointing path = do
                 CheckpointWhenCommitting -> []
                 CheckpointedByOthers     -> [ "PRAGMA wal_autocheckpoint = 0" ]
 
-mkCachedConn :: Connection -> IO CachedConn
-mkCachedConn conn = do
+-- | Open a connection and register it with 'watchTransactions'.
+openCachedConn :: IORef Int -> IORef (IntMap CachedConn)
+               -> Int -> WalCheckpointing -> FilePath -> IO CachedConn
+openCachedConn nextConnId connections busyTimeoutMs walCheckpointing path = do
+    rawConn   <- initConn busyTimeoutMs walCheckpointing path
     stmtCache <- newIORef Map.empty
-    pure CachedConn { rawConn = conn, .. }
-
-initCachedConn :: Int -> WalCheckpointing -> FilePath -> IO CachedConn
-initCachedConn busyTimeoutMs walCheckpointing path =
-    mkCachedConn =<< initConn busyTimeoutMs walCheckpointing path
+    txSlot    <- newIORef NoTx
+    connId    <- atomicModifyIORef' nextConnId $ \n -> (n + 1, n)
+    let cc = CachedConn {..}
+    atomicModifyIORef' connections $ \cs -> (IntMap.insert connId cc cs, ())
+    pure cc
 
 -- | Finalise every cached prepared statement, then close the connection.
 -- SQLite requires all statements finalised before (or as part of) closing.
-closeCachedConn :: CachedConn -> IO ()
-closeCachedConn CachedConn{..} = do
+closeCachedConn :: IORef (IntMap CachedConn) -> CachedConn -> IO ()
+closeCachedConn connections CachedConn{..} = do
+    atomicModifyIORef' connections $ \cs -> (IntMap.delete connId cs, ())
     cached <- readIORef stmtCache
     mapM_ closeStatement (Map.elems cached)
     writeIORef stmtCache Map.empty
@@ -187,19 +353,22 @@ closeCachedConn CachedConn{..} = do
 
 createDB :: FilePath -> Int -> WalCheckpointing -> Int -> IO SqliteDB
 createDB path busyTimeoutMs walCheckpointing poolSize = do
+    connections <- newIORef IntMap.empty
+    nextConnId  <- newIORef 0
+    let open_ = openCachedConn nextConnId connections busyTimeoutMs walCheckpointing path
     readPool  <- Pool.newPool $
                     Pool.defaultPoolConfig
-                        (initCachedConn busyTimeoutMs walCheckpointing path)
-                        closeCachedConn
+                        open_
+                        (closeCachedConn connections)
                         60      -- idle TTL seconds
                         poolSize
-    writeConn <- newMVar =<< initCachedConn busyTimeoutMs walCheckpointing path
+    writeConn <- newMVar =<< open_
     pure SqliteDB{ dbPath = path, .. }
 
 closeDB :: SqliteDB -> IO ()
 closeDB SqliteDB{..} = do
     Pool.destroyAllResources readPool
-    withMVar writeConn closeCachedConn
+    withMVar writeConn (closeCachedConn connections)
 
 
 -- | Unlike the automatic passive checkpoint SQLite that runs every 1000 WAL pages, 

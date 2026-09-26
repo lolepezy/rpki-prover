@@ -22,6 +22,7 @@ import           RPKI.Logging
 import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
 import           RPKI.Repository
+import           RPKI.Reporting (Validations)
 import           RPKI.Time
 import           Data.Hourglass (Seconds(..))
 import           RPKI.Metrics.System
@@ -74,7 +75,10 @@ data AppState = AppState {
 
         fetcheables :: TVar Fetcheables,
 
-        systemState :: TVar SystemState
+        -- Problems of the main process that are not about any TA, e.g. a 
+        -- transaction that had to be rolled back, waiting to be added to the 
+        -- common validations of the latest version (see 'RPKI.Workflow.reportSystemProblem').
+        systemProblems :: TVar Validations
         
     } deriving stock (Generic)
 
@@ -196,7 +200,7 @@ newAppState = do
         cachedBinaryRtrPdus <- newTVar mempty
         runningWorkers <- newTVar mempty
         fetcheables <- newTVar mempty
-        systemState <- newTVar $ SystemState DbOperational
+        systemProblems <- newTVar mempty
         erikRelayHealth <- newTVar mempty
         let readSlurm = Nothing
         pure AppState {..}
@@ -256,16 +260,6 @@ updateRunningWorkers message AppState {..} =
             AddWorker wi     -> Map.insert (wi ^. #workerPid) wi
             RemoveWorker pid -> Map.delete pid
 
-updateSystemStatus :: MonadIO m => SystemStatusMessage -> AppState -> m ()           
-updateSystemStatus (SystemStatusMessage ss) AppState {..} =     
-    -- TODO Do something smarter here
-    liftIO $ atomically $ writeTVar systemState ss
-
-waitForStuckDb :: AppState -> STM ()
-waitForStuckDb AppState {..} = do
-    SystemState {..} <- readTVar systemState
-    unless (dbState == DbStuck) retry
-
         
 removeExpiredWorkers :: MonadIO m => AppState -> m [WorkerInfo]
 removeExpiredWorkers AppState {..} = liftIO $ do 
@@ -279,13 +273,6 @@ removeExpiredWorkers AppState {..} = liftIO $ do
 getRunningWorkers :: MonadIO m => AppState -> m [WorkerInfo]
 getRunningWorkers AppState {..} = 
     liftIO $ atomically $ Map.elems <$> readTVar runningWorkers
-
-removeAllRunningWorkers :: MonadIO m => AppState -> m [WorkerInfo]
-removeAllRunningWorkers AppState {..} = 
-    liftIO $ atomically $ do 
-        clients <- Map.elems <$> readTVar runningWorkers
-        writeTVar runningWorkers mempty
-        pure clients
 
 readRtrPayloads :: AppState -> STM RtrPayloads    
 readRtrPayloads AppState {..} = readTVar filtered
