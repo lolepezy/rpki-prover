@@ -234,6 +234,9 @@ library
       RPKI.Validation.ObjectValidation
       RPKI.Validation.ResourceValidation
       RPKI.Validation.TopDown
+      RPKI.Validation.TopDown.Context
+      RPKI.Validation.TopDown.Shortcuts
+      RPKI.Validation.TopDown.TaCert
       RPKI.Validation.Types
       RPKI.Meta.GitVersionInfo
       RPKI.Meta.Version
