@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.DomainSpec where
 
 import           Test.Tasty

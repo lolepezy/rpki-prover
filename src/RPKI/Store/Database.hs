@@ -1,7 +1,4 @@
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE QuasiQuotes         #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StrictData          #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Store.Database (
     -- * Public database handle (implementation hidden)

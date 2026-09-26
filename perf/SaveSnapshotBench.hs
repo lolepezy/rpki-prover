@@ -1,7 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE OverloadedLabels  #-}
-{-# LANGUAGE RecordWildCards   #-}
-
 -- | Standalone (non-criterion) benchmark for `saveSnapshot`: the
 -- parse-prevalidate-store pipeline that runs when an RRDP snapshot is
 -- processed. Criterion isn't a good fit here since we care about wall-clock

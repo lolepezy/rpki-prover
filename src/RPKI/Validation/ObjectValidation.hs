@@ -1,8 +1,5 @@
-{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes  #-}
-{-# LANGUAGE ConstraintKinds      #-}
-{-# LANGUAGE OverloadedStrings    #-}
 
 module RPKI.Validation.ObjectValidation where
     

@@ -1,7 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE OverloadedLabels  #-}
-{-# LANGUAGE RecordWildCards   #-}
-
 -- | Standalone (non-criterion) benchmark for `validateMutlipleTAs`: the
 -- top-down validation entry point that fetches, parses and validates the
 -- whole RPKI tree for a set of TAs. Criterion isn't a good fit here for the

@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 {- | How many CPUs the process can actually make use of.
 All of it is Linux only, read from procfs and sysfs.
 -}

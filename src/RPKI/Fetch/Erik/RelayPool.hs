@@ -1,5 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE StrictData        #-}
+{-# LANGUAGE StrictData #-}
 
 {- | A work queue drained by worker threads bound to Erik relays.
 

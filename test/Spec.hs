@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 import Test.Tasty
 
 import RPKI.Parse.ObjectParseSpec

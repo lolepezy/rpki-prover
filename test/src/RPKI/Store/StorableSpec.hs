@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Store.StorableSpec where
 
 import           Codec.Compression.LZ4          (decompress)

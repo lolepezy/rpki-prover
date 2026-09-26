@@ -1,7 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE LambdaCase          #-}
-
 -- | Per-stage allocation/time breakdown for the RRDP object-processing
 -- pipeline (the part of `saveSnapshot` that runs on the parsing/async
 -- threads): base64 decode, SHA-256 hash, ASN.1 parse + prevalidate +

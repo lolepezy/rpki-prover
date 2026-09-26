@@ -3,7 +3,6 @@
 -- handlers). GHC2024 implies MonoLocalBinds, which would pin the unsignatured
 -- ones to the enclosing stack; turn it off so they generalise over `es`.
 {-# LANGUAGE NoMonoLocalBinds     #-}
-{-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE StrictData           #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -843,7 +842,7 @@ allOrNothingMftChildrenResults appContext topDownContext fullCa nonCrlChildren v
                 -- In this case invalid child is considered invalid entry
                 -- and the whole manifest is invalid
                 Left e              -> InvalidEntry e vs
-                Right entry         -> ValidEntry vs key entry
+                Right entry         -> ValidEntry vs key (keptEntry appContext entry)
 
 
 independentMftChildrenResults :: (ValidatorIO es, Concurrent :> es) =>
@@ -880,7 +879,7 @@ independentMftChildrenResults appContext topDownContext fullCa nonCrlChildren va
                     let allVs = vs <> vs'
                     pure $! case z of
                             Left e              -> InvalidChild e allVs key filename
-                            Right entry         -> ValidEntry allVs key entry
+                            Right entry         -> ValidEntry allVs key (keptEntry appContext entry)
 
 
 -- A child CA is a whole sub-tree to validate and a task of its own,
@@ -889,6 +888,17 @@ forChildren :: IOE :> es =>
             WorkPool -> [T3 Text Hash ObjectKey] -> (T3 Text Hash ObjectKey -> Eff es b) -> Eff es [b]
 forChildren workPool = forInPool workPool 64 $ \(T3 fileName _ _) ->
                 textObjectType fileName == Just CER
+
+
+-- | Entries of children go into the manifest shortcut, i.e. only with incremental
+-- validation, and without it they aren't kept at all. The results of all the
+-- children of a manifest are kept until the sub-trees of its CA children are
+-- validated, and so would be the entries of all its other children.
+keptEntry :: AppContext s -> MftEntry -> Maybe MftEntry
+keptEntry appContext entry =
+    case appContext.config.validationConfig.validationAlgorithm of
+        Incremental        -> Just entry
+        FullEveryIteration -> Nothing
 
 
 gatherMftEntryResults :: Validator es =>
@@ -908,7 +918,7 @@ gatherMftEntryResults =
                 -- Issues about the child in the scope of the manifest, e.g. its
                 -- name not matching its location, don't make it troubled: they
                 -- stop the manifest shortcut from being made at all.
-                pure $! (key, entry) : childrenShortcuts
+                pure $! maybe childrenShortcuts (\e -> (key, e) : childrenShortcuts) entry
         ) mempty
 
 
@@ -1420,7 +1430,7 @@ getCaLocations AppContext {..} = \case
 
 data ManifestValidity e v = InvalidEntry e v 
                           | InvalidChild e v ObjectKey Text
-                          | ValidEntry v ObjectKey MftEntry
+                          | ValidEntry v ObjectKey (Maybe MftEntry)
 
 longerThan :: [a] -> Int -> Bool
 longerThan xs n = not $ null $ drop n xs

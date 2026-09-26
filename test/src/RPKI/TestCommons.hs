@@ -1,8 +1,3 @@
-{-# LANGUAGE RecordWildCards  #-}
-{-# LANGUAGE QuasiQuotes      #-}
-{-# LANGUAGE OverloadedLabels #-}
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.TestCommons where
 
 import           Control.Lens

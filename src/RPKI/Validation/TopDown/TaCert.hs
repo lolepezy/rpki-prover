@@ -1,5 +1,4 @@
-{-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE StrictData           #-}
+{-# LANGUAGE StrictData #-}
 
 -- | The TA certificate: downloading it, choosing between the downloaded and
 -- the cached one, storing it, and reading it for validation.

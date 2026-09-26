@@ -1,7 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
-{-# LANGUAGE OverloadedLabels  #-}
-
 module RPKI.Parse.ObjectParseSpec where
 
 import Control.Lens

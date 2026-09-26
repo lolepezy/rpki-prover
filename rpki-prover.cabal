@@ -46,6 +46,7 @@ common shared
     , TemplateHaskell
     , ViewPatterns
     , OverloadedRecordDot
+    , OverloadedStrings
   default-language: GHC2024
   ghc-options:
       -j8 +RTS -A256m -AL512m -n4m -qb0 -qn6 -RTS

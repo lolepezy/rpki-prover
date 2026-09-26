@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings  #-}
-
 module RPKI.Fetch.Erik.ErikRelay where
 
 import           Effectful.Concurrent (Concurrent)

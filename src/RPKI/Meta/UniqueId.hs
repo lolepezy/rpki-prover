@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Meta.UniqueId where
 
 import RPKI.AppTypes
