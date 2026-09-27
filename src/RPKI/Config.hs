@@ -175,15 +175,11 @@ data ValidationConfig = ValidationConfig {
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
--- | Tuning for the fetch scheduler: how long a fetch may wait for a
--- concurrency slot, the bounds a repository's own refresh interval is
--- trimmed to, and how a failed fetch backs off. Not exposed as CLI flags,
--- same as 'minimalRevalidationInterval' above -- these are knobs to be
--- changed by editing the default, not by a user tuning a deployment.
 data FetchIntervalConfig = FetchIntervalConfig {
+        -- | How long a fetch may wait for a concurrency slot before it start anyway
         fetchLaunchWaitDuration  :: Seconds,
         minFetchInterval         :: Seconds,
-        maxFetchInterval        :: Seconds,
+        maxFetchInterval         :: Seconds,
         maxFailedBackoffInterval :: Seconds
     }
     deriving stock (Eq, Ord, Show, Generic)
