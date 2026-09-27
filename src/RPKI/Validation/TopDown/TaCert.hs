@@ -116,7 +116,7 @@ fetchValidateAndStoreTaCert appContext@AppContext {..} tal worldVersion = go
                     DB.getTaCertByKey tx taCertKey
 
         z <- (do 
-                (u, ro) <- fetchTACertificate appContext (newFetchConfig config) tal
+                (u, ro) <- fetchTACertificate appContext tal
                 pure $ FetchedTA u ro)
             `catchError`
                 (\_cs -> tryToFallbackToCachedCopy)

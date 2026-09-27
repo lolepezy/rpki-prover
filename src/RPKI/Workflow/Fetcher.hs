@@ -102,9 +102,7 @@ newFetcher :: AppContext s -> WorkflowShared -> RpkiURL -> IO ()
 newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetchers {..}, ..} url = do
     ignoreSync $ go `finally` dropFetcher fetchers url    
   where
-    fetchConfig = newFetchConfig config
-
-    go = case config ^. #proverRunMode of         
+    go = case config ^. #proverRunMode of
         OneOffMode _ -> void fetchOnce
         ServerMode   -> do 
             Now start <- thisInstant        
@@ -170,7 +168,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 withFetchLimits fetchers config repository 
                     $ runConcurrentlyIfPossible logger FetchTask runningTasks 
                         $ runFetch url
-                            $ fetchRepository appContext fetchConfig worldVersion repository
+                            $ fetchRepository appContext worldVersion repository
 
             rememberFirstFetchBy worldVersion
             updatePrometheusForRepository url duration prometheusMetrics
@@ -249,7 +247,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                     -- Erik workers, one per FQDN, started in a single round.
                     withSemaphore erikFetchSemaphore $ 
                         runFetch url $ 
-                            fetchRepositoryFromErikRelays appContext fetchConfig 
+                            fetchRepositoryFromErikRelays appContext
                                 erikRelays worldVersion fqdn
                 case r of 
                     Right ErikFetchStat {..} -> do 
@@ -282,7 +280,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                         withFetchLimits fetchers config repository 
                             $ runConcurrentlyIfPossible logger FetchTask runningTasks                                 
                                 $ runFetch fallbackUrl
-                                    $ fetchRepository appContext fetchConfig worldVersion repository                
+                                    $ fetchRepository appContext worldVersion repository
 
                 updatePrometheusForRepository fallbackUrl duration prometheusMetrics
                 let repo = case r of

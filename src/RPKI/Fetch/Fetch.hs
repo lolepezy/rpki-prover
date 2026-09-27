@@ -180,14 +180,14 @@ nextRefreshInterval config repository worldVersion newStatus rrdpStats duration 
                             | otherwise                -> currentInterval
                         _                              -> currentInterval
   where
-    fetchConfig = newFetchConfig config
+    fetchIntervalConfig = config ^. #fetchIntervalConfig
 
     currentInterval =
         fromMaybe defaultInterval (getMeta repository ^. #refreshInterval)
 
     exponentialBackoff (Seconds s) = min
         (Seconds $ s + s `div` 2 + 2 * kindaRandomness)
-        ((fetchConfig ^. #maxFailedBackoffInterval) + 3 * Seconds kindaRandomness)
+        (fetchIntervalConfig ^. #maxFailedBackoffInterval + 3 * Seconds kindaRandomness)
 
     moreThanOne = ( > 1) . length . NonEmpty.take 2
 
@@ -202,12 +202,12 @@ nextRefreshInterval config repository worldVersion newStatus rrdpStats duration 
         case repository of
             -- it's significantly cheaper to use E-Tag and If-None-Match,
             -- so the interval can be smaller
-            RrdpR (RrdpRepository { eTag = Just _ }) -> fetchConfig ^. #minFetchInterval
-            _                                        -> 2 * fetchConfig ^. #minFetchInterval
+            RrdpR (RrdpRepository { eTag = Just _ }) -> fetchIntervalConfig ^. #minFetchInterval
+            _                                        -> 2 * fetchIntervalConfig ^. #minFetchInterval
 
     trimInterval interval =
         max minInterval
-            (min ((fetchConfig ^. #maxFetchInterval) + Seconds kindaRandomness) interval)
+            (min (fetchIntervalConfig ^. #maxFetchInterval + Seconds kindaRandomness) interval)
 
     -- Pseudorandom stuff is added to spread repositories over time more or less
     -- uniformly and avoid having peaks of activity. It's just something looking
@@ -234,7 +234,7 @@ withFetchLimits Fetchers {..} config repository f =
         RrdpR _                   -> withLaunchSlot
         RsyncR (getRsyncURL -> r) -> rsyncFetch r
   where
-    timeToWait = newFetchConfig config ^. #fetchLaunchWaitDuration
+    timeToWait = config ^. #fetchIntervalConfig . #fetchLaunchWaitDuration
 
     semaphoreToUse =
         case getFetchStatus repository of
@@ -262,40 +262,38 @@ withFetchLimits Fetchers {..} config repository f =
 -- Returned repository has all the metadata updated (in case of RRDP session and serial).
 -- The metadata is also updated in the database.
 --
-fetchRepository :: (ValidatorIO es, Timeout :> es) => AppContext s 
-                -> FetchConfig
+fetchRepository :: (ValidatorIO es, Timeout :> es) => AppContext s
                 -> WorldVersion
-                -> Repository 
+                -> Repository
                 -> Eff es (Repository, Maybe RrdpFetchStat)
-fetchRepository 
+fetchRepository
     appContext@AppContext {..}
-    fetchConfig
     worldVersion
     repo = do
-        logInfo logger [i|Fetching #{getURL repoURL}.|]   
+        logInfo logger [i|Fetching #{getURL repoURL}.|]
         case repo of
-            RsyncR r -> do 
+            RsyncR r -> do
                 r' <- fetchRsyncRepository r
-                pure (RsyncR r', Nothing)                
-            RrdpR r  -> do 
+                pure (RsyncR r', Nothing)
+            RrdpR r  -> do
                 (r', stat) <- fetchRrdpRepository r
-                pure (RrdpR r', Just stat)                
+                pure (RrdpR r', Just stat)
   where
-    repoURL = getRpkiURL repo    
+    repoURL = getRpkiURL repo
 
-    -- The worker's own timeout, and the parent's backstop for it, 
+    -- The worker's own timeout, and the parent's backstop for it,
     -- are taken care of by 'runWorker'.
-    fetchRrdpRepository r = do 
-        (z, elapsed) <- timedMS $ fromTryM 
-                            (RrdpE . UnknownRrdpProblem . fmtEx) 
-                            (runRrdpFetchWorker appContext fetchConfig worldVersion r)
+    fetchRrdpRepository r = do
+        (z, elapsed) <- timedMS $ fromTryM
+                            (RrdpE . UnknownRrdpProblem . fmtEx)
+                            (runRrdpFetchWorker appContext worldVersion r)
         logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
         pure z
 
     fetchRsyncRepository r = do 
         (z, elapsed) <- timedMS $ fromTryM 
                             (RsyncE . UnknownRsyncProblem . fmtEx) 
-                            (runRsyncFetchWorker appContext fetchConfig worldVersion r)
+                            (runRsyncFetchWorker appContext worldVersion r)
         logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
         pure z
           
@@ -303,28 +301,28 @@ fetchRepository
 
 -- | Fetch TA certificate based on TAL location(s)
 --
-fetchTACertificate :: (ValidatorIO es, Timeout :> es) => AppContext s -> FetchConfig -> TAL -> Eff es (RpkiURL, ParsedRpkiObject)
-fetchTACertificate appContext@AppContext {..} fetchConfig tal = 
+fetchTACertificate :: (ValidatorIO es, Timeout :> es) => AppContext s -> TAL -> Eff es (RpkiURL, ParsedRpkiObject)
+fetchTACertificate appContext@AppContext {..} tal =
     go $ sortRrdpFirst $ neSetToList $ unLocations $ talCertLocations tal
   where
     go []         = appError $ TAL_E $ TALError "None of the certificate locations could be fetched."
     go (u : uris) = tryFetch `catchError` (\_cs -> goToNext)
-      where 
-        tryFetch = 
+      where
+        tryFetch =
             timeoutVT timeout fetchTaCert (goToNext timeoutError)
-        
-        (timeout, timeoutError) = let 
-            rsyncT = fetchConfig ^. #rsyncTimeout
-            rrdpT  = fetchConfig ^. #rrdpTimeout
-            in case u of 
+
+        (timeout, timeoutError) = let
+            rsyncT = rsyncFetchTimeout config
+            rrdpT  = rrdpFetchTimeout config
+            in case u of
                 RsyncU _ -> (rsyncT, RsyncE $ RsyncDownloadTimeout rsyncT)
                 RrdpU _  -> (rrdpT, RrdpE $ RrdpDownloadTimeout rrdpT)
 
-        fetchTaCert = do                     
+        fetchTaCert = do
             logInfo logger [i|Fetching TA certificate from #{getURL u}.|]
-            ro <- case u of 
-                RsyncU rsyncU -> rsyncRpkiObject appContext fetchConfig rsyncU
-                RrdpU rrdpU   -> downloadRpkiObject appContext fetchConfig rrdpU
+            ro <- case u of
+                RsyncU rsyncU -> rsyncRpkiObject appContext rsyncU
+                RrdpU rrdpU   -> downloadRpkiObject appContext rrdpU
             pure (u, ro)
             
         goToNext e = do            
@@ -334,23 +332,21 @@ fetchTACertificate appContext@AppContext {..} fetchConfig tal =
             go uris            
 
 
-fetchRepositoryFromErikRelays :: (ValidatorIO es, Timeout :> es) => AppContext s 
-                            -> FetchConfig
-                            -> [URI]                            
+fetchRepositoryFromErikRelays :: (ValidatorIO es, Timeout :> es) => AppContext s
+                            -> [URI]
                             -> WorldVersion
-                            -> FQDN 
+                            -> FQDN
                             -> Eff es ErikFetchStat
 fetchRepositoryFromErikRelays
     appContext@AppContext {..}
-    fetchConfig
     relays
-    worldVersion    
-    fqdn = do        
-        logInfo logger [i|Fetching #{fqdn} from #{length relays} Erik relay(s).|]           
+    worldVersion
+    fqdn = do
+        logInfo logger [i|Fetching #{fqdn} from #{length relays} Erik relay(s).|]
 
-        (z, elapsed) <- timedMS $ fromTryM 
-                            (ErikE . UnknownErikProblem . fmtEx) 
-                            (runErikFetchWorker appContext fetchConfig worldVersion relays fqdn)
+        (z, elapsed) <- timedMS $ fromTryM
+                            (ErikE . UnknownErikProblem . fmtEx)
+                            (runErikFetchWorker appContext worldVersion relays fqdn)
         logInfo logger [i|Fetched #{fqdn} from Erik relays, took #{elapsed}ms.|]
         pure z
 
