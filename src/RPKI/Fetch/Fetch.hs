@@ -116,16 +116,12 @@ dropFetcher Fetchers {..} url = do
             writeTVar runningFetchers $ Map.delete url running
             modifyTVar' uriByTa $ deleteByIx url
 
--- | Cancel every running fetcher, for shutdown only. Fetchers deregister
--- themselves through 'dropFetcher' as they die.
+-- | Cancel every running fetcher, for shutdown only.
 stopAllFetchers :: Fetchers -> IO ()
 stopAllFetchers Fetchers {..} = mask_ $ do
     threads <- atomically $ Map.elems <$> readTVar runningFetchers
     for_ threads $ \thread -> Conc.throwTo thread AsyncCancelled
 
--- | All the shared state the fetchers need. The 'Fetcheables' are not created
--- here but taken from the 'AppState', so that they are globally available,
--- in particular to the REST API.
 newFetchers :: Config -> TVar Fetcheables -> STM Fetchers
 newFetchers config fetcheables = do
     runningFetchers      <- newTVar mempty
