@@ -167,9 +167,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
       where
         fetchPrimary repository worldVersion = do
             (r, validations, duration) <-                 
-                withFetchLimits fetchers config repository $ 
-                    runFetch url $ 
-                        runConcurrentlyIfPossible logger FetchTask runningTasks 
+                withFetchLimits fetchers config repository 
+                    $ runConcurrentlyIfPossible logger FetchTask runningTasks 
+                        $ runFetch url
                             $ fetchRepository appContext fetchConfig worldVersion repository
 
             rememberFirstFetchBy worldVersion
@@ -303,6 +303,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         
 
     -- Every fetch attempt is timed and reported under its own repository scope.
+    -- It always goes innermost, inside every semaphore and task slot the attempt
+    -- has to acquire, so that the duration is the fetch itself and never
+    -- includes the time spent queueing for a slot to run in.
     runFetch scopeUrl fetch = do 
         ((r, validations), duration) <- 
             timedMS $ runValidatorIO (newScopes' RepositoryFocus scopeUrl) fetch
@@ -321,7 +324,8 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             DB.saveRepositoryValidationStates tx [(updated, validations)]
         pure interval
 
-    repositoryFor u = fromMaybe (newRepository u) <$> DB.roTxT database (\tx -> DB.getRepository tx u)
+    repositoryFor u = fromMaybe (newRepository u) <$> 
+        DB.roTxT database (\tx -> DB.getRepository tx u)
 
     fetchableForUrl = do 
         Fetcheables fs <- readTVarIO fetcheables
