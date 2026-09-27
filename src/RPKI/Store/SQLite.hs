@@ -275,7 +275,15 @@ watchTransactions SqliteDB{connections} TxTimeouts{..} onStuck = forever $ do
                 | not reported && runningFor > limit ->
                     (InTx tx { reported = True }, Just StuckTx {..})
               where
-                runningFor = Seconds $ fromIntegral $ (now - startedAt) `div` 1_000_000_000
+                -- `now` is read once per tick, before this loop visits every
+                -- connection, so a transaction can start after `now` was
+                -- captured (its `startedAt` is then later than `now`). Word64
+                -- subtraction has no negatives, so without this guard that
+                -- wraps around to ~2^64 nanoseconds, reported as a transaction
+                -- "running for 18446744073s" and aborted on the spot.
+                runningFor
+                    | now <= startedAt = Seconds 0
+                    | otherwise        = Seconds $ fromIntegral $ (now - startedAt) `div` 1_000_000_000
                 limit      = case kind of
                                 ReadTx  -> readTxTimeout
                                 WriteTx -> writeTxTimeout
