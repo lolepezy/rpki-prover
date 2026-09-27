@@ -1,4 +1,4 @@
--- | Standalone (non-criterion) benchmark for `validateMutlipleTAs`: the
+-- | Standalone (non-criterion) benchmark for `validateMultipleTAs`: the
 -- top-down validation entry point that fetches, parses and validates the
 -- whole RPKI tree for a set of TAs. Criterion isn't a good fit here for the
 -- same reason as in SaveSnapshotBench: we care about wall-clock vs
@@ -75,7 +75,7 @@ import qualified RPKI.Store.Database     as DB
 import           RPKI.TAL                (TAL, getTaName, parseTAL)
 import           RPKI.Time               (Instant (..), thisInstant, unNow, TimeMs (..))
 import           RPKI.Util               (convert, parseRsyncURL)
-import           RPKI.Validation.TopDown (TopDownResult (..), validateMutlipleTAs)
+import           RPKI.Validation.TopDown (TopDownResult (..), validateMultipleTAs)
 
 
 -- | Placeholder bench root; replace with the root directory of a real,
@@ -206,7 +206,7 @@ runIteration i appContext fixedNow dumpDir tals = do
     traceMarkerIO "validation start"
     cpu0  <- getCPUTime
     wall0 <- getMonotonicTimeNSec
-    results <- validateMutlipleTAs appContext worldVersion tals
+    results <- validateMultipleTAs appContext worldVersion tals
     wall1 <- getMonotonicTimeNSec
     cpu1  <- getCPUTime
     traceMarkerIO "validation end"

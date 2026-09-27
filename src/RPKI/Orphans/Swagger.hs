@@ -136,6 +136,7 @@ instance ToSchema RsyncConf
 instance ToSchema RrdpConf
 instance ToSchema ErikConf
 instance ToSchema ValidationConfig
+instance ToSchema FetchIntervalConfig
 instance ToSchema WorkerLimits
 instance ToSchema SystemConfig
 instance ToSchema HttpApiConfig

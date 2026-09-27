@@ -450,6 +450,7 @@ instance ToJSON ProverRunMode
 instance ToJSON TAL
 instance ToJSON HttpApiConfig
 instance ToJSON ValidationConfig
+instance ToJSON FetchIntervalConfig
 instance ToJSON RtrConfig
 instance ToJSON WorkerLimits
 instance ToJSON SystemConfig

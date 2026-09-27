@@ -42,18 +42,6 @@ data Parallelism = Parallelism {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-data FetchConfig = FetchConfig {
-        rsyncTimeout             :: Seconds,
-        rrdpTimeout              :: Seconds,
-        erikTimeout              :: Seconds,
-        fetchLaunchWaitDuration  :: Seconds,
-        minFetchInterval         :: Seconds,
-        maxFetchInterval         :: Seconds,
-        maxFailedBackoffInterval :: Seconds
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
 -- | 'txTimeout' is how long one database transaction, read or write, may run
 -- from BEGIN on, in the main process and in every worker alike. A worker with 
 -- a transaction running longer than that gives up and exits 
@@ -79,6 +67,7 @@ data Config = Config {
         rrdpConf                  :: RrdpConf,
         erikConf                  :: ErikConf,
         validationConfig          :: ValidationConfig,
+        fetchIntervalConfig       :: FetchIntervalConfig,
         systemConfig              :: SystemConfig,
         httpApiConf               :: HttpApiConfig,
         rtrConfig                 :: Maybe RtrConfig,
@@ -182,7 +171,17 @@ data ValidationConfig = ValidationConfig {
         validationAlgorithm            :: ValidationAlgorithm,
 
         minimalRevalidationInterval :: Seconds
-    } 
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+data FetchIntervalConfig = FetchIntervalConfig {
+        -- | How long a fetch may wait for a concurrency slot before it start anyway
+        fetchLaunchWaitDuration  :: Seconds,
+        minFetchInterval         :: Seconds,
+        maxFetchInterval         :: Seconds,
+        maxFailedBackoffInterval :: Seconds
+    }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -315,6 +314,12 @@ defaultConfig = Config {
         validationAlgorithm            = FullEveryIteration,
         minimalRevalidationInterval    = Seconds 30
     },
+    fetchIntervalConfig = FetchIntervalConfig {
+        fetchLaunchWaitDuration  = Seconds 30,
+        minFetchInterval         = Seconds 30,
+        maxFetchInterval         = Seconds 300,
+        maxFailedBackoffInterval = Seconds $ 30 * 60
+    },
     httpApiConf = HttpApiConfig {
         port = 9999
     },
@@ -438,14 +443,10 @@ defaultTalUrls = [
         ("ripe.tal", "https://tal.rpki.ripe.net/ripe-ncc.tal")
     ]        
     
-newFetchConfig :: Config -> FetchConfig
-newFetchConfig config = let
-        SystemConfig {..} = config ^. typed @SystemConfig
-        rsyncTimeout = rsyncWorkerLimits ^. #workerTimeout
-        rrdpTimeout  = rrdpWorkerLimits ^. #workerTimeout
-        erikTimeout  = erikWorkerLimits ^. #workerTimeout
-        fetchLaunchWaitDuration = Seconds 30
-        minFetchInterval = Seconds 30
-        maxFetchInterval = Seconds 300
-        maxFailedBackoffInterval = Seconds $ 30 * 60
-    in FetchConfig {..}
+-- | How long a worker doing a fetch of this kind may run before the main
+-- process gives up on it. Not bundled into a record of its own: every use of
+-- these needs exactly one of them, next to the 'Config' it came from.
+rsyncFetchTimeout, rrdpFetchTimeout, erikFetchTimeout :: Config -> Seconds
+rsyncFetchTimeout config = config ^. typed @SystemConfig . #rsyncWorkerLimits . #workerTimeout
+rrdpFetchTimeout  config = config ^. typed @SystemConfig . #rrdpWorkerLimits  . #workerTimeout
+erikFetchTimeout  config = config ^. typed @SystemConfig . #erikWorkerLimits  . #workerTimeout

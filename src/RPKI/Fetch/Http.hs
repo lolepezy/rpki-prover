@@ -109,10 +109,9 @@ downloadHashedBS tmpDir uri@(URI u) eTag expectedHash maxSize hashMishmatch = li
 -- | Fetch arbitrary file using the streaming implementation
 -- 
 downloadRpkiObject :: ValidatorIO es => AppContext s ->
-                    FetchConfig ->             
-                    RrdpURL ->             
+                    RrdpURL ->
                     Eff es ParsedRpkiObject
-downloadRpkiObject AppContext {..} _ uri = do
+downloadRpkiObject AppContext {..} uri = do
     let tmpDir = configValue $ config ^. #tmpDirectory
     let maxSize = config ^. typed @RrdpConf . #maxSize
     (content, _, _, _) <- 

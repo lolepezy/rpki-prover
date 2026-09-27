@@ -85,19 +85,17 @@ data WorkerParams = RrdpFetchParams {
                 rrdpRepository :: RrdpRepository,
                 worldVersion   :: WorldVersion 
             } | 
-            RsyncFetchParams { 
-                scopes          :: Scopes, 
-                fetchConfig     :: FetchConfig, 
+            RsyncFetchParams {
+                scopes          :: Scopes,
                 rsyncRepository :: RsyncRepository,
-                worldVersion    :: WorldVersion 
-            } | 
+                worldVersion    :: WorldVersion
+            } |
             ErikFetchParams {
                 scopes       :: Scopes,
-                fetchConfig  :: FetchConfig,
                 relayUris    :: [URI],
                 fqdn         :: FQDN,
                 worldVersion :: WorldVersion
-            } | 
+            } |
             ValidationParams {                 
                 worldVersion   :: WorldVersion,
                 allTaNames     :: [TaName],

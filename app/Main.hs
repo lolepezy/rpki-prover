@@ -188,9 +188,9 @@ executeWorkerProcess = do
                                     exec resultHandler $ fmap (Right . RrdpFetchResult) $ runValidatorIO scopes $ 
                                         updateRrdpRepository appContext worldVersion rrdpRepository
 
-                                RsyncFetchParams {..} -> 
-                                    exec resultHandler $ fmap (Right . RsyncFetchResult) $ runValidatorIO scopes $                                     
-                                        updateObjectForRsyncRepository appContext fetchConfig 
+                                RsyncFetchParams {..} ->
+                                    exec resultHandler $ fmap (Right . RsyncFetchResult) $ runValidatorIO scopes $
+                                        updateObjectForRsyncRepository appContext
                                             worldVersion rsyncRepository
 
                                 ErikFetchParams {..} ->

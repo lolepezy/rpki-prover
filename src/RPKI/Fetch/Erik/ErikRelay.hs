@@ -94,16 +94,15 @@ spillRecords bs
         in LBS.toStrict record : spillRecords rest'
 
 runErikFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext s
-                    -> FetchConfig
                     -> WorldVersion
                     -> [URI]
                     -> FQDN
                     -> Eff es ErikFetchStat
-runErikFetchWorker appContext fetchConfig worldVersion relayUris fqdn = do
+runErikFetchWorker appContext@AppContext {..} worldVersion relayUris fqdn = do
     scopes <- askScopes
     ErikFetchResult z <- runWorker appContext
-                            (ErikFetchParams scopes fetchConfig relayUris fqdn worldVersion)
-                            (Just $ fetchConfig ^. #erikTimeout)
+                            (ErikFetchParams scopes relayUris fqdn worldVersion)
+                            (Just $ erikFetchTimeout config)
     embedValidatorT $ pure z
 
 {-

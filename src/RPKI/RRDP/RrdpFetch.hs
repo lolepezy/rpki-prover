@@ -51,16 +51,15 @@ import qualified RPKI.Store.Database    as DB
 import qualified RPKI.Util              as U
 
 
-runRrdpFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext s 
-                    -> FetchConfig
+runRrdpFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext s
                     -> WorldVersion
-                    -> RrdpRepository             
+                    -> RrdpRepository
                     -> Eff es (RrdpRepository, RrdpFetchStat)
-runRrdpFetchWorker appContext fetchConfig worldVersion repository = do
+runRrdpFetchWorker appContext@AppContext {..} worldVersion repository = do
     scopes <- askScopes
     RrdpFetchResult z <- runWorker appContext
                             (RrdpFetchParams scopes repository worldVersion)
-                            (Just $ fetchConfig ^. #rrdpTimeout)
+                            (Just $ rrdpFetchTimeout config)
     embedValidatorT $ pure z
 
 

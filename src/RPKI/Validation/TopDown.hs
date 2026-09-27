@@ -8,7 +8,7 @@
 
 module RPKI.Validation.TopDown (
     TopDownResult(..),
-    validateMutlipleTAs,
+    validateMultipleTAs,
     refreshTaCertificate,
     TroubledChildLoadPath(..),
     resolveTroubledChildByKey
@@ -130,11 +130,11 @@ data TroubledChildLoadPath = TroubledFromParsed | TroubledFromOriginal
 
 -- | It is the main entry point for the top-down validation. 
 -- Validates a bunch of TAs starting from their TALs.  
-validateMutlipleTAs :: AppContext s
+validateMultipleTAs :: AppContext s
                     -> WorldVersion
                     -> [TAL]
                     -> IO (Map TaName TopDownResult)
-validateMutlipleTAs appContext@AppContext {..} worldVersion tals = do
+validateMultipleTAs appContext@AppContext {..} worldVersion tals = do
     -- All the TAs are validated by one pool of workers (see `WorkPool`), one on 
     -- every capability. The writer of manifest shortcuts, the only thread writing
     -- to the database here, gets an extra capability of its own. Every SQLite call
