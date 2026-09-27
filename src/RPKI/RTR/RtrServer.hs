@@ -47,6 +47,7 @@ import           RPKI.Util                        (convert, hex, decodeBase64)
 
 import           RPKI.AppState
 import           RPKI.AppTypes
+import           RPKI.Workflow.Task                (delayUntilNext)
 
 import qualified RPKI.Store.Database    as DB
 
@@ -83,12 +84,18 @@ preNegotiated pdu = TruePdu $ VersionedPdu pdu preNegotiationVersion
 
 {- | Maximum number of simultaneous RTR client connections.
 
-   An RTR server talks to routers, so a few hundred is already generous, while 
-   an unbounded accept loop lets anyone who can reach the port exhaust threads 
+   An RTR server talks to routers, so a few hundred is already generous, while
+   an unbounded accept loop lets anyone who can reach the port exhaust threads
    and file descriptors.
 -}
 maxRtrConnections :: Int
 maxRtrConnections = 512
+
+-- | https://datatracker.ietf.org/doc/html/rfc8210#section-8.2
+-- "The cache MUST rate-limit Serial Notifies to no more frequently than one
+-- per minute."
+rtrNotifyRateLimit :: Seconds
+rtrNotifyRateLimit = Seconds 60
 
 -- 
 -- | Main entry point, here we start the RTR server. 
@@ -184,22 +191,23 @@ runRtrServer appContext RtrConfig {..} = do
                         Just $ newRtrState worldVersion maxStoredDiffs
 
         lastTimeNotified <- newTVarIO Nothing
+        notifyPending    <- newTVarIO False
 
         forever $ do
             (rtrState', previousVersion, newVersion, currentRtrPayload) <- waitForLatestRtrPayload appContext rtrState
             previousRtrPayload <- readRtrPayload appContext previousVersion
-            
+
             let rtrDiff = evalDiffs previousRtrPayload currentRtrPayload
             let thereAreRtrUpdates = not $ emptyDiffs rtrDiff
 
-            let 
-                previousVrpSize = vrpsCount $ previousRtrPayload ^. #uniqueVrps 
+            let
+                previousVrpSize = vrpsCount $ previousRtrPayload ^. #uniqueVrps
                 currentVrpSize  = vrpsCount $ currentRtrPayload ^. #uniqueVrps
-                previousBgpSecSize = Set.size $ previousRtrPayload ^. #bgpSec 
-                currentBgpSecSize  = Set.size $ currentRtrPayload ^. #bgpSec 
-                previousAspaSize   = Set.size $ previousRtrPayload ^. #aspas 
-                currentAspaSize    = Set.size $ currentRtrPayload ^. #aspas 
-                in logDebug logger $ [i|Notified about an update: #{previousVersion} -> #{newVersion}, |] <> 
+                previousBgpSecSize = Set.size $ previousRtrPayload ^. #bgpSec
+                currentBgpSecSize  = Set.size $ currentRtrPayload ^. #bgpSec
+                previousAspaSize   = Set.size $ previousRtrPayload ^. #aspas
+                currentAspaSize    = Set.size $ currentRtrPayload ^. #aspas
+                in logDebug logger $ [i|Notified about an update: #{previousVersion} -> #{newVersion}, |] <>
                               [i|VRPs: #{previousVrpSize} -> #{currentVrpSize}, |] <>
                               [i|BGPSecs: #{previousBgpSecSize} -> #{currentBgpSecSize}, |] <>
                               [i|ASPAs: #{previousAspaSize} -> #{currentAspaSize}.|]
@@ -207,27 +215,58 @@ runRtrServer appContext RtrConfig {..} = do
             -- force evaluation of the new RTR state so that the old ones could be GC-ed.
             let !nextRtrState = if thereAreRtrUpdates
                     then updatedRtrState rtrState' newVersion rtrDiff
-                    else rtrState' { lastKnownWorldVersion = newVersion }                    
+                    else rtrState' { lastKnownWorldVersion = newVersion }
 
             logDiff rtrDiff
 
-            Now now <- thisInstant            
+            atomically $ writeTVar rtrState $! Just $! nextRtrState
 
-            atomically $ do                
-                writeTVar rtrState $! Just $! nextRtrState
-
-                -- https://datatracker.ietf.org/doc/html/rfc8210#section-8.2
-                -- "The cache MUST rate-limit Serial Notifies to no more frequently than one per minute."
-                -- 
-                let moreThanMinuteAgo lastTime = not $ closeEnoughMoments (Earlier lastTime) (Later now) (Seconds 60)
-                sendNotify <- maybe True moreThanMinuteAgo <$> readTVar lastTimeNotified                 
-
-                when (sendNotify && thereAreRtrUpdates) $ do                    
-                    writeTChan updateBroadcastChan 
-                        (nextRtrState ^. #currentSessionId, nextRtrState ^. #currentSerial)
-                    writeTVar lastTimeNotified $ Just now
+            when thereAreRtrUpdates $
+                notifyClients rtrState lastTimeNotified notifyPending
         where
-          logDiff GenDiffs {..} = do 
+          -- Send a Serial Notify for the current session/serial, unless one
+          -- was already sent less than `rtrNotifyRateLimit` ago. A notify
+          -- suppressed by that limit is not simply dropped: a client relying
+          -- on it (rather than on its own poll timer) would otherwise learn
+          -- about the update only whenever the next one happens to land
+          -- outside the rate-limit window, which may be a long time, or
+          -- never. Instead, a delayed notify is scheduled for as soon as the
+          -- window allows, picking up whatever `rtrState` holds by then, so
+          -- several updates suppressed in a row still cost only one delayed
+          -- notify, not one per update.
+          notifyClients rtrStateTv lastTimeNotified notifyPending = do
+            Now now <- thisInstant
+            toSchedule <- atomically $ do
+                notified <- readTVar lastTimeNotified
+                let dueNow = maybe True
+                        (\lastNotified -> not $ closeEnoughMoments (Earlier lastNotified) (Later now) rtrNotifyRateLimit)
+                        notified
+                if dueNow
+                    then sendNow now >> pure Nothing
+                    else readTVar notifyPending >>= \case
+                            True  -> pure Nothing
+                            False -> do
+                                writeTVar notifyPending True
+                                -- `dueNow` was False, so `notified` is `Just _`
+                                pure notified
+            for_ toSchedule $ \lastNotified ->
+                void $ forkFinally
+                    (do delayUntilNext lastNotified rtrNotifyRateLimit
+                        Now later <- thisInstant
+                        atomically $ do
+                            sendNow later
+                            writeTVar notifyPending False)
+                    (\case
+                        Left e  -> logError logger [i|Exception in the delayed RTR Serial Notify sender: #{e}|]
+                        Right _ -> pure ())
+            where
+              sendNow now = do
+                current <- readTVar rtrStateTv
+                for_ current $ \s -> do
+                    writeTChan updateBroadcastChan (s ^. #currentSessionId, s ^. #currentSerial)
+                    writeTVar lastTimeNotified $ Just now
+
+          logDiff GenDiffs {..} = do
             
             let diffText =
                     [i|VRPs: added #{Set.size $ added vrpDiff}, deleted #{Set.size $ deleted vrpDiff}, |] <>
