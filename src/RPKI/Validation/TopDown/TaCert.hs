@@ -19,7 +19,6 @@ import           Data.Text                        (Text)
 import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppTypes
-import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Fetch.Fetch
 import           RPKI.Reporting
