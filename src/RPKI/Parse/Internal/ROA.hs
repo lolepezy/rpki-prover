@@ -24,12 +24,11 @@ import qualified RPKI.Util                  as U
 
 -- | Parse ROA, https://tools.ietf.org/html/rfc6482
 -- 
-parseRoa :: Validator es => BS.ByteString -> Eff es RoaObject
-parseRoa bs = do    
+parseRoa :: Validator es => Hashed BS.ByteString -> Eff es RoaObject
+parseRoa (Hashed bs hash_) = do    
     asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs  
     signedRoa <- fromEither $ first (parseErr . U.convert) 
                     $ runParseASN1 (parseSignedObject $ parseSignedContent parseRoas_) asns
-    hash_ <- getMetaFromSigned signedRoa bs
     pure $ newCMSObject hash_ (CMS signedRoa)
   where     
     parseRoas_ = onNextContainer Sequence $ 

@@ -1359,14 +1359,14 @@ resolveTroubledChildByKey tx childKey =
         Just (Located locations (WellStructuredRO vro)) ->
             pure $! Just (TroubledFromParsed, Keyed (Located locations vro) childKey)
 
-        Just (Located locations (OriginalRO (ObjectOriginal blob) _ _ t)) -> 
+        Just (Located locations (OriginalRO (ObjectOriginal blob) _ hash t)) -> 
             vFocusOn ObjectFocus childKey $ 
                 -- Re-parsing a cached blob can raise a pure exception for a sufficiently 
                 -- broken object. Turn it into a normal validation error so that it stays 
                 -- contained to this child instead of failing the whole TA.
                 fromTryM (\e -> 
                             parseErr $ "Failed to re-parse the cached object: " <> fmtEx e) $ do
-                    validatedRo <- prevalidateObject =<< readObjectOfType t blob
+                    validatedRo <- prevalidateObject =<< readObjectOfType t (Hashed blob hash)
                     pure $! Just (TroubledFromOriginal, Keyed (Located locations validatedRo) childKey)
 
         _ -> pure Nothing

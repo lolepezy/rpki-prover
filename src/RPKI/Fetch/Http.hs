@@ -118,7 +118,7 @@ downloadRpkiObject AppContext {..} uri = do
         fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
             downloadToBS tmpDir (getURL uri) Nothing maxSize
 
-    readObject (RrdpU uri) content
+    readObject (RrdpU uri) (U.hashed content)
 
 
 downloadToFile :: MonadIO m => 
@@ -222,7 +222,7 @@ downloadHashedToMemory :: MonadIO m
                        -> Size
                        -> (HttpStatus -> e)
                        -> (Hash -> e)
-                       -> m (Either e BS.ByteString)
+                       -> m (Either e (Hashed BS.ByteString))
 downloadHashedToMemory uri expectedHash maxSize httpStatusNotOk hashMismatch = liftIO $ do
     (((actualHash, _), body), status, _) <-
         downloadToSink uri Nothing $
@@ -232,7 +232,7 @@ downloadHashedToMemory uri expectedHash maxSize httpStatusNotOk hashMismatch = l
         then Left $ httpStatusNotOk status
         else if actualHash /= expectedHash
             then Left $ hashMismatch actualHash
-            else Right $! LBS.toStrict body
+            else Right $! Hashed (LBS.toStrict body) actualHash
 
 
 downloadToSink :: (MonadIO m, MonadUnliftIO m) =>

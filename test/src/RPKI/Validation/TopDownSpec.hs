@@ -28,7 +28,7 @@ import qualified RPKI.Store.Database              as DB
 import           RPKI.Store.Types
 import           RPKI.TestCommons
 import           RPKI.Time
-import           RPKI.Util                        (parseRpkiURL)
+import           RPKI.Util                        (hashed, parseRpkiURL)
 import           RPKI.Validation.ObjectValidation (prevalidateObject)
 import           RPKI.Validation.Types
 import           RPKI.Validation.TopDown
@@ -123,7 +123,7 @@ readFixtureObject path = do
             case parseRpkiURL $ "rsync://host/" <> urlPath of
                 Right parsedUrl -> parsedUrl
                 Left err -> error $ "Failed to parse fixture URL: " <> Text.unpack err
-    object <- readObject url blob
+    object <- readObject url (hashed blob)
     pure (url, blob, object)
 
 

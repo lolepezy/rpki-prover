@@ -44,6 +44,11 @@ sha256s :: BS.ByteString -> Hash
 sha256s = mkHash . S256.hash
 {-# INLINE sha256s #-}
 
+-- | Bytes, together with their hash.
+hashed :: BS.ByteString -> Hashed BS.ByteString
+hashed bs = Hashed bs (sha256s bs)
+{-# INLINE hashed #-}
+
 mkHash :: BS.ByteString -> Hash
 mkHash = Hash . BSS.toShort
 {-# INLINE mkHash #-}

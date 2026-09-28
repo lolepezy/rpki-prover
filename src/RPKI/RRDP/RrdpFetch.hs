@@ -453,27 +453,29 @@ saveSnapshot
                             Right _ ->                                 
                                 case urlObjectType rpkiURL of                                 
                                     Just type_ -> do 
-                                        let hash = U.sha256s blob  
-                                        roTx db (\tx -> DB.getObjectKey tx hash) >>= \case
+                                        -- The hash is computed here, once: it is what the 
+                                        -- object is looked up by, and it goes with it to the parser.
+                                        let hashedBlob = U.hashed blob
+                                        roTx db (\tx -> DB.getObjectKey tx hashedBlob.hash) >>= \case
                                             Just key -> 
                                                 -- The object is already in cache. Do not parse-serialise
                                                 -- anything, just skip it. We are not afraid of possible 
                                                 -- race-conditions here, it's not a problem to double-insert
                                                 -- an object and delete-insert race will never happen in practice
                                                 -- since deletion is never concurrent with insertion.
-                                                pure $! HashExists rpkiURL hash key
+                                                pure $! HashExists rpkiURL hashedBlob.hash key
                                             Nothing ->
-                                                tryToParse rpkiURL hash blob type_                                                 
+                                                tryToParse rpkiURL hashedBlob type_                                                 
                                     Nothing -> 
                                         pure $! UknownObjectType rpkiURL
           where
-            tryToParse rpkiURL hash blob type_ = 
+            tryToParse rpkiURL hashedBlob@(Hashed blob hash) type_ = 
                 doParse `catchSync` onError
               where
                 doParse = do 
                     z <- runValidator scopes $
                             inSubLocationScope uri $ 
-                                prevalidateObject =<< readObjectOfType type_ blob
+                                prevalidateObject =<< readObjectOfType type_ hashedBlob
                     evaluate $!
                         case z of
                             (Left _, vs) ->
@@ -614,17 +616,17 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                             case validateSizeOfBS validationConfig blob of 
                                 Left e  -> pure $! DecodingTrouble rpkiURL (VErr $ ValidationE e)                                
                                 Right _ -> do 
-                                    let hash = U.sha256s blob                                    
                                     case urlObjectType rpkiURL of 
-                                        Just type_ -> tryToParse rpkiURL hash blob type_
+                                        Just type_ -> tryToParse rpkiURL (U.hashed blob) type_
                                         Nothing    -> pure $! UknownObjectType rpkiURL
           where
-            tryToParse rpkiURL hash blob type_ = 
+            tryToParse rpkiURL hashedBlob@(Hashed blob hash) type_ = 
                 doParse `catchSync` onError                    
               where
                 doParse = do 
                     z <- runValidator scopes $ 
-                            inSubLocationScope uri $                                 prevalidateObject =<< readObjectOfType type_ blob
+                            inSubLocationScope uri $ 
+                                prevalidateObject =<< readObjectOfType type_ hashedBlob
                     evaluate $!
                         case z of 
                             (Left _, _) ->

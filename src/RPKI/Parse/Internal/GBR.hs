@@ -20,12 +20,11 @@ import qualified RPKI.Util as U
 
 -- | Parse Ghostbusters record (https://tools.ietf.org/html/rfc6493)
 -- 
-parseGbr :: Validator es => BS.ByteString -> Eff es GbrObject
-parseGbr bs = do    
+parseGbr :: Validator es => Hashed BS.ByteString -> Eff es GbrObject
+parseGbr (Hashed bs hash') = do    
     asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs  
     signedGbr <- fromEither $ first (parseErr . U.convert) $ 
                     runParseASN1 (parseSignedObject parseGbr') asns
-    hash' <- getMetaFromSigned signedGbr bs
     pure $ newCMSObject hash' (CMS signedGbr)
     where     
         parseGbr' contentType octets = 

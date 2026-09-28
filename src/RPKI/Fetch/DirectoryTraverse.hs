@@ -87,12 +87,13 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                 case nameObjectType (takeFileName filePath) of
                     Just type_ -> do
                         -- Check if the object is already in the storage
-                        -- before parsing ASN1 and serialising it.
-                        let hash = U.sha256s blob
-                        liftIO (roTx db $ \tx -> DB.getObjectKey tx hash) >>= \case
-                            Just key -> pure $! HashExists rpkiURL hash key
+                        -- before parsing ASN1 and serialising it. The hash
+                        -- goes with the object to the parser.
+                        let hashedBlob = U.hashed blob
+                        liftIO (roTx db $ \tx -> DB.getObjectKey tx hashedBlob.hash) >>= \case
+                            Just key -> pure $! HashExists rpkiURL hashedBlob.hash key
                             Nothing  -> do
-                                (_, lifecycle) <- parseAndPrevalidate type_ hash blob rpkiURL
+                                (_, lifecycle) <- parseAndPrevalidate type_ hashedBlob rpkiURL
                                 -- Encode/compress the object here, on a worker, so
                                 -- the single-threaded DB-writer only has to do the INSERT.
                                 pure $! SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
@@ -147,11 +148,10 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
 -}
 parseAndPrevalidate :: IOE :> es
                     => RpkiObjectType
-                    -> Hash
-                    -> BS.ByteString
+                    -> Hashed BS.ByteString
                     -> Maybe RpkiURL
                     -> Eff es (Either AppError ParsedRpkiObject, RpkiObjectLifecycle)
-parseAndPrevalidate type_ hash blob rpkiURL =
+parseAndPrevalidate type_ hashedBlob@(Hashed blob hash) rpkiURL =
     doParse `catchSync` onError
   where
     scopes =
@@ -165,7 +165,7 @@ parseAndPrevalidate type_ hash blob rpkiURL =
             Nothing -> vFocusOn HashFocus hash
 
     doParse =
-        runValidator scopes (readObjectOfType type_ blob) >>= \case
+        runValidator scopes (readObjectOfType type_ hashedBlob) >>= \case
             (Left e, vs) -> pure (Left e, original vs)
             (Right parsed, parseVs) -> do
                 (vro, prevalidationVs) <- runValidator scopes $ inObjectScope $ prevalidateObject parsed

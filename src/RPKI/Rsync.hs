@@ -107,7 +107,7 @@ rsyncRpkiObject AppContext{..} uri = do
             fileSize <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileSize destination
             void $ validateSizeM (config ^. typed) fileSize
             bs       <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileContent destination
-            readObject (RsyncU uri) bs
+            readObject (RsyncU uri) (U.hashed bs)
 
 
 -- | Process the whole rsync repository, download it, traverse the directory and 

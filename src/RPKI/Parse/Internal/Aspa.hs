@@ -26,12 +26,11 @@ import qualified RPKI.Util as U
 
 -- | Parse ASPA, https://datatracker.ietf.org/doc/draft-ietf-sidrops-aspa-profile/
 -- 
-parseAspa :: Validator es => BS.ByteString -> Eff es AspaObject
-parseAspa bs = do    
+parseAspa :: Validator es => Hashed BS.ByteString -> Eff es AspaObject
+parseAspa (Hashed bs hash') = do    
     asns       <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs    
     signedAspa <- fromEither $ first (parseErr . U.convert) $ 
                     runParseASN1 (parseSignedObject $ parseSignedContent parseAspa') asns
-    hash' <- getMetaFromSigned signedAspa bs
     pure $ newCMSObject hash' (CMS signedAspa)
   where     
     parseAspa' = onNextContainer Sequence $ do         

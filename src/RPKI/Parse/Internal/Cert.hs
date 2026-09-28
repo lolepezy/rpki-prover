@@ -29,13 +29,13 @@ import           RPKI.Parse.Internal.Common
   Parse RPKI certificate object with the IP and ASN resource extensions.
 -}
 parseResourceCertificate :: Validator es => BS.ByteString 
-                        -> Eff es (RawResourceCertificate, CertType, SKI, Maybe AKI, Hash)
+                        -> Eff es (RawResourceCertificate, CertType, SKI, Maybe AKI)
 parseResourceCertificate bs = do
     cert <- mapParseErr $ decodeSignedObject bs      
     let z = unifyCert cert
     (rc, ski_, aki_) <- toResourceCert z
     certType <- getCertificateType $ getExtsSign z
-    pure (rc, certType, ski_, aki_, U.sha256s bs)
+    pure (rc, certType, ski_, aki_)
 
 
 toResourceCert :: Validator es => CertificateWithSignature 

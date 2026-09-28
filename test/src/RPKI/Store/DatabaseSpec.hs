@@ -1456,7 +1456,7 @@ readObjectFromFile path = do
     url <- case parseRpkiURL $ "rsync://host/" <> urlPath of 
                 Right u -> pure u
                 Left e  -> liftIO $ fail $ "Failed to parse fixture URL: " <> Text.unpack e
-    o <- readObject url bs
+    o <- readObject url (hashed bs)
     pure (url, o)
 
 replaceAKI :: AKI -> ParsedRpkiObject -> ParsedRpkiObject

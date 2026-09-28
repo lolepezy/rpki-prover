@@ -62,7 +62,7 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
     when (isNothing lastVersion) $ appError $ ValidationE NoValidatedVersion    
 
     bs        <- fromTry (ParseE . ParseError . fmtEx) $ BS.readFile rscFile
-    parsedRsc <- parseRsc bs    
+    parsedRsc <- parseRsc (hashed bs)
 
     now <- thisInstant
     void $ validateBottomUp appContext (RscRO parsedRsc) now

@@ -16,7 +16,7 @@ import           RPKI.Validation.ObjectValidation (prevalidateObject)
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit        as HU
-import RPKI.Util (hashHex)
+import RPKI.Util (hashHex, hashed)
 
 
 -- TODO Implement a bunch of good tests here
@@ -73,7 +73,7 @@ prevalidationSpec = testGroup "Prevalidation of real objects"
         HU.testCase ("Should prevalidate " <> path) $ do 
             bs <- BS.readFile path
             let (r, _) = runValidatorPure (newScopes "prevalidate") $ 
-                            readObjectOfType objectType bs >>= prevalidateObject
+                            readObjectOfType objectType (hashed bs) >>= prevalidateObject
             case r of 
                 Right _ -> pure ()
                 Left e  -> HU.assertFailure $ 
@@ -83,10 +83,10 @@ prevalidationSpec = testGroup "Prevalidation of real objects"
 shoudlParseBGPSec :: TestTree
 shoudlParseBGPSec = HU.testCase "Should parse a BGPSec certificate" $ do        
     bs <- BS.readFile "test/data/bgp_router_cert.cer"
-    let (Right (rc, ct, ski, aki, objectHash), _) = 
+    let (Right (rc, ct, ski, aki), _) = 
             runValidatorPure (newScopes "parse") $ parseResourceCertificate bs
     let bgpObject = BgpCerObject {
-            hash = objectHash,
+            hash = (hashed bs).hash,
             ski = ski,
             aki = aki,
             certificate = TypedCert rc
@@ -102,7 +102,7 @@ shoudlParseBGPSec = HU.testCase "Should parse a BGPSec certificate" $ do
 shouldParseAspa1 :: TestTree
 shouldParseAspa1 = HU.testCase "Should parse an ASPA object" $ do        
     bs <- BS.readFile "test/data/AS204325.asa"
-    let (Right aspaObject, _) = runValidatorPure (newScopes "parse") $ parseAspa bs
+    let (Right aspaObject, _) = runValidatorPure (newScopes "parse") $ parseAspa (hashed bs)
 
     let Aspa {..} = getCMSContent $ cmsPayload aspaObject
     HU.assertEqual "Wrong customer" customer (ASN 204325)
@@ -111,7 +111,7 @@ shouldParseAspa1 = HU.testCase "Should parse an ASPA object" $ do
 shouldParseAspa2 :: TestTree
 shouldParseAspa2 = HU.testCase "Should not parse an ASPA object" $ do        
     bs <- BS.readFile "test/data/aspa-no-explicit-version.asa"
-    let (x, _) = runValidatorPure (newScopes "parse") $ parseAspa bs
+    let (x, _) = runValidatorPure (newScopes "parse") $ parseAspa (hashed bs)
     case x of
         Left (ParseE (ParseError s)) -> 
              HU.assertEqual "Wrong outcome" s "Couldn't parse embedded ASN1 stream: Wrong provider AS (Start Sequence)"
@@ -119,7 +119,7 @@ shouldParseAspa2 = HU.testCase "Should not parse an ASPA object" $ do
 
 shouldParseSpl = HU.testCase "Should parse an SPL object" $ do        
     bs <- BS.readFile "test/data/9X0AhXWTJDl8lJhfOwvnac-42CA.spl"
-    let (Right splObject, _) = runValidatorPure (newScopes "parse") $ parseSpl bs
+    let (Right splObject, _) = runValidatorPure (newScopes "parse") $ parseSpl (hashed bs)
 
     let SplPayload asn prefixes = getCMSContent $ cmsPayload splObject
     HU.assertEqual "Wrong ASN" asn (ASN 15562)

@@ -131,7 +131,7 @@ processOne totalsRef scopes uri encodedb64 =
                             _ <- measure totalsRef (show type_) Sha256Hash $ evaluate hash_
 
                             let measure' stage = measure totalsRef (show type_) stage
-                            let (parsedZ, parseVs) = runValidatorPure scopes $ readObjectOfType type_ blob
+                            let (parsedZ, parseVs) = runValidatorPure scopes $ readObjectOfType type_ (Hashed blob hash_)
                             _ <- measure' ParseAndSerialise $ serialiseParsed parsedZ
                             _ <- measure' SerialiseParsed $ serialiseParsed parsedZ
 

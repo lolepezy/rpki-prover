@@ -33,7 +33,7 @@ import qualified Data.List                as List
 import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
-import           Data.Hashable hiding (hash)
+import           Data.Hashable hiding (hash, Hashed)
 import           Data.Semigroup
 import           Data.Monoid.Generic
 import           Data.Tuple.Strict
@@ -80,6 +80,17 @@ data CertType = CACert | EECert | BGPCert
 newtype Hash = Hash { unHash :: BSS.ShortByteString } 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
+
+{- | A value together with the SHA-256 hash of the bytes it came from.
+
+     The hash must be that of the bytes: make one with 'RPKI.Util.hashed', or
+     with a hash that was computed from, or checked against, those same bytes.
+-}
+data Hashed a = Hashed {
+        raw  :: a,
+        hash :: Hash
+    }
+    deriving stock (Show, Eq, Ord, Generic, Functor)
 
 newtype URI = URI { unURI :: Text } 
     deriving stock (Eq, Ord, Generic, Data, Typeable)

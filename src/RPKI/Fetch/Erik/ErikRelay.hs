@@ -420,7 +420,7 @@ fetchErik
                 let manifestUri = objectByHashUri relayUri hash
                 (mft, ms) <- timedMS $ vFocusOn LocationFocus manifestUri $ do
                     bytes <- downloadObject manifestUri hash size
-                    parseAndPrevalidate MFT hash bytes Nothing >>= \case
+                    parseAndPrevalidate MFT bytes Nothing >>= \case
                         (Right (MftRO mft), lifecycle) -> mft <$ prepareForStorage spill hash lifecycle
                         (Right _, _) -> appError $ ErikE $ UnknownErikProblem
                                             [i|Manifest #{U.hashAsBase64Url hash} parsed as something else.|]
@@ -437,7 +437,7 @@ fetchErik
                                         [i|Manifest child #{fileName} is not of a type Erik fetches.|]
                         Just type_ -> do
                             bytes          <- downloadObject childUri hash maxChildSize
-                            (_, lifecycle) <- parseAndPrevalidate type_ hash bytes Nothing
+                            (_, lifecycle) <- parseAndPrevalidate type_ bytes Nothing
                             prepareForStorage spill hash lifecycle
 
             -- | Which of these manifest entries are not in the store yet, in one
@@ -450,10 +450,11 @@ fetchErik
                 pure [ (e.hash, FetchChild e.hash e.fileName)
                      | e <- mftChildren, not (e.hash `Set.member` have) ]
 
-    -- | Download an object and check it against its hash. Objects are small
-    -- enough to hold, and staying off the disk matters: a file per object costs
-    -- several syscalls each, which adds up over a hundred thousand of them.
-    downloadObject :: ValidatorIO es' => URI -> Hash -> Size -> Eff es' BS.ByteString
+    -- | Download an object and check it against its hash, which it then comes
+    -- with. Objects are small enough to hold, and staying off the disk
+    -- matters: a file per object costs several syscalls each, which adds up
+    -- over a hundred thousand of them.
+    downloadObject :: ValidatorIO es' => URI -> Hash -> Size -> Eff es' (Hashed BS.ByteString)
     downloadObject uri hash maxSize =
         fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $
             withinDownloadTimeout $ downloadHashedToMemory uri hash maxSize

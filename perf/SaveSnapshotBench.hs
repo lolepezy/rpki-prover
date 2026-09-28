@@ -337,8 +337,9 @@ stageBreakdown (_, appContext) items = do
 
     hashes <- stage "sha256" $ forM decoded $ \(_, _, _, blob) -> evaluate $ U.sha256s blob
 
-    parsed <- stage "asn.1 parse" $ forM decoded $ \(uri, _, type_, blob) ->
-        case runValidatorPure scopes $ inSubLocationScope uri $ readObjectOfType type_ blob of
+    -- The hash comes with the object, as it does from the fetchers.
+    parsed <- stage "asn.1 parse" $ forM (zip decoded hashes) $ \((uri, _, type_, blob), h) ->
+        case runValidatorPure scopes $ inSubLocationScope uri $ readObjectOfType type_ (Hashed blob h) of
             (Right ro, _) -> evaluate ro
             (Left e, _)   -> error $ show e
 
@@ -359,11 +360,11 @@ stageBreakdown (_, appContext) items = do
 
     -- Where the per-object allocation goes, by object type.
     putStrLn "per type, asn.1 parse + prevalidate + serialise + lz4:"
-    perType <- fmap (Map.fromListWith add4) $ forM decoded $ \(uri, _, type_, blob) -> do
+    perType <- fmap (Map.fromListWith add4) $ forM (zip decoded hashes) $ \((uri, _, type_, blob), h) -> do
         a0 <- getAllocationCounter
         t0 <- getMonotonicTimeNSec
         case runValidatorPure scopes $ inSubLocationScope uri $
-                prevalidateObject =<< readObjectOfType type_ blob of
+                prevalidateObject =<< readObjectOfType type_ (Hashed blob h) of
             (Right vro, _) -> () <$ evaluate (toStorableObject (Compressed (WellStructuredRO vro)))
             (Left e, _)    -> error $ show e
         t1 <- getMonotonicTimeNSec
@@ -422,9 +423,9 @@ cpuOnly items = do
                     Left e                     -> error $ show e
                     Right (DecodedBase64 blob) -> do
                         let Just type_ = urlObjectType rpkiURL
-                        _ <- evaluate $ U.sha256s blob
+                        hashedBlob <- evaluate $ U.hashed blob
                         case runValidatorPure scopes $ inSubLocationScope uri $
-                                prevalidateObject =<< readObjectOfType type_ blob of
+                                prevalidateObject =<< readObjectOfType type_ hashedBlob of
                             (Right vro, _) -> () <$ evaluate (toStorableObject (Compressed (WellStructuredRO vro)))
                             (Left e, _)    -> error $ show e
     cpu0  <- getCPUTime
