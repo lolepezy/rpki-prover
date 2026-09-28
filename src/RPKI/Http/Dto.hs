@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Http.Dto where
 
 import qualified Data.ByteString.Builder          as BB

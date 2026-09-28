@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 {- | Sandboxing worker processes with Landlock (Linux only).
 
 The parent describes what a worker may touch ('WorkerSandbox') and passes it

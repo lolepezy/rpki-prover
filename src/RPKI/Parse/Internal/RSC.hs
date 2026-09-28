@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Parse.Internal.RSC where
 
 import           Effectful
@@ -28,12 +26,11 @@ import qualified RPKI.Util                  as U
 
 -- | Parse RSC, https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-rsc/
 -- 
-parseRsc :: Validator es => BS.ByteString -> Eff es RscObject
-parseRsc bs = do    
+parseRsc :: Validator es => Hashed BS.ByteString -> Eff es RscObject
+parseRsc (Hashed bs hash') = do    
     asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs      
     signedRsc <- fromEither $ first (parseErr . U.convert) $ 
                     runParseASN1 (parseSignedObject $ parseSignedContent parseRsc') asns
-    hash' <- getMetaFromSigned signedRsc bs
     pure $ newCMSObject hash' (CMS signedRsc)
   where     
     parseRsc' = onNextContainer Sequence $ do        

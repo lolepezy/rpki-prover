@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Resources.ResourcesSpec where
 
 import           Prelude                    hiding (subtract)

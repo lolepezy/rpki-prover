@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.SLURM.SlurmSpec where
 
 import           Control.Lens

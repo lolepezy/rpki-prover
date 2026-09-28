@@ -1,6 +1,4 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE OverloadedStrings #-}
 
 module RPKI.Orphans.Json where
 
@@ -452,6 +450,7 @@ instance ToJSON ProverRunMode
 instance ToJSON TAL
 instance ToJSON HttpApiConfig
 instance ToJSON ValidationConfig
+instance ToJSON FetchIntervalConfig
 instance ToJSON RtrConfig
 instance ToJSON WorkerLimits
 instance ToJSON SystemConfig

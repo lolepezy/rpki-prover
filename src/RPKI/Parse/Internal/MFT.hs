@@ -19,12 +19,11 @@ import           RPKI.Parse.Internal.SignedObject
 import qualified RPKI.Util                  as U
 
 
-parseMft :: Validator es => BS.ByteString -> Eff es MftObject
-parseMft bs = do
+parseMft :: Validator es => Hashed BS.ByteString -> Eff es MftObject
+parseMft (Hashed bs hash') = do
     asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs
     signedMft <- fromEither $ first (parseErr . U.fmtGen) $ 
                     runParseASN1 (parseSignedObject $ parseSignedContent parseManifest) asns
-    hash' <- getMetaFromSigned signedMft bs
     pure $ newCMSObject hash' (CMS signedMft)
     where
         {-

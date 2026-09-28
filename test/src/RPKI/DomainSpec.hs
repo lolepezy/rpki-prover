@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.DomainSpec where
 
 import           Test.Tasty
@@ -9,7 +7,6 @@ import qualified Test.Tasty.QuickCheck as QC
 import qualified Data.List       as List
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import qualified Data.Set        as Set
-import qualified Data.Vector     as V
 import qualified Data.Vector.Unboxed as VU
 
 import           RPKI.Domain

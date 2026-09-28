@@ -1,5 +1,4 @@
 {-# OPTIONS_GHC -fno-warn-orphans -Wno-type-defaults #-}
-{-# LANGUAGE FlexibleInstances   #-}
 
 module RPKI.Orphans.Store where
 

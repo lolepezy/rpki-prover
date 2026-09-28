@@ -1,5 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE StrictData        #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Config where
 
@@ -18,7 +17,6 @@ import RPKI.Domain
 import RPKI.AppTypes
 import RPKI.Logging
 import RPKI.Util (toNatural)
-import RPKI.Time 
 import GHC.Generics (Generic)
 
 import RPKI.Store.Base.Serialisation
@@ -44,20 +42,13 @@ data Parallelism = Parallelism {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-data FetchConfig = FetchConfig {
-        rsyncTimeout             :: Seconds,
-        rrdpTimeout              :: Seconds,
-        erikTimeout              :: Seconds,
-        fetchLaunchWaitDuration  :: Seconds,
-        minFetchInterval         :: Seconds,
-        maxFetchInterval         :: Seconds,
-        maxFailedBackoffInterval :: Seconds
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
+-- | 'txTimeout' is how long one database transaction, read or write, may run
+-- from BEGIN on, in the main process and in every worker alike. A worker with 
+-- a transaction running longer than that gives up and exits 
+-- ('RPKI.Worker.dieOfLongTransactions'), the main process rolls the 
+-- transaction back ('RPKI.Workflow.rollBackLongTransactions').
 data StorageConfig = StorageConfig {
-        rwTransactionTimeout  :: Seconds,
+        txTimeout             :: Seconds,
         walCheckpointInterval :: Seconds
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -76,6 +67,7 @@ data Config = Config {
         rrdpConf                  :: RrdpConf,
         erikConf                  :: ErikConf,
         validationConfig          :: ValidationConfig,
+        fetchIntervalConfig       :: FetchIntervalConfig,
         systemConfig              :: SystemConfig,
         httpApiConf               :: HttpApiConfig,
         rtrConfig                 :: Maybe RtrConfig,
@@ -89,8 +81,9 @@ data Config = Config {
         localExceptions           :: ApiSecured [FilePath],
         logLevel                  :: LogLevel,
         metricsPrefix             :: Text,
-        withValidityApi           :: Bool
-    } 
+        withValidityApi           :: Bool,
+        withGhcMetrics            :: Bool
+    }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
@@ -178,7 +171,17 @@ data ValidationConfig = ValidationConfig {
         validationAlgorithm            :: ValidationAlgorithm,
 
         minimalRevalidationInterval :: Seconds
-    } 
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+data FetchIntervalConfig = FetchIntervalConfig {
+        -- | How long a fetch may wait for a concurrency slot before it start anyway
+        fetchLaunchWaitDuration  :: Seconds,
+        minFetchInterval         :: Seconds,
+        maxFetchInterval         :: Seconds,
+        maxFailedBackoffInterval :: Seconds
+    }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -285,8 +288,14 @@ defaultConfig = Config {
         relays              = [],
         maxSize             = Size $ 20 * 1024 * 1024,
         parallelism         = 8,
-        relayParallelism    = 3,
-        fqdnParallelism     = 10,
+        -- Up to fqdnParallelism * relayParallelism downloads can be in flight
+        -- against one relay, 32 here. A download is mostly round trips, so a
+        -- big FQDN takes time inversely proportional to relayParallelism:
+        -- rpki.afrinic.net takes 69s with 3 and 27s with 8. A relay 4ms away
+        -- answered in ~12ms with anything up to 16 of our downloads in flight,
+        -- and started to queue them somewhere above 24.
+        relayParallelism    = 8,
+        fqdnParallelism     = 4,
         downloadTimeout     = Seconds 10,
         erikRefreshInterval = Seconds 30
     },
@@ -304,6 +313,12 @@ defaultConfig = Config {
         validationRFC                  = StrictRFC,
         validationAlgorithm            = FullEveryIteration,
         minimalRevalidationInterval    = Seconds 30
+    },
+    fetchIntervalConfig = FetchIntervalConfig {
+        fetchLaunchWaitDuration  = Seconds 30,
+        minFetchInterval         = Seconds 30,
+        maxFetchInterval         = Seconds 300,
+        maxFailedBackoffInterval = Seconds $ 30 * 60
     },
     httpApiConf = HttpApiConfig {
         port = 9999
@@ -357,7 +372,7 @@ defaultConfig = Config {
     },
     rtrConfig                 = Nothing,
     storageConfig = StorageConfig {       
-        rwTransactionTimeout = 15 * minutes,
+        txTimeout             = 10 * minutes,
         walCheckpointInterval = 1 * minutes
     },
     cacheCleanupInterval      = 6 * hours,    
@@ -368,6 +383,7 @@ defaultConfig = Config {
     logLevel = defaultsLogLevel,
     metricsPrefix = "rpki_prover_",
     withValidityApi = False,
+    withGhcMetrics = False,
     ..
 }
   where
@@ -389,14 +405,6 @@ adjustConfig config = config
         -- to accomodate for a weird case of longLivedCacheLifeTime < shortLivedCacheLifeTime
         -- we still want some correctness here, so the "short" one should be shorter
         & #shortLivedCacheLifeTime %~ (`min` (config ^. #longLivedCacheLifeTime))
-
-adjustWorkerConfig :: Config -> Timebox -> Config
-adjustWorkerConfig config (Timebox timeout) = config
-        -- There's no point in having RW-transaction timeout
-        -- longer than the worker timeout
-        & #storageConfig . #rwTransactionTimeout %~ (`min` safeTimeout)
-  where
-    safeTimeout = max (Seconds 1) (timeout - Seconds 1)
 
 defaultsLogLevel :: LogLevel
 defaultsLogLevel = InfoL
@@ -435,14 +443,10 @@ defaultTalUrls = [
         ("ripe.tal", "https://tal.rpki.ripe.net/ripe-ncc.tal")
     ]        
     
-newFetchConfig :: Config -> FetchConfig
-newFetchConfig config = let
-        SystemConfig {..} = config ^. typed @SystemConfig
-        rsyncTimeout = rsyncWorkerLimits ^. #workerTimeout
-        rrdpTimeout  = rrdpWorkerLimits ^. #workerTimeout
-        erikTimeout  = erikWorkerLimits ^. #workerTimeout
-        fetchLaunchWaitDuration = Seconds 30
-        minFetchInterval = Seconds 30
-        maxFetchInterval = Seconds 300
-        maxFailedBackoffInterval = Seconds $ 30 * 60
-    in FetchConfig {..}
+-- | How long a worker doing a fetch of this kind may run before the main
+-- process gives up on it. Not bundled into a record of its own: every use of
+-- these needs exactly one of them, next to the 'Config' it came from.
+rsyncFetchTimeout, rrdpFetchTimeout, erikFetchTimeout :: Config -> Seconds
+rsyncFetchTimeout config = config ^. typed @SystemConfig . #rsyncWorkerLimits . #workerTimeout
+rrdpFetchTimeout  config = config ^. typed @SystemConfig . #rrdpWorkerLimits  . #workerTimeout
+erikFetchTimeout  config = config ^. typed @SystemConfig . #erikWorkerLimits  . #workerTimeout

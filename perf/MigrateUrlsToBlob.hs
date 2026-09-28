@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 -- | One-off migration helper for the `urls.url` TEXT -> BLOB storage change
 -- (database version 54 -> 55: see the `urls` table in RPKI.Store.SQLite and
 -- RPKI.Store.Database.currentDatabaseVersion). Converts an EXISTING SQLite

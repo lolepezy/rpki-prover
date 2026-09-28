@@ -1,8 +1,5 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Parse.Internal.SignedObject where
 
-import           Effectful
 import qualified Data.ByteString as BS
 
 import Control.Applicative
@@ -19,7 +16,6 @@ import RPKI.Reporting
 import RPKI.Parse.Internal.Common
 import RPKI.Parse.Internal.Cert
 
-import RPKI.Util (sha256s)
 
 {- 
   https://tools.ietf.org/html/rfc6488#section-2
@@ -148,10 +144,6 @@ parseSignedObject contentBinaryParse =
                             s -> throwParseError $ "Unknown signed attribute OID: " <> show s
                                             
     parseSignatureAlgorithm = SignatureAlgorithmIdentifier <$> getObject
-
-
-getMetaFromSigned :: Validator es => SignedObject a -> BS.ByteString -> Eff es Hash
-getMetaFromSigned _ bs = pure $ sha256s bs
 
 
 parseSignedContent :: ParseASN1 a 

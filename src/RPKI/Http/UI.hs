@@ -1,7 +1,5 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE StrictData           #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Http.UI where
 
@@ -541,7 +539,7 @@ issuesSection dtos =
             unless (vrs == mempty) $ taIssueGroup ta vrs
   where
     taIssueGroup ta vrs =
-        detailsEl ! A.class_ "ta-issue" $ do
+        H.details ! A.class_ "ta-issue" $ do
             H.summary $ do
                 chevIcon
                 H.span ! A.class_ "ta-name" $ toHtml ta
@@ -552,7 +550,6 @@ issuesSection dtos =
             H.div ! A.class_ "body" $ issueRows ta vrs
       where
         (e, w) = countProblemsAll vrs
-        detailsEl = if length vrs < 10 then H.details ! A.open "" else H.details
 
 
 generalIssuesSection :: [ResolvedVDto] -> Html

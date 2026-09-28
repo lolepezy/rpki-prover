@@ -1,11 +1,10 @@
-{-# LANGUAGE OverloadedStrings  #-}
-
 module RPKI.Fetch.Erik.ErikRelay where
 
 import           Effectful.Concurrent (Concurrent)
 import           Effectful
-import           GHC.Conc                         (getNumCapabilities, setNumCapabilities)
+import           GHC.Conc                         (getNumCapabilities)
 import           Effectful.Error.Static           (catchError, rethrowError)
+import           Effectful.Timeout                (Timeout)
 import           Control.Concurrent.MVar          (MVar, newMVar, withMVar)
 import           Control.Concurrent.STM           (readTVarIO)
 import           Control.Exception                (evaluate)
@@ -37,6 +36,7 @@ import           RPKI.AppMonad
 import           RPKI.AppMonadUtil
 import           RPKI.AppTypes
 import           RPKI.Config
+import           RPKI.Cpu                        (useAvailableCpus)
 import           RPKI.Domain
 import           RPKI.Parse.Parse
 import           RPKI.Reporting
@@ -93,17 +93,16 @@ spillRecords bs
             (record, rest')     = LBS.splitAt len rest
         in LBS.toStrict record : spillRecords rest'
 
-runErikFetchWorker :: ValidatorIO es => AppContext s
-                    -> FetchConfig
+runErikFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext s
                     -> WorldVersion
                     -> [URI]
                     -> FQDN
                     -> Eff es ErikFetchStat
-runErikFetchWorker appContext fetchConfig worldVersion relayUris fqdn = do
+runErikFetchWorker appContext@AppContext {..} worldVersion relayUris fqdn = do
     scopes <- askScopes
     ErikFetchResult z <- runWorker appContext
-                            (ErikFetchParams scopes fetchConfig relayUris fqdn worldVersion)
-                            (Just $ fetchConfig ^. #erikTimeout)
+                            (ErikFetchParams scopes relayUris fqdn worldVersion)
+                            (Just $ erikFetchTimeout config)
     embedValidatorT $ pure z
 
 {-
@@ -200,15 +199,16 @@ fetchErik
             <$> Timeout.timeout (fromIntegral s * 1_000_000) download
 
     -- Raise the capability count from the 1 the worker started with, but only
-    -- when there is enough independent work to use it.
+    -- when there is enough independent work to use it, and not above the cores
+    -- available (see `useAvailableCpus`).
     scaleUpCapabilities partitionCount = do
-        let maxCpuAvailable = fromIntegral $ config ^. typed @Parallelism . #cpuCount
-        let wanted = max 1 $ min maxCpuAvailable partitionCount
+        let configured = config ^. typed @Parallelism . #cpuCount
+            wanted     = max 1 $ min configured (fromIntegral partitionCount)
         current <- liftIO getNumCapabilities
-        when (wanted > current) $ do
-            liftIO $ setNumCapabilities wanted
+        when (fromIntegral wanted > current) $ do
+            cpus <- liftIO $ useAvailableCpus wanted
             logDebug logger
-                [i|Erik worker for #{fqdn_}: #{partitionCount} partition(s), raising -N from #{current} to #{wanted}.|]
+                [i|Erik worker for #{fqdn_}: #{partitionCount} partition(s), raising -N from #{current} to #{cpus}.|]
 
     doFetch relays =
         withDir indexDir $ \_ ->
@@ -226,13 +226,13 @@ fetchErik
 
                 liftIO $ createDirectoryIfMissing True partitionDir
 
-                pool <- newWorkPool
+                queue <- newWorkQueue
 
                 -- The one query that starts everything: which of the partitions
                 -- this index names do we already have?
                 cached <- DB.roTxT database $ \tx ->
                             DB.existingErikPartitions tx [ ref.hash | ref <- partitionList ]
-                enqueue pool
+                enqueue queue
                     [ (workHash w, w)
                     | ref <- partitionList
                     , let w = if ref.hash `Set.member` cached
@@ -242,10 +242,10 @@ fetchErik
                 bracketVT
                     (openBinaryFile preparedObjectsFile WriteMode >>= newMVar)
                     (\spill -> liftIO $ withMVar spill hClose)
-                    (\spill -> runRelayWorkers logger relays pool (processWork spill indexScope))
+                    (\spill -> runRelayWorkers logger relays queue (processWork spill indexScope))
 
-                failures <- poolFailures pool
-                done     <- poolSucceeded pool
+                failures <- queueFailures queue
+                done     <- queueSucceeded queue
                 logDebug logger [i|Finished fetching Erik relay #{indexDir} for #{fqdn_}: #{done} item(s), #{length failures} failure(s).|]
 
                 -- Per-relay query counts, so the spread across relays and the
@@ -420,7 +420,7 @@ fetchErik
                 let manifestUri = objectByHashUri relayUri hash
                 (mft, ms) <- timedMS $ vFocusOn LocationFocus manifestUri $ do
                     bytes <- downloadObject manifestUri hash size
-                    parseAndPrevalidate MFT hash bytes Nothing >>= \case
+                    parseAndPrevalidate MFT bytes Nothing >>= \case
                         (Right (MftRO mft), lifecycle) -> mft <$ prepareForStorage spill hash lifecycle
                         (Right _, _) -> appError $ ErikE $ UnknownErikProblem
                                             [i|Manifest #{U.hashAsBase64Url hash} parsed as something else.|]
@@ -437,7 +437,7 @@ fetchErik
                                         [i|Manifest child #{fileName} is not of a type Erik fetches.|]
                         Just type_ -> do
                             bytes          <- downloadObject childUri hash maxChildSize
-                            (_, lifecycle) <- parseAndPrevalidate type_ hash bytes Nothing
+                            (_, lifecycle) <- parseAndPrevalidate type_ bytes Nothing
                             prepareForStorage spill hash lifecycle
 
             -- | Which of these manifest entries are not in the store yet, in one
@@ -450,10 +450,11 @@ fetchErik
                 pure [ (e.hash, FetchChild e.hash e.fileName)
                      | e <- mftChildren, not (e.hash `Set.member` have) ]
 
-    -- | Download an object and check it against its hash. Objects are small
-    -- enough to hold, and staying off the disk matters: a file per object costs
-    -- several syscalls each, which adds up over a hundred thousand of them.
-    downloadObject :: ValidatorIO es' => URI -> Hash -> Size -> Eff es' BS.ByteString
+    -- | Download an object and check it against its hash, which it then comes
+    -- with. Objects are small enough to hold, and staying off the disk
+    -- matters: a file per object costs several syscalls each, which adds up
+    -- over a hundred thousand of them.
+    downloadObject :: ValidatorIO es' => URI -> Hash -> Size -> Eff es' (Hashed BS.ByteString)
     downloadObject uri hash maxSize =
         fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $
             withinDownloadTimeout $ downloadHashedToMemory uri hash maxSize

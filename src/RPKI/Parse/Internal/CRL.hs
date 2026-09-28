@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Parse.Internal.CRL where
     
 import           Effectful
@@ -24,8 +22,8 @@ import           RPKI.Parse.Internal.Common
 import qualified RPKI.Util                  as U
 
 
-parseCrl :: Validator es => BS.ByteString -> Eff es CrlObject
-parseCrl bs = do
+parseCrl :: Validator es => Hashed BS.ByteString -> Eff es CrlObject
+parseCrl (Hashed bs hash') = do
     -- appError $ parseErr $ "Couldn't parse IP address extension: " <> Text.pack (show e)
     asns                   <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs
     (extensions, signCrlF) <- fromEither $ first (parseErr . U.convert) $ runParseASN1 getCrl asns      
@@ -62,7 +60,7 @@ parseCrl bs = do
         Left e       -> appError $ parseErr $ Text.pack e
         Right crlNum -> pure $ newCrl         
                             (AKI $ mkKI aki') 
-                            (U.sha256s bs) 
+                            hash' 
                             (signCrlF crlNum)        
     where          
         getCrl = onNextContainer Sequence $ do

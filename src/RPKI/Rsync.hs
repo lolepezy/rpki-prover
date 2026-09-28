@@ -1,5 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE StrictData        #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Rsync where
     
@@ -73,16 +72,15 @@ stdout = [#{U.textual stdout'}],
 stderr = [#{U.textual stderr'}]|]
 
 
-runRsyncFetchWorker :: ValidatorIO es => AppContext s 
-                    -> FetchConfig
+runRsyncFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext s 
                     -> WorldVersion
                     -> RsyncRepository             
                     -> Eff es RsyncRepository
-runRsyncFetchWorker appContext fetchConfig worldVersion repository = do
+runRsyncFetchWorker appContext@AppContext {..} worldVersion repository = do
     scopes <- askScopes
     RsyncFetchResult z <- runWorker appContext
-                            (RsyncFetchParams scopes fetchConfig repository worldVersion)
-                            (Just $ fetchConfig ^. #rsyncTimeout)
+                            (RsyncFetchParams scopes repository worldVersion)
+                            (Just $ rsyncFetchTimeout config)
     embedValidatorT $ pure z
     
 
@@ -90,14 +88,14 @@ runRsyncFetchWorker appContext fetchConfig worldVersion repository = do
 -- | 
 -- | This function doesn't throw exceptions.
 rsyncRpkiObject :: ValidatorIO es => AppContext s -> 
-                FetchConfig -> 
                 RsyncURL -> 
                 Eff es ParsedRpkiObject
-rsyncRpkiObject AppContext{..} fetchConfig uri = do
+rsyncRpkiObject AppContext{..} uri = do
     let RsyncConf {..} = rsyncConf config
     destination <- rsyncDestination RsyncOneFile (configValue rsyncRoot) uri
-    let rsync = rsyncProcess config fetchConfig uri destination RsyncOneFile
-    (exitCode, out, err) <- readRsyncProcess logger fetchConfig rsync [i|rsync for #{uri}|]
+    let timeout = rsyncFetchTimeout config
+    let rsync = rsyncProcess config timeout uri destination RsyncOneFile
+    (exitCode, out, err) <- readRsyncProcess logger timeout rsync [i|rsync for #{uri}|]
     case exitCode of  
         ExitFailure errorCode -> do
             logError logger [i|Rsync process failed: #rsync 
@@ -109,39 +107,38 @@ rsyncRpkiObject AppContext{..} fetchConfig uri = do
             fileSize <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileSize destination
             void $ validateSizeM (config ^. typed) fileSize
             bs       <- fromTry (RsyncE . FileReadError . U.fmtEx) $ getFileContent destination
-            readObject (RsyncU uri) bs
+            readObject (RsyncU uri) (U.hashed bs)
 
 
 -- | Process the whole rsync repository, download it, traverse the directory and 
 -- | add all the relevant objects to the storage.
 updateObjectForRsyncRepository :: (ValidatorIO es, Concurrent :> es, Timeout :> es) => 
                                   AppContext s
-                               -> FetchConfig 
                                -> WorldVersion 
                                -> RsyncRepository 
                                -> Eff es RsyncRepository
 updateObjectForRsyncRepository 
     appContext@AppContext{..} 
-    fetchConfig
     worldVersion
     repo@(RsyncRepository (RsyncPublicationPoint uri) _) = 
         
     timedMetric (Proxy :: Proxy TraverseMetric) $ do     
         let rsyncRoot = configValue $ appContext ^. typed @Config . typed @RsyncConf . typed
         destination <- rsyncDestination RsyncDirectory rsyncRoot uri
-        let rsync = rsyncProcess config fetchConfig uri destination RsyncDirectory
+        let rsyncTimeout = rsyncFetchTimeout config
+        let rsync = rsyncProcess config rsyncTimeout uri destination RsyncDirectory
             
         logDebug logger [i|Runnning #{U.trimmed rsync}|]
 
         -- The timeout we are getting here includes the extra timeout for the rsync fetcher 
         -- process to kill itself. So reserve less time specifically for the rsync client.
-        let timeout = fetchConfig ^. #rsyncTimeout - Seconds 2
+        let timeout = rsyncTimeout - Seconds 2
 
         (exitCode, out, err) <- timeoutVT 
                 timeout
                 (fromTry  
                     (RsyncE . RsyncRunningError . U.fmtEx) $ 
-                    readRsyncProcess logger fetchConfig rsync [i|rsync for #{uri}|])
+                    readRsyncProcess logger rsyncTimeout rsync [i|rsync for #{uri}|])
                 (do 
                     logError logger [i|rsync client timed out after #{timeout}}.|]
                     appError $ RsyncE $ RsyncDownloadTimeout timeout)
@@ -161,13 +158,13 @@ updateObjectForRsyncRepository
 -- together with its maximal lifetime
 readRsyncProcess :: MonadIO m =>
                     AppLogger
-                    -> FetchConfig
+                    -> Seconds
                     -> ProcessConfig stdin stdout0 stderr0
                     -> Text.Text
                     -> m (ExitCode, LBS.ByteString, LBS.ByteString)
-readRsyncProcess logger fetchConfig pc textual = do 
+readRsyncProcess logger rsyncTimeout pc textual = do 
     Now now <- thisInstant
-    let endOfLife = momentAfter now (fetchConfig ^. #rsyncTimeout)
+    let endOfLife = momentAfter now rsyncTimeout
     liftIO $ withProcessTerm pc' $ \p -> do 
         mPid <- getPid p
         case mPid of 
@@ -210,8 +207,8 @@ loadRsyncRepository appContext worldVersion repositoryUrl rootPath =
 
 data RsyncMode = RsyncOneFile | RsyncDirectory
 
-rsyncProcess :: Config -> FetchConfig -> RsyncURL -> FilePath -> RsyncMode -> ProcessConfig () () ()
-rsyncProcess Config {..} fetchConfig rsyncURL destination rsyncMode = 
+rsyncProcess :: Config -> Seconds -> RsyncURL -> FilePath -> RsyncMode -> ProcessConfig () () ()
+rsyncProcess Config {..} rsyncTimeout rsyncURL destination rsyncMode = 
     proc rsyncBinary $ 
         [ "--update",  "--times" ] <> 
         [ "--timeout=" <> show timeout' ] <>         
@@ -223,7 +220,7 @@ rsyncProcess Config {..} fetchConfig rsyncURL destination rsyncMode =
     where 
         rsyncBinary = maybe "rsync" configValue rsyncConf.clientPath 
 
-        Seconds timeout' = fetchConfig ^. #rsyncTimeout
+        Seconds timeout' = rsyncTimeout
         source = Text.unpack (unURI $ getURL rsyncURL)        
         (sourceUrl, extraOptions) = case rsyncMode of 
             RsyncOneFile   -> (source, [])

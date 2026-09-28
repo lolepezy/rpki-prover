@@ -1,5 +1,3 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -41,7 +39,7 @@ data PrometheusMetrics = PrometheusMetrics {
 createPrometheusMetrics :: MonadIO m => Config -> m PrometheusMetrics
 createPrometheusMetrics Config {..} = do
 
-    void $ register ghcMetrics
+    when withGhcMetrics $ void $ register ghcMetrics
 
     rrdpCode <- register
             $ vector ("url" :: Text)

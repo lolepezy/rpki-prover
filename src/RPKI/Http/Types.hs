@@ -1,7 +1,5 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE StrictData           #-}
-{-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Http.Types where
 

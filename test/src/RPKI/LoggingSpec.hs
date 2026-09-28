@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.LoggingSpec where
 
 import qualified Data.ByteString.Builder as BB

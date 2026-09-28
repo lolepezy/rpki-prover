@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Metrics.ProcessSpec where
 
 import           Data.Int                (Int64)

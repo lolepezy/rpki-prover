@@ -1,7 +1,4 @@
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE QuasiQuotes         #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StrictData          #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Store.Database (
     -- * Public database handle (implementation hidden)
@@ -41,7 +38,7 @@ module RPKI.Store.Database (
     saveTA, getTA, getTAs, setActiveTAs,
     saveTaValidations, getTaValidations,
     versionsBackwards, previousVersion, getLatestVersion,
-    getValidationsPerTA, getMetricsPerTA, getCommonMetrics,
+    getValidationsPerTA, getMetricsPerTA, getCommonMetrics, getCommonValidations,
     getValidationOutcomes,
     getVrps, getVrpsForTA, getRoas, getAspas, getGbrs, getBgps, getSpls,
     saveValidationVersion, deleteValidationVersion,
@@ -900,9 +897,16 @@ getMetricsPerTA :: MonadIO m => Tx mode -> WorldVersion -> m (PerTA Metrics)
 getMetricsPerTA tx = getLatestPerTA tx "metrics"
 
 getCommonMetrics :: MonadIO m => Tx mode -> WorldVersion -> m Metrics
-getCommonMetrics (Tx conn) version = liftIO $ do
+getCommonMetrics tx = getLatestCommon tx "metrics"
+
+getCommonValidations :: MonadIO m => Tx mode -> WorldVersion -> m Validations
+getCommonValidations tx = getLatestCommon tx "validations"
+
+-- | Latest value of one column of the common, i.e. not TA-specific, outcome.
+getLatestCommon :: (MonadIO m, AsStorable a, Monoid a) => Tx mode -> Text -> WorldVersion -> m a
+getLatestCommon (Tx conn) column version = liftIO $ do
     rows <- queryNamed conn
-        (latestOutcomeQuery Common ["metrics"])
+        (latestOutcomeQuery Common [column])
         [":version" := version]
     pure $ maybe mempty (deserialiseCompressed . fromOnly) (listToMaybe rows)
 
@@ -1007,7 +1011,8 @@ saveSlurm (Tx conn) version slurm = liftIO $
 
 -- | Merge validations and metrics into the common (not TA-specific) outcome
 -- of an already saved version. Used for what the main process finds out after
--- the validation worker has saved the version, i.e. SLURM problems.
+-- the validation worker has saved the version, i.e. SLURM problems and workers
+-- that exceeded their limits.
 addCommonValidations :: MonadIO m => Tx 'RW -> WorldVersion -> ValidationState -> m ()
 addCommonValidations (Tx conn) version vs = liftIO $ do
     rows <- query conn

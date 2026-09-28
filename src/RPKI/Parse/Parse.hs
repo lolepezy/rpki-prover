@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Parse.Parse (
     module RPKI.Parse.Internal.Common,
     module RPKI.Parse.Internal.Cert,
@@ -93,18 +91,21 @@ isOfType t1 t2 = t1 == t2 || t1 == BGPSec && t2 == CER
 
 -- | Parse object from a bytesting containing ASN1 representaton
 -- | Decide which parser to use based on the object's filename
-readObject :: Validator es => RpkiURL -> BS.ByteString -> Eff es ParsedRpkiObject
+readObject :: Validator es => RpkiURL -> Hashed BS.ByteString -> Eff es ParsedRpkiObject
 readObject objectURL bs =     
     case urlObjectType objectURL of 
         Just type_ -> readObjectOfType type_ bs
         Nothing    -> appError $ parseErr $ "Could not figure out object type from URL: " <> fmtGen objectURL
 
 
-readObjectOfType :: Validator es => RpkiObjectType -> BS.ByteString -> Eff es ParsedRpkiObject        
+-- | Parse an object from its bytes, which come with their hash so that the 
+-- | object does not have to be hashed again.
+readObjectOfType :: Validator es => RpkiObjectType -> Hashed BS.ByteString -> Eff es ParsedRpkiObject        
 readObjectOfType objectType bs = 
     case objectType of 
         CER -> do 
-            (rc, certType, ski, aki, hash) <- parseResourceCertificate bs
+            (rc, certType, ski, aki) <- parseResourceCertificate bs.raw
+            let hash = bs.hash
             case certType of 
                 CACert -> do 
                     let certificate = TypedCert $ ResourceCertificate rc

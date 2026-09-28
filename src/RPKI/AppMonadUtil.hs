@@ -1,4 +1,3 @@
-{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Validator helpers that need 'RPKI.Parallel'. They cannot live in

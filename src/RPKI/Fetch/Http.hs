@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Fetch.Http where
 
 import           Effectful
@@ -72,9 +70,8 @@ downloadToBS :: (Blob bs, MonadIO m) =>
                 m (bs, Size, HttpStatus, Maybe ETag)
 downloadToBS tmpDir uri@(URI u) eTag maxSize = liftIO $ do    
     let tmpFileName = U.convert $ U.normalizeUri u
-    -- let tmpDir = configValue $ config ^. #tmpDirectory
     withTempFile tmpDir tmpFileName $ \name fd -> do
-        ((_, size), status, newETag) <- 
+        ((_, size), status, newETag) <-
                 downloadConduit uri eTag fd 
                     (sinkGenSize uri maxSize () (\_ _ -> ()) id)
         hClose fd                    
@@ -97,7 +94,6 @@ downloadHashedBS tmpDir uri@(URI u) eTag expectedHash maxSize hashMishmatch = li
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
     let tmpFileName = U.convert $ U.normalizeUri u
-    -- let tmpDir = configValue $ config ^. #tmpDirectory      
     withTempFile tmpDir tmpFileName $ \name fd -> do
         ((actualHash, size), status, newETag) <- 
                 downloadConduit uri eTag fd 
@@ -113,17 +109,16 @@ downloadHashedBS tmpDir uri@(URI u) eTag expectedHash maxSize hashMishmatch = li
 -- | Fetch arbitrary file using the streaming implementation
 -- 
 downloadRpkiObject :: ValidatorIO es => AppContext s ->
-                    FetchConfig ->             
-                    RrdpURL ->             
+                    RrdpURL ->
                     Eff es ParsedRpkiObject
-downloadRpkiObject AppContext {..} _ uri = do
+downloadRpkiObject AppContext {..} uri = do
     let tmpDir = configValue $ config ^. #tmpDirectory
     let maxSize = config ^. typed @RrdpConf . #maxSize
     (content, _, _, _) <- 
         fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
             downloadToBS tmpDir (getURL uri) Nothing maxSize
 
-    readObject (RrdpU uri) content
+    readObject (RrdpU uri) (U.hashed content)
 
 
 downloadToFile :: MonadIO m => 
@@ -227,7 +222,7 @@ downloadHashedToMemory :: MonadIO m
                        -> Size
                        -> (HttpStatus -> e)
                        -> (Hash -> e)
-                       -> m (Either e BS.ByteString)
+                       -> m (Either e (Hashed BS.ByteString))
 downloadHashedToMemory uri expectedHash maxSize httpStatusNotOk hashMismatch = liftIO $ do
     (((actualHash, _), body), status, _) <-
         downloadToSink uri Nothing $
@@ -237,7 +232,7 @@ downloadHashedToMemory uri expectedHash maxSize httpStatusNotOk hashMismatch = l
         then Left $ httpStatusNotOk status
         else if actualHash /= expectedHash
             then Left $ hashMismatch actualHash
-            else Right $! LBS.toStrict body
+            else Right $! Hashed (LBS.toStrict body) actualHash
 
 
 downloadToSink :: (MonadIO m, MonadUnliftIO m) =>

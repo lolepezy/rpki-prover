@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Http.HttpServer where
 
 import           Control.Lens
@@ -318,8 +316,7 @@ getValidationsOriginalDto :: (MonadIO m, MonadError ServerError m) =>
 getValidationsOriginalDto appContext versionText = do
     getValuesByVersion appContext versionText
         (\_ -> pure Nothing) 
-        (\tx version ->
-            Just . validationsToDto version . allTAs <$> DB.getValidationsPerTA tx version)
+        (\tx version -> Just <$> allValidations tx version)
         (orNoFinishedValidation "validations")
         
 getValidationsDto :: (MonadIO m, MonadError ServerError m) =>
@@ -329,10 +326,17 @@ getValidationsDto :: (MonadIO m, MonadError ServerError m) =>
 getValidationsDto appContext versionText = 
     getValuesByVersion appContext versionText
         (\_ -> pure Nothing) 
-        (\tx version -> do 
-            originalDtos <- validationsToDto version . allTAs <$> DB.getValidationsPerTA tx version            
-            Just <$> resolveValidationDto tx originalDtos)
+        (\tx version -> 
+            fmap Just . resolveValidationDto tx =<< allValidations tx version)
         (orNoFinishedValidation "validations")
+
+-- | Validations of every TA together with the ones that are not about any TA,
+-- such as SLURM problems or workers that exceeded their limits.
+allValidations :: MonadIO m => Tx mode -> WorldVersion -> m (ValidationsDto OriginalVDto)
+allValidations tx version = do 
+    perTa  <- DB.getValidationsPerTA tx version
+    common <- DB.getCommonValidations tx version
+    pure $ validationsToDto version $ allTAs perTa <> common
 
 getMetrics :: (MonadIO m, MonadError ServerError m) =>
             AppContext s 
