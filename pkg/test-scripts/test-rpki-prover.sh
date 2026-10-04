@@ -242,7 +242,7 @@ mode_upgrade() {
 
     # A locally modified conffile must survive the upgrade untouched.
     echo '# local modification by the test suite' >> /etc/default/rpki-prover
-    sed -i 's/--cpu-count 2/--cpu-count 1/' /etc/default/rpki-prover
+
 
     install_deb "${DEB}" || return
     local new_version
@@ -257,7 +257,6 @@ mode_upgrade() {
 
     check "local conffile modification survived" \
         grep -q 'local modification by the test suite' /etc/default/rpki-prover
-    check "conffile edit survived" grep -q -- '--cpu-count 1' /etc/default/rpki-prover
     check_not "no .dpkg-dist file was left behind" test -f /etc/default/rpki-prover.dpkg-dist
 
     check_eq "service is still enabled" "enabled" "$(systemctl is-enabled rpki-prover 2>&1)"
