@@ -147,8 +147,8 @@ runAll appContext@AppContext {..} tals = do
             (triggeredValidationLoop canValidateAgain FirstRun)
             (concurrently_
                 periodicallyRevalidateAllTAs
-                (revalidateOnExpiry logger
-                    (workflowShared ^. #earliestToExpire) (workflowShared ^. #tasToValidate)))
+                (revalidateOnValidityChange logger
+                    (workflowShared ^. #earliestValidityChange) (workflowShared ^. #tasToValidate)))
 
       where
         periodicallyRevalidateAllTAs = do 
@@ -368,7 +368,7 @@ runAll appContext@AppContext {..} tals = do
                 Right (ValidationResult vs discovered) -> do
                     adjustFetchers appContext (fmap fst discovered) workflowShared
                     -- What this validation found replaces what the previous ones did
-                    atomically $ modifyTVar' (workflowShared ^. #earliestToExpire)
+                    atomically $ modifyTVar' (workflowShared ^. #earliestValidityChange)
                                     (Map.union $ fmap snd discovered)
 
                     -- The worker has saved the version, SLURM is read and
@@ -579,7 +579,7 @@ runValidation :: AppContext s
             -> WorldVersion
             -> [TAL]
             -> [TaName]
-            -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire))
+            -> IO (ValidationState, Map TaName (Fetcheables, EarliestValidityChange))
 runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames = do           
 
     results <- validateMultipleTAs appContext worldVersion talsToValidate
@@ -614,7 +614,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deletedStr} oldest version(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, 
-        Map.map (\r -> (r ^. #discoveredRepositories, r ^. #earliestNotValidAfter)) results)
+        Map.map (\r -> (r ^. #discoveredRepositories, r ^. #earliestValidityChange)) results)
 
   where
     addUniqueVrpCountsToMetrics tx results = do

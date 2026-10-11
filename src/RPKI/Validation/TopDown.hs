@@ -9,6 +9,7 @@
 module RPKI.Validation.TopDown (
     TopDownResult(..),
     validateMultipleTAs,
+    becomingValid,
     refreshTaCertificate,
     TroubledChildLoadPath(..),
     resolveTroubledChildByKey,
@@ -120,7 +121,7 @@ data TopDownResult = TopDownResult {
         roas                   :: Roas,
         topDownValidations     :: ValidationState,
         discoveredRepositories :: Fetcheables,
-        earliestNotValidAfter  :: EarliestToExpire
+        earliestValidityChange :: EarliestValidityChange
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving Semigroup via GenericSemigroup TopDownResult
@@ -214,11 +215,17 @@ validateTA appContext@AppContext{..} tal topDownContext = do
             readTVar (topDownContext ^. #fetcheables) <*>
             readTVar (topDownContext ^. #earliestNotValidAfter)
 
-    logDebug logger [i|Earliest #{taName}, earliestNotValidAfter=#{earliestNotValidAfter}|]
+    -- An object that's not valid yet is used once it becomes valid, 
+    -- that's as much of a change as an object that expires
+    let earliestValidityChange = earliestNotValidAfter <> becomingValid (topDownValidations ^. typed)
+
+    logDebug logger [i|Earliest #{taName}, earliestValidityChange=#{earliestValidityChange}|]
 
     case r of
         Left _ -> 
-            pure $ fromValidations topDownValidations & #discoveredRepositories .~ discoveredRepositories
+            pure $ fromValidations topDownValidations 
+                    & #discoveredRepositories .~ discoveredRepositories
+                    & #earliestValidityChange .~ earliestValidityChange
         Right _ -> do     
             let builder = topDownContext ^. #payloadBuilder
             vrps     <- readIORef $ builder ^. #vrps 
@@ -252,6 +259,25 @@ validateTA appContext@AppContext{..} tal topDownContext = do
 
 taScopes :: TaName -> Scopes
 taScopes = newScopes' TAFocus . unTaName
+
+-- | The earliest moment when an object that isn't valid yet becomes valid,
+-- such as a manifest or a CRL from the future, or a certificate with notBefore 
+-- in the future. It's known from the issues about them, since such objects are
+-- reported (and their manifests fall back to older ones) every time they're met.
+becomingValid :: Validations -> EarliestValidityChange
+becomingValid (Validations issues) = 
+    mconcat [ EarliestValidityChange moment 
+            | issue <- concatMap Set.toList $ Map.elems issues
+            , Just moment <- [validFrom $ appErrorOf issue] ]
+  where
+    appErrorOf = \case
+        VErr e             -> e
+        VWarn (VWarning e) -> e
+
+    validFrom = \case
+        ValidationE (ObjectValidityIsInTheFuture notBefore _) -> Just notBefore
+        ValidationE (ThisUpdateTimeIsInTheFuture thisUpdate _) -> Just thisUpdate
+        _                                                      -> Nothing
         
 
 -- | Do the validation starting from the TA certificate.

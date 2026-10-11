@@ -24,7 +24,7 @@ import           RPKI.Workflow.Shared
 
 
 revalidationOnExpirySpec :: TestTree
-revalidationOnExpirySpec = testGroup "Revalidation on expiry" [
+revalidationOnExpirySpec = testGroup "Revalidation when objects expire or become valid" [
         HU.testCase "Revalidates a TA right after its first object expires" shouldRevalidateOnExpiry,
         HU.testCase "Doesn't revalidate when the expiration time moves on" shouldNotRevalidateForOldExpiration,
         HU.testCase "Revalidates when validations find the same expiration time again" shouldRevalidateForSameExpiration
@@ -73,18 +73,18 @@ shouldRevalidateForSameExpiration = withExpiryLoop $ \expirations tasToValidate 
 
 -- The loop running, with the expiration times it waits
 -- for and the TAs it asks to revalidate.
-withExpiryLoop :: (TVar (Map TaName EarliestToExpire) -> TVar (Set TaName) -> IO a) -> IO a
+withExpiryLoop :: (TVar (Map TaName EarliestValidityChange) -> TVar (Set TaName) -> IO a) -> IO a
 withExpiryLoop f =
     withLogger (newLogConfig ErrorL MainLog) $ \logger -> do
         expirations   <- newTVarIO mempty
         tasToValidate <- newTVarIO mempty
-        withAsync (revalidateOnExpiry logger expirations tasToValidate) $ \_ ->
+        withAsync (revalidateOnValidityChange logger expirations tasToValidate) $ \_ ->
             f expirations tasToValidate
 
-inSeconds :: Seconds -> IO EarliestToExpire
+inSeconds :: Seconds -> IO EarliestValidityChange
 inSeconds seconds = do
     Now now <- thisInstant
-    pure $ EarliestToExpire $ momentAfter now seconds
+    pure $ EarliestValidityChange $ momentAfter now seconds
 
 -- Whether the TA is asked to be revalidated within the time
 revalidatedWithin :: Int -> TVar (Set TaName) -> TaName -> IO Bool

@@ -46,9 +46,9 @@ data WorkflowShared = WorkflowShared {
         -- associated with these TAs have been fetched.
         tasToValidate :: TVar (Set TaName),
 
-        -- Earliest expiration time for any object for a TA, as the
-        -- last validation of the TA found it (see `revalidateOnExpiry`)
-        earliestToExpire :: TVar (Map TaName EarliestToExpire),
+        -- The earliest moment the validity of some object of a TA changes, as
+        -- the last validation of the TA found it (see `revalidateOnValidityChange`)
+        earliestValidityChange :: TVar (Map TaName EarliestValidityChange),
 
         tals :: [TAL]
     }
@@ -62,11 +62,11 @@ withWorkflowShared :: AppContext s
                     -> IO b
 withWorkflowShared AppContext {..} prometheusMetrics tals f = do
     shared <- liftIO $ atomically $ do 
-        runningTasks     <- newRunningTasks
-        fetchers         <- newFetchers config (appState ^. #fetcheables)
-        tasToValidate    <- newTVar mempty
-        lastFqdnFetch    <- newTVar mempty
-        earliestToExpire <- newTVar mempty
+        runningTasks           <- newRunningTasks
+        fetchers               <- newFetchers config (appState ^. #fetcheables)
+        tasToValidate          <- newTVar mempty
+        lastFqdnFetch          <- newTVar mempty
+        earliestValidityChange <- newTVar mempty
         pure WorkflowShared {..}
 
     f shared `finally` liftIO (stopAllFetchers (shared ^. #fetchers))
@@ -75,45 +75,45 @@ withWorkflowShared AppContext {..} prometheusMetrics tals f = do
 -- | Ask the validation loop to (re)validate these TAs on its next round. 
 -- This is the one signal the whole triggered-validation design turns on: 
 -- fetches that found updates, TA certificates that changed and objects 
--- that are about to expire all end up here.
+-- that expire or become valid all end up here.
 requestRevalidation :: MonadIO m => TVar (Set TaName) -> Set TaName -> m ()
 requestRevalidation tasToValidate tas =
     liftIO $ atomically $ modifyTVar' tasToValidate (<> tas)
 
 
--- | Revalidate a TA right after its earliest expiration time, i.e. right after
--- the first of its objects expires.
+-- | Revalidate a TA right after the validity of one of its objects changes,
+-- i.e. right after the first of them expires or becomes valid.
 --
--- Every validation of a TA replaces its expiration time, and since in practice
--- it keeps receding into the future as objects are re-issued, most of these
--- moments never come. So there's one thread for all TAs: it waits for the
--- first moment and starts over whenever any of them changes. A moment is
--- dropped once it has come, the validation it triggers sets the next one.
-revalidateOnExpiry :: AppLogger
-                   -> TVar (Map TaName EarliestToExpire)
-                   -> TVar (Set TaName)
-                   -> IO ()
-revalidateOnExpiry logger earliestToExpire tasToValidate = forever $ do
+-- Every validation of a TA replaces its moment, and since in practice it keeps
+-- receding into the future as objects are re-issued, most of these moments
+-- never come. So there's one thread for all TAs: it waits for the first
+-- moment and starts over whenever any of them changes. A moment is dropped
+-- once it has come, the validation it triggers finds the next one.
+revalidateOnValidityChange :: AppLogger
+                           -> TVar (Map TaName EarliestValidityChange)
+                           -> TVar (Set TaName)
+                           -> IO ()
+revalidateOnValidityChange logger earliestValidityChange tasToValidate = forever $ do
     Now now <- thisInstant
-    (expired, waiting) <- atomically $ do
-        (expired, waiting) <- Map.partition (hasExpiredBy now) <$> readTVar earliestToExpire
-        writeTVar earliestToExpire waiting
-        pure (expired, waiting)
+    (changed, waiting) <- atomically $ do
+        (changed, waiting) <- Map.partition (hasComeBy now) <$> readTVar earliestValidityChange
+        writeTVar earliestValidityChange waiting
+        pure (changed, waiting)
 
-    for_ (Map.toList expired) $ \(taName, EarliestToExpire expiresAt) ->
-        logDebug logger [i|The first object of #{taName} expired at #{expiresAt}, will revalidate it.|]
-    requestRevalidation tasToValidate $ Map.keysSet expired
+    for_ (Map.toList changed) $ \(taName, EarliestValidityChange moment) ->
+        logDebug logger [i|An object of #{taName} expired or became valid at #{moment}, will revalidate it.|]
+    requestRevalidation tasToValidate $ Map.keysSet changed
 
     -- Until the first of the moments, or until the moments change. It doesn't
     -- sleep for longer than an hour, the clock can jump or the machine sleep.
-    let untilFirst = minimum $ maxWait : [ microsecondsBetween now t | EarliestToExpire t <- Map.elems waiting ]
+    let untilFirst = minimum $ maxWait : [ microsecondsBetween now t | EarliestValidityChange t <- Map.elems waiting ]
     timeIsUp <- registerDelay untilFirst
     atomically $ do
         up      <- readTVar timeIsUp
-        changed <- (/= waiting) <$> readTVar earliestToExpire
-        unless (up || changed) retry
+        moved <- (/= waiting) <$> readTVar earliestValidityChange
+        unless (up || moved) retry
   where
-    hasExpiredBy now (EarliestToExpire expiresAt) = expiresAt < now
+    hasComeBy now (EarliestValidityChange moment) = moment < now
 
     maxWait = 3600 * 1_000_000
 

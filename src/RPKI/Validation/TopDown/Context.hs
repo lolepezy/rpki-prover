@@ -60,7 +60,7 @@ data TopDownContext = TopDownContext {
         payloadBuilder          :: PayloadBuilder,
         overclaimingHappened    :: Bool,
         fetcheables             :: TVar Fetcheables,
-        earliestNotValidAfter   :: TVar EarliestToExpire,        
+        earliestNotValidAfter   :: TVar EarliestValidityChange,        
         visitedAkis             :: TVar (Set AKI)
     }
     deriving stock (Generic)
@@ -223,7 +223,7 @@ bumpCounterBy counters counterLens n = liftIO $
 
 rememberNotValidAfter :: MonadIO m => TopDownContext -> Instant -> m ()
 rememberNotValidAfter TopDownContext {..} notAfter = 
-    liftIO $ atomically $ modifyTVar' earliestNotValidAfter (<> EarliestToExpire notAfter)
+    liftIO $ atomically $ modifyTVar' earliestNotValidAfter (<> EarliestValidityChange notAfter)
 
 rememberCrlNextUpdate :: MonadIO m => TopDownContext -> Validated CrlObject -> m ()
 rememberCrlNextUpdate topDownContext (Validated (CrlObject { signCrl = SignCRL {..}})) = liftIO $ 
