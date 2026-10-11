@@ -39,6 +39,7 @@ import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Repository
 import           RPKI.RRDP.Types
+import           RPKI.Store.Types                (ManifestUpdates)
 
 import           RPKI.Time
 import           RPKI.Parallel
@@ -258,10 +259,19 @@ withFetchLimits Fetchers {..} config repository f =
 -- Returned repository has all the metadata updated (in case of RRDP session and serial).
 -- The metadata is also updated in the database.
 --
+-- | What a successful fetch of a repository gives back.
+data FetchResult = FetchResult {
+        repository      :: Repository,
+        rrdpStat        :: Maybe RrdpFetchStat,
+        -- | The manifests the fetch stored
+        manifestUpdates :: ManifestUpdates
+    }
+    deriving stock (Show, Eq, Generic)
+
 fetchRepository :: (ValidatorIO es, Timeout :> es) => AppContext s
                 -> WorldVersion
                 -> Repository
-                -> Eff es (Repository, Maybe RrdpFetchStat)
+                -> Eff es FetchResult
 fetchRepository
     appContext@AppContext {..}
     worldVersion
@@ -269,11 +279,11 @@ fetchRepository
         logInfo logger [i|Fetching #{getURL repoURL}.|]
         case repo of
             RsyncR r -> do
-                r' <- fetchRsyncRepository r
-                pure (RsyncR r', Nothing)
+                (r', manifestUpdates) <- fetchRsyncRepository r
+                pure $ FetchResult (RsyncR r') Nothing manifestUpdates
             RrdpR r  -> do
-                (r', stat) <- fetchRrdpRepository r
-                pure (RrdpR r', Just stat)
+                (r', stat, manifestUpdates) <- fetchRrdpRepository r
+                pure $ FetchResult (RrdpR r') (Just stat) manifestUpdates
   where
     repoURL = getRpkiURL repo
 
