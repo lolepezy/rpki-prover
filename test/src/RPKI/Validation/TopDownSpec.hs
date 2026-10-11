@@ -6,8 +6,10 @@ import           Control.Lens
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Short            as BSS
+import           Data.Either                      (isLeft, isRight)
 import           Data.Int                         (Int64)
 import           Data.List.NonEmpty               (NonEmpty (..))
+import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Set                         as Set
 import qualified Data.Text                        as Text
@@ -20,10 +22,14 @@ import qualified Test.Tasty.HUnit                 as HU
 import           RPKI.AppState                    (instantToVersion)
 import           RPKI.AppMonad
 import           RPKI.AppTypes                    (WorldVersion)
+import           RPKI.Parallel                    (closeCQueue, newCQueueIO, newWorkPool)
+import           RPKI.Config                      (ValidationAlgorithm (..))
 import           RPKI.Domain
 import           RPKI.Parse.Parse
 import           RPKI.Reporting                   (newScopes)
+import           RPKI.Repository                  (PublicationPointAccess (..), rsyncPP)
 import           RPKI.Resources.Types
+import           RPKI.Store.Base.Storable         (Compressed (..), Verbatim (..), toStorable)
 import           RPKI.Store.Database              (DB)
 import qualified RPKI.Store.Database              as DB
 import           RPKI.Store.Types
@@ -36,12 +42,21 @@ import           RPKI.Validation.TopDown
                 ( TroubledChildLoadPath (..)
                 , resolveTroubledChildByKey
                 , signedByCa
+                , validateManifests
+                )
+import           RPKI.Validation.TopDown.Context
+                ( newAllTasTopDownContext
+                , newTopDownContext
                 )
 import           RPKI.Validation.TopDown.Shortcuts
                 ( MftPlan (..)
+                , ShortcutWrites (..)
+                , makeChildWithIssues
                 , manifestValidityPeriod
                 , planManifests
                 , revokedShortcutChildren
+                , shortcutWrites
+                , storeShortcuts
                 )
 
 
@@ -54,6 +69,8 @@ topDownRegressionGroup =
         , HU.testCase "Bounds manifest validity by thisUpdate and nextUpdate" shouldBoundManifestValidityByUpdateTimes
         , HU.testCase "Picks how to validate the manifest of a CA" shouldPlanManifests
         , HU.testCase "Tells whether the CA signed an EE certificate" shouldTellWhetherCaSignedEECert
+        , HU.testCase "Writes the shortcut of an accepted manifest, with warnings or not" shouldWriteShortcutOfAcceptedManifest
+        , HU.testCase "Deletes the shortcut of a CA without an accepted manifest" shouldDeleteShortcutOfCaWithoutManifest
         ]
 
 
@@ -146,13 +163,15 @@ shouldReplaceRevokedShortcutChildren = do
         revokedGbrKey = objectKey 3
         troubledKey   = objectKey 4
         notOnShortcut = objectKey 5
+        revokedCaKey  = objectKey 6
 
     let mftShortcut = testMftShortcut
-            [ (revokedRoaKey, MftEntry "revoked.roa"  (RoaChild (testRoaShortcut revokedRoaKey) (Serial 100)))
-            , (liveRoaKey,    MftEntry "live.roa"     (RoaChild (testRoaShortcut liveRoaKey)    (Serial 200)))
-            , (revokedGbrKey, MftEntry "revoked.gbr"  (GbrChild (testGbrShortcut revokedGbrKey) (Serial 300)))
+            [ (revokedRoaKey, MftEntry "revoked.roa"  (RoaChild (testRoaShortcut revokedRoaKey) (Serial 100)) Nothing)
+            , (liveRoaKey,    MftEntry "live.roa"     (RoaChild (testRoaShortcut liveRoaKey)    (Serial 200)) Nothing)
+            , (revokedGbrKey, MftEntry "revoked.gbr"  (GbrChild (testGbrShortcut revokedGbrKey) (Serial 300)) Nothing)
+            , (revokedCaKey,  MftEntry "revoked.cer"  (CaChild (testCaShortcut revokedCaKey)    (Serial 400)) (Just ValidCaChild))
             -- A troubled child carries no serial, it is re-validated in full anyway
-            , (troubledKey,   MftEntry "troubled.roa" (TroubledChild troubledKey))
+            , (troubledKey,   MftEntry "troubled.roa" (TroubledChild troubledKey) Nothing)
             ]
 
     let mftChildren =
@@ -162,14 +181,17 @@ shouldReplaceRevokedShortcutChildren = do
             , T3 "troubled.roa" (testHash "h4") troubledKey
             -- Not on the shortcut at all, so not this function's business
             , T3 "new.roa"      (testHash "h5") notOnShortcut
+            , T3 "revoked.cer"  (testHash "h6") revokedCaKey
             ]
 
-    -- The new CRL revokes the ROA and the GBR, plus a serial that belongs to nothing here
+    -- The new CRL revokes the ROA, the GBR and the CA, plus a serial that belongs to
+    -- nothing here. A revoked CA certificate stays a CA certificate, an invalid one.
     HU.assertEqual "Wrong set of revoked children"
-        [ (revokedRoaKey, MftEntry "revoked.roa" (TroubledChild revokedRoaKey))
-        , (revokedGbrKey, MftEntry "revoked.gbr" (TroubledChild revokedGbrKey))
+        [ (revokedRoaKey, MftEntry "revoked.roa" (TroubledChild revokedRoaKey) Nothing)
+        , (revokedGbrKey, MftEntry "revoked.gbr" (TroubledChild revokedGbrKey) Nothing)
+        , (revokedCaKey,  MftEntry "revoked.cer" (TroubledChild revokedCaKey)  (Just InvalidCaChild))
         ]
-        (revokedShortcutChildren mftShortcut (testCrl [Serial 100, Serial 300, Serial 999]) mftChildren)
+        (revokedShortcutChildren mftShortcut (testCrl [Serial 100, Serial 300, Serial 400, Serial 999]) mftChildren)
 
     HU.assertEqual "Nothing may be revoked by a CRL that lists none of these serials"
         []
@@ -325,8 +347,96 @@ shouldPlanManifests = do
             notAfter       = notAfter_,
             serial         = Serial 1,
             manifestNumber = Serial (fromIntegral k),
-            crlShortcut    = CrlShortcut (objectKey 1000) notBefore_ notAfter_
+            crlShortcut    = CrlShortcut (objectKey 1000) notBefore_ notAfter_,
+            hasIssues      = False
         }
+
+
+-- | A manifest accepted with warnings gets a shortcut too, marked, so that the
+-- shortcut names the manifest that is in the tree. Only what changed is written.
+shouldWriteShortcutOfAcceptedManifest :: HU.Assertion
+shouldWriteShortcutOfAcceptedManifest = do
+    let roaKey   = objectKey 1
+        newKey   = objectKey 2
+        roa      = (roaKey, MftEntry "a.roa" (RoaChild (testRoaShortcut roaKey) (Serial 100)) Nothing)
+        newRoa   = (newKey, MftEntry "b.roa" (RoaChild (testRoaShortcut newKey) (Serial 200)) Nothing)
+        olderMft = testMftShortcut [roa] & #key .~ objectKey 100
+        -- With the entries of the children that were validated in full
+        accepted entries hasIssues = testMftShortcut entries
+                                        & #key       .~ objectKey 110
+                                        & #hasIssues .~ hasIssues
+
+    HU.assertEqual "Without a shortcut to validate against, the whole one is replaced"
+        ReplaceShortcut
+        (shortcutWrites Nothing (accepted [roa] True) [])
+
+    HU.assertEqual "A newer manifest with warnings takes the shortcut over"
+        (UpdateShortcut True [newRoa] [roaKey])
+        (shortcutWrites (Just olderMft) (accepted [newRoa] True) [roaKey])
+
+    -- The manifest of a shortcut with issues is validated with all its children again
+    let withIssues = testMftShortcut [roa, newRoa] & #key .~ objectKey 110 & #hasIssues .~ True
+    HU.assertEqual "Nothing changed, nothing is written"
+        (UpdateShortcut False [] [])
+        (shortcutWrites (Just withIssues) (accepted [roa, newRoa] True) [])
+
+    HU.assertEqual "The warnings are gone"
+        (UpdateShortcut True [] [])
+        (shortcutWrites (Just withIssues) (accepted [roa, newRoa] False) [])
+
+    let troubled = (newKey, makeChildWithIssues newKey "b.roa" Nothing)
+    HU.assertEqual "Only the child that is validated to something else is written"
+        (UpdateShortcut False [troubled] [])
+        (shortcutWrites (Just withIssues) (accepted [roa, troubled] True) [])
+
+
+-- | Shortcuts describe the tree as it was validated, so a CA that ends up without 
+-- an accepted manifest loses its shortcut. A shortcut that is used stays.
+shouldDeleteShortcutOfCaWithoutManifest :: HU.Assertion
+shouldDeleteShortcutOfCaWithoutManifest =
+    withTestContext $ \appContext_ -> do
+        -- Shortcuts are only used by incremental validation
+        let appContext = appContext_ & #config . #validationConfig . #validationAlgorithm .~ Incremental
+        db <- readTVarIO $ appContext ^. #database
+        Now now <- thisInstant
+        let aki = AKI (mkKI "98765432109876543210")
+            ca  = CaShort $ testCaShortcut (objectKey 1)
+            shortcut notAfter_ = DB.MftShortcutMeta {
+                    key            = objectKey 2,
+                    notBefore      = momentAfter now (-3600),
+                    notAfter       = notAfter_,
+                    serial         = Serial 1,
+                    manifestNumber = Serial 1,
+                    crlShortcut    = CrlShortcut (objectKey 3) (momentAfter now (-3600)) notAfter_,
+                    hasIssues      = False
+                }
+
+        let validateWith meta = do
+                DB.rwTx db $ \tx ->
+                    DB.saveMftShorcutMeta tx aki (Verbatim $ toStorable $ Compressed meta)
+                shortcutQueue <- newCQueueIO 10
+                workPool      <- newWorkPool
+                publicationPoints <- DB.roTx db DB.getPublicationPoints
+                allTas <- newAllTasTopDownContext (instantToVersion now) publicationPoints shortcutQueue mempty workPool
+                topDownContext <- newTopDownContext (TaName "test") allTas
+                (r, _) <- runValidatorIO (newScopes "validate-manifests") $
+                            validateManifests appContext topDownContext ca aki
+                atomically $ closeCQueue shortcutQueue
+                storeShortcuts appContext shortcutQueue
+                stored <- DB.roTx db $ \tx -> DB.getMftShorcutMeta tx aki
+                pure (r, stored)
+
+        -- No manifests and the shortcut is expired: there's nothing to accept
+        let expired = shortcut (momentAfter now (-60))
+        (r, stored) <- validateWith expired
+        HU.assertBool "Validation must fail" (isLeft r)
+        HU.assertEqual "The shortcut must be gone" Nothing stored
+
+        -- No manifests, but the shortcut is still valid, so it's used (RFC 9286, 6.6)
+        let valid = shortcut (momentAfter now 3600)
+        (r', stored') <- validateWith valid
+        HU.assertBool "Validation must succeed" (isRight r')
+        HU.assertEqual "The shortcut must stay" (Just valid) stored'
 
 
 objectKey :: Int64 -> ObjectKey
@@ -343,8 +453,23 @@ testMftShortcut entries = MftShortcut {
         notAfter       = Instant 1,
         serial         = Serial 1,
         manifestNumber = Serial 1,
-        crlShortcut    = CrlShortcut (objectKey 101) (Instant 0) (Instant 1)
+        crlShortcut    = CrlShortcut (objectKey 101) (Instant 0) (Instant 1),
+        hasIssues      = False
     }
+
+testCaShortcut :: ObjectKey -> CaShortcut
+testCaShortcut key = CaShortcut {
+        key       = key,
+        ski       = SKI (mkKI "01234567890123456789"),
+        ppas      = PublicationPointAccess $ NonEmpty.singleton $ rsyncPP testRsyncUrl,
+        notBefore = Instant 0,
+        notAfter  = Instant 1,
+        resources = AllResources Inherit Inherit Inherit
+    }
+  where
+    testRsyncUrl = case parseRpkiURL "rsync://host/repo/" of
+                        Right (RsyncU u) -> u
+                        other            -> error $ "Not an rsync URL: " <> show other
 
 testRoaShortcut :: ObjectKey -> RoaShortcut
 testRoaShortcut key = RoaShortcut {
