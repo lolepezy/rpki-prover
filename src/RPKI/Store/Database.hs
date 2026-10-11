@@ -22,14 +22,14 @@ module RPKI.Store.Database (
     getByUri, getKeysByUri,
     getObjectByKey, getLocatedByKey,
     getLocationsByKey, getHashByKey,
-    saveObject, saveStorableObject, prepareObject, insertPreparedObject,
+    saveObject, saveStorableObject, prepareObject, prepareLifecycle, insertPreparedObject,
     getObjectMeta, linkObjectToUrl,
     hashExists, existingHashes, getObjectsByHashes,
     deleteObjectByHash, deleteObjectByKey,
     -- * Erik protocol functions
     getErikIndex, saveErikIndex, getAllErikIndexes,
     getErikPartition, existingErikPartitions, saveErikPartition, deleteOrphanedErikPartitions,
-    getMftsForAKI, findAllMftsByAKI, getMftByKey,
+    getMftsForAKI, findAllMftsByAKI, getMftByKey, getMftMetaByKey,
     getMftShorcut, getMftShorcutMeta, getMftShorcutChildrenLight, getMftShorcutChildrenFull,
     getMftShortcutChildFileName,
     saveMftShorcutMeta, insertMftShortcutChildren, deleteMftShortcutChildren,
@@ -68,6 +68,7 @@ module RPKI.Store.Database (
 import           Effectful
 import           Effectful.Error.Static           (tryError)
 import           Control.Concurrent.STM
+import           Control.DeepSeq          (force)
 import           Control.Exception
 import           Control.Lens
 import           Control.Monad
@@ -160,7 +161,7 @@ rwTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 62
+currentDatabaseVersion = 63
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -393,9 +394,17 @@ prepareObject StorableObject { object = Compressed lifecycle, storable = Storabl
     indexEntry = case lifecycle of
                     WellStructuredRO (CerRO c)   -> Just $ CertificateIndex (getSKI c) (getAKI c)
                     WellStructuredRO (MftRO mft) ->
-                        let Manifest {..} = mft ^. #content
-                        in (\aki_ -> ManifestIndex aki_ mftNumber thisTime nextTime) <$> getAKI mft
+                        let content@Manifest {..} = mft ^. #content
+                        in (\aki_ -> ManifestIndex aki_ mftNumber thisTime nextTime
+                                        (manifestContentDigest content)) <$> getAKI mft
                     _                            -> Nothing
+
+
+-- | 'prepareObject' for an object that was just parsed, evaluated in full, so that 
+-- all of it, serialising and the digest of a manifest included, happens on the 
+-- thread that parsed the object and not on the DB writer.
+prepareLifecycle :: RpkiObjectLifecycle -> PreparedObject
+prepareLifecycle = force . prepareObject . toStorableObject . Compressed
 
 
 insertPreparedObject :: MonadIO m
@@ -437,7 +446,7 @@ insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
                 execute conn
                     [sql|INSERT OR IGNORE INTO certificates(object_key, ski, aki) VALUES (?, ?, ?)|]
                     (objectKey, ski, aki_)
-            Just (ManifestIndex aki_ mftNumber thisTime nextTime) ->
+            Just (ManifestIndex aki_ mftNumber thisTime nextTime contentDigest) ->
                 let meta = MftMeta { key = objectKey, .. }
                     Serial mftNum = mftNumber
                 in execute conn
@@ -627,6 +636,12 @@ getMftsForAKI (Tx conn) aki_ = liftIO $ do
         "SELECT meta FROM manifest_meta WHERE aki = ?"
         (Only aki_)
     pure $! List.sortOn Down $ map (deserialiseField . fromOnly) rows
+
+-- | The meta of one manifest, e.g. the one a manifest shortcut is for.
+getMftMetaByKey :: MonadIO m => Tx mode -> ObjectKey -> m (Maybe MftMeta)
+getMftMetaByKey (Tx conn) key = liftIO $ do
+    rows <- query conn "SELECT meta FROM manifest_meta WHERE object_key = ?" (Only key)
+    pure $! deserialiseField . fromOnly <$> listToMaybe rows
 
 findAllMftsByAKI :: MonadIO m
                  => Tx mode -> AKI -> m [(MftMeta, Keyed (Located WellStructuredMft))]
@@ -1576,7 +1591,8 @@ getAll tx = liftIO $ do
 
 getMftMeta :: MftObject -> ObjectKey -> MftMeta
 getMftMeta mft key =
-    let Manifest{..} = getCMSContent $ cmsPayload mft
+    let content@Manifest{..} = getCMSContent $ cmsPayload mft
+        contentDigest = manifestContentDigest content
     in MftMeta{..}
 
 getGbrObjects :: MonadIO m => Tx mode -> WorldVersion -> m [Located RpkiObjectLifecycle]
