@@ -56,7 +56,7 @@ validateMftFileName filename =
 
 -- TODO Is there a more reliable way to find it?
 findCrlOnMft :: Manifest -> [MftPair]
-findCrlOnMft mft = filter (\(MftPair name _) -> ".crl" `Text.isSuffixOf` name) $ mft.mftEntries 
+findCrlOnMft mft = filter isCrlEntry mft.mftEntries
 
 
 -- | Check that manifest URL in the certificate is the same as the one
