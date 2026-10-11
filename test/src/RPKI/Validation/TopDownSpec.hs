@@ -292,7 +292,8 @@ shouldPlanManifests = do
             key       = objectKey k,
             mftNumber = Serial (fromIntegral k),
             thisTime  = thisTime_,
-            nextTime  = nextTime_
+            nextTime  = nextTime_,
+            contentDigest = testHash "digest"
         }
     shortcutMeta k notBefore_ notAfter_ = DB.MftShortcutMeta {
             key            = objectKey k,

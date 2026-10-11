@@ -11,7 +11,7 @@ import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString                   as BS
 import qualified Data.List                         as List
-import           Data.Maybe                        (isJust, isNothing)
+import           Data.Maybe                        (catMaybes, isJust, isNothing)
 import qualified Data.Map.Strict                   as Map
 import qualified Data.Set                          as Set
 import qualified Data.Text                         as Text
@@ -63,6 +63,7 @@ databaseGroup = testGroup "SQLite storage tests"
 objectStoreGroup :: TestTree
 objectStoreGroup = testGroup "Object storage test"
     [ dbTestCase "Should order manifests according to their dates" shouldOrderManifests
+    , dbTestCase "Should store the content digest of a manifest" shouldStoreManifestContentDigest
     , dbTestCase "Should order manifests by thisTime, not by manifest_number"
         shouldOrderManifestsByThisTimeNotNumber
     , dbTestCase "Should order manifests by nextTime when thisTime ties"
@@ -581,6 +582,40 @@ shouldOrderManifests io = do
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) (toValidatedRpkiObject mft2)
 
 
+-- | The digest is computed when a manifest is stored, and kept in its meta.
+shouldStoreManifestContentDigest :: IO DB -> HU.Assertion
+shouldStoreManifestContentDigest io = do
+    db <- io
+    (Right (_, mft1), _) <- runValidatorIO (newScopes "read1") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
+    (Right (_, mft2), _) <- runValidatorIO (newScopes "read2") $ readObjectFromFile "./test/data/afrinic_mft2.mft"
+    [other] <- distinctObjects 1
+
+    worldVersion <- newVersion
+    (key1, key2, otherKey) <- rwTx db $ \tx -> (,,)
+        <$> DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft1) worldVersion
+        <*> DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft2) worldVersion
+        <*> storeIn tx other worldVersion
+
+    let digestOf = \case
+            MftRO m -> manifestContentDigest $ getCMSContent $ cmsPayload m
+            o       -> error $ "Not a manifest: " <> show o
+    HU.assertBool "The fixtures must list different objects" (digestOf mft1 /= digestOf mft2)
+
+    metas <- roTx db $ \tx -> mapM (DB.getMftMetaByKey tx) [key1, key2, otherKey]
+    HU.assertEqual "Each manifest must have its own digest, other objects no meta"
+        [Just (digestOf mft1), Just (digestOf mft2), Nothing]
+        (map (fmap (^. #contentDigest)) metas)
+
+    let Just aki1 = getAKI mft1
+    byAki <- roTx db $ \tx -> DB.getMftsForAKI tx aki1
+    HU.assertEqual "The metas of the AKI must be the same as by key"
+        (List.sort $ catMaybes $ take 2 metas) (List.sort byAki)
+  where
+    storeIn tx obj version = DB.saveObject tx
+        (OriginalRO (ObjectOriginal $ unStorable $ toStorable obj) mempty (getHash obj) (getRpkiObjectType obj))
+        version
+
+
 -- | Saves one fresh dummy object per descriptor (to satisfy manifest_meta's
 -- FK to objects) and inserts a manifest_meta row for each `(mftNumber,
 -- thisTime, nextTime)` descriptor, all under the given AKI. Bypasses
@@ -596,6 +631,7 @@ insertMftMetasFor db aki descriptors = do
             key <- DB.saveObject tx
                 (OriginalRO (ObjectOriginal $ unStorable $ toStorable ro) mempty (getHash ro) (getRpkiObjectType ro))
                 worldVersion
+            let contentDigest = Hash mempty
             let meta = MftMeta {..}
             SQLite.execute conn
                 "INSERT INTO manifest_meta(object_key, aki, manifest_number, meta) VALUES (?, ?, ?, ?)"

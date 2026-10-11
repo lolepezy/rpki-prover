@@ -36,7 +36,9 @@ data MftMeta = MftMeta {
         key       :: {-# UNPACK #-} ObjectKey,
         mftNumber :: {-# UNPACK #-} Serial,
         thisTime  :: {-# UNPACK #-} Instant,
-        nextTime  :: {-# UNPACK #-} Instant 
+        nextTime  :: {-# UNPACK #-} Instant,
+        -- | `manifestContentDigest` of the manifest
+        contentDigest :: Hash
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
@@ -99,7 +101,7 @@ data PreparedObject = PreparedObject {
 data ObjectIndexEntry
     = CertificateIndex SKI (Maybe AKI)
     -- | The rest of 'MftMeta', which also needs the object key the INSERT assigns.
-    | ManifestIndex AKI Serial Instant Instant
+    | ManifestIndex AKI Serial Instant Instant Hash
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary, NFData)
 
