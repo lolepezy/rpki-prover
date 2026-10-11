@@ -16,8 +16,11 @@ import           GHC.Generics
 
 import           Data.Foldable
 import           Data.IORef
+import           Data.Map.Monoidal.Strict         (MonoidalMap)
+import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
+import           Data.Text                        (Text)
 import           Data.String.Interpolate.IsString
 import           Data.Tuple.Strict
 
@@ -61,7 +64,11 @@ data TopDownContext = TopDownContext {
         overclaimingHappened    :: Bool,
         fetcheables             :: TVar Fetcheables,
         earliestNotValidAfter   :: TVar EarliestToExpire,        
-        visitedAkis             :: TVar (Set AKI)
+        visitedAkis             :: TVar (Set AKI),
+        -- | RRDP repositories to fetch from a snapshot next time, with why: 
+        -- the cache doesn't have what the manifests of a CA there say, 
+        -- and none of them could be used
+        snapshotCandidates      :: TVar (MonoidalMap RrdpURL (Set Text))
     }
     deriving stock (Generic)
 
@@ -139,6 +146,7 @@ newTopDownContext taName allTas =
             fetcheables             <- newTVar mempty                 
             earliestNotValidAfter   <- newTVar mempty
             visitedAkis             <- newTVar mempty
+            snapshotCandidates      <- newTVar mempty
             pure $! TopDownContext {..}
 
 newAllTasTopDownContext :: MonadIO m =>
@@ -224,6 +232,11 @@ bumpCounterBy counters counterLens n = liftIO $
 rememberNotValidAfter :: MonadIO m => TopDownContext -> Instant -> m ()
 rememberNotValidAfter TopDownContext {..} notAfter = 
     liftIO $ atomically $ modifyTVar' earliestNotValidAfter (<> EarliestToExpire notAfter)
+
+-- | The repository is to be fetched from a snapshot next time.
+rememberSnapshotCandidate :: MonadIO m => TopDownContext -> RrdpURL -> Set Text -> m ()
+rememberSnapshotCandidate TopDownContext {..} rrdpUrl reasons =
+    liftIO $ atomically $ modifyTVar' snapshotCandidates (<> MonoidalMap.singleton rrdpUrl reasons)
 
 rememberCrlNextUpdate :: MonadIO m => TopDownContext -> Validated CrlObject -> m ()
 rememberCrlNextUpdate topDownContext (Validated (CrlObject { signCrl = SignCRL {..}})) = liftIO $ 

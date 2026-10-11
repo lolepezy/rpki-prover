@@ -21,9 +21,9 @@ import qualified Data.ByteString.Lazy            as LBS
 
 import           Data.Foldable                   (for_)
 import qualified Data.Text                       as Text
-import qualified Data.List.NonEmpty              as NonEmpty
 import           Data.Map.Strict                 (Map)
 import qualified Data.Map.Strict                 as Map
+import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import qualified Data.Set                        as Set
 import           Data.Maybe                      (fromMaybe, catMaybes, isJust)
 import           Data.Hourglass
@@ -599,7 +599,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
 
         let validations = updatedValidation <> snd (allTAs resultsToSave)
 
-        handleValidations tx (validations ^. typed)
+        forceSnapshotForReferencialIssues tx $ foldMap (^. #snapshotCandidates) results
 
         pure (deleted, validations)
 
@@ -638,23 +638,18 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
         fmap $ #topDownValidations . #topDownMetric . #validationMetrics 
                 %~ fmap (#validatedBy .~ ValidatedBy worldVersion)         
 
-    -- Here we do anything that needs to be done in case of specific 
-    -- fetch/validation issues are present    
-    handleValidations tx validations = do
-        forceSnapshotForReferencialIssues tx validations
-        -- other processings if needed
-        -- TODO Add some logic that would reset the cache in case of storage integrity issues
-
     -- https://github.com/lolepezy/rpki-prover/issues/249
     -- This is to handle referential integrity issues, i.e. manifests referring to 
     -- objects that are not found in the cache. That might be caused by
     -- either a bug in the code, e.g. we GC-ed the referred object too early 
     -- or a problem in the repository. In either case we force snapshot fetch 
-    -- to recover repository integrity. This is hacky and should be reconsidered 
-    -- in the future, but it works well for now.
-    forceSnapshotForReferencialIssues tx (Validations validations) = do
+    -- to recover repository integrity. 
+    -- 
+    -- The candidates are the repositories of CAs that ended up without a manifest 
+    -- to use, with an integrity error on the way to it (see `validateManifests`).
+    forceSnapshotForReferencialIssues tx candidates = do
         Now now <- thisInstant
-        for_ (Map.toList repositoriesWithManifestIntegrityIssues) $ \(rrdpUrl, issues) -> do
+        for_ (MonoidalMap.toList candidates) $ \(rrdpUrl, Text.intercalate "; " . Set.toList -> issues) -> do
             DB.updateRrdpMetaM tx rrdpUrl $ \case
                 Nothing   -> pure Nothing
                 Just meta -> do 
@@ -680,31 +675,6 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                                 logInfo logger 
                                     [i|Repository #{rrdpUrl} has integrity issues #{issues}, last forced snapshot fetch was at #{processedAt}, will force it again.|]
                                 pure $ Just enforcedSnapshot
-      where 
-        repositoriesWithManifestIntegrityIssues = 
-            Map.fromListWith (<>) [ 
-                (relevantRepo, relevantIssues) | 
-                    (scope, issues) <- Map.toList validations,                    
-                    let relevantIssues = filter manifestIntegrityError (Set.toList issues),
-                    not (null relevantIssues),
-                    relevantRepo <- mostNarrowPPScope scope
-                ]        
-          where
-            manifestIntegrityError = \case                
-                VErr (ValidationE e)             -> isReferentialIntegrityError e
-                VWarn (VWarning (ValidationE e)) -> isReferentialIntegrityError e                    
-                _                                -> False
-              where
-                isReferentialIntegrityError = \case
-                    MftFallback (ValidationE e) _    -> isReferentialIntegrityError e
-                    ManifestEntryDoesn'tExist _ _    -> True
-                    NoCRLExists _ _                  -> True                
-                    ManifestEntryHasWrongFileType {} -> True                
-                    ReferentialIntegrityError _      -> True                
-                    _                                -> False
-
-            mostNarrowPPScope (Scope s) = 
-                take 1 [ url | PPFocus (RrdpU url) <- NonEmpty.toList s ]
 
 
 -- Keep track of the earliest expiration time for each TA (i.e. the earlist time when some 

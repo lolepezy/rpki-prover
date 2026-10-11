@@ -10,11 +10,13 @@ import           Data.Either                      (isLeft, isRight)
 import           Data.Int                         (Int64)
 import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.List.NonEmpty               as NonEmpty
+import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Set                         as Set
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import qualified Data.X509                        as X509
+import           Data.Generics.Product.Typed      (typed)
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit                 as HU
@@ -26,10 +28,13 @@ import           RPKI.Parallel                    (closeCQueue, newCQueueIO, new
 import           RPKI.Config                      (ValidationAlgorithm (..))
 import           RPKI.Domain
 import           RPKI.Parse.Parse
-import           RPKI.Reporting                   (newScopes)
+import           RPKI.AppContext                  (AppContext)
+import           RPKI.Reporting
+import           RPKI.Store.AppSqliteStorage      (SqliteBackend)
 import           RPKI.Repository                  (PublicationPointAccess (..), rsyncPP)
 import           RPKI.Resources.Types
-import           RPKI.Store.Base.Storable         (Compressed (..), Verbatim (..), toStorable)
+import           RPKI.Store.Base.Storable         (Compressed (..), Verbatim (..), serialiseField, toStorable)
+import qualified RPKI.Store.SQLite                as SQLite
 import           RPKI.Store.Database              (DB)
 import qualified RPKI.Store.Database              as DB
 import           RPKI.Store.Types
@@ -71,6 +76,8 @@ topDownRegressionGroup =
         , HU.testCase "Tells whether the CA signed an EE certificate" shouldTellWhetherCaSignedEECert
         , HU.testCase "Writes the shortcut of an accepted manifest, with warnings or not" shouldWriteShortcutOfAcceptedManifest
         , HU.testCase "Deletes the shortcut of a CA without an accepted manifest" shouldDeleteShortcutOfCaWithoutManifest
+        , HU.testCase "Forces a snapshot only when no manifest can be used" shouldForceSnapshotOnlyWithoutFallback
+        , HU.testCase "Tells integrity errors and the repository they are in" shouldTellIntegrityErrors
         ]
 
 
@@ -395,49 +402,157 @@ shouldWriteShortcutOfAcceptedManifest = do
 -- an accepted manifest loses its shortcut. A shortcut that is used stays.
 shouldDeleteShortcutOfCaWithoutManifest :: HU.Assertion
 shouldDeleteShortcutOfCaWithoutManifest =
-    withTestContext $ \appContext_ -> do
-        -- Shortcuts are only used by incremental validation
-        let appContext = appContext_ & #config . #validationConfig . #validationAlgorithm .~ Incremental
-        db <- readTVarIO $ appContext ^. #database
+    withIncrementalContext $ \appContext -> do
         Now now <- thisInstant
         let aki = AKI (mkKI "98765432109876543210")
-            ca  = CaShort $ testCaShortcut (objectKey 1)
-            shortcut notAfter_ = DB.MftShortcutMeta {
-                    key            = objectKey 2,
-                    notBefore      = momentAfter now (-3600),
-                    notAfter       = notAfter_,
-                    serial         = Serial 1,
-                    manifestNumber = Serial 1,
-                    crlShortcut    = CrlShortcut (objectKey 3) (momentAfter now (-3600)) notAfter_,
-                    hasIssues      = False
-                }
-
-        let validateWith meta = do
-                DB.rwTx db $ \tx ->
-                    DB.saveMftShorcutMeta tx aki (Verbatim $ toStorable $ Compressed meta)
-                shortcutQueue <- newCQueueIO 10
-                workPool      <- newWorkPool
-                publicationPoints <- DB.roTx db DB.getPublicationPoints
-                allTas <- newAllTasTopDownContext (instantToVersion now) publicationPoints shortcutQueue mempty workPool
-                topDownContext <- newTopDownContext (TaName "test") allTas
-                (r, _) <- runValidatorIO (newScopes "validate-manifests") $
-                            validateManifests appContext topDownContext ca aki
-                atomically $ closeCQueue shortcutQueue
-                storeShortcuts appContext shortcutQueue
-                stored <- DB.roTx db $ \tx -> DB.getMftShorcutMeta tx aki
-                pure (r, stored)
 
         -- No manifests and the shortcut is expired: there's nothing to accept
-        let expired = shortcut (momentAfter now (-60))
-        (r, stored) <- validateWith expired
+        let expired = shortcutMetaUntil now (momentAfter now (-60))
+        saveShortcut appContext aki expired
+        (r, stored, _) <- validateCaManifests appContext testRrdpPP aki
         HU.assertBool "Validation must fail" (isLeft r)
         HU.assertEqual "The shortcut must be gone" Nothing stored
 
         -- No manifests, but the shortcut is still valid, so it's used (RFC 9286, 6.6)
-        let valid = shortcut (momentAfter now 3600)
-        (r', stored') <- validateWith valid
+        let valid = shortcutMetaUntil now (momentAfter now 3600)
+        saveShortcut appContext aki valid
+        (r', stored', _) <- validateCaManifests appContext testRrdpPP aki
         HU.assertBool "Validation must succeed" (isRight r')
         HU.assertEqual "The shortcut must stay" (Just valid) stored'
+
+
+-- | A manifest that refers to what the cache doesn't have makes the repository
+-- fetched from a snapshot, but only when there's nothing left to fall back to.
+shouldForceSnapshotOnlyWithoutFallback :: HU.Assertion
+shouldForceSnapshotOnlyWithoutFallback =
+    withIncrementalContext $ \appContext -> do
+        Now now <- thisInstant
+        let rrdpUrl = RrdpURL $ URI "https://rrdp.example.net/notification.xml"
+
+        -- Neither of the manifests is in the cache, there's no shortcut
+        let noFallback = AKI (mkKI "11111111111111111111")
+        storeBrokenManifest appContext noFallback 1 (momentAfter now (-7200))
+        storeBrokenManifest appContext noFallback 2 (momentAfter now (-3600))
+        (r, _, candidates) <- validateCaManifests appContext (RrdpU rrdpUrl) noFallback
+        HU.assertBool "Validation must fail" (isLeft r)
+        HU.assertEqual "The repository must be a snapshot candidate"
+            [rrdpUrl] (MonoidalMap.keys candidates)
+        HU.assertBool "With why" (all (not . Set.null) candidates)
+
+        -- The same, under a publication point that has no RRDP repository
+        (_, _, rsyncCandidates) <- validateCaManifests appContext testRsyncPP noFallback
+        HU.assertEqual "There's no RRDP repository to fetch a snapshot of" mempty rsyncCandidates
+
+        -- The newer manifest is not in the cache, but the shortcut is valid
+        let withFallback = AKI (mkKI "22222222222222222222")
+        let valid = shortcutMetaUntil now (momentAfter now 3600)
+        saveShortcut appContext withFallback valid
+        storeBrokenManifest appContext withFallback 3 (momentAfter now (-60))
+        (r', stored', candidates') <- validateCaManifests appContext (RrdpU rrdpUrl) withFallback
+        HU.assertBool "Validation must succeed with the shortcut" (isRight r')
+        HU.assertEqual "The shortcut must stay" (Just valid) stored'
+        HU.assertEqual "Nothing is forced when falling back works" mempty candidates'
+
+        -- No manifest at all is not an integrity problem
+        let noManifests = AKI (mkKI "33333333333333333333")
+        (r'', _, candidates'') <- validateCaManifests appContext (RrdpU rrdpUrl) noManifests
+        HU.assertBool "Validation must fail" (isLeft r'')
+        HU.assertEqual "Nothing to force for a CA without manifests" mempty candidates''
+
+
+shouldTellIntegrityErrors :: HU.Assertion
+shouldTellIntegrityErrors = do
+    let missing = ValidationE $ ManifestEntryDoesn'tExist (testHash "h") "a.roa"
+        other   = ValidationE $ NoMFT (AKI (mkKI "11111111111111111111"))
+    HU.assertBool "A missing object" (isReferentialIntegrityError missing)
+    HU.assertBool "A missing object of a manifest fallen back from"
+        (isReferentialIntegrityError $ ValidationE $ MftFallback missing (Serial 1))
+    HU.assertBool "Not a missing manifest" (not $ isReferentialIntegrityError other)
+
+    let rrdpUrl = RrdpURL $ URI "https://rrdp.example.net/notification.xml"
+        scope = newScopes' PPFocus (RrdpU rrdpUrl) ^. typed @VScope
+    HU.assertEqual "The RRDP repository of the publication point"
+        (Just rrdpUrl) (innermostRrdpPP scope)
+    HU.assertEqual "Not the one of an outer publication point"
+        Nothing (innermostRrdpPP $ subScope PPFocus testRsyncPP scope)
+
+
+-- | Shortcuts are only used by incremental validation
+withIncrementalContext :: (AppContext SqliteBackend -> IO a) -> IO a
+withIncrementalContext f =
+    withTestContext $ \appContext ->
+        f $ appContext & #config . #validationConfig . #validationAlgorithm .~ Incremental
+
+-- | Run `validateManifests` for a CA in the scope of its publication point, 
+-- the way validation does. Gives back the result, the shortcut of the CA once 
+-- the shortcut writes are done, and the repositories to fetch from a snapshot.
+validateCaManifests :: AppContext SqliteBackend -> RpkiURL -> AKI
+                    -> IO (Either AppError (), Maybe DB.MftShortcutMeta, MonoidalMap.MonoidalMap RrdpURL (Set.Set Text.Text))
+validateCaManifests appContext ppUrl aki = do
+    db <- readTVarIO $ appContext ^. #database
+    Now now <- thisInstant
+    shortcutQueue <- newCQueueIO 10
+    workPool      <- newWorkPool
+    publicationPoints <- DB.roTx db DB.getPublicationPoints
+    allTas <- newAllTasTopDownContext (instantToVersion now) publicationPoints shortcutQueue mempty workPool
+    topDownContext <- newTopDownContext (TaName "test") allTas
+    -- Any CA certificate does, it's only needed to tell which manifests the CA signed
+    (Right ca, _) <- runValidatorIO (newScopes "ca") $ do
+        (_, _, parsed) <- readFixtureObject "./test/data/overcleaiming/2R93viIBHX4dV12fmttfjhYOX9k.cer"
+        prevalidateObject parsed >>= \case
+            CerRO c -> pure $ CaFull $ Located Nothing c
+            other   -> error $ "Not a CA certificate: " <> show other
+    (r, _) <- runValidatorIO (newScopes "validate-manifests") $
+                vFocusOn PPFocus ppUrl $
+                    validateManifests appContext topDownContext ca aki
+    atomically $ closeCQueue shortcutQueue
+    storeShortcuts appContext shortcutQueue
+    stored <- DB.roTx db $ \tx -> DB.getMftShorcutMeta tx aki
+    candidates <- readTVarIO $ topDownContext ^. #snapshotCandidates
+    pure (r, stored, candidates)
+
+saveShortcut :: AppContext SqliteBackend -> AKI -> DB.MftShortcutMeta -> IO ()
+saveShortcut appContext aki meta = do
+    db <- readTVarIO $ appContext ^. #database
+    DB.rwTx db $ \tx -> DB.saveMftShorcutMeta tx aki (Verbatim $ toStorable $ Compressed meta)
+
+-- | A shortcut that is valid from an hour before `now` until `notAfter_`
+shortcutMetaUntil :: Instant -> Instant -> DB.MftShortcutMeta
+shortcutMetaUntil now notAfter_ = DB.MftShortcutMeta {
+        key            = objectKey 2,
+        notBefore      = momentAfter now (-3600),
+        notAfter       = notAfter_,
+        serial         = Serial 1,
+        manifestNumber = Serial 1,
+        crlShortcut    = CrlShortcut (objectKey 3) (momentAfter now (-3600)) notAfter_,
+        hasIssues      = False
+    }
+
+-- | A manifest of the AKI that is known, but whose object is not a manifest,
+-- as if it was gone from the cache.
+storeBrokenManifest :: AppContext SqliteBackend -> AKI -> Int64 -> Instant -> IO ()
+storeBrokenManifest appContext aki n thisTime_ = do
+    db <- readTVarIO $ appContext ^. #database
+    worldVersion <- instantToVersion . unNow <$> thisInstant
+    let blob = BS.pack $ map (fromIntegral . fromEnum) $ "not a manifest " <> show n
+    DB.rwTx db $ \tx@(DB.Tx conn) -> do
+        key <- DB.saveObject tx (OriginalRO (ObjectOriginal blob) mempty (testHash blob) MFT) worldVersion
+        let meta = MftMeta {
+                key           = key,
+                mftNumber     = Serial (fromIntegral n),
+                thisTime      = thisTime_,
+                nextTime      = momentAfter thisTime_ 86400,
+                contentDigest = testHash blob
+            }
+        SQLite.execute conn
+            "INSERT INTO manifest_meta(object_key, aki, manifest_number, meta) VALUES (?, ?, ?, ?)"
+            (key, aki, serialiseField meta.mftNumber, serialiseField meta)
+
+testRrdpPP, testRsyncPP :: RpkiURL
+testRrdpPP  = RrdpU $ RrdpURL $ URI "https://rrdp.example.net/other.xml"
+testRsyncPP = case parseRpkiURL "rsync://rsync.example.net/repo/" of
+                Right u -> u
+                Left e  -> error $ "Not an rsync URL: " <> show e
 
 
 objectKey :: Int64 -> ObjectKey
