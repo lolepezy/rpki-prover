@@ -369,14 +369,14 @@ saveObject :: MonadIO m
            -> RpkiObjectLifecycle
            -> WorldVersion
            -> m ObjectKey
-saveObject tx lifecycle = saveStorableObject tx (toStorableObject (Compressed lifecycle))
+saveObject tx lifecycle wv = (.key) <$> saveStorableObject tx (toStorableObject (Compressed lifecycle)) wv
 
 
 saveStorableObject :: MonadIO m
                 => Tx 'RW
                 -> StorableObject (Compressed RpkiObjectLifecycle)
                 -> WorldVersion
-                -> m ObjectKey
+                -> m Inserted
 saveStorableObject tx so = insertPreparedObject tx (prepareObject so)
 
 
@@ -411,7 +411,7 @@ insertPreparedObject :: MonadIO m
                      => Tx 'RW
                      -> PreparedObject
                      -> WorldVersion
-                     -> m ObjectKey
+                     -> m Inserted
 insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
     existing <- query conn
         "SELECT object_key, original IS NOT NULL FROM objects WHERE hash = ?" (Only hash)
@@ -425,9 +425,9 @@ insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
                      WHERE object_key = ?|]
                 (typ, payload, wv, objectKey)
             saveIndexes objectKey
-            pure objectKey
+            pure $ Inserted objectKey newManifest
 
-        ((objectKey, _) : _, _) -> pure objectKey
+        ((objectKey, _) : _, _) -> pure $ Inserted objectKey Nothing
 
         ([], _) -> do
             [Only objectKey] <- query conn
@@ -436,9 +436,13 @@ insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
                 (hash, typ, payload, original, wv)
 
             saveIndexes objectKey
-            pure objectKey
+            pure $ Inserted objectKey newManifest
   where
     typ = show objectType
+
+    newManifest = case indexEntry of
+        Just (ManifestIndex aki _ thisTime _ contentDigest) -> Just NewManifest {..}
+        _                                                   -> Nothing
 
     saveIndexes objectKey =
         case indexEntry of
