@@ -586,21 +586,5 @@ totalMapCount :: Map a Count -> Count
 totalMapCount m = sum $ Map.elems m
 
 
-rrdpRepoHasSignificantUpdates :: RrdpMetric -> Bool
-rrdpRepoHasSignificantUpdates RrdpMetric {..} = 
-    anySignificantPositive added || anySignificantPositive deleted   
-
-rsyncRepoHasSignificantUpdates :: TraverseMetric -> Bool
-rsyncRepoHasSignificantUpdates TraverseMetric {..} = anySignificantPositive processed
-
 anyPositive :: (Ord b, Num b) => Map a b -> Bool
 anyPositive m = Prelude.any ((> 0) . snd) $ Map.toList m    
-
-anySignificantPositive :: (Ord b, Num b) => Map (Maybe RpkiObjectType) b -> Bool
-anySignificantPositive m = Prelude.any f $ Map.toList m    
-  where
-    f (type_, c) = 
-        case type_ of 
-            Just MFT -> False
-            Just CRL -> False
-            _        -> c > 0
