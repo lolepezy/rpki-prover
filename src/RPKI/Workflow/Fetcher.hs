@@ -5,9 +5,12 @@
 
      A fetcher tries the primary repository (through the Erik relays when they
      are configured and the repository has been fetched successfully before),
-     falls back to the repository's fallbacks when that fails, records what it
-     found, and asks for the TAs that depend on it to be revalidated whenever
-     it brought back anything significant.
+     falls back to the repository's fallbacks when that fails, and records what
+     it found. 
+
+     Then it asks for the TAs that depend on the repository to be revalidated, 
+     if the manifests it stored change what the last validation found, now or 
+     when they become current (see RPKI.Workflow.Revalidation).
 -}
 module RPKI.Workflow.Fetcher (
     adjustFetchers,
@@ -28,7 +31,7 @@ import qualified Data.Map.Strict                 as Map
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import           Data.Set                        (Set)
 import qualified Data.Set                        as Set
-import           Data.Maybe                      (fromMaybe)
+import           Data.Maybe                      (catMaybes, fromMaybe, isJust)
 import qualified Data.IxSet.Typed                as IxSet
 
 import           Data.String.Interpolate.IsString
@@ -44,10 +47,12 @@ import           RPKI.Metrics.Prometheus
 import           RPKI.Reporting
 import           RPKI.Repository
 import qualified RPKI.Store.Database             as DB
+import           RPKI.Store.Types                (ManifestUpdates (..), NewManifest (..), MftMeta (..), manifestUpdatesCap)
 import           RPKI.Parallel
 import           RPKI.Time
 import           RPKI.Util
 import           RPKI.Worker
+import           RPKI.Workflow.Revalidation
 import           RPKI.Workflow.Shared
 import           RPKI.Workflow.Task
 
@@ -175,10 +180,10 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
             -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
             case r of
-                Right FetchResult { repository = repository', rrdpStat } -> do
+                Right FetchResult { repository = repository', rrdpStat, manifestUpdates } -> do
                     interval <- recordFetchOutcome repository' worldVersion 
                                     (FetchedAt (versionToInstant worldVersion)) rrdpStat duration validations
-                    triggerTaRevalidationIf $ hasUpdates validations                                                         
+                    revalidateFor manifestUpdates
                     pure $ Just interval
 
                 Left _ -> do
@@ -191,10 +196,10 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                             pure Nothing
                         Just fallbacks -> do  
                             -- TODO Maybe try Erik relay before trying rsync
-                            anyUpdates <- fetchFallbacks worldVersion fallbacks                                                            
-                            triggerTaRevalidationIf anyUpdates
+                            (anySucceeded, manifestUpdates) <- fetchFallbacks worldVersion fallbacks                                                            
+                            revalidateFor manifestUpdates
                             pure $ Just $ 
-                                if not anyUpdates 
+                                if not anySucceeded 
                                     -- nothing responded, so just go with the normal exponential backoff thing
                                     then interval
                                     else case [ () | RsyncU _ <- Set.toList fallbacks ] of                                                     
@@ -254,7 +259,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                         let newStatus = FetchedAt (versionToInstant worldVersion)
                         interval <- recordFetchOutcome repository worldVersion newStatus Nothing duration validations
                         saveErikFetchOutcome fqdn newStatus interval relayUsage validations
-                        triggerTaRevalidationIf $ hasUpdates validations                                                         
+                        revalidateFor manifestUpdates
                         pure $ Just interval
 
                     Left e -> do
@@ -283,21 +288,23 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                     $ fetchRepository appContext worldVersion repository
 
                 updatePrometheusForRepository fallbackUrl duration prometheusMetrics
-                let repo = case r of
-                        Right FetchResult { repository = repository' } -> 
-                            -- realistically at this time the only fallback repositories are rsync, so 
-                            -- there's no RrdpFetchStat ever
-                            updateMeta' repository' (#status .~ FetchedAt (versionToInstant worldVersion))
-                        Left _ ->
-                            updateMeta' repository (#status .~ FailedAt (versionToInstant worldVersion))
-            
-                pure (repo, validations)            
+                pure $ case r of
+                    Right FetchResult { repository = repository', manifestUpdates } -> 
+                        -- realistically at this time the only fallback repositories are rsync, so 
+                        -- there's no RrdpFetchStat ever
+                        (updateMeta' repository' (#status .~ FetchedAt (versionToInstant worldVersion)), 
+                         validations, Just manifestUpdates)
+                    Left _ ->
+                        (updateMeta' repository (#status .~ FailedAt (versionToInstant worldVersion)), 
+                         validations, Nothing)
 
             DB.rwTxT database $ \tx -> do
-                DB.saveRepositories tx (map fst repositories)
-                DB.saveRepositoryValidationStates tx repositories
+                DB.saveRepositories tx [ repo | (repo, _, _) <- repositories ]
+                DB.saveRepositoryValidationStates tx [ (repo, vs) | (repo, vs, _) <- repositories ]
 
-            pure $ any (hasUpdates . snd) repositories
+            -- Whether any of them got through, and all they stored
+            let fetched = [ updates | (_, _, updates) <- repositories ]
+            pure (any isJust fetched, mconcat $ catMaybes fetched)
         
 
     -- Every fetch attempt is timed and reported under its own repository scope.
@@ -357,23 +364,48 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             DB.saveErikRepositoryValidationStates tx [(erikRepository, validations)]
 
 
-    hasUpdates validations = let 
-            metrics = validations ^. #topDownMetric
-            rrdps = MonoidalMap.elems $ unMetricMap $ metrics ^. #rrdpMetrics
-            rsyncs = MonoidalMap.elems $ unMetricMap $ metrics ^. #traverseMetrics                
-        in any (\m -> rrdpRepoHasSignificantUpdates (m ^. typed)) rrdps ||
-           any (\m -> rsyncRepoHasSignificantUpdates (m ^. typed)) rsyncs
-
+    -- Ask for the TAs that use the repository to be revalidated, if the manifests
+    -- a fetch stored change what the last validation found, now or when they
+    -- become current. They're compared with the manifest shortcuts after the 
+    -- fetch, i.e. as late as possible before the validation that uses them.
+    --
     -- In the one-off mode there is no next round, so every finished fetch has 
     -- to be able to unblock the validation, whether it found anything or not.
-    triggerTaRevalidationIf condition = atomically $ 
-        case config ^. #proverRunMode of         
-            OneOffMode _ -> trigger
-            ServerMode   -> when condition trigger                
-      where
-        trigger = do 
-            relevantTas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVar uriByTa
-            modifyTVar' tasToValidate (<> relevantTas)
+    revalidateFor manifestUpdates = do
+        Now now <- thisInstant
+        let runMode   = config ^. #proverRunMode
+            algorithm = config ^. #validationConfig . #validationAlgorithm
+        changes <- case (runMode, manifestUpdates) of
+            (ServerMode, StoredManifests manifests) -> do
+                shortcuts <- case algorithm of
+                    Incremental        -> shortcutViews manifests
+                    FullEveryIteration -> pure mempty
+                pure [ manifestRevalidation algorithm now m (Map.lookup m.aki shortcuts) | m <- manifests ]
+            _ -> pure []
+
+        let decision = fetchRevalidation runMode now manifestUpdates changes
+        tas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVarIO uriByTa
+        unless (manifestUpdates == mempty && decision == NoRevalidation) $ do
+            let stored = case manifestUpdates of
+                    StoredManifests ms -> [i|#{length ms} new manifest(s)|]
+                    ManyManifests      -> [i|more than #{manifestUpdatesCap} new manifests|] :: String
+            let changed = length [ () | (change, _) <- changes, change /= SameContent ]
+            logDebug logger $ [i|#{url} stored #{stored}, #{changed} of them to revalidate for, |] <>
+                              [i|decision: #{decision}, TAs: #{Set.toList tas}.|]
+        case decision of
+            NoRevalidation -> pure ()
+            RevalidateNow  -> requestRevalidation tasToValidate tas
+            RevalidateAt t -> scheduleRevalidationAt logger scheduledRevalidations tasToValidate tas t
+
+    -- The shortcut of every AKI, and the digest of the manifest it is for 
+    -- if it's still in the cache: two lookups by key per AKI.
+    shortcutViews manifests =
+        DB.roTxT database $ \tx ->
+            fmap (Map.fromList . catMaybes) $
+                forM (Set.toList $ Set.fromList [ m.aki | m <- manifests ]) $ \aki ->
+                    DB.getMftShorcutMeta tx aki >>= traverse (\shortcut -> do
+                        digest <- fmap (.contentDigest) <$> DB.getMftMetaByKey tx shortcut.key
+                        pure (aki, ShortcutView shortcut digest))
     
     rememberFirstFetchBy version = atomically $ do 
         fff <- readTVar firstFinishedFetchBy
