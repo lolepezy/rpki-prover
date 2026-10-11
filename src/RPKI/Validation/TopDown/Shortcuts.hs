@@ -13,7 +13,6 @@ import qualified Data.Map.Strict                  as Map
 import qualified Data.List                        as List
 import           Data.Text                        (Text)
 import           Data.Tuple.Strict
-import qualified Data.ByteString                  as BS
 
 import           RPKI.AppContext
 import           RPKI.Domain
@@ -77,10 +76,11 @@ makeBgpSecShortcut key (Validated bgpCert) bgpSec = let
 makeMftShortcut :: ObjectKey 
                 -> Validated WellStructuredMft -> [(ObjectKey, MftEntry)] 
                 -> Keyed (Validated CrlObject) 
+                -> Bool
                 -> MftShortcut   
 makeMftShortcut key 
     (Validated mftObject) (Map.fromList -> nonCrlEntries) 
-    (Keyed (Validated validCrl) crlKey) = 
+    (Keyed (Validated validCrl) crlKey) hasIssues = 
   let
     ValidityPeriod {..} = manifestValidityPeriod mftObject
     serial = getSerial mftObject
@@ -104,9 +104,9 @@ manifestValidityPeriod mft =
         Manifest { thisTime, nextTime } = mft.content
     in ValidityPeriod (max eeNotBefore thisTime) (min eeNotAfter nextTime)
 
-makeChildWithIssues :: ObjectKey -> Text -> MftEntry
-makeChildWithIssues childKey fileName = 
-    MftEntry { child = TroubledChild childKey, .. }     
+makeChildWithIssues :: ObjectKey -> Text -> Maybe CaChildValidity -> MftEntry
+makeChildWithIssues childKey fileName caCert =
+    MftEntry { child = TroubledChild childKey, .. }
 
 
 -- Using shortcuts ------------------------------------------------------------
@@ -169,11 +169,15 @@ shortcutMftNextUpdate mfts meta =
 
 -- Either a full manifest entry (file_name known, from the diff-path's full read)
 -- or just the child's shortcut payload (from the hot, file_name-free light read).
-data ChildData = ChildWithEntry MftEntry | ChildLight MftChild
+data ChildData = ChildWithEntry MftEntry | ChildLight MftChild (Maybe CaChildValidity)
 
 childOf :: ChildData -> MftChild
 childOf (ChildWithEntry MftEntry {..}) = child
-childOf (ChildLight c)                 = c
+childOf (ChildLight c _)               = c
+
+caCertOf :: ChildData -> Maybe CaChildValidity
+caCertOf (ChildWithEntry MftEntry {..}) = caCert
+caCertOf (ChildLight _ caCert)          = caCert
 
 -- Calculate difference bentween a manifest shortcut
 -- and the list of children of the new manifest object.
@@ -201,15 +205,48 @@ manifestDiff mftShortcut newMftChidlren =
                 | otherwise ->
                     (t3 : newOnes_, overlapping_, remaining)
 
+-- | What to write for a manifest that's accepted.
+data ShortcutWrites
+    -- | There was no shortcut to validate the manifest against, so all the
+    -- children are new. The whole shortcut is replaced: an expired one can
+    -- still have children that are not on this manifest.
+    = ReplaceShortcut
+    | UpdateShortcut {
+        -- | The shortcut is for another manifest now, or the
+        -- manifest's issues came or went
+        writeMeta       :: Bool,
+        -- | Children that are new on the manifest or validated to something else
+        changedChildren :: [(ObjectKey, MftEntry)],
+        -- | Children that are not on the manifest anymore
+        deletedChildren :: [ObjectKey]
+    }
+    deriving stock (Show, Eq)
+
+-- | Given the shortcut a manifest was validated against, if any, and the one
+-- made from the manifest with the entries of the children validated in full,
+-- what is to be written.
+shortcutWrites :: Maybe MftShortcut -> MftShortcut -> [ObjectKey] -> ShortcutWrites
+shortcutWrites current next deletedKeys =
+    case current of
+        Nothing -> ReplaceShortcut
+        Just shortcut -> UpdateShortcut {
+                writeMeta       = shortcut.key /= next.key || shortcut.hasIssues /= next.hasIssues,
+                -- Children validated again come out the same as they 
+                -- are on the shortcut most of the time
+                changedChildren = [ e | e@(k, entry) <- Map.toList next.nonCrlEntries,
+                                        Map.lookup k shortcut.nonCrlEntries /= Just entry ],
+                deletedChildren = deletedKeys
+            }
+
 revokedShortcutChildren :: MftShortcut 
                         -> Validated CrlObject
                         -> [T3 Text Hash ObjectKey]
                         -> [(ObjectKey, MftEntry)]
 revokedShortcutChildren mftShortcut validCrl children = 
-    [ (childKey, makeChildWithIssues childKey fileName)
-    | T3 fileName _ childKey <- children
-    , Just MftEntry { child } <- [ Map.lookup childKey mftShortcut.nonCrlEntries ]
-    , Just childSerial        <- [ getMftChildSerial child ]
+    [ (childKey, makeChildWithIssues childKey fileName (InvalidCaChild <$ caCert))
+    | T3 fileName _ childKey          <- children
+    , Just MftEntry { child, caCert } <- [ Map.lookup childKey mftShortcut.nonCrlEntries ]
+    , Just childSerial                <- [ getMftChildSerial child ]
     , isRevoked childSerial validCrl ]
 
 
@@ -229,8 +266,8 @@ replaceMftShortcut shortcutQueue aki MftShortcut {..} =
         let !children = shortcutChildRows $ Map.toList nonCrlEntries
         atomically $ writeCQueue shortcutQueue $ ReplaceMftShortcut aki raw children
 
--- Only the new children get inserted (into `shortcuts` and `mft_shortcut_children`)
--- and only the deleted/revoked keys get removed.
+-- Only the new children get inserted (into `shortcuts` and one of the children
+-- tables) and only the deleted/revoked keys get removed.
 updateMftShortcutChildren :: MonadIO m => ClosableQueue MftShortcutOp -> AKI -> [(ObjectKey, MftEntry)] -> [ObjectKey] -> m ()
 updateMftShortcutChildren shortcutQueue aki newEntries deletedKeys =
     liftIO $ do
@@ -240,9 +277,14 @@ updateMftShortcutChildren shortcutQueue aki newEntries deletedKeys =
 
 -- Pre-serialise each child's data so the heavy lifting happens on this
 -- (validation) thread, not on the DB-writer thread.
-shortcutChildRows :: [(ObjectKey, MftEntry)] -> [(ObjectKey, Text, BS.ByteString)]
+shortcutChildRows :: [(ObjectKey, MftEntry)] -> [DB.ShortcutChildRow]
 shortcutChildRows entries =
-    [ (k, fileName, unStorable $ toStorable $ Compressed child)
+    [ DB.ShortcutChildRow {
+            childKey = k,
+            fileName = fileName,
+            caCert   = caCert,
+            shortcut = unStorable $ toStorable $ Compressed child
+        }
     | (k, MftEntry {..}) <- entries ]
 
 deleteMftShortcut :: MonadIO m => ClosableQueue MftShortcutOp -> AKI -> m ()
@@ -269,6 +311,6 @@ storeShortcuts AppContext {..} shortcutQueue = liftIO $
                     DB.deleteMftShortcut tx aki
 
 data MftShortcutOp = UpdateMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta))
-                   | UpdateMftShortcutChildren AKI [(ObjectKey, Text, BS.ByteString)] [ObjectKey]
-                   | ReplaceMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta)) [(ObjectKey, Text, BS.ByteString)]
+                   | UpdateMftShortcutChildren AKI [DB.ShortcutChildRow] [ObjectKey]
+                   | ReplaceMftShortcut AKI (Verbatim (Compressed DB.MftShortcutMeta)) [DB.ShortcutChildRow]
                    | DeleteMftShortcut AKI
