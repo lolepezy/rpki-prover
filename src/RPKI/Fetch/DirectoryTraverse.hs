@@ -38,7 +38,6 @@ import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Store.Types
-import           RPKI.Store.Base.Storable (StorableObject(..), Compressed(..), toStorableObject)
 import           RPKI.Store.Database      (DB, roTx)
 import qualified RPKI.Store.Database      as DB
 import qualified RPKI.Util                as U
@@ -96,7 +95,7 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                                 (_, lifecycle) <- parseAndPrevalidate type_ hashedBlob rpkiURL
                                 -- Encode/compress the object here, on a worker, so
                                 -- the single-threaded DB-writer only has to do the INSERT.
-                                pure $! SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
+                                pure $! SaveObject rpkiURL lifecycle (DB.prepareLifecycle lifecycle)
                     Nothing ->
                         pure $! UknownObjectType rpkiURL filePath
 
@@ -118,14 +117,14 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                     atObject rpkiUrl filePath $
                         appWarn $ RsyncE $ RsyncUnsupportedObjectType $ U.convert filePath
 
-                SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
+                SaveObject rpkiUrl lifecycle prepared -> do
                     case lifecycle of
                         OriginalRO _ vs1 _ _ -> do
                             logError logger [i|Object #{rpkiUrl} failed parse/prevalidation.|]
                             embedState vs1
                         WellStructuredRO _ -> pure ()
 
-                    key <- DB.saveStorableObject tx so worldVersion
+                    key <- DB.insertPreparedObject tx prepared worldVersion
                     for_ rpkiUrl $ \u -> DB.linkObjectToUrl tx u key worldVersion
                     updateMetric @TraverseMetric @_ (#processed %~
                         Map.unionWith (+) (Map.singleton (Just $ getRpkiObjectType lifecycle) 1))
@@ -204,5 +203,5 @@ data ObjectProcessingResult =
           CantReadFile (Maybe RpkiURL) FilePath VIssue
         | HashExists (Maybe RpkiURL) Hash ObjectKey
         | UknownObjectType (Maybe RpkiURL) FilePath
-        | SaveObject (Maybe RpkiURL) (StorableObject (Compressed RpkiObjectLifecycle))
+        | SaveObject (Maybe RpkiURL) RpkiObjectLifecycle PreparedObject
     deriving stock (Show, Eq, Generic)
