@@ -566,7 +566,10 @@ validateManifests
         mftShortcut <- fullShortcut meta
         overlappingChildren <- manifestFullValidation appContext topDownContext fullCa mft
                                     (Just mftShortcut) OnlyNewChildren aki
-        collectPayloads appContext topDownContext aki meta (Map.map ChildWithEntry mftShortcut.nonCrlEntries) (Just overlappingChildren)
+
+        collectPayloads appContext topDownContext aki meta 
+                    (Map.map ChildWithEntry mftShortcut.nonCrlEntries) 
+                    (Just overlappingChildren)
                     (Left fullCa)
                     (findAndValidateCrl appContext topDownContext fullCa mft aki)
                     (getResources ca)
