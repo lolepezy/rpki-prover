@@ -158,9 +158,13 @@ planManifests now mfts shortcut =
     -- stays unchanged, and so does its shortcut, so the manifest's own
     -- nextUpdate is checked here.
     shortcutExpired meta =
-        not (isWithinValidityPeriod now meta) ||
-        not (isWithinValidityPeriod now meta.crlShortcut) ||
+        not (shortcutIsUsable now meta) ||
         maybe False (< unNow now) (shortcutMftNextUpdate mfts meta)
+
+-- | The shortcut and its CRL are valid at this moment.
+shortcutIsUsable :: Now -> DB.MftShortcutMeta -> Bool
+shortcutIsUsable now meta =
+    isWithinValidityPeriod now meta && isWithinValidityPeriod now meta.crlShortcut
 
 -- | nextUpdate of the manifest of the shortcut, if it's still in the cache.
 shortcutMftNextUpdate :: [MftMeta] -> DB.MftShortcutMeta -> Maybe Instant
