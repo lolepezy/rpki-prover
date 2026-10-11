@@ -21,7 +21,7 @@ import qualified Data.String.Conversions     as SC
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 import           Text.Read                   (readEither)
-import           Data.Text.Encoding          (decodeUtf8)
+import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
 import           Data.Bifunctor
 
 import           Data.Word
@@ -52,6 +52,19 @@ hashed bs = Hashed bs (sha256s bs)
 mkHash :: BS.ByteString -> Hash
 mkHash = Hash . BSS.toShort
 {-# INLINE mkHash #-}
+
+-- | What a manifest lists apart from its CRL. Two manifests with the same 
+-- digest list the same objects under the same names, whatever their numbers, 
+-- times and CRLs are.
+--
+-- It's SHA-256 over the entries sorted by name and hash, each one being the 
+-- name, a NUL that no name contains, and the hash. Names are IA5Strings, 
+-- so their UTF-8 bytes are just their characters.
+manifestContentDigest :: Manifest -> Hash
+manifestContentDigest Manifest { mftEntries } =
+    mkHash $ S256.finalize $ S256.updates S256.init $ concat
+        [ [encodeUtf8 fileName, "\0", BSS.fromShort $ unHash hash]
+        | MftPair {..} <- List.sort $ filter (not . isCrlEntry) mftEntries ]
 
 unhex :: BS.ByteString -> Maybe BS.ByteString
 unhex hexed = either (const Nothing) Just $ Hex.decode hexed    

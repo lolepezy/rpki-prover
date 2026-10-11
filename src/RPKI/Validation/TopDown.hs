@@ -815,7 +815,7 @@ findAndValidateCrl
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..} }
     fullCa (Keyed (Located _ mft) _) aki = do
     MftPair _ crlHash <-
-        case findCrlOnMft mft.content of
+        case filter isCrlEntry mft.content.mftEntries of
             []    -> vError $ NoCRLOnMFT aki
             [crl] -> pure crl
             crls  -> vError $ MoreThanOneCRLOnMFT aki crls
