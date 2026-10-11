@@ -11,7 +11,7 @@ import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString                   as BS
 import qualified Data.List                         as List
-import           Data.Maybe                        (catMaybes, isJust, isNothing)
+import           Data.Maybe                        (catMaybes, fromJust, isJust, isNothing)
 import qualified Data.Map.Strict                   as Map
 import qualified Data.Set                          as Set
 import qualified Data.Text                         as Text
@@ -58,12 +58,14 @@ databaseGroup = testGroup "SQLite storage tests"
     , txGroup
     , dbGroup
     , erikStoreGroup
+    , manifestUpdatesGroup
     ]
 
 objectStoreGroup :: TestTree
 objectStoreGroup = testGroup "Object storage test"
     [ dbTestCase "Should order manifests according to their dates" shouldOrderManifests
     , dbTestCase "Should store the content digest of a manifest" shouldStoreManifestContentDigest
+    , dbTestCase "Should tell which manifest an insert stored" shouldTellNewManifestOnInsert
     , dbTestCase "Should order manifests by thisTime, not by manifest_number"
         shouldOrderManifestsByThisTimeNotNumber
     , dbTestCase "Should order manifests by nextTime when thisTime ties"
@@ -614,6 +616,61 @@ shouldStoreManifestContentDigest io = do
     storeIn tx obj version = DB.saveObject tx
         (OriginalRO (ObjectOriginal $ unStorable $ toStorable obj) mempty (getHash obj) (getRpkiObjectType obj))
         version
+
+
+-- | An insert tells about a manifest only when it stored one, i.e. only the
+-- first time and only for a well-structured one.
+shouldTellNewManifestOnInsert :: IO DB -> HU.Assertion
+shouldTellNewManifestOnInsert io = do
+    db <- io
+    (Right (_, mft1), _) <- runValidatorIO (newScopes "read1") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
+    (Right (_, mft2), _) <- runValidatorIO (newScopes "read2") $ readObjectFromFile "./test/data/afrinic_mft2.mft"
+    [other] <- distinctObjects 1
+    worldVersion <- newVersion
+
+    let insert lifecycle = rwTx db $ \tx -> (.newManifest) <$>
+            DB.insertPreparedObject tx (DB.prepareLifecycle lifecycle) worldVersion
+    let wellStructured = WellStructuredRO . toValidatedRpkiObject
+    let unparsed o = OriginalRO (ObjectOriginal $ unStorable $ toStorable o) mempty (getHash o) (getRpkiObjectType o)
+    let expected = \case
+            MftRO m -> let content = getCMSContent $ cmsPayload m
+                       in Just NewManifest {
+                            aki           = fromJust $ getAKI m,
+                            thisTime      = content.thisTime,
+                            contentDigest = manifestContentDigest content
+                        }
+            o       -> error $ "Not a manifest: " <> show o
+
+    insert (wellStructured mft1) >>= HU.assertEqual "A new manifest must be told about" (expected mft1)
+    insert (wellStructured mft1) >>= HU.assertEqual "A manifest stored before must not" Nothing
+    insert (unparsed other)      >>= HU.assertEqual "Anything else must not" Nothing
+
+    -- An unparsed copy is replaced with the parsed one, which is when
+    -- the manifest becomes usable
+    insert (unparsed mft2)       >>= HU.assertEqual "An unparsed manifest must not be told about" Nothing
+    insert (wellStructured mft2) >>= HU.assertEqual "Its parsed copy must be" (expected mft2)
+
+
+manifestUpdatesGroup :: TestTree
+manifestUpdatesGroup = testGroup "Manifest updates"
+    [ HU.testCase "Should keep the manifests up to the cap and only the fact there were many past it" $ do
+        let manifest n = NewManifest (AKI $ mkKI "01234567890123456789") (Instant n) (Hash mempty)
+        let stored n = StoredManifests [manifest i | i <- [1 .. n]]
+        let one i = StoredManifests [manifest i]
+
+        HU.assertEqual "Appending one at a time keeps them in order"
+            (stored 1000) (mconcat [ one i | i <- [1 .. 1000] ])
+        HU.assertEqual "One more is too many"
+            ManyManifests (mconcat [ one i | i <- [1 .. 1001] ])
+        HU.assertEqual "Two halves make the cap"
+            (stored 1000) (stored 500 <> StoredManifests [manifest i | i <- [501 .. 1000]])
+        HU.assertEqual "Nothing changes nothing" (stored 3) (mempty <> stored 3 <> mempty)
+    , HU.testCase "Should not forget there were many" $ do
+        let some = StoredManifests [NewManifest (AKI $ mkKI "01234567890123456789") (Instant 1) (Hash mempty)]
+        HU.assertEqual "Many and some" ManyManifests (ManyManifests <> some)
+        HU.assertEqual "Some and many" ManyManifests (some <> ManyManifests)
+        HU.assertEqual "Many and none" ManyManifests (ManyManifests <> mempty)
+    ]
 
 
 -- | Saves one fresh dummy object per descriptor (to satisfy manifest_meta's

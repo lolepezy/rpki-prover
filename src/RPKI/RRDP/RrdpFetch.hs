@@ -19,6 +19,7 @@ import qualified Data.ByteString                  as BS
 import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.List                        as List
 import qualified Data.Map.Strict                  as Map
+import           Data.IORef
 import           Data.String.Interpolate.IsString
 import           Data.Proxy
 import           Data.Maybe
@@ -53,7 +54,7 @@ import qualified RPKI.Util              as U
 runRrdpFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext s
                     -> WorldVersion
                     -> RrdpRepository
-                    -> Eff es (RrdpRepository, RrdpFetchStat)
+                    -> Eff es (RrdpRepository, RrdpFetchStat, ManifestUpdates)
 runRrdpFetchWorker appContext@AppContext {..} worldVersion repository = do
     scopes <- askScopes
     RrdpFetchResult z <- runWorker appContext
@@ -64,18 +65,22 @@ runRrdpFetchWorker appContext@AppContext {..} worldVersion repository = do
 
 -- | 
 --  Update RRDP repository, actually saving all the objects in the DB.
+--  Also tells which manifests it stored, including the ones from deltas
+--  when it had to fall back to the snapshot after them.
 -- 
 updateRrdpRepository :: (ValidatorIO es, Concurrent :> es) => 
                         AppContext s 
                     -> WorldVersion 
                     -> RrdpRepository
-                    -> Eff es (RrdpRepository, RrdpFetchStat) 
+                    -> Eff es (RrdpRepository, RrdpFetchStat, ManifestUpdates)
 updateRrdpRepository     
         appContext@AppContext {..}
         worldVersion 
         repo@RrdpRepository { uri = repoUri, .. } = do
 
   timedMetric (Proxy :: Proxy RrdpMetric) $ do                                   
+
+    storedManifests <- liftIO $ newIORef mempty
         
     let tmpDir = configValue $ config ^. #tmpDirectory
         maxSize = config ^. typed @RrdpConf . #maxSize
@@ -104,10 +109,10 @@ updateRrdpRepository
             repo' <- bumpETag newETag $ do
                 usedSource $ RrdpSnapshot $ notification ^. #serial
                 logDebug logger [i|Forced to use snapshot for #{repoUri}, because #{reason}.|]
-                useSnapshot notification nextStep         
+                useSnapshot storedManifests notification nextStep         
             pure (repo', RrdpFetchStat nextStep)       
 
-    case (httpStatus, enforcement) of 
+    (repo', stat) <- case (httpStatus, enforcement) of 
         (HttpStatus 304, Just (NextTimeFetchSnapshot _ reason)) -> do                        
             -- notification.xml wasn't actually downloaded, so we need to do it first
             (notificationXml_, _, _, _) <- fetchNotification Nothing            
@@ -138,12 +143,12 @@ updateRrdpRepository
                     ForcedFetchSnapshot _ reason -> do 
                         usedSource $ RrdpSnapshot $ notification ^. #serial
                         logDebug logger [i|Forced to use snapshot for #{repoUri}, because #{reason}.|]
-                        useSnapshot notification nextStep   
+                        useSnapshot storedManifests notification nextStep   
 
                     FetchSnapshot _ message -> do 
                         usedSource $ RrdpSnapshot $ notification ^. #serial
                         logDebug logger [i|Going to use snapshot for #{repoUri}: #{message}|]
-                        useSnapshot notification nextStep                       
+                        useSnapshot storedManifests notification nextStep                       
 
                     FetchDeltas {..} ->                  
                             (do 
@@ -152,13 +157,15 @@ updateRrdpRepository
                                     (NonEmpty.last sortedDeltas ^. typed)
 
                                 logDebug logger [i|Going to use deltas for #{repoUri}: #{message}|]
-                                useDeltas sortedDeltas notification)
+                                useDeltas storedManifests sortedDeltas notification)
                         `catchError` \_cs (e :: AppError) -> do         
                                 usedSource $ RrdpSnapshot $ notification ^. #serial
                                 logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
-                                useSnapshot notification nextStep
+                                useSnapshot storedManifests notification nextStep
 
             pure (repo', RrdpFetchStat nextStep)                            
+
+    (repo', stat, ) <$> liftIO (readIORef storedManifests)
   where
     bumpETag newETag f = (\r -> r { eTag = newETag }) <$> f        
 
@@ -182,7 +189,7 @@ updateRrdpRepository
                             appError $ RrdpE $ DeltaUriHostname repoU deltaHostname
         pure notification
 
-    useSnapshot notification nextStep = do         
+    useSnapshot storedManifests notification nextStep = do         
         let SnapshotInfo uri expectedHash = notification ^. #snapshotInfo
         vFocusOn LinkFocus uri $ do            
             logInfo logger [i|#{uri}: downloading snapshot.|] 
@@ -203,7 +210,7 @@ updateRrdpRepository
 
             void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
                     (\t -> #saveTimeMs %~ (<> t))
-                    (saveSnapshot appContext worldVersion repoUri notification rawContent)                                    
+                    (saveSnapshot appContext worldVersion storedManifests repoUri notification rawContent)                                    
 
             rrdpMeta' <- makeRrdpMeta rrdpMeta
             pure $ repo & #rrdpMeta .~ rrdpMeta'
@@ -220,7 +227,7 @@ updateRrdpRepository
                 pure $ Just $ RrdpMeta {..}
     
 
-    useDeltas sortedDeltas notification = do
+    useDeltas storedManifests sortedDeltas notification = do
         let repoURI = getURL $ repo ^. #uri
         let message = if minDeltaSerial == maxDeltaSerial 
                 then [i|#{repoURI}: downloading delta #{minDeltaSerial}.|]
@@ -240,7 +247,7 @@ updateRrdpRepository
                         downloadDelta
                         (\(rawContent, serial, deltaUri) _ -> 
                             inSubVScope deltaUri $ 
-                                saveDelta appContext worldVersion 
+                                saveDelta appContext worldVersion storedManifests
                                     repoUri notification serial rawContent)
                         (mempty :: ())     
 
@@ -389,13 +396,14 @@ nextSerial (RrdpSerial s) = RrdpSerial $ s + 1
 saveSnapshot :: (ValidatorIO es, Concurrent :> es) => 
                 AppContext s        
                 -> WorldVersion         
+                -> IORef ManifestUpdates
                 -> RrdpURL
                 -> Notification 
                 -> BS.ByteString 
                 -> Eff es ()
 saveSnapshot 
     appContext@AppContext {..} 
-    worldVersion repoUri notification snapshotContent = do              
+    worldVersion storedManifests repoUri notification snapshotContent = do              
 
     snapshotCpus <- liftIO $ useAvailableCpus $ config ^. typed @Parallelism . #cpuCount
     
@@ -527,8 +535,9 @@ saveSnapshot
                                 logError logger [i|Object #{rpkiUrl} failed parse/prevalidation, storing original.|]
                                 embedState vs
                             WellStructuredRO _ -> pure ()
-                        key <- DB.insertPreparedObject tx prepared worldVersion
-                        DB.linkObjectToUrl tx rpkiUrl key worldVersion
+                        inserted <- DB.insertPreparedObject tx prepared worldVersion
+                        rememberNewManifest storedManifests inserted
+                        DB.linkObjectToUrl tx rpkiUrl inserted.key worldVersion
                         addedObject $ Just $ getRpkiObjectType lifecycle
 
                     other -> 
@@ -548,12 +557,13 @@ saveSnapshot
 saveDelta :: (ValidatorIO es, Concurrent :> es) => 
             AppContext s 
             -> WorldVersion         
+            -> IORef ManifestUpdates
             -> RrdpURL 
             -> Notification 
             -> RrdpSerial             
             -> BS.ByteString 
             -> Eff es ()
-saveDelta appContext worldVersion repoUri notification expectedSerial deltaContent = do                
+saveDelta appContext worldVersion storedManifests repoUri notification expectedSerial deltaContent = do                
     db <- liftIO $ readTVarIO $ appContext ^. #database    
 
     Delta _ sessionId serial deltaItems <- 
@@ -698,9 +708,10 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                             logError logger [i|Object #{rpkiUrl} failed parse/prevalidation.|]
                             embedState vs
                         WellStructuredRO _ -> pure ()
-                    key <- DB.insertPreparedObject tx prepared worldVersion
+                    inserted <- DB.insertPreparedObject tx prepared worldVersion
+                    rememberNewManifest storedManifests inserted
                     addedObject $ Just $ getRpkiObjectType lifecycle
-                    DB.linkObjectToUrl tx rpkiUrl key worldVersion
+                    DB.linkObjectToUrl tx rpkiUrl inserted.key worldVersion
 
             other ->
                 logDebug logger [i|Weird thing happened in `addObject` #{other}.|]
@@ -747,8 +758,9 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                             embedState vs
                         WellStructuredRO _ -> pure ()
 
-                    key <- DB.insertPreparedObject tx prepared worldVersion
-                    DB.linkObjectToUrl tx rpkiUrl key worldVersion
+                    inserted <- DB.insertPreparedObject tx prepared worldVersion
+                    rememberNewManifest storedManifests inserted
+                    DB.linkObjectToUrl tx rpkiUrl inserted.key worldVersion
                     addedObject $ Just $ getRpkiObjectType lifecycle
 
             other -> 

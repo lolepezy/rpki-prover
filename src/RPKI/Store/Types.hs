@@ -4,7 +4,10 @@ module RPKI.Store.Types where
 
 import           Control.Lens
 import           Control.DeepSeq
+import           Control.Monad.IO.Class
 import qualified Data.ByteString          as BS
+import           Data.Foldable            (for_)
+import           Data.IORef
 
 import           GHC.Generics
 import           RPKI.TAL
@@ -97,6 +100,50 @@ data PreparedObject = PreparedObject {
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary, NFData)
+
+-- | What inserting an object did.
+data Inserted = Inserted {
+        key         :: ObjectKey,
+        -- | Only for a well-structured manifest that wasn't stored before
+        newManifest :: Maybe NewManifest
+    }
+    deriving stock (Show, Eq, Generic)
+
+-- | A manifest that a fetch stored.
+data NewManifest = NewManifest {
+        aki           :: AKI,
+        thisTime      :: Instant,
+        contentDigest :: Hash
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+-- | The manifests a fetch stored: at most `manifestUpdatesCap` of them, past
+-- that only the fact that there were many.
+data ManifestUpdates = StoredManifests [NewManifest]
+                     | ManyManifests
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+manifestUpdatesCap :: Int
+manifestUpdatesCap = 1000
+
+instance Semigroup ManifestUpdates where
+    StoredManifests a <> StoredManifests b
+        | not $ null $ drop manifestUpdatesCap ab = ManyManifests
+        | otherwise                                = StoredManifests ab
+      where
+        ab = a <> b
+    _ <> _ = ManyManifests
+
+instance Monoid ManifestUpdates where
+    mempty = StoredManifests []
+
+-- | Remember the manifest an insert stored, if it did.
+rememberNewManifest :: MonadIO m => IORef ManifestUpdates -> Inserted -> m ()
+rememberNewManifest stored Inserted { newManifest } =
+    for_ newManifest $ \m ->
+        liftIO $ atomicModifyIORef' stored $ \ms -> (ms <> StoredManifests [m], ())
 
 data ObjectIndexEntry
     = CertificateIndex SKI (Maybe AKI)

@@ -175,9 +175,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
             -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
             case r of
-                Right (repository', stats) -> do
+                Right FetchResult { repository = repository', rrdpStat } -> do
                     interval <- recordFetchOutcome repository' worldVersion 
-                                    (FetchedAt (versionToInstant worldVersion)) stats duration validations
+                                    (FetchedAt (versionToInstant worldVersion)) rrdpStat duration validations
                     triggerTaRevalidationIf $ hasUpdates validations                                                         
                     pure $ Just interval
 
@@ -284,7 +284,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                 updatePrometheusForRepository fallbackUrl duration prometheusMetrics
                 let repo = case r of
-                        Right (repository', _noRrdpStats) -> 
+                        Right FetchResult { repository = repository' } -> 
                             -- realistically at this time the only fallback repositories are rsync, so 
                             -- there's no RrdpFetchStat ever
                             updateMeta' repository' (#status .~ FetchedAt (versionToInstant worldVersion))
