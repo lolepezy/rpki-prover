@@ -582,6 +582,28 @@ focusToText = \case
 scopeList :: Scope a -> [Focus]
 scopeList (Scope s) = NonEmpty.toList s
 
+-- | The RRDP repository of the innermost publication point of the scope, 
+-- if that publication point has one.
+innermostRrdpPP :: Scope a -> Maybe RrdpURL
+innermostRrdpPP s =
+    case [ url | PPFocus url <- scopeList s ] of
+        RrdpU url : _ -> Just url
+        _             -> Nothing
+
+-- | The cache is not consistent with what a manifest says: an object or a CRL
+-- on it is missing, or is something else.
+isReferentialIntegrityError :: AppError -> Bool
+isReferentialIntegrityError = \case
+    ValidationE e ->
+        case e of
+            MftFallback e' _                 -> isReferentialIntegrityError e'
+            ManifestEntryDoesn'tExist _ _    -> True
+            NoCRLExists _ _                  -> True
+            ManifestEntryHasWrongFileType {} -> True
+            ReferentialIntegrityError _      -> True
+            _                                -> False
+    _ -> False
+
 totalMapCount :: Map a Count -> Count
 totalMapCount m = sum $ Map.elems m
 
