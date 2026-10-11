@@ -10,7 +10,6 @@ import           Control.Lens
 import           Data.Foldable                      (for_)
 import qualified Data.Map.Strict                  as Map
 import           Data.Maybe                        (catMaybes)
-import qualified Data.Text                        as Text
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -178,7 +177,7 @@ validateBottomUp
                     validateObjectLocations locatedMft
                     validateMftLocation locatedMft certificate
                     MftPair _ crlHash <- 
-                            case filter (\(MftPair name _) -> ".crl" `Text.isSuffixOf` name) $ mftEntries $ mft ^. #content of
+                            case filter isCrlEntry $ mftEntries $ mft ^. #content of
                                 []    -> vError $ NoCRLOnMFT childrenAki
                                 [crl] -> pure crl
                                 crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls
