@@ -17,7 +17,7 @@ import           RPKI.Domain
 import           RPKI.Parse.Internal.MFT (parseMft)
 import           RPKI.Reporting (newScopes)
 import           RPKI.Time (Instant(..))
-import           RPKI.Util (hashed)
+import           RPKI.Util (hashed, manifestContentDigest)
 import           RPKI.Resources.Resources (readIp4)
 import           RPKI.Resources.Types (ASN(..), IpPrefix(..), PrefixLength(..))
 

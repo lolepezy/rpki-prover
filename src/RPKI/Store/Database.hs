@@ -117,7 +117,7 @@ import qualified RPKI.Store.SQLite            as SQLite
 import           RPKI.Store.Types
 import           RPKI.Validation.Types
 
-import           RPKI.Util                (ifJustM, fmtEx)
+import           RPKI.Util                (ifJustM, fmtEx, manifestContentDigest)
 import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.AppTypes
