@@ -78,13 +78,22 @@ import qualified UnliftIO.Exception              as UIO
 
     - Every newly discovered repository is added to the fetching machinery
 
-    - After every fetch a validation can be triggered iff
-        * there are "significant" updates in the fetch (not MFTs and CRLs only)
-        * validation happened not less than N seconds ago
+    - After every fetch, the TAs that use the repository are revalidated if 
+      the manifests the fetch stored change what the last validation found, 
+      i.e. differ from the manifest shortcuts of their CAs: now, or when such 
+      a manifest becomes current (RPKI.Workflow.Revalidation). Validation goes 
+      by manifests, so other objects are no reason.
+
+    - A TA is also revalidated right after the first object of its validated
+      tree expires.
+
+    - A TA is validated not more often than every minimalRevalidationInterval.
     
     - Fetches must always happen atomically, including snapshot fetches
 
-    - 
+    - An RRDP repository is fetched from a snapshot next time if a CA there 
+      is left without a manifest to use, and the cache doesn't have what one 
+      of its manifests says.
 -}
 
 -- The main entry point for the whole validator workflow. Runs multiple threads, 
