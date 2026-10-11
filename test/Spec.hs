@@ -32,6 +32,7 @@ main = defaultMain $ testGroup "All tests" [
         validityGroup,
         repositoryGroup,
         domainCountersGroup,
+        manifestDigestGroup,
         rtrGroup,
         httpSpec,
         slurmGroup,

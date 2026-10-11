@@ -7,10 +7,12 @@ import           Control.Lens
 import           Control.DeepSeq          (NFData)
 import           Control.Monad.ST         (runST)
 
+import qualified Crypto.Hash.SHA256        as S256
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Short    as BSS
 import           Data.Text                (Text)
 import qualified Data.Text                as Text
+import qualified Data.Text.Encoding       as Text
 import qualified Data.Vector              as V
 import qualified Data.Vector.Algorithms.Merge as VectorSort
 import qualified Data.Vector.Algorithms.Intro as VectorSortU
@@ -678,6 +680,22 @@ data Manifest = Manifest {
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
+
+isCrlEntry :: MftPair -> Bool
+isCrlEntry (MftPair name _) = ".crl" `Text.isSuffixOf` name
+
+-- | What a manifest lists apart from its CRL. Two manifests with the same 
+-- digest list the same objects under the same names, whatever their numbers, 
+-- times and CRLs are.
+--
+-- It's SHA-256 over the entries sorted by name and hash, each one being the 
+-- name, a NUL that no name contains, and the hash. Names are IA5Strings, 
+-- so their UTF-8 bytes are just their characters.
+manifestContentDigest :: Manifest -> Hash
+manifestContentDigest Manifest { mftEntries } =
+    Hash $ BSS.toShort $ S256.finalize $ S256.updates S256.init $ concat
+        [ [Text.encodeUtf8 fileName, "\0", BSS.fromShort $ unHash hash]
+        | MftPair {..} <- List.sort $ filter (not . isCrlEntry) mftEntries ]
 
 data SignCRL = SignCRL {
         thisUpdateTime     :: Instant,
