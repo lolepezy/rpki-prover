@@ -121,14 +121,16 @@ data TopDownResult = TopDownResult {
         roas                   :: Roas,
         topDownValidations     :: ValidationState,
         discoveredRepositories :: Fetcheables,
-        earliestNotValidAfter  :: EarliestToExpire
+        earliestNotValidAfter  :: EarliestToExpire,
+        -- | RRDP repositories to fetch from a snapshot next time, with why
+        snapshotCandidates     :: MonoidalMap.MonoidalMap RrdpURL (Set Text)
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving Semigroup via GenericSemigroup TopDownResult
     deriving Monoid    via GenericMonoid TopDownResult
 
 fromValidations :: ValidationState -> TopDownResult
-fromValidations vs = TopDownResult mempty mempty vs mempty mempty
+fromValidations vs = TopDownResult mempty mempty vs mempty mempty mempty
 
 data TroubledChildLoadPath = TroubledFromParsed | TroubledFromOriginal
     deriving stock (Show, Eq, Ord, Generic)
@@ -194,8 +196,12 @@ validateMultipleTAs appContext@AppContext {..} worldVersion tals = do
         logError logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
         (_, validations) <- runValidatorIO (taScopes taName) $ 
                                 (appError $ ValidationE $ ValidationTimeout maxDuration :: Eff AppEffects ())
-        discoveredRepositories <- readTVarIO $ topDownContext ^. #fetcheables
-        pure $ fromValidations validations & #discoveredRepositories .~ discoveredRepositories
+        (discoveredRepositories, snapshotCandidates) <- atomically $ (,) 
+            <$> readTVar (topDownContext ^. #fetcheables)
+            <*> readTVar (topDownContext ^. #snapshotCandidates)
+        pure $ fromValidations validations 
+                & #discoveredRepositories .~ discoveredRepositories
+                & #snapshotCandidates .~ snapshotCandidates
 
     maxDuration = config ^. typed @SystemConfig . #validationWorkerLimits . #workerTimeout
                  
@@ -210,16 +216,19 @@ validateTA :: AppContext s
 validateTA appContext@AppContext{..} tal topDownContext = do
     (r, topDownValidations) <- runValidatorIO (taScopes taName) validateFromTAL
 
-    (discoveredRepositories, earliestNotValidAfter) <- 
-        atomically $ (,) <$>
+    (discoveredRepositories, earliestNotValidAfter, snapshotCandidates) <- 
+        atomically $ (,,) <$>
             readTVar (topDownContext ^. #fetcheables) <*>
-            readTVar (topDownContext ^. #earliestNotValidAfter)
+            readTVar (topDownContext ^. #earliestNotValidAfter) <*>
+            readTVar (topDownContext ^. #snapshotCandidates)
 
     logDebug logger [i|Earliest #{taName}, earliestNotValidAfter=#{earliestNotValidAfter}|]
 
     case r of
         Left _ -> 
-            pure $ fromValidations topDownValidations & #discoveredRepositories .~ discoveredRepositories
+            pure $ fromValidations topDownValidations 
+                    & #discoveredRepositories .~ discoveredRepositories
+                    & #snapshotCandidates .~ snapshotCandidates
         Right _ -> do     
             let builder = topDownContext ^. #payloadBuilder
             vrps     <- readIORef $ builder ^. #vrps 
@@ -460,17 +469,22 @@ validateManifests
     unless (null premature) $ do
         fullCa <- getFullCa appContext topDownContext ca
         for_ premature $ \m ->
-            getSignedMft appContext topDownContext fullCa m >>=
-                traverse_ (reportMftFallback appContext $
-                    ValidationE $ ThisUpdateTimeIsInTheFuture m.thisTime (unNow now))
+            getSignedMft appContext topDownContext fullCa m >>= \case
+                Just (SignedMft mft) -> reportMftFallback appContext
+                    (ValidationE $ ThisUpdateTimeIsInTheFuture m.thisTime (unNow now)) mft
+                _ -> pure ()
 
-    withoutShortcutOnFailure shortcut $ case plan of
+    -- The errors of the manifests that were tried and fallen back from
+    fallbackErrors <- liftIO $ newIORef []
+    let fallBackFrom e = liftIO $ modifyIORef' fallbackErrors (e :)
+
+    onFailure shortcut fallbackErrors $ case plan of
         NoManifest ->
             vError $ NoMFT aki
 
         InFull mftMetas -> do
             increment topDownCounters.originalMft
-            tryMfts appContext topDownContext ca aki mftMetas
+            tryMfts appContext topDownContext fallBackFrom ca aki mftMetas
 
         UseShortcut meta ->
             fromShortcut mfts meta $
@@ -484,32 +498,48 @@ validateManifests
         DiffWithShortcut meta (newest :| newer) ->
             fromShortcut mfts meta $ do
                 fullCa <- getFullCa appContext topDownContext ca
-                tryNewerMfts mfts meta fullCa (newest : newer)
+                tryNewerMfts fallBackFrom mfts meta fullCa (newest : newer)
   where
     validationAlgorithm = config.validationConfig.validationAlgorithm
 
     -- The manifests newer than the one of the shortcut, newest first: use the
-    -- first one that the CA signed and that is valid. Each signed one that isn't
-    -- valid is reported and the next one is tried. When none of them is valid,
-    -- the shortcut is, so it is the latest valid manifest to fall back to.
-    tryNewerMfts mfts meta fullCa mftMetas =
+    -- first one that the CA signed and that is valid. Each one that isn't valid,
+    -- or is gone from the cache, is fallen back from and the next one is tried.
+    -- When none of them is valid, the shortcut is, so it is the latest valid
+    -- manifest to fall back to.
+    tryNewerMfts fallBackFrom mfts meta fullCa mftMetas =
         nextSignedMft appContext topDownContext fullCa mftMetas >>= \case
             Nothing -> useShortcut mfts meta
-            Just (mft, olderMfts) -> do
-                markAsUsed topDownContext $ mft ^. #key
-                tryOneMftWithShortcut meta fullCa mft
-                    `catchError` \_cs (e :: AppError) -> do
-                        reportMftFallback appContext e mft
-                        tryNewerMfts mfts meta fullCa olderMfts
+            Just (candidate, olderMfts) ->
+                tryManifest appContext candidate
+                    (\e reportFallback -> do
+                        void $ fallBackFrom e
+                        reportFallback
+                        tryNewerMfts fallBackFrom mfts meta fullCa olderMfts)
+                    (\mft -> do
+                        markAsUsed topDownContext $ mft ^. #key
+                        tryOneMftWithShortcut meta fullCa mft)
 
-    -- Shortcuts describe the tree as it was validated, so a CA that ends 
-    -- up without an accepted manifest mustn't keep one.
-    withoutShortcutOnFailure shortcut validate =
-        case shortcut of
-            Nothing -> validate
-            Just _  -> validate `catchError` \_cs (e :: AppError) -> do
-                            deleteMftShortcut shortcutQueue aki
-                            appError e
+    -- The CA ends up without an accepted manifest.
+    --
+    -- Shortcuts describe the tree as it was validated, so it mustn't keep one.
+    --
+    -- If the cache doesn't have what one of the manifests says, the repository 
+    -- is to be fetched from a snapshot. Only now that there's nothing left to 
+    -- fall back to: falling back is what the previous manifests are for, and 
+    -- a newer manifest that refers to objects that aren't there yet is the 
+    -- publisher's problem.
+    onFailure shortcut fallbackErrors validate =
+        validate `catchError` \_cs (e :: AppError) -> do
+            for_ shortcut $ \_ -> deleteMftShortcut shortcutQueue aki
+            errors <- (e :) <$> liftIO (readIORef fallbackErrors)
+            let integrityErrors = filter isReferentialIntegrityError errors
+            unless (null integrityErrors) $ do
+                scope <- askScopes
+                for_ (innermostRrdpPP $ scope ^. typed @VScope) $ \rrdpUrl ->
+                    rememberSnapshotCandidate topDownContext rrdpUrl $
+                        Set.fromList $ map toMessage integrityErrors
+            appError e
 
     -- Use the manifest of the shortcut. One that was accepted with warnings is
     -- validated in full again, its children too, so that the warnings are
@@ -574,30 +604,56 @@ validateManifests
                 (getResources ca)
 
 
--- Validate the manifests that the CA signed in full, falling back
--- to the next one until one is valid
+-- Validate the manifests that the CA signed in full, falling back to the next one
+-- until one is valid. A manifest that is gone from the cache is fallen back from too.
 tryMfts :: (ValidatorIO es, Concurrent :> es) =>
-          AppContext s -> TopDownContext -> Ca -> AKI -> [MftMeta] -> Eff es ()
-tryMfts _ _ _ aki [] = vError $ NoMFT aki
-tryMfts appContext topDownContext ca aki mftMetas = do
+          AppContext s -> TopDownContext -> (AppError -> Eff es ()) -> Ca -> AKI -> [MftMeta] -> Eff es ()
+tryMfts _ _ _ _ aki [] = vError $ NoMFT aki
+tryMfts appContext topDownContext fallBackFrom ca aki mftMetas = do
     caFull <- getFullCa appContext topDownContext ca
     nextSignedMft appContext topDownContext caFull mftMetas >>= \case
-        Nothing               -> vError $ NoMFT aki
-        Just (mft, mftMetas_) -> tryFrom caFull mft mftMetas_
+        Nothing                     -> vError $ NoMFT aki
+        Just (candidate, mftMetas_) -> tryFrom caFull candidate mftMetas_
   where
     -- The error of the last one is the error of the CA, the ones before it are fallbacks
-    tryFrom caFull mft mftMetas_ =
-        tryOneMft caFull mft `catchError` \_cs (e :: AppError) ->
-            nextSignedMft appContext topDownContext caFull mftMetas_ >>= \case
-                Nothing                    -> appError e
-                Just (nextMft, mftMetas__) -> do
-                    reportMftFallback appContext e mft
-                    tryFrom caFull nextMft mftMetas__
+    tryFrom caFull candidate mftMetas_ =
+        tryManifest appContext candidate (fallBack caFull mftMetas_) (tryOneMft caFull)
+
+    fallBack caFull mftMetas_ e reportFallback =
+        nextSignedMft appContext topDownContext caFull mftMetas_ >>= \case
+            Nothing                  -> appError e
+            Just (next, mftMetas__) -> do
+                fallBackFrom e
+                reportFallback
+                tryFrom caFull next mftMetas__
 
     tryOneMft caFull mft = do
         markAsUsed topDownContext $ mft ^. #key
         void $ manifestFullValidation appContext topDownContext caFull mft Nothing OnlyNewChildren aki
         oneMoreMft >> oneMoreCrl
+
+
+-- | A manifest of a CA to try: one that the CA signed, or one that is gone 
+-- from the cache, so that it can't be told whether the CA signed it.
+data MftCandidate = SignedMft (Keyed (Located WellStructuredMft))
+                  | MissingMft MftMeta AppError
+
+-- | Validate a manifest the given way, and fall back from it if that fails, or 
+-- if the manifest is gone from the cache. Falling back gets the error, and how
+-- to report it.
+tryManifest :: ValidatorIO es =>
+              AppContext s
+              -> MftCandidate
+              -> (AppError -> Eff es () -> Eff es a)
+              -> (Keyed (Located WellStructuredMft) -> Eff es a)
+              -> Eff es a
+tryManifest appContext candidate fallBack validate =
+    case candidate of
+        MissingMft m e ->
+            fallBack e $ vFocusOn ObjectFocus (m ^. #key) $ vWarn $ MftFallback e (m ^. #mftNumber)
+        SignedMft mft ->
+            validate mft `catchError` \_cs (e :: AppError) ->
+                fallBack e $ reportMftFallback appContext e mft
 
 
 withMft :: ValidatorIO es =>
@@ -626,22 +682,29 @@ signedByCa ca cms =
         SignaturePass     -> True
         SignatureFailed _ -> False
 
--- | The manifest, if the CA signed it.
+-- | The manifest, if the CA signed it, or if it is gone from the cache.
 getSignedMft :: ValidatorIO es =>
                 AppContext s -> TopDownContext -> Located WellStructuredCaCert -> MftMeta
-                -> Eff es (Maybe (Keyed (Located WellStructuredMft)))
-getSignedMft appContext topDownContext ca m =
-    withMft appContext m.key $ \mft ->
-        if signedByCa ca (mft ^. #object . #payload)
-            then pure $ Just mft
-            else do
+                -> Eff es (Maybe MftCandidate)
+getSignedMft AppContext {..} topDownContext ca m = do
+    let mftKey = m ^. #key
+    z <- roTxT database $ \tx -> DB.getMftByKey tx mftKey
+    case z of
+        Nothing -> do
+            let message = [i|Referential integrity error, can't find a manifest by its key #{mftKey}.|]
+            logError logger message
+            pure $ Just $ MissingMft m $ ValidationE $ ReferentialIntegrityError message
+        Just mft
+            | signedByCa ca (mft ^. #object . #payload) -> pure $ Just $ SignedMft mft
+            | otherwise -> do
                 increment topDownContext.allTas.topDownCounters.foreignMft
                 pure Nothing
 
--- | The first of the manifests that the CA signed, with the ones after it.
+-- | The first of the manifests that the CA signed, or that is gone from the cache,
+-- with the ones after it.
 nextSignedMft :: ValidatorIO es =>
                 AppContext s -> TopDownContext -> Located WellStructuredCaCert -> [MftMeta]
-                -> Eff es (Maybe (Keyed (Located WellStructuredMft), [MftMeta]))
+                -> Eff es (Maybe (MftCandidate, [MftMeta]))
 nextSignedMft _ _ _ [] = pure Nothing
 nextSignedMft appContext topDownContext ca (m : ms) =
     getSignedMft appContext topDownContext ca m >>= \case
