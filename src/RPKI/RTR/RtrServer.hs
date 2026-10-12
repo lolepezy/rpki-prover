@@ -2,7 +2,7 @@
 
 module RPKI.RTR.RtrServer where
 
-import           Control.Concurrent               (forkFinally)
+import           Control.Concurrent               (forkFinally, threadDelay)
 
 import           Control.Lens                     ((^.))
 
@@ -47,7 +47,6 @@ import           RPKI.Util                        (convert, hex, decodeBase64)
 
 import           RPKI.AppState
 import           RPKI.AppTypes
-import           RPKI.Workflow.Task                (delayUntilNext)
 
 import qualified RPKI.Store.Database    as DB
 
@@ -187,13 +186,10 @@ runRtrServer appContext RtrConfig {..} = do
                 
         logDebug logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
 
-        atomically $ writeTVar rtrState $ 
-                        Just $ newRtrState worldVersion maxStoredDiffs
+        let initialRtrState = newRtrState worldVersion maxStoredDiffs
+        atomically $ writeTVar rtrState $ Just initialRtrState
 
-        lastTimeNotified <- newTVarIO Nothing
-        notifyPending    <- newTVarIO False
-
-        forever $ do
+        race_ (notifyClients $ notifyKey initialRtrState) $ forever $ do
             (rtrState', previousVersion, newVersion, currentRtrPayload) <- waitForLatestRtrPayload appContext rtrState
             previousRtrPayload <- readRtrPayload appContext previousVersion
 
@@ -220,51 +216,24 @@ runRtrServer appContext RtrConfig {..} = do
             logDiff rtrDiff
 
             atomically $ writeTVar rtrState $! Just $! nextRtrState
-
-            when thereAreRtrUpdates $
-                notifyClients rtrState lastTimeNotified notifyPending
         where
-          -- Send a Serial Notify for the current session/serial, unless one
-          -- was already sent less than `rtrNotifyRateLimit` ago. A notify
-          -- suppressed by that limit is not simply dropped: a client relying
-          -- on it (rather than on its own poll timer) would otherwise learn
-          -- about the update only whenever the next one happens to land
-          -- outside the rate-limit window, which may be a long time, or
-          -- never. Instead, a delayed notify is scheduled for as soon as the
-          -- window allows, picking up whatever `rtrState` holds by then, so
-          -- several updates suppressed in a row still cost only one delayed
-          -- notify, not one per update.
-          notifyClients rtrStateTv lastTimeNotified notifyPending = do
-            Now now <- thisInstant
-            toSchedule <- atomically $ do
-                notified <- readTVar lastTimeNotified
-                let dueNow = maybe True
-                        (\lastNotified -> not $ closeEnoughMoments (Earlier lastNotified) (Later now) rtrNotifyRateLimit)
-                        notified
-                if dueNow
-                    then sendNow now >> pure Nothing
-                    else readTVar notifyPending >>= \case
-                            True  -> pure Nothing
-                            False -> do
-                                writeTVar notifyPending True
-                                -- `dueNow` was False, so `notified` is `Just _`
-                                pure notified
-            for_ toSchedule $ \lastNotified ->
-                void $ forkFinally
-                    (do delayUntilNext lastNotified rtrNotifyRateLimit
-                        Now later <- thisInstant
-                        atomically $ do
-                            sendNow later
-                            writeTVar notifyPending False)
-                    (\case
-                        Left e  -> logError logger [i|Exception in the delayed RTR Serial Notify sender: #{e}|]
-                        Right _ -> pure ())
-            where
-              sendNow now = do
-                current <- readTVar rtrStateTv
-                for_ current $ \s -> do
-                    writeTChan updateBroadcastChan (s ^. #currentSessionId, s ^. #currentSerial)
-                    writeTVar lastTimeNotified $ Just now
+          -- The serial only changes when there's a non-empty diff, so a change 
+          -- of (session, serial) is exactly "there's something to notify about".
+          -- 
+          -- Wait for it to differ from what was announced last, announce it 
+          -- and then sleep out the rate limit. Updates that come during the sleep
+          -- are not lost: after waking up the state already differs, so a single 
+          -- notify for the latest serial goes out immediately.
+          notifyClients lastNotified = do
+            current <- atomically $ do
+                key <- maybe retry (pure . notifyKey) =<< readTVar rtrState
+                when (key == lastNotified) retry
+                writeTChan updateBroadcastChan key
+                pure key
+            threadDelay $ toMicroseconds rtrNotifyRateLimit
+            notifyClients current
+
+          notifyKey s = (s ^. #currentSessionId, s ^. #currentSerial)
 
           logDiff GenDiffs {..} = do
             
