@@ -88,6 +88,8 @@ data TopDownCounters f = TopDownCounters {
         shortcutCa   :: f Int,
         originalMft  :: f Int,
         shortcutMft  :: f Int,
+        -- manifests with the AKI of a CA that the CA did not sign
+        foreignMft   :: f Int,
         originalCrl  :: f Int,
         shortcutCrl  :: f Int,        
         originalRoa  :: f Int,
@@ -159,6 +161,7 @@ newTopDownCounters = do
     shortcutCa <- newIORef 0
     originalMft <- newIORef 0
     shortcutMft <- newIORef 0
+    foreignMft <- newIORef 0
     originalCrl <- newIORef 0
     shortcutCrl <- newIORef 0
     newChildren <- newIORef 0

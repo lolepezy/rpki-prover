@@ -7,6 +7,7 @@ import           Control.Lens
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Short            as BSS
 import           Data.Int                         (Int64)
+import           Data.List.NonEmpty               (NonEmpty (..))
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Set                         as Set
 import qualified Data.Text                        as Text
@@ -34,6 +35,7 @@ import           RPKI.Validation.Types
 import           RPKI.Validation.TopDown
                 ( TroubledChildLoadPath (..)
                 , resolveTroubledChildByKey
+                , signedByCa
                 )
 import           RPKI.Validation.TopDown.Shortcuts
                 ( MftPlan (..)
@@ -51,6 +53,7 @@ topDownRegressionGroup =
         , HU.testCase "Replaces revoked shortcut children with troubled entries" shouldReplaceRevokedShortcutChildren
         , HU.testCase "Bounds manifest validity by thisUpdate and nextUpdate" shouldBoundManifestValidityByUpdateTimes
         , HU.testCase "Picks how to validate the manifest of a CA" shouldPlanManifests
+        , HU.testCase "Tells whether the CA signed an EE certificate" shouldTellWhetherCaSignedEECert
         ]
 
 
@@ -173,6 +176,34 @@ shouldReplaceRevokedShortcutChildren = do
         (revokedShortcutChildren mftShortcut (testCrl [Serial 999]) mftChildren)
 
 
+-- | Manifests are found by AKI, and anyone can publish one with the AKI of any
+-- CA. Only the ones whose EE certificate the CA signed are its manifests.
+shouldTellWhetherCaSignedEECert :: HU.Assertion
+shouldTellWhetherCaSignedEECert = do
+    (Right objects, _) <- runValidatorIO (newScopes "signed-by-ca") $
+        (,,) <$> prevalidated "./test/data/overcleaiming/2R93viIBHX4dV12fmttfjhYOX9k.cer"
+             <*> prevalidated "./test/data/overcleaiming/EBA158C223CE11EBA804DD64C4F9AE02.roa"
+             <*> prevalidated fixturePath
+    case objects of
+        (CerRO ca, RoaRO roa, MftRO mft) -> do
+            let locatedCa = Located Nothing ca
+            HU.assertBool "The CA signed the EE certificate of its ROA" $
+                signedByCa locatedCa roa
+            -- The same AKI, but not the signature of the CA
+            let spoilt = roa & #eeCert . #signature %~
+                    \(SignatureValue s) -> SignatureValue $ BSS.pack $ reverse $ BSS.unpack s
+            HU.assertBool "An EE certificate with the AKI of the CA, but not signed by it" $
+                not $ signedByCa locatedCa spoilt
+            HU.assertBool "A manifest of another CA" $
+                not $ signedByCa locatedCa mft
+        other ->
+            HU.assertFailure $ "Unexpected fixture objects: " <> show other
+  where
+    prevalidated path = do
+        (_, _, parsedObject) <- readFixtureObject path
+        prevalidateObject parsedObject
+
+
 -- | A manifest can be used only while its EE certificate is valid and the
 -- manifest is current, whichever ends first. Manifest shortcuts used to take
 -- only the EE certificate's validity, so the fast path accepted a manifest past
@@ -233,8 +264,24 @@ shouldPlanManifests = do
         (planManifests now [future, older] (Just shortcut))
 
     HU.assertEqual "There's a newer manifest than the one of the shortcut"
-        (DiffWithShortcut shortcut newer, [future])
+        (DiffWithShortcut shortcut (newer :| []), [future])
         (planManifests now [future, newer, older] (Just shortcut))
+
+    -- Manifests are found by AKI wherever they were published, so a manifest
+    -- with this CA's AKI from somewhere else can be the newest one. It must not
+    -- hide the CA's own manifest that is newer than the shortcut.
+    let elsewhere = mftMeta 4 (atHour 99) (atHour 124)
+    HU.assertEqual "All manifests newer than the one of the shortcut are kept, newest first"
+        (DiffWithShortcut shortcut (elsewhere :| [newer]), [future])
+        (planManifests now [future, elsewhere, newer, older] (Just shortcut))
+
+    HU.assertEqual "The manifests older than the one of the shortcut are not kept"
+        (DiffWithShortcut shortcut (newer :| []), [])
+        (planManifests now [newer, older, mftMeta 0 (atHour 80) (atHour 104)] (Just shortcut))
+
+    HU.assertEqual "When the manifest of the shortcut is gone from the cache, all are kept"
+        (DiffWithShortcut shortcut (elsewhere :| [newer]), [])
+        (planManifests now [elsewhere, newer] (Just shortcut))
 
     HU.assertEqual "An expired shortcut is not used"
         (InFull [newer, older], [])
