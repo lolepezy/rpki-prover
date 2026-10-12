@@ -67,7 +67,7 @@ common shared
     , blaze-html
     , blaze-markup
     , bytestring
-    , bytestring-mmap
+    , bytestring-mmap-compat
     , cborg
     , conduit
     , conduit-extra
