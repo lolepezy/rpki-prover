@@ -553,9 +553,6 @@ instance Arbitrary SlurmError where
     shrink = genericShrink
 
 instance Arbitrary AppError where
-    -- `ComposeE [AppError]` is recursive, so the generic generator would happily
-    -- build unboundedly deep errors and never come back. Halving the size at
-    -- every level makes the nested list empty out and the generator terminate.
     arbitrary = scale (`div` 2) genericArbitrary
     shrink = genericShrink
 

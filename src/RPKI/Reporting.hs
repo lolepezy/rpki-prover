@@ -277,7 +277,6 @@ data AppError = ParseE (ParseError Text) |
                 InitE InitError |
                 SlurmE SlurmError |
                 InternalE InternalError |
-                ComposeE [AppError] |
                 UnspecifiedE Text Text                
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -293,7 +292,6 @@ data VIssue = VErr AppError | VWarn VWarning
 instance Plated AppError where
     plate f = \case
         ValidationE (MftFallback e n) -> ValidationE . (`MftFallback` n) <$> f e
-        ComposeE es                   -> ComposeE <$> traverse f es
         e                             -> pure e
 
 -- | All the validation errors of an issue, the ones nested in others too.
