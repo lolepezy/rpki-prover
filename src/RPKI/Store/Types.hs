@@ -4,10 +4,12 @@ module RPKI.Store.Types where
 
 import           Control.Lens
 import           Control.DeepSeq
+import           Control.Monad            (when)
 import           Control.Monad.IO.Class
 import qualified Data.ByteString          as BS
 import           Data.Foldable            (for_)
 import           Data.IORef
+import           Data.Maybe               (isJust)
 
 import           GHC.Generics
 import           RPKI.TAL
@@ -104,6 +106,8 @@ data PreparedObject = PreparedObject {
 -- | What inserting an object did.
 data Inserted = Inserted {
         key         :: ObjectKey,
+        -- | The type of the object, if it wasn't stored before
+        newObject   :: Maybe RpkiObjectType,
         -- | Only for a well-structured manifest that wasn't stored before
         newManifest :: Maybe NewManifest
     }
@@ -111,6 +115,7 @@ data Inserted = Inserted {
 
 -- | A manifest that a fetch stored.
 data NewManifest = NewManifest {
+        key           :: ObjectKey,
         aki           :: AKI,
         thisTime      :: Instant,
         contentDigest :: Hash
@@ -139,11 +144,31 @@ instance Semigroup ManifestUpdates where
 instance Monoid ManifestUpdates where
     mempty = StoredManifests []
 
--- | Remember the manifest an insert stored, if it did.
-rememberNewManifest :: MonadIO m => IORef ManifestUpdates -> Inserted -> m ()
-rememberNewManifest stored Inserted { newManifest } =
-    for_ newManifest $ \m ->
-        liftIO $ atomicModifyIORef' stored $ \ms -> (ms <> StoredManifests [m], ())
+-- | What a fetch stored that can be a reason to revalidate.
+data FetchUpdates = FetchUpdates {
+        manifests  :: ManifestUpdates,
+        -- | Whether it stored a new object other than a manifest or a CRL
+        newObjects :: Bool
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+instance Semigroup FetchUpdates where
+    FetchUpdates m1 o1 <> FetchUpdates m2 o2 = FetchUpdates (m1 <> m2) (o1 || o2)
+
+instance Monoid FetchUpdates where
+    mempty = FetchUpdates mempty False
+
+-- | Remember what an insert stored, if it stored anything.
+rememberInserted :: MonadIO m => IORef FetchUpdates -> Inserted -> m ()
+rememberInserted stored Inserted { newObject, newManifest } = liftIO $
+    for_ newObject $ \objectType -> do
+        let other = objectType `notElem` [MFT, CRL]
+        FetchUpdates { newObjects } <- readIORef stored
+        -- Most of the objects of a snapshot change nothing here
+        when (isJust newManifest || other && not newObjects) $
+            atomicModifyIORef' stored $ \updates ->
+                (updates <> FetchUpdates (foldMap (StoredManifests . pure) newManifest) other, ())
 
 data ObjectIndexEntry
     = CertificateIndex SKI (Maybe AKI)

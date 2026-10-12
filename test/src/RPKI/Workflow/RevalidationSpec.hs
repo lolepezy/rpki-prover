@@ -78,7 +78,7 @@ shouldCompareWithShortcut = do
 
 shouldDecideForFetch :: HU.Assertion
 shouldDecideForFetch = do
-    let some = StoredManifests [mft (atHour 99) "D1"]
+    let some = FetchUpdates (StoredManifests [mft (atHour 99) "D1"]) False
         decide = fetchRevalidation ServerMode now
 
     HU.assertEqual "In one-off mode every fetch counts"
@@ -87,7 +87,15 @@ shouldDecideForFetch = do
 
     HU.assertEqual "Too many manifests to compare"
         RevalidateNow
-        (decide ManyManifests [])
+        (decide (FetchUpdates ManyManifests False) [])
+
+    HU.assertEqual "A new object other than a manifest or a CRL"
+        RevalidateNow
+        (decide (FetchUpdates mempty True) [])
+
+    HU.assertEqual "A new object, with manifests that change nothing"
+        RevalidateNow
+        (decide (some & #newObjects .~ True) [(SameContent, Nothing)])
 
     HU.assertEqual "Nothing to revalidate for"
         NoRevalidation
@@ -164,7 +172,7 @@ digestOf :: String -> Hash
 digestOf = Hash . BSS.pack . map (fromIntegral . fromEnum)
 
 mft :: Instant -> String -> NewManifest
-mft thisTime d = NewManifest (AKI $ mkKI "01234567890123456789") thisTime (digestOf d)
+mft thisTime d = NewManifest (ObjectKey $ asKey 1) (AKI $ mkKI "01234567890123456789") thisTime (digestOf d)
 
 shortcutMeta :: Instant -> Instant -> DB.MftShortcutMeta
 shortcutMeta notBefore notAfter = DB.MftShortcutMeta {

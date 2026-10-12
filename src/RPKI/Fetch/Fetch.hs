@@ -39,7 +39,7 @@ import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Repository
 import           RPKI.RRDP.Types
-import           RPKI.Store.Types                (ManifestUpdates)
+import           RPKI.Store.Types                (FetchUpdates)
 
 import           RPKI.Time
 import           RPKI.Parallel
@@ -261,10 +261,10 @@ withFetchLimits Fetchers {..} config repository f =
 --
 -- | What a successful fetch of a repository gives back.
 data FetchResult = FetchResult {
-        repository      :: Repository,
-        rrdpStat        :: Maybe RrdpFetchStat,
-        -- | The manifests the fetch stored
-        manifestUpdates :: ManifestUpdates
+        repository   :: Repository,
+        rrdpStat     :: Maybe RrdpFetchStat,
+        -- | What the fetch stored that can be a reason to revalidate
+        fetchUpdates :: FetchUpdates
     }
     deriving stock (Show, Eq, Generic)
 
@@ -279,11 +279,11 @@ fetchRepository
         logInfo logger [i|Fetching #{getURL repoURL}.|]
         case repo of
             RsyncR r -> do
-                (r', manifestUpdates) <- fetchRsyncRepository r
-                pure $ FetchResult (RsyncR r') Nothing manifestUpdates
+                (r', fetchUpdates) <- fetchRsyncRepository r
+                pure $ FetchResult (RsyncR r') Nothing fetchUpdates
             RrdpR r  -> do
-                (r', stat, manifestUpdates) <- fetchRrdpRepository r
-                pure $ FetchResult (RrdpR r') (Just stat) manifestUpdates
+                (r', stat, fetchUpdates) <- fetchRrdpRepository r
+                pure $ FetchResult (RrdpR r') (Just stat) fetchUpdates
   where
     repoURL = getRpkiURL repo
 

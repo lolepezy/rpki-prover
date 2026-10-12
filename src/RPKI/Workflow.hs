@@ -81,8 +81,10 @@ import qualified UnliftIO.Exception              as UIO
     - After every fetch, the TAs that use the repository are revalidated if 
       the manifests the fetch stored change what the last validation found, 
       i.e. differ from the manifest shortcuts of their CAs: now, or when such 
-      a manifest becomes current (RPKI.Workflow.Revalidation). Validation goes 
-      by manifests, so other objects are no reason.
+      a manifest becomes current (RPKI.Workflow.Revalidation). A manifest 
+      whose objects aren't all stored yet waits for them, and any new object 
+      other than a manifest or a CRL is a reason to revalidate as well, so it
+      doesn't matter whether a manifest or its objects come first.
 
     - A TA is also revalidated right after the first object of its validated
       tree expires.
