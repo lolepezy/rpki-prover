@@ -11,7 +11,8 @@ module RPKI.Validation.TopDown (
     validateMultipleTAs,
     refreshTaCertificate,
     TroubledChildLoadPath(..),
-    resolveTroubledChildByKey
+    resolveTroubledChildByKey,
+    signedByCa
 )
 where
 
@@ -47,6 +48,7 @@ import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
 import           Data.Tuple.Strict
 import           Data.Proxy
+import           Data.X509.Validation             (SignatureVerification (..))
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -69,6 +71,7 @@ import           RPKI.TAL
 import           RPKI.Time
 import           RPKI.Util
 import           RPKI.Validation.Common
+import           RPKI.Validation.Crypto
 import           RPKI.Validation.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Validation.ResourceValidation
@@ -453,9 +456,12 @@ validateManifests
 
     -- A manifest from the future is a failed fetch (RFC 9286, 6.3) that
     -- has to be reported when an older one is used instead of it
-    for_ premature $ \m ->
-        withMft appContext m.key $ reportMftFallback appContext $
-            ValidationE $ ThisUpdateTimeIsInTheFuture m.thisTime (unNow now)
+    unless (null premature) $ do
+        fullCa <- getFullCa appContext topDownContext ca
+        for_ premature $ \m ->
+            getSignedMft appContext topDownContext fullCa m >>=
+                traverse_ (reportMftFallback appContext $
+                    ValidationE $ ThisUpdateTimeIsInTheFuture m.thisTime (unNow now))
 
     case plan of
         NoManifest ->
@@ -475,25 +481,25 @@ validateManifests
                 onlyCollectPayloads meta
 
         DiffWithShortcut meta (newest :| newer) ->
-            fromShortcut mfts meta $
-                tryNewerMfts meta (newest : newer)
+            fromShortcut mfts meta $ do
+                fullCa <- getFullCa appContext topDownContext ca
+                tryNewerMfts meta fullCa (newest : newer)
   where
     validationAlgorithm = config.validationConfig.validationAlgorithm
 
     -- The manifests newer than the one of the shortcut, newest first: use the
-    -- first one that is valid. Each one that isn't is reported and the next one
-    -- is tried, so that a manifest with this CA's AKI published somewhere else
-    -- can't hide the CA's own newer manifest. When none of them is valid, the
-    -- shortcut is, so it is the latest valid manifest to fall back to.
-    tryNewerMfts meta [] =
-        onlyCollectPayloads meta
-    tryNewerMfts meta (mftMeta : olderMfts) = do
-        markAsUsed topDownContext mftMeta.key
-        withMft appContext mftMeta.key $ \mft ->
-            tryOneMftWithShortcut meta mft
-                `catchError` \_cs (e :: AppError) -> do
-                    reportMftFallback appContext e mft
-                    tryNewerMfts meta olderMfts
+    -- first one that the CA signed and that is valid. Each signed one that isn't
+    -- valid is reported and the next one is tried. When none of them is valid,
+    -- the shortcut is, so it is the latest valid manifest to fall back to.
+    tryNewerMfts meta fullCa mftMetas =
+        nextSignedMft appContext topDownContext fullCa mftMetas >>= \case
+            Nothing -> onlyCollectPayloads meta
+            Just (mft, olderMfts) -> do
+                markAsUsed topDownContext $ mft ^. #key
+                tryOneMftWithShortcut meta fullCa mft
+                    `catchError` \_cs (e :: AppError) -> do
+                        reportMftFallback appContext e mft
+                        tryNewerMfts meta fullCa olderMfts
 
     fromShortcut mfts meta validate = do
         markAsUsed topDownContext meta.key
@@ -505,8 +511,7 @@ validateManifests
 
     -- The manifest changed since the last shortcut: run the full diff, which needs
     -- file_name (to detect renames), so fetch the full children map.
-    tryOneMftWithShortcut meta@DB.MftShortcutMeta{..} mft = do
-        fullCa <- getFullCa appContext topDownContext ca
+    tryOneMftWithShortcut meta@DB.MftShortcutMeta{..} fullCa mft = do
         let crlKey = crlShortcut.key
         markAsUsed topDownContext crlKey
         fullChildren <- roTxT database $ \tx -> DB.getMftShorcutChildrenFull tx aki
@@ -536,22 +541,28 @@ validateManifests
                 (getResources ca)
 
 
--- Validate the manifests in full, falling back to the next one until one is valid
+-- Validate the manifests that the CA signed in full, falling back
+-- to the next one until one is valid
 tryMfts :: (ValidatorIO es, Concurrent :> es) =>
           AppContext s -> TopDownContext -> Ca -> AKI -> [MftMeta] -> Eff es ()
-tryMfts _ _ _ aki []                                     = vError $ NoMFT aki
-tryMfts appContext topDownContext ca aki (m : mftsMetas_) =
-    withMft appContext (m ^. #key) $ \mft -> do
-        tryOneMft mft `catchError` \_cs (e :: AppError) ->
-            case mftsMetas_ of
-                [] -> appError e
-                _  -> do
-                    reportMftFallback appContext e mft
-                    tryMfts appContext topDownContext ca aki mftsMetas_
+tryMfts _ _ _ aki [] = vError $ NoMFT aki
+tryMfts appContext topDownContext ca aki mftMetas = do
+    caFull <- getFullCa appContext topDownContext ca
+    nextSignedMft appContext topDownContext caFull mftMetas >>= \case
+        Nothing               -> vError $ NoMFT aki
+        Just (mft, mftMetas_) -> tryFrom caFull mft mftMetas_
   where
-    tryOneMft mft = do
+    -- The error of the last one is the error of the CA, the ones before it are fallbacks
+    tryFrom caFull mft mftMetas_ =
+        tryOneMft caFull mft `catchError` \_cs (e :: AppError) ->
+            nextSignedMft appContext topDownContext caFull mftMetas_ >>= \case
+                Nothing                    -> appError e
+                Just (nextMft, mftMetas__) -> do
+                    reportMftFallback appContext e mft
+                    tryFrom caFull nextMft mftMetas__
+
+    tryOneMft caFull mft = do
         markAsUsed topDownContext $ mft ^. #key
-        caFull <- getFullCa appContext topDownContext ca
         void $ manifestFullValidation appContext topDownContext caFull mft Nothing aki
         oneMoreMft >> oneMoreCrl
 
@@ -563,6 +574,46 @@ withMft appContext@AppContext {..} key f = do
     case z of
         Nothing  -> integrityError appContext [i|Referential integrity error, can't find a manifest by its key #{key}.|]
         Just mft -> f mft
+
+
+-- | Manifests are found by AKI, wherever they were published, and anyone can
+-- publish one with the AKI of any CA. Only those with an EE certificate signed
+-- by the key of the CA are its manifests (`validateCmsStructure` has checked
+-- that the EE certificate signed the rest). The others are not tried or
+-- reported for the CA, so that they can't change what is validated or reported
+-- for it. The location of a manifest can't tell them apart: an RRDP repository
+-- can publish an object at any URL, and Erik objects have none.
+--
+-- All the certificates with the SKI of the CA have the same key, since the SKI
+-- is checked to be its hash (`validateSKIMatchesPublicKey`), so it doesn't
+-- matter which of them is used.
+signedByCa :: Located WellStructuredCaCert -> WellStructuredCms a -> Bool
+signedByCa ca cms =
+    case validateSignMaterial (cms ^. #eeCert) ca of
+        SignaturePass     -> True
+        SignatureFailed _ -> False
+
+-- | The manifest, if the CA signed it.
+getSignedMft :: ValidatorIO es =>
+                AppContext s -> TopDownContext -> Located WellStructuredCaCert -> MftMeta
+                -> Eff es (Maybe (Keyed (Located WellStructuredMft)))
+getSignedMft appContext topDownContext ca m =
+    withMft appContext m.key $ \mft ->
+        if signedByCa ca (mft ^. #object . #payload)
+            then pure $ Just mft
+            else do
+                increment topDownContext.allTas.topDownCounters.foreignMft
+                pure Nothing
+
+-- | The first of the manifests that the CA signed, with the ones after it.
+nextSignedMft :: ValidatorIO es =>
+                AppContext s -> TopDownContext -> Located WellStructuredCaCert -> [MftMeta]
+                -> Eff es (Maybe (Keyed (Located WellStructuredMft), [MftMeta]))
+nextSignedMft _ _ _ [] = pure Nothing
+nextSignedMft appContext topDownContext ca (m : ms) =
+    getSignedMft appContext topDownContext ca m >>= \case
+        Just mft -> pure $ Just (mft, ms)
+        Nothing  -> nextSignedMft appContext topDownContext ca ms
 
 
 reportMftFallback :: ValidatorIO es =>

@@ -35,6 +35,7 @@ import           RPKI.Validation.Types
 import           RPKI.Validation.TopDown
                 ( TroubledChildLoadPath (..)
                 , resolveTroubledChildByKey
+                , signedByCa
                 )
 import           RPKI.Validation.TopDown.Shortcuts
                 ( MftPlan (..)
@@ -52,6 +53,7 @@ topDownRegressionGroup =
         , HU.testCase "Replaces revoked shortcut children with troubled entries" shouldReplaceRevokedShortcutChildren
         , HU.testCase "Bounds manifest validity by thisUpdate and nextUpdate" shouldBoundManifestValidityByUpdateTimes
         , HU.testCase "Picks how to validate the manifest of a CA" shouldPlanManifests
+        , HU.testCase "Tells whether the CA signed an EE certificate" shouldTellWhetherCaSignedEECert
         ]
 
 
@@ -172,6 +174,34 @@ shouldReplaceRevokedShortcutChildren = do
     HU.assertEqual "Nothing may be revoked by a CRL that lists none of these serials"
         []
         (revokedShortcutChildren mftShortcut (testCrl [Serial 999]) mftChildren)
+
+
+-- | Manifests are found by AKI, and anyone can publish one with the AKI of any
+-- CA. Only the ones whose EE certificate the CA signed are its manifests.
+shouldTellWhetherCaSignedEECert :: HU.Assertion
+shouldTellWhetherCaSignedEECert = do
+    (Right objects, _) <- runValidatorIO (newScopes "signed-by-ca") $
+        (,,) <$> prevalidated "./test/data/overcleaiming/2R93viIBHX4dV12fmttfjhYOX9k.cer"
+             <*> prevalidated "./test/data/overcleaiming/EBA158C223CE11EBA804DD64C4F9AE02.roa"
+             <*> prevalidated fixturePath
+    case objects of
+        (CerRO ca, RoaRO roa, MftRO mft) -> do
+            let locatedCa = Located Nothing ca
+            HU.assertBool "The CA signed the EE certificate of its ROA" $
+                signedByCa locatedCa roa
+            -- The same AKI, but not the signature of the CA
+            let spoilt = roa & #eeCert . #signature %~
+                    \(SignatureValue s) -> SignatureValue $ BSS.pack $ reverse $ BSS.unpack s
+            HU.assertBool "An EE certificate with the AKI of the CA, but not signed by it" $
+                not $ signedByCa locatedCa spoilt
+            HU.assertBool "A manifest of another CA" $
+                not $ signedByCa locatedCa mft
+        other ->
+            HU.assertFailure $ "Unexpected fixture objects: " <> show other
+  where
+    prevalidated path = do
+        (_, _, parsedObject) <- readFixtureObject path
+        prevalidateObject parsedObject
 
 
 -- | A manifest can be used only while its EE certificate is valid and the
