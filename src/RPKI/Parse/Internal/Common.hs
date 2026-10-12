@@ -353,21 +353,22 @@ parseIpExt' = do
 
 
 ipv4Address :: ParseASN1 [Ipv4Prefix]
-ipv4Address = ipvVxAddress R.fourW8sToW32 32  makeOneIP R.ipv4RangeToPrefixes
+ipv4Address = ipvVxAddress R.fourW8sToW32 R.ipv4NetworkPart 32  makeOneIP R.ipv4RangeToPrefixes
 
 ipv6Address :: ParseASN1 [Ipv6Prefix]
-ipv6Address = ipvVxAddress R.someW8ToW128 128 makeOneIP R.ipv6RangeToPrefixes
+ipv6Address = ipvVxAddress R.someW8ToW128 R.ipv6NetworkPart 128 makeOneIP R.ipv6RangeToPrefixes
 
 makeOneIP :: (Prefix a, Integral b) => BS.ByteString -> b -> [a]
 makeOneIP bs nz = [makePrefix bs (fromIntegral nz)]
 
 ipvVxAddress :: Ord t 
             => ([Word8] -> t)
+            -> (Int -> t -> t)
             -> Int
             -> (BS.ByteString -> Word64 -> b)
             -> (t -> t -> b)
             -> ParseASN1 b
-ipvVxAddress wToAddr fullLength makePrefix_ rangeToPrefixes =     
+ipvVxAddress wToAddr networkPart fullLength makePrefix_ rangeToPrefixes =     
     getNextContainerMaybe Sequence >>= \case
         Nothing -> getNext >>= \case
             (BitString (BitArray nzBits bs)) -> 
@@ -384,7 +385,9 @@ ipvVxAddress wToAddr fullLength makePrefix_ rangeToPrefixes =
             ] -> do
                 checkPrefixEncoding nzBits1 bs1
                 checkPrefixEncoding nzBits2 bs2
-                let w1 = wToAddr $ BS.unpack bs1
+                -- Clear the unused bits of min the same way `makePrefix` does 
+                -- for a prefix, max has them all set below anyway
+                let w1 = networkPart (fromIntegral nzBits1) $ wToAddr $ BS.unpack bs1
                     w2 = wToAddr $ setLowerBitsToOne (BS.unpack bs2)
                         (fromIntegral nzBits2) fullLength
                 -- https://www.rfc-editor.org/rfc/rfc3779#section-2.2.3.9
