@@ -277,6 +277,9 @@ becomingValid (Validations issues) =
     validFrom = \case
         ValidationE (ObjectValidityIsInTheFuture notBefore _) -> Just notBefore
         ValidationE (ThisUpdateTimeIsInTheFuture thisUpdate _) -> Just thisUpdate
+        -- A manifest that isn't valid yet, while an older one is used instead,
+        -- is reported as a fallback, with the reason inside
+        ValidationE (MftFallback e _)                          -> validFrom e
         _                                                      -> Nothing
         
 

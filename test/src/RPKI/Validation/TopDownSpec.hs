@@ -250,10 +250,18 @@ shouldFindWhenObjectsBecomeValid = do
                         VErr $ ValidationE $ ObjectValidityIsInTheFuture (atHour 102) (atHour 200) ])
         aspa     = (newScope "aspa", Set.fromList [
                         VErr $ ValidationE $ ObjectIsExpired (atHour 1) (atHour 50) ])
+        -- How a manifest from the future is reported when there's an older one to use
+        fallback = (newScope "fallback", Set.fromList [
+                        VWarn $ VWarning $ ValidationE $ MftFallback
+                            (ValidationE $ ThisUpdateTimeIsInTheFuture (atHour 101) now) (Serial 7) ])
 
     HU.assertEqual "The first of them to become valid"
         (EarliestValidityChange $ atHour 102)
         (becomingValid $ issuesOf [manifest, roa, aspa])
+
+    HU.assertEqual "A manifest from the future with an older one to fall back to"
+        (EarliestValidityChange $ atHour 101)
+        (becomingValid $ issuesOf [manifest, roa, aspa, fallback])
 
     HU.assertEqual "An expired object never becomes valid"
         mempty
