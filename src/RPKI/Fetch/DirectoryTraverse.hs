@@ -47,28 +47,28 @@ import           RPKI.Validation.ObjectValidation
 
 -- | Recursively traverse a directory and save every parseable object into the
 -- storage. `restoreUrl` maps a file back to the URL the object is published at.
--- Gives back the manifests it stored.
+-- Gives back what it stored that can be a reason to revalidate.
 --
 -- Is not supposed to throw exceptions.
 loadObjectsFromFS :: (ValidatorIO es, Concurrent :> es) => AppContext s
                   -> WorldVersion
                   -> (FilePath -> Maybe RsyncURL)
                   -> FilePath
-                  -> Eff es ManifestUpdates
+                  -> Eff es FetchUpdates
 loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
     db <- liftIO $ readTVarIO database
     -- As many capabilities as for an RRDP snapshot
     void $ liftIO $ useAvailableCpus $ config ^. typed @Parallelism . #cpuCount
     scopes <- askScopes
-    storedManifests <- liftIO $ newIORef mempty
+    storedUpdates <- liftIO $ newIORef mempty
     txPoolPipeline
         CompletionOrder
         (objectFiles rootPath)
         (\(path, uri) -> trySync $ 
             evaluate =<< runValidator scopes (readAndParseObject db path (RsyncU <$> uri)))
         (DB.rwAppTx db)
-        (saveStorable storedManifests)
-    liftIO $ readIORef storedManifests
+        (saveStorable storedUpdates)
+    liftIO $ readIORef storedUpdates
   where
     -- Files of supported types in the tree and the URLs their paths tell, 
     -- one directory at a time
@@ -103,7 +103,7 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                     Nothing ->
                         pure $! UknownObjectType rpkiURL filePath
 
-    saveStorable storedManifests tx processed = do
+    saveStorable storedUpdates tx processed = do
         (r, vs) <- either (appError . UnspecifiedE "Something bad happened in loadObjectsFromFS" . U.fmtEx) pure processed
         embedState vs
         case r of
@@ -129,7 +129,7 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                         WellStructuredRO _ -> pure ()
 
                     inserted <- DB.insertPreparedObject tx prepared worldVersion
-                    rememberNewManifest storedManifests inserted
+                    rememberInserted storedUpdates inserted
                     for_ rpkiUrl $ \u -> DB.linkObjectToUrl tx u inserted.key worldVersion
                     updateMetric @TraverseMetric @_ (#processed %~
                         Map.unionWith (+) (Map.singleton (Just $ getRpkiObjectType lifecycle) 1))

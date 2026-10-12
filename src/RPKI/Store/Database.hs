@@ -24,7 +24,7 @@ module RPKI.Store.Database (
     getLocationsByKey, getHashByKey,
     saveObject, saveStorableObject, prepareObject, prepareLifecycle, insertPreparedObject,
     getObjectMeta, linkObjectToUrl,
-    hashExists, existingHashes, getObjectsByHashes,
+    hashExists, existingHashes, manifestObjectsStored, getObjectsByHashes,
     deleteObjectByHash, deleteObjectByKey,
     -- * Erik protocol functions
     getErikIndex, saveErikIndex, getAllErikIndexes,
@@ -425,9 +425,9 @@ insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
                      WHERE object_key = ?|]
                 (typ, payload, wv, objectKey)
             saveIndexes objectKey
-            pure $ Inserted objectKey newManifest
+            pure $ stored objectKey
 
-        ((objectKey, _) : _, _) -> pure $ Inserted objectKey Nothing
+        ((objectKey, _) : _, _) -> pure $ Inserted objectKey Nothing Nothing
 
         ([], _) -> do
             [Only objectKey] <- query conn
@@ -436,13 +436,14 @@ insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
                 (hash, typ, payload, original, wv)
 
             saveIndexes objectKey
-            pure $ Inserted objectKey newManifest
+            pure $ stored objectKey
   where
     typ = show objectType
 
-    newManifest = case indexEntry of
-        Just (ManifestIndex aki _ thisTime _ contentDigest) -> Just NewManifest {..}
-        _                                                   -> Nothing
+    stored key = Inserted key (Just objectType) $
+        case indexEntry of
+            Just (ManifestIndex aki _ thisTime _ contentDigest) -> Just NewManifest {..}
+            _                                                   -> Nothing
 
     saveIndexes objectKey =
         case indexEntry of
@@ -511,6 +512,17 @@ existingHashes (Tx conn) hashes = liftIO $
                     "SELECT hash FROM objects WHERE hash IN (" <> placeholders <> ")")
                 params
             pure $ map fromOnly rows
+
+-- | Whether the cache has every object the manifest lists, its CRL included.
+-- Anything but a well-structured manifest has nothing to wait for.
+manifestObjectsStored :: MonadIO m => Tx mode -> ObjectKey -> m Bool
+manifestObjectsStored tx key =
+    getObjectByKey tx key >>= \case
+        Just (WellStructuredRO (MftRO mft)) -> do
+            let hashes = [ hash | MftPair { hash } <- mft ^. #content . #mftEntries ]
+            stored <- existingHashes tx hashes
+            pure $ all (`Set.member` stored) hashes
+        _ -> pure True
 
 -- | Bulk 'getObjectByKey' by hash. Hashes with no object, or with a row that
 -- has been stripped of its payload, are simply absent from the result.

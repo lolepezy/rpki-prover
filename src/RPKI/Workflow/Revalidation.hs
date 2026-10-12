@@ -3,11 +3,17 @@
 {- | Whether what a fetch stored is a reason to revalidate the TAs that use
      the repository, and when.
 
-     Validation goes by manifests, so only manifests are a reason. A new one
-     is compared with the manifest shortcut of its CA, i.e. with the manifest
-     that the last validation accepted: if it lists the same objects, the
-     validated tree doesn't change and there's nothing to do. Otherwise, the
-     TA is revalidated once the manifest is current, i.e. at its thisUpdate.
+     Validation goes by manifests. A new one is compared with the manifest
+     shortcut of its CA, i.e. with the manifest that the last validation
+     accepted: if it lists the same objects, the validated tree doesn't change
+     and there's nothing to do. Otherwise, the TA is revalidated once the
+     manifest is current, i.e. at its thisUpdate.
+
+     A manifest and the objects it lists don't always come in the same fetch.
+     A manifest that lists objects not stored yet can't be used, validation
+     falls back to an older one, so it is no reason to revalidate. The fetch
+     that stores the rest of the objects is: any new object other than a
+     manifest or a CRL is a reason to revalidate.
 -}
 module RPKI.Workflow.Revalidation where
 
@@ -83,16 +89,18 @@ manifestRevalidation algorithm now newManifest shortcutView =
 -- | One decision for one fetch: the earliest moment over its manifests.
 -- In one-off mode every fetch counts, otherwise the run could not finish.
 -- A fetch with too many manifests to remember revalidates without comparing
--- anything, so many manifests almost always change something.
+-- anything, so many manifests almost always change something. So does one
+-- that stored a new object other than a manifest or a CRL.
 fetchRevalidation :: ProverRunMode
                   -> Instant
-                  -> ManifestUpdates
+                  -> FetchUpdates
                   -> [(ManifestChange, Maybe Instant)]
                   -> RevalidationDecision
 fetchRevalidation runMode now updates changes =
     case (runMode, updates) of
-        (OneOffMode _, _) -> RevalidateNow
-        (_, ManyManifests) -> RevalidateNow
+        (OneOffMode _, _)                              -> RevalidateNow
+        (_, FetchUpdates { newObjects = True })        -> RevalidateNow
+        (_, FetchUpdates { manifests = ManyManifests }) -> RevalidateNow
         _ ->
             case [ t | (_, Just t) <- changes ] of
                 [] -> NoRevalidation

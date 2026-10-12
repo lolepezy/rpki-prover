@@ -9,8 +9,8 @@
      it found. 
 
      Then it asks for the TAs that depend on the repository to be revalidated, 
-     if the manifests it stored change what the last validation found, now or 
-     when they become current (see RPKI.Workflow.Revalidation).
+     if what it stored changes what the last validation found, now or when it 
+     becomes current (see RPKI.Workflow.Revalidation).
 -}
 module RPKI.Workflow.Fetcher (
     adjustFetchers,
@@ -47,7 +47,7 @@ import           RPKI.Metrics.Prometheus
 import           RPKI.Reporting
 import           RPKI.Repository
 import qualified RPKI.Store.Database             as DB
-import           RPKI.Store.Types                (ManifestUpdates (..), NewManifest (..), MftMeta (..), manifestUpdatesCap)
+import           RPKI.Store.Types                (FetchUpdates (..), ManifestUpdates (..), NewManifest (..), MftMeta (..), manifestUpdatesCap)
 import           RPKI.Parallel
 import           RPKI.Time
 import           RPKI.Util
@@ -180,10 +180,10 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
             -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
             case r of
-                Right FetchResult { repository = repository', rrdpStat, manifestUpdates } -> do
+                Right FetchResult { repository = repository', rrdpStat, fetchUpdates } -> do
                     interval <- recordFetchOutcome repository' worldVersion 
                                     (FetchedAt (versionToInstant worldVersion)) rrdpStat duration validations
-                    revalidateFor manifestUpdates
+                    revalidateFor fetchUpdates
                     pure $ Just interval
 
                 Left _ -> do
@@ -196,8 +196,8 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                             pure Nothing
                         Just fallbacks -> do  
                             -- TODO Maybe try Erik relay before trying rsync
-                            (anySucceeded, manifestUpdates) <- fetchFallbacks worldVersion fallbacks                                                            
-                            revalidateFor manifestUpdates
+                            (anySucceeded, fetchUpdates) <- fetchFallbacks worldVersion fallbacks                                                            
+                            revalidateFor fetchUpdates
                             pure $ Just $ 
                                 if not anySucceeded 
                                     -- nothing responded, so just go with the normal exponential backoff thing
@@ -259,7 +259,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                         let newStatus = FetchedAt (versionToInstant worldVersion)
                         interval <- recordFetchOutcome repository worldVersion newStatus Nothing duration validations
                         saveErikFetchOutcome fqdn newStatus interval relayUsage validations
-                        revalidateFor manifestUpdates
+                        revalidateFor fetchUpdates
                         pure $ Just interval
 
                     Left e -> do
@@ -289,11 +289,11 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                 updatePrometheusForRepository fallbackUrl duration prometheusMetrics
                 pure $ case r of
-                    Right FetchResult { repository = repository', manifestUpdates } -> 
+                    Right FetchResult { repository = repository', fetchUpdates } -> 
                         -- realistically at this time the only fallback repositories are rsync, so 
                         -- there's no RrdpFetchStat ever
                         (updateMeta' repository' (#status .~ FetchedAt (versionToInstant worldVersion)), 
-                         validations, Just manifestUpdates)
+                         validations, Just fetchUpdates)
                     Left _ ->
                         (updateMeta' repository (#status .~ FailedAt (versionToInstant worldVersion)), 
                          validations, Nothing)
@@ -364,38 +364,50 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             DB.saveErikRepositoryValidationStates tx [(erikRepository, validations)]
 
 
-    -- Ask for the TAs that use the repository to be revalidated, if the manifests
-    -- a fetch stored change what the last validation found, now or when they
-    -- become current. They're compared with the manifest shortcuts after the 
-    -- fetch, i.e. as late as possible before the validation that uses them.
+    -- Ask for the TAs that use the repository to be revalidated, if what a fetch 
+    -- stored changes what the last validation found, now or later (see 
+    -- RPKI.Workflow.Revalidation). New manifests are compared with the manifest 
+    -- shortcuts after the fetch, i.e. as late as possible before the validation 
+    -- that uses them. A changed manifest that lists objects not stored yet waits 
+    -- for the fetch that stores them, that fetch is the one to revalidate for.
     --
     -- In the one-off mode there is no next round, so every finished fetch has 
     -- to be able to unblock the validation, whether it found anything or not.
-    revalidateFor manifestUpdates = do
+    revalidateFor fetchUpdates = do
         Now now <- thisInstant
         let runMode   = config ^. #proverRunMode
             algorithm = config ^. #validationConfig . #validationAlgorithm
-        changes <- case (runMode, manifestUpdates) of
+        (changes, waiting) <- case (runMode, fetchUpdates.manifests) of
             (ServerMode, StoredManifests manifests) -> do
                 shortcuts <- case algorithm of
                     Incremental        -> shortcutViews manifests
                     FullEveryIteration -> pure mempty
-                pure [ manifestRevalidation algorithm now m (Map.lookup m.aki shortcuts) | m <- manifests ]
-            _ -> pure []
+                let changes = [ (m, manifestRevalidation algorithm now m (Map.lookup m.aki shortcuts)) 
+                              | m <- manifests ]
+                waiting <- withObjectsMissing [ m.key | (m, (_, Just _)) <- changes ]
+                pure ([ c | (m, c) <- changes, m.key `Set.notMember` waiting ], Set.size waiting)
+            _ -> pure ([], 0)
 
-        let decision = fetchRevalidation runMode now manifestUpdates changes
+        let decision = fetchRevalidation runMode now fetchUpdates changes
         tas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVarIO uriByTa
-        unless (manifestUpdates == mempty && decision == NoRevalidation) $ do
-            let stored = case manifestUpdates of
+        unless (fetchUpdates == mempty && decision == NoRevalidation) $ do
+            let stored = case fetchUpdates.manifests of
                     StoredManifests ms -> [i|#{length ms} new manifest(s)|]
                     ManyManifests      -> [i|more than #{manifestUpdatesCap} new manifests|] :: String
+                others = if fetchUpdates.newObjects then " and other new objects" else "" :: String
             let changed = length [ () | (change, _) <- changes, change /= SameContent ]
-            logDebug logger $ [i|#{url} stored #{stored}, #{changed} of them to revalidate for, |] <>
-                              [i|decision: #{decision}, TAs: #{Set.toList tas}.|]
+            logDebug logger $ [i|#{url} stored #{stored}#{others}, #{changed} of them to revalidate for, |] <>
+                              [i|#{waiting} waiting for their objects, decision: #{decision}, TAs: #{Set.toList tas}.|]
         case decision of
             NoRevalidation -> pure ()
             RevalidateNow  -> requestRevalidation tasToValidate tas
             RevalidateAt t -> scheduleRevalidationAt logger scheduledRevalidations tasToValidate tas t
+
+    -- The manifests that list objects the cache doesn't have yet
+    withObjectsMissing []   = pure mempty
+    withObjectsMissing keys =
+        DB.roTxT database $ \tx ->
+            Set.fromList <$> filterM (fmap not . DB.manifestObjectsStored tx) keys
 
     -- The shortcut of every AKI, and the digest of the manifest it is for 
     -- if it's still in the cache: two lookups by key per AKI.

@@ -264,13 +264,13 @@ runIteration i (_, appContext) delta expected sessionId serial content = do
     -- Markers bracket the run in the eventlog (`+RTS -l`), so the setup
     -- before it can be left out when looking at what the threads did.
     traceMarkerIO "saveSnapshot start"
-    storedManifests <- newIORef mempty
+    storedUpdates <- newIORef mempty
     cpu0  <- getCPUTime
     wall0 <- getMonotonicTimeNSec
     (result, vs) <- runValidatorIO (newScopes "save-snapshot-bench") $
         if delta 
-            then saveDelta appContext worldVersion storedManifests repoUri notification serial content
-            else saveSnapshot appContext worldVersion storedManifests repoUri notification content
+            then saveDelta appContext worldVersion storedUpdates repoUri notification serial content
+            else saveSnapshot appContext worldVersion storedUpdates repoUri notification content
     wall1 <- getMonotonicTimeNSec
     cpu1  <- getCPUTime
     traceMarkerIO "saveSnapshot end"
