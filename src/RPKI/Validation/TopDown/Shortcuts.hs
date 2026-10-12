@@ -11,6 +11,7 @@ import           Control.Monad
 import           Data.Foldable
 import qualified Data.Map.Strict                  as Map
 import qualified Data.List                        as List
+import           Data.List.NonEmpty               (NonEmpty (..))
 import           Data.Text                        (Text)
 import           Data.Tuple.Strict
 import qualified Data.ByteString                  as BS
@@ -124,9 +125,16 @@ data MftPlan
     -- cached data of the last successful fetch, which is to be used until it
     -- becomes stale (RFC 9286, 6.6).
     | OnlyShortcut DB.MftShortcutMeta
-    -- | There's a newer manifest than the one of the shortcut: validate only
-    -- what changed, and fall back to the shortcut if the manifest is not valid.
-    | DiffWithShortcut DB.MftShortcutMeta MftMeta
+    -- | There are manifests newer than the one of the shortcut, newest first:
+    -- validate only what changed, with the first of them that is valid, and
+    -- fall back to the shortcut if none of them is.
+    --
+    -- All of them are here, not only the newest one. Manifests are found by
+    -- AKI, wherever they were published, so the newest one can be a manifest
+    -- with this CA's AKI published somewhere else. Stopping at it would keep
+    -- the CA at its shortcut, with its own newer manifest never tried, until
+    -- the shortcut expires.
+    | DiffWithShortcut DB.MftShortcutMeta (NonEmpty MftMeta)
     deriving stock (Show, Eq)
 
 -- | Given the manifests of a CA, newest first, and its manifest shortcut
@@ -141,9 +149,12 @@ planManifests now mfts shortcut =
             let plan = case current of
                     -- A shortcut is only made for a manifest that is not in the
                     -- future, so the manifest of this one is gone from the cache
-                    []                        -> OnlyShortcut meta
-                    m : _ | m.key == meta.key -> UseShortcut meta
-                          | otherwise         -> DiffWithShortcut meta m
+                    [] -> OnlyShortcut meta
+                    -- The ones before the manifest of the shortcut are newer than
+                    -- it. When it is gone from the cache, all of them are tried.
+                    _  -> case List.takeWhile ((/= meta.key) . (.key)) current of
+                            []     -> UseShortcut meta
+                            m : ms -> DiffWithShortcut meta (m :| ms)
             in (plan, premature)
         _   | null mfts    -> (NoManifest, [])
             -- If there are only manifests from the future, validate

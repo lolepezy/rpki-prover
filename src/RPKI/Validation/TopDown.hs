@@ -33,6 +33,7 @@ import           GHC.Generics
 import           Data.Foldable
 import           Data.IORef
 import           Data.Either
+import           Data.List.NonEmpty               (NonEmpty (..))
 import           Data.Maybe
 import qualified Data.Set.NonEmpty                as NESet
 import           Data.Map.Strict                  (Map)
@@ -473,18 +474,26 @@ validateManifests
             fromShortcut mfts meta $
                 onlyCollectPayloads meta
 
-        DiffWithShortcut meta mftMeta ->
-            fromShortcut mfts meta $ do
-                markAsUsed topDownContext mftMeta.key
-                withMft appContext mftMeta.key $ \mft ->
-                    tryOneMftWithShortcut meta mft
-                        `catchError` \_cs (e :: AppError) -> do
-                            -- The shortcut is valid, so it is the latest
-                            -- valid manifest to fall back to
-                            reportMftFallback appContext e mft
-                            onlyCollectPayloads meta
+        DiffWithShortcut meta (newest :| newer) ->
+            fromShortcut mfts meta $
+                tryNewerMfts meta (newest : newer)
   where
     validationAlgorithm = config.validationConfig.validationAlgorithm
+
+    -- The manifests newer than the one of the shortcut, newest first: use the
+    -- first one that is valid. Each one that isn't is reported and the next one
+    -- is tried, so that a manifest with this CA's AKI published somewhere else
+    -- can't hide the CA's own newer manifest. When none of them is valid, the
+    -- shortcut is, so it is the latest valid manifest to fall back to.
+    tryNewerMfts meta [] =
+        onlyCollectPayloads meta
+    tryNewerMfts meta (mftMeta : olderMfts) = do
+        markAsUsed topDownContext mftMeta.key
+        withMft appContext mftMeta.key $ \mft ->
+            tryOneMftWithShortcut meta mft
+                `catchError` \_cs (e :: AppError) -> do
+                    reportMftFallback appContext e mft
+                    tryNewerMfts meta olderMfts
 
     fromShortcut mfts meta validate = do
         markAsUsed topDownContext meta.key
