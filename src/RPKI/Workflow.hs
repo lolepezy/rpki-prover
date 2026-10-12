@@ -695,18 +695,12 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                     relevantRepo <- mostNarrowPPScope scope
                 ]        
           where
-            manifestIntegrityError = \case                
-                VErr (ValidationE e)             -> isReferentialIntegrityError e
-                VWarn (VWarning (ValidationE e)) -> isReferentialIntegrityError e                    
+            manifestIntegrityError = anyOf issueValidationErrors $ \case
+                ManifestEntryDoesn'tExist _ _    -> True
+                NoCRLExists _ _                  -> True
+                ManifestEntryHasWrongFileType {} -> True
+                ReferentialIntegrityError _      -> True
                 _                                -> False
-              where
-                isReferentialIntegrityError = \case
-                    MftFallback (ValidationE e) _    -> isReferentialIntegrityError e
-                    ManifestEntryDoesn'tExist _ _    -> True
-                    NoCRLExists _ _                  -> True                
-                    ManifestEntryHasWrongFileType {} -> True                
-                    ReferentialIntegrityError _      -> True                
-                    _                                -> False
 
             mostNarrowPPScope (Scope s) = 
                 take 1 [ url | PPFocus (RrdpU url) <- NonEmpty.toList s ]

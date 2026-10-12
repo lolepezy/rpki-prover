@@ -260,27 +260,15 @@ validateTA appContext@AppContext{..} tal topDownContext = do
 taScopes :: TaName -> Scopes
 taScopes = newScopes' TAFocus . unTaName
 
--- | The earliest moment when an object that isn't valid yet becomes valid,
--- such as a manifest or a CRL from the future, or a certificate with notBefore 
--- in the future. It's known from the issues about them, since such objects are
--- reported (and their manifests fall back to older ones) every time they're met.
+-- | The earliest moment when an object that isn't valid yet becomes valid.
 becomingValid :: Validations -> EarliestValidityChange
-becomingValid (Validations issues) = 
-    mconcat [ EarliestValidityChange moment 
-            | issue <- concatMap Set.toList $ Map.elems issues
-            , Just moment <- [validFrom $ appErrorOf issue] ]
+becomingValid (Validations issues) =
+    foldMapOf (folded . folded . issueValidationErrors) validFrom issues
   where
-    appErrorOf = \case
-        VErr e             -> e
-        VWarn (VWarning e) -> e
-
     validFrom = \case
-        ValidationE (ObjectValidityIsInTheFuture notBefore _) -> Just notBefore
-        ValidationE (ThisUpdateTimeIsInTheFuture thisUpdate _) -> Just thisUpdate
-        -- A manifest that isn't valid yet, while an older one is used instead,
-        -- is reported as a fallback, with the reason inside
-        ValidationE (MftFallback e _)                          -> validFrom e
-        _                                                      -> Nothing
+        ObjectValidityIsInTheFuture notBefore _  -> EarliestValidityChange notBefore
+        ThisUpdateTimeIsInTheFuture thisUpdate _ -> EarliestValidityChange thisUpdate
+        _                                        -> mempty
         
 
 -- | Do the validation starting from the TA certificate.
