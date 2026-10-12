@@ -137,15 +137,24 @@ validateBottomUp
         go _ [] = pure ()
 
         go verifiedResources [bottomCert] = do
-            vFocusOnLocated bottomCert $ do
-                (mft, crl) <- validateManifest db bottomCert verifiedResources
+            vFocusOnLocated bottomCert $
+                case validObject of
+                    -- A manifest is not on a manifest and it is checked with the CRL
+                    -- that is on it, the same as in the top-down validation
+                    MftRO mft -> do
+                        crl <- vFocusOn TextFocus "rpki-object" $ findMftCrl db bottomCert mft
+                        validateObjectItself validObject bottomCert crl verifiedResources
+                        notSuperseded db bottomCert verifiedResources mft
 
-                -- RSC objects are not supposed to be on a manifest
-                case object of
-                    RscRO _ -> pure ()
-                    _       -> validateOnMft mft object
+                    _ -> do
+                        (mft, crl) <- validateManifest db bottomCert verifiedResources
 
-                validateObjectItself validObject bottomCert crl verifiedResources
+                        -- RSC objects are not supposed to be on a manifest
+                        case object of
+                            RscRO _ -> pure ()
+                            _       -> validateOnMft mft object
+
+                        validateObjectItself validObject bottomCert crl verifiedResources
 
         go verifiedResources (cert : childCert : certs) = do
             vFocusOnLocated cert $ do
@@ -209,10 +218,10 @@ validateBottomUp
         mftMetas <- DB.roAppTx db $ \tx -> DB.getMftsForAKI tx childrenAki
         nextSignedMft mftMetas >>= \case
             Nothing               -> vError $ NoMFT childrenAki
-            Just (mft, mftMetas') -> tryFrom childrenAki mft mftMetas'
+            Just (mft, mftMetas') -> tryFrom mft mftMetas'
       where
-        tryFrom childrenAki keyedMft mftMetas = do
-            (z, vs) <- isolated $ validateOneMft childrenAki keyedMft
+        tryFrom keyedMft mftMetas = do
+            (z, vs) <- isolated $ validateOneMft keyedMft
             case z of
                 Right r -> embedState vs >> pure r
                 Left e  ->
@@ -222,7 +231,7 @@ validateBottomUp
                         Just (nextMft, mftMetas') -> do
                             let mftNumber = keyedMft ^. #object . #payload . #content . #mftNumber
                             vFocusOnLocated (keyedMft ^. #object) $ vWarn $ MftFallback e mftNumber
-                            tryFrom childrenAki nextMft mftMetas'
+                            tryFrom nextMft mftMetas'
 
         nextSignedMft [] = pure Nothing
         nextSignedMft (m : ms) = do
@@ -233,32 +242,53 @@ validateBottomUp
                 _ ->
                     nextSignedMft ms
 
-        validateOneMft childrenAki (Keyed locatedMft@(Located _ mft) _) =
+        validateOneMft (Keyed locatedMft@(Located _ mft) _) =
             vFocusOnLocated locatedMft $ do
                 validateObjectLocations locatedMft
                 validateMftLocation locatedMft certificate
-                MftPair _ crlHash <-
-                        case findCrlOnMft $ mft ^. #content of
-                            []    -> vError $ NoCRLOnMFT childrenAki
-                            [crl] -> pure crl
-                            crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls
-
-                crlObject <- DB.roAppTx db $ \tx -> DB.getByHash tx crlHash
-                validCrl <- case crlObject of
-                    Nothing ->
-                        vError $ NoCRLExists childrenAki crlHash
-
-                    Just foundCrl@(Located _ (WellStructuredRO (CrlRO crl))) ->
-                        vFocusOnLocated foundCrl $ do
-                            validateObjectLocations foundCrl
-                            checkCrlLocation foundCrl $ eeCert mft
-                            validateCrl now crl (certificate ^. #payload)
-
-                    Just _ ->
-                        vError $ CRLHashPointsToAnotherObject crlHash
-
+                validCrl <- findMftCrl db certificate mft
                 void $ validateMft validationRFC now mft (certificate ^. #payload) validCrl (Just verifiedResources)
                 pure (mft, validCrl)
+
+    -- The CRL that is on the manifest, validated
+    findMftCrl db certificate mft = do
+        let childrenAki = toAKI $ getSKI certificate
+        MftPair _ crlHash <-
+                case findCrlOnMft $ mft ^. #content of
+                    []    -> vError $ NoCRLOnMFT childrenAki
+                    [crl] -> pure crl
+                    crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls
+
+        crlObject <- DB.roAppTx db $ \tx -> DB.getByHash tx crlHash
+        case crlObject of
+            Nothing ->
+                vError $ NoCRLExists childrenAki crlHash
+
+            Just foundCrl@(Located _ (WellStructuredRO (CrlRO crl))) ->
+                vFocusOnLocated foundCrl $ do
+                    validateObjectLocations foundCrl
+                    checkCrlLocation foundCrl $ eeCert mft
+                    validateCrl now crl (certificate ^. #payload)
+
+            Just _ ->
+                vError $ CRLHashPointsToAnotherObject crlHash
+
+    -- For a manifest, the analogue of being on the current manifest is to be
+    -- the current manifest: there must be no newer valid manifest of the CA in
+    -- the cache. If there's no valid one there at all, that is not a problem
+    -- of this manifest, so the issues of the cached ones are not kept.
+    notSuperseded db certificate verifiedResources mft = do
+        (z, _) <- isolated $ validateManifest db certificate verifiedResources
+        case z of
+            Right (latest, _)
+                | latestNumber > mftNumber ->
+                    vFocusOn TextFocus "rpki-object" $
+                        vError $ NewerManifestExists mftNumber latestNumber
+              where
+                mftNumber    = mft ^. #content . #mftNumber
+                latestNumber = latest ^. #content . #mftNumber
+            _ ->
+                pure ()
 
 
 -- | An upper bound for the number of certificates the search for a path looks at.

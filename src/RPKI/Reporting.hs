@@ -162,7 +162,9 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         CertValidityPeriodInvalid |
                         TimeNotRepresentable Text |
                         SerialNumberOutOfBounds Text |
-                        ReferentialIntegrityError Text 
+                        ReferentialIntegrityError Text |
+                        -- The number of the manifest, then the one of the newer manifest
+                        NewerManifestExists Serial Serial
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     
