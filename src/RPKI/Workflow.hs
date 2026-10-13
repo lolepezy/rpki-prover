@@ -156,31 +156,40 @@ runAll appContext@AppContext {..} tals = do
 
     revalidate workflowShared = 
         race_
-            (triggeredValidationLoop FirstRun)
+            (triggeredValidationLoop FirstRun mempty)
             (revalidateWhenDue logger revalidationInterval
                 (workflowShared ^. #nextValidation) (workflowShared ^. #tasToValidate))
 
       where
-        triggeredValidationLoop run = do 
+        -- `retried` are the TAs that this run validates again after a run that failed
+        triggeredValidationLoop run retried = do 
             talsToValidate <- waitForTasToValidate            
-            void $ do 
-                worldVersion <- newWorldVersion            
-                validateTAs workflowShared worldVersion talsToValidate
+            worldVersion   <- newWorldVersion            
+            validated      <- validateTAs workflowShared worldVersion talsToValidate
 
-                case config ^. #proverRunMode of     
-                    ServerMode -> scheduleNextAndLoop
-                    OneOffMode vrpOutputFile -> do                        
-                        canStop <- hasValidatedEverythingForEveryTA workflowShared
-                        if canStop then 
-                            outputVrps vrpOutputFile
-                        else
-                            scheduleNextAndLoop
+            -- A run that failed loses what asked for its TAs, so they are asked
+            -- for again. Only once: a failure that happens again isn't likely 
+            -- to go away by itself, and then the TAs wait until they are due.
+            let again | validated = mempty
+                      | otherwise = Set.fromList (map getTaName talsToValidate) `Set.difference` retried
+            unless (Set.null again) $ do
+                logInfo logger [i|Will validate #{Set.toList again} again after the failure.|]
+                requestRevalidation (workflowShared ^. #tasToValidate) again
+
+            case config ^. #proverRunMode of     
+                ServerMode -> scheduleNextAndLoop again
+                OneOffMode vrpOutputFile -> do                        
+                    canStop <- hasValidatedEverythingForEveryTA workflowShared
+                    if canStop then 
+                        outputVrps vrpOutputFile
+                    else
+                        scheduleNextAndLoop again
           where
             -- Not more often than every minimalRevalidationInterval, the TAs
             -- asked for in the meantime are validated together after it
-            scheduleNextAndLoop = do 
+            scheduleNextAndLoop again = do 
                 threadDelay $ toMicroseconds $ config ^. #validationConfig . #minimalRevalidationInterval
-                triggeredValidationLoop RanBefore
+                triggeredValidationLoop RanBefore again
 
             waitForTasToValidate = do 
                 readyForFirstRun <- 
@@ -335,14 +344,17 @@ runAll appContext@AppContext {..} tals = do
         let taNames = map getTaName talsToValidate
         logInfo logger [i|Validating TAs #{taNames}, world version #{worldVersion} |]
         
-        ((rtrPayloads, slurmedPayloads), elapsed) <- timedMS processTALs            
+        (result, elapsed) <- timedMS processTALs            
         -- The ones that came before there was any version to add them to
         saveSystemProblems appContext
+        let (rtrPayloads, slurmedPayloads) = fromMaybe (mempty, mempty) result
         let vrps = rtrPayloads ^. #vrps
         let slurmedVrps = slurmedPayloads ^. #vrps
         logInfo logger $
             [i|Validated TAs #{taNames}, got #{estimateVrpCount vrps} VRPs (probably not unique), |] <>
             [i|#{estimateVrpCount slurmedVrps} SLURM-ed VRPs, took #{elapsed}ms|]
+        -- Whether the worker got through
+        pure $ isJust result
       where
         processTALs = do
             (z, workerVS) <- runValidationWorker worldVersion talsToValidate
@@ -358,7 +370,7 @@ runAll appContext@AppContext {..} tals = do
                     DB.rwTxT database $ \tx -> do
                         DB.saveValidationVersion tx worldVersion mempty commonVS
                     updatePrometheus (commonVS ^. typed) (workflowShared ^. #prometheusMetrics) worldVersion
-                    pure (mempty, mempty)
+                    pure Nothing
 
             case z of 
                 Left e -> 
@@ -388,7 +400,7 @@ runAll appContext@AppContext {..} tals = do
                     
                     (!q, elapsed) <- timedMS $ reReadAndUpdatePayloads maybeSlurm
                     logDebug logger [i|Re-read payloads, took #{elapsed}ms.|]
-                    pure q
+                    pure $ Just q
           where
             reReadAndUpdatePayloads maybeSlurm = do 
                 DB.roTxT database (\tx -> DB.getRtrPayloads tx worldVersion) >>= \case
