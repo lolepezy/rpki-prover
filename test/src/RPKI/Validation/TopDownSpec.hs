@@ -50,12 +50,15 @@ import           RPKI.Validation.TopDown
                 , becomingValid
                 , resolveTroubledChildByKey
                 , signedByCa
+                , validateCa
                 , validateManifests
                 )
 import           RPKI.Validation.TopDown.Context
                 ( ChildSource (..)
+                , Limited (..)
                 , TopDownContext
                 , acceptLeaf
+                , markAsUsed
                 , newAllTasTopDownContext
                 , newTopDownContext
                 )
@@ -84,6 +87,8 @@ topDownRegressionGroup =
         , HU.testCase "Finds when objects from the future become valid" shouldFindWhenObjectsBecomeValid
         , HU.testCase "Remembers when a leaf validated in full expires" shouldRememberWhenLeavesExpire
         , HU.testCase "Checks the ASNs of a router certificate against its CA" shouldCheckRouterCertificateAsns
+        , HU.testCase "Cuts only the path that is too deep" shouldCutOnlyThePathThatIsTooDeep
+        , HU.testCase "Counts the size of the tree of every TA on its own" shouldCountTreeSizePerTa
         , HU.testCase "Writes the shortcut of an accepted manifest, with warnings or not" shouldWriteShortcutOfAcceptedManifest
         , HU.testCase "Deletes the shortcut of a CA without an accepted manifest" shouldDeleteShortcutOfCaWithoutManifest
         , HU.testCase "Forces a snapshot only when no manifest can be used" shouldForceSnapshotOnlyWithoutFallback
@@ -347,6 +352,37 @@ shouldCheckRouterCertificateAsns = do
         "Without verified resources it's the resources of the issuer that count" (Right ())
 
 
+-- | Too deep is a matter of one path, e.g. of a CA that keeps issuing CAs
+-- under itself. Only that path is cut, the rest of the TA is validated.
+shouldCutOnlyThePathThatIsTooDeep :: HU.Assertion
+shouldCutOnlyThePathThatIsTooDeep =
+    withTestContext $ \appContext -> do
+        (topDownContext, _) <- newTestTopDownContext appContext
+        ca <- fixtureCa
+        let maxDepth = appContext ^. #config . #validationConfig . #maxCertificatePathDepth
+        (r, _) <- runValidatorIO (newScopes "deep") $
+                    validateCa appContext (topDownContext & #currentPathDepth .~ maxDepth + 1) ca
+        HU.assertEqual "The path is cut" (Left $ ValidationE $ CertificatePathTooDeep maxDepth) r
+        readTVarIO (topDownContext ^. #interruptedByLimit) >>= HU.assertEqual
+            "The rest of the TA goes on" CanProceed
+
+
+-- | The size of the tree is for one TA, while the objects that validation 
+-- has looked at are for all of them.
+shouldCountTreeSizePerTa :: HU.Assertion
+shouldCountTreeSizePerTa =
+    withTestContext $ \appContext -> do
+        (ripe, _) <- newTestTopDownContext appContext
+        arin <- newTopDownContext (TaName "arin") (ripe ^. #allTas)
+        let mark ta keys = void $ runValidatorIO (newScopes "mark") $
+                            mapM_ (markAsUsed ta . objectKey) keys
+        mark ripe [1, 2, 2, 3]
+        mark arin [3, 4]
+        readTVarIO (ripe ^. #treeSize) >>= HU.assertEqual "Every object once" 3
+        readTVarIO (arin ^. #treeSize) >>= HU.assertEqual
+            "Only its own, an object of both is of the TA that got to it first" 1
+
+
 -- | Which manifest of a CA is validated, and how.
 shouldPlanManifests :: HU.Assertion
 shouldPlanManifests = do
@@ -574,11 +610,7 @@ validateCaManifests appContext ppUrl aki = do
     db <- readTVarIO $ appContext ^. #database
     (topDownContext, shortcutQueue) <- newTestTopDownContext appContext
     -- Any CA certificate does, it's only needed to tell which manifests the CA signed
-    (Right ca, _) <- runValidatorIO (newScopes "ca") $ do
-        (_, _, parsed) <- readFixtureObject "./test/data/overcleaiming/2R93viIBHX4dV12fmttfjhYOX9k.cer"
-        prevalidateObject parsed >>= \case
-            CerRO c -> pure $ CaFull $ Located Nothing c
-            other   -> error $ "Not a CA certificate: " <> show other
+    ca <- fixtureCa
     (r, _) <- runValidatorIO (newScopes "validate-manifests") $
                 vFocusOn PPFocus ppUrl $
                     validateManifests appContext topDownContext ca aki
@@ -599,6 +631,16 @@ newTestTopDownContext appContext = do
     allTas <- newAllTasTopDownContext (instantToVersion now) publicationPoints shortcutQueue mempty workPool
     topDownContext <- newTopDownContext (TaName "test") allTas
     pure (topDownContext, shortcutQueue)
+
+-- | A CA certificate, with no locations
+fixtureCa :: IO Ca
+fixtureCa = do
+    (Right ca, _) <- runValidatorIO (newScopes "ca") $ do
+        (_, _, parsed) <- readFixtureObject "./test/data/overcleaiming/2R93viIBHX4dV12fmttfjhYOX9k.cer"
+        prevalidateObject parsed >>= \case
+            CerRO c -> pure $ CaFull $ Located Nothing c
+            other   -> error $ "Not a CA certificate: " <> show other
+    pure ca
 
 saveShortcut :: AppContext SqliteBackend -> AKI -> DB.MftShortcutMeta -> IO ()
 saveShortcut appContext aki meta = do
