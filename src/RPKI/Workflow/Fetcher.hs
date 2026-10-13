@@ -47,7 +47,7 @@ import           RPKI.Metrics.Prometheus
 import           RPKI.Reporting
 import           RPKI.Repository
 import qualified RPKI.Store.Database             as DB
-import           RPKI.Store.Types                (FetchUpdates (..), ManifestUpdates (..), NewManifest (..), MftMeta (..), manifestUpdatesCap)
+import           RPKI.Store.Types                (FetchUpdates (..), ManifestUpdates (..), manifestUpdatesCap)
 import           RPKI.Parallel
 import           RPKI.Time
 import           RPKI.Util
@@ -368,56 +368,34 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
     -- stored changes what the last validation found (see 
     -- RPKI.Workflow.Revalidation). New manifests are compared with the manifest 
     -- shortcuts after the fetch, i.e. as late as possible before the validation 
-    -- that uses them. A changed manifest that lists objects not stored yet waits 
-    -- for the fetch that stores them, that fetch is the one to revalidate for.
+    -- that uses them.
     --
     -- In the one-off mode there is no next round, so every finished fetch has 
     -- to be able to unblock the validation, whether it found anything or not.
     revalidateFor fetchUpdates = do
-        Now now <- thisInstant
         let runMode   = config ^. #proverRunMode
             algorithm = config ^. #validationConfig . #validationAlgorithm
-        (changes, (unsigned, waiting)) <- case (runMode, fetchUpdates.manifests) of
-            (ServerMode, StoredManifests manifests) -> do
-                cas <- caViews manifests
-                let changes = [ (m, manifestRevalidation algorithm now m (cas Map.! m.aki)) 
-                              | m <- manifests ]
-                let candidates = [ m | (m, c) <- changes, isReason c ]
-                UnusableManifests {..} <- case candidates of
-                    [] -> pure mempty
-                    _  -> DB.roTxT database $ \tx -> unusableManifests tx candidates
-                pure ([ c | (m, c) <- changes, m.key `Set.notMember` (unsigned <> waiting) ], 
-                      (Set.size unsigned, Set.size waiting))
-            _ -> pure ([], (0, 0))
+        verdicts <- case (runMode, fetchUpdates.manifests) of
+            (ServerMode, StoredManifests manifests@(_ : _)) -> do
+                now <- thisInstant
+                DB.roTxT database $ \tx -> mapM (manifestVerdict tx algorithm now) manifests
+            _ -> pure []
 
-        let decision = fetchRevalidation runMode fetchUpdates changes
+        let decision = fetchRevalidation runMode fetchUpdates verdicts
         tas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVarIO uriByTa
         unless (fetchUpdates == mempty && decision == NoRevalidation) $ do
             let stored = case fetchUpdates.manifests of
                     StoredManifests ms -> [i|#{length ms} new manifest(s)|]
                     ManyManifests      -> [i|more than #{manifestUpdatesCap} new manifests|] :: String
                 others = if fetchUpdates.newObjects then " and other new objects" else "" :: String
-            let changed = length $ filter isReason changes
-            logDebug logger $ [i|#{url} stored #{stored}#{others}, #{changed} of them to revalidate for, |] <>
-                              [i|#{waiting} waiting for their objects, #{unsigned} not signed by their CA, |] <> 
+                count v = length $ filter (== v) verdicts
+            logDebug logger $ [i|#{url} stored #{stored}#{others}, #{count Revalidate} of them to revalidate for, |] <>
+                              [i|#{count WaitingForObjects} waiting for their objects, |] <>
+                              [i|#{count NotSignedByCa} not signed by their CA, |] <>
+                              [i|#{count UnknownCa} of CAs with no certificate, |] <>
                               [i|decision: #{decision}, TAs: #{Set.toList tas}.|]
         when (decision == RevalidateNow) $
             requestRevalidation tasToValidate tas
-
-    -- What the cache knows about the CA of every AKI: its shortcut and the digest
-    -- of the manifest it is for, if it's still in the cache, or else whether there 
-    -- is a certificate of the CA at all. At most two lookups by key per AKI.
-    caViews manifests =
-        DB.roTxT database $ \tx ->
-            fmap Map.fromList $
-                forM (Set.toList $ Set.fromList [ m.aki | m <- manifests ]) $ \aki ->
-                    fmap (aki, ) $ DB.getMftShorcutMeta tx aki >>= \case
-                        Just shortcut -> do
-                            digest <- fmap (.contentDigest) <$> DB.getMftMetaByKey tx shortcut.key
-                            pure $ WithShortcut $ ShortcutView shortcut digest
-                        Nothing -> do
-                            certified <- DB.hasCertificate tx $ SKI $ unAKI aki
-                            pure $ if certified then WithoutShortcut else NoCertificate
     
     rememberFirstFetchBy version = atomically $ do 
         fff <- readTVar firstFinishedFetchBy

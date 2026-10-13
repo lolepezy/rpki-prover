@@ -33,7 +33,7 @@ module RPKI.Store.Database (
     getMftShorcut, getMftShorcutMeta, getMftShorcutChildrenLight, getMftShorcutChildrenFull,
     getMftShortcutChildFileName,
     saveMftShorcutMeta, insertMftShortcutChildren, deleteMftShortcutChildren,
-    deleteMftShortcut, getBySKI, getBySKIUpTo, hasCertificate, getTaCertByKey,
+    deleteMftShortcut, getBySKI, getBySKIUpTo, getTaCertByKey,
     markAsValidated,
     saveTA, getTA, getTAs, setActiveTAs,
     saveTaValidations, getTaValidations,
@@ -814,12 +814,6 @@ deleteMftShortcut (Tx conn) aki = liftIO $ do
     execute conn "DELETE FROM mft_shortcut_meta WHERE aki = ?" (Only aki)
     execute conn "DELETE FROM mft_shortcut_payload_children WHERE aki = ?" (Only aki)
     execute conn "DELETE FROM mft_shortcut_ca_children WHERE aki = ?" (Only aki)
-
--- | Whether the cache has a certificate with the SKI, without reading it.
-hasCertificate :: MonadIO m => Tx mode -> SKI -> m Bool
-hasCertificate (Tx conn) ski = liftIO $ do
-    rows <- query conn "SELECT 1 FROM certificates WHERE ski = ? LIMIT 1" (Only ski)
-    pure $ not (null (rows :: [Only Int]))
 
 -- | Returns all candidates for the SKI; callers must verify signatures.
 getBySKI :: MonadIO m => Tx mode -> SKI -> m [Located WellStructuredCaCert]

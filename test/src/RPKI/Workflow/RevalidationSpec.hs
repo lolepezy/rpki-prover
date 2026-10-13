@@ -6,7 +6,6 @@ import           Control.Monad
 
 import qualified Data.ByteString.Short            as BSS
 import           Data.Int                         (Int64)
-import qualified Data.Set                         as Set
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit                 as HU
@@ -16,6 +15,7 @@ import           RPKI.AppState                    (instantToVersion)
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting                   (newScopes)
+import           RPKI.Store.Base.Storable         (Compressed (..), Verbatim (..), toStorable)
 import           RPKI.Store.Database              (Tx (..))
 import qualified RPKI.Store.Database              as DB
 import           RPKI.Store.DatabaseSpec          (readObjectFromFile, toValidatedRpkiObject)
@@ -31,59 +31,32 @@ revalidationSpec :: TestTree
 revalidationSpec = testGroup "Revalidation on new manifests"
     [ HU.testCase "Compares a new manifest with the shortcut of its CA" shouldCompareWithShortcut
     , HU.testCase "Decides for a whole fetch" shouldDecideForFetch
-    , HU.testCase "Tells which new manifests validation won't use" shouldTellUnusableManifests
+    , HU.testCase "Tells whether a new manifest is a reason to revalidate" shouldGiveVerdicts
     ]
 
 
 shouldCompareWithShortcut :: HU.Assertion
 shouldCompareWithShortcut = do
-    let current = mft "D1"
-        usable  = ShortcutView (shortcutMeta (atHour 90) (atHour 114)) (Just $ digestOf "D1")
-        compareWith = manifestRevalidation Incremental now
+    let usable = shortcutMeta (atHour 90) (atHour 114)
+        same   = sameAsShortcut (Now now) (mft "D1")
 
-    HU.assertEqual "Without shortcuts every manifest counts"
-        FullValidation
-        (manifestRevalidation FullEveryIteration now current (WithShortcut usable))
+    HU.assertBool "The same content" $
+        same usable (Just $ digestOf "D1")
 
-    HU.assertEqual "A CA without a shortcut"
-        NoShortcut
-        (compareWith current WithoutShortcut)
+    HU.assertBool "The same content as a shortcut accepted with warnings" $
+        same (usable & #hasIssues .~ True) (Just $ digestOf "D1")
 
-    HU.assertEqual "A CA that no certificate in the cache has the key of"
-        UnknownCa
-        (compareWith current NoCertificate)
+    HU.assertBool "Another content" $
+        not $ same usable (Just $ digestOf "D2")
 
-    HU.assertEqual "... with or without shortcuts"
-        UnknownCa
-        (manifestRevalidation FullEveryIteration now current NoCertificate)
+    HU.assertBool "A shortcut whose manifest is gone from the cache" $
+        not $ same usable Nothing
 
-    HU.assertEqual "A shortcut past its validity"
-        ShortcutUnusable
-        (compareWith current $ WithShortcut $ usable & #shortcut . #notAfter .~ atHour 99)
+    HU.assertBool "A shortcut past its validity" $
+        not $ same (usable & #notAfter .~ atHour 99) (Just $ digestOf "D1")
 
-    HU.assertEqual "A shortcut with its CRL past its validity"
-        ShortcutUnusable
-        (compareWith current $ WithShortcut $ usable & #shortcut . #crlShortcut . #notAfter .~ atHour 99)
-
-    HU.assertEqual "A shortcut whose manifest is gone from the cache"
-        ShortcutManifestGone
-        (compareWith current $ WithShortcut $ usable & #digest .~ Nothing)
-
-    HU.assertEqual "Another content"
-        ContentChanged
-        (compareWith (mft "D2") (WithShortcut usable))
-
-    HU.assertEqual "The same content"
-        SameContent
-        (compareWith current (WithShortcut usable))
-
-    HU.assertEqual "The same content as a shortcut accepted with warnings"
-        SameContent
-        (compareWith current $ WithShortcut $ usable & #shortcut . #hasIssues .~ True)
-
-    HU.assertEqual "Only an unknown CA and the same content are no reason"
-        [ShortcutUnusable, ShortcutManifestGone, ContentChanged, NoShortcut, FullValidation]
-        (filter isReason [UnknownCa, ShortcutUnusable, ShortcutManifestGone, SameContent, ContentChanged, NoShortcut, FullValidation])
+    HU.assertBool "A shortcut with its CRL past its validity" $
+        not $ same (usable & #crlShortcut . #notAfter .~ atHour 99) (Just $ digestOf "D1")
 
 
 shouldDecideForFetch :: HU.Assertion
@@ -105,11 +78,11 @@ shouldDecideForFetch = do
 
     HU.assertEqual "A new object, with manifests that change nothing"
         RevalidateNow
-        (decide (some & #newObjects .~ True) [SameContent])
+        (decide (some & #newObjects .~ True) [SameAsShortcut])
 
     HU.assertEqual "Nothing to revalidate for"
         NoRevalidation
-        (decide some [SameContent, UnknownCa])
+        (decide some [SameAsShortcut, UnknownCa, NotSignedByCa, WaitingForObjects])
 
     HU.assertEqual "Nothing stored"
         NoRevalidation
@@ -117,13 +90,14 @@ shouldDecideForFetch = do
 
     HU.assertEqual "One manifest that changes something is enough"
         RevalidateNow
-        (decide some [SameContent, ContentChanged, UnknownCa])
+        (decide some [SameAsShortcut, Revalidate, UnknownCa])
 
 
--- | A manifest that its CA didn't sign, or one that lists objects the cache
--- doesn't have yet, is no reason to revalidate.
-shouldTellUnusableManifests :: HU.Assertion
-shouldTellUnusableManifests =
+-- | A manifest is a reason to revalidate unless it lists the same as the
+-- shortcut of its CA, there's no certificate of its CA, its CA didn't sign 
+-- it, or it lists objects the cache doesn't have yet.
+shouldGiveVerdicts :: HU.Assertion
+shouldGiveVerdicts =
     withTestContext $ \appContext -> do
         db <- readTVarIO $ appContext ^. #database
         version <- instantToVersion . unNow <$> thisInstant
@@ -145,36 +119,52 @@ shouldTellUnusableManifests =
         let akiOf o = maybe (HU.assertFailure $ "No AKI: " <> show o) pure $ getAKI o
         taAki      <- akiOf taMft
         afrinicAki <- akiOf afrinicMft
-        let unusable ms = DB.roTx db $ \tx -> unusableManifests tx ms
-            stored key aki = NewManifest key aki (Hash mempty)
+        Just taMftMeta <- DB.roTx db $ \tx -> DB.getMftMetaByKey tx taMftKey
+        let verdict algorithm m = DB.roTx db $ \tx -> manifestVerdict tx algorithm (Now now) m
+            stored key aki = NewManifest key aki (digestOf "another content")
+            sameAsStored   = NewManifest taMftKey taAki taMftMeta.contentDigest
             otherAki = case otherCa of
                 CerRO c -> toAKI $ getSKI c
                 o       -> error $ "Not a CA certificate: " <> show o
+            saveShortcut aki key = DB.rwTx db $ \tx -> DB.saveMftShorcutMeta tx aki
+                (Verbatim $ toStorable $ Compressed $ shortcutMeta (atHour 90) (atHour 114) & #key .~ key)
 
-        unusable [stored taMftKey taAki] >>= HU.assertEqual
-            "Signed by its CA, waiting for its objects" (UnusableManifests mempty (Set.singleton taMftKey))
+        verdict Incremental (stored taMftKey taAki) >>= HU.assertEqual
+            "Signed by its CA, waiting for its objects" WaitingForObjects
 
-        unusable [stored taMftKey otherAki] >>= HU.assertEqual
-            "With the AKI of a CA that didn't sign it" (UnusableManifests (Set.singleton taMftKey) mempty)
+        verdict Incremental (stored taMftKey otherAki) >>= HU.assertEqual
+            "With the AKI of a CA that didn't sign it" NotSignedByCa
 
-        unusable [stored afrinicMftKey afrinicAki] >>= HU.assertEqual
-            "No certificate of its CA to check it with, waiting for its objects"
-            (UnusableManifests mempty (Set.singleton afrinicMftKey))
+        verdict Incremental (stored afrinicMftKey afrinicAki) >>= HU.assertEqual
+            "No certificate of its CA" UnknownCa
 
         let entries = case taMft of
                 MftRO m -> getCMSContent (cmsPayload m) ^. #mftEntries
                 o       -> error $ "Not a manifest: " <> show o
         forM_ entries $ \MftPair {..} -> DB.rwTx db $ \tx -> void $ DB.saveObject tx
             (OriginalRO (ObjectOriginal "entry") mempty hash ROA) version
-        unusable [stored taMftKey taAki] >>= HU.assertEqual "Signed by its CA and complete" mempty
+        verdict Incremental (stored taMftKey taAki) >>= HU.assertEqual
+            "Signed by its CA and complete" Revalidate
+
+        saveShortcut taAki taMftKey
+        verdict Incremental sameAsStored >>= HU.assertEqual
+            "The same content as the shortcut of its CA" SameAsShortcut
+        verdict Incremental (stored taMftKey taAki) >>= HU.assertEqual
+            "Another content than the shortcut of its CA" Revalidate
+        verdict FullEveryIteration sameAsStored >>= HU.assertEqual
+            "Without shortcuts every manifest counts" Revalidate
+
+        saveShortcut afrinicAki afrinicMftKey
+        verdict Incremental (stored afrinicMftKey afrinicAki) >>= HU.assertEqual
+            "A shortcut, but no certificate of its CA" UnknownCa
 
         -- A certificate with the SKI of the CA but another key, which prevalidation
         -- doesn't let into the cache, and found before the one of the CA: the most
         -- recently stored ones come first
         DB.rwTx db $ \(Tx conn) ->
             SQLite.execute conn "UPDATE certificates SET ski = ? WHERE object_key = ?" (SKI $ unAKI taAki, otherCaKey)
-        unusable [stored taMftKey taAki] >>= HU.assertEqual
-            "Signed by one of the certificates with the SKI of its CA" mempty
+        verdict Incremental (stored taMftKey taAki) >>= HU.assertEqual
+            "Signed by one of the certificates with the SKI of its CA" Revalidate
 
 
 now :: Instant
