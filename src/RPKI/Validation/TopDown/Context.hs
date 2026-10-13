@@ -7,6 +7,7 @@ module RPKI.Validation.TopDown.Context where
 
 import           Effectful
 import           Control.Concurrent.STM
+import           Control.Monad                    (unless)
 
 import           Control.Lens hiding (children)
 
@@ -60,6 +61,9 @@ data TopDownContext = TopDownContext {
         allTas                  :: AllTasTopDownContext,
         currentPathDepth        :: Int,
         interruptedByLimit      :: TVar Limited,
+        -- | How many objects of the TA validation has looked at, for maxTotalTreeSize. 
+        -- An object of more than one TA counts for the one that got to it first.
+        treeSize                :: TVar Int,
         payloadBuilder          :: PayloadBuilder,
         overclaimingHappened    :: Bool,
         fetcheables             :: TVar Fetcheables,
@@ -143,6 +147,7 @@ newTopDownContext taName allTas =
                 currentPathDepth = 0
                 overclaimingHappened = False       
             interruptedByLimit      <- newTVar CanProceed                 
+            treeSize                <- newTVar 0
             fetcheables             <- newTVar mempty                 
             earliestNotValidAfter   <- newTVar mempty
             visitedAkis             <- newTVar mempty
@@ -215,8 +220,12 @@ verifyLimit hitTheLimit limit =
 -- to GC this object from the cache -- if it's not visited for too long, it is 
 -- removed.
 markAsUsed :: ValidatorIO es => TopDownContext -> ObjectKey -> Eff es ()
-markAsUsed TopDownContext { allTas = AllTasTopDownContext {..} } k = 
-    liftIO $ atomically $ modifyTVar' visitedKeys (Set.insert k)
+markAsUsed TopDownContext { allTas = AllTasTopDownContext {..}, treeSize = taTreeSize } k = 
+    liftIO $ atomically $ do
+        visited <- readTVar visitedKeys
+        unless (Set.member k visited) $ do
+            writeTVar visitedKeys $! Set.insert k visited
+            modifyTVar' taTreeSize (+ 1)
 
 markAsUsedByHash :: ValidatorIO es => 
                     AppContext s -> TopDownContext -> Hash -> Eff es ()

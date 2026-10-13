@@ -11,6 +11,7 @@ module RPKI.Validation.TopDown (
     validateMultipleTAs,
     becomingValid,
     validateManifests,
+    validateCa,
     refreshTaCertificate,
     TroubledChildLoadPath(..),
     resolveTroubledChildByKey,
@@ -312,25 +313,22 @@ validateCa :: (ValidatorIO es, Concurrent :> es) => AppContext s ->
             Eff es ()
 validateCa 
     appContext@AppContext {..}
-    topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
-    ca = 
-    checkAndReport treeDepthLimit
-        $ checkAndReport visitedObjectCountLimit
-        $ checkAndReport repositoryCountLimit
-        $ validateCaNoLimitChecks appContext topDownContext ca        
-  where
-
-    -- Check and report for the maximal tree depth
-    treeDepthLimit = (
-        pure (currentPathDepth > validationConfig ^. #maxCertificatePathDepth),
+    topDownContext@TopDownContext {..}
+    ca 
+    -- The depth is of one path, e.g. of a CA that keeps issuing CAs under 
+    -- itself, so only this path is cut and the rest of the TA is validated
+    | currentPathDepth > validationConfig ^. #maxCertificatePathDepth =
         logCheck 
             (CertificatePathTooDeep $ validationConfig ^. #maxCertificatePathDepth)
             (\loc -> [i|Interrupting validation on #{fmtLocations loc}, maximum tree depth is reached.|])
-        )
-
+    | otherwise =
+        checkAndReport visitedObjectCountLimit
+            $ checkAndReport repositoryCountLimit
+            $ validateCaNoLimitChecks appContext topDownContext ca        
+  where
     -- Check and report for the maximal number of objects in the tree
     visitedObjectCountLimit = (
-        (> validationConfig ^. #maxTotalTreeSize) . Set.size <$> readTVar visitedKeys,
+        (> validationConfig ^. #maxTotalTreeSize) <$> readTVar treeSize,
         logCheck 
             (TreeIsTooBig $ validationConfig ^. #maxTotalTreeSize)
             (\loc -> [i|Interrupting validation on #{fmtLocations loc}, maximum total object number in the tree is reached.|])
@@ -352,8 +350,9 @@ validateCa
             logError logger (errorText loc)
         vError validationError                
 
-    -- This is to make sure that the error of hitting a limit
-    -- is reported only by the thread that first hits it
+    -- The size of the tree and the number of repositories are for the whole TA:
+    -- once one of them is reached, the rest of the TA isn't validated. The error 
+    -- is reported only by the thread that first hits it.
     checkAndReport (condition, report) nextOne = do
             z <- liftIO $ atomically $ verifyLimit condition interruptedByLimit
             case z of
