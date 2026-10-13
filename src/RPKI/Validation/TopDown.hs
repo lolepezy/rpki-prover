@@ -611,7 +611,9 @@ validateManifests
         let fullCa = case ca of
                 CaFull c  -> Left c
                 CaShort _ -> Right $ getFullCa appContext topDownContext ca
-        collectPayloads appContext topDownContext aki meta (Map.map (uncurry ChildLight) lightChildren) Nothing
+        collectPayloads appContext topDownContext aki meta 
+                (Map.map (uncurry ChildLight) lightChildren) 
+                Nothing
                 fullCa
                 (getCrlByKey appContext crlKey)
                 (getResources ca)

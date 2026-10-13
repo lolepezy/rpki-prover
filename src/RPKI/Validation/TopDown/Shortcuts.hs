@@ -128,12 +128,6 @@ data MftPlan
     -- | There are manifests newer than the one of the shortcut, newest first:
     -- validate only what changed, with the first of them that is valid, and
     -- fall back to the shortcut if none of them is.
-    --
-    -- All of them are here, not only the newest one. Manifests are found by
-    -- AKI, wherever they were published, so the newest one can be a manifest
-    -- with this CA's AKI published somewhere else. Stopping at it would keep
-    -- the CA at its shortcut, with its own newer manifest never tried, until
-    -- the shortcut expires.
     | DiffWithShortcut DB.MftShortcutMeta (NonEmpty MftMeta)
     deriving stock (Show, Eq)
 
@@ -164,10 +158,6 @@ planManifests now mfts shortcut =
   where
     (current, premature) = List.partition (\m -> m.thisTime <= unNow now) mfts
 
-    -- Shortcuts stored before `manifestValidityPeriod` only carry the validity
-    -- of the manifest's EE certificate. A manifest that's past its nextUpdate
-    -- stays unchanged, and so does its shortcut, so the manifest's own
-    -- nextUpdate is checked here.
     shortcutExpired meta =
         not (shortcutIsUsable now meta) ||
         maybe False (< unNow now) (shortcutMftNextUpdate mfts meta)
