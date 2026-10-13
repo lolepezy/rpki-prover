@@ -249,31 +249,40 @@ data ChildSource = FromObject | FromShortcut
 -- | Count a valid manifest child that is not a CA certificate and keep its
 -- payload. It's done here only, the same for a child validated in full and
 -- for a child taken from its shortcut.
+--
+-- When it expires is a reason to revalidate. For a child taken from its 
+-- shortcut it's remembered where the shortcut is checked (`validateShortcut`),
+-- for a child validated in full it's remembered here.
 acceptLeaf :: ValidatorIO es => TopDownContext -> ChildSource -> MftChild -> Eff es ()
-acceptLeaf topDownContext source = \case
-    RoaChild r _ -> do
-        oneMoreRoa
-        moreVrps $ Count $ fromIntegral $ length (roaV4 r.roaPayload) + length (roaV6 r.roaPayload)
-        count (.originalRoa) (.shortcutRoa)
-        keep #vrps $ T2 r.roaPayload r.key
-    SplChild s _ -> do
-        oneMoreSpl
-        count (.originalSpl) (.shortcutSpl)
-        keep #spls s.splPayload
-    AspaChild a _ -> do
-        oneMoreAspa
-        count (.originalAspa) (.shortcutAspa)
-        keep #aspas a.aspa
-    BgpSecChild b _ -> do
-        oneMoreBgp
-        keep #bgpCerts b.bgpSec
-    GbrChild g _ -> do
-        oneMoreGbr
-        keep #gbrs g.gbr
-    -- A CA gives the payloads of its sub-tree
-    CaChild {} -> pure ()
-    -- A troubled child is validated in full and accepted as what that gives
-    TroubledChild _ -> pure ()
+acceptLeaf topDownContext source child = do
+    case source of
+        FromObject   -> for_ (childValidityPeriod child) $ \period ->
+                            rememberNotValidAfter topDownContext period.notAfter
+        FromShortcut -> pure ()
+    case child of
+        RoaChild r _ -> do
+            oneMoreRoa
+            moreVrps $ Count $ fromIntegral $ length (roaV4 r.roaPayload) + length (roaV6 r.roaPayload)
+            count (.originalRoa) (.shortcutRoa)
+            keep #vrps $ T2 r.roaPayload r.key
+        SplChild s _ -> do
+            oneMoreSpl
+            count (.originalSpl) (.shortcutSpl)
+            keep #spls s.splPayload
+        AspaChild a _ -> do
+            oneMoreAspa
+            count (.originalAspa) (.shortcutAspa)
+            keep #aspas a.aspa
+        BgpSecChild b _ -> do
+            oneMoreBgp
+            keep #bgpCerts b.bgpSec
+        GbrChild g _ -> do
+            oneMoreGbr
+            keep #gbrs g.gbr
+        -- A CA gives the payloads of its sub-tree
+        CaChild {} -> pure ()
+        -- A troubled child is validated in full and accepted as what that gives
+        TroubledChild _ -> pure ()
   where
     counters = topDownContext.allTas.topDownCounters
     count original shortcut = increment $ case source of

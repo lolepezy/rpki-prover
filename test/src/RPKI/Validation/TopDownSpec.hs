@@ -3,6 +3,7 @@ module RPKI.Validation.TopDownSpec where
 import           Effectful
 import           Control.Concurrent.STM
 import           Control.Lens
+import           Control.Monad                    (void)
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Short            as BSS
@@ -24,7 +25,7 @@ import qualified Test.Tasty.HUnit                 as HU
 import           RPKI.AppState                    (instantToVersion)
 import           RPKI.AppMonad
 import           RPKI.AppTypes                    (WorldVersion)
-import           RPKI.Parallel                    (closeCQueue, newCQueueIO, newWorkPool)
+import           RPKI.Parallel                    (ClosableQueue, closeCQueue, newCQueueIO, newWorkPool)
 import           RPKI.Config                      (ValidationAlgorithm (..))
 import           RPKI.Domain
 import           RPKI.Parse.Parse
@@ -51,11 +52,15 @@ import           RPKI.Validation.TopDown
                 , validateManifests
                 )
 import           RPKI.Validation.TopDown.Context
-                ( newAllTasTopDownContext
+                ( ChildSource (..)
+                , TopDownContext
+                , acceptLeaf
+                , newAllTasTopDownContext
                 , newTopDownContext
                 )
 import           RPKI.Validation.TopDown.Shortcuts
                 ( MftPlan (..)
+                , MftShortcutOp
                 , ShortcutWrites (..)
                 , makeChildWithIssues
                 , manifestValidityPeriod
@@ -76,6 +81,7 @@ topDownRegressionGroup =
         , HU.testCase "Picks how to validate the manifest of a CA" shouldPlanManifests
         , HU.testCase "Tells whether the CA signed an EE certificate" shouldTellWhetherCaSignedEECert
         , HU.testCase "Finds when objects from the future become valid" shouldFindWhenObjectsBecomeValid
+        , HU.testCase "Remembers when a leaf validated in full expires" shouldRememberWhenLeavesExpire
         , HU.testCase "Writes the shortcut of an accepted manifest, with warnings or not" shouldWriteShortcutOfAcceptedManifest
         , HU.testCase "Deletes the shortcut of a CA without an accepted manifest" shouldDeleteShortcutOfCaWithoutManifest
         , HU.testCase "Forces a snapshot only when no manifest can be used" shouldForceSnapshotOnlyWithoutFallback
@@ -295,6 +301,28 @@ shouldFindWhenObjectsBecomeValid = do
     HU.assertEqual "An expired object never becomes valid"
         mempty
         (becomingValid $ issuesOf [aspa])
+
+
+-- | When a leaf expires is a reason to revalidate. For one taken from its 
+-- shortcut it's remembered where the shortcut is checked, not here.
+shouldRememberWhenLeavesExpire :: HU.Assertion
+shouldRememberWhenLeavesExpire =
+    withTestContext $ \appContext -> do
+        (topDownContext, _) <- newTestTopDownContext appContext
+        let roa notAfter = RoaChild (testRoaShortcut (objectKey 1) & #notAfter .~ Instant notAfter) (Serial 1)
+            accept source child = void $ runValidatorIO (newScopes "accept") $
+                                    acceptLeaf topDownContext source child
+            earliest = readTVarIO $ topDownContext ^. #earliestNotValidAfter
+
+        accept FromShortcut (roa 100)
+        earliest >>= HU.assertEqual "Not for a leaf from its shortcut" mempty
+
+        accept FromObject (roa 200)
+        accept FromObject (TroubledChild $ objectKey 2)
+        earliest >>= HU.assertEqual "For a leaf validated in full" (EarliestValidityChange $ Instant 200)
+
+        accept FromObject (roa 150)
+        earliest >>= HU.assertEqual "The first of them" (EarliestValidityChange $ Instant 150)
 
 
 -- | Which manifest of a CA is validated, and how.
@@ -522,12 +550,7 @@ validateCaManifests :: AppContext SqliteBackend -> RpkiURL -> AKI
                     -> IO (Either AppError (), Maybe DB.MftShortcutMeta, MonoidalMap.MonoidalMap RrdpURL (Set.Set Text.Text))
 validateCaManifests appContext ppUrl aki = do
     db <- readTVarIO $ appContext ^. #database
-    Now now <- thisInstant
-    shortcutQueue <- newCQueueIO 10
-    workPool      <- newWorkPool
-    publicationPoints <- DB.roTx db DB.getPublicationPoints
-    allTas <- newAllTasTopDownContext (instantToVersion now) publicationPoints shortcutQueue mempty workPool
-    topDownContext <- newTopDownContext (TaName "test") allTas
+    (topDownContext, shortcutQueue) <- newTestTopDownContext appContext
     -- Any CA certificate does, it's only needed to tell which manifests the CA signed
     (Right ca, _) <- runValidatorIO (newScopes "ca") $ do
         (_, _, parsed) <- readFixtureObject "./test/data/overcleaiming/2R93viIBHX4dV12fmttfjhYOX9k.cer"
@@ -542,6 +565,18 @@ validateCaManifests appContext ppUrl aki = do
     stored <- DB.roTx db $ \tx -> DB.getMftShorcutMeta tx aki
     candidates <- readTVarIO $ topDownContext ^. #snapshotCandidates
     pure (r, stored, candidates)
+
+-- | The context of validating a TA, with the queue of its shortcut writes
+newTestTopDownContext :: AppContext SqliteBackend -> IO (TopDownContext, ClosableQueue MftShortcutOp)
+newTestTopDownContext appContext = do
+    db <- readTVarIO $ appContext ^. #database
+    Now now <- thisInstant
+    shortcutQueue <- newCQueueIO 10
+    workPool      <- newWorkPool
+    publicationPoints <- DB.roTx db DB.getPublicationPoints
+    allTas <- newAllTasTopDownContext (instantToVersion now) publicationPoints shortcutQueue mempty workPool
+    topDownContext <- newTopDownContext (TaName "test") allTas
+    pure (topDownContext, shortcutQueue)
 
 saveShortcut :: AppContext SqliteBackend -> AKI -> DB.MftShortcutMeta -> IO ()
 saveShortcut appContext aki meta = do

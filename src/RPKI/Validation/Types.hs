@@ -144,6 +144,17 @@ data GbrShortcut = GbrShortcut {
     deriving anyclass (TheBinary)
 
 
+-- | The validity period of the object of a child, `Nothing` for a troubled one.
+childValidityPeriod :: MftChild -> Maybe ValidityPeriod
+childValidityPeriod = \case
+    CaChild c _     -> Just $ getValidityPeriod c
+    RoaChild r _    -> Just $ getValidityPeriod r
+    SplChild s _    -> Just $ getValidityPeriod s
+    AspaChild a _   -> Just $ getValidityPeriod a
+    BgpSecChild b _ -> Just $ getValidityPeriod b
+    GbrChild g _    -> Just $ getValidityPeriod g
+    TroubledChild _ -> Nothing
+
 instance {-# OVERLAPPING #-} WithValidityPeriod CaShortcut where
     getValidityPeriod CaShortcut {..} = ValidityPeriod notBefore notAfter
 
