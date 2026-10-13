@@ -514,15 +514,11 @@ existingHashes (Tx conn) hashes = liftIO $
             pure $ map fromOnly rows
 
 -- | Whether the cache has every object the manifest lists, its CRL included.
--- Anything but a well-structured manifest has nothing to wait for.
-manifestObjectsStored :: MonadIO m => Tx mode -> ObjectKey -> m Bool
-manifestObjectsStored tx key =
-    getObjectByKey tx key >>= \case
-        Just (WellStructuredRO (MftRO mft)) -> do
-            let hashes = [ hash | MftPair { hash } <- mft ^. #content . #mftEntries ]
-            stored <- existingHashes tx hashes
-            pure $ all (`Set.member` stored) hashes
-        _ -> pure True
+manifestObjectsStored :: MonadIO m => Tx mode -> WellStructuredMft -> m Bool
+manifestObjectsStored tx mft = do
+    let hashes = [ hash | MftPair { hash } <- mft ^. #content . #mftEntries ]
+    stored <- existingHashes tx hashes
+    pure $ all (`Set.member` stored) hashes
 
 -- | Bulk 'getObjectByKey' by hash. Hashes with no object, or with a row that
 -- has been stripped of its payload, are simply absent from the result.

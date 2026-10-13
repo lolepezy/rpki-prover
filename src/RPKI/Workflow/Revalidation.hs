@@ -10,7 +10,9 @@
      manifest is current, i.e. at its thisUpdate.
 
      A manifest of a CA that no certificate in the cache has the key of is no 
-     reason either: validation can't get to it.
+     reason either: validation can't get to it. Neither is a manifest that the 
+     CA didn't sign: anyone can publish one with the AKI of any CA, and 
+     validation doesn't use it.
 
      A manifest and the objects it lists don't always come in the same fetch.
      A manifest that lists objects not stored yet can't be used, validation
@@ -20,13 +22,23 @@
 -}
 module RPKI.Workflow.Revalidation where
 
+import           Control.Lens
+import           Control.Monad
+import           Control.Monad.IO.Class
 import           GHC.Generics
+
+import qualified Data.Map.Strict                   as Map
+import           Data.Maybe                        (listToMaybe)
+import           Data.Set                          (Set)
+import qualified Data.Set                          as Set
 
 import           RPKI.Config
 import           RPKI.Domain
-import           RPKI.Store.Database               (MftShortcutMeta)
+import           RPKI.Store.Database               (MftShortcutMeta, Tx)
+import qualified RPKI.Store.Database               as DB
 import           RPKI.Store.Types
 import           RPKI.Time
+import           RPKI.Validation.TopDown           (signedByCa)
 import           RPKI.Validation.TopDown.Shortcuts (shortcutIsUsable)
 
 
@@ -69,6 +81,21 @@ data RevalidationDecision = RevalidateNow
                           | RevalidateAt Instant
                           | NoRevalidation
     deriving stock (Show, Eq, Ord, Generic)
+
+-- | New manifests that validation won't use, by key.
+data UnusableManifests = UnusableManifests {
+        -- | Their CA didn't sign them
+        unsigned :: Set ObjectKey,
+        -- | They list objects that the cache doesn't have yet
+        waiting  :: Set ObjectKey
+    }
+    deriving stock (Show, Eq, Generic)
+
+instance Semigroup UnusableManifests where
+    UnusableManifests u1 w1 <> UnusableManifests u2 w2 = UnusableManifests (u1 <> u2) (w1 <> w2)
+
+instance Monoid UnusableManifests where
+    mempty = UnusableManifests mempty mempty
 
 
 -- | A new manifest against what the cache knows about its CA: how it compares, 
@@ -122,3 +149,28 @@ fetchRevalidation runMode now updates changes =
                    | otherwise       -> RevalidateAt earliest
                   where
                     earliest = minimum ts
+
+
+-- | Of the new manifests that would be a reason to revalidate, the ones that
+-- validation won't use. A manifest waiting for its objects waits for the fetch
+-- that stores them, that fetch is the one to revalidate for.
+--
+-- Validation only tries the manifests that their CA signed (`signedByCa`).
+-- When there's no certificate of the CA to check that with, the manifest is
+-- taken as signed, so that a reason to revalidate is never lost.
+unusableManifests :: MonadIO m => Tx mode -> [NewManifest] -> m UnusableManifests
+unusableManifests tx manifests = do
+    caCerts <- fmap Map.fromList $
+        forM (Set.toList $ Set.fromList [ m.aki | m <- manifests ]) $ \aki ->
+            (aki, ) . listToMaybe <$> DB.getBySKI tx (SKI $ unAKI aki)
+    fmap mconcat $ forM manifests $ \m ->
+        DB.getMftByKey tx m.key >>= \case
+            Nothing  -> pure mempty
+            Just mft -> do
+                let payload = mft ^. #object . #payload
+                case join (Map.lookup m.aki caCerts) of
+                    Just ca | not (signedByCa ca payload) ->
+                        pure $ mempty { unsigned = Set.singleton m.key }
+                    _ -> do
+                        stored <- DB.manifestObjectsStored tx payload
+                        pure $ if stored then mempty else mempty { waiting = Set.singleton m.key }

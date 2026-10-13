@@ -13,11 +13,16 @@ import           System.Timeout                   (timeout)
 import           Test.Tasty
 import qualified Test.Tasty.HUnit                 as HU
 
+import           RPKI.AppMonad
+import           RPKI.AppState                    (instantToVersion)
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Logging
+import           RPKI.Reporting                   (newScopes)
 import qualified RPKI.Store.Database              as DB
+import           RPKI.Store.DatabaseSpec          (readObjectFromFile, toValidatedRpkiObject)
 import           RPKI.Store.Types
+import           RPKI.TestCommons
 import           RPKI.Time
 import           RPKI.Validation.Types
 import           RPKI.Workflow.Revalidation
@@ -29,6 +34,7 @@ revalidationSpec = testGroup "Revalidation on new manifests"
     [ HU.testCase "Compares a new manifest with the shortcut of its CA" shouldCompareWithShortcut
     , HU.testCase "Decides for a whole fetch" shouldDecideForFetch
     , HU.testCase "Revalidates at every moment it is asked to" shouldRevalidateAtScheduledMoments
+    , HU.testCase "Tells which new manifests validation won't use" shouldTellUnusableManifests
     ]
 
 
@@ -120,6 +126,54 @@ shouldDecideForFetch = do
     HU.assertEqual "Only later"
         (RevalidateAt $ atHour 101)
         (decide some [(ContentChanged, Just $ atHour 102), (ContentChanged, Just $ atHour 101)])
+
+
+-- | A manifest that its CA didn't sign, or one that lists objects the cache
+-- doesn't have yet, is no reason to revalidate.
+shouldTellUnusableManifests :: HU.Assertion
+shouldTellUnusableManifests =
+    withTestContext $ \appContext -> do
+        db <- readTVarIO $ appContext ^. #database
+        version <- instantToVersion . unNow <$> thisInstant
+        (read_, _) <- runValidatorIO (newScopes "read") $
+            forM [ "./test/data/ripe-ncc-ta.cer"
+                 , "./test/data/overcleaiming/2R93viIBHX4dV12fmttfjhYOX9k.cer"
+                 , "./test/data/ripe-ncc-ta.mft"
+                 , "./test/data/afrinic_mft1.mft" ] $ fmap snd . readObjectFromFile
+        (taCert, otherCa, taMft, afrinicMft) <- case read_ of
+            Right [a, b, c, d] -> pure (a, b, c, d)
+            other              -> HU.assertFailure $ "Can't read the fixtures: " <> show other
+
+        let store o = DB.rwTx db $ \tx -> DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject o) version
+        mapM_ store [taCert, otherCa]
+        taMftKey      <- store taMft
+        afrinicMftKey <- store afrinicMft
+
+        let akiOf o = maybe (HU.assertFailure $ "No AKI: " <> show o) pure $ getAKI o
+        taAki      <- akiOf taMft
+        afrinicAki <- akiOf afrinicMft
+        let unusable ms = DB.roTx db $ \tx -> unusableManifests tx ms
+            stored key aki = NewManifest key aki (Instant 0) (Hash mempty)
+            otherAki = case otherCa of
+                CerRO c -> toAKI $ getSKI c
+                o       -> error $ "Not a CA certificate: " <> show o
+
+        unusable [stored taMftKey taAki] >>= HU.assertEqual
+            "Signed by its CA, waiting for its objects" (UnusableManifests mempty (Set.singleton taMftKey))
+
+        unusable [stored taMftKey otherAki] >>= HU.assertEqual
+            "With the AKI of a CA that didn't sign it" (UnusableManifests (Set.singleton taMftKey) mempty)
+
+        unusable [stored afrinicMftKey afrinicAki] >>= HU.assertEqual
+            "No certificate of its CA to check it with, waiting for its objects"
+            (UnusableManifests mempty (Set.singleton afrinicMftKey))
+
+        let entries = case taMft of
+                MftRO m -> getCMSContent (cmsPayload m) ^. #mftEntries
+                o       -> error $ "Not a manifest: " <> show o
+        forM_ entries $ \MftPair {..} -> DB.rwTx db $ \tx -> void $ DB.saveObject tx
+            (OriginalRO (ObjectOriginal "entry") mempty hash ROA) version
+        unusable [stored taMftKey taAki] >>= HU.assertEqual "Signed by its CA and complete" mempty
 
 
 -- | Times are generous, only the order of things is checked.
