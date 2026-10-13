@@ -379,10 +379,8 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             algorithm = config ^. #validationConfig . #validationAlgorithm
         (changes, waiting) <- case (runMode, fetchUpdates.manifests) of
             (ServerMode, StoredManifests manifests) -> do
-                shortcuts <- case algorithm of
-                    Incremental        -> shortcutViews manifests
-                    FullEveryIteration -> pure mempty
-                let changes = [ (m, manifestRevalidation algorithm now m (Map.lookup m.aki shortcuts)) 
+                cas <- caViews manifests
+                let changes = [ (m, manifestRevalidation algorithm now m (cas Map.! m.aki)) 
                               | m <- manifests ]
                 waiting <- withObjectsMissing [ m.key | (m, (_, Just _)) <- changes ]
                 pure ([ c | (m, c) <- changes, m.key `Set.notMember` waiting ], Set.size waiting)
@@ -395,7 +393,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                     StoredManifests ms -> [i|#{length ms} new manifest(s)|]
                     ManyManifests      -> [i|more than #{manifestUpdatesCap} new manifests|] :: String
                 others = if fetchUpdates.newObjects then " and other new objects" else "" :: String
-            let changed = length [ () | (change, _) <- changes, change /= SameContent ]
+            let changed = length [ () | (_, Just _) <- changes ]
             logDebug logger $ [i|#{url} stored #{stored}#{others}, #{changed} of them to revalidate for, |] <>
                               [i|#{waiting} waiting for their objects, decision: #{decision}, TAs: #{Set.toList tas}.|]
         case decision of
@@ -409,15 +407,20 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         DB.roTxT database $ \tx ->
             Set.fromList <$> filterM (fmap not . DB.manifestObjectsStored tx) keys
 
-    -- The shortcut of every AKI, and the digest of the manifest it is for 
-    -- if it's still in the cache: two lookups by key per AKI.
-    shortcutViews manifests =
+    -- What the cache knows about the CA of every AKI: its shortcut and the digest
+    -- of the manifest it is for, if it's still in the cache, or else whether there 
+    -- is a certificate of the CA at all. At most two lookups by key per AKI.
+    caViews manifests =
         DB.roTxT database $ \tx ->
-            fmap (Map.fromList . catMaybes) $
+            fmap Map.fromList $
                 forM (Set.toList $ Set.fromList [ m.aki | m <- manifests ]) $ \aki ->
-                    DB.getMftShorcutMeta tx aki >>= traverse (\shortcut -> do
-                        digest <- fmap (.contentDigest) <$> DB.getMftMetaByKey tx shortcut.key
-                        pure (aki, ShortcutView shortcut digest))
+                    fmap (aki, ) $ DB.getMftShorcutMeta tx aki >>= \case
+                        Just shortcut -> do
+                            digest <- fmap (.contentDigest) <$> DB.getMftMetaByKey tx shortcut.key
+                            pure $ WithShortcut $ ShortcutView shortcut digest
+                        Nothing -> do
+                            certified <- DB.hasCertificate tx $ SKI $ unAKI aki
+                            pure $ if certified then WithoutShortcut else NoCertificate
     
     rememberFirstFetchBy version = atomically $ do 
         fff <- readTVar firstFinishedFetchBy

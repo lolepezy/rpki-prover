@@ -67,6 +67,7 @@ objectStoreGroup = testGroup "Object storage test"
     , dbTestCase "Should store the content digest of a manifest" shouldStoreManifestContentDigest
     , dbTestCase "Should tell which manifest an insert stored" shouldTellNewManifestOnInsert
     , dbTestCase "Should tell whether the objects a manifest lists are stored" shouldTellManifestObjectsStored
+    , dbTestCase "Should tell whether there's a certificate with a key" shouldTellCertificateWithKey
     , dbTestCase "Should order manifests by thisTime, not by manifest_number"
         shouldOrderManifestsByThisTimeNotNumber
     , dbTestCase "Should order manifests by nextTime when thisTime ties"
@@ -655,6 +656,24 @@ shouldTellNewManifestOnInsert io = do
     -- the manifest becomes usable
     told "An unparsed manifest must not be told about" (unparsed mft2) (Just MFT) (const Nothing)
     told "Its parsed copy must be" (wellStructured mft2) (Just MFT) (`expected` mft2)
+
+
+-- | The revalidation decision only needs to know that a certificate is there.
+shouldTellCertificateWithKey :: IO DB -> HU.Assertion
+shouldTellCertificateWithKey io = do
+    db <- io
+    (Right (_, ca), _) <- runValidatorIO (newScopes "read") $
+        readObjectFromFile "./test/data/overcleaiming/2R93viIBHX4dV12fmttfjhYOX9k.cer"
+    worldVersion <- newVersion
+    let ski = case ca of
+            CerRO c -> getSKI c
+            o       -> error $ "Not a CA certificate: " <> show o
+        other = SKI $ mkKI "01234567890123456789"
+
+    roTx db (\tx -> DB.hasCertificate tx ski) >>= HU.assertEqual "Not stored yet" False
+    void $ rwTx db $ \tx -> DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject ca) worldVersion
+    roTx db (\tx -> DB.hasCertificate tx ski) >>= HU.assertEqual "Stored" True
+    roTx db (\tx -> DB.hasCertificate tx other) >>= HU.assertEqual "Another key" False
 
 
 -- | A manifest can't be used before everything it lists is in the cache.
