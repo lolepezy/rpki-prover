@@ -89,7 +89,7 @@ import           RPKI.Store.Database     (rwAppTx, roTx, Tx (..))
 import qualified RPKI.Store.SQLite       as SQLite
 import           Database.SQLite.Simple  (Only (..))
 import qualified RPKI.Store.Database     as DB
-import           RPKI.Store.Types        (RpkiObjectLifecycle (..))
+import           RPKI.Store.Types        (Inserted (..), RpkiObjectLifecycle (..))
 import           RPKI.Time               (thisInstant, unNow)
 import           RPKI.Validation.ObjectValidation (prevalidateObject)
 import qualified RPKI.Util               as U
@@ -264,12 +264,13 @@ runIteration i (_, appContext) delta expected sessionId serial content = do
     -- Markers bracket the run in the eventlog (`+RTS -l`), so the setup
     -- before it can be left out when looking at what the threads did.
     traceMarkerIO "saveSnapshot start"
+    storedUpdates <- newIORef mempty
     cpu0  <- getCPUTime
     wall0 <- getMonotonicTimeNSec
     (result, vs) <- runValidatorIO (newScopes "save-snapshot-bench") $
         if delta 
-            then saveDelta appContext worldVersion repoUri notification serial content
-            else saveSnapshot appContext worldVersion repoUri notification content
+            then saveDelta appContext worldVersion storedUpdates repoUri notification serial content
+            else saveSnapshot appContext worldVersion storedUpdates repoUri notification content
     wall1 <- getMonotonicTimeNSec
     cpu1  <- getCPUTime
     traceMarkerIO "saveSnapshot end"
@@ -383,8 +384,8 @@ stageBreakdown (_, appContext) items = do
     putStrLn "sqlite, single-threaded:"
     _ <- stage "insert, 1 tx" $ runValidatorIO scopes $ rwAppTx db $ \tx ->
         forM_ (zip decoded storables) $ \((_, rpkiURL, _, _), so) -> do
-            key <- DB.saveStorableObject tx so worldVersion
-            DB.linkObjectToUrl tx rpkiURL key worldVersion
+            inserted <- DB.saveStorableObject tx so worldVersion
+            DB.linkObjectToUrl tx rpkiURL inserted.key worldVersion
 
     -- What every parsing thread does before parsing: a read transaction
     -- per object, here against a DB that has them all.

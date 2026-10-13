@@ -10,6 +10,7 @@ module RPKI.Validation.TopDown (
     TopDownResult(..),
     validateMultipleTAs,
     becomingValid,
+    validateManifests,
     refreshTaCertificate,
     TroubledChildLoadPath(..),
     resolveTroubledChildByKey,
@@ -121,14 +122,16 @@ data TopDownResult = TopDownResult {
         roas                   :: Roas,
         topDownValidations     :: ValidationState,
         discoveredRepositories :: Fetcheables,
-        earliestValidityChange :: EarliestValidityChange
+        earliestValidityChange :: EarliestValidityChange,
+        -- | RRDP repositories to fetch from a snapshot next time, with why
+        snapshotCandidates     :: MonoidalMap.MonoidalMap RrdpURL (Set Text)
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving Semigroup via GenericSemigroup TopDownResult
     deriving Monoid    via GenericMonoid TopDownResult
 
 fromValidations :: ValidationState -> TopDownResult
-fromValidations vs = TopDownResult mempty mempty vs mempty mempty
+fromValidations vs = TopDownResult mempty mempty vs mempty mempty mempty
 
 data TroubledChildLoadPath = TroubledFromParsed | TroubledFromOriginal
     deriving stock (Show, Eq, Ord, Generic)
@@ -194,8 +197,12 @@ validateMultipleTAs appContext@AppContext {..} worldVersion tals = do
         logError logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
         (_, validations) <- runValidatorIO (taScopes taName) $ 
                                 (appError $ ValidationE $ ValidationTimeout maxDuration :: Eff AppEffects ())
-        discoveredRepositories <- readTVarIO $ topDownContext ^. #fetcheables
-        pure $ fromValidations validations & #discoveredRepositories .~ discoveredRepositories
+        (discoveredRepositories, snapshotCandidates) <- atomically $ (,) 
+            <$> readTVar (topDownContext ^. #fetcheables)
+            <*> readTVar (topDownContext ^. #snapshotCandidates)
+        pure $ fromValidations validations 
+                & #discoveredRepositories .~ discoveredRepositories
+                & #snapshotCandidates .~ snapshotCandidates
 
     maxDuration = config ^. typed @SystemConfig . #validationWorkerLimits . #workerTimeout
                  
@@ -210,10 +217,11 @@ validateTA :: AppContext s
 validateTA appContext@AppContext{..} tal topDownContext = do
     (r, topDownValidations) <- runValidatorIO (taScopes taName) validateFromTAL
 
-    (discoveredRepositories, earliestNotValidAfter) <- 
-        atomically $ (,) <$>
+    (discoveredRepositories, earliestNotValidAfter, snapshotCandidates) <- 
+        atomically $ (,,) <$>
             readTVar (topDownContext ^. #fetcheables) <*>
-            readTVar (topDownContext ^. #earliestNotValidAfter)
+            readTVar (topDownContext ^. #earliestNotValidAfter) <*>
+            readTVar (topDownContext ^. #snapshotCandidates)
 
     -- An object that's not valid yet is used once it becomes valid, 
     -- that's as much of a change as an object that expires
@@ -226,6 +234,7 @@ validateTA appContext@AppContext{..} tal topDownContext = do
             pure $ fromValidations topDownValidations 
                     & #discoveredRepositories .~ discoveredRepositories
                     & #earliestValidityChange .~ earliestValidityChange
+                    & #snapshotCandidates .~ snapshotCandidates
         Right _ -> do     
             let builder = topDownContext ^. #payloadBuilder
             vrps     <- readIORef $ builder ^. #vrps 
@@ -476,21 +485,26 @@ validateManifests
     unless (null premature) $ do
         fullCa <- getFullCa appContext topDownContext ca
         for_ premature $ \m ->
-            getSignedMft appContext topDownContext fullCa m >>=
-                traverse_ (reportMftFallback appContext $
-                    ValidationE $ ThisUpdateTimeIsInTheFuture m.thisTime (unNow now))
+            getSignedMft appContext topDownContext fullCa m >>= \case
+                Just (SignedMft mft) -> reportMftFallback appContext
+                    (ValidationE $ ThisUpdateTimeIsInTheFuture m.thisTime (unNow now)) mft
+                _ -> pure ()
 
-    case plan of
+    -- The errors of the manifests that were tried and fallen back from
+    fallbackErrors <- liftIO $ newIORef []
+    let fallBackFrom e = liftIO $ modifyIORef' fallbackErrors (e :)
+
+    onFailure shortcut fallbackErrors $ case plan of
         NoManifest ->
             vError $ NoMFT aki
 
         InFull mftMetas -> do
             increment topDownCounters.originalMft
-            tryMfts appContext topDownContext ca aki mftMetas
+            tryMfts appContext topDownContext fallBackFrom ca aki mftMetas
 
         UseShortcut meta ->
             fromShortcut mfts meta $
-                onlyCollectPayloads meta
+                useShortcut mfts meta
 
         OnlyShortcut meta -> do
             vWarn $ NoMFTButCachedMft aki
@@ -500,23 +514,59 @@ validateManifests
         DiffWithShortcut meta (newest :| newer) ->
             fromShortcut mfts meta $ do
                 fullCa <- getFullCa appContext topDownContext ca
-                tryNewerMfts meta fullCa (newest : newer)
+                tryNewerMfts fallBackFrom mfts meta fullCa (newest : newer)
   where
     validationAlgorithm = config.validationConfig.validationAlgorithm
 
     -- The manifests newer than the one of the shortcut, newest first: use the
-    -- first one that the CA signed and that is valid. Each signed one that isn't
-    -- valid is reported and the next one is tried. When none of them is valid,
-    -- the shortcut is, so it is the latest valid manifest to fall back to.
-    tryNewerMfts meta fullCa mftMetas =
+    -- first one that the CA signed and that is valid. Each one that isn't valid,
+    -- or is gone from the cache, is fallen back from and the next one is tried.
+    -- When none of them is valid, the shortcut is, so it is the latest valid
+    -- manifest to fall back to.
+    tryNewerMfts fallBackFrom mfts meta fullCa mftMetas =
         nextSignedMft appContext topDownContext fullCa mftMetas >>= \case
-            Nothing -> onlyCollectPayloads meta
-            Just (mft, olderMfts) -> do
-                markAsUsed topDownContext $ mft ^. #key
-                tryOneMftWithShortcut meta fullCa mft
-                    `catchError` \_cs (e :: AppError) -> do
-                        reportMftFallback appContext e mft
-                        tryNewerMfts meta fullCa olderMfts
+            Nothing -> useShortcut mfts meta
+            Just (candidate, olderMfts) ->
+                tryManifest appContext candidate
+                    (\e reportFallback -> do
+                        void $ fallBackFrom e
+                        reportFallback
+                        tryNewerMfts fallBackFrom mfts meta fullCa olderMfts)
+                    (\mft -> do
+                        markAsUsed topDownContext $ mft ^. #key
+                        tryOneMftWithShortcut meta fullCa mft)
+
+    -- The CA ends up without an accepted manifest.
+    --
+    -- Shortcuts describe the tree as it was validated, so it mustn't keep one.
+    --
+    -- If the cache doesn't have what one of the manifests says, the repository 
+    -- is to be fetched from a snapshot. Only now that there's nothing left to 
+    -- fall back to: falling back is what the previous manifests are for, and 
+    -- a newer manifest that refers to objects that aren't there yet is the 
+    -- publisher's problem.
+    onFailure shortcut fallbackErrors validate =
+        validate `catchError` \_cs (e :: AppError) -> do
+            for_ shortcut $ \_ -> deleteMftShortcut shortcutQueue aki
+            errors <- (e :) <$> liftIO (readIORef fallbackErrors)
+            let integrityErrors = filter isReferentialIntegrityError errors
+            unless (null integrityErrors) $ do
+                scope <- askScopes
+                for_ (innermostRrdpPP $ scope ^. typed @VScope) $ \rrdpUrl ->
+                    rememberSnapshotCandidate topDownContext rrdpUrl $
+                        Set.fromList $ map toMessage integrityErrors
+            appError e
+
+    -- Use the manifest of the shortcut. One that was accepted with warnings is
+    -- validated in full again, its children too, so that the warnings are
+    -- reported every time, also the ones about its children. There's nothing
+    -- to fall back to if that fails. If the manifest is gone from the cache,
+    -- there's nothing to validate and only the shortcut is left.
+    useShortcut mfts meta
+        | meta.hasIssues && any ((== meta.key) . (.key)) mfts =
+            withMft appContext meta.key $ validateAgain meta
+        | otherwise =
+            onlyCollectPayloads meta
 
     fromShortcut mfts meta validate = do
         markAsUsed topDownContext meta.key
@@ -528,16 +578,31 @@ validateManifests
 
     -- The manifest changed since the last shortcut: run the full diff, which needs
     -- file_name (to detect renames), so fetch the full children map.
-    tryOneMftWithShortcut meta@DB.MftShortcutMeta{..} fullCa mft = do
-        let crlKey = crlShortcut.key
-        markAsUsed topDownContext crlKey
-        fullChildren <- roTxT database $ \tx -> DB.getMftShorcutChildrenFull tx aki
-        let mftShortcut = MftShortcut { nonCrlEntries = fullChildren, .. }
-        overlappingChildren <- manifestFullValidation appContext topDownContext fullCa mft (Just mftShortcut) aki
-        collectPayloads appContext topDownContext aki meta (Map.map ChildWithEntry fullChildren) (Just overlappingChildren)
+    tryOneMftWithShortcut meta fullCa mft = do
+        mftShortcut <- fullShortcut meta
+        overlappingChildren <- manifestFullValidation appContext topDownContext fullCa mft
+                                    (Just mftShortcut) OnlyNewChildren aki
+
+        collectPayloads appContext topDownContext aki meta 
+                    (Map.map ChildWithEntry mftShortcut.nonCrlEntries) 
+                    (Just overlappingChildren)
                     (Left fullCa)
                     (findAndValidateCrl appContext topDownContext fullCa mft aki)
                     (getResources ca)
+
+    -- The manifest of the shortcut was accepted with warnings: validate it again,
+    -- all its children too, which gives all the payloads. There's nothing left
+    -- to collect from the shortcut.
+    validateAgain meta mft = do
+        fullCa      <- getFullCa appContext topDownContext ca
+        mftShortcut <- fullShortcut meta
+        void $ manifestFullValidation appContext topDownContext fullCa mft
+                    (Just mftShortcut) AllChildren aki
+
+    fullShortcut DB.MftShortcutMeta{..} = do
+        markAsUsed topDownContext crlShortcut.key
+        fullChildren <- roTxT database $ \tx -> DB.getMftShorcutChildrenFull tx aki
+        pure MftShortcut { nonCrlEntries = fullChildren, .. }
 
     -- The steady-state "nothing changed" path: fetch the light children map,
     -- which never selects file_name.
@@ -552,36 +617,62 @@ validateManifests
         let fullCa = case ca of
                 CaFull c  -> Left c
                 CaShort _ -> Right $ getFullCa appContext topDownContext ca
-        collectPayloads appContext topDownContext aki meta (Map.map ChildLight lightChildren) Nothing
+        collectPayloads appContext topDownContext aki meta (Map.map (uncurry ChildLight) lightChildren) Nothing
                 fullCa
                 (getCrlByKey appContext crlKey)
                 (getResources ca)
 
 
--- Validate the manifests that the CA signed in full, falling back
--- to the next one until one is valid
+-- Validate the manifests that the CA signed in full, falling back to the next one
+-- until one is valid. A manifest that is gone from the cache is fallen back from too.
 tryMfts :: (ValidatorIO es, Concurrent :> es) =>
-          AppContext s -> TopDownContext -> Ca -> AKI -> [MftMeta] -> Eff es ()
-tryMfts _ _ _ aki [] = vError $ NoMFT aki
-tryMfts appContext topDownContext ca aki mftMetas = do
+          AppContext s -> TopDownContext -> (AppError -> Eff es ()) -> Ca -> AKI -> [MftMeta] -> Eff es ()
+tryMfts _ _ _ _ aki [] = vError $ NoMFT aki
+tryMfts appContext topDownContext fallBackFrom ca aki mftMetas = do
     caFull <- getFullCa appContext topDownContext ca
     nextSignedMft appContext topDownContext caFull mftMetas >>= \case
-        Nothing               -> vError $ NoMFT aki
-        Just (mft, mftMetas_) -> tryFrom caFull mft mftMetas_
+        Nothing                     -> vError $ NoMFT aki
+        Just (candidate, mftMetas_) -> tryFrom caFull candidate mftMetas_
   where
     -- The error of the last one is the error of the CA, the ones before it are fallbacks
-    tryFrom caFull mft mftMetas_ =
-        tryOneMft caFull mft `catchError` \_cs (e :: AppError) ->
-            nextSignedMft appContext topDownContext caFull mftMetas_ >>= \case
-                Nothing                    -> appError e
-                Just (nextMft, mftMetas__) -> do
-                    reportMftFallback appContext e mft
-                    tryFrom caFull nextMft mftMetas__
+    tryFrom caFull candidate mftMetas_ =
+        tryManifest appContext candidate (fallBack caFull mftMetas_) (tryOneMft caFull)
+
+    fallBack caFull mftMetas_ e reportFallback =
+        nextSignedMft appContext topDownContext caFull mftMetas_ >>= \case
+            Nothing                  -> appError e
+            Just (next, mftMetas__) -> do
+                fallBackFrom e
+                reportFallback
+                tryFrom caFull next mftMetas__
 
     tryOneMft caFull mft = do
         markAsUsed topDownContext $ mft ^. #key
-        void $ manifestFullValidation appContext topDownContext caFull mft Nothing aki
+        void $ manifestFullValidation appContext topDownContext caFull mft Nothing OnlyNewChildren aki
         oneMoreMft >> oneMoreCrl
+
+
+-- | A manifest of a CA to try: one that the CA signed, or one that is gone 
+-- from the cache, so that it can't be told whether the CA signed it.
+data MftCandidate = SignedMft (Keyed (Located WellStructuredMft))
+                  | MissingMft MftMeta AppError
+
+-- | Validate a manifest the given way, and fall back from it if that fails, or 
+-- if the manifest is gone from the cache. Falling back gets the error, and how
+-- to report it.
+tryManifest :: ValidatorIO es =>
+              AppContext s
+              -> MftCandidate
+              -> (AppError -> Eff es () -> Eff es a)
+              -> (Keyed (Located WellStructuredMft) -> Eff es a)
+              -> Eff es a
+tryManifest appContext candidate fallBack validate =
+    case candidate of
+        MissingMft m e ->
+            fallBack e $ vFocusOn ObjectFocus (m ^. #key) $ vWarn $ MftFallback e (m ^. #mftNumber)
+        SignedMft mft ->
+            validate mft `catchError` \_cs (e :: AppError) ->
+                fallBack e $ reportMftFallback appContext e mft
 
 
 withMft :: ValidatorIO es =>
@@ -610,22 +701,29 @@ signedByCa ca cms =
         SignaturePass     -> True
         SignatureFailed _ -> False
 
--- | The manifest, if the CA signed it.
+-- | The manifest, if the CA signed it, or if it is gone from the cache.
 getSignedMft :: ValidatorIO es =>
                 AppContext s -> TopDownContext -> Located WellStructuredCaCert -> MftMeta
-                -> Eff es (Maybe (Keyed (Located WellStructuredMft)))
-getSignedMft appContext topDownContext ca m =
-    withMft appContext m.key $ \mft ->
-        if signedByCa ca (mft ^. #object . #payload)
-            then pure $ Just mft
-            else do
+                -> Eff es (Maybe MftCandidate)
+getSignedMft AppContext {..} topDownContext ca m = do
+    let mftKey = m ^. #key
+    z <- roTxT database $ \tx -> DB.getMftByKey tx mftKey
+    case z of
+        Nothing -> do
+            let message = [i|Referential integrity error, can't find a manifest by its key #{mftKey}.|]
+            logError logger message
+            pure $ Just $ MissingMft m $ ValidationE $ ReferentialIntegrityError message
+        Just mft
+            | signedByCa ca (mft ^. #object . #payload) -> pure $ Just $ SignedMft mft
+            | otherwise -> do
                 increment topDownContext.allTas.topDownCounters.foreignMft
                 pure Nothing
 
--- | The first of the manifests that the CA signed, with the ones after it.
+-- | The first of the manifests that the CA signed, or that is gone from the cache,
+-- with the ones after it.
 nextSignedMft :: ValidatorIO es =>
                 AppContext s -> TopDownContext -> Located WellStructuredCaCert -> [MftMeta]
-                -> Eff es (Maybe (Keyed (Located WellStructuredMft), [MftMeta]))
+                -> Eff es (Maybe (MftCandidate, [MftMeta]))
 nextSignedMft _ _ _ [] = pure Nothing
 nextSignedMft appContext topDownContext ca (m : ms) =
     getSignedMft appContext topDownContext ca m >>= \case
@@ -644,14 +742,15 @@ reportMftFallback AppContext {..} e mft = do
 
 -- Proceed with full validation for children mentioned in the full manifest
 -- and children mentioned in the manifest shortcut. Create a diff between them,
--- run full validation only for new children and create a new manifest shortcut
--- with updated set of children.
+-- run full validation only for new children (or for all of them, if asked to)
+-- and create a new manifest shortcut with updated set of children.
 manifestFullValidation :: (ValidatorIO es, Concurrent :> es) =>
                         AppContext s
                         -> TopDownContext
                         -> Located WellStructuredCaCert
                         -> Keyed (Located WellStructuredMft)
                         -> Maybe MftShortcut
+                        -> ChildrenToValidate
                         -> AKI
                         -> Eff es [T3 Text Hash ObjectKey]
 manifestFullValidation
@@ -659,7 +758,7 @@ manifestFullValidation
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
     fullCa
     keyedMft@(Keyed locatedMft@(Located mftLocations mft) mftKey)
-    mftShortcut childrenAki = do
+    mftShortcut childrenToValidate childrenAki = do
     let uniqueFocusOn = case mftLocations of
             Just ls -> vUniqueFocusOn LocationFocus (getURL $ pickLocation ls)
             Nothing -> vUniqueFocusOn HashFocus (getHash mft)
@@ -695,7 +794,11 @@ manifestFullValidation
         let (newChildren, overlappingChildren0, deletedKeys) =
                 case mftShortcut of
                     Nothing       -> (nonCrlChildren, [], [])
-                    Just mftShort -> manifestDiff mftShort nonCrlChildren
+                    Just mftShort ->
+                        let diff@(_, _, deleted) = manifestDiff mftShort nonCrlChildren
+                        in case childrenToValidate of
+                            OnlyNewChildren -> diff
+                            AllChildren     -> (nonCrlChildren, [], deleted)
 
         -- If the CRL has changed, children that are not going to be re-validated
         -- here (i.e. the overlapping ones) still have to be checked for revocation.
@@ -754,8 +857,6 @@ manifestFullValidation
                 let newEntries = makeEntriesWithMap newChildren (Map.fromList childrenShortcuts)
                                     <> revokedEntries
 
-                let nextMftShortcut = makeMftShortcut mftKey validMft newEntries keyedValidCrl
-
                 case validationAlgorithm of
                     -- Only create shortcuts for case of incremental validation.
                     --
@@ -763,35 +864,28 @@ manifestFullValidation
                     -- the previous valid manifest will not work, since there are no
                     -- shortcuts of previous manifests to fall back to.
                     Incremental -> do
-                        issues <- thisScopeIssues
-                        -- Do no create shortcuts for manifests with warnings
-                        -- (or errors, obviously)
-                        when (Set.null issues) $ do
-                            let aki = toAKI $ getSKI fullCa
+                        -- A manifest accepted with warnings gets a shortcut as well,
+                        -- shortcuts describe the tree as it was validated. It's
+                        -- marked, so that it's validated in full every time and the
+                        -- warnings are reported every time.
+                        hasIssues <- not . Set.null <$> thisScopeIssues
+                        let aki = toAKI $ getSKI fullCa
+                        let nextMftShortcut = makeMftShortcut mftKey validMft newEntries keyedValidCrl hasIssues
 
-                            case mftShortcut of
-                                -- There's nothing to diff against, so all the children
-                                -- are new. Replace the whole shortcut: an expired one can
-                                -- still have children that are not on this manifest.
-                                Nothing -> do
-                                    replaceMftShortcut shortcutQueue aki nextMftShortcut
+                        case shortcutWrites mftShortcut nextMftShortcut deletedKeys of
+                            ReplaceShortcut -> do
+                                replaceMftShortcut shortcutQueue aki nextMftShortcut
+                                increment topDownCounters.updateMftMeta
+                                increment topDownCounters.updateMftChildren
+
+                            UpdateShortcut {..} -> do
+                                when writeMeta $ do
+                                    updateMftShortcut shortcutQueue aki nextMftShortcut
                                     increment topDownCounters.updateMftMeta
+
+                                unless (null changedChildren && null deletedChildren) $ do
+                                    updateMftShortcutChildren shortcutQueue aki changedChildren deletedChildren
                                     increment topDownCounters.updateMftChildren
-
-                                Just mftShort -> do
-                                    -- If manifest key is not the same as the shortcut key,
-                                    -- we need to replace the shortcut with the new one
-                                    when (mftShort.key /= mftKey) $ do
-                                        updateMftShortcut shortcutQueue aki nextMftShortcut
-                                        increment topDownCounters.updateMftMeta
-
-                                    -- Update manifest shortcut children in case there are new
-                                    -- or deleted children in the new manifest.
-                                    when (not (null newChildren)
-                                        || not (null deletedKeys)
-                                        || not (null revokedEntries)) $ do
-                                            updateMftShortcutChildren shortcutQueue aki newEntries deletedKeys
-                                            increment topDownCounters.updateMftChildren
 
                     _  -> pure ()
 
@@ -812,7 +906,7 @@ findAndValidateCrl
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..} }
     fullCa (Keyed (Located _ mft) _) aki = do
     MftPair _ crlHash <-
-        case findCrlOnMft mft.content of
+        case filter isCrlEntry mft.content.mftEntries of
             []    -> vError $ NoCRLOnMFT aki
             [crl] -> pure crl
             crls  -> vError $ MoreThanOneCRLOnMFT aki crls
@@ -942,7 +1036,7 @@ independentMftChildrenResults appContext topDownContext fullCa nonCrlChildren va
                     -- reported issues. It's a bit hacky, but it works nicely.
                     let manifestIssues = getIssues (scopes ^. typed) (vs ^. typed )
                     pure $! if Set.null manifestIssues
-                        then InvalidChild e vs key filename
+                        then InvalidChild e vs key filename Nothing
                         else InvalidEntry e vs
                 Right ro -> do
                     -- We are cheating here a little by faking empty payload set.
@@ -954,8 +1048,11 @@ independentMftChildrenResults appContext topDownContext fullCa nonCrlChildren va
                     -- an object that failed to parse, is kept with what validating
                     -- it reports
                     let allVs = vs <> vs'
+                    let caCert = case ro ^. #object . #payload of
+                                    WellStructuredRO (CerRO _) -> Just InvalidCaChild
+                                    _                          -> Nothing
                     pure $! case z of
-                            Left e              -> InvalidChild e allVs key filename
+                            Left e              -> InvalidChild e allVs key filename caCert
                             Right entry         -> ValidEntry allVs key (keptEntry appContext entry)
 
 
@@ -986,9 +1083,9 @@ gatherMftEntryResults =
             InvalidEntry e vs -> do
                 embedState vs
                 appError e
-            InvalidChild _ vs key fileName -> do
+            InvalidChild _ vs key fileName caCert -> do
                 embedState vs
-                let !entry = makeChildWithIssues key fileName
+                let !entry = makeChildWithIssues key fileName caCert
                 pure $! (key, entry) : childrenShortcuts
             ValidEntry vs key entry -> do
                 embedState vs
@@ -1089,7 +1186,7 @@ validateMftChild appContext topDownContext caFull child@(Keyed (Located objectLo
 
     case child.object.payload of
         OriginalRO _ _ _ _ -> do
-            pure $! makeChildWithIssues child.key filename
+            pure $! makeChildWithIssues child.key filename Nothing
         WellStructuredRO wellStructuredChild ->
             validateChildObject appContext topDownContext
                 caFull
@@ -1138,7 +1235,7 @@ validateChildObject
     appContext@AppContext {..}
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
     fullCa (Keyed child@(Located locations childRo) childKey) fileName validCrl =
-    vFocusOnLocated child $ entryFor =<< case childRo of
+    vFocusOnLocated child $ case childRo of
         CerRO childCert -> validCaChild childCert
 
         RoaRO roa -> validLeaf $ do
@@ -1165,7 +1262,7 @@ validateChildObject
         -- they will emit a warning.
         _somethingElse -> do
             logWarn logger [i|Unsupported type of object: #{locations}.|]
-            pure Nothing
+            entryFor Nothing Nothing
 
     where
         validationRFC = config.validationConfig.validationRFC
@@ -1173,12 +1270,14 @@ validateChildObject
         -- What is stored for a child validated in full: its shortcut when it's
         -- valid and there are no issues in its scope, a troubled entry otherwise.
         -- A troubled child is validated in full again next time, so its issues
-        -- are reported every time, and not only this once.
-        entryFor valid = do
+        -- are reported every time, and not only this once. A CA certificate 
+        -- stays what it is either way, e.g. a valid one with a warning somewhere
+        -- in its sub-tree is still a valid one.
+        entryFor caCert valid = do
             issues <- thisScopeIssues
             pure $! case valid of
-                Just shortcut | Set.null issues -> MftEntry fileName shortcut
-                _                               -> makeChildWithIssues childKey fileName
+                Just shortcut | Set.null issues -> MftEntry fileName shortcut caCert
+                _                               -> makeChildWithIssues childKey fileName caCert
 
         validCaChild childCert = do
             scopes <- askScopes
@@ -1187,44 +1286,53 @@ validateChildObject
                 runValidator (...) call, it is to avoid short-circuit logic implemented by ExceptT:
                 otherwise an error in child validation would interrupt validation of the parent with
                 ExceptT's exception logic.
+
+                The certificate itself and its sub-tree are validated separately: a 
+                valid certificate stays valid even if there's something wrong with 
+                its publication point.
             -}
-            (r, validationState) <- runValidator scopes $ do
+            (certResult, certState) <- runValidator scopes $ do
                 -- Check that AIA of the child points to the correct location of the parent
                 -- https://mailarchive.ietf.org/arch/msg/sidrops/wRa88GHsJ8NMvfpuxXsT2_JXQSU/
                 --
                 validateAIA childCert fullCa
 
-                (childVerifiedResources, overlclaiming)
-                    <- do
-                        void $ validateResourceCert now childCert fullCa validCrl
-                        validateResources (config ^. #validationConfig . typed)
-                            verifiedResources childCert (fullCa ^. #payload)
+                void $ validateResourceCert now childCert fullCa validCrl
+                validateResources (config ^. #validationConfig . typed)
+                    verifiedResources childCert (fullCa ^. #payload)
 
-                let childTopDownContext = topDownContext
-                        & #verifiedResources ?~ childVerifiedResources
-                        & #currentPathDepth %~ (+ 1)
-                        & #overclaimingHappened .~ isJust overlclaiming
+            case certResult of
+                Left _ -> do
+                    embedState certState
+                    entryFor (Just InvalidCaChild) Nothing
 
-                validateCa appContext childTopDownContext (CaFull (Located locations childCert))
+                Right (childVerifiedResources, overlclaiming) -> do
+                    let childTopDownContext = topDownContext
+                            & #verifiedResources ?~ childVerifiedResources
+                            & #currentPathDepth %~ (+ 1)
+                            & #overclaimingHappened .~ isJust overlclaiming
 
-            embedState validationState
-            case r of
-                Left _  -> pure Nothing
-                Right _ ->
-                    case getPublicationPointsFromWellStructuredCert childCert of
-                        -- It's not going to happen?
-                        Left e     -> vError e
-                        Right ppas -> pure $ Just $ makeCaShortcut childKey (Validated childCert) ppas
+                    (r, subTreeState) <- runValidator scopes $
+                        validateCa appContext childTopDownContext (CaFull (Located locations childCert))
+
+                    embedState $ certState <> subTreeState
+                    entryFor (Just ValidCaChild) =<< case r of
+                        Left _  -> pure Nothing
+                        Right _ ->
+                            case getPublicationPointsFromWellStructuredCert childCert of
+                                -- It's not going to happen?
+                                Left e     -> vError e
+                                Right ppas -> pure $ Just $ makeCaShortcut childKey (Validated childCert) ppas
 
         -- Validate an object other than a CA certificate, which gives
         -- its shortcut, and take it the same way the shortcut is taken
         -- in the next rounds
         validLeaf validate = do
             validateObjectLocations child
-            allowRevoked $ do
+            entryFor Nothing =<< allowRevoked (do
                 leaf <- validate
                 acceptLeaf topDownContext FromObject leaf
-                pure $ Just leaf
+                pure $ Just leaf)
 
         -- In case of RevokedResourceCertificate error, the whole manifest is not to be considered
         -- invalid, only the object with the revoked certificate is considered invalid.
@@ -1344,7 +1452,7 @@ collectPayloads
     -- file_name into every bulk read.
     childFileName childKey = \case
         ChildWithEntry MftEntry {..} -> pure fileName
-        ChildLight _ -> do
+        ChildLight _ _ -> do
             mfn <- roTxT database $ \tx ->
                         DB.getMftShortcutChildFileName tx childrenAki childKey
             case mfn of
@@ -1352,8 +1460,10 @@ collectPayloads
                 Nothing -> integrityError appContext
                     [i|Referential integrity error, can't find file_name for child #{childKey}.|]
 
+    -- The stored entry of a child follows what validation found, 
+    -- otherwise the shortcuts wouldn't describe the tree as it was validated.
     storeChildIfChanged childKey childData newEntry =
-        unless (newEntry.child == childOf childData) $
+        unless (newEntry.child == childOf childData && newEntry.caCert == caCertOf childData) $
             updateMftShortcutChildren shortcutQueue childrenAki [(childKey, newEntry)] []
 
     getChildPayloads troubledValidation (childKey, childData) = do
@@ -1366,6 +1476,14 @@ collectPayloads
                                 caShortcut.resources
                                 parentCaResources
                                 verifiedResources
+                        `catchError` \_cs (e :: AppError) -> do
+                            -- The parent has fewer resources now (under the same key),
+                            -- the child isn't valid anymore. Expiry doesn't need this,
+                            -- it's checked against the validity period every time.
+                            fileName <- childFileName childKey childData
+                            storeChildIfChanged childKey childData
+                                (makeChildWithIssues childKey fileName (Just InvalidCaChild))
+                            appError e
 
                 let childTopDownContext = topDownContext
                         & #currentPathDepth %~ (+ 1)
@@ -1383,8 +1501,8 @@ collectPayloads
             TroubledChild childKey_ -> do
                 increment topDownCounters.shortcutTroubled
                 fileName <- childFileName childKey_ childData
-                -- A troubled child can come out of re-validation clean,
-                -- then it doesn't need to be validated in full anymore.
+                -- A troubled child can come out of re-validation clean, or a
+                -- valid CA certificate can become an invalid one, e.g. revoked.
                 newEntry <- troubledValidation childKey_ fileName
                 storeChildIfChanged childKey_ childData newEntry
       where
@@ -1424,7 +1542,7 @@ collectPayloads
                     -- may not check its resources again (e.g. the CA is a shortcut
                     -- by then), so it has to be validated in full from now on.
                     fileName <- childFileName key childData
-                    storeChildIfChanged key childData (makeChildWithIssues key fileName)
+                    storeChildIfChanged key childData (makeChildWithIssues key fileName Nothing)
                     appError e
 
 
@@ -1505,9 +1623,14 @@ getCaLocations AppContext {..} = \case
         pure $! getLocations c
 
 
-data ManifestValidity e v = InvalidEntry e v 
-                          | InvalidChild e v ObjectKey Text
+data ManifestValidity e v = InvalidEntry e v
+                          -- The last field is what the child is if it's a CA certificate
+                          | InvalidChild e v ObjectKey Text (Maybe CaChildValidity)
                           | ValidEntry v ObjectKey (Maybe MftEntry)
+
+-- | Which children of a manifest validated in full are validated in full as well:
+-- only the ones that are not on the shortcut, or all of them.
+data ChildrenToValidate = OnlyNewChildren | AllChildren
 
 longerThan :: [a] -> Int -> Bool
 longerThan xs n = not $ null $ drop n xs

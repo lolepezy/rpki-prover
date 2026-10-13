@@ -36,6 +36,7 @@ import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parse.Parse
 import           RPKI.Repository
+import           RPKI.Store.Types                 (FetchUpdates)
 import           RPKI.Fetch.DirectoryTraverse
 import           RPKI.Time
 import qualified RPKI.Util                        as U
@@ -75,7 +76,7 @@ stderr = [#{U.textual stderr'}]|]
 runRsyncFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext s 
                     -> WorldVersion
                     -> RsyncRepository             
-                    -> Eff es RsyncRepository
+                    -> Eff es (RsyncRepository, FetchUpdates)
 runRsyncFetchWorker appContext@AppContext {..} worldVersion repository = do
     scopes <- askScopes
     RsyncFetchResult z <- runWorker appContext
@@ -111,12 +112,13 @@ rsyncRpkiObject AppContext{..} uri = do
 
 
 -- | Process the whole rsync repository, download it, traverse the directory and 
--- | add all the relevant objects to the storage.
+-- | add all the relevant objects to the storage. Also tells what it stored that can be 
+-- | a reason to revalidate.
 updateObjectForRsyncRepository :: (ValidatorIO es, Concurrent :> es, Timeout :> es) => 
                                   AppContext s
                                -> WorldVersion 
                                -> RsyncRepository 
-                               -> Eff es RsyncRepository
+                               -> Eff es (RsyncRepository, FetchUpdates)
 updateObjectForRsyncRepository 
     appContext@AppContext{..} 
     worldVersion
@@ -145,8 +147,7 @@ updateObjectForRsyncRepository
         logInfo logger [i|Finished rsynching #{getURL uri} to #{destination}.|]
         case exitCode of  
             ExitSuccess -> do                 
-                loadRsyncRepository appContext worldVersion uri destination                        
-                pure repo
+                (repo, ) <$> loadRsyncRepository appContext worldVersion uri destination
             ExitFailure errorCode -> do
                 logError logger [i|Rsync process failed: #{rsync} 
                                             with code #{errorCode}, 
@@ -198,7 +199,7 @@ loadRsyncRepository :: (ValidatorIO es, Concurrent :> es)
                     -> WorldVersion
                     -> RsyncURL
                     -> FilePath
-                    -> Eff es ()
+                    -> Eff es FetchUpdates
 loadRsyncRepository appContext worldVersion repositoryUrl rootPath =
     -- An rsync tree mirrors the repository layout, so the path determines the URL.
     loadObjectsFromFS appContext worldVersion

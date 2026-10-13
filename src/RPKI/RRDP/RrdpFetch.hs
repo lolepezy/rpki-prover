@@ -19,6 +19,7 @@ import qualified Data.ByteString                  as BS
 import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.List                        as List
 import qualified Data.Map.Strict                  as Map
+import           Data.IORef
 import           Data.String.Interpolate.IsString
 import           Data.Proxy
 import           Data.Maybe
@@ -45,7 +46,6 @@ import           RPKI.RRDP.Parse
 import           RPKI.RRDP.Types
 import           RPKI.Validation.ObjectValidation
 import           RPKI.Store.Types
-import           RPKI.Store.Base.Storable (StorableObject(..), Compressed(..), toStorableObject)
 import           RPKI.Store.Database     (Tx(..), TxMode(..), roTx)
 import qualified RPKI.Store.Database    as DB
 import qualified RPKI.Util              as U
@@ -54,7 +54,7 @@ import qualified RPKI.Util              as U
 runRrdpFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext s
                     -> WorldVersion
                     -> RrdpRepository
-                    -> Eff es (RrdpRepository, RrdpFetchStat)
+                    -> Eff es (RrdpRepository, RrdpFetchStat, FetchUpdates)
 runRrdpFetchWorker appContext@AppContext {..} worldVersion repository = do
     scopes <- askScopes
     RrdpFetchResult z <- runWorker appContext
@@ -65,18 +65,22 @@ runRrdpFetchWorker appContext@AppContext {..} worldVersion repository = do
 
 -- | 
 --  Update RRDP repository, actually saving all the objects in the DB.
+--  Also tells what it stored that can be a reason to revalidate, including 
+--  what deltas stored when it had to fall back to the snapshot after them.
 -- 
 updateRrdpRepository :: (ValidatorIO es, Concurrent :> es) => 
                         AppContext s 
                     -> WorldVersion 
                     -> RrdpRepository
-                    -> Eff es (RrdpRepository, RrdpFetchStat) 
+                    -> Eff es (RrdpRepository, RrdpFetchStat, FetchUpdates)
 updateRrdpRepository     
         appContext@AppContext {..}
         worldVersion 
         repo@RrdpRepository { uri = repoUri, .. } = do
 
   timedMetric (Proxy :: Proxy RrdpMetric) $ do                                   
+
+    storedUpdates <- liftIO $ newIORef mempty
         
     let tmpDir = configValue $ config ^. #tmpDirectory
         maxSize = config ^. typed @RrdpConf . #maxSize
@@ -105,10 +109,10 @@ updateRrdpRepository
             repo' <- bumpETag newETag $ do
                 usedSource $ RrdpSnapshot $ notification ^. #serial
                 logDebug logger [i|Forced to use snapshot for #{repoUri}, because #{reason}.|]
-                useSnapshot notification nextStep         
+                useSnapshot storedUpdates notification nextStep         
             pure (repo', RrdpFetchStat nextStep)       
 
-    case (httpStatus, enforcement) of 
+    (repo', stat) <- case (httpStatus, enforcement) of 
         (HttpStatus 304, Just (NextTimeFetchSnapshot _ reason)) -> do                        
             -- notification.xml wasn't actually downloaded, so we need to do it first
             (notificationXml_, _, _, _) <- fetchNotification Nothing            
@@ -139,12 +143,12 @@ updateRrdpRepository
                     ForcedFetchSnapshot _ reason -> do 
                         usedSource $ RrdpSnapshot $ notification ^. #serial
                         logDebug logger [i|Forced to use snapshot for #{repoUri}, because #{reason}.|]
-                        useSnapshot notification nextStep   
+                        useSnapshot storedUpdates notification nextStep   
 
                     FetchSnapshot _ message -> do 
                         usedSource $ RrdpSnapshot $ notification ^. #serial
                         logDebug logger [i|Going to use snapshot for #{repoUri}: #{message}|]
-                        useSnapshot notification nextStep                       
+                        useSnapshot storedUpdates notification nextStep                       
 
                     FetchDeltas {..} ->                  
                             (do 
@@ -153,13 +157,15 @@ updateRrdpRepository
                                     (NonEmpty.last sortedDeltas ^. typed)
 
                                 logDebug logger [i|Going to use deltas for #{repoUri}: #{message}|]
-                                useDeltas sortedDeltas notification)
+                                useDeltas storedUpdates sortedDeltas notification)
                         `catchError` \_cs (e :: AppError) -> do         
                                 usedSource $ RrdpSnapshot $ notification ^. #serial
                                 logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
-                                useSnapshot notification nextStep
+                                useSnapshot storedUpdates notification nextStep
 
             pure (repo', RrdpFetchStat nextStep)                            
+
+    (repo', stat, ) <$> liftIO (readIORef storedUpdates)
   where
     bumpETag newETag f = (\r -> r { eTag = newETag }) <$> f        
 
@@ -183,7 +189,7 @@ updateRrdpRepository
                             appError $ RrdpE $ DeltaUriHostname repoU deltaHostname
         pure notification
 
-    useSnapshot notification nextStep = do         
+    useSnapshot storedUpdates notification nextStep = do         
         let SnapshotInfo uri expectedHash = notification ^. #snapshotInfo
         vFocusOn LinkFocus uri $ do            
             logInfo logger [i|#{uri}: downloading snapshot.|] 
@@ -204,7 +210,7 @@ updateRrdpRepository
 
             void $ timedMetric' (Proxy :: Proxy RrdpMetric) 
                     (\t -> #saveTimeMs %~ (<> t))
-                    (saveSnapshot appContext worldVersion repoUri notification rawContent)                                    
+                    (saveSnapshot appContext worldVersion storedUpdates repoUri notification rawContent)                                    
 
             rrdpMeta' <- makeRrdpMeta rrdpMeta
             pure $ repo & #rrdpMeta .~ rrdpMeta'
@@ -221,7 +227,7 @@ updateRrdpRepository
                 pure $ Just $ RrdpMeta {..}
     
 
-    useDeltas sortedDeltas notification = do
+    useDeltas storedUpdates sortedDeltas notification = do
         let repoURI = getURL $ repo ^. #uri
         let message = if minDeltaSerial == maxDeltaSerial 
                 then [i|#{repoURI}: downloading delta #{minDeltaSerial}.|]
@@ -241,7 +247,7 @@ updateRrdpRepository
                         downloadDelta
                         (\(rawContent, serial, deltaUri) _ -> 
                             inSubVScope deltaUri $ 
-                                saveDelta appContext worldVersion 
+                                saveDelta appContext worldVersion storedUpdates
                                     repoUri notification serial rawContent)
                         (mempty :: ())     
 
@@ -390,13 +396,14 @@ nextSerial (RrdpSerial s) = RrdpSerial $ s + 1
 saveSnapshot :: (ValidatorIO es, Concurrent :> es) => 
                 AppContext s        
                 -> WorldVersion         
+                -> IORef FetchUpdates
                 -> RrdpURL
                 -> Notification 
                 -> BS.ByteString 
                 -> Eff es ()
 saveSnapshot 
     appContext@AppContext {..} 
-    worldVersion repoUri notification snapshotContent = do              
+    worldVersion storedUpdates repoUri notification snapshotContent = do              
 
     snapshotCpus <- liftIO $ useAvailableCpus $ config ^. typed @Parallelism . #cpuCount
     
@@ -493,7 +500,7 @@ saveSnapshot
 
                 -- Encode/compress the object here, on the parsing (async) thread,
                 -- so the single-threaded DB-writer only has to do the INSERT.
-                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
+                mkSaveObject lifecycle = SaveObject rpkiURL lifecycle (DB.prepareLifecycle lifecycle)
 
     saveStorable _ (Left (e, uri)) =
         inSubLocationScope uri $ appWarn e
@@ -522,14 +529,15 @@ saveSnapshot
                         inSubLocationScope uri $ 
                             appWarn $ RrdpE $ RrdpUnsupportedObjectType $ U.convert rpkiUrl                   
 
-                    SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
+                    SaveObject rpkiUrl lifecycle prepared -> do
                         case lifecycle of
                             OriginalRO _ vs _ _ -> do
                                 logError logger [i|Object #{rpkiUrl} failed parse/prevalidation, storing original.|]
                                 embedState vs
                             WellStructuredRO _ -> pure ()
-                        key <- DB.saveStorableObject tx so worldVersion
-                        DB.linkObjectToUrl tx rpkiUrl key worldVersion
+                        inserted <- DB.insertPreparedObject tx prepared worldVersion
+                        rememberInserted storedUpdates inserted
+                        DB.linkObjectToUrl tx rpkiUrl inserted.key worldVersion
                         addedObject $ Just $ getRpkiObjectType lifecycle
 
                     other -> 
@@ -549,12 +557,13 @@ saveSnapshot
 saveDelta :: (ValidatorIO es, Concurrent :> es) => 
             AppContext s 
             -> WorldVersion         
+            -> IORef FetchUpdates
             -> RrdpURL 
             -> Notification 
             -> RrdpSerial             
             -> BS.ByteString 
             -> Eff es ()
-saveDelta appContext worldVersion repoUri notification expectedSerial deltaContent = do                
+saveDelta appContext worldVersion storedUpdates repoUri notification expectedSerial deltaContent = do                
     db <- liftIO $ readTVarIO $ appContext ^. #database    
 
     Delta _ sessionId serial deltaItems <- 
@@ -648,7 +657,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
 
                 -- Encode/compress the object here, on the parsing (async) thread,
                 -- so the single-threaded DB-writer only has to do the INSERT.
-                mkSaveObject lifecycle = SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
+                mkSaveObject lifecycle = SaveObject rpkiURL lifecycle (DB.prepareLifecycle lifecycle)
 
     saveStorable tx r =
         case r of
@@ -690,7 +699,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 DB.linkObjectToUrl tx rpkiUrl key worldVersion
                 logDebug logger [i||Added original object #{rpkiUrl} with hash #{hash} to the database.|]
 
-            SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
+            SaveObject rpkiUrl lifecycle prepared -> do
                 let newHash = getHash lifecycle
                 newOneIsAlreadyThere <- DB.hashExists tx newHash
                 unless newOneIsAlreadyThere $ do
@@ -699,9 +708,10 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                             logError logger [i|Object #{rpkiUrl} failed parse/prevalidation.|]
                             embedState vs
                         WellStructuredRO _ -> pure ()
-                    key <- DB.saveStorableObject tx so worldVersion
+                    inserted <- DB.insertPreparedObject tx prepared worldVersion
+                    rememberInserted storedUpdates inserted
                     addedObject $ Just $ getRpkiObjectType lifecycle
-                    DB.linkObjectToUrl tx rpkiUrl key worldVersion
+                    DB.linkObjectToUrl tx rpkiUrl inserted.key worldVersion
 
             other ->
                 logDebug logger [i|Weird thing happened in `addObject` #{other}.|]
@@ -737,7 +747,7 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                 key <- DB.saveObject tx (OriginalRO original validationState hash objectMeta.objectType) worldVersion
                 DB.linkObjectToUrl tx rpkiUrl key worldVersion
 
-            SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
+            SaveObject rpkiUrl lifecycle prepared -> do
                 validateOldHash
                 let newHash = getHash lifecycle
                 newOneIsAlreadyThere <- DB.hashExists tx newHash
@@ -748,8 +758,9 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
                             embedState vs
                         WellStructuredRO _ -> pure ()
 
-                    key <- DB.saveStorableObject tx so worldVersion
-                    DB.linkObjectToUrl tx rpkiUrl key worldVersion
+                    inserted <- DB.insertPreparedObject tx prepared worldVersion
+                    rememberInserted storedUpdates inserted
+                    DB.linkObjectToUrl tx rpkiUrl inserted.key worldVersion
                     addedObject $ Just $ getRpkiObjectType lifecycle
 
             other -> 
@@ -772,7 +783,7 @@ data RrdpObjectProcessingResult =
         | HashExists RpkiURL Hash ObjectKey
         | UknownObjectType RpkiURL    
         | ObjectParsingProblem RpkiURL VIssue ObjectOriginal Hash ObjectMeta
-        | SaveObject RpkiURL (StorableObject (Compressed RpkiObjectLifecycle))
+        | SaveObject RpkiURL RpkiObjectLifecycle PreparedObject
     deriving stock (Show, Eq, Generic)
 
 data DeltaOp a = Delete URI Hash 

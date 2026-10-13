@@ -304,6 +304,10 @@ dumpResults dir AppContext {..} worldVersion results = do
     writeLines "repositories.txt"
         [ line [ta, show (r ^. #discoveredRepositories), show (r ^. #earliestNotValidAfter)]
         | (ta, r) <- tas ]
+    writeLines "snapshot-candidates.txt"
+        [ line [ta, show url, show reasons]
+        | (ta, r) <- tas
+        , (url, reasons) <- MonoidalMap.toList $ r ^. #snapshotCandidates ]
 
     -- The objects marked as used by this run, i.e. the ones the cleanup would
     -- keep. It only reads the map, writing it back unchanged.

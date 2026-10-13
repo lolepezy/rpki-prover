@@ -245,6 +245,7 @@ library
       RPKI.Worker
       RPKI.Workflow
       RPKI.Workflow.Fetcher
+      RPKI.Workflow.Revalidation
       RPKI.Workflow.Shared
       RPKI.Workflow.Task
   other-modules:
@@ -340,6 +341,7 @@ test-suite rpki-prover-test
       RPKI.Validation.BottomUpSpec
       RPKI.Validation.TopDownSpec
       RPKI.WorkerSpec
+      RPKI.Workflow.RevalidationSpec
       RPKI.Workflow.SharedSpec
       Paths_rpki_prover
   hs-source-dirs:

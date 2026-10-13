@@ -52,6 +52,7 @@ import           RPKI.Time
 import           RPKI.Util (convert, fmtEx)
 import           RPKI.Store.Base.Serialisation
 import qualified RPKI.Store.Database    as DB
+import           RPKI.Store.Types       (FetchUpdates)
 import qualified RPKI.Store.SQLite      as SQLite
 import           RPKI.Meta.UniqueId
 
@@ -280,13 +281,15 @@ workerEnvironment input = do
             [("SQLITE_TMPDIR", cacheDirectory)]
     pure $ Map.toList $ Map.fromList $ inherited <> fromMaybe [] sandbox
 
+-- What the fetch stored goes next to RrdpFetchStat, rather than 
+-- into it: RPKI.RRDP.Types comes before the store types.
 newtype RrdpFetchResult = RrdpFetchResult
-                            (Either AppError (RrdpRepository, RrdpFetchStat), ValidationState)    
+                            (Either AppError (RrdpRepository, RrdpFetchStat, FetchUpdates), ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
 newtype RsyncFetchResult = RsyncFetchResult 
-                            (Either AppError RsyncRepository, ValidationState)    
+                            (Either AppError (RsyncRepository, FetchUpdates), ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -297,9 +300,10 @@ newtype ErikFetchResult = ErikFetchResult
 
 -- | What the parent process needs to know about a finished Erik fetch beyond
 -- the validation state: which relays served it, so the UI can show where the
--- objects actually came from.
-newtype ErikFetchStat = ErikFetchStat {
-        relayUsage :: [ErikRelayUsage]
+-- objects actually came from, and what it stored.
+data ErikFetchStat = ErikFetchStat {
+        relayUsage   :: [ErikRelayUsage],
+        fetchUpdates :: FetchUpdates
     }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)

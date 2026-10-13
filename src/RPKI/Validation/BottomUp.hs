@@ -254,7 +254,7 @@ validateBottomUp
     findMftCrl db certificate mft = do
         let childrenAki = toAKI $ getSKI certificate
         MftPair _ crlHash <-
-                case findCrlOnMft $ mft ^. #content of
+                case filter isCrlEntry $ mftEntries $ mft ^. #content of
                     []    -> vError $ NoCRLOnMFT childrenAki
                     [crl] -> pure crl
                     crls  -> vError $ MoreThanOneCRLOnMFT childrenAki crls

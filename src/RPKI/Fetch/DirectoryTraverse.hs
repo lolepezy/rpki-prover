@@ -16,6 +16,7 @@ import           Control.Monad
 import qualified Data.ByteString                  as BS
 import           Data.Bifunctor
 import           Data.Foldable                    (for_)
+import           Data.IORef
 import qualified Data.Map.Strict                  as Map
 import           Data.String.Interpolate.IsString
 
@@ -38,7 +39,6 @@ import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Parse.Parse
 import           RPKI.Store.Types
-import           RPKI.Store.Base.Storable (StorableObject(..), Compressed(..), toStorableObject)
 import           RPKI.Store.Database      (DB, roTx)
 import qualified RPKI.Store.Database      as DB
 import qualified RPKI.Util                as U
@@ -47,25 +47,28 @@ import           RPKI.Validation.ObjectValidation
 
 -- | Recursively traverse a directory and save every parseable object into the
 -- storage. `restoreUrl` maps a file back to the URL the object is published at.
+-- Gives back what it stored that can be a reason to revalidate.
 --
 -- Is not supposed to throw exceptions.
 loadObjectsFromFS :: (ValidatorIO es, Concurrent :> es) => AppContext s
                   -> WorldVersion
                   -> (FilePath -> Maybe RsyncURL)
                   -> FilePath
-                  -> Eff es ()
+                  -> Eff es FetchUpdates
 loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
     db <- liftIO $ readTVarIO database
     -- As many capabilities as for an RRDP snapshot
     void $ liftIO $ useAvailableCpus $ config ^. typed @Parallelism . #cpuCount
     scopes <- askScopes
+    storedUpdates <- liftIO $ newIORef mempty
     txPoolPipeline
         CompletionOrder
         (objectFiles rootPath)
         (\(path, uri) -> trySync $ 
             evaluate =<< runValidator scopes (readAndParseObject db path (RsyncU <$> uri)))
         (DB.rwAppTx db)
-        saveStorable
+        (saveStorable storedUpdates)
+    liftIO $ readIORef storedUpdates
   where
     -- Files of supported types in the tree and the URLs their paths tell, 
     -- one directory at a time
@@ -96,11 +99,11 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                                 (_, lifecycle) <- parseAndPrevalidate type_ hashedBlob rpkiURL
                                 -- Encode/compress the object here, on a worker, so
                                 -- the single-threaded DB-writer only has to do the INSERT.
-                                pure $! SaveObject rpkiURL (toStorableObject (Compressed lifecycle))
+                                pure $! SaveObject rpkiURL lifecycle (DB.prepareLifecycle lifecycle)
                     Nothing ->
                         pure $! UknownObjectType rpkiURL filePath
 
-    saveStorable tx processed = do
+    saveStorable storedUpdates tx processed = do
         (r, vs) <- either (appError . UnspecifiedE "Something bad happened in loadObjectsFromFS" . U.fmtEx) pure processed
         embedState vs
         case r of
@@ -118,15 +121,16 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                     atObject rpkiUrl filePath $
                         appWarn $ RsyncE $ RsyncUnsupportedObjectType $ U.convert filePath
 
-                SaveObject rpkiUrl so@StorableObject { object = Compressed lifecycle } -> do
+                SaveObject rpkiUrl lifecycle prepared -> do
                     case lifecycle of
                         OriginalRO _ vs1 _ _ -> do
                             logError logger [i|Object #{rpkiUrl} failed parse/prevalidation.|]
                             embedState vs1
                         WellStructuredRO _ -> pure ()
 
-                    key <- DB.saveStorableObject tx so worldVersion
-                    for_ rpkiUrl $ \u -> DB.linkObjectToUrl tx u key worldVersion
+                    inserted <- DB.insertPreparedObject tx prepared worldVersion
+                    rememberInserted storedUpdates inserted
+                    for_ rpkiUrl $ \u -> DB.linkObjectToUrl tx u inserted.key worldVersion
                     updateMetric @TraverseMetric @_ (#processed %~
                         Map.unionWith (+) (Map.singleton (Just $ getRpkiObjectType lifecycle) 1))
                 other ->
@@ -204,5 +208,5 @@ data ObjectProcessingResult =
           CantReadFile (Maybe RpkiURL) FilePath VIssue
         | HashExists (Maybe RpkiURL) Hash ObjectKey
         | UknownObjectType (Maybe RpkiURL) FilePath
-        | SaveObject (Maybe RpkiURL) (StorableObject (Compressed RpkiObjectLifecycle))
+        | SaveObject (Maybe RpkiURL) RpkiObjectLifecycle PreparedObject
     deriving stock (Show, Eq, Generic)

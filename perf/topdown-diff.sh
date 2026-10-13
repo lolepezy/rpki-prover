@@ -91,8 +91,11 @@ dump('shortcut-meta.txt',
      'SELECT aki, data FROM mft_shortcut_meta ORDER BY aki',
      lambda r: (k(r[0]), h(r[1])))
 dump('shortcut-children.txt',
-     'SELECT aki, child_key, file_name FROM mft_shortcut_children ORDER BY aki, child_key',
+     'SELECT aki, child_key, file_name FROM mft_shortcut_payload_children ORDER BY aki, child_key',
      lambda r: (k(r[0]), str(r[1]), r[2]))
+dump('shortcut-ca-children.txt',
+     'SELECT aki, child_key, file_name, valid FROM mft_shortcut_ca_children ORDER BY aki, child_key',
+     lambda r: (k(r[0]), str(r[1]), r[2], str(r[3])))
 dump('shortcuts.txt',
      'SELECT object_key, data FROM shortcuts ORDER BY object_key',
      lambda r: (str(r[0]), h(r[1])))
@@ -104,7 +107,8 @@ wipe_shortcuts() {
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 c.executescript('''
-    DELETE FROM mft_shortcut_children;
+    DELETE FROM mft_shortcut_payload_children;
+    DELETE FROM mft_shortcut_ca_children;
     DELETE FROM shortcuts;
     DELETE FROM mft_shortcut_meta;
 ''')

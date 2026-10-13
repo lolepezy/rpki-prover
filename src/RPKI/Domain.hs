@@ -679,6 +679,9 @@ data Manifest = Manifest {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
 
+isCrlEntry :: MftPair -> Bool
+isCrlEntry (MftPair name _) = ".crl" `Text.isSuffixOf` name
+
 data SignCRL = SignCRL {
         thisUpdateTime     :: Instant,
         nextUpdateTime     :: Instant,

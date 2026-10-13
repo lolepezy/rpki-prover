@@ -11,7 +11,7 @@ import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString                   as BS
 import qualified Data.List                         as List
-import           Data.Maybe                        (isJust, isNothing)
+import           Data.Maybe                        (catMaybes, fromJust, isJust, isNothing)
 import qualified Data.Map.Strict                   as Map
 import qualified Data.Set                          as Set
 import qualified Data.Text                         as Text
@@ -40,6 +40,7 @@ import           RPKI.Store.Base.Storable
 import           RPKI.Store.Database               (DB(..), Tx(..), roTx, rwTx)
 import qualified RPKI.Store.Database               as DB
 import           RPKI.Validation.ObjectValidation
+import           RPKI.Validation.Types
 import qualified RPKI.Store.SQLite                 as SQLite
 import           RPKI.Store.Types
 import qualified Data.Text.Encoding                as Text
@@ -57,11 +58,16 @@ databaseGroup = testGroup "SQLite storage tests"
     , txGroup
     , dbGroup
     , erikStoreGroup
+    , manifestUpdatesGroup
     ]
 
 objectStoreGroup :: TestTree
 objectStoreGroup = testGroup "Object storage test"
     [ dbTestCase "Should order manifests according to their dates" shouldOrderManifests
+    , dbTestCase "Should store the content digest of a manifest" shouldStoreManifestContentDigest
+    , dbTestCase "Should tell which manifest an insert stored" shouldTellNewManifestOnInsert
+    , dbTestCase "Should tell whether the objects a manifest lists are stored" shouldTellManifestObjectsStored
+    , dbTestCase "Should tell whether there's a certificate with a key" shouldTellCertificateWithKey
     , dbTestCase "Should order manifests by thisTime, not by manifest_number"
         shouldOrderManifestsByThisTimeNotNumber
     , dbTestCase "Should order manifests by nextTime when thisTime ties"
@@ -79,6 +85,8 @@ objectStoreGroup = testGroup "Object storage test"
         shouldComputeObjectSizeStats
     , dbTestCase "Should not report TA certificates as having multiple locations"
         shouldNotCountTaCertificatesAsMultiLocation
+    , dbTestCase "Should keep CA and payload shortcut children in their own tables"
+        shouldKeepShortcutChildrenInTheirTables
     ]
 
 erikStoreGroup :: TestTree
@@ -410,6 +418,71 @@ shouldNotCountTaCertificatesAsMultiLocation io = do
         (Set.singleton ordinaryKey) multi
 
 
+-- | CA certificates go to `mft_shortcut_ca_children` together with their 
+-- validity, everything else to `mft_shortcut_payload_children`. Reads bring 
+-- both back, deletes clear both, and deleting the object cascades into both.
+shouldKeepShortcutChildrenInTheirTables :: IO DB -> HU.Assertion
+shouldKeepShortcutChildrenInTheirTables io = do
+    db <- io
+    worldVersion <- instantToVersion . unNow <$> thisInstant
+    [roaObject, caObject, unindexedObject] <- distinctObjects 3
+    roaKey       <- storeAt db roaObject worldVersion
+    caKey        <- storeAt db caObject worldVersion
+    unindexedKey <- storeAt db unindexedObject worldVersion
+
+    -- Every parsed CA certificate has a `certificates` row
+    rwTx db $ \(Tx conn) ->
+        SQLite.execute conn "INSERT INTO certificates(object_key, ski, aki) VALUES (?, ?, NULL)"
+            (caKey, "01234567890123456789" :: BS.ByteString)
+
+    let aki = AKI (mkKI "98765432109876543210")
+    let row k fileName caCert = 
+            DB.ShortcutChildRow k fileName caCert (unStorable $ toStorable $ Compressed $ TroubledChild k)
+    let entry k fileName caCert = MftEntry fileName (TroubledChild k) caCert
+
+    rwTx db $ \tx -> DB.insertMftShortcutChildren tx aki
+        [ row roaKey "a.roa" Nothing
+        , row caKey "b.cer" (Just ValidCaChild)
+        -- No `certificates` row, so it can't be in the CA table, the 
+        -- foreign key would fail the transaction. It goes to the payload one.
+        , row unindexedKey "c.cer" (Just InvalidCaChild)
+        ]
+
+    full <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Children must come back with what they are"
+        (Map.fromList [ (roaKey,       entry roaKey "a.roa" Nothing)
+                      , (caKey,        entry caKey "b.cer" (Just ValidCaChild))
+                      , (unindexedKey, entry unindexedKey "c.cer" Nothing) ])
+        full
+
+    caRows <- roTx db $ \(Tx conn) ->
+        SQLite.query conn "SELECT child_key, valid FROM mft_shortcut_ca_children WHERE aki = ?" (Only aki)
+    HU.assertEqual "Only the indexed CA certificate is in the CA table" [(caKey, 1 :: Int)] caRows
+
+    -- A CA certificate that turned invalid is written over its row
+    rwTx db $ \tx -> DB.insertMftShortcutChildren tx aki [row caKey "b.cer" (Just InvalidCaChild)]
+    light <- roTx db $ \tx -> DB.getMftShorcutChildrenLight tx aki
+    HU.assertEqual "The CA certificate must be invalid now"
+        (Just (TroubledChild caKey, Just InvalidCaChild)) (Map.lookup caKey light)
+    HU.assertEqual "There must be no duplicates" 3 (Map.size light)
+
+    fileNames <- roTx db $ \tx -> forM [roaKey, caKey] $ DB.getMftShortcutChildFileName tx aki
+    HU.assertEqual "File names come from both tables" [Just "a.roa", Just "b.cer"] fileNames
+
+    rwTx db $ \tx -> DB.deleteMftShortcutChildren tx aki [roaKey, caKey]
+    afterDelete <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Deleted children must be gone from both tables" [unindexedKey] (Map.keys afterDelete)
+
+    rwTx db $ \tx -> DB.insertMftShortcutChildren tx aki [row caKey "b.cer" (Just ValidCaChild)]
+    rwTx db $ \tx -> DB.deleteObjectByKey tx [caKey]
+    afterCascade <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Deleting the object must cascade into the CA table" [unindexedKey] (Map.keys afterCascade)
+
+    rwTx db $ \tx -> DB.deleteMftShortcut tx aki
+    afterShortcutDelete <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Deleting the shortcut must delete all its children" Map.empty afterShortcutDelete
+
+
 -- | Make an object look like something a manifest refers to, which is what
 -- `getMultiLocationShortcutChildren` reports on.
 markAsManifestChild :: DB -> ObjectKey -> IO ()
@@ -419,7 +492,7 @@ markAsManifestChild db key =
             "INSERT INTO shortcuts(object_key, data) VALUES (?, ?)"
             (key, "" :: BS.ByteString)
         SQLite.execute conn
-            "INSERT INTO mft_shortcut_children(aki, file_name, child_key) VALUES (?, ?, ?)"
+            "INSERT INTO mft_shortcut_payload_children(aki, file_name, child_key) VALUES (?, ?, ?)"
             ("" :: BS.ByteString, "child.roa" :: Text.Text, key)
 
 
@@ -513,6 +586,167 @@ shouldOrderManifests io = do
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) (toValidatedRpkiObject mft2)
 
 
+-- | The digest is computed when a manifest is stored, and kept in its meta.
+shouldStoreManifestContentDigest :: IO DB -> HU.Assertion
+shouldStoreManifestContentDigest io = do
+    db <- io
+    (Right (_, mft1), _) <- runValidatorIO (newScopes "read1") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
+    (Right (_, mft2), _) <- runValidatorIO (newScopes "read2") $ readObjectFromFile "./test/data/afrinic_mft2.mft"
+    [other] <- distinctObjects 1
+
+    worldVersion <- newVersion
+    (key1, key2, otherKey) <- rwTx db $ \tx -> (,,)
+        <$> DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft1) worldVersion
+        <*> DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft2) worldVersion
+        <*> storeIn tx other worldVersion
+
+    let digestOf = \case
+            MftRO m -> manifestContentDigest $ getCMSContent $ cmsPayload m
+            o       -> error $ "Not a manifest: " <> show o
+    HU.assertBool "The fixtures must list different objects" (digestOf mft1 /= digestOf mft2)
+
+    metas <- roTx db $ \tx -> mapM (DB.getMftMetaByKey tx) [key1, key2, otherKey]
+    HU.assertEqual "Each manifest must have its own digest, other objects no meta"
+        [Just (digestOf mft1), Just (digestOf mft2), Nothing]
+        (map (fmap (^. #contentDigest)) metas)
+
+    let Just aki1 = getAKI mft1
+    byAki <- roTx db $ \tx -> DB.getMftsForAKI tx aki1
+    HU.assertEqual "The metas of the AKI must be the same as by key"
+        (List.sort $ catMaybes $ take 2 metas) (List.sort byAki)
+  where
+    storeIn tx obj version = DB.saveObject tx
+        (OriginalRO (ObjectOriginal $ unStorable $ toStorable obj) mempty (getHash obj) (getRpkiObjectType obj))
+        version
+
+
+-- | An insert tells about a manifest only when it stored one, i.e. only the
+-- first time and only for a well-structured one. It tells the type of any
+-- object it stored.
+shouldTellNewManifestOnInsert :: IO DB -> HU.Assertion
+shouldTellNewManifestOnInsert io = do
+    db <- io
+    (Right (_, mft1), _) <- runValidatorIO (newScopes "read1") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
+    (Right (_, mft2), _) <- runValidatorIO (newScopes "read2") $ readObjectFromFile "./test/data/afrinic_mft2.mft"
+    [other] <- distinctObjects 1
+    worldVersion <- newVersion
+
+    let insert lifecycle = rwTx db $ \tx ->
+            DB.insertPreparedObject tx (DB.prepareLifecycle lifecycle) worldVersion
+    let wellStructured = WellStructuredRO . toValidatedRpkiObject
+    let unparsed o = OriginalRO (ObjectOriginal $ unStorable $ toStorable o) mempty (getHash o) (getRpkiObjectType o)
+    let expected key = \case
+            MftRO m -> let content = getCMSContent $ cmsPayload m
+                       in Just NewManifest {
+                            key           = key,
+                            aki           = fromJust $ getAKI m,
+                            thisTime      = content.thisTime,
+                            contentDigest = manifestContentDigest content
+                        }
+            o       -> error $ "Not a manifest: " <> show o
+    let told message lifecycle expectedObject expectedManifest = do
+            Inserted {..} <- insert lifecycle
+            HU.assertEqual message (expectedObject, expectedManifest key) (newObject, newManifest)
+
+    told "A new manifest must be told about" (wellStructured mft1) (Just MFT) (`expected` mft1)
+    told "A manifest stored before must not" (wellStructured mft1) Nothing (const Nothing)
+    told "Anything else only by its type" (unparsed other) (Just $ getRpkiObjectType other) (const Nothing)
+
+    -- An unparsed copy is replaced with the parsed one, which is when
+    -- the manifest becomes usable
+    told "An unparsed manifest must not be told about" (unparsed mft2) (Just MFT) (const Nothing)
+    told "Its parsed copy must be" (wellStructured mft2) (Just MFT) (`expected` mft2)
+
+
+-- | The revalidation decision only needs to know that a certificate is there.
+shouldTellCertificateWithKey :: IO DB -> HU.Assertion
+shouldTellCertificateWithKey io = do
+    db <- io
+    (Right (_, ca), _) <- runValidatorIO (newScopes "read") $
+        readObjectFromFile "./test/data/overcleaiming/2R93viIBHX4dV12fmttfjhYOX9k.cer"
+    worldVersion <- newVersion
+    let ski = case ca of
+            CerRO c -> getSKI c
+            o       -> error $ "Not a CA certificate: " <> show o
+        other = SKI $ mkKI "01234567890123456789"
+
+    roTx db (\tx -> DB.hasCertificate tx ski) >>= HU.assertEqual "Not stored yet" False
+    void $ rwTx db $ \tx -> DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject ca) worldVersion
+    roTx db (\tx -> DB.hasCertificate tx ski) >>= HU.assertEqual "Stored" True
+    roTx db (\tx -> DB.hasCertificate tx other) >>= HU.assertEqual "Another key" False
+
+
+-- | A manifest can't be used before everything it lists is in the cache.
+shouldTellManifestObjectsStored :: IO DB -> HU.Assertion
+shouldTellManifestObjectsStored io = do
+    db <- io
+    (Right (_, mft), _) <- runValidatorIO (newScopes "read") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
+    worldVersion <- newVersion
+
+    payload <- case toValidatedRpkiObject mft of
+        MftRO m -> pure m
+        o       -> HU.assertFailure $ "Not a manifest: " <> show o
+    let entries = payload ^. #content . #mftEntries
+    let storeEntry MftPair {..} = rwTx db $ \tx -> void $ DB.saveObject tx
+            (OriginalRO (ObjectOriginal $ Text.encodeUtf8 fileName) mempty hash ROA) worldVersion
+        allStored = roTx db $ \tx -> DB.manifestObjectsStored tx payload
+
+    HU.assertBool "The manifest must list something" (length entries > 1)
+    allStored >>= HU.assertEqual "Nothing it lists is stored" False
+
+    mapM_ storeEntry (drop 1 entries)
+    allStored >>= HU.assertEqual "One of its objects is still missing" False
+
+    mapM_ storeEntry (take 1 entries)
+    allStored >>= HU.assertEqual "Everything it lists is stored" True
+
+
+manifestUpdatesGroup :: TestTree
+manifestUpdatesGroup = testGroup "Manifest updates"
+    [ HU.testCase "Should keep the manifests up to the cap and only the fact there were many past it" $ do
+        let manifest n = NewManifest (ObjectKey $ ArtificialKey n) (AKI $ mkKI "01234567890123456789") (Instant n) (Hash mempty)
+        let stored n = StoredManifests [manifest i | i <- [1 .. n]]
+        let one i = StoredManifests [manifest i]
+
+        HU.assertEqual "Appending one at a time keeps them in order"
+            (stored 1000) (mconcat [ one i | i <- [1 .. 1000] ])
+        HU.assertEqual "One more is too many"
+            ManyManifests (mconcat [ one i | i <- [1 .. 1001] ])
+        HU.assertEqual "Two halves make the cap"
+            (stored 1000) (stored 500 <> StoredManifests [manifest i | i <- [501 .. 1000]])
+        HU.assertEqual "Nothing changes nothing" (stored 3) (mempty <> stored 3 <> mempty)
+    , HU.testCase "Should not forget there were many" $ do
+        let some = StoredManifests [aManifest]
+        HU.assertEqual "Many and some" ManyManifests (ManyManifests <> some)
+        HU.assertEqual "Some and many" ManyManifests (some <> ManyManifests)
+        HU.assertEqual "Many and none" ManyManifests (ManyManifests <> mempty)
+    , HU.testCase "Should remember new manifests and whether there were other new objects" $ do
+        stored <- newIORef mempty
+        let inserted newObject newManifest = rememberInserted stored $ Inserted (ObjectKey $ ArtificialKey 1) newObject newManifest
+            remembered = readIORef stored
+
+        inserted (Just CRL) Nothing
+        inserted Nothing Nothing
+        remembered >>= HU.assertEqual "A CRL and an object stored before are nothing new" mempty
+
+        inserted (Just MFT) (Just aManifest)
+        remembered >>= HU.assertEqual "A manifest is a manifest" (FetchUpdates (StoredManifests [aManifest]) False)
+
+        inserted (Just ROA) Nothing
+        remembered >>= HU.assertEqual "Anything else is a new object" (FetchUpdates (StoredManifests [aManifest]) True)
+
+        inserted (Just MFT) Nothing
+        remembered >>= HU.assertEqual "An unparsed manifest is neither" (FetchUpdates (StoredManifests [aManifest]) True)
+    , HU.testCase "Should combine what fetches stored" $ do
+        let manifests = FetchUpdates (StoredManifests [aManifest]) False
+            objects   = FetchUpdates mempty True
+        HU.assertEqual "Both" (FetchUpdates (StoredManifests [aManifest]) True) (manifests <> objects)
+        HU.assertEqual "Nothing changes nothing" manifests (mempty <> manifests <> mempty)
+    ]
+  where
+    aManifest = NewManifest (ObjectKey $ ArtificialKey 1) (AKI $ mkKI "01234567890123456789") (Instant 1) (Hash mempty)
+
+
 -- | Saves one fresh dummy object per descriptor (to satisfy manifest_meta's
 -- FK to objects) and inserts a manifest_meta row for each `(mftNumber,
 -- thisTime, nextTime)` descriptor, all under the given AKI. Bypasses
@@ -528,6 +762,7 @@ insertMftMetasFor db aki descriptors = do
             key <- DB.saveObject tx
                 (OriginalRO (ObjectOriginal $ unStorable $ toStorable ro) mempty (getHash ro) (getRpkiObjectType ro))
                 worldVersion
+            let contentDigest = Hash mempty
             let meta = MftMeta {..}
             SQLite.execute conn
                 "INSERT INTO manifest_meta(object_key, aki, manifest_number, meta) VALUES (?, ?, ?, ?)"

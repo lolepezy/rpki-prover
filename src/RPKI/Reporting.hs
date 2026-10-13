@@ -594,25 +594,31 @@ focusToText = \case
 scopeList :: Scope a -> [Focus]
 scopeList (Scope s) = NonEmpty.toList s
 
+-- | The RRDP repository of the innermost publication point of the scope, 
+-- if that publication point has one.
+innermostRrdpPP :: Scope a -> Maybe RrdpURL
+innermostRrdpPP s =
+    case [ url | PPFocus url <- scopeList s ] of
+        RrdpU url : _ -> Just url
+        _             -> Nothing
+
+-- | The cache is not consistent with what a manifest says: an object or a CRL
+-- on it is missing, or is something else.
+isReferentialIntegrityError :: AppError -> Bool
+isReferentialIntegrityError = \case
+    ValidationE e ->
+        case e of
+            MftFallback e' _                 -> isReferentialIntegrityError e'
+            ManifestEntryDoesn'tExist _ _    -> True
+            NoCRLExists _ _                  -> True
+            ManifestEntryHasWrongFileType {} -> True
+            ReferentialIntegrityError _      -> True
+            _                                -> False
+    _ -> False
+
 totalMapCount :: Map a Count -> Count
 totalMapCount m = sum $ Map.elems m
 
 
-rrdpRepoHasSignificantUpdates :: RrdpMetric -> Bool
-rrdpRepoHasSignificantUpdates RrdpMetric {..} = 
-    anySignificantPositive added || anySignificantPositive deleted   
-
-rsyncRepoHasSignificantUpdates :: TraverseMetric -> Bool
-rsyncRepoHasSignificantUpdates TraverseMetric {..} = anySignificantPositive processed
-
 anyPositive :: (Ord b, Num b) => Map a b -> Bool
 anyPositive m = Prelude.any ((> 0) . snd) $ Map.toList m    
-
-anySignificantPositive :: (Ord b, Num b) => Map (Maybe RpkiObjectType) b -> Bool
-anySignificantPositive m = Prelude.any f $ Map.toList m    
-  where
-    f (type_, c) = 
-        case type_ of 
-            Just MFT -> False
-            Just CRL -> False
-            _        -> c > 0
