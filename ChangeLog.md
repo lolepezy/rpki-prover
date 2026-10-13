@@ -7,7 +7,8 @@
   the manifest's thisUpdate if that is in the future, or if it stored any
   new object other than a manifest or a CRL. A manifest whose objects are
   not all stored yet waits for the fetch that stores them, and one of a CA
-  that the cache has no certificate for is ignored. Updates whose manifest
+  that the cache has no certificate for, or one that the CA didn't sign,
+  is ignored. Updates whose manifest
   comes in a later fetch than its objects are no longer left to the
   periodic revalidation.
 - A repository with manifests that refer to missing objects is fetched from

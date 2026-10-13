@@ -377,14 +377,18 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
         Now now <- thisInstant
         let runMode   = config ^. #proverRunMode
             algorithm = config ^. #validationConfig . #validationAlgorithm
-        (changes, waiting) <- case (runMode, fetchUpdates.manifests) of
+        (changes, (unsigned, waiting)) <- case (runMode, fetchUpdates.manifests) of
             (ServerMode, StoredManifests manifests) -> do
                 cas <- caViews manifests
                 let changes = [ (m, manifestRevalidation algorithm now m (cas Map.! m.aki)) 
                               | m <- manifests ]
-                waiting <- withObjectsMissing [ m.key | (m, (_, Just _)) <- changes ]
-                pure ([ c | (m, c) <- changes, m.key `Set.notMember` waiting ], Set.size waiting)
-            _ -> pure ([], 0)
+                let candidates = [ m | (m, (_, Just _)) <- changes ]
+                UnusableManifests {..} <- case candidates of
+                    [] -> pure mempty
+                    _  -> DB.roTxT database $ \tx -> unusableManifests tx candidates
+                pure ([ c | (m, c) <- changes, m.key `Set.notMember` (unsigned <> waiting) ], 
+                      (Set.size unsigned, Set.size waiting))
+            _ -> pure ([], (0, 0))
 
         let decision = fetchRevalidation runMode now fetchUpdates changes
         tas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVarIO uriByTa
@@ -395,17 +399,12 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 others = if fetchUpdates.newObjects then " and other new objects" else "" :: String
             let changed = length [ () | (_, Just _) <- changes ]
             logDebug logger $ [i|#{url} stored #{stored}#{others}, #{changed} of them to revalidate for, |] <>
-                              [i|#{waiting} waiting for their objects, decision: #{decision}, TAs: #{Set.toList tas}.|]
+                              [i|#{waiting} waiting for their objects, #{unsigned} not signed by their CA, |] <> 
+                              [i|decision: #{decision}, TAs: #{Set.toList tas}.|]
         case decision of
             NoRevalidation -> pure ()
             RevalidateNow  -> requestRevalidation tasToValidate tas
             RevalidateAt t -> scheduleRevalidationAt logger scheduledRevalidations tasToValidate tas t
-
-    -- The manifests that list objects the cache doesn't have yet
-    withObjectsMissing []   = pure mempty
-    withObjectsMissing keys =
-        DB.roTxT database $ \tx ->
-            Set.fromList <$> filterM (fmap not . DB.manifestObjectsStored tx) keys
 
     -- What the cache knows about the CA of every AKI: its shortcut and the digest
     -- of the manifest it is for, if it's still in the cache, or else whether there 

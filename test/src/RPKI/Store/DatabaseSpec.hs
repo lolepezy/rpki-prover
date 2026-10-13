@@ -683,13 +683,13 @@ shouldTellManifestObjectsStored io = do
     (Right (_, mft), _) <- runValidatorIO (newScopes "read") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
     worldVersion <- newVersion
 
-    mftKey <- rwTx db $ \tx -> DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft) worldVersion
-    let entries = case mft of
-            MftRO m -> getCMSContent (cmsPayload m) ^. #mftEntries
-            o       -> error $ "Not a manifest: " <> show o
-        storeEntry MftPair {..} = rwTx db $ \tx -> void $ DB.saveObject tx
+    payload <- case toValidatedRpkiObject mft of
+        MftRO m -> pure m
+        o       -> HU.assertFailure $ "Not a manifest: " <> show o
+    let entries = payload ^. #content . #mftEntries
+    let storeEntry MftPair {..} = rwTx db $ \tx -> void $ DB.saveObject tx
             (OriginalRO (ObjectOriginal $ Text.encodeUtf8 fileName) mempty hash ROA) worldVersion
-        allStored = roTx db $ \tx -> DB.manifestObjectsStored tx mftKey
+        allStored = roTx db $ \tx -> DB.manifestObjectsStored tx payload
 
     HU.assertBool "The manifest must list something" (length entries > 1)
     allStored >>= HU.assertEqual "Nothing it lists is stored" False
@@ -699,11 +699,6 @@ shouldTellManifestObjectsStored io = do
 
     mapM_ storeEntry (take 1 entries)
     allStored >>= HU.assertEqual "Everything it lists is stored" True
-
-    otherKey <- rwTx db $ \tx -> DB.saveObject tx
-        (OriginalRO (ObjectOriginal "other") mempty (Hash "other") ROA) worldVersion
-    (roTx db $ \tx -> DB.manifestObjectsStored tx otherKey)
-        >>= HU.assertEqual "Anything but a manifest waits for nothing" True
 
 
 manifestUpdatesGroup :: TestTree
