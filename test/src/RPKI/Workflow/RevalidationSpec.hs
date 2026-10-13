@@ -147,8 +147,8 @@ shouldTellUnusableManifests =
             other              -> HU.assertFailure $ "Can't read the fixtures: " <> show other
 
         let store o = DB.rwTx db $ \tx -> DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject o) version
-        otherCaKey <- store otherCa
         void $ store taCert
+        otherCaKey <- store otherCa
         taMftKey      <- store taMft
         afrinicMftKey <- store afrinicMft
 
@@ -179,7 +179,8 @@ shouldTellUnusableManifests =
         unusable [stored taMftKey taAki] >>= HU.assertEqual "Signed by its CA and complete" mempty
 
         -- A certificate with the SKI of the CA but another key, which prevalidation
-        -- doesn't let into the cache, and found before the one of the CA
+        -- doesn't let into the cache, and found before the one of the CA: the most
+        -- recently stored ones come first
         DB.rwTx db $ \(Tx conn) ->
             SQLite.execute conn "UPDATE certificates SET ski = ? WHERE object_key = ?" (SKI $ unAKI taAki, otherCaKey)
         unusable [stored taMftKey taAki] >>= HU.assertEqual

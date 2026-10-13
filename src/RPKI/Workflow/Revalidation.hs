@@ -165,7 +165,7 @@ unusableManifests :: MonadIO m => Tx mode -> [NewManifest] -> m UnusableManifest
 unusableManifests tx manifests = do
     caCerts <- fmap Map.fromList $
         forM (Set.toList $ Set.fromList [ m.aki | m <- manifests ]) $ \aki ->
-            (aki, ) <$> DB.getBySKI tx (SKI $ unAKI aki)
+            (aki, ) <$> DB.getBySKIUpTo tx (SKI $ unAKI aki) maxCertificatesPerCa
     fmap mconcat $ forM manifests $ \m ->
         DB.getMftByKey tx m.key >>= \case
             Nothing  -> pure mempty
@@ -177,3 +177,9 @@ unusableManifests tx manifests = do
                     _ -> do
                         stored <- DB.manifestObjectsStored tx payload
                         pure $ if stored then mempty else mempty { waiting = Set.singleton m.key }
+
+-- | How many of the certificates with the SKI of a CA a manifest is checked
+-- against, the most recent ones. Real CAs have one or two. Anyone can publish 
+-- any number of them, with the key of the CA, so a few tell as much as all.
+maxCertificatesPerCa :: Int
+maxCertificatesPerCa = 16
