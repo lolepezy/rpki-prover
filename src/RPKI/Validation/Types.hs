@@ -53,7 +53,7 @@ data CaChildValidity = ValidCaChild | InvalidCaChild
 
 
 data CrlShortcut = CrlShortcut {
-        key            :: {-# UNPACK #-} ObjectKey,
+        key       :: {-# UNPACK #-} ObjectKey,
         notBefore :: {-# UNPACK #-} Instant,
         notAfter  :: {-# UNPACK #-} Instant        
     }

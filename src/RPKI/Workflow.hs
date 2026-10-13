@@ -103,6 +103,8 @@ import qualified UnliftIO.Exception              as UIO
 -- 
 runValidatorWorkflow :: MaintainableStorage s => AppContext s -> [TAL] -> IO ()
 runValidatorWorkflow appContext@AppContext {..} tals = do    
+    -- There might be more TAs in the cache than there are in the `tals`, 
+    -- they can stay from a previous run.
     DB.rwTxT database $ \tx ->
         DB.setActiveTAs tx (map getTaName tals)
         
