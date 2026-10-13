@@ -156,19 +156,23 @@ fetchRevalidation runMode now updates changes =
 --
 -- Validation only tries the manifests that their CA signed (`signedByCa`).
 -- When there's no certificate of the CA to check that with, the manifest is
--- taken as signed, so that a reason to revalidate is never lost.
+-- taken as signed, so that a reason to revalidate is never lost. For the same
+-- reason it's enough that any of the certificates with the SKI of the CA signed
+-- it. They all have the same key anyway (`validateSKIMatchesPublicKey`), unless 
+-- some way into the cache skips that check, and then the first one found could
+-- make the manifest of the CA look unsigned.
 unusableManifests :: MonadIO m => Tx mode -> [NewManifest] -> m UnusableManifests
 unusableManifests tx manifests = do
     caCerts <- fmap Map.fromList $
         forM (Set.toList $ Set.fromList [ m.aki | m <- manifests ]) $ \aki ->
-            (aki, ) <$> DB.getFirstCaCertBySKI tx (SKI $ unAKI aki)
+            (aki, ) <$> DB.getBySKI tx (SKI $ unAKI aki)
     fmap mconcat $ forM manifests $ \m ->
         DB.getMftByKey tx m.key >>= \case
             Nothing  -> pure mempty
             Just mft -> do
                 let payload = mft ^. #object . #payload
-                case join (Map.lookup m.aki caCerts) of
-                    Just ca | not (signedByCa ca payload) ->
+                case Map.findWithDefault [] m.aki caCerts of
+                    cas@(_ : _) | not (any (`signedByCa` payload) cas) ->
                         pure $ mempty { unsigned = Set.singleton m.key }
                     _ -> do
                         stored <- DB.manifestObjectsStored tx payload
