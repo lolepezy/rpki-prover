@@ -41,39 +41,47 @@ shouldCompareWithShortcut = do
 
     HU.assertEqual "Without shortcuts every manifest counts"
         (FullValidation, Just now)
-        (manifestRevalidation FullEveryIteration now current (Just usable))
+        (manifestRevalidation FullEveryIteration now current (WithShortcut usable))
 
     HU.assertEqual "A CA without a shortcut"
         (NoShortcut, Just now)
-        (compareWith current Nothing)
+        (compareWith current WithoutShortcut)
+
+    HU.assertEqual "A CA that no certificate in the cache has the key of"
+        (UnknownCa, Nothing)
+        (compareWith current NoCertificate)
+
+    HU.assertEqual "... with or without shortcuts"
+        (UnknownCa, Nothing)
+        (manifestRevalidation FullEveryIteration now current NoCertificate)
 
     HU.assertEqual "A shortcut past its validity"
         (ShortcutUnusable, Just now)
-        (compareWith current $ Just $ usable & #shortcut . #notAfter .~ atHour 99)
+        (compareWith current $ WithShortcut $ usable & #shortcut . #notAfter .~ atHour 99)
 
     HU.assertEqual "A shortcut with its CRL past its validity"
         (ShortcutUnusable, Just now)
-        (compareWith current $ Just $ usable & #shortcut . #crlShortcut . #notAfter .~ atHour 99)
+        (compareWith current $ WithShortcut $ usable & #shortcut . #crlShortcut . #notAfter .~ atHour 99)
 
     HU.assertEqual "A shortcut whose manifest is gone from the cache"
         (ShortcutManifestGone, Just now)
-        (compareWith current $ Just $ usable & #digest .~ Nothing)
+        (compareWith current $ WithShortcut $ usable & #digest .~ Nothing)
 
     HU.assertEqual "Another content"
         (ContentChanged, Just now)
-        (compareWith (mft (atHour 99) "D2") (Just usable))
+        (compareWith (mft (atHour 99) "D2") (WithShortcut usable))
 
     HU.assertEqual "Another content, of a manifest that is current only later"
         (ContentChanged, Just $ atHour 101)
-        (compareWith (mft (atHour 101) "D2") (Just usable))
+        (compareWith (mft (atHour 101) "D2") (WithShortcut usable))
 
     HU.assertEqual "The same content"
         (SameContent, Nothing)
-        (compareWith future (Just usable))
+        (compareWith future (WithShortcut usable))
 
     HU.assertEqual "The same content as a shortcut accepted with warnings"
         (SameContent, Nothing)
-        (compareWith current $ Just $ usable & #shortcut . #hasIssues .~ True)
+        (compareWith current $ WithShortcut $ usable & #shortcut . #hasIssues .~ True)
 
 
 shouldDecideForFetch :: HU.Assertion

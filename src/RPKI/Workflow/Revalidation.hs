@@ -9,6 +9,9 @@
      and there's nothing to do. Otherwise, the TA is revalidated once the
      manifest is current, i.e. at its thisUpdate.
 
+     A manifest of a CA that no certificate in the cache has the key of is no 
+     reason either: validation can't get to it.
+
      A manifest and the objects it lists don't always come in the same fetch.
      A manifest that lists objects not stored yet can't be used, validation
      falls back to an older one, so it is no reason to revalidate. The fetch
@@ -29,8 +32,13 @@ import           RPKI.Validation.TopDown.Shortcuts (shortcutIsUsable)
 
 -- | How a new manifest compares with what the last validation accepted.
 data ManifestChange
+    -- | No certificate in the cache has the key of the CA, so validation can't 
+    -- get to the manifest. The certificate is a new object when it comes, and 
+    -- that is a reason to revalidate. Until then, there's nothing to do: some 
+    -- publishers keep re-issuing manifests of CAs that have no certificate.
+    = UnknownCa
     -- | There are no shortcuts, every manifest counts
-    = FullValidation
+    | FullValidation
     -- | A new CA, or one without an accepted manifest
     | NoShortcut
     -- | The shortcut is past its validity, or its CRL is: the CA is
@@ -51,39 +59,45 @@ data ShortcutView = ShortcutView {
     }
     deriving stock (Show, Eq, Generic)
 
+-- | What the cache knows about the CA of a new manifest.
+data CaView = NoCertificate
+            | WithoutShortcut
+            | WithShortcut ShortcutView
+    deriving stock (Show, Eq, Generic)
+
 data RevalidationDecision = RevalidateNow
                           | RevalidateAt Instant
                           | NoRevalidation
     deriving stock (Show, Eq, Ord, Generic)
 
 
--- | A new manifest against the shortcut of its AKI: how it compares, and
--- when to revalidate because of it, if at all. It is not before the
+-- | A new manifest against what the cache knows about its CA: how it compares, 
+-- and when to revalidate because of it, if at all. It is not before the
 -- manifest is current, i.e. its thisUpdate.
 manifestRevalidation :: ValidationAlgorithm
                      -> Instant
                      -> NewManifest
-                     -> Maybe ShortcutView
+                     -> CaView
                      -> (ManifestChange, Maybe Instant)
-manifestRevalidation algorithm now newManifest shortcutView =
+manifestRevalidation algorithm now newManifest ca =
     (change, case change of
                 SameContent -> Nothing
+                UnknownCa   -> Nothing
                 _           -> Just $ max now newManifest.thisTime)
   where
     change =
-        case algorithm of
-            FullEveryIteration -> FullValidation
-            Incremental ->
-                case shortcutView of
-                    Nothing -> NoShortcut
-                    Just ShortcutView {..}
-                        | not (shortcutIsUsable (Now now) shortcut) -> ShortcutUnusable
-                        | otherwise ->
-                            case digest of
-                                Nothing -> ShortcutManifestGone
-                                Just d
-                                    | d == newManifest.contentDigest -> SameContent
-                                    | otherwise                      -> ContentChanged
+        case (algorithm, ca) of
+            (_, NoCertificate)                   -> UnknownCa
+            (FullEveryIteration, _)              -> FullValidation
+            (Incremental, WithoutShortcut)       -> NoShortcut
+            (Incremental, WithShortcut ShortcutView {..})
+                | not (shortcutIsUsable (Now now) shortcut) -> ShortcutUnusable
+                | otherwise ->
+                    case digest of
+                        Nothing -> ShortcutManifestGone
+                        Just d
+                            | d == newManifest.contentDigest -> SameContent
+                            | otherwise                      -> ContentChanged
 
 
 -- | One decision for one fetch: the earliest moment over its manifests.

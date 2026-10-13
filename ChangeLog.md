@@ -6,9 +6,10 @@
   it stored lists other objects than the one the last validation used, at
   the manifest's thisUpdate if that is in the future, or if it stored any
   new object other than a manifest or a CRL. A manifest whose objects are
-  not all stored yet waits for the fetch that stores them. Updates whose
-  manifest comes in a later fetch than its objects are no longer left to
-  the periodic revalidation.
+  not all stored yet waits for the fetch that stores them, and one of a CA
+  that the cache has no certificate for is ignored. Updates whose manifest
+  comes in a later fetch than its objects are no longer left to the
+  periodic revalidation.
 - A repository with manifests that refer to missing objects is fetched from
   a snapshot only when no manifest of the CA can be used, not as soon as a
   newer one fails while falling back to an older one works.
