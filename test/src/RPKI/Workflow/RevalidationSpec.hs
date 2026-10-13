@@ -66,7 +66,7 @@ shouldDecideForFetch = do
 
     HU.assertEqual "In one-off mode every fetch counts"
         RevalidateNow
-        (fetchRevalidation (OneOffMode "vrps.csv") mempty [])
+        (fetchRevalidation (OneOffMode "vrps.csv") nothingStored [])
 
     HU.assertEqual "Too many manifests to compare"
         RevalidateNow
@@ -74,7 +74,7 @@ shouldDecideForFetch = do
 
     HU.assertEqual "A new object other than a manifest or a CRL"
         RevalidateNow
-        (decide (FetchUpdates mempty True) [])
+        (decide (nothingStored & #newObjects .~ True) [])
 
     HU.assertEqual "A new object, with manifests that change nothing"
         RevalidateNow
@@ -86,7 +86,7 @@ shouldDecideForFetch = do
 
     HU.assertEqual "Nothing stored"
         NoRevalidation
-        (decide mempty [])
+        (decide nothingStored [])
 
     HU.assertEqual "One manifest that changes something is enough"
         RevalidateNow

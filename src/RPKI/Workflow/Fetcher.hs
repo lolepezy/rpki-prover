@@ -31,7 +31,7 @@ import qualified Data.Map.Strict                 as Map
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
 import           Data.Set                        (Set)
 import qualified Data.Set                        as Set
-import           Data.Maybe                      (catMaybes, fromMaybe, isJust)
+import           Data.Maybe                      (fromMaybe)
 import qualified Data.IxSet.Typed                as IxSet
 
 import           Data.String.Interpolate.IsString
@@ -47,7 +47,7 @@ import           RPKI.Metrics.Prometheus
 import           RPKI.Reporting
 import           RPKI.Repository
 import qualified RPKI.Store.Database             as DB
-import           RPKI.Store.Types                (FetchUpdates (..), ManifestUpdates (..), manifestUpdatesCap)
+import           RPKI.Store.Types                (FetchUpdates (..), ManifestUpdates (..), manifestUpdatesCap, nothingStored)
 import           RPKI.Parallel
 import           RPKI.Time
 import           RPKI.Util
@@ -155,7 +155,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 -- TODO It should be refactored to be more systematic: 
                 -- If a repository was successfully fetched before, try to fetch the update 
                 -- using Erik relays (if configured)
-                case (config ^. typed @ErikConf . #relays, getFetchStatus repository) of 
+                interval <- case (config ^. typed @ErikConf . #relays, getFetchStatus repository) of 
                     (erikRelays, FetchedAt {}) 
                         | not (null erikRelays) -> 
                             usableErikRelays appState erikRelays >>= \case 
@@ -167,6 +167,8 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                     _ -> 
                             fetchPrimary repository worldVersion
 
+                revalidateFor worldVersion
+                pure interval
       where
         fetchPrimary repository worldVersion = do
             (r, validations, duration) <-                 
@@ -180,10 +182,9 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
             -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
             case r of
-                Right FetchResult { repository = repository', rrdpStat, fetchUpdates } -> do
+                Right (repository', stats) -> do
                     interval <- recordFetchOutcome repository' worldVersion 
-                                    (FetchedAt (versionToInstant worldVersion)) rrdpStat duration validations
-                    revalidateFor fetchUpdates
+                                    (FetchedAt (versionToInstant worldVersion)) stats duration validations
                     pure $ Just interval
 
                 Left _ -> do
@@ -196,8 +197,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                             pure Nothing
                         Just fallbacks -> do  
                             -- TODO Maybe try Erik relay before trying rsync
-                            (anySucceeded, fetchUpdates) <- fetchFallbacks worldVersion fallbacks                                                            
-                            revalidateFor fetchUpdates
+                            anySucceeded <- fetchFallbacks worldVersion fallbacks                                                            
                             pure $ Just $ 
                                 if not anySucceeded 
                                     -- nothing responded, so just go with the normal exponential backoff thing
@@ -259,7 +259,6 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                         let newStatus = FetchedAt (versionToInstant worldVersion)
                         interval <- recordFetchOutcome repository worldVersion newStatus Nothing duration validations
                         saveErikFetchOutcome fqdn newStatus interval relayUsage validations
-                        revalidateFor fetchUpdates
                         pure $ Just interval
 
                     Left e -> do
@@ -289,22 +288,21 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
                 updatePrometheusForRepository fallbackUrl duration prometheusMetrics
                 pure $ case r of
-                    Right FetchResult { repository = repository', fetchUpdates } -> 
+                    Right (repository', _noRrdpStats) -> 
                         -- realistically at this time the only fallback repositories are rsync, so 
                         -- there's no RrdpFetchStat ever
                         (updateMeta' repository' (#status .~ FetchedAt (versionToInstant worldVersion)), 
-                         validations, Just fetchUpdates)
+                         validations, True)
                     Left _ ->
                         (updateMeta' repository (#status .~ FailedAt (versionToInstant worldVersion)), 
-                         validations, Nothing)
+                         validations, False)
 
             DB.rwTxT database $ \tx -> do
                 DB.saveRepositories tx [ repo | (repo, _, _) <- repositories ]
                 DB.saveRepositoryValidationStates tx [ (repo, vs) | (repo, vs, _) <- repositories ]
 
-            -- Whether any of them got through, and all they stored
-            let fetched = [ updates | (_, _, updates) <- repositories ]
-            pure (any isJust fetched, mconcat $ catMaybes fetched)
+            -- Whether any of them got through
+            pure $ or [ succeeded | (_, _, succeeded) <- repositories ]
         
 
     -- Every fetch attempt is timed and reported under its own repository scope.
@@ -364,26 +362,32 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             DB.saveErikRepositoryValidationStates tx [(erikRepository, validations)]
 
 
-    -- Ask for the TAs that use the repository to be revalidated, if what a fetch 
-    -- stored changes what the last validation found (see 
+    -- Ask for the TAs that use the repository to be revalidated, if what the 
+    -- fetch stored changes what the last validation found (see 
     -- RPKI.Workflow.Revalidation). New manifests are compared with the manifest 
     -- shortcuts after the fetch, i.e. as late as possible before the validation 
     -- that uses them.
     --
+    -- What the fetch stored is what the cache has with its world version, the 
+    -- same for the primary repository, its fallbacks and Erik relays. Also 
+    -- after a fetch that failed: it may have stored something before that.
+    --
     -- In the one-off mode there is no next round, so every finished fetch has 
     -- to be able to unblock the validation, whether it found anything or not.
-    revalidateFor fetchUpdates = do
+    revalidateFor worldVersion = do
         let runMode   = config ^. #proverRunMode
             algorithm = config ^. #validationConfig . #validationAlgorithm
-        verdicts <- case (runMode, fetchUpdates.manifests) of
-            (ServerMode, StoredManifests manifests@(_ : _)) -> do
-                now <- thisInstant
-                DB.roTxT database $ \tx -> mapM (manifestVerdict tx algorithm now) manifests
-            _ -> pure []
+        now <- thisInstant
+        (fetchUpdates, verdicts) <- DB.roTxT database $ \tx -> do
+            fetchUpdates <- DB.storedByFetch tx worldVersion
+            verdicts <- case (runMode, fetchUpdates.manifests) of
+                (ServerMode, StoredManifests manifests) -> mapM (manifestVerdict tx algorithm now) manifests
+                _                                       -> pure []
+            pure (fetchUpdates, verdicts)
 
         let decision = fetchRevalidation runMode fetchUpdates verdicts
         tas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVarIO uriByTa
-        unless (fetchUpdates == mempty && decision == NoRevalidation) $ do
+        unless (fetchUpdates == nothingStored && decision == NoRevalidation) $ do
             let stored = case fetchUpdates.manifests of
                     StoredManifests ms -> [i|#{length ms} new manifest(s)|]
                     ManyManifests      -> [i|more than #{manifestUpdatesCap} new manifests|] :: String

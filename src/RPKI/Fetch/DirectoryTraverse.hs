@@ -16,7 +16,6 @@ import           Control.Monad
 import qualified Data.ByteString                  as BS
 import           Data.Bifunctor
 import           Data.Foldable                    (for_)
-import           Data.IORef
 import qualified Data.Map.Strict                  as Map
 import           Data.String.Interpolate.IsString
 
@@ -47,28 +46,25 @@ import           RPKI.Validation.ObjectValidation
 
 -- | Recursively traverse a directory and save every parseable object into the
 -- storage. `restoreUrl` maps a file back to the URL the object is published at.
--- Gives back what it stored that can be a reason to revalidate.
 --
 -- Is not supposed to throw exceptions.
 loadObjectsFromFS :: (ValidatorIO es, Concurrent :> es) => AppContext s
                   -> WorldVersion
                   -> (FilePath -> Maybe RsyncURL)
                   -> FilePath
-                  -> Eff es FetchUpdates
+                  -> Eff es ()
 loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
     db <- liftIO $ readTVarIO database
     -- As many capabilities as for an RRDP snapshot
     void $ liftIO $ useAvailableCpus $ config ^. typed @Parallelism . #cpuCount
     scopes <- askScopes
-    storedUpdates <- liftIO $ newIORef mempty
     txPoolPipeline
         CompletionOrder
         (objectFiles rootPath)
         (\(path, uri) -> trySync $ 
             evaluate =<< runValidator scopes (readAndParseObject db path (RsyncU <$> uri)))
         (DB.rwAppTx db)
-        (saveStorable storedUpdates)
-    liftIO $ readIORef storedUpdates
+        saveStorable
   where
     -- Files of supported types in the tree and the URLs their paths tell, 
     -- one directory at a time
@@ -103,7 +99,7 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                     Nothing ->
                         pure $! UknownObjectType rpkiURL filePath
 
-    saveStorable storedUpdates tx processed = do
+    saveStorable tx processed = do
         (r, vs) <- either (appError . UnspecifiedE "Something bad happened in loadObjectsFromFS" . U.fmtEx) pure processed
         embedState vs
         case r of
@@ -128,9 +124,8 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                             embedState vs1
                         WellStructuredRO _ -> pure ()
 
-                    inserted <- DB.insertPreparedObject tx prepared worldVersion
-                    rememberInserted storedUpdates inserted
-                    for_ rpkiUrl $ \u -> DB.linkObjectToUrl tx u inserted.key worldVersion
+                    key <- DB.insertPreparedObject tx prepared worldVersion
+                    for_ rpkiUrl $ \u -> DB.linkObjectToUrl tx u key worldVersion
                     updateMetric @TraverseMetric @_ (#processed %~
                         Map.unionWith (+) (Map.singleton (Just $ getRpkiObjectType lifecycle) 1))
                 other ->

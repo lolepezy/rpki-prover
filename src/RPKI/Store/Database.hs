@@ -24,7 +24,7 @@ module RPKI.Store.Database (
     getLocationsByKey, getHashByKey,
     saveObject, saveStorableObject, prepareObject, prepareLifecycle, insertPreparedObject,
     getObjectMeta, linkObjectToUrl,
-    hashExists, existingHashes, manifestObjectsStored, getObjectsByHashes,
+    hashExists, existingHashes, manifestObjectsStored, storedByFetch, getObjectsByHashes,
     deleteObjectByHash, deleteObjectByKey,
     -- * Erik protocol functions
     getErikIndex, saveErikIndex, getAllErikIndexes,
@@ -369,14 +369,14 @@ saveObject :: MonadIO m
            -> RpkiObjectLifecycle
            -> WorldVersion
            -> m ObjectKey
-saveObject tx lifecycle wv = (.key) <$> saveStorableObject tx (toStorableObject (Compressed lifecycle)) wv
+saveObject tx lifecycle wv = saveStorableObject tx (toStorableObject (Compressed lifecycle)) wv
 
 
 saveStorableObject :: MonadIO m
                 => Tx 'RW
                 -> StorableObject (Compressed RpkiObjectLifecycle)
                 -> WorldVersion
-                -> m Inserted
+                -> m ObjectKey
 saveStorableObject tx so = insertPreparedObject tx (prepareObject so)
 
 
@@ -411,7 +411,7 @@ insertPreparedObject :: MonadIO m
                      => Tx 'RW
                      -> PreparedObject
                      -> WorldVersion
-                     -> m Inserted
+                     -> m ObjectKey
 insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
     existing <- query conn
         "SELECT object_key, original IS NOT NULL FROM objects WHERE hash = ?" (Only hash)
@@ -425,9 +425,9 @@ insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
                      WHERE object_key = ?|]
                 (typ, payload, wv, objectKey)
             saveIndexes objectKey
-            pure $ stored objectKey
+            pure objectKey
 
-        ((objectKey, _) : _, _) -> pure $ Inserted objectKey Nothing Nothing
+        ((objectKey, _) : _, _) -> pure objectKey
 
         ([], _) -> do
             [Only objectKey] <- query conn
@@ -436,14 +436,9 @@ insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
                 (hash, typ, payload, original, wv)
 
             saveIndexes objectKey
-            pure $ stored objectKey
+            pure objectKey
   where
     typ = show objectType
-
-    stored key = Inserted key (Just objectType) $
-        case indexEntry of
-            Just (ManifestIndex aki _ _ _ contentDigest) -> Just NewManifest {..}
-            _                                                   -> Nothing
 
     saveIndexes objectKey =
         case indexEntry of
@@ -519,6 +514,28 @@ manifestObjectsStored tx mft = do
     let hashes = [ hash | MftPair { hash } <- mft ^. #content . #mftEntries ]
     stored <- existingHashes tx hashes
     pure $ all (`Set.member` stored) hashes
+
+-- | What the fetch with the world version stored that can be a reason to 
+-- revalidate. An object is stored with the version of the fetch that stored 
+-- it, or that replaced its unparsed copy with a parsed one, and keeps it. 
+-- A manifest that didn't parse has no meta and isn't one of the manifests, 
+-- nor is it another object.
+storedByFetch :: MonadIO m => Tx mode -> WorldVersion -> m FetchUpdates
+storedByFetch (Tx conn) version = liftIO $ do
+    manifests <- query conn
+        [sql|SELECT m.aki, m.meta FROM objects o JOIN manifest_meta m ON m.object_key = o.object_key
+             WHERE o.world_version = ? LIMIT ?|]
+        (version, manifestUpdatesCap + 1)
+    others <- query conn
+        "SELECT 1 FROM objects WHERE world_version = ? AND type NOT IN (?, ?) LIMIT 1"
+        (version, show MFT, show CRL)
+    pure FetchUpdates {
+            manifests  = if length manifests > manifestUpdatesCap
+                            then ManyManifests
+                            else StoredManifests [ NewManifest meta.key aki meta.contentDigest
+                                                 | (aki, deserialiseField -> (meta :: MftMeta)) <- manifests ],
+            newObjects = not $ null (others :: [Only Int])
+        }
 
 -- | Bulk 'getObjectByKey' by hash. Hashes with no object, or with a row that
 -- has been stripped of its payload, are simply absent from the result.

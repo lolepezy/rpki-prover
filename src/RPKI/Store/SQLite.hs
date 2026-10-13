@@ -523,6 +523,8 @@ schemaDDL =
             CHECK (data IS NOT NULL OR original IS NOT NULL)
         )
       |]
+    -- What a fetch stored, by the version of the fetch
+    , "CREATE INDEX IF NOT EXISTS idx_objects_world_version ON objects(world_version)"
     , [sql|
         CREATE TABLE IF NOT EXISTS urls (
             url_key INTEGER PRIMARY KEY,

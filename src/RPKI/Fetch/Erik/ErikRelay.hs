@@ -15,7 +15,6 @@ import qualified Data.ByteString.Builder         as BB
 import qualified Data.ByteString.Lazy            as LBS
 import           Data.Generics.Product.Typed
 import           Data.Proxy
-import           Data.IORef
 import           Data.String.Interpolate.IsString
 import           Data.Text                       (Text)
 import qualified Data.Text                       as Text
@@ -132,11 +131,10 @@ fetchErik
     fqdn@(FQDN fqdn_) = do
 
     relays <- newRelays perRelayThreads relayUris
-    storedUpdates <- liftIO $ newIORef mempty
     -- Same metric rsync fills in: objects stored are counted into `processed`
     -- as they are for an rsync directory load. Timing it here is what gives
     -- that metric its `totalTimeMs`.
-    timedMetric (Proxy :: Proxy TraverseMetric) $ doFetch storedUpdates relays
+    timedMetric (Proxy :: Proxy TraverseMetric) $ doFetch relays
     -- Whatever happened inside -- a full download, an unchanged index, or a
     -- failure part-way through -- we know which relays answered.
     stats <- relayStats relays
@@ -154,18 +152,16 @@ fetchErik
         [ ErikRelayReport statRelay statServed 0
         | RelayStat {..} <- stats, statServed > 0 ]
 
-    toFetchStat stats <$> liftIO (readIORef storedUpdates)
+    pure $ toFetchStat stats
   where
 
     -- Only the relays that actually took part: we know about every configured
     -- relay, and listing the ones that were never touched says nothing about
     -- where the objects came from.
-    toFetchStat stats fetchUpdates = ErikFetchStat {
-            relayUsage = [ ErikRelayUsage statRelay statServed statFailed
-                         | RelayStat {..} <- stats
-                         , statServed > 0 || statFailed > 0 ],
-            fetchUpdates = fetchUpdates
-        }
+    toFetchStat stats = ErikFetchStat
+        [ ErikRelayUsage statRelay statServed statFailed
+        | RelayStat {..} <- stats
+        , statServed > 0 || statFailed > 0 ]
 
     parallelism = fromIntegral $ config ^. typed @ErikConf . #parallelism
 
@@ -214,7 +210,7 @@ fetchErik
             logDebug logger
                 [i|Erik worker for #{fqdn_}: #{partitionCount} partition(s), raising -N from #{current} to #{cpus}.|]
 
-    doFetch storedUpdates relays =
+    doFetch relays =
         withDir indexDir $ \_ ->
             U.ifJustM (getIndex relays) $ \(relayUri, index@ErikIndex {..}) -> do
                 logInfo logger [i|Erik index for #{fqdn_} updated, downloading partitions from #{length relayUris} relay(s).|]
@@ -259,7 +255,7 @@ fetchErik
                 forM_ stats $ \RelayStat {..} ->
                     logInfo logger [i|  #{statRelay}: served=#{statServed} failed=#{statFailed}|]
 
-                (_, loadMs) <- timedMS $ storePreparedObjects storedUpdates
+                (_, loadMs) <- timedMS storePreparedObjects
                 logInfo logger [i|Stored downloaded Erik objects for #{fqdn_}, took #{loadMs} ms.|]
 
                 {- Only a fetch that got everything may record the index as the
@@ -499,15 +495,15 @@ fetchErik
        otherwise be silently missing, and failing means the index is not
        recorded, so the next round tries again.
     -}
-    storePreparedObjects :: ValidatorIO es' => IORef FetchUpdates -> Eff es' ()
-    storePreparedObjects storedUpdates = do
+    storePreparedObjects :: ValidatorIO es' => Eff es' ()
+    storePreparedObjects = do
         db      <- liftIO $ readTVarIO database
         records <- liftIO $ spillRecords <$> LBS.readFile preparedObjectsFile
         DB.rwAppTx db $ \tx ->
             forM_ records $ \record -> do
                 prepared <- fromTry (ErikE . UnknownErikProblem . U.fmtEx) $
                                 evaluate $ deserialise_ @PreparedObject record
-                rememberInserted storedUpdates =<< DB.insertPreparedObject tx prepared worldVersion
+                void $ DB.insertPreparedObject tx prepared worldVersion
                 updateMetric @TraverseMetric @_ $
                     #processed %~ Map.unionWith (+) (Map.singleton (Just prepared.objectType) 1)
 

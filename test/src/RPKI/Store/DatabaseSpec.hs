@@ -58,14 +58,13 @@ databaseGroup = testGroup "SQLite storage tests"
     , txGroup
     , dbGroup
     , erikStoreGroup
-    , manifestUpdatesGroup
     ]
 
 objectStoreGroup :: TestTree
 objectStoreGroup = testGroup "Object storage test"
     [ dbTestCase "Should order manifests according to their dates" shouldOrderManifests
     , dbTestCase "Should store the content digest of a manifest" shouldStoreManifestContentDigest
-    , dbTestCase "Should tell which manifest an insert stored" shouldTellNewManifestOnInsert
+    , dbTestCase "Should tell what a fetch stored" shouldTellWhatAFetchStored
     , dbTestCase "Should tell whether the objects a manifest lists are stored" shouldTellManifestObjectsStored
     , dbTestCase "Should order manifests by thisTime, not by manifest_number"
         shouldOrderManifestsByThisTimeNotNumber
@@ -619,41 +618,52 @@ shouldStoreManifestContentDigest io = do
         version
 
 
--- | An insert tells about a manifest only when it stored one, i.e. only the
--- first time and only for a well-structured one. It tells the type of any
--- object it stored.
-shouldTellNewManifestOnInsert :: IO DB -> HU.Assertion
-shouldTellNewManifestOnInsert io = do
+-- | What a fetch stored is what the cache has with its version: the manifests
+-- that are new and parsed, and whether there was a new object other than a 
+-- manifest or a CRL.
+shouldTellWhatAFetchStored :: IO DB -> HU.Assertion
+shouldTellWhatAFetchStored io = do
     db <- io
     (Right (_, mft1), _) <- runValidatorIO (newScopes "read1") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
     (Right (_, mft2), _) <- runValidatorIO (newScopes "read2") $ readObjectFromFile "./test/data/afrinic_mft2.mft"
-    [other] <- distinctObjects 1
-    worldVersion <- newVersion
+    [v1, v2, v3, v4] <- newVersions 4
 
-    let insert lifecycle = rwTx db $ \tx ->
-            DB.insertPreparedObject tx (DB.prepareLifecycle lifecycle) worldVersion
-    let wellStructured = WellStructuredRO . toValidatedRpkiObject
-    let unparsed o = OriginalRO (ObjectOriginal $ unStorable $ toStorable o) mempty (getHash o) (getRpkiObjectType o)
-    let expected key = \case
-            MftRO m -> let content = getCMSContent $ cmsPayload m
-                       in Just NewManifest {
-                            key           = key,
-                            aki           = fromJust $ getAKI m,
-                            contentDigest = manifestContentDigest content
-                        }
+    let insert version lifecycle = rwTx db $ \tx ->
+            DB.insertPreparedObject tx (DB.prepareLifecycle lifecycle) version
+        storedBy version = roTx db $ \tx -> DB.storedByFetch tx version
+        wellStructured = WellStructuredRO . toValidatedRpkiObject
+        unparsed o = OriginalRO (ObjectOriginal $ unStorable $ toStorable o) mempty (getHash o) (getRpkiObjectType o)
+        newManifest key = \case
+            MftRO m -> NewManifest key (fromJust $ getAKI m) (manifestContentDigest $ getCMSContent $ cmsPayload m)
             o       -> error $ "Not a manifest: " <> show o
-    let told message lifecycle expectedObject expectedManifest = do
-            Inserted {..} <- insert lifecycle
-            HU.assertEqual message (expectedObject, expectedManifest key) (newObject, newManifest)
+        -- Objects of a type, with the hashes of what the manifest lists
+        listed type_ = case mft1 of
+            MftRO m -> [ OriginalRO (ObjectOriginal $ Text.encodeUtf8 fileName) mempty hash type_
+                       | MftPair {..} <- getCMSContent (cmsPayload m) ^. #mftEntries
+                       , isCrlEntry (MftPair fileName hash) == (type_ == CRL) ]
+            o       -> error $ "Not a manifest: " <> show o
 
-    told "A new manifest must be told about" (wellStructured mft1) (Just MFT) (`expected` mft1)
-    told "A manifest stored before must not" (wellStructured mft1) Nothing (const Nothing)
-    told "Anything else only by its type" (unparsed other) (Just $ getRpkiObjectType other) (const Nothing)
+    storedBy v1 >>= HU.assertEqual "Nothing yet" nothingStored
+
+    key1 <- insert v1 (wellStructured mft1)
+    storedBy v1 >>= HU.assertEqual "A new manifest"
+        (FetchUpdates (StoredManifests [newManifest key1 mft1]) False)
+
+    void $ insert v2 (wellStructured mft1)
+    forM_ (take 1 $ listed CRL) $ insert v2
+    storedBy v2 >>= HU.assertEqual "A manifest stored before, and a CRL, are nothing new" nothingStored
 
     -- An unparsed copy is replaced with the parsed one, which is when
     -- the manifest becomes usable
-    told "An unparsed manifest must not be told about" (unparsed mft2) (Just MFT) (const Nothing)
-    told "Its parsed copy must be" (wellStructured mft2) (Just MFT) (`expected` mft2)
+    void $ insert v3 (unparsed mft2)
+    storedBy v3 >>= HU.assertEqual "An unparsed manifest is neither a manifest nor another object" nothingStored
+
+    key2 <- insert v4 (wellStructured mft2)
+    forM_ (take 1 $ listed ROA) $ insert v4
+    storedBy v4 >>= HU.assertEqual "The parsed copy of a manifest, and another object"
+        (FetchUpdates (StoredManifests [newManifest key2 mft2]) True)
+    storedBy v1 >>= HU.assertEqual "What the first fetch stored stays the same"
+        (FetchUpdates (StoredManifests [newManifest key1 mft1]) False)
 
 
 -- | A manifest can't be used before everything it lists is in the cache.
@@ -679,52 +689,6 @@ shouldTellManifestObjectsStored io = do
 
     mapM_ storeEntry (take 1 entries)
     allStored >>= HU.assertEqual "Everything it lists is stored" True
-
-
-manifestUpdatesGroup :: TestTree
-manifestUpdatesGroup = testGroup "Manifest updates"
-    [ HU.testCase "Should keep the manifests up to the cap and only the fact there were many past it" $ do
-        let manifest n = NewManifest (ObjectKey $ ArtificialKey n) (AKI $ mkKI "01234567890123456789") (Hash mempty)
-        let stored n = StoredManifests [manifest i | i <- [1 .. n]]
-        let one i = StoredManifests [manifest i]
-
-        HU.assertEqual "Appending one at a time keeps them in order"
-            (stored 1000) (mconcat [ one i | i <- [1 .. 1000] ])
-        HU.assertEqual "One more is too many"
-            ManyManifests (mconcat [ one i | i <- [1 .. 1001] ])
-        HU.assertEqual "Two halves make the cap"
-            (stored 1000) (stored 500 <> StoredManifests [manifest i | i <- [501 .. 1000]])
-        HU.assertEqual "Nothing changes nothing" (stored 3) (mempty <> stored 3 <> mempty)
-    , HU.testCase "Should not forget there were many" $ do
-        let some = StoredManifests [aManifest]
-        HU.assertEqual "Many and some" ManyManifests (ManyManifests <> some)
-        HU.assertEqual "Some and many" ManyManifests (some <> ManyManifests)
-        HU.assertEqual "Many and none" ManyManifests (ManyManifests <> mempty)
-    , HU.testCase "Should remember new manifests and whether there were other new objects" $ do
-        stored <- newIORef mempty
-        let inserted newObject newManifest = rememberInserted stored $ Inserted (ObjectKey $ ArtificialKey 1) newObject newManifest
-            remembered = readIORef stored
-
-        inserted (Just CRL) Nothing
-        inserted Nothing Nothing
-        remembered >>= HU.assertEqual "A CRL and an object stored before are nothing new" mempty
-
-        inserted (Just MFT) (Just aManifest)
-        remembered >>= HU.assertEqual "A manifest is a manifest" (FetchUpdates (StoredManifests [aManifest]) False)
-
-        inserted (Just ROA) Nothing
-        remembered >>= HU.assertEqual "Anything else is a new object" (FetchUpdates (StoredManifests [aManifest]) True)
-
-        inserted (Just MFT) Nothing
-        remembered >>= HU.assertEqual "An unparsed manifest is neither" (FetchUpdates (StoredManifests [aManifest]) True)
-    , HU.testCase "Should combine what fetches stored" $ do
-        let manifests = FetchUpdates (StoredManifests [aManifest]) False
-            objects   = FetchUpdates mempty True
-        HU.assertEqual "Both" (FetchUpdates (StoredManifests [aManifest]) True) (manifests <> objects)
-        HU.assertEqual "Nothing changes nothing" manifests (mempty <> manifests <> mempty)
-    ]
-  where
-    aManifest = NewManifest (ObjectKey $ ArtificialKey 1) (AKI $ mkKI "01234567890123456789") (Hash mempty)
 
 
 -- | Saves one fresh dummy object per descriptor (to satisfy manifest_meta's

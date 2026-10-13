@@ -39,7 +39,6 @@ import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Repository
 import           RPKI.RRDP.Types
-import           RPKI.Store.Types                (FetchUpdates)
 
 import           RPKI.Time
 import           RPKI.Parallel
@@ -259,19 +258,10 @@ withFetchLimits Fetchers {..} config repository f =
 -- Returned repository has all the metadata updated (in case of RRDP session and serial).
 -- The metadata is also updated in the database.
 --
--- | What a successful fetch of a repository gives back.
-data FetchResult = FetchResult {
-        repository   :: Repository,
-        rrdpStat     :: Maybe RrdpFetchStat,
-        -- | What the fetch stored that can be a reason to revalidate
-        fetchUpdates :: FetchUpdates
-    }
-    deriving stock (Show, Eq, Generic)
-
 fetchRepository :: (ValidatorIO es, Timeout :> es) => AppContext s
                 -> WorldVersion
                 -> Repository
-                -> Eff es FetchResult
+                -> Eff es (Repository, Maybe RrdpFetchStat)
 fetchRepository
     appContext@AppContext {..}
     worldVersion
@@ -279,11 +269,11 @@ fetchRepository
         logInfo logger [i|Fetching #{getURL repoURL}.|]
         case repo of
             RsyncR r -> do
-                (r', fetchUpdates) <- fetchRsyncRepository r
-                pure $ FetchResult (RsyncR r') Nothing fetchUpdates
+                r' <- fetchRsyncRepository r
+                pure (RsyncR r', Nothing)
             RrdpR r  -> do
-                (r', stat, fetchUpdates) <- fetchRrdpRepository r
-                pure $ FetchResult (RrdpR r') (Just stat) fetchUpdates
+                (r', stat) <- fetchRrdpRepository r
+                pure (RrdpR r', Just stat)
   where
     repoURL = getRpkiURL repo
 

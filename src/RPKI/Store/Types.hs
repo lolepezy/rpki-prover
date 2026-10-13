@@ -4,12 +4,7 @@ module RPKI.Store.Types where
 
 import           Control.Lens
 import           Control.DeepSeq
-import           Control.Monad            (when)
-import           Control.Monad.IO.Class
 import qualified Data.ByteString          as BS
-import           Data.Foldable            (for_)
-import           Data.IORef
-import           Data.Maybe               (isJust)
 
 import           GHC.Generics
 import           RPKI.TAL
@@ -103,16 +98,6 @@ data PreparedObject = PreparedObject {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary, NFData)
 
--- | What inserting an object did.
-data Inserted = Inserted {
-        key         :: ObjectKey,
-        -- | The type of the object, if it wasn't stored before
-        newObject   :: Maybe RpkiObjectType,
-        -- | Only for a well-structured manifest that wasn't stored before
-        newManifest :: Maybe NewManifest
-    }
-    deriving stock (Show, Eq, Generic)
-
 -- | A manifest that a fetch stored.
 data NewManifest = NewManifest {
         key           :: ObjectKey,
@@ -120,28 +105,15 @@ data NewManifest = NewManifest {
         contentDigest :: Hash
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
 
 -- | The manifests a fetch stored: at most `manifestUpdatesCap` of them, past
 -- that only the fact that there were many.
 data ManifestUpdates = StoredManifests [NewManifest]
                      | ManyManifests
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
 
 manifestUpdatesCap :: Int
 manifestUpdatesCap = 1000
-
-instance Semigroup ManifestUpdates where
-    StoredManifests a <> StoredManifests b
-        | not $ null $ drop manifestUpdatesCap ab = ManyManifests
-        | otherwise                                = StoredManifests ab
-      where
-        ab = a <> b
-    _ <> _ = ManyManifests
-
-instance Monoid ManifestUpdates where
-    mempty = StoredManifests []
 
 -- | What a fetch stored that can be a reason to revalidate.
 data FetchUpdates = FetchUpdates {
@@ -150,24 +122,9 @@ data FetchUpdates = FetchUpdates {
         newObjects :: Bool
     }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary, NFData)
 
-instance Semigroup FetchUpdates where
-    FetchUpdates m1 o1 <> FetchUpdates m2 o2 = FetchUpdates (m1 <> m2) (o1 || o2)
-
-instance Monoid FetchUpdates where
-    mempty = FetchUpdates mempty False
-
--- | Remember what an insert stored, if it stored anything.
-rememberInserted :: MonadIO m => IORef FetchUpdates -> Inserted -> m ()
-rememberInserted stored Inserted { newObject, newManifest } = liftIO $
-    for_ newObject $ \objectType -> do
-        let other = objectType `notElem` [MFT, CRL]
-        FetchUpdates { newObjects } <- readIORef stored
-        -- Most of the objects of a snapshot change nothing here
-        when (isJust newManifest || other && not newObjects) $
-            atomicModifyIORef' stored $ \updates ->
-                (updates <> FetchUpdates (foldMap (StoredManifests . pure) newManifest) other, ())
+nothingStored :: FetchUpdates
+nothingStored = FetchUpdates (StoredManifests []) False
 
 data ObjectIndexEntry
     = CertificateIndex SKI (Maybe AKI)
