@@ -1438,12 +1438,12 @@ getStoredObject tx key =
     fmap (`Keyed` key) <$> DB.getLocatedByKey tx key    
 
 getFullCa :: ValidatorIO es => AppContext s -> TopDownContext -> Ca -> Eff es (Located WellStructuredCaCert)
-getFullCa appContext@AppContext {..} topDownContext = \case    
+getFullCa appContext@AppContext {..} TopDownContext {..} = \case    
     CaFull c -> pure c            
     CaShort CaShortcut {..} -> do   
         db <- liftIO $ readTVarIO database
         DB.roAppTx db $ \tx -> do 
-            increment topDownContext.allTas.topDownCounters.readParsed
+            increment allTas.topDownCounters.readParsed
             z <- DB.getLocatedByKey tx key
             case z of 
                 Just (Located locations (WellStructuredRO (CerRO ca_))) -> pure $! Located locations ca_

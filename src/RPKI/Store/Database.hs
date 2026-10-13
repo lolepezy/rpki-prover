@@ -33,7 +33,7 @@ module RPKI.Store.Database (
     getMftShorcut, getMftShorcutMeta, getMftShorcutChildrenLight, getMftShorcutChildrenFull,
     getMftShortcutChildFileName,
     saveMftShorcutMeta, insertMftShortcutChildren, deleteMftShortcutChildren,
-    deleteMftShortcut, getBySKI, getTaCertByKey,
+    deleteMftShortcut, getBySKI, getBySKIUpTo, getTaCertByKey,
     markAsValidated,
     saveTA, getTA, getTAs, setActiveTAs,
     saveTaValidations, getTaValidations,
@@ -721,10 +721,16 @@ deleteMftShortcut tx@(Tx conn) aki = liftIO $ do
 
 -- | Returns all candidates for the SKI; callers must verify signatures.
 getBySKI :: MonadIO m => Tx mode -> SKI -> m [Located WellStructuredCaCert]
-getBySKI tx@(Tx conn) ski = liftIO $ do
+getBySKI tx ski = getBySKIUpTo tx ski maxBound
+
+-- | Returns at most `limit` candidates for the SKI, the most recently stored
+-- first; callers must verify signatures. Anyone can publish any number of
+-- certificates with any SKI, so a caller that walks them needs a bound.
+getBySKIUpTo :: MonadIO m => Tx mode -> SKI -> Int -> m [Located WellStructuredCaCert]
+getBySKIUpTo tx@(Tx conn) ski limit = liftIO $ do
     rows <- query conn
-        "SELECT object_key FROM certificates WHERE ski = ?"
-        (Only ski)
+        "SELECT object_key FROM certificates WHERE ski = ? ORDER BY object_key DESC LIMIT ?"
+        (ski, limit)
     let objectKeys = map fromOnly rows
     fmap catMaybes $ forM objectKeys $ \k ->
         getLocatedByKey tx k >>= \case

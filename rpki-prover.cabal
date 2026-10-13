@@ -337,6 +337,7 @@ test-suite rpki-prover-test
       RPKI.Store.DatabaseSpec
       RPKI.Store.StorableSpec
       RPKI.TestCommons
+      RPKI.Validation.BottomUpSpec
       RPKI.Validation.TopDownSpec
       RPKI.WorkerSpec
       Paths_rpki_prover

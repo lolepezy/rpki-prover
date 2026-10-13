@@ -444,6 +444,9 @@ toValidationMessage = \case
 
       ReferentialIntegrityError message -> [i|Referential integrity problem: #{message}.|]
 
+      NewerManifestExists mftNumber newerMftNumber ->
+        [i|Manifest number #{mftNumber} is not the latest one, there is a valid manifest number #{newerMftNumber} of the same CA.|]
+
       WeirdCaPublicationPoints urls -> 
         [i|Invalid CA publication points found: #{fmtUrlList urls}.|]
 
