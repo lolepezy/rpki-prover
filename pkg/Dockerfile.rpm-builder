@@ -1,0 +1,83 @@
+# Build environment for the rpki-prover RPM packages.
+#
+# The RPM counterpart of pkg/Dockerfile.deb-builder: one image per target
+# release, so that the binary is linked against exactly that release's
+# glibc/gmp/xz/zlib and rpmbuild's automatic dependency generator derives
+# requirements that are correct for it.
+#
+# Build context is the repository root:
+#   docker build -f pkg/Dockerfile.rpm-builder --build-arg BASE_IMAGE=rockylinux/rockylinux:9 .
+
+ARG BASE_IMAGE=rockylinux/rockylinux:9
+FROM ${BASE_IMAGE}
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    GHCUP_INSTALL_BASE_PREFIX=/opt \
+    CABAL_DIR=/opt/cabal \
+    PATH=/opt/.ghcup/bin:/opt/cabal/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# help2man lives in CRB on EL, which is off by default. rpmlint is not in the
+# EL repositories at all (only EPEL); its absence only costs the informational
+# lint run at the end of the build, so it is not worth pulling EPEL in for.
+# "file" is what rpmbuild's brp-* scripts use to recognise ELF files; without
+# it they silently do nothing.
+RUN dnf install -y dnf-plugins-core \
+    && dnf config-manager --set-enabled crb \
+    && dnf install -y \
+        diffutils \
+        file \
+        findutils \
+        gcc \
+        gcc-c++ \
+        git \
+        gmp-devel \
+        help2man \
+        make \
+        ncurses-devel \
+        numactl-devel \
+        perl \
+        pkgconf-pkg-config \
+        rpm-build \
+        rsync \
+        systemd-rpm-macros \
+        tar \
+        which \
+        xz \
+        xz-devel \
+        zlib-devel \
+    && dnf clean all
+
+# GHC and cabal come from ghcup, exactly as for the .deb packages; see the
+# comment in pkg/Dockerfile.deb-builder.
+COPY .tool-versions /tmp/.tool-versions
+RUN set -eux; \
+    case "$(uname -m)" in \
+        x86_64)  ghcup_arch=x86_64 ;; \
+        aarch64) ghcup_arch=aarch64 ;; \
+        *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    ghc_version="$(awk '$1 == "ghc" { print $2 }' /tmp/.tool-versions)"; \
+    cabal_version="$(awk '$1 == "cabal" { print $2 }' /tmp/.tool-versions)"; \
+    test -n "$ghc_version" -a -n "$cabal_version"; \
+    curl -fsSL "https://downloads.haskell.org/~ghcup/${ghcup_arch}-linux-ghcup" \
+        -o /usr/local/bin/ghcup; \
+    chmod 0755 /usr/local/bin/ghcup; \
+    ghcup install ghc "$ghc_version" --set; \
+    ghcup install cabal "$cabal_version" --set; \
+    ghc --version; \
+    cabal --version
+
+RUN git config --global --add safe.directory '*'
+
+# Pre-build every Haskell dependency into the image; see
+# pkg/Dockerfile.deb-builder for why only these files are copied.
+WORKDIR /deps
+COPY rpki-prover.cabal cabal.project cabal.project.freeze /deps/
+RUN set -eux; \
+    mkdir -p /deps/src /deps/app /deps/test/src /deps/perf /deps/static; \
+    cabal update; \
+    cabal build --only-dependencies exe:rpki-prover || true; \
+    rm -rf /deps/dist-newstyle
+
+WORKDIR /build
