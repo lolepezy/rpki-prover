@@ -38,10 +38,6 @@ toMessage = \case
     UnspecifiedE context e -> 
         [i|Unspecified error in #{context}, details: #{e}.|]
 
-    ComposeE appErrors -> let 
-        t = mconcat $ List.intersperse "\n" (map toMessage appErrors)
-        in [i|Multiple errors: #{t}.|]
-
 
 toErikMessage :: ErikError -> Text
 toErikMessage = \case

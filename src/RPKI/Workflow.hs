@@ -143,9 +143,12 @@ runAll appContext@AppContext {..} tals = do
 
     revalidate workflowShared = do 
         canValidateAgain <- newTVarIO True
-        race_ 
+        race_
             (triggeredValidationLoop canValidateAgain FirstRun)
-            periodicallyRevalidateAllTAs
+            (concurrently_
+                periodicallyRevalidateAllTAs
+                (revalidateOnValidityChange logger
+                    (workflowShared ^. #earliestValidityChange) (workflowShared ^. #tasToValidate)))
 
       where
         periodicallyRevalidateAllTAs = do 
@@ -364,7 +367,9 @@ runAll appContext@AppContext {..} tals = do
 
                 Right (ValidationResult vs discovered) -> do
                     adjustFetchers appContext (fmap fst discovered) workflowShared
-                    scheduleRevalidationOnExpiry appContext (fmap snd discovered) workflowShared
+                    -- What this validation found replaces what the previous ones did
+                    atomically $ modifyTVar' (workflowShared ^. #earliestValidityChange)
+                                    (Map.union $ fmap snd discovered)
 
                     -- The worker has saved the version, SLURM is read and
                     -- stored for it here since the worker doesn't read files.
@@ -574,7 +579,7 @@ runValidation :: AppContext s
             -> WorldVersion
             -> [TAL]
             -> [TaName]
-            -> IO (ValidationState, Map TaName (Fetcheables, EarliestToExpire))
+            -> IO (ValidationState, Map TaName (Fetcheables, EarliestValidityChange))
 runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames = do           
 
     results <- validateMultipleTAs appContext worldVersion talsToValidate
@@ -609,7 +614,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deletedStr} oldest version(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, 
-        Map.map (\r -> (r ^. #discoveredRepositories, r ^. #earliestNotValidAfter)) results)
+        Map.map (\r -> (r ^. #discoveredRepositories, r ^. #earliestValidityChange)) results)
 
   where
     addUniqueVrpCountsToMetrics tx results = do
@@ -690,56 +695,15 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
                     relevantRepo <- mostNarrowPPScope scope
                 ]        
           where
-            manifestIntegrityError = \case                
-                VErr (ValidationE e)             -> isReferentialIntegrityError e
-                VWarn (VWarning (ValidationE e)) -> isReferentialIntegrityError e                    
+            manifestIntegrityError = anyOf issueValidationErrors $ \case
+                ManifestEntryDoesn'tExist _ _    -> True
+                NoCRLExists _ _                  -> True
+                ManifestEntryHasWrongFileType {} -> True
+                ReferentialIntegrityError _      -> True
                 _                                -> False
-              where
-                isReferentialIntegrityError = \case
-                    MftFallback (ValidationE e) _    -> isReferentialIntegrityError e
-                    ManifestEntryDoesn'tExist _ _    -> True
-                    NoCRLExists _ _                  -> True                
-                    ManifestEntryHasWrongFileType {} -> True                
-                    ReferentialIntegrityError _      -> True                
-                    _                                -> False
 
             mostNarrowPPScope (Scope s) = 
                 take 1 [ url | PPFocus (RrdpU url) <- NonEmpty.toList s ]
-
-
--- Keep track of the earliest expiration time for each TA (i.e. the earlist time when some 
--- object of the TA will expire). Reschedule revalidation of the TA at the moment right after 
--- its earliest expiration time. Since this expiration time in practice keeps receding to the 
--- future as new objects are added, the revalidation is most likely not needed at all, 
--- that's why we double-check it once again before revalidation.
-scheduleRevalidationOnExpiry :: AppContext s -> Map TaName EarliestToExpire -> WorkflowShared -> IO ()
-scheduleRevalidationOnExpiry AppContext {..} expirationTimes WorkflowShared {..} = do
-    Now now <- thisInstant
-
-    -- Only the TAs whose expiration time actually changed need a new trigger
-    updatedExpirations <- atomically $ stateTVar earliestToExpire $ \known -> 
-            (Map.toList $ Map.differenceWith keepIfChanged expirationTimes known, 
-             Map.union expirationTimes known)
-
-    for_ updatedExpirations $ \(taName, expiration@(EarliestToExpire expiresAt)) -> do
-        let timeToWait = instantDiff (Earlier now) (Later expiresAt)
-        let expiresSoonEnough = timeToWait < config ^. #validationConfig . #revalidationInterval
-        when (now < expiresAt && expiration /= mempty && expiresSoonEnough) $ do
-            logDebug logger [i|The first object for #{taName} will expire at #{expiresAt}, will schedule re-validation right after.|]
-            forkLogged logger [i|Exception in the expiration trigger for #{taName}|] $ do
-                threadDelay $ toMicroseconds timeToWait
-                latest <- Map.lookup taName <$> readTVarIO earliestToExpire
-                case latest of 
-                    -- The expiration time moved on since the trigger was scheduled, 
-                    -- so there is a later trigger for this TA and this one can go.
-                    Just t | t > expiration -> 
-                        logDebug logger [i|Will cancel the re-validation for #{taName} scheduled after expiration at #{expiresAt}, new expiration time is #{t}.|]
-                    _ -> do 
-                        for_ latest $ \t -> 
-                            logDebug logger [i|Will not cancel re-validation for #{taName} scheduled after expiration at #{expiresAt}, new expiration time is #{t}.|]
-                        requestRevalidation tasToValidate $ Set.singleton taName
-  where
-    keepIfChanged new old = if new == old then Nothing else Just new
 
 
 -- To be called from the cache cleanup worker

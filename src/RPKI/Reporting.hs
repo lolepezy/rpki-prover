@@ -8,6 +8,8 @@ import           Control.Exception (Exception)
 import           Control.Lens
 
 import           Data.Generics.Labels
+import           Data.Generics.Product.Types    (types)
+import           Data.Generics.Sum.Constructors (_Ctor)
 import qualified Data.ByteString             as BS
 import           Data.Hourglass
 import           Data.Maybe                  (fromMaybe)
@@ -277,7 +279,6 @@ data AppError = ParseE (ParseError Text) |
                 InitE InitError |
                 SlurmE SlurmError |
                 InternalE InternalError |
-                ComposeE [AppError] |
                 UnspecifiedE Text Text                
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -289,6 +290,15 @@ newtype VWarning = VWarning AppError
 data VIssue = VErr AppError | VWarn VWarning
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
+
+instance Plated AppError where
+    plate f = \case
+        ValidationE (MftFallback e n) -> ValidationE . (`MftFallback` n) <$> f e
+        e                             -> pure e
+
+-- | All the validation errors of an issue, the ones nested in others too.
+issueValidationErrors :: Fold VIssue ValidationError
+issueValidationErrors = types @AppError . cosmos . _Ctor @"ValidationE"
 
 newtype AppException = AppException AppError
     deriving stock (Show, Eq, Ord, Generic)

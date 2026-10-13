@@ -306,7 +306,7 @@ newtype ErikFetchStat = ErikFetchStat {
 
 data ValidationResult = ValidationResult
             ValidationState
-            (Map.Map TaName (Fetcheables, EarliestToExpire))
+            (Map.Map TaName (Fetcheables, EarliestValidityChange))
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 

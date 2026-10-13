@@ -31,29 +31,6 @@ bracketVT :: (ValidatorIO es, IOE :> es)
           -> Eff es b
 bracketVT acquire release f = bracket (liftIO acquire) release f
 
-concurrentlyVTLenientN :: (ValidatorIO es, Concurrent :> es)
-                       => Int
-                       -> [a]
-                       -> (a -> Eff es r)
-                       -> Eff es [r]
-concurrentlyVTLenientN n as f = do
-    rs <- runEachSeparately n as f
-    let (failures, successes) = partitionEithers rs
-    case successes of
-        [] -> appError $ ComposeE failures
-        _  -> pure $! successes
-
-concurrentlyVTStrictN :: (ValidatorIO es, Concurrent :> es)
-                      => Int
-                      -> [a]
-                      -> (a -> Eff es r)
-                      -> Eff es [r]
-concurrentlyVTStrictN n as f = do
-    rs <- runEachSeparately n as f
-    let (failures, successes) = partitionEithers rs
-    case failures of
-        [] -> pure $! successes
-        _  -> appError $ ComposeE failures
 
 -- | Run every job concurrently, keeping each job's failure instead of letting
 -- it abort the others.

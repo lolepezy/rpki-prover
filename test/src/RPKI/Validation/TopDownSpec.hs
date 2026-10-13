@@ -22,7 +22,7 @@ import           RPKI.AppMonad
 import           RPKI.AppTypes                    (WorldVersion)
 import           RPKI.Domain
 import           RPKI.Parse.Parse
-import           RPKI.Reporting                   (newScopes)
+import           RPKI.Reporting
 import           RPKI.Resources.Types
 import           RPKI.Store.Database              (DB)
 import qualified RPKI.Store.Database              as DB
@@ -34,6 +34,7 @@ import           RPKI.Validation.ObjectValidation (prevalidateObject)
 import           RPKI.Validation.Types
 import           RPKI.Validation.TopDown
                 ( TroubledChildLoadPath (..)
+                , becomingValid
                 , resolveTroubledChildByKey
                 , signedByCa
                 )
@@ -54,6 +55,7 @@ topDownRegressionGroup =
         , HU.testCase "Bounds manifest validity by thisUpdate and nextUpdate" shouldBoundManifestValidityByUpdateTimes
         , HU.testCase "Picks how to validate the manifest of a CA" shouldPlanManifests
         , HU.testCase "Tells whether the CA signed an EE certificate" shouldTellWhetherCaSignedEECert
+        , HU.testCase "Finds when objects from the future become valid" shouldFindWhenObjectsBecomeValid
         ]
 
 
@@ -234,6 +236,36 @@ shouldBoundManifestValidityByUpdateTimes = do
   where
     hour = 3600
     shift (Instant t) seconds = Instant (t + seconds * nanosPerSecond)
+
+
+-- | The moment to revalidate at for the objects that aren't valid yet.
+shouldFindWhenObjectsBecomeValid :: HU.Assertion
+shouldFindWhenObjectsBecomeValid = do
+    let atHour hours = Instant (hours * 3600 * nanosPerSecond)
+        now = atHour 100
+        issuesOf = Validations . Map.fromList
+        manifest = (newScope "manifest", Set.fromList [
+                        VWarn $ VWarning $ ValidationE $ ThisUpdateTimeIsInTheFuture (atHour 103) now ])
+        roa      = (newScope "roa", Set.fromList [
+                        VErr $ ValidationE $ ObjectValidityIsInTheFuture (atHour 102) (atHour 200) ])
+        aspa     = (newScope "aspa", Set.fromList [
+                        VErr $ ValidationE $ ObjectIsExpired (atHour 1) (atHour 50) ])
+        futureMft = ValidationE $ ThisUpdateTimeIsInTheFuture (atHour 101) now
+        -- How a manifest from the future is reported when there's an older one to use
+        fallback = (newScope "fallback", Set.fromList [
+                        VWarn $ VWarning $ ValidationE $ MftFallback futureMft (Serial 7) ])
+
+    HU.assertEqual "The first of them to become valid"
+        (EarliestValidityChange $ atHour 102)
+        (becomingValid $ issuesOf [manifest, roa, aspa])
+
+    HU.assertEqual "A manifest from the future with an older one to fall back to"
+        (EarliestValidityChange $ atHour 101)
+        (becomingValid $ issuesOf [manifest, roa, aspa, fallback])
+
+    HU.assertEqual "An expired object never becomes valid"
+        mempty
+        (becomingValid $ issuesOf [aspa])
 
 
 -- | Which manifest of a CA is validated, and how.

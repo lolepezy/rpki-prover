@@ -1018,17 +1018,19 @@ data ObjectIdentity = KeyIdentity ObjectKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-newtype EarliestToExpire = EarliestToExpire Instant
+-- | The earliest moment when the validity of some object changes: it
+-- expires or, if it's not valid yet, it becomes valid.
+newtype EarliestValidityChange = EarliestValidityChange Instant
     deriving stock (Show, Eq, Ord, Generic)    
     deriving newtype (TheBinary)
-    deriving Semigroup via Min EarliestToExpire
+    deriving Semigroup via Min EarliestValidityChange
 
 
-instance Monoid EarliestToExpire where
+instance Monoid EarliestValidityChange where
     -- It is 2262-04-11 23:47:16.000Z, it's 
     -- 1) far enough to set it as "later that anything else"
     -- 2) Anything bigger than that wraps around to the year 1677
-    mempty = EarliestToExpire $ Instant $ 1000_000_000 * 9_223_372_036
+    mempty = EarliestValidityChange $ Instant $ 1000_000_000 * 9_223_372_036
 
 
 data WellStructuredCert (t :: CertType) = WellStructuredCert {
