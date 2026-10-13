@@ -19,8 +19,10 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Logging
 import           RPKI.Reporting                   (newScopes)
+import           RPKI.Store.Database              (Tx (..))
 import qualified RPKI.Store.Database              as DB
 import           RPKI.Store.DatabaseSpec          (readObjectFromFile, toValidatedRpkiObject)
+import qualified RPKI.Store.SQLite                as SQLite
 import           RPKI.Store.Types
 import           RPKI.TestCommons
 import           RPKI.Time
@@ -145,7 +147,8 @@ shouldTellUnusableManifests =
             other              -> HU.assertFailure $ "Can't read the fixtures: " <> show other
 
         let store o = DB.rwTx db $ \tx -> DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject o) version
-        mapM_ store [taCert, otherCa]
+        otherCaKey <- store otherCa
+        void $ store taCert
         taMftKey      <- store taMft
         afrinicMftKey <- store afrinicMft
 
@@ -174,6 +177,13 @@ shouldTellUnusableManifests =
         forM_ entries $ \MftPair {..} -> DB.rwTx db $ \tx -> void $ DB.saveObject tx
             (OriginalRO (ObjectOriginal "entry") mempty hash ROA) version
         unusable [stored taMftKey taAki] >>= HU.assertEqual "Signed by its CA and complete" mempty
+
+        -- A certificate with the SKI of the CA but another key, which prevalidation
+        -- doesn't let into the cache, and found before the one of the CA
+        DB.rwTx db $ \(Tx conn) ->
+            SQLite.execute conn "UPDATE certificates SET ski = ? WHERE object_key = ?" (SKI $ unAKI taAki, otherCaKey)
+        unusable [stored taMftKey taAki] >>= HU.assertEqual
+            "Signed by one of the certificates with the SKI of its CA" mempty
 
 
 -- | Times are generous, only the order of things is checked.
