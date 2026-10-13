@@ -33,7 +33,7 @@ module RPKI.Store.Database (
     getMftShorcut, getMftShorcutMeta, getMftShorcutChildrenLight, getMftShorcutChildrenFull,
     getMftShortcutChildFileName,
     saveMftShorcutMeta, insertMftShortcutChildren, deleteMftShortcutChildren,
-    deleteMftShortcut, getBySKI, getFirstCaCertBySKI, getTaCertByKey,
+    deleteMftShortcut, getBySKI, getTaCertByKey,
     markAsValidated,
     saveTA, getTA, getTAs, setActiveTAs,
     saveTaValidations, getTaValidations,
@@ -731,11 +731,6 @@ getBySKI tx@(Tx conn) ski = liftIO $ do
             Just (Located loc (WellStructuredRO (CerRO c))) ->
                 pure $ Just (Located loc c)
             _ -> pure Nothing
-
--- | Backward-compat wrapper: returns the first CA cert matching the SKI.
-getFirstCaCertBySKI :: MonadIO m => Tx mode -> SKI -> m (Maybe (Located WellStructuredCaCert))
-getFirstCaCertBySKI tx ski =
-    listToMaybe <$> getBySKI tx ski
 
 getTaCertByKey :: MonadIO m => Tx mode -> ObjectKey -> m (Maybe WellStructuredCaCert)
 getTaCertByKey tx k =

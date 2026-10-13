@@ -733,7 +733,7 @@ shouldIndexCertificateOnSaveObject io = do
         pure k
 
     bySki <- roTx db $ \tx -> DB.getBySKI tx (getSKI wsCert)
-    HU.assertBool "Certificate key must be indexed by SKI" (not $ null bySki)
+    HU.assertEqual "The certificate must be found by its SKI" [wsCert] [ c | Located _ c <- bySki ]
 
     rows <- roTx db $ \(Tx conn) ->
         SQLite.query conn "SELECT COUNT(*) FROM certificates WHERE object_key = ?"
@@ -742,13 +742,6 @@ shouldIndexCertificateOnSaveObject io = do
             [Only n] -> n
             _        -> 0
     HU.assertEqual "Exactly one certificates row must be created" 1 certRows
-
-    fetched <- roTx db $ \tx -> DB.getFirstCaCertBySKI tx (getSKI wsCert)
-    case fetched of
-        Just (Located _ fetchedCert) ->
-            HU.assertEqual "Fetched cert by SKI must match the inserted cert" wsCert fetchedCert
-        Nothing ->
-            HU.assertFailure "Expected getFirstCaCertBySKI to return inserted certificate"
 
 
 -- A TA certificate published over RRDP fails prevalidation there and is stored
