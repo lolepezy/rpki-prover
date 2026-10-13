@@ -372,6 +372,9 @@ toValidationMessage = \case
       SplAsnNotInResourceSet asn asns ->
         [i|#{asn} is not in the EE certificate AS set (#{asns}).|]      
 
+      BGPCertAsnsNotInResourceSet asns caAsns ->
+        [i|BGPSec certificate ASNs #{asns} are not in the resources of its CA (#{caAsns}).|]
+
       BGPCertTooManyASNs asnCount limit -> 
         [i|BGPSec certificate declares #{asnCount} ASNs, more than the limit of #{limit}.|]
 

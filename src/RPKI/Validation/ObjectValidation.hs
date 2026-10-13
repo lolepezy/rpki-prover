@@ -351,19 +351,25 @@ validateResources validationRFC verifiedResources childCert parentCert =
 
 validateBgpCert ::
     forall bgpCert parent es.
-     (Validator es, SignedCertCore bgpCert, WithCertUris bgpCert, WithPubKey bgpCert, WithSKI bgpCert, WithResources bgpCert, bgpCert `OfCertType` BGPCert, CertIssuer parent) =>
+     (Validator es, SignedCertCore bgpCert, WithCertUris bgpCert, WithPubKey bgpCert, WithSKI bgpCert, WithResources bgpCert, bgpCert `OfCertType` BGPCert, CaParent parent) =>
+    ValidationRFC ->
     Now ->
     bgpCert ->
     parent ->
     Validated CrlObject ->
+    Maybe (VerifiedRS PrefixesAndAsns) ->
     Eff es (Validated bgpCert, BGPSecPayload)
-validateBgpCert now bgpCert parentCert validCrl = do
+validateBgpCert validationRFC now bgpCert parentCert validCrl verifiedResources = do
     -- Validate BGP certificate according to 
     -- https://www.rfc-editor.org/rfc/rfc8209.html#section-3.3    
     void $ validateResourceCert now bgpCert parentCert validCrl
 
+    -- Its resources are the ones of its issuer, as for any resource certificate
+    void $ validateResources validationRFC verifiedResources bgpCert parentCert
+
     -- Must be some ASNs
     bgpSecAsns <- validateBgpCertAsns $ getResources bgpCert
+    validateBgpSecAsns verifiedResources bgpSecAsns
 
     let bgpSecSki = getSKI bgpCert
 
@@ -614,6 +620,15 @@ validateAspaCore resources Aspa { customer, providers } = do
 
 maxAllowedAsnPerBgpSecCertificate :: Integer
 maxAllowedAsnPerBgpSecCertificate = 65536
+
+-- https://www.rfc-editor.org/rfc/rfc8360#section-4.2.6
+validateBgpSecAsns :: Validator es => Maybe (VerifiedRS PrefixesAndAsns) -> [ASN] -> Eff es ()
+validateBgpSecAsns verifiedResources bgpSecAsns =
+    for_ verifiedResources $ \(VerifiedRS vrs) -> do
+        let asns = vrs ^. typed
+        case filter (\asn -> not $ isInside (AS asn) asns) bgpSecAsns of
+            []      -> pure ()
+            notCas  -> vError $ BGPCertAsnsNotInResourceSet notCas (IS.toList asns)
 
 validateBgpCertAsns :: Validator es => AllResources -> Eff es [ASN]
 validateBgpCertAsns (AllResources _ _ asns) =
