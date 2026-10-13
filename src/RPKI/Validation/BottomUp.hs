@@ -198,9 +198,8 @@ validateBottomUp
                     void $ validateRsc validationRFC now rsc parentCert crl (Just verifiedResources)
                 AspaRO aspa ->
                     void $ validateAspa validationRFC now aspa parentCert crl (Just verifiedResources)
-                BgpRO bgp -> do
-                    void $ validateBgpCert now bgp parentCert crl
-                    void $ validateResources validationRFC (Just verifiedResources) bgp parentCert
+                BgpRO bgp ->
+                    void $ validateBgpCert validationRFC now bgp parentCert crl (Just verifiedResources)
                 CrlRO childCrl ->
                     void $ validateCrl now childCrl parentCert
 

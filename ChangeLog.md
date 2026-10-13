@@ -17,4 +17,6 @@
 - A repository with manifests that refer to missing objects is fetched from
   a snapshot only when no manifest of the CA can be used, not as soon as a
   newer one fails while falling back to an older one works.
+- A BGPsec router certificate is only valid for ASNs its CA has. Before, a
+  CA could issue one for any ASN.
 - Database version 67: the cache is rebuilt on the first start.

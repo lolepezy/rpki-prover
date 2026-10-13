@@ -166,7 +166,10 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         SerialNumberOutOfBounds Text |
                         ReferentialIntegrityError Text |
                         -- The number of the manifest, then the one of the newer manifest
-                        NewerManifestExists Serial Serial
+                        NewerManifestExists Serial Serial |
+                        -- The ASNs of a router certificate that its CA doesn't have,
+                        -- then the ones the CA has
+                        BGPCertAsnsNotInResourceSet [ASN] [AsResource]
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     

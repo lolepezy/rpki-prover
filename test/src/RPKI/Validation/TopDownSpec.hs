@@ -33,6 +33,7 @@ import           RPKI.AppContext                  (AppContext)
 import           RPKI.Reporting
 import           RPKI.Store.AppSqliteStorage      (SqliteBackend)
 import           RPKI.Repository                  (PublicationPointAccess (..), rsyncPP)
+import qualified RPKI.Resources.IntervalContainers as IS
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storable         (Compressed (..), Verbatim (..), serialiseField, toStorable)
 import qualified RPKI.Store.SQLite                as SQLite
@@ -42,7 +43,7 @@ import           RPKI.Store.Types
 import           RPKI.TestCommons
 import           RPKI.Time
 import           RPKI.Util                        (hashed, parseRpkiURL)
-import           RPKI.Validation.ObjectValidation (prevalidateObject)
+import           RPKI.Validation.ObjectValidation (prevalidateObject, validateBgpSecAsns)
 import           RPKI.Validation.Types
 import           RPKI.Validation.TopDown
                 ( TroubledChildLoadPath (..)
@@ -82,6 +83,7 @@ topDownRegressionGroup =
         , HU.testCase "Tells whether the CA signed an EE certificate" shouldTellWhetherCaSignedEECert
         , HU.testCase "Finds when objects from the future become valid" shouldFindWhenObjectsBecomeValid
         , HU.testCase "Remembers when a leaf validated in full expires" shouldRememberWhenLeavesExpire
+        , HU.testCase "Checks the ASNs of a router certificate against its CA" shouldCheckRouterCertificateAsns
         , HU.testCase "Writes the shortcut of an accepted manifest, with warnings or not" shouldWriteShortcutOfAcceptedManifest
         , HU.testCase "Deletes the shortcut of a CA without an accepted manifest" shouldDeleteShortcutOfCaWithoutManifest
         , HU.testCase "Forces a snapshot only when no manifest can be used" shouldForceSnapshotOnlyWithoutFallback
@@ -323,6 +325,26 @@ shouldRememberWhenLeavesExpire =
 
         accept FromObject (roa 150)
         earliest >>= HU.assertEqual "The first of them" (EarliestValidityChange $ Instant 150)
+
+
+-- | A router certificate is only good for the ASNs that its CA has. With 
+-- the reconsidered algorithm, resources it overclaims are only a warning.
+shouldCheckRouterCertificateAsns :: HU.Assertion
+shouldCheckRouterCertificateAsns = do
+    let caAsns = IS.fromList [AS (ASN 64496), ASRange (ASN 65000) (ASN 65010)]
+        verified = Just $ VerifiedRS $ PrefixesAndAsns IS.empty IS.empty caAsns
+        checkAsns verifiedResources asns = fst <$> runValidatorIO (newScopes "bgpsec")
+                                                (validateBgpSecAsns verifiedResources asns)
+
+    checkAsns verified [ASN 64496, ASN 65005] >>= HU.assertEqual
+        "All its ASNs are the CA's" (Right ())
+
+    checkAsns verified [ASN 64496, ASN 64497, ASN 65011] >>= HU.assertEqual
+        "Some of them aren't"
+        (Left $ ValidationE $ BGPCertAsnsNotInResourceSet [ASN 64497, ASN 65011] (IS.toList caAsns))
+
+    checkAsns Nothing [ASN 64497] >>= HU.assertEqual
+        "Without verified resources it's the resources of the issuer that count" (Right ())
 
 
 -- | Which manifest of a CA is validated, and how.

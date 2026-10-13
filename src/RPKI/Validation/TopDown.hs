@@ -1251,7 +1251,7 @@ validateChildObject
             pure $! makeAspaShortcut childKey validAspa aspa.content
 
         BgpRO bgpCert -> validLeaf $ do
-            (validBgpCert, bgpPayload) <- validateBgpCert now bgpCert fullCa.payload validCrl
+            (validBgpCert, bgpPayload) <- validateBgpCert validationRFC now bgpCert fullCa.payload validCrl verifiedResources
             pure $! makeBgpSecShortcut childKey validBgpCert bgpPayload
 
         GbrRO gbr -> validLeaf $ do
@@ -1495,7 +1495,7 @@ collectPayloads
             RoaChild r _    -> recheckLeaf r (validateRoaPrefixes verifiedResources r.roaPayload)
             SplChild s _    -> recheckLeaf s (validateSplAsn verifiedResources s.splPayload)
             AspaChild a _   -> recheckLeaf a (pure ())
-            BgpSecChild b _ -> recheckLeaf b (pure ())
+            BgpSecChild b _ -> recheckLeaf b (validateBgpSecAsns verifiedResources b.bgpSec.bgpSecAsns)
             GbrChild g _    -> recheckLeaf g (pure ())
 
             TroubledChild childKey_ -> do
