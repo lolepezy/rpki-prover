@@ -146,12 +146,7 @@ validateMultipleTAs :: AppContext s
 validateMultipleTAs appContext@AppContext {..} worldVersion tals = do
     -- All the TAs are validated by one pool of workers (see `WorkPool`), one on 
     -- every capability. The writer of manifest shortcuts, the only thread writing
-    -- to the database here, gets an extra capability of its own. Every SQLite call
-    -- is a safe foreign call, and on a capability shared with a worker it has to 
-    -- win the capability back after each one. In a first validation, with hundreds 
-    -- of thousands rows to write, the writer is the bottleneck. Taking a capability 
-    -- away from the workers instead slows down every later validation, where there's 
-    -- little to write, and doubles the time at -N2.    
+    -- to the database here, gets an extra capability of its own.
     shortcutQueue <- newCQueueIO 5000
     let closeQueue = atomically $ closeCQueue shortcutQueue
     caps <- getNumCapabilities

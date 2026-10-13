@@ -101,11 +101,10 @@ readObject objectURL bs =
 -- | Parse an object from its bytes, which come with their hash so that the 
 -- | object does not have to be hashed again.
 readObjectOfType :: Validator es => RpkiObjectType -> Hashed BS.ByteString -> Eff es ParsedRpkiObject        
-readObjectOfType objectType bs = 
+readObjectOfType objectType hashed@(Hashed bytes hash) = 
     case objectType of 
         CER -> do 
-            (rc, certType, ski, aki) <- parseResourceCertificate bs.raw
-            let hash = bs.hash
+            (rc, certType, ski, aki) <- parseResourceCertificate bytes
             case certType of 
                 CACert -> do 
                     let certificate = TypedCert $ ResourceCertificate rc
@@ -116,11 +115,11 @@ readObjectOfType objectType bs =
                 EECert -> 
                     appError $ parseErr "Cannot have EE certificate as a separate object."
 
-        MFT  -> MftRO <$> parseMft bs
-        ROA  -> RoaRO <$> parseRoa bs
-        SPL  -> SplRO <$> parseSpl bs
-        CRL  -> CrlRO <$> parseCrl bs            
-        GBR  -> GbrRO <$> parseGbr bs            
-        RSC  -> RscRO <$> parseRsc bs
-        ASPA -> AspaRO <$> parseAspa bs     
+        MFT  -> MftRO <$> parseMft hashed
+        ROA  -> RoaRO <$> parseRoa hashed
+        SPL  -> SplRO <$> parseSpl hashed
+        CRL  -> CrlRO <$> parseCrl hashed            
+        GBR  -> GbrRO <$> parseGbr hashed            
+        RSC  -> RscRO <$> parseRsc hashed
+        ASPA -> AspaRO <$> parseAspa hashed     
         t    -> appError $ parseErr $ "Parsing of type " <> fmtGen t <> " is not supported"  
