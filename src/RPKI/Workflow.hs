@@ -152,10 +152,9 @@ runAll appContext@AppContext {..} tals = do
         threadDelay $ toMicroseconds $ config ^. typed @StorageConfig . #walCheckpointInterval
         checkpointDatabase appContext
 
-    revalidate workflowShared = do 
-        canValidateAgain <- newTVarIO True
+    revalidate workflowShared = 
         race_
-            (triggeredValidationLoop canValidateAgain FirstRun)
+            (triggeredValidationLoop FirstRun)
             (concurrently_
                 periodicallyRevalidateAllTAs
                 (revalidateOnValidityChange logger
@@ -169,7 +168,7 @@ runAll appContext@AppContext {..} tals = do
                 atomically $ writeTVar
                     (workflowShared ^. #tasToValidate) (Set.fromList allTaNames)
 
-        triggeredValidationLoop canValidateAgain run = do 
+        triggeredValidationLoop run = do 
             talsToValidate <- waitForTasToValidate            
             void $ do 
                 worldVersion <- newWorldVersion            
@@ -184,12 +183,11 @@ runAll appContext@AppContext {..} tals = do
                         else
                             scheduleNextAndLoop
           where
+            -- Not more often than every minimalRevalidationInterval, the TAs
+            -- asked for in the meantime are validated together after it
             scheduleNextAndLoop = do 
-                -- If this thread leaks, it's not a biggy, it will exit pretty soon           
-                forkLogged logger "Exception in revalidation delay thread" $ do              
-                    Conc.threadDelay $ toMicroseconds $ config ^. #validationConfig . #minimalRevalidationInterval
-                    atomically $ writeTVar canValidateAgain True
-                triggeredValidationLoop canValidateAgain RanBefore           
+                threadDelay $ toMicroseconds $ config ^. #validationConfig . #minimalRevalidationInterval
+                triggeredValidationLoop RanBefore
 
             waitForTasToValidate = do 
                 readyForFirstRun <- 
@@ -211,8 +209,7 @@ runAll appContext@AppContext {..} tals = do
                                 Set.fromList . map (getTaName . (^. #tal)) <$> DB.getTAs tx
                             pure $ filter ((`Set.member` cached) . getTaName) tals
 
-                atomically $ do
-                    (`unless` retry) =<< readTVar canValidateAgain                
+                atomically $
                     case readyForFirstRun of
                         _ : _ -> reset >> pure readyForFirstRun
                         []    -> do 
@@ -221,9 +218,7 @@ runAll appContext@AppContext {..} tals = do
                             reset
                             pure $ filter (\tal -> getTaName tal `Set.member` tas) tals                           
               where
-                reset = do 
-                    writeTVar (workflowShared ^. #tasToValidate) mempty
-                    writeTVar canValidateAgain False
+                reset = writeTVar (workflowShared ^. #tasToValidate) mempty
                     
 
     outputVrps vrpOutputFile = do 
