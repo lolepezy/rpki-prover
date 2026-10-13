@@ -11,6 +11,10 @@
   is ignored. Updates whose manifest
   comes in a later fetch than its objects are no longer left to the
   periodic revalidation.
+- `--revalidation-interval` is how often every TA is validated at least: a TA
+  validated because of a fetch isn't validated again by the periodic
+  revalidation until the interval after that. All TAs used to be validated
+  every interval.
 - A repository with manifests that refer to missing objects is fetched from
   a snapshot only when no manifest of the CA can be used, not as soon as a
   newer one fails while falling back to an older one works.

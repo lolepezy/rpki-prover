@@ -13,6 +13,7 @@ import           Control.Lens
 import           GHC.Generics
 
 import           Data.Foldable                   (for_)
+import           Data.Hourglass                  (Seconds)
 import           Data.Map.Strict                 (Map)
 import qualified Data.Map.Strict                 as Map
 import           Data.Set                        (Set)
@@ -46,9 +47,8 @@ data WorkflowShared = WorkflowShared {
         -- associated with these TAs have been fetched.
         tasToValidate :: TVar (Set TaName),
 
-        -- The earliest moment the validity of some object of a TA changes, as
-        -- the last validation of the TA found it (see `revalidateOnValidityChange`)
-        earliestValidityChange :: TVar (Map TaName EarliestValidityChange),
+        -- When each TA is to be revalidated at the latest (see `revalidateWhenDue`)
+        nextValidation :: TVar (Map TaName Due),
 
         tals :: [TAL]
     }
@@ -61,12 +61,17 @@ withWorkflowShared :: AppContext s
                     -> (WorkflowShared -> IO b) 
                     -> IO b
 withWorkflowShared AppContext {..} prometheusMetrics tals f = do
+    Now now <- thisInstant
     shared <- liftIO $ atomically $ do 
-        runningTasks           <- newRunningTasks
-        fetchers               <- newFetchers config (appState ^. #fetcheables)
-        tasToValidate          <- newTVar mempty
-        lastFqdnFetch          <- newTVar mempty
-        earliestValidityChange <- newTVar mempty
+        runningTasks   <- newRunningTasks
+        fetchers       <- newFetchers config (appState ^. #fetcheables)
+        tasToValidate  <- newTVar mempty
+        lastFqdnFetch  <- newTVar mempty
+        -- Also the TAs that won't be validated until something asks for it, 
+        -- e.g. the ones without a TA certificate yet
+        nextValidation <- newTVar $ Map.fromList 
+            [ (getTaName tal, Periodic $ momentAfter now $ config ^. #validationConfig . #revalidationInterval) 
+            | tal <- tals ]
         pure WorkflowShared {..}
 
     f shared `finally` liftIO (stopAllFetchers (shared ^. #fetchers))
@@ -81,39 +86,69 @@ requestRevalidation tasToValidate tas =
     liftIO $ atomically $ modifyTVar' tasToValidate (<> tas)
 
 
--- | Revalidate a TA right after the validity of one of its objects changes,
--- i.e. right after the first of them expires or becomes valid.
+-- | When a TA is to be revalidated at the latest, unless something asks for 
+-- it before: right after the validity of one of its objects changes, i.e. 
+-- right after the first of them expires or becomes valid, or once it hasn't
+-- been validated for revalidationInterval. 
+--
+-- The latter is in case something that should have asked for a revalidation 
+-- didn't, so that the payloads of a TA are never older than that. 
+data Due = ValidityChange Instant
+         | Periodic Instant
+    deriving stock (Show, Eq, Ord, Generic)
+
+dueAt :: Due -> Instant
+dueAt = \case
+    ValidityChange t -> t
+    Periodic t       -> t
+
+-- | When a TA that was validated at the moment is due next.
+dueAfterValidation :: Seconds -> Instant -> EarliestValidityChange -> Due
+dueAfterValidation interval validatedAt (EarliestValidityChange change)
+    | change < periodic = ValidityChange change
+    | otherwise         = Periodic periodic
+  where
+    periodic = momentAfter validatedAt interval
+
+
+-- | Revalidate every TA when it's due.
 --
 -- Every validation of a TA replaces its moment, and since in practice it keeps
--- receding into the future as objects are re-issued, most of these moments
--- never come. So there's one thread for all TAs: it waits for the first
--- moment and starts over whenever any of them changes. A moment is dropped
--- once it has come, the validation it triggers finds the next one.
-revalidateOnValidityChange :: AppLogger
-                           -> TVar (Map TaName EarliestValidityChange)
-                           -> TVar (Set TaName)
-                           -> IO ()
-revalidateOnValidityChange logger earliestValidityChange tasToValidate = forever $ do
+-- receding into the future, as objects are re-issued and as the TA is validated
+-- because of fetches, most of these moments never come. So there's one thread
+-- for all TAs: it waits for the first moment and starts over whenever any of
+-- them changes. A TA whose moment has come is due again an interval later,
+-- in case its validation fails. A validation that doesn't replaces that.
+revalidateWhenDue :: AppLogger
+                  -> Seconds
+                  -> TVar (Map TaName Due)
+                  -> TVar (Set TaName)
+                  -> IO ()
+revalidateWhenDue logger interval nextValidation tasToValidate = forever $ do
     Now now <- thisInstant
-    (changed, waiting) <- atomically $ do
-        (changed, waiting) <- Map.partition (hasComeBy now) <$> readTVar earliestValidityChange
-        writeTVar earliestValidityChange waiting
-        pure (changed, waiting)
+    (due, waiting) <- atomically $ do
+        (due, notYet) <- Map.partition (hasComeBy now) <$> readTVar nextValidation
+        let waiting = notYet <> fmap (const $ Periodic $ momentAfter now interval) due
+        writeTVar nextValidation waiting
+        pure (due, waiting)
 
-    for_ (Map.toList changed) $ \(taName, EarliestValidityChange moment) ->
-        logDebug logger [i|An object of #{taName} expired or became valid at #{moment}, will revalidate it.|]
-    requestRevalidation tasToValidate $ Map.keysSet changed
+    for_ (Map.toList due) $ \case
+        (taName, ValidityChange moment) ->
+            logDebug logger [i|An object of #{taName} expired or became valid at #{moment}, will revalidate it.|]
+        (taName, Periodic moment) ->
+            logDebug logger [i|#{taName} was due for its periodic revalidation at #{moment}, will revalidate it.|]
+    requestRevalidation tasToValidate $ Map.keysSet due
 
     -- Until the first of the moments, or until the moments change. It doesn't
     -- sleep for longer than an hour, the clock can jump or the machine sleep.
-    let untilFirst = minimum $ maxWait : [ microsecondsBetween now t | EarliestValidityChange t <- Map.elems waiting ]
+    let untilFirst = minimum $ maxWait : [ microsecondsBetween now (dueAt d) | d <- Map.elems waiting ]
     timeIsUp <- registerDelay untilFirst
     atomically $ do
-        up      <- readTVar timeIsUp
-        moved <- (/= waiting) <$> readTVar earliestValidityChange
+        up    <- readTVar timeIsUp
+        moved <- (/= waiting) <$> readTVar nextValidation
         unless (up || moved) retry
   where
-    hasComeBy now (EarliestValidityChange moment) = moment < now
+    hasComeBy now due = dueAt due < now
 
     maxWait = 3600 * 1_000_000
 

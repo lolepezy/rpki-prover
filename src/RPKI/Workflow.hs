@@ -72,7 +72,7 @@ import qualified UnliftIO.Exception              as UIO
 {- 
     Fully asynchronous execution.
 
-    - Validations are scheduled periodically for all TAs.
+    - Every TA is validated at least every revalidationInterval.
 
     - Validation creates a list of repositories mentioned in the certificates.
 
@@ -87,7 +87,7 @@ import qualified UnliftIO.Exception              as UIO
       doesn't matter whether a manifest or its objects come first.
 
     - A TA is also revalidated right after the first object of its validated
-      tree expires.
+      tree expires or becomes valid.
 
     - A TA is validated not more often than every minimalRevalidationInterval.
     
@@ -148,6 +148,8 @@ runAll appContext@AppContext {..} tals = do
   where
     allTaNames = map getTaName tals
 
+    revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
+
     checkpointPeriodically = forever $ do 
         threadDelay $ toMicroseconds $ config ^. typed @StorageConfig . #walCheckpointInterval
         checkpointDatabase appContext
@@ -155,19 +157,10 @@ runAll appContext@AppContext {..} tals = do
     revalidate workflowShared = 
         race_
             (triggeredValidationLoop FirstRun)
-            (concurrently_
-                periodicallyRevalidateAllTAs
-                (revalidateOnValidityChange logger
-                    (workflowShared ^. #earliestValidityChange) (workflowShared ^. #tasToValidate)))
+            (revalidateWhenDue logger revalidationInterval
+                (workflowShared ^. #nextValidation) (workflowShared ^. #tasToValidate))
 
       where
-        periodicallyRevalidateAllTAs = do 
-            let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval
-            forever $ do       
-                threadDelay $ toMicroseconds revalidationInterval
-                atomically $ writeTVar
-                    (workflowShared ^. #tasToValidate) (Set.fromList allTaNames)
-
         triggeredValidationLoop run = do 
             talsToValidate <- waitForTasToValidate            
             void $ do 
@@ -374,8 +367,9 @@ runAll appContext@AppContext {..} tals = do
                 Right (ValidationResult vs discovered) -> do
                     adjustFetchers appContext (fmap fst discovered) workflowShared
                     -- What this validation found replaces what the previous ones did
-                    atomically $ modifyTVar' (workflowShared ^. #earliestValidityChange)
-                                    (Map.union $ fmap snd discovered)
+                    atomically $ modifyTVar' (workflowShared ^. #nextValidation) $ Map.union $
+                        fmap (dueAfterValidation revalidationInterval (versionToInstant worldVersion) . snd) 
+                            discovered
 
                     -- The worker has saved the version, SLURM is read and
                     -- stored for it here since the worker doesn't read files.

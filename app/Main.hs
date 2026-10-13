@@ -757,8 +757,8 @@ cliOptionsParser = CLIOptions
     <*> optional (option auto
             (  long "revalidation-interval"
             <> metavar "SECONDS"
-            <> help ("Interval between validation cycles in seconds (default: " <> show defRevalidation <> "). "
-                  <> "Each cycle traverses the RPKI tree and gathers payloads (VRPs, ASPAs, BGPSec certificates). "
+            <> help ("Every TA is validated at least this often, in seconds (default: " <> show defRevalidation <> "). "
+                  <> "Validation traverses the RPKI tree of a TA and gathers payloads (VRPs, ASPAs, BGPSec certificates). "
                   <> "Revalidations are also triggered by repository updates and object expirations.")))
     <*> optional (option auto
             (  long "cache-lifetime-hours"
