@@ -61,8 +61,6 @@ data TopDownContext = TopDownContext {
         allTas                  :: AllTasTopDownContext,
         currentPathDepth        :: Int,
         interruptedByLimit      :: TVar Limited,
-        -- | How many objects of the TA validation has looked at, for maxTotalTreeSize. 
-        -- An object of more than one TA counts for the one that got to it first.
         treeSize                :: TVar Int,
         payloadBuilder          :: PayloadBuilder,
         overclaimingHappened    :: Bool,
@@ -77,20 +75,14 @@ data TopDownContext = TopDownContext {
     deriving stock (Generic)
 
 data AllTasTopDownContext = AllTasTopDownContext {
-        now                  :: Now,
-        worldVersion         :: WorldVersion,
-        visitedKeys          :: TVar (Set ObjectKey),        
-        publicationPoints    :: PublicationPoints,
-        shortcutQueue        :: ClosableQueue MftShortcutOp,
-        topDownCounters      :: TopDownCounters IORef,
-        -- | Objects published at more than one location, read once for the
-        -- whole run. Validating a shortcut needs to know whether its object is
-        -- one of these, and asking per object was ~440k queries per round to
-        -- find the handful that are (4 of 793516 in a real cache).
-        multiLocationKeys    :: Set ObjectKey,
-        -- | Validating a CA with all its sub-tree, or a chunk of objects, 
-        -- is a task in this pool, for all the TAs together
-        workPool             :: WorkPool
+        now               :: Now,
+        worldVersion      :: WorldVersion,
+        visitedKeys       :: TVar (Set ObjectKey),        
+        publicationPoints :: PublicationPoints,
+        shortcutQueue     :: ClosableQueue MftShortcutOp,
+        topDownCounters   :: TopDownCounters IORef,
+        multiLocationKeys :: Set ObjectKey,
+        workPool          :: WorkPool
     }
     deriving stock (Generic)
 
@@ -305,25 +297,16 @@ acceptLeaf topDownContext source child = do
         atomicModifyIORef' (topDownContext.payloadBuilder ^. field) $ \as -> (a : as, ())
 
 oneMoreCert, oneMoreRoa, oneMoreMft, oneMoreCrl :: Validator es => Eff es ()
-
 oneMoreGbr, oneMoreAspa, oneMoreBgp, oneMoreSpl :: Validator es => Eff es ()
-
 oneMoreMftShort :: Validator es => Eff es ()
 
 oneMoreCert = updateMetric @ValidationMetric @_ (#validCertNumber %~ (+1))
-
 oneMoreRoa  = updateMetric @ValidationMetric @_ (#validRoaNumber %~ (+1))
-
 oneMoreSpl  = updateMetric @ValidationMetric @_ (#validSplNumber %~ (+1))
-
 oneMoreMft  = updateMetric @ValidationMetric @_ (#validMftNumber %~ (+1))
-
 oneMoreCrl  = updateMetric @ValidationMetric @_ (#validCrlNumber %~ (+1))
-
 oneMoreGbr  = updateMetric @ValidationMetric @_ (#validGbrNumber %~ (+1))
-
 oneMoreAspa = updateMetric @ValidationMetric @_ (#validAspaNumber %~ (+1))
-
 oneMoreBgp  = updateMetric @ValidationMetric @_ (#validBgpNumber %~ (+1))
 
 oneMoreMftShort = updateMetric @ValidationMetric @_ (#mftShortcutNumber %~ (+1))
