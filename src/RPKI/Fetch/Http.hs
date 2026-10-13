@@ -147,20 +147,6 @@ downloadToFileHashed uri file expectedHash maxSize httpStatusNotOk hashMishmatch
             content <- readB file size
             pure (content, size, status))
 
--- Same as above, but doesn't consstruct the blob, 
--- just write the content to the file.
-downloadToFileHashed_ :: MonadIO m 
-                    => URI 
-                    -> FilePath 
-                    -> Hash 
-                    -> Size 
-                    -> (HttpStatus -> Either e (Size, HttpStatus)) 
-                    -> (Hash -> Either e (Size, HttpStatus)) 
-                    -> m (Either e (Size, HttpStatus))
-downloadToFileHashed_ uri file expectedHash maxSize httpStatusNotOk hashMishmatch = 
-    downloadToFileHashedGen uri file expectedHash maxSize httpStatusNotOk hashMishmatch 
-        (\size status -> pure (size, status))
-
 
 downloadToFileHashedGen :: MonadIO m 
                         => URI 

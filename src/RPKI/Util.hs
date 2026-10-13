@@ -247,6 +247,4 @@ fmtLocations = mconcat .
 parseWorldVersion :: Text -> Either Text WorldVersion
 parseWorldVersion t = asVersion <$> first Text.pack (readEither $ Text.unpack t)
 
-firstByte :: Hash -> Word8
-firstByte (Hash h) = BSS.head h
         

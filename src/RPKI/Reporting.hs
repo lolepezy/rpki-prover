@@ -14,7 +14,6 @@ import qualified Data.ByteString             as BS
 import           Data.Hourglass
 import           Data.Maybe                  (fromMaybe)
 import           Data.Text                   as Text
-import qualified Data.List                   as List
 import           Data.List.NonEmpty          (NonEmpty (..))
 import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
@@ -390,8 +389,6 @@ mWarning vc w = mProblem vc (VWarn w)
 mProblem :: VScope -> VIssue -> Validations
 mProblem vc p = Validations $ Map.singleton vc $ Set.singleton p
 
-emptyValidations :: Validations -> Bool 
-emptyValidations (Validations m) = List.all Set.null $ Map.elems m  
 
 removeValidation :: VScope -> (AppError -> Bool) -> Validations -> Validations
 removeValidation vScope predicate (Validations vs) =
@@ -623,5 +620,3 @@ totalMapCount :: Map a Count -> Count
 totalMapCount m = sum $ Map.elems m
 
 
-anyPositive :: (Ord b, Num b) => Map a b -> Bool
-anyPositive m = Prelude.any ((> 0) . snd) $ Map.toList m    
