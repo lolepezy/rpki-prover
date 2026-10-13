@@ -29,6 +29,10 @@
 --
 -- `--debug` logs TopDown's counters of the paths it took.
 --
+-- `--max-depth=N`, `--max-tree-size=N` and `--max-repositories=N` set the
+-- limits of validation, as `--max-certificate-path-depth`, 
+-- `--max-total-tree-size` and `--max-ta-repositories` do for the program.
+--
 -- `--full`, `--reconsidered` and `--strict-manifests` are what
 -- `--no-incremental-validation`, `--allow-overclaiming` and
 -- `--strict-manifest-validation` are to the program.
@@ -93,7 +97,7 @@ main :: IO ()
 main = do
     (flags, args) <- List.partition ("--" `List.isPrefixOf`) <$> getArgs
     let knownFlag f = f `elem` ["--full", "--reconsidered", "--strict-manifests", "--debug"]
-                   || any (`List.isPrefixOf` f) ["--now=", "--dump="]
+                   || any (`List.isPrefixOf` f) ["--now=", "--dump=", "--max-depth=", "--max-tree-size=", "--max-repositories="]
     -- A mistyped flag would quietly compare the wrong things
     case filter (not . knownFlag) flags of
         []      -> pure ()
@@ -103,6 +107,8 @@ main = do
             [ Instant (seconds * 1_000_000_000)
             | Just seconds <- map (readMaybe <=< List.stripPrefix "--now=") flags ]
         dumpDir = listToMaybe [ d | Just d <- map (List.stripPrefix "--dump=") flags ]
+        intFlag name = listToMaybe [ n | Just n <- map (readMaybe <=< List.stripPrefix name) flags ]
+        limit name setting = maybe id (\n -> #validationConfig . setting .~ n) (intFlag name)
         hasFlag f = f `elem` flags
         (benchRoot, repeats) = case args of
             []          -> (defaultBenchRoot, defaultRepeats)
@@ -140,6 +146,9 @@ main = do
                         (if hasFlag "--reconsidered" then ReconsideredRFC else StrictRFC)
                     & #validationConfig . #manifestProcessing .~
                         (if hasFlag "--strict-manifests" then RFC6486_Strict else RFC9286)
+                    & limit "--max-depth=" #maxCertificatePathDepth
+                    & limit "--max-tree-size=" #maxTotalTreeSize
+                    & limit "--max-repositories=" #maxTaRepositories
 
         -- An incompatible cache gets wiped, which would quietly turn this into
         -- a benchmark of validating nothing.
@@ -302,7 +311,7 @@ dumpResults dir AppContext {..} worldVersion results = do
         | (ta, r) <- tas
         , let metrics = r ^. #topDownValidations . #topDownMetric ]
     writeLines "repositories.txt"
-        [ line [ta, show (r ^. #discoveredRepositories), show (r ^. #earliestNotValidAfter)]
+        [ line [ta, show (r ^. #discoveredRepositories), show (r ^. #earliestValidityChange)]
         | (ta, r) <- tas ]
     writeLines "snapshot-candidates.txt"
         [ line [ta, show url, show reasons]
