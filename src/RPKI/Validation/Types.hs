@@ -63,14 +63,11 @@ data CrlShortcut = CrlShortcut {
 data MftShortcut = MftShortcut { 
         key            :: {-# UNPACK #-} ObjectKey,
         nonCrlEntries  :: Map.Map ObjectKey MftEntry,
-        notBefore :: {-# UNPACK #-} Instant,
-        notAfter  :: {-# UNPACK #-} Instant,        
+        notBefore      :: {-# UNPACK #-} Instant,
+        notAfter       :: {-# UNPACK #-} Instant,        
         serial         :: {-# UNPACK #-} Serial,
         manifestNumber :: {-# UNPACK #-} Serial,
         crlShortcut    :: CrlShortcut,
-        -- | The manifest was accepted with warnings. Its shortcut is kept, so
-        -- that it describes the tree, but it's validated in full every time,
-        -- so that the warnings are reported every time.
         hasIssues      :: Bool
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -80,8 +77,8 @@ data CaShortcut = CaShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
         ski            :: SKI,
         ppas           :: PublicationPointAccess,
-        notBefore :: {-# UNPACK #-} Instant,
-        notAfter  :: {-# UNPACK #-} Instant,
+        notBefore      :: {-# UNPACK #-} Instant,
+        notAfter       :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -106,8 +103,8 @@ data RoaShortcut = RoaShortcut {
 data SplShortcut = SplShortcut {
         key            :: {-# UNPACK #-} ObjectKey,        
         splPayload     :: SplPayload,
-        notBefore :: {-# UNPACK #-} Instant,
-        notAfter  :: {-# UNPACK #-} Instant,
+        notBefore      :: {-# UNPACK #-} Instant,
+        notAfter       :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -116,8 +113,8 @@ data SplShortcut = SplShortcut {
 data AspaShortcut = AspaShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
         aspa           :: Aspa,
-        notBefore :: {-# UNPACK #-} Instant,
-        notAfter  :: {-# UNPACK #-} Instant,
+        notBefore      :: {-# UNPACK #-} Instant,
+        notAfter       :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -126,8 +123,8 @@ data AspaShortcut = AspaShortcut {
 data BgpSecShortcut = BgpSecShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
         bgpSec         :: BGPSecPayload,
-        notBefore :: {-# UNPACK #-} Instant,
-        notAfter  :: {-# UNPACK #-} Instant,
+        notBefore      :: {-# UNPACK #-} Instant,
+        notAfter       :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -136,8 +133,8 @@ data BgpSecShortcut = BgpSecShortcut {
 data GbrShortcut = GbrShortcut {
         key            :: {-# UNPACK #-} ObjectKey,    
         gbr            :: T2 Hash Gbr,
-        notBefore :: {-# UNPACK #-} Instant,
-        notAfter  :: {-# UNPACK #-} Instant,
+        notBefore      :: {-# UNPACK #-} Instant,
+        notAfter       :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)

@@ -489,8 +489,7 @@ validateSplAsn verifiedResources (SplPayload asn _) =
     for_ verifiedResources $ \(VerifiedRS vrs) -> do
         let asns = vrs ^. typed
         unless (isInside (AS asn) asns) $
-            vError $
-                SplAsnNotInResourceSet asn (IS.toList asns)
+            vError $ SplAsnNotInResourceSet asn (IS.toList asns)
 
 
 validateGbr :: (Validator es, CaParent parent) =>
