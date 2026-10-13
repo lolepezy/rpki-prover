@@ -640,7 +640,6 @@ shouldTellNewManifestOnInsert io = do
                        in Just NewManifest {
                             key           = key,
                             aki           = fromJust $ getAKI m,
-                            thisTime      = content.thisTime,
                             contentDigest = manifestContentDigest content
                         }
             o       -> error $ "Not a manifest: " <> show o
@@ -704,7 +703,7 @@ shouldTellManifestObjectsStored io = do
 manifestUpdatesGroup :: TestTree
 manifestUpdatesGroup = testGroup "Manifest updates"
     [ HU.testCase "Should keep the manifests up to the cap and only the fact there were many past it" $ do
-        let manifest n = NewManifest (ObjectKey $ ArtificialKey n) (AKI $ mkKI "01234567890123456789") (Instant n) (Hash mempty)
+        let manifest n = NewManifest (ObjectKey $ ArtificialKey n) (AKI $ mkKI "01234567890123456789") (Hash mempty)
         let stored n = StoredManifests [manifest i | i <- [1 .. n]]
         let one i = StoredManifests [manifest i]
 
@@ -744,7 +743,7 @@ manifestUpdatesGroup = testGroup "Manifest updates"
         HU.assertEqual "Nothing changes nothing" manifests (mempty <> manifests <> mempty)
     ]
   where
-    aManifest = NewManifest (ObjectKey $ ArtificialKey 1) (AKI $ mkKI "01234567890123456789") (Instant 1) (Hash mempty)
+    aManifest = NewManifest (ObjectKey $ ArtificialKey 1) (AKI $ mkKI "01234567890123456789") (Hash mempty)
 
 
 -- | Saves one fresh dummy object per descriptor (to satisfy manifest_meta's

@@ -117,7 +117,6 @@ data Inserted = Inserted {
 data NewManifest = NewManifest {
         key           :: ObjectKey,
         aki           :: AKI,
-        thisTime      :: Instant,
         contentDigest :: Hash
     }
     deriving stock (Show, Eq, Ord, Generic)

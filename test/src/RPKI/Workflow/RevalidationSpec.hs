@@ -6,9 +6,7 @@ import           Control.Monad
 
 import qualified Data.ByteString.Short            as BSS
 import           Data.Int                         (Int64)
-import qualified Data.Map.Strict                  as Map
 import qualified Data.Set                         as Set
-import           System.Timeout                   (timeout)
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit                 as HU
@@ -17,7 +15,6 @@ import           RPKI.AppMonad
 import           RPKI.AppState                    (instantToVersion)
 import           RPKI.Config
 import           RPKI.Domain
-import           RPKI.Logging
 import           RPKI.Reporting                   (newScopes)
 import           RPKI.Store.Database              (Tx (..))
 import qualified RPKI.Store.Database              as DB
@@ -28,78 +25,75 @@ import           RPKI.TestCommons
 import           RPKI.Time
 import           RPKI.Validation.Types
 import           RPKI.Workflow.Revalidation
-import           RPKI.Workflow.Shared             (scheduleRevalidationAt)
 
 
 revalidationSpec :: TestTree
 revalidationSpec = testGroup "Revalidation on new manifests"
     [ HU.testCase "Compares a new manifest with the shortcut of its CA" shouldCompareWithShortcut
     , HU.testCase "Decides for a whole fetch" shouldDecideForFetch
-    , HU.testCase "Revalidates at every moment it is asked to" shouldRevalidateAtScheduledMoments
     , HU.testCase "Tells which new manifests validation won't use" shouldTellUnusableManifests
     ]
 
 
 shouldCompareWithShortcut :: HU.Assertion
 shouldCompareWithShortcut = do
-    let current = mft (atHour 99) "D1"
-        future  = mft (atHour 101) "D1"
+    let current = mft "D1"
         usable  = ShortcutView (shortcutMeta (atHour 90) (atHour 114)) (Just $ digestOf "D1")
         compareWith = manifestRevalidation Incremental now
 
     HU.assertEqual "Without shortcuts every manifest counts"
-        (FullValidation, Just now)
+        FullValidation
         (manifestRevalidation FullEveryIteration now current (WithShortcut usable))
 
     HU.assertEqual "A CA without a shortcut"
-        (NoShortcut, Just now)
+        NoShortcut
         (compareWith current WithoutShortcut)
 
     HU.assertEqual "A CA that no certificate in the cache has the key of"
-        (UnknownCa, Nothing)
+        UnknownCa
         (compareWith current NoCertificate)
 
     HU.assertEqual "... with or without shortcuts"
-        (UnknownCa, Nothing)
+        UnknownCa
         (manifestRevalidation FullEveryIteration now current NoCertificate)
 
     HU.assertEqual "A shortcut past its validity"
-        (ShortcutUnusable, Just now)
+        ShortcutUnusable
         (compareWith current $ WithShortcut $ usable & #shortcut . #notAfter .~ atHour 99)
 
     HU.assertEqual "A shortcut with its CRL past its validity"
-        (ShortcutUnusable, Just now)
+        ShortcutUnusable
         (compareWith current $ WithShortcut $ usable & #shortcut . #crlShortcut . #notAfter .~ atHour 99)
 
     HU.assertEqual "A shortcut whose manifest is gone from the cache"
-        (ShortcutManifestGone, Just now)
+        ShortcutManifestGone
         (compareWith current $ WithShortcut $ usable & #digest .~ Nothing)
 
     HU.assertEqual "Another content"
-        (ContentChanged, Just now)
-        (compareWith (mft (atHour 99) "D2") (WithShortcut usable))
-
-    HU.assertEqual "Another content, of a manifest that is current only later"
-        (ContentChanged, Just $ atHour 101)
-        (compareWith (mft (atHour 101) "D2") (WithShortcut usable))
+        ContentChanged
+        (compareWith (mft "D2") (WithShortcut usable))
 
     HU.assertEqual "The same content"
-        (SameContent, Nothing)
-        (compareWith future (WithShortcut usable))
+        SameContent
+        (compareWith current (WithShortcut usable))
 
     HU.assertEqual "The same content as a shortcut accepted with warnings"
-        (SameContent, Nothing)
+        SameContent
         (compareWith current $ WithShortcut $ usable & #shortcut . #hasIssues .~ True)
+
+    HU.assertEqual "Only an unknown CA and the same content are no reason"
+        [ShortcutUnusable, ShortcutManifestGone, ContentChanged, NoShortcut, FullValidation]
+        (filter isReason [UnknownCa, ShortcutUnusable, ShortcutManifestGone, SameContent, ContentChanged, NoShortcut, FullValidation])
 
 
 shouldDecideForFetch :: HU.Assertion
 shouldDecideForFetch = do
-    let some = FetchUpdates (StoredManifests [mft (atHour 99) "D1"]) False
-        decide = fetchRevalidation ServerMode now
+    let some = FetchUpdates (StoredManifests [mft "D1"]) False
+        decide = fetchRevalidation ServerMode
 
     HU.assertEqual "In one-off mode every fetch counts"
         RevalidateNow
-        (fetchRevalidation (OneOffMode "vrps.csv") now mempty [])
+        (fetchRevalidation (OneOffMode "vrps.csv") mempty [])
 
     HU.assertEqual "Too many manifests to compare"
         RevalidateNow
@@ -111,23 +105,19 @@ shouldDecideForFetch = do
 
     HU.assertEqual "A new object, with manifests that change nothing"
         RevalidateNow
-        (decide (some & #newObjects .~ True) [(SameContent, Nothing)])
+        (decide (some & #newObjects .~ True) [SameContent])
 
     HU.assertEqual "Nothing to revalidate for"
         NoRevalidation
-        (decide some [(SameContent, Nothing)])
+        (decide some [SameContent, UnknownCa])
 
     HU.assertEqual "Nothing stored"
         NoRevalidation
         (decide mempty [])
 
-    HU.assertEqual "The earliest moment counts"
+    HU.assertEqual "One manifest that changes something is enough"
         RevalidateNow
-        (decide some [(ContentChanged, Just $ atHour 101), (SameContent, Nothing), (NoShortcut, Just now)])
-
-    HU.assertEqual "Only later"
-        (RevalidateAt $ atHour 101)
-        (decide some [(ContentChanged, Just $ atHour 102), (ContentChanged, Just $ atHour 101)])
+        (decide some [SameContent, ContentChanged, UnknownCa])
 
 
 -- | A manifest that its CA didn't sign, or one that lists objects the cache
@@ -156,7 +146,7 @@ shouldTellUnusableManifests =
         taAki      <- akiOf taMft
         afrinicAki <- akiOf afrinicMft
         let unusable ms = DB.roTx db $ \tx -> unusableManifests tx ms
-            stored key aki = NewManifest key aki (Instant 0) (Hash mempty)
+            stored key aki = NewManifest key aki (Hash mempty)
             otherAki = case otherCa of
                 CerRO c -> toAKI $ getSKI c
                 o       -> error $ "Not a CA certificate: " <> show o
@@ -187,54 +177,6 @@ shouldTellUnusableManifests =
             "Signed by one of the certificates with the SKI of its CA" mempty
 
 
--- | Times are generous, only the order of things is checked.
-shouldRevalidateAtScheduledMoments :: HU.Assertion
-shouldRevalidateAtScheduledMoments =
-    withLogger (newLogConfig ErrorL MainLog) $ \logger -> do
-        scheduled     <- newTVarIO mempty
-        tasToValidate <- newTVarIO mempty
-        Now start <- thisInstant
-        let ta1 = TaName "ta1"
-            ta2 = TaName "ta2"
-            schedule tas millis = scheduleRevalidationAt logger scheduled tasToValidate
-                                    (Set.fromList tas) (afterMillis start millis)
-
-        schedule [ta1] 1000
-        schedule [ta1, ta2] 1500
-        -- Earlier than what the TA waits for already
-        schedule [ta1] 100
-
-        let requested expected = do
-                r <- timeout 5_000_000 $ atomically $ do
-                        tas <- readTVar tasToValidate
-                        unless (expected `Set.isSubsetOf` tas) retry
-                        writeTVar tasToValidate mempty
-                        pure tas
-                Now t <- thisInstant
-                case r of
-                    Nothing  -> HU.assertFailure $ "Never revalidated " <> show expected
-                    Just tas -> pure (tas, millisBetween start t)
-
-        (tas, elapsed) <- requested (Set.singleton ta1)
-        HU.assertEqual "The earlier moment wakes the TA up earlier" (Set.singleton ta1) tas
-        HU.assertBool ("Revalidated " <> show elapsed <> "ms after, expected about 100ms") (elapsed < 700)
-
-        (tas', elapsed') <- requested (Set.singleton ta1)
-        HU.assertEqual "The later moment is kept" (Set.singleton ta1) tas'
-        HU.assertBool ("Revalidated " <> show elapsed' <> "ms after, expected about 1000ms") 
-            (elapsed' >= 1000 && elapsed' < 1400)
-
-        (tas'', elapsed'') <- requested (Set.fromList [ta1, ta2])
-        HU.assertBool ("Revalidated " <> show elapsed'' <> "ms after, expected about 1500ms") (elapsed'' >= 1500)
-        HU.assertEqual "Both TAs at the last moment" (Set.fromList [ta1, ta2]) tas''
-
-        leftOver <- readTVarIO scheduled
-        HU.assertEqual "Nothing is waiting anymore" Map.empty leftOver
-  where
-    afterMillis (Instant t) millis = Instant $ t + millis * 1_000_000
-    millisBetween (Instant from_) (Instant to_) = (to_ - from_) `div` 1_000_000
-
-
 now :: Instant
 now = atHour 100
 
@@ -244,8 +186,8 @@ atHour hours = Instant (hours * 3600 * nanosPerSecond)
 digestOf :: String -> Hash
 digestOf = Hash . BSS.pack . map (fromIntegral . fromEnum)
 
-mft :: Instant -> String -> NewManifest
-mft thisTime d = NewManifest (ObjectKey $ asKey 1) (AKI $ mkKI "01234567890123456789") thisTime (digestOf d)
+mft :: String -> NewManifest
+mft d = NewManifest (ObjectKey $ asKey 1) (AKI $ mkKI "01234567890123456789") (digestOf d)
 
 shortcutMeta :: Instant -> Instant -> DB.MftShortcutMeta
 shortcutMeta notBefore notAfter = DB.MftShortcutMeta {

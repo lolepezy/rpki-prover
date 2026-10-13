@@ -9,8 +9,8 @@
      it found. 
 
      Then it asks for the TAs that depend on the repository to be revalidated, 
-     if what it stored changes what the last validation found, now or when it 
-     becomes current (see RPKI.Workflow.Revalidation).
+     if what it stored changes what the last validation found (see 
+     RPKI.Workflow.Revalidation).
 -}
 module RPKI.Workflow.Fetcher (
     adjustFetchers,
@@ -365,7 +365,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
 
 
     -- Ask for the TAs that use the repository to be revalidated, if what a fetch 
-    -- stored changes what the last validation found, now or later (see 
+    -- stored changes what the last validation found (see 
     -- RPKI.Workflow.Revalidation). New manifests are compared with the manifest 
     -- shortcuts after the fetch, i.e. as late as possible before the validation 
     -- that uses them. A changed manifest that lists objects not stored yet waits 
@@ -382,7 +382,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 cas <- caViews manifests
                 let changes = [ (m, manifestRevalidation algorithm now m (cas Map.! m.aki)) 
                               | m <- manifests ]
-                let candidates = [ m | (m, (_, Just _)) <- changes ]
+                let candidates = [ m | (m, c) <- changes, isReason c ]
                 UnusableManifests {..} <- case candidates of
                     [] -> pure mempty
                     _  -> DB.roTxT database $ \tx -> unusableManifests tx candidates
@@ -390,21 +390,19 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                       (Set.size unsigned, Set.size waiting))
             _ -> pure ([], (0, 0))
 
-        let decision = fetchRevalidation runMode now fetchUpdates changes
+        let decision = fetchRevalidation runMode fetchUpdates changes
         tas <- Set.fromList . IxSet.indexKeys . IxSet.getEQ url <$> readTVarIO uriByTa
         unless (fetchUpdates == mempty && decision == NoRevalidation) $ do
             let stored = case fetchUpdates.manifests of
                     StoredManifests ms -> [i|#{length ms} new manifest(s)|]
                     ManyManifests      -> [i|more than #{manifestUpdatesCap} new manifests|] :: String
                 others = if fetchUpdates.newObjects then " and other new objects" else "" :: String
-            let changed = length [ () | (_, Just _) <- changes ]
+            let changed = length $ filter isReason changes
             logDebug logger $ [i|#{url} stored #{stored}#{others}, #{changed} of them to revalidate for, |] <>
                               [i|#{waiting} waiting for their objects, #{unsigned} not signed by their CA, |] <> 
                               [i|decision: #{decision}, TAs: #{Set.toList tas}.|]
-        case decision of
-            NoRevalidation -> pure ()
-            RevalidateNow  -> requestRevalidation tasToValidate tas
-            RevalidateAt t -> scheduleRevalidationAt logger scheduledRevalidations tasToValidate tas t
+        when (decision == RevalidateNow) $
+            requestRevalidation tasToValidate tas
 
     -- What the cache knows about the CA of every AKI: its shortcut and the digest
     -- of the manifest it is for, if it's still in the cache, or else whether there 

@@ -442,7 +442,7 @@ insertPreparedObject (Tx conn) PreparedObject {..} wv = liftIO $ do
 
     stored key = Inserted key (Just objectType) $
         case indexEntry of
-            Just (ManifestIndex aki _ thisTime _ contentDigest) -> Just NewManifest {..}
+            Just (ManifestIndex aki _ _ _ contentDigest) -> Just NewManifest {..}
             _                                                   -> Nothing
 
     saveIndexes objectKey =

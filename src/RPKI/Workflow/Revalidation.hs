@@ -6,8 +6,9 @@
      Validation goes by manifests. A new one is compared with the manifest
      shortcut of its CA, i.e. with the manifest that the last validation
      accepted: if it lists the same objects, the validated tree doesn't change
-     and there's nothing to do. Otherwise, the TA is revalidated once the
-     manifest is current, i.e. at its thisUpdate.
+     and there's nothing to do. Otherwise, the TA is revalidated. A manifest
+     that isn't current yet is no exception: validation falls back from it,
+     and revalidates once it is (see `becomingValid`).
 
      A manifest of a CA that no certificate in the cache has the key of is no 
      reason either: validation can't get to it. Neither is a manifest that the 
@@ -77,7 +78,6 @@ data CaView = NoCertificate
     deriving stock (Show, Eq, Generic)
 
 data RevalidationDecision = RevalidateNow
-                          | RevalidateAt Instant
                           | NoRevalidation
     deriving stock (Show, Eq, Ord, Generic)
 
@@ -97,57 +97,50 @@ instance Monoid UnusableManifests where
     mempty = UnusableManifests mempty mempty
 
 
--- | A new manifest against what the cache knows about its CA: how it compares, 
--- and when to revalidate because of it, if at all. It is not before the
--- manifest is current, i.e. its thisUpdate.
+-- | A new manifest against what the cache knows about its CA.
 manifestRevalidation :: ValidationAlgorithm
                      -> Instant
                      -> NewManifest
                      -> CaView
-                     -> (ManifestChange, Maybe Instant)
+                     -> ManifestChange
 manifestRevalidation algorithm now newManifest ca =
-    (change, case change of
-                SameContent -> Nothing
-                UnknownCa   -> Nothing
-                _           -> Just $ max now newManifest.thisTime)
-  where
-    change =
-        case (algorithm, ca) of
-            (_, NoCertificate)                   -> UnknownCa
-            (FullEveryIteration, _)              -> FullValidation
-            (Incremental, WithoutShortcut)       -> NoShortcut
-            (Incremental, WithShortcut ShortcutView {..})
-                | not (shortcutIsUsable (Now now) shortcut) -> ShortcutUnusable
-                | otherwise ->
-                    case digest of
-                        Nothing -> ShortcutManifestGone
-                        Just d
-                            | d == newManifest.contentDigest -> SameContent
-                            | otherwise                      -> ContentChanged
+    case (algorithm, ca) of
+        (_, NoCertificate)                   -> UnknownCa
+        (FullEveryIteration, _)              -> FullValidation
+        (Incremental, WithoutShortcut)       -> NoShortcut
+        (Incremental, WithShortcut ShortcutView {..})
+            | not (shortcutIsUsable (Now now) shortcut) -> ShortcutUnusable
+            | otherwise ->
+                case digest of
+                    Nothing -> ShortcutManifestGone
+                    Just d
+                        | d == newManifest.contentDigest -> SameContent
+                        | otherwise                      -> ContentChanged
+
+-- | Whether validation can come out different because of the new manifest.
+isReason :: ManifestChange -> Bool
+isReason = \case
+    SameContent -> False
+    UnknownCa   -> False
+    _           -> True
 
 
--- | One decision for one fetch: the earliest moment over its manifests.
+-- | One decision for one fetch, over the changes of its manifests.
 -- In one-off mode every fetch counts, otherwise the run could not finish.
 -- A fetch with too many manifests to remember revalidates without comparing
 -- anything, so many manifests almost always change something. So does one
 -- that stored a new object other than a manifest or a CRL.
 fetchRevalidation :: ProverRunMode
-                  -> Instant
                   -> FetchUpdates
-                  -> [(ManifestChange, Maybe Instant)]
+                  -> [ManifestChange]
                   -> RevalidationDecision
-fetchRevalidation runMode now updates changes =
+fetchRevalidation runMode updates changes =
     case (runMode, updates) of
         (OneOffMode _, _)                              -> RevalidateNow
         (_, FetchUpdates { newObjects = True })        -> RevalidateNow
         (_, FetchUpdates { manifests = ManyManifests }) -> RevalidateNow
-        _ ->
-            case [ t | (_, Just t) <- changes ] of
-                [] -> NoRevalidation
-                ts | earliest <= now -> RevalidateNow
-                   | otherwise       -> RevalidateAt earliest
-                  where
-                    earliest = minimum ts
+        _ | any isReason changes                       -> RevalidateNow
+          | otherwise                                  -> NoRevalidation
 
 
 -- | Of the new manifests that would be a reason to revalidate, the ones that

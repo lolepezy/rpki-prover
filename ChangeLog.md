@@ -3,9 +3,8 @@
 ## Unreleased changes
 
 - A fetch makes the TAs that use the repository revalidated if a manifest
-  it stored lists other objects than the one the last validation used, at
-  the manifest's thisUpdate if that is in the future, or if it stored any
-  new object other than a manifest or a CRL. A manifest whose objects are
+  it stored lists other objects than the one the last validation used, or
+  if it stored any new object other than a manifest or a CRL. A manifest whose objects are
   not all stored yet waits for the fetch that stores them, and one of a CA
   that the cache has no certificate for, or one that the CA didn't sign,
   is ignored. Updates whose manifest
