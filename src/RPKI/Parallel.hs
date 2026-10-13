@@ -81,27 +81,6 @@ foldPipeline parallelism stream mapStream consume accum0 =
 -- spends waiting for the oldest item. The workers take items from the stream
 -- one at a time, so it can be a walk through a directory tree of any size.
 --
--- Made for saving an RRDP snapshot, where the workers do CPU-heavy parsing and
--- the consumer is the SQLite writer, which is one thread by necessity. What
--- limited the pipeline before it, an `async` per item and a `TBQueue` of them,
--- to ~6 busy cores of 16 was not SQLite:
---
---   * Every SQLite call is a safe foreign call, which gives the capability
---     away and has to win it back on return. With parsing threads on every
---     capability that wait, not the SQL, was most of the writer's time, ~6
---     calls per object. So the consumer gets capability 0 to itself and the
---     workers are pinned to the others.
---
---   * A producer forking one thread per item is queued behind those same
---     threads on its own capability and starves the pipeline. The workers here
---     just take the next item from the stream.
---
---   * Results are handed over through MVars, not a `TBQueue`. A consumer 
---     blocking in STM once per item leaked TVar watch queue entries
---     and transaction records that the GC keeps on the mutable list and
---     rescans on every minor GC; with one worker (-N2) that more than doubled
---     the run time, and it gets worse the longer the run.
---
 txPoolPipeline :: (ValidatorIO es, Concurrent :> es) =>
             ResultOrder ->
             Stream (Of s) IO () ->
@@ -187,11 +166,6 @@ data PipelineItem s = Item Int s | LastItem Int | NoItems
 -- tasks and wait for them. Whoever waits for a task runs it itself if no worker
 -- has taken it yet, and runs other tasks while it's running elsewhere, so a
 -- parent waiting for its children doesn't take a worker out of the pool.
---
--- Deciding on parallelism locally, e.g. per manifest from the number of its
--- entries, left ARIN (1 CA of 20 CAs of 500 CAs each) validated on one thread.
--- With one pool shared by everything, the workers are busy as long as there's
--- work left anywhere.
 --
 -- A synchronous exception in a task goes to whoever waits for the task.
 -- An asynchronous one kills the worker, and with it the whole pool.

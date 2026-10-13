@@ -451,9 +451,7 @@ fetchErik
                      | e <- mftChildren, not (e.hash `Set.member` have) ]
 
     -- | Download an object and check it against its hash, which it then comes
-    -- with. Objects are small enough to hold, and staying off the disk
-    -- matters: a file per object costs several syscalls each, which adds up
-    -- over a hundred thousand of them.
+    -- with. Objects are small enough to hold in memory.
     downloadObject :: ValidatorIO es' => URI -> Hash -> Size -> Eff es' (Hashed BS.ByteString)
     downloadObject uri hash maxSize =
         fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $
@@ -464,14 +462,6 @@ fetchErik
 
     {- Reduce a parsed object to the rows it will be stored as, and append them
        to the spill file for 'storePreparedObjects'.
-
-       This is all the work that storing it used to involve apart from the
-       INSERTs themselves -- serialising, compressing, extracting what the
-       index tables need -- done now, on a download thread, so that none of it
-       happens inside the write transaction. It goes to disk rather than
-       staying in memory, since the objects of a big FQDN add up to more than a
-       worker should hold, and to one file rather than one per object, so it
-       is a buffered write and not a round of syscalls.
     -}
     prepareForStorage :: ValidatorIO es' => MVar Handle -> Hash -> RpkiObjectLifecycle -> Eff es' ()
     prepareForStorage spill hash lifecycle = do
@@ -489,11 +479,6 @@ fetchErik
 
        Parsing and serialising have all happened by now, so the transaction
        only streams the spill file back and does the inserts.
-
-       Anything going wrong here fails the whole transaction, and with it the
-       fetch: a record that cannot be read back is an object that would
-       otherwise be silently missing, and failing means the index is not
-       recorded, so the next round tries again.
     -}
     storePreparedObjects :: ValidatorIO es' => Eff es' ()
     storePreparedObjects = do

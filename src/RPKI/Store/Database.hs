@@ -812,11 +812,6 @@ insertMftShortcutChildren (Tx conn) aki newEntries = liftIO $ do
             |]
             [ (aki, fileName, childKey, childKey) | (childKey, fileName, _) <- caChildren ]
 
--- | Delete only this AKI's (aki, child_key) membership rows. Never touches
--- `shortcuts` -- an orphaned shortcut is cleaned up by the general objects
--- cleanup/GC (deleteObjectByKey etc.), which cascades objects -> shortcuts ->
--- mft_shortcut_payload_children (and objects -> certificates ->
--- mft_shortcut_ca_children) once nothing marks the underlying object as used.
 deleteMftShortcutChildren :: MonadIO m => Tx 'RW -> AKI -> [ObjectKey] -> m ()
 deleteMftShortcutChildren (Tx conn) aki deletedKeys = liftIO $
     forM_ (inClauseBatches deletedKeys) $ \(placeholders, params) ->

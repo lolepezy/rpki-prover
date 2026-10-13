@@ -102,16 +102,12 @@ instance Indexable Indexes UrlTA where
 deleteByIx :: (Indexable ixs a, IsIndexOf ix ixs) => ix -> IxSet ixs a -> IxSet ixs a
 deleteByIx ix_ s = foldr IxSet.delete s $ IxSet.getEQ ix_ s
 
--- | Deregister a fetcher that is exiting. It is called by the fetcher thread
--- itself, so it must not try to cancel anything: throwing to yourself raises
--- the exception immediately and everything after it is dead code. It must
--- also only remove its own registration, since 'adjustFetchers' may already
--- have started a replacement fetcher for the same URL.
 dropFetcher :: Fetchers -> RpkiURL -> IO ()
 dropFetcher Fetchers {..} url = do
     me <- Conc.myThreadId
     atomically $ do
         running <- readTVar runningFetchers
+        -- Check if we are not trying to kill a fetcher for the same URL but not the original thread
         when (Map.lookup url running == Just me) $ do
             writeTVar runningFetchers $ Map.delete url running
             modifyTVar' uriByTa $ deleteByIx url
@@ -147,14 +143,7 @@ updateUriPerTa fetcheablesPerTa uriTa = uriTa'
                 url <- MonoidalMap.keys fs
             ] cleanedUpPerTa 
 
-{- | How long to wait before fetching this repository again.
-
-    A failed fetch backs off exponentially. After a successful one the current
-    interval is nudged by what the fetch actually found: nothing new means it
-    can grow, more than one delta means the repository is busy and it should
-    shrink. The result is trimmed to the configured bounds and scattered by a
-    pseudorandom amount, so that repositories do not all come due at once.
--}
+-- | How long to wait before fetching this repository again.
 nextRefreshInterval :: Config
                     -> Repository
                     -> WorldVersion

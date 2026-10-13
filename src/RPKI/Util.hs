@@ -53,13 +53,6 @@ mkHash :: BS.ByteString -> Hash
 mkHash = Hash . BSS.toShort
 {-# INLINE mkHash #-}
 
--- | What a manifest lists apart from its CRL. Two manifests with the same 
--- digest list the same objects under the same names, whatever their numbers, 
--- times and CRLs are.
---
--- It's SHA-256 over the entries sorted by name and hash, each one being the 
--- name, a NUL that no name contains, and the hash. Names are IA5Strings, 
--- so their UTF-8 bytes are just their characters.
 manifestContentDigest :: Manifest -> Hash
 manifestContentDigest Manifest { mftEntries } =
     mkHash $ S256.finalize $ S256.updates S256.init $ concat

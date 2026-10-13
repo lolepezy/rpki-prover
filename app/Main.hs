@@ -796,7 +796,8 @@ cliOptionsParser = CLIOptions
             <> metavar "URL"
             <> help ("URL of an Erik relay server. Can be specified multiple times. "
                   <> "The presense of this option switches on Erik relay support. These "
-                  <> "relays will be used for fetching repositories, by default Erik relays will be used after a successful RRDP fetch.")))
+                  <> "relays will be used for fetching repositories, by default relays are "
+                  <> "used for every repository which had at least one a successful RRDP fetch.")))
     <*> optional (option auto
             (  long "erik-parallelism"
             <> metavar "COUNT"

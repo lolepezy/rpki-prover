@@ -185,7 +185,6 @@ getRsyncURL RsyncRepository { repoPP = RsyncPublicationPoint { uri = url } } = u
 getFetchStatus :: Repository -> FetchStatus
 getFetchStatus r = getMeta r ^. #status
 
--- | When the last fetch attempt happened, successful or not.
 fetchMoment :: FetchStatus -> Maybe Instant
 fetchMoment = \case 
     FetchedAt t -> Just t
