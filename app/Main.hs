@@ -26,6 +26,8 @@ import           Data.Maybe
 import           Data.Word                        (Word16)
 import           Data.String.Interpolate.IsString
 import qualified Network.Wai.Handler.Warp         as Warp
+import           Network.Wai (responseLBS)
+import           Network.HTTP.Types (status503)
 
 import           System.Directory
 import           System.Environment
@@ -274,10 +276,30 @@ readTALs AppContext {..} = do
 
 runHttpApi :: (MaintainableStorage s) => AppContext s -> IO ()
 runHttpApi appContext@AppContext {..} = do 
-    let httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
-    Warp.run httpPort (httpServer appContext) 
+    let httpApiConfig = appContext ^. typed @Config . typed @HttpApiConfig
+    let httpPort = fromIntegral $ httpApiConfig ^. #port
+    let maxConcurrentRequests = httpApiConfig ^. #maxConcurrentRequests    
+    inFlight <- newTVarIO (0 :: Int)
+    Warp.run httpPort (limitRequests inFlight $ httpServer appContext) 
         `catch` 
         (\(e :: SomeException) -> logError logger [i|Interrupted HTTP server: #{e}.|])
+  where 
+    -- Warp has no connection limit of its own, so limit the number of requests
+    -- being served at the same time and answer the rest with 503. Idle keep-alive
+    -- connections are not counted, Warp closes them on its own timeout.    
+    limitRequests inFlight app req respond = do
+        admitted <- atomically $ do
+            n <- readTVar inFlight
+            if n < maxConcurrentRequests
+                then writeTVar inFlight (n + 1) >> pure True
+                else pure False
+        if admitted
+            then app req respond `finally` atomically (modifyTVar' inFlight (subtract 1))
+            else respond $ responseLBS status503 [
+                        ("Retry-After", "5"), 
+                        ("Content-Type", "text/plain")
+                    ]
+                    "Too many concurrent requests, try again later.\n"        
 
 
 createAppContext :: ValidatorIO es => CLIOptions -> AppLogger -> LogLevel -> Eff es AppSQLiteEnv

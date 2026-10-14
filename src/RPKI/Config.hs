@@ -186,8 +186,9 @@ data FetchIntervalConfig = FetchIntervalConfig {
     deriving anyclass (TheBinary)
 
 
-newtype HttpApiConfig = HttpApiConfig {
-        port :: Word16    
+data HttpApiConfig = HttpApiConfig {
+        port                  :: Word16,
+        maxConcurrentRequests :: Int
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -321,7 +322,8 @@ defaultConfig = Config {
         maxFailedBackoffInterval = Seconds $ 30 * 60
     },
     httpApiConf = HttpApiConfig {
-        port = 9999
+        port = 9999,
+        maxConcurrentRequests = 100
     },
     systemConfig = SystemConfig {
         rsyncWorkerLimits = WorkerLimits {
