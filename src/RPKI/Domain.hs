@@ -1335,13 +1335,12 @@ filterVrps f (Vrps v4 v6) =
     Vrps (VU.filter (f . unpack4) v4) (VU.filter (f . unpack6) v6)
 
 -----------------------------------------------------------------
--- Here is a bunch of functions sorting and counting VRPs and this machinery 
+-- Here is a bunch of functions sorting and counting VRPs. This machinery 
 -- is so complicated mainly for performance reasons -- it's actually quite
 -- CPU-demanding to sort and deduplicate a million VRPs, so this 
--- seemingly minor operastions takes a large chunk of the validation time. 
--- There is a lot of benchmarking went into this, so it's close to 
--- "as fast as it gets" without going to C.
-
+-- seemingly minor operations take a large chunk of the validation time. 
+-- There is a lot of benchmarking went into this, so it's probably close 
+-- to "as fast as it gets" without going to C.
 
 -- | Sort and deduplicate each family in the packed form. Nothing is
 -- materialised, so the result costs the same as the input.
