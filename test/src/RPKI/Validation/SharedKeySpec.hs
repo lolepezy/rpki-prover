@@ -77,6 +77,8 @@ sharedKeyGroup =
             shouldValidateOnceUnderDuplicates
         , HU.testCase "Validates the manifest of every key once under levels of duplicates"
             shouldValidateOnceUnderLevelsOfDuplicates
+        , HU.testCase "Validates the manifest of every key once per resources under levels of certificates"
+            shouldValidateOncePerResourcesUnderLevels
         , HU.testCase "Counts every pass of a key towards the size of the tree"
             shouldCountEveryPassOfKey
         , HU.testCase "Stops at a cycle of keys"
@@ -195,6 +197,45 @@ shouldValidateOnceUnderLevelsOfDuplicates =
   where
     levelCount = 6 :: Int
     perKey = 4 :: Integer
+
+
+-- | The same, but the certificates of a key have different resources, each
+-- within those of every certificate of the key before it. So the manifest 
+-- of every key is validated under every one of its certificates, and that's
+-- once for each of them: what it's validated under doesn't depend on which
+-- certificate of the key before it the certificate is validated under.
+shouldValidateOncePerResourcesUnderLevels :: HU.Assertion
+shouldValidateOncePerResourcesUnderLevels =
+    withTestContext $ \appContext -> do
+        now  <- thisInstant
+        keys@(first : _) <- forM [0 .. levelCount] $ \n -> newKey $ "level-" <> show n
+        let certificatesOf level issuer subject = 
+                [ makeCaCert now issuer subject (fromIntegral k) (resources level k) | k <- [1 .. perKey] ]
+            roa = makeRoa now (last keys) 10 (ASN 1) "10.0.0.0/24"
+        top <- newKey "top"
+        forM_ (zip3 [1 ..] keys (drop 1 keys)) $ \(level, issuer, subject) ->
+            storePublicationPoint appContext now issuer (fromIntegral level)
+                [ (Text.pack $ "c" <> show k <> ".cer", CerRO c) 
+                | (k, c) <- zip [1 :: Int ..] (certificatesOf level issuer subject) ]
+        storePublicationPoint appContext now (last keys) 1000 [("r10.roa", RoaRO roa)]
+
+        let tops = certificatesOf 0 top first
+        storeCertificates appContext now tops
+        Run {..} <- validateInOrder appContext now tops
+        HU.assertEqual "The ROA is valid" (Set.fromList [roa.content]) vrps
+        counter context (.originalMft) >>= HU.assertEqual 
+            "The manifest of every key is validated under every certificate of it" 
+            ((levelCount + 1) * perKey)
+  where
+    levelCount = 6 :: Int
+    perKey = 4 :: Int
+    -- 10.0.0.0/17 at the first level, half of it at every next one, 
+    -- and some of the other half of the level before, different for 
+    -- every certificate
+    resources level k = ipv4s [ prefix 0 (17 + level), 
+                                prefix (2 ^ (15 - level) + 16 * k) 28 ]
+    prefix offset len = 
+        "10.0." <> show (offset `div` 256 :: Int) <> "." <> show (offset `mod` 256) <> "/" <> show (len :: Int)
 
 
 -- | Validating a manifest under one more certificate with its key looks at
@@ -361,8 +402,7 @@ validateInOrder appContext now cas = do
     states <- forM cas $ \ca ->
         fmap snd $ runValidatorIO (newScopes "shared-key") $
             validateCa appContext
-                (context & #verifiedResources ?~ createVerifiedResources ca
-                         & #currentPathDepth .~ 1)
+                (taContext context ca & #currentPathDepth .~ 1)
                 (CaFull $ Located Nothing ca)
     atomically $ closeCQueue shortcutQueue
     storeShortcuts appContext shortcutQueue

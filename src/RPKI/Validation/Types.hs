@@ -83,7 +83,9 @@ data CaShortcut = CaShortcut {
         mftUri         :: Maybe URI,
         notBefore      :: {-# UNPACK #-} Instant,
         notAfter       :: {-# UNPACK #-} Instant,
-        resources      :: AllResources
+        resources      :: AllResources,
+        -- | The hash of the resources, see `certResourcesHash`
+        ownResourcesHash :: Hash
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)

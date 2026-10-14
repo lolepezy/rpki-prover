@@ -18,7 +18,7 @@ import           GHC.Generics
 
 import           Data.Foldable
 import           Data.IORef
-import           Data.Maybe                       (fromMaybe)
+import           Data.Maybe                       (fromMaybe, isJust)
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 import           Data.Map.Monoidal.Strict         (MonoidalMap)
@@ -45,6 +45,7 @@ import           RPKI.Store.Database    (roTxT, rwTxT)
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Time
 import           RPKI.Util
+import           RPKI.Validation.Common           (createVerifiedResources)
 import           RPKI.Validation.Types
 import           RPKI.Validation.TopDown.Shortcuts
 
@@ -62,6 +63,8 @@ data PayloadBuilder = PayloadBuilder {
 -- but it's lifetime is limited to one top-down validation run.
 data TopDownContext = TopDownContext {
         verifiedResources       :: Maybe (VerifiedRS PrefixesAndAsns),
+        -- | See `verifiedResourcesHash`
+        resourcesHash           :: Hash,
         taName                  :: TaName,
         allTas                  :: AllTasTopDownContext,
         currentPathDepth        :: Int,
@@ -170,6 +173,7 @@ newTopDownContext taName allTas =
         payloadBuilder <- newPayloadBuilder
         atomically $ do
             let verifiedResources = Nothing
+                resourcesHash = noResourcesHash
                 currentPathDepth = 0
                 overclaimingHappened = False       
             interruptedByLimit      <- newTVar CanProceed                 
@@ -324,6 +328,27 @@ knownSignature TopDownContext { allTas = AllTasTopDownContext {..}, anotherPassO
                 atomically $ modifyTVar' knownSignatures $ Map.insert (key, ski) checked
                 pure checked
     | otherwise = pure signature
+
+
+-- | The context of validating a TA with its certificate
+taContext :: WithResources c => TopDownContext -> c -> TopDownContext
+taContext topDownContext taCert = topDownContext 
+    & #verifiedResources ?~ createVerifiedResources taCert
+    & #resourcesHash     .~ taResourcesHash (getResources taCert)
+
+-- | The context of validating a child CA with the resources of its certificate
+-- and their hash, verified the way `validateChildParentResources` does it
+childCaContext :: TopDownContext 
+               -> AllResources 
+               -> Hash
+               -> (VerifiedRS PrefixesAndAsns, Maybe (Overclaiming PrefixesAndAsns)) 
+               -> TopDownContext
+childCaContext topDownContext resources ownHash verified@(childVerifiedResources, overclaiming) = 
+    topDownContext 
+        & #verifiedResources    ?~ childVerifiedResources
+        & #resourcesHash        .~ verifiedResourcesHash resources ownHash topDownContext.resourcesHash verified
+        & #currentPathDepth     %~ (+ 1)
+        & #overclaimingHappened .~ isJust overclaiming
 
 
 -- Do whatever is required to notify other subsystems that the object was touched 

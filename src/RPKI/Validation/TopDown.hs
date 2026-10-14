@@ -258,7 +258,7 @@ validateTA appContext@AppContext{..} tal topDownContext = do
                 (taCert, repos) <- taCertificateFromCache appContext tal
                 -- This clumsy code is to make it possible to construct topDownContext
                 -- before getting and validating the TA certificate
-                let topDownContext' = topDownContext & #verifiedResources ?~ createVerifiedResources (taCert ^. #payload)
+                let topDownContext' = taContext topDownContext (taCert ^. #payload)
                 validateFromTACert appContext topDownContext' repos taCert
 
 taScopes :: TaName -> Scopes
@@ -449,7 +449,7 @@ validateCaNoFetch
     -- the key that can make more of its children valid, see `claimKeyPass`
     validateChildrenOf certificate ski = do
         let aki = toAKI ski
-        let contextHash = validationContextHash verifiedResources (caMftUri ca)
+        let contextHash = validationContextHash resourcesHash (caMftUri ca)
         (passOfKey, newCertificate, owner) <- liftIO $ atomically $ do
             (passOfKey, newCertificate) <- 
                 claimKeyPass keyPasses aki certificate contextHash currentPathDepth
@@ -936,7 +936,7 @@ manifestFullValidation
                         -- warnings are reported every time.
                         hasIssues <- not . Set.null <$> thisScopeIssues
                         let aki = toAKI $ getSKI fullCa
-                        let validatedUnder = validationContextHash verifiedResources 
+                        let validatedUnder = validationContextHash resourcesHash 
                                                 fullCa.payload.certUris.manifestUri
                         let nextMftShortcut = makeMftShortcut mftKey validMft newEntries 
                                                 keyedValidCrl hasIssues validatedUnder
@@ -1394,11 +1394,10 @@ validateChildObject
                     embedState certState
                     entryFor (Just InvalidCaChild) Nothing
 
-                Right (childVerifiedResources, overlclaiming) -> do
-                    let childTopDownContext = topDownContext
-                            & #verifiedResources ?~ childVerifiedResources
-                            & #currentPathDepth %~ (+ 1)
-                            & #overclaimingHappened .~ isJust overlclaiming
+                Right verified -> do
+                    let resources = getResources childCert
+                    let childTopDownContext = childCaContext topDownContext 
+                                                resources (certResourcesHash resources) verified
 
                     (r, subTreeState) <- runValidator scopes $
                         validateCa appContext childTopDownContext (CaFull (Located locations childCert))
@@ -1563,7 +1562,7 @@ collectPayloads
         markAsUsed topDownContext childKey
         case childOf childData of
             CaChild caShortcut _ -> do
-                (childVerifiedResources, overlclaiming) <-
+                verified <-
                     validateChildParentResources
                                 (config ^. #validationConfig . typed)
                                 caShortcut.resources
@@ -1578,10 +1577,8 @@ collectPayloads
                                 (makeChildWithIssues childKey fileName (Just InvalidCaChild))
                             appError e
 
-                let childTopDownContext = topDownContext
-                        & #currentPathDepth %~ (+ 1)
-                        & #verifiedResources ?~ childVerifiedResources
-                        & #overclaimingHappened .~ isJust overlclaiming
+                let childTopDownContext = childCaContext topDownContext 
+                                            caShortcut.resources caShortcut.ownResourcesHash verified
 
                 validateCa appContext childTopDownContext (CaShort caShortcut)
 
