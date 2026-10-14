@@ -224,6 +224,12 @@ toValidationMessage = \case
           [i|this occurrence. This CA is reachable by more than one path, so its objects |] <>
           [i|are validated along the path that reached it first.|]
 
+      CertificatesWithSameKey (SKI ski) others locations -> 
+          [i|#{others} other CA certificate(s) in this TA have the same key #{ski} as this one|] <> 
+          (if null locations then "" else [i|, e.g. #{Text.intercalate ", " $ map fmtLocations locations}|]) <> 
+          [i|. That is unusual and can be an attempt to change what is valid under the key: |] <>
+          [i|its manifest and the objects on it are validated under each of the certificates.|]
+
       NoMFT (AKI aki) -> 
           [i|No manifest found for AKI #{aki}.|]
 

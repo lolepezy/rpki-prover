@@ -7,7 +7,7 @@ module RPKI.Validation.TopDown.Context where
 
 import           Effectful
 import           Control.Concurrent.STM
-import           Control.Monad                    (unless)
+import           Control.Monad                    (unless, when)
 
 import           Control.Lens hiding (children)
 
@@ -16,7 +16,11 @@ import           Barbies
 import           GHC.Generics
 
 import           Data.Foldable
+import           Data.Either                      (isLeft)
 import           Data.IORef
+import           Data.Maybe                       (fromMaybe)
+import           Data.Map.Strict                  (Map)
+import qualified Data.Map.Strict                  as Map
 import           Data.Map.Monoidal.Strict         (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Set                         (Set)
@@ -34,6 +38,7 @@ import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Repository
+import qualified RPKI.Resources.IntervalContainers as IS
 import           RPKI.Resources.Types
 
 import           RPKI.Store.Database    (roTxT, rwTxT)
@@ -66,7 +71,16 @@ data TopDownContext = TopDownContext {
         overclaimingHappened    :: Bool,
         fetcheables             :: TVar Fetcheables,
         earliestNotValidAfter   :: TVar EarliestValidityChange,        
-        visitedAkis             :: TVar (Set AKI),
+        -- | The certificates of every key so far, and what the manifest of 
+        -- the key was validated under, see `claimKeyPass`
+        keyPasses               :: TVar (Map AKI KeyPasses),
+        -- | The manifest of the CA is validated not for the first time, under 
+        -- another certificate with its key. Everything it looks at counts 
+        -- towards the size of the tree then, also the objects counted before.
+        anotherPassOfKey        :: Bool,
+        -- | The validation of the manifest of the CA is the one in this run that 
+        -- uses and writes its shortcut, see `claimShortcut`
+        ownsShortcut            :: Bool,
         -- | RRDP repositories to fetch from a snapshot next time, with why: 
         -- the cache doesn't have what the manifests of a CA there say, 
         -- and none of them could be used
@@ -78,6 +92,8 @@ data AllTasTopDownContext = AllTasTopDownContext {
         now               :: Now,
         worldVersion      :: WorldVersion,
         visitedKeys       :: TVar (Set ObjectKey),        
+        -- | The keys whose manifest shortcut is used in this run
+        shortcutOwners    :: TVar (Set AKI),
         publicationPoints :: PublicationPoints,
         shortcutQueue     :: ClosableQueue MftShortcutOp,
         topDownCounters   :: TopDownCounters IORef,
@@ -108,7 +124,9 @@ data TopDownCounters f = TopDownCounters {
         updateMftChildren   :: f Int,
         readOriginal :: f Int,
         readParsed   :: f Int,
-        repeatedAki  :: f Int
+        repeatedAki  :: f Int,
+        -- | Validations of a manifest under one more certificate with its key
+        anotherKeyPass :: f Int
     }
     deriving stock (Generic)
     deriving (FunctorB, TraversableB, ApplicativeB, ConstraintsB)
@@ -117,6 +135,24 @@ deriving instance AllBF Show f TopDownCounters => Show (TopDownCounters f)
 
 data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
     deriving stock (Show, Eq, Ord, Generic)
+
+-- | The certificates with one key, and what the manifest of the key was 
+-- validated under: the location of the manifest and the publication points 
+-- of the certificate, and the resources and the depth of the certificate.
+data KeyPasses = KeyPasses {
+        certificates :: Set ObjectKey,
+        passes       :: Map (Maybe URI, PublicationPointAccess) [KeyPass]
+    }
+    deriving stock (Generic)
+
+data KeyPass = KeyPass {
+        resources :: Maybe (VerifiedRS PrefixesAndAsns),
+        depth     :: Int
+    }
+    deriving stock (Show, Eq, Generic)
+
+data PassOfKey = FirstPassOfKey | AnotherPassOfKey | PassedAlready
+    deriving stock (Show, Eq, Generic)
 
 
 newPayloadBuilder :: IO PayloadBuilder 
@@ -142,8 +178,10 @@ newTopDownContext taName allTas =
             treeSize                <- newTVar 0
             fetcheables             <- newTVar mempty                 
             earliestNotValidAfter   <- newTVar mempty
-            visitedAkis             <- newTVar mempty
+            keyPasses               <- newTVar mempty
             snapshotCandidates      <- newTVar mempty
+            let anotherPassOfKey = False
+                ownsShortcut     = True
             pure $! TopDownContext {..}
 
 newAllTasTopDownContext :: MonadIO m =>
@@ -158,6 +196,7 @@ newAllTasTopDownContext worldVersion publicationPoints shortcutQueue multiLocati
     topDownCounters <- newTopDownCounters
     atomically $ do        
         visitedKeys    <- newTVar mempty 
+        shortcutOwners <- newTVar mempty
         pure $! AllTasTopDownContext {..}
 
 newTopDownCounters :: IO (TopDownCounters IORef)
@@ -186,6 +225,7 @@ newTopDownCounters = do
     readOriginal <- newIORef 0   
     readParsed   <- newIORef 0             
     repeatedAki  <- newIORef 0
+    anotherKeyPass <- newIORef 0
    
     pure TopDownCounters {..}
 
@@ -206,24 +246,92 @@ verifyLimit hitTheLimit limit =
             pure AlreadyReportedLimit
 
 
+{- | Whether the manifest of a key is to be validated under one more certificate 
+   with the key, and remember it if it is. 
+
+   Nothing stops several certificates from having one key, e.g. issued by 
+   different parents with different resources. The children of the key are 
+   valid under any of them that has their resources, so they are validated
+   under every one of them that can make more of them valid. That's every one
+   but the ones with the same SIA and the resources and the depth (for the 
+   limit of it) within those of one the manifest was validated under already.
+   Duplicates of a certificate, the same certificate on another path, or 
+   a cycle, don't take more than one pass then.
+
+   It also gives the certificates with the key before this one, if it is not 
+   one of them.
+-}
+claimKeyPass :: TVar (Map AKI KeyPasses) 
+             -> AKI 
+             -> Maybe ObjectKey 
+             -> (Maybe URI, PublicationPointAccess) 
+             -> KeyPass 
+             -> STM (PassOfKey, Maybe [ObjectKey])
+claimKeyPass keyPasses aki certificate sia pass = do
+    KeyPasses {..} <- fromMaybe (KeyPasses mempty mempty) . Map.lookup aki <$> readTVar keyPasses
+    let passOfKey 
+            | any (`covers` pass) (Map.findWithDefault [] sia passes) = PassedAlready
+            | Map.null passes = FirstPassOfKey
+            | otherwise       = AnotherPassOfKey
+    let passes' = case passOfKey of 
+                    PassedAlready -> passes
+                    _             -> Map.insertWith (<>) sia [pass] passes
+    let certificates' = maybe certificates (`Set.insert` certificates) certificate
+    modifyTVar' keyPasses $ Map.insert aki $! KeyPasses certificates' passes'
+    let newCertificate = maybe True (`Set.notMember` certificates) certificate
+    pure (passOfKey, if newCertificate then Just (Set.toList certificates) else Nothing)
+  where
+    covers earlier later = 
+        earlier.depth <= later.depth && 
+        later.resources `resourcesWithin` earlier.resources
+
+-- | The resources are within the other ones, `Nothing` is all of them
+resourcesWithin :: Maybe (VerifiedRS PrefixesAndAsns) -> Maybe (VerifiedRS PrefixesAndAsns) -> Bool
+resourcesWithin _ Nothing = True
+resourcesWithin Nothing (Just _) = False
+resourcesWithin (Just r@(VerifiedRS (PrefixesAndAsns i4 i6 ia))) 
+                (Just o@(VerifiedRS (PrefixesAndAsns o4 o6 oa))) =
+    r == o || (within i4 o4 && within i6 o6 && within ia oa)
+  where
+    within i o = isLeft $ IS.subsetCheck i o
+
+-- | Whether the validation of the manifest of a key is the one in this run
+-- that uses and writes its shortcut: the first one. The others don't use it,
+-- they can be under certificates with the key that have other resources, and
+-- what they validate goes to the shortcut of the key otherwise (see 
+-- `validationContextHash`).
+claimShortcut :: TVar (Set AKI) -> AKI -> STM Bool
+claimShortcut shortcutOwners aki = do
+    owners <- readTVar shortcutOwners
+    if Set.member aki owners
+        then pure False
+        else do
+            writeTVar shortcutOwners $! Set.insert aki owners
+            pure True
+
+
 -- Do whatever is required to notify other subsystems that the object was touched 
 -- during top-down validation. It doesn't mean that the object is valid, just that 
 -- we read it from the database and looked at it. It will be used to decide when 
 -- to GC this object from the cache -- if it's not visited for too long, it is 
 -- removed.
 markAsUsed :: ValidatorIO es => TopDownContext -> ObjectKey -> Eff es ()
-markAsUsed TopDownContext { allTas = AllTasTopDownContext {..}, treeSize = taTreeSize } k = 
+markAsUsed TopDownContext { allTas = AllTasTopDownContext {..}, treeSize = taTreeSize, anotherPassOfKey } k = 
     liftIO $ atomically $ do
         visited <- readTVar visitedKeys
-        unless (Set.member k visited) $ do
-            writeTVar visitedKeys $! Set.insert k visited
-            modifyTVar' taTreeSize (+ 1)
+        if Set.member k visited
+            then when anotherPassOfKey $ modifyTVar' taTreeSize (+ 1)
+            else do
+                writeTVar visitedKeys $! Set.insert k visited
+                modifyTVar' taTreeSize (+ 1)
 
+-- | Same as `markAsUsed`, also gives the key of the object
 markAsUsedByHash :: ValidatorIO es => 
-                    AppContext s -> TopDownContext -> Hash -> Eff es ()
+                    AppContext s -> TopDownContext -> Hash -> Eff es (Maybe ObjectKey)
 markAsUsedByHash AppContext {..} topDownContext hash = do
     key <- roTxT database $ \tx -> DB.getKeyByHash tx hash
     for_ key $ markAsUsed topDownContext              
+    pure key
 
 bumpCounterBy :: (MonadIO m, Num a) =>
                 s -> Getting (IORef a) s (IORef a) -> a -> m ()

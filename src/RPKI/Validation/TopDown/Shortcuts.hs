@@ -19,12 +19,15 @@ import           RPKI.AppContext
 import           RPKI.Domain
 import           RPKI.Parallel
 import           RPKI.Repository
+import           RPKI.Resources.Types
 
+import           RPKI.Store.Base.Serialisation
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Database    (rwTxT)
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 import           RPKI.Time
+import           RPKI.Util                        (sha256s)
 import           RPKI.Validation.Types
 import           RPKI.Validation.ObjectValidation
 
@@ -37,6 +40,7 @@ makeCaShortcut key (Validated certificate) ppas = let
         ski = getSKI certificate
         serial = getSerial certificate
         resources = getResources certificate
+        mftUri = certificate.certUris.manifestUri
     in CaChild (CaShortcut {..}) serial
 
 makeRoaShortcut :: ObjectKey -> Validated WellStructuredRoa -> VrpsPerAs -> MftChild
@@ -78,10 +82,11 @@ makeMftShortcut :: ObjectKey
                 -> Validated WellStructuredMft -> [(ObjectKey, MftEntry)] 
                 -> Keyed (Validated CrlObject) 
                 -> Bool
+                -> Hash
                 -> MftShortcut   
 makeMftShortcut key 
     (Validated mftObject) (Map.fromList -> nonCrlEntries) 
-    (Keyed (Validated validCrl) crlKey) hasIssues = 
+    (Keyed (Validated validCrl) crlKey) hasIssues validatedUnder = 
   let
     ValidityPeriod {..} = manifestValidityPeriod mftObject
     serial = getSerial mftObject
@@ -104,6 +109,16 @@ manifestValidityPeriod mft =
     let ValidityPeriod eeNotBefore eeNotAfter = getValidityPeriod mft
         Manifest { thisTime, nextTime } = mft.content
     in ValidityPeriod (max eeNotBefore thisTime) (min eeNotAfter nextTime)
+
+-- | What the children of a CA are validated under, apart from its key: its 
+-- verified resources and the location of its manifest, by its SIA. Several 
+-- certificates can have the same key and different ones of these, e.g. a 
+-- certificate re-issued with fewer resources, or two parents issuing one 
+-- each. A manifest shortcut is used only under what its children were 
+-- validated under, otherwise they are validated again.
+validationContextHash :: Maybe (VerifiedRS PrefixesAndAsns) -> Maybe URI -> Hash
+validationContextHash resources mftUri = 
+    sha256s $ serialise_ resources <> serialise_ mftUri
 
 makeChildWithIssues :: ObjectKey -> Text -> Maybe CaChildValidity -> MftEntry
 makeChildWithIssues childKey fileName caCert =
@@ -217,8 +232,9 @@ data ShortcutWrites
     -- still have children that are not on this manifest.
     = ReplaceShortcut
     | UpdateShortcut {
-        -- | The shortcut is for another manifest now, or the
-        -- manifest's issues came or went
+        -- | The shortcut is for another manifest now, the manifest's 
+        -- issues came or went, or the children were validated under 
+        -- something else
         writeMeta       :: Bool,
         -- | Children that are new on the manifest or validated to something else
         changedChildren :: [(ObjectKey, MftEntry)],
@@ -235,7 +251,9 @@ shortcutWrites current next deletedKeys =
     case current of
         Nothing -> ReplaceShortcut
         Just shortcut -> UpdateShortcut {
-                writeMeta       = shortcut.key /= next.key || shortcut.hasIssues /= next.hasIssues,
+                writeMeta       = shortcut.key /= next.key || 
+                                  shortcut.hasIssues /= next.hasIssues ||
+                                  shortcut.validatedUnder /= next.validatedUnder,
                 -- Children validated again come out the same as they 
                 -- are on the shortcut most of the time
                 changedChildren = [ e | e@(k, entry) <- Map.toList next.nonCrlEntries,
