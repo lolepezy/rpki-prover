@@ -391,7 +391,7 @@ validateCaNoLimitChecks
                 let validateWithPpScope =
                         vFocusOn PPFocus primaryUrl $
                             metricFocusOn PPFocus primaryUrl $
-                                validateCaNoFetch appContext topDownContext ca ppAccess
+                                validateCaNoFetch appContext topDownContext ca
                 case ca of
                     CaFull c ->
                         vFocusOnLocated c validateWithPpScope
@@ -417,12 +417,11 @@ validateCaNoLimitChecks
 validateCaNoFetch :: (ValidatorIO es, Concurrent :> es) => AppContext s
                 -> TopDownContext 
                 -> Ca 
-                -> PublicationPointAccess
                 -> Eff es ()
 validateCaNoFetch
     appContext@AppContext {..}
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
-    ca ppAccess = do 
+    ca = do 
     
     case ca of 
         CaFull c ->
@@ -450,9 +449,10 @@ validateCaNoFetch
     -- the key that can make more of its children valid, see `claimKeyPass`
     validateChildrenOf certificate ski = do
         let aki = toAKI ski
-        let keyPass = KeyPass verifiedResources currentPathDepth
+        let contextHash = validationContextHash verifiedResources (caMftUri ca)
         (passOfKey, newCertificate, owner) <- liftIO $ atomically $ do
-            (passOfKey, newCertificate) <- claimKeyPass keyPasses aki certificate (caMftUri ca, ppAccess) keyPass
+            (passOfKey, newCertificate) <- 
+                claimKeyPass keyPasses aki certificate contextHash currentPathDepth
             owner <- case passOfKey of
                         PassedAlready -> pure False
                         _             -> claimShortcut shortcutOwners aki
@@ -473,7 +473,7 @@ validateCaNoFetch
                 validateManifests appContext
                     (topDownContext & #anotherPassOfKey .~ (passOfKey == AnotherPassOfKey)
                                     & #ownsShortcut .~ owner)
-                    ca aki
+                    ca aki contextHash
 
     -- There are no several certificates with one key in the RPKI as it is, so 
     -- it's worth telling about. The warning goes to every certificate with the 
@@ -489,12 +489,13 @@ validateCaNoFetch
 
 
 -- Validate the manifest of the CA with its children, the way `planManifests` says.
+-- The hash is of what the children are validated under, see `validationContextHash`.
 validateManifests :: (ValidatorIO es, Concurrent :> es) =>
-                    AppContext s -> TopDownContext -> Ca -> AKI -> Eff es ()
+                    AppContext s -> TopDownContext -> Ca -> AKI -> Hash -> Eff es ()
 validateManifests
     appContext@AppContext {..}
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..} }
-    ca aki = do
+    ca aki contextHash = do
     (mfts, shortcut) <- roTxT database $ \tx ->
         (,) <$> DB.getMftsForAKI tx aki
             <*> if usesShortcut
@@ -557,7 +558,6 @@ validateManifests
 
     -- The children on the shortcut were validated under what the CA has now
     sameContext meta = meta.validatedUnder == contextHash
-    contextHash = validationContextHash topDownContext.verifiedResources (caMftUri ca)
 
     -- The manifests newer than the one of the shortcut, newest first: use the
     -- first one that the CA signed and that is valid. Each one that isn't valid,

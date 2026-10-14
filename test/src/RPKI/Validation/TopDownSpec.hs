@@ -72,6 +72,7 @@ import           RPKI.Validation.TopDown.Shortcuts
                 , revokedShortcutChildren
                 , shortcutWrites
                 , storeShortcuts
+                , validationContextHash
                 )
 
 
@@ -619,7 +620,7 @@ validateCaManifests appContext ppUrl aki = do
     ca <- fixtureCa
     (r, _) <- runValidatorIO (newScopes "validate-manifests") $
                 vFocusOn PPFocus ppUrl $
-                    validateManifests appContext topDownContext ca aki
+                    validateManifests appContext topDownContext ca aki (validationContextHash Nothing Nothing)
     atomically $ closeCQueue shortcutQueue
     storeShortcuts appContext shortcutQueue
     stored <- DB.roTx db $ \tx -> DB.getMftShorcutMeta tx aki

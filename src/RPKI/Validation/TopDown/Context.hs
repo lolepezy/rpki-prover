@@ -17,7 +17,6 @@ import           Barbies
 import           GHC.Generics
 
 import           Data.Foldable
-import           Data.Either                      (isLeft)
 import           Data.IORef
 import           Data.Maybe                       (fromMaybe)
 import           Data.Map.Strict                  (Map)
@@ -40,7 +39,6 @@ import           RPKI.Reporting
 import           RPKI.Logging
 import           RPKI.Parallel
 import           RPKI.Repository
-import qualified RPKI.Resources.IntervalContainers as IS
 import           RPKI.Resources.Types
 
 import           RPKI.Store.Database    (roTxT, rwTxT)
@@ -143,19 +141,13 @@ data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
     deriving stock (Show, Eq, Ord, Generic)
 
 -- | The certificates with one key, and what the manifest of the key was 
--- validated under: the location of the manifest and the publication points 
--- of the certificate, and the resources and the depth of the certificate.
+-- validated under (see `validationContextHash`), with the smallest depth 
+-- of a certificate it was validated under with it.
 data KeyPasses = KeyPasses {
         certificates :: Set ObjectKey,
-        passes       :: Map (Maybe URI, PublicationPointAccess) [KeyPass]
+        passes       :: Map Hash Int
     }
     deriving stock (Generic)
-
-data KeyPass = KeyPass {
-        resources :: Maybe (VerifiedRS PrefixesAndAsns),
-        depth     :: Int
-    }
-    deriving stock (Show, Eq, Generic)
 
 data PassOfKey = FirstPassOfKey | AnotherPassOfKey | PassedAlready
     deriving stock (Show, Eq, Generic)
@@ -260,16 +252,22 @@ verifyLimit hitTheLimit limit =
    Nothing stops several certificates from having one key, e.g. issued by 
    different parents with different resources. The children of the key are 
    valid under any of them that has their resources, so they are validated
-   under every one of them that can make more of them valid. That's every one
-   but the ones with the same SIA and the resources and the depth (for the 
-   limit of it) within those of one the manifest was validated under already.
-   Duplicates of a certificate, the same certificate on another path, or
-   a cycle, don't take more than one pass then.
+   under every one of them that can make other ones valid. That's every one 
+   but the ones with the same resources and location of the manifest (see 
+   `validationContextHash`) as one the manifest was validated under already, 
+   and a depth (for the limit of it) that is not smaller. Duplicates of a 
+   certificate, the same certificate on another path, or a cycle, don't take 
+   more than one pass then.
+
+   Only the hash of the resources and the location is kept, there's one for 
+   every key in the tree. So a certificate with resources within those of 
+   another one takes a pass of its own as well, although nothing more can be
+   valid under it. Every pass but the first one counts towards the size of 
+   the tree, which limits them.
 
    The resources are the verified ones. With the reconsidered algorithm
    (RFC 8360) they are the intersection of the resources on the path, so
-   there can be a pass for every one of them. Every pass but the first one
-   counts towards the size of the tree, which limits them.
+   there can be a pass for every one of them.
 
    It also gives the certificates with the key before this one, if it is not 
    one of them.
@@ -277,36 +275,22 @@ verifyLimit hitTheLimit limit =
 claimKeyPass :: TVar (Map AKI KeyPasses) 
              -> AKI 
              -> Maybe ObjectKey 
-             -> (Maybe URI, PublicationPointAccess) 
-             -> KeyPass 
+             -> Hash
+             -> Int
              -> STM (PassOfKey, Maybe [ObjectKey])
-claimKeyPass keyPasses aki certificate sia pass = do
+claimKeyPass keyPasses aki certificate validatedUnder depth = do
     KeyPasses {..} <- fromMaybe (KeyPasses mempty mempty) . Map.lookup aki <$> readTVar keyPasses
     let passOfKey 
-            | any (`covers` pass) (Map.findWithDefault [] sia passes) = PassedAlready
+            | maybe False (<= depth) (Map.lookup validatedUnder passes) = PassedAlready
             | Map.null passes = FirstPassOfKey
             | otherwise       = AnotherPassOfKey
     let passes' = case passOfKey of 
                     PassedAlready -> passes
-                    _             -> Map.insertWith (<>) sia [pass] passes
+                    _             -> Map.insertWith min validatedUnder depth passes
     let certificates' = maybe certificates (`Set.insert` certificates) certificate
     modifyTVar' keyPasses $ Map.insert aki $! KeyPasses certificates' passes'
     let newCertificate = maybe True (`Set.notMember` certificates) certificate
     pure (passOfKey, if newCertificate then Just (Set.toList certificates) else Nothing)
-  where
-    covers earlier later = 
-        earlier.depth <= later.depth && 
-        later.resources `resourcesWithin` earlier.resources
-
--- | The resources are within the other ones, `Nothing` is all of them
-resourcesWithin :: Maybe (VerifiedRS PrefixesAndAsns) -> Maybe (VerifiedRS PrefixesAndAsns) -> Bool
-resourcesWithin _ Nothing = True
-resourcesWithin Nothing (Just _) = False
-resourcesWithin (Just r@(VerifiedRS (PrefixesAndAsns i4 i6 ia))) 
-                (Just o@(VerifiedRS (PrefixesAndAsns o4 o6 oa))) =
-    r == o || (within i4 o4 && within i6 o6 && within ia oa)
-  where
-    within inner outer = isLeft $ IS.subsetCheck inner outer
 
 -- | Whether the validation of the manifest of a key is the one in this run
 -- that uses and writes its shortcut: the first one. The others don't use it,
