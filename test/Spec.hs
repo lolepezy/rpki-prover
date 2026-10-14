@@ -45,6 +45,7 @@ main = defaultMain $ testGroup "All tests" [
         topDownRegressionGroup,
         bottomUpGroup,
         sharedKeyGroup,
+        validationWorkGroup,
         revalidationSpec,
         storableEncodingSpec,
         workerSpec,

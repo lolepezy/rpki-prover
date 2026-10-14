@@ -43,6 +43,7 @@ import           RPKI.TestCommons
 import           RPKI.Time
 import           RPKI.Util                        (parseRpkiURL, sha256s)
 import           RPKI.Validation.Common           (createVerifiedResources)
+import           RPKI.Validation.ObjectValidation (validateCrl, validateRoa)
 import           RPKI.Validation.TopDown          (validateCa)
 import           RPKI.Validation.TopDown.Context
 import           RPKI.Validation.TopDown.Shortcuts (MftShortcutOp, storeShortcuts)
@@ -55,9 +56,9 @@ import           RPKI.Validation.Types            (Ca (..))
     children of a CA are found by its key, so they are children of all of these
     certificates, and valid under any one of them that has their resources.
 
-    That's the path poisoning of "Algorithmic Complexity Attacks Against RPKI" 
-    (Fig. 11 there), and several certificates with one key are what the other 
-    attacks there are built of, see `claimKeyPass`. 
+    Whichever of them validation gets to first must not decide which of the 
+    children are valid. Several certificates with one key also make many 
+    paths to the same objects, see `claimKeyPass`. 
 
     The objects are made up here, with only what top-down validation looks at
     being real: keys, signatures, resources and the times. They have no
@@ -80,6 +81,17 @@ sharedKeyGroup =
             shouldCountEveryPassOfKey
         , HU.testCase "Stops at a cycle of keys"
             shouldStopAtCycle
+        , HU.testCase "Checks a signature under a key once more at most"
+            shouldCheckSignaturesOnce
+        ]
+
+validationWorkGroup :: TestTree
+validationWorkGroup =
+    testGroup "Work of validating a CA"
+        [ HU.testCase "Checks what doesn't need cryptography before signatures"
+            shouldCheckBeforeSignatures
+        , HU.testCase "Falls back from so many manifests at most"
+            shouldLimitManifestFallbacks
         ]
 
 
@@ -155,9 +167,9 @@ shouldValidateOnceUnderDuplicates =
             (Count 8) (validationMetric state).sharedKeyCertNumber
 
 
--- | Fig. 6 of the paper: every key has several certificates, issued by the key
--- before it, so that there are (certificates per key) ^ (number of keys) paths
--- to the last key. The manifest of every key is validated once.
+-- | Every key has several certificates, issued by the key before it, so that 
+-- there are (certificates per key) ^ (number of keys) paths to the last key. 
+-- The manifest of every key is validated once.
 shouldValidateOnceUnderLevelsOfDuplicates :: HU.Assertion
 shouldValidateOnceUnderLevelsOfDuplicates =
     withTestContext $ \appContext -> do
@@ -198,11 +210,12 @@ shouldCountEveryPassOfKey =
         HU.assertEqual "Twice as much" (2 * onceSize) twiceSize
 
 
--- | Fig. 3 of the paper: the key of a CA has a certificate issued by its child.
--- The second one has the same location of the manifest or another one.
+-- | The key of a CA has a certificate issued by its child.
+-- The second one has the same location of the manifest, or another one, and 
+-- then the manifest is validated under it once more.
 shouldStopAtCycle :: HU.Assertion
 shouldStopAtCycle =
-    forM_ [id, movedTo "elsewhere"] $ \moved -> 
+    forM_ [(id, 0), (movedTo "elsewhere", 1)] $ \(moved, anotherPass) -> 
         withTestContext $ \appContext -> do
             now    <- thisInstant
             root   <- newKey "root"
@@ -221,6 +234,88 @@ shouldStopAtCycle =
 
             Run {..} <- validateInOrder appContext now [parentCa]
             HU.assertEqual "The ROA is valid" (Set.fromList [roa.content]) vrps
+            counter context (.anotherKeyPass) >>= HU.assertEqual "Passes of the key" anotherPass
+
+
+-- | A signature doesn't depend on which certificate with the key the object is 
+-- validated under. It's checked the first time and once more, and known after. 
+shouldCheckSignaturesOnce :: HU.Assertion
+shouldCheckSignaturesOnce =
+    withTestContext $ \appContext -> do
+        now     <- thisInstant
+        shared  <- newKey "shared"
+        issuers <- forM [1 .. 3 :: Int] $ \n -> newKey $ "issuer-" <> show n
+        -- Each one with an SIA of its own, so each one is a pass of its own
+        let cas = [ movedTo (Text.pack $ "pp-" <> show n) $ 
+                        makeCaCert now issuer shared n (ipv4s ["10.0.0.0/16"])
+                  | (n, issuer) <- zip [1 ..] issuers ]
+            roa1 = makeRoa now shared 10 (ASN 1) "10.0.1.0/24"
+            roa2 = makeRoa now shared 11 (ASN 2) "10.0.2.0/24"
+        storeCertificates appContext now cas
+        storePublicationPoint appContext now shared 1
+            [("r10.roa", RoaRO roa1), ("r11.roa", RoaRO roa2)]
+
+        Run {..} <- validateInOrder appContext now cas
+        HU.assertEqual "Both ROAs are valid" (Set.fromList [roa1.content, roa2.content]) vrps
+        counter context (.anotherKeyPass) >>= HU.assertEqual "Three passes" 2
+        counter context (.rememberedSignature) >>= HU.assertEqual 
+            "The manifest, the CRL and the ROAs are known in the third one" 4
+
+
+-- | An object that is not valid for other reasons doesn't cost a signature
+-- check, the signature is checked last. Here the signatures are not valid.
+shouldCheckBeforeSignatures :: HU.Assertion
+shouldCheckBeforeSignatures = do
+    now   <- thisInstant
+    key   <- newKey "ca"
+    other <- newKey "other"
+    let ca  = makeCaCert now other key 1 (ipv4s ["10.0.0.0/16"])
+        crl = makeCrl now key & #signCrl . #revokedSerials .~ Set.singleton (Serial 11)
+        forged :: WellStructuredRoa -> WellStructuredRoa
+        forged roa = roa & #eeCert . #signature .~ sign other (BSS.fromShort roa.eeCert.encoded)
+        validate roa = fst <$> runValidatorIO (newScopes "order")
+                        (validateRoa StrictRFC now roa ca (Validated crl) 
+                            (Just $ createVerifiedResources ca))
+
+    validate (forged $ makeRoa now key 10 (ASN 1) "10.0.1.0/24") >>= \case
+        Left (ValidationE (InvalidSignature _)) -> pure ()
+        other_ -> HU.assertFailure $ "The signature is not valid: " <> show other_
+    validate (forged $ makeRoa now key 12 (ASN 1) "10.1.0.0/24") >>= \case
+        Left (ValidationE (OverclaimedResources _)) -> pure ()
+        other_ -> HU.assertFailure $ "Resources go before the signature: " <> show other_
+    validate (forged $ makeRoa now key 11 (ASN 1) "10.0.1.0/24") >>= 
+        HU.assertEqual "Revocation goes before the signature" 
+            (Left $ ValidationE RevokedResourceCertificate)
+
+    let expired = makeCrl now key 
+                    & #signCrl . #nextUpdateTime .~ momentAfter (unNow now) (-60)
+                    & #signCrl . #signatureValue .~ sign other "CRL ca"
+    fst <$> runValidatorIO (newScopes "crl") (validateCrl now expired ca) >>= \case
+        Left (ValidationE NextUpdateTimeIsInThePast {}) -> pure ()
+        other_ -> HU.assertFailure $ "The times go before the signature: " <> show other_
+
+
+-- | The key of a CA can sign any number of manifests that are not valid, 
+-- and every one of them that is tried validates its children
+shouldLimitManifestFallbacks :: HU.Assertion
+shouldLimitManifestFallbacks =
+    withTestContext $ \appContext -> do
+        now    <- thisInstant
+        issuer <- newKey "issuer"
+        key    <- newKey "key"
+        let ca     = makeCaCert now issuer key 1 (ipv4s ["10.0.0.0/16"])
+            crl    = makeCrl now key
+            broken n = makeManifest now key n 
+                        [("ca.crl", crl.hash), ("missing.roa", sha256s "not in the cache")]
+        storeCertificates appContext now [ca]
+        storeObjects appContext now $ CrlRO crl : [ MftRO (broken n) | n <- [1 .. 15] ]
+
+        Run {..} <- validateInOrder appContext now [ca]
+        let maxFallbacks = appContext ^. #config . #validationConfig . #maxManifestFallbacks
+        HU.assertEqual "Falls back as many times as it's allowed" 
+            maxFallbacks (length [ () | MftFallback {} <- issues state ])
+        HU.assertEqual "Tells about it" 
+            [TooManyManifestFallbacks maxFallbacks] [ e | e@TooManyManifestFallbacks {} <- issues state ]
 
 
 data TwoCertificates = TwoCertificates {
@@ -390,8 +485,8 @@ makeCaCert now issuer subject serial resources = WellStructuredCert {
 -- | The same CA certificate with the SIA of another publication point
 movedTo :: Text -> WellStructuredCaCert -> WellStructuredCaCert
 movedTo directory ca = ca 
-    & #certUris . #repositoryUri ?~ URI ("rsync://host/" <> directory <> "/")
-    & #certUris . #manifestUri   ?~ URI ("rsync://host/" <> directory <> "/ca.mft")
+    & #certUris . #repositoryUri ?~ URI ("rsync://host/repo/" <> directory <> "/")
+    & #certUris . #manifestUri   ?~ URI ("rsync://host/repo/" <> directory <> "/ca.mft")
 
 -- | An EE certificate of a signed object, signed by the issuer key
 makeEeCert :: Now -> TestKey -> Integer -> AllResources -> WellStructuredEECert

@@ -230,6 +230,9 @@ toValidationMessage = \case
           [i|. That is unusual and can be an attempt to change what is valid under the key: |] <>
           [i|its manifest and the objects on it are validated under each of the certificates.|]
 
+      TooManyManifestFallbacks fallbacks -> 
+          [i|Fell back from #{fallbacks} manifests of the CA that are not valid, the older ones are not tried.|]
+
       NoMFT (AKI aki) -> 
           [i|No manifest found for AKI #{aki}.|]
 

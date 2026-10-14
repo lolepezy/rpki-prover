@@ -517,13 +517,21 @@ validateManifests
     fallbackErrors <- liftIO $ newIORef []
     let fallBackFrom e = liftIO $ modifyIORef' fallbackErrors (e :)
 
+    -- Every manifest that is tried validates its children, and the key of the CA
+    -- can sign any number of them, so it's falling back only so many times
+    let mayFallBack olderMfts = do
+            fallbacks <- length <$> liftIO (readIORef fallbackErrors)
+            let may = null olderMfts || fallbacks < maxFallbacks
+            unless may $ vWarn $ TooManyManifestFallbacks fallbacks
+            pure may
+
     onFailure shortcut fallbackErrors $ case plan of
         NoManifest ->
             vError $ NoMFT aki
 
         InFull mftMetas -> do
             increment topDownCounters.originalMft
-            tryMfts appContext topDownContext fallBackFrom ca aki mftMetas
+            tryMfts appContext topDownContext fallBackFrom mayFallBack ca aki mftMetas
 
         UseShortcut meta ->
             fromShortcut mfts meta $
@@ -537,9 +545,10 @@ validateManifests
         DiffWithShortcut meta (newest :| newer) ->
             fromShortcut mfts meta $ do
                 fullCa <- getFullCa appContext topDownContext ca
-                tryNewerMfts fallBackFrom mfts meta fullCa (newest : newer)
+                tryNewerMfts fallBackFrom mayFallBack mfts meta fullCa (newest : newer)
   where
     validationAlgorithm = config.validationConfig.validationAlgorithm
+    maxFallbacks = config.validationConfig.maxManifestFallbacks
 
     -- Only one validation of the manifest of a key in a run uses its shortcut
     usesShortcut = case validationAlgorithm of
@@ -554,16 +563,19 @@ validateManifests
     -- first one that the CA signed and that is valid. Each one that isn't valid,
     -- or is gone from the cache, is fallen back from and the next one is tried.
     -- When none of them is valid, the shortcut is, so it is the latest valid
-    -- manifest to fall back to.
-    tryNewerMfts fallBackFrom mfts meta fullCa mftMetas =
+    -- manifest to fall back to. So it is when too many of them are not valid.
+    tryNewerMfts fallBackFrom mayFallBack mfts meta fullCa mftMetas =
         nextSignedMft appContext topDownContext fullCa mftMetas >>= \case
             Nothing -> useShortcut mfts meta
             Just (candidate, olderMfts) ->
                 tryManifest appContext candidate
                     (\e reportFallback -> do
+                        may <- mayFallBack olderMfts
                         void $ fallBackFrom e
                         reportFallback
-                        tryNewerMfts fallBackFrom mfts meta fullCa olderMfts)
+                        if may 
+                            then tryNewerMfts fallBackFrom mayFallBack mfts meta fullCa olderMfts
+                            else useShortcut mfts meta)
                     (\mft -> do
                         markAsUsed topDownContext $ mft ^. #key
                         tryOneMftWithShortcut meta fullCa mft)
@@ -617,7 +629,7 @@ validateManifests
         mftShortcut <- fullShortcut meta
         let childrenToValidate = if sameContext meta then OnlyNewChildren else AllChildren
         overlappingChildren <- manifestFullValidation appContext topDownContext fullCa mft
-                                    (Just mftShortcut) childrenToValidate aki
+                                    SignaturePass (Just mftShortcut) childrenToValidate aki
 
         collectPayloads appContext topDownContext aki meta 
                     (Map.map ChildWithEntry mftShortcut.nonCrlEntries) 
@@ -633,8 +645,10 @@ validateManifests
     validateAgain meta mft = do
         fullCa      <- getFullCa appContext topDownContext ca
         mftShortcut <- fullShortcut meta
+        signature   <- knownSignature topDownContext mft.key (getSKI fullCa) $
+                            validateSignMaterial mft.object.payload.eeCert fullCa
         void $ manifestFullValidation appContext topDownContext fullCa mft
-                    (Just mftShortcut) AllChildren aki
+                    signature (Just mftShortcut) AllChildren aki
 
     fullShortcut DB.MftShortcutMeta{..} = do
         markAsUsed topDownContext crlShortcut.key
@@ -662,9 +676,12 @@ validateManifests
 -- Validate the manifests that the CA signed in full, falling back to the next one
 -- until one is valid. A manifest that is gone from the cache is fallen back from too.
 tryMfts :: (ValidatorIO es, Concurrent :> es) =>
-          AppContext s -> TopDownContext -> (AppError -> Eff es ()) -> Ca -> AKI -> [MftMeta] -> Eff es ()
-tryMfts _ _ _ _ aki [] = vError $ NoMFT aki
-tryMfts appContext topDownContext fallBackFrom ca aki mftMetas = do
+          AppContext s -> TopDownContext 
+          -> (AppError -> Eff es ()) 
+          -> ([MftMeta] -> Eff es Bool) 
+          -> Ca -> AKI -> [MftMeta] -> Eff es ()
+tryMfts _ _ _ _ _ aki [] = vError $ NoMFT aki
+tryMfts appContext topDownContext fallBackFrom mayFallBack ca aki mftMetas = do
     caFull <- getFullCa appContext topDownContext ca
     nextSignedMft appContext topDownContext caFull mftMetas >>= \case
         Nothing                     -> vError $ NoMFT aki
@@ -675,16 +692,20 @@ tryMfts appContext topDownContext fallBackFrom ca aki mftMetas = do
         tryManifest appContext candidate (fallBack caFull mftMetas_) (tryOneMft caFull)
 
     fallBack caFull mftMetas_ e reportFallback =
-        nextSignedMft appContext topDownContext caFull mftMetas_ >>= \case
-            Nothing                  -> appError e
-            Just (next, mftMetas__) -> do
-                fallBackFrom e
-                reportFallback
-                tryFrom caFull next mftMetas__
+        mayFallBack mftMetas_ >>= \case
+            False -> appError e
+            True  -> 
+                nextSignedMft appContext topDownContext caFull mftMetas_ >>= \case
+                    Nothing                  -> appError e
+                    Just (next, mftMetas__) -> do
+                        fallBackFrom e
+                        reportFallback
+                        tryFrom caFull next mftMetas__
 
     tryOneMft caFull mft = do
         markAsUsed topDownContext $ mft ^. #key
-        void $ manifestFullValidation appContext topDownContext caFull mft Nothing OnlyNewChildren aki
+        void $ manifestFullValidation appContext topDownContext caFull mft 
+                    SignaturePass Nothing OnlyNewChildren aki
         oneMoreMft >> oneMoreCrl
 
 
@@ -749,11 +770,15 @@ getSignedMft AppContext {..} topDownContext ca m = do
             let message = [i|Referential integrity error, can't find a manifest by its key #{mftKey}.|]
             logError logger message
             pure $ Just $ MissingMft m $ ValidationE $ ReferentialIntegrityError message
-        Just mft
-            | signedByCa ca (mft ^. #object . #payload) -> pure $ Just $ SignedMft mft
-            | otherwise -> do
-                increment topDownContext.allTas.topDownCounters.foreignMft
-                pure Nothing
+        Just mft -> do
+            -- The same as `signedByCa`
+            signature <- knownSignature topDownContext mftKey (getSKI ca) $
+                            validateSignMaterial (mft ^. #object . #payload . #eeCert) ca
+            case signature of
+                SignaturePass -> pure $ Just $ SignedMft mft
+                SignatureFailed _ -> do
+                    increment topDownContext.allTas.topDownCounters.foreignMft
+                    pure Nothing
 
 -- | The first of the manifests that the CA signed, or that is gone from the cache,
 -- with the ones after it.
@@ -785,6 +810,7 @@ manifestFullValidation :: (ValidatorIO es, Concurrent :> es) =>
                         -> TopDownContext
                         -> Located WellStructuredCaCert
                         -> Keyed (Located WellStructuredMft)
+                        -> SignatureVerification
                         -> Maybe MftShortcut
                         -> ChildrenToValidate
                         -> AKI
@@ -794,7 +820,7 @@ manifestFullValidation
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
     fullCa
     keyedMft@(Keyed locatedMft@(Located mftLocations mft) mftKey)
-    mftShortcut childrenToValidate childrenAki = do
+    mftSignature mftShortcut childrenToValidate childrenAki = do
     let uniqueFocusOn = case mftLocations of
             Just ls -> vUniqueFocusOn LocationFocus (getURL $ pickLocation ls)
             Nothing -> vUniqueFocusOn HashFocus (getHash mft)
@@ -816,7 +842,8 @@ manifestFullValidation
         -- MFT can be revoked by the CRL that is on this MFT -- detect
         -- revocation as well, this is clearly an error
         validMft <- validateMft (config ^. #validationConfig . typed)
-                                now mft (fullCa ^. #payload) validCrl verifiedResources
+                                now mft (SignatureKnown (fullCa ^. #payload) mftSignature) 
+                                validCrl verifiedResources
 
         let ValidityPeriod { notAfter = mftNotAfter } = manifestValidityPeriod mft
         rememberNotValidAfter topDownContext mftNotAfter
@@ -972,7 +999,9 @@ findAndValidateCrl
                         vFocusOnLocated locatedCrl $ do
                             validateObjectLocations locatedCrl
                             checkCrlLocation locatedCrl mft.eeCert
-                            validatedCrl <- validateCrl now crl fullCa
+                            signature <- knownSignature topDownContext crlKey (getSKI fullCa) $
+                                            validateSignMaterial crl fullCa
+                            validatedCrl <- validateCrl now crl (SignatureKnown fullCa signature)
                             pure $! Keyed validatedCrl crlKey
                     _ ->
                         vError $ CRLHashPointsToAnotherObject crlHash
@@ -1284,23 +1313,28 @@ validateChildObject
         CerRO childCert -> validCaChild childCert
 
         RoaRO roa -> validLeaf $ do
-            validRoa <- validateRoa validationRFC now roa fullCa.payload validCrl verifiedResources
+            issuer <- signing roa.eeCert
+            validRoa <- validateRoa validationRFC now roa issuer validCrl verifiedResources
             pure $! makeRoaShortcut childKey validRoa roa.content
 
         SplRO spl -> validLeaf $ do
-            validSpl <- validateSpl validationRFC now spl fullCa.payload validCrl verifiedResources
+            issuer <- signing spl.eeCert
+            validSpl <- validateSpl validationRFC now spl issuer validCrl verifiedResources
             pure $! makeSplShortcut childKey validSpl spl.content
 
         AspaRO aspa -> validLeaf $ do
-            validAspa <- validateAspa validationRFC now aspa fullCa.payload validCrl verifiedResources
+            issuer <- signing aspa.eeCert
+            validAspa <- validateAspa validationRFC now aspa issuer validCrl verifiedResources
             pure $! makeAspaShortcut childKey validAspa aspa.content
 
         BgpRO bgpCert -> validLeaf $ do
-            (validBgpCert, bgpPayload) <- validateBgpCert validationRFC now bgpCert fullCa.payload validCrl verifiedResources
+            issuer <- signing bgpCert
+            (validBgpCert, bgpPayload) <- validateBgpCert validationRFC now bgpCert issuer validCrl verifiedResources
             pure $! makeBgpSecShortcut childKey validBgpCert bgpPayload
 
         GbrRO gbr -> validLeaf $ do
-            validGbr <- validateGbr validationRFC now gbr fullCa.payload validCrl verifiedResources
+            issuer <- signing gbr.eeCert
+            validGbr <- validateGbr validationRFC now gbr issuer validCrl verifiedResources
             pure $! makeGbrShortcut childKey validGbr (T2 (getHash gbr) gbr.content)
 
         -- Any new type of object should be added here, otherwise
@@ -1311,6 +1345,12 @@ validateChildObject
 
     where
         validationRFC = config.validationConfig.validationRFC
+
+        -- The CA, with the signature of the child by it, see `knownSignature`
+        signing :: (ValidatorIO es', WithSignMaterial c) => c -> Eff es' (SignatureKnown WellStructuredCaCert)
+        signing signed = 
+            SignatureKnown fullCa.payload <$> 
+                knownSignature topDownContext childKey (getSKI fullCa) (validateSignMaterial signed fullCa)
 
         -- What is stored for a child validated in full: its shortcut when it's
         -- valid and there are no issues in its scope, a troubled entry otherwise.
@@ -1342,9 +1382,12 @@ validateChildObject
                 --
                 validateAIA childCert fullCa
 
-                void $ validateResourceCert now childCert fullCa validCrl
-                validateResources (config ^. #validationConfig . typed)
-                    verifiedResources childCert (fullCa ^. #payload)
+                -- The checks that don't need cryptography go first
+                validateResourceCertExceptSignature now childCert fullCa validCrl
+                resources <- validateResources (config ^. #validationConfig . typed)
+                                verifiedResources childCert (fullCa ^. #payload)
+                signatureCheck . signatureOf childCert =<< signing childCert
+                pure resources
 
             case certResult of
                 Left _ -> do

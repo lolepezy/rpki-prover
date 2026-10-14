@@ -171,7 +171,9 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         BGPCertAsnsNotInResourceSet [ASN] [AsResource] |
                         -- The key of a CA certificate, how many other CA certificates
                         -- have it, and the locations of some of them
-                        CertificatesWithSameKey SKI Int [Locations]
+                        CertificatesWithSameKey SKI Int [Locations] |
+                        -- How many manifests of a CA were fallen back from
+                        TooManyManifestFallbacks Int
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     

@@ -7,7 +7,8 @@ module RPKI.Validation.TopDown.Context where
 
 import           Effectful
 import           Control.Concurrent.STM
-import           Control.Monad                    (unless, when)
+import           Control.Exception                (evaluate)
+import           Control.Monad                    (when)
 
 import           Control.Lens hiding (children)
 
@@ -28,6 +29,7 @@ import qualified Data.Set                         as Set
 import           Data.Text                        (Text)
 import           Data.String.Interpolate.IsString
 import           Data.Tuple.Strict
+import           Data.X509.Validation             (SignatureVerification)
 
 import           RPKI.AppContext
 import           RPKI.AppState
@@ -94,6 +96,8 @@ data AllTasTopDownContext = AllTasTopDownContext {
         visitedKeys       :: TVar (Set ObjectKey),        
         -- | The keys whose manifest shortcut is used in this run
         shortcutOwners    :: TVar (Set AKI),
+        -- | Signatures of objects by the key of their CA, see `knownSignature`
+        knownSignatures   :: TVar (Map (ObjectKey, SKI) SignatureVerification),
         publicationPoints :: PublicationPoints,
         shortcutQueue     :: ClosableQueue MftShortcutOp,
         topDownCounters   :: TopDownCounters IORef,
@@ -126,7 +130,9 @@ data TopDownCounters f = TopDownCounters {
         readParsed   :: f Int,
         repeatedAki  :: f Int,
         -- | Validations of a manifest under one more certificate with its key
-        anotherKeyPass :: f Int
+        anotherKeyPass :: f Int,
+        -- | Signatures known from validating them under another certificate
+        rememberedSignature :: f Int
     }
     deriving stock (Generic)
     deriving (FunctorB, TraversableB, ApplicativeB, ConstraintsB)
@@ -197,6 +203,7 @@ newAllTasTopDownContext worldVersion publicationPoints shortcutQueue multiLocati
     atomically $ do        
         visitedKeys    <- newTVar mempty 
         shortcutOwners <- newTVar mempty
+        knownSignatures <- newTVar mempty
         pure $! AllTasTopDownContext {..}
 
 newTopDownCounters :: IO (TopDownCounters IORef)
@@ -226,6 +233,7 @@ newTopDownCounters = do
     readParsed   <- newIORef 0             
     repeatedAki  <- newIORef 0
     anotherKeyPass <- newIORef 0
+    rememberedSignature <- newIORef 0
    
     pure TopDownCounters {..}
 
@@ -255,8 +263,13 @@ verifyLimit hitTheLimit limit =
    under every one of them that can make more of them valid. That's every one
    but the ones with the same SIA and the resources and the depth (for the 
    limit of it) within those of one the manifest was validated under already.
-   Duplicates of a certificate, the same certificate on another path, or 
+   Duplicates of a certificate, the same certificate on another path, or
    a cycle, don't take more than one pass then.
+
+   The resources are the verified ones. With the reconsidered algorithm
+   (RFC 8360) they are the intersection of the resources on the path, so
+   there can be a pass for every one of them. Every pass but the first one
+   counts towards the size of the tree, which limits them.
 
    It also gives the certificates with the key before this one, if it is not 
    one of them.
@@ -293,7 +306,7 @@ resourcesWithin (Just r@(VerifiedRS (PrefixesAndAsns i4 i6 ia)))
                 (Just o@(VerifiedRS (PrefixesAndAsns o4 o6 oa))) =
     r == o || (within i4 o4 && within i6 o6 && within ia oa)
   where
-    within i o = isLeft $ IS.subsetCheck i o
+    within inner outer = isLeft $ IS.subsetCheck inner outer
 
 -- | Whether the validation of the manifest of a key is the one in this run
 -- that uses and writes its shortcut: the first one. The others don't use it,
@@ -308,6 +321,25 @@ claimShortcut shortcutOwners aki = do
         else do
             writeTVar shortcutOwners $! Set.insert aki owners
             pure True
+
+
+-- | The signature of an object by the key of its CA. It doesn't depend on which 
+-- certificate with the key the object is validated under, so under one more of 
+-- them (`anotherPassOfKey`) it's remembered for the run and checked only once.
+-- Otherwise it's what is given, checked when it's needed. 
+knownSignature :: MonadIO m => 
+                  TopDownContext -> ObjectKey -> SKI -> SignatureVerification -> m SignatureVerification
+knownSignature TopDownContext { allTas = AllTasTopDownContext {..}, anotherPassOfKey } key ski signature
+    | anotherPassOfKey = liftIO $ 
+        Map.lookup (key, ski) <$> readTVarIO knownSignatures >>= \case
+            Just known -> do
+                increment topDownCounters.rememberedSignature
+                pure known
+            Nothing    -> do
+                checked <- evaluate signature
+                atomically $ modifyTVar' knownSignatures $ Map.insert (key, ski) checked
+                pure checked
+    | otherwise = pure signature
 
 
 -- Do whatever is required to notify other subsystems that the object was touched 

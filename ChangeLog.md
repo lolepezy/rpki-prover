@@ -19,4 +19,4 @@
   newer one fails while falling back to an older one works.
 - A BGPsec router certificate is only valid for ASNs its CA has. Before, a
   CA could issue one for any ASN.
-- Database version 67: the cache is rebuilt on the first start.
+- Database version 68: the cache is rebuilt on the first start.
