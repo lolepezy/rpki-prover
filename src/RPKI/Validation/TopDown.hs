@@ -488,13 +488,21 @@ validateManifests
     fallbackErrors <- liftIO $ newIORef []
     let fallBackFrom e = liftIO $ modifyIORef' fallbackErrors (e :)
 
+    -- Every manifest that is tried validates its children, and the key of the CA
+    -- can sign any number of them, so it's falling back only so many times
+    let mayFallBack olderMfts = do
+            fallbacks <- length <$> liftIO (readIORef fallbackErrors)
+            let may = null olderMfts || fallbacks < maxFallbacks
+            unless may $ vWarn $ TooManyManifestFallbacks fallbacks
+            pure may
+
     onFailure shortcut fallbackErrors $ case plan of
         NoManifest ->
             vError $ NoMFT aki
 
         InFull mftMetas -> do
             increment topDownCounters.originalMft
-            tryMfts appContext topDownContext fallBackFrom ca aki mftMetas
+            tryMfts appContext topDownContext fallBackFrom mayFallBack ca aki mftMetas
 
         UseShortcut meta ->
             fromShortcut mfts meta $
@@ -508,24 +516,28 @@ validateManifests
         DiffWithShortcut meta (newest :| newer) ->
             fromShortcut mfts meta $ do
                 fullCa <- getFullCa appContext topDownContext ca
-                tryNewerMfts fallBackFrom mfts meta fullCa (newest : newer)
+                tryNewerMfts fallBackFrom mayFallBack mfts meta fullCa (newest : newer)
   where
     validationAlgorithm = config.validationConfig.validationAlgorithm
+    maxFallbacks = config.validationConfig.maxManifestFallbacks
 
     -- The manifests newer than the one of the shortcut, newest first: use the
     -- first one that the CA signed and that is valid. Each one that isn't valid,
     -- or is gone from the cache, is fallen back from and the next one is tried.
     -- When none of them is valid, the shortcut is, so it is the latest valid
-    -- manifest to fall back to.
-    tryNewerMfts fallBackFrom mfts meta fullCa mftMetas =
+    -- manifest to fall back to. So it is when too many of them are not valid.
+    tryNewerMfts fallBackFrom mayFallBack mfts meta fullCa mftMetas =
         nextSignedMft appContext topDownContext fullCa mftMetas >>= \case
             Nothing -> useShortcut mfts meta
             Just (candidate, olderMfts) ->
                 tryManifest appContext candidate
                     (\e reportFallback -> do
+                        may <- mayFallBack olderMfts
                         void $ fallBackFrom e
                         reportFallback
-                        tryNewerMfts fallBackFrom mfts meta fullCa olderMfts)
+                        if may 
+                            then tryNewerMfts fallBackFrom mayFallBack mfts meta fullCa olderMfts
+                            else useShortcut mfts meta)
                     (\mft -> do
                         markAsUsed topDownContext $ mft ^. #key
                         tryOneMftWithShortcut meta fullCa mft)
@@ -622,9 +634,12 @@ validateManifests
 -- Validate the manifests that the CA signed in full, falling back to the next one
 -- until one is valid. A manifest that is gone from the cache is fallen back from too.
 tryMfts :: (ValidatorIO es, Concurrent :> es) =>
-          AppContext s -> TopDownContext -> (AppError -> Eff es ()) -> Ca -> AKI -> [MftMeta] -> Eff es ()
-tryMfts _ _ _ _ aki [] = vError $ NoMFT aki
-tryMfts appContext topDownContext fallBackFrom ca aki mftMetas = do
+          AppContext s -> TopDownContext 
+          -> (AppError -> Eff es ()) 
+          -> ([MftMeta] -> Eff es Bool) 
+          -> Ca -> AKI -> [MftMeta] -> Eff es ()
+tryMfts _ _ _ _ _ aki [] = vError $ NoMFT aki
+tryMfts appContext topDownContext fallBackFrom mayFallBack ca aki mftMetas = do
     caFull <- getFullCa appContext topDownContext ca
     nextSignedMft appContext topDownContext caFull mftMetas >>= \case
         Nothing                     -> vError $ NoMFT aki
@@ -635,12 +650,15 @@ tryMfts appContext topDownContext fallBackFrom ca aki mftMetas = do
         tryManifest appContext candidate (fallBack caFull mftMetas_) (tryOneMft caFull)
 
     fallBack caFull mftMetas_ e reportFallback =
-        nextSignedMft appContext topDownContext caFull mftMetas_ >>= \case
-            Nothing                  -> appError e
-            Just (next, mftMetas__) -> do
-                fallBackFrom e
-                reportFallback
-                tryFrom caFull next mftMetas__
+        mayFallBack mftMetas_ >>= \case
+            False -> appError e
+            True  -> 
+                nextSignedMft appContext topDownContext caFull mftMetas_ >>= \case
+                    Nothing                  -> appError e
+                    Just (next, mftMetas__) -> do
+                        fallBackFrom e
+                        reportFallback
+                        tryFrom caFull next mftMetas__
 
     tryOneMft caFull mft = do
         markAsUsed topDownContext $ mft ^. #key
@@ -1293,9 +1311,12 @@ validateChildObject
                 --
                 validateAIA childCert fullCa
 
-                void $ validateResourceCert now childCert fullCa validCrl
-                validateResources (config ^. #validationConfig . typed)
-                    verifiedResources childCert (fullCa ^. #payload)
+                -- The checks that don't need cryptography go first
+                validateResourceCertExceptSignature now childCert fullCa validCrl
+                resources <- validateResources (config ^. #validationConfig . typed)
+                                verifiedResources childCert (fullCa ^. #payload)
+                signatureCheck $ validateSignMaterial childCert fullCa
+                pure resources
 
             case certResult of
                 Left _ -> do

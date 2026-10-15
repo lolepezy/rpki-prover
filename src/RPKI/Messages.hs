@@ -224,6 +224,9 @@ toValidationMessage = \case
           [i|this occurrence. This CA is reachable by more than one path, so its objects |] <>
           [i|are validated along the path that reached it first.|]
 
+      TooManyManifestFallbacks fallbacks -> 
+          [i|Fell back from #{fallbacks} manifests of the CA that are not valid, the older ones are not tried.|]
+
       NoMFT (AKI aki) -> 
           [i|No manifest found for AKI #{aki}.|]
 

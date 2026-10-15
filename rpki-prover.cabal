@@ -340,7 +340,9 @@ test-suite rpki-prover-test
       RPKI.Store.StorableSpec
       RPKI.TestCommons
       RPKI.Validation.BottomUpSpec
+      RPKI.Validation.Fixtures
       RPKI.Validation.TopDownSpec
+      RPKI.Validation.ValidationWorkSpec
       RPKI.WorkerSpec
       RPKI.Workflow.RevalidationSpec
       RPKI.Workflow.SharedSpec

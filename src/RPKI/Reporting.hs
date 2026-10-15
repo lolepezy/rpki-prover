@@ -168,7 +168,9 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         NewerManifestExists Serial Serial |
                         -- The ASNs of a router certificate that its CA doesn't have,
                         -- then the ones the CA has
-                        BGPCertAsnsNotInResourceSet [ASN] [AsResource]
+                        BGPCertAsnsNotInResourceSet [ASN] [AsResource] |
+                        -- How many manifests of a CA were fallen back from
+                        TooManyManifestFallbacks Int
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     
