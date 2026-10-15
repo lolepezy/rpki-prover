@@ -166,6 +166,12 @@ data ValidationConfig = ValidationConfig {
         -- children, and the key of a CA can sign any number of them.
         maxManifestFallbacks           :: Int,
 
+        -- Under how many CA certificates with the same key the manifest
+        -- of the key is validated at most. Anyone can issue a certificate
+        -- with any key, it's only validated under the ones with resources
+        -- that its children need.
+        maxCertificatesPerKey          :: Int,
+
         -- Maximal allowed size of an individual object 
         maxObjectSize                  :: Integer,
 
@@ -317,6 +323,7 @@ defaultConfig = Config {
         minObjectSize                  = 300,
         maxTaRepositories              = 1000,
         maxManifestFallbacks           = 10,
+        maxCertificatesPerKey          = 3,
         validationRFC                  = StrictRFC,
         validationAlgorithm            = FullEveryIteration,
         minimalRevalidationInterval    = Seconds 30

@@ -68,7 +68,9 @@ data MftShortcut = MftShortcut {
         serial         :: {-# UNPACK #-} Serial,
         manifestNumber :: {-# UNPACK #-} Serial,
         crlShortcut    :: CrlShortcut,
-        hasIssues      :: Bool
+        hasIssues      :: Bool,
+        -- | What the children were validated under, see `validationContextHash`
+        validatedUnder :: Hash
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -77,9 +79,13 @@ data CaShortcut = CaShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
         ski            :: SKI,
         ppas           :: PublicationPointAccess,
+        -- | The manifest of the CA, by its SIA
+        mftUri         :: Maybe URI,
         notBefore      :: {-# UNPACK #-} Instant,
         notAfter       :: {-# UNPACK #-} Instant,
-        resources      :: AllResources
+        resources      :: AllResources,
+        -- | The hash of the resources, see `certResourcesHash`
+        ownResourcesHash :: Hash
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)

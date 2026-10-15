@@ -41,7 +41,6 @@ import qualified RPKI.Store.Database              as DB
 import           RPKI.Store.Types                 (RpkiObjectLifecycle (..))
 import           RPKI.Time
 import           RPKI.Util                        (parseRpkiURL, sha256s)
-import           RPKI.Validation.Common           (createVerifiedResources)
 import           RPKI.Validation.TopDown          (validateCa)
 import           RPKI.Validation.TopDown.Context
 import           RPKI.Validation.TopDown.Shortcuts (MftShortcutOp, storeShortcuts)
@@ -60,12 +59,11 @@ data Run = Run {
 -- it's done, as validation does it.
 validateInOrder :: AppContext SqliteBackend -> Now -> [WellStructuredCaCert] -> IO Run
 validateInOrder appContext now cas = do
-    (context, shortcutQueue) <- newContext now
+    (context, shortcutQueue) <- newContext appContext now
     states <- forM cas $ \ca ->
         fmap snd $ runValidatorIO (newScopes "in-order") $
             validateCa appContext
-                (context & #verifiedResources ?~ createVerifiedResources ca
-                         & #currentPathDepth .~ 1)
+                (taContext context ca & #currentPathDepth .~ 1)
                 (CaFull $ Located Nothing ca)
     atomically $ closeCQueue shortcutQueue
     storeShortcuts appContext shortcutQueue
@@ -87,11 +85,13 @@ validationMetric state =
 
 -- | The context of validating a TA, with the repository of every CA fetched,
 -- otherwise there's nothing to validate
-newContext :: Now -> IO (TopDownContext, ClosableQueue MftShortcutOp)
-newContext (Now now) = do
+newContext :: AppContext SqliteBackend -> Now -> IO (TopDownContext, ClosableQueue MftShortcutOp)
+newContext appContext (Now now) = do
     shortcutQueue <- newCQueueIO 1000
     workPool      <- newWorkPool
-    allTas <- newAllTasTopDownContext (instantToVersion now) fetched shortcutQueue mempty workPool
+    db <- readTVarIO $ appContext ^. #database
+    keysSharedBefore <- DB.roTx db DB.getKeysOfSeveralCaCertificates
+    allTas <- newAllTasTopDownContext (instantToVersion now) fetched shortcutQueue mempty keysSharedBefore workPool
     (, shortcutQueue) <$> newTopDownContext (TaName "test") allTas
   where
     fetched = PublicationPoints (RrdpMap mempty) $

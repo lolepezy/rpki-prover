@@ -227,6 +227,21 @@ toValidationMessage = \case
       TooManyManifestFallbacks fallbacks -> 
           [i|Fell back from #{fallbacks} manifests of the CA that are not valid, the older ones are not tried.|]
 
+      CertificatesWithSameKey (SKI ski) others locations -> 
+          [i|#{others} other CA certificate(s) in this TA have the same key #{ski} as this one|] <> 
+          (if null locations then "" else [i|, e.g. #{Text.intercalate ", " $ map fmtLocations locations}|]) <> 
+          [i|. That is unusual and can be an attempt to change what is valid under the key: |] <>
+          [i|its manifest and the objects on it are validated under each of the certificates |] <>
+          [i|that has resources the objects need.|]
+
+      CertificateCoversNothingOfKey (SKI ski) -> 
+          [i|The resources of this certificate have nothing of what the objects of its key #{ski} need, |] <> 
+          [i|so they are not validated under it. Other CA certificates have the same key.|]
+
+      TooManyCertificatesOfKey (SKI ski) certificates -> 
+          [i|The objects of the key #{ski} are validated under #{certificates} CA certificates with the key |] <> 
+          [i|already, and not under this one.|]
+
       NoMFT (AKI aki) -> 
           [i|No manifest found for AKI #{aki}.|]
 

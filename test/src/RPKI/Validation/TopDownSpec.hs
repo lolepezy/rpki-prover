@@ -72,6 +72,8 @@ import           RPKI.Validation.TopDown.Shortcuts
                 , revokedShortcutChildren
                 , shortcutWrites
                 , storeShortcuts
+                , noResourcesHash
+                , validationContextHash
                 )
 
 
@@ -474,7 +476,8 @@ shouldPlanManifests = do
             serial         = Serial 1,
             manifestNumber = Serial (fromIntegral k),
             crlShortcut    = CrlShortcut (objectKey 1000) notBefore_ notAfter_,
-            hasIssues      = False
+            hasIssues      = False,
+            validatedUnder = testHash "context"
         }
 
 
@@ -514,6 +517,11 @@ shouldWriteShortcutOfAcceptedManifest = do
     HU.assertEqual "Only the child that is validated to something else is written"
         (UpdateShortcut False [troubled] [])
         (shortcutWrites (Just withIssues) (accepted [roa, troubled] True) [])
+
+    HU.assertEqual "The children are validated under something else, e.g. other resources"
+        (UpdateShortcut True [] [])
+        (shortcutWrites (Just withIssues) 
+            (accepted [roa, newRoa] True & #validatedUnder .~ testHash "other context") [])
 
 
 -- | Shortcuts describe the tree as it was validated, so a CA that ends up without 
@@ -611,9 +619,14 @@ validateCaManifests appContext ppUrl aki = do
     (topDownContext, shortcutQueue) <- newTestTopDownContext appContext
     -- Any CA certificate does, it's only needed to tell which manifests the CA signed
     ca <- fixtureCa
+    -- The shortcut as validation gives it to the one validation that uses it
+    shortcut <- case appContext ^. #config . #validationConfig . #validationAlgorithm of
+                    FullEveryIteration -> pure Nothing
+                    Incremental        -> DB.roTx db $ \tx -> DB.getMftShorcutMeta tx aki
     (r, _) <- runValidatorIO (newScopes "validate-manifests") $
                 vFocusOn PPFocus ppUrl $
                     validateManifests appContext topDownContext ca aki
+                        (validationContextHash noResourcesHash Nothing) shortcut
     atomically $ closeCQueue shortcutQueue
     storeShortcuts appContext shortcutQueue
     stored <- DB.roTx db $ \tx -> DB.getMftShorcutMeta tx aki
@@ -628,7 +641,7 @@ newTestTopDownContext appContext = do
     shortcutQueue <- newCQueueIO 10
     workPool      <- newWorkPool
     publicationPoints <- DB.roTx db DB.getPublicationPoints
-    allTas <- newAllTasTopDownContext (instantToVersion now) publicationPoints shortcutQueue mempty workPool
+    allTas <- newAllTasTopDownContext (instantToVersion now) publicationPoints shortcutQueue mempty mempty workPool
     topDownContext <- newTopDownContext (TaName "test") allTas
     pure (topDownContext, shortcutQueue)
 
@@ -656,7 +669,8 @@ shortcutMetaUntil now notAfter_ = DB.MftShortcutMeta {
         serial         = Serial 1,
         manifestNumber = Serial 1,
         crlShortcut    = CrlShortcut (objectKey 3) (momentAfter now (-3600)) notAfter_,
-        hasIssues      = False
+        hasIssues      = False,
+        validatedUnder = testHash "context"
     }
 
 -- | A manifest of the AKI that is known, but whose object is not a manifest,
@@ -701,7 +715,8 @@ testMftShortcut entries = MftShortcut {
         serial         = Serial 1,
         manifestNumber = Serial 1,
         crlShortcut    = CrlShortcut (objectKey 101) (Instant 0) (Instant 1),
-        hasIssues      = False
+        hasIssues      = False,
+        validatedUnder = testHash "context"
     }
 
 testCaShortcut :: ObjectKey -> CaShortcut
@@ -709,9 +724,11 @@ testCaShortcut key = CaShortcut {
         key       = key,
         ski       = SKI (mkKI "01234567890123456789"),
         ppas      = PublicationPointAccess $ NonEmpty.singleton $ rsyncPP testRsyncUrl,
+        mftUri    = Nothing,
         notBefore = Instant 0,
         notAfter  = Instant 1,
-        resources = AllResources Inherit Inherit Inherit
+        resources = AllResources Inherit Inherit Inherit,
+        ownResourcesHash = testHash "resources"
     }
   where
     testRsyncUrl = case parseRpkiURL "rsync://host/repo/" of

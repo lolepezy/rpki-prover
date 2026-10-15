@@ -341,6 +341,7 @@ test-suite rpki-prover-test
       RPKI.TestCommons
       RPKI.Validation.BottomUpSpec
       RPKI.Validation.Fixtures
+      RPKI.Validation.SharedKeySpec
       RPKI.Validation.TopDownSpec
       RPKI.Validation.ValidationWorkSpec
       RPKI.WorkerSpec

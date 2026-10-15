@@ -19,6 +19,7 @@ module RPKI.Store.Database (
     -- * Query functions
     getKeyByHash, getObjectKey, getByHash, getKeyedByHash,
     getMultiLocationShortcutChildren,
+    getKeysOfSeveralCaCertificates,
     getByUri, getKeysByUri,
     getObjectByKey, getLocatedByKey,
     getLocationsByKey, getHashByKey,
@@ -161,7 +162,7 @@ rwTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 67
+currentDatabaseVersion = 68
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -180,6 +181,7 @@ data MftShortcutMeta = MftShortcutMeta
     , manifestNumber :: Serial
     , crlShortcut    :: CrlShortcut
     , hasIssues      :: Bool
+    , validatedUnder :: Hash
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -657,6 +659,19 @@ deleteObjectByKey (Tx conn) keys = liftIO $
 -- ---------------------------------------------------------------------------
 -- Manifest / Certificate index functions
 -- ---------------------------------------------------------------------------
+
+-- | The keys of more than one CA certificate that were valid children of 
+-- manifests the last time, i.e. the ones that the manifest shortcuts have.
+getKeysOfSeveralCaCertificates :: MonadIO m => Tx mode -> m (Set.Set SKI)
+getKeysOfSeveralCaCertificates (Tx conn) = liftIO $ do
+    rows <- query_ conn
+        [sql|
+            SELECT c.ski FROM certificates c
+            JOIN mft_shortcut_ca_children m ON m.child_key = c.object_key
+            WHERE m.valid = 1
+            GROUP BY c.ski HAVING COUNT(DISTINCT c.object_key) > 1
+        |]
+    pure $! Set.fromList $ map fromOnly rows
 
 -- | Sorted newest-first by `Ord MftMeta`
 getMftsForAKI :: MonadIO m => Tx mode -> AKI -> m [MftMeta]
