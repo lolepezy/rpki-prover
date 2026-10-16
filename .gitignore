@@ -12,5 +12,7 @@ package.yaml
 cbits/*.o
 # Debian packaging build output
 pkg/packages/
+pkg/openbsd/packages/
+pkg/openbsd/public/
 pkg/apt-repo/public/
 .vagrant/
