@@ -1,43 +1,32 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.RepositorySpec where
 
-import Control.Monad (replicateM)
-
-import Data.Maybe (catMaybes)
-import Data.List (sort, isPrefixOf, sortOn)
-
-import           Data.Either (isRight)
+import           Control.Lens hiding (elements)
+import           Data.Generics.Labels ()
+import qualified Data.Map.Strict                   as Map
+import           Data.List (sort, isPrefixOf, find)
+import           Data.Text (Text)
 import qualified Data.Text                         as Text
 
+import           Data.Either (isRight)
+
 import           Test.Tasty
-import           Test.QuickCheck.Arbitrary.Generic
 import qualified Test.Tasty.HUnit                  as HU
 import qualified Test.Tasty.QuickCheck             as QC
-
 import           Test.QuickCheck.Gen
 
 import           RPKI.Domain
 import           RPKI.Repository
+import           RPKI.Time
 import           RPKI.Util
 import           RPKI.Orphans
 
 
 repositoryGroup :: TestTree
 repositoryGroup = testGroup "PublicationPoints" [
-        QC.testProperty
-            "RsyncTree is commutative"
-            prop_rsync_tree_commutative,
-
-        QC.testProperty
-            "RsyncTree gets properly updated"
-            prop_rsync_tree_update,
-    
-        -- QC.testProperty "FetchStatus is a semigroup" $ isASemigroup @FetchStatus,
-        -- QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RrdpRepository,
-        -- QC.testProperty "RrdpRepository is a semigroup" $ isASemigroup @RepositoryMeta,
-        QC.testProperty "RrdpMap is a semigroup" $ isASemigroup @RrdpMap,
-
+        rsyncForestProperties,
+        rsyncForestUnitTests,
+        rrdpMapGroup,
+        fetchStatusGroup,
         rsyncUrlSafetyGroup
     ]
 
@@ -102,81 +91,263 @@ rsyncUrlSafetyGroup = testGroup "Rsync URL path safety" [
                 && c /= "." && c /= ".."
                 && not (Text.any (\ch -> ch == '/' || ch == '\\' || ch == '\0') c)
 
-isASemigroup :: Eq s => Semigroup s => (s, s, s) -> Bool
-isASemigroup (s1, s2, s3) = s1 <> (s2 <> s3) == (s1 <> s2) <> s3
+
+-- RsyncForest: properties checked against a trivial list-based model
+
+rsyncForestProperties :: TestTree
+rsyncForestProperties = testGroup "RsyncForest properties" [
+        QC.testProperty "behaves as the list-based model for arbitrary insert sequences" $
+            QC.forAll genInserts $ \inserts ->
+                sort (flattenRsyncTree (buildForest inserts))
+                    == sort (foldl (\m (u, a) -> modelInsert u a m) [] inserts),
+
+        QC.testProperty "leaves never cover each other" $
+            QC.forAll genInserts $ \inserts -> let
+                leaves = map fst $ flattenRsyncTree (buildForest inserts)
+                in and [ not (covers l l') | l <- leaves, l' <- leaves, l /= l' ],
+
+        QC.testProperty "insertion order does not matter when the metadata is the same" $
+            QC.forAll (QC.listOf genRsyncUrl) $ \urls ->
+                QC.forAll (shuffle urls) $ \shuffled ->
+                    buildForest (withMeta pendingMeta urls) == buildForest (withMeta pendingMeta shuffled),
+
+        QC.testProperty "inserting the same URL twice is the same as inserting it once" $
+            QC.forAll genInserts $ \inserts ->
+                QC.forAll genInsert $ \(u, m) -> let
+                    f = buildForest inserts
+                    once = toRsyncForest u m f
+                    in toRsyncForest u m once == once,
+
+        QC.testProperty "inserting a URL makes it findable with the new metadata, unless an ancestor is already there" $
+            QC.forAll genInserts $ \inserts ->
+                QC.forAll genInsert $ \(u, m) -> let
+                    before = buildForest inserts
+                    ancestorBefore = fst <$> lookupInRsyncForest u before
+                    after = toRsyncForest u m before
+                    in case (ancestorBefore, lookupInRsyncForest u after) of
+                        -- there was an ancestor (or the same URL), it is kept in place,
+                        -- and it only gets new metadata if it is exactly this URL
+                        (Just a, Just (a', m')) ->
+                            a == a' && (a /= u || m' == m)
+                        -- no ancestors: URL becomes a leaf itself
+                        (Nothing, Just (u', m')) -> u' == u && m' == m
+                        _ -> False,
+
+        QC.testProperty "lookup agrees with the model for arbitrary probe URLs" $
+            QC.forAll genInserts $ \inserts ->
+                QC.forAll genRsyncUrl $ \probe -> let
+                    forest = buildForest inserts
+                    model  = foldl (\m (u, a) -> modelInsert u a m) [] inserts
+                    in lookupInRsyncForest probe forest == find ((`covers` probe) . fst) model,
+
+        QC.testProperty "every URL that was inserted can be found" $
+            QC.forAll genInserts $ \inserts -> let
+                forest = buildForest inserts
+                in all (\(u, _) ->
+                        maybe False (\(found, _) -> found `covers` u) (lookupInRsyncForest u forest))
+                    inserts,
+
+        QC.testProperty "a strict ancestor of a leaf is not found" $
+            QC.forAll genInserts $ \inserts -> let
+                forest = buildForest inserts
+                leaves = map fst $ flattenRsyncTree forest
+                in and [ lookupInRsyncForest (RsyncURL h (take n p)) forest == Nothing
+                       | RsyncURL h p <- leaves, n <- [0 .. length p - 1] ]
+    ]
+
+
+rsyncForestUnitTests :: TestTree
+rsyncForestUnitTests = testGroup "RsyncForest unit tests" [
+        HU.testCase "only the topmost URLs remain as leaves" $ do
+            let forest = buildForest $ withMeta pendingMeta (map rsyncUrl repositoryPaths)
+            flattenRsyncTree forest HU.@?=
+                [ (rsyncUrl p, pendingMeta) | p <- ["a", "b/a", "b/z", "different_root"] ],
+
+        HU.testCase "lookup of a nested URL returns the covering leaf" $ do
+            let forest = buildForest $ withMeta pendingMeta (map rsyncUrl repositoryPaths)
+            fmap fst (lookupInRsyncForest (rsyncUrl "a/z/q/deeper/still") forest)
+                HU.@?= Just (rsyncUrl "a")
+            fmap fst (lookupInRsyncForest (rsyncUrl "b/a/c/d") forest)
+                HU.@?= Just (rsyncUrl "b/a"),
+
+        HU.testCase "lookup of a parent of a leaf, a sibling, an unknown host and an empty forest" $ do
+            let forest = buildForest $ withMeta pendingMeta (map rsyncUrl repositoryPaths)
+            lookupInRsyncForest (rsyncUrl "b") forest HU.@?= Nothing
+            lookupInRsyncForest (rsyncUrl "") forest HU.@?= Nothing
+            lookupInRsyncForest (rsyncUrl "b/y") forest HU.@?= Nothing
+            lookupInRsyncForest (rsyncUrl "c") forest HU.@?= Nothing
+            lookupInRsyncForest (rsyncUrlOn "host2.com" "a") forest HU.@?= Nothing
+            lookupInRsyncForest (rsyncUrl "a") (newRsyncForest :: RsyncForest) HU.@?= Nothing,
+
+        HU.testCase "a path chunk is not matched as a string prefix" $ do
+            let forest = buildForest [(rsyncUrl "a/bc", pendingMeta)]
+            lookupInRsyncForest (rsyncUrl "a/b") forest HU.@?= Nothing
+            lookupInRsyncForest (rsyncUrl "a/bcd") forest HU.@?= Nothing,
+
+        HU.testCase "adding a deeper URL below an existing leaf does not change the forest" $ do
+            let forest = buildForest [(rsyncUrl "a", failedMeta)]
+            toRsyncForest (rsyncUrl "a/b/c") fetchedMeta forest HU.@?= forest,
+
+        HU.testCase "adding a shorter URL replaces everything below it" $ do
+            let forest = buildForest [(rsyncUrl "a/b", failedMeta), (rsyncUrl "a/c/d", failedMeta), (rsyncUrl "z", failedMeta)]
+            let forest' = toRsyncForest (rsyncUrl "a") fetchedMeta forest
+            flattenRsyncTree forest' HU.@?=
+                [ (rsyncUrl "a", fetchedMeta), (rsyncUrl "z", failedMeta) ],
+
+        HU.testCase "re-adding the same URL updates its metadata" $ do
+            let forest = buildForest [(rsyncUrl "a/b", pendingMeta)]
+            flattenRsyncTree (toRsyncForest (rsyncUrl "a/b") fetchedMeta forest)
+                HU.@?= [ (rsyncUrl "a/b", fetchedMeta) ],
+
+        HU.testCase "updating one sibling leaves the others alone" $ do
+            let forest = buildForest [(rsyncUrl "a/b", pendingMeta), (rsyncUrl "a/c", pendingMeta)]
+            flattenRsyncTree (toRsyncForest (rsyncUrl "a/b") fetchedMeta forest)
+                HU.@?= [ (rsyncUrl "a/b", fetchedMeta), (rsyncUrl "a/c", pendingMeta) ],
+
+        HU.testCase "hosts that differ only by port are different hosts" $ do
+            let withPort = RsyncURL (RsyncHost (RsyncHostName "host1.com") (Just (RsyncPort 8730))) []
+            let forest = buildForest [(rsyncUrl "a", pendingMeta), (withPort, fetchedMeta)]
+            length (flattenRsyncTree forest) HU.@?= 2
+            fmap snd (lookupInRsyncForest withPort forest) HU.@?= Just fetchedMeta
+            fmap snd (lookupInRsyncForest (rsyncUrl "a") forest) HU.@?= Just pendingMeta,
+
+        HU.testCase "a URL without a path is the root of the host" $ do
+            let forest = buildForest [(rsyncUrl "a", pendingMeta), (rsyncUrl "b/c", pendingMeta)]
+            let forest' = toRsyncForest (rsyncUrl "") fetchedMeta forest
+            flattenRsyncTree forest' HU.@?= [ (rsyncUrl "", fetchedMeta) ]
+            fmap snd (lookupInRsyncForest (rsyncUrl "x/y/z") forest') HU.@?= Just fetchedMeta
+    ]
+
+
+-- RrdpMap and its merging
+
+rrdpMapGroup :: TestTree
+rrdpMapGroup = testGroup "RrdpMap" [
+        QC.testProperty "is associative" $ \(a :: RrdpMap, b, c) ->
+            a <> (b <> c) == (a <> b) <> c,
+
+        QC.testProperty "is idempotent" $ \(a :: RrdpMap) -> a <> a == a,
+
+        QC.testProperty "has the union of keys" $ \(RrdpMap a, RrdpMap b) ->
+            Map.keys (unRrdpMap (RrdpMap a <> RrdpMap b)) == Map.keys (Map.union a b),
+
+        QC.testProperty "never loses the most recent status of a repository" $ \(RrdpMap a, RrdpMap b) -> let
+            merged = unRrdpMap (RrdpMap a <> RrdpMap b)
+            statusOf m k = (\r -> r ^. #meta . #status) <$> Map.lookup k m
+            expected k = maximum $ [ s | Just s <- [statusOf a k, statusOf b k] ]
+            in all (\k -> statusOf merged k == Just (expected k)) (Map.keys merged),
+
+        QC.testProperty "mergeRrdp never makes the status older" $ \(r :: RrdpRepository, existing :: RrdpRepository) -> let
+            existing' = existing & #uri .~ (r ^. #uri)
+            pps = PublicationPoints (RrdpMap (Map.singleton (r ^. #uri) existing')) newRsyncForest
+            merged = rrdpRepository (mergeRrdp r pps) (r ^. #uri)
+            in fmap (\x -> x ^. #meta . #status) merged
+                    == Just (max (r ^. #meta . #status) (existing' ^. #meta . #status)),
+
+        QC.testProperty "mergeRrdp adds a repository that was not there" $ \(r :: RrdpRepository) ->
+            rrdpRepository (mergeRrdp r (PublicationPoints (RrdpMap mempty) newRsyncForest)) (r ^. #uri) == Just r,
+
+        HU.testCase "mergePP for rsync adds a new URL as Pending" $ do
+            let pps = PublicationPoints (RrdpMap mempty) newRsyncForest
+            let u = rsyncUrl "a/b"
+            fmap (\r -> r ^. #meta) (rsyncRepository (mergePP (rsyncPP u) pps) u) 
+                HU.@?= Just pendingMeta,
+
+        HU.testCase "mergePP for rsync does not reset metadata of the exact same repository" $ do
+            let u = rsyncUrl "a/b"
+            let pps = PublicationPoints (RrdpMap mempty) (toRsyncForest u fetchedMeta newRsyncForest)
+            fmap (\r -> r ^. #meta) (rsyncRepository (mergePP (rsyncPP u) pps) u) 
+                HU.@?= Just fetchedMeta,
+
+        HU.testCase "mergePP for rsync does not touch metadata of a covering repository" $ do
+            let pps = PublicationPoints (RrdpMap mempty) (toRsyncForest (rsyncUrl "a") fetchedMeta newRsyncForest)
+            let merged = mergePP (rsyncPP (rsyncUrl "a/b/c")) pps
+            rsyncs merged HU.@?= rsyncs pps
+    ]
+
+
+fetchStatusGroup :: TestTree
+fetchStatusGroup = testGroup "FetchStatus ordering" [
+        HU.testCase "Pending is older than any fetch result" $ do
+            HU.assertBool "pendingMeta < failedMeta"  $ Pending < FailedAt (Instant 1)
+            HU.assertBool "pendingMeta < fetchedMeta" $ Pending < FetchedAt (Instant 1),
+
+        HU.testCase "later result wins regardless of its kind" $ do
+            HU.assertBool "failedMeta later" $ FetchedAt (Instant 1) < FailedAt (Instant 2)
+            HU.assertBool "fetchedMeta later" $ FailedAt (Instant 1) < FetchedAt (Instant 2),
+
+        HU.testCase "success wins over failure at the same moment" $
+            HU.assertBool "fetchedMeta > failedMeta" $ FailedAt (Instant 1) < FetchedAt (Instant 1)
+    ]
+
+
+-- Helpers
+
+pendingMeta, failedMeta, fetchedMeta :: RepositoryMeta
+pendingMeta = RepositoryMeta Pending Nothing
+failedMeta  = RepositoryMeta (FailedAt (Instant 100)) Nothing
+fetchedMeta = RepositoryMeta (FetchedAt (Instant 200)) Nothing
 
 repositoriesURIs :: [RsyncPublicationPoint]
-repositoriesURIs = map (RsyncPublicationPoint . toURL) [
-        "a",
-        "a/b",
-        "a/c",
-        "a/z",
-        "a/z/q",
-        "a/z/q/zzz",
-        "a/z/q/aa",
-        "a/z/p/q",
-        "b/a",
-        "b/a/c",
-        "a/z/q",
-        "b/a/d",
-        "b/a/e",
-        "b/z",
-        "different_root"
+repositoriesURIs = map (RsyncPublicationPoint . rsyncUrl) repositoryPaths
+
+repositoryPaths :: [Text]
+repositoryPaths = [
+        "a", "a/b", "a/c", "a/z", "a/z/q", "a/z/q/zzz", "a/z/q/aa", "a/z/p/q",
+        "b/a", "b/a/c", "a/z/q", "b/a/d", "b/a/e", "b/z", "different_root"
     ]
+
+rsyncUrl :: Text -> RsyncURL
+rsyncUrl = rsyncUrlOn "host1.com"
+
+rsyncUrlOn :: Text -> Text -> RsyncURL
+rsyncUrlOn host path =
+    RsyncURL (RsyncHost (RsyncHostName host) Nothing)
+             [ RsyncPathChunk c | c <- Text.splitOn "/" path, not (null' c) ]
   where
-    toURL path = let Right u = parseRsyncURL ("rsync://host1.com/" <> path) in u
+    null' = (== "")
 
-prop_rsync_tree_commutative :: QC.Property
-prop_rsync_tree_commutative =
-    QC.forAll (replicateM 200 generateRsyncUrl) $ \urls ->
-        convertToRepos (sort urls) Pending == convertToRepos urls Pending
+buildForest :: [(RsyncURL, RepositoryMeta)] -> RsyncForest
+buildForest = foldl (\f (u, m) -> toRsyncForest u m f) newRsyncForest
 
-prop_rsync_tree_update :: QC.Property
-prop_rsync_tree_update =
-    QC.forAll arbitrary $ \(newStatus :: FetchStatus) ->
-        QC.forAll (replicateM 100 generateRsyncUrl) $ \urls ->
-            QC.forAll (QC.sublistOf urls) $ \toUpdate -> let
-                tree = convertToRepos urls Pending
-                -- this messy stuff basically means "try to find the shortest URLs to update"
-                -- and "don't update a longer one if a shorter one exists".
-                allShorter = map (\(RsyncURL h p) -> 
-                                    filter (\(RsyncURL h' p') -> 
-                                        h == h' && p /= p' && p' `isPrefixOf` p) urls) toUpdate
-                sameOrShorter =
-                    zipWith (\original shorterOnes -> 
-                        (case take 1 $ sortOn (\(RsyncURL _ p) -> length p) shorterOnes of
-                                []   -> original
-                                s :_ -> s)) 
-                        toUpdate allShorter
-                updatedTree = foldr (\u t -> toRsyncForest u (newMeta newStatus) t) tree sameOrShorter
-                sameOrLonger = filter (\(RsyncURL h p) -> 
-                                    any (\(RsyncURL h' p') -> 
-                                        h == h' && (p == p' || p' `isPrefixOf` p)) toUpdate) urls
-                in all (\url -> 
-                    fmap snd (lookupInRsyncForest url updatedTree) == 
-                        Just (newMeta newStatus)) sameOrLonger
-    
+withMeta :: RepositoryMeta -> [RsyncURL] -> [(RsyncURL, RepositoryMeta)]
+withMeta m = map (, m)
 
-convertToRepos :: [RsyncURL] -> FetchStatus -> RsyncForest
-convertToRepos urls status = 
-    foldr (\u t -> toRsyncForest u (newMeta status) t) newRsyncForest urls
+-- l covers u when l is the same as u or an ancestor of u
+covers :: RsyncURL -> RsyncURL -> Bool
+covers (RsyncURL h p) (RsyncURL h' p') = h == h' && p `isPrefixOf` p'
+
+-- Reference implementation of what the forest has to do:
+--  * if a leaf already covers the URL, only a leaf with exactly the same URL gets new metadata,
+--  * otherwise the URL becomes a leaf and swallows all the leaves below it.
+modelInsert :: RsyncURL -> RepositoryMeta -> [(RsyncURL, RepositoryMeta)] -> [(RsyncURL, RepositoryMeta)]
+modelInsert u m model =
+    case find ((`covers` u) . fst) model of
+        Just (l, _)
+            | l == u    -> [ if l' == u then (l', m) else x | x@(l', _) <- model ]
+            | otherwise -> model
+        Nothing -> (u, m) : [ x | x@(l, _) <- model, not (u `covers` l) ]
 
 
-generateRsyncUrl :: Gen RsyncURL
-generateRsyncUrl = do
-    let hosts  = [ "rrdp.ripe.net", "ca.rg.net", "rpki-repository.nic.ad.jp", "repo-rpki.idnic.net" ]
-    let level1 = Nothing : map Just [ "repo", "repository", "0", "A91A73810000", "member_repository" ]
-    let levelChunks = map (replicate 5) ['a'..'z']
-    let level2 = replicate 5 Nothing  <> map Just levelChunks
-    let level3 = replicate 10 Nothing <> map Just levelChunks
-    host <- elements hosts
-    pathLevels <- catMaybes <$> mapM elements [level1, level2, level3]
-    let rsyncHost = RsyncHost (RsyncHostName host) Nothing
-    let path = map (RsyncPathChunk . convert) pathLevels
-    pure $ RsyncURL rsyncHost path
+-- Generators. The alphabet is deliberately tiny, so that the URLs
+-- often are prefixes of each other, otherwise the interesting cases are hit too rarely.
 
+genRsyncUrl :: Gen RsyncURL
+genRsyncUrl = do
+    host <- frequency [
+                (4, pure $ RsyncHost (RsyncHostName "host1.com") Nothing),
+                (2, pure $ RsyncHost (RsyncHostName "host2.com") Nothing),
+                (1, pure $ RsyncHost (RsyncHostName "host1.com") (Just (RsyncPort 8730)))
+            ]
+    len  <- frequency [ (1, pure 0), (3, pure 1), (4, pure 2), (3, pure 3), (2, pure 4) ]
+    path <- vectorOf len (RsyncPathChunk <$> elements ["a", "b", "ab"])
+    pure $ RsyncURL host path
 
-newMeta :: FetchStatus -> RepositoryMeta
-newMeta status = let      
-    refreshInterval = Nothing
-    in RepositoryMeta {..}
+genMeta :: Gen RepositoryMeta
+genMeta = elements [ pendingMeta, failedMeta, fetchedMeta ]
+
+genInsert :: Gen (RsyncURL, RepositoryMeta)
+genInsert = (,) <$> genRsyncUrl <*> genMeta
+
+genInserts :: Gen [(RsyncURL, RepositoryMeta)]
+genInserts = scale (* 2) $ listOf genInsert

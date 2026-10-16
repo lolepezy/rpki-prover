@@ -1,5 +1,4 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Resources.Resources where
@@ -37,7 +36,8 @@ instance WithSetOps Ipv4Prefix where
 
 instance Prefix Ipv4Prefix where
     type Address Ipv4Prefix = V4.IpAddress
-    makePrefix bs nonZeroBits = mkIpv4Block (fourW8sToW32 (BS.unpack bs)) (fromIntegral nonZeroBits)
+    makePrefix bs nonZeroBits =
+        mkIpv4Block (ipv4NetworkPart (fromIntegral nonZeroBits) (fourW8sToW32 (BS.unpack bs))) nonZeroBits
     toRange (Ipv4Prefix p) = V4.blockToRange p
     toPrefixes r@Range {..} 
         | first > last = []
@@ -62,7 +62,8 @@ instance Interval Ipv6Prefix where
 
 instance Prefix Ipv6Prefix where
     type Address Ipv6Prefix = V6.IpAddress
-    makePrefix bs nonZeroBits = mkIpv6Block (someW8ToW128 (BS.unpack bs)) (fromIntegral nonZeroBits)
+    makePrefix bs nonZeroBits =
+        mkIpv6Block (ipv6NetworkPart (fromIntegral nonZeroBits) (someW8ToW128 (BS.unpack bs))) nonZeroBits
     toRange (Ipv6Prefix p) = V6.blockToRange p    
     toPrefixes r@Range {..} 
         | first > last = []
@@ -92,10 +93,32 @@ mkIpv6Block w128 nonZeroBits = Ipv6Prefix (V6.IpBlock (V6.IpAddress w128) (V6.Ip
 ipv6RangeToPrefixes :: Word128 -> Word128 -> [Ipv6Prefix]
 ipv6RangeToPrefixes w1 w2 = map Ipv6Prefix $ V6.rangeToBlocks $ Range (V6.IpAddress w1) (V6.IpAddress w2)
 
+{- | Keep only the first `len` bits of an address, i.e. zero its host bits.
+
+   An address encoded as a BIT STRING may have non-zero bits past its length
+   (the unused bits of the last octet, which DER requires to be zero). hw-ip
+   takes the address of a block for its first address, so left in place they
+   would turn 10.255/9 into the range 10.255.0.0 - 11.126.255.255. OpenSSL
+   clears these bits when decoding, so clearing them gives the same prefixes
+   other RPs get.
+-}
+ipv4NetworkPart :: Int -> Word32 -> Word32
+ipv4NetworkPart len w = w .&. netMask32 len
+
+ipv6NetworkPart :: Int -> Word128 -> Word128
+ipv6NetworkPart len (w0, w1, w2, w3) = (mask 0 w0, mask 1 w1, mask 2 w2, mask 3 w3)
+  where
+    mask i w = w .&. netMask32 (len - 32 * i)
+
+-- | A 32-bit word with its first `len` bits set, `len` is clamped to [0, 32].
+netMask32 :: Int -> Word32
+netMask32 len = complement 0 `shiftL` (32 - max 0 (min 32 len))
+{-# INLINE netMask32 #-}
+
     
 subtractRange :: (Enum a, Ord a, Bounded a) => a -> a -> a -> a -> r -> (Range a -> [r]) -> [r]
 subtractRange f1 l1 f2 l2 r fromRange = 
-    if | f2 > l1  || l2 <= f1 -> [r]
+    if | f2 > l1  || l2 < f1  -> [r]
        | f1 <= f2 && l1 < l2  -> below
        | f1 <= f2 && l1 >= l2 -> below <> above
        | f1 > f2  && l1 >= l2 -> above
@@ -269,9 +292,9 @@ subtractAsn (AS a) (ASRange b0 b1)
 subtractAsn (ASRange a0 a1) (AS b)
     | a0 == b           = optimiseAsns $ maybeToList $ (`ASRange` a1) <$> succSafe a0
     | a1 == b           = optimiseAsns $ maybeToList $ ASRange a0 <$> predSafe b
-    | a0 < b && b <= a1 = optimiseAsns $ catMaybes [ ASRange a0 <$> predSafe b, 
+    | a0 < b && b <= a1 = optimiseAsns $ catMaybes [ ASRange a0 <$> predSafe b,
                                                      (`ASRange` a1) <$> succSafe b ]
-    | otherwise         = []
+    | otherwise         = optimiseAsns [ASRange a0 a1]
 
 subtractAsn (ASRange a0 a1) (ASRange b0 b1) = 
     optimiseAsns go 
@@ -403,8 +426,12 @@ parseAsnT :: Text -> Maybe ASN
 parseAsnT = parseAsn . Text.unpack
 
 parseAsn :: String -> Maybe ASN
-parseAsn = \case 
+parseAsn = \case
     a : s : n
-        | (a == 'a' || a == 'A') && (s == 's' || s == 'S') 
-            -> ASN <$> readMaybe n
-    n -> ASN <$> readMaybe n
+        | (a == 'a' || a == 'A') && (s == 's' || s == 'S')
+            -> asn n
+    n -> asn n
+  where
+    -- Read as Integer and check the range, reading a Word32 silently
+    -- wraps "4294967303" into AS7 and "-1" into AS4294967295.
+    asn n = readMaybe n >>= either (const Nothing) Just . mkAsn

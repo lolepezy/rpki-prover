@@ -9,11 +9,6 @@ source-repository-package
   location: https://github.com/lolepezy/hs-connection
   tag: e3cf8623979f8687694280939349734868cd18ac
 
-source-repository-package
-  type: git
-  location: https://github.com/lolepezy/bytestring-mmap
-  tag: 244367f5febcc44ca9e673dedbf00874395de406
-
 -- Pinned Hackage versions (stack.yaml extra-deps)
 constraints:
     hw-ip == 2.4.2.1

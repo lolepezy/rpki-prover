@@ -1,6 +1,5 @@
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE StrictData                 #-}
-{-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE StrictData           #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Reporting where
     
@@ -9,11 +8,12 @@ import           Control.Exception (Exception)
 import           Control.Lens
 
 import           Data.Generics.Labels
+import           Data.Generics.Product.Types    (types)
+import           Data.Generics.Sum.Constructors (_Ctor)
 import qualified Data.ByteString             as BS
 import           Data.Hourglass
 import           Data.Maybe                  (fromMaybe)
 import           Data.Text                   as Text
-import qualified Data.List                   as List
 import           Data.List.NonEmpty          (NonEmpty (..))
 import qualified Data.List.NonEmpty          as NonEmpty
 import           Data.Map.Strict             (Map)
@@ -163,7 +163,12 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         CertValidityPeriodInvalid |
                         TimeNotRepresentable Text |
                         SerialNumberOutOfBounds Text |
-                        ReferentialIntegrityError Text 
+                        ReferentialIntegrityError Text |
+                        -- The number of the manifest, then the one of the newer manifest
+                        NewerManifestExists Serial Serial |
+                        -- The ASNs of a router certificate that its CA doesn't have,
+                        -- then the ones the CA has
+                        BGPCertAsnsNotInResourceSet [ASN] [AsResource]
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     
@@ -255,6 +260,8 @@ data InternalError = WorkerTimeout Text
                    | WorkerDetectedDifferentExecutable Text 
                    | WorkerError Text 
                    | InternalError Text 
+                   -- Last, to keep the serialised form of the ones above 
+                   | WorkerTxTimeout Text
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
@@ -274,7 +281,6 @@ data AppError = ParseE (ParseError Text) |
                 InitE InitError |
                 SlurmE SlurmError |
                 InternalE InternalError |
-                ComposeE [AppError] |
                 UnspecifiedE Text Text                
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
@@ -286,6 +292,15 @@ newtype VWarning = VWarning AppError
 data VIssue = VErr AppError | VWarn VWarning
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
+
+instance Plated AppError where
+    plate f = \case
+        ValidationE (MftFallback e n) -> ValidationE . (`MftFallback` n) <$> f e
+        e                             -> pure e
+
+-- | All the validation errors of an issue, the ones nested in others too.
+issueValidationErrors :: Fold VIssue ValidationError
+issueValidationErrors = types @AppError . cosmos . _Ctor @"ValidationE"
 
 newtype AppException = AppException AppError
     deriving stock (Show, Eq, Ord, Generic)
@@ -374,8 +389,6 @@ mWarning vc w = mProblem vc (VWarn w)
 mProblem :: VScope -> VIssue -> Validations
 mProblem vc p = Validations $ Map.singleton vc $ Set.singleton p
 
-emptyValidations :: Validations -> Bool 
-emptyValidations (Validations m) = List.all Set.null $ Map.elems m  
 
 removeValidation :: VScope -> (AppError -> Bool) -> Validations -> Validations
 removeValidation vScope predicate (Validations vs) =
@@ -581,25 +594,25 @@ focusToText = \case
 scopeList :: Scope a -> [Focus]
 scopeList (Scope s) = NonEmpty.toList s
 
+-- | The RRDP repository of the innermost publication point of the scope, 
+-- if that publication point has one.
+innermostRrdpPP :: Scope a -> Maybe RrdpURL
+innermostRrdpPP s =
+    case [ url | PPFocus url <- scopeList s ] of
+        RrdpU url : _ -> Just url
+        _             -> Nothing
+
+-- | The cache is not consistent with what a manifest says: an object or a CRL
+-- on it is missing, or is something else.
+isReferentialIntegrityError :: AppError -> Bool
+isReferentialIntegrityError = anyOf (cosmos . _Ctor @"ValidationE") $ \case
+    ManifestEntryDoesn'tExist _ _    -> True
+    NoCRLExists _ _                  -> True
+    ManifestEntryHasWrongFileType {} -> True
+    ReferentialIntegrityError _      -> True
+    _                                -> False
+
 totalMapCount :: Map a Count -> Count
 totalMapCount m = sum $ Map.elems m
 
 
-rrdpRepoHasSignificantUpdates :: RrdpMetric -> Bool
-rrdpRepoHasSignificantUpdates RrdpMetric {..} = 
-    anySignificantPositive added || anySignificantPositive deleted   
-
-rsyncRepoHasSignificantUpdates :: TraverseMetric -> Bool
-rsyncRepoHasSignificantUpdates TraverseMetric {..} = anySignificantPositive processed
-
-anyPositive :: (Ord b, Num b) => Map a b -> Bool
-anyPositive m = Prelude.any ((> 0) . snd) $ Map.toList m    
-
-anySignificantPositive :: (Ord b, Num b) => Map (Maybe RpkiObjectType) b -> Bool
-anySignificantPositive m = Prelude.any f $ Map.toList m    
-  where
-    f (type_, c) = 
-        case type_ of 
-            Just MFT -> False
-            Just CRL -> False
-            _        -> c > 0

@@ -1,8 +1,5 @@
-{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes  #-}
-{-# LANGUAGE ConstraintKinds      #-}
-{-# LANGUAGE OverloadedStrings    #-}
 
 module RPKI.Validation.ObjectValidation where
     
@@ -354,19 +351,25 @@ validateResources validationRFC verifiedResources childCert parentCert =
 
 validateBgpCert ::
     forall bgpCert parent es.
-     (Validator es, SignedCertCore bgpCert, WithCertUris bgpCert, WithPubKey bgpCert, WithSKI bgpCert, WithResources bgpCert, bgpCert `OfCertType` BGPCert, CertIssuer parent) =>
+     (Validator es, SignedCertCore bgpCert, WithCertUris bgpCert, WithPubKey bgpCert, WithSKI bgpCert, WithResources bgpCert, bgpCert `OfCertType` BGPCert, CaParent parent) =>
+    ValidationRFC ->
     Now ->
     bgpCert ->
     parent ->
     Validated CrlObject ->
+    Maybe (VerifiedRS PrefixesAndAsns) ->
     Eff es (Validated bgpCert, BGPSecPayload)
-validateBgpCert now bgpCert parentCert validCrl = do
+validateBgpCert validationRFC now bgpCert parentCert validCrl verifiedResources = do
     -- Validate BGP certificate according to 
     -- https://www.rfc-editor.org/rfc/rfc8209.html#section-3.3    
     void $ validateResourceCert now bgpCert parentCert validCrl
 
+    -- Its resources are the ones of its issuer, as for any resource certificate
+    void $ validateResources validationRFC verifiedResources bgpCert parentCert
+
     -- Must be some ASNs
     bgpSecAsns <- validateBgpCertAsns $ getResources bgpCert
+    validateBgpSecAsns verifiedResources bgpSecAsns
 
     let bgpSecSki = getSKI bgpCert
 
@@ -426,22 +429,26 @@ validateRoa :: (Validator es, CaParent parent) =>
     Eff es (Validated WellStructuredRoa)
 validateRoa validationRFC now roa parentCert crl verifiedResources = do      
     validateCms validationRFC now roa parentCert crl verifiedResources    
-    checkResources roa.content    
+    validateRoaPrefixes verifiedResources roa.content    
     pure $ Validated roa
-  where
-    checkResources (VrpsPerAs asn v4s v6s) = do 
-        let checkerV4 = validatedPrefixInRS @Ipv4Prefix verifiedResources
-        let checkerV6 = validatedPrefixInRS @Ipv6Prefix verifiedResources
-        
-        for_ v4s $ \(Vrp4 prefix maxLength) -> do
-            checkerV4 prefix (RoaPrefixIsOutsideOfResourceSet (Ipv4P prefix))
-            when (ipv4PrefixLen prefix > maxLength) $
-                vError $ RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp asn (Ipv4P prefix) maxLength)
-        for_ v6s $ \(Vrp6 prefix maxLength) -> do
-            checkerV6 prefix (RoaPrefixIsOutsideOfResourceSet (Ipv6P prefix))
-            when (ipv6PrefixLen prefix > maxLength) $
-                vError $ RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp asn (Ipv6P prefix) maxLength)
 
+-- | The prefixes of a ROA have to be within the verified resources of its CA.
+-- With the reconsidered algorithm that's not implied by the EE certificate 
+-- being valid, so a ROA shortcut has to be checked with this as well.
+validateRoaPrefixes :: Validator es => Maybe (VerifiedRS PrefixesAndAsns) -> VrpsPerAs -> Eff es ()
+validateRoaPrefixes verifiedResources (VrpsPerAs asn v4s v6s) = do 
+    let checkerV4 = validatedPrefixInRS @Ipv4Prefix verifiedResources
+    let checkerV6 = validatedPrefixInRS @Ipv6Prefix verifiedResources
+    
+    for_ v4s $ \(Vrp4 prefix maxLength) -> do
+        checkerV4 prefix (RoaPrefixIsOutsideOfResourceSet (Ipv4P prefix))
+        when (ipv4PrefixLen prefix > maxLength) $
+            vError $ RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp asn (Ipv4P prefix) maxLength)
+    for_ v6s $ \(Vrp6 prefix maxLength) -> do
+        checkerV6 prefix (RoaPrefixIsOutsideOfResourceSet (Ipv6P prefix))
+        when (ipv6PrefixLen prefix > maxLength) $
+            vError $ RoaPrefixLenghtsIsBiggerThanMaxLength (Vrp asn (Ipv6P prefix) maxLength)
+  where
     validatedPrefixInRS ::
         forall a es.
          (Validator es, Interval a, HasType (IntervalSet a) PrefixesAndAsns) =>
@@ -464,12 +471,7 @@ validateSpl :: (Validator es, CaParent parent) =>
 validateSpl validationRFC now spl parentCert crl verifiedResources = do
     validateCms validationRFC now spl parentCert crl verifiedResources
 
-    let SplPayload asn _ = spl.content
-    for_ verifiedResources $ \(VerifiedRS vrs) -> do
-        let asns = vrs ^. typed
-        unless (isInside (AS asn) asns) $
-            vError $
-                SplAsnNotInResourceSet asn (IS.toList asns)
+    validateSplAsn verifiedResources spl.content
 
     let AllResources ipv4 ipv6 _ = getResources spl
     resourceSetMustBeEmpty ipv4 (SplNotIpResources (ipToList Ipv4P ipv4))
@@ -479,6 +481,15 @@ validateSpl validationRFC now spl parentCert crl verifiedResources = do
     ipToList f = \case
         Inherit -> []
         RS s -> map f $ IS.toList s
+
+-- | The ASN of an SPL has to be within the verified resources of its CA, 
+-- the same as the prefixes of a ROA (see `validateRoaPrefixes`).
+validateSplAsn :: Validator es => Maybe (VerifiedRS PrefixesAndAsns) -> SplPayload -> Eff es ()
+validateSplAsn verifiedResources (SplPayload asn _) = 
+    for_ verifiedResources $ \(VerifiedRS vrs) -> do
+        let asns = vrs ^. typed
+        unless (isInside (AS asn) asns) $
+            vError $ SplAsnNotInResourceSet asn (IS.toList asns)
 
 
 validateGbr :: (Validator es, CaParent parent) =>
@@ -608,6 +619,15 @@ validateAspaCore resources Aspa { customer, providers } = do
 
 maxAllowedAsnPerBgpSecCertificate :: Integer
 maxAllowedAsnPerBgpSecCertificate = 65536
+
+-- https://www.rfc-editor.org/rfc/rfc8360#section-4.2.6
+validateBgpSecAsns :: Validator es => Maybe (VerifiedRS PrefixesAndAsns) -> [ASN] -> Eff es ()
+validateBgpSecAsns verifiedResources bgpSecAsns =
+    for_ verifiedResources $ \(VerifiedRS vrs) -> do
+        let asns = vrs ^. typed
+        case filter (\asn -> not $ isInside (AS asn) asns) bgpSecAsns of
+            []      -> pure ()
+            notCas  -> vError $ BGPCertAsnsNotInResourceSet notCas (IS.toList asns)
 
 validateBgpCertAsns :: Validator es => AllResources -> Eff es [ASN]
 validateBgpCertAsns (AllResources _ _ asns) =

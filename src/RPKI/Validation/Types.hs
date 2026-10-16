@@ -1,4 +1,3 @@
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -33,16 +32,28 @@ data MftChild = CaChild CaShortcut Serial
     deriving anyclass (TheBinary)
 
 
-data MftEntry = MftEntry {        
+data MftEntry = MftEntry {
         fileName :: Text,
-        child    :: MftChild
+        child    :: MftChild,
+        -- | `Just` for a child that parsed as a CA certificate, `Nothing` for
+        -- anything else. It's independent of `child`: a valid CA certificate
+        -- with warnings is a `TroubledChild`, so that it's re-validated and its
+        -- warnings are reported every time, but it's still `Just ValidCaChild`.
+        caCert   :: Maybe CaChildValidity
     }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+-- | Whether a CA certificate on a manifest passed validation: signature,
+-- validity period, revocation and resources. A valid one is a subordinate of
+-- the manifest's issuer, whether or not its own publication point is fine.
+data CaChildValidity = ValidCaChild | InvalidCaChild
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
 
 data CrlShortcut = CrlShortcut {
-        key            :: {-# UNPACK #-} ObjectKey,
+        key       :: {-# UNPACK #-} ObjectKey,
         notBefore :: {-# UNPACK #-} Instant,
         notAfter  :: {-# UNPACK #-} Instant        
     }
@@ -52,11 +63,12 @@ data CrlShortcut = CrlShortcut {
 data MftShortcut = MftShortcut { 
         key            :: {-# UNPACK #-} ObjectKey,
         nonCrlEntries  :: Map.Map ObjectKey MftEntry,
-        notBefore :: {-# UNPACK #-} Instant,
-        notAfter  :: {-# UNPACK #-} Instant,        
+        notBefore      :: {-# UNPACK #-} Instant,
+        notAfter       :: {-# UNPACK #-} Instant,        
         serial         :: {-# UNPACK #-} Serial,
         manifestNumber :: {-# UNPACK #-} Serial,
-        crlShortcut    :: CrlShortcut        
+        crlShortcut    :: CrlShortcut,
+        hasIssues      :: Bool
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -65,8 +77,8 @@ data CaShortcut = CaShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
         ski            :: SKI,
         ppas           :: PublicationPointAccess,
-        notBefore :: {-# UNPACK #-} Instant,
-        notAfter  :: {-# UNPACK #-} Instant,
+        notBefore      :: {-# UNPACK #-} Instant,
+        notAfter       :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -91,8 +103,8 @@ data RoaShortcut = RoaShortcut {
 data SplShortcut = SplShortcut {
         key            :: {-# UNPACK #-} ObjectKey,        
         splPayload     :: SplPayload,
-        notBefore :: {-# UNPACK #-} Instant,
-        notAfter  :: {-# UNPACK #-} Instant,
+        notBefore      :: {-# UNPACK #-} Instant,
+        notAfter       :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -101,8 +113,8 @@ data SplShortcut = SplShortcut {
 data AspaShortcut = AspaShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
         aspa           :: Aspa,
-        notBefore :: {-# UNPACK #-} Instant,
-        notAfter  :: {-# UNPACK #-} Instant,
+        notBefore      :: {-# UNPACK #-} Instant,
+        notAfter       :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -111,8 +123,8 @@ data AspaShortcut = AspaShortcut {
 data BgpSecShortcut = BgpSecShortcut {
         key            :: {-# UNPACK #-} ObjectKey,
         bgpSec         :: BGPSecPayload,
-        notBefore :: {-# UNPACK #-} Instant,
-        notAfter  :: {-# UNPACK #-} Instant,
+        notBefore      :: {-# UNPACK #-} Instant,
+        notAfter       :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
@@ -121,13 +133,24 @@ data BgpSecShortcut = BgpSecShortcut {
 data GbrShortcut = GbrShortcut {
         key            :: {-# UNPACK #-} ObjectKey,    
         gbr            :: T2 Hash Gbr,
-        notBefore :: {-# UNPACK #-} Instant,
-        notAfter  :: {-# UNPACK #-} Instant,
+        notBefore      :: {-# UNPACK #-} Instant,
+        notAfter       :: {-# UNPACK #-} Instant,
         resources      :: AllResources
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+
+-- | The validity period of the object of a child, `Nothing` for a troubled one.
+childValidityPeriod :: MftChild -> Maybe ValidityPeriod
+childValidityPeriod = \case
+    CaChild c _     -> Just $ getValidityPeriod c
+    RoaChild r _    -> Just $ getValidityPeriod r
+    SplChild s _    -> Just $ getValidityPeriod s
+    AspaChild a _   -> Just $ getValidityPeriod a
+    BgpSecChild b _ -> Just $ getValidityPeriod b
+    GbrChild g _    -> Just $ getValidityPeriod g
+    TroubledChild _ -> Nothing
 
 instance {-# OVERLAPPING #-} WithValidityPeriod CaShortcut where
     getValidityPeriod CaShortcut {..} = ValidityPeriod notBefore notAfter

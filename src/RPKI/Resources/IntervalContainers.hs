@@ -1,12 +1,10 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Resources.IntervalContainers where
 
 import Prelude hiding (subtract, null)
 
-import           Data.Either              (partitionEithers)
 import qualified Data.List                as List
 import qualified Data.Vector              as V
 import           RPKI.Resources.Types
@@ -113,22 +111,23 @@ type ResourceCheckResult a = Either
 intersectionAndOverclaimedIntervals :: Interval a =>    
                                         IntervalSet a -> IntervalSet a -> 
                                         (Nested (IntervalSet a), Overclaiming (IntervalSet a))
-intersectionAndOverclaimedIntervals (IntervalSet smaller) bigger =     
+intersectionAndOverclaimedIntervals (IntervalSet smaller) bigger =
     (Nested $ fromList intersectionRS, Overclaiming $ fromList overclaimingRS)
     where
-        intersectionRS = good <> concatMap fst problematic 
-        overclaimingRS = concatMap snd problematic
+        (intersectionRS, overclaimingRS) = foldMap nestedAndOverclaimed smaller
 
-        (problematic, good) = partitionEithers $ concatMap overclamingPart smaller
-
-        overclamingPart smallerInterval = 
+        nestedAndOverclaimed smallerInterval =
             case findFullIntersections smallerInterval bigger of
-                []             -> [Left ([], [smallerInterval])]
-                intersections  -> flip List.map intersections $ 
-                    \(intersection', biggerInterval) ->        
-                        if biggerInterval `contains` smallerInterval
-                            then Right smallerInterval
-                            else Left (intersection', smallerInterval `subtract` biggerInterval)       
+                [] -> ([], [smallerInterval])
+                [(_, biggerInterval)]
+                    | biggerInterval `contains` smallerInterval -> ([smallerInterval], [])
+                intersections ->
+                    -- Overclaimed is what none of the bigger intervals covers,
+                    -- so subtract all of them, not each one separately.
+                    (concatMap fst intersections,
+                     List.foldl'
+                        (\rest (_, biggerInterval) -> concatMap (`subtract` biggerInterval) rest)
+                        [smallerInterval] intersections)
 
 
 subsetCheck :: Interval a =>

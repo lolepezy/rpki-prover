@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Metrics.Process (
     DiskIO(..),
     ProcessStats(..),

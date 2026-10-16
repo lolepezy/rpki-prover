@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.RRDP.Parse.Xeno where
 
 import           Control.Monad.Primitive
@@ -112,26 +110,29 @@ parseSnapshot bs = catchExceptions $ runST $ do
                             Just v' -> lift $ writeSTRef versionRef  (Just $ Version v')
                 ("publish", attributes) -> do
                     uri <- forAttribute attributes "uri" NoPublishURI (lift . pure)
-                    lift $ modifySTRef publishes $ \pubs -> (uri, []) : pubs
+                    lift $ modifySTRef' publishes $ \pubs -> (uri, []) : pubs
                 (_, _) -> pure ()
             )
-            -- Accumulate chunks in reverse order and concatenate once at the
-            -- end (in `snapshotPublishes`) instead of re-concatenating on
-            -- every chunk here: Xeno's SAX parser can deliver a single
-            -- element's base64 body across many `onText` calls, and
-            -- `BS.concat [existing, base64]` on every call is O(n) per call,
-            -- i.e. O(n^2) overall for an n-chunk body.
+            -- Xeno delivers the text between two tags as a single zero-copy 
+            -- slice of the input, so a publish body normally comes in one call.
+            -- It can still be split by a comment or CDATA inside the body, so 
+            -- accumulate chunks and concatenate once at the end. Skip the 
+            -- whitespace between elements, otherwise it gets attached to the 
+            -- previous publish and `BS.concat` has to copy every body.
             (\base64 ->
-                (lift . readSTRef) publishes >>= \case
-                    []               -> pure ()
-                    (uri, chunks) : pubs ->
-                        lift $ writeSTRef publishes $ (uri, base64 : chunks) : pubs
+                if BS.all isSpace_ base64
+                    then pure ()
+                    else
+                        (lift . readSTRef) publishes >>= \case
+                            []               -> pure ()
+                            (uri, chunks) : pubs ->
+                                lift $ writeSTRef publishes $ (uri, base64 : chunks) : pubs
             )
 
     let snapshotPublishes = do
             ps <- (lift . readSTRef) publishes
             pure $ map (\(uri, chunks) ->
-                        SnapshotPublish (URI $ convert uri) (EncodedBase64 $ removeSpaces $ BS.concat $ reverse chunks))
+                        SnapshotPublish (URI $ convert uri) (EncodedBase64 $ BS.concat $ reverse chunks))
                         $ reverse ps
 
     let snapshot = Snapshot <$>
@@ -193,10 +194,7 @@ parseDelta bs = catchExceptions $ runST $ do
                                 Left  (uri, _) -> 
                                     throwE $ ContentInWithdraw (convert uri) (convert base64)
                                 Right (uri, hash', chunks) ->
-                                    -- See the analogous comment in `parseSnapshot`:
-                                    -- accumulate chunks and concatenate once at
-                                    -- the end instead of re-concatenating here
-                                    -- on every `onText` call.
+                                    -- See the analogous comment in `parseSnapshot`.
                                     lift $ writeSTRef deltaItemsRef $ Right (uri, hash', base64 : chunks) : is
 
     let parse = parseXml bs onElement onCharacterData
@@ -207,7 +205,7 @@ parseDelta bs = catchExceptions $ runST $ do
                     Left  (uri, hash') ->
                         DW $ DeltaWithdraw (URI $ convert uri) hash'
                     Right (uri, hash', chunks) ->
-                        DP $ DeltaPublish (URI $ convert uri) hash' (EncodedBase64 $ removeSpaces $ BS.concat $ reverse chunks))
+                        DP $ DeltaPublish (URI $ convert uri) hash' (EncodedBase64 $ BS.concat $ reverse chunks))
                     $ reverse is
 
 
@@ -237,9 +235,9 @@ parseXml bs onElement onText = do
   where
     processor element = Xeno.Process {
         openF = \elemName -> 
-                    lift $ stToPrim $ modifySTRef element (\(_, as) -> (elemName, as)),    
+                    lift $ stToPrim $ modifySTRef' element (\(_, as) -> (elemName, as)),    
         attrF = \name value -> 
-                    lift $ stToPrim $ modifySTRef element (\(n, as) -> (n, (name, value) : as)),
+                    lift $ stToPrim $ modifySTRef' element (\(n, as) -> (n, (name, value) : as)),
 
         endOpenF = \elemName -> do
                     e@(existingElemName, _) <- lift $ stToPrim $ readSTRef element

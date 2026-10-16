@@ -1,5 +1,3 @@
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE StrictData           #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -35,7 +33,7 @@ import qualified Data.List                as List
 import qualified Data.Set                 as Set
 import           Data.Map.Monoidal.Strict (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
-import           Data.Hashable hiding (hash)
+import           Data.Hashable hiding (hash, Hashed)
 import           Data.Semigroup
 import           Data.Monoid.Generic
 import           Data.Tuple.Strict
@@ -79,9 +77,23 @@ data CertType = CACert | EECert | BGPCert
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
+-- It reality it's (almost) always SHA-256, but optimising it into something
+-- that is exactly a 32 bytes like (Word64, Word64, Word64, Word64) is not 
+-- bringing any measurable performance gains.
 newtype Hash = Hash { unHash :: BSS.ShortByteString } 
     deriving stock (Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
+
+{- | A value together with the SHA-256 hash of the bytes it came from.
+
+     The hash must be that of the bytes: make one with 'RPKI.Util.hashed', or
+     with a hash that was computed from, or checked against, those same bytes.
+-}
+data Hashed a = Hashed {
+        raw  :: a,
+        hash :: Hash
+    }
+    deriving stock (Show, Eq, Ord, Generic, Functor)
 
 newtype URI = URI { unURI :: Text } 
     deriving stock (Eq, Ord, Generic, Data, Typeable)
@@ -336,7 +348,7 @@ type RscObject = CMSBasedObject Rsc
 -- https://datatracker.ietf.org/doc/draft-ietf-sidrops-aspa-profile/
 type AspaObject = CMSBasedObject Aspa
 
-data RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl = 
+data RpkiObjectTemplate ca mft roa spl gbr rsc aspa bgpSec crl = 
                   CerRO ca 
                 | MftRO mft
                 | RoaRO roa
@@ -349,7 +361,10 @@ data RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl =
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary) 
 
-type ParsedRpkiObject = RpkiObject_ 
+-- RPKI object as just parsed from ASN.1. There are only some
+-- very basic guarantees about its structure and correctness.
+-- These objects are not stored in the cache.
+type ParsedRpkiObject = RpkiObjectTemplate 
         CaCerObject 
         MftObject 
         RoaObject 
@@ -367,7 +382,15 @@ type WellStructuredGbr  = WellStructuredCms Gbr
 type WellStructuredRsc  = WellStructuredCms Rsc
 type WellStructuredAspa = WellStructuredCms Aspa
 
-type WellStructuredRpkiObject = RpkiObject_ 
+{- RPKI objects that are also validates individually, i.e. everything 
+that can be checked about this objects without any context is checked. 
+That allows to simplify the structure, remove redundancies, and make it 
+more convenient to use.
+
+These objects are the ones stored in the cache, and are used for 
+tree validation when checking all the parent-child relationships.
+-}
+type WellStructuredRpkiObject = RpkiObjectTemplate 
         WellStructuredCaCert 
         WellStructuredMft
         WellStructuredRoa
@@ -389,7 +412,7 @@ foldRpkiObject ::
     (aspa -> r) ->
     (bgpSec -> r) ->
     (crl -> r) ->
-    RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl ->
+    RpkiObjectTemplate ca mft roa spl gbr rsc aspa bgpSec crl ->
     r
 foldRpkiObject onCer onMft onRoa onSpl onGbr onRsc onAspa onBgp onCrl = \case
     CerRO c  -> onCer c
@@ -539,20 +562,20 @@ instance OfCertType BgpCerObject 'BGPCert
 
 instance {-# OVERLAPPING #-} (WithAKI ca, WithAKI mft, WithAKI roa, WithAKI spl, WithAKI gbr, 
           WithAKI rsc, WithAKI aspa, WithAKI bgpSec, WithAKI crl) => 
-    WithAKI (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl) where
+    WithAKI (RpkiObjectTemplate ca mft roa spl gbr rsc aspa bgpSec crl) where
     getAKI = foldRpkiObject getAKI getAKI getAKI getAKI getAKI getAKI getAKI getAKI getAKI
 
 instance {-# OVERLAPPING #-} (WithPubKey ca, WithPubKey mft, WithPubKey roa, WithPubKey spl, WithPubKey gbr, 
           WithPubKey rsc, WithPubKey aspa, WithPubKey bgpSec, WithPubKey crl) => 
-    WithPubKey (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl) where
+    WithPubKey (RpkiObjectTemplate ca mft roa spl gbr rsc aspa bgpSec crl) where
     getPubKey = foldRpkiObject getPubKey getPubKey getPubKey getPubKey getPubKey getPubKey getPubKey getPubKey getPubKey
 
 instance {-# OVERLAPPING #-} (WithHash ca, WithHash mft, WithHash roa, WithHash spl, WithHash gbr, 
           WithHash rsc, WithHash aspa, WithHash bgpSec, WithHash crl) => 
-    WithHash (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl) where
+    WithHash (RpkiObjectTemplate ca mft roa spl gbr rsc aspa bgpSec crl) where
     getHash = foldRpkiObject getHash getHash getHash getHash getHash getHash getHash getHash getHash
 
-instance WithRpkiObjectType (RpkiObject_ ca mft roa spl gbr rsc aspa bgpSec crl) where
+instance WithRpkiObjectType (RpkiObjectTemplate ca mft roa spl gbr rsc aspa bgpSec crl) where
     getRpkiObjectType = foldRpkiObject 
                          (const CER) (const MFT) (const ROA) (const SPL) (const GBR) 
                          (const RSC) (const ASPA) (const BGPSec) (const CRL)
@@ -669,6 +692,9 @@ data Manifest = Manifest {
     } 
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
+
+isCrlEntry :: MftPair -> Bool
+isCrlEntry (MftPair name _) = ".crl" `Text.isSuffixOf` name
 
 data SignCRL = SignCRL {
         thisUpdateTime     :: Instant,
@@ -930,21 +956,8 @@ instance Show TaName where
 
 -- | VRPs stored packed, in an unboxed vector.
 --
--- This used to be a boxed @V.Vector Vrp@, which cost around 60 bytes per VRP
--- against the 10-22 bytes a VRP actually carries. Worse, it was built lazily
--- from 'Roas' -- @V.fromList@ forces the list spine but not the elements -- so
--- every slot held a thunk that kept its source 'Vrp4'\/'Vrp6' alive, and the
--- process paid for both representations at once plus the thunks in between.
--- An unboxed vector cannot hold a thunk, so building one forces the conversion
--- and lets the 'Roas' go.
--- | VRPs stored packed, split by address family.
---
 -- Deliberately not 'TheBinary': VRPs are persisted as 'Roas', and 'Vrps' is
 -- only ever derived from them in memory.
---
--- Two vectors rather than one uniform one because an IPv4 VRP is 10 bytes of
--- information and an IPv6 one is 22; a shared layout has to be as wide as the
--- larger, which wastes 13 bytes on ~85% of the set.
 data Vrps = Vrps {
         packed4 :: VU.Vector PackedVrp4,
         packed6 :: VU.Vector PackedVrp6
@@ -1009,17 +1022,19 @@ data ObjectIdentity = KeyIdentity ObjectKey
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
-newtype EarliestToExpire = EarliestToExpire Instant
+-- | The earliest moment when the validity of some object changes: it
+-- expires or, if it's not valid yet, it becomes valid.
+newtype EarliestValidityChange = EarliestValidityChange Instant
     deriving stock (Show, Eq, Ord, Generic)    
     deriving newtype (TheBinary)
-    deriving Semigroup via Min EarliestToExpire
+    deriving Semigroup via Min EarliestValidityChange
 
 
-instance Monoid EarliestToExpire where
-    -- It is 2262-04-11 23:47:16.000Z, it's 
+instance Monoid EarliestValidityChange where
+    -- It is 2262-04-11 23:47:16.000Z, because
     -- 1) far enough to set it as "later that anything else"
     -- 2) Anything bigger than that wraps around to the year 1677
-    mempty = EarliestToExpire $ Instant $ 1000_000_000 * 9_223_372_036
+    mempty = EarliestValidityChange $ Instant $ 1000_000_000 * 9_223_372_036
 
 
 data WellStructuredCert (t :: CertType) = WellStructuredCert {
@@ -1053,11 +1068,6 @@ type WellStructuredCaCert = WellStructuredCert 'CACert
 -- | Minimized BGPSec certificate.
 type WellStructuredBgpCert = WellStructuredCert 'BGPCert
 
--- | Minimized EE certificate, stripped of fields that are either
--- constant-after-prevalidation (CMS versions, digest algorithms) or
--- derivable from other stored data (SID == SKI, etc.).
--- Retains only what is needed for chain validation and CMS signature
--- verification.
 data CertUris = CertUris {
         aiaCaIssuersUri :: Maybe URI,
         crlDPUri        :: Maybe URI,
@@ -1256,18 +1266,7 @@ uniqueVrpCounts (PerTA perTaVrps) = (perTaCounts, total)
 uniqueVrpCount :: PerTA Vrps -> Int 
 uniqueVrpCount = snd . uniqueVrpCounts
 
--- | Sort and deduplicate, in place on the vector.
---
--- This used to go through a list -- @V.toList@, @List.sortBy@, dedup, then
--- @V.fromList@ -- which for a million VRPs allocated ~1.5gb of cons cells per
--- call and took ~2s. Sorting the vector itself does the same work in ~0.5s for
--- ~170mb. It matters because this is rebuilt from scratch on every payload
--- re-read, and the transient peak is what the RTS then sizes the heap for.
---
--- A stable sort keeps this exactly equivalent to the list version: dedup drops
--- structurally equal neighbours, so for a `cmp` that can call two distinct VRPs
--- EQ (neither of the two used here -- 'cmpVrps' and 'compare' -- can), their
--- relative order stays the input order, as it did before.
+-- | Sort and deduplicate, in place on the vector for speed.
 uniqVrpsBy :: (Vrp -> Vrp -> Ordering) -> Vrps -> V.Vector Vrp
 uniqVrpsBy cmp vrps = dedupSorted $ V.modify (VectorSort.sortBy cmp) (vrpsToVector vrps)
   where
@@ -1282,11 +1281,6 @@ createVrps vrps = Vrps (VU.fromList v4s) (VU.fromList v6s)
     split (Vrp asn (Ipv6P p) maxLen) (as, bs) = (as, pack6 asn p maxLen : bs)
 
 -- | Convert stored ROA payloads into the packed VRP set.
---
--- Goes straight from 'Vrp4'\/'Vrp6' to packed words without building 'Vrp'
--- values on the way, and the unboxed vector forces the whole conversion, so
--- the 'Roas' it came from become garbage immediately rather than being kept
--- alive behind unevaluated elements.
 toVrps :: Roas -> Vrps
 toVrps (Roas roas) = Vrps (VU.fromList (concatMap toPacked4 payloads))
                           (VU.fromList (concatMap toPacked6 payloads))
@@ -1339,6 +1333,14 @@ vrpsCount (Vrps v4 v6) = VU.length v4 + VU.length v6
 filterVrps :: (Vrp -> Bool) -> Vrps -> Vrps
 filterVrps f (Vrps v4 v6) =
     Vrps (VU.filter (f . unpack4) v4) (VU.filter (f . unpack6) v6)
+
+-----------------------------------------------------------------
+-- Here is a bunch of functions sorting and counting VRPs. This machinery 
+-- is so complicated mainly for performance reasons -- it's actually quite
+-- CPU-demanding to sort and deduplicate a million VRPs, so this 
+-- seemingly minor operations take a large chunk of the validation time. 
+-- There is a lot of benchmarking went into this, so it's probably close 
+-- to "as fast as it gets" without going to C.
 
 -- | Sort and deduplicate each family in the packed form. Nothing is
 -- materialised, so the result costs the same as the input.

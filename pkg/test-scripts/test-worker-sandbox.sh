@@ -13,6 +13,7 @@
 # Must run as root on a throwaway machine with systemd, with network access.
 #
 #   test-worker-sandbox.sh --deb rpki-prover_0.11.0-1~deb12u1_amd64.deb
+#   test-worker-sandbox.sh --rpm rpki-prover-0.11.0-1.el9.x86_64.rpm
 #
 # Exit status is non-zero if a worker failed, or if the workers ran without the
 # sandbox they asked for.
@@ -20,6 +21,7 @@
 set -uo pipefail
 
 DEB=""
+RPM=""
 # A cold start downloads the TALs, then fetches the repositories before the
 # first validation worker has anything to do.
 WORKER_TIMEOUT=${WORKER_TIMEOUT:-600}
@@ -41,15 +43,22 @@ step() { printf '\n\033[1m--- %s\033[0m\n' "$1"; }
 while [ $# -gt 0 ]; do
     case "$1" in
         --deb)            DEB=$(readlink -f "$2"); shift 2 ;;
+        --rpm)            RPM=$(readlink -f "$2"); shift 2 ;;
         --worker-timeout) WORKER_TIMEOUT=$2; shift 2 ;;
         --rsync-timeout)  RSYNC_TIMEOUT=$2; shift 2 ;;
-        -h|--help)        echo "Usage: test-worker-sandbox.sh --deb PATH [--worker-timeout N] [--rsync-timeout N]" >&2; exit 0 ;;
+        -h|--help)        echo "Usage: test-worker-sandbox.sh {--deb PATH|--rpm PATH} [--worker-timeout N] [--rsync-timeout N]" >&2; exit 0 ;;
         *)                echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
 done
 
 [ "$(id -u)" -eq 0 ] || { echo "Must run as root" >&2; exit 1; }
-[ -n "${DEB}" ] && [ -f "${DEB}" ] || { echo "--deb PATH is required" >&2; exit 1; }
+if [ -n "${DEB}" ] && [ -f "${DEB}" ]; then
+    CONFIG=/etc/default/rpki-prover
+elif [ -n "${RPM}" ] && [ -f "${RPM}" ]; then
+    CONFIG=/etc/sysconfig/rpki-prover
+else
+    echo "--deb PATH or --rpm PATH is required" >&2; exit 1
+fi
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -74,12 +83,22 @@ wait_for_journal() {  # wait_for_journal <regex> <timeout>
 }
 
 step "install"
-apt-get install -y --no-install-recommends "${DEB}" >/tmp/apt-install.log 2>&1 \
-    || { fail "apt-get install"; tail -40 /tmp/apt-install.log >&2; exit 1; }
-pass "apt-get install $(basename "${DEB}")"
+if [ -n "${DEB}" ]; then
+    apt-get install -y --no-install-recommends "${DEB}" >/tmp/pkg-install.log 2>&1 \
+        || { fail "apt-get install"; tail -40 /tmp/pkg-install.log >&2; exit 1; }
+    pass "apt-get install $(basename "${DEB}")"
+else
+    dnf install -y --setopt=install_weak_deps=False "${RPM}" >/tmp/pkg-install.log 2>&1 \
+        || { fail "dnf install"; tail -40 /tmp/pkg-install.log >&2; exit 1; }
+    pass "dnf install $(basename "${RPM}")"
+    # The RPM leaves the service disabled, as is the convention there.
+    systemctl enable --now rpki-prover \
+        && pass "systemctl enable --now rpki-prover" \
+        || fail "systemctl enable --now rpki-prover"
+fi
 
 step "wait for the first-start TAL download"
-# The service is started by the postinst and downloads the RIR TALs on its
+# The service is started by the postinst (or above) and downloads the RIR TALs on its
 # first start. It must not be restarted while that is in flight: the files are
 # created before they are written, and a restart in between leaves them empty.
 # The next start then finds a non-empty tals/ directory, skips the download and
@@ -99,10 +118,10 @@ empty_tals=$(find /var/lib/rpki-prover/tals -name '*.tal' -empty 2>/dev/null | w
 step "enable debug logging"
 # The sandbox reports itself at debug level, and "nothing complained" is not a
 # check. This restart is safe now that the TALs are on disk.
-sed -i 's|^RPKI_PROVER_ARGS="\(.*\)"|RPKI_PROVER_ARGS="\1 --log-level debug"|' /etc/default/rpki-prover
-grep -q -- '--log-level debug' /etc/default/rpki-prover \
-    && pass "--log-level debug set in /etc/default/rpki-prover" \
-    || fail "--log-level debug set in /etc/default/rpki-prover"
+sed -i 's|^RPKI_PROVER_ARGS="\(.*\)"|RPKI_PROVER_ARGS="\1 --log-level debug"|' "${CONFIG}"
+grep -q -- '--log-level debug' "${CONFIG}" \
+    && pass "--log-level debug set in ${CONFIG}" \
+    || fail "--log-level debug set in ${CONFIG}"
 systemctl restart rpki-prover
 
 step "the unit permits the Landlock syscalls"

@@ -1,6 +1,4 @@
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE StrictData            #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Messages where
 
@@ -39,10 +37,6 @@ toMessage = \case
     
     UnspecifiedE context e -> 
         [i|Unspecified error in #{context}, details: #{e}.|]
-
-    ComposeE appErrors -> let 
-        t = mconcat $ List.intersperse "\n" (map toMessage appErrors)
-        in [i|Multiple errors: #{t}.|]
 
 
 toErikMessage :: ErikError -> Text
@@ -378,6 +372,9 @@ toValidationMessage = \case
       SplAsnNotInResourceSet asn asns ->
         [i|#{asn} is not in the EE certificate AS set (#{asns}).|]      
 
+      BGPCertAsnsNotInResourceSet asns caAsns ->
+        [i|BGPSec certificate ASNs #{asns} are not in the resources of its CA (#{caAsns}).|]
+
       BGPCertTooManyASNs asnCount limit -> 
         [i|BGPSec certificate declares #{asnCount} ASNs, more than the limit of #{limit}.|]
 
@@ -446,6 +443,9 @@ toValidationMessage = \case
 
       ReferentialIntegrityError message -> [i|Referential integrity problem: #{message}.|]
 
+      NewerManifestExists mftNumber newerMftNumber ->
+        [i|Manifest number #{mftNumber} is not the latest one, there is a valid manifest number #{newerMftNumber} of the same CA.|]
+
       WeirdCaPublicationPoints urls -> 
         [i|Invalid CA publication points found: #{fmtUrlList urls}.|]
 
@@ -476,6 +476,7 @@ toInternalErrorMessage = \case
     WorkerOutOfCpuTime t -> t
     WorkerOutOfMemory t  -> t
     WorkerTooMuchIO t    -> t
+    WorkerTxTimeout t    -> t
     WorkerDetectedDifferentExecutable t  -> t
 
 fmtOID :: OID -> Text

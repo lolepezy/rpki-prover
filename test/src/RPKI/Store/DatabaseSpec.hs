@@ -1,19 +1,17 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Store.DatabaseSpec where
 
 import           Effectful
 import           Control.Concurrent              (threadDelay)
+import           Control.Concurrent.Async        (withAsync)
 import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Lens
-import           Control.Monad
 import           Control.Monad
 import           Data.Generics.Product.Typed
 
 import qualified Data.ByteString                   as BS
 import qualified Data.List                         as List
-import           Data.Maybe                        (isJust, isNothing)
+import           Data.Maybe                        (catMaybes, fromJust, isJust, isNothing)
 import qualified Data.Map.Strict                   as Map
 import qualified Data.Set                          as Set
 import qualified Data.Text                         as Text
@@ -22,6 +20,7 @@ import           Data.Maybe                        (fromMaybe)
 import           Data.Int                          (Int64)
 import           Data.Ord                          (Down(..))
 import           Data.Hourglass                    (Seconds(..))
+import           Data.IORef
 
 import           Database.SQLite.Simple            (Only(..))
 
@@ -37,14 +36,13 @@ import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Repository
 import           RPKI.RepositorySpec
-import           RPKI.Store.AppStorage
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Database               (DB(..), Tx(..), roTx, rwTx)
 import qualified RPKI.Store.Database               as DB
 import           RPKI.Validation.ObjectValidation
+import           RPKI.Validation.Types
 import qualified RPKI.Store.SQLite                 as SQLite
 import           RPKI.Store.Types
-import           RPKI.Parse.Internal.Common        (id_sha256)
 import qualified Data.Text.Encoding                as Text
 import qualified RPKI.Util                         as U
 import           RPKI.TestCommons
@@ -65,6 +63,9 @@ databaseGroup = testGroup "SQLite storage tests"
 objectStoreGroup :: TestTree
 objectStoreGroup = testGroup "Object storage test"
     [ dbTestCase "Should order manifests according to their dates" shouldOrderManifests
+    , dbTestCase "Should store the content digest of a manifest" shouldStoreManifestContentDigest
+    , dbTestCase "Should tell what a fetch stored" shouldTellWhatAFetchStored
+    , dbTestCase "Should tell whether the objects a manifest lists are stored" shouldTellManifestObjectsStored
     , dbTestCase "Should order manifests by thisTime, not by manifest_number"
         shouldOrderManifestsByThisTimeNotNumber
     , dbTestCase "Should order manifests by nextTime when thisTime ties"
@@ -82,6 +83,8 @@ objectStoreGroup = testGroup "Object storage test"
         shouldComputeObjectSizeStats
     , dbTestCase "Should not report TA certificates as having multiple locations"
         shouldNotCountTaCertificatesAsMultiLocation
+    , dbTestCase "Should keep CA and payload shortcut children in their own tables"
+        shouldKeepShortcutChildrenInTheirTables
     ]
 
 erikStoreGroup :: TestTree
@@ -246,7 +249,10 @@ txGroup = testGroup "App transaction test"
 
 dbGroup :: TestTree
 dbGroup = testGroup "App database test"
-    [ HU.testCase "Should reopen database without issues" shouldReopenDatabase
+    [ HU.testCase "Should roll back a write transaction that runs for too long" 
+        shouldRollBackLongWriteTransaction
+    , HU.testCase "Should interrupt a statement that runs for too long" 
+        shouldInterruptLongStatement
     , dbTestCase "Should delete only objects older than the criteria say"
         shouldDeleteStaleObjectsOnly
     , dbTestCase "Should keep an old object that was validated recently"
@@ -410,6 +416,71 @@ shouldNotCountTaCertificatesAsMultiLocation io = do
         (Set.singleton ordinaryKey) multi
 
 
+-- | CA certificates go to `mft_shortcut_ca_children` together with their 
+-- validity, everything else to `mft_shortcut_payload_children`. Reads bring 
+-- both back, deletes clear both, and deleting the object cascades into both.
+shouldKeepShortcutChildrenInTheirTables :: IO DB -> HU.Assertion
+shouldKeepShortcutChildrenInTheirTables io = do
+    db <- io
+    worldVersion <- instantToVersion . unNow <$> thisInstant
+    [roaObject, caObject, unindexedObject] <- distinctObjects 3
+    roaKey       <- storeAt db roaObject worldVersion
+    caKey        <- storeAt db caObject worldVersion
+    unindexedKey <- storeAt db unindexedObject worldVersion
+
+    -- Every parsed CA certificate has a `certificates` row
+    rwTx db $ \(Tx conn) ->
+        SQLite.execute conn "INSERT INTO certificates(object_key, ski, aki) VALUES (?, ?, NULL)"
+            (caKey, "01234567890123456789" :: BS.ByteString)
+
+    let aki = AKI (mkKI "98765432109876543210")
+    let row k fileName caCert = 
+            DB.ShortcutChildRow k fileName caCert (unStorable $ toStorable $ Compressed $ TroubledChild k)
+    let entry k fileName caCert = MftEntry fileName (TroubledChild k) caCert
+
+    rwTx db $ \tx -> DB.insertMftShortcutChildren tx aki
+        [ row roaKey "a.roa" Nothing
+        , row caKey "b.cer" (Just ValidCaChild)
+        -- No `certificates` row, so it can't be in the CA table, the 
+        -- foreign key would fail the transaction. It goes to the payload one.
+        , row unindexedKey "c.cer" (Just InvalidCaChild)
+        ]
+
+    full <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Children must come back with what they are"
+        (Map.fromList [ (roaKey,       entry roaKey "a.roa" Nothing)
+                      , (caKey,        entry caKey "b.cer" (Just ValidCaChild))
+                      , (unindexedKey, entry unindexedKey "c.cer" Nothing) ])
+        full
+
+    caRows <- roTx db $ \(Tx conn) ->
+        SQLite.query conn "SELECT child_key, valid FROM mft_shortcut_ca_children WHERE aki = ?" (Only aki)
+    HU.assertEqual "Only the indexed CA certificate is in the CA table" [(caKey, 1 :: Int)] caRows
+
+    -- A CA certificate that turned invalid is written over its row
+    rwTx db $ \tx -> DB.insertMftShortcutChildren tx aki [row caKey "b.cer" (Just InvalidCaChild)]
+    light <- roTx db $ \tx -> DB.getMftShorcutChildrenLight tx aki
+    HU.assertEqual "The CA certificate must be invalid now"
+        (Just (TroubledChild caKey, Just InvalidCaChild)) (Map.lookup caKey light)
+    HU.assertEqual "There must be no duplicates" 3 (Map.size light)
+
+    fileNames <- roTx db $ \tx -> forM [roaKey, caKey] $ DB.getMftShortcutChildFileName tx aki
+    HU.assertEqual "File names come from both tables" [Just "a.roa", Just "b.cer"] fileNames
+
+    rwTx db $ \tx -> DB.deleteMftShortcutChildren tx aki [roaKey, caKey]
+    afterDelete <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Deleted children must be gone from both tables" [unindexedKey] (Map.keys afterDelete)
+
+    rwTx db $ \tx -> DB.insertMftShortcutChildren tx aki [row caKey "b.cer" (Just ValidCaChild)]
+    rwTx db $ \tx -> DB.deleteObjectByKey tx [caKey]
+    afterCascade <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Deleting the object must cascade into the CA table" [unindexedKey] (Map.keys afterCascade)
+
+    rwTx db $ \tx -> DB.deleteMftShortcut tx aki
+    afterShortcutDelete <- roTx db $ \tx -> DB.getMftShorcutChildrenFull tx aki
+    HU.assertEqual "Deleting the shortcut must delete all its children" Map.empty afterShortcutDelete
+
+
 -- | Make an object look like something a manifest refers to, which is what
 -- `getMultiLocationShortcutChildren` reports on.
 markAsManifestChild :: DB -> ObjectKey -> IO ()
@@ -419,7 +490,7 @@ markAsManifestChild db key =
             "INSERT INTO shortcuts(object_key, data) VALUES (?, ?)"
             (key, "" :: BS.ByteString)
         SQLite.execute conn
-            "INSERT INTO mft_shortcut_children(aki, file_name, child_key) VALUES (?, ?, ?)"
+            "INSERT INTO mft_shortcut_payload_children(aki, file_name, child_key) VALUES (?, ?, ?)"
             ("" :: BS.ByteString, "child.roa" :: Text.Text, key)
 
 
@@ -513,6 +584,113 @@ shouldOrderManifests io = do
     HU.assertEqual "Not the same manifests" (MftRO mftLatest) (toValidatedRpkiObject mft2)
 
 
+-- | The digest is computed when a manifest is stored, and kept in its meta.
+shouldStoreManifestContentDigest :: IO DB -> HU.Assertion
+shouldStoreManifestContentDigest io = do
+    db <- io
+    (Right (_, mft1), _) <- runValidatorIO (newScopes "read1") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
+    (Right (_, mft2), _) <- runValidatorIO (newScopes "read2") $ readObjectFromFile "./test/data/afrinic_mft2.mft"
+    [other] <- distinctObjects 1
+
+    worldVersion <- newVersion
+    (key1, key2, otherKey) <- rwTx db $ \tx -> (,,)
+        <$> DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft1) worldVersion
+        <*> DB.saveObject tx (WellStructuredRO $ toValidatedRpkiObject mft2) worldVersion
+        <*> storeIn tx other worldVersion
+
+    let digestOf = \case
+            MftRO m -> manifestContentDigest $ getCMSContent $ cmsPayload m
+            o       -> error $ "Not a manifest: " <> show o
+    HU.assertBool "The fixtures must list different objects" (digestOf mft1 /= digestOf mft2)
+
+    metas <- roTx db $ \tx -> mapM (DB.getMftMetaByKey tx) [key1, key2, otherKey]
+    HU.assertEqual "Each manifest must have its own digest, other objects no meta"
+        [Just (digestOf mft1), Just (digestOf mft2), Nothing]
+        (map (fmap (^. #contentDigest)) metas)
+
+    let Just aki1 = getAKI mft1
+    byAki <- roTx db $ \tx -> DB.getMftsForAKI tx aki1
+    HU.assertEqual "The metas of the AKI must be the same as by key"
+        (List.sort $ catMaybes $ take 2 metas) (List.sort byAki)
+  where
+    storeIn tx obj version = DB.saveObject tx
+        (OriginalRO (ObjectOriginal $ unStorable $ toStorable obj) mempty (getHash obj) (getRpkiObjectType obj))
+        version
+
+
+-- | What a fetch stored is what the cache has with its version: the manifests
+-- that are new and parsed, and whether there was a new object other than a 
+-- manifest or a CRL.
+shouldTellWhatAFetchStored :: IO DB -> HU.Assertion
+shouldTellWhatAFetchStored io = do
+    db <- io
+    (Right (_, mft1), _) <- runValidatorIO (newScopes "read1") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
+    (Right (_, mft2), _) <- runValidatorIO (newScopes "read2") $ readObjectFromFile "./test/data/afrinic_mft2.mft"
+    [v1, v2, v3, v4] <- newVersions 4
+
+    let insert version lifecycle = rwTx db $ \tx ->
+            DB.insertPreparedObject tx (DB.prepareLifecycle lifecycle) version
+        storedBy version = roTx db $ \tx -> DB.storedByFetch tx version
+        wellStructured = WellStructuredRO . toValidatedRpkiObject
+        unparsed o = OriginalRO (ObjectOriginal $ unStorable $ toStorable o) mempty (getHash o) (getRpkiObjectType o)
+        newManifest key = \case
+            MftRO m -> NewManifest key (fromJust $ getAKI m) (manifestContentDigest $ getCMSContent $ cmsPayload m)
+            o       -> error $ "Not a manifest: " <> show o
+        -- Objects of a type, with the hashes of what the manifest lists
+        listed type_ = case mft1 of
+            MftRO m -> [ OriginalRO (ObjectOriginal $ Text.encodeUtf8 fileName) mempty hash type_
+                       | MftPair {..} <- getCMSContent (cmsPayload m) ^. #mftEntries
+                       , isCrlEntry (MftPair fileName hash) == (type_ == CRL) ]
+            o       -> error $ "Not a manifest: " <> show o
+
+    storedBy v1 >>= HU.assertEqual "Nothing yet" nothingStored
+
+    key1 <- insert v1 (wellStructured mft1)
+    storedBy v1 >>= HU.assertEqual "A new manifest"
+        (FetchUpdates (StoredManifests [newManifest key1 mft1]) False)
+
+    void $ insert v2 (wellStructured mft1)
+    forM_ (take 1 $ listed CRL) $ insert v2
+    storedBy v2 >>= HU.assertEqual "A manifest stored before, and a CRL, are nothing new" nothingStored
+
+    -- An unparsed copy is replaced with the parsed one, which is when
+    -- the manifest becomes usable
+    void $ insert v3 (unparsed mft2)
+    storedBy v3 >>= HU.assertEqual "An unparsed manifest is neither a manifest nor another object" nothingStored
+
+    key2 <- insert v4 (wellStructured mft2)
+    forM_ (take 1 $ listed ROA) $ insert v4
+    storedBy v4 >>= HU.assertEqual "The parsed copy of a manifest, and another object"
+        (FetchUpdates (StoredManifests [newManifest key2 mft2]) True)
+    storedBy v1 >>= HU.assertEqual "What the first fetch stored stays the same"
+        (FetchUpdates (StoredManifests [newManifest key1 mft1]) False)
+
+
+-- | A manifest can't be used before everything it lists is in the cache.
+shouldTellManifestObjectsStored :: IO DB -> HU.Assertion
+shouldTellManifestObjectsStored io = do
+    db <- io
+    (Right (_, mft), _) <- runValidatorIO (newScopes "read") $ readObjectFromFile "./test/data/afrinic_mft1.mft"
+    worldVersion <- newVersion
+
+    payload <- case toValidatedRpkiObject mft of
+        MftRO m -> pure m
+        o       -> HU.assertFailure $ "Not a manifest: " <> show o
+    let entries = payload ^. #content . #mftEntries
+    let storeEntry MftPair {..} = rwTx db $ \tx -> void $ DB.saveObject tx
+            (OriginalRO (ObjectOriginal $ Text.encodeUtf8 fileName) mempty hash ROA) worldVersion
+        allStored = roTx db $ \tx -> DB.manifestObjectsStored tx payload
+
+    HU.assertBool "The manifest must list something" (length entries > 1)
+    allStored >>= HU.assertEqual "Nothing it lists is stored" False
+
+    mapM_ storeEntry (drop 1 entries)
+    allStored >>= HU.assertEqual "One of its objects is still missing" False
+
+    mapM_ storeEntry (take 1 entries)
+    allStored >>= HU.assertEqual "Everything it lists is stored" True
+
+
 -- | Saves one fresh dummy object per descriptor (to satisfy manifest_meta's
 -- FK to objects) and inserts a manifest_meta row for each `(mftNumber,
 -- thisTime, nextTime)` descriptor, all under the given AKI. Bypasses
@@ -528,6 +706,7 @@ insertMftMetasFor db aki descriptors = do
             key <- DB.saveObject tx
                 (OriginalRO (ObjectOriginal $ unStorable $ toStorable ro) mempty (getHash ro) (getRpkiObjectType ro))
                 worldVersion
+            let contentDigest = Hash mempty
             let meta = MftMeta {..}
             SQLite.execute conn
                 "INSERT INTO manifest_meta(object_key, aki, manifest_number, meta) VALUES (?, ?, ?, ?)"
@@ -733,7 +912,7 @@ shouldIndexCertificateOnSaveObject io = do
         pure k
 
     bySki <- roTx db $ \tx -> DB.getBySKI tx (getSKI wsCert)
-    HU.assertBool "Certificate key must be indexed by SKI" (not $ null bySki)
+    HU.assertEqual "The certificate must be found by its SKI" [wsCert] [ c | Located _ c <- bySki ]
 
     rows <- roTx db $ \(Tx conn) ->
         SQLite.query conn "SELECT COUNT(*) FROM certificates WHERE object_key = ?"
@@ -742,13 +921,6 @@ shouldIndexCertificateOnSaveObject io = do
             [Only n] -> n
             _        -> 0
     HU.assertEqual "Exactly one certificates row must be created" 1 certRows
-
-    fetched <- roTx db $ \tx -> DB.getFirstCaCertBySKI tx (getSKI wsCert)
-    case fetched of
-        Just (Located _ fetchedCert) ->
-            HU.assertEqual "Fetched cert by SKI must match the inserted cert" wsCert fetchedCert
-        Nothing ->
-            HU.assertFailure "Expected getFirstCaCertBySKI to return inserted certificate"
 
 
 -- A TA certificate published over RRDP fails prevalidation there and is stored
@@ -1375,22 +1547,60 @@ shouldPreserveStateInAppTx io = do
         (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
 
 
-shouldReopenDatabase :: HU.Assertion
-shouldReopenDatabase =
+-- | Any transaction running for a second or more is stuck.
+abortAllStuck :: DB -> IORef [SQLite.TxKind] -> IO ()
+abortAllStuck db reported = 
+    SQLite.watchTransactions (unDB db) (SQLite.TxTimeouts 0 0) $ \stuck -> do 
+        atomicModifyIORef' reported $ \ks -> (stuck.kind : ks, ())
+        SQLite.abortTransaction stuck
+
+expectTimedOut :: SQLite.TxKind -> Either SQLite.TransactionTimedOut () -> HU.Assertion
+expectTimedOut kind = \case 
+    Left (SQLite.TransactionTimedOut k _) -> HU.assertEqual "Wrong kind of transaction" kind k
+    Right _                               -> HU.assertFailure "The transaction should have timed out"
+
+shouldRollBackLongWriteTransaction :: HU.Assertion
+shouldRollBackLongWriteTransaction =
     withTestContext $ \appContext -> do
         db <- readTVarIO $ appContext ^. #database
-
+        reported <- newIORef []
         Now now <- thisInstant
-        rwTx db $ \tx -> DB.setJobCompletionTime tx "reopen-job" now
 
-        reopenStorage appContext
+        r <- withAsync (abortAllStuck db reported) $ \_ -> 
+                -- Transactions that finish in time are left alone
+                withAsync (forever $ roTx db DB.allJobs >> threadDelay 10_000) $ \_ ->
+                    try $ rwTx db $ \tx -> do
+                        DB.setJobCompletionTime tx "stuck-job" now
+                        threadDelay 30_000_000
 
-        db' <- readTVarIO $ appContext ^. #database
-        jobs <- roTx db' $ \tx -> DB.allJobs tx
+        expectTimedOut SQLite.WriteTx r
+        HU.assertEqual "Only the stuck transaction must be reported, once" 
+            [SQLite.WriteTx] =<< readIORef reported
 
-        HU.assertEqual "Persisted data must remain available after reopen"
-            (Just now)
-            (lookup "reopen-job" jobs)
+        jobs <- roTx db DB.allJobs
+        HU.assertEqual "What the stuck transaction wrote must be rolled back"
+            Nothing (lookup "stuck-job" jobs)
+
+        -- The write connection is still usable
+        rwTx db $ \tx -> DB.setJobCompletionTime tx "next-job" now
+        jobs' <- roTx db DB.allJobs
+        HU.assertEqual "The next transaction must work" (Just now) (lookup "next-job" jobs')
+
+-- | Stuck inside SQLite, where an asynchronous exception doesn't get to it. 
+shouldInterruptLongStatement :: HU.Assertion
+shouldInterruptLongStatement =
+    withTestContext $ \appContext -> do
+        db <- readTVarIO $ appContext ^. #database
+        reported <- newIORef []
+
+        r <- withAsync (abortAllStuck db reported) $ \_ -> 
+                try $ roTx db $ \(Tx conn) -> void $ 
+                    SQLite.query_ @(Only Int64) conn 
+                        "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c"
+
+        expectTimedOut SQLite.ReadTx r
+        -- Read transactions still work
+        void $ roTx db DB.allJobs
 
 
 stripTime :: metric -> metric
@@ -1418,7 +1628,7 @@ readObjectFromFile path = do
     url <- case parseRpkiURL $ "rsync://host/" <> urlPath of 
                 Right u -> pure u
                 Left e  -> liftIO $ fail $ "Failed to parse fixture URL: " <> Text.unpack e
-    o <- readObject url bs
+    o <- readObject url (hashed bs)
     pure (url, o)
 
 replaceAKI :: AKI -> ParsedRpkiObject -> ParsedRpkiObject

@@ -1,4 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 module RPKI.Validation.Common where
@@ -54,10 +53,6 @@ validateMftFileName filename =
         _ -> 
             vError $ BadFileNameOnMFT filename 
                         "Filename doesn't have exactly one DOT"      
-
--- TODO Is there a more reliable way to find it?
-findCrlOnMft :: Manifest -> [MftPair]
-findCrlOnMft mft = filter (\(MftPair name _) -> ".crl" `Text.isSuffixOf` name) $ mft.mftEntries 
 
 
 -- | Check that manifest URL in the certificate is the same as the one

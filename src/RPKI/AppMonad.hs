@@ -1,4 +1,3 @@
-{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.AppMonad where

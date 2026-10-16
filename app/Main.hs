@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module Main where
 
 import           Effectful
@@ -7,12 +5,12 @@ import           Control.Lens ((^.), (&))
 import           Control.Lens.Setter
 import           Control.Concurrent
 import           Control.Concurrent.STM
+import           Control.Concurrent.STM.TSem
 import           Control.Concurrent.Async
 
 import           Control.Exception
 
 import           Control.Monad
-import           Control.Monad.IO.Class
 
 import           Data.Foldable
 import           Data.Generics.Product.Typed
@@ -29,6 +27,8 @@ import           Data.Maybe
 import           Data.Word                        (Word16)
 import           Data.String.Interpolate.IsString
 import qualified Network.Wai.Handler.Warp         as Warp
+import           Network.Wai (responseLBS)
+import           Network.HTTP.Types (status503)
 
 import           System.Directory
 import           System.Environment
@@ -47,6 +47,7 @@ import           RPKI.AppContext
 import           RPKI.AppMonad
 import           RPKI.AppState
 import           RPKI.Config
+import           RPKI.Cpu                         (getAvailableCpuCount)
 import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Reporting
@@ -99,10 +100,12 @@ main = do
                     executeWorkerProcess
   where
     printConf cliOptions = do 
+        cpuCount <- defaultCpuCount
         putStrLn "CLI options:"
         putStrLn $ shower cliOptions
         putStrLn "Configuration:"
-        putStrLn $ shower $ applyCliToConfig defaultConfig cliOptions Hidden                            
+        putStrLn $ shower $ applyCliToConfig 
+            (defaultConfig & #parallelism . #cpuCount .~ cpuCount) cliOptions Hidden                            
 
 
 executeMainProcess :: CLIOptions -> IO ()
@@ -118,7 +121,6 @@ executeMainProcess cliOptions@CLIOptions{..} = do
         let logConfig = logConfig_
                 & #metricsHandler .~ withAppState . mergeSystemMetrics
                 & #workerHandler .~ withAppState . updateRunningWorkers
-                & #systemStatusHandler .~ withAppState . updateSystemStatus
                 & #erikRelayHandler .~ (\(ErikRelayMessage reports) ->
                         withAppState (`updateErikRelayHealth` reports))
 
@@ -144,7 +146,7 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     exitFailure
                 Right appContext -> do 
                     atomically $ writeTVar appStateHolder $ Just $ appContext ^. #appState
-                    runMainProcess
+                    race_ (rollBackLongTransactions appContext) runMainProcess
                         `finally` 
                         closeStorage appContext
                   where
@@ -161,18 +163,20 @@ executeMainProcess cliOptions@CLIOptions{..} = do
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
     input <- readWorkerInput    
-    let config = adjustWorkerConfig (input ^. typed @Config) (input ^. #workerTimeout)
+    let config = input ^. typed @Config
     let logConfig = newLogConfig (config ^. #logLevel) WorkerLog
-                    
-    -- turnOffTlsValidation
 
     appContextRef <- newTVarIO Nothing
     let onExit workerExit = do            
-            readTVarIO appContextRef >>= maybe (pure ()) closeStorage
+            -- Closing waits for the write connection, which the transaction 
+            -- that timed out may still be holding. Nothing is lost by not 
+            -- closing: the transaction goes away with the process either way.
+            when (workerExit /= TxTimedOut) $ 
+                readTVarIO appContextRef >>= maybe (pure ()) closeStorage
             exitWith $ toExitCode workerExit
 
-    let runWork :: AppLogger -> (forall a . TheBinary a => a -> IO ()) -> IO ()
-        runWork logger resultHandler = do
+    let runWork :: AppLogger -> (forall a . TheBinary a => a -> IO ()) -> GiveUp -> IO ()
+        runWork logger resultHandler giveUp = do
             (z, validations) <- runValidatorIO
                                     (newScopes "worker-create-app-context")
                                     (createWorkerAppContext config logger)
@@ -187,9 +191,9 @@ executeWorkerProcess = do
                                     exec resultHandler $ fmap (Right . RrdpFetchResult) $ runValidatorIO scopes $ 
                                         updateRrdpRepository appContext worldVersion rrdpRepository
 
-                                RsyncFetchParams {..} -> 
-                                    exec resultHandler $ fmap (Right . RsyncFetchResult) $ runValidatorIO scopes $                                     
-                                        updateObjectForRsyncRepository appContext fetchConfig 
+                                RsyncFetchParams {..} ->
+                                    exec resultHandler $ fmap (Right . RsyncFetchResult) $ runValidatorIO scopes $
+                                        updateObjectForRsyncRepository appContext
                                             worldVersion rsyncRepository
 
                                 ErikFetchParams {..} ->
@@ -205,46 +209,36 @@ executeWorkerProcess = do
                                 CacheCleanupParams {..} -> 
                                     exec resultHandler $
                                         Right . CacheCleanupResult <$> runCacheCleanup appContext worldVersion
-                    actuallyExecuteWork
-                        `catch` (\(t :: TxTimeout) -> 
-                                    exec @() resultHandler $ do
-                                        pushSystemStatus logger $ SystemStatusMessage $ SystemState { dbState = DbStuck }
-                                        pure $ Left $ ErrorResult $ fmtGen t)
+                    race_ (dieOfLongTransactions input appContext giveUp) actuallyExecuteWork
                         `finally` do
                             -- Clear the ref first so onExit doesn't close the same DB a second time.
                             atomically $ writeTVar appContextRef Nothing
                             closeStorage appContext
 
-    executeWork input onExit $ \_ resultHandler -> 
+    executeWork input onExit $ \_ resultHandler giveUp -> 
         withLogger logConfig $ \logger -> liftIO $ do
             -- Sandboxing (if any) was done before the runtime started, here
             -- is where we find out how it went.
             sandbox <- getSandboxStatus
             case sandbox of
                 NotSandboxed -> 
-                    runWork logger resultHandler
+                    runWork logger resultHandler giveUp
                 Sandboxed abi -> do
                     logDebug logger [i|Worker is sandboxed, Landlock ABI #{abi}.|]
                     -- A writes-only sandbox doesn't restrict network access anyway
                     when (abi < 4 && maybe False (not . onlyRestrictWrites) (workerSandbox input)) $ 
                         logWarn logger [i|Landlock ABI #{abi} can't restrict network access, the worker still has it.|]
-                    runWork logger resultHandler
+                    runWork logger resultHandler giveUp
                 SandboxUnsupported message -> do
                     logWarn logger [i|Worker is not sandboxed: #{message}.|]
-                    runWork logger resultHandler
+                    runWork logger resultHandler giveUp
                 SandboxFailed message ->
                     -- It was supposed to be sandboxed and it is not, so it doesn't run
                     exec @() resultHandler $ pure $ Left $ ErrorResult 
                         [i|Worker could not sandbox itself, refusing to run: #{message}|]
   where    
     exec :: forall r . (WorkerResult r -> IO ()) -> IO (Either ErrorResult r) -> IO ()
-    exec resultHandler f = resultHandler =<< execWithStats f    
-
-
--- turnOffTlsValidation :: IO ()
--- turnOffTlsValidation = do 
---     manager <- newManager $ mkManagerSettings (TLSSettingsSimple True True True) Nothing 
---     setGlobalManager manager    
+    exec resultHandler f = resultHandler =<< execWithStats f
 
 
 readTALs :: MaintainableStorage s => AppContext s -> IO [TAL]
@@ -283,10 +277,28 @@ readTALs AppContext {..} = do
 
 runHttpApi :: (MaintainableStorage s) => AppContext s -> IO ()
 runHttpApi appContext@AppContext {..} = do 
-    let httpPort = fromIntegral $ appContext ^. typed @Config . typed @HttpApiConfig . #port
-    Warp.run httpPort (httpServer appContext) 
-        `catch` 
+    let httpApiConfig = appContext ^. typed @Config . typed @HttpApiConfig
+    let httpPort = fromIntegral $ httpApiConfig ^. #port
+    slots <- atomically $ newTSem $ fromIntegral $ httpApiConfig ^. #maxConcurrentRequests
+    Warp.run httpPort (limitRequests slots $ httpServer appContext)
+        `catch`
         (\(e :: SomeException) -> logError logger [i|Interrupted HTTP server: #{e}.|])
+  where
+    -- Warp has no connection limit of its own, so limit the number of requests
+    -- being served at the same time and answer the rest with 503. Idle keep-alive
+    -- connections are not counted, Warp closes them on its own timeout.
+    limitRequests slots app req respond =
+        bracket
+            (atomically $ (waitTSem slots >> pure True) `orElse` pure False)
+            (\admitted -> when admitted $ atomically $ signalTSem slots)
+            (\admitted ->
+                if admitted
+                    then app req respond
+                    else respond $ responseLBS status503 [
+                            ("Retry-After", "5"),
+                            ("Content-Type", "text/plain")
+                        ]
+                        "Too many concurrent requests, try again later.\n")
 
 
 createAppContext :: ValidatorIO es => CLIOptions -> AppLogger -> LogLevel -> Eff es AppSQLiteEnv
@@ -297,9 +309,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     -- Create (or make sure exist) necessary directories in the root directory
     (root, tald, rsyncd, tmpd, cached) <- fsLayout cliOptions logger
 
-    -- Set capabilities to the values from the CLI or to all available CPUs,
-    -- (disregard the HT issue for now it needs more testing).
-    let cpuCount' = fromMaybe getRtsCpuCount cpuCount
+    -- Set capabilities to the value from the CLI or the detected default
+    cpuCount' <- maybe (liftIO defaultCpuCount) pure cpuCount
     liftIO $ setCpuCount cpuCount'
 
     proverRunMode     <- deriveProverRunMode cliOptions
@@ -694,6 +705,7 @@ data CLIOptions = CLIOptions {
         noIncrementalValidation  :: Bool,
         showHiddenConfig         :: Bool,
         withValidityApi          :: Bool,
+        withGhcMetrics           :: Bool,
         printConfig              :: Bool
     }
     deriving stock (Show, Generic)
@@ -753,20 +765,21 @@ cliOptionsParser = CLIOptions
     <*> optional (option auto
             (  long "cpu-count"
             <> metavar "N"
-            <> help ("Number of CPUs available to the program (default: " <> show defCpuCount <> "). "
+            <> help ("Number of CPUs available to the program (default: on Linux, the physical CPU cores "
+                  <> "the process can use within its cgroup CPU quota, otherwise " <> show defCpuCount <> "). "
                   <> "It is recommended to use the number of physical CPU cores rather than hyper-threads.")))
     <*> optional (option auto
             (  long "fetcher-count"
             <> metavar "N"
-            <> help ("Maximum number of concurrent fetchers (default: " <> show defFetcherCount <> ", i.e. cpu-count * 2).")))
+            <> help "Maximum number of concurrent fetchers (default: cpu-count * 2)."))
     <*> switch
             (  long "reset-cache"
             <> help "Delete rpki.sqlite (and its -wal/-shm files) from the cache directory before starting.")
     <*> optional (option auto
             (  long "revalidation-interval"
             <> metavar "SECONDS"
-            <> help ("Interval between validation cycles in seconds (default: " <> show defRevalidation <> "). "
-                  <> "Each cycle traverses the RPKI tree and gathers payloads (VRPs, ASPAs, BGPSec certificates). "
+            <> help ("Every TA is validated at least this often, in seconds (default: " <> show defRevalidation <> "). "
+                  <> "Validation traverses the RPKI tree of a TA and gathers payloads (VRPs, ASPAs, BGPSec certificates). "
                   <> "Revalidations are also triggered by repository updates and object expirations.")))
     <*> optional (option auto
             (  long "cache-lifetime-hours"
@@ -803,7 +816,9 @@ cliOptionsParser = CLIOptions
             (  long "erik-relay"
             <> metavar "URL"
             <> help ("URL of an Erik relay server. Can be specified multiple times. "
-                  <> "Overrides the default relay list when provided.")))
+                  <> "The presense of this option switches on Erik relay support. These "
+                  <> "relays will be used for fetching repositories, by default relays are "
+                  <> "used for every repository which had at least one a successful RRDP fetch.")))
     <*> optional (option auto
             (  long "erik-parallelism"
             <> metavar "COUNT"
@@ -950,13 +965,16 @@ cliOptionsParser = CLIOptions
                   <> "Increases memory usage (about 200-300MB in the main process) "
                   <> "and CPU usage (about 2 seconds per validation cycle)."))
     <*> switch
+            (  long "with-ghc-metrics"
+            <> help ("Register GHC runtime system metrics (memory, GC, etc.) in Prometheus "
+                  <> "(default: false)."))
+    <*> switch
             (  long "print-config"
             <> help "Print the effective configuration derived from CLI options and exit.")
   where
     cfg    = defaultConfig
     rtrCfg = defaultRtrConfig
     defCpuCount               = cfg ^. #parallelism . #cpuCount
-    defFetcherCount           = cfg ^. #parallelism . #fetchParallelism
     Seconds defRevalidation   = cfg ^. #validationConfig . #revalidationInterval
     Seconds defCacheLifetime  = cfg ^. #longLivedCacheLifeTime
     defCacheLifetimeHours     = defCacheLifetime `div` 3600
@@ -985,6 +1003,11 @@ cliOptionsParser = CLIOptions
     defMaxFetchDiskWrite      = showLimit $ cfg ^. #systemConfig . #rrdpWorkerLimits . #maxDiskWriteMb
     showLimit                 = maybe ("unlimited" :: String) show
 
+
+-- | Where it can be detected (Linux), the physical cores the process can 
+-- use within its cgroup CPU quota, otherwise the -N the binary is built with.
+defaultCpuCount :: IO Natural
+defaultCpuCount = fromMaybe getRtsCpuCount <$> getAvailableCpuCount
 
 -- | Apply CLI option overrides to a base Config. The base config should
 -- already contain any IO-derived values (paths, run mode, etc.).
@@ -1025,6 +1048,7 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet #longLivedCacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
         & #localExceptions .~ apiSecured localExceptions
         & #withValidityApi .~ withValidityApi
+        & #withGhcMetrics .~ withGhcMetrics
         & maybeSet #metricsPrefix (convert <$> metricsPrefix)
         & maybeSet (#systemConfig . #rsyncWorkerLimits . #memoryMb) maxRsyncFetchMemory
         & maybeSet (#systemConfig . #rrdpWorkerLimits . #memoryMb) maxRrdpFetchMemory

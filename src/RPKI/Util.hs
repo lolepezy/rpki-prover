@@ -1,6 +1,4 @@
-{-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE FlexibleInstances    #-}
 
 module RPKI.Util where
 
@@ -12,7 +10,6 @@ import qualified Crypto.Hash.SHA256          as S256
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Base16      as Hex
-import qualified Data.ByteString.Char8       as C
 import qualified Data.ByteString.Short       as BSS
 import qualified Data.ByteString.Base64      as B64
 import qualified Data.ByteString.Base64.URL  as B64U
@@ -24,13 +21,12 @@ import qualified Data.String.Conversions     as SC
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 import           Text.Read                   (readEither)
-import           Data.Text.Encoding          (decodeUtf8)
+import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
 import           Data.Bifunctor
 
 import           Data.Word
 import           RPKI.Domain
 import           RPKI.AppTypes
-import           RPKI.Store.Base.Serialisation
 
 import           Data.IORef
 
@@ -48,9 +44,20 @@ sha256s :: BS.ByteString -> Hash
 sha256s = mkHash . S256.hash
 {-# INLINE sha256s #-}
 
+-- | Bytes, together with their hash.
+hashed :: BS.ByteString -> Hashed BS.ByteString
+hashed bs = Hashed bs (sha256s bs)
+{-# INLINE hashed #-}
+
 mkHash :: BS.ByteString -> Hash
 mkHash = Hash . BSS.toShort
 {-# INLINE mkHash #-}
+
+manifestContentDigest :: Manifest -> Hash
+manifestContentDigest Manifest { mftEntries } =
+    mkHash $ S256.finalize $ S256.updates S256.init $ concat
+        [ [encodeUtf8 fileName, "\0", BSS.fromShort $ unHash hash]
+        | MftPair {..} <- List.sort $ filter (not . isCrlEntry) mftEntries ]
 
 unhex :: BS.ByteString -> Maybe BS.ByteString
 unhex hexed = either (const Nothing) Just $ Hex.decode hexed    
@@ -100,8 +107,12 @@ isValidFileNameCharacter c = isAsciiLower c || isAsciiUpper c || isDigit c || c 
 trimmed :: Show a => a -> Text
 trimmed = Text.strip . Text.pack . show
 
+-- | Most inputs either have no whitespace at all or have the first line
+-- break close to the beginning, so check before paying for a copy.
 removeSpaces :: BS.ByteString -> BS.ByteString
-removeSpaces = C.filter (not . isSpace)
+removeSpaces bs 
+    | BS.any isSpace_ bs = BS.filter (not . isSpace_) bs
+    | otherwise          = bs
 
 {-# INLINE isSpace_ #-}
 isSpace_ :: Word8 -> Bool
@@ -210,7 +221,7 @@ decodeBase64 (EncodedBase64 bs) context =
     bimap 
         (\e -> e <> " for " <> Text.pack (show context) <> ": " <> convert bs)
         DecodedBase64
-        $ B64.decodeBase64Untyped bs 
+        $ B64.decodeBase64Untyped $ removeSpaces bs 
 
 encodeBase64 :: DecodedBase64 -> EncodedBase64
 encodeBase64 (DecodedBase64 bs) = EncodedBase64 $ B64T.extractBase64 $ B64.encodeBase64' bs
@@ -229,6 +240,4 @@ fmtLocations = mconcat .
 parseWorldVersion :: Text -> Either Text WorldVersion
 parseWorldVersion t = asVersion <$> first Text.pack (readEither $ Text.unpack t)
 
-firstByte :: Hash -> Word8
-firstByte (Hash h) = BSS.head h
         

@@ -1,5 +1,4 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE StrictData        #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.Store.Types where
 
@@ -37,7 +36,9 @@ data MftMeta = MftMeta {
         key       :: {-# UNPACK #-} ObjectKey,
         mftNumber :: {-# UNPACK #-} Serial,
         thisTime  :: {-# UNPACK #-} Instant,
-        nextTime  :: {-# UNPACK #-} Instant 
+        nextTime  :: {-# UNPACK #-} Instant,
+        -- | `manifestContentDigest` of the manifest
+        contentDigest :: Hash
     }
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary)
@@ -97,10 +98,38 @@ data PreparedObject = PreparedObject {
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary, NFData)
 
+-- | A manifest that a fetch stored.
+data NewManifest = NewManifest {
+        key           :: ObjectKey,
+        aki           :: AKI,
+        contentDigest :: Hash
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+
+-- | The manifests a fetch stored: at most `manifestUpdatesCap` of them, past
+-- that only the fact that there were many.
+data ManifestUpdates = StoredManifests [NewManifest]
+                     | ManyManifests
+    deriving stock (Show, Eq, Ord, Generic)
+
+manifestUpdatesCap :: Int
+manifestUpdatesCap = 1000
+
+-- | What a fetch stored that can be a reason to revalidate.
+data FetchUpdates = FetchUpdates {
+        manifests  :: ManifestUpdates,
+        -- | Whether it stored a new object other than a manifest or a CRL
+        newObjects :: Bool
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+
+nothingStored :: FetchUpdates
+nothingStored = FetchUpdates (StoredManifests []) False
+
 data ObjectIndexEntry
     = CertificateIndex SKI (Maybe AKI)
     -- | The rest of 'MftMeta', which also needs the object key the INSERT assigns.
-    | ManifestIndex AKI Serial Instant Instant
+    | ManifestIndex AKI Serial Instant Instant Hash
     deriving stock (Show, Eq, Generic)
     deriving anyclass (TheBinary, NFData)
 

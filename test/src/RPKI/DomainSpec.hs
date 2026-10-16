@@ -1,18 +1,23 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.DomainSpec where
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit as HU
 import qualified Test.Tasty.QuickCheck as QC
 
+import           Control.Lens    ((&), (.~), (%~))
+import           Control.Monad   (forM_)
+import qualified Data.ByteString as BS
 import qualified Data.List       as List
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import qualified Data.Set        as Set
-import qualified Data.Vector     as V
 import qualified Data.Vector.Unboxed as VU
 
+import           RPKI.AppMonad (runValidatorIO)
 import           RPKI.Domain
+import           RPKI.Parse.Internal.MFT (parseMft)
+import           RPKI.Reporting (newScopes)
+import           RPKI.Time (Instant(..))
+import           RPKI.Util (hashed, manifestContentDigest)
 import           RPKI.Resources.Resources (readIp4)
 import           RPKI.Resources.Types (ASN(..), IpPrefix(..), PrefixLength(..))
 
@@ -28,6 +33,79 @@ domainCountersGroup =
         , HU.testCase "countDistinctUnion handles edge cases" testCountDistinctUnion
         , QC.testProperty "countDistinctUnion agrees with Set.union" propCountDistinctUnion
         ]
+
+
+manifestDigestGroup :: TestTree
+manifestDigestGroup =
+    testGroup "Manifest content digest"
+        [ HU.testCase "The order of entries doesn't matter" testDigestIgnoresOrder
+        , HU.testCase "The CRL, the number and the times don't matter" testDigestIgnoresCrlNumberAndTimes
+        , HU.testCase "Any other entry matters" testDigestFollowsEntries
+        ]
+
+
+testDigestIgnoresOrder :: HU.Assertion
+testDigestIgnoresOrder = do
+    mft <- fixtureManifest "test/data/afrinic_mft2.mft"
+    HU.assertBool "The fixture must have a few entries" (length mft.mftEntries > 2)
+    HU.assertEqual "Reversed entries must give the same digest"
+        (manifestContentDigest mft)
+        (manifestContentDigest $ mft & #mftEntries %~ reverse)
+
+
+testDigestIgnoresCrlNumberAndTimes :: HU.Assertion
+testDigestIgnoresCrlNumberAndTimes = do
+    mft <- fixtureManifest "test/data/afrinic_mft1.mft"
+    HU.assertEqual "The fixture must have one CRL" 1 (length $ filter isCrlEntry mft.mftEntries)
+    let otherCrl (MftPair name hash)
+            | isCrlEntry (MftPair name hash) = MftPair ("other-" <> name) (Hash "another hash")
+            | otherwise                      = MftPair name hash
+    let reissued = mft & #mftEntries %~ map otherCrl
+                       & #mftNumber  .~ Serial 123456
+                       & #thisTime   .~ Instant 1
+                       & #nextTime   .~ Instant 2
+    HU.assertEqual "A re-issued manifest with the same objects must have the same digest"
+        (manifestContentDigest mft) (manifestContentDigest reissued)
+
+    let withoutCrl = mft & #mftEntries %~ filter (not . isCrlEntry)
+    HU.assertEqual "The CRL entry must not count"
+        (manifestContentDigest mft) (manifestContentDigest withoutCrl)
+
+
+testDigestFollowsEntries :: HU.Assertion
+testDigestFollowsEntries = do
+    mft <- fixtureManifest "test/data/afrinic_mft2.mft"
+    let digest = manifestContentDigest mft
+    let (crls, entries) = List.partition isCrlEntry mft.mftEntries
+    MftPair name hash <- case entries of
+                e : _ -> pure e
+                []    -> HU.assertFailure "The fixture must have entries other than its CRL"
+    let changed f = manifestContentDigest $ mft & #mftEntries .~ crls <> f entries
+    let replaceFirst e = (e :) . drop 1
+    let changes :: [(String, Hash)]
+        changes = [
+            ("added",   changed (MftPair "new.roa" (Hash "some hash") :)),
+            ("removed", changed (drop 1)),
+            ("renamed", changed (replaceFirst $ MftPair "renamed.roa" hash)),
+            ("changed", changed (replaceFirst $ MftPair name (Hash "other hash")))
+          ]
+    forM_ changes $ \(what, digest') ->
+        HU.assertBool ("A manifest with an entry " <> what <> " must have another digest")
+            (digest /= digest')
+
+    -- The same bytes, with the boundary between the name and the hash moved
+    HU.assertBool "The name and the hash must be kept apart"
+        (changed (replaceFirst $ MftPair "a.roa" (Hash "xyz")) /=
+         changed (replaceFirst $ MftPair "a.roax" (Hash "yz")))
+
+
+fixtureManifest :: FilePath -> IO Manifest
+fixtureManifest path = do
+    bytes <- BS.readFile path
+    (r, _) <- runValidatorIO (newScopes "fixture") $ parseMft (hashed bytes)
+    case r of
+        Left e    -> HU.assertFailure $ "Couldn't parse " <> path <> ": " <> show e
+        Right mft -> pure $ getCMSContent mft.cmsPayload
 
 
 testEstimateVrpCount :: HU.Assertion

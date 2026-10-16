@@ -1,5 +1,4 @@
-{-# LANGUAGE StrictData         #-}
-{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.SLURM.SlurmProcessing where
 

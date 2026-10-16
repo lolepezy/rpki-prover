@@ -1,7 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE OverloadedLabels  #-}
-{-# LANGUAGE RecordWildCards   #-}
-
 -- | Standalone benchmark for a cold Erik fetch of one FQDN: download from the
 -- relays, parse, and store everything into a fresh SQLite cache. It runs
 -- 'fetchErik' in-process with the same RTS options the Erik worker gets, so

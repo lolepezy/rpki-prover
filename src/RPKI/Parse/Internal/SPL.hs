@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Parse.Internal.SPL where
 
 import           Effectful
@@ -25,12 +23,11 @@ import qualified RPKI.Util                  as U
 
 -- | Parse ROA, https://tools.ietf.org/html/rfc6482
 -- 
-parseSpl :: Validator es => BS.ByteString -> Eff es SplObject
-parseSpl bs = do    
+parseSpl :: Validator es => Hashed BS.ByteString -> Eff es SplObject
+parseSpl (Hashed bs hash') = do    
     asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs      
     signedSpl <- fromEither $ first (parseErr . U.convert) 
                     $ runParseASN1 (parseSignedObject $ parseSignedContent parseSpls') asns
-    hash' <- getMetaFromSigned signedSpl bs
     pure $ newCMSObject hash' (CMS signedSpl)
   where     
     parseSpls' = onNextContainer Sequence $ do      

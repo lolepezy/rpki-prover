@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.AppMonadSpec where
 
 import           Control.Monad

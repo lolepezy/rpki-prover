@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 #
 # Runs pkg/test-scripts/test-rpki-prover.sh inside a systemd-enabled Debian or
-# Ubuntu container. Much faster than the Vagrant VMs, and enough to catch packaging
-# mistakes; pkg/vagrant is still what should be run before tagging a release.
+# Ubuntu container, or test-rpki-prover-rpm.sh inside an EL one for the
+# releases in pkg/rpm-releases.conf. Much faster than the Vagrant VMs, and
+# enough to catch packaging mistakes; pkg/vagrant is still what should be run
+# before tagging a release.
 #
 #   ./pkg/test-scripts/run-in-docker.sh bookworm
+#   ./pkg/test-scripts/run-in-docker.sh el9
 #   ./pkg/test-scripts/run-in-docker.sh --keep trixie
 #   ./pkg/test-scripts/run-in-docker.sh --sandbox bookworm
 #
@@ -50,14 +53,24 @@ PKG_OUT="${REPO_ROOT}/pkg/packages/${CODENAME}"
     exit 1
 }
 
+FORMAT=deb
+DOCKERFILE="${REPO_ROOT}/pkg/test-scripts/Dockerfile.systemd"
 base_image=$(awk -v c="${CODENAME}" '$1 == c { print $2 }' "${REPO_ROOT}/pkg/releases.conf")
-[ -n "${base_image}" ] || { echo "${CODENAME} is not listed in pkg/releases.conf" >&2; exit 1; }
+if [ -z "${base_image}" ]; then
+    FORMAT=rpm
+    DOCKERFILE="${REPO_ROOT}/pkg/test-scripts/Dockerfile.systemd-rpm"
+    base_image=$(awk -v c="${CODENAME}" '$1 == c { print $2 }' "${REPO_ROOT}/pkg/rpm-releases.conf")
+fi
+[ -n "${base_image}" ] || {
+    echo "${CODENAME} is listed in neither pkg/releases.conf nor pkg/rpm-releases.conf" >&2
+    exit 1
+}
 
 image="rpki-prover-systemd-test:${CODENAME}"
 container="rpki-prover-test-${CODENAME}"
 
 docker build \
-    --file "${REPO_ROOT}/pkg/test-scripts/Dockerfile.systemd" \
+    --file "${DOCKERFILE}" \
     --build-arg "BASE_IMAGE=${base_image}" \
     --tag "${image}" \
     "${REPO_ROOT}/pkg/test-scripts"
@@ -92,6 +105,30 @@ for _ in $(seq 60); do
     sleep 1
 done
 echo "systemd state: ${state:-unknown}"
+
+if [ "${FORMAT}" = rpm ]; then
+    docker exec \
+        --env "SERVICE_TIMEOUT=${SERVICE_TIMEOUT}" \
+        --env "WORKER_TIMEOUT=${WORKER_TIMEOUT}" \
+        --env "SANDBOX=${SANDBOX}" \
+        --env "RSYNC_TIMEOUT=${RSYNC_TIMEOUT}" \
+        "${container}" \
+        bash -c '
+            set -e
+            PKG_DIR="/opt/rpki-prover-pkg/packages/'"${CODENAME}"'"
+            RPM=$(find "${PKG_DIR}" -maxdepth 1 -name "rpki-prover-*.rpm" | sort -V | tail -1)
+            if [ "${SANDBOX}" = "1" ]; then
+                exec /opt/rpki-prover-pkg/test-scripts/test-worker-sandbox.sh \
+                    --rpm "${RPM}" --worker-timeout "${WORKER_TIMEOUT}" \
+                    --rsync-timeout "${RSYNC_TIMEOUT}"
+            fi
+            OLD_RPM=$(find "${PKG_DIR}/old" -maxdepth 1 -name "rpki-prover-*.rpm" 2>/dev/null | sort -V | tail -1)
+            ARGS=(--rpm "${RPM}" --service-timeout "${SERVICE_TIMEOUT}")
+            [ -n "${OLD_RPM}" ] && ARGS+=(--old-rpm "${OLD_RPM}")
+            exec /opt/rpki-prover-pkg/test-scripts/test-rpki-prover-rpm.sh "${ARGS[@]}" all
+        '
+    exit
+fi
 
 docker exec \
     --env "SERVICE_TIMEOUT=${SERVICE_TIMEOUT}" \

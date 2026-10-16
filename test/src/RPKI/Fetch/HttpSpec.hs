@@ -1,6 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE OverloadedLabels  #-}
-
 module RPKI.Fetch.HttpSpec where
 
 import Control.Lens

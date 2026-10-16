@@ -1,9 +1,8 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE StrictData        #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.RTR.RtrServer where
 
-import           Control.Concurrent               (forkFinally)
+import           Control.Concurrent               (forkFinally, threadDelay)
 
 import           Control.Lens                     ((^.))
 
@@ -84,12 +83,18 @@ preNegotiated pdu = TruePdu $ VersionedPdu pdu preNegotiationVersion
 
 {- | Maximum number of simultaneous RTR client connections.
 
-   An RTR server talks to routers, so a few hundred is already generous, while 
-   an unbounded accept loop lets anyone who can reach the port exhaust threads 
+   An RTR server talks to routers, so a few hundred is already generous, while
+   an unbounded accept loop lets anyone who can reach the port exhaust threads
    and file descriptors.
 -}
 maxRtrConnections :: Int
 maxRtrConnections = 512
+
+-- | https://datatracker.ietf.org/doc/html/rfc8210#section-8.2
+-- "The cache MUST rate-limit Serial Notifies to no more frequently than one
+-- per minute."
+rtrNotifyRateLimit :: Seconds
+rtrNotifyRateLimit = Seconds 60
 
 -- 
 -- | Main entry point, here we start the RTR server. 
@@ -181,26 +186,24 @@ runRtrServer appContext RtrConfig {..} = do
                 
         logDebug logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
 
-        atomically $ writeTVar rtrState $ 
-                        Just $ newRtrState worldVersion maxStoredDiffs
+        let initialRtrState = newRtrState worldVersion maxStoredDiffs
+        atomically $ writeTVar rtrState $ Just initialRtrState
 
-        lastTimeNotified <- newTVarIO Nothing
-
-        forever $ do
+        race_ (notifyClients $ notifyKey initialRtrState) $ forever $ do
             (rtrState', previousVersion, newVersion, currentRtrPayload) <- waitForLatestRtrPayload appContext rtrState
             previousRtrPayload <- readRtrPayload appContext previousVersion
-            
+
             let rtrDiff = evalDiffs previousRtrPayload currentRtrPayload
             let thereAreRtrUpdates = not $ emptyDiffs rtrDiff
 
-            let 
-                previousVrpSize = vrpsCount $ previousRtrPayload ^. #uniqueVrps 
+            let
+                previousVrpSize = vrpsCount $ previousRtrPayload ^. #uniqueVrps
                 currentVrpSize  = vrpsCount $ currentRtrPayload ^. #uniqueVrps
-                previousBgpSecSize = Set.size $ previousRtrPayload ^. #bgpSec 
-                currentBgpSecSize  = Set.size $ currentRtrPayload ^. #bgpSec 
-                previousAspaSize   = Set.size $ previousRtrPayload ^. #aspas 
-                currentAspaSize    = Set.size $ currentRtrPayload ^. #aspas 
-                in logDebug logger $ [i|Notified about an update: #{previousVersion} -> #{newVersion}, |] <> 
+                previousBgpSecSize = Set.size $ previousRtrPayload ^. #bgpSec
+                currentBgpSecSize  = Set.size $ currentRtrPayload ^. #bgpSec
+                previousAspaSize   = Set.size $ previousRtrPayload ^. #aspas
+                currentAspaSize    = Set.size $ currentRtrPayload ^. #aspas
+                in logDebug logger $ [i|Notified about an update: #{previousVersion} -> #{newVersion}, |] <>
                               [i|VRPs: #{previousVrpSize} -> #{currentVrpSize}, |] <>
                               [i|BGPSecs: #{previousBgpSecSize} -> #{currentBgpSecSize}, |] <>
                               [i|ASPAs: #{previousAspaSize} -> #{currentAspaSize}.|]
@@ -208,27 +211,31 @@ runRtrServer appContext RtrConfig {..} = do
             -- force evaluation of the new RTR state so that the old ones could be GC-ed.
             let !nextRtrState = if thereAreRtrUpdates
                     then updatedRtrState rtrState' newVersion rtrDiff
-                    else rtrState' { lastKnownWorldVersion = newVersion }                    
+                    else rtrState' { lastKnownWorldVersion = newVersion }
 
             logDiff rtrDiff
 
-            Now now <- thisInstant            
-
-            atomically $ do                
-                writeTVar rtrState $! Just $! nextRtrState
-
-                -- https://datatracker.ietf.org/doc/html/rfc8210#section-8.2
-                -- "The cache MUST rate-limit Serial Notifies to no more frequently than one per minute."
-                -- 
-                let moreThanMinuteAgo lastTime = not $ closeEnoughMoments (Earlier lastTime) (Later now) (Seconds 60)
-                sendNotify <- maybe True moreThanMinuteAgo <$> readTVar lastTimeNotified                 
-
-                when (sendNotify && thereAreRtrUpdates) $ do                    
-                    writeTChan updateBroadcastChan 
-                        (nextRtrState ^. #currentSessionId, nextRtrState ^. #currentSerial)
-                    writeTVar lastTimeNotified $ Just now
+            atomically $ writeTVar rtrState $! Just $! nextRtrState
         where
-          logDiff GenDiffs {..} = do 
+          -- The serial only changes when there's a non-empty diff, so a change 
+          -- of (session, serial) is exactly "there's something to notify about".
+          -- 
+          -- Wait for it to differ from what was announced last, announce it 
+          -- and then sleep out the rate limit. Updates that come during the sleep
+          -- are not lost: after waking up the state already differs, so a single 
+          -- notify for the latest serial goes out immediately.
+          notifyClients lastNotified = do
+            current <- atomically $ do
+                key <- maybe retry (pure . notifyKey) =<< readTVar rtrState
+                when (key == lastNotified) retry
+                writeTChan updateBroadcastChan key
+                pure key
+            threadDelay $ toMicroseconds rtrNotifyRateLimit
+            notifyClients current
+
+          notifyKey s = (s ^. #currentSessionId, s ^. #currentSerial)
+
+          logDiff GenDiffs {..} = do
             
             let diffText =
                     [i|VRPs: added #{Set.size $ added vrpDiff}, deleted #{Set.size $ deleted vrpDiff}, |] <>

@@ -1,0 +1,49 @@
++-------------------------------------------------------------------------------
+| Running ${PKGSTEM} on OpenBSD
++-------------------------------------------------------------------------------
+
+Starting the service
+====================
+
+    # rcctl enable rpki_prover
+    # rcctl start rpki_prover
+
+rpki-prover runs as _rpki-prover and keeps all of its state, a few GB
+of it, in ${LOCALSTATEDIR}/db/rpki-prover. On the first start it downloads
+the trust anchor locators of the five RIRs into its tals/ subdirectory,
+then fetches and validates the whole RPKI, which takes a few minutes.
+It logs to syslog (daemon.info, so /var/log/daemon by default), and its
+web UI is at http://127.0.0.1:9999/.
+
+Options
+=======
+
+There is no configuration file; everything is a command line option, see
+"rpki-prover --help". The defaults in the rc.d script are
+
+    rpki_prover_flags=--http-api-port 9999
+
+and are replaced by whatever is set with rcctl, for example to also serve
+RTR to routers:
+
+    # rcctl set rpki_prover flags --http-api-port 9999 \
+          --with-rtr --rtr-address 0.0.0.0 --rtr-port 8283
+
+The rc.d script always passes --rpki-root-directory
+${LOCALSTATEDIR}/db/rpki-prover; do not repeat it in the flags.
+
+Memory
+======
+
+rpki-prover validates in separate worker processes, each with its own heap
+limit (--max-rrdp-fetch-memory, --max-validation-memory and so on). Every
+process is also bound by the datasize of the "rpki_prover" login class,
+${SYSCONFDIR}/login.conf.d/rpki_prover, which allows 8G. If a worker limit
+is raised above that, raise the datasize too.
+
+Worker sandboxing
+=================
+
+On Linux the validation workers sandbox themselves with Landlock. That is
+not available on OpenBSD, and rpki-prover logs "Worker is not sandboxed" at
+start; this is expected.

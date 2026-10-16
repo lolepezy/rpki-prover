@@ -1,18 +1,25 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Resources.ResourcesSpec where
 
 import           Prelude                    hiding (subtract)
 
+import           Data.ASN1.BitArray
+import           Data.ASN1.Parse
+import           Data.ASN1.Types
+import qualified Data.ByteString            as BS
 import           Data.List                  as List
+import           Data.Word                  (Word8)
 import           Test.QuickCheck.Gen
 import           Test.Tasty
 import           Test.Tasty.HUnit           ((@?=))
 import qualified Test.Tasty.HUnit           as HU
 import qualified Test.Tasty.QuickCheck      as QC
 
+import qualified HaskellWorks.Data.Network.Ip.Ipv4 as V4
+import           HaskellWorks.Data.Network.Ip.Range (Range (..))
+
 import           RPKI.Orphans
 
+import           RPKI.Parse.Internal.Common (ipv4Address, ipv6Address)
 import qualified RPKI.Resources.IntervalContainers as IS
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
@@ -24,7 +31,148 @@ resourceGroup = testGroup "Resources" [
         resourcesUnitTests,
         intervalSetUnitTests,
         ipOverlapTests,
-        boundaryValueTests
+        boundaryValueTests,
+        exactSetOperationTests,
+        canonicalPrefixTests
+    ]
+
+{- | Nested and overclaimed parts must be exact, not only add up to the child:
+   overclaimed must not contain anything the parent has. The overclaimed part
+   used to be computed against every intersecting parent interval separately,
+   so a child interval spanning several of them was reported as overclaimed
+   whole.
+-}
+exactSetOperationTests :: TestTree
+exactSetOperationTests = testGroup "Set operations are exact" [
+    HU.testCase "overclaiming of an AS range spanning several parent ranges" $ do
+        let child  = IS.fromList [ASRange (ASN 1) (ASN 100)]
+        let parent = IS.fromList [ASRange (ASN 10) (ASN 20), ASRange (ASN 30) (ASN 40)]
+        let (Nested n, Overclaiming o) = IS.intersectionAndOverclaimedIntervals child parent
+        n @?= parent
+        o @?= IS.fromList [ASRange (ASN 1) (ASN 9), ASRange (ASN 21) (ASN 29), ASRange (ASN 41) (ASN 100)],
+
+    HU.testCase "overclaiming of an IPv4 prefix spanning several parent prefixes" $ do
+        let child  = IS.fromList [readIp4 "10.0.0.0/22"]
+        let parent = IS.fromList [readIp4 "10.0.1.0/24", readIp4 "10.0.2.0/23"]
+        let (Nested n, Overclaiming o) = IS.intersectionAndOverclaimedIntervals child parent
+        n @?= parent
+        o @?= IS.fromList [readIp4 "10.0.0.0/24"],
+
+    HU.testCase "overclaiming of an IPv6 prefix spanning several parent prefixes" $ do
+        let child  = IS.fromList [readIp6 "2001:db8::/32"]
+        let parent = IS.fromList [readIp6 "2001:db8:1::/48", readIp6 "2001:db8:8000::/33"]
+        let (Nested n, Overclaiming o) = IS.intersectionAndOverclaimedIntervals child parent
+        n @?= parent
+        o @?= IS.fromList [readIp6 "2001:db8::/48", readIp6 "2001:db8:2::/47",
+                           readIp6 "2001:db8:4::/46", readIp6 "2001:db8:8::/45",
+                           readIp6 "2001:db8:10::/44", readIp6 "2001:db8:20::/43",
+                           readIp6 "2001:db8:40::/42", readIp6 "2001:db8:80::/41",
+                           readIp6 "2001:db8:100::/40", readIp6 "2001:db8:200::/39",
+                           readIp6 "2001:db8:400::/38", readIp6 "2001:db8:800::/37",
+                           readIp6 "2001:db8:1000::/36", readIp6 "2001:db8:2000::/35",
+                           readIp6 "2001:db8:4000::/34"],
+
+    -- A prefix that starts exactly where the subtracted one ends was taken
+    -- for not overlapping with it at all.
+    HU.testCase "subtract of prefixes touching at one address" $ do
+        subtract (readIp4 "10.0.0.0/24") (readIp4 "10.0.0.0/32")
+            @?= ipv4RangeToPrefixes 0x0A000001 0x0A0000FF
+        subtract (readIp4 "10.0.0.255/32") (readIp4 "10.0.0.0/24") @?= []
+        subtract (readIp4 "10.0.0.0/24") (readIp4 "10.0.0.255/32")
+            @?= ipv4RangeToPrefixes 0x0A000000 0x0A0000FE
+        subtract (readIp6 "2001:db8::/48") (readIp6 "2001:db8::/128")
+            @?= ipv6RangeToPrefixes (0x20010db8, 0, 0, 1) (0x20010db8, 0xFFFF, 0xFFFFFFFF, 0xFFFFFFFF)
+        subtract (readIp6 "2001:db8::/128") (readIp6 "2001:db8::/48") @?= [],
+
+    HU.testCase "overclaiming against a parent holding the first address only" $ do
+        let child  = IS.fromList [readIp4 "10.0.0.0/24"]
+        let parent = IS.fromList [readIp4 "10.0.0.0/32"]
+        let (Nested n, Overclaiming o) = IS.intersectionAndOverclaimedIntervals child parent
+        n @?= parent
+        o @?= IS.fromList (ipv4RangeToPrefixes 0x0A000001 0x0A0000FF),
+
+    QC.testProperty "subtract and intersection of IPv4 prefixes are exact" $
+        \(p :: Ipv4Prefix) q -> subtractIsExact p q,
+    QC.testProperty "subtract and intersection of IPv6 prefixes are exact" $
+        \(p :: Ipv6Prefix) q -> subtractIsExact p q,
+    QC.testProperty "subtract and intersection of AS resources are exact" $
+        \(p :: AsResource) q -> subtractIsExact p q,
+
+    -- Arbitrary prefixes rarely touch, so also subtract a prefix's own edges
+    QC.testProperty "subtract of the edges of an IPv4 prefix is exact" $
+        \(p :: Ipv4Prefix) -> let Range (V4.IpAddress f) (V4.IpAddress l) = toRange p
+                              in all (subtractIsExact p . (`mkIpv4Block` 32)) [f, l],
+
+    QC.testProperty "nested and overclaimed IPv4 are exact" $
+        \(child :: [Ipv4Prefix]) parent -> nestedAndOverclaimedAreExact child parent,
+    QC.testProperty "nested and overclaimed IPv6 are exact" $
+        \(child :: [Ipv6Prefix]) parent -> nestedAndOverclaimedAreExact child parent,
+    QC.testProperty "nested and overclaimed ASNs are exact" $
+        \(child :: [AsResource]) parent -> nestedAndOverclaimedAreExact child parent,
+
+    -- Independent random sets rarely overlap much; a child built from a parent
+    -- with some of it removed spans the gaps in the parent, which is the case
+    -- that used to go wrong.
+    QC.testProperty "nested and overclaimed IPv4 are exact for a child spanning the parent" $
+        \(xs :: [Ipv4Prefix]) -> QC.forAll (sublistOf xs) $ \sub -> nestedAndOverclaimedAreExact xs sub,
+    QC.testProperty "nested and overclaimed IPv6 are exact for a child spanning the parent" $
+        \(xs :: [Ipv6Prefix]) -> QC.forAll (sublistOf xs) $ \sub -> nestedAndOverclaimedAreExact xs sub,
+    QC.testProperty "nested and overclaimed ASNs are exact for a child spanning the parent" $
+        \(xs :: [AsResource]) -> QC.forAll (sublistOf xs) $ \sub -> nestedAndOverclaimedAreExact xs sub
+    ]
+  where
+    -- What's left of p after subtracting q does not overlap q, and together
+    -- with the intersection it is p again
+    subtractIsExact p q =
+        let rest = subtract p q
+        in all (null . intersection q) rest
+            && normalise (rest <> intersection p q) == normalise [p]
+
+    nestedAndOverclaimedAreExact childXs parentXs =
+        let child  = IS.fromList childXs
+            parent = IS.fromList parentXs
+            (Nested n, Overclaiming o) = IS.intersectionAndOverclaimedIntervals child parent
+        in n <> o == child
+            && all (\x -> null (IS.findIntersections x parent)) (IS.toList o)
+            && all (\x -> any (`contains` x) (IS.toList parent)) (IS.toList n)
+
+
+{- | A prefix in a BIT STRING may have non-zero bits past its length (the
+   "unused" bits of the last octet, DER requires them to be zero). They must
+   not end up in the prefix: hw-ip takes the address of a block for its first
+   address, so 10.255/9 used to become the range 10.255.0.0 - 11.126.255.255.
+   OpenSSL clears these bits when decoding, so clearing them here gives the
+   same prefixes other RPs get.
+-}
+canonicalPrefixTests :: TestTree
+canonicalPrefixTests = testGroup "Prefixes are canonical" [
+    HU.testCase "makePrefix clears the bits past the prefix length" $ do
+        makePrefix (BS.pack [10, 0xFF]) 9 @?= readIp4 "10.128.0.0/9"
+        makePrefix (BS.pack [10, 0xFF, 0xFF, 0xFF]) 32 @?= readIp4 "10.255.255.255/32"
+        makePrefix (BS.pack [0xFF]) 0 @?= readIp4 "0.0.0.0/0"
+        makePrefix (BS.pack [0x20, 0x01, 0x0d, 0xb9]) 31 @?= readIp6 "2001:db8::/31"
+        makePrefix (BS.pack [0x20, 0x01, 0x0d, 0xb8, 0xFF]) 33 @?= readIp6 "2001:db8:8000::/33"
+        makePrefix (BS.pack [0xFF]) 0 @?= readIp6 "::/0",
+
+    QC.testProperty "makePrefix makes canonical IPv4 prefixes" $
+        \(ws :: [Word8]) -> QC.forAll (QC.choose (0, 32)) $ \len ->
+            let p = makePrefix (BS.pack (take 4 ws)) len :: Ipv4Prefix
+            in toPrefixes (toRange p) == [p],
+
+    QC.testProperty "makePrefix makes canonical IPv6 prefixes" $
+        \(ws :: [Word8]) -> QC.forAll (QC.choose (0, 128)) $ \len ->
+            let p = makePrefix (BS.pack (take 16 ws)) len :: Ipv6Prefix
+            in toPrefixes (toRange p) == [p],
+
+    HU.testCase "Parsed prefixes and address ranges ignore the unused bits" $ do
+        let bits n ws = BitString (BitArray n (BS.pack ws))
+        runParseASN1 ipv4Address [bits 9 [10, 0xFF]]
+            @?= Right [readIp4 "10.128.0.0/9"]
+        -- 10.0.0.0/23 (min, unused bits set) - 10.0.4.0/23 (max)
+        runParseASN1 ipv4Address [Start Sequence, bits 23 [10, 0, 1], bits 23 [10, 0, 4], End Sequence]
+            @?= Right [readIp4 "10.0.0.0/22", readIp4 "10.0.4.0/23"]
+        runParseASN1 ipv6Address [bits 31 [0x20, 0x01, 0x0d, 0xb9]]
+            @?= Right [readIp6 "2001:db8::/31"]
     ]
 
 {- | `ASN` and the hw-ip address types derive `Enum` from `Word32`/`Word128`, so 
@@ -101,6 +249,20 @@ boundaryValueTests = testGroup "Boundary values must not throw" [
         HU.assertBool "2^32 must be rejected"     $ isLeft $ mkAsn 4294967296
         HU.assertBool "2^32 + 7 must be rejected" $ isLeft $ mkAsn 4294967303
         HU.assertBool "negative must be rejected" $ isLeft $ mkAsn (-1),
+
+    HU.testCase "parseAsn rejects out-of-range AS numbers instead of wrapping them" $ do
+        parseAsn "AS65000" @?= Just (ASN 65000)
+        parseAsn "as4294967295" @?= Just (ASN maxBound)
+        parseAsn "0" @?= Just (ASN 0)
+        parseAsn "AS4294967303" @?= Nothing
+        parseAsn "4294967296" @?= Nothing
+        parseAsn "-1" @?= Nothing
+        parseAsn "ASfoo" @?= Nothing,
+
+    HU.testCase "subtractAsn of an ASN outside of the range keeps the range" $ do
+        subtractAsn (ASRange (ASN 1) (ASN 2)) (AS (ASN 0)) @?= [ASRange (ASN 1) (ASN 2)]
+        subtractAsn (ASRange (ASN 1) (ASN 2)) (AS (ASN 3)) @?= [ASRange (ASN 1) (ASN 2)]
+        subtractAsn (ASRange (ASN 1) (ASN 2)) (AS (ASN 2)) @?= [AS (ASN 1)],
 
     QC.testProperty "normalise never throws for arbitrary AS resources including the bounds" $
         QC.forAll (listOf extremeAsResource) $ \asns -> 

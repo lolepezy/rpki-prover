@@ -28,7 +28,7 @@ import           RPKI.Store.Database (DB(..), Tx, MftShortcutMeta(..))
 import qualified RPKI.Store.Database as DB
 import qualified RPKI.Store.SQLite as SQLite
 import           RPKI.Time (thisInstant, unNow, momentAfter)
-import           RPKI.Util (parseRpkiURL)
+import           RPKI.Util (hashed, parseRpkiURL)
 import           RPKI.Validation.Types (CrlShortcut(..), MftShortcut)
 
 import           System.Directory (createDirectoryIfMissing, removePathForcibly)
@@ -172,7 +172,7 @@ loadObjectFromFixture path = do
     let urlText = Text.pack ("rsync://bench.local/" <> path)
     url <- either (fail . show) pure (parseRpkiURL urlText)
 
-    (result, _) <- runValidatorIO (newScopes "bench-read") $ readObject url bs
+    (result, _) <- runValidatorIO (newScopes "bench-read") $ readObject url (hashed bs)
     either (fail . show) (pure . (url,)) result
 
 mkSaveObjectEnv :: IO SaveObjectEnv

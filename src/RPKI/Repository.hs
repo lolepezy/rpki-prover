@@ -6,7 +6,6 @@ import           Control.Lens
 import           Data.Generics.Product.Typed
 import           Data.Ord
 
-import           Data.X509                   (Certificate)
 
 import           Data.Hourglass
 import qualified Data.List                   as List
@@ -24,7 +23,6 @@ import           RPKI.Domain
 import           RPKI.Config
 import           RPKI.RRDP.Types
 import           RPKI.Reporting
-import           RPKI.Parse.Parse
 import           RPKI.Time
 import           RPKI.TAL
 import           RPKI.Util
@@ -187,6 +185,12 @@ getRsyncURL RsyncRepository { repoPP = RsyncPublicationPoint { uri = url } } = u
 getFetchStatus :: Repository -> FetchStatus
 getFetchStatus r = getMeta r ^. #status
 
+fetchMoment :: FetchStatus -> Maybe Instant
+fetchMoment = \case 
+    FetchedAt t -> Just t
+    FailedAt t  -> Just t
+    Pending     -> Nothing
+
 getMeta :: Repository -> RepositoryMeta
 getMeta (RrdpR r)   = r ^. #meta
 getMeta (RsyncR r)  = r ^. #meta
@@ -321,26 +325,6 @@ getPublicationPointsFromWellStructuredCert WellStructuredCert {
         Nothing -> Left CertificateDoesntHaveSIA
         Just ne -> Right $ PublicationPointAccess ne  
 
-getPublicationPointsFromCert :: Certificate -> Either ValidationError PublicationPointAccess
-getPublicationPointsFromCert cert = do 
-    rrdp <- case getRrdpNotifyUri cert of 
-                Just rrdpNotifyUri
-                    | isRrdpURI rrdpNotifyUri -> Right [rrdpPP $ RrdpURL rrdpNotifyUri]
-                    | otherwise               -> Left $ UnknownUriType rrdpNotifyUri
-                Nothing -> Right []
-
-    rsync <- case getRepositoryUri cert of 
-                Just repositoryUri
-                    | isRsyncURI repositoryUri -> 
-                        case parseRsyncURL (unURI repositoryUri) of 
-                            Left e   -> Left $ BrokenUri (unURI repositoryUri) e
-                            Right rr -> Right [rsyncPP rr]                        
-                    | otherwise -> Left $ UnknownUriType repositoryUri
-                Nothing -> Right []
-
-    case nonEmpty (rrdp <> rsync) of 
-        Nothing -> Left CertificateDoesntHaveSIA
-        Just ne -> Right $ PublicationPointAccess ne
           
 
 -- Number of repositories

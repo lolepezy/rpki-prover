@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 import Test.Tasty
 
 import RPKI.Parse.ObjectParseSpec
@@ -17,10 +15,14 @@ import RPKI.DomainSpec
 import RPKI.RTR.RtrSpec
 import RPKI.SLURM.SlurmSpec
 import RPKI.Store.StorableSpec
+import RPKI.Validation.BottomUpSpec
 import RPKI.Validation.TopDownSpec
+import RPKI.Workflow.RevalidationSpec
 import RPKI.Fetch.ErikSpec
 import RPKI.WorkerSpec
 import RPKI.Metrics.ProcessSpec
+import RPKI.ParallelSpec
+import RPKI.Workflow.SharedSpec
 
 main :: IO ()
 main = defaultMain $ testGroup "All tests" [  
@@ -33,17 +35,22 @@ main = defaultMain $ testGroup "All tests" [
         validityGroup,
         repositoryGroup,
         domainCountersGroup,
+        manifestDigestGroup,
         rtrGroup,
         httpSpec,
         slurmGroup,
         loggingSpec,
         workflowSpec,
         topDownRegressionGroup,
+        bottomUpGroup,
+        revalidationSpec,
         storableEncodingSpec,
         workerSpec,
         processMetricsSpec,
         relayPoolSpec,
-        erikSpillSpec
+        erikSpillSpec,
+        parallelSpec,
+        revalidationOnExpirySpec
 
         -- erikSpec
     ]  

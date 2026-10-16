@@ -1,0 +1,6 @@
+rpki-prover is an RPKI relying party: it downloads the RPKI repositories
+of the five Regional Internet Registries (AFRINIC, APNIC, ARIN, LACNIC
+and RIPE NCC) over RRDP and rsync, validates the certificates, manifests,
+ROAs, ASPAs and router certificates in them, and serves the result to
+routers over the RPKI-to-Router protocol (RFC 8210) and to people and
+scripts over an HTTP API with a web UI.

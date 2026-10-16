@@ -46,6 +46,7 @@ common shared
     , TemplateHaskell
     , ViewPatterns
     , OverloadedRecordDot
+    , OverloadedStrings
   default-language: GHC2024
   ghc-options:
       -j8 +RTS -A256m -AL512m -n4m -qb0 -qn6 -RTS
@@ -66,7 +67,7 @@ common shared
     , blaze-html
     , blaze-markup
     , bytestring
-    , bytestring-mmap
+    , bytestring-mmap-compat
     , cborg
     , conduit
     , conduit-extra
@@ -106,6 +107,7 @@ common shared
     , ram
     , resource-pool
     , sqlite-simple
+    , direct-sqlite
     , modern-uri
     , monoidal-containers
     , mtl
@@ -147,6 +149,7 @@ common shared
     , unordered-containers
     , vector
     , vector-algorithms
+    , wai
     , wai-extra
     , warp
     , xeno
@@ -160,6 +163,7 @@ library
       RPKI.AppState
       RPKI.AppTypes
       RPKI.Config
+      RPKI.Cpu
       RPKI.Domain
       RPKI.Domain.Packed
       RPKI.Fetch.DirectoryTraverse
@@ -233,11 +237,18 @@ library
       RPKI.Validation.ObjectValidation
       RPKI.Validation.ResourceValidation
       RPKI.Validation.TopDown
+      RPKI.Validation.TopDown.Context
+      RPKI.Validation.TopDown.Shortcuts
+      RPKI.Validation.TopDown.TaCert
       RPKI.Validation.Types
       RPKI.Meta.GitVersionInfo
       RPKI.Meta.Version
       RPKI.Worker
       RPKI.Workflow
+      RPKI.Workflow.Fetcher
+      RPKI.Workflow.Revalidation
+      RPKI.Workflow.Shared
+      RPKI.Workflow.Task
   other-modules:
       Paths_rpki_prover
   hs-source-dirs:
@@ -316,6 +327,7 @@ test-suite rpki-prover-test
       RPKI.LoggingSpec
       RPKI.Metrics.ProcessSpec
       RPKI.Orphans
+      RPKI.ParallelSpec
       RPKI.Parse.ObjectParseSpec
       RPKI.RepositorySpec
       RPKI.Resources.ResourcesSpec
@@ -327,8 +339,11 @@ test-suite rpki-prover-test
       RPKI.Store.DatabaseSpec
       RPKI.Store.StorableSpec
       RPKI.TestCommons
+      RPKI.Validation.BottomUpSpec
       RPKI.Validation.TopDownSpec
       RPKI.WorkerSpec
+      RPKI.Workflow.RevalidationSpec
+      RPKI.Workflow.SharedSpec
       Paths_rpki_prover
   hs-source-dirs:
       test
@@ -363,6 +378,25 @@ benchmark save-snapshot-bench
     import:          shared
     type:            exitcode-stdio-1.0
     main-is:         SaveSnapshotBench.hs
+    other-modules:
+            Paths_rpki_prover
+    hs-source-dirs:
+            perf
+    ghc-options:
+            -threaded
+            -rtsopts
+            -O2
+            "-with-rtsopts=-N -T"
+    build-depends:
+            rpki-prover
+          , directory
+          , filepath
+          , temporary
+
+benchmark load-objects-bench
+    import:          shared
+    type:            exitcode-stdio-1.0
+    main-is:         LoadObjectsBench.hs
     other-modules:
             Paths_rpki_prover
     hs-source-dirs:
