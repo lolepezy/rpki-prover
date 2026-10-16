@@ -31,8 +31,8 @@ import           RPKI.Validation.TopDown.Context
     Whichever of them validation gets to first must not decide which of the 
     children are valid. But anyone can issue a certificate with the key of 
     anyone else, with their own resources, as many of them as they like. So 
-    the children are validated under the ones that have resources the children 
-    need, and only under so many of them, see `claimKeyPass`.
+    the manifest of the key is validated under the first one, and under every
+    other one only the children that can be valid under it, see `claimKey`.
 -}
 sharedKeyGroup :: TestTree
 sharedKeyGroup =
@@ -47,22 +47,24 @@ sharedKeyGroup =
             shouldValidateOnceUnderDuplicates
         , HU.testCase "Validates the manifest of every key once under levels of duplicates"
             shouldValidateOnceUnderLevelsOfDuplicates
-        , HU.testCase "Validates the manifest of every key under so many certificates at most"
-            shouldValidateUnderSoManyCertificates
-        , HU.testCase "Doesn't validate the children of a key under a certificate without resources they need"
+        , HU.testCase "Validates the manifest of every key once under levels of certificates with other resources"
+            shouldValidateOnceUnderLevelsOfCertificates
+        , HU.testCase "Validates nothing again under a certificate without resources the children need"
             shouldSkipCertificateWithoutResourcesOfChildren
         , HU.testCase "Copies of a certificate with other resources don't take the size of the tree"
             shouldNotCountCopies
-        , HU.testCase "Checks the first certificate of a key that is not what the key was validated under"
-            shouldCheckFirstCertificateNotAsBefore
-        , HU.testCase "Checks the first certificate of a key that had more than one"
-            shouldCheckFirstCertificateOfSharedKey
+        , HU.testCase "Validates the children of a key again under a certificate after a copy"
+            shouldValidateAgainAfterCopy
+        , HU.testCase "Validates the children of a key again every time the copy comes first"
+            shouldValidateAgainEveryTime
         , HU.testCase "Looks for what the children of a key need through CA certificates that inherit"
             shouldLookThroughInheritingCertificates
+        , HU.testCase "Validates again under CA certificates that inherit after a copy"
+            shouldValidateInheritingAgainAfterCopy
         , HU.testCase "Stops at a cycle of keys"
             shouldStopAtCycle
-        , HU.testCase "Checks a signature under a key once more at most"
-            shouldCheckSignaturesOnce
+        , HU.testCase "Validates a child again once at most"
+            shouldValidateChildAgainOnce
         ]
 
 
@@ -169,13 +171,11 @@ shouldValidateOnceUnderLevelsOfDuplicates =
 
 
 -- | The same, but the certificates of a key have different resources, each
--- within those of every certificate of the key before it, and they have 
--- what the children of the key need. So the manifest of every key is validated
--- under every one of its certificates, but only under so many of them, and 
--- that's once for each of them: what it's validated under doesn't depend on 
--- which certificate of the key before it the certificate is validated under.
-shouldValidateUnderSoManyCertificates :: HU.Assertion
-shouldValidateUnderSoManyCertificates =
+-- within those of every certificate of the key before it, and with what the
+-- children of the key need. Everything is valid under any of them, so the
+-- manifest of every key is validated once.
+shouldValidateOnceUnderLevelsOfCertificates :: HU.Assertion
+shouldValidateOnceUnderLevelsOfCertificates =
     withTestContext $ \appContext -> do
         now  <- thisInstant
         keys@(first : _) <- forM [0 .. levelCount] $ \n -> newKey $ "level-" <> show n
@@ -192,14 +192,10 @@ shouldValidateUnderSoManyCertificates =
         let tops = certificatesOf 0 top first
         storeCertificates appContext now tops
         Run {..} <- validateInOrder appContext now tops
-        let maxPasses = appContext ^. #config . #validationConfig . #maxCertificatesPerKey
-        HU.assertBool "There are more certificates of a key" (maxPasses < perKey)
         HU.assertEqual "The ROA is valid" (Set.fromList [roa.content]) vrps
         counter context (.originalMft) >>= HU.assertEqual 
-            "The manifest of every key is validated under so many certificates of it" 
-            ((levelCount + 1) * maxPasses)
-        HU.assertBool "The other ones are told about" $ 
-            not $ null [ () | TooManyCertificatesOfKey {} <- issues state ]
+            "The manifest of every key is validated once" (levelCount + 1)
+        counter context (.anotherKeyPass) >>= HU.assertEqual "Nothing is validated again" 0
   where
     levelCount = 6 :: Int
     perKey = 4 :: Int
@@ -213,20 +209,19 @@ shouldValidateUnderSoManyCertificates =
 
 
 -- | Copies of the certificate of a key, issued by someone else with their 
--- resources. Nothing the key has can be valid under them, so its manifest is 
--- not validated under them. Unless one comes first: then there's nothing to 
--- tell it's not the one, it is validated under it once.
+-- resources. Nothing of the key can be valid under them, nothing is validated
+-- again under them. When one comes first, the children are validated again 
+-- under the certificate.
 shouldSkipCertificateWithoutResourcesOfChildren :: HU.Assertion
 shouldSkipCertificateWithoutResourcesOfChildren =
     withTestContext $ \appContext -> do
         Victim {..} <- victimWithCopies appContext 3
-        forM_ [(real : copies, 1), (copies <> [real], 2)] $ \(order, passes) -> do
+        forM_ [(real : copies, 0), (copies <> [real], 1)] $ \(order, again) -> do
             Run {..} <- validateInOrder appContext now order
             HU.assertEqual "The ROAs are valid" (Set.fromList $ map (.content) roas) vrps
-            counter context (.originalMft) >>= HU.assertEqual "Validated under so many" passes
-            HU.assertEqual "The copies that are not validated under are told about" 
-                (replicate (4 - passes) $ CertificateCoversNothingOfKey key.keyId) 
-                [ e | e@CertificateCoversNothingOfKey {} <- issues state ]
+            counter context (.anotherKeyPass) >>= HU.assertEqual "Validated again" again
+            counter context (.skippedKeyPass) >>= HU.assertEqual "Nothing under the other copies" (3 - again)
+            counter context (.originalRoa) >>= HU.assertEqual "Every ROA is valid once" 20
 
 
 -- | Copies of a certificate with many children don't take more of the size of 
@@ -252,28 +247,23 @@ shouldNotCountCopies =
 
 
 -- | The key was validated under its certificate before. The first certificate 
--- with it now is a copy with other resources, it's checked as one after another.
-shouldCheckFirstCertificateNotAsBefore :: HU.Assertion
-shouldCheckFirstCertificateNotAsBefore =
+-- with it now is a copy with other resources, the children are validated
+-- again under the certificate.
+shouldValidateAgainAfterCopy :: HU.Assertion
+shouldValidateAgainAfterCopy =
     withTestContext $ \appContext_ -> do
         let appContext = appContext_ & #config . #validationConfig . #validationAlgorithm .~ Incremental
         Victim {..} <- victimWithCopies appContext 1
         void $ validateInOrder appContext now [real]
         Run {..} <- validateInOrder appContext now (copies <> [real])
         HU.assertEqual "The ROAs are valid" (Set.fromList $ map (.content) roas) vrps
-        counter context (.skippedKeyPass) >>= HU.assertEqual "Not under the copy" 1
-        counter context (.shortcutMft) >>= HU.assertEqual "Under the certificate as before" 1
-        counter context (.originalRoa) >>= HU.assertEqual "Nothing is validated in full" 0
+        counter context (.anotherKeyPass) >>= HU.assertEqual "Validated again" 1
 
 
--- | The first time, the copy comes first and nothing tells it's a copy, the 
--- shortcut of the key is written under it. The next time it's known that 
--- the key had two certificates, the copy is checked and the certificate is
--- the one to validate the key under first, and to write the shortcut.
--- The certificates are children of manifests here, that's what tells the
--- key had two of them.
-shouldCheckFirstCertificateOfSharedKey :: HU.Assertion
-shouldCheckFirstCertificateOfSharedKey =
+-- | The copy comes first every time, the children are validated again under 
+-- the certificate every time. The certificates are children of manifests here.
+shouldValidateAgainEveryTime :: HU.Assertion
+shouldValidateAgainEveryTime =
     withTestContext $ \appContext_ -> do
         let appContext = appContext_ & #config . #validationConfig . #validationAlgorithm .~ Incremental
         now      <- thisInstant
@@ -291,23 +281,10 @@ shouldCheckFirstCertificateOfSharedKey =
         storePublicationPoint appContext now copier 1 [("copy.cer", CerRO copy)]
         storePublicationPoint appContext now key 1 [("r10.roa", RoaRO roa)]
 
-        let validate = validateInOrder appContext now [copierCa, parentCa]
-        first <- validate
-        HU.assertEqual "The ROA is valid" (Set.fromList [roa.content]) first.vrps
-        counter first.context (.anotherKeyPass) >>= HU.assertEqual "Under both" 1
-
-        second <- validate
-        HU.assertEqual "The ROA is valid" (Set.fromList [roa.content]) second.vrps
-        counter second.context (.skippedKeyPass) >>= HU.assertEqual "Not under the copy" 1
-        counter second.context (.anotherKeyPass) >>= HU.assertEqual "Under the certificate" 0
-        counter second.context (.originalRoa) >>= HU.assertEqual 
-            "The ROA is validated in full, the shortcut was not under the certificate" 1
-
-        third <- validate
-        HU.assertEqual "The ROA is valid" (Set.fromList [roa.content]) third.vrps
-        counter third.context (.skippedKeyPass) >>= HU.assertEqual "Not under the copy" 1
-        counter third.context (.originalRoa) >>= HU.assertEqual 
-            "The shortcut is under the certificate now" 0
+        replicateM_ 3 $ do
+            Run {..} <- validateInOrder appContext now [copierCa, parentCa]
+            HU.assertEqual "The ROA is valid" (Set.fromList [roa.content]) vrps
+            counter context (.anotherKeyPass) >>= HU.assertEqual "Validated again" 1
 
 
 -- | The children of the key are CA certificates that inherit their resources, 
@@ -333,20 +310,46 @@ shouldLookThroughInheritingCertificates =
         storePublicationPoint appContext now member 1 [("r10.roa", RoaRO roa)]
 
         -- Under the one with resources the member needs, the certificate that
-        -- inherits is validated under them as well, that's a pass of its key
-        forM_ [(other, 0, 1), (within, 2, 0)] $ \(second, anotherPasses, skipped) -> do
+        -- inherits is validated again, and nothing is validated again under 
+        -- its key, the member is valid already
+        forM_ [(other, 0, 1), (within, 1, 1)] $ \(second, anotherPasses, skipped) -> do
             Run {..} <- validateInOrder appContext now [real, second]
             HU.assertEqual "The ROA is valid" (Set.fromList [roa.content]) vrps
             counter context (.anotherKeyPass) >>= HU.assertEqual "Under the second one" anotherPasses
             counter context (.skippedKeyPass) >>= HU.assertEqual "Not under the second one" skipped
 
 
--- | The key of a CA has a certificate issued by its child.
--- The second one has the same location of the manifest, or another one, and 
--- then the manifest is validated under it once more.
+-- | The copy comes first, the certificate that inherits is valid under it, and
+-- the member under it isn't. Under the certificate, the member is valid.
+shouldValidateInheritingAgainAfterCopy :: HU.Assertion
+shouldValidateInheritingAgainAfterCopy =
+    withTestContext $ \appContext -> do
+        now        <- thisInstant
+        issuer     <- newKey "issuer"
+        copier     <- newKey "copier"
+        key        <- newKey "key"
+        inheriting <- newKey "inheriting"
+        member     <- newKey "member"
+        let real = makeCaCert now issuer key 1 (ipv4s ["10.0.0.0/16"])
+            copy = makeCaCert now copier key 2 (ipv4s ["10.1.0.0/16"])
+            inheritingCa = makeCaCert now key inheriting 4 (AllResources Inherit Inherit Inherit)
+            memberCa = makeCaCert now inheriting member 5 (ipv4s ["10.0.1.0/24"])
+            roa = makeRoa now member 10 (ASN 1) "10.0.1.0/24"
+        storeCertificates appContext now [real, copy]
+        storePublicationPoint appContext now key 1 [("inheriting.cer", CerRO inheritingCa)]
+        storePublicationPoint appContext now inheriting 1 [("member.cer", CerRO memberCa)]
+        storePublicationPoint appContext now member 1 [("r10.roa", RoaRO roa)]
+
+        Run {..} <- validateInOrder appContext now [copy, real]
+        HU.assertEqual "The ROA is valid" (Set.fromList [roa.content]) vrps
+        counter context (.anotherKeyPass) >>= HU.assertEqual 
+            "The key and the one that inherits are validated again" 2
+
+-- | The key of a CA has a certificate issued by its child, with the same 
+-- location of the manifest or another one. Everything is valid already.
 shouldStopAtCycle :: HU.Assertion
 shouldStopAtCycle =
-    forM_ [(id, 0), (movedTo "elsewhere", 1)] $ \(moved, anotherPass) -> 
+    forM_ [id, movedTo "elsewhere"] $ \moved -> 
         withTestContext $ \appContext -> do
             now    <- thisInstant
             root   <- newKey "root"
@@ -365,34 +368,31 @@ shouldStopAtCycle =
 
             Run {..} <- validateInOrder appContext now [parentCa]
             HU.assertEqual "The ROA is valid" (Set.fromList [roa.content]) vrps
-            counter context (.anotherKeyPass) >>= HU.assertEqual "Passes of the key" anotherPass
+            counter context (.anotherKeyPass) >>= HU.assertEqual "Nothing is validated again" 0
 
 
--- | A signature doesn't depend on which certificate with the key the object is 
--- validated under. It's checked the first time and once more, and known after. 
--- The signature of the manifest is known in the second time already, it's 
--- checked to find what the children need.
-shouldCheckSignaturesOnce :: HU.Assertion
-shouldCheckSignaturesOnce =
+-- | The copy comes first, then a certificate with the resources of one of the
+-- ROAs, then the one with both. Every ROA is validated again once.
+shouldValidateChildAgainOnce :: HU.Assertion
+shouldValidateChildAgainOnce =
     withTestContext $ \appContext -> do
         now     <- thisInstant
         shared  <- newKey "shared"
         issuers <- forM [1 .. 3 :: Int] $ \n -> newKey $ "issuer-" <> show n
-        -- Each one with an SIA of its own, so each one is a pass of its own
-        let cas = [ movedTo (Text.pack $ "pp-" <> show n) $ 
-                        makeCaCert now issuer shared n (ipv4s ["10.0.0.0/16"])
-                  | (n, issuer) <- zip [1 ..] issuers ]
+        let certificate n resources = makeCaCert now (issuers !! (n - 1)) shared (fromIntegral n) (ipv4s resources)
+            copy  = certificate 1 ["10.1.0.0/16"]
+            one   = certificate 2 ["10.0.1.0/24"]
+            whole = certificate 3 ["10.0.0.0/16"]
             roa1 = makeRoa now shared 10 (ASN 1) "10.0.1.0/24"
             roa2 = makeRoa now shared 11 (ASN 2) "10.0.2.0/24"
-        storeCertificates appContext now cas
+        storeCertificates appContext now [copy, one, whole]
         storePublicationPoint appContext now shared 1
             [("r10.roa", RoaRO roa1), ("r11.roa", RoaRO roa2)]
 
-        Run {..} <- validateInOrder appContext now cas
+        Run {..} <- validateInOrder appContext now [copy, one, whole]
         HU.assertEqual "Both ROAs are valid" (Set.fromList [roa1.content, roa2.content]) vrps
-        counter context (.anotherKeyPass) >>= HU.assertEqual "Three passes" 2
-        counter context (.rememberedSignature) >>= HU.assertEqual 
-            "The manifest in the second one, and the manifest, the CRL and the ROAs in the third one" 5
+        counter context (.anotherKeyPass) >>= HU.assertEqual "Under two of them" 2
+        counter context (.originalRoa) >>= HU.assertEqual "Every ROA once" 2
 
 
 data TwoCertificates = TwoCertificates {

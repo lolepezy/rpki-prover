@@ -641,7 +641,7 @@ newTestTopDownContext appContext = do
     shortcutQueue <- newCQueueIO 10
     workPool      <- newWorkPool
     publicationPoints <- DB.roTx db DB.getPublicationPoints
-    allTas <- newAllTasTopDownContext (instantToVersion now) publicationPoints shortcutQueue mempty mempty workPool
+    allTas <- newAllTasTopDownContext (instantToVersion now) publicationPoints shortcutQueue mempty workPool
     topDownContext <- newTopDownContext (TaName "test") allTas
     pure (topDownContext, shortcutQueue)
 

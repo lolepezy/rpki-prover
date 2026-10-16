@@ -231,16 +231,12 @@ toValidationMessage = \case
           [i|#{others} other CA certificate(s) in this TA have the same key #{ski} as this one|] <> 
           (if null locations then "" else [i|, e.g. #{Text.intercalate ", " $ map fmtLocations locations}|]) <> 
           [i|. That is unusual and can be an attempt to change what is valid under the key: |] <>
-          [i|its manifest and the objects on it are validated under each of the certificates |] <>
-          [i|that has resources the objects need.|]
-
-      CertificateCoversNothingOfKey (SKI ski) -> 
-          [i|The resources of this certificate have nothing of what the objects of its key #{ski} need, |] <> 
-          [i|so they are not validated under it. Other CA certificates have the same key.|]
+          [i|the objects on its manifest are valid under any of the certificates that has the |] <>
+          [i|resources they need.|]
 
       TooManyCertificatesOfKey (SKI ski) certificates -> 
-          [i|The objects of the key #{ski} are validated under #{certificates} CA certificates with the key |] <> 
-          [i|already, and not under this one.|]
+          [i|Objects of the key #{ski} are validated again under #{certificates} other CA certificates |] <> 
+          [i|with the key already, and not under this one.|]
 
       NoMFT (AKI aki) -> 
           [i|No manifest found for AKI #{aki}.|]

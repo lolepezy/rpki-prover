@@ -75,7 +75,7 @@ data TopDownContext = TopDownContext {
         fetcheables             :: TVar Fetcheables,
         earliestNotValidAfter   :: TVar EarliestValidityChange,        
         -- | The certificates of every key so far, and what the manifest of 
-        -- the key was validated under, see `claimKeyPass`
+        -- the key was validated under, see `claimKey`
         keyStates               :: TVar (Map AKI KeyState),
         -- | The manifest of the CA is validated not for the first time, under 
         -- another certificate with its key
@@ -83,6 +83,11 @@ data TopDownContext = TopDownContext {
         -- | The validation of the manifest of the CA is the one in this run that 
         -- uses and writes its shortcut, see `claimShortcut`
         ownsShortcut            :: Bool,
+        -- | Where the first validation of the manifest of the CA keeps the 
+        -- children that are not valid only because of their resources
+        recordingChildren       :: Maybe (TVar KeyChildren),
+        -- | Only these children of the manifest are validated, see `KeyChildren`
+        onlyChildren            :: Maybe (Set ObjectKey),
         -- | RRDP repositories to fetch from a snapshot next time, with why: 
         -- the cache doesn't have what the manifests of a CA there say, 
         -- and none of them could be used
@@ -98,9 +103,6 @@ data AllTasTopDownContext = AllTasTopDownContext {
         shortcutOwners    :: TVar (Set AKI),
         -- | Signatures of objects by the key of their CA, see `knownSignature`
         knownSignatures   :: TVar (Map (ObjectKey, SKI) SignatureVerification),
-        -- | The keys that had more than one valid CA certificate the last time,
-        -- see `claimKeyPass`
-        keysSharedBefore  :: Set SKI,
         -- | What the children of a key need from a certificate of the key,
         -- for the keys it's needed for, see `keyNeeds`
         knownKeyNeeds     :: TVar (Map AKI PrefixesAndAsns),
@@ -151,42 +153,83 @@ deriving instance AllBF Show f TopDownCounters => Show (TopDownCounters f)
 data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
     deriving stock (Show, Eq, Ord, Generic)
 
--- | The certificates with one key, and what the manifest of the key was 
--- validated under (see `validationContextHash`), with the smallest depth 
--- of a certificate it was validated under with it.
+-- | What happened to a key in a run: the certificates with it, what its 
+-- manifest was validated under (see `validationContextHash`), and how far
+-- its validation is.
 data KeyState = KeyState {
-        certificates :: Set ObjectKey,
-        passes       :: Map Hash Int,
-        -- | Validations of the manifest so far, also the ones under the
-        -- same as before at a smaller depth
-        passCount    :: Int
+        certificates  :: Set ObjectKey,
+        contextHashes :: Set Hash,
+        -- | Validations of children of the key again, under other certificates
+        rechecks      :: Int,
+        stage         :: KeyStage
     }
     deriving stock (Generic)
 
-data PassOfKey = FirstPassOfKey | AnotherPassOfKey
-    deriving stock (Show, Eq, Generic)
+data KeyStage =
+      -- | The manifest of the key is not validated yet, or it failed
+      NotValidatedYet
+      -- | It's being validated under the first certificate with the key, the
+      -- certificates that come meanwhile wait for it
+    | ValidatingFirst (TVar KeyChildren) [KeyArrival]
+      -- | It's validated under the first certificate with the key
+    | ValidatedFirst (TVar KeyChildren)
+    deriving stock (Generic)
 
--- | What `claimKeyPass` is told about a certificate
-data KeyPassCheck =
-      -- | Nothing is known about it
-      NotChecked
-      -- | It has what the key was validated under last time, so it's
-      -- the one to validate the manifest of the key under first
-    | AsBefore
-      -- | It has resources that the children of the key need
-    | CoversChildren
-    deriving stock (Show, Eq, Generic)
+{- | The children of a key that can be valid under another certificate with
+   the key, when they are not valid under the first one.
 
--- | Whether the manifest of a key is validated under a certificate with it
-data KeyPass =
-      ValidateUnder PassOfKey
-      -- | It was validated under the same at the same depth or a smaller one
+   Validity of a child under a certificate depends only on the resources of
+   the certificate, the rest of it (the signature, revocation, the times) is 
+   the same under any certificate with the key. So under another certificate 
+   it's the children that are not valid only because of their resources, and
+   the CA children with resources that depend on the certificate: the ones 
+   that inherit them, and every one with the reconsidered algorithm.
+-}
+data KeyChildren = KeyChildren {
+        -- | The ones that are not valid only because of their resources, with 
+        -- what they need from a certificate to be valid, see `objectNeeds`
+        pending      :: Map ObjectKey PrefixesAndAsns,
+        -- | What all the pending ones need, when it's known
+        pendingNeeds :: Maybe PrefixesAndAsns,
+        -- | The CA children that depend on the certificate, when it's known, 
+        -- see `dependentCaChildren`
+        dependent    :: Maybe DependentChildren
+    }
+    deriving stock (Generic)
+
+data DependentChildren = DependentChildren {
+        children     :: [DependentChild],
+        -- | What of the resources of a certificate with the key can make a 
+        -- difference to any of them
+        ownResources :: PrefixesAndAsns
+    }
+    deriving stock (Generic)
+
+data DependentChild = DependentChild {
+        key         :: ObjectKey,
+        certificate :: WellStructuredCaCert
+    }
+    deriving stock (Generic)
+
+-- | A certificate with a key that comes to the children of the key
+data KeyArrival = KeyArrival {
+        context     :: TopDownContext,
+        ca          :: Ca,
+        ski         :: SKI,
+        contextHash :: Hash,
+        -- | The same certificate again
+        sameAgain   :: Bool,
+        scopes      :: Scopes
+    }
+    deriving stock (Generic)
+
+data KeyClaim =
+      ValidateFirst (TVar KeyChildren)
+      -- | It waits for the first validation, which takes it after
+    | WaitForFirst
+    | ValidateAgain (TVar KeyChildren)
+      -- | It was validated under the same already
     | ValidatedAlready
-      -- | It's up to what the children of the key need, see `KeyPassCheck`
-    | ChildrenDecide
-      -- | It was validated under that many certificates already
-    | TooManyPasses Int
-    deriving stock (Show, Eq, Generic)
 
 
 newPayloadBuilder :: IO PayloadBuilder 
@@ -215,8 +258,10 @@ newTopDownContext taName allTas =
             earliestNotValidAfter   <- newTVar mempty
             keyStates               <- newTVar mempty
             snapshotCandidates      <- newTVar mempty
-            let anotherPassOfKey = False
-                ownsShortcut     = True
+            let anotherPassOfKey  = False
+                ownsShortcut      = True
+                recordingChildren = Nothing
+                onlyChildren      = Nothing
             pure $! TopDownContext {..}
 
 newAllTasTopDownContext :: MonadIO m =>
@@ -224,10 +269,9 @@ newAllTasTopDownContext :: MonadIO m =>
                         -> PublicationPoints 
                         -> ClosableQueue MftShortcutOp
                         -> Set ObjectKey
-                        -> Set SKI
                         -> WorkPool
                         -> m AllTasTopDownContext
-newAllTasTopDownContext worldVersion publicationPoints shortcutQueue multiLocationKeys keysSharedBefore workPool = liftIO $ do
+newAllTasTopDownContext worldVersion publicationPoints shortcutQueue multiLocationKeys workPool = liftIO $ do
     let now = Now $ versionToInstant worldVersion
     topDownCounters <- newTopDownCounters
     atomically $ do        
@@ -286,46 +330,73 @@ verifyLimit hitTheLimit limit =
             pure AlreadyReportedLimit
 
 
-{- | Whether the manifest of a key is to be validated under a certificate with
-   the key, and remember it if it is.
+{- | What a certificate with a key does about the children of the key.
 
    Nothing stops several certificates from having one key: e.g. issued by
    different parents with different resources, or a copy of a certificate
    issued by anyone, with their own resources. The children of the key are
-   valid under any of them that has their resources. But under a copy with
-   other resources than the children have, there's nothing to validate them
-   for, and the copies can be many.
+   valid under any of them that has their resources.
 
-   So the manifest is validated under a certificate with the key only if its
-   resources cover something that the children need, the caller tells that
-   (`CoversChildren`), and under so many of them at most. Under one with the
-   same resources and location of the manifest as before (see
-   `validationContextHash`) only at a smaller depth (for the limit of it), so
-   duplicates of a certificate, the same certificate on another path, or a
-   cycle, don't take passes of their own.
+   So the manifest of the key is validated under the first certificate with
+   it, and under every other one, only the children that can be valid under
+   it are validated again (see `KeyChildren`), each one at most once. A 
+   certificate with resources that none of them need costs nothing then.
+   Certificates that come while the first validation goes on wait for it,
+   it takes them after.
 
-   It's not checked for the first certificate of the key in the run if it has
-   what the key was validated under the last time (`AsBefore`), so that it
-   costs nothing for a key with one certificate, every key in the RPKI as it
-   is. Unless it had more than one the last time: then the first one may be
-   the one that was validated under first because it came first, a copy.
+   The same certificate again, or one with the same resources and location
+   of the manifest (see `validationContextHash`), changes nothing.
 -}
-claimKeyPass :: TVar (Map AKI KeyState) -> AKI -> Hash -> Int -> KeyPassCheck -> Int -> STM KeyPass
-claimKeyPass keyStates aki contextHash depth checked maxPasses = do
+claimKey :: TVar (Map AKI KeyState) -> AKI -> KeyArrival -> STM KeyClaim
+claimKey keyStates aki arrival = do
     state@KeyState {..} <- keyStateOf keyStates aki
-    let claim = do
+    let update = modifyTVar' keyStates . Map.insert aki
+    if Set.member arrival.contextHash contextHashes
+        then pure ValidatedAlready
+        else case stage of
+            NotValidatedYet -> do
+                children <- newTVar $ KeyChildren mempty Nothing Nothing
+                update $! state { contextHashes = Set.insert arrival.contextHash contextHashes,
+                                  stage    = ValidatingFirst children [] }
+                pure $ ValidateFirst children
+            ValidatingFirst children waiting -> do
+                update $! state { stage = ValidatingFirst children (arrival : waiting) }
+                pure WaitForFirst
+            ValidatedFirst children -> do
+                update $! state { contextHashes = Set.insert arrival.contextHash contextHashes }
+                pure $ ValidateAgain children
+
+-- | The first validation of the manifest of the key is done, give the 
+-- certificates that waited for it. If it failed, the next one is the first.
+finishFirstValidation :: TVar (Map AKI KeyState) -> AKI -> Bool -> STM [KeyArrival]
+finishFirstValidation keyStates aki succeeded = do
+    state@KeyState {..} <- keyStateOf keyStates aki
+    case stage of
+        ValidatingFirst children waiting -> do
             modifyTVar' keyStates $ Map.insert aki $! state {
-                    passes    = Map.insertWith min contextHash depth passes,
-                    passCount = passCount + 1
+                    stage = if succeeded then ValidatedFirst children else NotValidatedYet
                 }
-            pure $ ValidateUnder $ if Map.null passes then FirstPassOfKey else AnotherPassOfKey
-    if | maybe False (<= depth) (Map.lookup contextHash passes) -> pure ValidatedAlready
-       | passCount >= maxPasses -> pure $ TooManyPasses passCount
-       | otherwise ->
-            case checked of
-                CoversChildren             -> claim
-                AsBefore | Map.null passes -> claim
-                _                          -> pure ChildrenDecide
+            pure $ reverse waiting
+        _ -> pure []
+
+-- | Whether children of the key can be validated once more, under another 
+-- certificate with the key that has resources they need. Only so many times.
+claimRecheck :: TVar (Map AKI KeyState) -> AKI -> Int -> STM (Maybe Int)
+claimRecheck keyStates aki maxRechecks = do
+    state@KeyState {..} <- keyStateOf keyStates aki
+    if rechecks >= maxRechecks
+        then pure $ Just rechecks
+        else do
+            modifyTVar' keyStates $ Map.insert aki $! state { rechecks = rechecks + 1 }
+            pure Nothing
+
+-- | A child that is not valid only because of its resources, under the first
+-- certificate of the key that this is the validation of, see `KeyChildren`
+recordPendingChild :: MonadIO m => TopDownContext -> ObjectKey -> PrefixesAndAsns -> m ()
+recordPendingChild TopDownContext { recordingChildren } childKey needs = 
+    for_ recordingChildren $ \children -> 
+        liftIO $ atomically $ modifyTVar' children $ \c -> 
+            c { pending = Map.insert childKey needs c.pending, pendingNeeds = Nothing }
 
 -- | Remember a certificate with the key. If it's a new one, give the ones before it.
 rememberCertificateOfKey :: TVar (Map AKI KeyState) -> AKI -> Maybe ObjectKey -> STM (Maybe [ObjectKey])
@@ -341,7 +412,7 @@ rememberCertificateOfKey keyStates aki certificate = do
 
 keyStateOf :: TVar (Map AKI KeyState) -> AKI -> STM KeyState
 keyStateOf keyStates aki =
-    fromMaybe (KeyState mempty mempty 0) . Map.lookup aki <$> readTVar keyStates
+    fromMaybe (KeyState mempty mempty 0 NotValidatedYet) . Map.lookup aki <$> readTVar keyStates
 
 -- | Whether the validation of the manifest of a key is the one in this run
 -- that uses and writes its shortcut: the first one. The others don't use it,
@@ -396,6 +467,9 @@ childCaContext topDownContext resources ownHash verified@(childVerifiedResources
         & #resourcesHash        .~ verifiedResourcesHash resources ownHash topDownContext.resourcesHash verified
         & #currentPathDepth     %~ (+ 1)
         & #overclaimingHappened .~ isJust overclaiming
+        -- These are about the manifest of the parent
+        & #recordingChildren    .~ Nothing
+        & #onlyChildren         .~ Nothing
 
 
 -- Do whatever is required to notify other subsystems that the object was touched 

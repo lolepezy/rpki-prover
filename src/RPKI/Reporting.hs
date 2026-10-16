@@ -174,11 +174,8 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         -- The key of a CA certificate, how many other CA certificates
                         -- have it, and the locations of some of them
                         CertificatesWithSameKey SKI Int [Locations] |
-                        -- A CA certificate with a key of other ones, that has nothing
-                        -- of what the children of the key need
-                        CertificateCoversNothingOfKey SKI |
                         -- A CA certificate with a key of other ones, and under how
-                        -- many of them the manifest of the key is validated already
+                        -- many of them children of the key were validated again already
                         TooManyCertificatesOfKey SKI Int
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)

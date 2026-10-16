@@ -166,10 +166,10 @@ data ValidationConfig = ValidationConfig {
         -- children, and the key of a CA can sign any number of them.
         maxManifestFallbacks           :: Int,
 
-        -- Under how many CA certificates with the same key the manifest
-        -- of the key is validated at most. Anyone can issue a certificate
-        -- with any key, it's only validated under the ones with resources
-        -- that its children need.
+        -- Under how many CA certificates with the same key, other than 
+        -- the first one, children of the key are validated again at most.
+        -- Only under the ones that have resources the children need,
+        -- anyone can issue a certificate with any key.
         maxCertificatesPerKey          :: Int,
 
         -- Maximal allowed size of an individual object 

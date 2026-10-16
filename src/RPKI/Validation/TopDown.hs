@@ -27,7 +27,7 @@ import qualified Control.Exception                as IOExc
 import           GHC.Conc                         (getNumCapabilities, setNumCapabilities)
 import           System.Timeout                   (timeout)
 import           Effectful.Error.Static           (catchError)
-import           Control.DeepSeq                  (NFData, force)
+import           Control.DeepSeq                  (force)
 import           Control.Monad
 
 import           Control.Lens hiding (children)
@@ -66,7 +66,7 @@ import           RPKI.Messages
 import           RPKI.Parallel
 import           RPKI.Repository
 import qualified RPKI.Resources.IntervalContainers as IS
-import           RPKI.Resources.Resources         (mkIpv4Block, mkIpv6Block)
+import           RPKI.Resources.Resources         (mkIpv4Block, mkIpv6Block, toPrefixesAndAsns)
 import           RPKI.Resources.Types
 
 import           RPKI.Store.Database    (Tx, roTxT)
@@ -164,8 +164,7 @@ validateMultipleTAs appContext@AppContext {..} worldVersion tals = do
         publicationPoints <- addprefetchUrls <$> roTxT database DB.getPublicationPoints            
         multiLocationKeys <- roTxT database DB.getMultiLocationShortcutChildren
         workPool <- newWorkPool
-        keysSharedBefore  <- roTxT database DB.getKeysOfSeveralCaCertificates
-        allTas <- newAllTasTopDownContext worldVersion publicationPoints shortcutQueue multiLocationKeys keysSharedBefore workPool
+        allTas <- newAllTasTopDownContext worldVersion publicationPoints shortcutQueue multiLocationKeys workPool
         withWorkers workPool workerCaps (validateThem allTas)
             `IOExc.finally` 
             applyValidationSideEffects appContext allTas
@@ -449,62 +448,22 @@ validateCaNoFetch
                 oneMoreCert
                 validateChildrenOf (Just $ c ^. #key) (c ^. #ski)
   where
-    -- The manifest of a key is validated under the certificates with the key
-    -- that have resources its children need, see `claimKeyPass`
+    -- The children of a key are validated under the first certificate with
+    -- it, and the ones that can be valid under another one under it, see `claimKey`
     validateChildrenOf certificate ski = do
         let aki = toAKI ski
-        let contextHash = validationContextHash resourcesHash (caMftUri ca)
-        shortcut <- case config.validationConfig.validationAlgorithm of
-                        FullEveryIteration -> pure Nothing
-                        Incremental        -> roTxT database $ \tx -> DB.getMftShorcutMeta tx aki
-
         newCertificate <- liftIO $ atomically $ rememberCertificateOfKey keyStates aki certificate
         for_ newCertificate $ \others ->
             unless (null others) $ reportSharedKey ski others
-
-        let asBefore
-                | Set.member ski keysSharedBefore = NotChecked
-                | otherwise = case shortcut of
-                    Just meta | meta.validatedUnder /= contextHash -> NotChecked
-                    _                                              -> AsBefore
-
-        let claim checked = liftIO $ atomically $ do
-                keyPass <- claimKeyPass keyStates aki contextHash currentPathDepth checked
-                                config.validationConfig.maxCertificatesPerKey
-                owner <- case keyPass of
-                            ValidateUnder _ -> claimShortcut shortcutOwners aki
-                            _               -> pure False
-                pure (keyPass, owner)
-
-        claim asBefore >>= \case
-            (ChildrenDecide, _) ->
-                coversChildrenOfKey appContext topDownContext ca >>= \case
-                    True  -> claim CoversChildren >>= validateUnder ski contextHash shortcut newCertificate
-                    False -> do
-                        increment topDownCounters.skippedKeyPass
-                        vWarn $ CertificateCoversNothingOfKey ski
-            keyPass ->
-                validateUnder ski contextHash shortcut newCertificate keyPass
-
-    validateUnder ski contextHash shortcut newCertificate = let aki = toAKI ski in \case
-        (ValidateUnder passOfKey, owner) -> do
-            when (passOfKey == AnotherPassOfKey) $
-                increment topDownCounters.anotherKeyPass
-            validateManifests appContext
-                (topDownContext & #anotherPassOfKey .~ (passOfKey == AnotherPassOfKey)
-                                & #ownsShortcut .~ owner)
-                ca aki contextHash (if owner then shortcut else Nothing)
-        (ValidatedAlready, _) ->
-            -- The same certificate again, another one is reported already
-            when (isNothing newCertificate) $ do
-                increment topDownCounters.repeatedAki
-                vWarn $ MftAlreadyValidated aki
-        (TooManyPasses passes, _) -> do
-            increment topDownCounters.skippedKeyPass
-            vWarn $ TooManyCertificatesOfKey ski passes
-        -- Not after `CoversChildren`
-        (ChildrenDecide, _) ->
-            pure ()
+        scopes <- askScopes
+        arriveAtKey appContext KeyArrival {
+                context     = topDownContext,
+                ca          = ca,
+                ski         = ski,
+                contextHash = validationContextHash resourcesHash (caMftUri ca),
+                sameAgain   = isNothing newCertificate,
+                scopes      = scopes
+            }
 
     -- There are no several certificates with one key in the RPKI as it is, so 
     -- it's worth telling about. The warning goes to every certificate with the 
@@ -519,23 +478,170 @@ validateCaNoFetch
         vWarn $ CertificatesWithSameKey ski (length others) locations
 
 
--- | Whether the verified resources of the CA have something that the children
--- of its key need, see `keyNeeds`. If not, nothing that needs resources can be
--- valid under the certificate of the CA.
-coversChildrenOfKey :: ValidatorIO es => AppContext s -> TopDownContext -> Ca -> Eff es Bool
-coversChildrenOfKey appContext topDownContext ca =
-    case topDownContext.verifiedResources of
-        Nothing                     -> pure True
-        Just (VerifiedRS resources) -> do
-            fullCa <- getFullCa appContext topDownContext ca
-            overlap resources <$> keyNeeds appContext topDownContext fullCa
+-- | A certificate with a key comes to the children of the key, see `claimKey`
+arriveAtKey :: (ValidatorIO es, Concurrent :> es) => AppContext s -> KeyArrival -> Eff es ()
+arriveAtKey 
+    appContext@AppContext {..} 
+    arrival@KeyArrival { context = topDownContext@TopDownContext { allTas = AllTasTopDownContext {..} }, .. } = do
+    let aki = toAKI ski
+    liftIO (atomically $ claimKey topDownContext.keyStates aki arrival) >>= \case
+        ValidatedAlready ->
+            -- The same certificate again, another one is reported already
+            when sameAgain $ do
+                increment topDownCounters.repeatedAki
+                vWarn $ MftAlreadyValidated aki
+
+        WaitForFirst -> 
+            pure ()
+
+        ValidateFirst children -> do
+            owner <- liftIO $ atomically $ claimShortcut shortcutOwners aki
+            shortcut <- case config.validationConfig.validationAlgorithm of
+                            Incremental | owner -> roTxT database $ \tx -> DB.getMftShorcutMeta tx aki
+                            _                   -> pure Nothing
+            failure <- (Nothing <$ validateManifests appContext
+                                    (topDownContext & #ownsShortcut      .~ owner
+                                                    & #anotherPassOfKey  .~ False
+                                                    & #recordingChildren ?~ children)
+                                    ca aki contextHash shortcut)
+                        `catchError` \_cs (e :: AppError) -> pure (Just e)
+            waiting <- liftIO $ atomically $ 
+                            finishFirstValidation topDownContext.keyStates aki (isNothing failure)
+            -- The certificates that came meanwhile, in their own scopes
+            for_ waiting $ \next -> do
+                (_, state) <- runValidator next.scopes $ arriveAtKey appContext next
+                embedState state
+            for_ failure appError
+
+        ValidateAgain children ->
+            recheckKey appContext arrival children
+
+
+-- | Validate the children of the key that can be valid under one more 
+-- certificate with the key, see `KeyChildren`: the ones that were not valid 
+-- only because of their resources and have what they need now, each of them
+-- once, and the CA children with resources that depend on the certificate, 
+-- if it has something of what their children need. 
+recheckKey :: (ValidatorIO es, Concurrent :> es) => AppContext s -> KeyArrival -> TVar KeyChildren -> Eff es ()
+recheckKey 
+    appContext@AppContext {..} 
+    KeyArrival { context = topDownContext@TopDownContext { allTas = AllTasTopDownContext {..} }, .. } 
+    childrenVar = do
+    let aki = toAKI ski
+    let resources = case topDownContext.verifiedResources of
+            Just (VerifiedRS r) -> r
+            Nothing             -> anyResources
+    pendingOnes   <- pendingWithin resources
+    dependentOnes <- dependentWithin resources
+    let toValidate = Set.fromList $ pendingOnes <> dependentOnes
+    if Set.null toValidate
+        then increment topDownCounters.skippedKeyPass
+        else liftIO (atomically $ claimRecheck topDownContext.keyStates aki maxRechecks) >>= \case
+            Just rechecks -> do
+                increment topDownCounters.skippedKeyPass
+                vWarn $ TooManyCertificatesOfKey ski rechecks
+            Nothing -> do
+                increment topDownCounters.anotherKeyPass
+                validateManifests appContext
+                    (topDownContext & #anotherPassOfKey  .~ True
+                                    & #ownsShortcut      .~ False
+                                    & #recordingChildren .~ Nothing
+                                    & #onlyChildren      ?~ toValidate)
+                    ca aki contextHash Nothing
+                -- They are validated under a certificate that has what they 
+                -- need now, they aren't validated again whatever came out of it
+                liftIO $ atomically $ modifyTVar' childrenVar $ \c ->
+                    c { pending = foldr Map.delete c.pending pendingOnes, pendingNeeds = Nothing }
+  where
+    validationRFC = config.validationConfig.validationRFC
+    maxRechecks = config.validationConfig.maxCertificatesPerKey
+
+    pendingWithin resources = do
+        KeyChildren { pending, pendingNeeds } <- liftIO $ readTVarIO childrenVar
+        allNeeds <- case pendingNeeds of
+            Just needs -> pure needs
+            Nothing    -> do
+                let needs = unionOf $ Map.elems pending
+                -- Unless some of them are validated meanwhile
+                liftIO $ atomically $ modifyTVar' childrenVar $ \c ->
+                    if Map.size c.pending == Map.size pending
+                        then c { pendingNeeds = Just needs }
+                        else c
+                pure needs
+        pure $ if overlap resources allNeeds
+            then [ key | (key, needs) <- Map.toList pending, contained needs resources ]
+            else []
+
+    dependentWithin resources = do
+        DependentChildren {..} <- dependentCaChildren appContext topDownContext ca childrenVar
+        if overlap resources ownResources
+            then fmap catMaybes $ forM children $ \DependentChild {..} ->
+                if mayDependOn resources certificate
+                    then do
+                        needs <- keyNeeds appContext topDownContext (Located Nothing certificate)
+                        pure $ if overlap resources (relevantNeeds certificate needs)
+                            then Just key
+                            else Nothing
+                    else pure Nothing
+            else pure []
+
+    -- With the strict algorithm a certificate that inherits gets the resources
+    -- of the certificate with the key, if it's valid under it. With the 
+    -- reconsidered one, every certificate gets what it has of them.
+    mayDependOn resources certificate =
+        case validationRFC of
+            StrictRFC       -> contained (explicitResources certificate) resources
+            ReconsideredRFC -> True
+
+    -- What of the needs of the children of the certificate the resources of
+    -- the certificate with the key can change
+    relevantNeeds (getResources -> AllResources v4 v6 as) (PrefixesAndAsns n4 n6 na) =
+        PrefixesAndAsns (relevant v4 n4) (relevant v6 n6) (relevant as na)
+
+    relevant :: Interval a => RSet (IntervalSet a) -> IntervalSet a -> IntervalSet a
+    relevant own needs = case (own, validationRFC) of
+        (Inherit, _)               -> needs
+        (RS _,    StrictRFC)       -> IS.empty
+        (RS r,    ReconsideredRFC) -> intersectionOf needs r
+
+
+-- | The CA children of the key with resources that depend on the certificate
+-- with the key, see `KeyChildren`. They are found once there's another
+-- certificate with the key, i.e. hardly ever, and remembered for the run.
+dependentCaChildren :: ValidatorIO es =>
+                        AppContext s -> TopDownContext -> Ca -> TVar KeyChildren -> Eff es DependentChildren
+dependentCaChildren appContext@AppContext {..} topDownContext ca childrenVar =
+    (.dependent) <$> liftIO (readTVarIO childrenVar) >>= \case
+        Just dependent -> pure dependent
+        Nothing -> do
+            fullCa  <- getFullCa appContext topDownContext ca
+            entries <- signedManifestEntries appContext topDownContext fullCa
+            children <- roTxT database $ \tx ->
+                fmap catMaybes $ forM [ hash | MftPair name hash <- entries, textObjectType name == Just CER ] $ \hash ->
+                    DB.getKeyByHash tx hash >>= \case
+                        Nothing  -> pure Nothing
+                        Just key -> DB.getObjectByKey tx key <&> \case
+                            Just (WellStructuredRO (CerRO c)) | depends c -> Just $ DependentChild key c
+                            _                                             -> Nothing
+            -- What of the resources of a certificate with the key can make a 
+            -- difference to any of them
+            let ownResources
+                    | any (inheritsSome . (.certificate)) children = anyResources
+                    | otherwise = unionOf [ explicitResources c.certificate | c <- children ]
+            let dependent = DependentChildren {..}
+            liftIO $ atomically $ modifyTVar' childrenVar $ \c -> c { dependent = Just dependent }
+            pure dependent
+  where
+    depends c = case config.validationConfig.validationRFC of
+        StrictRFC       -> inheritsSome c
+        ReconsideredRFC -> True
+
 
 {- | What the children of a key need from a certificate with the key to be valid
-   under it: the resources of the objects on the manifests that the key signed,
-   the ones that validation of the key can try, and of what they have, e.g. the
-   prefixes of a ROA. Not what a child inherits, it's valid under any certificate
-   with that. A CA certificate that inherits needs what its children need, when
-   they are validated under the resources of the certificate with the key.
+   under it: what the objects on the manifests that the key signed need (see 
+   `objectNeeds`), the ones that validation of the key can try. A CA certificate
+   that inherits needs what its children need, when they are validated under 
+   the resources of the certificate with the key.
 
    It's only needed for a key with more than one certificate, i.e. hardly ever,
    and it's remembered for the run.
@@ -544,10 +650,6 @@ keyNeeds :: ValidatorIO es => AppContext s -> TopDownContext -> Located WellStru
 keyNeeds appContext@AppContext {..} topDownContext = needsOfKey mempty
   where
     remembered = topDownContext.allTas.knownKeyNeeds
-    -- So that the signatures of the manifests are checked once for every
-    -- validation of the key, see `knownSignature`
-    context = topDownContext & #anotherPassOfKey .~ True
-    maxManifests = config.validationConfig.maxManifestFallbacks + 1
     maxDepth = config.validationConfig.maxCertificatePathDepth
 
     needsOfKey path ca = do
@@ -557,18 +659,14 @@ keyNeeds appContext@AppContext {..} topDownContext = needsOfKey mempty
             Nothing
                 -- A cycle of keys, or too many of them that inherit one after
                 -- another, could need anything
-                | Set.member aki path || Set.size path >= maxDepth -> pure anything
+                | Set.member aki path || Set.size path >= maxDepth -> pure anyResources
                 | otherwise -> do
-                    needs <- needsOfManifests (Set.insert aki path) ca aki
+                    needs <- needsOfManifests (Set.insert aki path) ca
                     liftIO $ atomically $ modifyTVar' remembered $ Map.insert aki needs
                     pure needs
 
-    needsOfManifests path ca aki = do
-        mfts <- roTxT database $ \tx -> DB.getMftsForAKI tx aki
-        signed <- forM (take maxManifests mfts) $ \m ->
-                    getSignedMft appContext context ca m <&> \case
-                        Just (SignedMft mft) -> [ hash | MftPair _ hash <- mft.object.payload.content.mftEntries ]
-                        _                    -> []
+    needsOfManifests path ca = do
+        entries <- signedManifestEntries appContext topDownContext ca
         -- What every object needs is kept, not the object
         needs <- roTxT database $ \tx ->
             foldM (\collected hash ->
@@ -576,64 +674,111 @@ keyNeeds appContext@AppContext {..} topDownContext = needsOfKey mempty
                         Nothing  -> pure collected
                         Just key -> DB.getObjectByKey tx key >>= \case
                             Just (WellStructuredRO o) -> do
-                                let (explicit, inheriting) = objectNeeds o
-                                needs <- IOExc.evaluate $ force explicit
+                                needs <- IOExc.evaluate $ force $ objectNeeds StrictRFC o
                                 -- and of the object, only the certificate if it inherits
-                                void $ IOExc.evaluate $ length inheriting
+                                let inheriting = case o of
+                                        CerRO c | inheritsSome c -> [c]
+                                        _                         -> []
                                 pure $ (needs, inheriting) : collected
                             _ -> pure collected)
-                [] (Set.toList $ Set.fromList $ concat signed)
-        let (explicit, inheriting) = mconcat needs
+                [] (Set.toList $ Set.fromList [ hash | MftPair _ hash <- entries ])
+        let (explicit, inheriting) = bimap unionOf concat $ unzip needs
         fromInheriting <- forM inheriting $ inheritedNeeds path
-        pure $! toNeeds $ explicit <> mconcat fromInheriting
-
-    -- What the object needs, and the CA certificate if it inherits something
-    objectNeeds :: WellStructuredRpkiObject -> (Needs, [WellStructuredCaCert])
-    objectNeeds = \case
-        CerRO c  -> (explicitOf c, [ c | inheritsSome c ])
-        RoaRO r  -> (explicitOf r <> roaPrefixes r.content, [])
-        SplRO s  -> (explicitOf s <> asns [ let SplPayload asn _ = s.content in AS asn ], [])
-        AspaRO a -> (explicitOf a <> asns [AS a.content.customer], [])
-        BgpRO b  -> (explicitOf b, [])
-        GbrRO g  -> (explicitOf g, [])
-        _        -> mempty
+        pure $! unionOf $ explicit : fromInheriting
 
     -- What the children of the CA certificate need of what it inherits
     inheritedNeeds path c = do
         PrefixesAndAsns v4 v6 as <- needsOfKey path (Located Nothing c)
         let AllResources cv4 cv6 cas = getResources c
-            ifInherits Inherit needs = IS.toList needs
-            ifInherits _       _     = []
-        pure $ Needs (ifInherits cv4 v4) (ifInherits cv6 v6) (ifInherits cas as)
+            ifInherits :: RSet (IntervalSet a) -> IntervalSet a -> IntervalSet a
+            ifInherits Inherit needs = needs
+            ifInherits _       _     = IS.empty
+        pure $ PrefixesAndAsns (ifInherits cv4 v4) (ifInherits cv6 v6) (ifInherits cas as)
 
-    explicitOf (getResources -> AllResources v4 v6 as) = Needs (rs v4) (rs v6) (rs as)
-      where
-        rs (RS s)  = IS.toList s
-        rs Inherit = []
 
-    inheritsSome (getResources -> AllResources v4 v6 as) = inherits v4 || inherits v6 || inherits as
+-- | The entries of the manifests that the key of the CA signed, of the ones 
+-- that validation of the key can try
+signedManifestEntries :: ValidatorIO es =>
+                        AppContext s -> TopDownContext -> Located WellStructuredCaCert -> Eff es [MftPair]
+signedManifestEntries appContext@AppContext {..} topDownContext ca = do
+    mfts <- roTxT database $ \tx -> DB.getMftsForAKI tx $ toAKI $ getSKI ca
+    fmap concat $ forM (take maxManifests mfts) $ \m ->
+        getSignedMft appContext context ca m <&> \case
+            Just (SignedMft mft) -> mft.object.payload.content.mftEntries
+            _                    -> []
+  where
+    maxManifests = config.validationConfig.maxManifestFallbacks + 1
+    -- So that the signatures of the manifests are checked once for every
+    -- validation of the key, see `knownSignature`
+    context = topDownContext & #anotherPassOfKey .~ True
+
+
+{- | What an object needs from the certificate of its CA to be valid under it:
+   the resources it has that it doesn't inherit, and what it has in its 
+   payload, e.g. the prefixes of a ROA. 
+
+   With the reconsidered algorithm it's only what is in its payload: resources
+   of an EE certificate that the CA doesn't have are only a warning, and a CA 
+   certificate is valid with the ones the CA has.
+-}
+objectNeeds :: ValidationRFC -> WellStructuredRpkiObject -> PrefixesAndAsns
+objectNeeds validationRFC o = 
+    case validationRFC of 
+        StrictRFC       -> unionOf [explicit, payload]
+        ReconsideredRFC -> payload
+  where
+    explicit = case o of
+        CerRO c  -> explicitResources c
+        RoaRO r  -> explicitResources r
+        SplRO s  -> explicitResources s
+        AspaRO a -> explicitResources a
+        BgpRO b  -> explicitResources b
+        GbrRO g  -> explicitResources g
+        _        -> noResources
+
+    payload = case o of
+        RoaRO r -> let VrpsPerAs _ v4s v6s = r.content 
+                   in PrefixesAndAsns (IS.fromList [ p | Vrp4 p _ <- v4s ]) (IS.fromList [ p | Vrp6 p _ <- v6s ]) IS.empty
+        SplRO s -> let SplPayload asn _ = s.content in asns [AS asn]
+        BgpRO b -> explicitResources b
+        _       -> noResources
+
+    asns = PrefixesAndAsns IS.empty IS.empty . IS.fromList
+
+-- | The resources that are not inherited
+explicitResources :: WithResources r => r -> PrefixesAndAsns
+explicitResources = toPrefixesAndAsns . getResources
+
+inheritsSome :: WithResources r => r -> Bool
+inheritsSome (getResources -> AllResources v4 v6 as) = inherits v4 || inherits v6 || inherits as
+  where
+    inherits :: RSet a -> Bool
     inherits = \case
         Inherit -> True
         RS _    -> False
 
-    roaPrefixes (VrpsPerAs _ v4s v6s) =
-        Needs [ p | Vrp4 p _ <- v4s ] [ p | Vrp6 p _ <- v6s ] []
+-- | Whether it's a resource that a child doesn't have but needs, so that it 
+-- can be valid under another certificate with the key that has it
+isResourceError :: AppError -> Bool
+isResourceError = \case
+    ValidationE (OverclaimedResources _)              -> True
+    ValidationE (RoaPrefixIsOutsideOfResourceSet _ _) -> True
+    ValidationE (SplAsnNotInResourceSet _ _)          -> True
+    ValidationE (BGPCertAsnsNotInResourceSet _ _)     -> True
+    _                                                 -> False
 
-    asns = Needs [] []
+unionOf :: [PrefixesAndAsns] -> PrefixesAndAsns
+unionOf rs = PrefixesAndAsns
+    (IS.fromList $ concat [ IS.toList v4 | PrefixesAndAsns v4 _ _ <- rs ])
+    (IS.fromList $ concat [ IS.toList v6 | PrefixesAndAsns _ v6 _ <- rs ])
+    (IS.fromList $ concat [ IS.toList as | PrefixesAndAsns _ _ as <- rs ])
 
-    toNeeds (Needs v4 v6 as) = PrefixesAndAsns (IS.fromList v4) (IS.fromList v6) (IS.fromList as)
-
-    anything = PrefixesAndAsns
-        (IS.fromList [mkIpv4Block 0 0])
-        (IS.fromList [mkIpv6Block 0 0])
-        (IS.fromList [ASRange minBound maxBound])
-
--- | Resources as they are collected
-data Needs = Needs [Ipv4Prefix] [Ipv6Prefix] [AsResource]
-    deriving stock (Generic)
-    deriving anyclass (NFData)
-    deriving Semigroup via GenericSemigroup Needs
-    deriving Monoid    via GenericMonoid Needs
+noResources, anyResources :: PrefixesAndAsns
+noResources = PrefixesAndAsns IS.empty IS.empty IS.empty
+anyResources = PrefixesAndAsns
+    (IS.fromList [mkIpv4Block 0 0])
+    (IS.fromList [mkIpv6Block 0 0])
+    (IS.fromList [ASRange minBound maxBound])
 
 -- | Whether the resources have something in common
 overlap :: PrefixesAndAsns -> PrefixesAndAsns -> Bool
@@ -641,6 +786,16 @@ overlap (PrefixesAndAsns a4 a6 as) (PrefixesAndAsns b4 b6 bs) =
     common a4 b4 || common a6 b6 || common as bs
   where
     common xs ys = any (not . null . (`IS.findIntersections` ys)) (IS.toList xs)
+
+-- | Whether all of the first resources are within the second ones
+contained :: PrefixesAndAsns -> PrefixesAndAsns -> Bool
+contained (PrefixesAndAsns a4 a6 as) (PrefixesAndAsns b4 b6 bs) =
+    within a4 b4 && within a6 b6 && within as bs
+  where
+    within xs ys = all (`IS.isInside` ys) (IS.toList xs)
+
+intersectionOf :: Interval a => IntervalSet a -> IntervalSet a -> IntervalSet a
+intersectionOf xs ys = let (Nested common, _) = IS.intersectionAndOverclaimedIntervals xs ys in common
 
 
 -- Validate the manifest of the CA with its children, the way `planManifests` says.
@@ -1000,7 +1155,7 @@ manifestFullValidation
 
         -- If MFT shortcut is present, filter children that need validation,
         -- children that are on the shortcut are already validated.
-        let (newChildren, overlappingChildren0, deletedKeys) =
+        let (newChildren0, overlappingChildren0, deletedKeys) =
                 case mftShortcut of
                     Nothing       -> (nonCrlChildren, [], [])
                     Just mftShort ->
@@ -1024,6 +1179,11 @@ manifestFullValidation
         let revokedKeys = Set.fromList $ map fst revokedEntries
         let overlappingChildren =
                 filter (\(T3 _ _ k) -> k `Set.notMember` revokedKeys) overlappingChildren0
+
+        -- Under another certificate with the key, see `KeyChildren`
+        let newChildren = case onlyChildren of
+                Nothing   -> newChildren0
+                Just asked -> filter (\(T3 _ _ k) -> Set.member k asked) newChildren0
 
         bumpCounterBy topDownCounters #newChildren (length newChildren)
         bumpCounterBy topDownCounters #overlappingChildren (length overlappingChildren)
@@ -1536,7 +1696,8 @@ validateChildObject
                 pure resources
 
             case certResult of
-                Left _ -> do
+                Left e -> do
+                    whenResourceError e
                     embedState certState
                     entryFor (Just InvalidCaChild) Nothing
 
@@ -1563,9 +1724,17 @@ validateChildObject
         validLeaf validate = do
             validateObjectLocations child
             entryFor Nothing =<< allowRevoked (do
-                leaf <- validate
+                leaf <- validate `catchError` \_cs e -> do
+                    whenResourceError e
+                    appError e
                 acceptLeaf topDownContext FromObject leaf
                 pure $ Just leaf)
+
+        -- Not valid only because of its resources, it can be valid under 
+        -- another certificate with the key that has them, see `KeyChildren`
+        whenResourceError e = 
+            when (isResourceError e) $ 
+                recordPendingChild topDownContext childKey (objectNeeds validationRFC childRo)
 
         -- In case of RevokedResourceCertificate error, the whole manifest is not to be considered
         -- invalid, only the object with the revoked certificate is considered invalid.

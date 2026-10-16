@@ -59,7 +59,7 @@ data Run = Run {
 -- it's done, as validation does it.
 validateInOrder :: AppContext SqliteBackend -> Now -> [WellStructuredCaCert] -> IO Run
 validateInOrder appContext now cas = do
-    (context, shortcutQueue) <- newContext appContext now
+    (context, shortcutQueue) <- newContext now
     states <- forM cas $ \ca ->
         fmap snd $ runValidatorIO (newScopes "in-order") $
             validateCa appContext
@@ -85,13 +85,11 @@ validationMetric state =
 
 -- | The context of validating a TA, with the repository of every CA fetched,
 -- otherwise there's nothing to validate
-newContext :: AppContext SqliteBackend -> Now -> IO (TopDownContext, ClosableQueue MftShortcutOp)
-newContext appContext (Now now) = do
+newContext :: Now -> IO (TopDownContext, ClosableQueue MftShortcutOp)
+newContext (Now now) = do
     shortcutQueue <- newCQueueIO 1000
     workPool      <- newWorkPool
-    db <- readTVarIO $ appContext ^. #database
-    keysSharedBefore <- DB.roTx db DB.getKeysOfSeveralCaCertificates
-    allTas <- newAllTasTopDownContext (instantToVersion now) fetched shortcutQueue mempty keysSharedBefore workPool
+    allTas <- newAllTasTopDownContext (instantToVersion now) fetched shortcutQueue mempty workPool
     (, shortcutQueue) <$> newTopDownContext (TaName "test") allTas
   where
     fetched = PublicationPoints (RrdpMap mempty) $
