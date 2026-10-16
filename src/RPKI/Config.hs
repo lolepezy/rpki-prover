@@ -194,9 +194,10 @@ data HttpApiConfig = HttpApiConfig {
     deriving anyclass (TheBinary)
 
 data RtrConfig = RtrConfig {
-        rtrAddress :: String,
-        rtrPort    :: Int16,
-        rtrLogFile :: Maybe String          
+        rtrAddress        :: String,
+        rtrPort           :: Int16,
+        rtrLogFile        :: Maybe String,
+        rtrMaxConnections :: Int
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -415,9 +416,11 @@ defaultsLogLevel = InfoL
 
 defaultRtrConfig :: RtrConfig
 defaultRtrConfig = RtrConfig { 
-        rtrAddress = "localhost",
-        rtrPort    = 8283,
-        rtrLogFile = Nothing
+        rtrAddress        = "localhost",
+        rtrPort           = 8283,
+        rtrLogFile        = Nothing,
+        -- RTR clients are routers, so a few hundred is already generous
+        rtrMaxConnections = 512
     }
     
 -- This is a heuristic list of rsync repositories that is currently out there

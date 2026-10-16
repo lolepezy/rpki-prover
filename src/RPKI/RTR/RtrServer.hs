@@ -81,15 +81,6 @@ preNegotiationVersion = V0
 preNegotiated :: Pdu -> PduLike
 preNegotiated pdu = TruePdu $ VersionedPdu pdu preNegotiationVersion
 
-{- | Maximum number of simultaneous RTR client connections.
-
-   An RTR server talks to routers, so a few hundred is already generous, while
-   an unbounded accept loop lets anyone who can reach the port exhaust threads
-   and file descriptors.
--}
-maxRtrConnections :: Int
-maxRtrConnections = 512
-
 -- | https://datatracker.ietf.org/doc/html/rfc8210#section-8.2
 -- "The cache MUST rate-limit Serial Notifies to no more frequently than one
 -- per minute."
@@ -144,7 +135,7 @@ runRtrServer appContext RtrConfig {..} = do
             (conn, peer) <- accept sock
             accepted <- atomically $ do 
                 n <- readTVar connectionCount
-                if n >= maxRtrConnections
+                if n >= rtrMaxConnections
                     then pure False
                     else do 
                         writeTVar connectionCount $! n + 1
@@ -161,7 +152,7 @@ runRtrServer appContext RtrConfig {..} = do
                 else do 
                     logWarn logger $ 
                         [i|Rejecting RTR connection from #{peer}, |] <>
-                        [i|already serving the maximum of #{maxRtrConnections} connections.|]
+                        [i|already serving the maximum of #{rtrMaxConnections} connections.|]
                     close conn
     
     -- | Block on updates on `appState` and when these update happen
