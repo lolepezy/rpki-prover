@@ -1,7 +1,8 @@
-# Debian/Ubuntu packaging for rpki-prover
+# Debian/Ubuntu and RHEL packaging for rpki-prover
 
 Everything needed to build, test and publish `.deb` packages of `rpki-prover`
-for the current Debian and Ubuntu LTS releases.
+for the current Debian and Ubuntu LTS releases, and `.rpm` packages for
+RHEL 9 and 10 and their rebuilds (see [RPM packages](#rpm-packages)).
 
 ```
 pkg/
@@ -10,10 +11,18 @@ pkg/
 ├── build-packages.sh             host side: build a package for each release
 ├── build-deb-in-container.sh     container side: what actually runs the build
 ├── debian/                       the debian/ directory, as templates
+├── rpm-releases.conf             the same for the RPM targets
+├── Dockerfile.rpm-builder        per-release RPM build environment
+├── build-rpm-packages.sh         host side of the RPM build
+├── build-rpm-in-container.sh     container side of the RPM build
+├── rpm/                          the spec file and what it installs
 ├── test-scripts/
 │   ├── test-rpki-prover.sh       install / upgrade / remove / purge checks
+│   ├── test-rpki-prover-rpm.sh   install / upgrade / remove checks for the .rpm
+│   ├── test-worker-sandbox.sh    worker processes and their Landlock sandbox
 │   ├── Dockerfile.systemd        a Debian container that runs systemd
-│   └── run-in-docker.sh          fast test loop in that container
+│   ├── Dockerfile.systemd-rpm    an EL container that runs systemd
+│   └── run-in-docker.sh          fast test loop in those containers
 ├── vagrant/Vagrantfile           the same checks in real VMs, for releases
 └── apt-repo/build-apt-repo.sh    turns the packages into a signed APT repo
 ```
@@ -164,3 +173,58 @@ rather not run the signing yourself:
 
 Whichever you pick, the packages this directory produces are the input; only
 the last step changes.
+
+## RPM packages
+
+```sh
+./pkg/build-rpm-packages.sh              # every release in pkg/rpm-releases.conf
+./pkg/build-rpm-packages.sh el9          # just one
+```
+
+This works the same way as the `.deb` build: one container per release from
+`pkg/rpm-releases.conf` (`el9`, `el10`, both on Rocky Linux images), GHC and
+cabal from ghcup, dependencies pre-built into the image, and `rpmbuild -bb
+--build-in-place` over a copy of the checkout. Packages end up in
+`pkg/packages/el9/` and `pkg/packages/el10/`, named like
+`rpki-prover-0.11.0-1.el9.x86_64.rpm`. The `.el9`/`.el10` tag comes from the
+build image's `%{dist}`, so one package per major version serves RHEL, Rocky,
+AlmaLinux and Oracle Linux alike. Shared library requirements are generated
+by rpmbuild from the binary, the counterpart of `dpkg-shlibdeps`.
+
+`pkg/rpm/rpki-prover.spec` installs the same things as the `.deb`, except:
+
+| `.deb` | `.rpm` |
+|---|---|
+| `/etc/default/rpki-prover` | `/etc/sysconfig/rpki-prover`, `%config(noreplace)` |
+| `/lib/systemd/system/rpki-prover.service` | `/usr/lib/systemd/system/rpki-prover.service`, generated from the same file with the `EnvironmentFile=` path changed |
+| user created by the postinst | `/usr/lib/sysusers.d/rpki-prover.conf`, plus a `%pre` for EL9's rpm, which does not apply sysusers files itself |
+| service enabled and started on install | service left disabled, as `%systemd_post` defers to the presets; `systemctl enable --now rpki-prover` |
+| `remove` keeps config and state, `purge` deletes both and the user | there is no purge: erasing keeps the user and `/var/lib/rpki-prover`, deletes an unmodified config file and keeps a modified one as `.rpmsave` |
+
+Upgrades restart a running service (`%systemd_postun_with_restart`), and a
+locally edited `/etc/sysconfig/rpki-prover` is left alone; if the packaged one
+changed too, the new one lands next to it as `.rpmnew`.
+
+The tests are `test-scripts/test-rpki-prover-rpm.sh`, which mirrors
+`test-rpki-prover.sh` but checks the RPM behaviour above. Its `cleanup` mode
+does by hand what a purge would, so that the upgrade test starts from a clean
+machine. Both test loops pick the RPM path for the `el*` names:
+
+```sh
+./pkg/test-scripts/run-in-docker.sh el9
+./pkg/test-scripts/run-in-docker.sh --sandbox el10
+
+cd pkg/vagrant
+vagrant up el9           # Rocky Linux 9; RPKI_PROVER_BOX_EL9=almalinux/9 for Alma
+vagrant destroy -f el9
+```
+
+For the upgrade test, drop the previous release's `.rpm` into
+`pkg/packages/<release>/old/`. To exercise the upgrade path without one, build
+the same sources twice with different revisions:
+
+```sh
+./pkg/build-rpm-packages.sh --output /tmp/old el9 && mkdir -p pkg/packages/el9/old \
+  && mv /tmp/old/el9/*.rpm pkg/packages/el9/old/
+./pkg/build-rpm-packages.sh --revision 2 el9
+```

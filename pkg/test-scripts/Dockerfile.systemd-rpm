@@ -1,0 +1,32 @@
+# An EL container that actually runs systemd: the RPM counterpart of
+# Dockerfile.systemd, used by run-in-docker.sh for the releases in
+# pkg/rpm-releases.conf.
+#
+# This is the fast feedback loop; pkg/vagrant is the real thing and is what
+# should be run before tagging a release.
+
+ARG BASE_IMAGE=rockylinux/rockylinux:9
+FROM ${BASE_IMAGE}
+
+ENV container=docker \
+    LANG=C.UTF-8
+
+# The images tell dnf to skip documentation, which would drop the man page
+# and the license file the tests check for; put dnf back to normal first.
+RUN sed -i '/^tsflags=nodocs/d' /etc/dnf/dnf.conf \
+    && dnf install -y \
+        dbus \
+        findutils \
+        procps-ng \
+        systemd \
+    && dnf clean all \
+    && rm -f /usr/lib/systemd/system/multi-user.target.wants/* \
+             /etc/systemd/system/*.wants/* \
+             /usr/lib/systemd/system/local-fs.target.wants/* \
+             /usr/lib/systemd/system/sockets.target.wants/*udev* \
+             /usr/lib/systemd/system/sockets.target.wants/*initctl* \
+             /usr/lib/systemd/system/basic.target.wants/* \
+             /usr/lib/systemd/system/sysinit.target.wants/systemd-tmpfiles-setup.service
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/usr/sbin/init"]
