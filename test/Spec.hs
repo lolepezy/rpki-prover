@@ -16,7 +16,9 @@ import RPKI.RTR.RtrSpec
 import RPKI.SLURM.SlurmSpec
 import RPKI.Store.StorableSpec
 import RPKI.Validation.BottomUpSpec
+import RPKI.Validation.SharedKeySpec
 import RPKI.Validation.TopDownSpec
+import RPKI.Validation.ValidationWorkSpec
 import RPKI.Workflow.RevalidationSpec
 import RPKI.Fetch.ErikSpec
 import RPKI.WorkerSpec
@@ -43,6 +45,8 @@ main = defaultMain $ testGroup "All tests" [
         workflowSpec,
         topDownRegressionGroup,
         bottomUpGroup,
+        sharedKeyGroup,
+        validationWorkGroup,
         revalidationSpec,
         storableEncodingSpec,
         workerSpec,

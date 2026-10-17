@@ -187,5 +187,6 @@ shortcutMeta notBefore notAfter = DB.MftShortcutMeta {
         serial         = Serial 1,
         manifestNumber = Serial 1,
         crlShortcut    = CrlShortcut (ObjectKey $ asKey 2) notBefore notAfter,
-        hasIssues      = False
+        hasIssues      = False,
+        validatedUnder = digestOf "context"
     }

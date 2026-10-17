@@ -168,7 +168,15 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         NewerManifestExists Serial Serial |
                         -- The ASNs of a router certificate that its CA doesn't have,
                         -- then the ones the CA has
-                        BGPCertAsnsNotInResourceSet [ASN] [AsResource]
+                        BGPCertAsnsNotInResourceSet [ASN] [AsResource] |
+                        -- How many manifests of a CA were fallen back from
+                        TooManyManifestFallbacks Int |
+                        -- The key of a CA certificate, how many other CA certificates
+                        -- have it, and the locations of some of them
+                        CertificatesWithSameKey SKI Int [Locations] |
+                        -- A CA certificate with a key of other ones, and under how
+                        -- many of them children of the key were validated again already
+                        TooManyCertificatesOfKey SKI Int
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
     
@@ -495,6 +503,8 @@ data ValidationMetric = ValidationMetric {
         validAspaNumber :: Count,
         validBgpNumber  :: Count,
         mftShortcutNumber :: Count,                
+        -- | CA certificates with a key that other CA certificates have
+        sharedKeyCertNumber :: Count,
         totalTimeMs     :: TimeMs,
         validatedBy     :: ValidatedBy
     }

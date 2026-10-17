@@ -161,6 +161,17 @@ data ValidationConfig = ValidationConfig {
         -- during one TA top-down validation
         maxTaRepositories              :: Int,
 
+        -- How many times validation of a CA falls back from a manifest 
+        -- to an older one. Every manifest that is tried validates its 
+        -- children, and the key of a CA can sign any number of them.
+        maxManifestFallbacks           :: Int,
+
+        -- Under how many CA certificates with the same key, other than 
+        -- the first one, children of the key are validated again at most.
+        -- Only under the ones that have resources the children need,
+        -- anyone can issue a certificate with any key.
+        maxCertificatesPerKey          :: Int,
+
         -- Maximal allowed size of an individual object 
         maxObjectSize                  :: Integer,
 
@@ -311,6 +322,8 @@ defaultConfig = Config {
         -- couple of dates and a few extensions
         minObjectSize                  = 300,
         maxTaRepositories              = 1000,
+        maxManifestFallbacks           = 10,
+        maxCertificatesPerKey          = 3,
         validationRFC                  = StrictRFC,
         validationAlgorithm            = FullEveryIteration,
         minimalRevalidationInterval    = Seconds 30

@@ -31,7 +31,8 @@ data PrometheusMetrics = PrometheusMetrics {
         fetchStatus       :: Vector Text Gauge,
         uniqueVrpCounter  :: Vector Text Gauge,
         validObjectNumberPerTa   :: Vector (Text, Text) Gauge,
-        validObjectNumberPerRepo :: Vector (Text, Text) Gauge
+        validObjectNumberPerRepo :: Vector (Text, Text) Gauge,
+        sharedKeyCertificates    :: Vector Text Gauge
     }
     deriving (Generic)
 
@@ -69,6 +70,10 @@ createPrometheusMetrics Config {..} = do
     validObjectNumberPerRepo <- register
             $ vector ("repository", "type")
             $ gauge (Info (metricsPrefix <> "object_total") "Number of valid objects of different types per repository")
+    sharedKeyCertificates <- register
+            $ vector ("trustanchor" :: Text)
+            $ gauge (Info (metricsPrefix <> "shared_key_certificates") 
+                          "Number of CA certificates with a key that other CA certificates of the TA have")
 
     pure $ PrometheusMetrics {..}
 
@@ -86,9 +91,11 @@ updatePrometheus :: (MonadIO m, MonadMonitor m) => Metrics -> PrometheusMetrics 
 updatePrometheus rm PrometheusMetrics {..} _ = do    
     let grouped = groupedValidationMetric rm
     
-    forM_ (MonoidalMap.toList $ grouped ^. #byTa) $ \(TaName name, metric) ->
+    forM_ (MonoidalMap.toList $ grouped ^. #byTa) $ \(TaName name, metric) -> do
         setObjectMetricsPerUrl validObjectNumberPerTa name 
                 metric True vrpCounter
+        withLabel sharedKeyCertificates name $ flip setGauge $ 
+            fromIntegral $ unCount $ metric ^. #sharedKeyCertNumber
     forM_ (MonoidalMap.toList $ grouped ^. #byRepository) $ \(rpkiUrl, metric) -> 
         setObjectMetricsPerUrl validObjectNumberPerRepo (unURI $ getURL rpkiUrl) 
                 metric False vrpCounterPerRepo

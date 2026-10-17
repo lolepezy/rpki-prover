@@ -44,9 +44,33 @@ import           RPKI.Resources.Resources
 import           RPKI.Validation.Common        
 
 
-type WithIssuerKey p = (WithPubKey p, WithSKI p)
+type WithIssuerKey p = (WithSKI p, IssuerSignature p)
 type CertIssuer p    = (WithIssuerKey p, OfCertType p 'CACert)
 type CaParent p      = (CertIssuer p, WithResources p)
+
+-- | The signature of an object by its issuer. It doesn't depend on where the
+-- object is in the tree, so it can be known already, see `SignatureKnown`.
+class IssuerSignature p where
+    signatureOf :: WithSignMaterial c => c -> p -> SignatureVerification
+
+instance {-# OVERLAPPABLE #-} WithPubKey p => IssuerSignature p where
+    signatureOf = validateSignMaterial
+
+-- | An issuer and the signature by it of the object that is validated. 
+-- The field is lazy, so that the signature is checked only when it's 
+-- needed, after the checks that don't need cryptography.
+data SignatureKnown p = SignatureKnown p SignatureVerification
+
+instance IssuerSignature (SignatureKnown p) where
+    signatureOf _ (SignatureKnown _ signature) = signature
+
+instance {-# OVERLAPPING #-} WithSKI p => WithSKI (SignatureKnown p) where
+    getSKI (SignatureKnown p _) = getSKI p
+
+instance WithResources p => WithResources (SignatureKnown p) where
+    getResources (SignatureKnown p _) = getResources p
+
+instance OfCertType p t => OfCertType (SignatureKnown p) t
 
 type CertCore c       = (WithAKI c, WithSerial c, WithValidityPeriod c)
 type SignedCertCore c = (CertCore c, WithSignMaterial c)
@@ -291,12 +315,14 @@ chooseTaCert cert cachedCert = do
 
 -- | In general, resource certifcate validation is:
 --
---    - check the signature (with the parent)
 --    - check all the needed extensions
 --    - check expiration times
---    - check the resource set (needs the parent as well)
 --    - check it's not revoked (needs CRL)
+--    - check the signature (with the parent)
+--    - check the resource set (needs the parent as well), see `validateResources`
 -- 
+-- The checks that don't need cryptography go first, so that objects that 
+-- are not valid anyway don't cost a signature check.
 validateResourceCert :: forall child parent es.
      (Validator es, SignedCertCore child, WithCertUris child, CertIssuer parent) =>
     Now ->
@@ -305,6 +331,19 @@ validateResourceCert :: forall child parent es.
     Validated CrlObject ->
     Eff es (Validated child)
 validateResourceCert now cert parentCert vcrl = do
+    validateResourceCertExceptSignature now cert parentCert vcrl
+    signatureCheck $ signatureOf cert parentCert
+    pure $ Validated cert
+
+-- | Everything of `validateResourceCert` but the signature
+validateResourceCertExceptSignature :: forall child parent es.
+     (Validator es, SignedCertCore child, WithCertUris child, CertIssuer parent) =>
+    Now ->
+    child ->
+    parent ->
+    Validated CrlObject ->
+    Eff es ()
+validateResourceCertExceptSignature now cert parentCert vcrl = do
     void $ validateObjectValidityPeriod cert now
 
     -- This one is here and not in "prevalidate" workflow, because
@@ -312,14 +351,11 @@ validateResourceCert now cert parentCert vcrl = do
     -- not a TA certificate for which validateRequiredParentPointers would fail.
     validateRequiredParentPointers cert
 
-    signatureCheck $ validateSignMaterial cert parentCert
-    when (isRevoked cert vcrl) $ 
-        vError RevokedResourceCertificate                
-
     unless (correctSkiAki cert parentCert) $    
         vError $ AKIIsNotEqualsToParentSKI (getAKI cert) (getSKI parentCert)
 
-    pure $ Validated cert
+    when (isRevoked cert vcrl) $ 
+        vError RevokedResourceCertificate                
   where
     correctSkiAki c (getSKI -> SKI s) =
         maybe False (\(AKI a) -> a == s) $ getAKI c
@@ -362,10 +398,12 @@ validateBgpCert ::
 validateBgpCert validationRFC now bgpCert parentCert validCrl verifiedResources = do
     -- Validate BGP certificate according to 
     -- https://www.rfc-editor.org/rfc/rfc8209.html#section-3.3    
-    void $ validateResourceCert now bgpCert parentCert validCrl
+    validateResourceCertExceptSignature now bgpCert parentCert validCrl
 
     -- Its resources are the ones of its issuer, as for any resource certificate
     void $ validateResources validationRFC verifiedResources bgpCert parentCert
+
+    signatureCheck $ signatureOf bgpCert parentCert
 
     -- Must be some ASNs
     bgpSecAsns <- validateBgpCertAsns $ getResources bgpCert
@@ -387,10 +425,10 @@ validateCrl :: (Validator es, WithIssuerKey parent) =>
     Eff es (Validated CrlObject)
 validateCrl now crlObject@CrlObject{..} parentCert = do
     let SignCRL{..} = signCrl
-    signatureCheck $ validateSignMaterial crlObject parentCert
     when (toAKI (getSKI parentCert) /= aki) $
         vError $ CRL_AKI_DifferentFromCertSKI (getSKI parentCert) aki    
     validateUpdateTimes now thisUpdateTime nextUpdateTime
+    signatureCheck $ signatureOf crlObject parentCert
     pure $ Validated crlObject
 
 
@@ -547,8 +585,9 @@ validateCms :: (Validator es, CaParent parent) =>
     Maybe (VerifiedRS PrefixesAndAsns) ->
     Eff es ()
 validateCms validationRFC now cms parentCert crl verifiedResources = do
-    void $ validateResourceCert now cms.eeCert parentCert crl
+    validateResourceCertExceptSignature now cms.eeCert parentCert crl
     void $ validateResources validationRFC verifiedResources cms.eeCert parentCert
+    signatureCheck $ signatureOf cms.eeCert parentCert
 
 
 validateUpdateTimes :: Validator es => Now -> Instant -> Instant -> Eff es ()

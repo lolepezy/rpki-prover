@@ -8,23 +8,35 @@ import           Effectful
 import           Control.Concurrent.STM
 import           Control.Monad
 
+import qualified Crypto.Hash.SHA256               as S256
+
+import qualified Data.ByteString                  as BS
+import qualified Data.ByteString.Short            as BSS
+import qualified Data.ByteString.Builder          as BB
+import qualified Data.ByteString.Builder.Extra    as BB (toLazyByteStringWith, untrimmedStrategy, defaultChunkSize)
 import           Data.Foldable
 import qualified Data.Map.Strict                  as Map
 import qualified Data.List                        as List
 import           Data.List.NonEmpty               (NonEmpty (..))
 import           Data.Text                        (Text)
+import qualified Data.Text.Encoding               as Text
 import           Data.Tuple.Strict
+import qualified Data.Vector                      as V
+import           Data.Word                        (Word8, Word32, Word64)
 
 import           RPKI.AppContext
 import           RPKI.Domain
 import           RPKI.Parallel
 import           RPKI.Repository
+import           RPKI.Resources.Resources         (toPrefixesAndAsns)
+import           RPKI.Resources.Types
 
 import           RPKI.Store.Base.Storable
 import           RPKI.Store.Database    (rwTxT)
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Types
 import           RPKI.Time
+import           RPKI.Util                        (mkHash)
 import           RPKI.Validation.Types
 import           RPKI.Validation.ObjectValidation
 
@@ -37,6 +49,8 @@ makeCaShortcut key (Validated certificate) ppas = let
         ski = getSKI certificate
         serial = getSerial certificate
         resources = getResources certificate
+        mftUri = certificate.certUris.manifestUri
+        ownResourcesHash = certResourcesHash resources
     in CaChild (CaShortcut {..}) serial
 
 makeRoaShortcut :: ObjectKey -> Validated WellStructuredRoa -> VrpsPerAs -> MftChild
@@ -78,10 +92,11 @@ makeMftShortcut :: ObjectKey
                 -> Validated WellStructuredMft -> [(ObjectKey, MftEntry)] 
                 -> Keyed (Validated CrlObject) 
                 -> Bool
+                -> Hash
                 -> MftShortcut   
 makeMftShortcut key 
     (Validated mftObject) (Map.fromList -> nonCrlEntries) 
-    (Keyed (Validated validCrl) crlKey) hasIssues = 
+    (Keyed (Validated validCrl) crlKey) hasIssues validatedUnder = 
   let
     ValidityPeriod {..} = manifestValidityPeriod mftObject
     serial = getSerial mftObject
@@ -104,6 +119,113 @@ manifestValidityPeriod mft =
     let ValidityPeriod eeNotBefore eeNotAfter = getValidityPeriod mft
         Manifest { thisTime, nextTime } = mft.content
     in ValidityPeriod (max eeNotBefore thisTime) (min eeNotAfter nextTime)
+
+-- | What the children of a CA are validated under, apart from its key: its 
+-- verified resources and the location of its manifest, by its SIA. Several 
+-- certificates can have the same key and different ones of these, e.g. a 
+-- certificate re-issued with fewer resources, or two parents issuing one 
+-- each. A manifest shortcut is used only under what its children were 
+-- validated under, otherwise they are validated again.
+validationContextHash :: Hash -> Maybe URI -> Hash
+validationContextHash resourcesHash mftUri = 
+    hashSized $ shortBytes (unHash resourcesHash) <> mftUriBytes
+  where
+    mftUriBytes = case mftUri of
+        Nothing      -> word8 0
+        Just (URI u) -> word8 1 <> bytes (Text.encodeUtf8 u)
+
+-- | The hash of the verified resources of a CA, given the resources of its 
+-- certificate and their hash (`certResourcesHash`), and the hash of the 
+-- verified resources of its parent.
+--
+-- It's done for every CA in every validation, so it's not the verified 
+-- resources themselves that are hashed: they are computed when they are 
+-- needed, and that costs more than taking all of the CA from its shortcut.
+-- It's what gives them: the resources of the certificate and, if it inherits 
+-- some, the hash of the parent's. That's the same for the same verified 
+-- resources, whatever the path to the CA. Only the resources the CA overclaims 
+-- (with the reconsidered algorithm) are not verified, then they are computed.
+verifiedResourcesHash :: AllResources 
+                      -> Hash 
+                      -> Hash 
+                      -> (VerifiedRS PrefixesAndAsns, Maybe (Overclaiming PrefixesAndAsns))
+                      -> Hash
+verifiedResourcesHash (AllResources ipv4 ipv6 asns) ownHash parentHash = \case
+    (_, Nothing) -> 
+        hashSized $ word8 1 <> shortBytes (unHash ownHash) <> inherited
+    (VerifiedRS (PrefixesAndAsns v4 v6 va), Just _) -> 
+        hashSized $ word8 2 <> elements ipv4Bytes v4 <> elements ipv6Bytes v6 <> elements asnBytes va
+  where
+    inherited = case (ipv4, ipv6, asns) of
+        (RS _, RS _, RS _) -> mempty
+        _                  -> shortBytes (unHash parentHash)
+
+-- | The hash of the resources on a certificate, a CA shortcut keeps it
+certResourcesHash :: AllResources -> Hash
+certResourcesHash (AllResources ipv4 ipv6 asns) = 
+    hashSized $ resourceSet ipv4Bytes ipv4 <> resourceSet ipv6Bytes ipv6 <> resourceSet asnBytes asns
+
+-- | The hash of the verified resources of a TA certificate, which has 
+-- no parent and can't inherit
+taResourcesHash :: AllResources -> Hash
+taResourcesHash resources = 
+    verifiedResourcesHash resources (certResourcesHash resources) noResourcesHash 
+        (VerifiedRS $ toPrefixesAndAsns resources, Nothing)
+
+-- | When there are no verified resources
+noResourcesHash :: Hash
+noResourcesHash = hashSized $ word8 0
+
+resourceSet :: (a -> Sized) -> RSet (IntervalSet a) -> Sized
+resourceSet element = \case
+    Inherit -> word8 0
+    RS s    -> word8 1 <> elements element s
+
+-- | With the number of them, so that where one set ends is known
+elements :: (a -> Sized) -> IntervalSet a -> Sized
+elements element (IntervalSet v) = 
+    word64 (fromIntegral $ V.length v) <> V.foldl' (\acc e -> acc <> element e) mempty v
+
+ipv4Bytes :: Ipv4Prefix -> Sized
+ipv4Bytes p = let (w, m) = ipv4PrefixWords p in word32 w <> word8 m
+
+ipv6Bytes :: Ipv6Prefix -> Sized
+ipv6Bytes p = let (hi, lo, m) = ipv6PrefixWords p in word64 hi <> word64 lo <> word8 m
+
+asnBytes :: AsResource -> Sized
+asnBytes = \case 
+    AS (ASN a)              -> word8 0 <> word32 a
+    ASRange (ASN a) (ASN b) -> word8 1 <> word32 a <> word32 b
+
+-- | Bytes to hash and how many of them there are, so that they are written 
+-- into one buffer of that size: the default ones are a lot bigger
+data Sized = Sized BB.Builder Int
+
+instance Semigroup Sized where
+    Sized a n <> Sized b m = Sized (a <> b) (n + m)
+
+instance Monoid Sized where
+    mempty = Sized mempty 0
+
+hashSized :: Sized -> Hash
+hashSized (Sized builder size) = 
+    mkHash $ S256.hashlazy $ 
+        BB.toLazyByteStringWith (BB.untrimmedStrategy size BB.defaultChunkSize) mempty builder
+
+word8 :: Word8 -> Sized
+word8 w = Sized (BB.word8 w) 1
+
+word32 :: Word32 -> Sized
+word32 w = Sized (BB.word32BE w) 4
+
+word64 :: Word64 -> Sized
+word64 w = Sized (BB.word64BE w) 8
+
+bytes :: BS.ByteString -> Sized
+bytes bs = Sized (BB.byteString bs) (BS.length bs)
+
+shortBytes :: BSS.ShortByteString -> Sized
+shortBytes bs = Sized (BB.shortByteString bs) (BSS.length bs)
 
 makeChildWithIssues :: ObjectKey -> Text -> Maybe CaChildValidity -> MftEntry
 makeChildWithIssues childKey fileName caCert =
@@ -217,8 +339,9 @@ data ShortcutWrites
     -- still have children that are not on this manifest.
     = ReplaceShortcut
     | UpdateShortcut {
-        -- | The shortcut is for another manifest now, or the
-        -- manifest's issues came or went
+        -- | The shortcut is for another manifest now, the manifest's 
+        -- issues came or went, or the children were validated under 
+        -- something else
         writeMeta       :: Bool,
         -- | Children that are new on the manifest or validated to something else
         changedChildren :: [(ObjectKey, MftEntry)],
@@ -235,7 +358,9 @@ shortcutWrites current next deletedKeys =
     case current of
         Nothing -> ReplaceShortcut
         Just shortcut -> UpdateShortcut {
-                writeMeta       = shortcut.key /= next.key || shortcut.hasIssues /= next.hasIssues,
+                writeMeta       = shortcut.key /= next.key || 
+                                  shortcut.hasIssues /= next.hasIssues ||
+                                  shortcut.validatedUnder /= next.validatedUnder,
                 -- Children validated again come out the same as they 
                 -- are on the shortcut most of the time
                 changedChildren = [ e | e@(k, entry) <- Map.toList next.nonCrlEntries,
