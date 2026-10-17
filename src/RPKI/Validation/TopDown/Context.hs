@@ -220,7 +220,7 @@ markAsUsed TopDownContext { allTas = AllTasTopDownContext {..}, treeSize = taTre
             modifyTVar' taTreeSize (+ 1)
 
 markAsUsedByHash :: ValidatorIO es => 
-                    AppContext s -> TopDownContext -> Hash -> Eff es ()
+                    AppContext -> TopDownContext -> Hash -> Eff es ()
 markAsUsedByHash AppContext {..} topDownContext hash = do
     key <- roTxT database $ \tx -> DB.getKeyByHash tx hash
     for_ key $ markAsUsed topDownContext              
@@ -317,7 +317,7 @@ moreVrps n = updateMetric @ValidationMetric @_ (#vrpCounter %~ (+n))
 
 -- | Mark validated objects in the database, i.e.
 applyValidationSideEffects :: (MonadIO m) =>
-                              AppContext s -> AllTasTopDownContext -> m ()
+                              AppContext -> AllTasTopDownContext -> m ()
 applyValidationSideEffects
     appContext@AppContext {..}
     AllTasTopDownContext {..} = liftIO $ do        
@@ -337,7 +337,7 @@ newtype IdenticalShow a = IdenticalShow a
 instance Show a => Show (IdenticalShow a) where
     show (IdenticalShow a) = show a
 
-reportCounters :: AppContext s -> TopDownCounters IORef -> IO ()
+reportCounters :: AppContext -> TopDownCounters IORef -> IO ()
 reportCounters AppContext {..} counters = do
     c <- btraverse (fmap IdenticalShow . readIORef) counters
     logDebug logger $ fmtGen c

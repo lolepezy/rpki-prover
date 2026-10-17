@@ -203,7 +203,7 @@ ensureTals logger talDir =
     dropTalExtension f = take (length f - 4) f
 
 
-runIteration :: Int -> AppContext SqliteBackend -> Maybe Instant -> Maybe FilePath -> [TAL] -> IO ()
+runIteration :: Int -> AppContext -> Maybe Instant -> Maybe FilePath -> [TAL] -> IO ()
 runIteration i appContext fixedNow dumpDir tals = do
     now <- maybe (unNow <$> thisInstant) pure fixedNow
     let worldVersion = instantToVersion now
@@ -284,7 +284,7 @@ runIteration i appContext fixedNow dumpDir tals = do
 
 -- | Everything a validation produced, as sorted text with one item per line
 -- and without timings, so that runs of two builds can be compared with `diff`.
-dumpResults :: FilePath -> AppContext SqliteBackend -> WorldVersion -> Map TaName TopDownResult -> IO ()
+dumpResults :: FilePath -> AppContext -> WorldVersion -> Map TaName TopDownResult -> IO ()
 dumpResults dir AppContext {..} worldVersion results = do
     createDirectoryIfMissing True dir
     writeLines "vrps.txt"

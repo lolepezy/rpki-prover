@@ -62,7 +62,7 @@ import           UnliftIO                        (pooledForConcurrentlyN)
 -- | Adjust running fetchers to the latest discovered repositories
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
-adjustFetchers :: AppContext s -> Map TaName Fetcheables -> WorkflowShared -> IO ()
+adjustFetchers :: AppContext -> Map TaName Fetcheables -> WorkflowShared -> IO ()
 adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@WorkflowShared { fetchers = Fetchers {..} } = do
     (currentFetchers, toStop, toStart) <- atomically $ do            
 
@@ -103,7 +103,7 @@ adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@W
             foldr Map.delete (foldr (uncurry Map.insert) r threads) (Set.toList toStop)
                         
 -- | Create a new fetcher for the given URL and run it.
-newFetcher :: AppContext s -> WorkflowShared -> RpkiURL -> IO ()
+newFetcher :: AppContext -> WorkflowShared -> RpkiURL -> IO ()
 newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetchers {..}, ..} url = do
     ignoreSync $ go `finally` dropFetcher fetchers url    
   where

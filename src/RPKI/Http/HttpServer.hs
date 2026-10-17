@@ -50,7 +50,6 @@ import           RPKI.Http.Dto
 import           RPKI.Http.UI
 import           RPKI.Store.Database     (Tx(..), TxMode(..), roTx, roTxT)
 import qualified RPKI.Store.Database    as DB
-import           RPKI.Store.AppStorage
 import           RPKI.Store.Types
 import           RPKI.SLURM.Types
 import           RPKI.Resources.Resources
@@ -60,7 +59,7 @@ import           RPKI.SLURM.SlurmProcessing (applySlurmBgpSec)
 import           RPKI.Meta.Version
 
 
-httpServer :: MaintainableStorage s => AppContext s -> Application
+httpServer :: AppContext -> Application
 httpServer appContext = gzip defaultGzipSettings $ genericServe HttpApi {
         api     = apiServer,
         metrics = convert <$> textualMetrics,
@@ -150,7 +149,7 @@ httpServer appContext = gzip defaultGzipSettings $ genericServe HttpApi {
 
 
 getVRPValidated :: (MonadIO m, MonadError ServerError m)
-                => AppContext s -> Maybe Text -> m [VrpDto]
+                => AppContext -> Maybe Text -> m [VrpDto]
 getVRPValidated appContext version =
     getValuesByVersion appContext version 
         (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #validated)) 
@@ -158,7 +157,7 @@ getVRPValidated appContext version =
         (pure . toVrpDtos . fromMaybe mempty)
 
 getVRPSlurmed :: (MonadIO m, MonadError ServerError m)
-                => AppContext s -> Maybe Text -> m [VrpDto]
+                => AppContext -> Maybe Text -> m [VrpDto]
 getVRPSlurmed appContext version =
     getValuesByVersion appContext version 
         (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #filtered)) 
@@ -166,17 +165,17 @@ getVRPSlurmed appContext version =
         (pure . toVrpDtos . fromMaybe mempty)
 
 getVRPValidatedRaw :: (MonadIO m, MonadError ServerError m)
-                    => AppContext s -> Maybe Text -> m RawCSV
+                    => AppContext -> Maybe Text -> m RawCSV
 getVRPValidatedRaw appContext version = 
     vrpDtosToCSV <$> getVRPValidated appContext version        
 
 getVRPSlurmedRaw :: (MonadIO m, MonadError ServerError m)
-                    => AppContext s -> Maybe Text -> m RawCSV
+                    => AppContext -> Maybe Text -> m RawCSV
 getVRPSlurmedRaw appContext version = 
     vrpDtosToCSV <$> getVRPSlurmed appContext version
 
 getVRPsUniqueRaw :: (MonadIO m, MonadError ServerError m)
-                    => AppContext s -> Maybe Text -> m RawCSV
+                    => AppContext -> Maybe Text -> m RawCSV
 getVRPsUniqueRaw appContext version = 
     vrpSetToCSV <$> 
         getValuesByVersion appContext version 
@@ -185,7 +184,7 @@ getVRPsUniqueRaw appContext version =
         (pure . toVrpV . (allTAs <$>))
 
 getVRPsUnique :: (MonadIO m, MonadError ServerError m)
-                    => AppContext s -> Maybe Text -> m [VrpMinimalDto]
+                    => AppContext -> Maybe Text -> m [VrpMinimalDto]
 getVRPsUnique appContext version = 
     getValuesByVersion appContext version 
         (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #filtered)) 
@@ -194,7 +193,7 @@ getVRPsUnique appContext version =
 
 
 getRoasValidatedRaw :: (MonadIO m, MonadError ServerError m)
-                    => AppContext s -> Maybe Text -> m RawCSV
+                    => AppContext -> Maybe Text -> m RawCSV
 getRoasValidatedRaw appContext version =     
     getValuesByVersion appContext version  
         (\_ -> pure Nothing)
@@ -223,7 +222,7 @@ asMaybe a = if mempty == a then Nothing else Just a
    `fromJust` here answered with an opaque 500 until then.
 -}
 getValuesByVersion :: (MonadIO m, MonadError ServerError m)
-                    => AppContext s
+                    => AppContext
                     -> Maybe Text
                     -> (AppState -> STM (Maybe v))   
                     -> (Tx 'RO -> WorldVersion -> IO (Maybe v))
@@ -256,7 +255,7 @@ getValuesByVersion AppContext {..} version readFromState readForVersion convertT
 
 
 getAspas_ :: (MonadIO m, MonadError ServerError m) => 
-             AppContext s -> Maybe Text -> m [AspaDto]
+             AppContext -> Maybe Text -> m [AspaDto]
 getAspas_ appContext version = 
     getValuesByVersion appContext version  
         (\_ -> pure Nothing) DB.getAspas (pure . toDtos)
@@ -265,7 +264,7 @@ getAspas_ appContext version =
 
 
 getSpls_ :: (MonadIO m, MonadError ServerError m) => 
-           AppContext s -> Maybe Text -> m [SplDto]
+           AppContext -> Maybe Text -> m [SplDto]
 getSpls_ appContext version =
     getValuesByVersion appContext version  
         (\_ -> pure Nothing) DB.getSpls (pure . toDtos)
@@ -275,7 +274,7 @@ getSpls_ appContext version =
             maybe [] Set.toList spls
 
 getBgps_ :: (MonadIO m, MonadError ServerError m) => 
-           AppContext s -> Maybe Text -> m [BgpCertDto]
+           AppContext -> Maybe Text -> m [BgpCertDto]
 getBgps_ appContext version =
     getValuesByVersion appContext version  
         (\_ -> pure Nothing) DB.getBgps (pure . toDtos)
@@ -284,7 +283,7 @@ getBgps_ appContext version =
 
 
 getBGPCertsFiltered_ :: (MonadIO m, MonadError ServerError m) => 
-                        AppContext s -> Maybe Text -> m [BgpCertDto]
+                        AppContext -> Maybe Text -> m [BgpCertDto]
 getBGPCertsFiltered_ appContext version =
     getValuesByVersion appContext version  
         (\_ -> pure Nothing) getSlurmedBgps (pure . toDtos)
@@ -298,7 +297,7 @@ getBGPCertsFiltered_ appContext version =
 
 
 getGbrs_ :: (MonadIO m, MonadError ServerError m) => 
-            AppContext s -> Maybe Text -> m [Located GbrDto]
+            AppContext -> Maybe Text -> m [Located GbrDto]
 getGbrs_ appContext version = 
     getValuesByVersion appContext version  
         (\_ -> pure Nothing) 
@@ -310,7 +309,7 @@ getGbrs_ appContext version =
  
 
 getValidationsOriginalDto :: (MonadIO m, MonadError ServerError m) =>
-                            AppContext s 
+                            AppContext 
                         -> Maybe Text 
                         -> m (ValidationsDto OriginalVDto)
 getValidationsOriginalDto appContext versionText = do
@@ -320,7 +319,7 @@ getValidationsOriginalDto appContext versionText = do
         (orNoFinishedValidation "validations")
         
 getValidationsDto :: (MonadIO m, MonadError ServerError m) =>
-                    AppContext s 
+                    AppContext 
                     -> Maybe Text 
                     -> m (ValidationsDto ResolvedVDto)
 getValidationsDto appContext versionText = 
@@ -339,7 +338,7 @@ allValidations tx version = do
     pure $ validationsToDto version $ allTAs perTa <> common
 
 getMetrics :: (MonadIO m, MonadError ServerError m) =>
-            AppContext s 
+            AppContext 
         -> Maybe Text 
         -> m MetricsDto
 getMetrics appContext versionText = 
@@ -361,7 +360,7 @@ orNoFinishedValidation what =
     maybe (throwError $ err404 { errBody = [i|No #{what} yet, no validation run has finished.|] }) pure
 
 getSlurm :: (MonadIO m, MonadError ServerError m) =>
-            AppContext s -> m Slurm
+            AppContext -> m Slurm
 getSlurm AppContext {..} = do
     db <- liftIO $ readTVarIO database
     z  <- liftIO $ roTx db $ \tx ->
@@ -373,7 +372,7 @@ getSlurm AppContext {..} = do
         Just m  -> pure m
 
 getAllSlurms :: (MonadIO m, MonadError ServerError m) =>
-                AppContext s -> m [(WorldVersion, Slurm)]
+                AppContext -> m [(WorldVersion, Slurm)]
 getAllSlurms AppContext {..} = 
     liftIO $ roTxT database $ \tx -> do
         versions <- DB.versionsBackwards tx
@@ -383,19 +382,19 @@ getAllSlurms AppContext {..} =
     
 
 
-getJobs :: MonadIO m => AppContext s -> m JobsDto
+getJobs :: MonadIO m => AppContext -> m JobsDto
 getJobs AppContext {..} = liftIO $ do
     db   <- readTVarIO database
     jobs <- roTx db $ \tx -> DB.allJobs tx
     pure JobsDto {..}
 
-getPPs :: (MonadIO m) => AppContext s -> m PublicationPointsDto
+getPPs :: (MonadIO m) => AppContext -> m PublicationPointsDto
 getPPs AppContext {..} = liftIO $ do
     db <- readTVarIO database
     pps <- roTx db $ \tx -> DB.getPublicationPoints tx
     pure $ toPublicationPointDto pps
 
-getErikRelays_ :: MonadIO m => AppContext s -> m [ErikRelayDto]
+getErikRelays_ :: MonadIO m => AppContext -> m [ErikRelayDto]
 getErikRelays_ AppContext {..} = liftIO $ do
     db <- readTVarIO database
     roTx db $ \tx -> do
@@ -412,7 +411,7 @@ getErikRelays_ AppContext {..} = liftIO $ do
                 }
 
 getRpkiObject :: (MonadIO m, MonadError ServerError m)
-                => AppContext s
+                => AppContext
                 -> Maybe Text
                 -> Maybe Text
                 -> Maybe Text
@@ -454,7 +453,7 @@ getRpkiObject AppContext {..} uri hash key =
 
 
 getManifests :: (MonadIO m, MonadError ServerError m)
-                => AppContext s
+                => AppContext
                 -> Maybe Text           
                 -> m ManifestsDto
 getManifests AppContext {..} akiText = 
@@ -473,7 +472,7 @@ getManifests AppContext {..} akiText =
                         pure ManifestsDto {..}
             
 
-getSystem ::  AppContext s -> IO SystemDto
+getSystem ::  AppContext -> IO SystemDto
 getSystem AppContext {..} = do
     now <- unNow <$> thisInstant
     SystemInfo {..} <- readTVarIO $ appState ^. #system
@@ -554,7 +553,7 @@ getSystem AppContext {..} = do
 
 
 getRtr :: (MonadIO m, MonadError ServerError m) =>
-            AppContext s -> m RtrDto
+            AppContext -> m RtrDto
 getRtr AppContext {..} = do
     liftIO (readTVarIO $ appState ^. #rtrState) >>= \case
         Nothing -> throwError $ err400 { errBody =
@@ -562,18 +561,18 @@ getRtr AppContext {..} = do
         Just rtrState -> pure RtrDto {..}
 
 getVersions :: (MonadIO m, MonadError ServerError m) =>
-                AppContext s -> m [WorldVersion]
+                AppContext -> m [WorldVersion]
 getVersions AppContext {..} = 
     liftIO $ roTxT database DB.versionsBackwards
 
 getFetcheables :: (MonadIO m, MonadError ServerError m) =>
-                  AppContext s -> m Fetcheables
+                  AppContext -> m Fetcheables
 getFetcheables AppContext {..} = 
     liftIO $ readTVarIO $ appState ^. #fetcheables
 
 
 getQueryPrefixValidity :: (MonadIO m, MonadError ServerError m)
-                        => AppContext s
+                        => AppContext
                         -> Maybe String           
                         -> Maybe String
                         -> m ValidityResultDto
@@ -585,7 +584,7 @@ getQueryPrefixValidity appContext maybeAsn maybePrefix = do
         
 
 getPrefixValidity :: (MonadIO m, MonadError ServerError m)
-                => AppContext s
+                => AppContext
                 -> String           
                 -> [String]         
                 -> m ValidityResultDto
@@ -602,7 +601,7 @@ getPrefixValidity appContext asnText (List.intercalate "/" -> prefixText) = do
                         pure $! toValidityResultDto now asn prefix validity
 
 getBulkPrefixValidity :: (MonadIO m, MonadError ServerError m)
-                        => AppContext s
+                        => AppContext
                         -> [ValidityBulkInputDto]
                         -> m ValidityBulkResultDto
 getBulkPrefixValidity appContext inputs =
@@ -619,7 +618,7 @@ getBulkPrefixValidity appContext inputs =
         pure $! toBulkResultDto now results  
 
 withPrefixIndex :: (MonadIO m, MonadError ServerError m) => 
-                    AppContext s 
+                    AppContext 
                 -> (PrefixIndex -> m a) 
                 -> m a
 withPrefixIndex AppContext {..} f = do
@@ -628,7 +627,7 @@ withPrefixIndex AppContext {..} f = do
         Just prefixIndex -> f prefixIndex                
 
 
-toRepositoryDtos :: AppContext s -> [(Repository, ValidationState)] -> IO [RepositoryDto] 
+toRepositoryDtos :: AppContext -> [(Repository, ValidationState)] -> IO [RepositoryDto] 
 toRepositoryDtos AppContext {..} inputs = do
     let rrdps = [(r, s) | (RrdpR r, s) <- inputs]
     let rsyncs = [(r, s) | (RsyncR r, s) <- inputs]
@@ -669,7 +668,7 @@ toRepositoryDtos AppContext {..} inputs = do
         uri `elem` [ u | RepositoryFocus u <- NonEmpty.toList scope ]
 
 
-toErikRepositoryDtos :: AppContext s -> [(ErikRepository, ValidationState)] -> IO [ErikRepositoryDto]
+toErikRepositoryDtos :: AppContext -> [(ErikRepository, ValidationState)] -> IO [ErikRepositoryDto]
 toErikRepositoryDtos AppContext {..} inputs =
     roTxT database $ \tx ->
         forM inputs $ \(repository@ErikRepository { fqdn }, state) -> do

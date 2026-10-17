@@ -55,9 +55,8 @@ import           RPKI.Fetch.Http (downloadToFile)
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
 
-import           RPKI.Store.AppStorage
 import           RPKI.Store.Base.Serialisation (TheBinary)
-import           RPKI.Store.AppSqliteStorage (AppSQLiteEnv, DbCheckResult(..),
+import           RPKI.Store.AppSqliteStorage (DbCheckResult(..), closeStorage, runMaintenance,
                                               cleanUpCacheDirectory, createSqliteDatabase,
                                               openExistingSqliteDatabase)
 import           RPKI.SLURM.SlurmProcessing
@@ -241,7 +240,7 @@ executeWorkerProcess = do
     exec resultHandler f = resultHandler =<< execWithStats f
 
 
-readTALs :: MaintainableStorage s => AppContext s -> IO [TAL]
+readTALs :: AppContext -> IO [TAL]
 readTALs AppContext {..} = do
     
     logInfo logger [i|Reading TAL files from #{talDirectory config}|]
@@ -275,7 +274,7 @@ readTALs AppContext {..} = do
         fromEither $ first TAL_E $ parseTAL (convert talContent) taName            
 
 
-runHttpApi :: (MaintainableStorage s) => AppContext s -> IO ()
+runHttpApi :: AppContext -> IO ()
 runHttpApi appContext@AppContext {..} = do 
     let httpApiConfig = appContext ^. typed @Config . typed @HttpApiConfig
     let httpPort = fromIntegral $ httpApiConfig ^. #port
@@ -301,7 +300,7 @@ runHttpApi appContext@AppContext {..} = do
                         "Too many concurrent requests, try again later.\n")
 
 
-createAppContext :: ValidatorIO es => CLIOptions -> AppLogger -> LogLevel -> Eff es AppSQLiteEnv
+createAppContext :: ValidatorIO es => CLIOptions -> AppLogger -> LogLevel -> Eff es AppContext
 createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
 
     programPath <- liftIO getExecutablePath
@@ -561,7 +560,7 @@ rsyncPrefetches CLIOptions {..} = do
             Right rsyncURL -> pure rsyncURL
 
 
-createWorkerAppContext :: ValidatorIO es => Config -> AppLogger -> Eff es AppSQLiteEnv
+createWorkerAppContext :: ValidatorIO es => Config -> AppLogger -> Eff es AppContext
 createWorkerAppContext config logger = do
     db <- fromTry (InitE . InitError . fmtEx) $ openExistingSqliteDatabase cacheDir config
     -- No SLURM reading function here: workers don't read SLURM files, 
@@ -629,7 +628,7 @@ executeVerifier cliOptions@CLIOptions {..} = do
                     _              -> logError logger "Both directory and list of files are set, leave just one of them to verify."
 
 
-createVerifierContext :: ValidatorIO es => CLIOptions -> AppLogger -> Eff es AppSQLiteEnv
+createVerifierContext :: ValidatorIO es => CLIOptions -> AppLogger -> Eff es AppContext
 createVerifierContext cliOptions logger = do
     rootDir <- either id id <$> getRoot cliOptions
     cached <- fromEitherM $ liftIO $ first (InitE . InitError) <$> checkSubDirectory rootDir cacheDirName

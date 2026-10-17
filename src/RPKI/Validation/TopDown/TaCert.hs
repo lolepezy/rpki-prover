@@ -38,7 +38,7 @@ data WhichTA = FetchedTA RpkiURL ParsedRpkiObject | CachedTA
 -- | certificate actually changed (a fresh download that differs from the
 -- | cached copy, or there was no cached copy at all) -- callers use that to
 -- | decide whether the TA needs to be revalidated.
-refreshTaCertificate :: AppContext s
+refreshTaCertificate :: AppContext
                         -> TAL
                         -> WorldVersion
                         -> IO (Either AppError Bool)
@@ -58,7 +58,7 @@ refreshTaCertificate appContext@AppContext {..} tal worldVersion = do
 
 -- | Get the TA certificate to start the top-down validation from.
 -- | This function doesn't throw exceptions.
-taCertificateFromCache :: ValidatorIO es => AppContext s
+taCertificateFromCache :: ValidatorIO es => AppContext
                         -> TAL
                         -> Eff es (Located WellStructuredCaCert, PublicationPointAccess)
 taCertificateFromCache AppContext {..} tal = do
@@ -99,7 +99,7 @@ taCertificateFromCache AppContext {..} tal = do
 -- | `False` when the refresh reconfirmed the cached certificate (the common
 -- | case, since these RRDP/rsync objects change rarely and are re-fetched
 -- | on every refresh) or fell back to it after a download failure.
-fetchValidateAndStoreTaCert :: (ValidatorIO es, Timeout :> es) => AppContext s
+fetchValidateAndStoreTaCert :: (ValidatorIO es, Timeout :> es) => AppContext
                         -> TAL
                         -> WorldVersion
                         -> Maybe StorableTA

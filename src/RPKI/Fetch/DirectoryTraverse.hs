@@ -48,7 +48,7 @@ import           RPKI.Validation.ObjectValidation
 -- storage. `restoreUrl` maps a file back to the URL the object is published at.
 --
 -- Is not supposed to throw exceptions.
-loadObjectsFromFS :: (ValidatorIO es, Concurrent :> es) => AppContext s
+loadObjectsFromFS :: (ValidatorIO es, Concurrent :> es) => AppContext
                   -> WorldVersion
                   -> (FilePath -> Maybe RsyncURL)
                   -> FilePath

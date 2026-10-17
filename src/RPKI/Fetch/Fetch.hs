@@ -247,7 +247,7 @@ withFetchLimits Fetchers {..} config repository f =
 -- Returned repository has all the metadata updated (in case of RRDP session and serial).
 -- The metadata is also updated in the database.
 --
-fetchRepository :: (ValidatorIO es, Timeout :> es) => AppContext s
+fetchRepository :: (ValidatorIO es, Timeout :> es) => AppContext
                 -> WorldVersion
                 -> Repository
                 -> Eff es (Repository, Maybe RrdpFetchStat)
@@ -286,7 +286,7 @@ fetchRepository
 
 -- | Fetch TA certificate based on TAL location(s)
 --
-fetchTACertificate :: (ValidatorIO es, Timeout :> es) => AppContext s -> TAL -> Eff es (RpkiURL, ParsedRpkiObject)
+fetchTACertificate :: (ValidatorIO es, Timeout :> es) => AppContext -> TAL -> Eff es (RpkiURL, ParsedRpkiObject)
 fetchTACertificate appContext@AppContext {..} tal =
     go $ sortRrdpFirst $ neSetToList $ unLocations $ talCertLocations tal
   where
@@ -317,7 +317,7 @@ fetchTACertificate appContext@AppContext {..} tal =
             go uris            
 
 
-fetchRepositoryFromErikRelays :: (ValidatorIO es, Timeout :> es) => AppContext s
+fetchRepositoryFromErikRelays :: (ValidatorIO es, Timeout :> es) => AppContext
                             -> [URI]
                             -> WorldVersion
                             -> FQDN

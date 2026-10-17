@@ -55,7 +55,7 @@ data WorkflowShared = WorkflowShared {
     deriving stock (Generic)
 
 
-withWorkflowShared :: AppContext s
+withWorkflowShared :: AppContext
                     -> PrometheusMetrics 
                     -> [TAL]
                     -> (WorkflowShared -> IO b) 

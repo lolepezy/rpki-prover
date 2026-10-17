@@ -93,7 +93,7 @@ spillRecords bs
             (record, rest')     = LBS.splitAt len rest
         in LBS.toStrict record : spillRecords rest'
 
-runErikFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext s
+runErikFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext
                     -> WorldVersion
                     -> [URI]
                     -> FQDN
@@ -119,7 +119,7 @@ runErikFetchWorker appContext@AppContext {..} worldVersion relayUris fqdn = do
         one per index for the partitions, one per partition or manifest for the
         objects below it -- instead of a read transaction per object.
 -}
-fetchErik :: (ValidatorIO es, Concurrent :> es) => AppContext s
+fetchErik :: (ValidatorIO es, Concurrent :> es) => AppContext
             -> WorldVersion
             -> [URI]
             -> FQDN

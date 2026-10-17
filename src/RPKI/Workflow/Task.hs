@@ -43,7 +43,7 @@ data Task =
     -- delete old objects and old versions
     CacheCleanupTask    
 
-    -- cleanup files in tmp, stale storage-backend state, run-away child processes, etc.
+    -- cleanup files in tmp, run-away child processes, etc.
     | LeftoversCleanupTask
 
     -- async fetches of slow repositories

@@ -99,7 +99,7 @@ rtrNotifyRateLimit = Seconds 60
 -- 
 -- | Main entry point, here we start the RTR server. 
 -- 
-runRtrServer :: AppContext s -> RtrConfig -> IO ()
+runRtrServer :: AppContext -> RtrConfig -> IO ()
 runRtrServer appContext RtrConfig {..} = do         
     -- re-initialise `rtrState` and create a broadcast 
     -- channel to publish update for all clients
@@ -334,7 +334,7 @@ runRtrServer appContext RtrConfig {..} = do
                                 pure $ io <> serveLoop session outboxQueue
 
 
-readRtrPayload :: AppContext s -> WorldVersion -> IO RtrPayloads 
+readRtrPayload :: AppContext -> WorldVersion -> IO RtrPayloads 
 readRtrPayload AppContext {..} worldVersion = do 
     (vrps, bgpSec, aspas) <- DB.roTxT database $ \tx -> do
                 slurm <- DB.getSlurm tx worldVersion
@@ -353,7 +353,7 @@ readRtrPayload AppContext {..} worldVersion = do
     pure $ mkRtrPayloads vrps bgpSec aspas
 
 
-waitForLatestRtrPayload :: AppContext s 
+waitForLatestRtrPayload :: AppContext 
         -> TVar (Maybe RtrState) 
         -> IO (RtrState, WorldVersion, WorldVersion, RtrPayloads)
 waitForLatestRtrPayload AppContext {..} rtrState = do 

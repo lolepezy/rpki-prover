@@ -52,12 +52,12 @@ import           RPKI.Http.Types
 import           RPKI.Http.Dto
 import qualified RPKI.Store.Database               as DB
 import qualified RPKI.Store.SQLite                 as SQLite
+import           RPKI.Store.AppSqliteStorage       (checkpointDatabase, runMaintenance)
 import           RPKI.Validation.TopDown
 
 import           RPKI.AppContext
 import           RPKI.Metrics.Prometheus
 import           RPKI.RTR.RtrServer
-import           RPKI.Store.AppStorage
 import           RPKI.RRDP.Types
 import           RPKI.TAL
 import           RPKI.Util                     
@@ -101,7 +101,7 @@ import qualified UnliftIO.Exception              as UIO
 -- The main entry point for the whole validator workflow. Runs multiple threads, 
 -- running validation, RTR server, cleanups, cache maintenance and async fetches.
 -- 
-runValidatorWorkflow :: MaintainableStorage s => AppContext s -> [TAL] -> IO ()
+runValidatorWorkflow :: AppContext -> [TAL] -> IO ()
 runValidatorWorkflow appContext@AppContext {..} tals = do    
     -- There might be more TAs in the cache than there are in the `tals`, 
     -- they can stay from a previous run.
@@ -117,8 +117,7 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
         ]
 
 
-runAll :: MaintainableStorage s =>
-                         AppContext s -> [TAL] -> IO ()
+runAll :: AppContext -> [TAL] -> IO ()
 runAll appContext@AppContext {..} tals = do    
     void $ concurrently (
             -- Fill in the current appState if it's not too old.
@@ -459,7 +458,7 @@ runAll appContext@AppContext {..} tals = do
                 Left e  -> pure $ Left [i|Cache cleanup process failed: #{e}.|]
                 Right r -> pure $ Right r
 
-    -- Delete temporary files and any stale storage-backend state
+    -- Delete temporary files and kill orphan workers
     cleanupLeftovers = do
         -- Cleanup tmp directory, if some fetchers died abruptly 
         -- there may be leftover files.        
@@ -530,7 +529,7 @@ runAll appContext@AppContext {..} tals = do
      'SQLite.TransactionTimedOut'. It is also reported as a problem of the latest 
      version, to be seen in the UI and not only in the log.
 -}
-rollBackLongTransactions :: AppContext s -> IO ()
+rollBackLongTransactions :: AppContext -> IO ()
 rollBackLongTransactions appContext@AppContext {..} = do
     db <- readTVarIO database
     SQLite.watchTransactions (DB.unDB db) timeouts $ 
@@ -546,14 +545,14 @@ rollBackLongTransactions appContext@AppContext {..} = do
 -- | Add a problem of the main process, one that isn't about any TA, to the 
 -- common validations of the latest version, where the UI shows it. If there 
 -- is no version yet, it waits in 'systemProblems' for the next validation.
-reportSystemProblem :: AppContext s -> AppError -> IO ()
+reportSystemProblem :: AppContext -> AppError -> IO ()
 reportSystemProblem appContext@AppContext {..} problem = do
     atomically $ modifyTVar' (appState ^. #systemProblems) (<> mError (newScope "storage") problem)
     -- Doesn't wait for it: it takes a write transaction, and the one
     -- that is being rolled back may well be holding the lock yet.
     void $ forkIO $ saveSystemProblems appContext
 
-saveSystemProblems :: AppContext s -> IO ()
+saveSystemProblems :: AppContext -> IO ()
 saveSystemProblems AppContext {..} = do
     let systemProblems = appState ^. #systemProblems
     problems <- atomically $ stateTVar systemProblems (, mempty)
@@ -574,7 +573,7 @@ saveSystemProblems AppContext {..} = do
 
 -- | Read SLURM files, if there are any configured. Only the main process
 -- does it, workers don't read any files that are not their own.
-reReadSlurm :: AppContext s -> IO (ValidationState, Maybe Slurm)
+reReadSlurm :: AppContext -> IO (ValidationState, Maybe Slurm)
 reReadSlurm AppContext {..} =
     case appState ^. #readSlurm of
         Nothing       -> pure (mempty, Nothing)
@@ -589,7 +588,7 @@ reReadSlurm AppContext {..} =
                     pure (vs, Just slurm)
 
 -- To be called by the validation worker process
-runValidation :: AppContext s
+runValidation :: AppContext
             -> WorldVersion
             -> [TAL]
             -> [TaName]
@@ -698,8 +697,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
 
 -- To be called from the cache cleanup worker
 --
-runCacheCleanup :: MaintainableStorage s
-                => AppContext s
+runCacheCleanup :: AppContext
                 -> WorldVersion
                 -> IO DB.CleanUpResult
 runCacheCleanup appContext@AppContext {..} worldVersion = do
@@ -736,7 +734,7 @@ runCacheCleanup appContext@AppContext {..} worldVersion = do
 
 -- | Load the state corresponding to the last completed validation version.
 -- 
-loadStoredAppState :: AppContext s -> IO (Maybe WorldVersion)
+loadStoredAppState :: AppContext -> IO (Maybe WorldVersion)
 loadStoredAppState appContext@AppContext {..} = do
     Now now' <- thisInstant
     let revalidationInterval = config ^. typed @ValidationConfig . #revalidationInterval    
@@ -773,7 +771,7 @@ loadStoredAppState appContext@AppContext {..} = do
                     pure $ Just lastVersion
 
 
-killWorkers :: AppContext s -> [WorkerInfo] -> IO ()
+killWorkers :: AppContext -> [WorkerInfo] -> IO ()
 killWorkers AppContext {..} workers = do
     forConcurrently_ workers $ \WorkerInfo {..} -> do 
         r <- try $ do

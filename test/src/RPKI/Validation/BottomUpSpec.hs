@@ -31,7 +31,6 @@ import           RPKI.Domain
 import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Repository
-import           RPKI.Store.AppSqliteStorage      (SqliteBackend)
 import qualified RPKI.Store.Database              as DB
 import           RPKI.Store.Types
 import           RPKI.TAL
@@ -133,7 +132,7 @@ shouldLimitCertificateCount =
 
 
 data Fixture = Fixture {
-        appContext :: AppContext SqliteBackend,
+        appContext :: AppContext,
         rsc        :: ParsedRpkiObject,
         rscAki     :: AKI,
         template   :: WellStructuredCaCert

@@ -222,7 +222,7 @@ workerSpecFor config params = WorkerSpec {..}
 
 -- | 'timeout' rather than the spec's own 'workerTimeout': the caller is allowed
 -- to give a worker less wall-clock time than its kind is configured for.
-makeWorkerInput :: (MonadIO m) => AppContext s -> WorkerSpec -> Timebox -> m WorkerInput
+makeWorkerInput :: (MonadIO m) => AppContext -> WorkerSpec -> Timebox -> m WorkerInput
 makeWorkerInput AppContext {..} WorkerSpec { params, workerId, limits } timeout = do
     thisProcessId <- liftIO getProcessID
     let WorkerLimits { cpuLimit, maxIncomingTrafficMb, maxDiskReadMb, maxDiskWriteMb } = limits
@@ -478,7 +478,7 @@ executeWork input exitWith_ actualWork =
    Unlike the other limits, it needs the database to watch, so it isn't started 
    by 'executeWork', but by the work itself.
 -}
-dieOfLongTransactions :: WorkerInput -> AppContext s -> GiveUp -> IO ()
+dieOfLongTransactions :: WorkerInput -> AppContext -> GiveUp -> IO ()
 dieOfLongTransactions input AppContext {..} giveUp = do
     db <- readTVarIO database
     SQLite.watchTransactions (DB.unDB db) timeouts $ \SQLite.StuckTx { kind, runningFor, limit } -> 
@@ -663,7 +663,7 @@ by the worker itself into an 'AppError' and remembering the workers that
 exceeded their limits ('rememberLimitProblems').
 -}
 runWorker :: (ValidatorIO es, Timeout :> es, TheBinary r)
-            => AppContext s
+            => AppContext
             -> WorkerParams
             -> Maybe Seconds -- ^ wall-clock timeout, if it is not the configured one
             -> Eff es r
@@ -701,7 +701,7 @@ runWorker appContext@AppContext {..} params timeoutOverride = do
      forgotten after the next run of the same kind of worker in the same scope,
      unless that one exceeds its limits too.
 -}
-rememberLimitProblems :: ValidatorIO es => AppContext s -> Text -> Eff es r -> Eff es r
+rememberLimitProblems :: ValidatorIO es => AppContext -> Text -> Eff es r -> Eff es r
 rememberLimitProblems AppContext {..} name work = do
     scope <- (^. #validationScope) <$> askScopes
     r <- tryError @AppError work

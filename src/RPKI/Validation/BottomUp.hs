@@ -42,7 +42,7 @@ import           RPKI.Validation.TopDown            (signedByCa)
     looks at.
 -}
 validateBottomUp :: ValidatorIO es =>
-                AppContext s
+                AppContext
                 -> ParsedRpkiObject
                 -> Now
                 -> Eff es (Validated ParsedRpkiObject, [Located WellStructuredCaCert])

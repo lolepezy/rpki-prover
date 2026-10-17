@@ -23,8 +23,7 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Reporting
 import           RPKI.Logging
-import           RPKI.Store.AppStorage
-import           RPKI.Store.AppSqliteStorage (AppSQLiteEnv, SqliteFlow (..), setupSqliteCache)
+import           RPKI.Store.AppSqliteStorage (SqliteFlow (..), setupSqliteCache)
 import           RPKI.RRDP.RrdpFetch
 
 import           RPKI.Time
@@ -61,7 +60,7 @@ testSnapshotLoad = do
 
 
 
-createAppContext :: AppLogger -> ValidatorT IO AppSQLiteEnv
+createAppContext :: AppLogger -> ValidatorT IO AppContext
 createAppContext logger = do
 
     liftIO $ setCpuCount 6

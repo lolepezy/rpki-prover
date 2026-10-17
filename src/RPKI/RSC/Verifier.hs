@@ -52,7 +52,7 @@ data VerifyPath = FileList [FilePath]
     deriving stock (Show, Eq, Ord, Generic)    
 
 
-rscVerify :: ValidatorIO es => AppContext s -> FilePath -> VerifyPath -> Eff es ()
+rscVerify :: ValidatorIO es => AppContext -> FilePath -> VerifyPath -> Eff es ()
 rscVerify appContext@AppContext {..} rscFile verifyPath = do
 
     db <- liftIO $ readTVarIO database

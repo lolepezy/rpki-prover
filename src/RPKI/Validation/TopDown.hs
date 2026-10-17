@@ -139,7 +139,7 @@ data TroubledChildLoadPath = TroubledFromParsed | TroubledFromOriginal
 
 -- | It is the main entry point for the top-down validation. 
 -- Validates a bunch of TAs starting from their TALs.  
-validateMultipleTAs :: AppContext s
+validateMultipleTAs :: AppContext
                     -> WorldVersion
                     -> [TAL]
                     -> IO (Map TaName TopDownResult)
@@ -206,7 +206,7 @@ validateMultipleTAs appContext@AppContext {..} worldVersion tals = do
         foldr (mergePP . rsyncPP) pps (config ^. #rsyncConf . #prefetchUrls)
 
 --
-validateTA :: AppContext s
+validateTA :: AppContext
             -> TAL
             -> TopDownContext
             -> IO TopDownResult
@@ -279,7 +279,7 @@ becomingValid (Validations issues) =
 -- | Do the validation starting from the TA certificate.
 -- | 
 -- | This function doesn't throw exceptions.
-validateFromTACert :: (ValidatorIO es, Concurrent :> es) => AppContext s ->
+validateFromTACert :: (ValidatorIO es, Concurrent :> es) => AppContext ->
                     TopDownContext ->
                     PublicationPointAccess ->
                     Located WellStructuredCaCert ->
@@ -302,7 +302,7 @@ validateFromTACert
             Nothing            -> publicationPoints
 
 
-validateCa :: (ValidatorIO es, Concurrent :> es) => AppContext s ->
+validateCa :: (ValidatorIO es, Concurrent :> es) => AppContext ->
             TopDownContext ->
             Ca ->
             Eff es ()
@@ -358,7 +358,7 @@ validateCa
     validationConfig = config ^. typed @ValidationConfig
     
 
-validateCaNoLimitChecks :: (ValidatorIO es, Concurrent :> es) => AppContext s ->
+validateCaNoLimitChecks :: (ValidatorIO es, Concurrent :> es) => AppContext ->
                         TopDownContext ->
                         Ca ->
                         Eff es ()
@@ -415,7 +415,7 @@ validateCaNoLimitChecks
                 appError $ ValidationE $ WeirdCaPublicationPoints weirdCaUrls                        
 
 
-validateCaNoFetch :: (ValidatorIO es, Concurrent :> es) => AppContext s
+validateCaNoFetch :: (ValidatorIO es, Concurrent :> es) => AppContext
                 -> TopDownContext 
                 -> Ca 
                 -> Eff es ()
@@ -461,7 +461,7 @@ validateCaNoFetch
 
 -- Validate the manifest of the CA with its children, the way `planManifests` says.
 validateManifests :: (ValidatorIO es, Concurrent :> es) =>
-                    AppContext s -> TopDownContext -> Ca -> AKI -> Eff es ()
+                    AppContext -> TopDownContext -> Ca -> AKI -> Eff es ()
 validateManifests
     appContext@AppContext {..}
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..} }
@@ -622,7 +622,7 @@ validateManifests
 -- Validate the manifests that the CA signed in full, falling back to the next one
 -- until one is valid. A manifest that is gone from the cache is fallen back from too.
 tryMfts :: (ValidatorIO es, Concurrent :> es) =>
-          AppContext s -> TopDownContext -> (AppError -> Eff es ()) -> Ca -> AKI -> [MftMeta] -> Eff es ()
+          AppContext -> TopDownContext -> (AppError -> Eff es ()) -> Ca -> AKI -> [MftMeta] -> Eff es ()
 tryMfts _ _ _ _ aki [] = vError $ NoMFT aki
 tryMfts appContext topDownContext fallBackFrom ca aki mftMetas = do
     caFull <- getFullCa appContext topDownContext ca
@@ -657,7 +657,7 @@ data MftCandidate = SignedMft (Keyed (Located WellStructuredMft))
 -- if the manifest is gone from the cache. Falling back gets the error, and how
 -- to report it.
 tryManifest :: ValidatorIO es =>
-              AppContext s
+              AppContext
               -> MftCandidate
               -> (AppError -> Eff es () -> Eff es a)
               -> (Keyed (Located WellStructuredMft) -> Eff es a)
@@ -672,7 +672,7 @@ tryManifest appContext candidate fallBack validate =
 
 
 withMft :: ValidatorIO es =>
-          AppContext s -> ObjectKey -> (Keyed (Located WellStructuredMft) -> Eff es a) -> Eff es a
+          AppContext -> ObjectKey -> (Keyed (Located WellStructuredMft) -> Eff es a) -> Eff es a
 withMft appContext@AppContext {..} key f = do
     z <- roTxT database $ \tx -> DB.getMftByKey tx key
     case z of
@@ -699,7 +699,7 @@ signedByCa ca cms =
 
 -- | The manifest, if the CA signed it, or if it is gone from the cache.
 getSignedMft :: ValidatorIO es =>
-                AppContext s -> TopDownContext -> Located WellStructuredCaCert -> MftMeta
+                AppContext -> TopDownContext -> Located WellStructuredCaCert -> MftMeta
                 -> Eff es (Maybe MftCandidate)
 getSignedMft AppContext {..} topDownContext ca m = do
     let mftKey = m ^. #key
@@ -718,7 +718,7 @@ getSignedMft AppContext {..} topDownContext ca m = do
 -- | The first of the manifests that the CA signed, or that is gone from the cache,
 -- with the ones after it.
 nextSignedMft :: ValidatorIO es =>
-                AppContext s -> TopDownContext -> Located WellStructuredCaCert -> [MftMeta]
+                AppContext -> TopDownContext -> Located WellStructuredCaCert -> [MftMeta]
                 -> Eff es (Maybe (MftCandidate, [MftMeta]))
 nextSignedMft _ _ _ [] = pure Nothing
 nextSignedMft appContext topDownContext ca (m : ms) =
@@ -728,7 +728,7 @@ nextSignedMft appContext topDownContext ca (m : ms) =
 
 
 reportMftFallback :: ValidatorIO es =>
-                    AppContext s -> AppError -> Keyed (Located WellStructuredMft) -> Eff es ()
+                    AppContext -> AppError -> Keyed (Located WellStructuredMft) -> Eff es ()
 reportMftFallback AppContext {..} e mft = do
     let mftLocation = describeLocated $ mft ^. #object
     let mftNumber = mft ^. #object . #payload . #content . #mftNumber
@@ -741,7 +741,7 @@ reportMftFallback AppContext {..} e mft = do
 -- run full validation only for new children (or for all of them, if asked to)
 -- and create a new manifest shortcut with updated set of children.
 manifestFullValidation :: (ValidatorIO es, Concurrent :> es) =>
-                        AppContext s
+                        AppContext
                         -> TopDownContext
                         -> Located WellStructuredCaCert
                         -> Keyed (Located WellStructuredMft)
@@ -891,7 +891,7 @@ manifestFullValidation
 
 
 findAndValidateCrl :: ValidatorIO es =>
-                    AppContext s
+                    AppContext
                     -> TopDownContext
                     -> Located WellStructuredCaCert
                     -> Keyed (Located WellStructuredMft)
@@ -956,7 +956,7 @@ checkForRevokedChildren mftShortcut (Keyed (Located _ mft) _) children validCrl 
 -- this indicates the difference between RFC9286-bis
 -- version 02 (strict) and version 03 and later (more loose).
 gatherMftEntryValidations :: (ValidatorIO es, Concurrent :> es) =>
-                            AppContext s
+                            AppContext
                             -> TopDownContext
                             -> Located WellStructuredCaCert
                             -> [T3 Text Hash ObjectKey]
@@ -990,7 +990,7 @@ gatherMftEntryValidations appContext@AppContext {..} topDownContext =
 
 
 allOrNothingMftChildrenResults :: (ValidatorIO es, Concurrent :> es) =>
-                                AppContext s
+                                AppContext
                                 -> TopDownContext
                                 -> Located WellStructuredCaCert
                                 -> [T3 Text Hash ObjectKey]
@@ -1013,7 +1013,7 @@ allOrNothingMftChildrenResults appContext topDownContext fullCa nonCrlChildren v
 
 
 independentMftChildrenResults :: (ValidatorIO es, Concurrent :> es) =>
-                                AppContext s
+                                AppContext
                                 -> TopDownContext
                                 -> Located WellStructuredCaCert
                                 -> [T3 Text Hash ObjectKey]
@@ -1064,7 +1064,7 @@ forChildren workPool = forInPool workPool 64 $ \(T3 fileName _ _) ->
 -- validation, and without it they aren't kept at all. The results of all the
 -- children of a manifest are kept until the sub-trees of its CA children are
 -- validated, and so would be the entries of all its other children.
-keptEntry :: AppContext s -> MftEntry -> Maybe MftEntry
+keptEntry :: AppContext -> MftEntry -> Maybe MftEntry
 keptEntry appContext entry =
     case appContext.config.validationConfig.validationAlgorithm of
         Incremental        -> Just entry
@@ -1095,7 +1095,7 @@ gatherMftEntryResults =
 -- Check manifest entries as a whole, without doing anything
 -- with the objects they are pointing to.
 validateMftEntries :: ValidatorIO es =>
-                    AppContext s -> WellStructuredMft -> Hash -> Eff es [T3 Text Hash ObjectKey]
+                    AppContext -> WellStructuredMft -> Hash -> Eff es [T3 Text Hash ObjectKey]
 validateMftEntries AppContext {..} mft crlHash = do
     let mftChildren = mft.content.mftEntries
     when (null mftChildren) $
@@ -1128,7 +1128,7 @@ validateMftEntries AppContext {..} mft crlHash = do
 -- (from validateMftEntries, which already looked it up), get the
 -- object it refers to.
 getManifestEntry :: ValidatorIO es =>
-                    AppContext s -> TopDownContext -> Text -> Hash -> ObjectKey
+                    AppContext -> TopDownContext -> Text -> Hash -> ObjectKey
                     -> Eff es (Keyed (Located RpkiObjectLifecycle))
 getManifestEntry
     AppContext {..}
@@ -1163,7 +1163,7 @@ getManifestEntry
 
 
 validateMftChild :: (ValidatorIO es, Concurrent :> es) =>
-                    AppContext s
+                    AppContext
                     -> TopDownContext
                     -> Located WellStructuredCaCert
                     -> Keyed (Located RpkiObjectLifecycle)
@@ -1196,7 +1196,7 @@ validateMftChild appContext topDownContext caFull child@(Keyed (Located objectLo
 -- Only objects with more than one location need anything done, and which
 -- objects those are was read once for the whole run, so the common case is
 -- a set lookup rather than a query and a transaction per object.
-validateLocationForShortcut :: ValidatorIO es => AppContext s -> TopDownContext -> ObjectKey -> Eff es ()
+validateLocationForShortcut :: ValidatorIO es => AppContext -> TopDownContext -> ObjectKey -> Eff es ()
 validateLocationForShortcut
     appContext@AppContext {..}
     TopDownContext { allTas = AllTasTopDownContext {..} }
@@ -1220,7 +1220,7 @@ validateLocationForShortcut
     And return the entry of the manifest shortcut for it
 -}
 validateChildObject :: (ValidatorIO es, Concurrent :> es) =>
-                    AppContext s
+                    AppContext
                     -> TopDownContext
                     -> Located WellStructuredCaCert
                     -> Keyed (Located WellStructuredRpkiObject)
@@ -1351,7 +1351,7 @@ thisScopeIssues =
 
 
 collectPayloads :: (ValidatorIO es, Concurrent :> es) =>
-                AppContext s
+                AppContext
                 -> TopDownContext
                 -> AKI
                 -> DB.MftShortcutMeta
@@ -1568,7 +1568,7 @@ getStoredObject :: ValidatorIO es => Tx mode
 getStoredObject tx key =
     fmap (`Keyed` key) <$> DB.getLocatedByKey tx key    
 
-getFullCa :: ValidatorIO es => AppContext s -> TopDownContext -> Ca -> Eff es (Located WellStructuredCaCert)
+getFullCa :: ValidatorIO es => AppContext -> TopDownContext -> Ca -> Eff es (Located WellStructuredCaCert)
 getFullCa appContext@AppContext {..} TopDownContext {..} = \case    
     CaFull c -> pure c            
     CaShort CaShortcut {..} -> do   
@@ -1582,7 +1582,7 @@ getFullCa appContext@AppContext {..} TopDownContext {..} = \case
                         [i|Referential integrity error, wrong type of the CA found by its key #{key}.|]            
     
 
-getCrlByKey :: ValidatorIO es => AppContext s -> ObjectKey -> Eff es (Keyed (Validated CrlObject))
+getCrlByKey :: ValidatorIO es => AppContext -> ObjectKey -> Eff es (Keyed (Validated CrlObject))
 getCrlByKey appContext@AppContext {..} crlKey = do        
     z <- roTxT database $ \tx -> DB.getObjectByKey tx crlKey
     case z of 
@@ -1590,7 +1590,7 @@ getCrlByKey appContext@AppContext {..} crlKey = do
         _ -> integrityError appContext [i|Referential integrity error, can't find a CRL by its key #{crlKey}.|]
      
     
-integrityError :: ValidatorIO es => AppContext s -> Text -> Eff es a
+integrityError :: ValidatorIO es => AppContext -> Text -> Eff es a
 integrityError AppContext {..} message = do     
     logError logger message
     appError $ ValidationE $ ReferentialIntegrityError message  
@@ -1611,7 +1611,7 @@ extractPPAs = \case
     CaShort (CaShortcut {..}) -> Right ppas 
     CaFull c                  -> getPublicationPointsFromWellStructuredCert c.payload
 
-getCaLocations :: ValidatorIO es => AppContext s -> Ca -> Eff es (Maybe Locations)
+getCaLocations :: ValidatorIO es => AppContext -> Ca -> Eff es (Maybe Locations)
 getCaLocations AppContext {..} = \case 
     CaShort (CaShortcut {..}) -> 
         roTxT database $ \tx -> DB.getLocationsByKey tx key

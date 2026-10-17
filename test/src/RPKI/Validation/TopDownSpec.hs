@@ -31,7 +31,6 @@ import           RPKI.Domain
 import           RPKI.Parse.Parse
 import           RPKI.AppContext                  (AppContext)
 import           RPKI.Reporting
-import           RPKI.Store.AppSqliteStorage      (SqliteBackend)
 import           RPKI.Repository                  (PublicationPointAccess (..), rsyncPP)
 import qualified RPKI.Resources.IntervalContainers as IS
 import           RPKI.Resources.Types
@@ -596,7 +595,7 @@ shouldTellIntegrityErrors = do
 
 
 -- | Shortcuts are only used by incremental validation
-withIncrementalContext :: (AppContext SqliteBackend -> IO a) -> IO a
+withIncrementalContext :: (AppContext -> IO a) -> IO a
 withIncrementalContext f =
     withTestContext $ \appContext ->
         f $ appContext & #config . #validationConfig . #validationAlgorithm .~ Incremental
@@ -604,7 +603,7 @@ withIncrementalContext f =
 -- | Run `validateManifests` for a CA in the scope of its publication point, 
 -- the way validation does. Gives back the result, the shortcut of the CA once 
 -- the shortcut writes are done, and the repositories to fetch from a snapshot.
-validateCaManifests :: AppContext SqliteBackend -> RpkiURL -> AKI
+validateCaManifests :: AppContext -> RpkiURL -> AKI
                     -> IO (Either AppError (), Maybe DB.MftShortcutMeta, MonoidalMap.MonoidalMap RrdpURL (Set.Set Text.Text))
 validateCaManifests appContext ppUrl aki = do
     db <- readTVarIO $ appContext ^. #database
@@ -621,7 +620,7 @@ validateCaManifests appContext ppUrl aki = do
     pure (r, stored, candidates)
 
 -- | The context of validating a TA, with the queue of its shortcut writes
-newTestTopDownContext :: AppContext SqliteBackend -> IO (TopDownContext, ClosableQueue MftShortcutOp)
+newTestTopDownContext :: AppContext -> IO (TopDownContext, ClosableQueue MftShortcutOp)
 newTestTopDownContext appContext = do
     db <- readTVarIO $ appContext ^. #database
     Now now <- thisInstant
@@ -642,7 +641,7 @@ fixtureCa = do
             other   -> error $ "Not a CA certificate: " <> show other
     pure ca
 
-saveShortcut :: AppContext SqliteBackend -> AKI -> DB.MftShortcutMeta -> IO ()
+saveShortcut :: AppContext -> AKI -> DB.MftShortcutMeta -> IO ()
 saveShortcut appContext aki meta = do
     db <- readTVarIO $ appContext ^. #database
     DB.rwTx db $ \tx -> DB.saveMftShorcutMeta tx aki (Verbatim $ toStorable $ Compressed meta)
@@ -661,7 +660,7 @@ shortcutMetaUntil now notAfter_ = DB.MftShortcutMeta {
 
 -- | A manifest of the AKI that is known, but whose object is not a manifest,
 -- as if it was gone from the cache.
-storeBrokenManifest :: AppContext SqliteBackend -> AKI -> Int64 -> Instant -> IO ()
+storeBrokenManifest :: AppContext -> AKI -> Int64 -> Instant -> IO ()
 storeBrokenManifest appContext aki n thisTime_ = do
     db <- readTVarIO $ appContext ^. #database
     worldVersion <- instantToVersion . unNow <$> thisInstant

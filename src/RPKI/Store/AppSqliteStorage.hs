@@ -1,6 +1,7 @@
 module RPKI.Store.AppSqliteStorage (
-    SqliteBackend,
-    AppSQLiteEnv,
+    closeStorage,
+    runMaintenance,
+    checkpointDatabase,
     DbCheckResult(..),
     sqliteFileName,
     sqliteCacheFiles,
@@ -19,13 +20,11 @@ import           Data.Hourglass
 import           Data.String.Interpolate.IsString
 
 import           RPKI.AppContext
-import           RPKI.AppTypes            (Size(..))
 import           RPKI.Config
 import           RPKI.Logging
 import           RPKI.Time                (timedMS)
 import           RPKI.Util                (fmtEx)
 
-import           RPKI.Store.AppStorage
 import qualified RPKI.Store.Database      as DB
 import qualified RPKI.Store.SQLite        as SQLite
 import           RPKI.Store.SQLite        (SqliteDB(..))
@@ -36,34 +35,33 @@ import           System.Directory         (createDirectoryIfMissing, doesDirecto
 import           System.FilePath          ((</>))
 
 
--- | Phantom type tag for the SQLite backend; callers only see DB.
-data SqliteBackend
+closeStorage :: AppContext -> IO ()
+closeStorage AppContext{database} = do
+    db <- readTVarIO database
+    SQLite.closeDB (DB.unDB db)
 
-type AppSQLiteEnv = AppContext SqliteBackend
+-- | Checkpoint the WAL fully and give the free pages back to the file system.
+runMaintenance :: AppContext -> IO ()
+runMaintenance AppContext{database} = do
+    SqliteDB{..} <- DB.unDB <$> readTVarIO database
+    withMVar writeConn $ \cc -> do
+        SQLite.checkpointTruncate cc
+        SQLite.incrementalVacuum cc
+        SQLite.optimize cc
 
-instance MaintainableStorage SqliteBackend where
-    closeStorage AppContext{database} = do
-        db <- readTVarIO database
-        SQLite.closeDB (DB.unDB db)
-    runMaintenance AppContext{database} = do
-        SqliteDB{..} <- DB.unDB <$> readTVarIO database
-        withMVar writeConn $ \cc -> do
-            SQLite.checkpointTruncate cc
-            SQLite.incrementalVacuum cc
-            SQLite.optimize cc
-    checkpointDatabase AppContext{database, logger} = do
-        sdb@SqliteDB{..} <- DB.unDB <$> readTVarIO database
-        before <- SQLite.walFileSize sdb
-        -- Nothing to do most of the time, so don't take the write lock for nothing
-        when (before > 0) $ do
-            (_, elapsed) <- timedMS $ withMVar writeConn SQLite.checkpointTruncate
-            after <- SQLite.walFileSize sdb
-            let inMb n = n `div` (1024 * 1024)
-            logDebug logger $ if after == 0
-                then [i|Checkpointed #{inMb before}mb of WAL in #{elapsed}ms.|]
-                else [i|Checkpointed WAL in #{elapsed}ms, #{inMb before}mb before, |] <>
-                     [i|#{inMb after}mb still left (readers are holding it).|]
-    getCacheFsSize  _ = pure (Size 0)
+checkpointDatabase :: AppContext -> IO ()
+checkpointDatabase AppContext{database, logger} = do
+    sdb@SqliteDB{..} <- DB.unDB <$> readTVarIO database
+    before <- SQLite.walFileSize sdb
+    -- Nothing to do most of the time, so don't take the write lock for nothing
+    when (before > 0) $ do
+        (_, elapsed) <- timedMS $ withMVar writeConn SQLite.checkpointTruncate
+        after <- SQLite.walFileSize sdb
+        let inMb n = n `div` (1024 * 1024)
+        logDebug logger $ if after == 0
+            then [i|Checkpointed #{inMb before}mb of WAL in #{elapsed}ms.|]
+            else [i|Checkpointed WAL in #{elapsed}ms, #{inMb before}mb before, |] <>
+                 [i|#{inMb after}mb still left (readers are holding it).|]
 
 
 data DbCheckResult = WasIncompatible | WasCompatible | DidntHaveVersion

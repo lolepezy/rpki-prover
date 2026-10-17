@@ -297,7 +297,7 @@ deleteMftShortcut shortcutQueue aki =
     liftIO $ atomically $ writeCQueue shortcutQueue $ DeleteMftShortcut aki
 
 storeShortcuts :: (MonadIO m) => 
-                AppContext s 
+                AppContext 
              -> ClosableQueue MftShortcutOp -> m ()
 storeShortcuts AppContext {..} shortcutQueue = liftIO $
     readQueueChunked shortcutQueue 1000 $ \shotcutOps ->

@@ -50,7 +50,7 @@ import qualified RPKI.Store.Database    as DB
 import qualified RPKI.Util              as U
 
 
-runRrdpFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext s
+runRrdpFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext
                     -> WorldVersion
                     -> RrdpRepository
                     -> Eff es (RrdpRepository, RrdpFetchStat)
@@ -66,7 +66,7 @@ runRrdpFetchWorker appContext@AppContext {..} worldVersion repository = do
 --  Update RRDP repository, actually saving all the objects in the DB.
 -- 
 updateRrdpRepository :: (ValidatorIO es, Concurrent :> es) => 
-                        AppContext s 
+                        AppContext 
                     -> WorldVersion 
                     -> RrdpRepository
                     -> Eff es (RrdpRepository, RrdpFetchStat) 
@@ -387,7 +387,7 @@ nextSerial (RrdpSerial s) = RrdpSerial $ s + 1
     see `txPoolPipeline`.
 -} 
 saveSnapshot :: (ValidatorIO es, Concurrent :> es) => 
-                AppContext s        
+                AppContext        
                 -> WorldVersion         
                 -> RrdpURL
                 -> Notification 
@@ -546,7 +546,7 @@ saveSnapshot
     emit an error and fall back to downloading snapshot.
 -}
 saveDelta :: (ValidatorIO es, Concurrent :> es) => 
-            AppContext s 
+            AppContext 
             -> WorldVersion         
             -> RrdpURL 
             -> Notification 

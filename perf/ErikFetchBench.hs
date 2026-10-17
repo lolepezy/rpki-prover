@@ -65,7 +65,7 @@ main = do
                     runFetch ctx (FQDN $ Text.pack fqdn) relayUris
 
 
-mkBenchContext :: AppLogger -> IO (FilePath, AppContext SqliteBackend)
+mkBenchContext :: AppLogger -> IO (FilePath, AppContext)
 mkBenchContext logger = do
     dir <- createTempDirectory "/tmp" "rpki-erik-fetch-bench"
     let cacheDir = dir </> "cache"
@@ -96,11 +96,11 @@ mkBenchContext logger = do
     pure (dir, AppContext {..})
 
 
-cleanupBenchContext :: (FilePath, AppContext SqliteBackend) -> IO ()
+cleanupBenchContext :: (FilePath, AppContext) -> IO ()
 cleanupBenchContext (dir, _) = removePathForcibly dir
 
 
-runFetch :: (FilePath, AppContext SqliteBackend) -> FQDN -> [URI] -> IO ()
+runFetch :: (FilePath, AppContext) -> FQDN -> [URI] -> IO ()
 runFetch (_, appContext) fqdn relayUris = do
     worldVersion <- instantToVersion . unNow <$> thisInstant
 

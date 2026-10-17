@@ -72,7 +72,7 @@ stdout = [#{U.textual stdout'}],
 stderr = [#{U.textual stderr'}]|]
 
 
-runRsyncFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext s 
+runRsyncFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext 
                     -> WorldVersion
                     -> RsyncRepository             
                     -> Eff es RsyncRepository
@@ -87,7 +87,7 @@ runRsyncFetchWorker appContext@AppContext {..} worldVersion repository = do
 -- | Download one file using rsync
 -- | 
 -- | This function doesn't throw exceptions.
-rsyncRpkiObject :: ValidatorIO es => AppContext s -> 
+rsyncRpkiObject :: ValidatorIO es => AppContext -> 
                 RsyncURL -> 
                 Eff es ParsedRpkiObject
 rsyncRpkiObject AppContext{..} uri = do
@@ -113,7 +113,7 @@ rsyncRpkiObject AppContext{..} uri = do
 -- | Process the whole rsync repository, download it, traverse the directory and 
 -- | add all the relevant objects to the storage.
 updateObjectForRsyncRepository :: (ValidatorIO es, Concurrent :> es, Timeout :> es) => 
-                                  AppContext s
+                                  AppContext
                                -> WorldVersion 
                                -> RsyncRepository 
                                -> Eff es RsyncRepository
@@ -194,7 +194,7 @@ readRsyncProcess logger rsyncTimeout pc textual = do
 -- 
 -- | Is not supposed to throw exceptions.
 loadRsyncRepository :: (ValidatorIO es, Concurrent :> es)
-                    => AppContext s
+                    => AppContext
                     -> WorldVersion
                     -> RsyncURL
                     -> FilePath

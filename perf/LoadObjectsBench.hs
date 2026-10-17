@@ -96,7 +96,7 @@ main = do
         | otherwise = removePathForcibly dir
 
 
-mkBenchContext :: FilePath -> Maybe Int -> AppLogger -> IO (FilePath, AppContext SqliteBackend)
+mkBenchContext :: FilePath -> Maybe Int -> AppLogger -> IO (FilePath, AppContext)
 mkBenchContext baseDir cpus logger = do
     dir <- createTempDirectory baseDir "rpki-load-objects-bench"
     let cacheDir = dir </> "cache"
@@ -122,7 +122,7 @@ mkBenchContext baseDir cpus logger = do
     pure (dir, AppContext {..})
 
 
-runIteration :: Int -> AppContext SqliteBackend -> FilePath -> RsyncURL -> IO ()
+runIteration :: Int -> AppContext -> FilePath -> RsyncURL -> IO ()
 runIteration i appContext rootPath url = do
     worldVersion <- instantToVersion . unNow <$> thisInstant
 

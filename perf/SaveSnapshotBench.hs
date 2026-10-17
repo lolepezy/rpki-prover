@@ -206,7 +206,7 @@ main = do
         _         -> Nothing
 
 
-mkBenchContext :: FilePath -> AppLogger -> IO (FilePath, AppContext SqliteBackend)
+mkBenchContext :: FilePath -> AppLogger -> IO (FilePath, AppContext)
 mkBenchContext baseDir logger = do
     dir <- createTempDirectory baseDir "rpki-save-snapshot-bench"
     let cacheDir = dir </> "cache"
@@ -236,13 +236,13 @@ mkBenchContext baseDir logger = do
     pure (dir, AppContext {..})
 
 
-cleanupBenchContext :: (FilePath, AppContext SqliteBackend) -> IO ()
+cleanupBenchContext :: (FilePath, AppContext) -> IO ()
 cleanupBenchContext (dir, _) = removePathForcibly dir
 
 
 data Expected = Expected { objects :: Int, links :: Int }
 
-runIteration :: Int -> (FilePath, AppContext SqliteBackend) -> Bool -> Expected -> SessionId -> RrdpSerial -> BS.ByteString -> IO ()
+runIteration :: Int -> (FilePath, AppContext) -> Bool -> Expected -> SessionId -> RrdpSerial -> BS.ByteString -> IO ()
 runIteration i (_, appContext) delta expected sessionId serial content = do
     now <- unNow <$> thisInstant
     -- In production the hash comes out of the download; hashing 700MB here
@@ -322,7 +322,7 @@ runIteration i (_, appContext) delta expected sessionId serial content = do
 -- snapshot on this thread, each step's output kept for the next. Most of
 -- the types are StrictData, so `evaluate` forces nearly all of a step's
 -- work into that step; whatever it doesn't is picked up by `serialise`.
-stageBreakdown :: (FilePath, AppContext SqliteBackend) -> [SnapshotPublish] -> IO ()
+stageBreakdown :: (FilePath, AppContext) -> [SnapshotPublish] -> IO ()
 stageBreakdown (_, appContext) items = do
     putStrLn "per-object steps, single-threaded:"
     let scopes = newScopes "stages"

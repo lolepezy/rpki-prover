@@ -20,7 +20,7 @@ testConfig :: Config
 testConfig = defaultConfig
 
 
-withTestContext :: (AppContext SqliteBackend -> IO b) -> IO b
+withTestContext :: (AppContext -> IO b) -> IO b
 withTestContext f = do
     withLogger (newLogConfig DebugL MainLog) $ \logger -> do
         dir <- createTempDirectory "/tmp" "rpki-prover-test"
