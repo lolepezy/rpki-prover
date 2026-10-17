@@ -45,6 +45,7 @@ rsync -a \
     --exclude '/pkg/packages/' \
     --exclude '/pkg/apt-repo/public/' \
     --exclude '/debian/' \
+    --exclude '/releases/' \
     "${SRC_DIR}/" "${SRC_TREE}/"
 
 cd "${SRC_TREE}"

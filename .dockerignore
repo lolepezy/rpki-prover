@@ -7,3 +7,4 @@ dist-newstyle
 .vagrant
 pkg/packages
 pkg/apt-repo/public
+releases
