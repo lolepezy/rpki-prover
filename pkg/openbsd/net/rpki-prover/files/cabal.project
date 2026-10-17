@@ -1,0 +1,5 @@
+packages: .
+
+-- Dependencies are pinned by the MODCABAL_MANIFEST in cabal.inc rather than by
+-- cabal.project.freeze; some of them need upper bounds relaxed, as upstream.
+allow-newer: True

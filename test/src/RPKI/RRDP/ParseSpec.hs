@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.RRDP.ParseSpec where
 
 import           Data.ByteString.Short             as BSS

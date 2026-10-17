@@ -6,7 +6,6 @@ import           Control.Lens
 import           Data.Generics.Product.Typed
 import           Data.Ord
 
-import           Data.X509                   (Certificate)
 
 import           Data.Hourglass
 import qualified Data.List                   as List
@@ -24,7 +23,6 @@ import           RPKI.Domain
 import           RPKI.Config
 import           RPKI.RRDP.Types
 import           RPKI.Reporting
-import           RPKI.Parse.Parse
 import           RPKI.Time
 import           RPKI.TAL
 import           RPKI.Util
@@ -102,6 +100,39 @@ newRepositoryMeta = RepositoryMeta {
         refreshInterval   = Nothing
     }
 
+{- | What is known about one Erik-fetched repository, keyed by the FQDN the
+     Erik index is published under.
+
+     Erik has no session/serial/delta state of its own -- the index is just a
+     list of partitions -- so compared to 'RrdpRepository' this only carries
+     the fetch status and which relays actually answered during the last fetch.
+-}
+data ErikRepository = ErikRepository {
+        fqdn       :: FQDN,
+        meta       :: RepositoryMeta,
+        relayUsage :: [ErikRelayUsage]
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+-- | How much of the last fetch one relay actually served. A fetch spreads its
+-- queries over every configured relay and falls back on failure, so this is a
+-- list rather than a single "the relay it came from".
+data ErikRelayUsage = ErikRelayUsage {
+        relay  :: URI,
+        served :: Int,
+        failed :: Int
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+newErikRepository :: FQDN -> ErikRepository
+newErikRepository fqdn = ErikRepository {
+        meta       = newRepositoryMeta,
+        relayUsage = [],
+        ..
+    }
+
 newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
@@ -153,6 +184,12 @@ getRsyncURL RsyncRepository { repoPP = RsyncPublicationPoint { uri = url } } = u
 
 getFetchStatus :: Repository -> FetchStatus
 getFetchStatus r = getMeta r ^. #status
+
+fetchMoment :: FetchStatus -> Maybe Instant
+fetchMoment = \case 
+    FetchedAt t -> Just t
+    FailedAt t  -> Just t
+    Pending     -> Nothing
 
 getMeta :: Repository -> RepositoryMeta
 getMeta (RrdpR r)   = r ^. #meta
@@ -208,9 +245,15 @@ repositoryFromPP pps pp =
     merged = mergePP pp pps        
     
 
+-- Add the PP to the set if it's not there yet. It must not touch the meta of
+-- a repository that is already known: `toRsyncForest` overwrites the meta of an
+-- exactly matching leaf, so using it directly would reset the fetch status of
+-- every repository whose URL is the PP URL back to `Pending`.
 mergeRsyncPP :: RsyncPublicationPoint -> PublicationPoints -> PublicationPoints
-mergeRsyncPP (RsyncPublicationPoint u) pps = 
-    pps & typed @RsyncForest %~ toRsyncForest u newRepositoryMeta
+mergeRsyncPP (RsyncPublicationPoint u) pps =
+    case lookupInRsyncForest u (pps ^. typed @RsyncForest) of
+        Just _  -> pps
+        Nothing -> pps & typed @RsyncForest %~ toRsyncForest u newRepositoryMeta
 
 mergeRrdp :: RrdpRepository -> PublicationPoints -> PublicationPoints
 mergeRrdp r@RrdpRepository {..} pps =
@@ -231,12 +274,12 @@ mergePP (RsyncPP r) = mergeRsyncPP r
 -- | Extract repositories from URIs in TAL and in TA certificate,
 -- | use some reasonable heuristics, but don't try to be very smart.
 -- | Prefer RRDP to rsync for everything.
-publicationPointsFromTAL :: TAL -> CaCerObject -> Either ValidationError PublicationPointAccess
-publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert) = 
+publicationPointsFromTAL :: TAL -> WellStructuredCaCert -> Either ValidationError PublicationPointAccess
+publicationPointsFromTAL tal cert = 
     case tal of 
         PropertiesTAL {..} -> do 
 
-            PublicationPointAccess ppsFromCert <- getPublicationPointsFromCert cert
+            PublicationPointAccess ppsFromCert <- getPublicationPointsFromWellStructuredCert cert
             
             let uniquePrefetchRepos = map (snd . fromURI) prefetchUris
 
@@ -248,7 +291,7 @@ publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert)
                 maybe ppsFromCert (ppsFromCert <>) $ 
                 nonEmpty prefetchReposToUse
 
-        RFC_TAL {} -> getPublicationPointsFromCert cert
+        RFC_TAL {} -> getPublicationPointsFromWellStructuredCert cert
   where        
     fromURI r = 
         case r of
@@ -256,31 +299,32 @@ publicationPointsFromTAL tal (cwsX509certificate . getCertWithSignature -> cert)
             RsyncU u -> (r, rsyncPP u)           
 
 
--- | Get publication points of the certificate.
--- 
-getPublicationPointsFromCertObject :: CaCerObject -> Either ValidationError PublicationPointAccess
-getPublicationPointsFromCertObject = getPublicationPointsFromCert . cwsX509certificate . getCertWithSignature
+getPublicationPointsFromWellStructuredCert :: WellStructuredCert t -> Either ValidationError PublicationPointAccess
+getPublicationPointsFromWellStructuredCert WellStructuredCert {
+    certUris = CertUris {
+        rrdpNotifyUri = certRrdpNotifyUri,
+        repositoryUri = certRepositoryUri
+    }
+} = do
+    rrdp <- case certRrdpNotifyUri of
+        Just notifyUri
+            | isRrdpURI notifyUri -> Right [rrdpPP $ RrdpURL notifyUri]
+            | otherwise           -> Left $ UnknownUriType notifyUri
+        Nothing -> Right []
 
-getPublicationPointsFromCert :: Certificate -> Either ValidationError PublicationPointAccess
-getPublicationPointsFromCert cert = do 
-    rrdp <- case getRrdpNotifyUri cert of 
-                Just rrdpNotifyUri
-                    | isRrdpURI rrdpNotifyUri -> Right [rrdpPP $ RrdpURL rrdpNotifyUri]
-                    | otherwise               -> Left $ UnknownUriType rrdpNotifyUri
-                Nothing -> Right []
+    rsync <- case certRepositoryUri of
+        Just repoUri
+            | isRsyncURI repoUri ->
+                case parseRsyncURL (unURI repoUri) of
+                    Left e   -> Left $ BrokenUri (unURI repoUri) e
+                    Right rr -> Right [rsyncPP rr]
+            | otherwise -> Left $ UnknownUriType repoUri
+        Nothing -> Right []
 
-    rsync <- case getRepositoryUri cert of 
-                Just repositoryUri
-                    | isRsyncURI repositoryUri -> 
-                        case parseRsyncURL (unURI repositoryUri) of 
-                            Left e   -> Left $ BrokenUri (unURI repositoryUri) e
-                            Right rr -> Right [rsyncPP rr]                        
-                    | otherwise -> Left $ UnknownUriType repositoryUri
-                Nothing -> Right []
-
-    case nonEmpty (rrdp <> rsync) of 
+    case nonEmpty (rrdp <> rsync) of
         Nothing -> Left CertificateDoesntHaveSIA
-        Just ne -> Right $ PublicationPointAccess ne
+        Just ne -> Right $ PublicationPointAccess ne  
+
           
 
 -- Number of repositories

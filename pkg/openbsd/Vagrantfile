@@ -1,0 +1,31 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+#
+# OpenBSD VM that builds and tests the rpki-prover package; driven by
+# pkg/openbsd/build-package.sh, which also brings it up to the target release.
+#
+# The newest OpenBSD box there is is 7.8, so the build script sysupgrades it.
+# libvirt only: the second disk below is how the box gets room to build in.
+
+Vagrant.configure("2") do |config|
+  config.vm.box = ENV.fetch("RPKI_PROVER_OPENBSD_BOX", "DefinedNet/openbsd78")
+  config.vm.box_check_update = false
+  config.vm.hostname = "rpki-prover-openbsd"
+
+  # Nothing to share: the build script pushes the port and the sources with
+  # rsync, and OpenBSD has no client for vagrant's other synced folder types.
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  config.vm.provider :libvirt do |lv|
+    # Not the default "openbsd_": that is too likely to clash with leftovers.
+    lv.default_prefix = "rpki-prover-"
+    lv.memory = Integer(ENV.fetch("RPKI_PROVER_OPENBSD_MEMORY", "12288"))
+    lv.cpus = Integer(ENV.fetch("RPKI_PROVER_OPENBSD_CPUS", "8"))
+    lv.cpu_mode = "host-passthrough"
+    # The box's own 20G disk is autopartitioned with 2.2G for /usr/local,
+    # and GHC alone is 1.9G installed. This disk becomes /usr/local and
+    # /build (see build-package.sh). It is only attached when the domain is
+    # created: adding it later needs a "vagrant destroy".
+    lv.storage :file, size: "80G", type: "qcow2", bus: "virtio"
+  end
+end

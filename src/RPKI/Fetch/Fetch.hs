@@ -1,0 +1,353 @@
+{-# LANGUAGE StrictData #-}
+
+module RPKI.Fetch.Fetch where
+
+import           Effectful.Timeout                (Timeout)
+import           Effectful
+import           Control.Concurrent              as Conc
+import           Control.Concurrent.Async
+import           Control.Concurrent.STM
+import           Control.Exception
+import           Control.Monad
+import           Control.Lens hiding (indices, Indexable)
+import           Effectful.Error.Static           (catchError)
+
+import qualified Data.List.NonEmpty          as NonEmpty
+
+import           Data.Data
+import           Data.Hourglass                   (Seconds(..))
+import qualified Data.Hashable                   as Hashable
+import           Data.Int                         (Int64)
+import           Data.Foldable                   (for_)
+import           Data.Maybe 
+import           Data.Map.Strict                 (Map)
+import qualified Data.Map.Strict                 as Map            
+import qualified Data.Map.Monoidal.Strict        as MonoidalMap     
+import           Data.String.Interpolate.IsString
+import           Data.IxSet.Typed                (IxSet, Indexable, IsIndexOf, ixFun, ixList)
+import qualified Data.IxSet.Typed                as IxSet
+
+import           GHC.Generics
+
+
+import           RPKI.AppContext
+import           RPKI.AppMonad
+import           RPKI.AppTypes
+import           RPKI.Config
+import           RPKI.Domain
+import           RPKI.Reporting
+import           RPKI.Logging
+import           RPKI.Repository
+import           RPKI.RRDP.Types
+
+import           RPKI.Time
+import           RPKI.Parallel
+import           RPKI.Util                       
+import           RPKI.Rsync
+import           RPKI.Fetch.Http
+import           RPKI.Fetch.Erik.ErikRelay
+import           RPKI.Worker (ErikFetchStat)
+import           RPKI.TAL
+import           RPKI.RRDP.RrdpFetch
+
+
+data Fetchers = Fetchers {
+        -- All fetchables after the last validation, i.e. repositories
+        -- with their fallbacks
+        fetcheables :: TVar Fetcheables,
+
+        -- Fetchers that are currently running
+        runningFetchers :: TVar (Map RpkiURL ThreadId),        
+
+        -- Version for the first fetch that was finished for every repository.
+        -- We want to track this to for the "one-off" mode.
+        firstFinishedFetchBy :: TVar (Map RpkiURL WorldVersion),        
+
+        -- Semaphore for untrusted fetches, i.e fetches that have 
+        -- no decent history of being successful 
+        untrustedFetchSemaphore :: Semaphore,        
+
+        -- Semaphore for trusted fetches, i.e. fetches 
+        -- that have already succeeded
+        trustedFetchSemaphore :: Semaphore,        
+
+        -- Semaphore for rsync fetches per host, used to no exceed 
+        -- the limit of connections per rsync host
+        rsyncPerHostSemaphores  :: TVar (Map RsyncHost Semaphore),
+
+        -- Hard cap on concurrent Erik fetches. Unlike the trusted/untrusted
+        -- semaphores above, which are deliberately soft (a fetch that waits
+        -- too long runs anyway rather than starving), this one is a real
+        -- limit: there is one Erik fetch per FQDN, so without it a round
+        -- spawns a worker process for every publication point at once.
+        erikFetchSemaphore :: Semaphore,
+
+        -- Mapping of repositories to the TAs they are mentioned in
+        uriByTa :: TVar UriTaIxSet
+    }
+    deriving stock (Generic)
+
+type UriTaIxSet = IxSet Indexes UrlTA
+
+data UrlTA = UrlTA RpkiURL TaName
+    deriving stock (Show, Eq, Ord, Generic, Data, Typeable)    
+
+type Indexes = '[RpkiURL, TaName]
+
+instance Indexable Indexes UrlTA where
+    indices = ixList
+        (ixFun (\(UrlTA url _) -> [url]))
+        (ixFun (\(UrlTA _ ta)  -> [ta]))        
+
+deleteByIx :: (Indexable ixs a, IsIndexOf ix ixs) => ix -> IxSet ixs a -> IxSet ixs a
+deleteByIx ix_ s = foldr IxSet.delete s $ IxSet.getEQ ix_ s
+
+dropFetcher :: Fetchers -> RpkiURL -> IO ()
+dropFetcher Fetchers {..} url = do
+    me <- Conc.myThreadId
+    atomically $ do
+        running <- readTVar runningFetchers
+        -- Check if we are not trying to kill a fetcher for the same URL but not the original thread
+        when (Map.lookup url running == Just me) $ do
+            writeTVar runningFetchers $ Map.delete url running
+            modifyTVar' uriByTa $ deleteByIx url
+
+-- | Cancel every running fetcher, for shutdown only.
+stopAllFetchers :: Fetchers -> IO ()
+stopAllFetchers Fetchers {..} = mask_ $ do
+    threads <- atomically $ Map.elems <$> readTVar runningFetchers
+    for_ threads $ \thread -> Conc.throwTo thread AsyncCancelled
+
+newFetchers :: Config -> TVar Fetcheables -> STM Fetchers
+newFetchers config fetcheables = do
+    runningFetchers      <- newTVar mempty
+    firstFinishedFetchBy <- newTVar mempty
+    uriByTa              <- newTVar mempty
+    rsyncPerHostSemaphores  <- newTVar mempty
+    untrustedFetchSemaphore <- newSemaphore fetchParallelism
+    trustedFetchSemaphore   <- newSemaphore fetchParallelism
+    erikFetchSemaphore      <- newSemaphore (fromIntegral $ config ^. #erikConf . #fqdnParallelism)
+    pure Fetchers {..}
+  where
+    fetchParallelism = fromIntegral $ config ^. #parallelism . #fetchParallelism
+
+updateUriPerTa :: Map TaName Fetcheables -> UriTaIxSet -> UriTaIxSet
+updateUriPerTa fetcheablesPerTa uriTa = uriTa'
+  where 
+    -- TODO Optimise it
+    cleanedUpPerTa = foldr deleteByIx uriTa $ Map.keys fetcheablesPerTa        
+
+    uriTa' = 
+        IxSet.insertList [ UrlTA url ta | 
+                (ta, Fetcheables fs) <- Map.toList fetcheablesPerTa,
+                url <- MonoidalMap.keys fs
+            ] cleanedUpPerTa 
+
+-- | How long to wait before fetching this repository again.
+nextRefreshInterval :: Config
+                    -> Repository
+                    -> WorldVersion
+                    -> FetchStatus
+                    -> Maybe RrdpFetchStat
+                    -> TimeMs
+                    -> Seconds
+nextRefreshInterval config repository worldVersion newStatus rrdpStats duration =
+    case newStatus of
+        FailedAt _ -> exponentialBackoff currentInterval
+        _ ->
+            case rrdpStats of
+                Nothing                 -> defaultInterval
+                Just RrdpFetchStat {..} ->
+                    case action of
+                        NothingToFetch _               -> increaseInterval currentInterval
+                        FetchDeltas {..}
+                            | moreThanOne sortedDeltas -> decreaseInterval currentInterval
+                            | otherwise                -> currentInterval
+                        _                              -> currentInterval
+  where
+    fetchIntervalConfig = config ^. #fetchIntervalConfig
+
+    currentInterval =
+        fromMaybe defaultInterval (getMeta repository ^. #refreshInterval)
+
+    exponentialBackoff (Seconds s) = min
+        (Seconds $ s + s `div` 2 + 2 * kindaRandomness)
+        (fetchIntervalConfig ^. #maxFailedBackoffInterval + 3 * Seconds kindaRandomness)
+
+    moreThanOne = ( > 1) . length . NonEmpty.take 2
+
+    defaultInterval = case repository of
+        RrdpR _  -> config ^. #rrdpConf . #repositoryRefreshInterval
+        RsyncR _ -> config ^. #rsyncConf . #repositoryRefreshInterval
+
+    increaseInterval (Seconds s) = trimInterval $ Seconds $ s + s `div` 5 + kindaRandomness
+    decreaseInterval (Seconds s) = trimInterval $ Seconds $ s - s `div` 3 - kindaRandomness
+
+    minInterval =
+        case repository of
+            -- it's significantly cheaper to use E-Tag and If-None-Match,
+            -- so the interval can be smaller
+            RrdpR (RrdpRepository { eTag = Just _ }) -> fetchIntervalConfig ^. #minFetchInterval
+            _                                        -> 2 * fetchIntervalConfig ^. #minFetchInterval
+
+    trimInterval interval =
+        max minInterval
+            (min (fetchIntervalConfig ^. #maxFetchInterval + Seconds kindaRandomness) interval)
+
+    -- Pseudorandom stuff is added to spread repositories over time more or less
+    -- uniformly and avoid having peaks of activity. It's just something looking
+    -- relatively random without IO. This one will return a number from 0 to 19.
+    kindaRandomness = let
+        h :: Integer = fromIntegral $ Hashable.hash $ getRpkiURL repository
+        w :: Integer = fromIntegral $ let (WorldVersion w_) = worldVersion in Hashable.hash w_
+        d :: Integer = fromIntegral $ unTimeMs duration
+        r = (w `mod` 83 + h `mod` 77 + d `mod` 37) `mod` 20
+        in fromIntegral r :: Int64
+
+
+{- | Wait for a slot to fetch this repository in.
+
+    Repositories that have been fetched successfully before get their own
+    semaphore, so that a crowd of new or broken ones cannot squeeze them out.
+    Both are deliberately soft: a fetch that has waited long enough runs
+    anyway rather than starving. Rsync is additionally limited per host,
+    since hosts limit the number of connections they accept.
+-}
+withFetchLimits :: Fetchers -> Config -> Repository -> IO a -> IO a
+withFetchLimits Fetchers {..} config repository f =
+    case repository of
+        RrdpR _                   -> withLaunchSlot
+        RsyncR (getRsyncURL -> r) -> rsyncFetch r
+  where
+    timeToWait = config ^. #fetchIntervalConfig . #fetchLaunchWaitDuration
+
+    semaphoreToUse =
+        case getFetchStatus repository of
+            -- TODO Add logic "if succeeded more than N times"
+            FetchedAt _ -> trustedFetchSemaphore
+            _           -> untrustedFetchSemaphore
+
+    withLaunchSlot = withSemaphoreOrTimeout semaphoreToUse timeToWait f
+
+    rsyncFetch (RsyncURL host _) = do
+        hostSemaphore <- atomically $ do
+            semaphores <- readTVar rsyncPerHostSemaphores
+            case Map.lookup host semaphores of
+                Just s  -> pure s
+                Nothing -> do
+                    s <- newSemaphore $ config ^. #rsyncConf . #perHostLimit
+                    writeTVar rsyncPerHostSemaphores $ Map.insert host s semaphores
+                    pure s
+
+        withSemaphore hostSemaphore withLaunchSlot
+
+
+-- Fetch one individual repository. 
+-- 
+-- Returned repository has all the metadata updated (in case of RRDP session and serial).
+-- The metadata is also updated in the database.
+--
+fetchRepository :: (ValidatorIO es, Timeout :> es) => AppContext
+                -> WorldVersion
+                -> Repository
+                -> Eff es (Repository, Maybe RrdpFetchStat)
+fetchRepository
+    appContext@AppContext {..}
+    worldVersion
+    repo = do
+        logInfo logger [i|Fetching #{getURL repoURL}.|]
+        case repo of
+            RsyncR r -> do
+                r' <- fetchRsyncRepository r
+                pure (RsyncR r', Nothing)
+            RrdpR r  -> do
+                (r', stat) <- fetchRrdpRepository r
+                pure (RrdpR r', Just stat)
+  where
+    repoURL = getRpkiURL repo
+
+    -- The worker's own timeout, and the parent's backstop for it,
+    -- are taken care of by 'runWorker'.
+    fetchRrdpRepository r = do
+        (z, elapsed) <- timedMS $ fromTryM
+                            (RrdpE . UnknownRrdpProblem . fmtEx)
+                            (runRrdpFetchWorker appContext worldVersion r)
+        logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
+        pure z
+
+    fetchRsyncRepository r = do 
+        (z, elapsed) <- timedMS $ fromTryM 
+                            (RsyncE . UnknownRsyncProblem . fmtEx) 
+                            (runRsyncFetchWorker appContext worldVersion r)
+        logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
+        pure z
+          
+
+
+-- | Fetch TA certificate based on TAL location(s)
+--
+fetchTACertificate :: (ValidatorIO es, Timeout :> es) => AppContext -> TAL -> Eff es (RpkiURL, ParsedRpkiObject)
+fetchTACertificate appContext@AppContext {..} tal =
+    go $ sortRrdpFirst $ neSetToList $ unLocations $ talCertLocations tal
+  where
+    go []         = appError $ TAL_E $ TALError "None of the certificate locations could be fetched."
+    go (u : uris) = tryFetch `catchError` (\_cs -> goToNext)
+      where
+        tryFetch =
+            timeoutVT timeout fetchTaCert (goToNext timeoutError)
+
+        (timeout, timeoutError) = let
+            rsyncT = rsyncFetchTimeout config
+            rrdpT  = rrdpFetchTimeout config
+            in case u of
+                RsyncU _ -> (rsyncT, RsyncE $ RsyncDownloadTimeout rsyncT)
+                RrdpU _  -> (rrdpT, RrdpE $ RrdpDownloadTimeout rrdpT)
+
+        fetchTaCert = do
+            logInfo logger [i|Fetching TA certificate from #{getURL u}.|]
+            ro <- case u of
+                RsyncU rsyncU -> rsyncRpkiObject appContext rsyncU
+                RrdpU rrdpU   -> downloadRpkiObject appContext rrdpU
+            pure (u, ro)
+            
+        goToNext e = do            
+            let message = [i|Failed to fetch #{getURL u}: #{e}|]
+            logError logger message
+            validatorWarning $ VWarning e
+            go uris            
+
+
+fetchRepositoryFromErikRelays :: (ValidatorIO es, Timeout :> es) => AppContext
+                            -> [URI]
+                            -> WorldVersion
+                            -> FQDN
+                            -> Eff es ErikFetchStat
+fetchRepositoryFromErikRelays
+    appContext@AppContext {..}
+    relays
+    worldVersion
+    fqdn = do
+        logInfo logger [i|Fetching #{fqdn} from #{length relays} Erik relay(s).|]
+
+        (z, elapsed) <- timedMS $ fromTryM
+                            (ErikE . UnknownErikProblem . fmtEx)
+                            (runErikFetchWorker appContext worldVersion relays fqdn)
+        logInfo logger [i|Fetched #{fqdn} from Erik relays, took #{elapsed}ms.|]
+        pure z
+
+
+getPrimaryRepositoryUrl :: PublicationPoints 
+                         -> PublicationPointAccess 
+                         -> RpkiURL
+getPrimaryRepositoryUrl pps ppAccess = 
+    let primary = NonEmpty.head $ unPublicationPointAccess ppAccess
+    in maybe (getRpkiURL primary) getRpkiURL $ repositoryFromPP pps primary
+
+
+getFetchables :: PublicationPoints -> PublicationPointAccess -> [(RpkiURL, FetchStatus)]
+getFetchables pps ppAccess = 
+    [ (getRpkiURL repo, getFetchStatus repo)
+        | pp <- NonEmpty.toList $ unPublicationPointAccess ppAccess,                
+          repo <- maybeToList $ repositoryFromPP pps pp ]
+
+            

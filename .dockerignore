@@ -1,0 +1,9 @@
+# Keep host build artifacts and VM/packaging output out of the docker build
+# context: they are large, and a stale dist-newstyle in particular can confuse
+# a build running inside the image.
+.git
+.stack-work
+dist-newstyle
+.vagrant
+pkg/packages
+pkg/apt-repo/public

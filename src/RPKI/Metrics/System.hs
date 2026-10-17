@@ -9,6 +9,7 @@ import           Data.Semigroup
 import           Data.Text                 (Text)
 import           RPKI.Time
 import           RPKI.AppTypes
+import           RPKI.Metrics.Process
 import           RPKI.Reporting
 import           RPKI.Store.Base.Serialisation
 
@@ -29,6 +30,12 @@ newtype LatestCPUTime = LatestCPUTime CPUTime
 instance Monoid LatestCPUTime where
     mempty = LatestCPUTime $ CPUTime 0
 
+newtype MaxSize = MaxSize Size
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+    deriving newtype (Num, Bounded)
+    deriving Semigroup via Max MaxSize
+    deriving Monoid    via Max MaxSize
 
 data AvgMemory = AvgMemory {
         totalMemory :: Sum MaxMemory,
@@ -54,8 +61,21 @@ data ResourceUsage = ResourceUsage {
         latestCpuTime       :: LatestCPUTime,
         aggregatedCpuTime   :: AggregatedCPUTime,
         aggregatedClockTime :: TimeMs,
-        maxMemory           :: MaxMemory,
-        avgMemory           :: AvgMemory
+        -- | Largest Haskell heap any run under this scope ever reached.
+        maxRtsHeap           :: MaxMemory,
+        avgRtsHeap           :: AvgMemory,
+        -- | Largest resident size any run under this scope ever reached.
+        -- Same kind of number as 'maxRtsHeap' -- both are high-water marks over
+        -- a whole run -- so the two are directly comparable.
+        maxProcessRSS       :: MaxMemory,
+        avgProcessRSS       :: AvgMemory,
+        -- | High-water marks over the runs that happened under this scope, i.e.
+        -- the most any single run of it ever downloaded or moved to and from disk.
+        -- They are maxima rather than totals because that is what the per-worker
+        -- limits in 'RPKI.Config.WorkerLimits' are set against.
+        maxIncomingTraffic  :: MaxSize,
+        maxDiskRead         :: MaxSize,
+        maxDiskWrite        :: MaxSize
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving anyclass (TheBinary)
@@ -81,14 +101,21 @@ data SystemInfo = SystemInfo {
 newSystemInfo :: Instant -> SystemInfo
 newSystemInfo = SystemInfo mempty 
 
-cpuMemMetric :: Text -> CPUTime -> TimeMs -> MaxMemory -> SystemMetrics
-cpuMemMetric scope cpuTime clockTime maxMemory' = SystemMetrics {
-        resources = updateMetricInMap 
-                        (newScope scope) 
-                        ((#latestCpuTime %~ (<> LatestCPUTime cpuTime)) . 
-                         (#aggregatedCpuTime %~ (<> AggregatedCPUTime cpuTime)) . 
-                         (#aggregatedClockTime %~ (<> clockTime)) .  
-                         (#maxMemory %~ (<> maxMemory')) .
-                         (#avgMemory %~ (<> newAvgMemory maxMemory')))
+resourceUsageMetric :: Text -> TimeMs -> ProcessStats -> SystemMetrics
+resourceUsageMetric scope clockTime ProcessStats {..} = let
+        DiskIO { diskRead = readBytes, diskWrite = writtenBytes } = statDiskIO
+    in SystemMetrics {
+        resources = updateMetricInMap
+                        (newScope scope)
+                        ((#latestCpuTime %~ (<> LatestCPUTime statCpuTime)) .
+                         (#aggregatedCpuTime %~ (<> AggregatedCPUTime statCpuTime)) .
+                         (#aggregatedClockTime %~ (<> clockTime)) .
+                         (#maxRtsHeap %~ (<> statMaxRtsHeap)) .
+                         (#avgRtsHeap %~ (<> newAvgMemory statMaxRtsHeap)) .
+                         (#maxProcessRSS %~ (<> statProcessRss)) .
+                         (#avgProcessRSS %~ (<> newAvgMemory statProcessRss)) .
+                         (#maxIncomingTraffic %~ (<> MaxSize statIncomingTraffic)) .
+                         (#maxDiskRead %~ (<> MaxSize readBytes)) .
+                         (#maxDiskWrite %~ (<> MaxSize writtenBytes)))
                         mempty
     }

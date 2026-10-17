@@ -1,0 +1,83 @@
+# Build environment for the rpki-prover Debian/Ubuntu packages.
+#
+# One image per target release, so that the resulting binary is linked against
+# exactly the libc/libgmp/liblzma/... of that release and dpkg-shlibdeps can
+# derive correct, release-specific dependencies.
+#
+# Build context is the repository root:
+#   docker build -f pkg/Dockerfile.deb-builder --build-arg BASE_IMAGE=debian:trixie-slim .
+
+ARG BASE_IMAGE=debian:bookworm-slim
+FROM ${BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    GHCUP_INSTALL_BASE_PREFIX=/opt \
+    CABAL_DIR=/opt/cabal \
+    PATH=/opt/.ghcup/bin:/opt/cabal/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        debhelper \
+        dpkg-dev \
+        fakeroot \
+        git \
+        help2man \
+        lintian \
+        make \
+        pkg-config \
+        rsync \
+        xz-utils \
+        libgmp-dev \
+        liblzma-dev \
+        libncurses-dev \
+        libnuma-dev \
+        libtinfo-dev \
+        zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# GHC and cabal come from ghcup rather than from Debian, so that every target
+# release is built with exactly the toolchain pinned in .tool-versions. Only
+# the C libraries above differ between releases -- which is the whole point of
+# building each package in its own release's container.
+COPY .tool-versions /tmp/.tool-versions
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+        amd64) ghcup_arch=x86_64 ;; \
+        arm64) ghcup_arch=aarch64 ;; \
+        *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
+    esac; \
+    ghc_version="$(awk '$1 == "ghc" { print $2 }' /tmp/.tool-versions)"; \
+    cabal_version="$(awk '$1 == "cabal" { print $2 }' /tmp/.tool-versions)"; \
+    test -n "$ghc_version" -a -n "$cabal_version"; \
+    curl -fsSL "https://downloads.haskell.org/~ghcup/${ghcup_arch}-linux-ghcup" \
+        -o /usr/local/bin/ghcup; \
+    chmod 0755 /usr/local/bin/ghcup; \
+    ghcup install ghc "$ghc_version" --set; \
+    ghcup install cabal "$cabal_version" --set; \
+    ghc --version; \
+    cabal --version
+
+# Cabal refuses to touch a git checkout owned by another user; inside the
+# container everything runs as root, so just allow it everywhere.
+RUN git config --global --add safe.directory '*'
+
+# Pre-build every Haskell dependency into the image so that the package build
+# only has to compile this project. Only the files that determine the
+# dependency set are copied, so editing sources does not invalidate this (very
+# expensive) layer.
+WORKDIR /deps
+COPY rpki-prover.cabal cabal.project cabal.project.freeze /deps/
+RUN set -eux; \
+    mkdir -p /deps/src /deps/app /deps/test/src /deps/perf /deps/static; \
+    cabal update; \
+    # Tolerated: if the plan cannot be fully realised without the sources, the
+    # package build below simply has to compile more.
+    cabal build --only-dependencies exe:rpki-prover || true; \
+    rm -rf /deps/dist-newstyle
+
+WORKDIR /build

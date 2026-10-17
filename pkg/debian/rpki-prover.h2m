@@ -1,0 +1,50 @@
+[NAME]
+rpki-prover \- RPKI relying party software
+
+[DESCRIPTION]
+.B rpki-prover
+validates the RPKI certificate tree and serves the results over an HTTP API,
+a web UI, Prometheus metrics and the RTR protocol.
+.PP
+There is no configuration file: everything is configured through the command
+line options listed below.  When run as the packaged systemd service the
+options come from
+.BR /etc/default/rpki-prover .
+
+[FILES]
+.TP
+.B /etc/default/rpki-prover
+Command line options used by the
+.B rpki-prover.service
+systemd unit.
+.TP
+.B /var/lib/rpki-prover/
+State directory of the service: object cache, rsync mirrors, temporary files
+and the trust anchor locators in
+.BR /var/lib/rpki-prover/tals/ ,
+which are downloaded from the RIRs on the first start.
+.TP
+.B /etc/tals/
+Trust anchor locator files from the
+.B rpki-trust-anchors
+package. Not used unless
+.B --extra-tals-directory
+is pointed at them.
+
+[EXAMPLES]
+Serve the HTTP API on port 8080 using four CPUs:
+.PP
+.RS
+rpki-prover --rpki-root-directory /var/lib/rpki-prover --http-api-port 8080 --cpu-count 4
+.RE
+.PP
+Verify files against an RPKI Signed Checklist using a running instance's cache:
+.PP
+.RS
+rpki-prover --rpki-root-directory /var/lib/rpki-prover --verify-signature --signature-file checklist.sig --verify-files foo.txt bar.bin
+.RE
+
+[SEE ALSO]
+The full documentation is at
+.UR https://github.com/lolepezy/rpki-prover
+.UE .

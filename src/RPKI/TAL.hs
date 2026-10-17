@@ -1,5 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE StrictData        #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.TAL where
 
@@ -33,11 +32,11 @@ import           RPKI.Store.Base.Serialisation
 -- | (I couldn't find any formal definiteion of the "RIPE format")
 -- | 
 data TAL = PropertiesTAL {
-        caName              :: Maybe Text,
-        certificateLocation :: Locations,
-        publicKeyInfo       :: EncodedBase64,
-        prefetchUris        :: [RpkiURL],
-        taName              :: TaName
+        caName               :: Maybe Text,
+        certificateLocations :: Locations,
+        publicKeyInfo        :: EncodedBase64,
+        prefetchUris         :: [RpkiURL],
+        taName               :: TaName
     } 
     | RFC_TAL {
         certificateLocations :: Locations,
@@ -48,15 +47,15 @@ data TAL = PropertiesTAL {
     deriving anyclass (TheBinary)
 
 talCertLocations :: TAL -> Locations
-talCertLocations PropertiesTAL {..} = certificateLocation
-talCertLocations RFC_TAL {..}       = certificateLocations
+talCertLocations PropertiesTAL {..} = certificateLocations
+talCertLocations RFC_TAL {..}        = certificateLocations
 
 getTaName :: TAL -> TaName
 getTaName = (^. #taName)    
 
 getTaCertURL :: TAL -> RpkiURL
-getTaCertURL PropertiesTAL {..} = pickLocation certificateLocation
-getTaCertURL RFC_TAL {..}       = pickLocation certificateLocations
+getTaCertURL PropertiesTAL {..} = pickLocation certificateLocations
+getTaCertURL RFC_TAL {..}        = pickLocation certificateLocations
 
 -- | Parse TAL object from raw text
 parseTAL :: Text -> Text -> Either TALError TAL
