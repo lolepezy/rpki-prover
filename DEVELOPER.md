@@ -4,8 +4,8 @@
 - You need `cabal` to start. The easiest way to manage GHC/Cabal versions at the moment is to use ghcup (https://www.haskell.org/ghcup/)
 - Docker
 - Some libraries
-    * On Linux using apt-get, that will be : `sudo apt install rsync libz-dev libexpat1-dev liblmdb-dev liblzma-dev libgmp-dev`.
-    * On MacOS using brew, that will be: `brew install rsync lmdb xz expat`.
+    * On Linux using apt-get, that will be : `sudo apt install rsync libz-dev libexpat1-dev liblzma-dev libgmp-dev`.
+    * On MacOS using brew, that will be: `brew install rsync xz expat`.
 
 ## Build
 

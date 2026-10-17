@@ -1,12 +1,10 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module RPKI.Resources.IntervalContainers where
 
 import Prelude hiding (subtract, null)
 
-import           Data.Either              (partitionEithers)
 import qualified Data.List                as List
 import qualified Data.Vector              as V
 import           RPKI.Resources.Types
@@ -37,52 +35,67 @@ isInside i is =
 
 -- | Use binary search to find intersections of an interval within an interval set.
 -- | Return both interesections -- '[a]' and the intervals it intersects with -- 'a'.
+--
+-- `intersection` can be expensive (e.g. Ipv6Prefix's goes through hw-ip's
+-- Word128 range-splitting), so every branch below reuses the `intersection`
+-- value it already tested instead of letting goForward/goBackwards recompute
+-- it for the very same index.
 findFullIntersections :: Interval a => a -> IntervalSet a -> [([a], a)]
-findFullIntersections a is@(IntervalSet v) = 
-    if null is 
+findFullIntersections a is@(IntervalSet v) =
+    if null is
         then []
-    else 
-        case V.unsafeIndex v 0 `intersection` a of
-            [] -> case V.unsafeIndex v lastIndex `intersection` a of
-                [] -> goBinarySearch 0 lastIndex
-                _  -> goBackwards lastIndex
-            _  -> goForward 0
-  where 
+    else
+        let first' = V.unsafeIndex v 0
+        in case first' `intersection` a of
+            [] ->
+                let last' = V.unsafeIndex v lastIndex
+                in case last' `intersection` a of
+                    [] -> goBinarySearch 0 lastIndex
+                    lastX -> continueBackwards lastIndex lastX last'
+            firstX -> continueForward 0 firstX first'
+  where
     goBinarySearch b e
         | e <= b = []
-        | otherwise =           
+        | otherwise =
             case middle `intersection` a of
-                [] -> 
+                [] ->
                     case compare (start a) (start middle) of
-                        LT -> goBinarySearch b middleIndex 
+                        LT -> goBinarySearch b middleIndex
                         GT -> goBinarySearch (middleIndex + 1) e
-                        -- this will never happen
-                        EQ -> goBackwards middleIndex <> goForward (middleIndex + 1)
-                _ -> goBackwards middleIndex <> goForward (middleIndex + 1)
-      where                  
+                        -- `middle` itself doesn't intersect (the [] case above),
+                        -- so a backwards search starting at it contributes nothing.
+                        EQ -> goForward (middleIndex + 1)
+                middleX -> continueBackwards middleIndex middleX middle <> goForward (middleIndex + 1)
+      where
         middle = V.unsafeIndex v middleIndex
         middleIndex = fromIntegral ((word b + word e) `div` 2) :: Int
             where
                 word n = fromIntegral n :: Word
                 {-# INLINE word #-}
 
-    goForward index 
+    goForward index
         | index >= len = []
-        | otherwise = 
-            case big `intersection` a of
-                [] -> []
-                is' -> (is', big) : goForward (index + 1)
+        | otherwise = continueForward index (big `intersection` a) big
       where
         big = V.unsafeIndex v index
-    
+
+    -- `x` must be `big \`intersection\` a`, already computed by the caller.
+    continueForward index x big =
+        case x of
+            [] -> []
+            is' -> (is', big) : goForward (index + 1)
+
     goBackwards index
         | index <= 0 = []
-        | otherwise = 
-            case big `intersection` a of
-                [] -> []
-                is' -> goBackwards (index - 1) <> [(is', big)]
+        | otherwise = continueBackwards index (big `intersection` a) big
       where
         big = V.unsafeIndex v index
+
+    -- `x` must be `big \`intersection\` a`, already computed by the caller.
+    continueBackwards index x big =
+        case x of
+            [] -> []
+            is' -> goBackwards (index - 1) <> [(is', big)]
 
     len = V.length v
     lastIndex = len - 1        
@@ -98,22 +111,23 @@ type ResourceCheckResult a = Either
 intersectionAndOverclaimedIntervals :: Interval a =>    
                                         IntervalSet a -> IntervalSet a -> 
                                         (Nested (IntervalSet a), Overclaiming (IntervalSet a))
-intersectionAndOverclaimedIntervals (IntervalSet smaller) bigger =     
+intersectionAndOverclaimedIntervals (IntervalSet smaller) bigger =
     (Nested $ fromList intersectionRS, Overclaiming $ fromList overclaimingRS)
     where
-        intersectionRS = good <> concatMap fst problematic 
-        overclaimingRS = concatMap snd problematic
+        (intersectionRS, overclaimingRS) = foldMap nestedAndOverclaimed smaller
 
-        (problematic, good) = partitionEithers $ concatMap overclamingPart smaller
-
-        overclamingPart smallerInterval = 
+        nestedAndOverclaimed smallerInterval =
             case findFullIntersections smallerInterval bigger of
-                []             -> [Left ([], [smallerInterval])]
-                intersections  -> flip List.map intersections $ 
-                    \(intersection', biggerInterval) ->        
-                        if biggerInterval `contains` smallerInterval
-                            then Right smallerInterval
-                            else Left (intersection', smallerInterval `subtract` biggerInterval)       
+                [] -> ([], [smallerInterval])
+                [(_, biggerInterval)]
+                    | biggerInterval `contains` smallerInterval -> ([smallerInterval], [])
+                intersections ->
+                    -- Overclaimed is what none of the bigger intervals covers,
+                    -- so subtract all of them, not each one separately.
+                    (concatMap fst intersections,
+                     List.foldl'
+                        (\rest (_, biggerInterval) -> concatMap (`subtract` biggerInterval) rest)
+                        [smallerInterval] intersections)
 
 
 subsetCheck :: Interval a =>

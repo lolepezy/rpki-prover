@@ -1,0 +1,2 @@
+# Applied by rpm itself on rpm >= 4.19; the spec's %pre covers older ones.
+u rpki-prover - "RPKI Prover" /var/lib/rpki-prover /sbin/nologin

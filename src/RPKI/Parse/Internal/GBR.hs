@@ -1,7 +1,6 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Parse.Internal.GBR where
 
+import           Effectful
 import Data.ASN1.BinaryEncoding
 import Data.ASN1.Encoding
 import Data.ASN1.Parse
@@ -21,16 +20,17 @@ import qualified RPKI.Util as U
 
 -- | Parse Ghostbusters record (https://tools.ietf.org/html/rfc6493)
 -- 
-parseGbr :: BS.ByteString -> PureValidatorT GbrObject
-parseGbr bs = do    
+parseGbr :: Validator es => Hashed BS.ByteString -> Eff es GbrObject
+parseGbr (Hashed bs hash') = do    
     asns      <- fromEither $ first (parseErr . U.fmtGen) $ decodeASN1' DER bs  
     signedGbr <- fromEither $ first (parseErr . U.convert) $ 
                     runParseASN1 (parseSignedObject parseGbr') asns
-    hash' <- getMetaFromSigned signedGbr bs
     pure $ newCMSObject hash' (CMS signedGbr)
     where     
         parseGbr' contentType octets = 
-            pure $ EncapsulatedContentInfo contentType (Gbr $ toShortBS octets)
+            -- Keep original CMS eContent bytes for RFC 6488 messageDigest checks.
+            -- https://www.rfc-editor.org/rfc/rfc6488#section-2.1.6.4.2
+            pure $ EncapsulatedContentInfo contentType octets (Gbr $ toShortBS octets)
 
 
 {- 

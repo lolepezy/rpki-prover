@@ -1,0 +1,51 @@
+Source: rpki-prover
+Section: net
+Priority: optional
+Maintainer: Mikhail Puzanov <misha.puzanov@pm.me>
+# NOTE: GHC and cabal are *not* listed here. The versions this project needs
+# (see .tool-versions) are not the ones Debian ships, so the build environment
+# in pkg/Dockerfile.deb-builder installs them with ghcup instead. Everything
+# below is a C library that the Haskell packages bind to, and must be kept in
+# sync with the apt-get line in that Dockerfile.
+Build-Depends:
+ debhelper-compat (= 13),
+ pkg-config,
+ help2man,
+ libgmp-dev,
+ liblzma-dev,
+ zlib1g-dev
+Standards-Version: 4.6.2
+Homepage: https://github.com/lolepezy/rpki-prover
+Vcs-Git: https://github.com/lolepezy/rpki-prover.git
+Vcs-Browser: https://github.com/lolepezy/rpki-prover
+Rules-Requires-Root: no
+
+Package: rpki-prover
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ adduser,
+ rsync
+Suggests: rpki-trust-anchors
+Description: RPKI relying party software (validator)
+ The Resource Public Key Infrastructure (RPKI) provides cryptographically
+ signed statements about the association of Internet routing resources.  In
+ particular it allows the holder of an IP address prefix to publish which AS
+ number is authorised to originate BGP announcements for it.
+ .
+ RPKI Prover is a relying party implementation: it fetches the RPKI
+ repositories over rsync and RRDP, validates the certificate tree and
+ publishes the resulting VRPs, ASPA objects and BGPSec keys over an HTTP API
+ (CSV/JSON), a web UI, Prometheus metrics and the RTR protocol (RFC 8210).
+ .
+ It also supports SLURM (RFC 8416), RPKI Signed Checklists and RPKI Prefix
+ Lists, and runs fetching and validation in isolated worker processes with
+ memory and time limits to contain misbehaving or hostile repositories.
+ .
+ This package installs rpki-prover as a systemd service running as the
+ dedicated "rpki-prover" system user, with its state under
+ /var/lib/rpki-prover.  On its first start the service downloads the five RIR
+ trust anchor locators itself; install rpki-trust-anchors and point
+ --extra-tals-directory at /etc/tals instead if you would rather they came
+ from the archive.

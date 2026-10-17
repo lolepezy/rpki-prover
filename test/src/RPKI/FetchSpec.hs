@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.FetchSpec where
 
 import           Data.Text (Text)
@@ -13,7 +11,7 @@ import qualified Data.IxSet.Typed                as IxSet
 
 import           RPKI.Domain
 import           RPKI.Repository
-import           RPKI.Fetch
+import           RPKI.Fetch.Fetch
 
 
 uriTaSet :: [(Text, Text)] -> UriTaIxSet

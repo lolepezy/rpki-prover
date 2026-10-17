@@ -3,14 +3,28 @@
 
 module RPKI.Parallel where
 
-import           Control.Concurrent
+import           Control.Concurrent              (threadDelay)
+import           Control.Concurrent.MVar
+import           Control.Concurrent.QSem
 import           Control.Concurrent.STM
 import qualified Control.Concurrent.STM.TBQueue  as Q
-import           Control.Concurrent.Async.Lifted
-import           Control.Exception.Lifted
+import qualified Control.Concurrent.Async        as IOAsync
+import qualified Control.Exception               as IOExc
+import qualified UnliftIO.Exception              as UIO
 import           Control.Monad
-import           Control.Monad.Reader
-import           Control.Monad.Trans.Control
+
+import           Effectful
+import           Effectful.Concurrent.Async
+import           Effectful.Exception             (SomeException, finally, throwIO)
+
+import           Data.IORef
+import qualified Data.List                       as List
+import qualified Data.List.Split                 as Split
+import qualified Data.Sequence                   as Seq
+import           Data.Sequence                   (Seq)
+import qualified Data.Vector                     as V
+import           Data.Void                       (Void, absurd)
+import           GHC.Conc                        (getNumCapabilities)
 
 import           Data.Hourglass
 import           Data.Foldable (for_)
@@ -22,22 +36,18 @@ import           Streaming
 import qualified Streaming.Prelude               as S
 
 
-
 atLeastOne :: Natural -> Natural
 atLeastOne n = if n < 2 then 1 else n
 
--- 
--- TODO Refactor it so that is shared code with "txFoldPipeline"
-
 -- Consume a stream, map each element and put asyncs in the queue.
 -- Read the queue and consume asyncs on the other end.
-foldPipeline :: (MonadBaseControl IO m, MonadIO m) =>
+foldPipeline :: (ValidatorIO es, Concurrent :> es) =>
             Natural ->
-            Stream (Of s) (ValidatorTCurried m) () ->
-            (s -> ValidatorT m p) ->          -- ^ producer
-            (p -> r -> ValidatorT m r) ->     -- ^ consumer, called for every item of the traversed argument
+            Stream (Of s) (Eff es) () ->
+            (s -> Eff es p) ->          -- ^ producer
+            (p -> r -> Eff es r) ->     -- ^ consumer, called for every item of the traversed argument
             r ->                              -- ^ fold initial value
-            ValidatorT m r
+            Eff es r
 foldPipeline parallelism stream mapStream consume accum0 =
     snd <$> bracketChanClosable
                 (atLeastOne parallelism)
@@ -62,33 +72,207 @@ foldPipeline parallelism stream mapStream consume accum0 =
                     consume p accum >>= go
 
 
+-- | Process every item of a stream with a pool of worker threads and feed the
+-- results to a single consumer running inside one transaction. The consumer 
+-- is called exactly once for every item, either in the order of the items 
+-- (an RRDP delta, where a later item may depend on an earlier one) or in the 
+-- order they are ready (a snapshot). Keeping the order costs a snapshot ~6%:
+-- the consumer is nearly saturated, and it can't make up for the time it 
+-- spends waiting for the oldest item. The workers take items from the stream
+-- one at a time, so it can be a walk through a directory tree of any size.
+--
+txPoolPipeline :: (ValidatorIO es, Concurrent :> es) =>
+            ResultOrder ->
+            Stream (Of s) IO () ->
+            (s -> Eff es p) ->                  -- ^ worker, an exception here fails the whole pipeline
+            ((tx -> Eff es ()) -> Eff es ()) -> -- ^ transaction in which the consumer runs
+            (tx -> p -> Eff es ()) ->           -- ^ consumer
+            Eff es ()
+txPoolPipeline order items process withTx consume = do
+    caps <- liftIO getNumCapabilities
+    let consumerCap = 0
+        workerCaps  = if caps > 1 then [1 .. caps - 1] else [0]
+        window      = 16 * length workerCaps
 
--- | Utility function for a specific case of producer-consumer pair 
--- where consumer works within a transaction (represented as withTx function)
---  
-txFoldPipeline :: (MonadBaseControl IO m, MonadIO m) =>
-            Natural ->
-            Stream (Of q) (ValidatorTCurried m) () ->
-            ((tx -> ValidatorT m ()) -> ValidatorT m ()) -> -- ^ transaction in which all consumerers are wrapped
-            (tx -> q -> ValidatorT m ()) ->           -- ^ consumer, called for every item of the traversed argument            
-            ValidatorT m ()
-txFoldPipeline parallelism stream withTx consume =
-    snd <$> bracketChanClosable
-                (atLeastOne parallelism)
-                writeAll 
-                readAll 
-                (\_ -> pure ())
+    -- Items are numbered as they are taken and in item order, each result 
+    -- goes to the slot for its number, which the consumer empties in order. 
+    -- A worker holds one of `window` permits from taking an item until the 
+    -- consumer takes its result, so no more than `window` items are ever in 
+    -- flight and the slot of each of them has already been emptied. In 
+    -- completion order all results go through the same slot.
+    --
+    -- How many items there are is only known at the end of the stream: the 
+    -- worker that gets there first puts the count in the next slot, as if it
+    -- were one more item.
+    remaining <- liftIO $ newMVar (0 :: Int, Just items)
+    slots     <- liftIO $ V.replicateM window newEmptyMVar
+    permits   <- liftIO $ newQSem window
+    let slot i = case order of
+            ItemOrder       -> slots V.! (i `mod` window)
+            CompletionOrder -> slots V.! 0
+
+    let takeItem = modifyMVar remaining $ \case
+            (i, Just stream) -> 
+                S.next stream >>= \case
+                    Right (s, rest) -> pure ((i + 1, Just rest), Item i s)
+                    Left ()         -> pure ((i, Nothing), LastItem i)
+            ended -> 
+                pure (ended, NoItems)
+
+    let worker = do
+            liftIO $ waitQSem permits
+            liftIO takeItem >>= \case
+                NoItems    -> liftIO $ signalQSem permits
+                LastItem n -> liftIO $ putMVar (slot n) (Left n)
+                Item i s   -> do
+                    p <- process s
+                    liftIO $ putMVar (slot i) (Right p)
+                    worker
+
+    let consumer = withTx $ \tx -> 
+            let go taken itemCount
+                    | Just taken == itemCount = pure ()
+                    | otherwise = 
+                        liftIO (takeMVar (slot taken) <* signalQSem permits) >>= \case
+                            Left n  -> go taken (Just n)
+                            Right p -> consume tx p >> go (taken + 1) itemCount
+            in go 0 Nothing
+
+    withAsyncOn consumerCap consumer $ \c ->
+        withAsyncsOn workerCaps worker $ \ws ->
+            waitAllOrThrow (c : ws)
   where
-    writeAll queue = 
-        S.mapM_ 
-            (liftIO . atomically . writeCQueue queue) 
-            stream
-        
-    readAll queue = withTx go
-      where
-        go tx = do                
-            a <- liftIO $ atomically $ readCQueue queue
-            for_ a $ \a' -> consume tx a' >> go tx
+    withAsyncsOn [] _ k = k []
+    withAsyncsOn (cap : caps) f k =
+        withAsyncOn cap f $ \a -> withAsyncsOn caps f $ \as -> k (a : as)
+
+    -- Any failure is rethrown right away, which cancels everything
+    -- else on the way out of the `withAsyncOn` brackets.
+    waitAllOrThrow [] = pure ()
+    waitAllOrThrow as = do
+        (done, r) <- waitAnyCatch as
+        either throwIO (const $ waitAllOrThrow $ filter (/= done) as) r
+
+data ResultOrder = ItemOrder | CompletionOrder
+    deriving stock (Eq, Show)
+
+-- | What a worker of `txPoolPipeline` gets from the stream: an item, the 
+-- news that there were `n` of them, or nothing, when someone else got that.
+data PipelineItem s = Item Int s | LastItem Int | NoItems
+
+
+-- | A fixed set of workers taking tasks from one queue, for work that is
+-- recursive and uneven, like validating a tree of CAs. A task may submit more
+-- tasks and wait for them. Whoever waits for a task runs it itself if no worker
+-- has taken it yet, and runs other tasks while it's running elsewhere, so a
+-- parent waiting for its children doesn't take a worker out of the pool.
+--
+-- A synchronous exception in a task goes to whoever waits for the task.
+-- An asynchronous one kills the worker, and with it the whole pool.
+data WorkPool = WorkPool {
+        queue     :: IORef (Seq (IO ())),
+        -- | Signalled for every task put into the queue. Waiters take tasks
+        -- without waiting for it, so a worker may find the queue empty.
+        available :: QSem
+    }
+
+data PoolTask a = PoolTask {
+        -- | Run the task on this thread, unless someone has taken it already
+        runIfNotTaken :: IO (),
+        result        :: MVar (Either SomeException a)
+    }
+
+newWorkPool :: IO WorkPool
+newWorkPool = WorkPool <$> newIORef Seq.empty <*> newQSem 0
+
+-- | Run the pool's workers on the given capabilities, one each, for as
+-- long as the action runs.
+withWorkers :: WorkPool -> [Int] -> IO a -> IO a
+withWorkers pool caps f =
+    withWorkersOn caps $ \workers ->
+        -- A worker only ever stops with an exception
+        either absurd id <$> IOAsync.race (snd <$> IOAsync.waitAny workers) f
+  where
+    withWorkersOn [] k = k []
+    withWorkersOn (cap : caps') k =
+        IOAsync.withAsyncOn cap worker $ \w -> withWorkersOn caps' $ \ws -> k (w : ws)
+
+    worker :: IO Void
+    worker = forever $ do
+        waitQSem $ available pool
+        takeQueued pool >>= sequence_
+
+submitTask :: WorkPool -> IO a -> IO (PoolTask a)
+submitTask WorkPool {..} action = do
+    result <- newEmptyMVar
+    -- Emptied by whoever takes the task. A task stays in the queue until
+    -- a worker gets to it, even when it's been run by whoever waited for it,
+    -- and the queue shouldn't keep the action and its result all that time.
+    toRun  <- newIORef $ Just $ UIO.tryAny action >>= putMVar result
+    let runIfNotTaken = atomicModifyIORef' toRun (Nothing, ) >>= sequence_
+    atomicModifyIORef' queue $ \q -> (q Seq.|> runIfNotTaken, ())
+    signalQSem available
+    pure PoolTask {..}
+
+-- | Wait for a task from a worker or a task of the pool: run it here if
+-- nobody has taken it yet, and run other tasks while it's running elsewhere.
+awaitTask :: WorkPool -> PoolTask a -> IO (Either SomeException a)
+awaitTask pool PoolTask {..} = runIfNotTaken >> go
+  where
+    go = tryReadMVar result >>= \case
+        Just r  -> pure r
+        Nothing -> takeQueued pool >>= \case
+            Just other -> other >> go
+            Nothing    -> readMVar result
+
+-- | Wait for a task from outside the pool.
+waitTask :: PoolTask a -> IO (Either SomeException a)
+waitTask PoolTask {..} = readMVar result
+
+pollTask :: PoolTask a -> IO (Maybe (Either SomeException a))
+pollTask PoolTask {..} = tryReadMVar result
+
+-- | The newest task. Taking the oldest, CAs higher up in the tree, goes 
+-- through the tree breadth first, with more of it in progress at once: ~20%
+-- more live data in a first validation of all five RIRs, and no faster.
+takeQueued :: WorkPool -> IO (Maybe (IO ()))
+takeQueued WorkPool {..} =
+    atomicModifyIORef' queue $ \q ->
+        case Seq.viewr q of
+            Seq.EmptyR    -> (q, Nothing)
+            rest Seq.:> t -> (rest, Just t)
+
+-- | `forM` for a task of the pool. The items that `isHeavy` picks are tasks of
+-- their own, the others go in tasks of `chunkSize` items. With just one task
+-- to make, it doesn't use the pool. Results are in the order of the items.
+--
+-- Every task is waited for before this returns or rethrows the first
+-- exception, the tasks would run in an environment that is gone otherwise.
+forInPool :: IOE :> es =>
+            WorkPool
+            -> Int
+            -> (a -> Bool)
+            -> [a]
+            -> (a -> Eff es b)
+            -> Eff es [b]
+forInPool pool chunkSize isHeavy items f =
+    case units of
+        _ : _ : _ ->
+            withEffToIO (ConcUnlift Ephemeral Unlimited) $ \unlift -> do
+                tasks <- forM units $ \unit ->
+                    submitTask pool $ forM unit $ \(i, x) -> (i, ) <$> unlift (f x)
+
+                -- Newest first, the way workers take them too, so that child
+                -- CAs, submitted first, are started last.
+                results <- reverse <$> mapM (awaitTask pool) (reverse tasks)
+                case sequence results of
+                    Left e   -> IOExc.throwIO e
+                    Right rs -> pure $! map snd $ List.sortOn fst $ concat rs
+        _ ->
+            forM items f
+  where
+    (heavy, light) = List.partition (isHeavy . snd) $ zip [0 :: Int ..] items
+    units = map pure heavy <> Split.chunksOf chunkSize light
 
 -- 
 -- | Create two threads and queue between then. Calls
@@ -96,12 +280,12 @@ txFoldPipeline parallelism stream withTx consume =
 -- 'kill' is used to kill an item in the queue in case
 -- the whole thing is interrupted with an exception.
 --    
-bracketChanClosable :: (MonadBaseControl IO m, MonadIO m) =>
+bracketChanClosable :: (Concurrent :> es, IOE :> es) =>
                         Natural ->
-                        (ClosableQueue t -> m b) ->
-                        (ClosableQueue t -> m c) ->
-                        (t -> m w) ->
-                        m (b, c)
+                        (ClosableQueue t -> Eff es b) ->
+                        (ClosableQueue t -> Eff es c) ->
+                        (t -> Eff es w) ->
+                        Eff es (b, c)
 bracketChanClosable size produce consume kill = do     
     queue <- liftIO $ atomically $ newCQueue size
     let closeQ = liftIO $ atomically $ closeCQueue queue
@@ -168,49 +352,40 @@ readQueueChunked cq chunkSize f = go
             []    -> pure ()
             chunk -> f chunk >> go  
 
--- Auxialliary stuff for limiting the amount of parallel reading LMDB transactions    
+-- Auxialliary stuff for limiting the amount of parallel reading DB transactions
 data Semaphore = Semaphore { 
         capacity :: Int,
-        current  :: TVar Int, 
-        highest  :: TVar Int
+        current  :: TVar Int
     }
     deriving (Eq)
 
-newSemaphoreIO :: Int -> IO Semaphore
-newSemaphoreIO = atomically . newSemaphore
 
 newSemaphore :: Int -> STM Semaphore
-newSemaphore n = Semaphore n <$> newTVar 0 <*> newTVar 0
+newSemaphore n = Semaphore n <$> newTVar 0
 
 -- Execute using a semaphore as a barrier
-withSemaphore :: Semaphore -> IO a -> IO a
+withSemaphore :: MonadUnliftIO m => Semaphore -> m a -> m a
 withSemaphore Semaphore {..} f = 
-    bracket incr decr (const f)
+    UIO.bracket (liftIO incr) (liftIO . decr) (const f)
   where 
     incr = atomically $ do 
         c <- readTVar current
         if c >= capacity 
             then retry
-            else do 
-                let c' = c + 1
-                writeTVar current c'
-                h <- readTVar highest 
-                when (c' > h) $ writeTVar highest c'
+            else writeTVar current (c + 1)
 
     decr _ = atomically $ modifyTVar' current $ \c -> c - 1
 
-getSemaphoreState :: Semaphore -> STM (Int, Int)
-getSemaphoreState Semaphore {..} = (,) <$> readTVar current <*> readTVar highest
 
 -- Execute using a semaphore as a barrier, but if the sempahore 
 -- is not allowing execution, execute after a timeout anyway
 withSemaphoreOrTimeout :: Semaphore -> Seconds -> IO a -> IO a
 withSemaphoreOrTimeout Semaphore {..} timeout f =     
-    bracket aquireSlot releaseSlot (const f)
+    IOExc.bracket aquireSlot releaseSlot (const f)
   where  
     aquireSlot = 
         either (const True) (const False) <$> 
-            race 
+            IOAsync.race 
                 (atomically thereIsSpaceToRun)
                 (threadDelay $ let Seconds s = timeout in fromIntegral $ s * 1000_000)
 

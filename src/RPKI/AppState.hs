@@ -2,18 +2,21 @@
 
 module RPKI.AppState where
     
+import           Effectful
 import           Control.Concurrent.STM    
 import           Control.DeepSeq
 import           Control.Lens hiding (filtered)
 import           Control.Monad (join, unless)
-import           Control.Monad.IO.Class
+import           Data.Maybe (fromMaybe)
 
 import qualified Data.ByteString                  as BS
 
+import           Data.Foldable                    (toList)
 import           Data.Set                         (Set)
-import qualified Data.List                        as List
+import qualified Data.Set                         as Set
 import qualified Data.Map.Strict                  as Map
-import qualified Data.Vector                      as V
+import qualified Data.Map.Monoidal.Strict         as MonoidalMap
+import           Data.Text                        (Text)
 import           GHC.Generics
 import           System.Posix.Types
 import           RPKI.AppMonad
@@ -23,7 +26,9 @@ import           RPKI.Logging
 import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
 import           RPKI.Repository
+import           RPKI.Reporting
 import           RPKI.Time
+import           Data.Hourglass (Seconds(..))
 import           RPKI.Metrics.System
 import           RPKI.RTR.Protocol
 import           RPKI.RTR.Types
@@ -47,8 +52,18 @@ data AppState = AppState {
         -- RTR state for every new client.
         cachedBinaryRtrPdus :: TVar (Map.Map ProtocolVersion BS.ByteString),
 
-        -- Function that re-reads SLURM file(s) after every re-validation
-        readSlurm   :: Maybe (ValidatorT IO Slurm),
+        -- Health of the Erik relays, as reported by the fetch workers.
+        -- Kept in the root process so that a worker started later already
+        -- knows which relays are not worth trying.
+        erikRelayHealth :: TVar (Map.Map URI RelayHealth),
+
+        -- Function that re-reads SLURM file(s) after every re-validation.
+        -- Pinned to the concrete `AppEffects` stack rather than the polymorphic
+        -- `ValidatorIO es => Eff es Slurm`, because a constrained type cannot be
+        -- stored in a record field without impredicativity. Its only consumer
+        -- (`Workflow.reReadSlurm`) runs it with `runValidatorIO`, which expects
+        -- exactly this stack.
+        readSlurm :: Maybe (Eff AppEffects Slurm),
 
         -- Metadata about RTR server
         rtrState    :: TVar (Maybe RtrState),
@@ -64,15 +79,123 @@ data AppState = AppState {
 
         fetcheables :: TVar Fetcheables,
 
-        systemState :: TVar SystemState
+        -- Problems of the main process that are not about any TA, e.g. a
+        -- transaction that had to be rolled back, waiting to be added to the
+        -- common validations of the latest version (see 'RPKI.Workflow.reportSystemProblem').
+        systemProblems :: TVar Validations,
+
+        -- Workers whose last run exceeded one of their limits, keyed by
+        -- the worker type name and the scope the worker ran in, see
+        -- 'workerLimitProblems'.
+        workerLimits :: TVar (Map.Map (Text, VScope) Validations)
         
     } deriving stock (Generic)
 
 
-mkRtrPayloads :: PerTA Vrps -> Set BGPSecPayload -> RtrPayloads
-mkRtrPayloads vrps bgpSec = RtrPayloads { uniqueVrps = uniqVrpsBy cmpVrps $ allTAs vrps, .. }
+mkRtrPayloads :: PerTA Vrps -> Set BGPSecPayload -> Set Aspa -> RtrPayloads
+mkRtrPayloads vrps bgpSec aspas = RtrPayloads { 
+        uniqueVrps = uniqVrpsPackedBy cmpPacked4 cmpPacked6 $ allTAs vrps, 
+        aspas = mergeAspasByCustomer aspas,
+        .. 
+    }
 
 -- 
+{- | What the root process knows about a relay, folded from worker reports.
+
+   A relay is considered unusable once it has failed and served nothing since,
+   and stays that way until 'relayRetryInterval' has passed -- long enough that
+   workers stop paying its timeout on every fetch, short enough that a relay
+   coming back is picked up quickly.
+-}
+data RelayHealth = RelayHealth {
+        consecutiveFailures :: Int,
+        lastFailure         :: Maybe Instant,
+        totalServed         :: Int,
+        totalFailed         :: Int
+    }
+    deriving stock (Show, Eq, Generic)
+
+newRelayHealth :: RelayHealth
+newRelayHealth = RelayHealth 0 Nothing 0 0
+
+-- | How long a relay stays benched after it stops answering.
+relayRetryInterval :: Seconds
+relayRetryInterval = Seconds 300
+
+{- | How many workers must independently report a relay as failing before it is
+     benched.
+
+     Counting here rather than inside a single worker is the point: a transient
+     404 or a slow object produces one report from one worker and is ignored,
+     while a relay that is actually down is reported by every worker that tries
+     it and crosses this within the first seconds of a fetch round.
+-}
+relayDeadAfterReports :: Int
+relayDeadAfterReports = 3
+
+-- | Fold one worker's reports into the health map.
+updateErikRelayHealth :: MonadIO m => AppState -> [ErikRelayReport] -> m ()
+updateErikRelayHealth AppState {..} reports = liftIO $ do
+    Now now <- thisInstant
+    atomically $ modifyTVar' erikRelayHealth $ \health ->
+        foldr (fold_ now) health reports
+  where
+    fold_ now ErikRelayReport {..} =
+        Map.alter (Just . bump . fromMaybe newRelayHealth) relay
+      where
+        bump h@RelayHealth {..} = h {
+                -- A relay that served anything at all is working, and that
+                -- clears the bench. Workers only report a failure once they
+                -- are convinced the relay is dead (see 'deadRelayThreshold'),
+                -- so a single report is enough to bench it.
+                consecutiveFailures = if served > 0 then 0 else consecutiveFailures + failed,
+                lastFailure  = if served > 0 then Nothing else
+                                 if failed > 0 then Just now else lastFailure,
+                totalServed  = totalServed + served,
+                totalFailed  = totalFailed + failed
+            }
+
+{- | Whether a relay in this state is worth handing to a new fetch worker.
+
+   Split out of 'usableErikRelays' so that anything reporting on relay health
+   (the system API) reaches its verdict through the same rule the fetcher
+   actually uses, instead of a copy that can drift away from it.
+-}
+relayWorthTrying :: Instant -> RelayHealth -> Bool
+relayWorthTrying now RelayHealth {..}
+    | consecutiveFailures < relayDeadAfterReports = True
+    | otherwise =
+        case lastFailure of
+            Nothing -> True
+            Just t  -> not $ closeEnoughMoments (Earlier t) (Later now) relayRetryInterval
+
+{- | The relays worth handing to a new fetch worker, best first.
+
+   Relays that have been failing are dropped, unless they have been benched
+   long enough to deserve another go. If that would leave nothing, the full
+   list is returned -- better to try a bad relay than to not fetch at all.
+-}
+usableErikRelays :: MonadIO m => AppState -> [URI] -> m [URI]
+usableErikRelays appState configured = do
+    details <- erikRelayHealthDetails appState configured
+    let usable = [ relay | (relay, _, True) <- details ]
+    pure $! if null usable then configured else usable
+
+{- | Health of every configured relay, paired with the verdict 'usableErikRelays'
+     would reach for it.
+
+     Every configured relay appears, including ones no worker has touched yet: a
+     relay missing from the list would be indistinguishable from a relay that is
+     working, which is the opposite of what a reader needs to know.
+-}
+erikRelayHealthDetails :: MonadIO m => AppState -> [URI] -> m [(URI, RelayHealth, Bool)]
+erikRelayHealthDetails AppState {..} configured = liftIO $ do
+    Now now <- thisInstant
+    health <- readTVarIO erikRelayHealth
+    pure [ (relay, h, relayWorthTrying now h)
+         | relay <- configured
+         , let h = fromMaybe newRelayHealth $ Map.lookup relay health ]
+
 newAppState :: IO AppState
 newAppState = do        
     Now now <- thisInstant
@@ -86,10 +209,30 @@ newAppState = do
         cachedBinaryRtrPdus <- newTVar mempty
         runningWorkers <- newTVar mempty
         fetcheables <- newTVar mempty
-        systemState <- newTVar $ SystemState DbOperational
+        systemProblems <- newTVar mempty
+        erikRelayHealth <- newTVar mempty
+        workerLimits <- newTVar mempty
         let readSlurm = Nothing
         pure AppState {..}
                     
+
+{- | Errors of the workers whose last run exceeded one of their limits.
+
+   They are not associated with any TA and every validation version adds them
+   to its common validations, so that they show up in the UI and in
+   /api/validations. An error stays there until the same kind of worker runs
+   in the same scope again and doesn't exceed its limits (see 'runWorker'), 
+   or until the repository it was fetching is not fetched anymore.
+-}
+workerLimitProblems :: AppState -> STM Validations
+workerLimitProblems AppState {..} = do
+    Fetcheables fs <- readTVar fetcheables
+    let fetched = Set.fromList $ concat [ url : toList fallbacks | (url, fallbacks) <- MonoidalMap.toList fs ]
+    let stillFetched (_, Scope scope) = 
+            all (`Set.member` fetched) [ url | RepositoryFocus url <- toList scope ]
+    problems <- Map.filterWithKey (\k _ -> stillFetched k) <$> readTVar workerLimits
+    writeTVar workerLimits problems
+    pure $ mconcat $ Map.elems problems
 
 newWorldVersion :: IO WorldVersion
 newWorldVersion = instantToVersion . unNow <$> thisInstant        
@@ -108,7 +251,7 @@ completeVersion AppState {..} worldVersion rtrPayloads slurm = do
 updatePrefixIndex :: AppState -> RtrPayloads -> STM ()
 updatePrefixIndex AppState {..} rtrPayloads = 
     writeTVar prefixIndex $! 
-        force $ Just $ createPrefixIndex $ rtrPayloads ^. #uniqueVrps
+        force $ Just $ createPrefixIndex $ vrpsToList $ rtrPayloads ^. #uniqueVrps
 
 getOrCreateWorldVerion :: AppState -> IO WorldVersion
 getOrCreateWorldVerion AppState {..} = 
@@ -145,19 +288,6 @@ updateRunningWorkers message AppState {..} =
             AddWorker wi     -> Map.insert (wi ^. #workerPid) wi
             RemoveWorker pid -> Map.delete pid
 
-updateSystemStatus :: MonadIO m => SystemStatusMessage -> AppState -> m ()           
-updateSystemStatus (SystemStatusMessage ss) AppState {..} =     
-    -- TODO Do something smarter here
-    liftIO $ atomically $ writeTVar systemState ss
-
-waitForStuckDb :: AppState -> STM ()
-waitForStuckDb AppState {..} = do
-    SystemState {..} <- readTVar systemState
-    unless (dbState == DbStuck) retry
-
-dbIsStuck :: AppState -> STM Bool 
-dbIsStuck AppState {..} = do
-    (== DbStuck) . dbState <$> readTVar systemState
         
 removeExpiredWorkers :: MonadIO m => AppState -> m [WorkerInfo]
 removeExpiredWorkers AppState {..} = liftIO $ do 
@@ -172,13 +302,6 @@ getRunningWorkers :: MonadIO m => AppState -> m [WorkerInfo]
 getRunningWorkers AppState {..} = 
     liftIO $ atomically $ Map.elems <$> readTVar runningWorkers
 
-removeAllRunningWorkers :: MonadIO m => AppState -> m [WorkerInfo]
-removeAllRunningWorkers AppState {..} = 
-    liftIO $ atomically $ do 
-        clients <- Map.elems <$> readTVar runningWorkers
-        writeTVar runningWorkers mempty
-        pure clients
-
 readRtrPayloads :: AppState -> STM RtrPayloads    
 readRtrPayloads AppState {..} = readTVar filtered
 
@@ -186,6 +309,7 @@ filterWithSLURM :: RtrPayloads -> Slurm -> RtrPayloads
 filterWithSLURM RtrPayloads {..} slurm =     
     mkRtrPayloads (slurm `applySlurmToVrps` vrps) 
                   (slurm `applySlurmBgpSec` bgpSec)
+                  aspas
 
 -- TODO Make it more generic for things that need to be recomoputed for each version 
 -- and things that are computed on-demand.

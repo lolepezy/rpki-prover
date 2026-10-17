@@ -1,0 +1,16 @@
+#!/bin/ksh
+
+# --rpki-root-directory is part of ${daemon} rather than ${daemon_flags}, so
+# that setting rpki_prover_flags does not move the state somewhere else.
+daemon="${TRUEPREFIX}/bin/rpki-prover --rpki-root-directory ${LOCALSTATEDIR}/db/rpki-prover"
+daemon_flags="--http-api-port 9999"
+daemon_user="_rpki-prover"
+daemon_logger="daemon.info"
+
+. /etc/rc.d/rc.subr
+
+# rpki-prover stays in the foreground and logs to stdout.
+rc_bg=YES
+rc_reload=NO
+
+rc_cmd $1

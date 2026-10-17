@@ -1,0 +1,10 @@
+# GHC does not emit position-independent executables: the Haskell libraries in
+# the cabal store are not all built as PIC, so linking with -pie fails outright
+# rather than merely losing the hardening. Debian's own GHC-built packages
+# carry the same override.
+rpki-prover: hardening-no-pie [usr/bin/rpki-prover]
+
+# These packages are built from this repository for people who want them, not
+# uploaded to the Debian archive, so there is no ITP bug for the first
+# changelog entry to close.
+rpki-prover: initial-upload-closes-no-bugs

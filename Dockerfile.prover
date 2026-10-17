@@ -2,7 +2,7 @@ FROM haskell:9.10.3 AS build
 WORKDIR /opt/build
 
 RUN apt-get update && apt-get install -y \
-    git libexpat1-dev liblmdb-dev liblzma-dev libz-dev pkg-config
+    git libexpat1-dev liblzma-dev libz-dev pkg-config
 
 RUN cabal update
 
@@ -17,8 +17,8 @@ RUN cabal install exe:rpki-prover \
 # -------------------------------------------------------------------------------------------
 FROM ubuntu:22.04 AS prover
 
-RUN apt-get update && apt-get install -y \
-    libgmp-dev libexpat1-dev liblmdb-dev liblzma-dev curl rsync libz-dev \
+RUN apt-get update && apt-get install -y \    
+    libgmp-dev libexpat1-dev liblzma-dev curl rsync libz-dev \
     && rm -rf /var/lib/apt/lists/*
 
 VOLUME /rpki-data/

@@ -8,17 +8,17 @@ import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Config
 import           RPKI.Logging
-import           RPKI.Store.Database    (DB)
+import           RPKI.Store.Database     (DB)
 
-data AppContext s = AppContext {
+data AppContext = AppContext {
         logger            :: AppLogger, 
         config            :: Config,
         appState          :: AppState,
-        database          :: TVar (DB s),
+        database          :: TVar DB,
         executableVersion :: ExecutableVersion
     } 
     deriving stock (Generic)
 
-getRtrLogger :: AppContext s -> RtrLogger
+getRtrLogger :: AppContext -> RtrLogger
 getRtrLogger AppContext { logger = AppLogger {..} } = rtrLogger    
 

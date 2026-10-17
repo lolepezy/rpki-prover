@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module RPKI.Parse.Internal.SignedObject where
 
 import qualified Data.ByteString as BS
@@ -18,7 +16,6 @@ import RPKI.Reporting
 import RPKI.Parse.Internal.Common
 import RPKI.Parse.Internal.Cert
 
-import RPKI.Util (sha256s)
 
 {- 
   https://tools.ietf.org/html/rfc6488#section-2
@@ -91,7 +88,7 @@ parseSignedObject contentBinaryParse =
                   signature'   <- parseSignature
                   let certWithSig = CertificateWithSignature 
                         eeCertificate sigAlgorithm signature' (toShortBS encodedCert)
-                  case runPureValidator (newScopes "parseEE") (toResourceCert certWithSig) of
+                  case runValidatorPure (newScopes "parseEE") (toResourceCert certWithSig) of
                     (Left e, _) -> 
                         throwParseError $ "EE certificate is broken " <> show e
                     (Right (_,   _,  Nothing), _) -> 
@@ -149,10 +146,6 @@ parseSignedObject contentBinaryParse =
     parseSignatureAlgorithm = SignatureAlgorithmIdentifier <$> getObject
 
 
-getMetaFromSigned :: SignedObject a -> BS.ByteString -> PureValidatorT Hash
-getMetaFromSigned _ bs = pure $ sha256s bs
-
-
 parseSignedContent :: ParseASN1 a 
                     -> ContentType 
                     -> BS.ByteString 
@@ -163,4 +156,7 @@ parseSignedContent eContentParse contentType bs =
         Right asns ->  
             case runParseASN1 eContentParse asns of
                 Left e  -> throwParseError $ "Couldn't parse embedded ASN1 stream: " <> e
-                Right a -> pure $ EncapsulatedContentInfo contentType a
+            -- Keep original eContent bytes so messageDigest can be verified later.
+            -- https://www.rfc-editor.org/rfc/rfc6488#section-2.1.6.4.2
+            -- https://www.rfc-editor.org/rfc/rfc5652#section-5.4
+                Right a -> pure $ EncapsulatedContentInfo contentType bs a

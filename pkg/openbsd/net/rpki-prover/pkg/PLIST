@@ -1,0 +1,15 @@
+@newgroup _rpki-prover:906
+@newuser _rpki-prover:906:_rpki-prover::rpki-prover user:${LOCALSTATEDIR}/db/rpki-prover:/sbin/nologin
+@rcscript ${RCDIR}/rpki_prover
+@extraunexec rm -rf ${LOCALSTATEDIR}/db/rpki-prover/
+@bin bin/rpki-prover
+share/doc/pkg-readmes/${PKGSTEM}
+@mode 0750
+@owner _rpki-prover
+@group _rpki-prover
+@sample ${LOCALSTATEDIR}/db/rpki-prover/
+@mode
+@owner
+@group
+share/examples/login.conf.d/rpki_prover
+@sample ${SYSCONFDIR}/login.conf.d/rpki_prover

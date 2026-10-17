@@ -1,9 +1,7 @@
-{-# LANGUAGE StrictData        #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StrictData #-}
 
 module RPKI.AppTypes where
     
-import           Control.Exception
 import           Control.DeepSeq
 import           Data.Int
 import           Data.Text (Text)
@@ -14,17 +12,17 @@ import           RPKI.Store.Base.Serialisation
 
 {- 
     Sequence of versions that are equal to some monotonic clock timestamp in nanoseconds. 
-    Used to attribute pretty much everything (validation runs, (async) repository fetches, 
+    Used to attribute pretty much everything (validation runs, repository fetches, 
     etc.) to. Every validation happens for a specific world version which is also used 
     as 'now' for validity period comparisons. Also, most of the data in the cache is
     associated with a world version (VRPs, metrics, SLURM data, etc.).
    -}
-newtype WorldVersion = WorldVersion LexOrdKey64
+newtype WorldVersion = WorldVersion Int64
     deriving stock (Eq, Ord, Generic)
     deriving newtype (TheBinary, NFData)
 
 instance Show WorldVersion where 
-    show (WorldVersion (LexOrdKey64 nanos)) = show nanos
+    show (WorldVersion nanos) = show nanos
 
 -- Version of the executable, ideally it is supposed to 
 -- be different for every build of the program where 
@@ -37,10 +35,20 @@ newtype ExecutableVersion = ExecutableVersion Text
 -- Some auxiliary types
 newtype Size = Size { unSize :: Int64 }
     deriving stock (Show, Eq, Ord, Generic)
-    deriving newtype (Num)
-    deriving anyclass (TheBinary)
+    deriving newtype (Num, Bounded)
+    deriving anyclass (TheBinary, NFData)
     deriving Semigroup via Sum Size
     deriving Monoid via Sum Size
+
+newtype Count = Count { unCount :: Int64 }
+    deriving stock (Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+    deriving newtype (Num)
+    deriving Semigroup via Sum Count
+    deriving Monoid via Sum Count
+
+instance Show Count where 
+    show (Count c) = Prelude.show c
 
 -- TODO Probably move it to some other module
 newtype MaxMemory = MaxMemory Int
@@ -50,27 +58,11 @@ newtype MaxMemory = MaxMemory Int
     deriving Semigroup via Max MaxMemory
     deriving Monoid via Max MaxMemory    
 
-data DBState = DbOperational | DbStuck | DbTryingToFix
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-data SystemState = SystemState {
-        dbState :: DBState
-    } 
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
-
-data TxTimeout = TxTimeout
-    deriving stock (Show, Ord, Eq, Generic)
-
-instance Exception TxTimeout
-
 instance Show MaxMemory where 
     show (MaxMemory m) = show (m `div` (1024*1024)) <> "mb"
 
 asVersion :: Int64 -> WorldVersion 
-asVersion = WorldVersion . LexOrdKey64
+asVersion = WorldVersion
 
 versionToInt :: WorldVersion -> Int64
-versionToInt (WorldVersion (LexOrdKey64 v)) = v
+versionToInt (WorldVersion v) = v
