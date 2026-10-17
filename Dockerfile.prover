@@ -1,4 +1,4 @@
-FROM haskell:9.10.3 AS build
+FROM haskell:9.10.3-bookworm AS build
 WORKDIR /opt/build
 
 RUN apt-get update && apt-get install -y \
@@ -15,7 +15,7 @@ RUN cabal install exe:rpki-prover \
     --overwrite-policy=always
 
 # -------------------------------------------------------------------------------------------
-FROM ubuntu:22.04 AS prover
+FROM ubuntu:24.04 AS prover
 
 RUN apt-get update && apt-get install -y \    
     libgmp-dev libexpat1-dev liblzma-dev curl rsync libz-dev \

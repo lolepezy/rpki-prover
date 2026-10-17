@@ -674,12 +674,14 @@ data CLIOptions = CLIOptions {
         erikParallelism          :: Maybe Natural,
         erikRelayParallelism     :: Maybe Natural,
         erikDownloadTimeout      :: Maybe Int64,
-        clientPath          :: Maybe String,
+        clientPath               :: Maybe String,
         httpApiPort              :: Maybe Word16,
+        httpApiMaxRequests       :: Maybe Natural,
         withRtr                  :: Bool,
         rtrAddress               :: Maybe String,
         rtrPort                  :: Maybe Int16,
         rtrLogFile               :: Maybe String,
+        rtrMaxConnections        :: Maybe Natural,
         logLevel                 :: Maybe String,
         logFormat                :: Maybe String,
         strictManifestValidation :: Bool,
@@ -840,6 +842,11 @@ cliOptionsParser = CLIOptions
             (  long "http-api-port"
             <> metavar "PORT"
             <> help ("Port for the HTTP API (default: " <> show defHttpApiPort <> ").")))
+    <*> optional (option auto
+            (  long "http-max-requests"
+            <> metavar "NUMBER"
+            <> help ("Maximum number of HTTP requests served at the same time, the rest are "
+                  <> "answered with 503 (default: " <> show defHttpMaxRequests <> ").")))
     <*> switch
             (  long "with-rtr"
             <> help "Start the RTR server (default: false).")
@@ -855,6 +862,11 @@ cliOptionsParser = CLIOptions
             (  long "rtr-log-file"
             <> metavar "FILE"
             <> help "Path for the RTR log file (default: stdout, shared with general output)."))
+    <*> optional (option auto
+            (  long "rtr-max-connections"
+            <> metavar "NUMBER"
+            <> help ("Maximum number of simultaneous RTR client connections, the rest are "
+                  <> "closed right after being accepted (default: " <> show defRtrMaxConnections <> ").")))
     <*> optional (strOption
             (  long "log-level"
             <> metavar "LEVEL"
@@ -985,8 +997,10 @@ cliOptionsParser = CLIOptions
     Seconds defErikRefresh    = cfg ^. #erikConf . #erikRefreshInterval
     Seconds defErikDownloadTimeout = cfg ^. #erikConf . #downloadTimeout
     defHttpApiPort            = cfg ^. #httpApiConf . #port
+    defHttpMaxRequests        = cfg ^. #httpApiConf . #maxConcurrentRequests
     defRtrAddress             = rtrCfg ^. #rtrAddress
     defRtrPort                = rtrCfg ^. #rtrPort
+    defRtrMaxConnections      = rtrCfg ^. #rtrMaxConnections
     defMaxTaRepos             = cfg ^. #validationConfig . #maxTaRepositories
     defMaxCertDepth           = cfg ^. #validationConfig . #maxCertificatePathDepth
     defMaxTotalTree           = cfg ^. #validationConfig . #maxTotalTreeSize
@@ -1043,6 +1057,7 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
         & maybeSet (#validationConfig . #minObjectSize) minObjectSize
         & maybeSet (#httpApiConf . #port) httpApiPort
+        & maybeSet (#httpApiConf . #maxConcurrentRequests) (fromIntegral <$> httpApiMaxRequests)
         & #rtrConfig .~ rtrConfig
         & maybeSet #longLivedCacheLifeTime ((\hours -> Seconds (hours * 60 * 60)) <$> cacheLifetimeHours)
         & #localExceptions .~ apiSecured localExceptions
@@ -1069,6 +1084,7 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
                     & maybeSet #rtrPort rtrPort
                     & maybeSet #rtrAddress rtrAddress
                     & #rtrLogFile .~ rtrLogFile
+                    & maybeSet #rtrMaxConnections (fromIntegral <$> rtrMaxConnections)
         else Nothing    
 
     setErikRelays = case erikRelay of

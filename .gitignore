@@ -16,3 +16,5 @@ pkg/openbsd/packages/
 pkg/openbsd/public/
 pkg/apt-repo/public/
 .vagrant/
+# Output of release.sh
+/releases/
