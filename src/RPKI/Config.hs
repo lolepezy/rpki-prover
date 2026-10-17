@@ -335,7 +335,7 @@ defaultConfig = Config {
             maxIncomingTrafficMb = Just 0,
             maxDiskReadMb        = Just $ 6 * gigabytes,
             -- it's pretty large mainly because of the SQLite WAL (and other) amplifications
-            maxDiskWriteMb       = Just $ 8 * gigabytes
+            maxDiskWriteMb       = Just $ 16 * gigabytes
         },
         rrdpWorkerLimits = WorkerLimits {
             workerTimeout  = 11 * minutes,
@@ -354,13 +354,15 @@ defaultConfig = Config {
             maxDiskWriteMb       = Just $ 16 * gigabytes
         },
         validationWorkerLimits = WorkerLimits {
-            workerTimeout  = 1 * hour,
-            cpuLimit = 3 * hour,
+            -- CPU limit will kill the validation worker first, 
+            -- so the clock time doesn't really matter that much
+            workerTimeout = hour,
+            cpuLimit = hour,
             memoryMb = 2048,
             -- It downloads nothing, TA certificates are fetched by the main process
             maxIncomingTrafficMb = Just 0,
             maxDiskReadMb        = Just $ 20 * gigabytes,
-            maxDiskWriteMb       = Just $ 5 * gigabytes
+            maxDiskWriteMb       = Just $ 8 * gigabytes
         },
         cleanupWorkerLimits = WorkerLimits {
             workerTimeout  = 300,
