@@ -38,6 +38,7 @@ import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Logging
 import           RPKI.Worker             (workerLimitsByName)
+import           RPKI.Meta.UniqueId
 import           RPKI.Metrics.Prometheus
 import           RPKI.Metrics.Process (mbToSize, sizeMb)
 import           RPKI.Metrics.System
@@ -478,6 +479,7 @@ getSystem AppContext {..} = do
     SystemInfo {..} <- readTVarIO $ appState ^. #system
     let proverVersion = rpkiProverVersion    
     let gitInfo       = makeGitInfo
+    let ExecutableVersion executableVersion = thisExecutableVersion
     
     let z = MonoidalMap.toList $ unMetricMap $ metrics ^. #resources
     resources <- 
