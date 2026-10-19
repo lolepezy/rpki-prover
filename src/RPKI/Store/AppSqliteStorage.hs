@@ -142,8 +142,8 @@ createSqliteDatabase cacheDir config mode = do
     sdb <- newSqliteDB dbPath config SQLite.CheckpointWhenCommitting
     let db = DB.DB sdb
     dbCheck <- case mode of
-        Reset                      -> initAndCheckVersion sdb db
-        RecreateIfDifferentVersion -> initAndCheckVersion sdb db
+        Reset                      -> initAndCheckVersion db
+        RecreateIfDifferentVersion -> initAndCheckVersion db
         UseAsIs                    -> pure WasCompatible
 
     pure (db, dbCheck)
@@ -152,8 +152,8 @@ createSqliteDatabase cacheDir config mode = do
         exists <- doesFileExist filePath
         when exists $ removeFile filePath
 
-    initAndCheckVersion sdb db = do
-        SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> SQLite.initSchema (SQLite.rawConn conn)
+    initAndCheckVersion db = do
+        DB.rwTx db $ \(SQLite.Tx conn) -> SQLite.initSchema (SQLite.rawConn conn)
         existingVersion <- DB.roTx db $ \tx -> DB.getDatabaseVersion tx
         case existingVersion of
             Nothing -> do
@@ -163,7 +163,7 @@ createSqliteDatabase cacheDir config mode = do
             Just version
                 | version == DB.currentDatabaseVersion -> pure WasCompatible
                 | otherwise -> do
-                    SQLite.withWriteTx sdb $ \tx@(SQLite.Tx conn) -> do
+                    DB.rwTx db $ \tx@(SQLite.Tx conn) -> do
                         SQLite.dropSchema (SQLite.rawConn conn)
                         SQLite.initSchema (SQLite.rawConn conn)
                         DB.saveCurrentDatabaseVersion tx

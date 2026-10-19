@@ -152,7 +152,7 @@ main = do
 
         -- An incompatible cache gets wiped, which would quietly turn this into
         -- a benchmark of validating nothing.
-        (_, dbCheck) <- createSqliteDatabase cacheDir config False True
+        (_, dbCheck) <- createSqliteDatabase cacheDir config RecreateIfDifferentVersion
         case dbCheck of
             WasIncompatible -> error $ "The cache in " <> cacheDir <> " is of another version and was wiped."
             _               -> pure ()
