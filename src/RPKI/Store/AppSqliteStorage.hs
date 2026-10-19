@@ -3,6 +3,7 @@ module RPKI.Store.AppSqliteStorage (
     runMaintenance,
     checkpointDatabase,
     DbCheckResult(..),
+    DbOpenMode(..),
     sqliteFileName,
     sqliteCacheFiles,
     cleanUpCacheDirectory,
@@ -117,44 +118,56 @@ newSqliteDB dbPath config walCheckpointing =
                     in fromIntegral $ s * 1000    
 
 
-createSqliteDatabase :: FilePath -> Config -> Bool -> Bool -> IO (DB.DB, DbCheckResult)
-createSqliteDatabase cacheDir config resetCache checkVersion = do
+-- | What 'createSqliteDatabase' does to the database before handing it out.
+data DbOpenMode
+    -- | Delete the database files and start with an empty database of the current version.
+    = Reset
+    -- | Keep the data if the stored version is the current one, wipe it if it isn't,
+    -- store the current version if there is none.
+    | RecreateIfDifferentVersion
+    -- | Don't touch the schema or the version, for those who only read what is
+    -- already there. Doesn't take the write lock and doesn't run DDL against
+    -- what may be an older schema.
+    | UseAsIs
+    deriving stock (Show, Eq)
+
+createSqliteDatabase :: FilePath -> Config -> DbOpenMode -> IO (DB.DB, DbCheckResult)
+createSqliteDatabase cacheDir config mode = do
     createDirectoryIfMissing True cacheDir
 
     let dbPath = cacheDir </> sqliteFileName
-    when resetCache $
+    when (mode == Reset) $
         mapM_ (removeIfExists . (cacheDir </>)) sqliteCacheFiles
 
     sdb <- newSqliteDB dbPath config SQLite.CheckpointWhenCommitting
-    SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> SQLite.initSchema (SQLite.rawConn conn)
-
     let db = DB.DB sdb
-    dbCheck <-
-        if checkVersion
-            then do
-                existingVersion <- DB.roTx db $ \tx -> DB.getDatabaseVersion tx
-                case existingVersion of
-                    Nothing -> do
-                        DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx
-                        pure DidntHaveVersion
-
-                    Just version
-                        | version == DB.currentDatabaseVersion -> pure WasCompatible
-                        | otherwise -> do
-                            SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> do
-                                SQLite.dropSchema (SQLite.rawConn conn)
-                                SQLite.initSchema (SQLite.rawConn conn)
-                            DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx
-                            pure WasIncompatible
-            else do
-                DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx
-                pure WasCompatible
+    dbCheck <- case mode of
+        Reset                      -> initAndCheckVersion sdb db
+        RecreateIfDifferentVersion -> initAndCheckVersion sdb db
+        UseAsIs                    -> pure WasCompatible
 
     pure (db, dbCheck)
   where
     removeIfExists filePath = do
         exists <- doesFileExist filePath
         when exists $ removeFile filePath
+
+    initAndCheckVersion sdb db = do
+        SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> SQLite.initSchema (SQLite.rawConn conn)
+        existingVersion <- DB.roTx db $ \tx -> DB.getDatabaseVersion tx
+        case existingVersion of
+            Nothing -> do
+                DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx
+                pure DidntHaveVersion
+
+            Just version
+                | version == DB.currentDatabaseVersion -> pure WasCompatible
+                | otherwise -> do
+                    SQLite.withWriteTx sdb $ \tx@(SQLite.Tx conn) -> do
+                        SQLite.dropSchema (SQLite.rawConn conn)
+                        SQLite.initSchema (SQLite.rawConn conn)
+                        DB.saveCurrentDatabaseVersion tx
+                    pure WasIncompatible
 
 
 -- | Open an already-initialised SQLite database without touching the schema or version.

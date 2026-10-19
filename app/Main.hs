@@ -56,7 +56,7 @@ import           RPKI.Http.HttpServer
 import           RPKI.Logging
 
 import           RPKI.Store.Base.Serialisation (TheBinary)
-import           RPKI.Store.AppSqliteStorage (DbCheckResult(..), closeStorage, runMaintenance,
+import           RPKI.Store.AppSqliteStorage (DbCheckResult(..), DbOpenMode(..), closeStorage, runMaintenance,
                                               cleanUpCacheDirectory, createSqliteDatabase,
                                               openExistingSqliteDatabase)
 import           RPKI.SLURM.SlurmProcessing
@@ -351,7 +351,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     liftIO $ cleanUpCacheDirectory logger cached
 
     (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $
-                createSqliteDatabase cached config resetCache True
+                createSqliteDatabase cached config
+                    (if resetCache then Reset else RecreateIfDifferentVersion)
 
     database <- liftIO $ newTVarIO db    
     
@@ -635,7 +636,7 @@ createVerifierContext cliOptions logger = do
 
     let config = defaultConfig
     (db, _) <- fromTry (InitE . InitError . fmtEx) $
-                createSqliteDatabase cached config False False
+                createSqliteDatabase cached config UseAsIs
 
     appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db
