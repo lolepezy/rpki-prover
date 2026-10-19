@@ -19,4 +19,8 @@
   newer one fails while falling back to an older one works.
 - A BGPsec router certificate is only valid for ASNs its CA has. Before, a
   CA could issue one for any ASN.
-- Database version 67: the cache is rebuilt on the first start.
+- Errors that used to be reported as "Unspecified error in ..." have their own
+  messages: inconsistent or invalid options, an unreadable directory to verify
+  with RSC, a TA that is not in the cache or whose certificate is not, and
+  unexpected exceptions.
+- Database version 68: the cache is rebuilt on the first start.

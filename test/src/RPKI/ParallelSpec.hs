@@ -69,8 +69,8 @@ parallelSpec = testGroup "Parallel" [
 
         HU.testCase "txPoolPipeline returns the consumer's validation error" $ do
             (r, _, _) <- runPool ItemOrder (S.each [1 .. 1000]) pure $ \i ->
-                when (i == 500) $ appError $ UnspecifiedE "consumer" "failed"
-            HU.assertEqual "result" (Left $ UnspecifiedE "consumer" "failed") r
+                when (i == 500) $ appError $ InternalE (InternalError "consumer: failed")
+            HU.assertEqual "result" (Left $ InternalE (InternalError "consumer: failed")) r
     ]
   where
     runPool :: ResultOrder -> Stream (Of Int) IO () -> (Int -> IO Int) -> (Int -> Eff AppEffects ())

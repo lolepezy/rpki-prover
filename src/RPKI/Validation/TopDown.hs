@@ -286,12 +286,12 @@ validateFromTACert :: (ValidatorIO es, Concurrent :> es) => AppContext ->
                     Eff es ()
 validateFromTACert
     appContext@AppContext {..}
-    topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
+    topDownContext@TopDownContext { allTas = AllTasTopDownContext {..} }
     initialRepos
     taCert
   = do
     fromTryM
-        (UnspecifiedE (unTaName taName) . fmtEx)
+        (\e -> InternalE $ InternalError [i|Top-down validation failed with an exception: #{fmtEx e}|])
         (validateCa appContext 
             (topDownContext & #allTas . #publicationPoints .~ publicationPoints') 
             (CaFull taCert))

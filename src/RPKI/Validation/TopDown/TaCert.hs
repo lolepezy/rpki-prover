@@ -14,7 +14,6 @@ import           Control.Lens hiding (children)
 import           Data.Generics.Product.Typed
 
 import           Data.String.Interpolate.IsString
-import           Data.Text                        (Text)
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -65,7 +64,7 @@ taCertificateFromCache AppContext {..} tal = do
     db <- liftIO $ readTVarIO database
     ta <- DB.roAppTxEx db DB.storageError $ \tx -> DB.getTA tx taName
     case ta of
-        Nothing       -> taCertProblem "there's no TA certificate in the cache yet"
+        Nothing       -> appError $ ValidationE TANotInCache
         Just storedTa -> do
             (taCert, taValidations) <-
                 DB.roAppTxEx db DB.storageError $ \tx ->
@@ -77,14 +76,12 @@ taCertificateFromCache AppContext {..} tal = do
             case taCert of
                 -- The object is gone from the cache, the next run of the TA
                 -- certificate job will download and store it again.
-                Nothing   -> taCertProblem "TA certificate is not in the object cache"
+                Nothing   -> appError $ ValidationE TACertNotInCache
                 Just cert -> do
                     let locations = talCertLocations tal <> toLocations (storedTa ^. #actualUrl)
                     pure (locatedTaCert locations cert, storedTa ^. #initialRepositories)
   where
     taName = getTaName tal
-    taCertProblem :: Validator es => Text -> Eff es a
-    taCertProblem message = appError $ UnspecifiedE (unTaName taName) message
 
 -- | Download the TA certificate using the locations from the TAL, validate it
 -- | and store it together with the initial publication points.
@@ -149,7 +146,7 @@ fetchValidateAndStoreTaCert appContext@AppContext {..} tal worldVersion = go
             -- Nothing was downloaded, the cached copy stays as it is
             CachedTA ->
                 case cachedTaCertM of
-                    Nothing -> appError $ UnspecifiedE (unTaName $ getTaName tal) "Cached TA cert not found in objects store"
+                    Nothing -> appError $ ValidationE TACertNotInCache
                     Just _  -> pure False
 
       where
