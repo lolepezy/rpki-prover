@@ -2,6 +2,11 @@
 
 ## Unreleased changes
 
+- RTR over TLS (#145), set up like in Routinator: `--rtr-tls-port` starts a
+  TLS listener with the certificate chain from `--rtr-tls-cert` and the key
+  from `--rtr-tls-key`. `--rtr-tls-address` can be given several times like
+  `--rtr-address`, and without it the TLS listener uses the addresses of
+  `--rtr-address`. It runs with or without the plain one from `--with-rtr`.
 - `--rtr-port` works for ports above 32767. `--rtr-port` and `--http-api-port`
   reject what is not a port.
 - The RTR server listens on all the addresses of `--rtr-address`, e.g. on both

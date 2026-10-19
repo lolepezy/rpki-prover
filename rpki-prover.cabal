@@ -85,6 +85,7 @@ common shared
     , crypton
     , crypton-connection
     , crypton-x509
+    , crypton-x509-store
     , crypton-x509-validation
     , deepseq
     , deque
@@ -148,6 +149,7 @@ common shared
     , template-haskell
     , text
     , th-utilities
+    , tls
     , these
     , time
     , transformers
@@ -228,6 +230,7 @@ library
       RPKI.RTR.RtrServer
       RPKI.RTR.RtrState
       RPKI.RTR.Snapshot
+      RPKI.RTR.Tls
       RPKI.RTR.Types
       RPKI.RTR.UniqueVrps
       RPKI.Sandbox
@@ -353,6 +356,7 @@ test-suite rpki-prover-test
       RPKI.RTR.OrderingSpec
       RPKI.RTR.RtrSpec
       RPKI.RTR.SnapshotSpec
+      RPKI.RTR.TlsSpec
       RPKI.SLURM.SlurmSpec
       RPKI.Store.DatabaseSpec
       RPKI.Store.StorableSpec

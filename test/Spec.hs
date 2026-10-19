@@ -18,6 +18,7 @@ import RPKI.DomainSpec
 import RPKI.RTR.OrderingSpec
 import RPKI.RTR.RtrSpec
 import RPKI.RTR.SnapshotSpec
+import RPKI.RTR.TlsSpec
 import RPKI.SLURM.SlurmSpec
 import RPKI.Store.StorableSpec
 import RPKI.Validation.BottomUpSpec
@@ -44,6 +45,7 @@ main = defaultMain $ testGroup "All tests" [
         rtrGroup,
         rtrSnapshotGroup,
         rtrOrderingGroup,
+        rtrTlsGroup,
         httpSpec,
         httpDtoGroup,
         directoryTraverseSpec,
