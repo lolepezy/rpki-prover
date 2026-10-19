@@ -31,7 +31,7 @@ import           RPKI.Domain
 import           RPKI.Parse.Parse
 import           RPKI.AppContext                  (AppContext)
 import           RPKI.Reporting
-import           RPKI.Repository                  (PublicationPointAccess (..), rsyncPP)
+import           RPKI.Repository
 import qualified RPKI.Resources.IntervalContainers as IS
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storable         (Compressed (..), Verbatim (..), serialiseField, toStorable)
@@ -47,6 +47,7 @@ import           RPKI.Validation.Types
 import           RPKI.Validation.TopDown
                 ( TroubledChildLoadPath (..)
                 , becomingValid
+                , enterCaGroup
                 , resolveTroubledChildByKey
                 , signedByCa
                 , validateCa
@@ -88,6 +89,10 @@ topDownRegressionGroup =
         , HU.testCase "Checks the ASNs of a router certificate against its CA" shouldCheckRouterCertificateAsns
         , HU.testCase "Cuts only the path that is too deep" shouldCutOnlyThePathThatIsTooDeep
         , HU.testCase "Counts the size of the tree of every TA on its own" shouldCountTreeSizePerTa
+        , HU.testCase "Starts a group where publication points leave the repositories of the issuer" shouldStartGroupsWhereRepositoriesChange
+        , HU.testCase "Cuts only the group that has too many repositories" shouldCutOnlyTheGroupWithTooManyRepositories
+        , HU.testCase "Cuts only the group that has too many objects" shouldCutOnlyTheGroupWithTooManyObjects
+        , HU.testCase "Keeps validating the CAs of the TA operator over the TA limit" shouldKeepRootGroupOverTaLimit
         , HU.testCase "Writes the shortcut of an accepted manifest, with warnings or not" shouldWriteShortcutOfAcceptedManifest
         , HU.testCase "Deletes the shortcut of a CA without an accepted manifest" shouldDeleteShortcutOfCaWithoutManifest
         , HU.testCase "Forces a snapshot only when no manifest can be used" shouldForceSnapshotOnlyWithoutFallback
@@ -381,6 +386,160 @@ shouldCountTreeSizePerTa =
         readTVarIO (arin ^. #treeSize) >>= HU.assertEqual
             "Only its own, an object of both is of the TA that got to it first" 1
 
+
+shouldStartGroupsWhereRepositoriesChange :: HU.Assertion
+shouldStartGroupsWhereRepositoriesChange =
+    withTestContext $ \appContext -> do
+        (topDownContext, _) <- newTestTopDownContext appContext
+        let enter context n pps = enterCaGroup context (groupTestCa n pps) (ppAccessOf pps)
+        let groupOf context n pps = enter context n pps ^. #fetchGroup
+
+        HU.assertEqual "The TA is in the root group, whatever its repositories"
+            (rootGroup testTaName) (groupOf topDownContext 0 [delegatedPP 0])
+
+        let underTa = enter topDownContext 0 taPPs & #currentPathDepth .~ 1
+        HU.assertEqual "A CA hosted by the TA operator is in its group" 
+            (rootGroup testTaName) (groupOf underTa 1 hostedPPs)
+        HU.assertEqual "A CA with its own repository starts a group" 
+            (testGroup_ [2]) (groupOf underTa 2 [delegatedPP 2])
+        HU.assertEqual "So does a CA with the TA operator's RRDP but its own rsync" 
+            (testGroup_ [3]) (groupOf underTa 3 [taRrdpPP, delegatedRsync 3])
+
+        let underDelegated = enter underTa 2 [delegatedPP 2] & #currentPathDepth .~ 2
+        HU.assertEqual "A CA in the repository of the delegated CA is in its group" 
+            (testGroup_ [2]) (groupOf underDelegated 4 [delegatedPP 2])
+        HU.assertEqual "A CA with its own repository under it starts a group inside" 
+            (testGroup_ [2, 5]) (groupOf underDelegated 5 [delegatedPP 5])
+        HU.assertEqual "Even if it is the TA operator's repository" 
+            (testGroup_ [2, 6]) (groupOf underDelegated 6 taPPs)
+
+
+-- | The repositories of a group count against it and all the groups it is inside of.
+shouldCutOnlyTheGroupWithTooManyRepositories :: HU.Assertion
+shouldCutOnlyTheGroupWithTooManyRepositories =
+    withTestContext $ \appContext0 -> do
+        let appContext = appContext0 & #config . #validationConfig . #maxGroupRepositories .~ 2
+        (topDownContext, _) <- newTestTopDownContext appContext
+        let underTa = enterCaGroup topDownContext (groupTestCa 0 taPPs) (ppAccessOf taPPs)
+                        & #currentPathDepth .~ 1
+        let underDelegated = underTa 
+                & #currentPathDepth .~ 2
+                & #fetchGroup .~ testGroup_ [1]
+                & #issuerRepositories .~ repositoryIdentities (ppAccessOf [delegatedPP 1])
+        let validate context n pps = fst <$> runValidatorIO (newScopes "group") 
+                                        (validateCa appContext context (groupTestCa n pps))
+
+        validate underTa 1 [delegatedPP 1] >>= HU.assertEqual "The delegated CA" (Right ())
+        validate underDelegated 2 [delegatedPP 2] >>= HU.assertEqual "Second repository of the group" (Right ())
+        validate underDelegated 3 [delegatedPP 3] >>= HU.assertEqual "Third one is too many" 
+            (Left $ ValidationE $ TooManyGroupRepositories 2)
+        validate underDelegated 4 [delegatedPP 4] >>= HU.assertEqual "Reported once" (Right ())
+        validate underDelegated 5 [delegatedPP 2] >>= HU.assertEqual "A repository the group has is fine" (Right ())
+        validate underTa 6 hostedPPs >>= HU.assertEqual "The TA operator's CA goes on" (Right ())
+        validate underTa 7 [delegatedPP 7] >>= HU.assertEqual "Another delegated CA goes on" (Right ())
+
+        Fetcheables fs <- readTVarIO $ topDownContext ^. #fetcheables
+        HU.assertEqual "The repositories of the CAs that were not cut, and the groups they are for"
+            [ (taRrdp, [rootGroup testTaName]),
+              (delegatedRrdp 1, [testGroup_ [1]]),
+              (delegatedRrdp 2, [testGroup_ [1, 2], testGroup_ [1, 5]]),
+              (delegatedRrdp 7, [testGroup_ [7]]) ]
+            [ (url, MonoidalMap.keys groups) | (url, groups) <- MonoidalMap.toList fs ]
+
+
+shouldCutOnlyTheGroupWithTooManyObjects :: HU.Assertion
+shouldCutOnlyTheGroupWithTooManyObjects =
+    withTestContext $ \appContext0 -> do
+        let appContext = appContext0 & #config . #validationConfig . #maxGroupTreeSize .~ 3
+        (topDownContext, _) <- newTestTopDownContext appContext
+        let inGroup ns = topDownContext 
+                & #currentPathDepth .~ 2
+                & #fetchGroup .~ testGroup_ ns
+                & #issuerRepositories .~ repositoryIdentities (ppAccessOf [delegatedPP (last ns)])
+        let validate context n pps = fst <$> runValidatorIO (newScopes "group") 
+                                        (validateCa appContext context (groupTestCa n pps))
+
+        -- Objects of an inner group count against the outer one
+        void $ runValidatorIO (newScopes "mark") $ do 
+            mapM_ (markAsUsed (inGroup [1]) . objectKey) [1, 2]
+            markAsUsed (inGroup [1, 2]) (objectKey 3)
+
+        validate (inGroup [1]) 4 [delegatedPP 1] >>= HU.assertEqual "The group is full" 
+            (Left $ ValidationE $ GroupTreeIsTooBig 3)
+        validate (inGroup [1, 2]) 5 [delegatedPP 2] >>= HU.assertEqual "So is the group inside it" (Right ())
+        validate (inGroup [8]) 6 [delegatedPP 8] >>= HU.assertEqual "Another group goes on" (Right ())
+
+        Fetcheables fs <- readTVarIO $ topDownContext ^. #fetcheables
+        HU.assertEqual "Only the CA of the other group" [delegatedRrdp 8] (MonoidalMap.keys fs)
+
+
+-- | When the TA-wide limit is reached because of too many groups, the CAs of 
+-- the TA operator are still validated.
+shouldKeepRootGroupOverTaLimit :: HU.Assertion
+shouldKeepRootGroupOverTaLimit =
+    withTestContext $ \appContext0 -> do
+        let appContext = appContext0 & #config . #validationConfig . #maxTaRepositories .~ 2
+        (topDownContext, _) <- newTestTopDownContext appContext
+        let underTa = enterCaGroup topDownContext (groupTestCa 0 taPPs) (ppAccessOf taPPs)
+                        & #currentPathDepth .~ 1
+        let validate n pps = fst <$> runValidatorIO (newScopes "ta-limit") 
+                                (validateCa appContext underTa (groupTestCa n pps))
+
+        rs <- mapM (\n -> validate n [delegatedPP n]) [1, 2, 3, 4]
+        HU.assertEqual "The fourth delegated CA is over the limit" 
+            [Right (), Right (), Right (), Left $ ValidationE $ TooManyRepositories 2] rs
+        validate 5 hostedPPs >>= HU.assertEqual "The TA operator's CA goes on" (Right ())
+        validate 6 [delegatedPP 6] >>= HU.assertEqual "Delegated CAs don't" (Right ())
+
+        Fetcheables fs <- readTVarIO $ topDownContext ^. #fetcheables
+        HU.assertEqual "Repositories" 
+            (Set.fromList $ taRrdp : map delegatedRrdp [1, 2, 3]) 
+            (Set.fromList $ MonoidalMap.keys fs)
+
+
+testTaName :: TaName
+testTaName = TaName "test"
+
+testGroup_ :: [Int] -> FetchGroup
+testGroup_ = FetchGroup testTaName . map groupTestSki
+
+groupTestSki :: Int -> SKI
+groupTestSki n = SKI $ mkKI $ BS.pack [fromIntegral n]
+
+-- | A CA with this SKI and these publication points
+groupTestCa :: Int -> [PublicationPoint] -> Ca
+groupTestCa n pps = CaShort $ testCaShortcut (objectKey $ fromIntegral $ 1000 + n)
+                        & #ski  .~ groupTestSki n
+                        & #ppas .~ ppAccessOf pps
+
+ppAccessOf :: [PublicationPoint] -> PublicationPointAccess
+ppAccessOf = PublicationPointAccess . NonEmpty.fromList
+
+taRrdp :: RpkiURL
+taRrdp = RrdpU $ RrdpURL $ URI "https://rrdp.ta.net/notification.xml"
+
+taPPs, hostedPPs :: [PublicationPoint]
+taPPs     = [ rrdpPP $ RrdpURL $ URI "https://rrdp.ta.net/notification.xml", rsyncPPOf "rsync://rsync.ta.net/repository/" ]
+hostedPPs = [ rrdpPP $ RrdpURL $ URI "https://rrdp.ta.net/notification.xml", rsyncPPOf "rsync://rsync.ta.net/repository/member/" ]
+
+delegatedRrdp :: Int -> RpkiURL
+delegatedRrdp n = RrdpU $ RrdpURL $ URI $ "https://rrdp" <> Text.pack (show n) <> ".net/notification.xml"
+
+delegatedPP :: Int -> PublicationPoint
+delegatedPP n = case delegatedRrdp n of 
+                    RrdpU u -> rrdpPP u
+                    other   -> error $ "Not RRDP: " <> show other
+
+taRrdpPP :: PublicationPoint
+taRrdpPP = rrdpPP $ RrdpURL $ URI "https://rrdp.ta.net/notification.xml"
+
+delegatedRsync :: Int -> PublicationPoint
+delegatedRsync n = rsyncPPOf $ "rsync://rsync" <> Text.pack (show n) <> ".net/repository/"
+
+rsyncPPOf :: Text.Text -> PublicationPoint
+rsyncPPOf u = case parseRpkiURL u of
+                Right (RsyncU r) -> rsyncPP r
+                other            -> error $ "Not an rsync URL: " <> show other
 
 -- | Which manifest of a CA is validated, and how.
 shouldPlanManifests :: HU.Assertion

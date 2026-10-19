@@ -5,6 +5,7 @@ import RPKI.RRDP.ParseSpec
 import RPKI.Store.DatabaseSpec
 import RPKI.RRDP.UpdateSpec
 import RPKI.Fetch.HttpSpec
+import RPKI.Fetch.SchedulerSpec
 import RPKI.Resources.ResourcesSpec
 import RPKI.Resources.ValiditySpec
 import RPKI.AppMonadSpec
@@ -41,6 +42,8 @@ main = defaultMain $ testGroup "All tests" [
         slurmGroup,
         loggingSpec,
         workflowSpec,
+        fetchGroupSpec,
+        schedulerSpec,
         topDownRegressionGroup,
         bottomUpGroup,
         revalidationSpec,

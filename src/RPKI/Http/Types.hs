@@ -303,6 +303,30 @@ data RrdpRepositoryDto = RrdpRepositoryDto {
 
 -- | Erik fetches are per-FQDN and not per-repository-URL, so they are reported 
 -- separately from RRDP/rsync ones rather than as another 'RepositoryDto' case.
+-- | A repository to fetch, with the groups that need it and their fallbacks
+data FetcheableDto = FetcheableDto {
+        url    :: RpkiURL,
+        groups :: [FetcheableGroupDto]
+    }
+    deriving stock (Eq, Show, Generic)
+
+data FetcheableGroupDto = FetcheableGroupDto {
+        group     :: Text,
+        fallbacks :: [RpkiURL]
+    }
+    deriving stock (Eq, Show, Generic)
+
+-- | The state of a group in the fetch scheduler and the repositories it owns
+data FetchGroupDto = FetchGroupDto {
+        group        :: Text,
+        window       :: Int,
+        inFlight     :: Int,
+        waiting      :: Int,
+        costSeconds  :: Double,
+        repositories :: [RpkiURL]
+    }
+    deriving stock (Eq, Show, Generic)
+
 data ErikRepositoryDto = ErikRepositoryDto {
         fqdn        :: FQDN,
         repository  :: ErikRepository,
@@ -698,7 +722,9 @@ instance ToJSON RrdpEnforcement
 instance ToJSON RrdpMeta
 instance ToJSON RrdpRepository
 instance ToJSON RepositoryMeta
-instance ToJSON Fetcheables
+instance ToJSON FetcheableDto
+instance ToJSON FetcheableGroupDto
+instance ToJSON FetchGroupDto
 instance ToJSON PublicationPointsDto
 instance ToJSON RepositoryDto
 instance ToJSON RrdpRepositoryDto
@@ -709,6 +735,9 @@ instance ToJSON ErikRepositoryDto
 
 
 instance ToSchema MetricsDto
+instance ToSchema FetcheableDto
+instance ToSchema FetcheableGroupDto
+instance ToSchema FetchGroupDto
 instance ToSchema FetchStatus where     
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ETag where     

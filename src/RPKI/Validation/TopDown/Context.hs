@@ -19,6 +19,8 @@ import           Data.Foldable
 import           Data.IORef
 import           Data.Map.Monoidal.Strict         (MonoidalMap)
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
+import           Data.Map.Strict                  (Map)
+import qualified Data.Map.Strict                  as Map
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
 import           Data.Text                        (Text)
@@ -65,7 +67,15 @@ data TopDownContext = TopDownContext {
         payloadBuilder          :: PayloadBuilder,
         overclaimingHappened    :: Bool,
         fetcheables             :: TVar Fetcheables,
-        earliestNotValidAfter   :: TVar EarliestValidityChange,        
+        -- | The group the CAs validated in this context are in, and the
+        -- repositories of their issuer, empty for the TA (see 'FetchGroup')
+        fetchGroup              :: FetchGroup,
+        issuerRepositories      :: Set RepositoryIdentity,
+        -- | What every group of the TA has used up so far
+        groupUsage              :: TVar (Map FetchGroup GroupUsage),
+        -- | Groups that went over one of their limits and were reported
+        groupsOverLimit         :: TVar (Set FetchGroup),
+        earliestNotValidAfter   :: TVar EarliestValidityChange,
         visitedAkis             :: TVar (Set AKI),
         -- | RRDP repositories to fetch from a snapshot next time, with why: 
         -- the cache doesn't have what the manifests of a CA there say, 
@@ -118,6 +128,57 @@ deriving instance AllBF Show f TopDownCounters => Show (TopDownCounters f)
 data Limited = CanProceed | FirstToHitLimit | AlreadyReportedLimit
     deriving stock (Show, Eq, Ord, Generic)
 
+-- | What a group used up. The root group only counts what is in it, every
+-- other group counts what is in it and in all the groups inside it.
+data GroupUsage = GroupUsage {
+        repositories :: Set RpkiURL,
+        objects      :: Int
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+
+instance Semigroup GroupUsage where
+    GroupUsage r1 o1 <> GroupUsage r2 o2 = GroupUsage (r1 <> r2) (o1 + o2)
+
+instance Monoid GroupUsage where
+    mempty = GroupUsage mempty 0
+
+-- | The limit of a group that is reached
+data GroupLimit = GroupRepositoriesLimit Int
+                | GroupTreeSizeLimit Int
+    deriving stock (Show, Eq, Ord, Generic)
+
+-- | The groups that whatever is in this group counts against
+countedGroups :: FetchGroup -> [FetchGroup]
+countedGroups g
+    | isRootGroup g = [g]
+    | otherwise     = groupPath g
+
+addGroupUsage :: TopDownContext -> GroupUsage -> STM ()
+addGroupUsage TopDownContext {..} usage =
+    modifyTVar' groupUsage $ \gu ->
+        foldr (\g -> Map.insertWith (<>) g usage) gu (countedGroups fetchGroup)
+
+-- | The first group of the CA validated in this context that would go over 
+-- one of its limits with the CA, whose primary repository is this one. It is 
+-- reported once per group.
+groupOverLimit :: Int -> Int -> TopDownContext -> Maybe RpkiURL -> STM (Maybe (FetchGroup, GroupLimit, Bool))
+groupOverLimit maxRepositories maxTreeSize TopDownContext {..} primary
+    | isRootGroup fetchGroup = pure Nothing
+    | otherwise = do
+        usage <- readTVar groupUsage
+        let overLimits = [ (g, limit)
+                   | g <- groupPath fetchGroup,
+                     let GroupUsage {..} = Map.findWithDefault mempty g usage,
+                     let withPrimary = maybe repositories (`Set.insert` repositories) primary,
+                     limit <- [ GroupRepositoriesLimit maxRepositories | Set.size withPrimary > maxRepositories ] <>
+                              [ GroupTreeSizeLimit maxTreeSize | objects >= maxTreeSize ] ]
+        case overLimits of
+            []             -> pure Nothing
+            (g, limit) : _ -> do
+                reported <- Set.member g <$> readTVar groupsOverLimit
+                unless reported $ modifyTVar' groupsOverLimit $ Set.insert g
+                pure $ Just (g, limit, not reported)
+
 
 newPayloadBuilder :: IO PayloadBuilder 
 newPayloadBuilder = PayloadBuilder <$> 
@@ -137,10 +198,14 @@ newTopDownContext taName allTas =
         atomically $ do
             let verifiedResources = Nothing
                 currentPathDepth = 0
-                overclaimingHappened = False       
-            interruptedByLimit      <- newTVar CanProceed                 
+                overclaimingHappened = False
+                fetchGroup = rootGroup taName
+                issuerRepositories = mempty
+            interruptedByLimit      <- newTVar CanProceed
             treeSize                <- newTVar 0
-            fetcheables             <- newTVar mempty                 
+            fetcheables             <- newTVar mempty
+            groupUsage              <- newTVar mempty
+            groupsOverLimit         <- newTVar mempty
             earliestNotValidAfter   <- newTVar mempty
             visitedAkis             <- newTVar mempty
             snapshotCandidates      <- newTVar mempty
@@ -189,21 +254,21 @@ newTopDownCounters = do
    
     pure TopDownCounters {..}
 
+-- | Whether to go on, and whether to report the limit if not. The limit is
+-- checked every time, it can stop some CAs of a TA and not the others, the
+-- TVar only remembers that it was reported.
 verifyLimit :: STM Bool -> TVar Limited -> STM Limited
 verifyLimit hitTheLimit limit =
-    readTVar limit >>= \case
-        CanProceed -> do
-            h <- hitTheLimit
-            if h then do
-                writeTVar limit FirstToHitLimit
-                pure FirstToHitLimit
-            else
-                pure CanProceed
-        FirstToHitLimit -> do
-            writeTVar limit AlreadyReportedLimit
-            pure AlreadyReportedLimit
-        AlreadyReportedLimit ->
-            pure AlreadyReportedLimit
+    hitTheLimit >>= \case
+        False -> pure CanProceed
+        True  ->
+            readTVar limit >>= \case
+                CanProceed -> do
+                    writeTVar limit FirstToHitLimit
+                    pure FirstToHitLimit
+                _ -> do
+                    writeTVar limit AlreadyReportedLimit
+                    pure AlreadyReportedLimit
 
 
 -- Do whatever is required to notify other subsystems that the object was touched 
@@ -212,12 +277,13 @@ verifyLimit hitTheLimit limit =
 -- to GC this object from the cache -- if it's not visited for too long, it is 
 -- removed.
 markAsUsed :: ValidatorIO es => TopDownContext -> ObjectKey -> Eff es ()
-markAsUsed TopDownContext { allTas = AllTasTopDownContext {..}, treeSize = taTreeSize } k = 
+markAsUsed topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, treeSize = taTreeSize } k =
     liftIO $ atomically $ do
         visited <- readTVar visitedKeys
         unless (Set.member k visited) $ do
             writeTVar visitedKeys $! Set.insert k visited
             modifyTVar' taTreeSize (+ 1)
+            addGroupUsage topDownContext $ GroupUsage mempty 1
 
 markAsUsedByHash :: ValidatorIO es => 
                     AppContext -> TopDownContext -> Hash -> Eff es ()

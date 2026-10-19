@@ -6,7 +6,7 @@ import           Effectful
 import           Control.Concurrent.STM    
 import           Control.DeepSeq
 import           Control.Lens hiding (filtered)
-import           Control.Monad (join, unless)
+import           Control.Monad (join)
 import           Data.Maybe (fromMaybe)
 
 import qualified Data.ByteString                  as BS
@@ -15,7 +15,6 @@ import           Data.Foldable                    (toList)
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
 import qualified Data.Map.Strict                  as Map
-import qualified Data.Map.Monoidal.Strict         as MonoidalMap
 import           Data.Text                        (Text)
 import           GHC.Generics
 import           System.Posix.Types
@@ -26,6 +25,7 @@ import           RPKI.Logging
 import           RPKI.SLURM.SlurmProcessing
 import           RPKI.SLURM.Types
 import           RPKI.Repository
+import           RPKI.Fetch.Scheduler             (FetchScheduler)
 import           RPKI.Reporting
 import           RPKI.Time
 import           Data.Hourglass (Seconds(..))
@@ -78,6 +78,9 @@ data AppState = AppState {
         runningWorkers :: TVar (Map.Map CPid WorkerInfo),
 
         fetcheables :: TVar Fetcheables,
+
+        -- The fetch scheduler, once the workflow has started it, for the API
+        fetchScheduler :: TVar (Maybe FetchScheduler),
 
         -- Problems of the main process that are not about any TA, e.g. a
         -- transaction that had to be rolled back, waiting to be added to the
@@ -209,6 +212,7 @@ newAppState = do
         cachedBinaryRtrPdus <- newTVar mempty
         runningWorkers <- newTVar mempty
         fetcheables <- newTVar mempty
+        fetchScheduler <- newTVar Nothing
         systemProblems <- newTVar mempty
         erikRelayHealth <- newTVar mempty
         workerLimits <- newTVar mempty
@@ -226,8 +230,7 @@ newAppState = do
 -}
 workerLimitProblems :: AppState -> STM Validations
 workerLimitProblems AppState {..} = do
-    Fetcheables fs <- readTVar fetcheables
-    let fetched = Set.fromList $ concat [ url : toList fallbacks | (url, fallbacks) <- MonoidalMap.toList fs ]
+    fetched <- fetcheableUrls <$> readTVar fetcheables
     let stillFetched (_, Scope scope) = 
             all (`Set.member` fetched) [ url | RepositoryFocus url <- toList scope ]
     problems <- Map.filterWithKey (\k _ -> stillFetched k) <$> readTVar workerLimits

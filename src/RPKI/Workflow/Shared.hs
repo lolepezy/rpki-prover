@@ -65,6 +65,7 @@ withWorkflowShared AppContext {..} prometheusMetrics tals f = do
     shared <- liftIO $ atomically $ do 
         runningTasks   <- newRunningTasks
         fetchers       <- newFetchers config (appState ^. #fetcheables)
+        writeTVar (appState ^. #fetchScheduler) (Just $ fetchers ^. #scheduler)
         tasToValidate  <- newTVar mempty
         lastFqdnFetch  <- newTVar mempty
         -- Also the TAs that won't be validated until something asks for it, 

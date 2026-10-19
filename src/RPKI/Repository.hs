@@ -16,6 +16,7 @@ import qualified Data.Map.Strict             as Map
 import           Data.Map.Monoidal.Strict    (MonoidalMap(..))
 import qualified Data.Map.Monoidal.Strict    as MonoidalMap
 import qualified Data.Set                    as Set
+import qualified Data.Text                   as Text
 
 import           GHC.Generics
 
@@ -137,12 +138,86 @@ newtype RrdpMap = RrdpMap { unRrdpMap :: Map RrdpURL RrdpRepository }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass TheBinary
 
--- | A set of URLs that can be fetched with their fallbacks.
--- | The key is the URL that should be fetched first, and the 
--- | value is a set of fallback URLs.
-newtype Fetcheables = Fetcheables { unFetcheables :: MonoidalMap RpkiURL (Set.Set RpkiURL) }    
-    deriving stock (Show, Eq, Ord, Generic)  
-    deriving anyclass (TheBinary)    
+{- | Whom a repository is fetched for.
+
+    A CA whose publication points are not all in the repositories of its
+    issuer starts a group of its own, inside the group of the issuer. The CAs
+    of the TA operator and the CAs it hosts are in the root group of the TA,
+    the one with no roots. Everything a group does -- the repositories and
+    objects of the CAs in it, the fetches of these repositories -- counts
+    against the group and against the groups it is inside of, so that a CA
+    that builds a big, slow or broken tree under itself only hurts itself.
+
+    It is the delegation, i.e. a certificate issued by the TA operator, that
+    is hard to come by, so the groups right under the root are the ones that
+    matter. A delegated CA can make as many groups inside its own as it likes,
+    they are all inside its group.
+-}
+data FetchGroup = FetchGroup {
+        ta    :: TaName,
+        -- | SKIs of the CAs that start the groups, the outermost first
+        roots :: [SKI]
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+rootGroup :: TaName -> FetchGroup
+rootGroup ta = FetchGroup ta []
+
+isRootGroup :: FetchGroup -> Bool
+isRootGroup = null . (^. #roots)
+
+-- | The group the CA with this SKI starts inside this group.
+innerGroup :: FetchGroup -> SKI -> FetchGroup
+innerGroup g ski = g & #roots %~ (<> [ski])
+
+-- | The groups that this group is inside of, and the group itself, the
+-- outermost first. The root group is not one of them.
+groupPath :: FetchGroup -> [FetchGroup]
+groupPath FetchGroup {..} =
+    [ FetchGroup ta (take n roots) | n <- [1 .. length roots] ]
+
+-- | The group closest to the TA of all these groups. A delegated CA can point
+-- at any repository, but it can't make a CA closer to the TA point at its own.
+-- It is the group a repository is shown under, the fetch scheduler picks the
+-- group to fetch a repository for itself (see RPKI.Fetch.Scheduler.cheapestGroup).
+ownerGroup :: [FetchGroup] -> Maybe FetchGroup
+ownerGroup [] = Nothing
+ownerGroup gs = Just $ List.minimumBy (comparing (\g -> (length (g ^. #roots), g))) gs
+
+
+-- | The TA and the SKIs of the roots, e.g. "ripe/0A1B.../3C4D..."
+fmtFetchGroup :: FetchGroup -> Text.Text
+fmtFetchGroup FetchGroup {..} =
+    Text.intercalate "/" $ unTaName ta : map (Text.pack . show . unSKI) roots
+
+
+-- | What tells one repository from another when it comes to groups: an RRDP
+-- repository is its notification URL, an rsync one is its host.
+data RepositoryIdentity = RrdpIdentity RrdpURL
+                        | RsyncIdentity RsyncHost
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
+repositoryIdentities :: PublicationPointAccess -> Set.Set RepositoryIdentity
+repositoryIdentities (PublicationPointAccess pps) =
+    Set.fromList $ map identity $ NonEmpty.toList pps
+  where
+    identity = \case
+        RrdpPP RrdpRepository {..}                         -> RrdpIdentity uri
+        RsyncPP (RsyncPublicationPoint (RsyncURL host _)) -> RsyncIdentity host
+
+
+-- | Repositories that can be fetched, with their fallbacks.
+-- | The key is the URL that should be fetched first, the value has the groups
+-- | that need it and, for every group, the URLs to fall back to. A fallback
+-- | is fetched for the group that asked for it: any CA can put somebody else's
+-- | repository as its primary one and its own one as the fallback.
+newtype Fetcheables = Fetcheables {
+        unFetcheables :: MonoidalMap RpkiURL (MonoidalMap FetchGroup (Set.Set RpkiURL))
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
     deriving newtype Monoid
     deriving newtype Semigroup
 
@@ -219,9 +294,20 @@ updateMeta' :: Repository -> (RepositoryMeta -> RepositoryMeta) -> Repository
 updateMeta' (RrdpR r) newMeta = RrdpR $ r & #meta %~ newMeta
 updateMeta' (RsyncR r) newMeta = RsyncR $ r & #meta %~ newMeta
 
-newFetcheables :: RpkiURL -> Maybe RpkiURL -> Fetcheables
-newFetcheables primary fallback = Fetcheables $ 
-    MonoidalMap.singleton primary (maybe Set.empty Set.singleton fallback)
+newFetcheables :: FetchGroup -> RpkiURL -> Maybe RpkiURL -> Fetcheables
+newFetcheables group primary fallback = Fetcheables $
+    MonoidalMap.singleton primary $
+        MonoidalMap.singleton group (maybe Set.empty Set.singleton fallback)
+
+-- | All the URLs, primary ones and fallbacks
+fetcheableUrls :: Fetcheables -> Set.Set RpkiURL
+fetcheableUrls (Fetcheables fs) =
+    Set.fromList (MonoidalMap.keys fs) <>
+    mconcat [ fallbacks | groups <- MonoidalMap.elems fs, fallbacks <- MonoidalMap.elems groups ]
+
+-- | All the fallbacks of the primary URL, of all the groups
+allFallbacks :: MonoidalMap FetchGroup (Set.Set RpkiURL) -> Set.Set RpkiURL
+allFallbacks = mconcat . MonoidalMap.elems
 
 rsyncPP :: RsyncURL -> PublicationPoint
 rrdpPP  :: RrdpURL  -> PublicationPoint

@@ -170,6 +170,7 @@ library
       RPKI.Fetch.Erik.ErikRelay
       RPKI.Fetch.Erik.RelayPool
       RPKI.Fetch.Fetch
+      RPKI.Fetch.Scheduler
       RPKI.Fetch.Http
       RPKI.Http.Api
       RPKI.Http.Dto
@@ -322,6 +323,7 @@ test-suite rpki-prover-test
       RPKI.DomainSpec
       RPKI.Fetch.ErikSpec
       RPKI.Fetch.HttpSpec
+      RPKI.Fetch.SchedulerSpec
       RPKI.FetchSpec
       RPKI.LoggingSpec
       RPKI.Metrics.ProcessSpec

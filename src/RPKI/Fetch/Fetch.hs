@@ -45,6 +45,7 @@ import           RPKI.Parallel
 import           RPKI.Util                       
 import           RPKI.Rsync
 import           RPKI.Fetch.Http
+import           RPKI.Fetch.Scheduler
 import           RPKI.Fetch.Erik.ErikRelay
 import           RPKI.Worker (ErikFetchStat)
 import           RPKI.TAL
@@ -63,13 +64,12 @@ data Fetchers = Fetchers {
         -- We want to track this to for the "one-off" mode.
         firstFinishedFetchBy :: TVar (Map RpkiURL WorldVersion),        
 
-        -- Semaphore for untrusted fetches, i.e fetches that have 
-        -- no decent history of being successful 
-        untrustedFetchSemaphore :: Semaphore,        
+        -- Slots for the fetches (see RPKI.Fetch.Scheduler)
+        scheduler :: FetchScheduler,
 
-        -- Semaphore for trusted fetches, i.e. fetches 
-        -- that have already succeeded
-        trustedFetchSemaphore :: Semaphore,        
+        -- When the fetches of the repositories of every group asked for 
+        -- a revalidation lately (see RPKI.Workflow.Fetcher)
+        groupRevalidations :: TVar (Map FetchGroup [Instant]),
 
         -- Semaphore for rsync fetches per host, used to no exceed 
         -- the limit of connections per rsync host
@@ -124,12 +124,14 @@ newFetchers config fetcheables = do
     firstFinishedFetchBy <- newTVar mempty
     uriByTa              <- newTVar mempty
     rsyncPerHostSemaphores  <- newTVar mempty
-    untrustedFetchSemaphore <- newSemaphore fetchParallelism
-    trustedFetchSemaphore   <- newSemaphore fetchParallelism
+    groupRevalidations <- newTVar mempty
+    scheduler <- newFetchScheduler SchedulerConfig {
+                        poolCapacity  = fromIntegral $ config ^. #parallelism . #fetchParallelism,
+                        initialWindow = 2,
+                        costHalfLife  = Seconds 3600
+                    }
     erikFetchSemaphore      <- newSemaphore (fromIntegral $ config ^. #erikConf . #fqdnParallelism)
     pure Fetchers {..}
-  where
-    fetchParallelism = fromIntegral $ config ^. #parallelism . #fetchParallelism
 
 updateUriPerTa :: Map TaName Fetcheables -> UriTaIxSet -> UriTaIxSet
 updateUriPerTa fetcheablesPerTa uriTa = uriTa'
@@ -205,29 +207,26 @@ nextRefreshInterval config repository worldVersion newStatus rrdpStats duration 
         in fromIntegral r :: Int64
 
 
-{- | Wait for a slot to fetch this repository in.
+{- | Wait for a slot to fetch this repository in for this group.
 
-    Repositories that have been fetched successfully before get their own
-    semaphore, so that a crowd of new or broken ones cannot squeeze them out.
-    Both are deliberately soft: a fetch that has waited long enough runs
-    anyway rather than starving. Rsync is additionally limited per host,
-    since hosts limit the number of connections they accept.
+    Repositories that have been fetched successfully the last time take the 
+    slots of their own pool, so that a crowd of new or broken ones cannot 
+    squeeze them out. Every group has a window of how many fetches it can 
+    run at once, see RPKI.Fetch.Scheduler. Rsync is additionally limited per 
+    host, since hosts limit the number of connections they accept.
 -}
-withFetchLimits :: Fetchers -> Config -> Repository -> IO a -> IO a
-withFetchLimits Fetchers {..} config repository f =
+withFetchLimits :: Fetchers -> Config -> FetchGroup -> Repository -> (a -> FetchOutcome) -> IO a -> IO a
+withFetchLimits Fetchers {..} config group repository outcomeOf f =
     case repository of
         RrdpR _                   -> withLaunchSlot
         RsyncR (getRsyncURL -> r) -> rsyncFetch r
   where
-    timeToWait = config ^. #fetchIntervalConfig . #fetchLaunchWaitDuration
-
-    semaphoreToUse =
+    pool =
         case getFetchStatus repository of
-            -- TODO Add logic "if succeeded more than N times"
-            FetchedAt _ -> trustedFetchSemaphore
-            _           -> untrustedFetchSemaphore
+            FetchedAt _ -> TrustedPool
+            _           -> UntrustedPool
 
-    withLaunchSlot = withSemaphoreOrTimeout semaphoreToUse timeToWait f
+    withLaunchSlot = withFetchSlot scheduler group pool outcomeOf f
 
     rsyncFetch (RsyncURL host _) = do
         hostSemaphore <- atomically $ do

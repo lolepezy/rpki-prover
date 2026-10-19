@@ -1,6 +1,10 @@
 module RPKI.Fetch.HttpSpec where
 
+import Control.Concurrent (threadDelay)
+import Control.Exception (try)
 import Control.Lens
+import Control.Monad (forever, replicateM_)
+import Data.IORef
 import System.IO.Temp (withSystemTempDirectory)
 
 import qualified Data.ByteString.Lazy    as LBS
@@ -22,6 +26,23 @@ import Network.Wreq
 
 httpSpec :: TestTree
 httpSpec = testGroup "Unit tests for Http updates" [
+    HU.testCase "Aborts a download that receives too little for too long" $ do
+        received <- newIORef 0
+        -- 2 bytes a period at most
+        r <- try $ abortIfStalled testStallLimit (URI "http://stalled") received $ 
+                forever $ modifyIORef' received (+ 1) >> threadDelay 50_000
+        case r of 
+            Left (StalledDownload _ n _) -> HU.assertBool "Less than the minimum" (n < 10)
+            Right ()                     -> HU.assertFailure "Should have been aborted",
+
+    HU.testCase "Doesn't abort a download that keeps going" $ do
+        received <- newIORef 0
+        -- 50 bytes a period, for three periods
+        r <- abortIfStalled testStallLimit (URI "http://slow-but-fine") received $ do 
+                replicateM_ 30 $ modifyIORef' received (+ 5) >> threadDelay 10_000
+                pure ("done" :: String)
+        HU.assertEqual "Finished" "done" r,
+
     HU.testCase "Should download and calculate hash and size" $ do        
         withSystemTempDirectory "rpki-http-spec" $ \tmpDir -> do
             let maxSize = testConfig ^. typed @RrdpConf . #maxSize
@@ -50,3 +71,7 @@ httpSpec = testGroup "Unit tests for Http updates" [
                     HU.assertEqual "Body" body bs1
   ]
 
+
+
+testStallLimit :: StallLimit
+testStallLimit = StallLimit { periodMicros = 100_000, minBytes = 10 }

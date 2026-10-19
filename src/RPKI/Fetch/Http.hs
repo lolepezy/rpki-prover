@@ -8,6 +8,8 @@ import Conduit
 import Data.Conduit.Internal (zipSinks)
 import Data.Generics.Product.Typed
 import Data.IORef
+import Control.Concurrent (threadDelay)
+import UnliftIO.Async (race)
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -188,6 +190,32 @@ instance Show OversizedDownloadStream where
         [i|Http stream for #{uri} is #{actualSize} bytes, bigger than #{maxSize} bytes limit|]    
 
 
+data StalledDownload = StalledDownload URI Int StallLimit
+    deriving stock (Eq, Ord, Generic)    
+
+instance Exception StalledDownload
+
+instance Show StalledDownload where 
+    show (StalledDownload uri received StallLimit {..}) =
+        let seconds = periodMicros `div` 1_000_000
+        in [i|Http stream for #{uri} stalled, got #{received} bytes in the last #{seconds} seconds|]
+
+-- | How much a download must receive in every period, counting from the 
+-- request, not to be stalled.
+data StallLimit = StallLimit {
+        periodMicros :: Int,
+        minBytes     :: Int
+    }
+    deriving stock (Show, Eq, Ord, Generic)    
+
+-- | 16KB a minute, that is not much more than nothing at all
+stallLimit :: StallLimit
+stallLimit = StallLimit {
+        periodMicros = 60 * 1_000_000,
+        minBytes     = 16 * 1024
+    }
+
+
 -- | Stream URL content to a file suing http conduit.
 --
 downloadConduit :: (MonadIO m, MonadUnliftIO m) => 
@@ -254,13 +282,36 @@ downloadToSink (URI u) eTag sink = do
                     e : _ -> writeIORef newETag $ Just $ ETag e
             getResponseBody r
 
-    z <- runConduitRes
-            $ httpSource req' getSrc
-            .| countTraffic
-            .| sink
+    received <- liftIO $ newIORef 0
+    z <- abortIfStalled stallLimit (URI u) received $ 
+            runConduitRes
+                $ httpSource req' getSrc
+                .| countTraffic
+                .| countReceived received
+                .| sink
 
     liftIO $ (z,,) <$> readIORef httpStatus <*> readIORef newETag
 
+
+-- | Abort the download if it receives too little for too long. A server that 
+-- sends a byte now and then, or nothing at all, would otherwise only be stopped 
+-- by the timeout of the whole fetch, taking a fetch slot for all that time.
+abortIfStalled :: MonadUnliftIO m => StallLimit -> URI -> IORef Int -> m a -> m a
+abortIfStalled limit@StallLimit {..} uri received download = 
+    race watchdog download >>= either (liftIO . throwIO) pure
+  where
+    watchdog = liftIO $ go 0
+    go before = do 
+        threadDelay periodMicros
+        now <- readIORef received
+        if now - before < minBytes
+            then pure $ StalledDownload uri (now - before) limit
+            else go now
+
+countReceived :: MonadIO m => IORef Int -> ConduitT BS.ByteString BS.ByteString m ()
+countReceived received = awaitForever $ \chunk -> do 
+    liftIO $ atomicModifyIORef' received $ \n -> (n + BS.length chunk, ())
+    yield chunk
 
 -- | Add everything that goes through to the process-wide incoming traffic counter.
 countTraffic :: MonadIO m => ConduitT BS.ByteString BS.ByteString m ()
