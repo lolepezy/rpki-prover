@@ -26,7 +26,7 @@ toMessage = \case
     RrdpE r  -> toRrdpMessage r
     RsyncE r -> toRsyncMessage r
     TAL_E (TALError t) -> t
-    InitE (InitError t) -> t    
+    InitE e  -> toInitMessage e
     
     StorageE (StorageError t) -> t
     StorageE (DeserialisationError t) -> t
@@ -34,9 +34,14 @@ toMessage = \case
     ErikE e     -> toErikMessage e
     SlurmE r    -> toSlurmMessage r
     InternalE t -> toInternalErrorMessage t
-    
-    UnspecifiedE context e -> 
-        [i|Unspecified error in #{context}, details: #{e}.|]
+
+
+toInitMessage :: InitError -> Text
+toInitMessage = \case
+    InitError t             -> t
+    InconsistentOptions t   -> [i|Inconsistent options: #{t}.|]
+    InvalidOptionValue {..} -> [i|Invalid value '#{value}' of option #{option}: #{whatsWrong}.|]
+    CantReadPath {..}       -> [i|Cannot read #{path}: #{whatsWrong}.|]
 
 
 toErikMessage :: ErikError -> Text
@@ -196,6 +201,12 @@ toValidationMessage = \case
       ChecklistFileNameMismatch hash f1 f2 -> [i|File with hash #{hash} has name #{f1} but marked as #{f2} on the checklist.|]
 
       TACertAKIIsNotEmpty u -> [i|TA certificate #{u} has an AKI.|]
+
+      TANotInCache -> 
+          [i|TA is not in the cache, its certificate has not been downloaded successfully yet.|]
+
+      TACertNotInCache -> 
+          [i|TA certificate is not in the object cache, it will be downloaded again.|]
       
       TACertPreferCachedCopy TACertValidities {..} -> 
           [i|New TA certificate has validity period of #{notBefore}-#{notAfter}, previous one has #{cachedNotBefore}-#{cachedNotAfter}. |] <>

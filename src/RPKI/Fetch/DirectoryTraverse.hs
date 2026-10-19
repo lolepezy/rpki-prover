@@ -101,7 +101,9 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                         pure $! UknownObjectType rpkiURL filePath
 
     saveStorable tx processed = do
-        (r, vs) <- either (appError . UnspecifiedE "Something bad happened in loadObjectsFromFS" . U.fmtEx) pure processed
+        (r, vs) <- either 
+                    (\e -> appError $ InternalE $ InternalError [i|Failed to load objects from #{rootPath}: #{U.fmtEx e}|]) 
+                    pure processed
         embedState vs
         case r of
             Left e  -> appWarn e

@@ -96,7 +96,7 @@ rscVerify appContext@AppContext {..} rscFile verifyPath = do
                 liftIO $ for files $ \f -> 
                     (f, ) . mkHash <$> runConduitRes (sourceFile f .| hashC)                                                
             Directory directory -> do 
-                files <- fromTry (UnspecifiedE [i|No directory #{directory}|] . fmtEx) $ getDirectoryContents directory
+                files <- fromTry (InitE . CantReadPath (convert directory) . fmtEx) $ getDirectoryContents directory
 
                 liftIO $ do 
                     fmap mconcat $ for files $ \f -> do 

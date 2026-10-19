@@ -556,7 +556,7 @@ rsyncPrefetches CLIOptions {..} = do
 
     forM urlsToParse $ \u ->
         case parseRsyncURL (convert u) of
-            Left e         -> appError $ UnspecifiedE [i|Rsync URL #{u} is invalid|] (convert $ show e)
+            Left e         -> appError $ InitE $ InvalidOptionValue { option = "--rsync-prefetch-url", value = convert u, whatsWrong = e }
             Right rsyncURL -> pure rsyncURL
 
 
@@ -595,8 +595,8 @@ deriveProverRunMode CLIOptions {..} =
     case (once, vrpOutput) of 
         (False, Nothing) -> pure ServerMode  
         (True, Just vo)  -> pure $ OneOffMode vo
-        _                -> appError $ UnspecifiedE "options"
-            [i|Options `--once` and `--vrp-output` must be either both set or both not set|]
+        _                -> appError $ InitE $ InconsistentOptions
+            [i|`--once` and `--vrp-output` must be either both set or both not set|]
             
 
 -- | Run rpki-prover in a CLI mode for verifying RSC signature (*.sig file).

@@ -1484,7 +1484,7 @@ shouldRollbackAppTx io = do
 
     void $ runValidatorIO (newScopes "tx-rollback") $ DB.rwAppTx db $ \tx -> do
         liftIO $ DB.setJobCompletionTime tx "job-rollback" i1
-        appError $ UnspecifiedE "Test" "Rollback requested"
+        appError $ InternalE (InternalError "Test: Rollback requested")
 
     void $ runValidatorIO (newScopes "tx-commit") $ DB.rwAppTx db $ \tx ->
         liftIO $ DB.setJobCompletionTime tx "job-commit" i2
@@ -1514,15 +1514,15 @@ shouldPreserveStateInAppTx io = do
     (_, ValidationState { validations = Validations validationMap, .. })
         <- runValidatorIO (newScopes "root") $
             timedMetric (Proxy :: Proxy RrdpMetric) $ do
-                appWarn $ UnspecifiedE "Error0" "text 0"
+                appWarn $ InternalE (InternalError "Error0: text 0")
                 void $ DB.rwAppTx db $ \tx -> do
                     addedObject
-                    appWarn $ UnspecifiedE "Error1" "text 1"
+                    appWarn $ InternalE (InternalError "Error1: text 1")
                     inSubVScope "nested-1" $
-                        appWarn $ UnspecifiedE "Error2" "text 2"
+                        appWarn $ InternalE (InternalError "Error2: text 2")
                     -- touch DB inside tx, but assertions are about state preservation
                     liftIO $ DB.getDatabaseVersion tx
-                appWarn $ UnspecifiedE "Error4" "text 4"
+                appWarn $ InternalE (InternalError "Error4: text 4")
                 addedObject
 
     HU.assertEqual "Root metric should count 2 objects"
@@ -1537,14 +1537,14 @@ shouldPreserveStateInAppTx io = do
     HU.assertEqual "Root validations should have 3 warnings"
         (Map.lookup (newScope "root") validationMap)
         (Just $ Set.fromList
-            [ VWarn (VWarning (UnspecifiedE "Error0" "text 0"))
-            , VWarn (VWarning (UnspecifiedE "Error1" "text 1"))
-            , VWarn (VWarning (UnspecifiedE "Error4" "text 4"))
+            [ VWarn (VWarning (InternalE (InternalError "Error0: text 0")))
+            , VWarn (VWarning (InternalE (InternalError "Error1: text 1")))
+            , VWarn (VWarning (InternalE (InternalError "Error4: text 4")))
             ])
 
     HU.assertEqual "Nested validations should have 1 warning"
         (Map.lookup (subScope TextFocus "nested-1" (newScope "root")) validationMap)
-        (Just $ Set.fromList [VWarn (VWarning (UnspecifiedE "Error2" "text 2"))])
+        (Just $ Set.fromList [VWarn (VWarning (InternalE (InternalError "Error2: text 2")))])
 
 
 -- | Any transaction running for a second or more is stuck.
