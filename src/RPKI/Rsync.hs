@@ -211,7 +211,9 @@ rsyncProcess :: Config -> Seconds -> RsyncURL -> FilePath -> RsyncMode -> Proces
 rsyncProcess Config {..} rsyncTimeout rsyncURL destination rsyncMode = 
     proc rsyncBinary $ 
         [ "--update",  "--times" ] <> 
-        [ "--timeout=" <> show timeout' ] <>         
+        -- It is the I/O timeout, i.e. how long rsync waits for the server 
+        -- to send something, the whole fetch is limited by the worker timeout
+        [ "--timeout=" <> show (min timeout' rsyncIoTimeout) ] <>         
         [ "--contimeout=60" ] <>         
         [ "--max-size=" <> show (validationConfig ^. #maxObjectSize) ] <> 
         [ "--min-size=" <> show (validationConfig ^. #minObjectSize) ] <> 
@@ -221,6 +223,7 @@ rsyncProcess Config {..} rsyncTimeout rsyncURL destination rsyncMode =
         rsyncBinary = maybe "rsync" configValue rsyncConf.clientPath 
 
         Seconds timeout' = rsyncTimeout
+        rsyncIoTimeout = 120
         source = Text.unpack (unURI $ getURL rsyncURL)        
         (sourceUrl, extraOptions) = case rsyncMode of 
             RsyncOneFile   -> (source, [])

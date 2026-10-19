@@ -50,7 +50,7 @@ import           RPKI.Config
 import           RPKI.Cpu                         (getAvailableCpuCount)
 import           RPKI.Domain
 import           RPKI.Messages
-import           RPKI.Reporting
+import           RPKI.Reporting                   hiding (option)
 import           RPKI.Fetch.Http (downloadToFile)
 import           RPKI.Http.HttpServer
 import           RPKI.Logging
@@ -556,7 +556,8 @@ rsyncPrefetches CLIOptions {..} = do
 
     forM urlsToParse $ \u ->
         case parseRsyncURL (convert u) of
-            Left e         -> appError $ InitE $ InvalidOptionValue { option = "--rsync-prefetch-url", value = convert u, whatsWrong = e }
+            -- The field is hidden, it clashes with `option` of optparse-applicative
+            Left e         -> appError $ InitE $ InvalidOptionValue "--rsync-prefetch-url" (convert u) e
             Right rsyncURL -> pure rsyncURL
 
 
@@ -690,6 +691,10 @@ data CLIOptions = CLIOptions {
         maxTaRepositories        :: Maybe Int,
         maxCertificatePathDepth  :: Maybe Int,
         maxTotalTreeSize         :: Maybe Int,
+        maxGroupRepositories     :: Maybe Int,
+        maxGroupTreeSize         :: Maybe Int,
+        maxGroupRevalidations    :: Maybe Int,
+        initialFetchTimeout      :: Maybe Int64,
         maxObjectSize            :: Maybe Integer,
         minObjectSize            :: Maybe Integer,
         topDownTimeout           :: Maybe Int64,
@@ -906,6 +911,26 @@ cliOptionsParser = CLIOptions
             <> metavar "N"
             <> help ("Maximum total number of objects in the tree for a single TA (default: " <> show defMaxTotalTree <> ").")))
     <*> optional (option auto
+            (  long "max-group-repositories"
+            <> metavar "N"
+            <> help ("Maximum number of repositories of a delegated CA with its own repository together with all the CAs under it. "
+                  <> "Only these CAs are cut when it is reached (default: " <> show defMaxGroupRepos <> ").")))
+    <*> optional (option auto
+            (  long "max-group-tree-size"
+            <> metavar "N"
+            <> help ("Maximum number of objects of a delegated CA with its own repository together with all the CAs under it. "
+                  <> "Only these CAs are cut when it is reached (default: " <> show defMaxGroupTree <> ").")))
+    <*> optional (option auto
+            (  long "max-group-revalidations"
+            <> metavar "N"
+            <> help ("How many times the fetches of the repositories of a delegated CA with all the CAs under it "
+                  <> "can trigger revalidation of the TA within the revalidation interval (default: " <> show defMaxGroupRevalidations <> ").")))
+    <*> optional (option auto
+            (  long "initial-fetch-timeout"
+            <> metavar "SECONDS"
+            <> help ("Timeout for fetching a repository of a delegated CA that wasn't fetched successfully the last time. "
+                  <> "It doubles after every failure up to the normal timeout (default: " <> show defInitialFetchTimeout <> ").")))
+    <*> optional (option auto
             (  long "max-object-size"
             <> metavar "BYTES"
             <> help ("Maximum size of any object in bytes (default: " <> show defMaxObjSize <> ", i.e. " <> show (defMaxObjSize `div` (1024*1024)) <> "MB).")))
@@ -1004,6 +1029,10 @@ cliOptionsParser = CLIOptions
     defMaxTaRepos             = cfg ^. #validationConfig . #maxTaRepositories
     defMaxCertDepth           = cfg ^. #validationConfig . #maxCertificatePathDepth
     defMaxTotalTree           = cfg ^. #validationConfig . #maxTotalTreeSize
+    defMaxGroupRepos          = cfg ^. #validationConfig . #maxGroupRepositories
+    defMaxGroupTree           = cfg ^. #validationConfig . #maxGroupTreeSize
+    defMaxGroupRevalidations  = cfg ^. #validationConfig . #maxGroupRevalidations
+    Seconds defInitialFetchTimeout = cfg ^. #fetchIntervalConfig . #initialFetchTimeout
     defMaxObjSize             = cfg ^. #validationConfig . #maxObjectSize
     defMinObjSize             = cfg ^. #validationConfig . #minObjectSize
     Seconds defTopDownTimeout = cfg ^. #systemConfig . #validationWorkerLimits . #workerTimeout
@@ -1054,6 +1083,10 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#validationConfig . #maxTaRepositories) maxTaRepositories
         & maybeSet (#validationConfig . #maxCertificatePathDepth) maxCertificatePathDepth
         & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
+        & maybeSet (#validationConfig . #maxGroupRepositories) maxGroupRepositories
+        & maybeSet (#validationConfig . #maxGroupTreeSize) maxGroupTreeSize
+        & maybeSet (#validationConfig . #maxGroupRevalidations) maxGroupRevalidations
+        & maybeSet (#fetchIntervalConfig . #initialFetchTimeout) (Seconds <$> initialFetchTimeout)
         & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
         & maybeSet (#validationConfig . #minObjectSize) minObjectSize
         & maybeSet (#httpApiConf . #port) httpApiPort

@@ -346,6 +346,12 @@ toValidationMessage = \case
       TooManyRepositories maxTaRepositories ->          
           [i|The number of new repositories added by one TA reached maximum of #{maxTaRepositories}.|]
 
+      GroupTreeIsTooBig maxTreeSize ->          
+          [i|The number of objects of a delegated CA and the CAs under it reached maximum of #{maxTreeSize}.|]
+
+      TooManyGroupRepositories maxRepositories ->          
+          [i|The number of repositories of a delegated CA and the CAs under it reached maximum of #{maxRepositories}.|]
+
       ValidationTimeout (Seconds maxDuration) -> 
           [i|Validation did not finish within #{maxDuration}s and was interrupted.|]
 

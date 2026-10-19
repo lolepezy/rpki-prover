@@ -25,7 +25,6 @@ import           RPKI.Http.Types
 import           RPKI.SLURM.Types
 import           RPKI.Util (convert)
 import           RPKI.Meta.Version
-import           RPKI.Repository (Fetcheables)
 import           RPKI.Store.Base.Storable
 
 
@@ -103,7 +102,9 @@ data API api = API {
 
         versions :: api :- "versions" :> Get '[JSON] [WorldVersion],
 
-        fetcheables :: api :- "fetcheables" :> Get '[JSON] Fetcheables,
+        fetcheables :: api :- "fetcheables" :> Get '[JSON] [FetcheableDto],
+
+        fetchGroups :: api :- "fetch-groups" :> Get '[JSON] [FetchGroupDto],
 
         objectStats :: api :- "object-stats" :> Get '[JSON] ObjectStats,
 
@@ -243,7 +244,10 @@ swaggerDoc = toSwagger (Proxy :: Proxy (ToServantApi API))
             ("/versions", mempty & get ?~ jsonOn200 "Return list of all world versions"),
             
             ("/fetcheables", mempty & get ?~ jsonOn200 
-                "Return all actual repository links together with their fall-back links"),
+                "Return all actual repository links together with the groups of CAs that need them and their fall-back links"),
+
+            ("/fetch-groups", mempty & get ?~ jsonOn200 
+                "Return the groups of CAs, i.e. delegated CAs with their own repositories, with the state of their fetches"),
 
             ("/object-stats", mempty & get ?~ jsonOn200 
                 "Return counts and size statistics about all objects in the cache"),

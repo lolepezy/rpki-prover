@@ -45,6 +45,7 @@ import           RPKI.Metrics.System
 import           RPKI.Time
 import           RPKI.Reporting
 import           RPKI.Repository
+import           RPKI.Fetch.Scheduler             (schedulerGroups, waitingPerGroup)
 import           RPKI.Http.Api
 import           RPKI.Http.Types
 import           RPKI.Http.Dto
@@ -102,6 +103,7 @@ httpServer appContext = gzip defaultGzipSettings $ genericServe HttpApi {
         rtr = getRtr appContext,
         versions = getVersions appContext,
         fetcheables = getFetcheables appContext,
+        fetchGroups = getFetchGroups appContext,
         objectStats = roTxT (appContext ^. #database) DB.getObjectsStats,
         validity = getPrefixValidity appContext,
         validityAsnPrefix = getQueryPrefixValidity appContext,
@@ -125,8 +127,7 @@ httpServer appContext = gzip defaultGzipSettings $ genericServe HttpApi {
 
                     
                     allFetcheables      <- do 
-                            fetcheables <- readTVarIO $ appState ^. #fetcheables
-                            pure $ mconcat $ map (uncurry Set.insert) $ MonoidalMap.toList $ unFetcheables fetcheables
+                            fetcheableUrls <$> readTVarIO (appState ^. #fetcheables)
                             
                     fetchesDtos         <- toRepositoryDtos appContext =<< DB.getRepositories tx (`Set.member` allFetcheables)
 
@@ -569,9 +570,36 @@ getVersions AppContext {..} =
     liftIO $ roTxT database DB.versionsBackwards
 
 getFetcheables :: (MonadIO m, MonadError ServerError m) =>
-                  AppContext -> m Fetcheables
-getFetcheables AppContext {..} = 
-    liftIO $ readTVarIO $ appState ^. #fetcheables
+                  AppContext -> m [FetcheableDto]
+getFetcheables AppContext {..} = do 
+    Fetcheables fs <- liftIO $ readTVarIO $ appState ^. #fetcheables
+    pure [ FetcheableDto url [ FetcheableGroupDto (fmtFetchGroup g) (Set.toList fallbacks) 
+                             | (g, fallbacks) <- MonoidalMap.toList groups ]
+         | (url, groups) <- MonoidalMap.toList fs ]
+
+-- | Every group the fetch scheduler knows about or that owns a repository
+getFetchGroups :: (MonadIO m, MonadError ServerError m) =>
+                  AppContext -> m [FetchGroupDto]
+getFetchGroups AppContext {..} = liftIO $ do 
+    Fetcheables fs <- readTVarIO $ appState ^. #fetcheables
+    let owned = Map.fromListWith (<>) 
+            [ (g, [url]) | (url, groups) <- MonoidalMap.toList fs, 
+                           Just g <- [ownerGroup $ MonoidalMap.keys groups] ]
+    (states, waiting) <- readTVarIO (appState ^. #fetchScheduler) >>= \case 
+        Nothing        -> pure (mempty, mempty)
+        Just scheduler -> (,) <$> schedulerGroups scheduler 
+                              <*> atomically (waitingPerGroup scheduler)
+    let allGroups = Set.toList $ Map.keysSet owned <> Map.keysSet states
+    initialWindow <- maybe 0 (^. #config . #initialWindow) <$> readTVarIO (appState ^. #fetchScheduler)
+    pure [ FetchGroupDto {
+                group        = fmtFetchGroup g,
+                window       = maybe initialWindow (^. #window) state,
+                inFlight     = maybe 0 (^. #inFlight) state,
+                waiting      = Map.findWithDefault 0 g waiting,
+                costSeconds  = maybe 0 (^. #cost) state,
+                repositories = Map.findWithDefault [] g owned
+            }
+         | g <- allGroups, let state = Map.lookup g states ]
 
 
 getQueryPrefixValidity :: (MonadIO m, MonadError ServerError m)

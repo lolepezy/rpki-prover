@@ -161,6 +161,18 @@ data ValidationConfig = ValidationConfig {
         -- during one TA top-down validation
         maxTaRepositories              :: Int,
 
+        -- The same two limits as above, but for one group of CAs, i.e. 
+        -- for a delegated CA with its own repository together with 
+        -- everything under it (see 'RPKI.Repository.FetchGroup'). 
+        -- Only the CAs of the group are cut when it reaches one of them.
+        maxGroupRepositories           :: Int,
+        maxGroupTreeSize               :: Int,
+
+        -- How many times the fetches of the repositories of one group 
+        -- can ask for a revalidation of its TA in a revalidationInterval. 
+        -- It's not limited for the root groups, i.e. the TA operators.
+        maxGroupRevalidations          :: Int,
+
         -- Maximal allowed size of an individual object 
         maxObjectSize                  :: Integer,
 
@@ -176,8 +188,10 @@ data ValidationConfig = ValidationConfig {
     deriving anyclass (TheBinary)
 
 data FetchIntervalConfig = FetchIntervalConfig {
-        -- | How long a fetch may wait for a concurrency slot before it start anyway
-        fetchLaunchWaitDuration  :: Seconds,
+        -- | The timeout of the first fetch of a repository that isn't the TA 
+        -- operator's and wasn't fetched successfully the last time. It doubles 
+        -- after every failure up to the normal timeout.
+        initialFetchTimeout      :: Seconds,
         minFetchInterval         :: Seconds,
         maxFetchInterval         :: Seconds,
         maxFailedBackoffInterval :: Seconds
@@ -312,12 +326,15 @@ defaultConfig = Config {
         -- couple of dates and a few extensions
         minObjectSize                  = 300,
         maxTaRepositories              = 1000,
+        maxGroupRepositories           = 100,
+        maxGroupTreeSize               = 500_000,
+        maxGroupRevalidations          = 4,
         validationRFC                  = StrictRFC,
         validationAlgorithm            = FullEveryIteration,
         minimalRevalidationInterval    = Seconds 30
     },
     fetchIntervalConfig = FetchIntervalConfig {
-        fetchLaunchWaitDuration  = Seconds 30,
+        initialFetchTimeout      = Seconds 120,
         minFetchInterval         = Seconds 30,
         maxFetchInterval         = Seconds 300,
         maxFailedBackoffInterval = Seconds $ 30 * 60

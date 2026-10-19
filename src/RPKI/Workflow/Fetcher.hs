@@ -26,6 +26,8 @@ import           Control.Lens
 import           Data.Generics.Product.Typed
 
 import           Data.Foldable                   (for_)
+import           Data.Hourglass                  (Seconds (..))
+import           Data.IORef
 import           Data.Map.Strict                 (Map)
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
@@ -42,6 +44,7 @@ import           RPKI.AppState
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Fetch.Fetch
+import           RPKI.Fetch.Scheduler            (FetchOutcome (..), cheapestGroup)
 import           RPKI.Logging
 import           RPKI.Metrics.Prometheus
 import           RPKI.Reporting
@@ -105,10 +108,12 @@ adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@W
 -- | Create a new fetcher for the given URL and run it.
 newFetcher :: AppContext -> WorkflowShared -> RpkiURL -> IO ()
 newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetchers {..}, ..} url = do
-    ignoreSync $ go `finally` dropFetcher fetchers url    
+    -- Failures of the primary repository in a row, see `fetchContextFor`
+    failuresInARow <- newIORef (0 :: Int)
+    ignoreSync $ go failuresInARow `finally` dropFetcher fetchers url    
   where
-    go = case config ^. #proverRunMode of
-        OneOffMode _ -> void fetchOnce
+    go failuresInARow = case config ^. #proverRunMode of
+        OneOffMode _ -> void $ fetchOnce failuresInARow
         ServerMode   -> do 
             Now start <- thisInstant        
             pauseIfNeeded start
@@ -116,7 +121,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
       where    
         fetchLoop = do 
             Now start <- thisInstant
-            fetchOnce >>= \case        
+            fetchOnce failuresInARow >>= \case        
                 Nothing -> do                
                     logInfo logger [i|Fetcher for #{url} is not needed and will be deleted.|]
                 Just interval -> do 
@@ -143,14 +148,16 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                 [i|interval is #{interval}, first fetch will be paused by #{pauseSeconds}s.|]
                             threadDelay $ fromIntegral pause
 
-    fetchOnce = do 
+    fetchOnce failuresInARow = do 
         fetchableForUrl >>= \case        
             Nothing -> 
                 pure Nothing
 
-            Just _ -> do 
+            Just groups -> do 
                 worldVersion <- newWorldVersion
                 repository   <- repositoryFor url
+                group <- fromMaybe (rootGroup $ TaName "") <$> 
+                            cheapestGroup scheduler (MonoidalMap.keys groups)
 
                 -- TODO It should be refactored to be more systematic: 
                 -- If a repository was successfully fetched before, try to fetch the update 
@@ -161,21 +168,24 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                             usableErikRelays appState erikRelays >>= \case 
                                 [] -> do 
                                     logWarn logger [i|No usable Erik relays for #{url}, falling back to primary fetch.|]
-                                    fetchPrimary repository worldVersion
+                                    fetchPrimary group repository worldVersion
                                 usableRelays ->
-                                    fetchErikRelays worldVersion repository usableRelays
+                                    fetchErikRelays group worldVersion repository usableRelays
                     _ -> 
-                            fetchPrimary repository worldVersion
+                            fetchPrimary group repository worldVersion
 
-                revalidateFor worldVersion
+                -- The first fetch of a repository is what makes the CAs under
+                -- it visible, so it is never held back (see `groupMayRevalidate`)
+                revalidateFor group (getFetchStatus repository == Pending) worldVersion
                 pure interval
       where
-        fetchPrimary repository worldVersion = do
+        fetchPrimary group repository worldVersion = do
+            failures <- readIORef failuresInARow
             (r, validations, duration) <-                 
-                withFetchLimits fetchers config repository 
+                withFetchLimits fetchers config group repository outcomeOfFetch
                     $ runConcurrentlyIfPossible logger FetchTask runningTasks 
                         $ runFetch url
-                            $ fetchRepository appContext worldVersion repository
+                            $ fetchRepository (fetchContextFor group repository failures) worldVersion repository
 
             rememberFirstFetchBy worldVersion
             updatePrometheusForRepository url duration prometheusMetrics
@@ -183,11 +193,13 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
             case r of
                 Right (repository', stats) -> do
+                    writeIORef failuresInARow 0
                     interval <- recordFetchOutcome repository' worldVersion 
                                     (FetchedAt (versionToInstant worldVersion)) stats duration validations
                     pure $ Just interval
 
                 Left _ -> do
+                    modifyIORef' failuresInARow (+ 1)
                     interval <- recordFetchOutcome repository worldVersion 
                                     (FailedAt (versionToInstant worldVersion)) Nothing duration validations
 
@@ -197,12 +209,12 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                             pure Nothing
                         Just fallbacks -> do  
                             -- TODO Maybe try Erik relay before trying rsync
-                            anySucceeded <- fetchFallbacks worldVersion fallbacks                                                            
+                            anySucceeded <- fetchFallbacks worldVersion fallbacks (failures + 1)
                             pure $ Just $ 
                                 if not anySucceeded 
                                     -- nothing responded, so just go with the normal exponential backoff thing
                                     then interval
-                                    else case [ () | RsyncU _ <- Set.toList fallbacks ] of                                                     
+                                    else case [ () | RsyncU _ <- Set.toList (allFallbacks fallbacks) ] of                                                     
                                         -- Not implemented yet, in reality it should never happen, 
                                         -- fallbacks can only be rsync in the foreseeable future
                                         [] -> interval
@@ -210,13 +222,13 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                                         -- so it should be a normal rsync interval then                                                    
                                         _  -> max interval (config ^. #rsyncConf . #repositoryRefreshInterval)
 
-        fetchErikRelays worldVersion repository erikRelays =             
+        fetchErikRelays group worldVersion repository erikRelays =             
             -- The FQDN is derived out here rather than inside the fetch itself, 
             -- because it is also the key the Erik bookkeeping record is stored under.
             erikFqdnForUrl >>= \case 
                 Nothing -> do 
                     logWarn logger [i|Couldn't derive an FQDN for #{url}, fetching it directly.|]
-                    fetchPrimary repository worldVersion
+                    fetchPrimary group repository worldVersion
 
                 Just fqdn -> do 
                     -- If an Erik fetch for this FQDN happened less than N seconds, skip it.
@@ -270,21 +282,31 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                         saveErikFetchOutcome fqdn newStatus 
                             (nextRefreshInterval config repository worldVersion newStatus Nothing duration) 
                             [] validations
-                        fetchPrimary repository worldVersion       
+                        fetchPrimary group repository worldVersion       
          
 
-        fetchFallbacks worldVersion fallbacks = do 
+        -- Every fallback is fetched for the group that asked for it, so that
+        -- the fallbacks a delegated CA adds to somebody else's repository
+        -- only take the slots of its own group. A fallback asked for by more
+        -- than one group is fetched for the cheapest one, like a primary.
+        fetchFallbacks worldVersion fallbacksPerGroup failures = do
             -- TODO Make it a bit smarter based on the overall number and overall load
             let maxThreads = 32
-            repositories <- pooledForConcurrentlyN maxThreads (Set.toList fallbacks) $ \fallbackUrl -> do 
+            let groupsPerFallback = Map.toList $ Map.fromListWith (<>)
+                    [ (fallbackUrl, [group])
+                    | (group, urls) <- MonoidalMap.toList fallbacksPerGroup,
+                      fallbackUrl   <- Set.toList urls ]
+
+            repositories <- pooledForConcurrentlyN maxThreads groupsPerFallback $ \(fallbackUrl, groups) -> do
+                group <- fromMaybe (rootGroup $ TaName "") <$> cheapestGroup scheduler groups
 
                 repository <- repositoryFor fallbackUrl
                                 
                 (r, validations, duration) <- 
-                        withFetchLimits fetchers config repository 
+                        withFetchLimits fetchers config group repository outcomeOfFetch
                             $ runConcurrentlyIfPossible logger FetchTask runningTasks                                 
                                 $ runFetch fallbackUrl
-                                    $ fetchRepository appContext worldVersion repository
+                                    $ fetchRepository (fetchContextFor group repository failures) worldVersion repository
 
                 updatePrometheusForRepository fallbackUrl duration prometheusMetrics
                 pure $ case r of
@@ -304,6 +326,23 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             -- Whether any of them got through
             pure $ or [ succeeded | (_, _, succeeded) <- repositories ]
         
+
+    outcomeOfFetch (r, _, _) = either (const BadFetch) (const GoodFetch) r
+
+    -- A repository of a delegated CA that wasn't fetched successfully the last 
+    -- time gets a shorter timeout: whatever the reason it doesn't work, if it's 
+    -- slow, it takes a slot for as long as the timeout is. The timeout doubles 
+    -- after every failure in a row, up to the normal one, so that a repository 
+    -- that is slow but works gets fetched eventually.
+    fetchContextFor group repository failures
+        | isRootGroup group                         = appContext
+        | FetchedAt _ <- getFetchStatus repository  = appContext
+        | otherwise = appContext 
+                & #config . typed @SystemConfig . #rrdpWorkerLimits . #workerTimeout %~ shorter
+                & #config . typed @SystemConfig . #rsyncWorkerLimits . #workerTimeout %~ shorter
+      where
+        Seconds initial = config ^. #fetchIntervalConfig . #initialFetchTimeout
+        shorter (Seconds normal) = Seconds $ min normal (initial * 2 ^ min 20 failures)
 
     -- Every fetch attempt is timed and reported under its own repository scope.
     -- It always goes innermost, inside every semaphore and task slot the attempt
@@ -339,7 +378,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
     -- RRDP URL, because FQDN comes from SIA of the certificate and 
     -- not from the RRDP host name
     erikFqdnForUrl = do 
-        fallbacks <- fromMaybe mempty <$> fetchableForUrl
+        fallbacks <- maybe mempty allFallbacks <$> fetchableForUrl
         let fqdns = Set.fromList [ fqdn | f <- Set.toList fallbacks, Just fqdn <- [getFQDN f]]
         pure $ if Set.null fqdns 
                 then getFQDN $ getRpkiURL url
@@ -374,7 +413,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
     --
     -- In the one-off mode there is no next round, so every finished fetch has 
     -- to be able to unblock the validation, whether it found anything or not.
-    revalidateFor worldVersion = do
+    revalidateFor group firstFetch worldVersion = do
         let runMode   = config ^. #proverRunMode
             algorithm = config ^. #validationConfig . #validationAlgorithm
         now <- thisInstant
@@ -398,8 +437,40 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                               [i|#{count NotSignedByCa} not signed by their CA, |] <>
                               [i|#{count UnknownCa} of CAs with no certificate, |] <>
                               [i|decision: #{decision}, TAs: #{Set.toList tas}.|]
-        when (decision == RevalidateNow) $
-            requestRevalidation tasToValidate tas
+        when (decision == RevalidateNow) $ 
+            groupMayRevalidate group firstFetch >>= \case
+                True  -> requestRevalidation tasToValidate tas
+                False -> logDebug logger $ 
+                    [i|The group #{fmtFetchGroup group} of #{url} asked for revalidation too often, |] <> 
+                    [i|#{Set.toList tas} will be revalidated later.|]
+
+    -- The fetches of one delegated CA, with everything under it, can ask for 
+    -- a revalidation of its TA so many times per revalidationInterval. Otherwise
+    -- a CA can keep changing its repositories and have its TA revalidated all
+    -- the time. It is not limited for the TA operators, and not in the one-off
+    -- mode, where there is no periodic revalidation to pick the changes up.
+    --
+    -- The first fetch of a repository doesn't count: until then the CAs under 
+    -- it can't be seen, and on a cold start every repository of a big group 
+    -- would otherwise wait for the periodic revalidation. Every repository has 
+    -- only one first fetch and the number of repositories of a group is limited.
+    groupMayRevalidate group firstFetch =
+        case (config ^. #proverRunMode, groupPath group) of
+            (ServerMode, outermost : _) 
+                | firstFetch -> pure True
+                | otherwise  -> do
+                    Now now <- thisInstant
+                    let period   = config ^. #validationConfig . #revalidationInterval
+                    let maxTimes = config ^. #validationConfig . #maxGroupRevalidations
+                    atomically $ do 
+                        recent <- filter (\t -> closeEnoughMoments (Earlier t) (Later now) period) 
+                                    . Map.findWithDefault [] outermost <$> readTVar groupRevalidations
+                        let allowed = length recent < maxTimes
+                        modifyTVar' groupRevalidations $ 
+                            Map.insert outermost (if allowed then now : recent else recent)
+                        pure allowed
+            _ -> 
+                pure True
     
     rememberFirstFetchBy version = atomically $ do 
         fff <- readTVar firstFinishedFetchBy

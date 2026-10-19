@@ -12,6 +12,7 @@ module RPKI.Validation.TopDown (
     becomingValid,
     validateManifests,
     validateCa,
+    enterCaGroup,
     refreshTaCertificate,
     TroubledChildLoadPath(..),
     resolveTroubledChildByKey,
@@ -37,7 +38,9 @@ import           GHC.Generics
 import           Data.Foldable
 import           Data.IORef
 import           Data.Either
+import qualified Data.List                        as List
 import           Data.List.NonEmpty               (NonEmpty (..))
+import           Data.Ord                         (Down (..))
 import           Data.Maybe
 import qualified Data.Set.NonEmpty                as NESet
 import           Data.Map.Strict                  (Map)
@@ -225,6 +228,9 @@ validateTA appContext@AppContext{..} tal topDownContext = do
 
     logDebug logger [i|Earliest #{taName}, earliestValidityChange=#{earliestValidityChange}|]
 
+    logLargestGroups
+
+
     case r of
         Left _ -> 
             pure $ fromValidations topDownValidations 
@@ -252,6 +258,30 @@ validateTA appContext@AppContext{..} tal topDownContext = do
 
   where
     taName = getTaName tal
+
+    -- How much the biggest groups of the TA, i.e. delegated CAs with their
+    -- own repositories together with everything under them, use up, to see
+    -- how far they are from their limits
+    logLargestGroups = do
+        usage <- readTVarIO (topDownContext ^. #groupUsage)
+        let outermost = [ (g, u) | (g, u) <- Map.toList usage, length (g ^. #roots) == 1 ]
+        let largest f = take 5 $ List.sortOn (Down . f . snd) outermost
+        let repositoryCount_ = Set.size . (^. #repositories)
+        let objectCount_ = (^. #objects)
+        let fmt (g, u) = let
+                group_  = fmtFetchGroup g
+                repos   = repositoryCount_ u
+                objects = objectCount_ u
+                in [i|#{group_}: #{repos} repositories, #{objects} objects|] :: Text
+        let rootUsage   = Map.findWithDefault mempty (rootGroup taName) usage
+        let rootRepos   = repositoryCount_ rootUsage
+        let rootObjects = objectCount_ rootUsage
+        let byObjects   = map fmt $ largest objectCount_
+        let byRepos     = map fmt $ largest repositoryCount_
+        logInfo logger $
+            [i|#{taName} has #{length outermost} delegated groups, the CAs of the TA operator have |] <>
+            [i|#{rootRepos} repositories and #{rootObjects} objects. |] <>
+            [i|The largest groups by objects: #{byObjects}, by repositories: #{byRepos}.|]
 
     validateFromTAL = do
         timedMetric (Proxy :: Proxy ValidationMetric) $
@@ -313,41 +343,77 @@ validateCa
     -- The depth is of one path, e.g. of a CA that keeps issuing CAs under 
     -- itself, so only this path is cut and the rest of the TA is validated
     | currentPathDepth > validationConfig ^. #maxCertificatePathDepth =
-        logCheck 
+        logCheck
             (CertificatePathTooDeep $ validationConfig ^. #maxCertificatePathDepth)
             (\loc -> [i|Interrupting validation on #{fmtLocations loc}, maximum tree depth is reached.|])
     | otherwise =
-        checkAndReport visitedObjectCountLimit
-            $ checkAndReport repositoryCountLimit
-            $ validateCaNoLimitChecks appContext topDownContext ca        
+        case extractPPAs ca of
+            Left e         -> vError e
+            Right ppAccess -> do
+                let caContext = enterCaGroup topDownContext ca ppAccess
+                let primary   = listToMaybe $ fetcheableUrlsOf ppAccess
+                checkAndReport (visitedObjectCountLimit caContext)
+                    $ checkAndReport (repositoryCountLimit caContext)
+                    $ checkGroupLimits caContext primary
+                    $ validateCaNoLimitChecks appContext caContext ca ppAccess
   where
     -- Check and report for the maximal number of objects in the tree
-    visitedObjectCountLimit = (
-        (> validationConfig ^. #maxTotalTreeSize) <$> readTVar treeSize,
-        logCheck 
-            (TreeIsTooBig $ validationConfig ^. #maxTotalTreeSize)
+    visitedObjectCountLimit caContext = let
+            maxTreeSize = validationConfig ^. #maxTotalTreeSize in (
+        overTaLimit caContext maxTreeSize (readTVar treeSize) (^. #objects),
+        logCheck
+            (TreeIsTooBig maxTreeSize)
             (\loc -> [i|Interrupting validation on #{fmtLocations loc}, maximum total object number in the tree is reached.|])
         )
 
     -- Check and report for the maximal increase in the repository number
-    repositoryCountLimit = let 
-            maxRepositories = validationConfig ^. #maxTaRepositories in 
-        (do
-            (\fs -> repositoryCount fs > maxRepositories) <$> readTVar fetcheables,
+    repositoryCountLimit caContext = let
+            maxRepositories = validationConfig ^. #maxTaRepositories in (
+        overTaLimit caContext maxRepositories
+            (repositoryCount <$> readTVar fetcheables) (Set.size . (^. #repositories)),
         logCheck
             (TooManyRepositories maxRepositories)
             (\loc -> [i|Interrupting validation on #{fmtLocations loc}, maximum total new repository count per TA #{maxRepositories} is reached.|])
-        )                
+        )
 
-    logCheck validationError errorText = do 
+    -- The size of the tree and the number of repositories are for the whole TA.
+    -- Once one of them is reached, the CAs that are not in the root group are
+    -- not validated anymore, since every group has limits of its own (see
+    -- `checkGroupLimits`), it can only happen if there are too many groups.
+    -- The CAs in the root group, i.e. the TA operator ones, are not validated
+    -- anymore only if they alone reach the limit.
+    overTaLimit caContext limit taTotal ofGroup
+        | isRootGroup (caContext ^. #fetchGroup) = do
+            usage <- readTVar (caContext ^. #groupUsage)
+            pure $ maybe 0 ofGroup (Map.lookup (caContext ^. #fetchGroup) usage) > limit
+        | otherwise =
+            (> limit) <$> taTotal
+
+    -- Every group has limits on the number of repositories and objects of the
+    -- CAs in it, only its own CAs are not validated anymore once it reaches one.
+    checkGroupLimits caContext primary nextOne = do
+        let maxGroupRepositories = validationConfig ^. #maxGroupRepositories
+        let maxGroupTreeSize     = validationConfig ^. #maxGroupTreeSize
+        liftIO (atomically $ groupOverLimit maxGroupRepositories maxGroupTreeSize caContext primary) >>= \case
+            Nothing -> nextOne
+            Just (group, limit, firstToHit)
+                | not firstToHit -> pure mempty
+                | otherwise ->
+                    case limit of
+                        GroupRepositoriesLimit n ->
+                            logCheck (TooManyGroupRepositories n)
+                                (\loc -> [i|Interrupting validation on #{fmtLocations loc}, the CAs of the group #{fmtFetchGroup group} have more than #{n} repositories.|])
+                        GroupTreeSizeLimit n ->
+                            logCheck (GroupTreeIsTooBig n)
+                                (\loc -> [i|Interrupting validation on #{fmtLocations loc}, the CAs of the group #{fmtFetchGroup group} have more than #{n} objects.|])
+
+    logCheck validationError errorText = do
         locations <- getCaLocations appContext ca
-        for_ locations $ \loc -> 
+        for_ locations $ \loc ->
             logError logger (errorText loc)
-        vError validationError                
+        vError validationError
 
-    -- The size of the tree and the number of repositories are for the whole TA:
-    -- once one of them is reached, the rest of the TA isn't validated. The error 
-    -- is reported only by the thread that first hits it.
+    -- The error is reported only by the thread that first hits the limit.
     checkAndReport (condition, report) nextOne = do
             z <- liftIO $ atomically $ verifyLimit condition interruptedByLimit
             case z of
@@ -356,60 +422,83 @@ validateCa
                 AlreadyReportedLimit -> pure mempty
 
     validationConfig = config ^. typed @ValidationConfig
-    
+
+    -- The URLs of the CA to fetch, the primary one first. Only the PPs of the
+    -- protocols that are enabled can be fetched.
+    fetcheableUrlsOf ppAccess =
+        map fst $ getFetchables (topDownContext ^. #allTas . #publicationPoints) $
+            fromMaybe ppAccess $ filterPPAccess config ppAccess
+
+
+-- | The context to validate the CA and its children in.A CA whose publication
+-- points are not all in the repositories of its issuer starts a group of its
+-- own, inside the group of the issuer (see 'FetchGroup'). The TA is in the
+-- root group whatever its publication points are.
+enterCaGroup :: TopDownContext -> Ca -> PublicationPointAccess -> TopDownContext
+enterCaGroup topDownContext ca ppAccess
+    | topDownContext ^. #currentPathDepth == 0 = withOwnRepositories
+    | caRepositories `Set.isSubsetOf` (topDownContext ^. #issuerRepositories) = withOwnRepositories
+    | otherwise = withOwnRepositories & #fetchGroup %~ (`innerGroup` caSki)
+  where
+    caRepositories      = repositoryIdentities ppAccess
+    withOwnRepositories = topDownContext & #issuerRepositories .~ caRepositories
+    caSki = case ca of
+        CaFull c  -> getSKI c
+        CaShort c -> c ^. #ski
+
 
 validateCaNoLimitChecks :: (ValidatorIO es, Concurrent :> es) => AppContext ->
                         TopDownContext ->
                         Ca ->
+                        PublicationPointAccess ->
                         Eff es ()
 validateCaNoLimitChecks
     appContext@AppContext {..}
     topDownContext@TopDownContext { allTas = AllTasTopDownContext {..}, .. }
-    ca = 
-    case extractPPAs ca of        
-        Left e         -> vError e
-        Right ppAccess -> do                
-            let caFetcheables = getFetchables publicationPoints ppAccess
+    ca ppAccess = do
+    let caFetcheables = getFetchables publicationPoints ppAccess
 
-            -- Only the PPs of the protocols that are enabled can be fetched: with 
-            -- '--no-rrdp'/'--no-rsync' the disabled protocol must neither get a fetcher 
-            -- of its own nor be used as a fallback for the other one. If everything is 
-            -- disabled, fall back to the full PP access, it is only used for reporting.
-            let fetcheablePPs = fromMaybe ppAccess $ filterPPAccess config ppAccess
+    -- Only the PPs of the protocols that are enabled can be fetched: with 
+    -- '--no-rrdp'/'--no-rsync' the disabled protocol must neither get a fetcher 
+    -- of its own nor be used as a fallback for the other one. If everything is 
+    -- disabled, fall back to the full PP access, it is only used for reporting.
+    let fetcheablePPs = fromMaybe ppAccess $ filterPPAccess config ppAccess
 
-            -- Add these PPs to the validation-wide set of fetcheables, 
-            -- i.e. all newly discovered publication points/repositories                        
-            mergeFetcheables caFetcheables $ 
-                map fst $ getFetchables publicationPoints fetcheablePPs
+    -- Add these PPs to the validation-wide set of fetcheables, 
+    -- i.e. all newly discovered publication points/repositories                        
+    mergeFetcheables caFetcheables $ 
+        map fst $ getFetchables publicationPoints fetcheablePPs
 
-            -- Do not validate if nothing was fetched for this CA
-            -- otherwise we'll have a lot of useless errors about 
-            -- missing manifests, so just don't go there.
-            -- Note that it is `caFetcheables`, i.e. all the PPs of the CA and not only 
-            -- the fetcheable ones: the cache doesn't care which protocol filled it.
-            unless (all ((== Pending) . snd) caFetcheables) $ do   
-                let primaryUrl = getPrimaryRepositoryUrl publicationPoints fetcheablePPs
-                let validateWithPpScope =
-                        vFocusOn PPFocus primaryUrl $
-                            metricFocusOn PPFocus primaryUrl $
-                                validateCaNoFetch appContext topDownContext ca
-                case ca of
-                    CaFull c ->
-                        vFocusOnLocated c validateWithPpScope
-                    CaShort c ->
-                        vFocusOn ObjectFocus (c ^. #key) validateWithPpScope
+    -- Do not validate if nothing was fetched for this CA
+    -- otherwise we'll have a lot of useless errors about 
+    -- missing manifests, so just don't go there.
+    -- Note that it is `caFetcheables`, i.e. all the PPs of the CA and not only 
+    -- the fetcheable ones: the cache doesn't care which protocol filled it.
+    unless (all ((== Pending) . snd) caFetcheables) $ do   
+        let primaryUrl = getPrimaryRepositoryUrl publicationPoints fetcheablePPs
+        let validateWithPpScope =
+                vFocusOn PPFocus primaryUrl $
+                    metricFocusOn PPFocus primaryUrl $
+                        validateCaNoFetch appContext topDownContext ca
+        case ca of
+            CaFull c ->
+                vFocusOnLocated c validateWithPpScope
+            CaShort c ->
+                vFocusOn ObjectFocus (c ^. #key) validateWithPpScope
   where
     -- The sanity check is done on all the PPs of the CA, `caFetcheables`, and not on 
     -- the fetcheable ones, so that it doesn't depend on the configuration.
-    mergeFetcheables caFetcheables fetcheableUrls =
+    mergeFetcheables caFetcheables urlsToFetch =
         case map fst caFetcheables of 
             -- Expect either one of two PPs per CA
             _ : _ -> 
-                case fetcheableUrls of 
+                case urlsToFetch of
                     -- Every PP of this CA uses a protocol that is disabled, nothing to fetch
                     []                                  -> pure ()
                     primary : (listToMaybe -> fallback) -> 
-                        liftIO $ atomically $ modifyTVar' fetcheables (<> newFetcheables primary fallback)
+                        liftIO $ atomically $ do 
+                            modifyTVar' fetcheables (<> newFetcheables fetchGroup primary fallback)
+                            addGroupUsage topDownContext $ GroupUsage (Set.singleton primary) 0
             weirdCaUrls -> do 
                 logError logger [i|Found CA certificate with uncommon publication points: #{weirdCaUrls}.|]
                 appError $ ValidationE $ WeirdCaPublicationPoints weirdCaUrls                        

@@ -121,6 +121,8 @@ data ValidationError =  SPKIMismatch SPKI SPKI |
                         CertificatePathTooDeep Int |
                         TreeIsTooBig Int |
                         TooManyRepositories Int |
+                        GroupTreeIsTooBig Int |
+                        TooManyGroupRepositories Int |
                         ValidationTimeout Seconds |
                         ManifestLocationMismatch Text Locations | 
                         InvalidVCardFormatInGbr Text | 
