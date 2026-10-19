@@ -140,6 +140,18 @@ curl -s http://localhost:9999/api/vrps.json
 
 RPKI Prover can also run as an [RTR server](https://www.rfc-editor.org/rfc/rfc8210). Enable it with the `--with-rtr` option. In most deployments, you will also want to set `--rtr-address` and `--rtr-port`.
 
+RTR can also be served over TLS ([RFC 6810, section 7](https://www.rfc-editor.org/rfc/rfc6810#section-7)), which is set up the same way as in [Routinator](https://routinator.docs.nlnetlabs.nl/en/stable/rtr-service.html). Setting `--rtr-tls-port` starts the TLS listener, and it needs two files:
+
+* `--rtr-tls-cert`: a PEM file with the server certificate followed by the rest of its certificate chain;
+* `--rtr-tls-key`: a PEM file with exactly one private key (PKCS#1 RSA, PKCS#8 or SEC1 EC).
+
+The TLS listener binds to `--rtr-tls-address`, which defaults to `--rtr-address`. It is independent of `--with-rtr`, so it can run alone or next to the plain TCP listener. Both serve the same data and share `--rtr-max-connections`. The IANA-assigned port for RTR over TLS is 324. Clients are not asked for certificates, and the files are read once at startup, so a renewed certificate needs a restart.
+
+```
+rpki-prover --with-rtr --rtr-address 0.0.0.0 --rtr-port 3323 \
+            --rtr-tls-port 3324 --rtr-tls-cert /etc/rpki-prover/rtr.crt --rtr-tls-key /etc/rpki-prover/rtr.key
+```
+
 ## HTTP API <a name="http-api"></a>
 
 Visit [http://localhost:9999](http://localhost:9999) to view the UI reporting metrics, trust anchors, repositories, and any errors or warnings.
