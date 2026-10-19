@@ -362,14 +362,15 @@ data ErikRelayHealthDto = ErikRelayHealthDto {
     deriving stock (Eq, Show, Generic)
 
 data SystemDto = SystemDto {
-        proverVersion   :: Text,
-        gitInfo         :: Text,
-        config          :: Config,
-        startUpTime     :: Instant,
-        tals            :: [TalDto],
-        resources       :: [ResourcesDto],
-        workers         :: [WorkerInfoDto],
-        erikRelayHealth :: [ErikRelayHealthDto]
+        proverVersion     :: Text,
+        executableVersion :: Text,
+        gitInfo           :: Text,        
+        config            :: Config,
+        startUpTime       :: Instant,
+        tals              :: [TalDto],
+        resources         :: [ResourcesDto],
+        workers           :: [WorkerInfoDto],
+        erikRelayHealth   :: [ErikRelayHealthDto]
     }
     deriving stock (Eq, Show, Generic)
 
