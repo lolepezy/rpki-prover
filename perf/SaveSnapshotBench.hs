@@ -228,7 +228,7 @@ mkBenchContext baseDir logger = do
             & #cacheDirectory  .~ Public cacheDir
             & #parallelism     .~ newParallelism cpuCount_
 
-    (db, _) <- createSqliteDatabase cacheDir config Reset
+    (db, _) <- openSqliteDatabase cacheDir config Reset
 
     appState <- newAppState
     database <- newTVarIO db

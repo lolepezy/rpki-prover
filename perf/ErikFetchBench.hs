@@ -88,7 +88,7 @@ mkBenchContext logger = do
             & maybe id (\n -> (#erikConf . #parallelism .~ n) . (#erikConf . #relayParallelism .~ n))
                     downloadThreads
 
-    (db, _) <- createSqliteDatabase cacheDir config Reset
+    (db, _) <- openSqliteDatabase cacheDir config Reset
 
     appState <- newAppState
     database <- newTVarIO db
