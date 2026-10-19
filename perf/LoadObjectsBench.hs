@@ -113,8 +113,8 @@ mkBenchContext baseDir cpus logger = do
             & #parallelism     .~ newParallelism cpuCount_
 
     -- Creates the schema, then open it again as a fetcher would
-    _  <- createSqliteDatabase cacheDir config True False
-    db <- openExistingSqliteDatabase cacheDir config
+    _  <- openSqliteDatabase cacheDir config Reset
+    (db, _) <- openSqliteDatabase cacheDir config UseAsIs
 
     appState <- newAppState
     database <- newTVarIO db

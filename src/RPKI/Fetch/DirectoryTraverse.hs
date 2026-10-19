@@ -55,8 +55,9 @@ loadObjectsFromFS :: (ValidatorIO es, Concurrent :> es) => AppContext
                   -> Eff es ()
 loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
     db <- liftIO $ readTVarIO database
-    -- As many capabilities as for an RRDP snapshot
-    void $ liftIO $ useAvailableCpus $ config ^. typed @Parallelism . #cpuCount
+    -- As many capabilities as for loading many objects
+    cpus <- liftIO $ useAvailableCpus $ config ^. typed @Parallelism . #cpuCount
+    logDebug logger [i|Using #{cpus} CPUs for loading objects from #{rootPath}.|]   
     scopes <- askScopes
     txPoolPipeline
         CompletionOrder

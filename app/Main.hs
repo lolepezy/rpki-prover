@@ -56,9 +56,8 @@ import           RPKI.Http.HttpServer
 import           RPKI.Logging
 
 import           RPKI.Store.Base.Serialisation (TheBinary)
-import           RPKI.Store.AppSqliteStorage (DbCheckResult(..), closeStorage, runMaintenance,
-                                              cleanUpCacheDirectory, createSqliteDatabase,
-                                              openExistingSqliteDatabase)
+import           RPKI.Store.AppSqliteStorage (DbCheckResult(..), DbOpenMode(..), closeStorage, runMaintenance,
+                                              cleanUpCacheDirectory, openSqliteDatabase)
 import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.RRDP.RrdpFetch
@@ -351,7 +350,8 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     liftIO $ cleanUpCacheDirectory logger cached
 
     (db, dbCheck) <- fromTry (InitE . InitError . fmtEx) $
-                createSqliteDatabase cached config resetCache True
+                openSqliteDatabase cached config
+                    (if resetCache then Reset else RecreateIfDifferentVersion)
 
     database <- liftIO $ newTVarIO db    
     
@@ -562,7 +562,7 @@ rsyncPrefetches CLIOptions {..} = do
 
 createWorkerAppContext :: ValidatorIO es => Config -> AppLogger -> Eff es AppContext
 createWorkerAppContext config logger = do
-    db <- fromTry (InitE . InitError . fmtEx) $ openExistingSqliteDatabase cacheDir config
+    (db, _) <- fromTry (InitE . InitError . fmtEx) $ openSqliteDatabase cacheDir config UseAsIs
     -- No SLURM reading function here: workers don't read SLURM files, 
     -- the main process does.
     appState <- liftIO newAppState
@@ -635,7 +635,7 @@ createVerifierContext cliOptions logger = do
 
     let config = defaultConfig
     (db, _) <- fromTry (InitE . InitError . fmtEx) $
-                createSqliteDatabase cached config False False
+                openSqliteDatabase cached config UseAsIs
 
     appState <- liftIO newAppState
     database <- liftIO $ newTVarIO db

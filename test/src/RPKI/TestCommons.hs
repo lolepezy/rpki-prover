@@ -42,7 +42,7 @@ withTestContext f = do
                 & #talDirectory .~ Public talDir
                 & #cacheDirectory .~ Public cacheDir        
 
-        (db, _) <- createSqliteDatabase cacheDir config True False
+        (db, _) <- openSqliteDatabase cacheDir config Reset
 
         appState <- newAppState
         database <- newTVarIO db

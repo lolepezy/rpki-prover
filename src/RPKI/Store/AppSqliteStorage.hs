@@ -3,11 +3,11 @@ module RPKI.Store.AppSqliteStorage (
     runMaintenance,
     checkpointDatabase,
     DbCheckResult(..),
+    DbOpenMode(..),
     sqliteFileName,
     sqliteCacheFiles,
     cleanUpCacheDirectory,
-    createSqliteDatabase,
-    openExistingSqliteDatabase,
+    openSqliteDatabase,
 ) where
 
 import           Control.Lens
@@ -117,38 +117,42 @@ newSqliteDB dbPath config walCheckpointing =
                     in fromIntegral $ s * 1000    
 
 
-createSqliteDatabase :: FilePath -> Config -> Bool -> Bool -> IO (DB.DB, DbCheckResult)
-createSqliteDatabase cacheDir config resetCache checkVersion = do
+-- | What 'openSqliteDatabase' does to the database before handing it out.
+data DbOpenMode
+    -- | Delete the database files and start with an empty database of the current version.
+    = Reset
+    -- | Keep the data if the stored version is the current one, wipe it if it isn't,
+    -- store the current version if there is none.
+    | RecreateIfDifferentVersion
+    -- | Open a database that another process owns, without touching the schema
+    -- or the version: worker processes and the RSC verifier. Doesn't take the
+    -- write lock and doesn't run DDL against what may be an older schema.
+    --
+    -- Also never checkpoints the WAL. Workers are killed when they exceed their
+    -- disk IO limits, and checkpointing would charge them for writing out a
+    -- backlog that the other processes produced. The main process does it on
+    -- a timer instead.
+    | UseAsIs
+    deriving stock (Show, Eq)
+
+openSqliteDatabase :: FilePath -> Config -> DbOpenMode -> IO (DB.DB, DbCheckResult)
+openSqliteDatabase cacheDir config mode = do
     createDirectoryIfMissing True cacheDir
 
     let dbPath = cacheDir </> sqliteFileName
-    when resetCache $
+    when (mode == Reset) $
         mapM_ (removeIfExists . (cacheDir </>)) sqliteCacheFiles
 
-    sdb <- newSqliteDB dbPath config SQLite.CheckpointWhenCommitting
-    SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> SQLite.initSchema (SQLite.rawConn conn)
+    let checkpointing = case mode of
+            Reset                      -> SQLite.CheckpointWhenCommitting
+            RecreateIfDifferentVersion -> SQLite.CheckpointWhenCommitting
+            UseAsIs                    -> SQLite.CheckpointedByOthers
 
-    let db = DB.DB sdb
-    dbCheck <-
-        if checkVersion
-            then do
-                existingVersion <- DB.roTx db $ \tx -> DB.getDatabaseVersion tx
-                case existingVersion of
-                    Nothing -> do
-                        DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx
-                        pure DidntHaveVersion
-
-                    Just version
-                        | version == DB.currentDatabaseVersion -> pure WasCompatible
-                        | otherwise -> do
-                            SQLite.withWriteTx sdb $ \(SQLite.Tx conn) -> do
-                                SQLite.dropSchema (SQLite.rawConn conn)
-                                SQLite.initSchema (SQLite.rawConn conn)
-                            DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx
-                            pure WasIncompatible
-            else do
-                DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx
-                pure WasCompatible
+    db <- DB.DB <$> newSqliteDB dbPath config checkpointing
+    dbCheck <- case mode of
+        Reset                      -> initAndCheckVersion db
+        RecreateIfDifferentVersion -> initAndCheckVersion db
+        UseAsIs                    -> pure WasCompatible
 
     pure (db, dbCheck)
   where
@@ -156,13 +160,20 @@ createSqliteDatabase cacheDir config resetCache checkVersion = do
         exists <- doesFileExist filePath
         when exists $ removeFile filePath
 
+    initAndCheckVersion db = do
+        DB.rwTx db $ \(SQLite.Tx conn) -> SQLite.initSchema (SQLite.rawConn conn)
+        existingVersion <- DB.roTx db $ \tx -> DB.getDatabaseVersion tx
+        case existingVersion of
+            Nothing -> do
+                DB.rwTx db $ \tx -> DB.saveCurrentDatabaseVersion tx
+                pure DidntHaveVersion
 
--- | Open an already-initialised SQLite database without touching the schema or version.
--- Used by worker processes to avoid unnecessary write-transaction contention on startup.
--- Workers never checkpoint the WAL: they are killed when they exceed their disk IO
--- limits, and checkpointing would charge them for writing out a backlog that the 
--- other processes produced. The main process does it on a timer instead.
-openExistingSqliteDatabase :: FilePath -> Config -> IO DB.DB
-openExistingSqliteDatabase cacheDir config = do
-    sdb <- newSqliteDB (cacheDir </> sqliteFileName) config SQLite.CheckpointedByOthers
-    pure (DB.DB sdb)
+            Just version
+                | version == DB.currentDatabaseVersion -> pure WasCompatible
+                | otherwise -> do
+                    DB.rwTx db $ \tx@(SQLite.Tx conn) -> do
+                        SQLite.dropSchema (SQLite.rawConn conn)
+                        SQLite.initSchema (SQLite.rawConn conn)
+                        DB.saveCurrentDatabaseVersion tx
+                    pure WasIncompatible
+

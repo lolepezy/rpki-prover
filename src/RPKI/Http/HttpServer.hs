@@ -476,10 +476,7 @@ getManifests AppContext {..} akiText =
 getSystem ::  AppContext -> IO SystemDto
 getSystem AppContext {..} = do
     now <- unNow <$> thisInstant
-    SystemInfo {..} <- readTVarIO $ appState ^. #system
-    let proverVersion = rpkiProverVersion    
-    let gitInfo       = makeGitInfo
-    let ExecutableVersion executableVersion = thisExecutableVersion
+    SystemInfo {..} <- readTVarIO $ appState ^. #system    
     
     let z = MonoidalMap.toList $ unMetricMap $ metrics ^. #resources
     resources <- 
@@ -522,7 +519,11 @@ getSystem AppContext {..} = do
             erikRelayHealthDetails appState (config ^. #erikConf . #relays)
 
     tals <- getTALs
-    pure SystemDto {..}  
+
+    let proverVersion = rpkiProverVersion    
+    let gitInfo       = makeGitInfo
+    let ExecutableVersion executableVersion_ = thisExecutableVersion
+    pure SystemDto { executableVersion = executableVersion_, .. }  
   where
     toRelayHealthDto (URI relay, RelayHealth {..}, usable) =
         ErikRelayHealthDto { .. }
