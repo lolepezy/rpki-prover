@@ -69,7 +69,7 @@ pduLength (VersionedPdu pdu protocolVersion) = case pdu of
                         maybe 0 (fromIntegral . BS.length . encodeUtf8) errorMessage
 
 -- 
--- | Serialise PDU into bytes according to the RTR protocal 
+-- | Serialise PDU into bytes according to the RTR protocol 
 -- 
 pduToBytes :: VersionedPdu -> LBS.ByteString
 pduToBytes versionedPdu@(VersionedPdu pdu protocolVersion) = 
@@ -171,7 +171,7 @@ compatibleWith AspaPdu{} version = version >= V2
 compatibleWith _ _ = True
 
 -- 
--- | Parse PDUs from bytestrings according to the RTR protocal 
+-- | Parse PDUs from bytestrings according to the RTR protocol 
 -- 
 bytesToVersionedPdu :: LBS.ByteString -> Either PduParseError VersionedPdu
 bytesToVersionedPdu bs = 
