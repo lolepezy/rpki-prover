@@ -70,9 +70,11 @@ data ErrorCode = CorruptData
 data PduHeader = PduHeader ProtocolVersion PduCode
     deriving stock (Show, Eq, Ord, Generic)
 
-data PduParseError = 
-      ParsedNothing ErrorCode Text 
-    | ParsedOnlyHeader ErrorCode Text PduHeader 
+data PduParseError =
+      ParsedNothing ErrorCode Text
+    | ParsedOnlyHeader ErrorCode Text PduHeader
+    -- | The header was read, but its protocol version is none of the known ones
+    | UnknownProtocolVersion Word8 PduCode
     deriving stock (Show, Eq, Ord, Generic)
 
 newtype Session = Session ProtocolVersion
@@ -111,13 +113,16 @@ instance Binary ProtocolVersion where
         V1 -> 1
         V2 -> 2
 
-    get = do 
+    get = do
         n :: Word8 <- get
-        case n of 
-            0 -> pure V0
-            1 -> pure V1            
-            2 -> pure V2
-            _ -> fail $ "No error code value for " <> show n
+        maybe (fail $ "Unknown protocol version " <> show n) pure $ toProtocolVersion n
+
+toProtocolVersion :: Word8 -> Maybe ProtocolVersion
+toProtocolVersion = \case
+    0 -> Just V0
+    1 -> Just V1
+    2 -> Just V2
+    _ -> Nothing
 
 instance Binary Flags where 
     put f = put $ case f of 

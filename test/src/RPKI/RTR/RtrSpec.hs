@@ -1,5 +1,6 @@
 module RPKI.RTR.RtrSpec where
 
+import           Control.Concurrent.STM            (atomically)
 import           Control.Monad
 
 import qualified Data.ByteString.Lazy              as LBS
@@ -7,6 +8,7 @@ import qualified Data.List                         as List
 import           Data.Set                          (Set)
 import qualified Data.Set                          as Set
 import qualified Data.Text                         as Text
+import           Data.Word                         (Word8)
 
 import           RPKI.Domain
 
@@ -19,7 +21,8 @@ import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Protocol
 
-import           RPKI.RTR.RtrServer                (PduLike (..), compatiblePduLike, diffPayloadPdus)
+import           RPKI.RTR.RtrServer                (PduLike (..), analyzePdu, compatiblePduLike, 
+                                                    diffPayloadPdus, processFirstPdu)
 import           RPKI.RTR.Types
 import           RPKI.Resources.Types
 
@@ -31,7 +34,8 @@ rtrGroup :: TestTree
 rtrGroup = testGroup "RTR tests" [
         rtrPduParseGroup,
         rtrDiffsGroup,
-        rtrStateGroup
+        rtrStateGroup,
+        rtrNegotiationGroup
     ]
 
 
@@ -109,6 +113,15 @@ rtrPduParseGroup = testGroup "RTR PDU parser tests" [
 rtrStateGroup :: TestTree
 rtrStateGroup = testGroup "RTR state unit tests" [
         testRtrStateUpdates
+    ]
+
+rtrNegotiationGroup :: TestTree
+rtrNegotiationGroup = testGroup "RTR protocol version negotiation tests" [
+        testUnknownVersion,
+        testVersionChangeAfterNegotiation,
+        testBrokenPdus,
+        testFirstPduErrorsInRouterVersion,
+        testUnknownSessionIdInFirstSerialQuery
     ]
 
 testEmptyDiff :: TestTree
@@ -348,3 +361,128 @@ generateBgpSecs n = Set.fromList <$> replicateM n (QC.generate arbitrary)
 
 generateAspas :: Int -> IO (Set Aspa)
 generateAspas n = Set.fromList <$> replicateM n (QC.generate arbitrary)
+
+
+testUnknownVersion :: TestTree
+testUnknownVersion = HU.testCase "Should reject unknown protocol versions" $ do
+    let serialQuery = withVersionByte 3 $ pduToBytes $ 
+                        VersionedPdu (SerialQueryPdu (RtrSessionId 1) (SerialNumber 1)) V2
+
+    HU.assertEqual "Before negotiation it is code 4 in the highest supported version"
+        (Just (UnsupportedProtocolVersion, V2), Nothing) 
+        (analyze Nothing serialQuery)
+
+    HU.assertEqual "After negotiation it is code 8 in the version of the session"
+        (Just (UnexpectedProtocolVersion, V1), Nothing) 
+        (analyze (Just $ Session V1) serialQuery)
+
+    let errorReport = withVersionByte 3 $ pduToBytes $ 
+                        VersionedPdu (ErrorPdu CorruptData Nothing Nothing) V2
+    HU.assertEqual "There should be no reply to an error report" 
+        (Nothing, Nothing) 
+        (analyze Nothing errorReport)
+
+
+testVersionChangeAfterNegotiation :: TestTree
+testVersionChangeAfterNegotiation = HU.testCase "Should not accept a different version after negotiation" $ do
+    let queries v = [ VersionedPdu ResetQueryPdu v, 
+                      VersionedPdu (SerialQueryPdu (RtrSessionId 1) (SerialNumber 1)) v ]
+
+    forM_ [V0, V1, V2] $ \sessionVersion -> 
+        forM_ [V0, V1, V2] $ \pduVersion -> 
+            forM_ (queries pduVersion) $ \query -> do 
+                let result = analyze (Just $ Session sessionVersion) (pduToBytes query)
+                if sessionVersion == pduVersion 
+                    then HU.assertEqual "Query of the same version should be accepted" 
+                            (Nothing, Just query) result
+                    else HU.assertEqual "Query of a different version should be rejected" 
+                            (Just (UnexpectedProtocolVersion, sessionVersion), Nothing) result
+
+
+testBrokenPdus :: TestTree
+testBrokenPdus = HU.testCase "Should reply to broken PDUs, except for broken error reports" $ do
+    let brokenSerialQuery v = LBS.take 10 $ pduToBytes $ 
+                VersionedPdu (SerialQueryPdu (RtrSessionId 1) (SerialNumber 1)) v
+    let brokenErrorReport = LBS.take 10 $ pduToBytes $ 
+                VersionedPdu (ErrorPdu CorruptData Nothing Nothing) V1
+
+    HU.assertEqual "Broken first query should be answered in its version" 
+        (Just (InvalidRequest, V1), Nothing) 
+        (analyze Nothing $ brokenSerialQuery V1)
+
+    HU.assertEqual "Broken query should be answered in the version of the session" 
+        (Just (InvalidRequest, V2), Nothing) 
+        (analyze (Just $ Session V2) $ brokenSerialQuery V2)
+
+    HU.assertEqual "Broken query of a different version is a version mismatch" 
+        (Just (UnexpectedProtocolVersion, V2), Nothing) 
+        (analyze (Just $ Session V2) $ brokenSerialQuery V1)
+
+    HU.assertEqual "Broken error report should not be answered" 
+        (Nothing, Nothing) 
+        (analyze Nothing brokenErrorReport)
+
+    HU.assertEqual "Broken error report should not be answered after negotiation" 
+        (Nothing, Nothing) 
+        (analyze (Just $ Session V1) brokenErrorReport)
+
+
+testFirstPduErrorsInRouterVersion :: TestTree
+testFirstPduErrorsInRouterVersion = HU.testCase "Should report errors about the first PDU in its version" $ do
+    appState <- newAppState
+    forM_ [V0, V1, V2] $ \v -> do 
+        let resetQuery = VersionedPdu ResetQueryPdu v
+        case processFirstPdu Nothing appState resetQuery (pduToBytes resetQuery) of 
+            Left (reply, _) -> 
+                HU.assertEqual "Not ready cache should report no data" 
+                    (Just (NoDataAvailable, v)) (errorCodeAndVersion reply)
+            Right _ -> HU.assertFailure "Not ready cache should report an error"
+
+        let notify = VersionedPdu (NotifyPdu (RtrSessionId 1) (SerialNumber 1)) v
+        case processFirstPdu Nothing appState notify (pduToBytes notify) of 
+            Left (reply, _) -> 
+                HU.assertEqual "First PDU must be a query" 
+                    (Just (InvalidRequest, v)) (errorCodeAndVersion reply)
+            Right _ -> HU.assertFailure "First PDU must be a query"
+
+
+testUnknownSessionIdInFirstSerialQuery :: TestTree
+testUnknownSessionIdInFirstSerialQuery = HU.testCase "Should reset a first Serial Query with an unknown session ID" $ do
+    appState <- newAppState
+    worldVersion <- getOrCreateWorldVerion appState
+    let rtrState = newRtrState worldVersion 10
+    let RtrSessionId sessionId = currentSessionId rtrState
+    let serial = currentSerial rtrState
+
+    let unknownSession = VersionedPdu (SerialQueryPdu (RtrSessionId (sessionId + 1)) serial) V1
+    case processFirstPdu (Just rtrState) appState unknownSession (pduToBytes unknownSession) of 
+        Left (reply, _) -> HU.assertFailure $ "Unexpected error " <> show reply
+        Right (createPdus, session, _) -> do 
+            pdus <- atomically createPdus
+            HU.assertEqual "Wrong session" (Session V1) session
+            HU.assertEqual "Should be a cache reset" [TruePdu $ VersionedPdu CacheResetPdu V1] pdus
+
+    let knownSession = VersionedPdu (SerialQueryPdu (RtrSessionId sessionId) serial) V1
+    case processFirstPdu (Just rtrState) appState knownSession (pduToBytes knownSession) of 
+        Left (reply, _) -> HU.assertFailure $ "Unexpected error " <> show reply
+        Right (createPdus, _, _) -> do 
+            pdus <- atomically createPdus
+            HU.assertEqual "Should be an empty cache response" 
+                [ TruePdu $ VersionedPdu (CacheResponsePdu (RtrSessionId sessionId)) V1, 
+                  TruePdu $ VersionedPdu (EndOfDataPdu (RtrSessionId sessionId) serial defIntervals) V1 ]
+                pdus
+
+
+-- | Error code and version of the reply (if any) and the PDU to respond to (if any).
+analyze :: Maybe Session -> LBS.ByteString -> (Maybe (ErrorCode, ProtocolVersion), Maybe VersionedPdu)
+analyze session bytes = 
+    let (reply, _, pdu) = analyzePdu ("peer" :: String) session bytes (bytesToVersionedPdu bytes)
+    in (errorCodeAndVersion =<< reply, pdu)
+
+errorCodeAndVersion :: PduLike -> Maybe (ErrorCode, ProtocolVersion)
+errorCodeAndVersion = \case 
+    TruePdu (VersionedPdu (ErrorPdu code _ _) v) -> Just (code, v)
+    _                                            -> Nothing
+
+withVersionByte :: Word8 -> LBS.ByteString -> LBS.ByteString
+withVersionByte v bytes = LBS.cons v $ LBS.drop 1 bytes
