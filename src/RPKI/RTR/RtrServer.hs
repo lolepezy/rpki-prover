@@ -406,7 +406,7 @@ analyzePdu :: Show peer =>
             -> (Maybe PduLike, Maybe Text, Maybe VersionedPdu)
 analyzePdu peer session pduBytes = \case
         Left (ParsedNothing errorCode errorMessage) -> let
-            errorPdu = mkErrorPdu errorCode errorMessage
+            errorPdu = newErrorPdu errorCode errorMessage
             in (Just $ framed highestVersion errorPdu, 
                 Just [i|PDU from the #{peer} was broken: #{errorMessage}, error PDU: #{errorPdu}|], 
                 Nothing)
@@ -415,15 +415,15 @@ analyzePdu peer session pduBytes = \case
             message = [i|PDU from the #{peer} has unknown protocol version #{version}.|]
             errorPdu = case session of 
                 -- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis#section-7
-                Nothing -> mkErrorPdu UnsupportedProtocolVersion message
-                Just _  -> mkErrorPdu UnexpectedProtocolVersion message
+                Nothing -> newErrorPdu UnsupportedProtocolVersion message
+                Just _  -> newErrorPdu UnexpectedProtocolVersion message
             in (replyUnlessError pduType $ framed highestVersion errorPdu, Just message, Nothing)
 
         Left (ParsedOnlyHeader errorCode errorMessage header@(PduHeader version pduType)) -> let 
             message = [i|Error parsing a PDU #{errorMessage}, parsed header #{header}.|]
             errorPdu 
-                | differsFromSession version = mkErrorPdu UnexpectedProtocolVersion versionMessage
-                | otherwise                  = mkErrorPdu errorCode errorMessage
+                | differsFromSession version = newErrorPdu UnexpectedProtocolVersion versionMessage
+                | otherwise                  = newErrorPdu errorCode errorMessage
             in (replyUnlessError pduType $ framed version errorPdu, Just message, Nothing)
 
         Right (VersionedPdu errorPdu@ErrorPdu {} _) ->
@@ -433,14 +433,14 @@ analyzePdu peer session pduBytes = \case
         -- "If either party receives a PDU for a different Protocol Version once
         -- the above negotiation completes, that party MUST drop the session"
         Right (VersionedPdu pdu version) | differsFromSession version -> 
-            (Just $ framed version $ mkErrorPdu UnexpectedProtocolVersion versionMessage, 
+            (Just $ framed version $ newErrorPdu UnexpectedProtocolVersion versionMessage, 
              Just ([i|Received #{pdu} from #{peer} with protocol version #{version}, |] <> 
                    [i|but the session is #{session}.|]), 
              Nothing)
 
         Right versionedPdu -> (Nothing, Nothing, Just versionedPdu)
   where
-    mkErrorPdu errorCode (message :: Text) = 
+    newErrorPdu errorCode (message :: Text) = 
         ErrorPdu errorCode (Just $ convert pduBytes) (Just message)
 
     -- After the negotiation everything goes back framed with the session's version, 
