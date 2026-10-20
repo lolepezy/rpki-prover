@@ -40,7 +40,7 @@ toInitMessage :: InitError -> Text
 toInitMessage = \case
     InitError t             -> t
     InconsistentOptions t   -> [i|Inconsistent options: #{t}.|]
-    InvalidOptionValue {..} -> [i|Invalid value '#{value}' of option #{option}: #{whatsWrong}.|]
+    InvalidOptionValue {..} -> [i|Invalid value '#{value}' of option #{optionName}: #{whatsWrong}.|]
     CantReadPath {..}       -> [i|Cannot read #{path}: #{whatsWrong}.|]
 
 

@@ -254,7 +254,7 @@ newtype TALError = TALError Text
 -- | Problems with what the program is started with: options, files, directories.
 data InitError = InitError Text 
                | InconsistentOptions Text
-               | InvalidOptionValue { option :: Text, value :: Text, whatsWrong :: Text }
+               | InvalidOptionValue { optionName :: Text, value :: Text, whatsWrong :: Text }
                | CantReadPath { path :: Text, whatsWrong :: Text }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
