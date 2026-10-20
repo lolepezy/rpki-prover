@@ -65,21 +65,14 @@ data PduLike = TruePdu VersionedPdu
              | SerialisedPdu ProtocolVersion BS.ByteString 
     deriving (Show, Eq)
 
-{- | Protocol version used to frame responses sent before the session's version 
-   has been negotiated, i.e. errors provoked by the very first PDU of a 
-   connection.
+{- | The highest protocol version this cache supports. Errors about the first
+   PDU of a connection are framed with it when the router's version cannot be
+   used, i.e. it is unknown or could not be read at all.
 
-   NB: this means a router that spoke V1 or V2 gets a V0-framed Error Report for 
-   a malformed or unexpected first PDU. That is the behaviour this server has 
-   always had; whether it is what RFC 8210 section 7 wants is a separate 
-   question from where the version is threaded.
+   https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis#section-7
 -}
-preNegotiationVersion :: ProtocolVersion
-preNegotiationVersion = V0
-
--- | Frame a PDU for a client whose protocol version is not known yet.
-preNegotiated :: Pdu -> PduLike
-preNegotiated pdu = TruePdu $ VersionedPdu pdu preNegotiationVersion
+highestVersion :: ProtocolVersion
+highestVersion = V2
 
 -- | https://datatracker.ietf.org/doc/html/rfc8210#section-8.2
 -- "The cache MUST rate-limit Serial Notifies to no more frequently than one
@@ -248,22 +241,19 @@ runRtrServer appContext RtrConfig {..} = do
 
         let firstPduLazyBS = LBS.fromStrict firstPdu
 
-        let (errorPdu, logMessage, versionedPdu) = 
-                analyzePdu peer firstPduLazyBS $ bytesToVersionedPdu firstPduLazyBS        
+        let (errorPdu, logMessage, versionedPdu) =
+                analyzePdu peer Nothing firstPduLazyBS $ bytesToVersionedPdu firstPduLazyBS
 
-        -- The version is not negotiated yet (and may not even have parsed), 
-        -- so anything that goes wrong here is reported in 'preNegotiationVersion'.
-        for_ errorPdu $ sendAll connection . pduBytesL . preNegotiated
+        for_ errorPdu $ sendAll connection . pduBytesL
         for_ logMessage $ logError logger
 
         for_ versionedPdu $ \versionedPdu' -> do
-            case processFirstPdu rtrState' (appContext ^. #appState) versionedPdu' firstPduLazyBS of 
-                Left (errorPdu', errorMessage) -> do
-                    let errorPduL = preNegotiated errorPdu'
+            case processFirstPdu rtrState' (appContext ^. #appState) versionedPdu' firstPduLazyBS of
+                Left (errorPduL, errorMessage) -> do
                     let errorBytes = pduBytesL errorPduL
-                    logError logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <> 
-                                      [i|error PDU: #{errorPdu'}, errorBytes = #{hex errorBytes}, length = #{pduLengthL errorPduL}|]
-                    sendAll connection $ pduBytesL errorPduL
+                    logError logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <>
+                                      [i|error PDU: #{errorPduL}, errorBytes = #{hex errorBytes}, length = #{pduLengthL errorPduL}|]
+                    sendAll connection errorBytes
 
                 Right (createPdus, session, warning) -> do
                     for_ warning $ logWarn logger                     
@@ -373,16 +363,15 @@ responseAction logger peer session rtrState appState pduBytes =
     let 
         pduBytesLazy = LBS.fromStrict pduBytes
 
-        (errorPdu, message, versionedPdu) = 
-                analyzePdu peer pduBytesLazy $ bytesToVersionedPdu pduBytesLazy
-        
+        (errorPdu, message, versionedPdu) =
+                analyzePdu peer (Just session) pduBytesLazy $ bytesToVersionedPdu pduBytesLazy
+
         logError' = maybe mempty (logError logger) message
 
-        -- The version is negotiated by now, so errors go back framed with it
-        errorResponse = maybe mempty ((: []) . TruePdu . toVersioned session) errorPdu
-                
-        response pdu = let 
-            r = respondToPdu rtrState appState (toVersioned session pdu) pduBytesLazy session
+        errorResponse = maybe mempty (: []) errorPdu
+
+        response pdu = let
+            r = respondToPdu rtrState appState pdu pduBytesLazy session
             in case r of 
                 Left (errorPdu', message') -> let
                     ioAction = logDebug logger [i|Parsed PDU: #{pdu}, error = #{message'}, responding with #{errorPdu}.|]
@@ -403,78 +392,132 @@ responseAction logger peer session rtrState appState pduBytes =
                     Right (createPdus, io) -> Right ((fst errors <>) <$> createPdus, io)
 
 
--- | Helper function to reduce repeated code.
+-- | Decide what to do with a parsed (or not) PDU: the error to send back, 
+-- the message to log and the PDU to respond to, each of them optional.
+-- 
+-- The session is Nothing for the first PDU of a connection, i.e. when the 
+-- protocol version is not negotiated yet.
 -- 
 analyzePdu :: Show peer => 
                peer 
+            -> Maybe Session
             -> LBS.ByteString 
             -> Either PduParseError VersionedPdu 
-            -> (Maybe Pdu, Maybe Text, Maybe VersionedPdu)
-analyzePdu peer pduBytes = \case
+            -> (Maybe PduLike, Maybe Text, Maybe VersionedPdu)
+analyzePdu peer session pduBytes = \case
         Left (ParsedNothing errorCode errorMessage) -> let
-            errorPdu = ErrorPdu errorCode (Just $ convert pduBytes) (Just $ convert errorMessage)
-            in (Just errorPdu, 
+            errorPdu = mkErrorPdu errorCode errorMessage
+            in (Just $ framed highestVersion errorPdu, 
                 Just [i|PDU from the #{peer} was broken: #{errorMessage}, error PDU: #{errorPdu}|], 
                 Nothing)
 
-        Left (ParsedOnlyHeader errorCode errorMessage header@(PduHeader _ pduType)) ->                 
-            let message = [i|Error parsing a PDU #{errorMessage}, parsed header #{header}.|]
-            in if pduType == errorPduType
-                then let 
-                    errorPdu = ErrorPdu errorCode (Just $ convert pduBytes) (Just $ convert errorMessage)
-                    in (Just errorPdu, Just message, Nothing)                        
-                else 
-                    -- Do no send an error PDU as a response to an error PDU, it's prohibited by RFC                        
-                    (Nothing, Just message, Nothing)                            
+        Left (UnknownProtocolVersion version pduType) -> let 
+            message = [i|PDU from the #{peer} has unknown protocol version #{version}.|]
+            errorPdu = case session of 
+                -- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis#section-7
+                Nothing -> mkErrorPdu UnsupportedProtocolVersion message
+                Just _  -> mkErrorPdu UnexpectedProtocolVersion message
+            in (replyUnlessError pduType $ framed highestVersion errorPdu, Just message, Nothing)
+
+        Left (ParsedOnlyHeader errorCode errorMessage header@(PduHeader version pduType)) -> let 
+            message = [i|Error parsing a PDU #{errorMessage}, parsed header #{header}.|]
+            errorPdu 
+                | differsFromSession version = mkErrorPdu UnexpectedProtocolVersion versionMessage
+                | otherwise                  = mkErrorPdu errorCode errorMessage
+            in (replyUnlessError pduType $ framed version errorPdu, Just message, Nothing)
 
         Right (VersionedPdu errorPdu@ErrorPdu {} _) ->
             (Nothing, Just [i|Received an error from #{peer}: #{errorPdu}.|], Nothing)                
 
+        -- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis#section-7
+        -- "If either party receives a PDU for a different Protocol Version once
+        -- the above negotiation completes, that party MUST drop the session"
+        Right (VersionedPdu pdu version) | differsFromSession version -> 
+            (Just $ framed version $ mkErrorPdu UnexpectedProtocolVersion versionMessage, 
+             Just ([i|Received #{pdu} from #{peer} with protocol version #{version}, |] <> 
+                   [i|but the session is #{session}.|]), 
+             Nothing)
+
         Right versionedPdu -> (Nothing, Nothing, Just versionedPdu)
+  where
+    mkErrorPdu errorCode (message :: Text) = 
+        ErrorPdu errorCode (Just $ convert pduBytes) (Just message)
+
+    -- After the negotiation everything goes back framed with the session's version, 
+    -- before it with the version that suits the error. 
+    framed version pdu = TruePdu $ maybe (VersionedPdu pdu version) (`toVersioned` pdu) session
+
+    differsFromSession version = maybe False (\(Session v) -> v /= version) session
+
+    versionMessage = "Protocol version is not the same as the one of the session."
+
+    -- Do no send an error PDU as a response to an error PDU, it's prohibited by RFC
+    -- https://datatracker.ietf.org/doc/html/rfc8210#section-5.11
+    replyUnlessError pduType reply
+        | pduType == errorPduType = Nothing
+        | otherwise               = Just reply
 
 
 -- 
 -- | Process the first PDU and do the protocol version negotiation.
 -- 
+-- Every version up to 'highestVersion' is supported, so the session is 
+-- established at the version of the router's query and everything sent back, 
+-- errors included, is framed with it.
+-- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis#section-7
+-- 
 processFirstPdu :: Maybe RtrState 
                 -> AppState
                 -> VersionedPdu
                 -> LBS.ByteString 
-                -> Either (Pdu, Text) (STM [PduLike], Session, Maybe Text)
+                -> Either (PduLike, Text) (STM [PduLike], Session, Maybe Text)
 processFirstPdu 
     rtrState 
     appState 
-    versionedPdu@(VersionedPdu pdu protocolVersion) 
+    (VersionedPdu pdu protocolVersion) 
     pduBytes =                
     case pdu of 
-        SerialQueryPdu _ _ -> let 
-            session' = Session protocolVersion
-            r = respondToPdu rtrState appState versionedPdu pduBytes session'
-            in fmap (\(pdus, message) -> (pdus, session', message)) r
+        -- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis#section-5.3
+        SerialQueryPdu sessionId _ 
+            | Just rtrState' <- rtrState
+            , let currentSessionId = rtrState' ^. #currentSessionId
+            , sessionId /= currentSessionId -> 
+                Right (pure [out CacheResetPdu], 
+                       session', 
+                       Just ([i|Unknown session ID #{sessionId} in the first Serial Query, |] <> 
+                             [i|cache session ID is #{currentSessionId}.|]))
 
-        ResetQueryPdu -> let
-            session' = Session protocolVersion
-            r = respondToPdu rtrState appState versionedPdu pduBytes session'
-            in fmap (\(pdus, message) -> (pdus, session', message)) r
+        SerialQueryPdu _ _ -> respond
+
+        ResetQueryPdu -> respond
 
         otherPdu -> let 
             text = convert $ "First received PDU must be SerialQueryPdu or ResetQueryPdu, " <> 
                              "but received " <> show otherPdu
-            in Left (ErrorPdu InvalidRequest (Just $ convert pduBytes) (Just $ convert text), text)
+            in Left (out $ ErrorPdu InvalidRequest (Just $ convert pduBytes) (Just $ convert text), text)
+  where
+    session' = Session protocolVersion
+    out = TruePdu . toVersioned session'
+
+    respond = case respondToPdu rtrState appState pdu pduBytes session' of 
+        Left (errorPdu, message) -> Left (out errorPdu, message)
+        Right (pdus, warning)    -> Right (pdus, session', warning)
 
 
 -- | Generate PDUs that would be an appropriate response the request PDU.
 -- 
+-- The PDU must already be known to have the version of the session.
+-- 
 respondToPdu :: Maybe RtrState
                 -> AppState
-                -> VersionedPdu 
+                -> Pdu 
                 -> LBS.ByteString                 
                 -> Session
                 -> Either (Pdu, Text) (STM [PduLike], Maybe Text)
 respondToPdu 
     rtrState    
     appState
-    (VersionedPdu pdu pduProtocol)     
+    pdu
     pduBytes     
     session@(Session sessionProtocol) =
         case rtrState of 
@@ -484,7 +527,7 @@ respondToPdu
             Just rtrState'@RtrState {..} ->             
                 case pdu of 
                     SerialQueryPdu sessionId clientSerial -> 
-                        withProtocolVersionCheck pdu $ withSessionIdCheck currentSessionId sessionId $
+                        withSessionIdCheck currentSessionId sessionId $
                             if clientSerial == currentSerial 
                                 then let 
                                     pdus = [out $ CacheResponsePdu sessionId] 
@@ -505,9 +548,8 @@ respondToPdu
                                                     <> [out $ EndOfDataPdu sessionId currentSerial defIntervals]
                                             in Right (pure pdus, Nothing)
 
-                    ResetQueryPdu -> 
-                        withProtocolVersionCheck pdu $ let 
-                            action = do 
+                    ResetQueryPdu -> let
+                            action = do
                                 bs <- cachedPduBinary appState sessionProtocol 
                                         (currentCachePayloadBS sessionProtocol)
                                 pure $ [out $ CacheResponsePdu currentSessionId] 
@@ -530,13 +572,6 @@ respondToPdu
         -- Everything sent back to the client is framed with the version of the 
         -- session it is sent on, never with the version of the incoming PDU.
         out = TruePdu . toVersioned session
-
-        withProtocolVersionCheck _ respond = 
-            if sessionProtocol == pduProtocol
-                then respond
-                else do            
-                    let text :: Text = [i|Protocol version is not the same.|]                                
-                    Left (ErrorPdu UnexpectedProtocolVersion (Just $ convert pduBytes) (Just $ convert text), text)
 
         withSessionIdCheck currentSessionId sessionId respond =
             if currentSessionId == sessionId

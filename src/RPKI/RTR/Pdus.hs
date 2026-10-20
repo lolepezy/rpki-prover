@@ -179,16 +179,22 @@ bytesToVersionedPdu bs =
         Left (_, _, errorMessage) -> 
             Left $ ParsedNothing InvalidRequest $ convert errorMessage
 
-        Right (remainder, _, header@(PduHeader version pduType)) ->         
-            case runGetOrFail (parseVersionedPdu version pduType) remainder of
-                Left (_, _, errorMessage) -> 
-                    Left $ ParsedOnlyHeader InvalidRequest 
-                            (Text.pack $ "Error parsing of " <> show bs <> ", " <> errorMessage)
-                            header
-                Right (_, _, pdu) -> 
-                    Right $ VersionedPdu pdu version            
+        Right (remainder, _, (versionByte, pduType)) ->
+            case toProtocolVersion versionByte of
+                Nothing ->
+                    Left $ UnknownProtocolVersion versionByte pduType
+                Just version ->
+                    case runGetOrFail (parseVersionedPdu version pduType) remainder of
+                        Left (_, _, errorMessage) ->
+                            Left $ ParsedOnlyHeader InvalidRequest
+                                    (Text.pack $ "Error parsing of " <> show bs <> ", " <> errorMessage)
+                                    (PduHeader version pduType)
+                        Right (_, _, pdu) ->
+                            Right $ VersionedPdu pdu version
     where
-        parsePduHeader = PduHeader <$> get <*> get
+        -- The version is read as a raw byte, so that an unknown version is
+        -- distinguishable from a broken header.
+        parsePduHeader = (,) <$> (get :: Get Word8) <*> get
 
 
 -- | Parse the body of a PDU after header is parsed.
