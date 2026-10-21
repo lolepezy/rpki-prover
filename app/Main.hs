@@ -556,7 +556,7 @@ rsyncPrefetches CLIOptions {..} = do
 
     forM urlsToParse $ \u ->
         case parseRsyncURL (convert u) of
-            Left e         -> appError $ InitE $ InvalidOptionValue { option = "--rsync-prefetch-url", value = convert u, whatsWrong = e }
+            Left e         -> appError $ InitE $ InvalidOptionValue { optionName = "--rsync-prefetch-url", value = convert u, whatsWrong = e }
             Right rsyncURL -> pure rsyncURL
 
 
