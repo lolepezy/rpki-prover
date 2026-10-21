@@ -5,7 +5,6 @@ module RPKI.Config where
 import Control.Lens
 import GHC.Conc
 import Numeric.Natural
-import Data.Int
 import Data.Text (Text)
 import Data.Word ( Word16 )
 
@@ -193,12 +192,34 @@ data HttpApiConfig = HttpApiConfig {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
+-- | An address and port an RTR listener binds to.
+data RtrListen = RtrListen {
+        address :: String,
+        port    :: Word16
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+-- | RTR over TLS (RFC 6810, section 7), set up the same way as in Routinator:
+-- a PEM file with the server certificate followed by the rest of its chain and
+-- a PEM file with exactly one private key. Clients are not asked for certificates.
+data RtrTlsConfig = RtrTlsConfig {
+        tlsListen   :: RtrListen,
+        tlsCertFile :: ApiSecured FilePath,
+        tlsKeyFile  :: ApiSecured FilePath
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+-- | The RTR server runs when at least one of the listeners is configured,
+-- they are independent of each other and serve the same data.
 data RtrConfig = RtrConfig {
-        rtrAddress        :: String,
-        rtrPort           :: Int16,
+        rtrListen         :: Maybe RtrListen,
+        rtrTls            :: Maybe RtrTlsConfig,
         rtrLogFile        :: Maybe String,
+        -- | Shared by both listeners
         rtrMaxConnections :: Int
-    } 
+    }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -414,10 +435,16 @@ adjustConfig config = config
 defaultsLogLevel :: LogLevel
 defaultsLogLevel = InfoL
 
+defaultRtrAddress :: String
+defaultRtrAddress = "localhost"
+
+defaultRtrPort :: Word16
+defaultRtrPort = 8283
+
 defaultRtrConfig :: RtrConfig
-defaultRtrConfig = RtrConfig { 
-        rtrAddress        = "localhost",
-        rtrPort           = 8283,
+defaultRtrConfig = RtrConfig {
+        rtrListen         = Just $ RtrListen defaultRtrAddress defaultRtrPort,
+        rtrTls            = Nothing,
         rtrLogFile        = Nothing,
         -- RTR clients are routers, so a few hundred is already generous
         rtrMaxConnections = 512
