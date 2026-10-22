@@ -192,11 +192,24 @@ data HttpApiConfig = HttpApiConfig {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
--- | An address and port an RTR listener binds to.
+-- | An address and port an RTR listener binds to and how the TCP segments 
+-- of its connections are authenticated.
 data RtrListen = RtrListen {
         address :: String,
-        port    :: Word16
+        port    :: Word16,
+        tcpAuth :: Maybe TcpAuthConfig
     }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+-- | Where the keys for authenticating TCP segments come from, see RPKI.RTR.TcpAuth.
+data TcpAuthConfig 
+    -- | A file with the keys of the routers, they are set on the 
+    -- listening socket (Linux).
+    = TcpAuthKeysFile (ApiSecured FilePath)
+    -- | The IPsec SAs of the system, TCP-MD5 is only turned on for the 
+    -- listening socket (OpenBSD).
+    | TcpMd5IpsecKeys
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -443,7 +456,7 @@ defaultRtrPort = 8283
 
 defaultRtrConfig :: RtrConfig
 defaultRtrConfig = RtrConfig {
-        rtrListen         = Just $ RtrListen defaultRtrAddress defaultRtrPort,
+        rtrListen         = Just $ RtrListen defaultRtrAddress defaultRtrPort Nothing,
         rtrTls            = Nothing,
         rtrLogFile        = Nothing,
         -- RTR clients are routers, so a few hundred is already generous

@@ -152,6 +152,29 @@ rpki-prover --with-rtr --rtr-address 0.0.0.0 --rtr-port 3323 \
             --rtr-tls-port 3324 --rtr-tls-cert /etc/rpki-prover/rtr.crt --rtr-tls-key /etc/rpki-prover/rtr.key
 ```
 
+Connections to the plain TCP listener can be authenticated with TCP-MD5 ([RFC 2385](https://www.rfc-editor.org/rfc/rfc2385)), which is what, for example, BIRD and OpenBGPD support. It works on Linux and OpenBSD, which keep the keys differently.
+
+On Linux, `--rtr-tcp-auth-keys` takes a file with one key per line, for a router's address or for a prefix of them:
+
+```
+# <address or prefix>  md5  <key, the rest of the line>
+192.0.2.1              md5  some secret
+2001:db8:1::/48        md5  another secret
+```
+
+The kernel checks the keys: a router that has a key in the file cannot connect without it, or with a different one, and its connection attempts never reach `rpki-prover`. Routers that have no key in the file connect as usual. Keys are at most 80 bytes long, and the file is read once at startup.
+
+On OpenBSD, the keys are IPsec SAs, as for `bgpd`, and `--rtr-tcp-md5-ipsec` turns TCP-MD5 on for the listener. The SAs are set up in [ipsec.conf(5)](https://man.openbsd.org/ipsec.conf.5) for each router and loaded with `ipsecctl -f /etc/ipsec.conf` (and `rcctl enable ipsec` to load them at boot):
+
+```
+# from <rpki-prover's address> to <router's address>, an SA for each direction,
+# the key in hex ("some secret" here) is usually the same for both
+tcpmd5 from 192.0.2.10 to 192.0.2.1 spi 0x1000:0x1001 \
+    authkey 0x736f6d6520736563726574:0x736f6d6520736563726574
+```
+
+Here, too, a router with an SA cannot connect without signing with its key and routers without one connect as usual. SAs can be added or changed while `rpki-prover` is running, they take effect for the next connection.
+
 ## HTTP API <a name="http-api"></a>
 
 Visit [http://localhost:9999](http://localhost:9999) to view the UI reporting metrics, trust anchors, repositories, and any errors or warnings.

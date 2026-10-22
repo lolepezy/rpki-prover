@@ -141,6 +141,9 @@ instance ToSchema WorkerLimits
 instance ToSchema SystemConfig
 instance ToSchema HttpApiConfig
 instance ToSchema RtrListen
+-- It's a mixed sum type, the schema just follows the generic ToJSON
+instance ToSchema TcpAuthConfig where
+    declareNamedSchema = genericDeclareNamedSchemaUnrestricted defaultSchemaOptions
 instance ToSchema RtrTlsConfig
 instance ToSchema RtrConfig
 instance ToSchema StorageConfig

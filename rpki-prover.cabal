@@ -218,6 +218,7 @@ library
       RPKI.RTR.Protocol
       RPKI.RTR.RtrServer
       RPKI.RTR.RtrState
+      RPKI.RTR.TcpAuth
       RPKI.RTR.Tls
       RPKI.RTR.Types
       RPKI.Sandbox
@@ -257,6 +258,7 @@ library
       src
   c-sources:
       cbits/sandbox.c
+      cbits/tcp_auth.c
   ghc-options:
       -funbox-strict-fields
       -O2
@@ -337,6 +339,7 @@ test-suite rpki-prover-test
       RPKI.RRDP.ParseSpec
       RPKI.RRDP.UpdateSpec
       RPKI.RTR.RtrSpec
+      RPKI.RTR.TcpAuthSpec
       RPKI.RTR.TlsSpec
       RPKI.SLURM.SlurmSpec
       RPKI.Store.DatabaseSpec

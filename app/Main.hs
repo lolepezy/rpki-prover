@@ -61,6 +61,7 @@ import           RPKI.Store.AppSqliteStorage (DbCheckResult(..), DbOpenMode(..),
 import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.RRDP.RrdpFetch
+import           RPKI.RTR.TcpAuth                 (loadTcpAuth)
 import           RPKI.RTR.Tls                     (loadTlsCredential)
 import           RPKI.Sandbox
 
@@ -347,6 +348,10 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     for_ (config ^? #rtrConfig . _Just . #rtrTls . _Just) $ \tlsConfig ->
         fromEitherM $ liftIO $ 
             bimap (InitE . InitError) (const ()) <$> loadTlsCredential tlsConfig
+
+    for_ (config ^? #rtrConfig . _Just . #rtrListen . _Just . #tcpAuth . _Just) $ \authConfig ->
+        fromEitherM $ liftIO $ 
+            bimap (InitE . InitError) (const ()) <$> loadTcpAuth authConfig
     
     appState <- createAppState logger localExceptions    
 
@@ -596,6 +601,7 @@ checkPreconditions :: ValidatorIO es => CLIOptions -> Eff es ()
 checkPreconditions cliOptions@CLIOptions {..} = do 
     checkRsyncInPath clientPath
     checkRtrTlsOptions cliOptions
+    checkRtrTcpAuthOptions cliOptions
 
 checkRtrTlsOptions :: ValidatorIO es => CLIOptions -> Eff es ()
 checkRtrTlsOptions CLIOptions {..} = 
@@ -608,6 +614,15 @@ checkRtrTlsOptions CLIOptions {..} =
             when (isJust rtrTlsAddress || isJust rtrTlsCert || isJust rtrTlsKey) $
                 appError $ InitE $ InconsistentOptions
                     [i|`--rtr-tls-address`, `--rtr-tls-cert` and `--rtr-tls-key` need `--rtr-tls-port` to be set|]
+
+checkRtrTcpAuthOptions :: ValidatorIO es => CLIOptions -> Eff es ()
+checkRtrTcpAuthOptions CLIOptions {..} = do
+    when (isJust rtrTcpAuthKeys && rtrTcpMd5Ipsec) $
+        appError $ InitE $ InconsistentOptions
+            [i|`--rtr-tcp-auth-keys` and `--rtr-tcp-md5-ipsec` cannot be used together|]
+    when ((isJust rtrTcpAuthKeys || rtrTcpMd5Ipsec) && not withRtr) $
+        appError $ InitE $ InconsistentOptions
+            [i|`--rtr-tcp-auth-keys` and `--rtr-tcp-md5-ipsec` need `--with-rtr`, they are for the plain TCP RTR server|]
 
 deriveProverRunMode :: ValidatorIO es => CLIOptions -> Eff es ProverRunMode
 deriveProverRunMode CLIOptions {..} = 
@@ -699,6 +714,8 @@ data CLIOptions = CLIOptions {
         withRtr                  :: Bool,
         rtrAddress               :: Maybe String,
         rtrPort                  :: Maybe Word16,
+        rtrTcpAuthKeys           :: Maybe FilePath,
+        rtrTcpMd5Ipsec           :: Bool,
         rtrTlsAddress            :: Maybe String,
         rtrTlsPort               :: Maybe Word16,
         rtrTlsCert               :: Maybe FilePath,
@@ -881,6 +898,15 @@ cliOptionsParser = CLIOptions
             (  long "rtr-port"
             <> metavar "PORT"
             <> help ("Port for the RTR server (default: " <> show defaultRtrPort <> ").")))
+    <*> optional (strOption
+            (  long "rtr-tcp-auth-keys"
+            <> metavar "FILE"
+            <> help ("File with TCP-MD5 keys of the routers that connect to the RTR server, "
+                  <> "one per line: '<address or prefix> md5 <key>'. Only on Linux.")))
+    <*> switch
+            (  long "rtr-tcp-md5-ipsec"
+            <> help ("Turn TCP-MD5 on for the RTR server, with the keys of the routers set up as "
+                  <> "IPsec SAs in ipsec.conf(5). Only on OpenBSD."))
     <*> optional (strOption
             (  long "rtr-tls-address"
             <> metavar "ADDRESS"
@@ -1132,13 +1158,18 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
     rtrAddress' = fromMaybe defaultRtrAddress rtrAddress
 
     rtrListen = if withRtr 
-        then Just $ RtrListen rtrAddress' (fromMaybe defaultRtrPort rtrPort)
+        then Just $ RtrListen rtrAddress' (fromMaybe defaultRtrPort rtrPort) rtrTcpAuth
         else Nothing
+
+    -- 'checkRtrTcpAuthOptions' makes sure that it's at most one of them
+    rtrTcpAuth 
+        | rtrTcpMd5Ipsec = Just TcpMd5IpsecKeys
+        | otherwise      = TcpAuthKeysFile . apiSecured <$> rtrTcpAuthKeys
 
     -- 'checkRtrTlsOptions' makes sure that it's either all of them or nothing
     rtrTls = do 
         tlsPort <- rtrTlsPort
-        RtrTlsConfig (RtrListen (fromMaybe rtrAddress' rtrTlsAddress) tlsPort)
+        RtrTlsConfig (RtrListen (fromMaybe rtrAddress' rtrTlsAddress) tlsPort Nothing)
             <$> (apiSecured <$> rtrTlsCert)
             <*> (apiSecured <$> rtrTlsKey)
 

@@ -67,7 +67,7 @@ load cert key = loadTlsCredential $ tlsConfig cert key
 
 tlsConfig :: FilePath -> FilePath -> RtrTlsConfig
 tlsConfig cert key = RtrTlsConfig {
-        tlsListen   = RtrListen "localhost" 0,
+        tlsListen   = RtrListen "localhost" 0 Nothing,
         tlsCertFile = Public $ "test/data/rtr-tls/" <> cert,
         tlsKeyFile  = Public $ "test/data/rtr-tls/" <> key
     }

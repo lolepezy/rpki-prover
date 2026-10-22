@@ -32,6 +32,20 @@ RTR to routers:
 The rc.d script always passes --rpki-root-directory
 ${LOCALSTATEDIR}/db/rpki-prover; do not repeat it in the flags.
 
+TCP-MD5 for RTR
+===============
+
+Routers can be made to sign their RTR connections with TCP-MD5, as for
+bgpd(8): the keys are IPsec SAs, one line per router in /etc/ipsec.conf,
+
+    tcpmd5 from <rpki-prover's address> to <router's address> \
+        spi 0x1000:0x1001 authkey <hex key>:<hex key>
+
+loaded with "ipsecctl -f /etc/ipsec.conf" (and at boot with
+"rcctl enable ipsec"), and --rtr-tcp-md5-ipsec turns TCP-MD5 on for the
+RTR server. A router with an SA cannot connect without signing, routers
+without one connect as usual.
+
 Memory
 ======
 

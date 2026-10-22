@@ -6,6 +6,10 @@
   TLS listener with the certificate chain from `--rtr-tls-cert` and the key
   from `--rtr-tls-key`, `--rtr-tls-address` defaults to `--rtr-address`. It
   runs with or without the plain one from `--with-rtr`.
+- TCP-MD5 for the plain RTR server (#368). On Linux, `--rtr-tcp-auth-keys`
+  is a file with lines like `192.0.2.1 md5 secret`. On OpenBSD,
+  `--rtr-tcp-md5-ipsec` uses the tcpmd5 SAs from ipsec.conf(5). Routers that
+  have a key cannot connect without it, and other routers connect as before.
 - `--rtr-port` accepts ports above 32767.
 - A fetch, also one that fails after storing something, makes the TAs that
   use the repository revalidated if a manifest it stored lists other objects

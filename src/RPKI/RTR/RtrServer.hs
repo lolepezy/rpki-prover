@@ -41,6 +41,7 @@ import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
+import           RPKI.RTR.TcpAuth
 import           RPKI.RTR.Tls
 import           RPKI.SLURM.SlurmProcessing
 
@@ -167,10 +168,20 @@ runRtrServer appContext RtrConfig {..} = do
 
     listenOn :: Text -> RtrListen -> TVar Int -> (Socket -> SockAddr -> IO ()) -> IO ()
     listenOn protocol RtrListen {..} connectionCount serve = do
+        -- Checked at startup as well
+        auth <- for tcpAuth $ \authConfig -> 
+            loadTcpAuth authConfig >>= \case 
+                Left e -> do 
+                    logError logger [i|Cannot start #{protocol} server: #{e}|]
+                    throwIO $ userError $ convert e
+                Right a -> pure a
         address' <- resolve
-        bracket (open address') close $ \sock -> do 
-            logInfo logger [i|#{protocol} server is listening on #{address}:#{port}.|]
-            loop sock
+        bracket (open address' auth) close $ \sock -> do 
+            logInfo logger $ [i|#{protocol} server is listening on #{address}:#{port}|] <> 
+                case auth of 
+                    Nothing -> "."
+                    Just a  -> [i| with #{describeTcpAuth a}.|]
+            loop sock auth
       where
         resolve = do
             let hints = defaultHints {
@@ -179,15 +190,17 @@ runRtrServer appContext RtrConfig {..} = do
                 }
             head <$> getAddrInfo (Just hints) (Just address) (Just $ show port)
 
-        open addr = do
+        open addr auth = do
             sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
             setSocketOption sock ReuseAddr 1
             withFdSocket sock setCloseOnExecIfNeeded
-            bind sock $ addrAddress addr
-            listen sock 1024
+            (`onException` close sock) $ do 
+                bind sock $ addrAddress addr
+                for_ auth $ installTcpAuth sock (addrFamily addr)
+                listen sock 1024
             pure sock
 
-        loop sock = forever $ do
+        loop sock auth = forever $ do
             (conn, peer) <- accept sock
             accepted <- atomically $ do 
                 n <- readTVar connectionCount
@@ -198,7 +211,11 @@ runRtrServer appContext RtrConfig {..} = do
                         pure True
             if accepted 
                 then do 
-                    logInfo logger [i|#{protocol} connection from #{peer}|]
+                    authenticated <- join <$> for auth (\a -> connectionTcpAuth a conn peer)
+                    logInfo logger $ [i|#{protocol} connection from #{peer}|] <> 
+                        case authenticated of 
+                            Nothing     -> ""
+                            Just method -> [i|, authenticated with #{method}|]
                     void $ forkFinally 
                         (serve conn peer) 
                         (\_ -> do 
