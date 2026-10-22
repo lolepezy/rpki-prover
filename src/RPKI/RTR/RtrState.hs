@@ -15,7 +15,7 @@ import           Data.Generics.Labels
 import           Deque.Strict   as Deq
 
 import           RPKI.AppTypes
-import           RPKI.Domain     (Vrp, Vrps, packed4, packed6, unpack4, unpack6)
+import           RPKI.Domain     (BGPSecPayload (..), Vrp, Vrps, packed4, packed6, unpack4, unpack6, vrpsCount)
 import           RPKI.Time      (nanosPerSecond)
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
@@ -34,27 +34,34 @@ emptyDiffs :: RtrDiffs -> Bool
 emptyDiffs GenDiffs {..} = isEmptyDiff vrpDiff && isEmptyDiff bgpSecDiff && isEmptyDiff aspaDiff
 
 
-newRtrState :: WorldVersion -> Int -> RtrState
-newRtrState worldVersion maxTotalVrps =
+-- | A state without any diffs: of a new session or of one restored from 
+-- the persisted state.
+newRtrState :: WorldVersion -> RtrSessionId -> SerialNumber -> Intervals -> ServedPayloads -> RtrState
+newRtrState worldVersion sessionId serial intervals served =
     RtrState {
         lastKnownWorldVersion = worldVersion,
-        currentSessionId      = worldVersionToRtrSessionId worldVersion,
-        currentSerial         = initialSerial,
+        currentSessionId      = sessionId,
+        currentSerial         = serial,
         maxSerialsPerSession  = 20,
         diffs                 = mempty,
         totalDiffSize         = 0,
-        maxTotalDiffSize      = maxTotalVrps
+        -- Do not store more than amound of VRPs in the diffs as the initial size.
+        -- It's totally heuristical way of avoiding memory bloat
+        maxTotalDiffSize      = vrpsCount $ served ^. #payloads . #uniqueVrps,
+        ..
     }
 
--- | Create a new RTR state based on the previous one and a new diff.
+-- | Create a new RTR state based on the previous one, a new diff and 
+-- the payloads after the diff.
 -- 
-updatedRtrState :: RtrState -> WorldVersion -> RtrDiffs -> RtrState
-updatedRtrState RtrState {..} worldVersion diff =
+updatedRtrState :: RtrState -> WorldVersion -> RtrDiffs -> ServedPayloads -> RtrState
+updatedRtrState RtrState {..} worldVersion diff newServed =
     RtrState {
         lastKnownWorldVersion = worldVersion,
         diffs = diffs',
         currentSerial = newSerial,
         totalDiffSize = newTotalSize,
+        served = newServed,
         ..
     }
     where
@@ -148,9 +155,21 @@ evalDiffs :: RtrPayloads -> RtrPayloads -> RtrDiffs
 evalDiffs previous current =
     GenDiffs {
         vrpDiff    = setDiffVrps (uniqueVrps previous) (uniqueVrps current),
-        bgpSecDiff = setDiff (bgpSec previous) (bgpSec current),
+        bgpSecDiff = setDiff (routerKeysPerAsn $ bgpSec previous) (routerKeysPerAsn $ bgpSec current),
         aspaDiff   = setDiff (aspas previous) (aspas current)
     }
+
+-- | Router keys one per ASN, which is what the Router Key PDUs are. 
+-- 
+-- How the ASNs of a key are grouped into payloads is not visible to routers, 
+-- e.g. two certificates of the same key for different ASNs give the same PDUs 
+-- as one certificate for both ASNs, and the payloads read back from the 
+-- persisted PDUs have one ASN each. So diffs compare the PDUs.
+routerKeysPerAsn :: Set BGPSecPayload -> Set BGPSecPayload
+routerKeysPerAsn = 
+    Set.fromList 
+        . concatMap (\p -> [ p { bgpSecAsns = [asn] } | asn <- bgpSecAsns p ]) 
+        . Set.toList
 
 
 -- Wrap around at 2^31 - 1
@@ -168,6 +187,17 @@ initialSerial = SerialNumber 1
 
 wrapAroundSerial :: Integer
 wrapAroundSerial = (2 :: Integer)^(31 :: Integer) - 1
+
+-- | Session ID for a new session, i.e. one that is not a continuation of the
+-- previous one. It must differ from the ID of the previous session, so that 
+-- routers that still have its data notice the change 
+-- (https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis#section-5.1).
+newSessionId :: WorldVersion -> Maybe RtrSessionId -> RtrSessionId
+newSessionId worldVersion previous 
+    | Just sessionId == previous = let RtrSessionId s = sessionId in RtrSessionId (s + 1)
+    | otherwise                  = sessionId
+  where
+    sessionId = worldVersionToRtrSessionId worldVersion
 
 -- 1) strip everything except from seconds from the the version
 -- 2) Make it 2 bytes using `mod`    

@@ -3,6 +3,7 @@
 
 module RPKI.RTR.Types where
 
+import qualified Data.ByteString as BS
 import           Data.Set       (Set)
 import qualified Data.Set       as Set
 import qualified Data.Map.Strict as Map
@@ -46,9 +47,47 @@ data RtrState = RtrState {
         maxSerialsPerSession  :: Int,
         diffs                 :: Deq.Deque (SerialNumber, RtrDiffs),
         totalDiffSize         :: Int,
-        maxTotalDiffSize      :: Int
+        maxTotalDiffSize      :: Int,
+        -- | Sent to routers with every End of Data
+        intervals             :: Intervals,
+        -- | What the cache serves at 'currentSerial'. It is replaced together 
+        -- with the serial, so that a response never mixes the two up.
+        served                :: ServedPayloads
     }
     deriving stock (Show, Eq, Generic)
+
+-- | The payloads the cache serves, together with their serialised forms. 
+-- 
+-- A form is rendered the first time it is needed, e.g. the PDUs of a 
+-- protocol version on the first Reset Query of that version, and is then 
+-- shared by everything that needs it.
+data ServedPayloads = ServedPayloads {
+        payloads   :: RtrPayloads,
+        renderedV0 :: ~BS.ByteString,
+        renderedV1 :: ~BS.ByteString,
+        renderedV2 :: ~BS.ByteString,
+        -- | The payloads as they are persisted, see RPKI.RTR.Snapshot
+        persisted  :: ~BS.ByteString
+    }
+    deriving stock (Generic)
+
+-- The rendered forms are derived from the payloads, comparing or showing 
+-- them would only force them.
+instance Eq ServedPayloads where
+    a == b = payloads a == payloads b
+
+instance Show ServedPayloads where
+    show ServedPayloads { payloads = RtrPayloads {..} } = 
+        "ServedPayloads { VRPs: " <> show (vrpsCount uniqueVrps) 
+            <> ", BGPSec: " <> show (Set.size bgpSec) 
+            <> ", ASPAs: " <> show (Set.size aspas) <> " }"
+
+renderedFor :: ProtocolVersion -> ServedPayloads -> BS.ByteString
+renderedFor protocolVersion ServedPayloads {..} = 
+    case protocolVersion of 
+        V0 -> renderedV0
+        V1 -> renderedV1
+        V2 -> renderedV2
 
 
 data RtrPayloads = RtrPayloads {

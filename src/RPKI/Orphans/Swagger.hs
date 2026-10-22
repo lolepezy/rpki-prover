@@ -240,6 +240,10 @@ instance ToSchema a => ToSchema (RSet a) where
 
 
 instance ToSchema RtrState
+instance ToSchema Intervals
+instance ToSchema ServedPayloadsSummary
+instance ToSchema ServedPayloads where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy ServedPayloadsSummary)
 instance ToSchema BGPSecPayload
 instance ToSchema Aspa
 instance ToSchema SerialNumber
