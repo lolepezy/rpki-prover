@@ -1,6 +1,5 @@
 module RPKI.RTR.RtrSpec where
 
-import           Control.Concurrent.STM            (atomically)
 import           Control.Monad
 
 import qualified Data.ByteString.Lazy              as LBS
@@ -16,13 +15,14 @@ import           Test.QuickCheck.Arbitrary.Generic
 import           Test.Tasty
 
 import           RPKI.AppState
+import           RPKI.AppTypes                     (WorldVersion)
 import           RPKI.Orphans
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Protocol
 
 import           RPKI.RTR.RtrServer                (PduLike (..), analyzePdu, compatiblePduLike, 
-                                                    diffPayloadPdus, processFirstPdu)
+                                                    diffPayloadPdus, processFirstPdu, servedPayloads)
 import           RPKI.RTR.Types
 import           RPKI.Resources.Types
 
@@ -317,10 +317,10 @@ testRtrStateUpdates = HU.testCase "Should update RTR state and shrink it when ne
             newVersion <- getOrCreateWorldVerion appState
             vrpDiff <- Diff <$> generateVrps n <*> generateVrps m
             bgpSecDiff <- Diff <$> generateBgpSecs n <*> generateBgpSecs m
-            pure $! updatedRtrState rtrState newVersion GenDiffs {aspaDiff = newDiff, ..}
+            pure $! updatedRtrState rtrState newVersion GenDiffs {aspaDiff = newDiff, ..} emptyServed
     
     worldVersion <- getOrCreateWorldVerion appState
-    let z = newRtrState worldVersion 10
+    let z = emptyRtrState worldVersion
     let rtrState = z { maxSerialsPerSession = 2, maxTotalDiffSize = 80 }
 
     rtrState1 <- update rtrState 10 1
@@ -341,8 +341,8 @@ testRtrStateUpdates = HU.testCase "Should update RTR state and shrink it when ne
     aspas1 <- generateAspas 10
     aspas2 <- generateAspas 5
     version <- getOrCreateWorldVerion appState
-    let withAspas = updatedRtrState (newRtrState version 10) version 
-                        newRtrDiff { aspaDiff = Diff aspas1 aspas2 }
+    let withAspas = updatedRtrState (emptyRtrState version) version 
+                        newRtrDiff { aspaDiff = Diff aspas1 aspas2 } emptyServed
     HU.assertEqual "Wrong total size" (Set.size aspas1 + Set.size aspas2) (totalDiffSize withAspas)
 
 
@@ -352,6 +352,13 @@ testRtrStateUpdates = HU.testCase "Should update RTR state and shrink it when ne
 --         <> ", lastKnownWorldVersion = " <> show lastKnownWorldVersion
 --         <> ", currentSessionId = " <> show currentSessionId
 --         <> ", maxSerialsPerSession = " <> show maxSerialsPerSession <> "]"
+
+emptyServed :: ServedPayloads
+emptyServed = servedPayloads mempty
+
+emptyRtrState :: WorldVersion -> RtrState
+emptyRtrState worldVersion = 
+    newRtrState worldVersion (worldVersionToRtrSessionId worldVersion) initialSerial defIntervals emptyServed
 
 generateVrps :: Int -> IO (Set Vrp)
 generateVrps n = Set.fromList <$> replicateM n (QC.generate arbitrary)
@@ -429,17 +436,16 @@ testBrokenPdus = HU.testCase "Should reply to broken PDUs, except for broken err
 
 testFirstPduErrorsInRouterVersion :: TestTree
 testFirstPduErrorsInRouterVersion = HU.testCase "Should report errors about the first PDU in its version" $ do
-    appState <- newAppState
     forM_ [V0, V1, V2] $ \v -> do 
         let resetQuery = VersionedPdu ResetQueryPdu v
-        case processFirstPdu Nothing appState resetQuery (pduToBytes resetQuery) of 
+        case processFirstPdu Nothing resetQuery (pduToBytes resetQuery) of 
             Left (reply, _) -> 
                 HU.assertEqual "Not ready cache should report no data" 
                     (Just (NoDataAvailable, v)) (errorCodeAndVersion reply)
             Right _ -> HU.assertFailure "Not ready cache should report an error"
 
         let notify = VersionedPdu (NotifyPdu (RtrSessionId 1) (SerialNumber 1)) v
-        case processFirstPdu Nothing appState notify (pduToBytes notify) of 
+        case processFirstPdu Nothing notify (pduToBytes notify) of 
             Left (reply, _) -> 
                 HU.assertEqual "First PDU must be a query" 
                     (Just (InvalidRequest, v)) (errorCodeAndVersion reply)
@@ -450,23 +456,21 @@ testUnknownSessionIdInFirstSerialQuery :: TestTree
 testUnknownSessionIdInFirstSerialQuery = HU.testCase "Should reset a first Serial Query with an unknown session ID" $ do
     appState <- newAppState
     worldVersion <- getOrCreateWorldVerion appState
-    let rtrState = newRtrState worldVersion 10
+    let rtrState = emptyRtrState worldVersion
     let RtrSessionId sessionId = currentSessionId rtrState
     let serial = currentSerial rtrState
 
     let unknownSession = VersionedPdu (SerialQueryPdu (RtrSessionId (sessionId + 1)) serial) V1
-    case processFirstPdu (Just rtrState) appState unknownSession (pduToBytes unknownSession) of 
+    case processFirstPdu (Just rtrState) unknownSession (pduToBytes unknownSession) of 
         Left (reply, _) -> HU.assertFailure $ "Unexpected error " <> show reply
-        Right (createPdus, session, _) -> do 
-            pdus <- atomically createPdus
+        Right (pdus, session, _) -> do 
             HU.assertEqual "Wrong session" (Session V1) session
             HU.assertEqual "Should be a cache reset" [TruePdu $ VersionedPdu CacheResetPdu V1] pdus
 
     let knownSession = VersionedPdu (SerialQueryPdu (RtrSessionId sessionId) serial) V1
-    case processFirstPdu (Just rtrState) appState knownSession (pduToBytes knownSession) of 
+    case processFirstPdu (Just rtrState) knownSession (pduToBytes knownSession) of 
         Left (reply, _) -> HU.assertFailure $ "Unexpected error " <> show reply
-        Right (createPdus, _, _) -> do 
-            pdus <- atomically createPdus
+        Right (pdus, _, _) -> do 
             HU.assertEqual "Should be an empty cache response" 
                 [ TruePdu $ VersionedPdu (CacheResponsePdu (RtrSessionId sessionId)) V1, 
                   TruePdu $ VersionedPdu (EndOfDataPdu (RtrSessionId sessionId) serial defIntervals) V1 ]

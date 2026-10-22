@@ -197,7 +197,11 @@ data RtrConfig = RtrConfig {
         rtrAddress        :: String,
         rtrPort           :: Int16,
         rtrLogFile        :: Maybe String,
-        rtrMaxConnections :: Int
+        rtrMaxConnections :: Int,
+        -- | How long routers may use the data without hearing from the cache 
+        -- (https://www.rfc-editor.org/rfc/rfc8210#section-6). It is also how old 
+        -- the persisted RTR state may be to be served after a restart.
+        rtrExpireInterval :: Seconds
     } 
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
@@ -420,7 +424,8 @@ defaultRtrConfig = RtrConfig {
         rtrPort           = 8283,
         rtrLogFile        = Nothing,
         -- RTR clients are routers, so a few hundred is already generous
-        rtrMaxConnections = 512
+        rtrMaxConnections = 512,
+        rtrExpireInterval = Seconds 7200
     }
     
 -- This is a heuristic list of rsync repositories that is currently out there

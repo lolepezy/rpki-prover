@@ -13,6 +13,7 @@ import RPKI.RepositorySpec
 import RPKI.FetchSpec
 import RPKI.DomainSpec
 import RPKI.RTR.RtrSpec
+import RPKI.RTR.SnapshotSpec
 import RPKI.SLURM.SlurmSpec
 import RPKI.Store.StorableSpec
 import RPKI.Validation.BottomUpSpec
@@ -37,6 +38,7 @@ main = defaultMain $ testGroup "All tests" [
         domainCountersGroup,
         manifestDigestGroup,
         rtrGroup,
+        rtrSnapshotGroup,
         httpSpec,
         slurmGroup,
         loggingSpec,
