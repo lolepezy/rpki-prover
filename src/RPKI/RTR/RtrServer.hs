@@ -200,7 +200,8 @@ runRtrServer appContext RtrConfig {..} = do
             -- Also without updates: the version says how fresh the payloads are
             persist nextRtrState
         where
-          -- Carry on with the persisted session if its payloads are fresh enough, 
+          -- Carry on with the persisted session if its payloads are fresh enough
+          -- and all known, start a new session with them if some are unknown,
           -- otherwise start a new session once there is a complete world version.
           restoredOrNewState appState = do 
             Now now <- thisInstant
@@ -212,18 +213,29 @@ runRtrServer appContext RtrConfig {..} = do
                     newState appState Nothing
 
                 Just (Right snapshot@RtrSnapshot {..})
-                    | freshEnough rtrExpireInterval now snapshot -> do 
-                        let RtrPayloads {..} = payloads
-                        let (RtrSessionId s, SerialNumber n) = (sessionId, serial)
-                        logInfo logger $ [i|RTR server: continuing session #{s} at serial #{n} with |] <> 
-                                         [i|#{vrpsCount uniqueVrps} VRPs, #{Set.size bgpSec} router keys and |] <> 
-                                         [i|#{Set.size aspas} ASPAs of version #{worldVersion} from #{snapshotPath}.|]
-                        pure $ newRtrState worldVersion sessionId serial intervals (servedPayloads payloads)
-
-                    | otherwise -> do 
-                        logInfo logger $ [i|RTR server: the persisted RTR state of version #{worldVersion} |] <> 
+                    | not $ freshEnough rtrExpireInterval now snapshot -> do
+                        logInfo logger $ [i|RTR server: the persisted RTR state of version #{worldVersion} |] <>
                                          [i|is older than the expire interval (#{rtrExpireInterval}), starting a new session.|]
                         newState appState (Just sessionId)
+
+                    -- Routers may have the unknown PDUs, and diffs from the rest
+                    -- of the payloads would never withdraw them
+                    | unknownPdus > 0 -> do
+                        let newId@(RtrSessionId s) = newSessionId worldVersion (Just sessionId)
+                        logWarn logger $ [i|RTR server: the persisted RTR state from #{snapshotPath} has #{unknownPdus} PDUs |] <>
+                                         [i|of unknown types, probably written by a newer rpki-prover, starting a new session #{s} |] <>
+                                         [i|with the rest of its payloads.|]
+                        let state = newRtrState worldVersion newId initialSerial intervals (servedPayloads payloads)
+                        persist state
+                        pure state
+
+                    | otherwise -> do
+                        let RtrPayloads {..} = payloads
+                        let (RtrSessionId s, SerialNumber n) = (sessionId, serial)
+                        logInfo logger $ [i|RTR server: continuing session #{s} at serial #{n} with |] <>
+                                         [i|#{vrpsCount uniqueVrps} VRPs, #{Set.size bgpSec} router keys and |] <>
+                                         [i|#{Set.size aspas} ASPAs of version #{worldVersion} from #{snapshotPath}.|]
+                        pure $ newRtrState worldVersion sessionId serial intervals (servedPayloads payloads)
 
           newState appState previousSessionId = do 
             logInfo logger [i|RTR server: waiting for the first complete world version.|] 

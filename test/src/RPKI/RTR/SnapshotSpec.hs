@@ -18,6 +18,7 @@ import           RPKI.RTR.RtrServer                (servedPayloads)
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Snapshot
 import           RPKI.RTR.Types
+import           RPKI.Resources.Resources          (readIp4, readIp6)
 import           RPKI.Resources.Types
 import           RPKI.Time
 import           RPKI.Util                         (encodeBase64)
@@ -84,8 +85,41 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
                         HU.assertEqual "Written at" (Instant 2) writtenAt
                     other -> HU.assertFailure $ "Should be read: " <> show other,
 
+        HU.testCase "Should read the state of format version 1" $ do
+            bytes <- LBS.readFile "test/data/rtr-state/format-1"
+            case decodeSnapshot bytes of
+                Left e -> HU.assertFailure $ Text.unpack e
+                Right RtrSnapshot {..} -> do
+                    HU.assertEqual "Session" (RtrSessionId 7) sessionId
+                    HU.assertEqual "Serial" (SerialNumber 42) serial
+                    HU.assertEqual "Version" version worldVersion
+                    HU.assertEqual "Written at" (Instant 1_700_000_060_000_000_000) writtenAt
+                    HU.assertEqual "Payloads" format1Payloads payloads
+                    HU.assertEqual "Unknown PDUs" 0 unknownPdus,
+
+        HU.testCase "Should skip PDUs of unknown versions and types" $ do
+            let rendered = renderedV2 . servedPayloads
+                pdus = BS.concat [
+                        -- A known type of an unknown version
+                        unknownPdu 3 4 (BS.replicate 12 0),
+                        rendered format1Payloads { bgpSec = mempty, aspas = mempty },
+                        unknownPdu 2 99 mempty,
+                        rendered format1Payloads { uniqueVrps = mempty },
+                        unknownPdu 3 12 (BS.pack [1, 2, 3, 4])
+                    ]
+            HU.assertEqual "Payloads" (Right (format1Payloads, 3)) $ payloadsFromPdus pdus,
+
+        HU.testCase "Should not skip PDUs with a broken length" $ do
+            let assertFails what bytes = HU.assertBool what $ either (const True) (const False) $ payloadsFromPdus bytes
+                ipv4Pdu = renderedV2 $ servedPayloads $ makePayloads [Vrp (ASN 1) (Ipv4P $ readIp4 "192.0.2.0/24") (PrefixLength 24)] mempty []
+            -- It would be skipped forever
+            assertFails "Shorter than the header" $ BS.pack [3, 12, 0, 0, 0, 0, 0, 0]
+            assertFails "Longer than the rest" $ BS.pack [3, 12, 0, 0, 0, 0, 0, 9]
+            assertFails "Known one longer than it is" $
+                BS.take 7 ipv4Pdu <> BS.singleton 24 <> BS.drop 8 ipv4Pdu <> BS.replicate 4 0,
+
         HU.testCase "Should only use the state within the expire interval" $ do
-            let snapshot = RtrSnapshot version (RtrSessionId 1) (SerialNumber 1) (Instant 0) mempty
+            let snapshot = RtrSnapshot version (RtrSessionId 1) (SerialNumber 1) (Instant 0) mempty 0
                 Instant v = versionToInstant version
                 secondsLater s = Instant $ v + s * nanosPerSecond
             HU.assertBool "Fresh" $ freshEnough (Seconds 7200) (secondsLater 7199) snapshot
@@ -109,6 +143,27 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
 
     aspas_ RtrPayloads {..} = aspas
 
+    unknownPdu protocolVersion code body = BS.pack [protocolVersion, code, 0, 0, 0, 0, 0, fromIntegral $ 8 + BS.length body] <> body
+
+
+-- | What test/data/rtr-state/format-1 has. Neither of them may ever change,
+-- since files of older versions of rpki-prover must stay readable.
+format1Payloads :: RtrPayloads
+format1Payloads = makePayloads
+    [ Vrp (ASN 64496) (Ipv4P $ readIp4 "192.0.2.0/24") (PrefixLength 24)
+    , Vrp (ASN 64496) (Ipv4P $ readIp4 "198.51.100.0/24") (PrefixLength 28)
+    , Vrp (ASN 0) (Ipv4P $ readIp4 "203.0.113.0/24") (PrefixLength 24)
+    , Vrp (ASN 64497) (Ipv6P $ readIp6 "2001:db8::/32") (PrefixLength 48) ]
+    -- The first key is for two ASNs, i.e. in two PDUs
+    (Set.fromList [routerKey 1 64496, routerKey 1 64497, routerKey 2 64498])
+    [ Aspa (ASN 64496) (Set.fromList [ASN 64497, ASN 64498])
+    , Aspa (ASN 64499) (Set.fromList [ASN 0]) ]
+  where
+    routerKey k asn = BGPSecPayload {
+            bgpSecSki  = SKI $ KI $ toShortBS $ BS.replicate 20 k,
+            bgpSecAsns = [ASN asn],
+            bgpSecSpki = SPKI $ encodeBase64 $ DecodedBase64 $ BS.replicate 91 k
+        }
 
 makePayloads :: [Vrp] -> Set.Set BGPSecPayload -> [Aspa] -> RtrPayloads
 makePayloads vrps bgpSec aspas =

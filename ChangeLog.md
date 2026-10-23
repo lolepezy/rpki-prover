@@ -7,6 +7,8 @@
   session with the same data immediately, also if the cache is rebuilt, as
   long as the data is younger than the Expire Interval. The Expire Interval
   sent to routers is set with `--rtr-expire-interval` (default 7200 seconds).
+  A state written by a newer version with data that this one doesn't know,
+  e.g. after a downgrade, is served without that data in a new session.
 - Responses to Reset Queries always have the data of the serial they report.
   The RTR state is no longer re-read from the cache for every update.
 - A fetch, also one that fails after storing something, makes the TAs that
