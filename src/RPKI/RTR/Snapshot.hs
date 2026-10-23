@@ -22,9 +22,33 @@
          - LZ4-compressed PDUs
 
    The PDUs are what a Cache Response of protocol version 2 contains, i.e.
-   IPv4 and IPv6 Prefix, Router Key and ASPA announcements, so the payloads
-   are in a format that never changes. Its header, then, is the only thing
-   that may need a new format version.
+   IPv4 and IPv6 Prefix, Router Key and ASPA announcements.
+
+   Every PDU starts with its protocol version and type and has its length in
+   bytes 4-7, so the payloads are read PDU by PDU, and the ones of an unknown
+   version and type are skipped. That is what keeps the files of every version
+   of rpki-prover readable when the payloads change:
+
+     * New payloads, or new layouts of the existing ones, come with new PDUs,
+       i.e. with a new version and type. Older files are still read with the
+       decoders in 'pduDecoders', which must therefore never be removed.
+
+     * A file written before a payload type was known has no PDUs of it, and
+       that is exactly what routers got from that version of rpki-prover, so
+       the session carries on.
+
+     * A file written by a newer rpki-prover may have PDUs that this one
+       doesn't know. They are skipped, but routers may still have them, and
+       diffs from the rest of the payloads would never withdraw them. So the
+       payloads are served in a new session, see 'unknownPdus'.
+
+     * The format version only changes with the header, or if a PDU that is
+       already persisted changes its layout without changing its version and
+       type, e.g. if version 2 changes before 8210bis is final. Then the
+       decoders of the older format versions must stay too.
+
+   test/data/rtr-state has a file of every format version, they must stay
+   readable.
 
    Persisted state is only used if its payloads are younger than the Expire
    Interval: routers don't keep data longer than that either.
@@ -47,17 +71,18 @@ import           Codec.Compression.LZ4            (compress, decompress)
 import           Control.Exception
 import           Control.Monad
 
-import           Data.Binary                      (get)
 import           Data.Binary.Get
 import           Data.Binary.Put
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
 import           Data.Foldable                    (toList)
+import           Data.Map.Strict                  (Map)
+import qualified Data.Map.Strict                  as Map
 import qualified Data.Sequence                    as Seq
 import qualified Data.Set                         as Set
 import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
-import           Data.Word                        (Word16)
+import           Data.Word                        (Word16, Word8)
 
 import qualified Crypto.Hash.SHA256               as S256
 
@@ -84,7 +109,11 @@ data RtrSnapshot = RtrSnapshot {
         sessionId    :: RtrSessionId,
         serial       :: SerialNumber,
         writtenAt    :: Instant,
-        payloads     :: RtrPayloads
+        payloads     :: RtrPayloads,
+        -- | PDUs skipped because there is no decoder for their version and
+        -- type, i.e. the state was written by a newer rpki-prover. Routers
+        -- may have them.
+        unknownPdus  :: Int
     }
     deriving stock (Show, Eq)
 
@@ -141,7 +170,7 @@ decodeSnapshot bytes = do
                         decompress compressed
     unless (BS.length uncompressed == pdus && S256.hash uncompressed == checksum) $
         Left "Payloads of the RTR state don't match their checksum"
-    payloads <- payloadsFromPdus uncompressed
+    (payloads, unknownPdus) <- payloadsFromPdus uncompressed
     pure RtrSnapshot {..}
   where
     getSnapshot = do
@@ -159,43 +188,58 @@ decodeSnapshot bytes = do
         compressed   <- getByteString . fromIntegral =<< getWord64be
         pure (sessionId, serial, worldVersion, writtenAt, pdus, checksum, compressed)
 
--- | Payloads from the PDUs of a full Cache Response of protocol version 2.
-payloadsFromPdus :: BS.ByteString -> Either Text RtrPayloads
+-- | Decoders of the PDUs in persisted payloads by protocol version and PDU
+-- type, each reading what follows these two bytes.
+--
+-- Never remove one, and if 'parseVersionedPdu' changes the layout of one of
+-- them, keep the old layout here (see the module header).
+pduDecoders :: Map (Word8, Word8) (Get Pdu)
+pduDecoders = Map.fromList [ ((2, code), parseVersionedPdu V2 (PduCode code)) | code <- [4, 6, 9, 11] ]
+
+-- | Payloads from the PDUs of a full Cache Response, and the number of PDUs
+-- skipped because there is no decoder for them.
+payloadsFromPdus :: BS.ByteString -> Either Text (RtrPayloads, Int)
 payloadsFromPdus bytes =
-    case runGetOrFail (go Seq.empty Seq.empty Seq.empty) (LBS.fromStrict bytes) of
+    case runGetOrFail (go Seq.empty Seq.empty Seq.empty 0) (LBS.fromStrict bytes) of
         Left (_, offset, e) -> Left [i|Broken PDU in the RTR state at #{offset}: #{e}|]
-        Right (_, _, (vrps, routerKeys, aspas)) ->
-            Right RtrPayloads {
+        Right (_, _, (vrps, routerKeys, aspas, unknown)) ->
+            Right (RtrPayloads {
                 -- Only the unique ones matter for RTR
                 vrps       = mempty,
                 uniqueVrps = uniqVrpsPackedBy cmpPacked4 cmpPacked6 $ createVrps vrps,
                 bgpSec     = Set.fromList $ toList routerKeys,
                 aspas      = Set.fromList $ toList aspas
-            }
+            }, unknown)
   where
-    go !vrps !routerKeys !aspas =
+    go !vrps !routerKeys !aspas !unknown =
         isEmpty >>= \case
-            True  -> pure (vrps, routerKeys, aspas)
+            True  -> pure (vrps, routerKeys, aspas, unknown)
             False -> do
-                version <- getWord8
-                unless (version == 2) $ fail [i|unexpected protocol version #{version}|]
-                pdu <- parseVersionedPdu V2 =<< get
-                case pdu of
-                    IPv4PrefixPdu Announcement prefix asn maxLength ->
-                        go (vrps Seq.|> Vrp asn (Ipv4P prefix) maxLength) routerKeys aspas
-                    IPv6PrefixPdu Announcement prefix asn maxLength ->
-                        go (vrps Seq.|> Vrp asn (Ipv6P prefix) maxLength) routerKeys aspas
-                    RouterKeyPdu asn Announcement ski spki -> let
-                        key = BGPSecPayload {
-                                bgpSecSki  = ski,
-                                bgpSecAsns = [asn],
-                                bgpSecSpki = SPKI $ encodeBase64 $ DecodedBase64 $ LBS.toStrict spki
-                            }
-                        in go vrps (routerKeys Seq.|> key) aspas
-                    AspaPdu Announcement customer providers ->
-                        go vrps routerKeys (aspas Seq.|> Aspa customer (Set.fromList providers))
-                    other ->
-                        fail [i|unexpected PDU #{other}|]
+                (version, code, len) <- lookAhead $
+                    (,,) <$> getWord8 <*> getWord8 <*> (skip 2 >> getWord32be)
+                -- Every PDU has at least these 8 bytes
+                when (len < 8) $ fail [i|wrong PDU length #{len}|]
+                case Map.lookup (version, code) pduDecoders of
+                    Nothing -> do
+                        skip $ fromIntegral len
+                        go vrps routerKeys aspas (unknown + 1)
+                    Just decode ->
+                        isolate (fromIntegral len) (skip 2 >> decode) >>= \case
+                            IPv4PrefixPdu Announcement prefix asn maxLength ->
+                                go (vrps Seq.|> Vrp asn (Ipv4P prefix) maxLength) routerKeys aspas unknown
+                            IPv6PrefixPdu Announcement prefix asn maxLength ->
+                                go (vrps Seq.|> Vrp asn (Ipv6P prefix) maxLength) routerKeys aspas unknown
+                            RouterKeyPdu asn Announcement ski spki -> let
+                                key = BGPSecPayload {
+                                        bgpSecSki  = ski,
+                                        bgpSecAsns = [asn],
+                                        bgpSecSpki = SPKI $ encodeBase64 $ DecodedBase64 $ LBS.toStrict spki
+                                    }
+                                in go vrps (routerKeys Seq.|> key) aspas unknown
+                            AspaPdu Announcement customer providers ->
+                                go vrps routerKeys (aspas Seq.|> Aspa customer (Set.fromList providers)) unknown
+                            other ->
+                                fail [i|unexpected PDU #{other}|]
 
 -- | Write it so that the file is either the previous or the new state,
 -- also if the system crashes in the middle.
