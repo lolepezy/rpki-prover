@@ -115,7 +115,8 @@ rtrPduParseGroup = testGroup "RTR PDU parser tests" [
 rtrStateGroup :: TestTree
 rtrStateGroup = testGroup "RTR state unit tests" [
         testRtrStateUpdates,
-        testDiffsFromSerial
+        testDiffsFromSerial,
+        testDiffsGrowWithData
     ]
 
 rtrNegotiationGroup :: TestTree
@@ -376,6 +377,25 @@ testDiffsFromSerial = HU.testCase "Should only give diffs that start right after
     HU.assertEqual "Right before the latest diff" (Just [SerialNumber 4]) (serialsAfter 3)
     HU.assertEqual "The diff right after it is gone" Nothing (serialsAfter 2)
     HU.assertEqual "Already the latest" Nothing (serialsAfter 4)
+
+
+testDiffsGrowWithData :: TestTree
+testDiffsGrowWithData = HU.testCase "Should keep diffs as big as the data has been" $ do
+    appState <- newAppState
+    worldVersion <- getOrCreateWorldVerion appState
+    vrps1 <- generateVrps 10
+    vrps2 <- generateVrps 10
+    let servedWith vrpSet = servedPayloads RtrPayloads {
+                vrps = mempty, uniqueVrps = createVrps $ Set.toList vrpSet, bgpSec = mempty, aspas = mempty }
+        add state vrpSet everything = updatedRtrState state worldVersion
+                newRtrDiff { vrpDiff = Diff vrpSet mempty } (servedWith everything)
+        -- As after a cold start: there was no data at first
+        rtrState1 = add (emptyRtrState worldVersion) vrps1 vrps1
+        rtrState2 = add rtrState1 vrps2 (vrps1 <> vrps2)
+
+    HU.assertEqual "Both diffs" [SerialNumber 3, SerialNumber 2] (map fst $ toList $ diffs rtrState2)
+    HU.assertEqual "From the first serial" (Just [SerialNumber 3, SerialNumber 2]) $
+        map fst <$> diffsFromSerial rtrState2 initialSerial
 
 
 -- rtrToStr RtrState {..} = 

@@ -45,8 +45,9 @@ newRtrState worldVersion sessionId serial intervals served =
         maxSerialsPerSession  = 20,
         diffs                 = mempty,
         totalDiffSize         = 0,
-        -- Do not store more than amound of VRPs in the diffs as the initial size.
-        -- It's totally heuristical way of avoiding memory bloat
+        -- Do not store more VRPs in the diffs than there are in the data, as much
+        -- as it has been (see 'updatedRtrState'). It's totally heuristical way
+        -- of avoiding memory bloat
         maxTotalDiffSize      = vrpsCount $ served ^. #payloads . #uniqueVrps,
         ..
     }
@@ -62,10 +63,16 @@ updatedRtrState RtrState {..} worldVersion diff newServed =
         currentSerial = newSerial,
         totalDiffSize = newTotalSize,
         served = newServed,
+        maxTotalDiffSize = newMaxTotalDiffSize,
         ..
     }
     where
         newSerial = nextSerial currentSerial
+
+        -- Not the size of the data at the start, which is nothing after a cold
+        -- start: then only the latest diff would be kept and every router that
+        -- missed a serial would need to get everything again.
+        newMaxTotalDiffSize = max maxTotalDiffSize $ vrpsCount $ newServed ^. #payloads . #uniqueVrps
 
         -- strip off the oldest serial if either
         --   * the list of diffs is getting too long
@@ -78,7 +85,7 @@ updatedRtrState RtrState {..} worldVersion diff newServed =
             where
                 shrinkUntilSizeFits newDiffs@[_] newSize = (newDiffs, newSize)
                 shrinkUntilSizeFits newDiffs newSize =
-                    if length newDiffs > maxSerialsPerSession || newSize > maxTotalDiffSize
+                    if length newDiffs > maxSerialsPerSession || newSize > newMaxTotalDiffSize
                         then
                             case Deq.unsnoc newDiffs of
                                 Nothing -> (newDiffs, newSize)
