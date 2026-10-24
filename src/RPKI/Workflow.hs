@@ -24,11 +24,11 @@ import qualified Data.Text                       as Text
 import           Data.Map.Strict                 (Map)
 import qualified Data.Map.Strict                 as Map
 import qualified Data.Map.Monoidal.Strict        as MonoidalMap
+import           Data.Monoid                     (Sum (..))
 import qualified Data.Set                        as Set
 import           Data.Maybe                      (fromMaybe, catMaybes, isJust)
 import           Data.Hourglass
 import           Data.Time.Clock                 (NominalDiffTime, diffUTCTime, getCurrentTime)
-import qualified Data.IxSet.Typed                as IxSet
 
 import           Data.String.Interpolate.IsString
 import           System.Exit
@@ -43,8 +43,6 @@ import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Messages
 import           RPKI.Reporting
-import           RPKI.Repository
-import           RPKI.Fetch.Fetch
 import           RPKI.Logging
 import           RPKI.Metrics.Process
 import           RPKI.Metrics.System
@@ -235,20 +233,13 @@ runAll appContext@AppContext {..} tals = do
             Just vrps' ->                 
                 LBS.writeFile vrpOutputFile $ unRawCSV $ vrpDtosToCSV $ toVrpDtos vrps'
 
-    hasValidatedEverythingForEveryTA WorkflowShared { fetchers = Fetchers {..}} = do 
-        -- check if for every TA the last validation time is later than 
-        -- all of the first fetching dates for the repositories
-        versions  <- DB.roTxT database DB.getLatestVersions
-        fetchedBy <- readTVarIO firstFinishedFetchBy                
-        urisByTA  <- readTVarIO uriByTa
-        
-        -- Every repository of the TA must have been fetched at least once, and 
-        -- the TA must have been validated after all of those first fetches.
-        pure $ all (\(ta, validatedBy) -> 
-                let urls = IxSet.indexKeys $ IxSet.getEQ ta urisByTA
-                in not (null urls) && 
-                   all (\url -> maybe False (validatedBy >) $ Map.lookup url fetchedBy) urls
-            ) $ perTA versions
+    hasValidatedEverythingForEveryTA workflowShared = do
+        -- Every TA has been validated and its latest validation found no CA
+        -- that more data could still come for: for every CA something had been
+        -- fetched or all of its publication points had been tried, successfully
+        -- or not (see `validateCaNoLimitChecks`).
+        pendingCas <- readTVarIO $ workflowShared ^. #pendingCas
+        pure $ all (\ta -> Map.lookup ta pendingCas == Just 0) allTaNames
 
 
     schedules workflowShared = [            
@@ -378,11 +369,14 @@ runAll appContext@AppContext {..} tals = do
                     reportError [i|Validator process failed: #{e}.|]                    
 
                 Right (ValidationResult vs discovered) -> do
-                    adjustFetchers appContext (fmap fst discovered) workflowShared
+                    adjustFetchers appContext (fmap (^. #discoveredRepositories) discovered) workflowShared
                     -- What this validation found replaces what the previous ones did
                     atomically $ modifyTVar' (workflowShared ^. #nextValidation) $ Map.union $
-                        fmap (dueAfterValidation revalidationInterval (versionToInstant worldVersion) . snd) 
+                        fmap (dueAfterValidation revalidationInterval (versionToInstant worldVersion)
+                                . (^. #earliestValidityChange))
                             discovered
+                    atomically $ modifyTVar' (workflowShared ^. #pendingCas) $ Map.union $
+                        fmap (^. #pendingCas) discovered
 
                     -- The worker has saved the version, SLURM is read and
                     -- stored for it here since the worker doesn't read files.
@@ -592,7 +586,7 @@ runValidation :: AppContext
             -> WorldVersion
             -> [TAL]
             -> [TaName]
-            -> IO (ValidationState, Map TaName (Fetcheables, EarliestValidityChange))
+            -> IO (ValidationState, Map TaName TaValidationResult)
 runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames = do           
 
     results <- validateMultipleTAs appContext worldVersion talsToValidate
@@ -627,7 +621,8 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deletedStr} oldest version(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, 
-        Map.map (\r -> (r ^. #discoveredRepositories, r ^. #earliestValidityChange)) results)
+        Map.map (\r -> TaValidationResult (r ^. #discoveredRepositories)
+                            (r ^. #earliestValidityChange) (getSum $ r ^. #pendingCas)) results)
 
   where
     addUniqueVrpCountsToMetrics tx results = do

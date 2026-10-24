@@ -50,6 +50,10 @@ data WorkflowShared = WorkflowShared {
         -- When each TA is to be revalidated at the latest (see `revalidateWhenDue`)
         nextValidation :: TVar (Map TaName Due),
 
+        -- How many CAs the latest validation of each TA found that nothing
+        -- had been fetched for, with publication points still to be tried
+        pendingCas :: TVar (Map TaName Int),
+
         tals :: [TAL]
     }
     deriving stock (Generic)
@@ -72,6 +76,7 @@ withWorkflowShared AppContext {..} prometheusMetrics tals f = do
         nextValidation <- newTVar $ Map.fromList 
             [ (getTaName tal, Periodic $ momentAfter now $ config ^. #validationConfig . #revalidationInterval) 
             | tal <- tals ]
+        pendingCas     <- newTVar mempty
         pure WorkflowShared {..}
 
     f shared `finally` liftIO (stopAllFetchers (shared ^. #fetchers))

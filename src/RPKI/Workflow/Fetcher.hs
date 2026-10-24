@@ -177,7 +177,6 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                         $ runFetch url
                             $ fetchRepository appContext worldVersion repository
 
-            rememberFirstFetchBy worldVersion
             updatePrometheusForRepository url duration prometheusMetrics
 
             -- TODO Use durationMs, it is the only time metric for failed and killed fetches 
@@ -400,8 +399,3 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                               [i|decision: #{decision}, TAs: #{Set.toList tas}.|]
         when (decision == RevalidateNow) $
             requestRevalidation tasToValidate tas
-    
-    rememberFirstFetchBy version = atomically $ do 
-        fff <- readTVar firstFinishedFetchBy
-        when (Map.notMember url fff) $ 
-            writeTVar firstFinishedFetchBy $ Map.insert url version fff
