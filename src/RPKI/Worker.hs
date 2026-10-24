@@ -310,7 +310,19 @@ newtype ErikFetchStat = ErikFetchStat {
 
 data ValidationResult = ValidationResult
             ValidationState
-            (Map.Map TaName (Fetcheables, Set.Set RsyncURL, EarliestValidityChange))
+            (Map.Map TaName TaValidationResult)
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+data TaValidationResult = TaValidationResult {
+        discoveredRepositories :: Fetcheables,
+        -- | The rsync publication points of the CAs, discovered repositories
+        -- can have directories above them instead
+        rsyncPublicationPoints :: Set.Set RsyncURL,
+        earliestValidityChange :: EarliestValidityChange,
+        -- | CAs that nothing had been fetched for
+        pendingCas             :: Int
+    }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
