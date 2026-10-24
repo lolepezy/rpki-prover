@@ -118,13 +118,15 @@ squashDiffs diffs =
     }
   where
     sortedDiffs = map snd $ List.sortOn fst diffs
-    squash diff resultDiff = let
-         added'   = added diff   <> added resultDiff
-         deleted' = deleted diff <> deleted resultDiff
-         in Diff {
-             added   = added'  \\ deleted resultDiff,
-             deleted = deleted' \\ added resultDiff
-         }
+    -- What a diff and the later ones, squashed already, add up to. Something that
+    -- one of them adds and the other one deletes is the same before and after
+    -- them, so it's not a change: a router would reject the announcement of what
+    -- it has or the withdrawal of what it doesn't have.
+    squash earlier later =
+        Diff {
+            added   = (added earlier \\ deleted later) <> (added later \\ deleted earlier),
+            deleted = (deleted earlier \\ added later) <> (deleted later \\ added earlier)
+        }
 
 
 -- | Create a diff, optimising typical corner-cases.
