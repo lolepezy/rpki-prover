@@ -3,6 +3,7 @@ module RPKI.RTR.RtrSpec where
 import           Control.Monad
 
 import qualified Data.ByteString.Lazy              as LBS
+import           Data.Foldable                     (toList)
 import qualified Data.List                         as List
 import           Data.Set                          (Set)
 import qualified Data.Set                          as Set
@@ -112,7 +113,8 @@ rtrPduParseGroup = testGroup "RTR PDU parser tests" [
 
 rtrStateGroup :: TestTree
 rtrStateGroup = testGroup "RTR state unit tests" [
-        testRtrStateUpdates
+        testRtrStateUpdates,
+        testDiffsFromSerial
     ]
 
 rtrNegotiationGroup :: TestTree
@@ -344,6 +346,23 @@ testRtrStateUpdates = HU.testCase "Should update RTR state and shrink it when ne
     let withAspas = updatedRtrState (emptyRtrState version) version 
                         newRtrDiff { aspaDiff = Diff aspas1 aspas2 } emptyServed
     HU.assertEqual "Wrong total size" (Set.size aspas1 + Set.size aspas2) (totalDiffSize withAspas)
+
+
+testDiffsFromSerial :: TestTree
+testDiffsFromSerial = HU.testCase "Should only give diffs that start right after the serial" $ do
+    appState <- newAppState
+    worldVersion <- getOrCreateWorldVerion appState
+    vrps <- generateVrps 3
+    let addVrp state vrp = updatedRtrState state worldVersion
+                                newRtrDiff { vrpDiff = Diff (Set.singleton vrp) mempty } emptyServed
+        -- As after a cold start: there was no data, so only the latest diff is kept
+        rtrState = List.foldl' addVrp ((emptyRtrState worldVersion) { maxTotalDiffSize = 0 }) $ Set.toList vrps
+        serialsAfter = fmap (map fst) . diffsFromSerial rtrState . SerialNumber
+
+    HU.assertEqual "Only the latest diff" [SerialNumber 4] (map fst $ toList $ diffs rtrState)
+    HU.assertEqual "Right before the latest diff" (Just [SerialNumber 4]) (serialsAfter 3)
+    HU.assertEqual "The diff right after it is gone" Nothing (serialsAfter 2)
+    HU.assertEqual "Already the latest" Nothing (serialsAfter 4)
 
 
 -- rtrToStr RtrState {..} = 
