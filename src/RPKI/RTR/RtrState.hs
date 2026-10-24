@@ -96,11 +96,14 @@ diffSize GenDiffs {..} = size vrpDiff + size bgpSecDiff + size aspaDiff
 
 -- | Return all the diffs starting from some serial if we have this data.
 -- 
+-- The oldest diffs are dropped when there are too many of them, a client
+-- that needs one of those can only get everything from scratch.
 diffsFromSerial :: RtrState -> SerialNumber -> Maybe [(SerialNumber, RtrDiffs)]
 diffsFromSerial RtrState {..} clientSerial =
     case List.takeWhile ((> clientSerial) . fst) (toList diffs) of
         [] -> Nothing
-        z -> Just z
+        z | fst (List.last z) == nextSerial clientSerial -> Just z
+          | otherwise                                    -> Nothing
 
 
 -- | Transform a list of diffs into one diff that doesn't contain duplicates
