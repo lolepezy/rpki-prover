@@ -47,6 +47,7 @@ rtrDiffsGroup = testGroup "RTR diff unit tests" [
         testTwoIndependentDiffs,
         testTwoDependentDiffs,
         testThreeDiffs,
+        testSquashFromFirstToLast,
         testGenerateDiffs,
         testMergeAspasByCustomer,
         testAspaDiffPdus
@@ -149,7 +150,7 @@ testTwoIndependentDiffs = HU.testCase "Should squash two unrelated diffs" $
 testTwoDependentDiffs :: TestTree
 testTwoDependentDiffs = HU.testCase "Should squash two related diffs" $
     HU.assertEqual "It's a bummer"                             
-        (mkNewDiff [1, 4, 5] [2, 3] :: GenDiffs Int Int Int)
+        (mkNewDiff [1, 5] [3] :: GenDiffs Int Int Int)
         $ squash [
             mkNewDiff [1,2] [3,4],
             mkNewDiff [4,5] [2]            
@@ -158,12 +159,24 @@ testTwoDependentDiffs = HU.testCase "Should squash two related diffs" $
 testThreeDiffs :: TestTree
 testThreeDiffs = HU.testCase "Should squash three diffs properly" $     
     HU.assertEqual "It's a bummer"                 
-        (mkNewDiff [2, 3, 4, 5] [1, 6] :: GenDiffs Int Int Int)
+        (mkNewDiff [2, 5] [6] :: GenDiffs Int Int Int)
         $ squash [
             mkNewDiff [1,2] [3,4],
             mkNewDiff [4,5] [2],            
-            mkNewDiff [2,3,4] [6,1]    
+            -- 6 was there before all of them
+            mkNewDiff [2,3] [6,1]    
         ]
+
+
+testSquashFromFirstToLast :: TestTree
+testSquashFromFirstToLast = QC.testProperty "Should squash diffs into the change from the first state to the last" $
+    \(states :: [[Word8]]) ->
+        let sets  = map Set.fromList states
+            diffs = [ GenDiffs { vrpDiff = setDiff a b, bgpSecDiff = newDiff, aspaDiff = newDiff } :: GenDiffs Word8 Int Int
+                    | (a, b) <- zip sets (drop 1 sets) ]
+        in case sets of
+            first : _ : _ -> vrpDiff (squash diffs) == setDiff first (List.last sets)
+            _             -> True
 
 
 squash :: (Ord a, Ord b, Ord c) => [GenDiffs a b c] -> GenDiffs a b c
