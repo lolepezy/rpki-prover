@@ -31,7 +31,9 @@ import           RPKI.Domain
 import           RPKI.Parse.Parse
 import           RPKI.AppContext                  (AppContext)
 import           RPKI.Reporting
-import           RPKI.Repository                  (PublicationPointAccess (..), rsyncPP)
+import           RPKI.Repository                  (FetchStatus (..), PublicationPointAccess (..),
+                                                   getPublicationPointsFromWellStructuredCert,
+                                                   newRepository, rsyncPP, updateMeta')
 import qualified RPKI.Resources.IntervalContainers as IS
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storable         (Compressed (..), Verbatim (..), serialiseField, toStorable)
@@ -88,6 +90,7 @@ topDownRegressionGroup =
         , HU.testCase "Checks the ASNs of a router certificate against its CA" shouldCheckRouterCertificateAsns
         , HU.testCase "Cuts only the path that is too deep" shouldCutOnlyThePathThatIsTooDeep
         , HU.testCase "Counts the size of the tree of every TA on its own" shouldCountTreeSizePerTa
+        , HU.testCase "Counts the CAs that more data may come for" shouldCountPendingCas
         , HU.testCase "Writes the shortcut of an accepted manifest, with warnings or not" shouldWriteShortcutOfAcceptedManifest
         , HU.testCase "Deletes the shortcut of a CA without an accepted manifest" shouldDeleteShortcutOfCaWithoutManifest
         , HU.testCase "Forces a snapshot only when no manifest can be used" shouldForceSnapshotOnlyWithoutFallback
@@ -380,6 +383,41 @@ shouldCountTreeSizePerTa =
         readTVarIO (ripe ^. #treeSize) >>= HU.assertEqual "Every object once" 3
         readTVarIO (arin ^. #treeSize) >>= HU.assertEqual
             "Only its own, an object of both is of the TA that got to it first" 1
+
+
+-- | More data may come for a CA until something has been fetched for it, or
+-- all of its publication points that can be fetched have been tried.
+shouldCountPendingCas :: HU.Assertion
+shouldCountPendingCas =
+    withTestContext $ \appContext -> do
+        ca@(CaFull c) <- fixtureCa
+        Right (PublicationPointAccess (rrdp :| [rsync])) <-
+            pure $ getPublicationPointsFromWellStructuredCert c.payload
+        Now now <- thisInstant
+        db <- readTVarIO $ appContext ^. #database
+        let pendingCas appContext' statuses = do
+                DB.rwTx db $ \tx -> DB.saveRepositories tx
+                    [ updateMeta' (newRepository $ getRpkiURL pp) (#status .~ status)
+                    | (pp, status) <- statuses ]
+                (topDownContext, _) <- newTestTopDownContext appContext'
+                void $ runValidatorIO (newScopes "pending") $ validateCa appContext' topDownContext ca
+                readTVarIO (topDownContext ^. #pendingCas)
+
+        let noRsync = appContext & #config . #rsyncConf . #enabled .~ False
+        let nothingEnabled = noRsync & #config . #rrdpConf . #enabled .~ False
+
+        pendingCas appContext [(rrdp, Pending), (rsync, Pending)]
+            >>= HU.assertEqual "Nothing has been tried" 1
+        pendingCas nothingEnabled [(rrdp, Pending), (rsync, Pending)]
+            >>= HU.assertEqual "Nothing can be tried" 0
+        pendingCas appContext [(rrdp, FailedAt now), (rsync, Pending)]
+            >>= HU.assertEqual "The rsync fallback is still to be tried" 1
+        pendingCas noRsync [(rrdp, FailedAt now), (rsync, Pending)]
+            >>= HU.assertEqual "There's no rsync fallback to try" 0
+        pendingCas appContext [(rrdp, FailedAt now), (rsync, FailedAt now)]
+            >>= HU.assertEqual "Everything has been tried" 0
+        pendingCas appContext [(rrdp, FetchedAt now), (rsync, Pending)]
+            >>= HU.assertEqual "Something has been fetched" 0
 
 
 -- | Which manifest of a CA is validated, and how.
