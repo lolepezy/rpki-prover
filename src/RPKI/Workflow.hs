@@ -233,13 +233,14 @@ runAll appContext@AppContext {..} tals = do
             Just vrps' ->                 
                 LBS.writeFile vrpOutputFile $ unRawCSV $ vrpDtosToCSV $ toVrpDtos vrps'
 
-    hasValidatedEverythingForEveryTA workflowShared = do
-        -- Every TA has been validated and its latest validation found no CA
-        -- that more data could still come for: for every CA something had been
-        -- fetched or all of its publication points had been tried, successfully
-        -- or not (see `validateCaNoLimitChecks`).
-        pendingCas <- readTVarIO $ workflowShared ^. #pendingCas
-        pure $ all (\ta -> Map.lookup ta pendingCas == Just 0) allTaNames
+    hasValidatedEverythingForEveryTA workflowShared =
+        allSettled <$> readTVarIO (workflowShared ^. #pendingCas)
+
+    -- Every TA has been validated and its latest validation found no CA
+    -- that more data could still come for: for every CA something had been
+    -- fetched or all of its publication points had been tried, successfully
+    -- or not (see `validateCaNoLimitChecks`).
+    allSettled pendingCas = all (\ta -> Map.lookup ta pendingCas == Just 0) allTaNames
 
 
     schedules workflowShared = [            
@@ -404,6 +405,7 @@ runAll appContext@AppContext {..} tals = do
                         pure (mempty, mempty)
                     Just rtrPayloads -> atomically $ do                                                    
                         slurmedPayloads <- completeVersion appState worldVersion rtrPayloads maybeSlurm 
+                        writeTVar (appState ^. #settled) . allSettled =<< readTVar (workflowShared ^. #pendingCas)
                         when (config ^. #withValidityApi) $
                             updatePrefixIndex appState slurmedPayloads
                         pure (rtrPayloads, slurmedPayloads)

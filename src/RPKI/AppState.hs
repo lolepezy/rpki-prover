@@ -6,10 +6,8 @@ import           Effectful
 import           Control.Concurrent.STM    
 import           Control.DeepSeq
 import           Control.Lens hiding (filtered)
-import           Control.Monad (join, unless)
+import           Control.Monad (join)
 import           Data.Maybe (fromMaybe)
-
-import qualified Data.ByteString                  as BS
 
 import           Data.Foldable                    (toList)
 import           Data.Set                         (Set)
@@ -30,7 +28,6 @@ import           RPKI.Reporting
 import           RPKI.Time
 import           Data.Hourglass (Seconds(..))
 import           RPKI.Metrics.System
-import           RPKI.RTR.Protocol
 import           RPKI.RTR.Types
 import           RPKI.Resources.Validity
 
@@ -44,6 +41,11 @@ data AppState = AppState {
 
         -- The same but filtered through SLURM 
         filtered  :: TVar RtrPayloads,
+
+        -- Whether the current version is as complete as fetching allows: the
+        -- latest validation of every TA found no CA that more data could still
+        -- come for. It is set together with the version.
+        settled   :: TVar Bool,
 
         -- Health of the Erik relays, as reported by the fetch workers.
         -- Kept in the root process so that a worker started later already
@@ -196,6 +198,7 @@ newAppState = do
         world       <- newTVar Nothing
         validated   <- newTVar mempty
         filtered    <- newTVar mempty        
+        settled     <- newTVar False
         rtrState    <- newTVar Nothing        
         system      <- newTVar (newSystemInfo now)        
         prefixIndex <- newTVar Nothing

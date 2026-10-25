@@ -55,8 +55,6 @@ import           RPKI.Resources.Types
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
 import           RPKI.Store.Base.Storable
-
-import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
 import qualified RPKI.Util                   as U
@@ -400,6 +398,7 @@ instance ToJSON SessionId where
     toJSON (SessionId s) = toJSON s
 
 instance ToJSON RtrState
+instance ToJSON CarriedOver
 instance ToJSON Intervals
 
 -- | Only how much there is: the payloads themselves are available 

@@ -52,7 +52,19 @@ data RtrState = RtrState {
         intervals             :: Intervals,
         -- | What the cache serves at 'currentSerial'. It is replaced together 
         -- with the serial, so that a response never mixes the two up.
-        served                :: ServedPayloads
+        served                :: ServedPayloads,
+        -- | Served together with the new payloads after a restart,
+        -- see 'RPKI.RTR.RtrState.withCarriedOver'
+        carriedOver           :: Maybe CarriedOver
+    }
+    deriving stock (Show, Eq, Generic)
+
+-- | What routers got before a restart, from the persisted state.
+data CarriedOver = CarriedOver {
+        served  :: ServedPayloads,
+        -- | Of the payloads, they are carried over until it is
+        -- older than the Expire Interval
+        version :: WorldVersion
     }
     deriving stock (Show, Eq, Generic)
 

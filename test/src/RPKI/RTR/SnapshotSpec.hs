@@ -95,7 +95,52 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
             let sameAsBefore = worldVersionToRtrSessionId version
             HU.assertEqual "Without a previous session" sameAsBefore $ newSessionId version Nothing
             HU.assertBool "With the same previous session" $
-                newSessionId version (Just sameAsBefore) /= sameAsBefore
+                newSessionId version (Just sameAsBefore) /= sameAsBefore,
+
+        QC.testProperty "Should have the VRPs and ASPAs of both in the union" $
+            \vrps1 vrps2 aspas1 aspas2 ->
+                let before    = makePayloads vrps1 mempty aspas1
+                    validated = makePayloads vrps2 mempty aspas2
+                    union     = unionPayloads before validated
+                    vrpSet p  = Set.fromList $ vrpsToList p.uniqueVrps
+                    unionVrps = vrpsToList union.uniqueVrps
+                    -- AS0 alone says there are no providers, any provider replaces it
+                    providersOf p = [ (c, Set.delete (ASN 0) ps) | Aspa c ps <- Set.toList p.aspas ]
+                    hasAspasOf p  = all (\(c, ps) -> any (\(c', ps') -> c == c' && ps `Set.isSubsetOf` ps')
+                                                         (providersOf union))
+                                        (providersOf p)
+                in Set.fromList unionVrps == vrpSet before <> vrpSet validated
+                    && length unionVrps == Set.size (Set.fromList unionVrps)
+                    && hasAspasOf before && hasAspasOf validated
+                    && Set.size (Set.map (.customer) union.aspas) == Set.size union.aspas,
+
+        HU.testCase "Should have a router key in the union once for every ASN" $ do
+            let together = routerKeys 2
+                apart    = routerKeysPerAsn together
+                union    = unionPayloads (makePayloads [] together []) (makePayloads [] apart [])
+            HU.assertEqual "One for every ASN" apart union.bgpSec,
+
+        HU.testCase "Should serve the carried over payloads until the validation is settled" $ do
+            let before    = makePayloads [] (routerKeys 2) []
+                validated = makePayloads [] (routerKeys 3) []
+                carried   = CarriedOver (servedPayloads before) version
+                Instant v = versionToInstant version
+                secondsLater s = Instant $ v + s * nanosPerSecond
+                carryOver seconds settled maybeCarried =
+                    withCarriedOver (Seconds 7200) (secondsLater seconds) settled maybeCarried validated
+            HU.assertEqual "Not settled" (unionPayloads before validated, Just carried) $
+                carryOver 60 False (Just carried)
+            HU.assertEqual "Settled" (validated, Nothing) $ carryOver 60 True (Just carried)
+            HU.assertEqual "Too old" (validated, Nothing) $ carryOver 7200 False (Just carried)
+            HU.assertEqual "Nothing carried over" (validated, Nothing) $ carryOver 60 False Nothing,
+
+        HU.testCase "Should persist the version of the carried over payloads" $ do
+            let restored = makePayloads [] (routerKeys 2) []
+                older    = WorldVersion 1_600_000_000_000_000_000
+                state    = (stateOf restored) { carriedOver = Just $ CarriedOver (servedPayloads restored) older }
+            case decodeSnapshot (encodeSnapshot (Instant 1) state) of
+                Left e -> HU.assertFailure $ Text.unpack e
+                Right RtrSnapshot {..} -> HU.assertEqual "Version" older worldVersion
     ]
   where
     version = WorldVersion 1_700_000_000_000_000_000

@@ -165,10 +165,13 @@ runRtrServer appContext RtrConfig {..} = do
         atomically $ writeTVar rtrState $ Just initialRtrState
 
         race_ (notifyClients $ notifyKey initialRtrState) $ forever $ do
-            (rtrState', newVersion, currentRtrPayload) <- atomically $ do 
-                current <- maybe retry pure =<< readTVar rtrState
-                (newVersion, payloads) <- waitForNewVersion appState (current ^. #lastKnownWorldVersion)
-                pure (current, newVersion, payloads)
+            rtrState' <- atomically $ maybe retry pure =<< readTVar rtrState
+            (newVersion, validatedRtrPayload, settled) <- nextVersion appState rtrState'
+
+            Now now <- thisInstant
+            let (currentRtrPayload, carriedOver') =
+                    withCarriedOver rtrExpireInterval now settled (rtrState' ^. #carriedOver) validatedRtrPayload
+            logCarriedOver now (rtrState' ^. #carriedOver) carriedOver'
 
             let previousVersion    = rtrState' ^. #lastKnownWorldVersion
             let previousRtrPayload = rtrState' ^. #served . #payloads
@@ -189,9 +192,9 @@ runRtrServer appContext RtrConfig {..} = do
                               [i|ASPAs: #{previousAspaSize} -> #{currentAspaSize}.|]
 
             -- force evaluation of the new RTR state so that the old ones could be GC-ed.
-            let !nextRtrState = if thereAreRtrUpdates
+            let !nextRtrState = (if thereAreRtrUpdates
                     then updatedRtrState rtrState' newVersion rtrDiff (servedPayloads currentRtrPayload)
-                    else rtrState' { lastKnownWorldVersion = newVersion }
+                    else rtrState' { lastKnownWorldVersion = newVersion }) { carriedOver = carriedOver' }
 
             logDiff rtrDiff
 
@@ -217,8 +220,12 @@ runRtrServer appContext RtrConfig {..} = do
                         let (RtrSessionId s, SerialNumber n) = (sessionId, serial)
                         logInfo logger $ [i|RTR server: continuing session #{s} at serial #{n} with |] <> 
                                          [i|#{vrpsCount uniqueVrps} VRPs, #{Set.size bgpSec} router keys and |] <> 
-                                         [i|#{Set.size aspas} ASPAs of version #{worldVersion} from #{snapshotPath}.|]
-                        pure $ newRtrState worldVersion sessionId serial intervals (servedPayloads payloads)
+                                         [i|#{Set.size aspas} ASPAs of version #{worldVersion} from #{snapshotPath}, |] <>
+                                         [i|serving them together with the validated ones until the validation is settled.|]
+                        let restored = servedPayloads payloads
+                        pure $ (newRtrState worldVersion sessionId serial intervals restored) {
+                                    carriedOver = Just $ CarriedOver restored worldVersion
+                                }
 
                     | otherwise -> do 
                         logInfo logger $ [i|RTR server: the persisted RTR state of version #{worldVersion} |] <> 
@@ -235,6 +242,36 @@ runRtrServer appContext RtrConfig {..} = do
             logDebug logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxTotalDiffSize state}.|] 
             persist state
             pure state
+
+          -- The next version with its payloads and whether it is settled. While
+          -- payloads are carried over, it is also the moment they get too old,
+          -- then the current version is taken as if it were settled.
+          nextVersion appState current = do
+              tooOld <- case current ^. #carriedOver of
+                  Nothing      -> newTVarIO False
+                  Just carried -> do
+                      Now now <- thisInstant
+                      registerDelay $ microsecondsBetween now $ carriedUntil rtrExpireInterval carried
+              atomically $
+                  (do (newVersion, payloads) <- waitForNewVersion appState (current ^. #lastKnownWorldVersion)
+                      (newVersion, payloads, ) <$> readTVar (appState ^. #settled))
+                  `orElse`
+                  (do check =<< readTVar tooOld
+                      (current ^. #lastKnownWorldVersion, , True) <$> readRtrPayloads appState)
+
+          logCarriedOver now before after =
+              for_ before $ \carried -> do
+                  let until_ = carriedUntil rtrExpireInterval carried
+                  case after of
+                      Just _ ->
+                          logDebug logger $ [i|RTR server: serving the payloads from before the restart too, |] <>
+                                            [i|until the validation is settled or until #{until_}.|]
+                      Nothing
+                          | now >= until_ ->
+                              logInfo logger $ [i|RTR server: the payloads from before the restart are older |] <>
+                                               [i|than the expire interval, not serving them anymore.|]
+                          | otherwise ->
+                              logInfo logger [i|RTR server: the validation is settled, not serving the payloads from before the restart anymore.|]
 
           -- Failing to write it is not a reason to stop serving routers
           persist state = do 
