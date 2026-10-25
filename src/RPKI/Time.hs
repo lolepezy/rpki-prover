@@ -154,6 +154,12 @@ momentAfter :: Instant -> Seconds -> Instant
 momentAfter (Instant moment) (Seconds seconds) = 
     Instant $ moment + seconds * nanosPerSecond
 
+-- | Rounded up, so that a thread waiting for the later moment
+-- is not woken up before it.
+microsecondsBetween :: Instant -> Instant -> Int
+microsecondsBetween (Instant earlier) (Instant later) =
+    fromIntegral $ max 0 $ (later - earlier + 999) `div` 1000
+
 instantDateFormat :: Instant -> String
 instantDateFormat (Instant d) = timePrint format (fromNanoseconds d)
   where 

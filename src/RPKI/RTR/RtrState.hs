@@ -15,10 +15,13 @@ import           Data.Generics.Labels
 import           Deque.Strict   as Deq
 
 import           RPKI.AppTypes
-import           RPKI.Domain     (BGPSecPayload (..), Vrp, Vrps, packed4, packed6, unpack4, unpack6, vrpsCount)
-import           RPKI.Time      (nanosPerSecond)
+import           RPKI.Domain     (BGPSecPayload (..), Vrp, Vrps, packed4, packed6,
+                                  unionVrpsPackedBy, unpack4, unpack6, vrpsCount)
+import           RPKI.Time      (Instant (..), momentAfter, nanosPerSecond)
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
+
+import           Time.Types     (Seconds)
 
 
 newDiff :: Ord a => Diff a
@@ -49,6 +52,7 @@ newRtrState worldVersion sessionId serial intervals served =
         -- as it has been (see 'updatedRtrState'). It's totally heuristical way
         -- of avoiding memory bloat
         maxTotalDiffSize      = vrpsCount $ served ^. #payloads . #uniqueVrps,
+        carriedOver           = Nothing,
         ..
     }
 
@@ -182,6 +186,45 @@ routerKeysPerAsn =
     Set.fromList 
         . concatMap (\p -> [ p { bgpSecAsns = [asn] } | asn <- bgpSecAsns p ]) 
         . Set.toList
+
+-- | Everything that is in either of them: a route that one of them
+-- accepts is accepted by the union too.
+unionPayloads :: RtrPayloads -> RtrPayloads -> RtrPayloads
+unionPayloads a b =
+    RtrPayloads {
+        -- Only the unique ones matter for RTR, and they are always sorted
+        -- and deduplicated by these orderings
+        vrps       = mempty,
+        uniqueVrps = unionVrpsPackedBy cmpPacked4 cmpPacked6 (uniqueVrps a) (uniqueVrps b),
+        -- The same key can be there for its ASNs together and for each of them
+        bgpSec     = routerKeysPerAsn $ bgpSec a <> bgpSec b,
+        aspas      = mergeAspasByCustomer $ aspas a <> aspas b
+    }
+
+-- | Payloads routers got before a restart are not served once they are older
+-- than the Expire Interval, routers don't keep them for longer either.
+carriedUntil :: Seconds -> CarriedOver -> Instant
+carriedUntil expireInterval CarriedOver {..} =
+    momentAfter (Instant $ versionToInt version) expireInterval
+
+-- | What to serve after a validation, and what to keep carrying over.
+--
+-- After a restart, especially with a rebuilt cache, the validation may not
+-- have everything yet that routers got before it, and serving only what it has
+-- would make them drop the rest. So until the validation is settled, i.e. no more
+-- data can come from the fetches (see 'RPKI.AppState.settled'), what routers got
+-- before the restart is served together with what is validated. Routers get
+-- what the validation adds right away, and what it doesn't have anymore is
+-- withdrawn once it is settled, or once the carried over payloads are too old.
+withCarriedOver :: Seconds -> Instant -> Bool -> Maybe CarriedOver -> RtrPayloads
+                -> (RtrPayloads, Maybe CarriedOver)
+withCarriedOver expireInterval now settled carriedOver validated =
+    case carriedOver of
+        Just carried
+            | not settled && now < carriedUntil expireInterval carried ->
+                (unionPayloads (carried ^. #served . #payloads) validated, Just carried)
+        _ ->
+            (validated, Nothing)
 
 
 -- Wrap around at 2^31 - 1
