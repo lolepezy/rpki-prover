@@ -13,7 +13,8 @@
          - format version (Word16), 'snapshotFormatVersion'
          - session ID (Word16)
          - serial (Word32)
-         - world version of the payloads (Int64, nanoseconds since the epoch)
+         - world version of the payloads (Int64, nanoseconds since the epoch),
+           of the carried over ones while they are served too (see 'CarriedOver')
          - when it was written (Int64, nanoseconds since the epoch)
      * payloads:
          - length of the PDUs (Word64)
@@ -127,7 +128,9 @@ encodeSnapshot (Instant writtenAt) RtrState {..} =
         putWord16be s
         let SerialNumber n = currentSerial
         putInt32be n
-        putInt64be $ versionToInt lastKnownWorldVersion
+        -- The served payloads are as old as their oldest part, so carrying
+        -- them over again after another restart doesn't take longer
+        putInt64be $ versionToInt $ maybe lastKnownWorldVersion (.version) carriedOver
         putInt64be writtenAt
         putByteString $ persisted served
 
