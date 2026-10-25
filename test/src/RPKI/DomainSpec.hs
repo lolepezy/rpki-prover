@@ -32,6 +32,7 @@ domainCountersGroup =
         , HU.testCase "countSortedDistinct handles edge cases" testCountSortedDistinct
         , HU.testCase "countDistinctUnion handles edge cases" testCountDistinctUnion
         , QC.testProperty "countDistinctUnion agrees with Set.union" propCountDistinctUnion
+        , QC.testProperty "mergeDedup agrees with sortDedup of both" propMergeDedup
         ]
 
 
@@ -171,6 +172,15 @@ propCountDistinctUnion xss =
   where
     -- the merge's contract is that every source is already sorted
     sorted = map (VU.fromList . List.sort) xss
+
+
+-- The order is the one given, not Ord, so it's tested with a reversed one
+propMergeDedup :: [Int] -> [Int] -> Bool
+propMergeDedup xs ys =
+    mergeDedup cmp (sortDedup cmp $ VU.fromList xs) (sortDedup cmp $ VU.fromList ys)
+        == sortDedup cmp (VU.fromList $ xs <> ys)
+  where
+    cmp = flip compare
 
 
 perTaVrps :: PerTA Vrps
