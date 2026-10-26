@@ -10,6 +10,8 @@
   Until the validation after the restart is complete, the data from before
   the restart is served together with the validated data, so that routers
   don't lose anything while the cache is rebuilt.
+  A state written by a newer version with data that this one doesn't know,
+  e.g. after a downgrade, is served without that data in a new session.
 - Responses to Reset Queries always have the data of the serial they report.
   The RTR state is no longer re-read from the cache for every update.
 - A fetch, also one that fails after storing something, makes the TAs that
