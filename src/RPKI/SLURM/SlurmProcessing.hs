@@ -26,6 +26,7 @@ import           Data.These
 
 import           RPKI.AppMonad
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.Reporting
 import           RPKI.Resources.Types
 import           RPKI.Resources.Resources (prefixLen)

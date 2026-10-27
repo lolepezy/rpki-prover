@@ -19,6 +19,7 @@ import           GHC.Generics
 import           System.Posix.Types
 import           RPKI.AppMonad
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.AppTypes
 import           RPKI.Logging
 import           RPKI.SLURM.SlurmProcessing

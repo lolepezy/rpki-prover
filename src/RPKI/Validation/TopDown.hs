@@ -59,6 +59,7 @@ import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.Fetch.Fetch
 import           RPKI.Parse.Parse
 import           RPKI.Reporting
