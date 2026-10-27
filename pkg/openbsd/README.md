@@ -35,7 +35,7 @@ framework starts every build from a clean work directory. A new VM adds
 another 15 minutes or so for the upgrade and setup.
 
 By default the package is built from the committed `HEAD`. The script exports
-`HEAD`, runs `generate-modules.sh` on the export, and puts the tarball where
+`HEAD`, runs `write-build-info.sh` on the export, and puts the tarball where
 the ports tree expects the release tarball. `make makesum` then records the
 checksums in the VM's copy of the port only.
 
