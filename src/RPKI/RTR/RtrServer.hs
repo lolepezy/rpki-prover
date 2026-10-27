@@ -32,6 +32,7 @@ import           Network.Socket.ByteString        (recv, sendAll, sendMany)
 import           RPKI.AppContext
 import           RPKI.Config
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.Logging
 import           RPKI.Resources.Types
 import           RPKI.RTR.Pdus

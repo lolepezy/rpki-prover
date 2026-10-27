@@ -12,6 +12,7 @@ import           System.IO.Temp                    (withSystemTempDirectory)
 import           RPKI.AppState                     (versionToInstant)
 import           RPKI.AppTypes
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.Orphans                      ()
 import           RPKI.RTR.Protocol
 import           RPKI.RTR.RtrServer                (servedPayloads)

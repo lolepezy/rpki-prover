@@ -43,6 +43,7 @@ import HaskellWorks.Data.Network.Ip.Ip as Ips
 
 import           RPKI.AppTypes
 import           RPKI.Domain                 as Domain
+import           RPKI.Domain.Vrps            (vrpsCount)
 import           RPKI.Config
 
 import           RPKI.Logging

@@ -41,6 +41,7 @@ import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Logging

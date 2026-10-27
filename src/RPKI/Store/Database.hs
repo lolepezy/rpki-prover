@@ -100,6 +100,7 @@ import           Data.Bits                (shiftR, (.&.))
 import qualified Data.ByteString       as BS
 
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.Reporting
 import           RPKI.TAL
 import           RPKI.RRDP.Types

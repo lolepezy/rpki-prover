@@ -18,6 +18,7 @@ import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Data.String.Interpolate.IsString
 
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.AppMonad
 import           RPKI.Reporting
 import           RPKI.Orphans

@@ -15,8 +15,8 @@ import           Data.Generics.Labels
 import           Deque.Strict   as Deq
 
 import           RPKI.AppTypes
-import           RPKI.Domain     (BGPSecPayload (..), Vrp, Vrps, packed4, packed6,
-                                  unionVrpsPackedBy, unpack4, unpack6, vrpsCount)
+import           RPKI.Domain     (BGPSecPayload (..), Vrp, Vrps, packed4, packed6)
+import           RPKI.Domain.Vrps (unionVrpsPackedBy, unpack4, unpack6, vrpsCount)
 import           RPKI.Time      (Instant (..), momentAfter, nanosPerSecond)
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol

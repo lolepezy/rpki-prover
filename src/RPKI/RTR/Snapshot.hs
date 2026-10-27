@@ -95,6 +95,7 @@ import           System.Posix.Unistd              (fileSynchronise)
 
 import           RPKI.AppTypes
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.Resources.Types
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.Protocol

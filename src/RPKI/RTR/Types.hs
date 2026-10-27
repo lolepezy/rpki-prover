@@ -17,6 +17,7 @@ import           RPKI.AppTypes
 
 import           RPKI.Domain
 import           RPKI.Domain.Packed
+import           RPKI.Domain.Vrps
 import           RPKI.Resources.Types
 import           RPKI.RTR.Protocol
 

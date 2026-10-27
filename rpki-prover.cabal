@@ -166,6 +166,7 @@ library
       RPKI.Cpu
       RPKI.Domain
       RPKI.Domain.Packed
+      RPKI.Domain.Vrps
       RPKI.Fetch.DirectoryTraverse
       RPKI.Fetch.Erik.ErikRelay
       RPKI.Fetch.Erik.RelayPool

@@ -23,6 +23,7 @@ import qualified HaskellWorks.Data.Network.Ip.Ipv6     as V6
 
 import           RPKI.Domain
 import           RPKI.Domain.Packed
+import           RPKI.Domain.Vrps
 import           RPKI.Resources.Types
 import           RPKI.Resources.Resources
 

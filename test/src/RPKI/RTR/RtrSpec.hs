@@ -11,6 +11,7 @@ import qualified Data.Text                         as Text
 import           Data.Word                         (Word8)
 
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 
 import           Test.QuickCheck.Arbitrary.Generic
 import           Test.Tasty
@@ -50,6 +51,7 @@ rtrDiffsGroup = testGroup "RTR diff unit tests" [
         testSquashFromFirstToLast,
         testGenerateDiffs,
         testMergeAspasByCustomer,
+        testPackedRtrOrder,
         testAspaDiffPdus
     ]
 
@@ -294,6 +296,19 @@ testMergeAspasByCustomer = HU.testCase "Should have one ASPA per customer" $ do
             aspa 5 [0], 
             aspa 6 [0, 7], 
             aspa 8 []])
+
+-- The packed orderings, merged across families, must be the same as sorting
+-- the VRPs with 'cmpVrps'. A few ASNs only, so that there are ties for the
+-- prefix comparison and the cross-family merge to decide, and some duplicates.
+testPackedRtrOrder :: TestTree
+testPackedRtrOrder = QC.testProperty "Packed RTR order is the same as cmpVrps" $
+    \(vrps :: [Vrp]) ->
+        let fewAsns   = [ Vrp (ASN (asn `mod` 3)) p ml | Vrp (ASN asn) p ml <- vrps ]
+            withDups  = fewAsns <> take 5 fewAsns
+            packed    = mergeVrpsBy cmpPacked4Against6
+                      $ uniqVrpsPackedBy cmpPacked4 cmpPacked6
+                      $ createVrps withDups
+        in packed == List.sortBy cmpVrps (Set.toList $ Set.fromList withDups)
 
 testAspaDiffPdus :: TestTree
 testAspaDiffPdus = HU.testCase "Should generate ASPA PDUs for a diff" $ do
