@@ -306,7 +306,16 @@ newtype ErikFetchStat = ErikFetchStat {
 
 data ValidationResult = ValidationResult
             ValidationState
-            (Map.Map TaName (Fetcheables, EarliestValidityChange))
+            (Map.Map TaName TaValidationResult)
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+data TaValidationResult = TaValidationResult {
+        discoveredRepositories :: Fetcheables,
+        earliestValidityChange :: EarliestValidityChange,
+        -- | CAs that nothing had been fetched for
+        pendingCas             :: Int
+    }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 

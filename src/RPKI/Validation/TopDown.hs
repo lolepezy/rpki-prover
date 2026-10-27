@@ -43,6 +43,7 @@ import qualified Data.Set.NonEmpty                as NESet
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
 import qualified Data.Map.Monoidal.Strict         as MonoidalMap
+import           Data.Monoid                      (Sum (..))
 import           Data.Monoid.Generic
 import           Data.Set                         (Set)
 import qualified Data.Set                         as Set
@@ -58,6 +59,7 @@ import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.Fetch.Fetch
 import           RPKI.Parse.Parse
 import           RPKI.Reporting
@@ -125,14 +127,17 @@ data TopDownResult = TopDownResult {
         discoveredRepositories :: Fetcheables,
         earliestValidityChange :: EarliestValidityChange,
         -- | RRDP repositories to fetch from a snapshot next time, with why
-        snapshotCandidates     :: MonoidalMap.MonoidalMap RrdpURL (Set Text)
+        snapshotCandidates     :: MonoidalMap.MonoidalMap RrdpURL (Set Text),
+        -- | CAs that nothing had been fetched for, with publication points
+        -- that hadn't been tried yet
+        pendingCas             :: Sum Int
     }
     deriving stock (Show, Eq, Ord, Generic)    
     deriving Semigroup via GenericSemigroup TopDownResult
     deriving Monoid    via GenericMonoid TopDownResult
 
 fromValidations :: ValidationState -> TopDownResult
-fromValidations vs = TopDownResult mempty mempty vs mempty mempty mempty
+fromValidations vs = TopDownResult mempty mempty vs mempty mempty mempty mempty
 
 data TroubledChildLoadPath = TroubledFromParsed | TroubledFromOriginal
     deriving stock (Show, Eq, Ord, Generic)
@@ -193,12 +198,14 @@ validateMultipleTAs appContext@AppContext {..} worldVersion tals = do
         logError logger [i|Validation for TA #{taName} did not finish within #{maxDuration} and was interrupted.|]
         (_, validations) <- runValidatorIO (taScopes taName) $ 
                                 (appError $ ValidationE $ ValidationTimeout maxDuration :: Eff AppEffects ())
-        (discoveredRepositories, snapshotCandidates) <- atomically $ (,) 
+        (discoveredRepositories, snapshotCandidates, pendingCas) <- atomically $ (,,)
             <$> readTVar (topDownContext ^. #fetcheables)
             <*> readTVar (topDownContext ^. #snapshotCandidates)
+            <*> readTVar (topDownContext ^. #pendingCas)
         pure $ fromValidations validations 
                 & #discoveredRepositories .~ discoveredRepositories
                 & #snapshotCandidates .~ snapshotCandidates
+                & #pendingCas .~ Sum pendingCas
 
     maxDuration = config ^. typed @SystemConfig . #validationWorkerLimits . #workerTimeout
                  
@@ -213,11 +220,12 @@ validateTA :: AppContext
 validateTA appContext@AppContext{..} tal topDownContext = do
     (r, topDownValidations) <- runValidatorIO (taScopes taName) validateFromTAL
 
-    (discoveredRepositories, earliestNotValidAfter, snapshotCandidates) <- 
-        atomically $ (,,) <$>
+    (discoveredRepositories, earliestNotValidAfter, snapshotCandidates, pendingCas) <-
+        atomically $ (,,,) <$>
             readTVar (topDownContext ^. #fetcheables) <*>
             readTVar (topDownContext ^. #earliestNotValidAfter) <*>
-            readTVar (topDownContext ^. #snapshotCandidates)
+            readTVar (topDownContext ^. #snapshotCandidates) <*>
+            (Sum <$> readTVar (topDownContext ^. #pendingCas))
 
     -- An object that's not valid yet is used once it becomes valid, 
     -- that's as much of a change as an object that expires
@@ -225,12 +233,16 @@ validateTA appContext@AppContext{..} tal topDownContext = do
 
     logDebug logger [i|Earliest #{taName}, earliestValidityChange=#{earliestValidityChange}|]
 
+    when (getSum pendingCas > 0) $
+        logDebug logger [i|#{taName}: #{getSum pendingCas} CA(s) with nothing fetched and publication points not tried yet.|]
+
     case r of
         Left _ -> 
             pure $ fromValidations topDownValidations 
                     & #discoveredRepositories .~ discoveredRepositories
                     & #earliestValidityChange .~ earliestValidityChange
                     & #snapshotCandidates .~ snapshotCandidates
+                    & #pendingCas .~ pendingCas
         Right _ -> do     
             let builder = topDownContext ^. #payloadBuilder
             vrps     <- readIORef $ builder ^. #vrps 
@@ -382,6 +394,9 @@ validateCaNoLimitChecks
             mergeFetcheables caFetcheables $ 
                 map fst $ getFetchables publicationPoints fetcheablePPs
 
+            when (pendingFetch caFetcheables ppAccess) $
+                liftIO $ atomically $ modifyTVar' pendingCas (+ 1)
+
             -- Do not validate if nothing was fetched for this CA
             -- otherwise we'll have a lot of useless errors about 
             -- missing manifests, so just don't go there.
@@ -399,6 +414,19 @@ validateCaNoLimitChecks
                     CaShort c ->
                         vFocusOn ObjectFocus (c ^. #key) validateWithPpScope
   where
+    -- Nothing has been fetched for the CA and some of its PPs that can be fetched
+    -- haven't been tried yet, e.g. the rsync fallback after a failed RRDP fetch,
+    -- so data for it may still come. Once they are all tried there's nothing to
+    -- wait for, and with none of its PPs enabled there's nothing to wait for either.
+    pendingFetch caFetcheables ppAccess =
+        not (any (isFetched . snd) caFetcheables) &&
+        any ((== Pending) . snd)
+            (maybe [] (getFetchables publicationPoints) $ filterPPAccess config ppAccess)
+      where
+        isFetched = \case
+            FetchedAt _ -> True
+            _           -> False
+
     -- The sanity check is done on all the PPs of the CA, `caFetcheables`, and not on 
     -- the fetcheable ones, so that it doesn't depend on the configuration.
     mergeFetcheables caFetcheables fetcheableUrls =

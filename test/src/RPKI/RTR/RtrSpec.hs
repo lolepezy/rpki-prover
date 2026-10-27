@@ -1,9 +1,9 @@
 module RPKI.RTR.RtrSpec where
 
-import           Control.Concurrent.STM            (atomically)
 import           Control.Monad
 
 import qualified Data.ByteString.Lazy              as LBS
+import           Data.Foldable                     (toList)
 import qualified Data.List                         as List
 import           Data.Set                          (Set)
 import qualified Data.Set                          as Set
@@ -11,18 +11,20 @@ import qualified Data.Text                         as Text
 import           Data.Word                         (Word8)
 
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 
 import           Test.QuickCheck.Arbitrary.Generic
 import           Test.Tasty
 
 import           RPKI.AppState
+import           RPKI.AppTypes                     (WorldVersion)
 import           RPKI.Orphans
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Protocol
 
 import           RPKI.RTR.RtrServer                (PduLike (..), analyzePdu, compatiblePduLike, 
-                                                    diffPayloadPdus, processFirstPdu)
+                                                    diffPayloadPdus, processFirstPdu, servedPayloads)
 import           RPKI.RTR.Types
 import           RPKI.Resources.Types
 
@@ -46,8 +48,10 @@ rtrDiffsGroup = testGroup "RTR diff unit tests" [
         testTwoIndependentDiffs,
         testTwoDependentDiffs,
         testThreeDiffs,
+        testSquashFromFirstToLast,
         testGenerateDiffs,
         testMergeAspasByCustomer,
+        testPackedRtrOrder,
         testAspaDiffPdus
     ]
 
@@ -112,7 +116,9 @@ rtrPduParseGroup = testGroup "RTR PDU parser tests" [
 
 rtrStateGroup :: TestTree
 rtrStateGroup = testGroup "RTR state unit tests" [
-        testRtrStateUpdates
+        testRtrStateUpdates,
+        testDiffsFromSerial,
+        testDiffsGrowWithData
     ]
 
 rtrNegotiationGroup :: TestTree
@@ -147,7 +153,7 @@ testTwoIndependentDiffs = HU.testCase "Should squash two unrelated diffs" $
 testTwoDependentDiffs :: TestTree
 testTwoDependentDiffs = HU.testCase "Should squash two related diffs" $
     HU.assertEqual "It's a bummer"                             
-        (mkNewDiff [1, 4, 5] [2, 3] :: GenDiffs Int Int Int)
+        (mkNewDiff [1, 5] [3] :: GenDiffs Int Int Int)
         $ squash [
             mkNewDiff [1,2] [3,4],
             mkNewDiff [4,5] [2]            
@@ -156,12 +162,24 @@ testTwoDependentDiffs = HU.testCase "Should squash two related diffs" $
 testThreeDiffs :: TestTree
 testThreeDiffs = HU.testCase "Should squash three diffs properly" $     
     HU.assertEqual "It's a bummer"                 
-        (mkNewDiff [2, 3, 4, 5] [1, 6] :: GenDiffs Int Int Int)
+        (mkNewDiff [2, 5] [6] :: GenDiffs Int Int Int)
         $ squash [
             mkNewDiff [1,2] [3,4],
             mkNewDiff [4,5] [2],            
-            mkNewDiff [2,3,4] [6,1]    
+            -- 6 was there before all of them
+            mkNewDiff [2,3] [6,1]    
         ]
+
+
+testSquashFromFirstToLast :: TestTree
+testSquashFromFirstToLast = QC.testProperty "Should squash diffs into the change from the first state to the last" $
+    \(states :: [[Word8]]) ->
+        let sets  = map Set.fromList states
+            diffs = [ GenDiffs { vrpDiff = setDiff a b, bgpSecDiff = newDiff, aspaDiff = newDiff } :: GenDiffs Word8 Int Int
+                    | (a, b) <- zip sets (drop 1 sets) ]
+        in case sets of
+            first : _ : _ -> vrpDiff (squash diffs) == setDiff first (List.last sets)
+            _             -> True
 
 
 squash :: (Ord a, Ord b, Ord c) => [GenDiffs a b c] -> GenDiffs a b c
@@ -279,6 +297,19 @@ testMergeAspasByCustomer = HU.testCase "Should have one ASPA per customer" $ do
             aspa 6 [0, 7], 
             aspa 8 []])
 
+-- The packed orderings, merged across families, must be the same as sorting
+-- the VRPs with 'cmpVrps'. A few ASNs only, so that there are ties for the
+-- prefix comparison and the cross-family merge to decide, and some duplicates.
+testPackedRtrOrder :: TestTree
+testPackedRtrOrder = QC.testProperty "Packed RTR order is the same as cmpVrps" $
+    \(vrps :: [Vrp]) ->
+        let fewAsns   = [ Vrp (ASN (asn `mod` 3)) p ml | Vrp (ASN asn) p ml <- vrps ]
+            withDups  = fewAsns <> take 5 fewAsns
+            packed    = mergeVrpsBy cmpPacked4Against6
+                      $ uniqVrpsPackedBy cmpPacked4 cmpPacked6
+                      $ createVrps withDups
+        in packed == List.sortBy cmpVrps (Set.toList $ Set.fromList withDups)
+
 testAspaDiffPdus :: TestTree
 testAspaDiffPdus = HU.testCase "Should generate ASPA PDUs for a diff" $ do
     let aspa c ps = Aspa (ASN c) (Set.fromList $ map ASN ps)
@@ -317,10 +348,10 @@ testRtrStateUpdates = HU.testCase "Should update RTR state and shrink it when ne
             newVersion <- getOrCreateWorldVerion appState
             vrpDiff <- Diff <$> generateVrps n <*> generateVrps m
             bgpSecDiff <- Diff <$> generateBgpSecs n <*> generateBgpSecs m
-            pure $! updatedRtrState rtrState newVersion GenDiffs {aspaDiff = newDiff, ..}
+            pure $! updatedRtrState rtrState newVersion GenDiffs {aspaDiff = newDiff, ..} emptyServed
     
     worldVersion <- getOrCreateWorldVerion appState
-    let z = newRtrState worldVersion 10
+    let z = emptyRtrState worldVersion
     let rtrState = z { maxSerialsPerSession = 2, maxTotalDiffSize = 80 }
 
     rtrState1 <- update rtrState 10 1
@@ -341,9 +372,45 @@ testRtrStateUpdates = HU.testCase "Should update RTR state and shrink it when ne
     aspas1 <- generateAspas 10
     aspas2 <- generateAspas 5
     version <- getOrCreateWorldVerion appState
-    let withAspas = updatedRtrState (newRtrState version 10) version 
-                        newRtrDiff { aspaDiff = Diff aspas1 aspas2 }
+    let withAspas = updatedRtrState (emptyRtrState version) version 
+                        newRtrDiff { aspaDiff = Diff aspas1 aspas2 } emptyServed
     HU.assertEqual "Wrong total size" (Set.size aspas1 + Set.size aspas2) (totalDiffSize withAspas)
+
+
+testDiffsFromSerial :: TestTree
+testDiffsFromSerial = HU.testCase "Should only give diffs that start right after the serial" $ do
+    appState <- newAppState
+    worldVersion <- getOrCreateWorldVerion appState
+    vrps <- generateVrps 3
+    let addVrp state vrp = updatedRtrState state worldVersion
+                                newRtrDiff { vrpDiff = Diff (Set.singleton vrp) mempty } emptyServed
+        -- As after a cold start: there was no data, so only the latest diff is kept
+        rtrState = List.foldl' addVrp ((emptyRtrState worldVersion) { maxTotalDiffSize = 0 }) $ Set.toList vrps
+        serialsAfter = fmap (map fst) . diffsFromSerial rtrState . SerialNumber
+
+    HU.assertEqual "Only the latest diff" [SerialNumber 4] (map fst $ toList $ diffs rtrState)
+    HU.assertEqual "Right before the latest diff" (Just [SerialNumber 4]) (serialsAfter 3)
+    HU.assertEqual "The diff right after it is gone" Nothing (serialsAfter 2)
+    HU.assertEqual "Already the latest" Nothing (serialsAfter 4)
+
+
+testDiffsGrowWithData :: TestTree
+testDiffsGrowWithData = HU.testCase "Should keep diffs as big as the data has been" $ do
+    appState <- newAppState
+    worldVersion <- getOrCreateWorldVerion appState
+    vrps1 <- generateVrps 10
+    vrps2 <- generateVrps 10
+    let servedWith vrpSet = servedPayloads RtrPayloads {
+                vrps = mempty, uniqueVrps = createVrps $ Set.toList vrpSet, bgpSec = mempty, aspas = mempty }
+        add state vrpSet everything = updatedRtrState state worldVersion
+                newRtrDiff { vrpDiff = Diff vrpSet mempty } (servedWith everything)
+        -- As after a cold start: there was no data at first
+        rtrState1 = add (emptyRtrState worldVersion) vrps1 vrps1
+        rtrState2 = add rtrState1 vrps2 (vrps1 <> vrps2)
+
+    HU.assertEqual "Both diffs" [SerialNumber 3, SerialNumber 2] (map fst $ toList $ diffs rtrState2)
+    HU.assertEqual "From the first serial" (Just [SerialNumber 3, SerialNumber 2]) $
+        map fst <$> diffsFromSerial rtrState2 initialSerial
 
 
 -- rtrToStr RtrState {..} = 
@@ -352,6 +419,13 @@ testRtrStateUpdates = HU.testCase "Should update RTR state and shrink it when ne
 --         <> ", lastKnownWorldVersion = " <> show lastKnownWorldVersion
 --         <> ", currentSessionId = " <> show currentSessionId
 --         <> ", maxSerialsPerSession = " <> show maxSerialsPerSession <> "]"
+
+emptyServed :: ServedPayloads
+emptyServed = servedPayloads mempty
+
+emptyRtrState :: WorldVersion -> RtrState
+emptyRtrState worldVersion = 
+    newRtrState worldVersion (worldVersionToRtrSessionId worldVersion) initialSerial defIntervals emptyServed
 
 generateVrps :: Int -> IO (Set Vrp)
 generateVrps n = Set.fromList <$> replicateM n (QC.generate arbitrary)
@@ -429,17 +503,16 @@ testBrokenPdus = HU.testCase "Should reply to broken PDUs, except for broken err
 
 testFirstPduErrorsInRouterVersion :: TestTree
 testFirstPduErrorsInRouterVersion = HU.testCase "Should report errors about the first PDU in its version" $ do
-    appState <- newAppState
     forM_ [V0, V1, V2] $ \v -> do 
         let resetQuery = VersionedPdu ResetQueryPdu v
-        case processFirstPdu Nothing appState resetQuery (pduToBytes resetQuery) of 
+        case processFirstPdu Nothing resetQuery (pduToBytes resetQuery) of 
             Left (reply, _) -> 
                 HU.assertEqual "Not ready cache should report no data" 
                     (Just (NoDataAvailable, v)) (errorCodeAndVersion reply)
             Right _ -> HU.assertFailure "Not ready cache should report an error"
 
         let notify = VersionedPdu (NotifyPdu (RtrSessionId 1) (SerialNumber 1)) v
-        case processFirstPdu Nothing appState notify (pduToBytes notify) of 
+        case processFirstPdu Nothing notify (pduToBytes notify) of 
             Left (reply, _) -> 
                 HU.assertEqual "First PDU must be a query" 
                     (Just (InvalidRequest, v)) (errorCodeAndVersion reply)
@@ -450,23 +523,21 @@ testUnknownSessionIdInFirstSerialQuery :: TestTree
 testUnknownSessionIdInFirstSerialQuery = HU.testCase "Should reset a first Serial Query with an unknown session ID" $ do
     appState <- newAppState
     worldVersion <- getOrCreateWorldVerion appState
-    let rtrState = newRtrState worldVersion 10
+    let rtrState = emptyRtrState worldVersion
     let RtrSessionId sessionId = currentSessionId rtrState
     let serial = currentSerial rtrState
 
     let unknownSession = VersionedPdu (SerialQueryPdu (RtrSessionId (sessionId + 1)) serial) V1
-    case processFirstPdu (Just rtrState) appState unknownSession (pduToBytes unknownSession) of 
+    case processFirstPdu (Just rtrState) unknownSession (pduToBytes unknownSession) of 
         Left (reply, _) -> HU.assertFailure $ "Unexpected error " <> show reply
-        Right (createPdus, session, _) -> do 
-            pdus <- atomically createPdus
+        Right (pdus, session, _) -> do 
             HU.assertEqual "Wrong session" (Session V1) session
             HU.assertEqual "Should be a cache reset" [TruePdu $ VersionedPdu CacheResetPdu V1] pdus
 
     let knownSession = VersionedPdu (SerialQueryPdu (RtrSessionId sessionId) serial) V1
-    case processFirstPdu (Just rtrState) appState knownSession (pduToBytes knownSession) of 
+    case processFirstPdu (Just rtrState) knownSession (pduToBytes knownSession) of 
         Left (reply, _) -> HU.assertFailure $ "Unexpected error " <> show reply
-        Right (createPdus, _, _) -> do 
-            pdus <- atomically createPdus
+        Right (pdus, _, _) -> do 
             HU.assertEqual "Should be an empty cache response" 
                 [ TruePdu $ VersionedPdu (CacheResponsePdu (RtrSessionId sessionId)) V1, 
                   TruePdu $ VersionedPdu (EndOfDataPdu (RtrSessionId sessionId) serial defIntervals) V1 ]

@@ -166,6 +166,7 @@ library
       RPKI.Cpu
       RPKI.Domain
       RPKI.Domain.Packed
+      RPKI.Domain.Vrps
       RPKI.Fetch.DirectoryTraverse
       RPKI.Fetch.Erik.ErikRelay
       RPKI.Fetch.Erik.RelayPool
@@ -216,6 +217,7 @@ library
       RPKI.RTR.Protocol
       RPKI.RTR.RtrServer
       RPKI.RTR.RtrState
+      RPKI.RTR.Snapshot
       RPKI.RTR.Types
       RPKI.Sandbox
       RPKI.SLURM.SlurmProcessing
@@ -334,6 +336,7 @@ test-suite rpki-prover-test
       RPKI.RRDP.ParseSpec
       RPKI.RRDP.UpdateSpec
       RPKI.RTR.RtrSpec
+      RPKI.RTR.SnapshotSpec
       RPKI.SLURM.SlurmSpec
       RPKI.Store.DatabaseSpec
       RPKI.Store.StorableSpec

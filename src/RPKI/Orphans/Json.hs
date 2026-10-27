@@ -20,6 +20,8 @@ import           Data.Aeson.TH
 import           Data.Tuple.Strict
 import           Deque.Strict                as Deq
 import qualified Data.Map.Strict             as Map
+import qualified Data.Set                    as Set
+import           GHC.Generics                (Generic)
 
 import           Data.String.Interpolate.IsString
 
@@ -41,6 +43,7 @@ import HaskellWorks.Data.Network.Ip.Ip as Ips
 
 import           RPKI.AppTypes
 import           RPKI.Domain                 as Domain
+import           RPKI.Domain.Vrps            (vrpsCount)
 import           RPKI.Config
 
 import           RPKI.Logging
@@ -53,8 +56,6 @@ import           RPKI.Resources.Types
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
 import           RPKI.Store.Base.Storable
-
-import           RPKI.Store.Types
 import           RPKI.TAL
 import           RPKI.Time
 import qualified RPKI.Util                   as U
@@ -398,6 +399,31 @@ instance ToJSON SessionId where
     toJSON (SessionId s) = toJSON s
 
 instance ToJSON RtrState
+instance ToJSON CarriedOver
+instance ToJSON Intervals
+
+-- | Only how much there is: the payloads themselves are available 
+-- through the other endpoints, and their rendered forms are of no use.
+data ServedPayloadsSummary = ServedPayloadsSummary {
+        vrps       :: Int,
+        routerKeys :: Int,
+        aspas      :: Int
+    }
+    deriving stock (Generic)
+
+instance ToJSON ServedPayloadsSummary
+
+servedPayloadsSummary :: ServedPayloads -> ServedPayloadsSummary
+servedPayloadsSummary ServedPayloads { payloads = RtrPayloads {..} } = 
+    ServedPayloadsSummary {
+        vrps       = vrpsCount uniqueVrps,
+        routerKeys = Set.size bgpSec,
+        aspas      = Set.size aspas
+    }
+
+instance ToJSON ServedPayloads where
+    toJSON = toJSON . servedPayloadsSummary
+
 instance ToJSON BGPSecPayload
 instance ToJSON SerialNumber
 instance ToJSON RtrSessionId

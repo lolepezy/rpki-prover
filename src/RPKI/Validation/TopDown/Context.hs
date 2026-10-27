@@ -70,7 +70,10 @@ data TopDownContext = TopDownContext {
         -- | RRDP repositories to fetch from a snapshot next time, with why: 
         -- the cache doesn't have what the manifests of a CA there say, 
         -- and none of them could be used
-        snapshotCandidates      :: TVar (MonoidalMap RrdpURL (Set Text))
+        snapshotCandidates      :: TVar (MonoidalMap RrdpURL (Set Text)),
+        -- | CAs that nothing has been fetched for, with publication points
+        -- that haven't been tried yet, i.e. there may be data coming for them
+        pendingCas              :: TVar Int
     }
     deriving stock (Generic)
 
@@ -144,6 +147,7 @@ newTopDownContext taName allTas =
             earliestNotValidAfter   <- newTVar mempty
             visitedAkis             <- newTVar mempty
             snapshotCandidates      <- newTVar mempty
+            pendingCas              <- newTVar 0
             pure $! TopDownContext {..}
 
 newAllTasTopDownContext :: MonadIO m =>

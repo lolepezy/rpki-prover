@@ -6,10 +6,8 @@ import           Effectful
 import           Control.Concurrent.STM    
 import           Control.DeepSeq
 import           Control.Lens hiding (filtered)
-import           Control.Monad (join, unless)
+import           Control.Monad (join)
 import           Data.Maybe (fromMaybe)
-
-import qualified Data.ByteString                  as BS
 
 import           Data.Foldable                    (toList)
 import           Data.Set                         (Set)
@@ -21,6 +19,7 @@ import           GHC.Generics
 import           System.Posix.Types
 import           RPKI.AppMonad
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.AppTypes
 import           RPKI.Logging
 import           RPKI.SLURM.SlurmProcessing
@@ -30,7 +29,6 @@ import           RPKI.Reporting
 import           RPKI.Time
 import           Data.Hourglass (Seconds(..))
 import           RPKI.Metrics.System
-import           RPKI.RTR.Protocol
 import           RPKI.RTR.Types
 import           RPKI.Resources.Validity
 
@@ -45,12 +43,10 @@ data AppState = AppState {
         -- The same but filtered through SLURM 
         filtered  :: TVar RtrPayloads,
 
-        -- Full binary RTR state sent to every RTR client.
-        -- It is serialised once per RTR protocol version 
-        -- and sent to every new client requesting the full state.
-        -- It is an optimisation to avoid serialising the same 
-        -- RTR state for every new client.
-        cachedBinaryRtrPdus :: TVar (Map.Map ProtocolVersion BS.ByteString),
+        -- Whether the current version is as complete as fetching allows: the
+        -- latest validation of every TA found no CA that more data could still
+        -- come for. It is set together with the version.
+        settled   :: TVar Bool,
 
         -- Health of the Erik relays, as reported by the fetch workers.
         -- Kept in the root process so that a worker started later already
@@ -203,10 +199,10 @@ newAppState = do
         world       <- newTVar Nothing
         validated   <- newTVar mempty
         filtered    <- newTVar mempty        
+        settled     <- newTVar False
         rtrState    <- newTVar Nothing        
         system      <- newTVar (newSystemInfo now)        
         prefixIndex <- newTVar Nothing
-        cachedBinaryRtrPdus <- newTVar mempty
         runningWorkers <- newTVar mempty
         fetcheables <- newTVar mempty
         systemProblems <- newTVar mempty
@@ -243,9 +239,6 @@ completeVersion AppState {..} worldVersion rtrPayloads slurm = do
     writeTVar validated rtrPayloads
     let slurmed = maybe rtrPayloads (filterWithSLURM rtrPayloads) slurm
     writeTVar filtered slurmed        
-
-    -- invalidate serialised PDU cache with every new version
-    writeTVar cachedBinaryRtrPdus mempty
     pure $! slurmed
 
 updatePrefixIndex :: AppState -> RtrPayloads -> STM ()
@@ -311,14 +304,3 @@ filterWithSLURM RtrPayloads {..} slurm =
                   (slurm `applySlurmBgpSec` bgpSec)
                   aspas
 
--- TODO Make it more generic for things that need to be recomoputed for each version 
--- and things that are computed on-demand.
-cachedPduBinary :: AppState -> ProtocolVersion -> (RtrPayloads -> BS.ByteString) -> STM BS.ByteString
-cachedPduBinary appState@AppState {..} protocolVersion makeBs = do 
-    cached <- readTVar cachedBinaryRtrPdus
-    case Map.lookup protocolVersion cached of
-        Nothing -> do            
-            bs <- makeBs <$> readRtrPayloads appState 
-            modifyTVar' cachedBinaryRtrPdus $ Map.insert protocolVersion bs
-            pure bs
-        Just bs -> pure bs

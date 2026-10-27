@@ -59,10 +59,6 @@ data Fetchers = Fetchers {
         -- Fetchers that are currently running
         runningFetchers :: TVar (Map RpkiURL ThreadId),        
 
-        -- Version for the first fetch that was finished for every repository.
-        -- We want to track this to for the "one-off" mode.
-        firstFinishedFetchBy :: TVar (Map RpkiURL WorldVersion),        
-
         -- Semaphore for untrusted fetches, i.e fetches that have 
         -- no decent history of being successful 
         untrustedFetchSemaphore :: Semaphore,        
@@ -121,7 +117,6 @@ stopAllFetchers Fetchers {..} = mask_ $ do
 newFetchers :: Config -> TVar Fetcheables -> STM Fetchers
 newFetchers config fetcheables = do
     runningFetchers      <- newTVar mempty
-    firstFinishedFetchBy <- newTVar mempty
     uriByTa              <- newTVar mempty
     rsyncPerHostSemaphores  <- newTVar mempty
     untrustedFetchSemaphore <- newSemaphore fetchParallelism

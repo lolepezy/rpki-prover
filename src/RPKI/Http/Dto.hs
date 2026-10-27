@@ -16,6 +16,7 @@ import qualified Crypto.PubKey.RSA.Types as RSA
 
 import           RPKI.AppState
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.Messages
 import           RPKI.Resources.Resources
 import qualified RPKI.Resources.IntervalContainers as IS
@@ -45,7 +46,10 @@ toVrpDto :: Vrp -> TaName -> VrpDto
 toVrpDto (Vrp a p len) (TaName ta) = VrpDto a p len ta
 
 toVrpV :: Maybe Vrps -> V.Vector Vrp
-toVrpV = maybe mempty (uniqVrpsBy cmpVrps)
+toVrpV = maybe mempty $
+    V.fromList
+        . mergeVrpsBy cmpPacked4Against6
+        . uniqVrpsPackedBy cmpPacked4 cmpPacked6
 
 toVrpMinimalDtos :: Maybe Vrps -> [VrpMinimalDto]
 toVrpMinimalDtos = map asDto . V.toList . toVrpV
