@@ -32,6 +32,7 @@ import           RPKI.AppMonad
 import           RPKI.AppTypes
 import           RPKI.AppState                   (instantToVersion)
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Repository

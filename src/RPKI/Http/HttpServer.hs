@@ -36,6 +36,7 @@ import           RPKI.AppContext
 import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.Logging
 import           RPKI.Worker             (workerLimitsByName)
 import           RPKI.Meta.UniqueId
