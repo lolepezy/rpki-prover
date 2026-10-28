@@ -457,6 +457,10 @@ instance Arbitrary ETag where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
+instance Arbitrary LastModified where
+    arbitrary = genericArbitrary
+    shrink = genericShrink
+
 instance Arbitrary FetchStatus where
     arbitrary = genericArbitrary
     shrink = genericShrink

@@ -185,10 +185,11 @@ nextRefreshInterval config repository worldVersion newStatus rrdpStats duration 
 
     minInterval =
         case repository of
-            -- it's significantly cheaper to use E-Tag and If-None-Match,
-            -- so the interval can be smaller
-            RrdpR (RrdpRepository { eTag = Just _ }) -> fetchIntervalConfig ^. #minFetchInterval
-            _                                        -> 2 * fetchIntervalConfig ^. #minFetchInterval
+            -- it's significantly cheaper to use E-Tag and If-None-Match
+            -- (or Last-Modified and If-Modified-Since), so the interval can be smaller
+            RrdpR (RrdpRepository { eTag = Just _ })         -> fetchIntervalConfig ^. #minFetchInterval
+            RrdpR (RrdpRepository { lastModified = Just _ }) -> fetchIntervalConfig ^. #minFetchInterval
+            _                                                -> 2 * fetchIntervalConfig ^. #minFetchInterval
 
     trimInterval interval =
         max minInterval

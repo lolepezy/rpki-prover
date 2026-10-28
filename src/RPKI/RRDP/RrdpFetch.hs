@@ -7,6 +7,7 @@ import           Control.Concurrent.STM
 import           Control.Lens
 import           Effectful.Concurrent.Async
 import           Effectful.Exception
+import           Control.Applicative              ((<|>))
 import           Control.Monad
 import           Effectful.Error.Static           (catchError)
 import           Effectful.Timeout                (Timeout)
@@ -79,11 +80,11 @@ updateRrdpRepository
         
     let tmpDir = configValue $ config ^. #tmpDirectory
         maxSize = config ^. typed @RrdpConf . #maxSize
-        fetchNotification eTag_ = do 
+        fetchNotification validators = do 
             timedMetric' (Proxy :: Proxy RrdpMetric) 
                 (\t -> #downloadTimeMs %~ (<> t)) $
                 fromTry (RrdpE . CantDownloadNotification . U.fmtEx)
-                    $ downloadToBS tmpDir (getURL repoUri) eTag_ maxSize
+                    $ downloadToBS tmpDir (getURL repoUri) validators maxSize
 
         enforcement = 
             case rrdpMeta of 
@@ -93,15 +94,22 @@ updateRrdpRepository
     for_ eTag $ \et -> 
         logDebug logger [i|Existing eTag for #{repoUri} is #{et}.|]
 
-    (notificationXml, _, httpStatus, newETag) <- fetchNotification eTag
+    for_ lastModified $ \lm -> 
+        logDebug logger [i|Existing Last-Modified for #{repoUri} is #{lm}.|]
+
+    (notificationXml, _, httpStatus, newValidators) <- 
+        fetchNotification $ HttpValidators eTag lastModified
     
-    for_ newETag $ \et -> 
+    for_ (newValidators ^. #eTag) $ \et -> 
         logDebug logger [i|New eTag for #{repoUri} is #{et}.|]
 
-    let forceSnapshot reason notificationXml_ = do 
+    for_ (newValidators ^. #lastModified) $ \lm -> 
+        logDebug logger [i|New Last-Modified for #{repoUri} is #{lm}.|]
+
+    let forceSnapshot reason (notificationXml_, validators) = do 
             notification <- validatedNotification =<< hoistHere (parseNotification notificationXml_)
             nextStep     <- rrdpNextStep repo notification
-            repo' <- bumpETag newETag $ do
+            repo' <- bumpValidators validators $ do
                 usedSource $ RrdpSnapshot $ notification ^. #serial
                 logDebug logger [i|Forced to use snapshot for #{repoUri}, because #{reason}.|]
                 useSnapshot notification nextStep         
@@ -110,17 +118,23 @@ updateRrdpRepository
     case (httpStatus, enforcement) of 
         (HttpStatus 304, Just (NextTimeFetchSnapshot _ reason)) -> do                        
             -- notification.xml wasn't actually downloaded, so we need to do it first
-            (notificationXml_, _, _, _) <- fetchNotification Nothing            
-            forceSnapshot reason notificationXml_           
+            (notificationXml_, _, _, validators) <- fetchNotification noValidators
+            forceSnapshot reason (notificationXml_, validators)
 
         (_, Just (NextTimeFetchSnapshot _ reason)) -> do                        
-            forceSnapshot reason notificationXml
+            forceSnapshot reason (notificationXml, newValidators)
 
         (HttpStatus 304, _) -> do 
-            repo' <- bumpETag newETag $ do
+            -- 304 response doesn't have to contain all the validators 
+            -- (Last-Modified in particular), so keep the old ones if there are no new.
+            let validators = HttpValidators {
+                    eTag         = newValidators ^. #eTag <|> eTag,
+                    lastModified = newValidators ^. #lastModified <|> lastModified
+                }
+            repo' <- bumpValidators validators $ do
                 usedSource RrdpNoUpdate
                 pure repo
-            let message = [i|Nothing to update for #{repoUri} based on ETag comparison.|]
+            let message = [i|Nothing to update for #{repoUri} based on ETag/Last-Modified comparison.|]
             logDebug logger message
             pure (repo', RrdpFetchStat $ NothingToFetch message)
 
@@ -128,7 +142,7 @@ updateRrdpRepository
             notification <- validatedNotification =<< hoistHere (parseNotification notificationXml)
             nextStep     <- rrdpNextStep repo notification
 
-            repo' <- bumpETag newETag $  
+            repo' <- bumpValidators newValidators $  
                 case nextStep of
                     NothingToFetch message -> do 
                         usedSource RrdpNoUpdate
@@ -160,7 +174,9 @@ updateRrdpRepository
 
             pure (repo', RrdpFetchStat nextStep)                            
   where
-    bumpETag newETag f = (\r -> r { eTag = newETag }) <$> f        
+    bumpValidators validators f = 
+        (\r -> r & #eTag .~ validators ^. #eTag 
+                  & #lastModified .~ validators ^. #lastModified) <$> f        
 
     usedSource z = updateMetric @RrdpMetric @_ (#rrdpSource .~ z)        
     hoistHere    = fromEither . first RrdpE
@@ -193,7 +209,7 @@ updateRrdpRepository
                     fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ do 
                         let tmpDir = configValue $ config ^. #tmpDirectory
                         let maxSize = config ^. typed @RrdpConf . #maxSize
-                        downloadHashedBS tmpDir uri Nothing expectedHash maxSize                            
+                        downloadHashedBS tmpDir uri noValidators expectedHash maxSize                            
                             (\actualHash -> 
                                 Left $ RrdpE $ SnapshotHashMismatch { 
                                     expectedHash = expectedHash,
@@ -254,7 +270,7 @@ updateRrdpRepository
                     fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ do 
                         let tmpDir = configValue $ config ^. #tmpDirectory
                         let maxSize = config ^. typed @RrdpConf . #maxSize
-                        downloadHashedBS tmpDir uri Nothing hash maxSize
+                        downloadHashedBS tmpDir uri noValidators hash maxSize
                             (\actualHash -> 
                                 Left $ RrdpE $ DeltaHashMismatch {
                                     actualHash = actualHash,

@@ -57,8 +57,26 @@ data Delta = Delta Version SessionId RrdpSerial [DeltaItem]
     deriving stock (Show, Eq, Ord, Generic)
 
 newtype ETag = ETag BS.ByteString
-    deriving stock (Show, Eq, Ord, Generic)    
-    deriving anyclass (TheBinary, NFData)        
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+-- | Raw value of the Last-Modified header, it is sent back
+-- as is in If-Modified-Since, without parsing it as a date.
+newtype LastModified = LastModified BS.ByteString
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+-- | Validators of a response, used to make the next request
+-- for the same URL conditional (If-None-Match/If-Modified-Since).
+data HttpValidators = HttpValidators {
+        eTag         :: Maybe ETag,
+        lastModified :: Maybe LastModified
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary, NFData)
+
+noValidators :: HttpValidators
+noValidators = HttpValidators Nothing Nothing
 
 
 newtype RrdpFetchStat = RrdpFetchStat {

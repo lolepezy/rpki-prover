@@ -150,8 +150,9 @@ defaultRepo = RrdpRepository {
             status = Pending,
             refreshInterval = Nothing
         },
-    eTag = Nothing
-} 
+    eTag = Nothing,
+    lastModified = Nothing
+}
 
 makeNotification :: SessionId -> RrdpSerial -> Notification
 makeNotification sessionId' serial' = Notification {

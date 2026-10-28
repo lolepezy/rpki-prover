@@ -40,10 +40,11 @@ newtype RsyncPublicationPoint = RsyncPublicationPoint { uri :: RsyncURL }
     deriving anyclass (TheBinary)
 
 data RrdpRepository = RrdpRepository {
-        uri       :: RrdpURL,
-        rrdpMeta  :: Maybe RrdpMeta,
-        eTag      :: Maybe ETag,
-        meta      :: RepositoryMeta        
+        uri          :: RrdpURL,
+        rrdpMeta     :: Maybe RrdpMeta,
+        eTag         :: Maybe ETag,
+        lastModified :: Maybe LastModified,
+        meta         :: RepositoryMeta
     } 
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -203,10 +204,11 @@ newRepository = \case
 
 newRrdpRepository :: RrdpURL -> RrdpRepository
 newRrdpRepository uri = RrdpRepository {    
-        rrdpMeta = Nothing,
-        eTag     = Nothing,
-        meta     = newRepositoryMeta,
-        uri      = uri
+        rrdpMeta     = Nothing,
+        eTag         = Nothing,
+        lastModified = Nothing,
+        meta         = newRepositoryMeta,
+        uri          = uri
     }
 
 newRsyncRepository :: RsyncURL -> RsyncRepository
