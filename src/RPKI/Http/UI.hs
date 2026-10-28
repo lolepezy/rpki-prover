@@ -361,6 +361,10 @@ rrdpMetricsHtml rrdpMetrics =
                 case m ^. #repository . #eTag of
                     Just _ -> "Yes" :: Text
                     _      -> "No"
+            detailItemNoWrap "Uses Last-Modified:" $
+                case m ^. #repository . #lastModified of
+                    Just _ -> "Yes" :: Text
+                    _      -> "No"
 
             for_ (m ^? #repository . #rrdpMeta . _Just . #enforcement . _Just) $ \enforcement ->
                 detailItemWrap "Enforcement:" $

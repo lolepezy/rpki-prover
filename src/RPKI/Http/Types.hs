@@ -10,7 +10,7 @@ import qualified Data.ByteString.Lazy        as LBS
 import qualified Data.ByteString.Base16      as Hex
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
-import           Data.Text.Encoding          (encodeUtf8)
+import           Data.Text.Encoding          (encodeUtf8, decodeLatin1)
 
 import           Data.Aeson.Types
 import           Data.Proxy
@@ -691,7 +691,12 @@ newtype DtoScope (s :: ScopeKind) = DtoScope (Scope s)
 instance ToJSON MetricsDto
 instance ToJSON RrdpURL
 instance ToJSON FetchStatus
-instance ToJSON ETag
+-- Header values are just octets, Latin-1 decoding never fails and 
+-- keeps them readable, unlike the hex used for ByteString in general
+instance ToJSON ETag where
+    toJSON (ETag e) = toJSON $ decodeLatin1 e
+instance ToJSON LastModified where
+    toJSON (LastModified lm) = toJSON $ decodeLatin1 lm
 instance ToJSON DeltaInfo
 instance ToJSON RrdpIntegrity
 instance ToJSON RrdpEnforcement
@@ -712,6 +717,8 @@ instance ToSchema MetricsDto
 instance ToSchema FetchStatus where     
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema ETag where     
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
+instance ToSchema LastModified where     
     declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy Text)
 instance ToSchema DeltaInfo
 instance ToSchema RrdpIntegrity

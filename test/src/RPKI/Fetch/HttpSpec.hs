@@ -32,14 +32,14 @@ httpSpec = testGroup "Unit tests for Http updates" [
             let hash_ = sha256 body
             let size = LBS.length body
 
-            (bs, s, status, _) :: (LBS.ByteString, Size, HttpStatus, Maybe ETag) <- 
-                    downloadToBS tmpDir (URI uri) Nothing maxSize
+            (bs, s, status, _) :: (LBS.ByteString, Size, HttpStatus, HttpValidators) <- 
+                    downloadToBS tmpDir (URI uri) noValidators maxSize
 
             HU.assertEqual "Status" status (HttpStatus 200)
             HU.assertEqual "Size" s (Size size)
             HU.assertEqual "Body" body bs
 
-            z <- downloadHashedBS tmpDir (URI uri) Nothing hash_ maxSize
+            z <- downloadHashedBS tmpDir (URI uri) noValidators hash_ maxSize
                     (\actual -> Left $ "Hash was " <> show actual <> " instead of " <> show hash_)
 
             case z of
