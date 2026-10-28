@@ -170,21 +170,19 @@ rpki-prover --rpki-root-directory /var/prover --verify-signature --signature-fil
 
 ## Resource consumption <a name="resource-consumption"></a>
 
-A cold start (no cache) takes at least a few minutes and consumes 3-5 minutes of CPU time. This can be slightly reduced by increasing `--cpu-count` if multiple CPUs are available. CPU-bound tasks scale well up to 8–10 cores, but overall warm-up time is often limited by the slowest RPKI repository. After warm-up, the application is not very CPU-intensive. 
+The numbers below are for the 5 RIR trust anchors (around 1M VRPs and 570K objects) on a machine with 8 cores. Adding or removing TAs affects them.
 
-Current memory usage for 7 trust anchors (including [AS0 TA](https://www.apnic.net/community/security/resource-certification/tal-archive/) and [AS0 of LACNIC](https://www.lacnic.net/4984/2/lacnic/rpki-rpki-trust-anchor)) with around 800K VRPs is under 3GB total. Adding or removing TAs affects this.
+A cold start (no cache) takes about 6 minutes and around 6 minutes of CPU time, most of it spent parsing RRDP snapshots. The time is usually bounded by the slowest repositories rather than by the CPU, so increasing `--cpu-count` helps only to some extent. The first VRPs are available after a minute or so, and the output grows as repositories get fetched. After warm-up, the application is not CPU-intensive: in steady state it uses less than 10% of one core, with a typical revalidation taking a few seconds of CPU.
 
-Memory reporting in tools like `top/htop` can be misleading. For example:
+`rpki-prover` runs as one long-living main process that starts short-lived worker processes for validation, RRDP and rsync fetches, and cache cleanup. The memory of every worker is limited by `--max-validation-memory` (default 2048MB), `--max-rrdp-fetch-memory` and `--max-rsync-fetch-memory` (default 1024MB each), and the number of concurrent fetchers is limited by `--fetcher-count`. Typical usage is much lower than these limits:
 
-```
-VIRT   RES    SHR
-1.0T   4463M  3920M
-```
+* the main process takes around 350MB;
+* a validation worker takes 500–850MB;
+* most RRDP fetchers take less than 100MB, the ones fetching large snapshots take up to 350MB.
 
+In total, memory usage peaks at around 2GB during a cold start and stays below that afterwards, so 3GB of RAM is recommended. Some extra memory for the filesystem page cache helps too, since every validation reads hundreds of thousands of objects from the cache. `--with-validity-api` adds another 200–300MB to the main process.
 
-Memory consumption is determined more by the size of the largest objects than by their count. 3GB RAM is recommended to reduce IOPS during validation. Each validation goes through over 400K objects, \~3KB each, so several hundred MB in FS page cache is beneficial.
-
-Disk usage depends on `--cache-lifetime-hours`. The default of 24 hours results in a \~4GB cache. Periodic compaction requires an extra 30–40% of disk space. Around 2GB may also be needed for `rsync` mirrors. A total of 10GB is recommended.
+The cache is an SQLite database `cache/rpki.sqlite` in the root directory. It takes about 2.5GB shortly after a cold start and grows for a while after that, since objects that are no longer used are kept for `--cache-lifetime-hours` (240 hours by default), except for manifests and CRLs, which are removed after 24 hours. Space of deleted objects is reclaimed gradually, no extra space is needed for compaction. Around 1GB is also needed for `rsync` mirrors. A total of 10GB is recommended.
 
 # Known issues <a name="known-issues"></a>
 
