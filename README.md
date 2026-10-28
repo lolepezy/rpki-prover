@@ -186,6 +186,8 @@ The cache is an SQLite database `cache/rpki.sqlite` in the root directory. It ta
 
 # Known issues <a name="known-issues"></a>
 
+At this moment, none.
+
 # Why Haskell? <a name="why-haskell"></a>
 
 * Compact codebase (\~20KLOC), including custom CMS parsing
