@@ -159,7 +159,7 @@ validateMultipleTAs appContext@AppContext {..} worldVersion tals = do
                 fst <$> Async.waitBoth validation writer
   where
     validateAll shortcutQueue workerCaps = do 
-        publicationPoints <- addprefetchUrls <$> roTxT database DB.getPublicationPoints            
+        publicationPoints <- roTxT database DB.getPublicationPoints
         multiLocationKeys <- roTxT database DB.getMultiLocationShortcutChildren
         workPool <- newWorkPool
         allTas <- newAllTasTopDownContext worldVersion publicationPoints shortcutQueue multiLocationKeys workPool
@@ -201,9 +201,6 @@ validateMultipleTAs appContext@AppContext {..} worldVersion tals = do
                 & #snapshotCandidates .~ snapshotCandidates
 
     maxDuration = config ^. typed @SystemConfig . #validationWorkerLimits . #workerTimeout
-                 
-    addprefetchUrls pps =     
-        foldr (mergePP . rsyncPP) pps (config ^. #rsyncConf . #prefetchUrls)
 
 --
 validateTA :: AppContext

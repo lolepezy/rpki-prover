@@ -143,10 +143,19 @@ updateObjectForRsyncRepository
                     logError logger [i|rsync client timed out after #{timeout}}.|]
                     appError $ RsyncE $ RsyncDownloadTimeout timeout)
         logInfo logger [i|Finished rsynching #{getURL uri} to #{destination}.|]
-        case exitCode of  
-            ExitSuccess -> do                 
-                loadRsyncRepository appContext worldVersion uri destination                        
+        let loadRepository = do
+                loadRsyncRepository appContext worldVersion uri destination
                 pure repo
+        case exitCode of  
+            ExitSuccess -> loadRepository
+            -- Files that vanished on the server during the transfer, i.e. the
+            -- repository was republished meanwhile. Everything else is there,
+            -- as consistent as any rsync of a repository that keeps changing,
+            -- and big trees (ARIN's) are hardly ever transferred without it.
+            ExitFailure 24 -> do
+                logWarn logger [i|Some files vanished from #{getURL uri} while fetching it, stderr = #{err}|]
+                appWarn $ RsyncE $ RsyncProcessError 24 $ U.convert err
+                loadRepository
             ExitFailure errorCode -> do
                 logError logger [i|Rsync process failed: #{rsync} 
                                             with code #{errorCode}, 
@@ -224,7 +233,15 @@ rsyncProcess Config {..} rsyncTimeout rsyncURL destination rsyncMode =
         source = Text.unpack (unURI $ getURL rsyncURL)        
         (sourceUrl, extraOptions) = case rsyncMode of 
             RsyncOneFile   -> (source, [])
-            RsyncDirectory -> (addTrailingPathSeparator source, [ "--recursive", "--delete", "--copy-links" ])
+            RsyncDirectory -> (addTrailingPathSeparator source,
+                                [ "--recursive", "--delete", "--copy-links" ] <> onlyObjects)
+
+        -- Only the files `loadObjectsFromFS` would load, everything else
+        -- is not transferred and deleted if it is there from before.
+        onlyObjects =
+            [ "--include=*/" ] <>
+            [ "--include=*." <> e | e <- objectExtensions ] <>
+            [ "--exclude=*", "--delete-excluded" ]
 
 
 {- | Map an rsync URL onto a local path under the rsync root.

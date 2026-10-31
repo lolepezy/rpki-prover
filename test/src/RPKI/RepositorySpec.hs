@@ -3,7 +3,10 @@ module RPKI.RepositorySpec where
 import           Control.Lens hiding (elements)
 import           Data.Generics.Labels ()
 import qualified Data.Map.Strict                   as Map
+import qualified Data.Map.Monoidal.Strict          as MonoidalMap
+import qualified Data.Set                          as Set
 import           Data.List (sort, isPrefixOf, find)
+import qualified Data.List                         as List
 import           Data.Text (Text)
 import qualified Data.Text                         as Text
 
@@ -27,7 +30,8 @@ repositoryGroup = testGroup "PublicationPoints" [
         rsyncForestUnitTests,
         rrdpMapGroup,
         fetchStatusGroup,
-        rsyncUrlSafetyGroup
+        rsyncUrlSafetyGroup,
+        rsyncCollapsingGroup
     ]
 
 {- | Rsync URLs are turned into local filesystem paths by `rsyncDestination`, and 
@@ -217,6 +221,84 @@ rsyncForestUnitTests = testGroup "RsyncForest unit tests" [
             flattenRsyncTree forest' HU.@?= [ (rsyncUrl "", fetchedMeta) ]
             fmap snd (lookupInRsyncForest (rsyncUrl "x/y/z") forest') HU.@?= Just fetchedMeta
     ]
+
+
+rsyncCollapsingGroup :: TestTree
+rsyncCollapsingGroup = testGroup "Collapsing rsync repositories into their common parent" [
+        HU.testCase "many repositories in one deep directory collapse into it, not into the module" $ do
+            let fs = mconcat [ rsyncFetcheable ("module/foo/bar/a" <> num n) | n <- [1 .. 100 :: Int] ]
+            collapseRsyncFetcheables 10 fs HU.@?=
+                (rsyncFetcheable "module/foo/bar", Map.fromList [(rsyncUrl "module/foo/bar", 100)]),
+
+        HU.testCase "directories with one repository each collapse into their common parent" $ do
+            -- e.g. rsync://rpki-rsync.idnic.net/repo/<uuid>/0
+            let fs = mconcat [ rsyncFetcheable ("repo/u" <> num n <> "/0") | n <- [1 .. 12 :: Int] ]
+            fetcheableUrls (fst $ collapseRsyncFetcheables 10 fs) HU.@?= [rsyncUrl "repo"],
+
+        HU.testCase "a sibling of a collapsed directory stays as it is" $ do
+            let fs = mconcat [ rsyncFetcheable ("module/foo/bar/a" <> num n) | n <- [1 .. 20 :: Int] ]
+                  <> rsyncFetcheable "module/foo/b"
+            fetcheableUrls (fst $ collapseRsyncFetcheables 10 fs) HU.@?= 
+                [rsyncUrl "module/foo/b", rsyncUrl "module/foo/bar"],
+
+        HU.testCase "enough collapsed directories collapse further" $ do
+            let fs = mconcat [ rsyncFetcheable ("module/org" <> num o <> "/x" <> num x) 
+                             | o <- [1 .. 10 :: Int], x <- [1 .. 10 :: Int] ]
+            collapseRsyncFetcheables 10 fs HU.@?= 
+                (rsyncFetcheable "module", Map.fromList [(rsyncUrl "module", 100)]),
+
+        HU.testCase "a repository nested in another one is fetched with it and doesn't count" $ do
+            let fs = rsyncFetcheable "repo/ca" <> mconcat [ rsyncFetcheable ("repo/ca/child" <> num n) | n <- [1 .. 20 :: Int] ]
+            collapseRsyncFetcheables 10 fs HU.@?= (rsyncFetcheable "repo/ca", mempty),
+
+        HU.testCase "the root of a host is never collapsed" $ do
+            let fs = mconcat [ rsyncFetcheable ("module" <> num n <> "/a") | n <- [1 .. 20 :: Int] ]
+            collapseRsyncFetcheables 10 fs HU.@?= (fs, mempty)
+            length (fetcheableUrls (fst $ collapseRsyncFetcheables 1 fs)) HU.@?= 20,
+
+        HU.testCase "threshold 0 changes nothing" $ do
+            let fs = mconcat [ rsyncFetcheable ("repo/" <> c) | c <- ["a", "b", "c"] ]
+            collapseRsyncFetcheables 0 fs HU.@?= (fs, mempty),
+
+        HU.testCase "rsync fallbacks are collapsed as well and merged under their primary" $ do
+            let rrdp = RrdpU (RrdpURL $ URI "https://rrdp.host1.com/notification.xml")
+            let fs = mconcat [ newFetcheables rrdp (Just $ RsyncU $ rsyncUrl ("repo/" <> c)) | c <- ["a", "b", "c"] ]
+            let (Fetcheables collapsed, _) = collapseRsyncFetcheables 3 fs
+            MonoidalMap.toList collapsed HU.@?= [(rrdp, Set.singleton $ RsyncU $ rsyncUrl "repo")],
+
+        QC.testProperty "every repository is fetched by exactly one fetch that covers it" $
+            QC.forAll genThreshold $ \threshold ->
+                QC.forAll (QC.listOf genRsyncUrl) $ \urls -> let
+                    fetched = fetcheableUrls $ fst $ collapseRsyncFetcheables threshold (fetcheablesOf urls)
+                    in all (\u -> length (filter (`covers` u) fetched) == 1) urls,
+
+        QC.testProperty "fetches never cover each other and there are no more of them than before" $
+            QC.forAll genThreshold $ \threshold ->
+                QC.forAll (QC.listOf genRsyncUrl) $ \urls -> let
+                    fetched = fetcheableUrls $ fst $ collapseRsyncFetcheables threshold (fetcheablesOf urls)
+                    in and [ not (covers f f') | f <- fetched, f' <- fetched, f /= f' ]
+                        && length fetched <= length (List.nub urls),
+
+        QC.testProperty "an introduced directory replaces at least threshold repositories, never the host root" $
+            QC.forAll genThreshold $ \threshold ->
+                QC.forAll (QC.listOf genRsyncUrl) $ \urls -> let
+                    introduced = snd $ collapseRsyncFetcheables threshold (fetcheablesOf urls)
+                    in and [ count >= threshold 
+                                && not (null path) 
+                                && count == length (List.nub $ filter (covers parent) urls)
+                           | (parent@(RsyncURL _ path), count) <- Map.toList introduced ],
+
+        QC.testProperty "threshold 1 fetches whole modules" $
+            QC.forAll (QC.listOf genRsyncUrl) $ \urls ->
+                all (\(RsyncURL _ path) -> length path <= 1) $
+                    fetcheableUrls $ fst $ collapseRsyncFetcheables 1 (fetcheablesOf urls)
+    ]
+  where
+    rsyncFetcheable path = newFetcheables (RsyncU $ rsyncUrl path) Nothing
+    fetcheablesOf urls = mconcat [ newFetcheables (RsyncU u) Nothing | u <- urls ]
+    fetcheableUrls (Fetcheables fs) = [ u | RsyncU u <- MonoidalMap.keys fs ]
+    num n = Text.pack (show n)
+    genThreshold = QC.choose (1, 4)
 
 
 -- RrdpMap and its merging

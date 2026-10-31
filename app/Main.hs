@@ -311,8 +311,7 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     cpuCount' <- maybe (liftIO defaultCpuCount) pure cpuCount
     liftIO $ setCpuCount cpuCount'
 
-    proverRunMode     <- deriveProverRunMode cliOptions
-    prefetchUrls <- rsyncPrefetches cliOptions
+    proverRunMode <- deriveProverRunMode cliOptions
 
     let apiSecured :: a -> ApiSecured a
         apiSecured a = if showHiddenConfig then Public a else Hidden a
@@ -329,7 +328,6 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
             & #proverRunMode .~ proverRunMode
             & #parallelism . #cpuCount .~ cpuCount'
             & #rsyncConf . #rsyncRoot .~ apiSecured rsyncd
-            & #rsyncConf . #prefetchUrls .~ prefetchUrls
             & #rrdpConf . #tmpRoot .~ apiSecured tmpd
             & #logLevel .~ derivedLogLevel
 
@@ -546,20 +544,6 @@ getRootDirectory CLIOptions{..} =
         [] -> Nothing
         s  -> Just $ Prelude.last s
 
--- Set rsync prefetch URLs
-rsyncPrefetches :: ValidatorIO es => CLIOptions -> Eff es [RsyncURL]
-rsyncPrefetches CLIOptions {..} = do
-    let urlsToParse =
-            case rsyncPrefetchUrl of
-                [] -> defaultPrefetchURLs
-                _  -> rsyncPrefetchUrl
-
-    forM urlsToParse $ \u ->
-        case parseRsyncURL (convert u) of
-            Left e         -> appError $ InitE $ InvalidOptionValue { optionName = "--rsync-prefetch-url", value = convert u, whatsWrong = e }
-            Right rsyncURL -> pure rsyncURL
-
-
 createWorkerAppContext :: ValidatorIO es => Config -> AppLogger -> Eff es AppContext
 createWorkerAppContext config logger = do
     (db, _) <- fromTry (InitE . InitError . fmtEx) $ openSqliteDatabase cacheDir config UseAsIs
@@ -695,7 +679,7 @@ data CLIOptions = CLIOptions {
         topDownTimeout           :: Maybe Int64,
         noRrdp                   :: Bool,
         noRsync                  :: Bool,
-        rsyncPrefetchUrl         :: [String],
+        rsyncCollapseThreshold   :: Maybe Int,
         metricsPrefix            :: Maybe String,
         maxRrdpFetchMemory       :: Maybe Int,
         maxRsyncFetchMemory      :: Maybe Int,
@@ -923,11 +907,12 @@ cliOptionsParser = CLIOptions
     <*> switch
             (  long "no-rsync"
             <> help "Disable fetching rsync repositories (default: false).")
-    <*> many (strOption
-            (  long "rsync-prefetch-url"
-            <> metavar "URL"
-            <> help ("rsync repositories to fetch instead of their children. "
-                  <> "Defaults include common RPKI rsync URLs.")))
+    <*> optional (option auto
+            (  long "rsync-collapse-threshold"
+            <> metavar "N"
+            <> help ("Fetch the common parent directory of rsync repositories instead of them "
+                  <> "when that saves at least N fetches. 1 means always fetching whole rsync modules, "
+                  <> "0 means never (default: " <> show defRsyncCollapse <> ").")))
     <*> optional (strOption
             (  long "metrics-prefix"
             <> metavar "PREFIX"
@@ -991,6 +976,7 @@ cliOptionsParser = CLIOptions
     defCacheLifetimeHours     = defCacheLifetime `div` 3600
     Seconds defRrdpRefresh    = cfg ^. #rrdpConf . #repositoryRefreshInterval
     Seconds defRsyncRefresh   = cfg ^. #rsyncConf . #repositoryRefreshInterval
+    defRsyncCollapse          = cfg ^. #rsyncConf . #collapseThreshold
     Seconds defRrdpTimeout    = cfg ^. #systemConfig . #rrdpWorkerLimits . #workerTimeout
     Seconds defRsyncTimeout   = cfg ^. #systemConfig . #rsyncWorkerLimits . #workerTimeout
     Seconds defErikTimeout    = cfg ^. #systemConfig . #erikWorkerLimits . #workerTimeout
@@ -1032,6 +1018,7 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & #parallelism .~ parallelism
         & #rsyncConf . #clientPath .~ fmap apiSecured clientPath
         & #rsyncConf . #enabled .~ not noRsync
+        & maybeSet (#rsyncConf . #collapseThreshold) rsyncCollapseThreshold
         & maybeSet (#systemConfig . #rsyncWorkerLimits . #workerTimeout) (Seconds <$> rsyncTimeout)
         & #rrdpConf . #enabled .~ not noRrdp
         & maybeSet (#systemConfig . #rrdpWorkerLimits . #workerTimeout) (Seconds <$> rrdpTimeout)

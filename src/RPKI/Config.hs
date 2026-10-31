@@ -91,9 +91,12 @@ data RsyncConf = RsyncConf {
         clientPath                :: Maybe (ApiSecured FilePath),
         rsyncRoot                 :: ApiSecured FilePath,
         enabled                   :: Bool,
-        prefetchUrls              :: [RsyncURL],
         perHostLimit              :: Int,
-        repositoryRefreshInterval :: Seconds
+        repositoryRefreshInterval :: Seconds,
+        -- | Fetch the common parent directory of rsync repositories instead 
+        -- of them when that saves at least that many fetches, 0 means never 
+        -- (see 'RPKI.Repository.collapseRsyncTree').
+        collapseThreshold         :: Int
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -275,9 +278,9 @@ defaultConfig = Config {
         clientPath = Nothing,
         rsyncRoot    = Hidden "",
         enabled = True,
-        prefetchUrls = [],
         perHostLimit = 5,
-        repositoryRefreshInterval = 11 * minutes
+        repositoryRefreshInterval = 11 * minutes,
+        collapseThreshold = 10
     },
     rrdpConf = RrdpConf {
         enabled = True,
@@ -423,24 +426,6 @@ defaultRtrConfig = RtrConfig {
         rtrMaxConnections = 512
     }
     
--- This is a heuristic list of rsync repositories that is currently out there
--- and not using them will result in too many small fetches from the same repository.
-defaultPrefetchURLs :: [String]
-defaultPrefetchURLs = [
-        "rsync://rpki.afrinic.net/repository",
-        "rsync://rpki.apnic.net/member_repository",
-        "rsync://rpki-repo.registro.br/repo/",
-        "rsync://repo-rpki.idnic.net/repo/",
-        "rsync://0.sb/repo/",
-        "rsync://rpki.co/repo/",
-        "rsync://rpki-rps.arin.net/repository/",
-        "rsync://rpki-repository.nic.ad.jp/ap/",
-        "rsync://rsync.paas.rpki.ripe.net/repository/",
-        "rsync://rpki.sub.apnic.net/repository/",
-        "rsync://rpki.cnnic.cn/rpki/A9162E3D0000/",
-        "rsync://rpki-repo.as207960.net/repo/"
-    ]    
-
 defaultTalUrls :: [(String, String)]
 defaultTalUrls = [
         ("afrinic.tal", "https://rpki.afrinic.net/tal/afrinic.tal"),

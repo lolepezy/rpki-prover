@@ -63,8 +63,17 @@ import           UnliftIO                        (pooledForConcurrentlyN)
 -- Updates fetcheables with new ones, creates fetchers for new URLs,
 -- and stops fetchers that are no longer needed.
 adjustFetchers :: AppContext -> Map TaName Fetcheables -> WorkflowShared -> IO ()
-adjustFetchers appContext@AppContext {..} discoveredFetcheables workflowShared@WorkflowShared { fetchers = Fetchers {..} } = do
-    (currentFetchers, toStop, toStart) <- atomically $ do            
+adjustFetchers appContext@AppContext {..} discoveredPerTa workflowShared@WorkflowShared { fetchers = Fetchers {..} } = do
+    -- Per TA, so that what is fetched for a TA doesn't depend on
+    -- which other TAs happened to be validated together with it.
+    let collapsedPerTa = Map.map (collapseRsyncFetcheables (config ^. #rsyncConf . #collapseThreshold)) discoveredPerTa
+    let discoveredFetcheables = Map.map fst collapsedPerTa
+
+    for_ (Map.toList collapsedPerTa) $ \(ta, (_, introduced)) ->
+        for_ (Map.toList introduced) $ \(parent, count) ->
+            logInfo logger [i|TA #{ta}: fetching #{getURL parent} instead of #{count} repositories under it.|]
+
+    (currentFetchers, toStop, toStart) <- atomically $ do
 
         -- All the URLs that were discovered by the recent validations of all TAs
         relevantUrls :: Set RpkiURL <- do 
@@ -171,11 +180,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
                 pure interval
       where
         fetchPrimary repository worldVersion = do
-            (r, validations, duration) <-                 
-                withFetchLimits fetchers config repository 
-                    $ runConcurrentlyIfPossible logger FetchTask runningTasks 
-                        $ runFetch url
-                            $ fetchRepository appContext worldVersion repository
+            (r, validations, duration) <- fetchOrJoin url repository worldVersion
 
             rememberFirstFetchBy worldVersion
             updatePrometheusForRepository url duration prometheusMetrics
@@ -279,12 +284,7 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             repositories <- pooledForConcurrentlyN maxThreads (Set.toList fallbacks) $ \fallbackUrl -> do 
 
                 repository <- repositoryFor fallbackUrl
-                                
-                (r, validations, duration) <- 
-                        withFetchLimits fetchers config repository 
-                            $ runConcurrentlyIfPossible logger FetchTask runningTasks                                 
-                                $ runFetch fallbackUrl
-                                    $ fetchRepository appContext worldVersion repository
+                (r, validations, duration) <- fetchOrJoin fallbackUrl repository worldVersion
 
                 updatePrometheusForRepository fallbackUrl duration prometheusMetrics
                 pure $ case r of
@@ -304,6 +304,30 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
             -- Whether any of them got through
             pure $ or [ succeeded | (_, _, succeeded) <- repositories ]
         
+
+    -- Fetch a repository, unless a fetch of the same URL is running already 
+    -- (as a fallback of another repository, or as the primary while this is 
+    -- a fallback): then wait for it and take its outcome. Two rsync fetches of 
+    -- a URL would write to the same directory at once, and after collapsing 
+    -- (see 'collapseRsyncFetcheables') one directory can be the fallback of 
+    -- many repositories that fail at about the same time. Waiting is outside 
+    -- of the fetch limits, so it doesn't take anybody's slot.
+    --
+    -- That fetch stored objects with its own world version and asked for 
+    -- the revalidation of its own TAs, so ask for this fetcher's TAs here.
+    fetchOrJoin fetchUrl repository worldVersion = do
+        ((fetchedWith, r, validations, duration), joined) <- 
+            singleFlight fetchesInProgress fetchUrl $ do 
+                (r, validations, duration) <- 
+                    withFetchLimits fetchers config repository 
+                        $ runConcurrentlyIfPossible logger FetchTask runningTasks 
+                            $ runFetch fetchUrl
+                                $ fetchRepository appContext worldVersion repository
+                pure (worldVersion, r, validations, duration)
+        when joined $ do 
+            logDebug logger [i|#{fetchUrl} was being fetched already, took the outcome of that fetch.|]
+            revalidateFor fetchedWith
+        pure (r, validations, duration)
 
     -- Every fetch attempt is timed and reported under its own repository scope.
     -- It always goes innermost, inside every semaphore and task slot the attempt

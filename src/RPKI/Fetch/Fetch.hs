@@ -82,10 +82,19 @@ data Fetchers = Fetchers {
         -- spawns a worker process for every publication point at once.
         erikFetchSemaphore :: Semaphore,
 
+        -- Fetches that are running, to never have two fetches 
+        -- of the same URL at the same time
+        fetchesInProgress :: SingleFlight RpkiURL FetchOutcome,
+
         -- Mapping of repositories to the TAs they are mentioned in
         uriByTa :: TVar UriTaIxSet
     }
     deriving stock (Generic)
+
+-- | What a fetch of a repository ended with: the world version it stored 
+-- objects with, the repository with updated metadata or the error, 
+-- the validations and the duration.
+type FetchOutcome = (WorldVersion, Either AppError (Repository, Maybe RrdpFetchStat), ValidationState, TimeMs)
 
 type UriTaIxSet = IxSet Indexes UrlTA
 
@@ -127,6 +136,7 @@ newFetchers config fetcheables = do
     untrustedFetchSemaphore <- newSemaphore fetchParallelism
     trustedFetchSemaphore   <- newSemaphore fetchParallelism
     erikFetchSemaphore      <- newSemaphore (fromIntegral $ config ^. #erikConf . #fqdnParallelism)
+    fetchesInProgress       <- newSingleFlight
     pure Fetchers {..}
   where
     fetchParallelism = fromIntegral $ config ^. #parallelism . #fetchParallelism
