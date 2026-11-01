@@ -490,6 +490,10 @@ rsyncMetricsHtml rsyncMetrics =
                                 td ! A.class_ "url-cell" $ do
                                     when hasDetail chevIcon
                                     toHtml $ let URI u_ = getURL (m ^. #uri) in u_
+                                    for_ (m ^. #fetchedInsteadOf) $ \count ->
+                                        H.span ! A.class_ "pill info"
+                                               ! A.title "Not the repository of any CA, this directory is fetched instead of the repositories of the CAs under it" $
+                                            toHtml (if count == 1 then "instead of 1 repository" else [i|instead of #{count} repositories|] :: Text)
                                 td $ H.span ! A.class_ ("status " <> statusCls) $ do
                                     H.span ! A.class_ "dot" $ ""
                                     toHtml statusText

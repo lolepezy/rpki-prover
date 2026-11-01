@@ -5,13 +5,13 @@ gitBranch :: String
 gitBranch = "rsync-merge"
 
 gitHash :: String
-gitHash = "ed0eaa81af2dbd3ab5490bf2de6ffefd4e2ab20b"
+gitHash = "24fc758714e8cd49138acd176c5f8a5a56eedf43"
 
 gitCommitDate :: String
-gitCommitDate = "2026-11-01 10:18:28 +0100"
+gitCommitDate = "2026-11-01 23:06:56 +0100"
 
 gitCommitCount :: Int
-gitCommitCount = 3115
+gitCommitCount = 3116
 
 gitDirty :: Bool
-gitDirty = True
+gitDirty = False

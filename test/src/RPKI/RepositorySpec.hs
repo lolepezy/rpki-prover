@@ -291,7 +291,26 @@ rsyncCollapsingGroup = testGroup "Collapsing rsync repositories into their commo
         QC.testProperty "threshold 1 fetches whole modules" $
             QC.forAll (QC.listOf genRsyncUrl) $ \urls ->
                 all (\(RsyncURL _ path) -> length path <= 1) $
-                    fetcheableUrls $ fst $ collapseRsyncFetcheables 1 (fetcheablesOf urls)
+                    fetcheableUrls $ fst $ collapseRsyncFetcheables 1 (fetcheablesOf urls),
+
+        HU.testCase "a collapsed directory is known by the publication points under it" $ do
+            let pps = Set.fromList [ rsyncUrl ("repo/u" <> num n <> "/0") | n <- [1 .. 12 :: Int] ]
+            -- once it's saved, the CAs' repositories resolve to it
+            collapsedRsyncRepositories pps (rsyncFetcheable "repo") HU.@?= Map.fromList [(rsyncUrl "repo", 12)],
+
+        HU.testCase "a publication point with the ones of its children isn't collapsed" $ do
+            let pps = Set.fromList $ rsyncUrl "repo/ca" : [ rsyncUrl ("repo/ca/child" <> num n) | n <- [1 .. 20 :: Int] ]
+            collapsedRsyncRepositories pps (rsyncFetcheable "repo/ca") HU.@?= mempty,
+
+        QC.testProperty "collapsed directories are the introduced ones, also after they are saved" $
+            QC.forAll genThreshold $ \threshold ->
+                QC.forAll (QC.listOf genRsyncUrl) $ \urls -> let
+                    pps = Set.fromList urls
+                    (collapsed, introduced) = collapseRsyncFetcheables threshold (fetcheablesOf urls)
+                    -- what the next validation discovers when they are saved
+                    nextTime = fst $ collapseRsyncFetcheables threshold collapsed
+                    in collapsedRsyncRepositories pps collapsed == introduced
+                        && collapsedRsyncRepositories pps nextTime == introduced
     ]
   where
     rsyncFetcheable path = newFetcheables (RsyncU $ rsyncUrl path) Nothing

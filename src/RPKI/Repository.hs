@@ -380,6 +380,26 @@ collapseRsyncFetcheables threshold fetcheables@(Fetcheables fs)
         , let parent = fetchedAs u
         , isNothing $ lookupInRsyncForest parent original ]
 
+{- | The rsync repositories that are not the publication point of any CA but
+    are fetched instead of the publication points under them (see
+    `collapseRsyncFetcheables`), with the number of those publication points.
+
+    It needs the URLs of the publication points themselves: once a collapsed
+    directory is saved, the publication points under it resolve to it during 
+    validation, so the fetcheables have the directory and not them, and 
+    `collapseRsyncFetcheables` doesn't see it as introduced anymore.
+-}
+collapsedRsyncRepositories :: Set.Set RsyncURL -> Fetcheables -> Map RsyncURL Int
+collapsedRsyncRepositories publicationPoints (Fetcheables fs) =
+    Map.fromListWith (+)
+        [ (fetchedAs, 1)
+        | pp <- Set.toList publicationPoints
+        , Just (fetchedAs, _) <- [lookupInRsyncForest pp fetched]
+        , not $ fetchedAs `Set.member` publicationPoints ]
+  where
+    fetched = foldr (`toRsyncForest` ()) newRsyncForestGen
+        [ u | RsyncU u <- MonoidalMap.keys fs <> concatMap Set.toList (MonoidalMap.elems fs) ]
+
 filterPPAccess :: Config -> PublicationPointAccess -> Maybe PublicationPointAccess    
 filterPPAccess Config {..} ppAccess = 
     fmap PublicationPointAccess $ nonEmpty $ 

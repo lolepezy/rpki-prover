@@ -378,11 +378,14 @@ runAll appContext@AppContext {..} tals = do
                     reportError [i|Validator process failed: #{e}.|]                    
 
                 Right (ValidationResult vs discovered) -> do
-                    adjustFetchers appContext (fmap fst discovered) workflowShared
+                    adjustFetchers appContext (fmap (\(fetcheables, _, _) -> fetcheables) discovered) workflowShared
                     -- What this validation found replaces what the previous ones did
-                    atomically $ modifyTVar' (workflowShared ^. #nextValidation) $ Map.union $
-                        fmap (dueAfterValidation revalidationInterval (versionToInstant worldVersion) . snd) 
-                            discovered
+                    atomically $ do 
+                        modifyTVar' (workflowShared ^. #nextValidation) $ Map.union $
+                            fmap (\(_, _, change) -> dueAfterValidation revalidationInterval (versionToInstant worldVersion) change) 
+                                discovered
+                        modifyTVar' (appState ^. #rsyncPublicationPoints) $ Map.union $
+                            fmap (\(_, rsyncPPs, _) -> rsyncPPs) discovered
 
                     -- The worker has saved the version, SLURM is read and
                     -- stored for it here since the worker doesn't read files.
@@ -596,7 +599,7 @@ runValidation :: AppContext
             -> WorldVersion
             -> [TAL]
             -> [TaName]
-            -> IO (ValidationState, Map TaName (Fetcheables, EarliestValidityChange))
+            -> IO (ValidationState, Map TaName (Fetcheables, Set.Set RsyncURL, EarliestValidityChange))
 runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames = do           
 
     results <- validateMultipleTAs appContext worldVersion talsToValidate
@@ -631,7 +634,7 @@ runValidation appContext@AppContext {..} worldVersion talsToValidate allTaNames 
     logDebug logger [i|Saved payloads for the version #{worldVersion}, deleted #{deletedStr} oldest version(s) in #{elapsed}ms.|]
 
     pure (updatedValidation, 
-        Map.map (\r -> (r ^. #discoveredRepositories, r ^. #earliestValidityChange)) results)
+        Map.map (\r -> (r ^. #discoveredRepositories, r ^. #rsyncPublicationPoints, r ^. #earliestValidityChange)) results)
 
   where
     addUniqueVrpCountsToMetrics tx results = do
