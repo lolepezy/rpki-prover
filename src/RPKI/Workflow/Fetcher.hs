@@ -315,17 +315,21 @@ newFetcher appContext@AppContext {..} WorkflowShared { fetchers = fetchers@Fetch
     --
     -- That fetch stored objects with its own world version and asked for 
     -- the revalidation of its own TAs, so ask for this fetcher's TAs here.
+    --
+    -- It's the URL of the repository that is fetched that counts, not the 
+    -- one of the fetcher: every repository under a collapsed parent resolves 
+    -- to the parent, also for the fetchers of the TAs that didn't collapse it.
     fetchOrJoin fetchUrl repository worldVersion = do
         ((fetchedWith, r, validations, duration), joined) <- 
-            singleFlight fetchesInProgress fetchUrl $ do 
+            singleFlight fetchesInProgress (getRpkiURL repository) $ do 
                 (r, validations, duration) <- 
                     withFetchLimits fetchers config repository 
                         $ runConcurrentlyIfPossible logger FetchTask runningTasks 
                             $ runFetch fetchUrl
-                                $ fetchRepository appContext worldVersion repository
+                                $ fetchRepository appContext rsyncLoadMarks worldVersion repository
                 pure (worldVersion, r, validations, duration)
         when joined $ do 
-            logDebug logger [i|#{fetchUrl} was being fetched already, took the outcome of that fetch.|]
+            logDebug logger [i|#{getURL repository} was being fetched already, took the outcome of that fetch for #{fetchUrl}.|]
             revalidateFor fetchedWith
         pure (r, validations, duration)
 

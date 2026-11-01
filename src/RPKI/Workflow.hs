@@ -439,8 +439,12 @@ runAll appContext@AppContext {..} tals = do
 
     -- Delete objects in the store that were read by top-down validation 
     -- longer than `shortLivedCacheLifeTime` hours ago.
-    cacheCleanup _ worldVersion _ = do
-        (r, elapsed) <- timedMS cleanupOldObjects
+    cacheCleanup workflowShared worldVersion _ = do
+        (r, elapsed) <- timedMS cleanupOldObjects 
+                            -- Whatever happened to it, it may have deleted objects 
+                            -- whose files are still in rsync directories
+                            `finally` atomically (modifyTVar' 
+                                (workflowShared ^. #fetchers . #rsyncLoadMarks) dropLoadMarks)
         case r of 
             Left message -> logError logger message
             Right DB.CleanUpResult {..} -> do

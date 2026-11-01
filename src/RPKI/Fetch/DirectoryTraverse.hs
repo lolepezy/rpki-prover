@@ -16,16 +16,19 @@ import           Control.Monad
 import qualified Data.ByteString                  as BS
 import           Data.Bifunctor
 import           Data.Foldable                    (for_)
+import           Data.Hourglass                   (Seconds(..))
+import           Data.IORef
 import qualified Data.Map.Strict                  as Map
 import           Data.String.Interpolate.IsString
 
 import           GHC.Generics
 
-import           Streaming                        (lift)
+import           Streaming                        (Of, Stream, lift)
 import qualified Streaming.Prelude                as S
 import           System.FilePath
-import           System.Directory                 (doesDirectoryExist, getDirectoryContents)
+import           System.Directory                 (getDirectoryContents)
 import           System.IO
+import           System.Posix.Files               (FileStatus, getFileStatus, isDirectory, statusChangeTimeHiRes)
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -40,44 +43,74 @@ import           RPKI.Parse.Parse
 import           RPKI.Store.Types
 import           RPKI.Store.Database      (DB, roTx)
 import qualified RPKI.Store.Database      as DB
+import           RPKI.Time
 import qualified RPKI.Util                as U
 import           RPKI.Validation.ObjectValidation
 
 
+-- | What loading a tree ended with.
+data LoadOutcome = LoadOutcome {
+        -- | When the walk through the tree began
+        startedAt    :: Instant,
+        filesRead    :: Int,
+        -- | Not read because they haven't changed since the mark
+        filesSkipped :: Int,
+        -- | Read or not, but not in the storage
+        filesFailed  :: Int
+    }
+    deriving stock (Show, Eq, Generic)
+
+-- | The mark for the next load of the same tree, if this load stored
+-- every file it had to: every object file that hasn't changed since
+-- the walk began is in the storage then.
+loadMarkAfter :: LoadOutcome -> Maybe Instant
+loadMarkAfter LoadOutcome {..}
+    | filesFailed == 0 = Just startedAt
+    | otherwise        = Nothing
+
 -- | Recursively traverse a directory and save every parseable object into the
 -- storage. `restoreUrl` maps a file back to the URL the object is published at.
+--
+-- With a mark (see `loadMarkAfter`) only the files that have changed since
+-- then are read, every other one is in the storage already.
 --
 -- Is not supposed to throw exceptions.
 loadObjectsFromFS :: (ValidatorIO es, Concurrent :> es) => AppContext
                   -> WorldVersion
+                  -> Maybe Instant
                   -> (FilePath -> Maybe RsyncURL)
                   -> FilePath
-                  -> Eff es ()
-loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
+                  -> Eff es LoadOutcome
+loadObjectsFromFS AppContext{..} worldVersion loadMark restoreUrl rootPath = do
     db <- liftIO $ readTVarIO database
     -- As many capabilities as for loading many objects
     cpus <- liftIO $ useAvailableCpus $ config ^. typed @Parallelism . #cpuCount
     logDebug logger [i|Using #{cpus} CPUs for loading objects from #{rootPath}.|]   
     scopes <- askScopes
+    Now startedAt <- thisInstant
+    readCount    <- liftIO $ newIORef 0
+    skippedCount <- liftIO $ newIORef 0
+    failedCount  <- liftIO $ newIORef 0
+    let since = (`momentAfter` negate timestampSlack) <$> loadMark
     txPoolPipeline
         CompletionOrder
-        (objectFiles rootPath)
+        (objectFiles since skippedCount restoreUrl rootPath
+            & S.chain (\_ -> modifyIORef' readCount (+1)))
         (\(path, uri) -> trySync $ 
             evaluate =<< runValidator scopes (readAndParseObject db path (RsyncU <$> uri)))
         (DB.rwAppTx db)
-        saveStorable
+        (saveStorable failedCount)
+    filesRead    <- liftIO $ readIORef readCount
+    filesSkipped <- liftIO $ readIORef skippedCount
+    filesFailed  <- liftIO $ readIORef failedCount
+    let skippedText :: String =
+            case loadMark of
+                Nothing   -> ""
+                Just mark -> [i|, skipped #{filesSkipped} unchanged since #{mark}|]
+    logInfo logger $ [i|Loaded #{rootPath}: read #{filesRead} files#{skippedText}, |] <>
+                     [i|#{filesFailed} not stored.|]
+    pure LoadOutcome {..}
   where
-    -- Files of supported types in the tree and the URLs their paths tell, 
-    -- one directory at a time
-    objectFiles currentPath = do
-        names <- lift $ getDirectoryContents currentPath
-        forM_ (filter (`notElem` [".", ".."]) names) $ \name -> do
-            let path = currentPath </> name
-            lift (doesDirectoryExist path) >>= \case
-                True  -> objectFiles path
-                False -> when (supportedExtension name) $ 
-                            S.yield (path, restoreUrl path)
-
     readAndParseObject :: forall es' . ValidatorIO es'
                         => DB -> FilePath -> Maybe RpkiURL -> Eff es' ObjectProcessingResult
     readAndParseObject db filePath rpkiURL =
@@ -100,22 +133,27 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                     Nothing ->
                         pure $! UknownObjectType rpkiURL filePath
 
-    saveStorable tx processed = do
+    saveStorable failedCount tx processed = do
         (r, vs) <- either 
                     (\e -> appError $ InternalE $ InternalError [i|Failed to load objects from #{rootPath}: #{U.fmtEx e}|]) 
                     pure processed
         embedState vs
+        let notStored = liftIO $ modifyIORef' failedCount (+1)
         case r of
-            Left e  -> appWarn e
+            Left e  -> do
+                notStored
+                appWarn e
             Right z -> case z of
                 HashExists rpkiURL _ key ->
                     for_ rpkiURL $ \u -> DB.linkObjectToUrl tx u key worldVersion
 
                 CantReadFile rpkiUrl filePath (VErr e) -> do
+                    notStored
                     logError logger [i|Cannot read file #{filePath}, error #{e} |]
                     atObject rpkiUrl filePath $ appWarn e
 
                 UknownObjectType rpkiUrl filePath -> do
+                    notStored
                     logError logger [i|Unknown object type: url = #{rpkiUrl}, path = #{filePath}.|]
                     atObject rpkiUrl filePath $
                         appWarn $ RsyncE $ RsyncUnsupportedObjectType $ U.convert filePath
@@ -131,13 +169,64 @@ loadObjectsFromFS AppContext{..} worldVersion restoreUrl rootPath = do
                     for_ rpkiUrl $ \u -> DB.linkObjectToUrl tx u key worldVersion
                     updateMetric @TraverseMetric @_ (#processed %~
                         Map.unionWith (+) (Map.singleton (Just $ getRpkiObjectType lifecycle) 1))
-                other ->
+                other -> do
+                    notStored
                     logDebug logger [i|Weird thing happened in `saveStorable` #{other}.|]
       where
         atObject rpkiUrl filePath f =
             case rpkiUrl of
                 Just u  -> inSubLocationScope (getURL u) f
                 Nothing -> vFocusOn TextFocus (U.convert filePath) f
+
+
+-- | Object files in the tree and the URLs their paths tell, one directory at
+-- a time. With `Just since` only the ones that have changed at or after
+-- `since`, the others are counted in `skipped`.
+--
+-- That a file has changed is told by its ctime. rsync can't write a file
+-- without setting it: it writes a temporary file, sets its mtime to that
+-- of the server's file (which is why mtime is no use here) and renames it.
+-- A file that rsync leaves alone keeps its ctime, and nothing can set it back.
+objectFiles :: Maybe Instant
+            -> IORef Int
+            -> (FilePath -> Maybe RsyncURL)
+            -> FilePath
+            -> Stream (Of (FilePath, Maybe RsyncURL)) IO ()
+objectFiles since skipped restoreUrl = go
+  where
+    go currentPath = do
+        names <- lift $ getDirectoryContents currentPath
+        forM_ (filter (`notElem` [".", ".."]) names) $ \name -> do
+            let path = currentPath </> name
+            lift (IOExc.try @IOExc.IOException $ getFileStatus path) >>= \case
+                Right status
+                    | isDirectory status -> go path
+                    | otherwise          -> objectFile name path (hasChanged status)
+                -- Can't tell, reading it will say what's wrong
+                Left _                   -> objectFile name path True
+
+    objectFile name path changed =
+        when (supportedExtension name) $
+            if changed
+                then S.yield (path, restoreUrl path)
+                else lift $ modifyIORef' skipped (+1)
+
+    hasChanged status =
+        case since of
+            Nothing     -> True
+            Just moment -> statusChangeInstant status >= moment
+
+
+statusChangeInstant :: FileStatus -> Instant
+statusChangeInstant = Instant . floor . (* nanosPerSecond) . statusChangeTimeHiRes
+
+-- | How much earlier than the mark a file can have changed and still be read.
+-- Timestamps of files are coarser than the clock: a second on HFS+, two on
+-- FAT, and Linux stamps files with a coarse clock that is a few milliseconds
+-- behind. The clock can also be stepped back a little. A few files read
+-- again cost nothing.
+timestampSlack :: Seconds
+timestampSlack = Seconds 60
 
 
 {- | Parse and prevalidate one object, and work out what gets stored for it.

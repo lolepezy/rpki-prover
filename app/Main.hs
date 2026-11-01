@@ -192,7 +192,7 @@ executeWorkerProcess = do
                                 RsyncFetchParams {..} ->
                                     exec resultHandler $ fmap (Right . RsyncFetchResult) $ runValidatorIO scopes $
                                         updateObjectForRsyncRepository appContext
-                                            worldVersion rsyncRepository
+                                            worldVersion loadMark rsyncRepository
 
                                 ErikFetchParams {..} ->
                                     exec resultHandler $ fmap (Right . ErikFetchResult) $ runValidatorIO scopes $

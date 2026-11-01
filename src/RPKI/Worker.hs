@@ -88,7 +88,9 @@ data WorkerParams = RrdpFetchParams {
             RsyncFetchParams {
                 scopes          :: Scopes,
                 rsyncRepository :: RsyncRepository,
-                worldVersion    :: WorldVersion
+                worldVersion    :: WorldVersion,
+                -- Read only the files changed since then, see `loadObjectsFromFS`
+                loadMark        :: Maybe Instant
             } |
             ErikFetchParams {
                 scopes       :: Scopes,
@@ -285,8 +287,9 @@ newtype RrdpFetchResult = RrdpFetchResult
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
+-- | The repository and the load mark for its next fetch, if there is one
 newtype RsyncFetchResult = RsyncFetchResult 
-                            (Either AppError RsyncRepository, ValidationState)    
+                            (Either AppError (RsyncRepository, Maybe Instant), ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 

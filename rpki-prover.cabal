@@ -320,6 +320,7 @@ test-suite rpki-prover-test
   other-modules:
       RPKI.AppMonadSpec
       RPKI.DomainSpec
+      RPKI.Fetch.DirectoryTraverseSpec
       RPKI.Fetch.ErikSpec
       RPKI.Fetch.HttpSpec
       RPKI.FetchSpec

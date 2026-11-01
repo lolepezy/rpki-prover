@@ -12,6 +12,7 @@ import qualified Data.IxSet.Typed                as IxSet
 import           RPKI.Domain
 import           RPKI.Repository
 import           RPKI.Fetch.Fetch
+import           RPKI.Time
 
 
 uriTaSet :: [(Text, Text)] -> UriTaIxSet
@@ -40,6 +41,12 @@ ta3 = "TA3"
 
 workflowSpec :: TestTree
 workflowSpec = testGroup "Fetching" [ 
+        urisPerTaSpec,
+        loadMarksSpec
+    ]
+
+urisPerTaSpec :: TestTree
+urisPerTaSpec = testGroup "URIs per TA" [ 
 
     HU.testCase "Adds entries to empty IxSet" $
         updateUriPerTa 
@@ -83,3 +90,47 @@ workflowSpec = testGroup "Fetching" [
             (uriTaSet [(repo1, ta1), (repo2, ta2)])
             @?= uriTaSet [(repo1, ta1), (repo2, ta2)]
   ]
+
+loadMarksSpec :: TestTree
+loadMarksSpec = testGroup "Load marks" [ 
+
+    HU.testCase "A load sets the mark of its repository" $ do
+        let (mark, generation) = loadMarkOf rsync1 newLoadMarks
+        mark @?= Nothing
+        markOf rsync1 (setLoadMark generation rsync1 moment1 newLoadMarks) @?= Just moment1
+
+  , HU.testCase "The next load replaces the mark" $ do
+        let generation = snd $ loadMarkOf rsync1 newLoadMarks
+            marks = setLoadMark generation rsync1 moment2 
+                  $ setLoadMark generation rsync1 moment1 newLoadMarks
+        markOf rsync1 marks @?= Just moment2
+
+  , HU.testCase "Every repository has its own mark" $ do
+        let generation = snd $ loadMarkOf rsync1 newLoadMarks
+            marks = setLoadMark generation rsync1 moment1 newLoadMarks
+        markOf rsync1 marks @?= Just moment1
+        markOf rsync2 marks @?= Nothing
+
+  , HU.testCase "Cleanup drops every mark" $ do
+        let generation = snd $ loadMarkOf rsync1 newLoadMarks
+            marks = dropLoadMarks 
+                  $ setLoadMark generation rsync2 moment2 
+                  $ setLoadMark generation rsync1 moment1 newLoadMarks
+        map (`markOf` marks) [rsync1, rsync2] @?= [Nothing, Nothing]
+
+  , HU.testCase "A load that ran during cleanup doesn't set its mark" $ do
+        let generation = snd $ loadMarkOf rsync1 newLoadMarks
+            marks = setLoadMark generation rsync1 moment1 $ dropLoadMarks newLoadMarks
+        markOf rsync1 marks @?= Nothing
+
+  , HU.testCase "A load that started after cleanup sets its mark" $ do
+        let afterCleanup = dropLoadMarks newLoadMarks
+            generation   = snd $ loadMarkOf rsync1 afterCleanup
+        markOf rsync1 (setLoadMark generation rsync1 moment1 afterCleanup) @?= Just moment1
+  ]
+  where
+    markOf url = fst . loadMarkOf url
+    rsync1 = RsyncURL (RsyncHost (RsyncHostName "host1.com") Nothing) [RsyncPathChunk "repo"]
+    rsync2 = RsyncURL (RsyncHost (RsyncHostName "host1.com") Nothing) [RsyncPathChunk "repo", RsyncPathChunk "ca"]
+    moment1 = Instant 1_000_000_000
+    moment2 = Instant 2_000_000_000
