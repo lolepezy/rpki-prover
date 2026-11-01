@@ -16,7 +16,6 @@ import           Control.Monad
 import qualified Data.ByteString                  as BS
 import           Data.Bifunctor
 import           Data.Foldable                    (for_)
-import           Data.Hourglass                   (Seconds(..))
 import           Data.IORef
 import qualified Data.Map.Strict                  as Map
 import           Data.String.Interpolate.IsString
@@ -91,7 +90,7 @@ loadObjectsFromFS AppContext{..} worldVersion loadMark restoreUrl rootPath = do
     readCount    <- liftIO $ newIORef 0
     skippedCount <- liftIO $ newIORef 0
     failedCount  <- liftIO $ newIORef 0
-    let since = (`momentAfter` negate timestampSlack) <$> loadMark
+    let since = (`momentAfter` negate (config ^. #rsyncConf . #timestampSlack)) <$> loadMark
     txPoolPipeline
         CompletionOrder
         (objectFiles since skippedCount restoreUrl rootPath
@@ -219,14 +218,6 @@ objectFiles since skipped restoreUrl = go
 
 statusChangeInstant :: FileStatus -> Instant
 statusChangeInstant = Instant . floor . (* nanosPerSecond) . statusChangeTimeHiRes
-
--- | How much earlier than the mark a file can have changed and still be read.
--- Timestamps of files are coarser than the clock: a second on HFS+, two on
--- FAT, and Linux stamps files with a coarse clock that is a few milliseconds
--- behind. The clock can also be stepped back a little. A few files read
--- again cost nothing.
-timestampSlack :: Seconds
-timestampSlack = Seconds 60
 
 
 {- | Parse and prevalidate one object, and work out what gets stored for it.

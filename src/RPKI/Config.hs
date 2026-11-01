@@ -96,7 +96,14 @@ data RsyncConf = RsyncConf {
         -- | Fetch the common parent directory of rsync repositories instead 
         -- of them when that saves at least that many fetches, 0 means never 
         -- (see 'RPKI.Repository.collapseRsyncTree').
-        collapseThreshold         :: Int
+        collapseThreshold         :: Int,
+        -- | How much earlier than the load mark a file can have changed and 
+        -- still be read (see 'RPKI.Fetch.DirectoryTraverse.loadObjectsFromFS').
+        -- Timestamps of files are coarser than the clock: a second on HFS+, 
+        -- two on FAT, and Linux stamps files with a coarse clock that is a few 
+        -- milliseconds behind. The clock can also be stepped back a little. 
+        -- A few files read again cost nothing.
+        timestampSlack            :: Seconds
     }
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
@@ -280,7 +287,8 @@ defaultConfig = Config {
         enabled = True,
         perHostLimit = 5,
         repositoryRefreshInterval = 11 * minutes,
-        collapseThreshold = 10
+        collapseThreshold = 10,
+        timestampSlack = 1 * minutes
     },
     rrdpConf = RrdpConf {
         enabled = True,
