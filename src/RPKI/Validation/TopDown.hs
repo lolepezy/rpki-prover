@@ -390,8 +390,6 @@ validateCaNoLimitChecks
             -- Do not validate if nothing was fetched for this CA
             -- otherwise we'll have a lot of useless errors about 
             -- missing manifests, so just don't go there.
-            -- Note that it is `caFetcheables`, i.e. all the PPs of the CA and not only 
-            -- the fetcheable ones: the cache doesn't care which protocol filled it.
             unless (all ((== Pending) . snd) caFetcheables) $ do   
                 let primaryUrl = getPrimaryRepositoryUrl publicationPoints fetcheablePPs
                 let validateWithPpScope =
