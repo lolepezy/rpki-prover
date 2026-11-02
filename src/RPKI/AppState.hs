@@ -79,6 +79,11 @@ data AppState = AppState {
 
         fetcheables :: TVar Fetcheables,
 
+        -- The rsync publication points of the CAs of every TA as they are in 
+        -- the certificates, to tell the directories that are fetched instead 
+        -- of them (see 'RPKI.Repository.collapsedRsyncRepositories').
+        rsyncPublicationPoints :: TVar (Map.Map TaName (Set RsyncURL)),
+
         -- Problems of the main process that are not about any TA, e.g. a
         -- transaction that had to be rolled back, waiting to be added to the
         -- common validations of the latest version (see 'RPKI.Workflow.reportSystemProblem').
@@ -209,6 +214,7 @@ newAppState = do
         cachedBinaryRtrPdus <- newTVar mempty
         runningWorkers <- newTVar mempty
         fetcheables <- newTVar mempty
+        rsyncPublicationPoints <- newTVar mempty
         systemProblems <- newTVar mempty
         erikRelayHealth <- newTVar mempty
         workerLimits <- newTVar mempty

@@ -19,6 +19,8 @@ import           Effectful.Exception             (SomeException, finally, throwI
 
 import           Data.IORef
 import qualified Data.List                       as List
+import           Data.Map.Strict                 (Map)
+import qualified Data.Map.Strict                 as Map
 import qualified Data.List.Split                 as Split
 import qualified Data.Sequence                   as Seq
 import           Data.Sequence                   (Seq)
@@ -398,3 +400,35 @@ withSemaphoreOrTimeout Semaphore {..} timeout f =
     releaseSlot increasedCounter = 
         when increasedCounter $ 
             atomically $ modifyTVar' current $ \c -> c - 1  
+
+{- | At most one run of an action per key at a time: whoever asks for a key 
+    that is running already waits for that run and gets its result, instead 
+    of running the action once more.
+-}
+newtype SingleFlight k a = SingleFlight (TVar (Map k (TMVar (Maybe a))))
+
+newSingleFlight :: STM (SingleFlight k a)
+newSingleFlight = SingleFlight <$> newTVar Map.empty
+
+-- | The result, and whether it comes from a run somebody else started. 
+-- A run that throws gives the exception to its own caller only, the 
+-- ones waiting for it run the action again.
+singleFlight :: Ord k => SingleFlight k a -> k -> IO a -> IO (a, Bool)
+singleFlight sf@(SingleFlight running) key f = 
+    IOExc.mask $ \restore -> 
+        join $ atomically $ do 
+            inFlight <- readTVar running
+            case Map.lookup key inFlight of 
+                Just result -> pure $ 
+                    restore (atomically $ readTMVar result) >>= \case 
+                        Just a  -> pure (a, True)
+                        Nothing -> restore $ singleFlight sf key f
+                Nothing -> do 
+                    result <- newEmptyTMVar
+                    writeTVar running $ Map.insert key result inFlight
+                    pure $ do 
+                        z <- IOExc.try @SomeException $ restore f
+                        atomically $ do 
+                            putTMVar result $ either (const Nothing) Just z
+                            modifyTVar' running $ Map.delete key
+                        either IOExc.throwIO (pure . (, False)) z

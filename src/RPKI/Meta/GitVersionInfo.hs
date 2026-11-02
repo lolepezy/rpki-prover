@@ -9,16 +9,16 @@ gitInfo = $(gitInfoOfTheTree)
 {-# NOINLINE gitInfo #-}
 
 gitBranch :: String
-gitBranch = gitInfo.branch
+gitBranch = "rsync-merge"
 
 gitHash :: String
-gitHash = gitInfo.commitHash
+gitHash = "24fc758714e8cd49138acd176c5f8a5a56eedf43"
 
 gitCommitDate :: String
-gitCommitDate = gitInfo.commitDate
+gitCommitDate = "2026-11-01 23:06:56 +0100"
 
 gitCommitCount :: Int
-gitCommitCount = gitInfo.commitCount
+gitCommitCount = 3116
 
 gitDirty :: Bool
 gitDirty = gitInfo.dirty

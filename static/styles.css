@@ -281,6 +281,8 @@ tr.total td { border-top: 2px solid var(--ink); border-bottom: none; font-weight
 .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 99px; font-family: "IBM Plex Mono"; }
 .pill.crit { color: var(--crit); background: var(--crit-soft); }
 .pill.warn { color: var(--warn); background: var(--warn-soft); }
+.pill.info { color: var(--accent); background: var(--accent-soft); }
+.url-cell .pill { margin-left: 8px; padding: 1px 7px; font-size: 11px; font-weight: 500; }
 .ta-issue > .body { border-top: 1px solid var(--border-soft); padding: 4px 16px 12px; }
 
 .issue-row { display: flex; gap: 12px; padding: 11px 4px; border-bottom: 1px solid var(--border-soft); }

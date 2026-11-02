@@ -45,6 +45,7 @@ import           RPKI.Repository
 import           RPKI.Fetch.Erik.RelayPool
 import qualified RPKI.Util as U
 import           RPKI.Fetch.Http
+import           RPKI.RRDP.Types                 (noValidators)
 import           RPKI.Fetch.DirectoryTraverse
 import qualified RPKI.Store.Database    as DB
 import           RPKI.Store.Base.Serialisation   (serialise_, deserialise_)
@@ -289,11 +290,11 @@ fetchErik
             let tmpDir = configValue $ config ^. #tmpDirectory
             let maxSize = config ^. typed @ErikConf . #maxSize
             let theIndexUri = indexUri relayUri
-            (indexBs, _, httpStatus, _ignoreEtag) <-
+            (indexBs, _, httpStatus, _ignoreValidators) <-
                     vFocusOn LocationFocus theIndexUri $
                         fromTryEither (ErikE . Can'tDownloadObject . U.fmtEx) $
                             withinDownloadTimeout $
-                                Right <$> downloadToBS tmpDir theIndexUri Nothing maxSize
+                                Right <$> downloadToBS tmpDir theIndexUri noValidators maxSize
             when (httpStatus /= mempty) $
                 appError $ ErikE $ Can'tDownloadObject [i|Could not download index #{theIndexUri}, http status = #{httpStatus}|]
 

@@ -72,14 +72,16 @@ stdout = [#{U.textual stdout'}],
 stderr = [#{U.textual stderr'}]|]
 
 
+-- | Fetch and load the repository in a worker, see `updateObjectForRsyncRepository`.
 runRsyncFetchWorker :: (ValidatorIO es, Timeout :> es) => AppContext 
                     -> WorldVersion
+                    -> Maybe Instant
                     -> RsyncRepository             
-                    -> Eff es RsyncRepository
-runRsyncFetchWorker appContext@AppContext {..} worldVersion repository = do
+                    -> Eff es (RsyncRepository, Maybe Instant)
+runRsyncFetchWorker appContext@AppContext {..} worldVersion loadMark repository = do
     scopes <- askScopes
     RsyncFetchResult z <- runWorker appContext
-                            (RsyncFetchParams scopes repository worldVersion)
+                            (RsyncFetchParams scopes repository worldVersion loadMark)
                             (Just $ rsyncFetchTimeout config)
     embedValidatorT $ pure z
     
@@ -112,14 +114,20 @@ rsyncRpkiObject AppContext{..} uri = do
 
 -- | Process the whole rsync repository, download it, traverse the directory and 
 -- | add all the relevant objects to the storage.
+--
+-- With the load mark of the repository, only the files that have changed 
+-- since then are read. Returns the mark for the next load, if there is one 
+-- (see `loadMarkAfter`).
 updateObjectForRsyncRepository :: (ValidatorIO es, Concurrent :> es, Timeout :> es) => 
                                   AppContext
                                -> WorldVersion 
+                               -> Maybe Instant
                                -> RsyncRepository 
-                               -> Eff es RsyncRepository
+                               -> Eff es (RsyncRepository, Maybe Instant)
 updateObjectForRsyncRepository 
     appContext@AppContext{..} 
     worldVersion
+    loadMark
     repo@(RsyncRepository (RsyncPublicationPoint uri) _) = 
         
     timedMetric (Proxy :: Proxy TraverseMetric) $ do     
@@ -143,10 +151,19 @@ updateObjectForRsyncRepository
                     logError logger [i|rsync client timed out after #{timeout}}.|]
                     appError $ RsyncE $ RsyncDownloadTimeout timeout)
         logInfo logger [i|Finished rsynching #{getURL uri} to #{destination}.|]
+        let loadRepository = do
+                outcome <- loadRsyncRepository appContext worldVersion loadMark uri destination
+                pure (repo, loadMarkAfter outcome)
         case exitCode of  
-            ExitSuccess -> do                 
-                loadRsyncRepository appContext worldVersion uri destination                        
-                pure repo
+            ExitSuccess -> loadRepository
+            -- Files that vanished on the server during the transfer, i.e. the
+            -- repository was republished meanwhile. Everything else is there,
+            -- as consistent as any rsync of a repository that keeps changing,
+            -- and big trees (ARIN's) are hardly ever transferred without it.
+            ExitFailure 24 -> do
+                logWarn logger [i|Some files vanished from #{getURL uri} while fetching it, stderr = #{err}|]
+                appWarn $ RsyncE $ RsyncProcessError 24 $ U.convert err
+                loadRepository
             ExitFailure errorCode -> do
                 logError logger [i|Rsync process failed: #{rsync} 
                                             with code #{errorCode}, 
@@ -196,12 +213,13 @@ readRsyncProcess logger rsyncTimeout pc textual = do
 loadRsyncRepository :: (ValidatorIO es, Concurrent :> es)
                     => AppContext
                     -> WorldVersion
+                    -> Maybe Instant
                     -> RsyncURL
                     -> FilePath
-                    -> Eff es ()
-loadRsyncRepository appContext worldVersion repositoryUrl rootPath =
+                    -> Eff es LoadOutcome
+loadRsyncRepository appContext worldVersion loadMark repositoryUrl rootPath =
     -- An rsync tree mirrors the repository layout, so the path determines the URL.
-    loadObjectsFromFS appContext worldVersion
+    loadObjectsFromFS appContext worldVersion loadMark
         (Just . restoreUriFromPath repositoryUrl rootPath)
         rootPath
 
@@ -224,7 +242,15 @@ rsyncProcess Config {..} rsyncTimeout rsyncURL destination rsyncMode =
         source = Text.unpack (unURI $ getURL rsyncURL)        
         (sourceUrl, extraOptions) = case rsyncMode of 
             RsyncOneFile   -> (source, [])
-            RsyncDirectory -> (addTrailingPathSeparator source, [ "--recursive", "--delete", "--copy-links" ])
+            RsyncDirectory -> (addTrailingPathSeparator source,
+                                [ "--recursive", "--delete", "--copy-links" ] <> onlyObjects)
+
+        -- Only the files `loadObjectsFromFS` would load, everything else
+        -- is not transferred and deleted if it is there from before.
+        onlyObjects =
+            [ "--include=*/" ] <>
+            [ "--include=*." <> e | e <- objectExtensions ] <>
+            [ "--exclude=*", "--delete-excluded" ]
 
 
 {- | Map an rsync URL onto a local path under the rsync root.

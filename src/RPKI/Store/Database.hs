@@ -161,7 +161,7 @@ rwTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 68
+currentDatabaseVersion = 69
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"

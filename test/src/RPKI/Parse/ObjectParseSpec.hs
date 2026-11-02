@@ -2,6 +2,7 @@ module RPKI.Parse.ObjectParseSpec where
 
 import Control.Lens
 import qualified Data.ByteString        as BS
+import qualified Data.List              as List
 import           Data.Maybe (isJust)
 import qualified Data.Set               as Set
 
@@ -16,6 +17,7 @@ import           RPKI.Validation.ObjectValidation (prevalidateObject)
 
 import           Test.Tasty
 import qualified Test.Tasty.HUnit        as HU
+import qualified Test.Tasty.QuickCheck   as QC
 import RPKI.Util (hashHex, hashed)
 
 
@@ -31,6 +33,7 @@ objectParseSpec = testGroup "Unit tests for object parsing" [
     shouldParseSpl,
     prevalidationSpec,
     filenameToObjectTypeSpec,
+    objectExtensionsSpec,
     shouldParseErikIndex,
     shouldParseErikPartition
   ]
@@ -144,6 +147,24 @@ shouldParseErikPartition = HU.testCase "Should parse an Erik partition" $ do
     
     HU.assertBool "Wrong index" True
 
+
+-- | rsync fetches "*.<extension>" for every one of `objectExtensions` and 
+-- nothing else, it must be exactly the files that are loaded as objects.
+objectExtensionsSpec :: TestTree
+objectExtensionsSpec = testGroup "Object file extensions" [
+    HU.testCase "There is one for every object type, BGPsec certificates are .cer" $
+        HU.assertEqual ""
+            (Just [ t | t <- [minBound .. maxBound], t /= BGPSec ])
+            (List.sort <$> traverse rpkiObjectType objectExtensions),
+
+    QC.testProperty "A file is an object exactly when its name ends with a dot and one of them" $
+        QC.forAll fileName $ \name ->
+            supportedExtension name == any (\e -> ('.' : e) `List.isSuffixOf` name) objectExtensions
+  ]
+  where
+    fileName = List.intercalate "." <$> QC.listOf (QC.elements
+        [ "", "a", "ce", "cer", "CER", "Cer", "mft", "crl", "roa", "gbr", 
+          "sig", "asa", "spl", "tak", "txt" ])
 
 filenameToObjectTypeSpec :: TestTree
 filenameToObjectTypeSpec = testGroup "Filename to object type mapping" [

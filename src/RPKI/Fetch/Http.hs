@@ -8,6 +8,7 @@ import Conduit
 import Data.Conduit.Internal (zipSinks)
 import Data.Generics.Product.Typed
 import Data.IORef
+import Data.Maybe (listToMaybe)
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -65,18 +66,18 @@ instance Blob BS.ByteString where
 downloadToBS :: (Blob bs, MonadIO m) => 
                 FilePath ->
                 URI -> 
-                Maybe ETag ->
+                HttpValidators ->
                 Size ->
-                m (bs, Size, HttpStatus, Maybe ETag)
-downloadToBS tmpDir uri@(URI u) eTag maxSize = liftIO $ do    
+                m (bs, Size, HttpStatus, HttpValidators)
+downloadToBS tmpDir uri@(URI u) validators maxSize = liftIO $ do    
     let tmpFileName = U.convert $ U.normalizeUri u
     withTempFile tmpDir tmpFileName $ \name fd -> do
-        ((_, size), status, newETag) <-
-                downloadConduit uri eTag fd 
+        ((_, size), status, newValidators) <-
+                downloadConduit uri validators fd 
                     (sinkGenSize uri maxSize () (\_ _ -> ()) id)
         hClose fd                    
         content <- readB name size
-        pure (content, size, status, newETag)
+        pure (content, size, status, newValidators)
 
 
 -- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
@@ -84,26 +85,26 @@ downloadToBS tmpDir uri@(URI u) eTag maxSize = liftIO $ do
 downloadHashedBS :: (Blob bs, MonadIO m) => 
                     FilePath ->
                     URI -> 
-                    Maybe ETag ->
+                    HttpValidators ->
                     Hash -> 
                     Size -> 
-                    (Hash -> Either e (bs, Size, HttpStatus, Maybe ETag)) ->
-                    m (Either e (bs, Size, HttpStatus, Maybe ETag))
-downloadHashedBS tmpDir uri@(URI u) eTag expectedHash maxSize hashMishmatch = liftIO $ do
+                    (Hash -> Either e (bs, Size, HttpStatus, HttpValidators)) ->
+                    m (Either e (bs, Size, HttpStatus, HttpValidators))
+downloadHashedBS tmpDir uri@(URI u) validators expectedHash maxSize hashMishmatch = liftIO $ do
     -- Download xml file to a temporary file and read it as a lazy bytestring 
     -- to minimize the heap. Snapshots can be pretty big, so we don't want 
     -- a spike in heap usage.
     let tmpFileName = U.convert $ U.normalizeUri u
     withTempFile tmpDir tmpFileName $ \name fd -> do
-        ((actualHash, size), status, newETag) <- 
-                downloadConduit uri eTag fd 
+        ((actualHash, size), status, newValidators) <- 
+                downloadConduit uri validators fd 
                     (sinkGenSize uri maxSize S256.init S256.update (U.mkHash . S256.finalize))
         if actualHash /= expectedHash 
             then pure $! hashMishmatch actualHash
             else do
                 hClose fd
                 content <- readB name size
-                pure $ Right (content, size, status, newETag)
+                pure $ Right (content, size, status, newValidators)
                 
 
 -- | Fetch arbitrary file using the streaming implementation
@@ -116,7 +117,7 @@ downloadRpkiObject AppContext {..} uri = do
     let maxSize = config ^. typed @RrdpConf . #maxSize
     (content, _, _, _) <- 
         fromTry (RrdpE . CantDownloadFile . U.fmtEx) $
-            downloadToBS tmpDir (getURL uri) Nothing maxSize
+            downloadToBS tmpDir (getURL uri) noValidators maxSize
 
     readObject (RrdpU uri) (U.hashed content)
 
@@ -128,7 +129,7 @@ downloadToFile :: MonadIO m =>
                 -> m HttpStatus
 downloadToFile uri file limit = liftIO $ do    
     fmap (\(_, s, _) -> s) $ withFile file WriteMode $ \fd -> do 
-        downloadConduit uri Nothing fd 
+        downloadConduit uri noValidators fd 
             (sinkGenSize uri limit () (\_ _ -> ()) id) 
 
 -- | Do the same as `downloadToBS` but calculate sha256 hash of the data while 
@@ -160,7 +161,7 @@ downloadToFileHashedGen :: MonadIO m
 downloadToFileHashedGen uri file expectedHash maxSize httpStatusNotOk hashMishmatch result = liftIO $
     withFile file WriteMode $ \fd -> do 
         ((actualHash, size), status, _) <- 
-                downloadConduit uri Nothing fd 
+                downloadConduit uri noValidators fd 
                     (sinkGenSize uri maxSize S256.init S256.update (U.mkHash . S256.finalize))
         if status /= mempty 
             then pure $! httpStatusNotOk status 
@@ -192,12 +193,12 @@ instance Show OversizedDownloadStream where
 --
 downloadConduit :: (MonadIO m, MonadUnliftIO m) => 
                     URI 
-                    -> Maybe ETag
+                    -> HttpValidators
                     -> Handle 
                     -> ConduitT BS.ByteString Void (ResourceT m) t
-                    -> m (t, HttpStatus, Maybe ETag)
-downloadConduit uri eTag fileHandle extraSink =
-    downloadToSink uri eTag $ fst <$> zipSinks extraSink (sinkHandle fileHandle)
+                    -> m (t, HttpStatus, HttpValidators)
+downloadConduit uri validators fileHandle extraSink =
+    downloadToSink uri validators $ fst <$> zipSinks extraSink (sinkHandle fileHandle)
 
 
 -- | Download an object that is small enough to hold in memory, checking its
@@ -211,7 +212,7 @@ downloadHashedToMemory :: MonadIO m
                        -> m (Either e (Hashed BS.ByteString))
 downloadHashedToMemory uri expectedHash maxSize httpStatusNotOk hashMismatch = liftIO $ do
     (((actualHash, _), body), status, _) <-
-        downloadToSink uri Nothing $
+        downloadToSink uri noValidators $
             zipSinks (sinkGenSize uri maxSize S256.init S256.update (U.mkHash . S256.finalize))
                      sinkLazy
     pure $ if status /= mempty
@@ -223,18 +224,22 @@ downloadHashedToMemory uri expectedHash maxSize httpStatusNotOk hashMismatch = l
 
 downloadToSink :: (MonadIO m, MonadUnliftIO m) =>
                   URI
-                  -> Maybe ETag
+                  -> HttpValidators
                   -> ConduitT BS.ByteString Void (ResourceT m) t
-                  -> m (t, HttpStatus, Maybe ETag)
-downloadToSink (URI u) eTag sink = do
+                  -> m (t, HttpStatus, HttpValidators)
+downloadToSink (URI u) HttpValidators {..} sink = do
     req <- liftIO $ parseRequest $ Text.unpack u
 
     let eTagHeader = case eTag of 
             Nothing          -> []
             Just (ETag etag) -> [(hIfNoneMatch, etag)]
 
+    let lastModifiedHeader = case lastModified of 
+            Nothing                     -> []
+            Just (LastModified lastMod) -> [(hIfModifiedSince, lastMod)]
+
     let newHeaders = 
-            [(hUserAgent, userAgent)] <> eTagHeader <> requestHeaders req
+            [(hUserAgent, userAgent)] <> eTagHeader <> lastModifiedHeader <> requestHeaders req
 
     let req' = req { 
             requestHeaders = newHeaders,
@@ -245,13 +250,14 @@ downloadToSink (URI u) eTag sink = do
         }
 
     httpStatus  <- liftIO $ newIORef mempty
-    newETag     <- liftIO $ newIORef Nothing
+    newValidators <- liftIO $ newIORef noValidators
     let getSrc r = do         
             liftIO $ do 
                 writeIORef httpStatus $ HttpStatus $ getResponseStatusCode r         
-                case getResponseHeader "ETag" r of
-                    []    -> pure ()
-                    e : _ -> writeIORef newETag $ Just $ ETag e
+                writeIORef newValidators $ HttpValidators {
+                        eTag         = ETag <$> listToMaybe (getResponseHeader hETag r),
+                        lastModified = LastModified <$> listToMaybe (getResponseHeader hLastModified r)
+                    }
             getResponseBody r
 
     z <- runConduitRes
@@ -259,7 +265,7 @@ downloadToSink (URI u) eTag sink = do
             .| countTraffic
             .| sink
 
-    liftIO $ (z,,) <$> readIORef httpStatus <*> readIORef newETag
+    liftIO $ (z,,) <$> readIORef httpStatus <*> readIORef newValidators
 
 
 -- | Add everything that goes through to the process-wide incoming traffic counter.

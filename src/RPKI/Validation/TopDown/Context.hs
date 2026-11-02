@@ -65,6 +65,9 @@ data TopDownContext = TopDownContext {
         payloadBuilder          :: PayloadBuilder,
         overclaimingHappened    :: Bool,
         fetcheables             :: TVar Fetcheables,
+        -- | The rsync publication points of the CAs as they are in the 
+        -- certificates, fetcheables can have a directory above them
+        rsyncPublicationPoints  :: TVar (Set RsyncURL),
         earliestNotValidAfter   :: TVar EarliestValidityChange,        
         visitedAkis             :: TVar (Set AKI),
         -- | RRDP repositories to fetch from a snapshot next time, with why: 
@@ -141,6 +144,7 @@ newTopDownContext taName allTas =
             interruptedByLimit      <- newTVar CanProceed                 
             treeSize                <- newTVar 0
             fetcheables             <- newTVar mempty                 
+            rsyncPublicationPoints  <- newTVar mempty
             earliestNotValidAfter   <- newTVar mempty
             visitedAkis             <- newTVar mempty
             snapshotCandidates      <- newTVar mempty

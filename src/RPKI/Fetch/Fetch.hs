@@ -82,10 +82,61 @@ data Fetchers = Fetchers {
         -- spawns a worker process for every publication point at once.
         erikFetchSemaphore :: Semaphore,
 
+        -- Fetches that are running, to never have two fetches 
+        -- of the same URL at the same time
+        fetchesInProgress :: SingleFlight RpkiURL FetchOutcome,
+
+        -- To read only the files that have changed after an rsync fetch
+        rsyncLoadMarks :: TVar LoadMarks,
+
         -- Mapping of repositories to the TAs they are mentioned in
         uriByTa :: TVar UriTaIxSet
     }
     deriving stock (Generic)
+
+{- | Load marks of rsync repositories: for every one, when the walk through 
+     its directory began in the last load that stored every file it had to. 
+     Every object file there that hasn't changed since is in the storage, so 
+     the next load only reads the ones that have (see `loadObjectsFromFS`).
+
+     They are only kept in memory, so the first load of every repository 
+     after a restart reads everything, which also takes care of the storage 
+     having been reset at the start.
+
+     Cache cleanup deletes objects whose files can still be in the 
+     directories, so it drops all the marks. A load that runs at the same 
+     time doesn't set its mark: it may have found an object in the storage 
+     right before the cleanup deleted it. That's what the generation is for.
+-}
+data LoadMarks = LoadMarks {
+        generation :: Int,
+        marks      :: Map RsyncURL Instant
+    }
+    deriving stock (Show, Eq, Generic)
+
+newLoadMarks :: LoadMarks
+newLoadMarks = LoadMarks 0 mempty
+
+-- | The mark of a repository, if there is one, and the generation to set
+-- the next one with
+loadMarkOf :: RsyncURL -> LoadMarks -> (Maybe Instant, Int)
+loadMarkOf url LoadMarks {..} = (Map.lookup url marks, generation)
+
+-- | Set the mark of a repository, unless cache cleanup has run since the 
+-- generation was taken
+setLoadMark :: Int -> RsyncURL -> Instant -> LoadMarks -> LoadMarks
+setLoadMark generation' url mark loadMarks@LoadMarks {..}
+    | generation' == generation = loadMarks { marks = Map.insert url mark marks }
+    | otherwise                 = loadMarks
+
+-- | Forget every mark, after cache cleanup
+dropLoadMarks :: LoadMarks -> LoadMarks
+dropLoadMarks LoadMarks {..} = LoadMarks (generation + 1) mempty
+
+-- | What a fetch of a repository ended with: the world version it stored 
+-- objects with, the repository with updated metadata or the error, 
+-- the validations and the duration.
+type FetchOutcome = (WorldVersion, Either AppError (Repository, Maybe RrdpFetchStat), ValidationState, TimeMs)
 
 type UriTaIxSet = IxSet Indexes UrlTA
 
@@ -127,6 +178,8 @@ newFetchers config fetcheables = do
     untrustedFetchSemaphore <- newSemaphore fetchParallelism
     trustedFetchSemaphore   <- newSemaphore fetchParallelism
     erikFetchSemaphore      <- newSemaphore (fromIntegral $ config ^. #erikConf . #fqdnParallelism)
+    fetchesInProgress       <- newSingleFlight
+    rsyncLoadMarks          <- newTVar newLoadMarks
     pure Fetchers {..}
   where
     fetchParallelism = fromIntegral $ config ^. #parallelism . #fetchParallelism
@@ -185,10 +238,11 @@ nextRefreshInterval config repository worldVersion newStatus rrdpStats duration 
 
     minInterval =
         case repository of
-            -- it's significantly cheaper to use E-Tag and If-None-Match,
-            -- so the interval can be smaller
-            RrdpR (RrdpRepository { eTag = Just _ }) -> fetchIntervalConfig ^. #minFetchInterval
-            _                                        -> 2 * fetchIntervalConfig ^. #minFetchInterval
+            -- it's significantly cheaper to use E-Tag and If-None-Match
+            -- (or Last-Modified and If-Modified-Since), so the interval can be smaller
+            RrdpR (RrdpRepository { eTag = Just _ })         -> fetchIntervalConfig ^. #minFetchInterval
+            RrdpR (RrdpRepository { lastModified = Just _ }) -> fetchIntervalConfig ^. #minFetchInterval
+            _                                                -> 2 * fetchIntervalConfig ^. #minFetchInterval
 
     trimInterval interval =
         max minInterval
@@ -248,11 +302,13 @@ withFetchLimits Fetchers {..} config repository f =
 -- The metadata is also updated in the database.
 --
 fetchRepository :: (ValidatorIO es, Timeout :> es) => AppContext
+                -> TVar LoadMarks
                 -> WorldVersion
                 -> Repository
                 -> Eff es (Repository, Maybe RrdpFetchStat)
 fetchRepository
     appContext@AppContext {..}
+    loadMarks
     worldVersion
     repo = do
         logInfo logger [i|Fetching #{getURL repoURL}.|]
@@ -276,11 +332,15 @@ fetchRepository
         pure z
 
     fetchRsyncRepository r = do 
-        (z, elapsed) <- timedMS $ fromTryM 
+        let url = getRsyncURL r
+        (loadMark, generation) <- liftIO $ loadMarkOf url <$> readTVarIO loadMarks
+        ((r', nextMark), elapsed) <- timedMS $ fromTryM 
                             (RsyncE . UnknownRsyncProblem . fmtEx) 
-                            (runRsyncFetchWorker appContext worldVersion r)
+                            (runRsyncFetchWorker appContext worldVersion loadMark r)
+        for_ nextMark $ \mark -> 
+            liftIO $ atomically $ modifyTVar' loadMarks $ setLoadMark generation url mark
         logInfo logger [i|Fetched #{getURL repoURL}, took #{elapsed}ms.|]
-        pure z
+        pure r'
           
 
 

@@ -635,6 +635,10 @@ toRepositoryDtos AppContext {..} inputs = do
     let rrdps = [(r, s) | (RrdpR r, s) <- inputs]
     let rsyncs = [(r, s) | (RsyncR r, s) <- inputs]
 
+    collapsed <- atomically $ collapsedRsyncRepositories
+                    <$> (mconcat . Map.elems <$> readTVar (appState ^. #rsyncPublicationPoints))
+                    <*> readTVar (appState ^. #fetcheables)
+
     roTxT database $ \tx -> do
         rrdpRepos <- 
             forM rrdps $ \(repository@RrdpRepository {..}, state) -> do
@@ -651,6 +655,7 @@ toRepositoryDtos AppContext {..} inputs = do
                 resolved <- forM validationDtos $ resolveOriginalDto tx
 
                 let metrics = filterRepositoryMetrics (RsyncU uri) $ state ^. typed @Metrics . #traverseMetrics
+                let fetchedInsteadOf = Map.lookup uri collapsed
                 pure $ RsyncDto RsyncRepositoryDto { validations = resolved, .. }
 
         pure $ rrdpRepos <> rsyncRepos            
