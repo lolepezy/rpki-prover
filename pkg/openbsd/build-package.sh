@@ -106,14 +106,14 @@ if [ "${FROM_TAG}" = no ]; then
     src="${WORK}/rpki-prover-${VERSION}"
     mkdir -p "${src}"
     git -C "${REPO_ROOT}" archive HEAD | tar -x -C "${src}"
-    # The committed GitVersionInfo.hs and UniqueId.hs describe whatever tree
-    # generate-modules.sh last ran in; run it on this one. The private index
-    # keeps git from touching the repository's own.
+    # The export has no .git, so record its git metadata in it (see
+    # build-info/README.txt). The private index keeps git from touching the
+    # repository's own.
     (cd "${src}" &&
         export GIT_DIR="${REPO_ROOT}/.git" GIT_WORK_TREE="${src}" \
                GIT_INDEX_FILE="${WORK}/index" &&
         git read-tree HEAD &&
-        bash ./generate-modules.sh)
+        bash ./write-build-info.sh)
     tar -C "${WORK}" -czf "${WORK}/rpki-prover-${VERSION}.tar.gz" "rpki-prover-${VERSION}"
     to_vm "${WORK}/rpki-prover-${VERSION}.tar.gz" default:/build/upload/
     LOCAL_DISTFILE="/build/upload/rpki-prover-${VERSION}.tar.gz"

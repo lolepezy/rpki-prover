@@ -23,8 +23,15 @@ extra-source-files:
     static/fonts/IBMPlexMono-Medium.woff2
     static/fonts/IBMPlexMono-SemiBold.woff2
     static/fonts/OFL.txt
-    src/RPKI/Meta/GitVersionInfo.hs
-    src/RPKI/Meta/UniqueId.hs
+    -- Hashed into the build's unique id, see RPKI.Meta.BuildInfo; app and
+    -- cbits are here so that a change in them rebuilds the library, which
+    -- has the hash
+    app/*.hs
+    cbits/*.c
+    cabal.project
+    cabal.project.freeze
+    -- The README, and git.txt where write-build-info.sh wrote one
+    build-info/*.txt
 
 source-repository head
   type: git
@@ -138,6 +145,7 @@ common shared
     , tasty-hunit
     , tasty-quickcheck
     , temporary
+    , template-haskell
     , text
     , th-utilities
     , these
@@ -240,6 +248,7 @@ library
       RPKI.Validation.TopDown.Shortcuts
       RPKI.Validation.TopDown.TaCert
       RPKI.Validation.Types
+      RPKI.Meta.BuildInfo
       RPKI.Meta.GitVersionInfo
       RPKI.Meta.Version
       RPKI.Worker

@@ -1,7 +1,10 @@
 #!/bin/bash 
 docker build - < Dockerfile.static-builder --tag rpki-prover-builder
 
-. ./generate-modules.sh
+# cabal install builds a copy of the sdist outside the repository, see
+# build-info/README.txt
+. ./write-build-info.sh
+trap 'rm -f build-info/git.txt' EXIT
 
 # NOTE: Dockerfile.static-builder must have cabal-install available
 docker run --rm \

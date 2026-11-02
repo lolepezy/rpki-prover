@@ -140,12 +140,12 @@ trap cleanup EXIT
 log "Cloning ${TAG} ($(git rev-parse --short "${TAG_COMMIT}")) into ${SRC}"
 rm -rf "${WORK}"
 mkdir -p "${WORK}" "${OUT_DIR}"
-# A full clone rather than a shallow one or a worktree: generate-modules.sh
+# A full clone rather than a shallow one or a worktree: write-build-info.sh
 # counts the commits, and the package builds copy .git into containers, where
 # a worktree's pointer to this repository's .git would dangle.
 git clone --quiet --no-checkout "${REPO_ROOT}" "${SRC}"
 
-# generate-modules.sh records the branch, so build on the branch the tag was
+# write-build-info.sh records the branch, so build on the branch the tag was
 # made on rather than on a detached HEAD.
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if git merge-base --is-ancestor "${TAG_COMMIT}" HEAD 2>/dev/null && [ "${BRANCH}" != HEAD ]; then
@@ -154,8 +154,8 @@ else
     git -C "${SRC}" checkout --quiet --detach "${TAG_COMMIT}"
 fi
 
-# Each build runs generate-modules.sh, which rewrites two tracked files. Undo
-# that before the next build, so that it doesn't see its tree as dirty.
+# A build that changed tracked files would make the next one record its tree
+# as dirty. Undo any such change, and fail on anything else.
 pristine() {
     git -C "${SRC}" checkout --quiet -- .
     [ -z "$(git -C "${SRC}" status --porcelain)" ] ||
@@ -178,7 +178,7 @@ if want static; then
     log "Building the static binary"
     pristine
     docker build - < "${SRC}/Dockerfile.static-builder" --tag rpki-prover-builder
-    (cd "${SRC}" && bash ./generate-modules.sh)
+    (cd "${SRC}" && bash ./write-build-info.sh)
     # The container runs as root; hand what it writes back to us, or the
     # clone can't be removed.
     docker run --rm \
@@ -203,7 +203,7 @@ fi
 if want docker; then
     log "Building the docker image ${DOCKER_REPO}:${VERSION}"
     pristine
-    (cd "${SRC}" && bash ./generate-modules.sh)
+    (cd "${SRC}" && bash ./write-build-info.sh)
     docker build "${SRC}" --file "${SRC}/Dockerfile.prover" --tag "${DOCKER_REPO}:${VERSION}"
     check_version docker run --rm "${DOCKER_REPO}:${VERSION}"
     docker tag "${DOCKER_REPO}:${VERSION}" "${DOCKER_REPO}:latest"

@@ -18,3 +18,5 @@ pkg/apt-repo/public/
 .vagrant/
 # Output of release.sh
 /releases/
+# Written by write-build-info.sh for builds that can't ask git
+/build-info/git.txt

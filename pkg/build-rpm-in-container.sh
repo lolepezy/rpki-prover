@@ -33,8 +33,8 @@ SRC_TREE="${BUILD_ROOT}/rpki-prover"
 log "Copying sources to ${SRC_TREE}"
 rm -rf "${SRC_TREE}"
 mkdir -p "${SRC_TREE}"
-# .git is copied along: generate-modules.sh derives the build's git metadata
-# from it, and without a repository it would bake in "unknown".
+# .git is copied along: write-build-info.sh derives the build's git metadata
+# from it, and without a repository it would record "unknown".
 rsync -a \
     --exclude '/.stack-work/' \
     --exclude '/dist-newstyle/' \
@@ -49,11 +49,13 @@ rsync -a \
 cd "${SRC_TREE}"
 
 # ---------------------------------------------------------------------------
-# 2. Generate the files the normal build scripts generate
+# 2. Record the git metadata
 # ---------------------------------------------------------------------------
 log "Preparing sources"
+# cabal install builds a copy of the sdist in /tmp, where there is no git
+# repository to ask; see build-info/README.txt.
 git config --global --add safe.directory "${SRC_TREE}" 2>/dev/null || true
-bash ./generate-modules.sh
+bash ./write-build-info.sh
 
 UPSTREAM_VERSION=$(awk '/^version:/ { print $2; exit }' rpki-prover.cabal)
 if [ -z "${UPSTREAM_VERSION}" ]; then
