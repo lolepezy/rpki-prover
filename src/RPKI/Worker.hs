@@ -20,6 +20,7 @@ import           Data.Text (Text, unpack)
 import qualified Data.ByteString.Lazy       as LBS
 import qualified Data.List                  as List
 import qualified Data.Map.Strict            as Map
+import qualified Data.Set                   as Set
 import qualified Data.Text                  as Text
 
 import           Data.Hourglass (Seconds(..))
@@ -88,7 +89,9 @@ data WorkerParams = RrdpFetchParams {
             RsyncFetchParams {
                 scopes          :: Scopes,
                 rsyncRepository :: RsyncRepository,
-                worldVersion    :: WorldVersion
+                worldVersion    :: WorldVersion,
+                -- Read only the files changed since then, see `loadObjectsFromFS`
+                loadMark        :: Maybe Instant
             } |
             ErikFetchParams {
                 scopes       :: Scopes,
@@ -285,8 +288,9 @@ newtype RrdpFetchResult = RrdpFetchResult
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
+-- | The repository and the load mark for its next fetch, if there is one
 newtype RsyncFetchResult = RsyncFetchResult 
-                            (Either AppError RsyncRepository, ValidationState)    
+                            (Either AppError (RsyncRepository, Maybe Instant), ValidationState)    
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -306,7 +310,7 @@ newtype ErikFetchStat = ErikFetchStat {
 
 data ValidationResult = ValidationResult
             ValidationState
-            (Map.Map TaName (Fetcheables, EarliestValidityChange))
+            (Map.Map TaName (Fetcheables, Set.Set RsyncURL, EarliestValidityChange))
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 

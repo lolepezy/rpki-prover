@@ -15,6 +15,7 @@ import           Data.Map.Strict             (Map)
 import qualified Data.Map.Strict             as Map
 import           Data.Map.Monoidal.Strict    (MonoidalMap(..))
 import qualified Data.Map.Monoidal.Strict    as MonoidalMap
+import           Data.Maybe                  (isNothing)
 import qualified Data.Set                    as Set
 
 import           GHC.Generics
@@ -334,6 +335,71 @@ repositoryCount :: Fetcheables -> Int
 repositoryCount (Fetcheables fs) = MonoidalMap.size fs
 
 
+{- | Fetch the common parent of many rsync repositories instead of each of them.
+
+    The rsync URLs (primaries and fallbacks) are put into an rsync forest and
+    collapsed there (see `collapseRsyncTree`), then every URL is replaced with
+    the leaf of the collapsed forest that covers it. One rsync of a directory is
+    much cheaper than many rsyncs of its subdirectories, each of which costs a
+    connection and a dozen round trips.
+
+    Once a collapsed directory is fetched and saved, the rsync forest has a
+    leaf for it, so the next validations resolve the repositories under it to
+    that directory by themselves (see `lookupInRsyncTree`).
+
+    Also returns the directories that the collapsing introduced, with the
+    number of repositories each of them replaces.
+-}
+collapseRsyncFetcheables :: Int -> Fetcheables -> (Fetcheables, Map RsyncURL Int)
+collapseRsyncFetcheables threshold fetcheables@(Fetcheables fs)
+    | threshold <= 0 = (fetcheables, mempty)
+    | otherwise      = (Fetcheables collapsedFetcheables, introduced)
+  where
+    collapsedFetcheables = mconcat
+        [ MonoidalMap.singleton primary' (Set.delete primary' $ Set.map toFetched fallbacks)
+        | (primary, fallbacks) <- MonoidalMap.toList fs
+        , let primary' = toFetched primary ]
+
+    rsyncUrls = [ u | RsyncU u <- Set.toList $ 
+                    Set.fromList $ MonoidalMap.keys fs <> concatMap Set.toList (MonoidalMap.elems fs) ]
+
+    original  = foldr (`toRsyncForest` ()) newRsyncForestGen rsyncUrls
+    collapsed = collapseRsyncForest threshold original
+
+    fetchedAs u = maybe u fst $ lookupInRsyncForest u collapsed
+
+    toFetched = \case
+        RsyncU u -> RsyncU $ fetchedAs u
+        url      -> url
+
+    -- A leaf of the collapsed forest that isn't covered by any of the 
+    -- original URLs is a directory that the collapsing introduced.
+    introduced = Map.fromListWith (+)
+        [ (parent, 1)
+        | u <- rsyncUrls
+        , let parent = fetchedAs u
+        , isNothing $ lookupInRsyncForest parent original ]
+
+{- | The rsync repositories that are not the publication point of any CA but
+    are fetched instead of the publication points under them (see
+    `collapseRsyncFetcheables`), with the number of those publication points.
+
+    It needs the URLs of the publication points themselves: once a collapsed
+    directory is saved, the publication points under it resolve to it during 
+    validation, so the fetcheables have the directory and not them, and 
+    `collapseRsyncFetcheables` doesn't see it as introduced anymore.
+-}
+collapsedRsyncRepositories :: Set.Set RsyncURL -> Fetcheables -> Map RsyncURL Int
+collapsedRsyncRepositories publicationPoints (Fetcheables fs) =
+    Map.fromListWith (+)
+        [ (fetchedAs, 1)
+        | pp <- Set.toList publicationPoints
+        , Just (fetchedAs, _) <- [lookupInRsyncForest pp fetched]
+        , not $ fetchedAs `Set.member` publicationPoints ]
+  where
+    fetched = foldr (`toRsyncForest` ()) newRsyncForestGen
+        [ u | RsyncU u <- MonoidalMap.keys fs <> concatMap Set.toList (MonoidalMap.elems fs) ]
+
 filterPPAccess :: Config -> PublicationPointAccess -> Maybe PublicationPointAccess    
 filterPPAccess Config {..} ppAccess = 
     fmap PublicationPointAccess $ nonEmpty $ 
@@ -408,6 +474,36 @@ lookupInRsyncTree path = meta_ path []
     meta_ (u: us) realPath SubTree {..} = 
         Map.lookup u rsyncChildren >>= meta_ us (realPath <> [u])
 
+
+{- | Replace every directory that needs at least `threshold` rsync fetches
+    with one fetch of the directory itself, going bottom-up.
+
+    A leaf is one fetch, whatever is below it is fetched with it. A subtree
+    needs as many fetches as its children together, where a child that has
+    been collapsed already is one fetch. So 100 repositories under
+    rsync://host/module/foo/bar/ become one fetch of rsync://host/module/foo/bar/
+    and not of the whole module, unless the module has `threshold` of such
+    directories or repositories. Threshold 1 always fetches whole modules, as
+    Routinator and rpki-client do, threshold 0 changes nothing.
+
+    The root of a host is never collapsed: rsync://host/ is the list of its
+    modules, not something to fetch.
+-}
+collapseRsyncForest :: Int -> RsyncForestGen a -> RsyncForestNoContent
+collapseRsyncForest threshold (RsyncForestGen byHost) =
+    RsyncForestGen $ Map.map (collapseRsyncTree threshold) byHost
+
+collapseRsyncTree :: Int -> RsyncTree a -> RsyncTree ()
+collapseRsyncTree threshold = fst . go False
+  where
+    -- The collapsed tree and the number of fetches it needs
+    go _ (Leaf _) = (Leaf (), 1 :: Int)
+    go collapsible SubTree {..} =
+        let collapsedChildren = Map.map (go True) rsyncChildren
+            fetches           = sum $ Map.map snd collapsedChildren
+        in if collapsible && threshold > 0 && fetches >= threshold
+            then (Leaf (), 1)
+            else (SubTree $ Map.map fst collapsedChildren, fetches)
 
 flattenRsyncTree :: RsyncForestGen a -> [(RsyncURL, a)]
 flattenRsyncTree (RsyncForestGen t) = 

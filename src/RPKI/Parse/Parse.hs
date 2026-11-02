@@ -10,6 +10,7 @@ module RPKI.Parse.Parse (
     module RPKI.Parse.Internal.Erik,
     readObject,
     readObjectOfType,
+    objectExtensions,
     supportedExtension,
     supportedExtensionByErik,
     isSupportedExtension,    
@@ -57,7 +58,11 @@ rpkiObjectType = \case
     "spl" -> Just SPL
     _      -> Nothing
 
--- | 
+-- | Extensions of the files that can be objects, every one that `rpkiObjectType` knows
+objectExtensions :: [String]
+objectExtensions = [ "cer", "mft", "crl", "roa", "gbr", "sig", "asa", "spl" ]
+
+-- |
 supportedExtension :: String -> Bool
 supportedExtension = isJust . nameObjectType
 

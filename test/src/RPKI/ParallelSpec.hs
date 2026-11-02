@@ -1,11 +1,15 @@
 module RPKI.ParallelSpec where
 
 import           Control.Concurrent      (threadDelay)
+import           Control.Concurrent.Async (async, cancel, wait, waitCatch)
+import           Control.Concurrent.MVar
+import           Control.Concurrent.STM  (atomically)
 import           Control.Exception       (ErrorCall (..), evaluate, throwIO, try)
-import           Control.Monad           (when)
+import           Control.Monad           (replicateM, when)
 import           Control.Monad.IO.Class  (liftIO)
 import           Data.IORef
 import qualified Data.List               as List
+import           Data.Either             (isLeft)
 import           Data.Maybe              (fromMaybe)
 import           Effectful               (Eff, IOE, runEff)
 import           Streaming               (Of, Stream)
@@ -16,6 +20,7 @@ import qualified Test.Tasty.HUnit        as HU
 import           Test.Tasty.QuickCheck   as QC
 
 import           GHC.Conc                (getNumCapabilities, getNumProcessors)
+import           System.Timeout          (timeout)
 
 import           RPKI.AppMonad
 import           RPKI.Cpu                (getPhysicalCpuCount, limitDirs, parseCpuList, parseCpuMax, quotaCpus)
@@ -27,6 +32,7 @@ parallelSpec :: TestTree
 parallelSpec = testGroup "Parallel" [
         cpuCountSpec,
         workPoolSpec,
+        singleFlightSpec,
         QC.testProperty "txPoolPipeline consumes every item once, in item order" $
             \(items :: [Int]) -> ioProperty $ do
                 (r, consumed, _) <- runPool ItemOrder (S.each items) unevenWork (\_ -> pure ())
@@ -141,6 +147,91 @@ workPoolSpec = testGroup "Work pool" [
         withWorkers pool [0 .. fromMaybe caps workers - 1] $ do
             task <- submitTask pool $ runEff $ f pool
             waitTask task >>= either throwIO pure
+
+
+singleFlightSpec :: TestTree
+singleFlightSpec = testGroup "Single flight" [
+        HU.testCase "Runs once for all who come while it runs" $ do
+            sf <- newFlights
+            (runs, release, action) <- blockedAction
+            first  <- async $ singleFlight sf "url" (action "fetched")
+            runsBecome runs 1
+            others <- replicateM 5 $ async $ singleFlight sf "url" (action "again")
+            -- Let them get to waiting
+            threadDelay 100_000
+            putMVar release ()
+            r1 <- wait first
+            rs <- mapM wait others
+            HU.assertEqual "the first one" ("fetched", False) r1
+            HU.assertEqual "the others" (replicate 5 ("fetched", True)) rs
+            runsBecome runs 1,
+
+        HU.testCase "Runs again for the next one after it's done" $ do
+            sf <- newFlights
+            r1 <- singleFlight sf "url" (pure (1 :: Int))
+            r2 <- singleFlight sf "url" (pure 2)
+            HU.assertEqual "" [(1, False), (2, False)] [r1, r2],
+
+        HU.testCase "Doesn't wait for other keys" $ do
+            sf <- newFlights
+            (runs, _, action) <- blockedAction
+            _ <- async $ singleFlight sf "a" (action "a")
+            runsBecome runs 1
+            r <- timeout 1_000_000 $ singleFlight sf "b" (pure "b")
+            HU.assertEqual "" (Just ("b", False)) r,
+
+        HU.testCase "Runs again for the waiting ones when the run is cancelled" $ do
+            sf <- newFlights
+            (runs, release, action) <- blockedAction
+            first  <- async $ singleFlight sf "url" (action "cancelled")
+            runsBecome runs 1
+            second <- async $ singleFlight sf "url" (action "fetched")
+            threadDelay 100_000
+            cancel first
+            runsBecome runs 2
+            putMVar release ()
+            r1 <- waitCatch first
+            r2 <- wait second
+            HU.assertBool "the first one is cancelled" (isLeft r1)
+            HU.assertEqual "the second one runs on its own" ("fetched", False) r2,
+
+        HU.testCase "Gives the exception only to the one who ran it" $ do
+            sf <- newFlights
+            (runs, release, action) <- blockedAction
+            first  <- async $ singleFlight sf "url" (action "boom" >> throwIO (ErrorCall "boom"))
+            runsBecome runs 1
+            second <- async $ singleFlight sf "url" (action "fetched")
+            threadDelay 100_000
+            putMVar release ()
+            r1 <- waitCatch first
+            r2 <- wait second
+            HU.assertEqual "the first one" (Left "boom") (either (Left . show) (Right . fst) r1)
+            HU.assertEqual "the second one runs on its own" ("fetched", False) r2
+            runsBecome runs 2
+    ]
+  where
+    newFlights :: IO (SingleFlight String a)
+    newFlights = atomically newSingleFlight
+
+    -- An action that counts its runs and waits for the release
+    blockedAction = do
+        runs    <- newIORef (0 :: Int)
+        release <- newEmptyMVar :: IO (MVar ())
+        let action (a :: String) = do
+                atomicModifyIORef' runs (\n -> (n + 1, ()))
+                readMVar release
+                pure a
+        pure (runs, release, action)
+
+    runsBecome runs n = do
+        r <- timeout 1_000_000 $ untilRuns runs n
+        HU.assertEqual "runs" (Just n) r
+
+    untilRuns runs n = do
+        r <- readIORef runs
+        if r == n 
+            then pure r 
+            else threadDelay 1_000 >> untilRuns runs n
 
 
 -- Uneven, so that the results are ready out of order

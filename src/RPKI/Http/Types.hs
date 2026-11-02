@@ -288,6 +288,9 @@ data RepositoryDto = RsyncDto RsyncRepositoryDto
 data RsyncRepositoryDto = RsyncRepositoryDto {
         uri         :: RsyncURL,
         meta        :: RepositoryMeta,
+        -- | When it is not the publication point of any CA: the number of 
+        -- publication points under it that it is fetched instead of
+        fetchedInsteadOf :: Maybe Int,
         metrics     :: TraverseMetric,
         validations :: [ResolvedVDto]
     }

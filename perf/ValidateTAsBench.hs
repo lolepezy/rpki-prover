@@ -128,14 +128,12 @@ main = do
         tals <- ensureTals logger talDir
 
         cpuCount_ <- fromIntegral <$> getNumCapabilities
-        let prefetchUrls = rights $ map (parseRsyncURL . Text.pack) defaultPrefetchURLs
-            config = defaultConfig
+        let config = defaultConfig
                     & #rootDirectory          .~ Public benchRoot
                     & #talDirectory           .~ Public talDir
                     & #tmpDirectory           .~ Public tmpDir
                     & #cacheDirectory         .~ Public cacheDir
                     & #rsyncConf . #rsyncRoot .~ Public rsyncDir
-                    & #rsyncConf . #prefetchUrls .~ prefetchUrls
                     & #rrdpConf  . #tmpRoot   .~ Public tmpDir
                     & #parallelism            .~ newParallelism cpuCount_
                     -- What the program runs with unless --no-incremental-validation

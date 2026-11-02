@@ -5,6 +5,7 @@ import RPKI.RRDP.ParseSpec
 import RPKI.Store.DatabaseSpec
 import RPKI.RRDP.UpdateSpec
 import RPKI.Fetch.HttpSpec
+import RPKI.Fetch.DirectoryTraverseSpec
 import RPKI.Resources.ResourcesSpec
 import RPKI.Resources.ValiditySpec
 import RPKI.AppMonadSpec
@@ -38,6 +39,7 @@ main = defaultMain $ testGroup "All tests" [
         manifestDigestGroup,
         rtrGroup,
         httpSpec,
+        directoryTraverseSpec,
         slurmGroup,
         loggingSpec,
         workflowSpec,

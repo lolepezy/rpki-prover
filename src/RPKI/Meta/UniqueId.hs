@@ -5,4 +5,4 @@ import RPKI.AppTypes
 import RPKI.Meta.Version
 
 thisExecutableVersion :: ExecutableVersion
-thisExecutableVersion = ExecutableVersion $ rpkiProverVersion <> " " <>  "5fff96d684ab5da4630a4e4b9745d85eab6d32ba3814227d3cc5b7f4201c26bb"        
+thisExecutableVersion = ExecutableVersion $ rpkiProverVersion <> " " <>  "d0b2ce2b571c9b081575fa129b4ee5b9b1ef1b72eb38e7bde7df9edeb0e07b35"        
