@@ -27,7 +27,7 @@ import qualified Streaming.Prelude                as S
 import           System.FilePath
 import           System.Directory                 (getDirectoryContents)
 import           System.IO
-import           System.Posix.Files               (FileStatus, getFileStatus, isDirectory, statusChangeTimeHiRes)
+import           System.Posix.Files               (getFileStatus, isDirectory, statusChangeTimeHiRes)
 
 import           RPKI.AppContext
 import           RPKI.AppMonad
@@ -183,9 +183,7 @@ loadObjectsFromFS AppContext{..} worldVersion loadMark restoreUrl rootPath = do
 -- `since`, the others are counted in `skipped`.
 --
 -- That a file has changed is told by its ctime. rsync can't write a file
--- without setting it: it writes a temporary file, sets its mtime to that
--- of the server's file (which is why mtime is no use here) and renames it.
--- A file that rsync leaves alone keeps its ctime, and nothing can set it back.
+-- without setting it.
 objectFiles :: Maybe Instant
             -> IORef Int
             -> (FilePath -> Maybe RsyncURL)
@@ -215,9 +213,7 @@ objectFiles since skipped restoreUrl = go
             Nothing     -> True
             Just moment -> statusChangeInstant status >= moment
 
-
-statusChangeInstant :: FileStatus -> Instant
-statusChangeInstant = Instant . floor . (* nanosPerSecond) . statusChangeTimeHiRes
+    statusChangeInstant = Instant . floor . (* nanosPerSecond) . statusChangeTimeHiRes
 
 
 {- | Parse and prevalidate one object, and work out what gets stored for it.
