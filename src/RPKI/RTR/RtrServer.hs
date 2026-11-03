@@ -13,7 +13,6 @@ import           Control.Exception
 import           Control.Monad
 
 import           Data.Foldable                    (for_)
-import           Data.Maybe                       (fromMaybe)
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
@@ -33,25 +32,26 @@ import           Network.Socket.ByteString        (recv, sendAll, sendMany)
 import           RPKI.AppContext
 import           RPKI.Config
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.Logging
 import           RPKI.Resources.Types
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
-import           RPKI.SLURM.SlurmProcessing
+import           RPKI.RTR.Snapshot
 
 import           RPKI.Parallel
 import           RPKI.Time
 import           RPKI.Util                        (convert, hex, decodeBase64)
 
 import           RPKI.AppState
-import           RPKI.AppTypes
 
-import qualified RPKI.Store.Database    as DB
-
+import           System.FilePath                  ((</>))
 import           System.Timeout                   (timeout)
 import           Time.Types
+
+import qualified UnliftIO.Exception               as UIO
 
 
 {- | Something that can be sent to a client: either a PDU still to be 
@@ -99,6 +99,11 @@ runRtrServer appContext RtrConfig {..} = do
   where    
 
     logger = getRtrLogger appContext
+
+    intervals = let Seconds expire = rtrExpireInterval 
+                in defIntervals { expireInterval = fromIntegral expire }
+
+    snapshotPath = configValue (appContext ^. #config . #rootDirectory) </> snapshotFileName
 
     -- | Handling TCP conections happens here
     runSocketBusiness rtrState updateBroadcastChan = 
@@ -157,25 +162,20 @@ runRtrServer appContext RtrConfig {..} = do
 
         let appState = appContext ^. #appState
 
-        -- If a version is recovered from the storage after the start, 
-        -- use it, otherwise wait until some complete version is generated       
-        -- by a validation process 
-        logInfo logger [i|RTR server: waiting for the first complete world version.|] 
-        worldVersion <- atomically $ waitForAnyVersion appState                
-    
-        -- Do not store more than amound of VRPs in the diffs as the initial size.
-        -- It's totally heuristical way of avoiding memory bloat
-        rtrPayloads <- atomically $ readRtrPayloads appState
-        let maxStoredDiffs = vrpsCount (rtrPayloads ^. #uniqueVrps)
-                
-        logDebug logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxStoredDiffs}.|] 
-
-        let initialRtrState = newRtrState worldVersion maxStoredDiffs
+        initialRtrState <- restoredOrNewState appState
         atomically $ writeTVar rtrState $ Just initialRtrState
 
         race_ (notifyClients $ notifyKey initialRtrState) $ forever $ do
-            (rtrState', previousVersion, newVersion, currentRtrPayload) <- waitForLatestRtrPayload appContext rtrState
-            previousRtrPayload <- readRtrPayload appContext previousVersion
+            rtrState' <- atomically $ maybe retry pure =<< readTVar rtrState
+            (newVersion, validatedRtrPayload, settled) <- nextVersion appState rtrState'
+
+            Now now <- thisInstant
+            let (currentRtrPayload, carriedOver') =
+                    withCarriedOver rtrExpireInterval now settled (rtrState' ^. #carriedOver) validatedRtrPayload
+            logCarriedOver now (rtrState' ^. #carriedOver) carriedOver'
+
+            let previousVersion    = rtrState' ^. #lastKnownWorldVersion
+            let previousRtrPayload = rtrState' ^. #served . #payloads
 
             let rtrDiff = evalDiffs previousRtrPayload currentRtrPayload
             let thereAreRtrUpdates = not $ emptyDiffs rtrDiff
@@ -193,14 +193,112 @@ runRtrServer appContext RtrConfig {..} = do
                               [i|ASPAs: #{previousAspaSize} -> #{currentAspaSize}.|]
 
             -- force evaluation of the new RTR state so that the old ones could be GC-ed.
-            let !nextRtrState = if thereAreRtrUpdates
-                    then updatedRtrState rtrState' newVersion rtrDiff
-                    else rtrState' { lastKnownWorldVersion = newVersion }
+            let !nextRtrState = (if thereAreRtrUpdates
+                    then updatedRtrState rtrState' newVersion rtrDiff (servedPayloads currentRtrPayload)
+                    else rtrState' { lastKnownWorldVersion = newVersion }) { carriedOver = carriedOver' }
 
             logDiff rtrDiff
 
             atomically $ writeTVar rtrState $! Just $! nextRtrState
+
+            -- Also without updates: the version says how fresh the payloads are
+            persist nextRtrState
         where
+          -- Carry on with the persisted session if its payloads are fresh enough
+          -- and all known, start a new session with them if some are unknown,
+          -- otherwise start a new session once there is a complete world version.
+          restoredOrNewState appState = do 
+            Now now <- thisInstant
+            readSnapshot snapshotPath >>= \case 
+                Nothing -> newState appState Nothing
+
+                Just (Left e) -> do 
+                    logWarn logger [i|Not using the persisted RTR state from #{snapshotPath}: #{e}|]
+                    newState appState Nothing
+
+                Just (Right snapshot@RtrSnapshot {..})
+                    | not $ freshEnough rtrExpireInterval now snapshot -> do
+                        logInfo logger $ [i|RTR server: the persisted RTR state of version #{worldVersion} |] <>
+                                         [i|is older than the expire interval (#{rtrExpireInterval}), starting a new session.|]
+                        newState appState (Just sessionId)
+
+                    -- Routers may have the unknown PDUs, and diffs from the rest
+                    -- of the payloads would never withdraw them
+                    | unknownPdus > 0 -> do
+                        let newId@(RtrSessionId s) = newSessionId worldVersion (Just sessionId)
+                        logWarn logger $ [i|RTR server: the persisted RTR state from #{snapshotPath} has #{unknownPdus} PDUs |] <>
+                                         [i|of unknown types, probably written by a newer rpki-prover, starting a new session #{s} |] <>
+                                         [i|with the rest of its payloads, serving them together with the validated ones |] <>
+                                         [i|until the validation is settled.|]
+                        let restored = servedPayloads payloads
+                        let state = (newRtrState worldVersion newId initialSerial intervals restored) {
+                                        carriedOver = Just $ CarriedOver restored worldVersion
+                                    }
+                        persist state
+                        pure state
+
+                    | otherwise -> do
+                        let RtrPayloads {..} = payloads
+                        let (RtrSessionId s, SerialNumber n) = (sessionId, serial)
+                        logInfo logger $ [i|RTR server: continuing session #{s} at serial #{n} with |] <>
+                                         [i|#{vrpsCount uniqueVrps} VRPs, #{Set.size bgpSec} router keys and |] <>
+                                         [i|#{Set.size aspas} ASPAs of version #{worldVersion} from #{snapshotPath}, |] <>
+                                         [i|serving them together with the validated ones until the validation is settled.|]
+                        let restored = servedPayloads payloads
+                        pure $ (newRtrState worldVersion sessionId serial intervals restored) {
+                                    carriedOver = Just $ CarriedOver restored worldVersion
+                                }
+
+          newState appState previousSessionId = do 
+            logInfo logger [i|RTR server: waiting for the first complete world version.|] 
+            (worldVersion, rtrPayloads) <- atomically $ 
+                (,) <$> waitForAnyVersion appState <*> readRtrPayloads appState
+            let state = newRtrState worldVersion 
+                            (newSessionId worldVersion previousSessionId) initialSerial 
+                            intervals (servedPayloads rtrPayloads)
+            logDebug logger [i|RTR started with version #{worldVersion}, maxStoredDiffs = #{maxTotalDiffSize state}.|] 
+            persist state
+            pure state
+
+          -- The next version with its payloads and whether it is settled. While
+          -- payloads are carried over, it is also the moment they get too old,
+          -- then the current version is taken as if it were settled.
+          nextVersion appState current = do
+              tooOld <- case current ^. #carriedOver of
+                  Nothing      -> newTVarIO False
+                  Just carried -> do
+                      Now now <- thisInstant
+                      registerDelay $ microsecondsBetween now $ carriedUntil rtrExpireInterval carried
+              atomically $
+                  (do (newVersion, payloads) <- waitForNewVersion appState (current ^. #lastKnownWorldVersion)
+                      (newVersion, payloads, ) <$> readTVar (appState ^. #settled))
+                  `orElse`
+                  (do check =<< readTVar tooOld
+                      (current ^. #lastKnownWorldVersion, , True) <$> readRtrPayloads appState)
+
+          logCarriedOver now before after =
+              for_ before $ \carried -> do
+                  let until_ = carriedUntil rtrExpireInterval carried
+                  case after of
+                      Just _ ->
+                          logDebug logger $ [i|RTR server: serving the payloads from before the restart too, |] <>
+                                            [i|until the validation is settled or until #{until_}.|]
+                      Nothing
+                          | now >= until_ ->
+                              logInfo logger $ [i|RTR server: the payloads from before the restart are older |] <>
+                                               [i|than the expire interval, not serving them anymore.|]
+                          | otherwise ->
+                              logInfo logger [i|RTR server: the validation is settled, not serving the payloads from before the restart anymore.|]
+
+          -- Failing to write it is not a reason to stop serving routers
+          persist state = do 
+            Now now <- thisInstant
+            UIO.tryAny (timedMS $ writeSnapshot snapshotPath now state) >>= \case 
+                Left e -> 
+                    logError logger [i|Failed to write the RTR state to #{snapshotPath}: #{e}|]
+                Right (_, elapsed) -> 
+                    logDebug logger [i|Wrote the RTR state to #{snapshotPath}, took #{elapsed}ms.|]
+
           -- The serial only changes when there's a non-empty diff, so a change 
           -- of (session, serial) is exactly "there's something to notify about".
           -- 
@@ -248,17 +346,16 @@ runRtrServer appContext RtrConfig {..} = do
         for_ logMessage $ logError logger
 
         for_ versionedPdu $ \versionedPdu' -> do
-            case processFirstPdu rtrState' (appContext ^. #appState) versionedPdu' firstPduLazyBS of
+            case processFirstPdu rtrState' versionedPdu' firstPduLazyBS of
                 Left (errorPduL, errorMessage) -> do
                     let errorBytes = pduBytesL errorPduL
                     logError logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <>
                                       [i|error PDU: #{errorPduL}, errorBytes = #{hex errorBytes}, length = #{pduLengthL errorPduL}|]
                     sendAll connection errorBytes
 
-                Right (createPdus, session, warning) -> do
+                Right (pdus, session, warning) -> do
                     for_ warning $ logWarn logger                     
-                    -- createPdus is an STM action that creates the response PDUs 
-                    atomically $ writeCQueue outboxQueue =<< createPdus
+                    atomically $ writeCQueue outboxQueue pdus
 
                     withAsync (sendFromQueuesToClient session outboxQueue) $ \sender -> do
                         serveLoop session outboxQueue 
@@ -305,46 +402,27 @@ runRtrServer appContext RtrConfig {..} = do
                         -- all the real work happens inside of pure `responseAction`, 
                         -- for better testability.
                         rtrState' <- readTVar rtrState                        
-                        case responseAction logger peer session rtrState' (appContext ^. #appState) pduBytes of 
+                        case responseAction logger peer session rtrState' pduBytes of 
                             Left (pdus, io) -> do 
                                 writeCQueue outboxQueue pdus
                                 pure io
-                            Right (createPdus, io) -> do 
-                                pdus <- createPdus
+                            Right (pdus, io) -> do 
                                 writeCQueue outboxQueue pdus
                                 pure $ io <> serveLoop session outboxQueue
 
 
-readRtrPayload :: AppContext -> WorldVersion -> IO RtrPayloads 
-readRtrPayload AppContext {..} worldVersion = do 
-    (vrps, bgpSec, aspas) <- DB.roTxT database $ \tx -> do
-                slurm <- DB.getSlurm tx worldVersion
-                vrps <- do
-                        vrps_ <- DB.getVrps tx worldVersion
-                        pure $ maybe vrps_ (`applySlurmToVrps` vrps_) slurm
-
-                bgpSec <- DB.getBgps tx worldVersion >>= \case
-                            Nothing   -> pure mempty
-                            Just bgps -> pure $ maybe bgps (`applySlurmBgpSec` bgps) slurm
-                
-                aspas <- fromMaybe mempty <$> DB.getAspas tx worldVersion
-
-                pure (vrps, bgpSec, aspas)
-
-    pure $ mkRtrPayloads vrps bgpSec aspas
-
-
-waitForLatestRtrPayload :: AppContext 
-        -> TVar (Maybe RtrState) 
-        -> IO (RtrState, WorldVersion, WorldVersion, RtrPayloads)
-waitForLatestRtrPayload AppContext {..} rtrState = do 
-    atomically $ 
-        readTVar rtrState >>= \case 
-            Nothing        -> retry
-            Just rtrState' -> do
-                let knownVersion = rtrState' ^. #lastKnownWorldVersion
-                (newVersion, rtrPayloads) <- waitForNewVersion appState knownVersion                
-                pure (rtrState', knownVersion, newVersion, rtrPayloads)
+-- | The payloads with their serialised forms, which are only rendered when needed.
+servedPayloads :: RtrPayloads -> ServedPayloads
+servedPayloads payloads = 
+    ServedPayloads {
+        renderedV0 = currentCachePayloadBS V0 payloads,
+        renderedV1 = currentCachePayloadBS V1 payloads,
+        renderedV2 = v2,
+        persisted  = persistedPayloads v2,
+        ..
+    }
+  where
+    v2 = currentCachePayloadBS V2 payloads
 
 -- | Auxiliarry pure function to avoid doing too much inside of IO.
 -- Here IO is only doing logging
@@ -356,10 +434,9 @@ responseAction :: (Show peer, Logger logger) =>
                 -> peer 
                 -> Session 
                 -> Maybe RtrState 
-                -> AppState 
                 -> BS.ByteString 
-                -> Either ([PduLike], IO ()) (STM [PduLike], IO ())
-responseAction logger peer session rtrState appState pduBytes = 
+                -> Either ([PduLike], IO ()) ([PduLike], IO ())
+responseAction logger peer session rtrState pduBytes = 
     let 
         pduBytesLazy = LBS.fromStrict pduBytes
 
@@ -371,7 +448,7 @@ responseAction logger peer session rtrState appState pduBytes =
         errorResponse = maybe mempty (: []) errorPdu
 
         response pdu = let
-            r = respondToPdu rtrState appState pdu pduBytesLazy session
+            r = respondToPdu rtrState pdu pduBytesLazy session
             in case r of 
                 Left (errorPdu', message') -> let
                     ioAction = logDebug logger [i|Parsed PDU: #{pdu}, error = #{message'}, responding with #{errorPdu}.|]
@@ -389,7 +466,7 @@ responseAction logger peer session rtrState appState pduBytes =
             Just (VersionedPdu pdu _) -> 
                 case response pdu of 
                     Left z                 -> Left $ errors <> z
-                    Right (createPdus, io) -> Right ((fst errors <>) <$> createPdus, io)
+                    Right (pdus, io)       -> Right (fst errors <> pdus, io)
 
 
 -- | Decide what to do with a parsed (or not) PDU: the error to send back, 
@@ -467,13 +544,11 @@ analyzePdu peer session pduBytes = \case
 -- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis#section-7
 -- 
 processFirstPdu :: Maybe RtrState 
-                -> AppState
                 -> VersionedPdu
                 -> LBS.ByteString 
-                -> Either (PduLike, Text) (STM [PduLike], Session, Maybe Text)
+                -> Either (PduLike, Text) ([PduLike], Session, Maybe Text)
 processFirstPdu 
     rtrState 
-    appState 
     (VersionedPdu pdu protocolVersion) 
     pduBytes =                
     case pdu of 
@@ -482,7 +557,7 @@ processFirstPdu
             | Just rtrState' <- rtrState
             , let currentSessionId = rtrState' ^. #currentSessionId
             , sessionId /= currentSessionId -> 
-                Right (pure [out CacheResetPdu], 
+                Right ([out CacheResetPdu], 
                        session', 
                        Just ([i|Unknown session ID #{sessionId} in the first Serial Query, |] <> 
                              [i|cache session ID is #{currentSessionId}.|]))
@@ -499,7 +574,7 @@ processFirstPdu
     session' = Session protocolVersion
     out = TruePdu . toVersioned session'
 
-    respond = case respondToPdu rtrState appState pdu pduBytes session' of 
+    respond = case respondToPdu rtrState pdu pduBytes session' of 
         Left (errorPdu, message) -> Left (out errorPdu, message)
         Right (pdus, warning)    -> Right (pdus, session', warning)
 
@@ -509,14 +584,12 @@ processFirstPdu
 -- The PDU must already be known to have the version of the session.
 -- 
 respondToPdu :: Maybe RtrState
-                -> AppState
                 -> Pdu 
                 -> LBS.ByteString                 
                 -> Session
-                -> Either (Pdu, Text) (STM [PduLike], Maybe Text)
+                -> Either (Pdu, Text) ([PduLike], Maybe Text)
 respondToPdu 
     rtrState    
-    appState
     pdu
     pduBytes     
     session@(Session sessionProtocol) =
@@ -531,38 +604,33 @@ respondToPdu
                             if clientSerial == currentSerial 
                                 then let 
                                     pdus = [out $ CacheResponsePdu sessionId] 
-                                        <> [out $ EndOfDataPdu sessionId currentSerial defIntervals]
-                                    in Right (pure pdus, Nothing)
+                                        <> [out $ EndOfDataPdu sessionId currentSerial intervals]
+                                    in Right (pdus, Nothing)
                                 else 
                                     case diffsFromSerial rtrState' clientSerial of
                                         Nothing -> 
                                             -- we don't have the data, you are too far behind
                                             Right (
-                                                pure [out CacheResetPdu], 
+                                                [out CacheResetPdu], 
                                                 Just [i|No data for serial #{clientSerial}.|])
                                         Just diffs' -> let                                            
                                             pdus = [out $ CacheResponsePdu sessionId] 
                                                     <> diffPayloadPdus sessionProtocol (squashDiffs diffs')
-                                                    -- TODO Figure out how to instantiate intervals
-                                                    -- Should they be configurable?                                                                     
-                                                    <> [out $ EndOfDataPdu sessionId currentSerial defIntervals]
-                                            in Right (pure pdus, Nothing)
+                                                    <> [out $ EndOfDataPdu sessionId currentSerial intervals]
+                                            in Right (pdus, Nothing)
 
                     ResetQueryPdu -> let
-                            action = do
-                                bs <- cachedPduBinary appState sessionProtocol 
-                                        (currentCachePayloadBS sessionProtocol)
-                                pure $ [out $ CacheResponsePdu currentSessionId] 
-                                    <> [SerialisedPdu sessionProtocol bs]
-                                    <> [out $ EndOfDataPdu currentSessionId currentSerial defIntervals]                                    
-                            in Right (action, Nothing) 
+                            pdus = [out $ CacheResponsePdu currentSessionId] 
+                                <> [SerialisedPdu sessionProtocol (renderedFor sessionProtocol served)]
+                                <> [out $ EndOfDataPdu currentSessionId currentSerial intervals]                                    
+                            in Right (pdus, Nothing) 
 
                     -- TODO Refactor that stuff 
                     --  - react properly on ErrorPdu
                     --  - Log 
                     -- Dont't send back anything 
                     ErrorPdu {} -> 
-                        Right (pure [], Nothing)
+                        Right ([], Nothing)
 
                     other -> let
                         text = "Unexpected PDU received from the client: " <> show other

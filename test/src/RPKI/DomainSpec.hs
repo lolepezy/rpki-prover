@@ -14,6 +14,7 @@ import qualified Data.Vector.Unboxed as VU
 
 import           RPKI.AppMonad (runValidatorIO)
 import           RPKI.Domain
+import           RPKI.Domain.Vrps
 import           RPKI.Parse.Internal.MFT (parseMft)
 import           RPKI.Reporting (newScopes)
 import           RPKI.Time (Instant(..))
@@ -27,11 +28,11 @@ domainCountersGroup =
     testGroup "Domain counters"
         [ HU.testCase "estimateVrpCount counts duplicates" testEstimateVrpCount
         , HU.testCase "estimateVrpCountRoas counts duplicates" testEstimateVrpCountRoas
-        , HU.testCase "uniqueVrpCount deduplicates flattened VRPs" testUniqueVrpCount
         , HU.testCase "uniqueVrpCounts reports per-TA and overall counts" testUniqueVrpCounts
         , HU.testCase "countSortedDistinct handles edge cases" testCountSortedDistinct
         , HU.testCase "countDistinctUnion handles edge cases" testCountDistinctUnion
         , QC.testProperty "countDistinctUnion agrees with Set.union" propCountDistinctUnion
+        , QC.testProperty "mergeDedup agrees with sortDedup of both" propMergeDedup
         ]
 
 
@@ -120,12 +121,6 @@ testEstimateVrpCountRoas =
         $ estimateVrpCountRoas roasFixture
 
 
-testUniqueVrpCount :: HU.Assertion
-testUniqueVrpCount =
-    HU.assertEqual "uniqueVrpCount must deduplicate identical VRPs" 2
-        $ uniqueVrpCount perTaVrps
-
-
 -- Both TAs hold `duplicateVrp`, so the overall count is not the sum of the
 -- per-TA counts and the merge across TAs has to deduplicate too.
 testUniqueVrpCounts :: HU.Assertion
@@ -171,6 +166,15 @@ propCountDistinctUnion xss =
   where
     -- the merge's contract is that every source is already sorted
     sorted = map (VU.fromList . List.sort) xss
+
+
+-- The order is the one given, not Ord, so it's tested with a reversed one
+propMergeDedup :: [Int] -> [Int] -> Bool
+propMergeDedup xs ys =
+    mergeDedup cmp (sortDedup cmp $ VU.fromList xs) (sortDedup cmp $ VU.fromList ys)
+        == sortDedup cmp (VU.fromList $ xs <> ys)
+  where
+    cmp = flip compare
 
 
 perTaVrps :: PerTA Vrps

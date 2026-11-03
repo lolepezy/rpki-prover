@@ -140,6 +140,10 @@ curl -s http://localhost:9999/api/vrps.json
 
 RPKI Prover can also run as an [RTR server](https://www.rfc-editor.org/rfc/rfc8210). Enable it with the `--with-rtr` option. In most deployments, you will also want to set `--rtr-address` and `--rtr-port`.
 
+The RTR server keeps its state (the session, the serial and the data at that serial) in `rtr-state` in the root directory, outside of the cache. After a restart it carries on with that session and data right away, also when the cache had to be rebuilt, so routers can keep their data and only get what changed. The state is only used if it is younger than the Expire Interval, `--rtr-expire-interval` (7200 seconds by default), which is also what routers are told: how long they may keep using the data without hearing from the cache. Otherwise the RTR server starts a new session once there is a validation result.
+
+Until the validation after the restart is complete, i.e. every repository it found has been fetched or at least tried, the data from before the restart is served together with the validated data. Routers then lose nothing while a rebuilt cache fills up: they get new data right away, and data that is gone is withdrawn once the validation is complete, or once the data from before the restart is older than the Expire Interval.
+
 ## HTTP API <a name="http-api"></a>
 
 Visit [http://localhost:9999](http://localhost:9999) to view the UI reporting metrics, trust anchors, repositories, and any errors or warnings.
