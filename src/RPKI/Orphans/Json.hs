@@ -451,6 +451,8 @@ instance ToJSON TAL
 instance ToJSON HttpApiConfig
 instance ToJSON ValidationConfig
 instance ToJSON FetchIntervalConfig
+instance ToJSON RtrListen
+instance ToJSON RtrTlsConfig
 instance ToJSON RtrConfig
 instance ToJSON WorkerLimits
 instance ToJSON SystemConfig

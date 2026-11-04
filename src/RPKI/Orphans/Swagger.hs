@@ -140,6 +140,8 @@ instance ToSchema FetchIntervalConfig
 instance ToSchema WorkerLimits
 instance ToSchema SystemConfig
 instance ToSchema HttpApiConfig
+instance ToSchema RtrListen
+instance ToSchema RtrTlsConfig
 instance ToSchema RtrConfig
 instance ToSchema StorageConfig
 instance ToSchema LogLevel

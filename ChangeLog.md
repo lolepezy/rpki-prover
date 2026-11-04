@@ -2,6 +2,11 @@
 
 ## Unreleased changes
 
+- RTR over TLS (#145), set up like in Routinator: `--rtr-tls-port` starts a
+  TLS listener with the certificate chain from `--rtr-tls-cert` and the key
+  from `--rtr-tls-key`, `--rtr-tls-address` defaults to `--rtr-address`. It
+  runs with or without the plain one from `--with-rtr`.
+- `--rtr-port` accepts ports above 32767.
 - A fetch, also one that fails after storing something, makes the TAs that
   use the repository revalidated if a manifest it stored lists other objects
   than the one the last validation used, or if it stored any new object
