@@ -41,7 +41,6 @@ import           RPKI.Domain
 import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Logging
-import           RPKI.Repository
 import           RPKI.Fetch.Erik.RelayPool
 import qualified RPKI.Util as U
 import           RPKI.Fetch.Http
