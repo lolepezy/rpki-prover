@@ -117,17 +117,6 @@ data ErikRepository = ErikRepository {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
--- | How much of the last fetch one relay actually served. A fetch spreads its
--- queries over every configured relay and falls back on failure, so this is a
--- list rather than a single "the relay it came from".
-data ErikRelayUsage = ErikRelayUsage {
-        relay  :: URI,
-        served :: Int,
-        failed :: Int
-    }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (TheBinary)
-
 newErikRepository :: FQDN -> ErikRepository
 newErikRepository fqdn = ErikRepository {
         meta       = newRepositoryMeta,

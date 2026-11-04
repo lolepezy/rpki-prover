@@ -800,6 +800,23 @@ data ErikSegmentRef = ErikSegmentRef {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary, NFData)
 
+{- | How many queries one relay served and failed.
+
+     The same counts mean slightly different things depending on where they
+     are: a fetch worker's running totals, the report it sends to the root
+     process to update relay health, and the summary of the last fetch stored
+     with the repository. A fetch spreads its queries over every configured
+     relay and falls back on failure, so it is always a list of these rather
+     than a single "the relay it came from".
+-}
+data ErikRelayUsage = ErikRelayUsage {
+        relay  :: URI,
+        served :: Int,
+        failed :: Int
+    }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (TheBinary)
+
 
 data CertificateWithSignature = CertificateWithSignature {
         cwsX509certificate    :: X509.Certificate,

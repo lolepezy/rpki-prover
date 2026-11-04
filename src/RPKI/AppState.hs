@@ -139,13 +139,13 @@ relayDeadAfterReports :: Int
 relayDeadAfterReports = 3
 
 -- | Fold one worker's reports into the health map.
-updateErikRelayHealth :: MonadIO m => AppState -> [ErikRelayReport] -> m ()
+updateErikRelayHealth :: MonadIO m => AppState -> [ErikRelayUsage] -> m ()
 updateErikRelayHealth AppState {..} reports = liftIO $ do
     Now now <- thisInstant
     atomically $ modifyTVar' erikRelayHealth $ \health ->
         foldr (fold_ now) health reports
   where
-    fold_ now ErikRelayReport {..} =
+    fold_ now ErikRelayUsage {..} =
         Map.alter (Just . bump . fromMaybe newRelayHealth) relay
       where
         bump h@RelayHealth {..} = h {

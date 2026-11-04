@@ -93,13 +93,6 @@ data Relays = Relays {
     }
     deriving stock (Eq)
 
-data RelayStat = RelayStat {
-        statRelay  :: URI,
-        statServed :: Int,
-        statFailed :: Int
-    }
-    deriving stock (Eq, Show)
-
 -- | One queued item: what to do, plus which relays have already refused it.
 data QueuedItem t = QueuedItem {
         payload  :: t,
@@ -331,7 +324,7 @@ chargeFailureSTM logger relays@Relays { relayList } relay benchNow = do
     -- round has already started and the news is too late to spare them the
     -- same timeout.
     when (cf == deadRelayThreshold) $
-        pushErikRelayReportSTM logger [ ErikRelayReport thisUri 0 1 ]
+        pushErikRelayReportSTM logger [ ErikRelayUsage thisUri 0 1 ]
 
     -- Never bench the last relay standing: a fetch with no live relay cannot
     -- make progress, and failing each item with its real error is more useful
@@ -445,10 +438,10 @@ withAnyRelay logger relays f = do
                         go rest
 
 
-relayStats :: MonadIO m => Relays -> m [RelayStat]
+relayStats :: MonadIO m => Relays -> m [ErikRelayUsage]
 relayStats Relays { relayList } = liftIO $ atomically $
     forM relayList $ \r ->
-        RelayStat r.relayUri <$> readTVar r.served <*> readTVar r.failed
+        ErikRelayUsage r.relayUri <$> readTVar r.served <*> readTVar r.failed
 
 queueFailures :: MonadIO m => WorkQueue t -> m [(Hash, AppError)]
 queueFailures queue = liftIO $ readTVarIO queue.failures
