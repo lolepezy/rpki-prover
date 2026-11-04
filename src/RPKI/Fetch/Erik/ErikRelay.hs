@@ -136,6 +136,7 @@ fetchErik
     timedMetric (Proxy :: Proxy TraverseMetric) $ doFetch relays    
     stats <- relayStats relays
 
+    -- The pool already reports failures, so don't do it here
     pushErikRelayReport logger
         [ ErikRelayUsage { failed = 0, .. } | ErikRelayUsage {..} <- stats, served > 0 ]
 
