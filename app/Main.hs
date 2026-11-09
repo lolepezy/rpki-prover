@@ -862,7 +862,8 @@ cliOptionsParser = CLIOptions
     <*> optional (strOption
             (  long "rtr-address"
             <> metavar "ADDRESS"
-            <> help ("Address to bind the RTR server to (default: " <> defRtrAddress <> ").")))
+            <> help ("Address to bind the RTR server to, for a name all of its addresses "
+                  <> "(default: " <> defRtrAddress <> ").")))
     <*> optional (option portReader
             (  long "rtr-port"
             <> metavar "PORT"

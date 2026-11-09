@@ -12,7 +12,9 @@ import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
 
+import           Data.Either                      (partitionEithers)
 import           Data.Foldable                    (for_)
+import           Data.List                        (nub)
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
@@ -109,26 +111,43 @@ runRtrServer appContext RtrConfig {..} = do
     -- | Handling TCP conections happens here
     runSocketBusiness rtrState updateBroadcastChan = 
         withSocketsDo $ do                 
-            address <- resolve (show rtrPort)
+            addresses <- resolve (show rtrPort)
             -- Every accepted connection forks two threads and duplicates the 
             -- update broadcast channel, so the number of them has to be bounded.
             connectionCount <- newTVarIO (0 :: Int)
-            bracket (open address) close (loop connectionCount)
+            bracket (openAll addresses) (mapM_ close) $ mapConcurrently_ (loop connectionCount)
       where
+        -- All the addresses of the name and not only the first one: localhost
+        -- is normally both 127.0.0.1 and ::1 and routers can use any of them.
         resolve port = do
             let hints = defaultHints {
                     addrFlags = [AI_PASSIVE], 
                     addrSocketType = Stream                                        
                 }
-            head <$> getAddrInfo (Just hints) (Just rtrAddress) (Just port)            
+            nub <$> getAddrInfo (Just hints) (Just rtrAddress) (Just port)            
 
-        open addr = do
-            sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
-            setSocketOption sock ReuseAddr 1
-            withFdSocket sock setCloseOnExecIfNeeded
-            bind sock $ addrAddress addr
-            listen sock 1024
-            pure sock
+        -- Some of them may not be usable, e.g. ::1 where IPv6 is disabled.
+        -- It only stops the server if none of them is.
+        openAll addresses = do
+            opened <- forM addresses $ \address ->
+                try (open address) >>= \case
+                    Left (e :: IOException) -> do
+                        logWarn logger [i|RTR server: cannot listen on #{addrAddress address}: #{e}|]
+                        pure $ Left e
+                    Right sock -> do
+                        logInfo logger [i|RTR server: listening on #{addrAddress address}.|]
+                        pure $ Right sock
+            case partitionEithers opened of
+                (e : _, []) -> throwIO e
+                (_, sockets) -> pure sockets
+
+        open addr =
+            bracketOnError (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)) close $ \sock -> do
+                setSocketOption sock ReuseAddr 1
+                withFdSocket sock setCloseOnExecIfNeeded
+                bind sock $ addrAddress addr
+                listen sock 1024
+                pure sock
 
         loop connectionCount sock = forever $ do
             (conn, peer) <- accept sock

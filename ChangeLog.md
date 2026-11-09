@@ -4,6 +4,8 @@
 
 - `--rtr-port` works for ports above 32767. `--rtr-port` and `--http-api-port`
   reject what is not a port.
+- The RTR server listens on all the addresses of `--rtr-address`, e.g. on both
+  127.0.0.1 and ::1 for the default `localhost`, not only on the first one.
 - The RTR server persists its session, serial and data in `rtr-state` in the
   root directory, outside of the cache. After a restart it continues the same
   session with the same data immediately, also if the cache is rebuilt, as
