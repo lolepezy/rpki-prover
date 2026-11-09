@@ -22,8 +22,25 @@
          - length of the LZ4-compressed PDUs (Word64)
          - LZ4-compressed PDUs
 
+     * the stored diffs, only if there are any, so that after a restart routers
+       that are behind get the changes instead of a Cache Reset:
+         - length of the serialised diffs (Word64)
+         - SHA256 of the serialised diffs (32 bytes)
+         - length of the LZ4-compressed serialised diffs (Word64)
+         - LZ4-compressed serialised diffs, which for every diff, the
+           latest first, are:
+             - serial of the diff (Word32)
+             - length of the PDUs of what it adds (Word64) and these PDUs
+             - length of the PDUs of what it deletes (Word64) and these PDUs
+
    The PDUs are what a Cache Response of protocol version 2 contains, i.e.
-   IPv4 and IPv6 Prefix, Router Key and ASPA announcements.
+   IPv4 and IPv6 Prefix, Router Key and ASPA announcements. Also for what
+   a diff deletes, because a withdrawal of an ASPA has no providers and
+   diffs can only be squashed with them.
+
+   Diffs are not a part of the payloads check and it is not a problem if they
+   cannot be used: routers that are behind get a Cache Reset then. A reader
+   that doesn't know about them just stops after the payloads.
 
    Every PDU starts with its protocol version and type and has its length in
    bytes 4-7, so the payloads are read PDU by PDU, and the ones of an unknown
@@ -58,7 +75,7 @@ module RPKI.RTR.Snapshot (
     RtrSnapshot (..),
     snapshotFileName,
     snapshotFormatVersion,
-    persistedPayloads,
+    compressedBlock,
     freshEnough,
     encodeSnapshot,
     decodeSnapshot,
@@ -116,7 +133,9 @@ data RtrSnapshot = RtrSnapshot {
         -- | PDUs skipped because there is no decoder for their version and
         -- type, i.e. the state was written by a newer rpki-prover. Routers
         -- may have them.
-        unknownPdus  :: Int
+        unknownPdus  :: Int,
+        -- | The latest first, or why they cannot be used.
+        storedDiffs  :: Either Text [(SerialNumber, RtrDiffs)]
     }
     deriving stock (Show, Eq)
 
@@ -136,19 +155,34 @@ freshEnough :: Seconds -> Instant -> RtrSnapshot -> Bool
 freshEnough expireInterval now RtrSnapshot {..} = 
     closeEnoughMoments (Earlier $ Instant $ versionToInt worldVersion) (Later now) expireInterval
 
--- | The payloads part of the file for the PDUs of 'V2' payloads. It is
--- the same for every state with these payloads, so it's made once
--- (see 'ServedPayloads') and not every time the state is written.
-persistedPayloads :: BS.ByteString -> BS.ByteString
-persistedPayloads pdus =
+-- | Length, checksum and the compressed bytes. For the payloads it is the same
+-- for every state with these payloads, so it's made once (see 'ServedPayloads')
+-- and not every time the state is written.
+compressedBlock :: BS.ByteString -> BS.ByteString
+compressedBlock bytes =
     LBS.toStrict $ runPut $ do
-        putWord64be $ fromIntegral $ BS.length pdus
-        putByteString $ S256.hash pdus
+        putWord64be $ fromIntegral $ BS.length bytes
+        putByteString $ S256.hash bytes
         putWord64be $ fromIntegral $ BS.length compressed
         putByteString compressed
   where
     -- It only fails for inputs over 2GB
-    compressed = maybe (error "Cannot compress RTR payloads") id $ compress pdus
+    compressed = maybe (error "Cannot compress the RTR state") id $ compress bytes
+
+getCompressedBlock :: Get (Int, BS.ByteString, BS.ByteString)
+getCompressedBlock = do
+    uncompressedLength <- fromIntegral <$> getWord64be
+    checksum           <- getByteString 32
+    compressed         <- getByteString . fromIntegral =<< getWord64be
+    pure (uncompressedLength, checksum, compressed)
+
+openCompressedBlock :: Text -> (Int, BS.ByteString, BS.ByteString) -> Either Text BS.ByteString
+openCompressedBlock what (uncompressedLength, checksum, compressed) = do
+    uncompressed <- maybe (Left [i|Cannot decompress the #{what} of the RTR state|]) Right $
+                        decompress compressed
+    unless (BS.length uncompressed == uncompressedLength && S256.hash uncompressed == checksum) $
+        Left [i|The #{what} of the RTR state don't match their checksum|]
+    pure uncompressed
 
 encodeSnapshot :: Instant -> RtrState -> LBS.ByteString
 encodeSnapshot (Instant writtenAt) RtrState {..} =
@@ -164,18 +198,18 @@ encodeSnapshot (Instant writtenAt) RtrState {..} =
         putInt64be $ versionToInt $ maybe lastKnownWorldVersion (.version) carriedOver
         putInt64be writtenAt
         putByteString $ persisted served
+        unless (null diffs) $
+            putByteString $ compressedBlock $ encodeStoredDiffs $ toList diffs
 
 decodeSnapshot :: LBS.ByteString -> Either Text RtrSnapshot
 decodeSnapshot bytes = do
-    (sessionId, serial, worldVersion, writtenAt, pdus, checksum, compressed) <-
+    (sessionId, serial, worldVersion, writtenAt, block, afterPayloads) <-
         case runGetOrFail getSnapshot bytes of
-            Left (_, _, e)       -> Left [i|Broken RTR state: #{e}|]
-            Right (_, _, parsed) -> Right parsed
-    uncompressed <- maybe (Left "Cannot decompress the payloads of the RTR state") Right $
-                        decompress compressed
-    unless (BS.length uncompressed == pdus && S256.hash uncompressed == checksum) $
-        Left "Payloads of the RTR state don't match their checksum"
+            Left (_, _, e)                  -> Left [i|Broken RTR state: #{e}|]
+            Right (rest, _, (a, b, c, d, e)) -> Right (a, b, c, d, e, rest)
+    uncompressed <- openCompressedBlock "payloads" block
     (payloads, unknownPdus) <- payloadsFromPdus uncompressed
+    let storedDiffs = decodeStoredDiffs afterPayloads
     pure RtrSnapshot {..}
   where
     getSnapshot = do
@@ -188,10 +222,65 @@ decodeSnapshot bytes = do
         serial       <- SerialNumber <$> getInt32be
         worldVersion <- asVersion <$> getInt64be
         writtenAt    <- Instant <$> getInt64be
-        pdus         <- fromIntegral <$> getWord64be
-        checksum     <- getByteString 32
-        compressed   <- getByteString . fromIntegral =<< getWord64be
-        pure (sessionId, serial, worldVersion, writtenAt, pdus, checksum, compressed)
+        block        <- getCompressedBlock
+        pure (sessionId, serial, worldVersion, writtenAt, block)
+
+encodeStoredDiffs :: [(SerialNumber, RtrDiffs)] -> BS.ByteString
+encodeStoredDiffs stored =
+    LBS.toStrict $ runPut $
+        forM_ stored $ \(SerialNumber n, GenDiffs {..}) -> do
+            putInt32be n
+            putPdus (added vrpDiff) (added bgpSecDiff) (added aspaDiff)
+            putPdus (deleted vrpDiff) (deleted bgpSecDiff) (deleted aspaDiff)
+  where
+    putPdus vrps bgpSec aspas = do
+        let pdus = currentCachePayloadBS V2 RtrPayloads {
+                        vrps       = mempty,
+                        uniqueVrps = toUniqueVrps $ createVrps vrps,
+                        bgpSec     = bgpSec,
+                        aspas      = aspas
+                    }
+        putWord64be $ fromIntegral $ BS.length pdus
+        putByteString pdus
+
+decodeStoredDiffs :: LBS.ByteString -> Either Text [(SerialNumber, RtrDiffs)]
+decodeStoredDiffs section
+    | LBS.null section = Right []
+    | otherwise = do
+        block  <- parse getCompressedBlock section
+        bytes  <- openCompressedBlock "diffs" block
+        stored <- parse getStored $ LBS.fromStrict bytes
+        mapM toDiff stored
+  where
+    parse :: Get a -> LBS.ByteString -> Either Text a
+    parse get_ input =
+        case runGetOrFail get_ input of
+            Left (_, _, e)       -> Left [i|Broken diffs in the RTR state: #{e}|]
+            Right (_, _, parsed) -> Right parsed
+
+    getStored = isEmpty >>= \case
+        True  -> pure []
+        False -> (:) <$> ((,,) <$> (SerialNumber <$> getInt32be) <*> getPdus <*> getPdus) <*> getStored
+
+    getPdus = getByteString . fromIntegral =<< getWord64be
+
+    toDiff (serial, addedPdus, deletedPdus) = do
+        a <- knownPayloads addedPdus
+        d <- knownPayloads deletedPdus
+        pure (serial, GenDiffs {
+                vrpDiff    = Diff (vrpSet a) (vrpSet d),
+                bgpSecDiff = Diff a.bgpSec d.bgpSec,
+                aspaDiff   = Diff a.aspas d.aspas
+            })
+
+    vrpSet = Set.fromList . vrpsToList . fromUniqueVrps . uniqueVrps
+
+    -- Routers may have the unknown ones and they couldn't be told about the
+    -- changes in them
+    knownPayloads pdus =
+        payloadsFromPdus pdus >>= \case
+            (payloads, 0) -> Right payloads
+            _             -> Left "The diffs in the RTR state have PDUs of unknown types"
 
 -- | Decoders of the PDUs in persisted payloads by protocol version and PDU
 -- type, each reading what follows these two bytes.

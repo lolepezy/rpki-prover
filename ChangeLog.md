@@ -6,10 +6,11 @@
   reject what is not a port.
 - The RTR server listens on all the addresses of `--rtr-address`, e.g. on both
   127.0.0.1 and ::1 for the default `localhost`, not only on the first one.
-- The RTR server persists its session, serial and data in `rtr-state` in the
-  root directory, outside of the cache. After a restart it continues the same
-  session with the same data immediately, also if the cache is rebuilt, as
-  long as the data is younger than the Expire Interval. The Expire Interval
+- The RTR server persists its session, serial, data and diffs in `rtr-state`
+  in the root directory, outside of the cache. After a restart it continues
+  the same session with the same data immediately, also if the cache is
+  rebuilt, as long as the data is younger than the Expire Interval, and
+  routers that are behind get the changes they missed. The Expire Interval
   sent to routers is set with `--rtr-expire-interval` (default 7200 seconds).
   Until the validation after the restart is complete, the data from before
   the restart is served together with the validated data, so that routers

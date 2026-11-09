@@ -55,7 +55,15 @@ newRtrState worldVersion sessionId serial intervals served =
         ..
     }
 
--- | Create a new RTR state based on the previous one, a new diff and 
+-- | A state restored from the persisted one with its diffs, the latest first.
+withStoredDiffs :: [(SerialNumber, RtrDiffs)] -> RtrState -> RtrState
+withStoredDiffs stored state =
+    state {
+        diffs         = Deq.fromConsAndSnocLists stored [],
+        totalDiffSize = sum $ map (diffSize . snd) stored
+    }
+
+-- | Create a new RTR state based on the previous one, a new diff and
 -- the payloads after the diff.
 -- 
 updatedRtrState :: RtrState -> WorldVersion -> RtrDiffs -> ServedPayloads -> RtrState

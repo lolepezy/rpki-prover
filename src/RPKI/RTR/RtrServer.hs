@@ -275,7 +275,14 @@ runRtrServer appContext RtrConfig {..} = do
                                          [i|#{Set.size aspas} ASPAs of version #{worldVersion} from #{snapshotPath}, |] <>
                                          [i|serving them together with the validated ones until the validation is settled.|]
                         let restored = servedPayloads payloads
-                        pure $ (newRtrState worldVersion sessionId serial intervals restored) {
+                        restoredDiffs <- case storedDiffs of
+                            Right stored -> do
+                                logDebug logger [i|RTR server: restored #{length stored} diffs.|]
+                                pure stored
+                            Left e -> do
+                                logWarn logger [i|RTR server: not using the persisted diffs, routers that are behind will get a reset: #{e}|]
+                                pure []
+                        pure $ (withStoredDiffs restoredDiffs $ newRtrState worldVersion sessionId serial intervals restored) {
                                     carriedOver = Just $ CarriedOver restored worldVersion
                                 }
 
@@ -448,7 +455,7 @@ servedPayloads payloads =
         renderedV0 = currentCachePayloadBS V0 payloads,
         renderedV1 = currentCachePayloadBS V1 payloads,
         renderedV2 = v2,
-        persisted  = persistedPayloads v2,
+        persisted  = compressedBlock v2,
         ..
     }
   where

@@ -2,6 +2,8 @@ module RPKI.RTR.SnapshotSpec where
 
 import qualified Data.ByteString                   as BS
 import qualified Data.ByteString.Lazy              as LBS
+import           Control.Lens                      ((^.))
+import           Data.Foldable                     (toList)
 import qualified Data.Set                          as Set
 import qualified Data.Text                         as Text
 import           Data.Hourglass                    (Seconds (..))
@@ -97,7 +99,75 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
                     HU.assertEqual "Version" version worldVersion
                     HU.assertEqual "Written at" (Instant 1_700_000_060_000_000_000) writtenAt
                     HU.assertEqual "Payloads" format1Payloads payloads
-                    HU.assertEqual "Unknown PDUs" 0 unknownPdus,
+                    HU.assertEqual "Unknown PDUs" 0 unknownPdus
+                    HU.assertEqual "No diffs" (Right []) storedDiffs,
+
+        HU.testCase "Should read the state of format version 1 with diffs" $ do
+            bytes <- LBS.readFile "test/data/rtr-state/format-1-diffs"
+            case decodeSnapshot bytes of
+                Left e -> HU.assertFailure $ Text.unpack e
+                Right RtrSnapshot {..} -> do
+                    HU.assertEqual "Payloads" format1Payloads payloads
+                    HU.assertEqual "Diffs" (Right format1Diffs) storedDiffs,
+
+        QC.testProperty "Should read back the stored diffs" $
+            \vrps1 vrps2 vrps3 aspas1 aspas2 aspas3 ->
+                let state = updatedStates [
+                            makePayloads vrps1 (routerKeys 2) aspas1,
+                            makePayloads vrps2 (routerKeys 3) aspas2,
+                            -- Removing keys in the latest diff, which is always kept
+                            makePayloads vrps3 (routerKeys 1) aspas3
+                        ]
+                in case decodeSnapshot (encodeSnapshot (Instant 1) state) of
+                    Left _ -> False
+                    Right RtrSnapshot {..} ->
+                        storedDiffs == Right (toList $ diffs state),
+
+        HU.testCase "Should give the routers that are behind the diffs after a restart" $ do
+            let vrp asn = Vrp (ASN asn) (Ipv4P $ readIp4 "192.0.2.0/24") (PrefixLength 24)
+                -- Enough VRPs for both diffs to be kept
+                state = updatedStates [
+                        makePayloads (map vrp [1])          (routerKeys 1) [],
+                        makePayloads (map vrp [1, 2])       (routerKeys 1) [],
+                        makePayloads (map vrp [1, 2, 3, 4]) (routerKeys 1) []
+                    ]
+                expected = diffsFromSerial state (SerialNumber 42)
+            HU.assertBool "Has them before the restart" $ expected /= Nothing
+            case decodeSnapshot (encodeSnapshot (Instant 1) state) of
+                Left e -> HU.assertFailure $ Text.unpack e
+                Right RtrSnapshot {..} -> do
+                    let restored = withStoredDiffs (either (const []) id storedDiffs) $
+                            newRtrState worldVersion sessionId serial defIntervals (servedPayloads payloads)
+                    HU.assertEqual "The same diffs" expected $ diffsFromSerial restored (SerialNumber 42)
+                    HU.assertEqual "The same size" (totalDiffSize state) (totalDiffSize restored),
+
+        HU.testCase "Should keep the payloads if the diffs are damaged" $ do
+            let state = updatedStates [makePayloads [] (routerKeys 1) [], makePayloads [] (routerKeys 2) []]
+                bytes = LBS.toStrict $ encodeSnapshot (Instant 1) state
+                lastByteChanged = BS.init bytes <> BS.singleton (BS.last bytes + 1)
+                useful = \case
+                    Right RtrSnapshot {..} -> (emptyDiffs $ evalDiffs (state ^. #served . #payloads) payloads,
+                                               either (const False) (const True) storedDiffs)
+                    Left _                 -> (False, True)
+            HU.assertEqual "Damaged" (True, False) $ useful $ decodeSnapshot $ LBS.fromStrict lastByteChanged
+            HU.assertEqual "Cut" (True, False) $ useful $ decodeSnapshot $ LBS.fromStrict $ BS.init bytes,
+
+        HU.testCase "Should not use diffs with unknown PDUs" $ do
+            let withUnknown = BS.concat [
+                        -- serial
+                        BS.pack [0, 0, 0, 43],
+                        -- added: one unknown PDU
+                        BS.pack [0, 0, 0, 0, 0, 0, 0, 8], unknownPdu 3 99 mempty,
+                        -- deleted: nothing
+                        BS.replicate 8 0
+                    ]
+                bytes = LBS.toStrict (encodeSnapshot (Instant 1) (stateOf format1Payloads))
+                            <> compressedBlock withUnknown
+            case decodeSnapshot (LBS.fromStrict bytes) of
+                Left e -> HU.assertFailure $ Text.unpack e
+                Right RtrSnapshot {..} -> do
+                    HU.assertEqual "Payloads" format1Payloads payloads
+                    assertFailsWith "unknown types" storedDiffs,
 
         HU.testCase "Should skip PDUs of unknown versions and types" $ do
             let rendered = renderedV2 . servedPayloads
@@ -121,7 +191,7 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
                 BS.take 7 ipv4Pdu <> BS.singleton 24 <> BS.drop 8 ipv4Pdu <> BS.replicate 4 0,
 
         HU.testCase "Should only use the state within the expire interval" $ do
-            let snapshot = RtrSnapshot version (RtrSessionId 1) (SerialNumber 1) (Instant 0) emptyRtrPayloads 0
+            let snapshot = RtrSnapshot version (RtrSessionId 1) (SerialNumber 1) (Instant 0) emptyRtrPayloads 0 (Right [])
                 Instant v = versionToInstant version
                 secondsLater s = Instant $ v + s * nanosPerSecond
             HU.assertBool "Fresh" $ freshEnough (Seconds 7200) (secondsLater 7199) snapshot
@@ -184,6 +254,14 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
     stateOf payloads =
         newRtrState version (RtrSessionId 7) (SerialNumber 42) defIntervals (servedPayloads payloads)
 
+    -- A state that went through these payloads, with a diff for every change
+    updatedStates = \case
+        [] -> error "Needs payloads"
+        first : rest -> foldl
+            (\state next -> updatedRtrState state version
+                                (evalDiffs (state ^. #served . #payloads) next) (servedPayloads next))
+            (stateOf first) rest
+
     assertFailsWith expected = \case
         Right _ -> HU.assertFailure "Should fail"
         Left e  -> HU.assertBool (Text.unpack e) $ expected `Text.isInfixOf` e
@@ -211,6 +289,33 @@ format1Payloads = makePayloads
             bgpSecAsns = [ASN asn],
             bgpSecSpki = SPKI $ encodeBase64 $ DecodedBase64 $ BS.replicate 91 k
         }
+
+-- | What test/data/rtr-state/format-1-diffs has on top of 'format1Payloads'.
+-- Neither of them may ever change either.
+format1Diffs :: [(SerialNumber, RtrDiffs)]
+format1Diffs = [
+        (SerialNumber 42, GenDiffs {
+            vrpDiff    = Diff (Set.singleton $ Vrp (ASN 64496) (Ipv4P $ readIp4 "192.0.2.0/24") (PrefixLength 24))
+                              (Set.singleton $ Vrp (ASN 64500) (Ipv6P $ readIp6 "2001:db8:1::/48") (PrefixLength 48)),
+            bgpSecDiff = Diff mempty
+                              (Set.singleton BGPSecPayload {
+                                    bgpSecSki  = SKI $ KI $ toShortBS $ BS.replicate 20 3,
+                                    bgpSecAsns = [ASN 64500],
+                                    bgpSecSpki = SPKI $ encodeBase64 $ DecodedBase64 $ BS.replicate 91 3
+                                }),
+            aspaDiff   = Diff (Set.singleton $ Aspa (ASN 64496) (Set.fromList [ASN 64497, ASN 64498]))
+                              (Set.singleton $ Aspa (ASN 64496) (Set.fromList [ASN 64497]))
+        }),
+        (SerialNumber 41, GenDiffs {
+            vrpDiff    = Diff mempty mempty,
+            bgpSecDiff = Diff (Set.singleton BGPSecPayload {
+                                    bgpSecSki  = SKI $ KI $ toShortBS $ BS.replicate 20 2,
+                                    bgpSecAsns = [ASN 64498],
+                                    bgpSecSpki = SPKI $ encodeBase64 $ DecodedBase64 $ BS.replicate 91 2
+                                }) mempty,
+            aspaDiff   = Diff mempty mempty
+        })
+    ]
 
 makePayloads :: [Vrp] -> Set.Set BGPSecPayload -> [Aspa] -> RtrPayloads
 makePayloads vrps bgpSec aspas =
