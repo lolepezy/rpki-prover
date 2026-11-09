@@ -14,8 +14,11 @@ module RPKI.RTR.UniqueVrps (
     fromUniqueVrps,
     countUniqueVrps,
     diffUniqueVrps,
-    rtrOrderedVrps
+    rtrOrderedVrps,
+    foldRtrOrderedVrps
 ) where
+
+import qualified Data.Vector.Unboxed as VU
 
 import           RPKI.Domain
 import           RPKI.Domain.Packed
@@ -55,6 +58,27 @@ diffUniqueVrps (UniqueVrps (Vrps a4 a6)) (UniqueVrps (Vrps b4 b6)) =
 -- | In the order they are sent to routers.
 rtrOrderedVrps :: UniqueVrps -> [Vrp]
 rtrOrderedVrps = mergeVrpsBy cmpPacked4Against6 . fromUniqueVrps
+
+-- | Goes through them in the same order as 'rtrOrderedVrps', without unpacking
+-- them into a list.
+foldRtrOrderedVrps :: Monad m =>
+                      (s -> PackedVrp4 -> m s) -> (s -> PackedVrp6 -> m s) -> s -> UniqueVrps -> m s
+foldRtrOrderedVrps on4 on6 start (UniqueVrps (Vrps v4 v6)) = go start 0 0
+  where
+    n4 = VU.length v4
+    n6 = VU.length v6
+
+    go !s !i !j
+        | i < n4 && j < n6 =
+            let a = VU.unsafeIndex v4 i
+                b = VU.unsafeIndex v6 j
+            in case cmpPacked4Against6 a b of
+                GT -> on6 s b >>= \s' -> go s' i (j + 1)
+                _  -> on4 s a >>= \s' -> go s' (i + 1) j
+        | i < n4    = on4 s (VU.unsafeIndex v4 i) >>= \s' -> go s' (i + 1) j
+        | j < n6    = on6 s (VU.unsafeIndex v6 j) >>= \s' -> go s' i (j + 1)
+        | otherwise = pure s
+{-# INLINE foldRtrOrderedVrps #-}
 
 
 -- | 'RPKI.RTR.Types.cmpVrps' on the packed form, per address family, giving

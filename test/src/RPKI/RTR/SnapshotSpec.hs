@@ -16,6 +16,7 @@ import           RPKI.AppTypes
 import           RPKI.Domain
 import           RPKI.Domain.Vrps
 import           RPKI.Orphans                      ()
+import           RPKI.RTR.Pdus
 import           RPKI.RTR.Protocol
 import           RPKI.RTR.RtrServer                (servedPayloads)
 import           RPKI.RTR.RtrState
@@ -34,6 +35,15 @@ import qualified Test.Tasty.QuickCheck             as QC
 
 rtrSnapshotGroup :: TestTree
 rtrSnapshotGroup = testGroup "Persisted RTR state" [
+        QC.testProperty "Should render the same bytes as serialising every PDU" $
+            \vrps aspas ->
+                -- Few ASNs, to have IPv4 and IPv6 VRPs with the same one
+                let fewAsns = [ Vrp (ASN $ asn `mod` 5) prefix maxLength
+                              | Vrp (ASN asn) prefix maxLength <- vrps ]
+                    payloads = makePayloads fewAsns (routerKeys 3) aspas
+                in all (\version -> currentCachePayloadBS version payloads == onePduAtATime version payloads)
+                       [V0, V1, V2],
+
         QC.testProperty "Should read back the payloads" $
             \vrps aspas ->
                 let payloads = makePayloads vrps (routerKeys 3) aspas
@@ -267,6 +277,14 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
         Left e  -> HU.assertBool (Text.unpack e) $ expected `Text.isInfixOf` e
 
     aspas_ RtrPayloads {..} = aspas
+
+    onePduAtATime version RtrPayloads {..} =
+        BS.concat
+            $ map (\pdu -> LBS.toStrict $ pduToBytes $ VersionedPdu pdu version)
+            $ filter (`compatibleWith` version)
+            $ map (vrpToPdu Announcement) (rtrOrderedVrps uniqueVrps)
+                <> concatMap (bgpSecToPdu Announcement) (Set.toList bgpSec)
+                <> map aspaToPdu (Set.toAscList aspas)
 
     unknownPdu protocolVersion code body = BS.pack [protocolVersion, code, 0, 0, 0, 0, 0, fromIntegral $ 8 + BS.length body] <> body
 

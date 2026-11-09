@@ -4,19 +4,28 @@ module RPKI.RTR.Pdus where
 
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Builder  as BB
+import           Data.ByteString.Internal (unsafeCreate)
 import qualified Data.ByteString.Lazy     as LBS
 import qualified Data.Set                 as Set
 import qualified Data.Text                as Text
+import qualified Data.Vector.Unboxed      as VU
 
 import           Data.Binary
 import           Data.Binary.Get          (getByteString, runGetOrFail)
 import           Data.Binary.Put          (runPut, putLazyByteString, putByteString)
 
+import           Data.Bits                (shiftR)
 import           Data.Int
 
-import           Control.Monad            (unless, when, replicateM)
+import           Foreign.Ptr              (Ptr, plusPtr)
+import           Foreign.Storable         (pokeByteOff)
+
+import           GHC.ByteOrder            (ByteOrder (..), targetByteOrder)
+
+import           Control.Monad            (unless, void, when, replicateM)
 import           RPKI.Domain              (toNormalBS, Aspa (..), BGPSecPayload (..), KI (..), SKI (..), SPKI (..),
-                                           DecodedBase64 (..), Vrp (..), skiLen, toShortBS)
+                                           DecodedBase64 (..), Vrp (..), Vrps (..), skiLen, toShortBS)
+import           RPKI.Domain.Packed       (PackedVrp4 (..), PackedVrp6 (..))
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RTR.Protocol
@@ -362,18 +371,71 @@ toVersioned (Session protocolVersion) pdu = VersionedPdu pdu protocolVersion
 -- | The payloads as PDUs in the order of a full Cache Response.
 currentCachePayloadBS :: ProtocolVersion -> RtrPayloads -> BS.ByteString
 currentCachePayloadBS protocolVersion RtrPayloads {..} =
-    LBS.toStrict 
-        $ BB.toLazyByteString 
-        $ mconcat 
-        $ map (\pdu -> BB.lazyByteString $ pduToBytes $ VersionedPdu pdu protocolVersion) 
+    vrpAnnouncementsBS protocolVersion uniqueVrps <> otherPdus
+  where
+    otherPdus = LBS.toStrict
+        $ BB.toLazyByteString
+        $ mconcat
+        $ map (\pdu -> BB.lazyByteString $ pduToBytes $ VersionedPdu pdu protocolVersion)
         $ filter (`compatibleWith` protocolVersion)
-        $ vrpPdusAnn <> mconcat bgpSecPdusAnn <> aspaPdusAnn
-  where    
-    vrpPdusAnn    = map (vrpToPdu Announcement) $ rtrOrderedVrps uniqueVrps
+        $ mconcat bgpSecPdusAnn <> aspaPdusAnn
+
     bgpSecPdusAnn = map (bgpSecToPdu Announcement) $ Set.toList bgpSec
     aspaPdusAnn   = map aspaToPdu $ Set.toAscList aspas
-    
-    
+
+
+-- | Announcements of all the VRPs, the same bytes as 'pduToBytes' gives for
+-- each of them, which a test checks. 'pduToBytes' allocates a buffer per PDU,
+-- which for a million VRPs is 6GB of allocations and 50 times slower than this.
+--
+-- VRPs are valid in every protocol version and only differ in the version byte.
+vrpAnnouncementsBS :: ProtocolVersion -> UniqueVrps -> BS.ByteString
+vrpAnnouncementsBS protocolVersion uniqueVrps =
+    unsafeCreate (VU.length v4 * ipv4Size + VU.length v6 * ipv6Size) $ \buffer ->
+        void $ foldRtrOrderedVrps write4 write6 buffer uniqueVrps
+  where
+    Vrps v4 v6 = fromUniqueVrps uniqueVrps
+    ipv4Size = 20
+    ipv6Size = 32
+
+    write4 :: Ptr Word8 -> PackedVrp4 -> IO (Ptr Word8)
+    write4 p (PackedVrp4 asn address prefixLength maxLength) = do
+        writeCommon p 4 ipv4Size prefixLength maxLength
+        pokeBE32 p 12 address
+        pokeBE32 p 16 asn
+        pure $ p `plusPtr` ipv4Size
+
+    write6 :: Ptr Word8 -> PackedVrp6 -> IO (Ptr Word8)
+    write6 p (PackedVrp6 asn addressHi addressLo prefixLength maxLength) = do
+        writeCommon p 6 ipv6Size prefixLength maxLength
+        pokeBE32 p 12 $ fromIntegral $ addressHi `shiftR` 32
+        pokeBE32 p 16 $ fromIntegral addressHi
+        pokeBE32 p 20 $ fromIntegral $ addressLo `shiftR` 32
+        pokeBE32 p 24 $ fromIntegral addressLo
+        pokeBE32 p 28 asn
+        pure $ p `plusPtr` ipv6Size
+
+    writeCommon :: Ptr Word8 -> Word8 -> Int -> Word8 -> Word8 -> IO ()
+    writeCommon p code size prefixLength maxLength = do
+        pokeByteOff p 0 versionByte
+        pokeByteOff p 1 code
+        pokeByteOff p 2 (0 :: Word16)
+        pokeBE32 p 4 $ fromIntegral size
+        pokeByteOff p 8 announcementFlag
+        pokeByteOff p 9 prefixLength
+        pokeByteOff p 10 maxLength
+        pokeByteOff p 11 (0 :: Word8)
+
+    versionByte = protocolVersionByte protocolVersion
+    announcementFlag = 1 :: Word8
+
+    pokeBE32 :: Ptr Word8 -> Int -> Word32 -> IO ()
+    pokeBE32 p offset value = pokeByteOff p offset $
+        case targetByteOrder of
+            BigEndian    -> value
+            LittleEndian -> byteSwap32 value
+
+
 vrpToPdu :: Flags -> Vrp -> Pdu
 vrpToPdu flags (Vrp asn prefix maxLength) = 
     case prefix of
