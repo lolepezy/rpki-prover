@@ -14,6 +14,7 @@ import           Control.Monad
 
 import           Data.Either                      (partitionEithers)
 import           Data.Foldable                    (for_)
+import           Data.IORef
 import           Data.List                        (nub)
 
 import qualified Data.ByteString                  as BS
@@ -82,6 +83,10 @@ highestVersion = V2
 -- per minute."
 rtrNotifyRateLimit :: Seconds
 rtrNotifyRateLimit = Seconds 60
+
+-- | How often the persisted state is written if the payloads don't change.
+rtrUnchangedWriteInterval :: Seconds
+rtrUnchangedWriteInterval = Seconds 300
 
 -- 
 -- | Main entry point, here we start the RTR server. 
@@ -185,6 +190,8 @@ runRtrServer appContext RtrConfig {..} = do
         initialRtrState <- restoredOrNewState appState
         atomically $ writeTVar rtrState $ Just initialRtrState
 
+        lastWritten <- newIORef $ Instant 0
+
         race_ (notifyClients $ notifyKey initialRtrState) $ forever $ do
             rtrState' <- atomically $ maybe retry pure =<< readTVar rtrState
             (newVersion, validatedRtrPayload, settled) <- nextVersion appState rtrState'
@@ -221,8 +228,14 @@ runRtrServer appContext RtrConfig {..} = do
 
             atomically $ writeTVar rtrState $! Just $! nextRtrState
 
-            -- Also without updates: the version says how fresh the payloads are
-            persist nextRtrState
+            -- Also without updates, because the version says how fresh the
+            -- payloads are. But not every time: the session and the serial are
+            -- the same, so all there is to lose is how fresh they look.
+            written <- readIORef lastWritten
+            when (thereAreRtrUpdates ||
+                  not (closeEnoughMoments (Earlier written) (Later now) rtrUnchangedWriteInterval)) $ do
+                persist nextRtrState
+                writeIORef lastWritten now
         where
           -- Carry on with the persisted session if its payloads are fresh enough
           -- and all known, start a new session with them if some are unknown,
