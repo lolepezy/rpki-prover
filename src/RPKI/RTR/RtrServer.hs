@@ -38,6 +38,7 @@ import           RPKI.Resources.Types
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
+import           RPKI.RTR.UniqueVrps
 import           RPKI.RTR.Protocol
 import           RPKI.RTR.Snapshot
 
@@ -181,8 +182,8 @@ runRtrServer appContext RtrConfig {..} = do
             let thereAreRtrUpdates = not $ emptyDiffs rtrDiff
 
             let
-                previousVrpSize = vrpsCount $ previousRtrPayload ^. #uniqueVrps
-                currentVrpSize  = vrpsCount $ currentRtrPayload ^. #uniqueVrps
+                previousVrpSize = countUniqueVrps $ previousRtrPayload ^. #uniqueVrps
+                currentVrpSize  = countUniqueVrps $ currentRtrPayload ^. #uniqueVrps
                 previousBgpSecSize = Set.size $ previousRtrPayload ^. #bgpSec
                 currentBgpSecSize  = Set.size $ currentRtrPayload ^. #bgpSec
                 previousAspaSize   = Set.size $ previousRtrPayload ^. #aspas
@@ -241,7 +242,7 @@ runRtrServer appContext RtrConfig {..} = do
                         let RtrPayloads {..} = payloads
                         let (RtrSessionId s, SerialNumber n) = (sessionId, serial)
                         logInfo logger $ [i|RTR server: continuing session #{s} at serial #{n} with |] <>
-                                         [i|#{vrpsCount uniqueVrps} VRPs, #{Set.size bgpSec} router keys and |] <>
+                                         [i|#{countUniqueVrps uniqueVrps} VRPs, #{Set.size bgpSec} router keys and |] <>
                                          [i|#{Set.size aspas} ASPAs of version #{worldVersion} from #{snapshotPath}, |] <>
                                          [i|serving them together with the validated ones until the validation is settled.|]
                         let restored = servedPayloads payloads
@@ -703,7 +704,7 @@ currentCachePayloadBS protocolVersion RtrPayloads {..} =
         $ filter (`compatibleWith` protocolVersion)
         $ vrpPdusAnn <> mconcat bgpSecPdusAnn <> aspaPdusAnn
   where    
-    vrpPdusAnn    = map (vrpToPdu Announcement) $ mergeVrpsBy cmpPacked4Against6 uniqueVrps
+    vrpPdusAnn    = map (vrpToPdu Announcement) $ rtrOrderedVrps uniqueVrps
     bgpSecPdusAnn = map (bgpSecToPdu Announcement) $ Set.toList bgpSec
     aspaPdusAnn   = map aspaToPdu $ Set.toAscList aspas
     

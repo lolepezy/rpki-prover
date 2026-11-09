@@ -26,7 +26,7 @@ import           RPKI.Reporting
 import           RPKI.Http.Types
 import           RPKI.Resources.Types
 import           RPKI.Resources.Validity
-import           RPKI.RTR.Types
+import           RPKI.RTR.UniqueVrps
 import           RPKI.Validation.Types
 import           RPKI.Util
 import           RPKI.AppTypes (WorldVersion)
@@ -47,9 +47,7 @@ toVrpDto (Vrp a p len) (TaName ta) = VrpDto a p len ta
 
 toVrpV :: Maybe Vrps -> V.Vector Vrp
 toVrpV = maybe mempty $
-    V.fromList
-        . mergeVrpsBy cmpPacked4Against6
-        . uniqVrpsPackedBy cmpPacked4 cmpPacked6
+    V.fromList . rtrOrderedVrps . toUniqueVrps
 
 toVrpMinimalDtos :: Maybe Vrps -> [VrpMinimalDto]
 toVrpMinimalDtos = map asDto . V.toList . toVrpV

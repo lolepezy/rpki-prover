@@ -9,17 +9,16 @@ import           Data.Foldable  (toList)
 import           Data.Set       (Set, (\\))
 import qualified Data.Set       as Set
 import qualified Data.List      as List
-import qualified Data.Vector.Unboxed as VU
 import           Data.Generics.Labels
 
 import           Deque.Strict   as Deq
 
 import           RPKI.AppTypes
-import           RPKI.Domain     (BGPSecPayload (..), Vrp, Vrps, packed4, packed6)
-import           RPKI.Domain.Vrps (unionVrpsPackedBy, unpack4, unpack6, vrpsCount)
+import           RPKI.Domain     (BGPSecPayload (..), Vrp)
 import           RPKI.Time      (Instant (..), momentAfter, nanosPerSecond)
 import           RPKI.RTR.Types
 import           RPKI.RTR.Protocol
+import           RPKI.RTR.UniqueVrps
 
 import           Time.Types     (Seconds)
 
@@ -51,7 +50,7 @@ newRtrState worldVersion sessionId serial intervals served =
         -- Do not store more VRPs in the diffs than there are in the data, as much
         -- as it has been (see 'updatedRtrState'). It's totally heuristical way
         -- of avoiding memory bloat
-        maxTotalDiffSize      = vrpsCount $ served ^. #payloads . #uniqueVrps,
+        maxTotalDiffSize      = countUniqueVrps $ served ^. #payloads . #uniqueVrps,
         carriedOver           = Nothing,
         ..
     }
@@ -76,7 +75,7 @@ updatedRtrState RtrState {..} worldVersion diff newServed =
         -- Not the size of the data at the start, which is nothing after a cold
         -- start: then only the latest diff would be kept and every router that
         -- missed a serial would need to get everything again.
-        newMaxTotalDiffSize = max maxTotalDiffSize $ vrpsCount $ newServed ^. #payloads . #uniqueVrps
+        newMaxTotalDiffSize = max maxTotalDiffSize $ countUniqueVrps $ newServed ^. #payloads . #uniqueVrps
 
         -- strip off the oldest serial if either
         --   * the list of diffs is getting too long
@@ -153,19 +152,15 @@ setDiff previous current
             }
 
 
--- | Diff two packed VRP sets. Only the delta -- which is normally tiny next to
--- the sets themselves -- is materialised as 'Vrp'.
-setDiffVrps :: Vrps -> Vrps -> Diff Vrp
+-- | Only the delta -- which is normally tiny next to the sets themselves --
+-- is materialised as 'Vrp'.
+setDiffVrps :: UniqueVrps -> UniqueVrps -> Diff Vrp
 setDiffVrps previous current = Diff {
-        added   = Set.map unpack4 (added   diff4) <> Set.map unpack6 (added   diff6),
-        deleted = Set.map unpack4 (deleted diff4) <> Set.map unpack6 (deleted diff6)
+        added   = Set.fromList onlyCurrent,
+        deleted = Set.fromList onlyPrevious
     }
   where
-    diff4 = setDiff (packedSet (packed4 previous)) (packedSet (packed4 current))
-    diff6 = setDiff (packedSet (packed6 previous)) (packedSet (packed6 current))
-
-packedSet :: (VU.Unbox a, Ord a) => VU.Vector a -> Set a
-packedSet = Set.fromList . VU.toList
+    (onlyPrevious, onlyCurrent) = diffUniqueVrps previous current
 
 evalDiffs :: RtrPayloads -> RtrPayloads -> RtrDiffs
 evalDiffs previous current =
@@ -192,10 +187,9 @@ routerKeysPerAsn =
 unionPayloads :: RtrPayloads -> RtrPayloads -> RtrPayloads
 unionPayloads a b =
     RtrPayloads {
-        -- Only the unique ones matter for RTR, and they are always sorted
-        -- and deduplicated by these orderings
+        -- Only the unique ones matter for RTR
         vrps       = mempty,
-        uniqueVrps = unionVrpsPackedBy cmpPacked4 cmpPacked6 (uniqueVrps a) (uniqueVrps b),
+        uniqueVrps = uniqueVrps a <> uniqueVrps b,
         -- The same key can be there for its ASNs together and for each of them
         bgpSec     = routerKeysPerAsn $ bgpSec a <> bgpSec b,
         aspas      = mergeAspasByCustomer $ aspas a <> aspas b

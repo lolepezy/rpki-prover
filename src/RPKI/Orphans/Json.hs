@@ -43,7 +43,6 @@ import HaskellWorks.Data.Network.Ip.Ip as Ips
 
 import           RPKI.AppTypes
 import           RPKI.Domain                 as Domain
-import           RPKI.Domain.Vrps            (vrpsCount)
 import           RPKI.Config
 
 import           RPKI.Logging
@@ -54,6 +53,7 @@ import           RPKI.Metrics.System
 import qualified RPKI.Resources.IntervalContainers as IS
 import           RPKI.Resources.Types
 import           RPKI.RTR.Types
+import           RPKI.RTR.UniqueVrps
 import           RPKI.RTR.Protocol
 import           RPKI.Store.Base.Storable
 import           RPKI.TAL
@@ -416,7 +416,7 @@ instance ToJSON ServedPayloadsSummary
 servedPayloadsSummary :: ServedPayloads -> ServedPayloadsSummary
 servedPayloadsSummary ServedPayloads { payloads = RtrPayloads {..} } = 
     ServedPayloadsSummary {
-        vrps       = vrpsCount uniqueVrps,
+        vrps       = countUniqueVrps uniqueVrps,
         routerKeys = Set.size bgpSec,
         aspas      = Set.size aspas
     }

@@ -19,6 +19,7 @@ import           RPKI.RTR.RtrServer                (servedPayloads)
 import           RPKI.RTR.RtrState
 import           RPKI.RTR.Snapshot
 import           RPKI.RTR.Types
+import           RPKI.RTR.UniqueVrps
 import           RPKI.Resources.Resources          (readIp4, readIp6)
 import           RPKI.Resources.Types
 import           RPKI.Time
@@ -120,7 +121,7 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
                 BS.take 7 ipv4Pdu <> BS.singleton 24 <> BS.drop 8 ipv4Pdu <> BS.replicate 4 0,
 
         HU.testCase "Should only use the state within the expire interval" $ do
-            let snapshot = RtrSnapshot version (RtrSessionId 1) (SerialNumber 1) (Instant 0) mempty 0
+            let snapshot = RtrSnapshot version (RtrSessionId 1) (SerialNumber 1) (Instant 0) emptyRtrPayloads 0
                 Instant v = versionToInstant version
                 secondsLater s = Instant $ v + s * nanosPerSecond
             HU.assertBool "Fresh" $ freshEnough (Seconds 7200) (secondsLater 7199) snapshot
@@ -137,8 +138,8 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
                 let before    = makePayloads vrps1 mempty aspas1
                     validated = makePayloads vrps2 mempty aspas2
                     union     = unionPayloads before validated
-                    vrpSet p  = Set.fromList $ vrpsToList p.uniqueVrps
-                    unionVrps = vrpsToList union.uniqueVrps
+                    vrpSet p  = Set.fromList $ vrpsToList $ fromUniqueVrps p.uniqueVrps
+                    unionVrps = vrpsToList $ fromUniqueVrps union.uniqueVrps
                     -- AS0 alone says there are no providers, any provider replaces it
                     providersOf p = [ (c, Set.delete (ASN 0) ps) | Aspa c ps <- Set.toList p.aspas ]
                     hasAspasOf p  = all (\(c, ps) -> any (\(c', ps') -> c == c' && ps `Set.isSubsetOf` ps')
@@ -215,7 +216,7 @@ makePayloads :: [Vrp] -> Set.Set BGPSecPayload -> [Aspa] -> RtrPayloads
 makePayloads vrps bgpSec aspas =
     RtrPayloads {
         vrps       = mempty,
-        uniqueVrps = uniqVrpsPackedBy cmpPacked4 cmpPacked6 $ createVrps vrps,
+        uniqueVrps = toUniqueVrps $ createVrps vrps,
         bgpSec     = bgpSec,
         aspas      = mergeAspasByCustomer $ Set.fromList aspas
     }

@@ -100,6 +100,7 @@ import           RPKI.Resources.Types
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.Protocol
 import           RPKI.RTR.Types
+import           RPKI.RTR.UniqueVrps
 import           RPKI.Time
 import           RPKI.Util                        (encodeBase64)
 
@@ -210,7 +211,7 @@ payloadsFromPdus bytes =
             Right (RtrPayloads {
                 -- Only the unique ones matter for RTR
                 vrps       = mempty,
-                uniqueVrps = uniqVrpsPackedBy cmpPacked4 cmpPacked6 $ createVrps vrps,
+                uniqueVrps = toUniqueVrps $ createVrps vrps,
                 bgpSec     = Set.fromList $ toList routerKeys,
                 aspas      = Set.fromList $ toList aspas
             }, unknown)

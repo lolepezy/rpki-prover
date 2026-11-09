@@ -227,6 +227,7 @@ library
       RPKI.RTR.RtrState
       RPKI.RTR.Snapshot
       RPKI.RTR.Types
+      RPKI.RTR.UniqueVrps
       RPKI.Sandbox
       RPKI.SLURM.SlurmProcessing
       RPKI.SLURM.Types

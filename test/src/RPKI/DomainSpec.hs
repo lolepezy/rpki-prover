@@ -11,6 +11,7 @@ import qualified Data.List       as List
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import qualified Data.Set        as Set
 import qualified Data.Vector.Unboxed as VU
+import           Data.Word       (Word8)
 
 import           RPKI.AppMonad (runValidatorIO)
 import           RPKI.Domain
@@ -33,6 +34,7 @@ domainCountersGroup =
         , HU.testCase "countDistinctUnion handles edge cases" testCountDistinctUnion
         , QC.testProperty "countDistinctUnion agrees with Set.union" propCountDistinctUnion
         , QC.testProperty "mergeDedup agrees with sortDedup of both" propMergeDedup
+        , QC.testProperty "diffSortedBy agrees with Set.difference" propDiffSortedBy
         ]
 
 
@@ -175,6 +177,18 @@ propMergeDedup xs ys =
         == sortDedup cmp (VU.fromList $ xs <> ys)
   where
     cmp = flip compare
+
+
+-- Word8, so that the two sides have a lot in common
+propDiffSortedBy :: [Word8] -> [Word8] -> Bool
+propDiffSortedBy xs ys =
+    diffSortedBy cmp (sorted xs) (sorted ys)
+        == (Set.toDescList $ xSet Set.\\ ySet, Set.toDescList $ ySet Set.\\ xSet)
+  where
+    cmp    = flip compare
+    sorted = sortDedup cmp . VU.fromList
+    xSet   = Set.fromList xs
+    ySet   = Set.fromList ys
 
 
 perTaVrps :: PerTA Vrps

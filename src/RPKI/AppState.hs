@@ -30,6 +30,7 @@ import           RPKI.Time
 import           Data.Hourglass (Seconds(..))
 import           RPKI.Metrics.System
 import           RPKI.RTR.Types
+import           RPKI.RTR.UniqueVrps
 import           RPKI.Resources.Validity
 
 data AppState = AppState {
@@ -95,7 +96,7 @@ data AppState = AppState {
 
 mkRtrPayloads :: PerTA Vrps -> Set BGPSecPayload -> Set Aspa -> RtrPayloads
 mkRtrPayloads vrps bgpSec aspas = RtrPayloads { 
-        uniqueVrps = uniqVrpsPackedBy cmpPacked4 cmpPacked6 $ allTAs vrps, 
+        uniqueVrps = toUniqueVrps $ allTAs vrps,
         aspas = mergeAspasByCustomer aspas,
         .. 
     }
@@ -202,8 +203,8 @@ newAppState = do
     Now now <- thisInstant
     atomically $ do 
         world       <- newTVar Nothing
-        validated   <- newTVar mempty
-        filtered    <- newTVar mempty        
+        validated   <- newTVar emptyRtrPayloads
+        filtered    <- newTVar emptyRtrPayloads
         settled     <- newTVar False
         rtrState    <- newTVar Nothing        
         system      <- newTVar (newSystemInfo now)        
@@ -250,7 +251,7 @@ completeVersion AppState {..} worldVersion rtrPayloads slurm = do
 updatePrefixIndex :: AppState -> RtrPayloads -> STM ()
 updatePrefixIndex AppState {..} rtrPayloads = 
     writeTVar prefixIndex $! 
-        force $ Just $ createPrefixIndex $ vrpsToList $ rtrPayloads ^. #uniqueVrps
+        force $ Just $ createPrefixIndex $ vrpsToList $ fromUniqueVrps $ rtrPayloads ^. #uniqueVrps
 
 getOrCreateWorldVerion :: AppState -> IO WorldVersion
 getOrCreateWorldVerion AppState {..} = 

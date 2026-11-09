@@ -26,6 +26,7 @@ import           RPKI.RTR.Protocol
 import           RPKI.RTR.RtrServer                (PduLike (..), analyzePdu, compatiblePduLike, 
                                                     diffPayloadPdus, processFirstPdu, servedPayloads)
 import           RPKI.RTR.Types
+import           RPKI.RTR.UniqueVrps
 import           RPKI.Resources.Types
 
 import qualified Test.Tasty.HUnit                  as HU
@@ -52,6 +53,8 @@ rtrDiffsGroup = testGroup "RTR diff unit tests" [
         testGenerateDiffs,
         testMergeAspasByCustomer,
         testPackedRtrOrder,
+        testVrpDiffOfPacked,
+        testUniqueVrpsUnion,
         testAspaDiffPdus
     ]
 
@@ -305,10 +308,26 @@ testPackedRtrOrder = QC.testProperty "Packed RTR order is the same as cmpVrps" $
     \(vrps :: [Vrp]) ->
         let fewAsns   = [ Vrp (ASN (asn `mod` 3)) p ml | Vrp (ASN asn) p ml <- vrps ]
             withDups  = fewAsns <> take 5 fewAsns
-            packed    = mergeVrpsBy cmpPacked4Against6
-                      $ uniqVrpsPackedBy cmpPacked4 cmpPacked6
-                      $ createVrps withDups
+            packed    = rtrOrderedVrps $ toUniqueVrps $ createVrps withDups
         in packed == List.sortBy cmpVrps (Set.toList $ Set.fromList withDups)
+
+-- With VRPs in common, which random ones wouldn't have.
+testVrpDiffOfPacked :: TestTree
+testVrpDiffOfPacked = QC.testProperty "VRP diff of packed sets is the diff of the sets" $
+    \(common :: [Vrp]) (onlyPrevious :: [Vrp]) (onlyCurrent :: [Vrp]) ->
+        let previous = Set.fromList $ common <> onlyPrevious
+            current  = Set.fromList $ common <> onlyCurrent
+            packed   = toUniqueVrps . createVrps . Set.toList
+        in setDiffVrps (packed previous) (packed current) == setDiff previous current
+
+-- The second one repeats some of the first, for the duplicates to be merged.
+testUniqueVrpsUnion :: TestTree
+testUniqueVrpsUnion = QC.testProperty "Union of unique VRPs is the same as making all of them unique" $
+    \(a :: [Vrp]) (b :: [Vrp]) ->
+        let unique = toUniqueVrps . createVrps
+        in unique a <> unique (take 5 a <> b) == unique (a <> b)
+            && unique a <> mempty == unique a
+            && mempty <> unique a == unique a
 
 testAspaDiffPdus :: TestTree
 testAspaDiffPdus = HU.testCase "Should generate ASPA PDUs for a diff" $ do
@@ -401,7 +420,7 @@ testDiffsGrowWithData = HU.testCase "Should keep diffs as big as the data has be
     vrps1 <- generateVrps 10
     vrps2 <- generateVrps 10
     let servedWith vrpSet = servedPayloads RtrPayloads {
-                vrps = mempty, uniqueVrps = createVrps $ Set.toList vrpSet, bgpSec = mempty, aspas = mempty }
+                vrps = mempty, uniqueVrps = toUniqueVrps $ createVrps $ Set.toList vrpSet, bgpSec = mempty, aspas = mempty }
         add state vrpSet everything = updatedRtrState state worldVersion
                 newRtrDiff { vrpDiff = Diff vrpSet mempty } (servedWith everything)
         -- As after a cold start: there was no data at first
@@ -421,7 +440,7 @@ testDiffsGrowWithData = HU.testCase "Should keep diffs as big as the data has be
 --         <> ", maxSerialsPerSession = " <> show maxSerialsPerSession <> "]"
 
 emptyServed :: ServedPayloads
-emptyServed = servedPayloads mempty
+emptyServed = servedPayloads emptyRtrPayloads
 
 emptyRtrState :: WorldVersion -> RtrState
 emptyRtrState worldVersion = 

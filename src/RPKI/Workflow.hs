@@ -42,6 +42,7 @@ import           RPKI.AppTypes
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Domain.Vrps
+import           RPKI.RTR.Types (emptyRtrPayloads)
 import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Fetch.Fetch
@@ -342,7 +343,7 @@ runAll appContext@AppContext {..} tals = do
         (result, elapsed) <- timedMS processTALs            
         -- The ones that came before there was any version to add them to
         saveSystemProblems appContext
-        let (rtrPayloads, slurmedPayloads) = fromMaybe (mempty, mempty) result
+        let (rtrPayloads, slurmedPayloads) = fromMaybe (emptyRtrPayloads, emptyRtrPayloads) result
         let vrps = rtrPayloads ^. #vrps
         let slurmedVrps = slurmedPayloads ^. #vrps
         logInfo logger $
@@ -407,7 +408,7 @@ runAll appContext@AppContext {..} tals = do
                 DB.roTxT database (\tx -> DB.getRtrPayloads tx worldVersion) >>= \case
                     Nothing -> do 
                         logError logger [i|Something weird happened, could not re-read VRPs.|]
-                        pure (mempty, mempty)
+                        pure (emptyRtrPayloads, emptyRtrPayloads)
                     Just rtrPayloads -> atomically $ do                                                    
                         slurmedPayloads <- completeVersion appState worldVersion rtrPayloads maybeSlurm 
                         writeTVar (appState ^. #settled) . allSettled =<< readTVar (workflowShared ^. #pendingCas)
