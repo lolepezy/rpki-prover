@@ -130,15 +130,7 @@ data WorkerMessage = AddWorker WorkerInfo
    each worker reports what it saw, and the root process folds those reports
    together. Sent once per fetch rather than per query, to keep the bus quiet.
 -}
-newtype ErikRelayMessage = ErikRelayMessage [ErikRelayReport]
-    deriving stock (Eq, Ord, Show, Generic)
-    deriving anyclass (TheBinary)
-
-data ErikRelayReport = ErikRelayReport {
-        relay  :: URI,
-        served :: Int,
-        failed :: Int
-    }
+newtype ErikRelayMessage = ErikRelayMessage [ErikRelayUsage]
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -250,12 +242,12 @@ deregisterWorker :: AppLogger -> CPid -> IO ()
 deregisterWorker logger pid = 
     atomically $ writeCQueue (getQueue logger) $ MsgQE $ WorkerM $ RemoveWorker pid
 
-pushErikRelayReport :: MonadIO m => AppLogger -> [ErikRelayReport] -> m ()
+pushErikRelayReport :: MonadIO m => AppLogger -> [ErikRelayUsage] -> m ()
 pushErikRelayReport logger = liftIO . atomically . pushErikRelayReportSTM logger
 
 -- | Same, but composable with other STM so a report can be emitted in the same
 --   transaction that decides the relay is dead.
-pushErikRelayReportSTM :: AppLogger -> [ErikRelayReport] -> STM ()
+pushErikRelayReportSTM :: AppLogger -> [ErikRelayUsage] -> STM ()
 pushErikRelayReportSTM logger reports =
     writeCQueue (getQueue logger) $ MsgQE $ ErikRelayM $ ErikRelayMessage reports
 

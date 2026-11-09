@@ -214,7 +214,6 @@ vFocusOnLocated (Located locations x) =
 
 -- Metrics ---------------------------------------------------------------------------
 
--- NOTE: keep the `forall metric es` order, call sites use `updateMetric @RrdpMetric @_`.
 updateMetric :: forall metric es .
                 (Validator es, MetricC metric) =>
                 (metric -> metric) -> Eff es ()
@@ -249,8 +248,6 @@ timedMetric' _ f v = do
     updateMetric (f elapsed)
     either (uncurry rethrowError) pure r
 
-
--- Misc ---------------------------------------------------------------------------
 
 timeoutVT :: (ValidatorIO es, Timeout :> es) => Seconds -> Eff es a -> Eff es a -> Eff es a
 timeoutVT s toDo timedOut = do

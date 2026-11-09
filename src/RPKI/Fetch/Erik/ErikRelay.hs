@@ -41,7 +41,6 @@ import           RPKI.Domain
 import           RPKI.Parse.Parse
 import           RPKI.Reporting
 import           RPKI.Logging
-import           RPKI.Repository
 import           RPKI.Fetch.Erik.RelayPool
 import qualified RPKI.Util as U
 import           RPKI.Fetch.Http
@@ -111,14 +110,14 @@ runErikFetchWorker appContext@AppContext {..} worldVersion relayUris fqdn = do
     https://datatracker.ietf.org/doc/draft-ietf-sidrops-rpki-erik-protocol/
 
     The download is a work queue drained by worker threads bound to relays (see
-    'RPKI.Fetch.Erik.RelayPool'), not a recursive fan-out. Two things follow from
-    that, and both are the point of the arrangement:
+    'RPKI.Fetch.Erik.RelayPool'). Two things follow from that, and both are the 
+    point of the arrangement:
 
       * an object referenced from several manifests is downloaded once, because
         the queue is keyed by hash,
       * what is missing locally is worked out set-at-a-time with bulk queries --
         one per index for the partitions, one per partition or manifest for the
-        objects below it -- instead of a read transaction per object.
+        objects below it.
 -}
 fetchErik :: (ValidatorIO es, Concurrent :> es) => AppContext
             -> WorldVersion
@@ -132,26 +131,13 @@ fetchErik
     fqdn@(FQDN fqdn_) = do
 
     relays <- newRelays perRelayThreads relayUris
-    -- Same metric rsync fills in: objects stored are counted into `processed`
-    -- as they are for an rsync directory load. Timing it here is what gives
-    -- that metric its `totalTimeMs`.
-    timedMetric (Proxy :: Proxy TraverseMetric) $ doFetch relays
-    -- Whatever happened inside -- a full download, an unchanged index, or a
-    -- failure part-way through -- we know which relays answered.
+    
+    timedMetric (Proxy :: Proxy TraverseMetric) $ doFetch relays    
     stats <- relayStats relays
 
-    {- Failures are reported by the pool as they happen (see
-       RelayPool.onFailure); this is the closing summary, which is what lets a
-       relay that answered clear its failure count in the root process.
-
-       It has to sit out here rather than beside the download, because the
-       commonest outcome by far is an index that has not changed: that path does
-       no downloading at all, and reporting only from the downloading path would
-       mean a healthy relay was almost never credited with anything.
-    -}
+    -- The pool already reports failures, so don't do it here
     pushErikRelayReport logger
-        [ ErikRelayReport statRelay statServed 0
-        | RelayStat {..} <- stats, statServed > 0 ]
+        [ ErikRelayUsage { failed = 0, .. } | ErikRelayUsage {..} <- stats, served > 0 ]
 
     pure $ toFetchStat stats
   where
@@ -160,18 +146,10 @@ fetchErik
     -- relay, and listing the ones that were never touched says nothing about
     -- where the objects came from.
     toFetchStat stats = ErikFetchStat
-        [ ErikRelayUsage statRelay statServed statFailed
-        | RelayStat {..} <- stats
-        , statServed > 0 || statFailed > 0 ]
+        [ u | u@ErikRelayUsage {..} <- stats, served > 0 || failed > 0 ]
 
     parallelism = fromIntegral $ config ^. typed @ErikConf . #parallelism
 
-    {- Threads per relay, which is the only parallelism knob the queue needs:
-       the per-relay cap *is* the thread count, and the total is what used to be
-       the global cap. Spreading `parallelism` over the relays rather than
-       giving each of them `relayParallelism` threads keeps a fetch with many
-       relays configured from running far wider than the config asks for.
-    -}
     perRelayThreads = let
         perRelayCap = fromIntegral $ config ^. typed @ErikConf . #relayParallelism
         relayCount  = max 1 $ length relayUris
@@ -253,8 +231,8 @@ fetchErik
                 -- effect of fall-back are visible.
                 stats <- relayStats relays
                 logInfo logger [i|Erik relay usage for #{fqdn_}: |]
-                forM_ stats $ \RelayStat {..} ->
-                    logInfo logger [i|  #{statRelay}: served=#{statServed} failed=#{statFailed}|]
+                forM_ stats $ \ErikRelayUsage {..} ->
+                    logInfo logger [i|  #{relay}: served=#{served} failed=#{failed}|]
 
                 (_, loadMs) <- timedMS storePreparedObjects
                 logInfo logger [i|Stored downloaded Erik objects for #{fqdn_}, took #{loadMs} ms.|]
