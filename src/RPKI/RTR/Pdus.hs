@@ -3,7 +3,9 @@
 module RPKI.RTR.Pdus where
 
 import qualified Data.ByteString          as BS
+import qualified Data.ByteString.Builder  as BB
 import qualified Data.ByteString.Lazy     as LBS
+import qualified Data.Set                 as Set
 import qualified Data.Text                as Text
 
 import           Data.Binary
@@ -13,10 +15,13 @@ import           Data.Binary.Put          (runPut, putLazyByteString, putByteStr
 import           Data.Int
 
 import           Control.Monad            (unless, when, replicateM)
-import           RPKI.Domain              (toNormalBS, KI (..), SKI (..), skiLen, toShortBS)
+import           RPKI.Domain              (toNormalBS, Aspa (..), BGPSecPayload (..), KI (..), SKI (..), SPKI (..),
+                                           DecodedBase64 (..), Vrp (..), skiLen, toShortBS)
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RTR.Protocol
+import           RPKI.RTR.Types           (RtrPayloads (..))
+import           RPKI.RTR.UniqueVrps
 import           RPKI.Util
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 
@@ -352,3 +357,34 @@ parseVersionedPdu protocolVersion pduType =
  
 toVersioned :: Session -> Pdu -> VersionedPdu
 toVersioned (Session protocolVersion) pdu = VersionedPdu pdu protocolVersion
+
+
+-- | The payloads as PDUs in the order of a full Cache Response.
+currentCachePayloadBS :: ProtocolVersion -> RtrPayloads -> BS.ByteString
+currentCachePayloadBS protocolVersion RtrPayloads {..} =
+    LBS.toStrict 
+        $ BB.toLazyByteString 
+        $ mconcat 
+        $ map (\pdu -> BB.lazyByteString $ pduToBytes $ VersionedPdu pdu protocolVersion) 
+        $ filter (`compatibleWith` protocolVersion)
+        $ vrpPdusAnn <> mconcat bgpSecPdusAnn <> aspaPdusAnn
+  where    
+    vrpPdusAnn    = map (vrpToPdu Announcement) $ rtrOrderedVrps uniqueVrps
+    bgpSecPdusAnn = map (bgpSecToPdu Announcement) $ Set.toList bgpSec
+    aspaPdusAnn   = map aspaToPdu $ Set.toAscList aspas
+    
+    
+vrpToPdu :: Flags -> Vrp -> Pdu
+vrpToPdu flags (Vrp asn prefix maxLength) = 
+    case prefix of
+        Ipv4P v4p -> IPv4PrefixPdu flags v4p asn maxLength
+        Ipv6P v6p -> IPv6PrefixPdu flags v6p asn maxLength
+
+bgpSecToPdu :: Flags -> BGPSecPayload -> [Pdu]
+bgpSecToPdu flags BGPSecPayload {..} = 
+    let Right (DecodedBase64 spkiBytes) = decodeBase64 (unSPKI bgpSecSpki) ("WTF broken SPKI" :: Text.Text)
+    in map (\asn -> RouterKeyPdu asn flags bgpSecSki (LBS.fromStrict spkiBytes)) bgpSecAsns    
+
+-- | ASPA announcement PDU. Providers are already ordered ascending in the set.
+aspaToPdu :: Aspa -> Pdu
+aspaToPdu Aspa {..} = AspaPdu Announcement customer (Set.toAscList providers)
