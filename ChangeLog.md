@@ -2,6 +2,8 @@
 
 ## Unreleased changes
 
+- `--rtr-port` works for ports above 32767. `--rtr-port` and `--http-api-port`
+  reject what is not a port.
 - The RTR server persists its session, serial and data in `rtr-state` in the
   root directory, outside of the cache. After a restart it continues the same
   session with the same data immediately, also if the cache is rebuilt, as

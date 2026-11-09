@@ -5,7 +5,6 @@ module RPKI.Config where
 import Control.Lens
 import GHC.Conc
 import Numeric.Natural
-import Data.Int
 import Data.Text (Text)
 import Data.Word ( Word16 )
 
@@ -205,7 +204,7 @@ data HttpApiConfig = HttpApiConfig {
 
 data RtrConfig = RtrConfig {
         rtrAddress        :: String,
-        rtrPort           :: Int16,
+        rtrPort           :: Word16,
         rtrLogFile        :: Maybe String,
         rtrMaxConnections :: Int,
         -- | How long routers may use the data without hearing from the cache 

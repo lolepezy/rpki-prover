@@ -21,7 +21,7 @@ import qualified Data.Text                        as Text
 import qualified Data.Set                         as Set
 
 import           Data.Hourglass
-import           Data.Int                         (Int16, Int64)    
+import           Data.Int                         (Int64)
 import qualified Data.List                        as List
 import           Data.Maybe
 import           Data.Word                        (Word16)
@@ -679,7 +679,7 @@ data CLIOptions = CLIOptions {
         httpApiMaxRequests       :: Maybe Natural,
         withRtr                  :: Bool,
         rtrAddress               :: Maybe String,
-        rtrPort                  :: Maybe Int16,
+        rtrPort                  :: Maybe Word16,
         rtrLogFile               :: Maybe String,
         rtrMaxConnections        :: Maybe Natural,
         rtrExpireInterval        :: Maybe Int64,
@@ -711,6 +711,14 @@ data CLIOptions = CLIOptions {
         printConfig              :: Bool
     }
     deriving stock (Show, Generic)
+
+-- | 'auto' on its own would silently wrap a number that doesn't fit.
+portReader :: ReadM Word16
+portReader = do
+    port :: Integer <- auto
+    if port >= 0 && port <= 65535
+        then pure $ fromIntegral port
+        else readerError $ "Port must be between 0 and 65535, got " <> show port
 
 cliOptionsParser :: Parser CLIOptions
 cliOptionsParser = CLIOptions
@@ -839,7 +847,7 @@ cliOptionsParser = CLIOptions
             (  long "rsync-client-path"
             <> metavar "PATH"
             <> help "Path to the rsync executable. Defaults to whatever is found in $PATH."))
-    <*> optional (option auto
+    <*> optional (option portReader
             (  long "http-api-port"
             <> metavar "PORT"
             <> help ("Port for the HTTP API (default: " <> show defHttpApiPort <> ").")))
@@ -855,7 +863,7 @@ cliOptionsParser = CLIOptions
             (  long "rtr-address"
             <> metavar "ADDRESS"
             <> help ("Address to bind the RTR server to (default: " <> defRtrAddress <> ").")))
-    <*> optional (option auto
+    <*> optional (option portReader
             (  long "rtr-port"
             <> metavar "PORT"
             <> help ("Port for the RTR server (default: " <> show defRtrPort <> ").")))
