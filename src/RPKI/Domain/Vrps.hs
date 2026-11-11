@@ -3,6 +3,8 @@ module RPKI.Domain.Vrps (
     roaPayloadToVrps,
     createVrps,
     toVrps,
+    pack4,
+    pack6,
     unpack4,
     unpack6,
     vrpsToList,

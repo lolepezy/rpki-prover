@@ -234,7 +234,7 @@ runAll appContext@AppContext {..} tals = do
             Nothing -> do
                 logWarn logger [i|Don't have any VRPs, exiting.|]                
             Just vrps' ->                 
-                LBS.writeFile vrpOutputFile $ unRawCSV $ vrpDtosToCSV $ toVrpDtos vrps'
+                LBS.writeFile vrpOutputFile $ unRawCSV $ vrpsToCSV vrps'
 
     hasValidatedEverythingForEveryTA workflowShared =
         allSettled <$> readTVarIO (workflowShared ^. #pendingCas)

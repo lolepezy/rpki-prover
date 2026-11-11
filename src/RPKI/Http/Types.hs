@@ -7,12 +7,14 @@ import           Control.Lens hiding ((.=))
 
 import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Lazy        as LBS
+import qualified Data.ByteString.Builder     as BB
 import qualified Data.ByteString.Base16      as Hex
 import           Data.Text                   (Text)
 import qualified Data.Text                   as Text
 import           Data.Text.Encoding          (encodeUtf8, decodeLatin1)
 
 import           Data.Aeson.Types
+import qualified Data.Aeson.Encoding          as E
 import           Data.Proxy
 import           Data.Coerce
 
@@ -33,6 +35,7 @@ import           RPKI.AppTypes
 import           RPKI.Validation.Types
 import           RPKI.Repository
 import           RPKI.Domain
+import           RPKI.Http.Encoding          (vrpJsonFields)
 import           RPKI.TAL
 import           RPKI.Metrics.Metrics
 import           RPKI.Orphans.Json
@@ -540,8 +543,17 @@ instance ToJSON RoaPrefixDto
 instance ToJSON GbrDto
 instance ToJSON RscDto
 instance ToJSON CheckListDto
-instance ToJSON VrpDto     
-instance ToJSON VrpMinimalDto     
+-- These two write the same as the generic instances, but without making
+-- an aeson Value of every VRP, there are millions of them
+instance ToJSON VrpDto where
+    toEncoding (VrpDto asn p ml ta) = E.unsafeToEncoding $
+        vrpJsonFields (Vrp asn p ml)
+            <> BB.string7 ",\"ta\":" <> E.fromEncoding (E.text ta) <> BB.char7 '}'
+
+instance ToJSON VrpMinimalDto where
+    toEncoding (VrpMinimalDto asn p ml) = E.unsafeToEncoding $
+        vrpJsonFields (Vrp asn p ml) <> BB.char7 '}'
+
 instance ToJSON AspaDto
 instance ToJSON BgpCertDto
 instance ToJSON RtrDto

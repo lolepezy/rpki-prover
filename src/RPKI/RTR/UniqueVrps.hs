@@ -15,7 +15,8 @@ module RPKI.RTR.UniqueVrps (
     countUniqueVrps,
     diffUniqueVrps,
     rtrOrderedVrps,
-    foldRtrOrderedVrps
+    foldRtrOrderedVrps,
+    foldrRtrOrderedVrps
 ) where
 
 import qualified Data.Vector.Unboxed as VU
@@ -79,6 +80,25 @@ foldRtrOrderedVrps on4 on6 start (UniqueVrps (Vrps v4 v6)) = go start 0 0
         | j < n6    = on6 s (VU.unsafeIndex v6 j) >>= \s' -> go s' i (j + 1)
         | otherwise = pure s
 {-# INLINE foldRtrOrderedVrps #-}
+
+-- | A lazy right fold in the same order, e.g. to stream them.
+foldrRtrOrderedVrps :: (PackedVrp4 -> b -> b) -> (PackedVrp6 -> b -> b) -> b -> UniqueVrps -> b
+foldrRtrOrderedVrps on4 on6 end (UniqueVrps (Vrps v4 v6)) = go 0 0
+  where
+    n4 = VU.length v4
+    n6 = VU.length v6
+
+    go !i !j
+        | i < n4 && j < n6 =
+            let a = VU.unsafeIndex v4 i
+                b = VU.unsafeIndex v6 j
+            in case cmpPacked4Against6 a b of
+                GT -> on6 b $ go i (j + 1)
+                _  -> on4 a $ go (i + 1) j
+        | i < n4    = on4 (VU.unsafeIndex v4 i) $ go (i + 1) j
+        | j < n6    = on6 (VU.unsafeIndex v6 j) $ go i (j + 1)
+        | otherwise = end
+{-# INLINE foldrRtrOrderedVrps #-}
 
 
 -- | 'RPKI.RTR.Types.cmpVrps' on the packed form, per address family, giving
