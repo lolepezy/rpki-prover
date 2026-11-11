@@ -5,6 +5,7 @@
 * [Features](#features)
 
 * [Installation and usage](#usage)
+  * [Debian/Ubuntu and RPM packages](#linux-packages)
   * [Static Linux binary](#static-linux-binary)
   * [Docker image](#docker-image)
   * [Building from source](#building-from-source)
@@ -37,6 +38,7 @@ Issues are tracked [here](https://github.com/lolepezy/rpki-prover/issues). You c
 * Support for BGPSec certificate validation and RTR
 * Support for RPKI Signed Checklists
 * Support for RPKI Prefix Lists
+* Debian/Ubuntu and RPM packages with a systemd service
 * Static binaries for Linux
 * Docker image
 
@@ -56,6 +58,28 @@ There is no configuration file; all configuration is provided via the CLI. Most 
 
 At the first launch, `rpki-prover` initializes the filesystem layout and
 downloads [TAL files](https://www.ripe.net/manage-ips-and-asns/resource-management/rpki/ripe-ncc-rpki-trust-anchor-structure/).
+
+## Debian/Ubuntu and RPM packages <a name="linux-packages"></a>
+
+Every [release](https://github.com/lolepezy/rpki-prover/releases) includes x64 packages for:
+
+* Debian 12 (bookworm), 13 (trixie) and unstable (sid), and Ubuntu 22.04 (jammy) and 24.04 (noble): `.deb`
+* RHEL 9 and 10 and their rebuilds (Rocky Linux, AlmaLinux, Oracle Linux): `.rpm` (`el9`, `el10`)
+
+Download the package for your distribution and install it with the system package manager, which also pulls in `rsync` and the shared libraries:
+
+```
+# Debian/Ubuntu
+sudo apt install ./rpki-prover_<version>_amd64.deb
+
+# RHEL and rebuilds
+sudo dnf install ./rpki-prover-<version>.el9.x86_64.rpm
+sudo systemctl enable --now rpki-prover
+```
+
+The package runs `rpki-prover` as a systemd service under a dedicated `rpki-prover` user, with its state in `/var/lib/rpki-prover`. The `.deb` enables and starts the service on install; the `.rpm` leaves it to the `systemctl enable` above. Command line options go in `RPKI_PROVER_ARGS` in `/etc/default/rpki-prover` (Debian/Ubuntu) or `/etc/sysconfig/rpki-prover` (RHEL), followed by `sudo systemctl restart rpki-prover`. The package also installs a man page, `man rpki-prover`.
+
+See [pkg/README.md](pkg/README.md) for how the packages are built and what exactly they install.
 
 ## Static Linux binary <a name="static-linux-binary"></a>
 
