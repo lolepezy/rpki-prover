@@ -1,3 +1,13 @@
+-- The sorts of vector-algorithms call helpers (sort3ByIndex etc.) that box
+-- every element they look at, unless they are specialised to the element type.
+-- These calls only appear once the sort is inlined, which is too late for the
+-- usual specialisation, so it takes -flate-specialise in every module where
+-- a sort is inlined at a concrete type: here and where 'sortDedup' is inlined
+-- (RPKI.RTR.UniqueVrps). For a million VRPs 'uniqueVrpCounts' is then ~120ms
+-- and 23MB instead of ~150ms and 180MB, and 'toUniqueVrps' ~80ms and 38MB
+-- instead of ~100ms and 190MB.
+{-# OPTIONS_GHC -flate-specialise #-}
+
 -- | Building, converting, counting, sorting and merging VRP sets.
 module RPKI.Domain.Vrps (
     roaPayloadToVrps,

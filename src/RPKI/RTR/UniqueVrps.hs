@@ -1,3 +1,6 @@
+-- For sorting without boxing every element, see RPKI.Domain.Vrps
+{-# OPTIONS_GHC -flate-specialise #-}
+
 {- | The VRPs the RTR server serves, sorted and deduplicated.
 
    They are kept in the order they are sent to routers in, so that they don't
