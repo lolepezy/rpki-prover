@@ -24,7 +24,6 @@ import           Data.List.Split                  (chunksOf)
 
 import qualified Data.Set                         as Set
 
-import           Data.Coerce
 import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
 
@@ -34,6 +33,7 @@ import           Network.Socket.ByteString        (recv, sendAll, sendMany)
 import           RPKI.AppContext
 import           RPKI.Config
 import           RPKI.Domain
+import           RPKI.Domain.Vrps                 (createVrps)
 import           RPKI.Logging
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
@@ -703,18 +703,22 @@ compatiblePduLike = \case
     -- 'currentCachePayloadBS' only renders PDUs compatible with its version
     SerialisedPdu _ _                          -> True
 
--- Create VRP PDUs framed with the protocol version of the session they are for
+-- | The PDUs of a diff, framed with the protocol version of the session they
+-- are for, in the order of
+-- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis-28#section-11.2:
+-- by PDU type and for each type the announcements first, so that a router
+-- applying them one by one never misses something only because the withdrawal
+-- of the old and the announcement of the new are not there yet.
 diffPayloadPdus :: ProtocolVersion -> RtrDiffs -> [PduLike]
-diffPayloadPdus protocolVersion GenDiffs {..} = 
-    map (TruePdu . (`VersionedPdu` protocolVersion)) $ 
-                  vrpWithdrawn <> vrpPdusAnn <> 
-                  mconcat bgpSecWithdrawn <> mconcat bgpSecPdusAnn <>
-                  aspaPdusAnn <> aspaWithdrawn
+diffPayloadPdus protocolVersion GenDiffs {..} =
+    map (TruePdu . (`VersionedPdu` protocolVersion)) $
+           rtrOrderedUpdates (vrpToPdu Announcement) (vrpToPdu Withdrawal)
+                (unique $ vrpDiff ^. #added) (unique $ vrpDiff ^. #deleted)
+        <> routerKeyPdus Announcement (bgpSecDiff ^. #added)
+        <> routerKeyPdus Withdrawal (bgpSecDiff ^. #deleted)
+        <> aspaPdusAnn <> aspaWithdrawn
   where
-    vrpWithdrawn = map (vrpToPdu Withdrawal) (coerce $ Set.toList $ vrpDiff ^. #deleted)
-    vrpPdusAnn   = map (vrpToPdu Announcement) $ coerce $ Set.toAscList $ vrpDiff ^. #added 
-    bgpSecWithdrawn = map (bgpSecToPdu Withdrawal) $ Set.toList $ bgpSecDiff ^. #deleted
-    bgpSecPdusAnn   = map (bgpSecToPdu Announcement) $ Set.toList $ bgpSecDiff ^. #added
+    unique = toUniqueVrps . createVrps
 
     -- An ASPA announcement replaces the previous record of the same customer AS, 
     -- and a withdrawal removes the whole record. So when the providers of a customer
@@ -723,7 +727,7 @@ diffPayloadPdus protocolVersion GenDiffs {..} =
     -- Squashed diffs can have several deleted records of the same customer, so 
     -- withdrawals are per customer. 
     -- Announcements go first, then withdrawals, both by ascending customer AS
-    -- (https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis#section-11.2.3).
+    -- (https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis-28#section-11.2.3).
     aspaAnnounced   = Set.map customer $ aspaDiff ^. #added
     aspaPdusAnn     = map aspaToPdu $ Set.toAscList $ aspaDiff ^. #added
     aspaWithdrawn   = map (\c -> AspaPdu Withdrawal c []) 

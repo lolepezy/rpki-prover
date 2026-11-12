@@ -7,7 +7,6 @@ import qualified Data.ByteString as BS
 import           Data.Set       (Set)
 import qualified Data.Set       as Set
 import qualified Data.Map.Strict as Map
-import           Data.Ord
 import           Deque.Strict   as Deq
 
 import           GHC.Generics
@@ -134,15 +133,3 @@ mergeAspasByCustomer =
         . Set.toList
   where
     dropAs0IfNotAlone ps = if Set.size ps > 1 then Set.delete (ASN 0) ps else ps
-
--- | The order of VRPs for routers, see 'RPKI.RTR.UniqueVrps' for
--- the same order on the packed form.
-cmpVrps :: Vrp -> Vrp -> Ordering
-cmpVrps (Vrp asn1 p1 ml1) (Vrp asn2 p2 ml2) = 
-    compare asn1 asn2 <> 
-    -- Sort prefixes backwards -- it automatically means that 
-    -- smaller prefixes will be in front of larger ones.
-    compare (Down p1) (Down p2) <> 
-    -- shorter max length should precede?
-    compare ml1 ml2       
-     

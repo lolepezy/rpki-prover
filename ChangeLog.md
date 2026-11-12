@@ -19,6 +19,15 @@
   e.g. after a downgrade, is served without that data in a new session.
 - Responses to Reset Queries always have the data of the serial they report.
   The RTR state is no longer re-read from the cache for every update.
+- The RTR server sends PDUs in the order that draft-ietf-sidrops-8210bis-28
+  requires for protocol version 2, also in sessions of versions 0 and 1: by
+  PDU type, announcements before withdrawals, IP prefixes from the higher
+  address, max length, prefix length and ASN to the lower ones (withdrawals
+  the other way around), router keys by SKI, key and ASN. VRPs used to be
+  sent by ASN and withdrawals before announcements, so that a router applying
+  PDUs as they come could take a valid route for invalid for a moment. A
+  router key that several certificates have for the same ASN is sent once.
+  `/api/vrps-unique` and `/api/vrps-unique.csv` list VRPs in this order too.
 - A fetch, also one that fails after storing something, makes the TAs that
   use the repository revalidated if a manifest it stored lists other objects
   than the one the last validation used, or if it stored any new object

@@ -348,6 +348,7 @@ test-suite rpki-prover-test
       RPKI.Resources.ValiditySpec
       RPKI.RRDP.ParseSpec
       RPKI.RRDP.UpdateSpec
+      RPKI.RTR.OrderingSpec
       RPKI.RTR.RtrSpec
       RPKI.RTR.SnapshotSpec
       RPKI.SLURM.SlurmSpec

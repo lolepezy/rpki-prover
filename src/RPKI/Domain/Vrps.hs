@@ -15,7 +15,6 @@ module RPKI.Domain.Vrps (
     uniqueVrpCounts,
     uniqVrpsPackedBy,
     unionVrpsPackedBy,
-    mergeVrpsBy,
     sortDedup,
     mergeDedup,
     diffSortedBy,
@@ -77,7 +76,7 @@ unpack6 (PackedVrp6 asn hi lo len maxLen) =
     Vrp (ASN asn) (Ipv6P (mkIpv6Prefix hi lo len)) (PrefixLength maxLen)
 
 -- | All the VRPs, IPv4 first. This is storage order, not any meaningful one --
--- for the RTR ordering see 'mergeVrpsBy'.
+-- for the RTR ordering see 'RPKI.RTR.UniqueVrps'.
 vrpsToList :: Vrps -> [Vrp]
 vrpsToList (Vrps v4 v6) = map unpack4 (VU.toList v4) <> map unpack6 (VU.toList v6)
 
@@ -210,21 +209,6 @@ diffSortedBy cmp xs ys = go 0 0 [] []
                 GT -> go i (j + 1) onlyX (y : onlyY)
                 EQ -> go (i + 1) (j + 1) onlyX onlyY
 {-# INLINE diffSortedBy #-}
-
--- | Merge two already-sorted families into one sequence.
---
--- The caller supplies the cross-family ordering, since which family comes
--- first for a given key is a property of the ordering being reproduced and not
--- of the storage (for the RTR order, see 'RPKI.RTR.UniqueVrps').
-mergeVrpsBy :: (PackedVrp4 -> PackedVrp6 -> Ordering) -> Vrps -> [Vrp]
-mergeVrpsBy cross (Vrps v4 v6) = go (VU.toList v4) (VU.toList v6)
-  where
-    go [] bs = map unpack6 bs
-    go as [] = map unpack4 as
-    go as@(a : as') bs@(b : bs') =
-        case cross a b of
-            GT -> unpack6 b : go as bs'
-            _  -> unpack4 a : go as' bs
 
 -- | Sort in place, without deduplicating.
 sortPacked :: (VU.Unbox a, Ord a) => VU.Vector a -> VU.Vector a

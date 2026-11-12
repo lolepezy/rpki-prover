@@ -283,7 +283,7 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
             $ map (\pdu -> LBS.toStrict $ pduToBytes $ VersionedPdu pdu version)
             $ filter (`compatibleWith` version)
             $ map (vrpToPdu Announcement) (rtrOrderedVrps uniqueVrps)
-                <> concatMap (bgpSecToPdu Announcement) (Set.toList bgpSec)
+                <> routerKeyPdus Announcement bgpSec
                 <> map aspaToPdu (Set.toAscList aspas)
 
     unknownPdu protocolVersion code body = BS.pack [protocolVersion, code, 0, 0, 0, 0, 0, fromIntegral $ 8 + BS.length body] <> body
