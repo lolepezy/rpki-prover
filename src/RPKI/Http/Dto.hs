@@ -115,11 +115,8 @@ vrpsToCSV vrpsPerTa =
         (str "ASN,IP Prefix,Max Length,Trust Anchor\n")
         (foldMap perTa $ perTA vrpsPerTa)
   where
-    perTa (TaName ta, Vrps v4 v6) =
-        VU.foldr (\vrp rest -> BP.primBounded packed4Prim vrp <> taEnd <> rest) mempty v4
-            <> VU.foldr (\vrp rest -> BP.primBounded packed6Prim vrp <> taEnd <> rest) mempty v6
-      where
-        taEnd = BB.byteString $ C.concat [C.singleton ',', TE.encodeUtf8 ta, C.singleton '\n']
+    perTa (TaName ta, vrps) =
+        csvRows (BB.byteString $ C.concat [C.singleton ',', TE.encodeUtf8 ta, C.singleton '\n']) vrps
 
 vrpExtDtosToCSV :: [VrpExtDto] -> RawCSV
 vrpExtDtosToCSV vrpDtos =
@@ -134,12 +131,14 @@ vrpExtDtosToCSV vrpDtos =
 -- | In the same order as 'toVrpMinimalDtos', straight from the packed form.
 uniqueVrpsToCSV :: UniqueVrps -> RawCSV
 uniqueVrpsToCSV vrps =
-    rawCSV
-        (str "ASN,IP Prefix,Max Length\n")
-        (foldrRtrOrderedVrps
-            (\vrp rest -> BP.primBounded packed4Prim vrp <> ch '\n' <> rest)
-            (\vrp rest -> BP.primBounded packed6Prim vrp <> ch '\n' <> rest)
-            mempty vrps)
+    rawCSV (str "ASN,IP Prefix,Max Length\n") (csvRows (ch '\n') $ fromUniqueVrps vrps)
+
+-- | A row for every VRP, IPv4 first and in the order of the vectors, each
+-- ending with the given bytes. Built lazily, so that it's streamed.
+csvRows :: BB.Builder -> Vrps -> BB.Builder
+csvRows rowEnd (Vrps v4 v6) =
+    VU.foldr (\vrp rest -> BP.primBounded packed4Prim vrp <> rowEnd <> rest) mempty v4
+        <> VU.foldr (\vrp rest -> BP.primBounded packed6Prim vrp <> rowEnd <> rest) mempty v6
 
  
 

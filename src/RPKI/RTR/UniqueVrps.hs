@@ -10,8 +10,9 @@
        prefix length and ASN to the lower ones, compared in this order;
      * withdrawals in each family the other way around.
 
-   So a VRP set is the IPv4 and the IPv6 vectors one after the other, and the
-   withdrawals of a diff are the same vectors read backwards.
+   So the VRPs are announced in the order of the IPv4 and then the IPv6 vector
+   of 'fromUniqueVrps', and the withdrawals of a diff are the same vectors read
+   backwards.
 
    Merging and diffing them relies on that order and would silently give wrong
    results without it. So the constructor is not exported and 'toUniqueVrps'
@@ -24,9 +25,7 @@ module RPKI.RTR.UniqueVrps (
     countUniqueVrps,
     diffUniqueVrps,
     rtrOrderedVrps,
-    rtrOrderedUpdates,
-    foldRtrOrderedVrps,
-    foldrRtrOrderedVrps
+    rtrOrderedUpdates
 ) where
 
 import qualified Data.Vector.Unboxed as VU
@@ -80,20 +79,6 @@ rtrOrderedUpdates announce withdraw (UniqueVrps (Vrps a4 a6)) (UniqueVrps (Vrps 
     <> map (withdraw . unpack4) (VU.toList $ VU.reverse w4)
     <> map (announce . unpack6) (VU.toList a6)
     <> map (withdraw . unpack6) (VU.toList $ VU.reverse w6)
-
--- | Goes through them in the same order as 'rtrOrderedVrps', without unpacking
--- them into a list.
-foldRtrOrderedVrps :: Monad m =>
-                      (s -> PackedVrp4 -> m s) -> (s -> PackedVrp6 -> m s) -> s -> UniqueVrps -> m s
-foldRtrOrderedVrps on4 on6 start (UniqueVrps (Vrps v4 v6)) =
-    VU.foldM' on4 start v4 >>= \s -> VU.foldM' on6 s v6
-{-# INLINE foldRtrOrderedVrps #-}
-
--- | A lazy right fold in the same order, e.g. to stream them.
-foldrRtrOrderedVrps :: (PackedVrp4 -> b -> b) -> (PackedVrp6 -> b -> b) -> b -> UniqueVrps -> b
-foldrRtrOrderedVrps on4 on6 end (UniqueVrps (Vrps v4 v6)) =
-    VU.foldr on4 (VU.foldr on6 end v6) v4
-{-# INLINE foldrRtrOrderedVrps #-}
 
 
 -- | The order of announcements in a family: the higher address, max length,

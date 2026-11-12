@@ -391,7 +391,7 @@ currentCachePayloadBS protocolVersion RtrPayloads {..} =
 vrpAnnouncementsBS :: ProtocolVersion -> UniqueVrps -> BS.ByteString
 vrpAnnouncementsBS protocolVersion uniqueVrps =
     unsafeCreate (VU.length v4 * ipv4Size + VU.length v6 * ipv6Size) $ \buffer ->
-        void $ foldRtrOrderedVrps write4 write6 buffer uniqueVrps
+        void $ VU.foldM' write4 buffer v4 >>= \p -> VU.foldM' write6 p v6
   where
     Vrps v4 v6 = fromUniqueVrps uniqueVrps
     ipv4Size = 20
