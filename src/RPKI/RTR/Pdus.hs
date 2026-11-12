@@ -368,7 +368,9 @@ toVersioned :: Session -> Pdu -> VersionedPdu
 toVersioned (Session protocolVersion) pdu = VersionedPdu pdu protocolVersion
 
 
--- | The payloads as PDUs in the order of a full Cache Response.
+-- | The payloads as PDUs in the order of a full Cache Response, which is
+-- by PDU type (https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis-28#section-11.2):
+-- IPv4 and IPv6 Prefix, Router Key, ASPA.
 currentCachePayloadBS :: ProtocolVersion -> RtrPayloads -> BS.ByteString
 currentCachePayloadBS protocolVersion RtrPayloads {..} =
     vrpAnnouncementsBS protocolVersion uniqueVrps <> otherPdus
@@ -378,10 +380,7 @@ currentCachePayloadBS protocolVersion RtrPayloads {..} =
         $ mconcat
         $ map (\pdu -> BB.lazyByteString $ pduToBytes $ VersionedPdu pdu protocolVersion)
         $ filter (`compatibleWith` protocolVersion)
-        $ mconcat bgpSecPdusAnn <> aspaPdusAnn
-
-    bgpSecPdusAnn = map (bgpSecToPdu Announcement) $ Set.toList bgpSec
-    aspaPdusAnn   = map aspaToPdu $ Set.toAscList aspas
+        $ routerKeyPdus Announcement bgpSec <> map aspaToPdu (Set.toAscList aspas)
 
 
 -- | Announcements of all the VRPs, the same bytes as 'pduToBytes' gives for
@@ -392,7 +391,7 @@ currentCachePayloadBS protocolVersion RtrPayloads {..} =
 vrpAnnouncementsBS :: ProtocolVersion -> UniqueVrps -> BS.ByteString
 vrpAnnouncementsBS protocolVersion uniqueVrps =
     unsafeCreate (VU.length v4 * ipv4Size + VU.length v6 * ipv6Size) $ \buffer ->
-        void $ foldRtrOrderedVrps write4 write6 buffer uniqueVrps
+        void $ VU.foldM' write4 buffer v4 >>= \p -> VU.foldM' write6 p v6
   where
     Vrps v4 v6 = fromUniqueVrps uniqueVrps
     ipv4Size = 20
@@ -442,10 +441,28 @@ vrpToPdu flags (Vrp asn prefix maxLength) =
         Ipv4P v4p -> IPv4PrefixPdu flags v4p asn maxLength
         Ipv6P v6p -> IPv6PrefixPdu flags v6p asn maxLength
 
-bgpSecToPdu :: Flags -> BGPSecPayload -> [Pdu]
-bgpSecToPdu flags BGPSecPayload {..} = 
-    let Right (DecodedBase64 spkiBytes) = decodeBase64 (unSPKI bgpSecSpki) ("WTF broken SPKI" :: Text.Text)
-    in map (\asn -> RouterKeyPdu asn flags bgpSecSki (LBS.fromStrict spkiBytes)) bgpSecAsns    
+-- | A Router Key PDU for every ASN of every key, in the order of
+-- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis-28#section-11.2.2:
+-- by SKI, then by the length of the SPKI, the SPKI itself and the ASN.
+--
+-- The same key for the same ASN in several payloads, e.g. from two
+-- certificates, is one PDU: a router must not get it twice.
+routerKeyPdus :: Flags -> Set.Set BGPSecPayload -> [Pdu]
+routerKeyPdus flags payloads =
+    [ RouterKeyPdu asn flags (SKI (KI ski)) spki
+    | (ski, _, spki, asn) <- Set.toAscList keys ]
+  where
+    -- Comparing ShortByteStrings and lazy ByteStrings compares their bytes
+    -- as unsigned numbers one by one, which is what the ordering requires
+    keys = Set.fromList [
+            (ski, LBS.length spki, spki, asn)
+            | BGPSecPayload { bgpSecSki = SKI (KI ski), .. } <- Set.toList payloads
+            , let spki = spkiBytes bgpSecSpki
+            , asn <- bgpSecAsns ]
+
+    spkiBytes (SPKI encoded) =
+        let Right (DecodedBase64 bytes) = decodeBase64 encoded ("WTF broken SPKI" :: Text.Text)
+        in LBS.fromStrict bytes
 
 -- | ASPA announcement PDU. Providers are already ordered ascending in the set.
 aspaToPdu :: Aspa -> Pdu

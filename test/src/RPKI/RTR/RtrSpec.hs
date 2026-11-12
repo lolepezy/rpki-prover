@@ -52,7 +52,6 @@ rtrDiffsGroup = testGroup "RTR diff unit tests" [
         testSquashFromFirstToLast,
         testGenerateDiffs,
         testMergeAspasByCustomer,
-        testPackedRtrOrder,
         testVrpDiffOfPacked,
         testUniqueVrpsUnion,
         testAspaDiffPdus
@@ -299,17 +298,6 @@ testMergeAspasByCustomer = HU.testCase "Should have one ASPA per customer" $ do
             aspa 5 [0], 
             aspa 6 [0, 7], 
             aspa 8 []])
-
--- The packed orderings, merged across families, must be the same as sorting
--- the VRPs with 'cmpVrps'. A few ASNs only, so that there are ties for the
--- prefix comparison and the cross-family merge to decide, and some duplicates.
-testPackedRtrOrder :: TestTree
-testPackedRtrOrder = QC.testProperty "Packed RTR order is the same as cmpVrps" $
-    \(vrps :: [Vrp]) ->
-        let fewAsns   = [ Vrp (ASN (asn `mod` 3)) p ml | Vrp (ASN asn) p ml <- vrps ]
-            withDups  = fewAsns <> take 5 fewAsns
-            packed    = rtrOrderedVrps $ toUniqueVrps $ createVrps withDups
-        in packed == List.sortBy cmpVrps (Set.toList $ Set.fromList withDups)
 
 -- With VRPs in common, which random ones wouldn't have.
 testVrpDiffOfPacked :: TestTree

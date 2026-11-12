@@ -37,6 +37,7 @@ import           RPKI.AppTypes
 import           RPKI.AppState
 import           RPKI.Domain
 import           RPKI.Domain.Vrps
+import           RPKI.RTR.UniqueVrps               (toUniqueVrps)
 import           RPKI.Logging
 import           RPKI.Worker             (workerLimitsByName)
 import           RPKI.Meta.UniqueId
@@ -153,37 +154,44 @@ httpServer appContext = gzip defaultGzipSettings $ genericServe HttpApi {
 getVRPValidated :: (MonadIO m, MonadError ServerError m)
                 => AppContext -> Maybe Text -> m [VrpDto]
 getVRPValidated appContext version =
-    getValuesByVersion appContext version 
-        (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #validated)) 
-        (\tx v -> Just <$> DB.getVrps tx v) 
-        (pure . toVrpDtos . fromMaybe mempty)
+    getValidatedVrps appContext version toVrpDtos
 
 getVRPSlurmed :: (MonadIO m, MonadError ServerError m)
                 => AppContext -> Maybe Text -> m [VrpDto]
 getVRPSlurmed appContext version =
-    getValuesByVersion appContext version 
-        (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #filtered)) 
-        (\tx v -> Just <$> DB.getVrps tx v) 
-        (pure . toVrpDtos . fromMaybe mempty)
+    getSlurmedVrps appContext version toVrpDtos
 
 getVRPValidatedRaw :: (MonadIO m, MonadError ServerError m)
                     => AppContext -> Maybe Text -> m RawCSV
-getVRPValidatedRaw appContext version = 
-    vrpDtosToCSV <$> getVRPValidated appContext version        
+getVRPValidatedRaw appContext version =
+    getValidatedVrps appContext version vrpsToCSV
 
 getVRPSlurmedRaw :: (MonadIO m, MonadError ServerError m)
                     => AppContext -> Maybe Text -> m RawCSV
-getVRPSlurmedRaw appContext version = 
-    vrpDtosToCSV <$> getVRPSlurmed appContext version
+getVRPSlurmedRaw appContext version =
+    getSlurmedVrps appContext version vrpsToCSV
+
+getValidatedVrps, getSlurmedVrps :: (MonadIO m, MonadError ServerError m)
+                                 => AppContext -> Maybe Text -> (PerTA Vrps -> a) -> m a
+getValidatedVrps appContext version toResult =
+    getValuesByVersion appContext version
+        (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #validated))
+        (\tx v -> Just <$> DB.getVrps tx v)
+        (pure . toResult . fromMaybe mempty)
+
+getSlurmedVrps appContext version toResult =
+    getValuesByVersion appContext version
+        (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #filtered))
+        (\tx v -> Just <$> DB.getVrps tx v)
+        (pure . toResult . fromMaybe mempty)
 
 getVRPsUniqueRaw :: (MonadIO m, MonadError ServerError m)
                     => AppContext -> Maybe Text -> m RawCSV
 getVRPsUniqueRaw appContext version = 
-    vrpSetToCSV <$> 
-        getValuesByVersion appContext version 
+    getValuesByVersion appContext version 
         (fmap (asMaybe . (^. #vrps)) . readTVar . (^. #filtered)) 
         (\tx v -> Just <$> DB.getVrps tx v) 
-        (pure . toVrpV . (allTAs <$>))
+        (pure . uniqueVrpsToCSV . maybe mempty (toUniqueVrps . allTAs))
 
 getVRPsUnique :: (MonadIO m, MonadError ServerError m)
                     => AppContext -> Maybe Text -> m [VrpMinimalDto]

@@ -1,3 +1,5 @@
+-- 'twoSorts' inlines 'sortDedup' here, see RPKI.Domain.Vrps
+{-# OPTIONS_GHC -flate-specialise #-}
 -- | How long it takes to count distinct VRPs, per TA and over all TAs.
 --
 -- Both numbers go into the metrics of every validation run, and the validation
@@ -22,6 +24,7 @@ import           Text.Printf                (printf)
 
 import           RPKI.Domain
 import           RPKI.Domain.Packed
+import           RPKI.Domain.Vrps            (sortDedup, uniqueVrpCounts)
 
 
 taCount, vrpsPerTa :: Int

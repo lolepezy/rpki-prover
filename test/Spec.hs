@@ -5,6 +5,7 @@ import RPKI.RRDP.ParseSpec
 import RPKI.Store.DatabaseSpec
 import RPKI.RRDP.UpdateSpec
 import RPKI.Fetch.HttpSpec
+import RPKI.Http.DtoSpec
 import RPKI.Fetch.DirectoryTraverseSpec
 import RPKI.Resources.ResourcesSpec
 import RPKI.Resources.ValiditySpec
@@ -13,6 +14,7 @@ import RPKI.LoggingSpec
 import RPKI.RepositorySpec
 import RPKI.FetchSpec
 import RPKI.DomainSpec
+import RPKI.RTR.OrderingSpec
 import RPKI.RTR.RtrSpec
 import RPKI.RTR.SnapshotSpec
 import RPKI.SLURM.SlurmSpec
@@ -40,7 +42,9 @@ main = defaultMain $ testGroup "All tests" [
         manifestDigestGroup,
         rtrGroup,
         rtrSnapshotGroup,
+        rtrOrderingGroup,
         httpSpec,
+        httpDtoGroup,
         directoryTraverseSpec,
         slurmGroup,
         loggingSpec,

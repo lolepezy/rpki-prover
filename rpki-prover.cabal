@@ -182,6 +182,7 @@ library
       RPKI.Fetch.Http
       RPKI.Http.Api
       RPKI.Http.Dto
+      RPKI.Http.Encoding
       RPKI.Http.HttpServer
       RPKI.Http.Types
       RPKI.Http.UI
@@ -336,6 +337,7 @@ test-suite rpki-prover-test
       RPKI.Fetch.ErikSpec
       RPKI.Fetch.HttpSpec
       RPKI.FetchSpec
+      RPKI.Http.DtoSpec
       RPKI.LoggingSpec
       RPKI.Metrics.ProcessSpec
       RPKI.Orphans
@@ -346,6 +348,7 @@ test-suite rpki-prover-test
       RPKI.Resources.ValiditySpec
       RPKI.RRDP.ParseSpec
       RPKI.RRDP.UpdateSpec
+      RPKI.RTR.OrderingSpec
       RPKI.RTR.RtrSpec
       RPKI.RTR.SnapshotSpec
       RPKI.SLURM.SlurmSpec
