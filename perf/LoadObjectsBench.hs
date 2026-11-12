@@ -133,7 +133,7 @@ runIteration i appContext rootPath url = do
     cpu0  <- getCPUTime
     wall0 <- getMonotonicTimeNSec
     (result, vs) <- runValidatorIO (newScopes "load-objects-bench") $
-        loadRsyncRepository appContext worldVersion url rootPath
+        loadRsyncRepository appContext worldVersion Nothing url rootPath
     wall1 <- getMonotonicTimeNSec
     cpu1  <- getCPUTime
     traceMarkerIO "load end"
