@@ -68,7 +68,8 @@ import           RPKI.AppContext
 import           RPKI.AppState           (instantToVersion, newAppState)
 import           RPKI.AppTypes           (Count (..), Size (..), WorldVersion)
 import           RPKI.Config
-import           RPKI.Domain             (Roas (..), TaName (..), URI (..), ValidationRFC (..), estimateVrpCountRoas)
+import           RPKI.Domain             (Roas (..), TaName (..), URI (..), ValidationRFC (..))
+import           RPKI.Domain.Vrps        (estimateVrpCountRoas)
 import           RPKI.Logging
 import           RPKI.Meta.UniqueId      (thisExecutableVersion)
 import           RPKI.Messages           (formatValidations)

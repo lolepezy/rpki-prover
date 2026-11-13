@@ -1,21 +1,25 @@
 module RPKI.Http.Dto where
 
 import qualified Data.ByteString.Builder          as BB
+import qualified Data.ByteString.Builder.Prim     as BP
+import qualified Data.ByteString.Char8            as C
 
 import qualified Data.List.NonEmpty               as NonEmpty
 import qualified Data.Set                         as Set
-import qualified Data.Vector                      as V
+import qualified Data.Vector.Unboxed              as VU
 import qualified Data.Map.Strict                  as Map
 import           Data.Text                        (Text)
 import qualified Data.Text                        as Text
+import qualified Data.Text.Encoding               as TE
 import           Data.Tuple.Strict
-import           Data.Foldable
 
 import qualified Data.X509 as X509
 import qualified Crypto.PubKey.RSA.Types as RSA
 
 import           RPKI.AppState
 import           RPKI.Domain
+import           RPKI.Http.Encoding
+import           RPKI.Domain.Vrps
 import           RPKI.Messages
 import           RPKI.Resources.Resources
 import qualified RPKI.Resources.IntervalContainers as IS
@@ -25,7 +29,7 @@ import           RPKI.Reporting
 import           RPKI.Http.Types
 import           RPKI.Resources.Types
 import           RPKI.Resources.Validity
-import           RPKI.RTR.Types
+import           RPKI.RTR.UniqueVrps
 import           RPKI.Validation.Types
 import           RPKI.Util
 import           RPKI.AppTypes (WorldVersion)
@@ -44,11 +48,10 @@ toVrpDtos vrpsPerTa =
 toVrpDto :: Vrp -> TaName -> VrpDto
 toVrpDto (Vrp a p len) (TaName ta) = VrpDto a p len ta
 
-toVrpV :: Maybe Vrps -> V.Vector Vrp
-toVrpV = maybe mempty (uniqVrpsBy cmpVrps)
-
+-- | Sorted and deduplicated. A lazy list, so that a response can be written
+-- while it is made and not all of the VRPs are in memory unpacked at once.
 toVrpMinimalDtos :: Maybe Vrps -> [VrpMinimalDto]
-toVrpMinimalDtos = map asDto . V.toList . toVrpV
+toVrpMinimalDtos = maybe [] $ map asDto . rtrOrderedVrps . toUniqueVrps
   where
     asDto (Vrp asn prefix maxLength) = VrpMinimalDto {..}
 
@@ -105,19 +108,15 @@ toVDtos (Validations vMap) =
         (VWarn (VWarning w)) -> WarningDto $ toMessage w
 
 
-vrpDtosToCSV :: [VrpDto] -> RawCSV
-vrpDtosToCSV vrpDtos =
+-- | The VRPs of every TA with the TA, in the same order as 'toVrpDtos'.
+vrpsToCSV :: PerTA Vrps -> RawCSV
+vrpsToCSV vrpsPerTa =
     rawCSV
         (str "ASN,IP Prefix,Max Length,Trust Anchor\n")
-        (mconcat $ map toBS vrpDtos)
+        (foldMap perTa $ perTA vrpsPerTa)
   where
-    toBS VrpDto {            
-            maxLength = PrefixLength ml,
-            ..
-        } = str (show asn) <> ch ',' <>
-            text (prefixStr prefix) <> ch ',' <>
-            str (show ml) <> ch ',' <>
-            str (convert ta) <> ch '\n'
+    perTa (TaName ta, vrps) =
+        csvRows (BB.byteString $ C.concat [C.singleton ',', TE.encodeUtf8 ta, C.singleton '\n']) vrps
 
 vrpExtDtosToCSV :: [VrpExtDto] -> RawCSV
 vrpExtDtosToCSV vrpDtos =
@@ -125,29 +124,22 @@ vrpExtDtosToCSV vrpDtos =
         (str "URI,ASN,IP Prefix,Max Length,Trust Anchor\n")
         (mconcat $ map toBS vrpDtos)
   where
-    toBS VrpExtDto {        
-            vrp = VrpDto {
-                maxLength = PrefixLength ml,
-                ..
-            },
-            ..
-        } = str (Text.unpack uri) <> ch ',' <>
-            str (show asn) <> ch ',' <>
-            text (prefixStr prefix) <> ch ',' <>
-            str (show ml) <> ch ',' <>
-            str (convert ta) <> ch '\n'
+    toBS VrpExtDto { vrp = VrpDto {..}, .. } =
+        text uri <> ch ',' <> vrpCsv (Vrp asn prefix maxLength) <> ch ',' <> text ta <> ch '\n'
 
 
-vrpSetToCSV :: Foldable f => f Vrp -> RawCSV
-vrpSetToCSV vrpDtos =
-    rawCSV
-        (str "ASN,IP Prefix,Max Length\n")
-        (mconcat $ map toBS $ toList vrpDtos)
-  where
-    toBS (Vrp asn prefix (PrefixLength maxLength)) =
-        str (show asn) <> ch ',' <>
-        text (prefixStr prefix) <> ch ',' <>
-        str (show maxLength) <> ch '\n'
+-- | In the same order as 'toVrpMinimalDtos', straight from the packed form.
+uniqueVrpsToCSV :: UniqueVrps -> RawCSV
+uniqueVrpsToCSV vrps =
+    rawCSV (str "ASN,IP Prefix,Max Length\n") (csvRows (ch '\n') $ fromUniqueVrps vrps)
+
+-- | A row for every VRP, IPv4 first and in the order of the vectors, each
+-- ending with the given bytes. Built lazily, so that it's streamed.
+csvRows :: BB.Builder -> Vrps -> BB.Builder
+csvRows rowEnd (Vrps v4 v6) =
+    VU.foldr (\vrp rest -> BP.primBounded packed4Prim vrp <> rowEnd <> rest) mempty v4
+        <> VU.foldr (\vrp rest -> BP.primBounded packed6Prim vrp <> rowEnd <> rest) mempty v6
+
  
 
 toMftShortcutDto :: MftShortcut -> ManifestShortcutDto
@@ -358,7 +350,7 @@ str :: String -> BB.Builder
 str = BB.stringUtf8
 
 text :: Text -> BB.Builder
-text = str . Text.unpack
+text = TE.encodeUtf8Builder
 
 ch :: Char -> BB.Builder
 ch  = BB.charUtf8

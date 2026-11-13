@@ -3,11 +3,10 @@
 
 module RPKI.RTR.Types where
 
+import qualified Data.ByteString as BS
 import           Data.Set       (Set)
 import qualified Data.Set       as Set
 import qualified Data.Map.Strict as Map
-import           Data.Monoid.Generic
-import           Data.Ord
 import           Deque.Strict   as Deq
 
 import           GHC.Generics
@@ -15,9 +14,9 @@ import           GHC.Generics
 import           RPKI.AppTypes
 
 import           RPKI.Domain
-import           RPKI.Domain.Packed
 import           RPKI.Resources.Types
 import           RPKI.RTR.Protocol
+import           RPKI.RTR.UniqueVrps
 
 data Diff a = Diff {
         added   :: Set a,
@@ -46,9 +45,59 @@ data RtrState = RtrState {
         maxSerialsPerSession  :: Int,
         diffs                 :: Deq.Deque (SerialNumber, RtrDiffs),
         totalDiffSize         :: Int,
-        maxTotalDiffSize      :: Int
+        maxTotalDiffSize      :: Int,
+        -- | Sent to routers with every End of Data
+        intervals             :: Intervals,
+        -- | What the cache serves at 'currentSerial'. It is replaced together 
+        -- with the serial, so that a response never mixes the two up.
+        served                :: ServedPayloads,
+        -- | Served together with the new payloads after a restart,
+        -- see 'RPKI.RTR.RtrState.withCarriedOver'
+        carriedOver           :: Maybe CarriedOver
     }
     deriving stock (Show, Eq, Generic)
+
+-- | What routers got before a restart, from the persisted state.
+data CarriedOver = CarriedOver {
+        served  :: ServedPayloads,
+        -- | Of the payloads, they are carried over until it is
+        -- older than the Expire Interval
+        version :: WorldVersion
+    }
+    deriving stock (Show, Eq, Generic)
+
+-- | The payloads the cache serves, together with their serialised forms. 
+-- 
+-- A form is rendered the first time it is needed, e.g. the PDUs of a 
+-- protocol version on the first Reset Query of that version, and is then 
+-- shared by everything that needs it.
+data ServedPayloads = ServedPayloads {
+        payloads   :: RtrPayloads,
+        renderedV0 :: ~BS.ByteString,
+        renderedV1 :: ~BS.ByteString,
+        renderedV2 :: ~BS.ByteString,
+        -- | The payloads as they are persisted, see RPKI.RTR.Snapshot
+        persisted  :: ~BS.ByteString
+    }
+    deriving stock (Generic)
+
+-- The rendered forms are derived from the payloads, comparing or showing 
+-- them would only force them.
+instance Eq ServedPayloads where
+    a == b = payloads a == payloads b
+
+instance Show ServedPayloads where
+    show ServedPayloads { payloads = RtrPayloads {..} } = 
+        "ServedPayloads { VRPs: " <> show (countUniqueVrps uniqueVrps)
+            <> ", BGPSec: " <> show (Set.size bgpSec) 
+            <> ", ASPAs: " <> show (Set.size aspas) <> " }"
+
+renderedFor :: ProtocolVersion -> ServedPayloads -> BS.ByteString
+renderedFor protocolVersion ServedPayloads {..} = 
+    case protocolVersion of 
+        V0 -> renderedV0
+        V1 -> renderedV1
+        V2 -> renderedV2
 
 
 data RtrPayloads = RtrPayloads {
@@ -56,14 +105,15 @@ data RtrPayloads = RtrPayloads {
         -- Lazy on purpose (StrictData is on for this module): nothing needs
         -- the deduplicated set unless RTR or the validity API is running, and
         -- the thunk only closes over `vrps`, which is retained anyway.
-        uniqueVrps :: ~Vrps,
+        uniqueVrps :: ~UniqueVrps,
         bgpSec     :: Set BGPSecPayload,
         -- At most one ASPA per customer AS, see 'mergeAspasByCustomer'
         aspas      :: Set Aspa
     }
     deriving stock (Show, Eq, Generic)
-    deriving Semigroup via GenericSemigroup RtrPayloads   
-    deriving Monoid    via GenericMonoid RtrPayloads           
+
+emptyRtrPayloads :: RtrPayloads
+emptyRtrPayloads = RtrPayloads mempty mempty mempty mempty
 
 -- | RTR cache can have at most one ASPA record per customer AS
 -- (https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis#section-5.12),
@@ -83,40 +133,3 @@ mergeAspasByCustomer =
         . Set.toList
   where
     dropAs0IfNotAlone ps = if Set.size ps > 1 then Set.delete (ASN 0) ps else ps
-
--- We store VRPs sorteed in a specific way, so that we don't have to sort them before 
--- sending to every client every time.
--- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis-02#section-11
--- 
--- | 'cmpVrps' on the packed form, per address family, giving byte for byte
--- the same ordering once the two are merged with 'cmpPacked4Against6'.
---
--- The prefix comparison is reversed (that is what @Down@ does above), and the
--- IPv6 flag stands in for the 'IpPrefix' constructor tag that derived Ord
--- compares first, so (flag, address, length) compared lexicographically is
--- exactly derived Ord on 'IpPrefix'.
-cmpPacked4 :: PackedVrp4 -> PackedVrp4 -> Ordering
-cmpPacked4 (PackedVrp4 asn1 a1 l1 m1) (PackedVrp4 asn2 a2 l2 m2) =
-    compare asn1 asn2 <> compare (a2, l2) (a1, l1) <> compare m1 m2
-
-cmpPacked6 :: PackedVrp6 -> PackedVrp6 -> Ordering
-cmpPacked6 (PackedVrp6 asn1 hi1 lo1 l1 m1) (PackedVrp6 asn2 hi2 lo2 l2 m2) =
-    compare asn1 asn2 <> compare (hi2, lo2, l2) (hi1, lo1, l1) <> compare m1 m2
-
--- | Which of an IPv4 and an IPv6 entry comes first, for merging the two
--- sorted families back into one RTR-ordered sequence.
---
--- The ASN decides; on a tie IPv6 goes first, because derived Ord puts Ipv4P
--- before Ipv6P and 'cmpVrps' compares the prefix reversed.
-cmpPacked4Against6 :: PackedVrp4 -> PackedVrp6 -> Ordering
-cmpPacked4Against6 a b = compare (packed4Asn a) (packed6Asn b) <> GT
-
-cmpVrps :: Vrp -> Vrp -> Ordering
-cmpVrps (Vrp asn1 p1 ml1) (Vrp asn2 p2 ml2) = 
-    compare asn1 asn2 <> 
-    -- Sort prefixes backwards -- it automatically means that 
-    -- smaller prefixes will be in front of larger ones.
-    compare (Down p1) (Down p2) <> 
-    -- shorter max length should precede?
-    compare ml1 ml2       
-     

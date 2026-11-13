@@ -3,20 +3,34 @@
 module RPKI.RTR.Pdus where
 
 import qualified Data.ByteString          as BS
+import qualified Data.ByteString.Builder  as BB
+import           Data.ByteString.Internal (unsafeCreate)
 import qualified Data.ByteString.Lazy     as LBS
+import qualified Data.Set                 as Set
 import qualified Data.Text                as Text
+import qualified Data.Vector.Unboxed      as VU
 
 import           Data.Binary
 import           Data.Binary.Get          (getByteString, runGetOrFail)
 import           Data.Binary.Put          (runPut, putLazyByteString, putByteString)
 
+import           Data.Bits                (shiftR)
 import           Data.Int
 
-import           Control.Monad            (unless, when, replicateM)
-import           RPKI.Domain              (toNormalBS, KI (..), SKI (..), skiLen, toShortBS)
+import           Foreign.Ptr              (Ptr, plusPtr)
+import           Foreign.Storable         (pokeByteOff)
+
+import           GHC.ByteOrder            (ByteOrder (..), targetByteOrder)
+
+import           Control.Monad            (unless, void, when, replicateM)
+import           RPKI.Domain              (toNormalBS, Aspa (..), BGPSecPayload (..), KI (..), SKI (..), SPKI (..),
+                                           DecodedBase64 (..), Vrp (..), Vrps (..), skiLen, toShortBS)
+import           RPKI.Domain.Packed       (PackedVrp4 (..), PackedVrp6 (..))
 import           RPKI.Resources.Resources
 import           RPKI.Resources.Types
 import           RPKI.RTR.Protocol
+import           RPKI.RTR.Types           (RtrPayloads (..))
+import           RPKI.RTR.UniqueVrps
 import           RPKI.Util
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 
@@ -352,3 +366,105 @@ parseVersionedPdu protocolVersion pduType =
  
 toVersioned :: Session -> Pdu -> VersionedPdu
 toVersioned (Session protocolVersion) pdu = VersionedPdu pdu protocolVersion
+
+
+-- | The payloads as PDUs in the order of a full Cache Response, which is
+-- by PDU type (https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis-28#section-11.2):
+-- IPv4 and IPv6 Prefix, Router Key, ASPA.
+currentCachePayloadBS :: ProtocolVersion -> RtrPayloads -> BS.ByteString
+currentCachePayloadBS protocolVersion RtrPayloads {..} =
+    vrpAnnouncementsBS protocolVersion uniqueVrps <> otherPdus
+  where
+    otherPdus = LBS.toStrict
+        $ BB.toLazyByteString
+        $ mconcat
+        $ map (\pdu -> BB.lazyByteString $ pduToBytes $ VersionedPdu pdu protocolVersion)
+        $ filter (`compatibleWith` protocolVersion)
+        $ routerKeyPdus Announcement bgpSec <> map aspaToPdu (Set.toAscList aspas)
+
+
+-- | Announcements of all the VRPs, the same bytes as 'pduToBytes' gives for
+-- each of them, which a test checks. 'pduToBytes' allocates a buffer per PDU,
+-- which for a million VRPs is 6GB of allocations and 50 times slower than this.
+--
+-- VRPs are valid in every protocol version and only differ in the version byte.
+vrpAnnouncementsBS :: ProtocolVersion -> UniqueVrps -> BS.ByteString
+vrpAnnouncementsBS protocolVersion uniqueVrps =
+    unsafeCreate (VU.length v4 * ipv4Size + VU.length v6 * ipv6Size) $ \buffer ->
+        void $ VU.foldM' write4 buffer v4 >>= \p -> VU.foldM' write6 p v6
+  where
+    Vrps v4 v6 = fromUniqueVrps uniqueVrps
+    ipv4Size = 20
+    ipv6Size = 32
+
+    write4 :: Ptr Word8 -> PackedVrp4 -> IO (Ptr Word8)
+    write4 p (PackedVrp4 asn address prefixLength maxLength) = do
+        writeCommon p 4 ipv4Size prefixLength maxLength
+        pokeBE32 p 12 address
+        pokeBE32 p 16 asn
+        pure $ p `plusPtr` ipv4Size
+
+    write6 :: Ptr Word8 -> PackedVrp6 -> IO (Ptr Word8)
+    write6 p (PackedVrp6 asn addressHi addressLo prefixLength maxLength) = do
+        writeCommon p 6 ipv6Size prefixLength maxLength
+        pokeBE32 p 12 $ fromIntegral $ addressHi `shiftR` 32
+        pokeBE32 p 16 $ fromIntegral addressHi
+        pokeBE32 p 20 $ fromIntegral $ addressLo `shiftR` 32
+        pokeBE32 p 24 $ fromIntegral addressLo
+        pokeBE32 p 28 asn
+        pure $ p `plusPtr` ipv6Size
+
+    writeCommon :: Ptr Word8 -> Word8 -> Int -> Word8 -> Word8 -> IO ()
+    writeCommon p code size prefixLength maxLength = do
+        pokeByteOff p 0 versionByte
+        pokeByteOff p 1 code
+        pokeByteOff p 2 (0 :: Word16)
+        pokeBE32 p 4 $ fromIntegral size
+        pokeByteOff p 8 announcementFlag
+        pokeByteOff p 9 prefixLength
+        pokeByteOff p 10 maxLength
+        pokeByteOff p 11 (0 :: Word8)
+
+    versionByte = protocolVersionByte protocolVersion
+    announcementFlag = 1 :: Word8
+
+    pokeBE32 :: Ptr Word8 -> Int -> Word32 -> IO ()
+    pokeBE32 p offset value = pokeByteOff p offset $
+        case targetByteOrder of
+            BigEndian    -> value
+            LittleEndian -> byteSwap32 value
+
+
+vrpToPdu :: Flags -> Vrp -> Pdu
+vrpToPdu flags (Vrp asn prefix maxLength) = 
+    case prefix of
+        Ipv4P v4p -> IPv4PrefixPdu flags v4p asn maxLength
+        Ipv6P v6p -> IPv6PrefixPdu flags v6p asn maxLength
+
+-- | A Router Key PDU for every ASN of every key, in the order of
+-- https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-8210bis-28#section-11.2.2:
+-- by SKI, then by the length of the SPKI, the SPKI itself and the ASN.
+--
+-- The same key for the same ASN in several payloads, e.g. from two
+-- certificates, is one PDU: a router must not get it twice.
+routerKeyPdus :: Flags -> Set.Set BGPSecPayload -> [Pdu]
+routerKeyPdus flags payloads =
+    [ RouterKeyPdu asn flags (SKI (KI ski)) spki
+    | (ski, _, spki, asn) <- Set.toAscList keys ]
+  where
+    -- Comparing ShortByteStrings and lazy ByteStrings compares their bytes
+    -- as unsigned numbers one by one, which is what the ordering requires
+    keys = Set.fromList [
+            -- length is here for ordering by length
+            (ski, LBS.length spki, spki, asn)
+            | BGPSecPayload { bgpSecSki = SKI (KI ski), .. } <- Set.toList payloads
+            , let spki = spkiBytes bgpSecSpki
+            , asn <- bgpSecAsns ]
+
+    spkiBytes (SPKI encoded) =
+        let Right (DecodedBase64 bytes) = decodeBase64 encoded ("WTF broken SPKI" :: Text.Text)
+        in LBS.fromStrict bytes
+
+-- | ASPA announcement PDU. Providers are already ordered ascending in the set.
+aspaToPdu :: Aspa -> Pdu
+aspaToPdu Aspa {..} = AspaPdu Announcement customer (Set.toAscList providers)

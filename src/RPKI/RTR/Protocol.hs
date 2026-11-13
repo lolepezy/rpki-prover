@@ -107,11 +107,14 @@ defIntervals = Intervals {
     expireInterval  = 7200
 }     
 
+protocolVersionByte :: ProtocolVersion -> Word8
+protocolVersionByte = \case
+    V0 -> 0
+    V1 -> 1
+    V2 -> 2
+
 instance Binary ProtocolVersion where
-    put f = put $ case f of 
-        V0 -> 0 :: Word8
-        V1 -> 1
-        V2 -> 2
+    put = put . protocolVersionByte
 
     get = do
         n :: Word8 <- get

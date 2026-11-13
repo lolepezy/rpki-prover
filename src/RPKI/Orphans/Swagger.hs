@@ -31,7 +31,6 @@ import           RPKI.Metrics.System
 import           RPKI.Resources.Types
 import           RPKI.Store.Base.Storable
 
-import           RPKI.Store.Types
 import           RPKI.Time
 import           RPKI.Orphans.Json
 import           RPKI.Orphans.Generics
@@ -240,6 +239,11 @@ instance ToSchema a => ToSchema (RSet a) where
 
 
 instance ToSchema RtrState
+instance ToSchema CarriedOver
+instance ToSchema Intervals
+instance ToSchema ServedPayloadsSummary
+instance ToSchema ServedPayloads where
+    declareNamedSchema _ = declareNamedSchema (Proxy :: Proxy ServedPayloadsSummary)
 instance ToSchema BGPSecPayload
 instance ToSchema Aspa
 instance ToSchema SerialNumber

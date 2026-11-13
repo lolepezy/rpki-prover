@@ -174,6 +174,7 @@ library
       RPKI.Cpu
       RPKI.Domain
       RPKI.Domain.Packed
+      RPKI.Domain.Vrps
       RPKI.Fetch.DirectoryTraverse
       RPKI.Fetch.Erik.ErikRelay
       RPKI.Fetch.Erik.RelayPool
@@ -181,6 +182,7 @@ library
       RPKI.Fetch.Http
       RPKI.Http.Api
       RPKI.Http.Dto
+      RPKI.Http.Encoding
       RPKI.Http.HttpServer
       RPKI.Http.Types
       RPKI.Http.UI
@@ -224,7 +226,9 @@ library
       RPKI.RTR.Protocol
       RPKI.RTR.RtrServer
       RPKI.RTR.RtrState
+      RPKI.RTR.Snapshot
       RPKI.RTR.Types
+      RPKI.RTR.UniqueVrps
       RPKI.Sandbox
       RPKI.SLURM.SlurmProcessing
       RPKI.SLURM.Types
@@ -333,6 +337,7 @@ test-suite rpki-prover-test
       RPKI.Fetch.ErikSpec
       RPKI.Fetch.HttpSpec
       RPKI.FetchSpec
+      RPKI.Http.DtoSpec
       RPKI.LoggingSpec
       RPKI.Metrics.ProcessSpec
       RPKI.Orphans
@@ -343,7 +348,9 @@ test-suite rpki-prover-test
       RPKI.Resources.ValiditySpec
       RPKI.RRDP.ParseSpec
       RPKI.RRDP.UpdateSpec
+      RPKI.RTR.OrderingSpec
       RPKI.RTR.RtrSpec
+      RPKI.RTR.SnapshotSpec
       RPKI.SLURM.SlurmSpec
       RPKI.Store.DatabaseSpec
       RPKI.Store.StorableSpec

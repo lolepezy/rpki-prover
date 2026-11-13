@@ -21,7 +21,7 @@ import qualified Data.Text                        as Text
 import qualified Data.Set                         as Set
 
 import           Data.Hourglass
-import           Data.Int                         (Int16, Int64)    
+import           Data.Int                         (Int64)
 import qualified Data.List                        as List
 import           Data.Maybe
 import           Data.Word                        (Word16)
@@ -61,6 +61,7 @@ import           RPKI.Store.AppSqliteStorage (DbCheckResult(..), DbOpenMode(..),
 import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.RRDP.RrdpFetch
+import           RPKI.RTR.Protocol                (Intervals (..), defIntervals)
 import           RPKI.Sandbox
 
 import           RPKI.Fetch.Erik.ErikRelay
@@ -572,7 +573,22 @@ createAppState logger localExceptions = do
 
 -- | Check some crucial things before running the validator
 checkPreconditions :: ValidatorIO es => CLIOptions -> Eff es ()
-checkPreconditions CLIOptions {..} = checkRsyncInPath clientPath
+checkPreconditions cliOptions@CLIOptions {..} = do 
+    checkRsyncInPath clientPath
+    checkRtrExpireInterval cliOptions
+
+-- | https://www.rfc-editor.org/rfc/rfc8210#section-6: at most 172800 and  
+-- larger than both the Refresh Interval (3600) and the Retry Interval (600).
+checkRtrExpireInterval :: ValidatorIO es => CLIOptions -> Eff es ()
+checkRtrExpireInterval CLIOptions {..} = 
+    for_ rtrExpireInterval $ \expire -> do 
+        let minExpire = fromIntegral (refreshInterval defIntervals `max` retryInterval defIntervals) + 1 :: Int64
+        unless (expire >= minExpire && expire <= 172800) $
+            appError $ InitE $ InvalidOptionValue { 
+                optionName = "--rtr-expire-interval", 
+                value      = convert $ show expire, 
+                whatsWrong = [i|must be between #{minExpire} and 172800 seconds|] 
+            }
 
 deriveProverRunMode :: ValidatorIO es => CLIOptions -> Eff es ProverRunMode
 deriveProverRunMode CLIOptions {..} = 
@@ -663,9 +679,10 @@ data CLIOptions = CLIOptions {
         httpApiMaxRequests       :: Maybe Natural,
         withRtr                  :: Bool,
         rtrAddress               :: Maybe String,
-        rtrPort                  :: Maybe Int16,
+        rtrPort                  :: Maybe Word16,
         rtrLogFile               :: Maybe String,
         rtrMaxConnections        :: Maybe Natural,
+        rtrExpireInterval        :: Maybe Int64,
         logLevel                 :: Maybe String,
         logFormat                :: Maybe String,
         strictManifestValidation :: Bool,
@@ -694,6 +711,14 @@ data CLIOptions = CLIOptions {
         printConfig              :: Bool
     }
     deriving stock (Show, Generic)
+
+-- | 'auto' on its own would silently wrap a number that doesn't fit.
+portReader :: ReadM Word16
+portReader = do
+    port :: Integer <- auto
+    if port >= 0 && port <= 65535
+        then pure $ fromIntegral port
+        else readerError $ "Port must be between 0 and 65535, got " <> show port
 
 cliOptionsParser :: Parser CLIOptions
 cliOptionsParser = CLIOptions
@@ -822,7 +847,7 @@ cliOptionsParser = CLIOptions
             (  long "rsync-client-path"
             <> metavar "PATH"
             <> help "Path to the rsync executable. Defaults to whatever is found in $PATH."))
-    <*> optional (option auto
+    <*> optional (option portReader
             (  long "http-api-port"
             <> metavar "PORT"
             <> help ("Port for the HTTP API (default: " <> show defHttpApiPort <> ").")))
@@ -837,8 +862,9 @@ cliOptionsParser = CLIOptions
     <*> optional (strOption
             (  long "rtr-address"
             <> metavar "ADDRESS"
-            <> help ("Address to bind the RTR server to (default: " <> defRtrAddress <> ").")))
-    <*> optional (option auto
+            <> help ("Address to bind the RTR server to, for a name all of its addresses "
+                  <> "(default: " <> defRtrAddress <> ").")))
+    <*> optional (option portReader
             (  long "rtr-port"
             <> metavar "PORT"
             <> help ("Port for the RTR server (default: " <> show defRtrPort <> ").")))
@@ -851,6 +877,12 @@ cliOptionsParser = CLIOptions
             <> metavar "NUMBER"
             <> help ("Maximum number of simultaneous RTR client connections, the rest are "
                   <> "closed right after being accepted (default: " <> show defRtrMaxConnections <> ").")))
+    <*> optional (option auto
+            (  long "rtr-expire-interval"
+            <> metavar "SECONDS"
+            <> help ("How long routers may keep using the data when they cannot reach the RTR server. "
+                  <> "The RTR state is persisted and after a restart it is only used if it is younger than that "
+                  <> "(default: " <> show defRtrExpireInterval <> ").")))
     <*> optional (strOption
             (  long "log-level"
             <> metavar "LEVEL"
@@ -987,6 +1019,7 @@ cliOptionsParser = CLIOptions
     defRtrAddress             = rtrCfg ^. #rtrAddress
     defRtrPort                = rtrCfg ^. #rtrPort
     defRtrMaxConnections      = rtrCfg ^. #rtrMaxConnections
+    Seconds defRtrExpireInterval = rtrCfg ^. #rtrExpireInterval
     defMaxTaRepos             = cfg ^. #validationConfig . #maxTaRepositories
     defMaxCertDepth           = cfg ^. #validationConfig . #maxCertificatePathDepth
     defMaxTotalTree           = cfg ^. #validationConfig . #maxTotalTreeSize
@@ -1072,6 +1105,7 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
                     & maybeSet #rtrAddress rtrAddress
                     & #rtrLogFile .~ rtrLogFile
                     & maybeSet #rtrMaxConnections (fromIntegral <$> rtrMaxConnections)
+                    & maybeSet #rtrExpireInterval (Seconds <$> rtrExpireInterval)
         else Nothing    
 
     setErikRelays = case erikRelay of
