@@ -29,6 +29,7 @@ import System.Posix.Files (getFdStatus, deviceID, fileID)
 import System.Posix.IO (stdOutput)
 import System.Environment (lookupEnv)
 import System.IO
+import qualified System.Timeout as Timeout
 import Text.Read (readMaybe)
 
 import RPKI.Domain
@@ -335,9 +336,16 @@ withLogger LogConfig {..} f = do
             rtrLogger    = RtrLogger $ ALogger messageQueue logLevel
         }
 
-    snd <$> concurrently 
-                (finallyCloseQ messageQueue actualLoop)                     
-                (finallyCloseQ messageQueue $ f appLogger)
+    -- What is logged before `f` fails is written out too, e.g. the reason why
+    -- the program doesn't start: the loop writes what is left in the closed
+    -- queue and stops, while `concurrently` would cancel it right away.
+    -- The loop failing still stops `f`.
+    withAsync (finallyCloseQ messageQueue actualLoop) $ \loop -> do
+        link loop
+        f appLogger `finally` do
+            atomically $ closeCQueue messageQueue
+            -- Unless the output is stuck
+            void $ Timeout.timeout 5_000_000 $ waitCatch loop
 
   where
     loopReadQueue queue g = do 
