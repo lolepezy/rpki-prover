@@ -298,9 +298,9 @@ withServers appContext@AppContext {..} f =
     -- Being cancelled is how a server stops with the rest of the program, 
     -- anything else is a failure of its own
     stopping :: Logger l => l -> Text.Text -> IO () -> IO ()
-    stopping logger' server run = run `catch` \(e :: SomeException) -> do 
+    stopping logger_ server run = run `catch` \(e :: SomeException) -> do 
         unless (isJust $ fromException @SomeAsyncException e) $ 
-            logError logger' [i|#{server} stopped: #{e}.|]
+            logError logger_ [i|#{server} stopped: #{e}.|]
         throwIO e
 
 
