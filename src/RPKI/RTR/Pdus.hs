@@ -455,6 +455,7 @@ routerKeyPdus flags payloads =
     -- Comparing ShortByteStrings and lazy ByteStrings compares their bytes
     -- as unsigned numbers one by one, which is what the ordering requires
     keys = Set.fromList [
+            -- length is here for ordering by length
             (ski, LBS.length spki, spki, asn)
             | BGPSecPayload { bgpSecSki = SKI (KI ski), .. } <- Set.toList payloads
             , let spki = spkiBytes bgpSecSpki
