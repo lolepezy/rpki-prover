@@ -50,7 +50,7 @@ For a prebuilt `rpki-prover` binary, the only external runtime dependency is an 
 
 `rpki-prover` is a daemon that periodically revalidates all TAs in the RPKI hierarchy. The results are exposed via the UI, JSON API, and Prometheus metrics. The `--with-rtr` option enables the RTR server, which pushes VRP updates to RTR clients.
 
-There is no configuration file; all configuration is provided via the CLI. Most defaults are reasonable, so you typically do not need to adjust many parameters. By default, the HTTP API listens on port `9999`. A typical command line might look like this:
+There is no configuration file; all configuration is provided via the CLI. Most defaults are reasonable, so you typically do not need to adjust many parameters. By default, the HTTP API listens on port `9999` of all the IPv4 addresses; `--http-api-address` restricts it to some addresses, e.g. `--http-api-address 127.0.0.1 --http-api-address ::1`. A typical command line might look like this:
 
 ```
 /opt/bin/rpki-prover --rpki-root-directory /var/rpki/ --cpu-count 4 --http-api-port 9999
@@ -162,7 +162,7 @@ curl -s http://localhost:9999/api/vrps.json
 
 ## RTR server <a name="rtr-server"></a>
 
-RPKI Prover can also run as an [RTR server](https://www.rfc-editor.org/rfc/rfc8210). Enable it with the `--with-rtr` option. In most deployments, you will also want to set `--rtr-address` and `--rtr-port`.
+RPKI Prover can also run as an [RTR server](https://www.rfc-editor.org/rfc/rfc8210). Enable it with the `--with-rtr` option. In most deployments, you will also want to set `--rtr-address` and `--rtr-port`. By default, the RTR server only listens on `localhost`. `--rtr-address` can be given several times, e.g. for an IPv4 and an IPv6 address that routers connect to, or `--rtr-address 0.0.0.0 --rtr-address ::` for all the addresses. An IPv6 address only takes IPv6 connections.
 
 The RTR server keeps its state (the session, the serial, the data at that serial and the recent diffs) in `rtr-state` in the root directory, outside of the cache. After a restart it carries on with that session and data right away, also when the cache had to be rebuilt, so routers can keep their data and only get what changed, also if they were a few serials behind. The state is only used if it is younger than the Expire Interval, `--rtr-expire-interval` (7200 seconds by default), which is also what routers are told: how long they may keep using the data without hearing from the cache. Otherwise the RTR server starts a new session once there is a validation result.
 

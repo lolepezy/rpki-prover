@@ -196,6 +196,8 @@ data FetchIntervalConfig = FetchIntervalConfig {
 
 
 data HttpApiConfig = HttpApiConfig {
+        -- | IP addresses or names, all the addresses of a name
+        addresses             :: [String],
         port                  :: Word16,
         maxConcurrentRequests :: Int
     } 
@@ -203,7 +205,8 @@ data HttpApiConfig = HttpApiConfig {
     deriving anyclass (TheBinary)
 
 data RtrConfig = RtrConfig {
-        rtrAddress        :: String,
+        -- | IP addresses or names, all the addresses of a name
+        rtrAddresses      :: [String],
         rtrPort           :: Word16,
         rtrLogFile        :: Maybe String,
         rtrMaxConnections :: Int,
@@ -337,6 +340,9 @@ defaultConfig = Config {
         maxFailedBackoffInterval = Seconds $ 30 * 60
     },
     httpApiConf = HttpApiConfig {
+        -- All the IPv4 addresses, which also works in a container 
+        -- with a port published to the host
+        addresses = ["0.0.0.0"],
         port = 9999,
         maxConcurrentRequests = 100
     },
@@ -430,7 +436,7 @@ defaultsLogLevel = InfoL
 
 defaultRtrConfig :: RtrConfig
 defaultRtrConfig = RtrConfig { 
-        rtrAddress        = "localhost",
+        rtrAddresses      = ["localhost"],
         rtrPort           = 8283,
         rtrLogFile        = Nothing,
         -- RTR clients are routers, so a few hundred is already generous
