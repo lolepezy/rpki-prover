@@ -961,9 +961,17 @@ shouldSaveAndGetRsyncRepositories :: IO DB -> HU.Assertion
 shouldSaveAndGetRsyncRepositories io = do
     db <- io
 
-    repositories <- (<>)
-        <$> replicateM 100 (QC.generate QC.arbitrary)
-        <*> rsyncReposWithCommonHosts 100
+    -- The paths on the common hosts are short enough to repeat. A URL can only
+    -- be one repository, and a URL under a repository gets that repository,
+    -- so none of them are the same as or under another one.
+    generated <- Map.fromList . map (\r -> (getRsyncURL r, r))
+        <$> ((<>)
+            <$> replicateM 100 (QC.generate QC.arbitrary)
+            <*> rsyncReposWithCommonHosts 100)
+    let repositories = [ r | (RsyncURL host path, r) <- Map.toList generated
+                           , not $ any (\(RsyncURL host' path') ->
+                                            host' == host && path' /= path && path' `List.isPrefixOf` path)
+                                       (Map.keys generated) ]
 
     rwTx db $ \tx -> DB.saveRsyncRepositories tx repositories
 
