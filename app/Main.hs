@@ -1,7 +1,7 @@
 module Main where
 
 import           Effectful
-import           Control.Lens ((^.), (&))
+import           Control.Lens ((^.), (^?), (&), _Just)
 import           Control.Lens.Setter
 import           Control.Concurrent
 import           Control.Concurrent.STM
@@ -65,7 +65,8 @@ import           RPKI.SLURM.SlurmProcessing
 import           RPKI.RRDP.RrdpFetch
 import           RPKI.Metrics.Prometheus          (createPrometheusMetrics)
 import           RPKI.RTR.Protocol                (Intervals (..), defIntervals)
-import           RPKI.RTR.RtrServer               (listenRtr, runRtrServer)
+import           RPKI.RTR.RtrServer               (closeRtrSockets, listenRtr, runRtrServer)
+import           RPKI.RTR.Tls                     (loadTlsCredential)
 import           RPKI.Sandbox
 
 import           RPKI.Fetch.Erik.ErikRelay
@@ -287,7 +288,7 @@ withServers appContext@AppContext {..} f =
                 case config ^. #rtrConfig of
                     Nothing -> f [httpApi]
                     Just rtrConfig ->
-                        withListening (listenRtr appContext rtrConfig) $ \rtrSockets ->
+                        bracket (listenRtr appContext rtrConfig) closeRtrSockets $ \rtrSockets ->
                             f [httpApi, stopping (getRtrLogger appContext) "RTR server" $ 
                                             runRtrServer appContext rtrConfig rtrSockets]
   where
@@ -369,6 +370,10 @@ createAppContext cliOptions@CLIOptions{..} logger derivedLogLevel = do
     -- Read the files first to fail fast
     unless (null localExceptions) $
         void $ readSlurms localExceptions
+
+    for_ (config ^? #rtrConfig . _Just . #rtrTls . _Just) $ \tlsConfig ->
+        fromEitherM $ liftIO $ 
+            bimap (InitE . InitError) (const ()) <$> loadTlsCredential tlsConfig
     
     appState <- createAppState logger localExceptions    
 
@@ -604,6 +609,7 @@ checkPreconditions :: ValidatorIO es => CLIOptions -> Eff es ()
 checkPreconditions cliOptions@CLIOptions {..} = do 
     checkRsyncInPath clientPath
     checkRtrExpireInterval cliOptions
+    checkRtrTlsOptions cliOptions
 
 -- | https://www.rfc-editor.org/rfc/rfc8210#section-6: at most 172800 and  
 -- larger than both the Refresh Interval (3600) and the Retry Interval (600).
@@ -617,6 +623,18 @@ checkRtrExpireInterval CLIOptions {..} =
                 value      = convert $ show expire, 
                 whatsWrong = [i|must be between #{minExpire} and 172800 seconds|] 
             }
+
+checkRtrTlsOptions :: ValidatorIO es => CLIOptions -> Eff es ()
+checkRtrTlsOptions CLIOptions {..} = 
+    case rtrTlsPort of 
+        Just _ -> 
+            when (isNothing rtrTlsCert || isNothing rtrTlsKey) $ 
+                appError $ InitE $ InconsistentOptions
+                    [i|`--rtr-tls-port` needs both `--rtr-tls-cert` and `--rtr-tls-key`|]
+        Nothing ->
+            when (not (null rtrTlsAddresses) || isJust rtrTlsCert || isJust rtrTlsKey) $
+                appError $ InitE $ InconsistentOptions
+                    [i|`--rtr-tls-address`, `--rtr-tls-cert` and `--rtr-tls-key` need `--rtr-tls-port` to be set|]
 
 deriveProverRunMode :: ValidatorIO es => CLIOptions -> Eff es ProverRunMode
 deriveProverRunMode CLIOptions {..} = 
@@ -709,6 +727,10 @@ data CLIOptions = CLIOptions {
         withRtr                  :: Bool,
         rtrAddresses             :: [String],
         rtrPort                  :: Maybe Word16,
+        rtrTlsAddresses          :: [String],
+        rtrTlsPort               :: Maybe Word16,
+        rtrTlsCert               :: Maybe FilePath,
+        rtrTlsKey                :: Maybe FilePath,
         rtrLogFile               :: Maybe String,
         rtrMaxConnections        :: Maybe Natural,
         rtrExpireInterval        :: Maybe Int64,
@@ -901,11 +923,32 @@ cliOptionsParser = CLIOptions
             <> help ("IP address or name for the RTR server to listen on, for a name all of its "
                   <> "addresses. Can be given several times. The server doesn't start if it can't "
                   <> "listen on any of the IP addresses, or on at least one address of a name "
-                  <> "(default: " <> List.intercalate ", " defRtrAddresses <> ").")))
+                  <> "(default: " <> List.intercalate ", " defaultRtrAddresses <> ").")))
     <*> optional (option portReader
             (  long "rtr-port"
             <> metavar "PORT"
-            <> help ("Port for the RTR server (default: " <> show defRtrPort <> ").")))
+            <> help ("Port for the RTR server (default: " <> show defaultRtrPort <> ").")))
+    <*> many (strOption
+            (  long "rtr-tls-address"
+            <> metavar "ADDRESS"
+            <> help ("IP address or name for the RTR over TLS server to listen on, in the same way "
+                  <> "as --rtr-address. Can be given several times (default: the addresses of --rtr-address).")))
+    <*> optional (option portReader
+            (  long "rtr-tls-port"
+            <> metavar "PORT"
+            <> help ("Port for RTR over TLS, setting it starts the RTR over TLS server, "
+                  <> "which needs --rtr-tls-cert and --rtr-tls-key. It is independent of --with-rtr, "
+                  <> "both can run at the same time. The IANA-assigned port is 324.")))
+    <*> optional (strOption
+            (  long "rtr-tls-cert"
+            <> metavar "FILE"
+            <> help ("PEM file with the RTR over TLS server certificate followed by "
+                  <> "the rest of its certificate chain.")))
+    <*> optional (strOption
+            (  long "rtr-tls-key"
+            <> metavar "FILE"
+            <> help ("PEM file with exactly one private key for the RTR over TLS server certificate "
+                  <> "(PKCS#1 RSA, PKCS#8 or SEC1 EC).")))
     <*> optional (strOption
             (  long "rtr-log-file"
             <> metavar "FILE"
@@ -1055,8 +1098,6 @@ cliOptionsParser = CLIOptions
     defHttpApiAddresses       = cfg ^. #httpApiConf . #addresses
     defHttpApiPort            = cfg ^. #httpApiConf . #port
     defHttpMaxRequests        = cfg ^. #httpApiConf . #maxConcurrentRequests
-    defRtrAddresses           = rtrCfg ^. #rtrAddresses
-    defRtrPort                = rtrCfg ^. #rtrPort
     defRtrMaxConnections      = rtrCfg ^. #rtrMaxConnections
     Seconds defRtrExpireInterval = rtrCfg ^. #rtrExpireInterval
     defMaxTaRepos             = cfg ^. #validationConfig . #maxTaRepositories
@@ -1139,14 +1180,28 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
     parallelism  = case fetcherCount of
         Nothing -> newParallelism cpuCount'
         Just fc -> makeParallelismF cpuCount' fc    
-    rtrConfig = if withRtr
-        then Just $ defaultRtrConfig
-                    & maybeSet #rtrPort rtrPort
-                    & maybeSet #rtrAddresses (nonEmptyList rtrAddresses)
+    rtrConfig = 
+        case (rtrListen, rtrTls) of 
+            (Nothing, Nothing) -> Nothing
+            _                  -> Just $ defaultRtrConfig
+                    & #rtrListen .~ rtrListen
+                    & #rtrTls .~ rtrTls
                     & #rtrLogFile .~ rtrLogFile
                     & maybeSet #rtrMaxConnections (fromIntegral <$> rtrMaxConnections)
                     & maybeSet #rtrExpireInterval (Seconds <$> rtrExpireInterval)
-        else Nothing    
+
+    rtrAddresses' = fromMaybe defaultRtrAddresses $ nonEmptyList rtrAddresses
+
+    rtrListen = if withRtr 
+        then Just $ RtrListen rtrAddresses' (fromMaybe defaultRtrPort rtrPort)
+        else Nothing
+
+    -- 'checkRtrTlsOptions' makes sure that it's either all of them or nothing
+    rtrTls = do 
+        tlsPort <- rtrTlsPort
+        RtrTlsConfig (RtrListen (fromMaybe rtrAddresses' $ nonEmptyList rtrTlsAddresses) tlsPort)
+            <$> (apiSecured <$> rtrTlsCert)
+            <*> (apiSecured <$> rtrTlsKey)
 
     -- A list option that is not given at all leaves the default
     nonEmptyList = \case

@@ -1,4 +1,4 @@
-module RPKI.RTR.SnapshotSpec where
+module RPKI.RTR.RtrSnapshotSpec where
 
 import qualified Data.ByteString                   as BS
 import qualified Data.ByteString.Lazy              as LBS
@@ -20,7 +20,7 @@ import           RPKI.RTR.Pdus
 import           RPKI.RTR.Protocol
 import           RPKI.RTR.RtrServer                (servedPayloads)
 import           RPKI.RTR.RtrState
-import           RPKI.RTR.Snapshot
+import           RPKI.RTR.RtrSnapshot
 import           RPKI.RTR.Types
 import           RPKI.RTR.UniqueVrps
 import           RPKI.Resources.Resources          (readIp4, readIp6)
@@ -47,7 +47,7 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
         QC.testProperty "Should read back the payloads" $
             \vrps aspas ->
                 let payloads = makePayloads vrps (routerKeys 3) aspas
-                in case decodeSnapshot (encodeSnapshot (Instant 1) (stateOf payloads)) of
+                in case decodeRtrSnapshot (encodeRtrSnapshot (Instant 1) (stateOf payloads)) of
                     Left _ -> False
                     Right RtrSnapshot { payloads = restored } ->
                         uniqueVrps restored == uniqueVrps payloads
@@ -55,7 +55,7 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
                             && emptyDiffs (evalDiffs payloads restored),
 
         HU.testCase "Should read back the session" $ do
-            case decodeSnapshot (encodeSnapshot (Instant 123) (stateOf $ makePayloads [] (routerKeys 2) [])) of
+            case decodeRtrSnapshot (encodeRtrSnapshot (Instant 123) (stateOf $ makePayloads [] (routerKeys 2) [])) of
                 Left e -> HU.assertFailure $ Text.unpack e
                 Right RtrSnapshot {..} -> do
                     HU.assertEqual "Session" (RtrSessionId 7) sessionId
@@ -73,9 +73,9 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
                           (makePayloads [] (Set.insert k2 apart) []),
 
         HU.testCase "Should reject damaged state" $ do
-            let bytes = LBS.toStrict $ encodeSnapshot (Instant 1)
+            let bytes = LBS.toStrict $ encodeRtrSnapshot (Instant 1)
                             $ stateOf $ makePayloads [] (routerKeys 5) []
-                decode = decodeSnapshot . LBS.fromStrict
+                decode = decodeRtrSnapshot . LBS.fromStrict
                 flipByte n bs = BS.take n bs <> BS.singleton (BS.index bs n + 1) <> BS.drop (n + 1) bs
             assertFailsWith "not an RTR state file" $ decode $ flipByte 0 bytes
             assertFailsWith "format version" $ decode $ flipByte 9 bytes
@@ -87,13 +87,13 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
 
         HU.testCase "Should write and read the file" $
             withSystemTempDirectory "rtr-state" $ \dir -> do
-                let path = dir </> snapshotFileName
-                HU.assertEqual "No file" Nothing . fmap (const ()) =<< readSnapshot path
+                let path = dir </> rtrSnapshotFileName
+                HU.assertEqual "No file" Nothing . fmap (const ()) =<< readRtrSnapshot path
                 let state = stateOf $ makePayloads [] (routerKeys 2) []
-                writeSnapshot path (Instant 1) state
+                writeRtrSnapshot path (Instant 1) state
                 -- Again, over the existing one
-                writeSnapshot path (Instant 2) state { currentSerial = SerialNumber 43 }
-                readSnapshot path >>= \case
+                writeRtrSnapshot path (Instant 2) state { currentSerial = SerialNumber 43 }
+                readRtrSnapshot path >>= \case
                     Just (Right RtrSnapshot {..}) -> do
                         HU.assertEqual "Serial" (SerialNumber 43) serial
                         HU.assertEqual "Written at" (Instant 2) writtenAt
@@ -101,7 +101,7 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
 
         HU.testCase "Should read the state of format version 1" $ do
             bytes <- LBS.readFile "test/data/rtr-state/format-1"
-            case decodeSnapshot bytes of
+            case decodeRtrSnapshot bytes of
                 Left e -> HU.assertFailure $ Text.unpack e
                 Right RtrSnapshot {..} -> do
                     HU.assertEqual "Session" (RtrSessionId 7) sessionId
@@ -114,7 +114,7 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
 
         HU.testCase "Should read the state of format version 1 with diffs" $ do
             bytes <- LBS.readFile "test/data/rtr-state/format-1-diffs"
-            case decodeSnapshot bytes of
+            case decodeRtrSnapshot bytes of
                 Left e -> HU.assertFailure $ Text.unpack e
                 Right RtrSnapshot {..} -> do
                     HU.assertEqual "Payloads" format1Payloads payloads
@@ -128,7 +128,7 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
                             -- Removing keys in the latest diff, which is always kept
                             makePayloads vrps3 (routerKeys 1) aspas3
                         ]
-                in case decodeSnapshot (encodeSnapshot (Instant 1) state) of
+                in case decodeRtrSnapshot (encodeRtrSnapshot (Instant 1) state) of
                     Left _ -> False
                     Right RtrSnapshot {..} ->
                         storedDiffs == Right (toList $ diffs state),
@@ -143,7 +143,7 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
                     ]
                 expected = diffsFromSerial state (SerialNumber 42)
             HU.assertBool "Has them before the restart" $ expected /= Nothing
-            case decodeSnapshot (encodeSnapshot (Instant 1) state) of
+            case decodeRtrSnapshot (encodeRtrSnapshot (Instant 1) state) of
                 Left e -> HU.assertFailure $ Text.unpack e
                 Right RtrSnapshot {..} -> do
                     let restored = withStoredDiffs (either (const []) id storedDiffs) $
@@ -153,14 +153,14 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
 
         HU.testCase "Should keep the payloads if the diffs are damaged" $ do
             let state = updatedStates [makePayloads [] (routerKeys 1) [], makePayloads [] (routerKeys 2) []]
-                bytes = LBS.toStrict $ encodeSnapshot (Instant 1) state
+                bytes = LBS.toStrict $ encodeRtrSnapshot (Instant 1) state
                 lastByteChanged = BS.init bytes <> BS.singleton (BS.last bytes + 1)
                 useful = \case
                     Right RtrSnapshot {..} -> (emptyDiffs $ evalDiffs (state ^. #served . #payloads) payloads,
                                                either (const False) (const True) storedDiffs)
                     Left _                 -> (False, True)
-            HU.assertEqual "Damaged" (True, False) $ useful $ decodeSnapshot $ LBS.fromStrict lastByteChanged
-            HU.assertEqual "Cut" (True, False) $ useful $ decodeSnapshot $ LBS.fromStrict $ BS.init bytes,
+            HU.assertEqual "Damaged" (True, False) $ useful $ decodeRtrSnapshot $ LBS.fromStrict lastByteChanged
+            HU.assertEqual "Cut" (True, False) $ useful $ decodeRtrSnapshot $ LBS.fromStrict $ BS.init bytes,
 
         HU.testCase "Should not use diffs with unknown PDUs" $ do
             let withUnknown = BS.concat [
@@ -171,9 +171,9 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
                         -- deleted: nothing
                         BS.replicate 8 0
                     ]
-                bytes = LBS.toStrict (encodeSnapshot (Instant 1) (stateOf format1Payloads))
+                bytes = LBS.toStrict (encodeRtrSnapshot (Instant 1) (stateOf format1Payloads))
                             <> compressedBlock withUnknown
-            case decodeSnapshot (LBS.fromStrict bytes) of
+            case decodeRtrSnapshot (LBS.fromStrict bytes) of
                 Left e -> HU.assertFailure $ Text.unpack e
                 Right RtrSnapshot {..} -> do
                     HU.assertEqual "Payloads" format1Payloads payloads
@@ -254,7 +254,7 @@ rtrSnapshotGroup = testGroup "Persisted RTR state" [
             let restored = makePayloads [] (routerKeys 2) []
                 older    = WorldVersion 1_600_000_000_000_000_000
                 state    = (stateOf restored) { carriedOver = Just $ CarriedOver (servedPayloads restored) older }
-            case decodeSnapshot (encodeSnapshot (Instant 1) state) of
+            case decodeRtrSnapshot (encodeRtrSnapshot (Instant 1) state) of
                 Left e -> HU.assertFailure $ Text.unpack e
                 Right RtrSnapshot {..} -> HU.assertEqual "Version" older worldVersion
     ]

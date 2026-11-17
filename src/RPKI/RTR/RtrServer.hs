@@ -14,6 +14,7 @@ import           Control.Monad
 
 import           Data.Foldable                    (for_)
 import           Data.IORef
+import           Data.Traversable                 (for)
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
@@ -26,7 +27,8 @@ import           Data.String.Interpolate.IsString
 import           Data.Text                        (Text)
 
 import           Network.Socket                   
-import           Network.Socket.ByteString        (recv, sendAll, sendMany)
+import           Network.Socket.ByteString        (recv, sendAll)
+import qualified Network.TLS                      as TLS
 
 import           RPKI.AppContext
 import           RPKI.Config
@@ -39,7 +41,8 @@ import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
 import           RPKI.RTR.UniqueVrps
 import           RPKI.RTR.Protocol
-import           RPKI.RTR.Snapshot
+import           RPKI.RTR.RtrSnapshot
+import           RPKI.RTR.Tls
 
 import           RPKI.Parallel
 import           RPKI.Time
@@ -84,16 +87,61 @@ rtrNotifyRateLimit = Seconds 60
 rtrUnchangedWriteInterval :: Seconds
 rtrUnchangedWriteInterval = Seconds 300
 
--- | The sockets the RTR server listens on, see 'listenOn'.
-listenRtr :: AppContext -> RtrConfig -> IO [Socket]
-listenRtr appContext RtrConfig {..} = 
-    listenOn (getRtrLogger appContext) "RTR server" rtrAddresses rtrPort
+-- | The sockets the RTR server listens on, plain TCP ones and TLS ones.
+data RtrSockets = RtrSockets {
+        plainSockets :: [Socket],
+        tlsSockets   :: [Socket]
+    }
+
+-- | Listen on the addresses of both listeners, see 'listenOn'.
+listenRtr :: AppContext -> RtrConfig -> IO RtrSockets
+listenRtr appContext RtrConfig {..} = do
+    plainSockets <- listenAt "RTR server" rtrListen
+    tlsSockets   <- listenAt "RTR over TLS server" ((^. #tlsListen) <$> rtrTls)
+                        `onException` mapM_ close plainSockets
+    pure RtrSockets {..}
+  where
+    listenAt server = maybe (pure []) $ \RtrListen {..} ->
+        listenOn (getRtrLogger appContext) server addresses port
+
+closeRtrSockets :: RtrSockets -> IO ()
+closeRtrSockets RtrSockets {..} = mapM_ close $ plainSockets <> tlsSockets
+
+-- | How long a client may take to complete the TLS handshake. Until then 
+-- it holds one of 'rtrMaxConnections'.
+tlsHandshakeTimeout :: Seconds
+tlsHandshakeTimeout = Seconds 30
+
+-- | What serving a connection needs from the transport, so that plain TCP 
+-- and TLS connections are served by the same code.
+data RtrTransport = RtrTransport {
+        -- | Some bytes from the client, empty means the connection is closed.
+        transportRecv :: IO BS.ByteString,
+        transportSend :: [BS.ByteString] -> IO ()
+    }
+
+-- Both transports glue PDUs together before sending them.
+--
+-- 'sendMany' is not used here intentionally, as it would pass at most IOV_MAX (1024) PDUs, 
+-- i.e. ~20KB, to every writev call and rebuild the iovec array for all the remaining ones
+-- after each of them, so it is both slower and quadratic in the number of PDUs.
+plainTransport :: Socket -> RtrTransport
+plainTransport sock = RtrTransport {
+        transportRecv = recv sock 1024,
+        transportSend = sendAll sock . BS.concat
+    }
+
+tlsTransport :: TLS.Context -> RtrTransport
+tlsTransport ctx = RtrTransport {
+        transportRecv = TLS.recvData ctx,
+        transportSend = TLS.sendData ctx . LBS.fromStrict . BS.concat
+    }
 
 -- 
 -- | Main entry point, here we start the RTR server on the sockets from 'listenRtr'.
 -- 
-runRtrServer :: AppContext -> RtrConfig -> [Socket] -> IO ()
-runRtrServer appContext RtrConfig {..} sockets = do         
+runRtrServer :: AppContext -> RtrConfig -> RtrSockets -> IO ()
+runRtrServer appContext RtrConfig {..} RtrSockets {..} = do         
     -- re-initialise `rtrState` and create a broadcast 
     -- channel to publish update for all clients
     let rtrState = appContext ^. #appState . #rtrState
@@ -112,16 +160,35 @@ runRtrServer appContext RtrConfig {..} sockets = do
     intervals = let Seconds expire = rtrExpireInterval 
                 in defIntervals { expireInterval = fromIntegral expire }
 
-    snapshotPath = configValue (appContext ^. #config . #rootDirectory) </> snapshotFileName
+    rtrSnapshotPath = configValue (appContext ^. #config . #rootDirectory) </> rtrSnapshotFileName
 
     -- | Handling TCP conections happens here
     runSocketBusiness rtrState updateBroadcastChan = do
         -- Every accepted connection forks two threads and duplicates the
         -- update broadcast channel, so the number of them has to be bounded.
+        -- The limit is shared by all listeners.
         connectionCount <- newTVarIO (0 :: Int)
-        mapConcurrently_ (loop connectionCount) sockets
+
+        serveTls <- for rtrTls $ \tlsConfig -> do
+            -- The files are already checked at startup, so this is not
+            -- supposed to fail unless they were changed since then.
+            credential <- loadTlsCredential tlsConfig >>= \case
+                Left e -> do
+                    logError logger [i|Cannot start RTR over TLS: #{e}|]
+                    throwIO $ userError $ convert e
+                Right c -> pure c
+            let serverParams = tlsServerParams credential
+            pure $ \conn peer -> serveTlsConnection serverParams conn peer updateBroadcastChan rtrState
+
+        let servePlain conn peer = serveConnection (plainTransport conn) peer updateBroadcastChan rtrState
+
+        mapConcurrently_ id $
+               [ loop connectionCount "RTR" servePlain sock | sock <- plainSockets ]
+            <> [ loop connectionCount "RTR over TLS" serveTls' sock
+               | Just serveTls' <- [serveTls], sock <- tlsSockets ]
       where
-        loop connectionCount sock = forever $ do
+        loop :: TVar Int -> Text -> (Socket -> SockAddr -> IO ()) -> Socket -> IO ()
+        loop connectionCount protocol serve sock = forever $ do
             (conn, peer) <- accept sock
             accepted <- atomically $ do 
                 n <- readTVar connectionCount
@@ -132,18 +199,33 @@ runRtrServer appContext RtrConfig {..} sockets = do
                         pure True
             if accepted 
                 then do 
-                    logInfo logger [i|Connection from #{peer}|]
+                    logInfo logger [i|#{protocol} connection from #{peer}|]
                     void $ forkFinally 
-                        (serveConnection conn peer updateBroadcastChan rtrState) 
+                        (serve conn peer) 
                         (\_ -> do 
-                            logInfo logger [i|Closing connection with #{peer}|]
+                            logInfo logger [i|Closing #{protocol} connection with #{peer}|]
                             atomically $ modifyTVar' connectionCount (\n -> n - 1)
                             close conn)
                 else do 
                     logWarn logger $ 
-                        [i|Rejecting RTR connection from #{peer}, |] <>
+                        [i|Rejecting #{protocol} connection from #{peer}, |] <>
                         [i|already serving the maximum of #{rtrMaxConnections} connections.|]
                     close conn
+
+    -- | Do the TLS handshake and then serve the connection exactly as a plain one.
+    serveTlsConnection serverParams conn peer updateBroadcastChan rtrState = do 
+        ctx <- TLS.contextNew conn serverParams
+        UIO.tryAny (timeout (toMicroseconds tlsHandshakeTimeout) $ TLS.handshake ctx) >>= \case
+            Left e -> 
+                logWarn logger [i|TLS handshake with #{peer} failed: #{e}|]
+            Right Nothing -> 
+                logWarn logger [i|TLS handshake with #{peer} did not finish in #{tlsHandshakeTimeout}.|]
+            Right (Just _) -> do 
+                serveConnection (tlsTransport ctx) peer updateBroadcastChan rtrState
+                -- Send close_notify, the client may well be gone already.
+                -- A client that doesn't read can block the write, don't let
+                -- it hold the connection (and one of 'rtrMaxConnections').
+                void $ UIO.tryAny $ timeout 5_000_000 $ TLS.bye ctx
     
     -- | Block on updates on `appState` and when these update happen
     --
@@ -209,11 +291,11 @@ runRtrServer appContext RtrConfig {..} sockets = do
           -- otherwise start a new session once there is a complete world version.
           restoredOrNewState appState = do 
             Now now <- thisInstant
-            readSnapshot snapshotPath >>= \case 
+            readRtrSnapshot rtrSnapshotPath >>= \case 
                 Nothing -> newState appState Nothing
 
                 Just (Left e) -> do 
-                    logWarn logger [i|Not using the persisted RTR state from #{snapshotPath}: #{e}|]
+                    logWarn logger [i|Not using the persisted RTR state from #{rtrSnapshotPath}: #{e}|]
                     newState appState Nothing
 
                 Just (Right snapshot@RtrSnapshot {..})
@@ -226,7 +308,7 @@ runRtrServer appContext RtrConfig {..} sockets = do
                     -- of the payloads would never withdraw them
                     | unknownPdus > 0 -> do
                         let newId@(RtrSessionId s) = newSessionId worldVersion (Just sessionId)
-                        logWarn logger $ [i|RTR server: the persisted RTR state from #{snapshotPath} has #{unknownPdus} PDUs |] <>
+                        logWarn logger $ [i|RTR server: the persisted RTR state from #{rtrSnapshotPath} has #{unknownPdus} PDUs |] <>
                                          [i|of unknown types, probably written by a newer rpki-prover, starting a new session #{s} |] <>
                                          [i|with the rest of its payloads, serving them together with the validated ones |] <>
                                          [i|until the validation is settled.|]
@@ -242,7 +324,7 @@ runRtrServer appContext RtrConfig {..} sockets = do
                         let (RtrSessionId s, SerialNumber n) = (sessionId, serial)
                         logInfo logger $ [i|RTR server: continuing session #{s} at serial #{n} with |] <>
                                          [i|#{countUniqueVrps uniqueVrps} VRPs, #{Set.size bgpSec} router keys and |] <>
-                                         [i|#{Set.size aspas} ASPAs of version #{worldVersion} from #{snapshotPath}, |] <>
+                                         [i|#{Set.size aspas} ASPAs of version #{worldVersion} from #{rtrSnapshotPath}, |] <>
                                          [i|serving them together with the validated ones until the validation is settled.|]
                         let restored = servedPayloads payloads
                         restoredDiffs <- case storedDiffs of
@@ -300,11 +382,11 @@ runRtrServer appContext RtrConfig {..} sockets = do
           -- Failing to write it is not a reason to stop serving routers
           persist state = do 
             Now now <- thisInstant
-            UIO.tryAny (timedMS $ writeSnapshot snapshotPath now state) >>= \case 
+            UIO.tryAny (timedMS $ writeRtrSnapshot rtrSnapshotPath now state) >>= \case 
                 Left e -> 
-                    logError logger [i|Failed to write the RTR state to #{snapshotPath}: #{e}|]
+                    logError logger [i|Failed to write the RTR state to #{rtrSnapshotPath}: #{e}|]
                 Right (_, elapsed) -> 
-                    logDebug logger [i|Wrote the RTR state to #{snapshotPath}, took #{elapsed}ms.|]
+                    logDebug logger [i|Wrote the RTR state to #{rtrSnapshotPath}, took #{elapsed}ms.|]
 
           -- The serial only changes when there's a non-empty diff, so a change 
           -- of (session, serial) is exactly "there's something to notify about".
@@ -338,9 +420,9 @@ runRtrServer appContext RtrConfig {..} sockets = do
     --      serveLoop blocks on `recv` and accepts client's requests
     --      sendFromQueuesToClient simply sends all PDUs to the client
     -- They communicate using the outboxChan
-    serveConnection connection peer updateBroadcastChan rtrState = do        
+    serveConnection transport peer updateBroadcastChan rtrState = do        
         logDebug logger [i|Waiting for the first PDU from the client #{peer}|]
-        firstPdu <- recv connection 1024
+        firstPdu <- transportRecv transport
         (rtrState', outboxQueue) <- 
             atomically $ (,) <$> readTVar rtrState <*> newCQueue 10
 
@@ -349,7 +431,7 @@ runRtrServer appContext RtrConfig {..} sockets = do
         let (errorPdu, logMessage, versionedPdu) =
                 analyzePdu peer Nothing firstPduLazyBS $ bytesToVersionedPdu firstPduLazyBS
 
-        for_ errorPdu $ sendAll connection . pduBytesL
+        for_ errorPdu $ sendBytes . pduBytesL
         for_ logMessage $ logError logger
 
         for_ versionedPdu $ \versionedPdu' -> do
@@ -358,7 +440,7 @@ runRtrServer appContext RtrConfig {..} sockets = do
                     let errorBytes = pduBytesL errorPduL
                     logError logger $ [i|Cannot respond to the first PDU from the #{peer}: #{errorMessage},|] <>
                                       [i|error PDU: #{errorPduL}, errorBytes = #{hex errorBytes}, length = #{pduLengthL errorPduL}|]
-                    sendAll connection errorBytes
+                    sendBytes errorBytes
 
                 Right (pdus, session, warning) -> do
                     for_ warning $ logWarn logger                     
@@ -372,6 +454,8 @@ runRtrServer appContext RtrConfig {..} sockets = do
                                 -- Let it first drain `outboxQueue` to the socket.
                                 void $ timeout 30_000_000 $ wait sender
         where
+            sendBytes bytes = transportSend transport [bytes]
+
             -- | Wait for PDUs to appear in either broadcast chan or 
             -- in this session's outbox and send them to the socket.
             sendFromQueuesToClient session outboxQueue =
@@ -389,8 +473,8 @@ runRtrServer appContext RtrConfig {..} sockets = do
                     for_ r $ \pdus -> do 
                         let pdusToSend = filter compatiblePduLike pdus
 
-                        for_ (chunksOf 3000 pdusToSend) $ \chunk ->                           
-                            sendMany connection $ map pduBytesL chunk
+                        for_ (chunksOf 3000 pdusToSend) $ \chunk ->
+                            transportSend transport $ map pduBytesL chunk
 
                         loop stateUpdateChan
             
@@ -400,7 +484,7 @@ runRtrServer appContext RtrConfig {..} sockets = do
             -- 
             serveLoop session outboxQueue = do
                 logDebug logger [i|Waiting data from the client #{peer}|]
-                pduBytes <- recv connection 1024                
+                pduBytes <- transportRecv transport
                 logDebug logger [i|Received #{BS.length pduBytes} bytes from #{peer}|]
                 -- Empty bytestring means connection is closed, so if it's 
                 -- empty just silently stop doing anything

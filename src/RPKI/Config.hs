@@ -204,17 +204,39 @@ data HttpApiConfig = HttpApiConfig {
     deriving stock (Show, Eq, Ord, Generic)
     deriving anyclass (TheBinary)
 
-data RtrConfig = RtrConfig {
+-- | The addresses and the port an RTR listener listens on.
+data RtrListen = RtrListen {
         -- | IP addresses or names, all the addresses of a name
-        rtrAddresses      :: [String],
-        rtrPort           :: Word16,
+        addresses :: [String],
+        port      :: Word16
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+-- | RTR over TLS (RFC 6810, section 7), set up the same way as in Routinator:
+-- a PEM file with the server certificate followed by the rest of its chain and
+-- a PEM file with exactly one private key. Clients are not asked for certificates.
+data RtrTlsConfig = RtrTlsConfig {
+        tlsListen   :: RtrListen,
+        tlsCertFile :: ApiSecured FilePath,
+        tlsKeyFile  :: ApiSecured FilePath
+    }
+    deriving stock (Eq, Ord, Show, Generic)
+    deriving anyclass (TheBinary)
+
+-- | The RTR server runs when at least one of the listeners is configured,
+-- they are independent of each other and serve the same data.
+data RtrConfig = RtrConfig {
+        rtrListen         :: Maybe RtrListen,
+        rtrTls            :: Maybe RtrTlsConfig,
         rtrLogFile        :: Maybe String,
+        -- | Shared by both listeners
         rtrMaxConnections :: Int,
         -- | How long routers may use the data without hearing from the cache 
         -- (https://www.rfc-editor.org/rfc/rfc8210#section-6). It is also how old 
         -- the persisted RTR state may be to be served after a restart.
         rtrExpireInterval :: Seconds
-    } 
+    }
     deriving stock (Eq, Ord, Show, Generic)
     deriving anyclass (TheBinary)
 
@@ -434,10 +456,16 @@ adjustConfig config = config
 defaultsLogLevel :: LogLevel
 defaultsLogLevel = InfoL
 
+defaultRtrAddresses :: [String]
+defaultRtrAddresses = ["localhost"]
+
+defaultRtrPort :: Word16
+defaultRtrPort = 8283
+
 defaultRtrConfig :: RtrConfig
-defaultRtrConfig = RtrConfig { 
-        rtrAddresses      = ["localhost"],
-        rtrPort           = 8283,
+defaultRtrConfig = RtrConfig {
+        rtrListen         = Just $ RtrListen defaultRtrAddresses defaultRtrPort,
+        rtrTls            = Nothing,
         rtrLogFile        = Nothing,
         -- RTR clients are routers, so a few hundred is already generous
         rtrMaxConnections = 512,

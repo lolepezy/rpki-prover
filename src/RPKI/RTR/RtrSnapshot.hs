@@ -10,7 +10,7 @@
 
      * header, all numbers big-endian:
          - "RPKI-RTR" (8 bytes)
-         - format version (Word16), 'snapshotFormatVersion'
+         - format version (Word16), 'rtrSnapshotFormatVersion'
          - session ID (Word16)
          - serial (Word32)
          - world version of the payloads (Int64, nanoseconds since the epoch),
@@ -71,16 +71,16 @@
    Persisted state is only used if its payloads are younger than the Expire
    Interval: routers don't keep data longer than that either.
 -}
-module RPKI.RTR.Snapshot (
+module RPKI.RTR.RtrSnapshot (
     RtrSnapshot (..),
-    snapshotFileName,
-    snapshotFormatVersion,
+    rtrSnapshotFileName,
+    rtrSnapshotFormatVersion,
     compressedBlock,
     freshEnough,
-    encodeSnapshot,
-    decodeSnapshot,
-    writeSnapshot,
-    readSnapshot,
+    encodeRtrSnapshot,
+    decodeRtrSnapshot,
+    writeRtrSnapshot,
+    readRtrSnapshot,
     payloadsFromPdus
 ) where
 
@@ -140,14 +140,14 @@ data RtrSnapshot = RtrSnapshot {
     deriving stock (Show, Eq)
 
 -- | In the root directory, which is not touched when the cache is erased.
-snapshotFileName :: FilePath
-snapshotFileName = "rtr-state"
+rtrSnapshotFileName :: FilePath
+rtrSnapshotFileName = "rtr-state"
 
-snapshotMagic :: BS.ByteString
-snapshotMagic = "RPKI-RTR"
+rtrSnapshotMagic :: BS.ByteString
+rtrSnapshotMagic = "RPKI-RTR"
 
-snapshotFormatVersion :: Word16
-snapshotFormatVersion = 1
+rtrSnapshotFormatVersion :: Word16
+rtrSnapshotFormatVersion = 1
 
 -- | Whether the payloads are younger than the Expire Interval, i.e. whether 
 -- routers that got them before the restart may still have them.
@@ -184,11 +184,11 @@ openCompressedBlock what (uncompressedLength, checksum, compressed) = do
         Left [i|The #{what} of the RTR state don't match their checksum|]
     pure uncompressed
 
-encodeSnapshot :: Instant -> RtrState -> LBS.ByteString
-encodeSnapshot (Instant writtenAt) RtrState {..} =
+encodeRtrSnapshot :: Instant -> RtrState -> LBS.ByteString
+encodeRtrSnapshot (Instant writtenAt) RtrState {..} =
     runPut $ do
-        putByteString snapshotMagic
-        putWord16be snapshotFormatVersion
+        putByteString rtrSnapshotMagic
+        putWord16be rtrSnapshotFormatVersion
         let RtrSessionId s = currentSessionId
         putWord16be s
         let SerialNumber n = currentSerial
@@ -201,10 +201,10 @@ encodeSnapshot (Instant writtenAt) RtrState {..} =
         unless (null diffs) $
             putByteString $ compressedBlock $ encodeStoredDiffs $ toList diffs
 
-decodeSnapshot :: LBS.ByteString -> Either Text RtrSnapshot
-decodeSnapshot bytes = do
+decodeRtrSnapshot :: LBS.ByteString -> Either Text RtrSnapshot
+decodeRtrSnapshot bytes = do
     (sessionId, serial, worldVersion, writtenAt, block, afterPayloads) <-
-        case runGetOrFail getSnapshot bytes of
+        case runGetOrFail getRtrSnapshot bytes of
             Left (_, _, e)                  -> Left [i|Broken RTR state: #{e}|]
             Right (rest, _, (a, b, c, d, e)) -> Right (a, b, c, d, e, rest)
     uncompressed <- openCompressedBlock "payloads" block
@@ -212,12 +212,12 @@ decodeSnapshot bytes = do
     let storedDiffs = decodeStoredDiffs afterPayloads
     pure RtrSnapshot {..}
   where
-    getSnapshot = do
-        magic <- getByteString $ BS.length snapshotMagic
-        unless (magic == snapshotMagic) $ fail "not an RTR state file"
+    getRtrSnapshot = do
+        magic <- getByteString $ BS.length rtrSnapshotMagic
+        unless (magic == rtrSnapshotMagic) $ fail "not an RTR state file"
         format <- getWord16be
-        unless (format == snapshotFormatVersion) $
-            fail [i|format version #{format}, only #{snapshotFormatVersion} is supported|]
+        unless (format == rtrSnapshotFormatVersion) $
+            fail [i|format version #{format}, only #{rtrSnapshotFormatVersion} is supported|]
         sessionId    <- RtrSessionId <$> getWord16be
         serial       <- SerialNumber <$> getInt32be
         worldVersion <- asVersion <$> getInt64be
@@ -337,11 +337,11 @@ payloadsFromPdus bytes =
 
 -- | Write it so that the file is either the previous or the new state,
 -- also if the system crashes in the middle.
-writeSnapshot :: FilePath -> Instant -> RtrState -> IO ()
-writeSnapshot path writtenAt rtrState = do
+writeRtrSnapshot :: FilePath -> Instant -> RtrState -> IO ()
+writeRtrSnapshot path writtenAt rtrState = do
     let tmp = path <> ".tmp"
     withBinaryFile tmp WriteMode $ \h ->
-        LBS.hPut h $ encodeSnapshot writtenAt rtrState
+        LBS.hPut h $ encodeRtrSnapshot writtenAt rtrState
     syncPath tmp
     renameFile tmp path
     syncPath $ takeDirectory path
@@ -349,11 +349,11 @@ writeSnapshot path writtenAt rtrState = do
     syncPath p = bracket (openFd p ReadOnly defaultFileFlags) closeFd fileSynchronise
 
 -- | Nothing if there is no file.
-readSnapshot :: FilePath -> IO (Maybe (Either Text RtrSnapshot))
-readSnapshot path =
+readRtrSnapshot :: FilePath -> IO (Maybe (Either Text RtrSnapshot))
+readRtrSnapshot path =
     doesFileExist path >>= \case
         False -> pure Nothing
         True  ->
             try (BS.readFile path) >>= \case
                 Left (e :: SomeException) -> pure $ Just $ Left [i|Cannot read RTR state: #{e}|]
-                Right bytes -> pure $ Just $ decodeSnapshot $ LBS.fromStrict bytes
+                Right bytes -> pure $ Just $ decodeRtrSnapshot $ LBS.fromStrict bytes

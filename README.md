@@ -168,6 +168,18 @@ The RTR server keeps its state (the session, the serial, the data at that serial
 
 Until the validation after the restart is complete, i.e. every repository it found has been fetched or at least tried, the data from before the restart is served together with the validated data. Routers then lose nothing while a rebuilt cache fills up: they get new data right away, and data that is gone is withdrawn once the validation is complete, or once the data from before the restart is older than the Expire Interval.
 
+RTR can also be served over TLS ([RFC 6810, section 7](https://www.rfc-editor.org/rfc/rfc6810#section-7)), which is set up the same way as in [Routinator](https://routinator.docs.nlnetlabs.nl/en/stable/rtr-service.html). Setting `--rtr-tls-port` starts the TLS listener, and it needs two files:
+
+* `--rtr-tls-cert`: a PEM file with the server certificate followed by the rest of its certificate chain;
+* `--rtr-tls-key`: a PEM file with exactly one private key (PKCS#1 RSA, PKCS#8 or SEC1 EC).
+
+The TLS listener listens on `--rtr-tls-address`, which can be given several times like `--rtr-address`, and without it on the addresses of `--rtr-address`. It is independent of `--with-rtr`, so it can run alone or next to the plain TCP listener. Both serve the same data and share `--rtr-max-connections`. The IANA-assigned port for RTR over TLS is 324. Clients are not asked for certificates, and the files are read once at startup, so a renewed certificate needs a restart.
+
+```
+rpki-prover --with-rtr --rtr-address 0.0.0.0 --rtr-port 3323 \
+            --rtr-tls-port 3324 --rtr-tls-cert /etc/rpki-prover/rtr.crt --rtr-tls-key /etc/rpki-prover/rtr.key
+```
+
 ## HTTP API <a name="http-api"></a>
 
 Visit [http://localhost:9999](http://localhost:9999) to view the UI reporting metrics, trust anchors, repositories, and any errors or warnings.
