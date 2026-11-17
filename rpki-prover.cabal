@@ -228,8 +228,8 @@ library
       RPKI.RTR.Pdus
       RPKI.RTR.Protocol
       RPKI.RTR.RtrServer
+      RPKI.RTR.RtrSnapshot
       RPKI.RTR.RtrState
-      RPKI.RTR.Snapshot
       RPKI.RTR.Tls
       RPKI.RTR.Types
       RPKI.RTR.UniqueVrps
@@ -354,8 +354,8 @@ test-suite rpki-prover-test
       RPKI.RRDP.ParseSpec
       RPKI.RRDP.UpdateSpec
       RPKI.RTR.OrderingSpec
+      RPKI.RTR.RtrSnapshotSpec
       RPKI.RTR.RtrSpec
-      RPKI.RTR.SnapshotSpec
       RPKI.RTR.TlsSpec
       RPKI.SLURM.SlurmSpec
       RPKI.Store.DatabaseSpec

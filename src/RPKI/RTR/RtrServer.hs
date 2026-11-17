@@ -41,7 +41,7 @@ import           RPKI.RTR.RtrState
 import           RPKI.RTR.Types
 import           RPKI.RTR.UniqueVrps
 import           RPKI.RTR.Protocol
-import           RPKI.RTR.Snapshot
+import           RPKI.RTR.RtrSnapshot
 import           RPKI.RTR.Tls
 
 import           RPKI.Parallel
@@ -122,13 +122,9 @@ data RtrTransport = RtrTransport {
 
 -- Both transports glue PDUs together before sending them.
 --
--- 'sendMany' would pass at most IOV_MAX (1024) PDUs, i.e. ~20KB, to every
--- writev call and rebuild the iovec array for all the remaining ones
+-- 'sendMany' is not used here intentionally, as it would pass at most IOV_MAX (1024) PDUs, 
+-- i.e. ~20KB, to every writev call and rebuild the iovec array for all the remaining ones
 -- after each of them, so it is both slower and quadratic in the number of PDUs.
---
--- 'TLS.sendData' makes at least one record for every chunk of a lazy
--- bytestring, i.e. there would be a separate record for every
--- (usually 20-byte) PDU.
 plainTransport :: Socket -> RtrTransport
 plainTransport sock = RtrTransport {
         transportRecv = recv sock 1024,
@@ -164,7 +160,7 @@ runRtrServer appContext RtrConfig {..} RtrSockets {..} = do
     intervals = let Seconds expire = rtrExpireInterval 
                 in defIntervals { expireInterval = fromIntegral expire }
 
-    snapshotPath = configValue (appContext ^. #config . #rootDirectory) </> snapshotFileName
+    rtrSnapshotPath = configValue (appContext ^. #config . #rootDirectory) </> rtrSnapshotFileName
 
     -- | Handling TCP conections happens here
     runSocketBusiness rtrState updateBroadcastChan = do
@@ -295,11 +291,11 @@ runRtrServer appContext RtrConfig {..} RtrSockets {..} = do
           -- otherwise start a new session once there is a complete world version.
           restoredOrNewState appState = do 
             Now now <- thisInstant
-            readSnapshot snapshotPath >>= \case 
+            readRtrSnapshot rtrSnapshotPath >>= \case 
                 Nothing -> newState appState Nothing
 
                 Just (Left e) -> do 
-                    logWarn logger [i|Not using the persisted RTR state from #{snapshotPath}: #{e}|]
+                    logWarn logger [i|Not using the persisted RTR state from #{rtrSnapshotPath}: #{e}|]
                     newState appState Nothing
 
                 Just (Right snapshot@RtrSnapshot {..})
@@ -312,7 +308,7 @@ runRtrServer appContext RtrConfig {..} RtrSockets {..} = do
                     -- of the payloads would never withdraw them
                     | unknownPdus > 0 -> do
                         let newId@(RtrSessionId s) = newSessionId worldVersion (Just sessionId)
-                        logWarn logger $ [i|RTR server: the persisted RTR state from #{snapshotPath} has #{unknownPdus} PDUs |] <>
+                        logWarn logger $ [i|RTR server: the persisted RTR state from #{rtrSnapshotPath} has #{unknownPdus} PDUs |] <>
                                          [i|of unknown types, probably written by a newer rpki-prover, starting a new session #{s} |] <>
                                          [i|with the rest of its payloads, serving them together with the validated ones |] <>
                                          [i|until the validation is settled.|]
@@ -328,7 +324,7 @@ runRtrServer appContext RtrConfig {..} RtrSockets {..} = do
                         let (RtrSessionId s, SerialNumber n) = (sessionId, serial)
                         logInfo logger $ [i|RTR server: continuing session #{s} at serial #{n} with |] <>
                                          [i|#{countUniqueVrps uniqueVrps} VRPs, #{Set.size bgpSec} router keys and |] <>
-                                         [i|#{Set.size aspas} ASPAs of version #{worldVersion} from #{snapshotPath}, |] <>
+                                         [i|#{Set.size aspas} ASPAs of version #{worldVersion} from #{rtrSnapshotPath}, |] <>
                                          [i|serving them together with the validated ones until the validation is settled.|]
                         let restored = servedPayloads payloads
                         restoredDiffs <- case storedDiffs of
@@ -386,11 +382,11 @@ runRtrServer appContext RtrConfig {..} RtrSockets {..} = do
           -- Failing to write it is not a reason to stop serving routers
           persist state = do 
             Now now <- thisInstant
-            UIO.tryAny (timedMS $ writeSnapshot snapshotPath now state) >>= \case 
+            UIO.tryAny (timedMS $ writeRtrSnapshot rtrSnapshotPath now state) >>= \case 
                 Left e -> 
-                    logError logger [i|Failed to write the RTR state to #{snapshotPath}: #{e}|]
+                    logError logger [i|Failed to write the RTR state to #{rtrSnapshotPath}: #{e}|]
                 Right (_, elapsed) -> 
-                    logDebug logger [i|Wrote the RTR state to #{snapshotPath}, took #{elapsed}ms.|]
+                    logDebug logger [i|Wrote the RTR state to #{rtrSnapshotPath}, took #{elapsed}ms.|]
 
           -- The serial only changes when there's a non-empty diff, so a change 
           -- of (session, serial) is exactly "there's something to notify about".

@@ -76,7 +76,7 @@ data ServedPayloads = ServedPayloads {
         renderedV0 :: ~BS.ByteString,
         renderedV1 :: ~BS.ByteString,
         renderedV2 :: ~BS.ByteString,
-        -- | The payloads as they are persisted, see RPKI.RTR.Snapshot
+        -- | The payloads as they are persisted, see RPKI.RTR.RtrSnapshot
         persisted  :: ~BS.ByteString
     }
     deriving stock (Generic)
