@@ -10,6 +10,7 @@ import RPKI.Fetch.DirectoryTraverseSpec
 import RPKI.Resources.ResourcesSpec
 import RPKI.Resources.ValiditySpec
 import RPKI.AppMonadSpec
+import RPKI.ListenSpec
 import RPKI.LoggingSpec
 import RPKI.RepositorySpec
 import RPKI.FetchSpec
@@ -47,6 +48,7 @@ main = defaultMain $ testGroup "All tests" [
         httpDtoGroup,
         directoryTraverseSpec,
         slurmGroup,
+        listenSpec,
         loggingSpec,
         workflowSpec,
         topDownRegressionGroup,

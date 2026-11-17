@@ -6,6 +6,21 @@
   reject what is not a port.
 - The RTR server listens on all the addresses of `--rtr-address`, e.g. on both
   127.0.0.1 and ::1 for the default `localhost`, not only on the first one.
+  `--rtr-address` can be given several times, e.g. for an IPv4 and an IPv6
+  address of the same interface. The server doesn't start if it can't listen
+  on one of the IP addresses given, or on any of the addresses of a name.
+  An IPv6 address only takes IPv6 connections: on Linux `--rtr-address ::`
+  used to take IPv4 connections too, now that takes
+  `--rtr-address 0.0.0.0 --rtr-address ::`.
+- `--http-api-address` sets the addresses of the HTTP API in the same way as
+  `--rtr-address` does for the RTR server. By default the HTTP API listens on
+  all the IPv4 addresses, as before.
+- The HTTP API and the RTR server start listening before anything else starts.
+  If one of them can't, the program stops right away with an error that lists
+  every address it tried and why it failed. It used to start validating first,
+  and for the HTTP API to exit with success.
+- Log messages of a program that stops because of an error are written out
+  before it exits, they could get lost.
 - The RTR server persists its session, serial, data and diffs in `rtr-state`
   in the root directory, outside of the cache. After a restart it continues
   the same session with the same data immediately, also if the cache is

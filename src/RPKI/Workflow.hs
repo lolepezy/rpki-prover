@@ -58,7 +58,6 @@ import           RPKI.Validation.TopDown
 
 import           RPKI.AppContext
 import           RPKI.Metrics.Prometheus
-import           RPKI.RTR.RtrServer
 import           RPKI.RRDP.Types
 import           RPKI.TAL
 import           RPKI.Util                     
@@ -100,16 +99,17 @@ import qualified UnliftIO.Exception              as UIO
 -}
 
 -- The main entry point for the whole validator workflow. Runs multiple threads, 
--- running validation, RTR server, cleanups, cache maintenance and async fetches.
+-- running validation, cleanups, cache maintenance and async fetches. The servers
+-- (HTTP API and RTR) run next to it, see Main.
 -- 
-runValidatorWorkflow :: AppContext -> [TAL] -> IO ()
-runValidatorWorkflow appContext@AppContext {..} tals = do    
+runValidatorWorkflow :: AppContext -> PrometheusMetrics -> [TAL] -> IO ()
+runValidatorWorkflow appContext@AppContext {..} prometheusMetrics tals = do    
     -- There might be more TAs in the cache than there are in the `tals`, 
     -- they can stay from a previous run.
     DB.rwTxT database $ \tx ->
         DB.setActiveTAs tx (map getTaName tals)
         
-    runAll appContext tals
+    runAll appContext prometheusMetrics tals
         `catches` [
             Handler $ \(AppException seriousProblem) ->
                 die [i|Something really bad happened: #{seriousProblem}, exiting.|],
@@ -118,23 +118,19 @@ runValidatorWorkflow appContext@AppContext {..} tals = do
         ]
 
 
-runAll :: AppContext -> [TAL] -> IO ()
-runAll appContext@AppContext {..} tals = do    
+runAll :: AppContext -> PrometheusMetrics -> [TAL] -> IO ()
+runAll appContext@AppContext {..} prometheusMetrics tals = do    
     void $ concurrently (
             -- Fill in the current appState if it's not too old.
             -- It is useful in case of restarts.             
             loadStoredAppState appContext)
         (do 
-            prometheusMetrics <- createPrometheusMetrics config
-
             withWorkflowShared appContext prometheusMetrics tals $ \workflowShared ->
                 case config ^. #proverRunMode of
                     ServerMode -> 
-                        mapConcurrently_ id [
-                            runScheduledTasks workflowShared,
-                            revalidate workflowShared,
-                            runRtrIfConfigured
-                        ]                        
+                        concurrently_ 
+                            (runScheduledTasks workflowShared)
+                            (revalidate workflowShared)
 
                     OneOffMode _ -> 
                         -- Scheduled jobs don't run in the one-off mode, so the things 
@@ -512,10 +508,6 @@ runAll appContext@AppContext {..} tals = do
                 logDebug logger [i|Deleting rsync mirrors in #{rsyncDir}.|]
                 listDirectory rsyncDir >>= mapM_ (removePathForcibly . (rsyncDir </>))
             logInfo logger [i|Done cleaning up rsync, took #{elapsed}ms.|]
-
-    runRtrIfConfigured = 
-        for_ (config ^. #rtrConfig) $ runRtrServer appContext
-
 
     -- Workers for functionality running in separate processes.
     --     

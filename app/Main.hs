@@ -27,6 +27,7 @@ import           Data.Maybe
 import           Data.Word                        (Word16)
 import           Data.String.Interpolate.IsString
 import qualified Network.Wai.Handler.Warp         as Warp
+import           Network.Socket                   (Socket, close, withSocketsDo)
 import           Network.Wai (responseLBS)
 import           Network.HTTP.Types (status503)
 
@@ -53,6 +54,7 @@ import           RPKI.Messages
 import           RPKI.Reporting
 import           RPKI.Fetch.Http (downloadToFile)
 import           RPKI.Http.HttpServer
+import           RPKI.Listen
 import           RPKI.Logging
 
 import           RPKI.Store.Base.Serialisation (TheBinary)
@@ -61,7 +63,9 @@ import           RPKI.Store.AppSqliteStorage (DbCheckResult(..), DbOpenMode(..),
 import           RPKI.SLURM.SlurmProcessing
 
 import           RPKI.RRDP.RrdpFetch
+import           RPKI.Metrics.Prometheus          (createPrometheusMetrics)
 import           RPKI.RTR.Protocol                (Intervals (..), defIntervals)
+import           RPKI.RTR.RtrServer               (listenRtr, runRtrServer)
 import           RPKI.Sandbox
 
 import           RPKI.Fetch.Erik.ErikRelay
@@ -145,19 +149,16 @@ executeMainProcess cliOptions@CLIOptions{..} = do
                     exitFailure
                 Right appContext -> do 
                     atomically $ writeTVar appStateHolder $ Just $ appContext ^. #appState
-                    race_ (rollBackLongTransactions appContext) runMainProcess
+                    -- The servers listen before anything else starts, so that
+                    -- if they can't, the program stops with nothing to cancel
+                    withServers appContext (\servers ->
+                        race_ (rollBackLongTransactions appContext) $ do
+                            tals <- readTALs appContext
+                            prometheusMetrics <- createPrometheusMetrics $ appContext ^. #config
+                            -- Any of them stopping stops all of them
+                            foldr1 race_ $ runValidatorWorkflow appContext prometheusMetrics tals : servers)
                         `finally` 
                         closeStorage appContext
-                  where
-                    runMainProcess = do                                          
-                        tals <- readTALs appContext
-                        case appContext ^. #config . #proverRunMode of
-                            OneOffMode _ -> 
-                                runValidatorWorkflow appContext tals                                                        
-                            ServerMode -> 
-                                void $ race
-                                    (runHttpApi appContext)
-                                    (runValidatorWorkflow appContext tals)
 
 executeWorkerProcess :: IO ()
 executeWorkerProcess = do
@@ -274,14 +275,41 @@ readTALs AppContext {..} = do
         fromEither $ first TAL_E $ parseTAL (convert talContent) taName            
 
 
-runHttpApi :: AppContext -> IO ()
-runHttpApi appContext@AppContext {..} = do 
+-- | Listen on the addresses of the HTTP API and on the ones of the RTR server 
+-- if it's on, and give what serves them. The one-off mode has no servers.
+withServers :: AppContext -> ([IO ()] -> IO a) -> IO a
+withServers appContext@AppContext {..} f = 
+    case config ^. #proverRunMode of
+        OneOffMode _ -> f []
+        ServerMode   -> withSocketsDo $ 
+            withListening (listenOn logger "HTTP API" (httpApiConfig ^. #addresses) (httpApiConfig ^. #port)) $ \httpSockets -> do
+                let httpApi = stopping logger "HTTP API" $ runHttpApi appContext httpSockets
+                case config ^. #rtrConfig of
+                    Nothing -> f [httpApi]
+                    Just rtrConfig ->
+                        withListening (listenRtr appContext rtrConfig) $ \rtrSockets ->
+                            f [httpApi, stopping (getRtrLogger appContext) "RTR server" $ 
+                                            runRtrServer appContext rtrConfig rtrSockets]
+  where
+    httpApiConfig = config ^. typed @HttpApiConfig
+
+    withListening listen = bracket listen (mapM_ close)
+
+    -- Being cancelled is how a server stops with the rest of the program, 
+    -- anything else is a failure of its own
+    stopping :: Logger l => l -> Text.Text -> IO () -> IO ()
+    stopping logger_ server run = run `catch` \(e :: SomeException) -> do 
+        unless (isJust $ fromException @SomeAsyncException e) $ 
+            logError logger_ [i|#{server} stopped: #{e}.|]
+        throwIO e
+
+
+runHttpApi :: AppContext -> [Socket] -> IO ()
+runHttpApi appContext sockets = do
     let httpApiConfig = appContext ^. typed @Config . typed @HttpApiConfig
-    let httpPort = fromIntegral $ httpApiConfig ^. #port
     slots <- atomically $ newTSem $ fromIntegral $ httpApiConfig ^. #maxConcurrentRequests
-    Warp.run httpPort (limitRequests slots $ httpServer appContext)
-        `catch`
-        (\(e :: SomeException) -> logError logger [i|Interrupted HTTP server: #{e}.|])
+    let app = limitRequests slots $ httpServer appContext
+    mapConcurrently_ (\sock -> Warp.runSettingsSocket Warp.defaultSettings sock app) sockets
   where
     -- Warp has no connection limit of its own, so limit the number of requests
     -- being served at the same time and answer the rest with 503. Idle keep-alive
@@ -675,10 +703,11 @@ data CLIOptions = CLIOptions {
         erikRelayParallelism     :: Maybe Natural,
         erikDownloadTimeout      :: Maybe Int64,
         clientPath               :: Maybe String,
+        httpApiAddresses         :: [String],
         httpApiPort              :: Maybe Word16,
         httpApiMaxRequests       :: Maybe Natural,
         withRtr                  :: Bool,
-        rtrAddress               :: Maybe String,
+        rtrAddresses             :: [String],
         rtrPort                  :: Maybe Word16,
         rtrLogFile               :: Maybe String,
         rtrMaxConnections        :: Maybe Natural,
@@ -847,6 +876,13 @@ cliOptionsParser = CLIOptions
             (  long "rsync-client-path"
             <> metavar "PATH"
             <> help "Path to the rsync executable. Defaults to whatever is found in $PATH."))
+    <*> many (strOption
+            (  long "http-api-address"
+            <> metavar "ADDRESS"
+            <> help ("IP address or name for the HTTP API to listen on, for a name all of its "
+                  <> "addresses. Can be given several times. The HTTP API doesn't start if it can't "
+                  <> "listen on any of the IP addresses, or on at least one address of a name "
+                  <> "(default: " <> List.intercalate ", " defHttpApiAddresses <> ").")))
     <*> optional (option portReader
             (  long "http-api-port"
             <> metavar "PORT"
@@ -859,11 +895,13 @@ cliOptionsParser = CLIOptions
     <*> switch
             (  long "with-rtr"
             <> help "Start the RTR server (default: false).")
-    <*> optional (strOption
+    <*> many (strOption
             (  long "rtr-address"
             <> metavar "ADDRESS"
-            <> help ("Address to bind the RTR server to, for a name all of its addresses "
-                  <> "(default: " <> defRtrAddress <> ").")))
+            <> help ("IP address or name for the RTR server to listen on, for a name all of its "
+                  <> "addresses. Can be given several times. The server doesn't start if it can't "
+                  <> "listen on any of the IP addresses, or on at least one address of a name "
+                  <> "(default: " <> List.intercalate ", " defRtrAddresses <> ").")))
     <*> optional (option portReader
             (  long "rtr-port"
             <> metavar "PORT"
@@ -1014,9 +1052,10 @@ cliOptionsParser = CLIOptions
     Seconds defErikTimeout    = cfg ^. #systemConfig . #erikWorkerLimits . #workerTimeout
     Seconds defErikRefresh    = cfg ^. #erikConf . #erikRefreshInterval
     Seconds defErikDownloadTimeout = cfg ^. #erikConf . #downloadTimeout
+    defHttpApiAddresses       = cfg ^. #httpApiConf . #addresses
     defHttpApiPort            = cfg ^. #httpApiConf . #port
     defHttpMaxRequests        = cfg ^. #httpApiConf . #maxConcurrentRequests
-    defRtrAddress             = rtrCfg ^. #rtrAddress
+    defRtrAddresses           = rtrCfg ^. #rtrAddresses
     defRtrPort                = rtrCfg ^. #rtrPort
     defRtrMaxConnections      = rtrCfg ^. #rtrMaxConnections
     Seconds defRtrExpireInterval = rtrCfg ^. #rtrExpireInterval
@@ -1076,6 +1115,7 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
         & maybeSet (#validationConfig . #maxTotalTreeSize) maxTotalTreeSize
         & maybeSet (#validationConfig . #maxObjectSize) maxObjectSize
         & maybeSet (#validationConfig . #minObjectSize) minObjectSize
+        & maybeSet (#httpApiConf . #addresses) (nonEmptyList httpApiAddresses)
         & maybeSet (#httpApiConf . #port) httpApiPort
         & maybeSet (#httpApiConf . #maxConcurrentRequests) (fromIntegral <$> httpApiMaxRequests)
         & #rtrConfig .~ rtrConfig
@@ -1102,11 +1142,16 @@ applyCliToConfig baseConfig CLIOptions{..} apiSecured =
     rtrConfig = if withRtr
         then Just $ defaultRtrConfig
                     & maybeSet #rtrPort rtrPort
-                    & maybeSet #rtrAddress rtrAddress
+                    & maybeSet #rtrAddresses (nonEmptyList rtrAddresses)
                     & #rtrLogFile .~ rtrLogFile
                     & maybeSet #rtrMaxConnections (fromIntegral <$> rtrMaxConnections)
                     & maybeSet #rtrExpireInterval (Seconds <$> rtrExpireInterval)
         else Nothing    
+
+    -- A list option that is not given at all leaves the default
+    nonEmptyList = \case
+        [] -> Nothing
+        xs -> Just xs
 
     setErikRelays = case erikRelay of
         [] -> id

@@ -186,6 +186,7 @@ library
       RPKI.Http.HttpServer
       RPKI.Http.Types
       RPKI.Http.UI
+      RPKI.Listen
       RPKI.Logging
       RPKI.Messages
       RPKI.Metrics.Metrics
@@ -338,6 +339,7 @@ test-suite rpki-prover-test
       RPKI.Fetch.HttpSpec
       RPKI.FetchSpec
       RPKI.Http.DtoSpec
+      RPKI.ListenSpec
       RPKI.LoggingSpec
       RPKI.Metrics.ProcessSpec
       RPKI.Orphans

@@ -12,10 +12,8 @@ import           Control.Concurrent.STM
 import           Control.Exception
 import           Control.Monad
 
-import           Data.Either                      (partitionEithers)
 import           Data.Foldable                    (for_)
 import           Data.IORef
-import           Data.List                        (nub)
 
 import qualified Data.ByteString                  as BS
 import qualified Data.ByteString.Lazy             as LBS
@@ -34,6 +32,7 @@ import           RPKI.AppContext
 import           RPKI.Config
 import           RPKI.Domain
 import           RPKI.Domain.Vrps                 (createVrps)
+import           RPKI.Listen
 import           RPKI.Logging
 import           RPKI.RTR.Pdus
 import           RPKI.RTR.RtrState
@@ -55,7 +54,7 @@ import           Time.Types
 import qualified UnliftIO.Exception               as UIO
 
 
-{- | Something that can be sent to a client: either a PDU still to be 
+{- | Something that can be sent to a client: either a PDU still to be
    serialised, or a blob already serialised by 'currentCachePayloadBS'.
 
    Both carry the protocol version they are framed with, so that a PDU cannot 
@@ -85,11 +84,16 @@ rtrNotifyRateLimit = Seconds 60
 rtrUnchangedWriteInterval :: Seconds
 rtrUnchangedWriteInterval = Seconds 300
 
+-- | The sockets the RTR server listens on, see 'listenOn'.
+listenRtr :: AppContext -> RtrConfig -> IO [Socket]
+listenRtr appContext RtrConfig {..} = 
+    listenOn (getRtrLogger appContext) "RTR server" rtrAddresses rtrPort
+
 -- 
--- | Main entry point, here we start the RTR server. 
+-- | Main entry point, here we start the RTR server on the sockets from 'listenRtr'.
 -- 
-runRtrServer :: AppContext -> RtrConfig -> IO ()
-runRtrServer appContext RtrConfig {..} = do         
+runRtrServer :: AppContext -> RtrConfig -> [Socket] -> IO ()
+runRtrServer appContext RtrConfig {..} sockets = do         
     -- re-initialise `rtrState` and create a broadcast 
     -- channel to publish update for all clients
     let rtrState = appContext ^. #appState . #rtrState
@@ -111,46 +115,12 @@ runRtrServer appContext RtrConfig {..} = do
     snapshotPath = configValue (appContext ^. #config . #rootDirectory) </> snapshotFileName
 
     -- | Handling TCP conections happens here
-    runSocketBusiness rtrState updateBroadcastChan = 
-        withSocketsDo $ do                 
-            addresses <- resolve (show rtrPort)
-            -- Every accepted connection forks two threads and duplicates the 
-            -- update broadcast channel, so the number of them has to be bounded.
-            connectionCount <- newTVarIO (0 :: Int)
-            bracket (openAll addresses) (mapM_ close) $ mapConcurrently_ (loop connectionCount)
+    runSocketBusiness rtrState updateBroadcastChan = do
+        -- Every accepted connection forks two threads and duplicates the
+        -- update broadcast channel, so the number of them has to be bounded.
+        connectionCount <- newTVarIO (0 :: Int)
+        mapConcurrently_ (loop connectionCount) sockets
       where
-        -- All the addresses of the name and not only the first one: localhost
-        -- is normally both 127.0.0.1 and ::1 and routers can use any of them.
-        resolve port = do
-            let hints = defaultHints {
-                    addrFlags = [AI_PASSIVE], 
-                    addrSocketType = Stream                                        
-                }
-            nub <$> getAddrInfo (Just hints) (Just rtrAddress) (Just port)            
-
-        -- Some of them may not be usable, e.g. ::1 where IPv6 is disabled.
-        -- It only stops the server if none of them is.
-        openAll addresses = do
-            opened <- forM addresses $ \address ->
-                try (open address) >>= \case
-                    Left (e :: IOException) -> do
-                        logWarn logger [i|RTR server: cannot listen on #{addrAddress address}: #{e}|]
-                        pure $ Left e
-                    Right sock -> do
-                        logInfo logger [i|RTR server: listening on #{addrAddress address}.|]
-                        pure $ Right sock
-            case partitionEithers opened of
-                (e : _, []) -> throwIO e
-                (_, sockets) -> pure sockets
-
-        open addr =
-            bracketOnError (socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)) close $ \sock -> do
-                setSocketOption sock ReuseAddr 1
-                withFdSocket sock setCloseOnExecIfNeeded
-                bind sock $ addrAddress addr
-                listen sock 1024
-                pure sock
-
         loop connectionCount sock = forever $ do
             (conn, peer) <- accept sock
             accepted <- atomically $ do 
