@@ -68,7 +68,7 @@ tlsServerParams credential =
             TLS.sharedCredentials = TLS.Credentials [credential]
         },
         TLS.serverSupported = TLS.defaultSupported {
-            -- The default is empty, i.e. no handshake would ever succeed
+            -- Set something, since the default is empty, i.e. no handshake would ever succeed
             TLS.supportedCiphers = ciphersuite_strong
         }
     }
