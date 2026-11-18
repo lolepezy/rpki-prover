@@ -2,6 +2,7 @@ module RPKI.Fetch.Http where
 
 import           Effectful
 import Control.Exception
+import Control.Monad (when)
 import Control.Lens
 
 import Conduit
@@ -11,11 +12,17 @@ import Data.IORef
 import Data.Maybe (listToMaybe)
 
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as C8
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text as Text
 import           Data.Tuple.Strict
 
 import           Data.String.Interpolate.IsString
+import           Data.Hourglass (Seconds(..))
+import           Data.Int (Int64)
+import           Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
+import           Data.Time.Format (defaultTimeLocale, parseTimeM)
+import           Text.Read (readMaybe)
 
 import GHC.Generics (Generic)
 
@@ -189,6 +196,33 @@ instance Show OversizedDownloadStream where
         [i|Http stream for #{uri} is #{actualSize} bytes, bigger than #{maxSize} bytes limit|]    
 
 
+-- | The server responded with 429 (Too Many Requests) or 503 (Service Unavailable), 
+-- with the delay from its Retry-After header, if there was a valid one.
+data HttpServerBusy = HttpServerBusy URI HttpStatus (Maybe Seconds)
+    deriving stock (Eq, Ord, Generic)    
+
+instance Exception HttpServerBusy
+
+instance Show HttpServerBusy where 
+    show (HttpServerBusy uri status retryAfter) = 
+        [i|Http status #{status} for #{uri}|] <> 
+            maybe "" (\t -> [i|, Retry-After #{t}|]) retryAfter
+
+isServerBusy :: HttpStatus -> Bool
+isServerBusy (HttpStatus s) = s == 429 || s == 503
+
+-- | Parse the value of Retry-After (RFC 9110, section 10.2.3), that is either 
+-- a number of seconds or an HTTP date. A date in the past means no delay.
+parseRetryAfter :: UTCTime -> BS.ByteString -> Maybe Seconds
+parseRetryAfter now (C8.unpack . C8.strip -> value) = 
+    case readMaybe value :: Maybe Int64 of 
+        Just s  | s >= 0    -> Just $ Seconds s
+                | otherwise -> Nothing
+        Nothing -> do 
+            date <- parseTimeM False defaultTimeLocale "%a, %d %b %Y %H:%M:%S GMT" value
+            pure $ Seconds $ max 0 $ ceiling $ diffUTCTime date now
+
+
 -- | Stream URL content to a file suing http conduit.
 --
 downloadConduit :: (MonadIO m, MonadUnliftIO m) => 
@@ -253,7 +287,14 @@ downloadToSink (URI u) HttpValidators {..} sink = do
     newValidators <- liftIO $ newIORef noValidators
     let getSrc r = do         
             liftIO $ do 
-                writeIORef httpStatus $ HttpStatus $ getResponseStatusCode r         
+                let status = HttpStatus $ getResponseStatusCode r
+                -- Don't bother downloading the body, the server is not going to 
+                -- give us the content anyway.
+                when (isServerBusy status) $ do 
+                    now <- getCurrentTime
+                    throwIO $ HttpServerBusy (URI u) status $ 
+                        parseRetryAfter now =<< listToMaybe (getResponseHeader hRetryAfter r)
+                writeIORef httpStatus status
                 writeIORef newValidators $ HttpValidators {
                         eTag         = ETag <$> listToMaybe (getResponseHeader hETag r),
                         lastModified = LastModified <$> listToMaybe (getResponseHeader hLastModified r)

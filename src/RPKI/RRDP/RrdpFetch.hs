@@ -9,7 +9,7 @@ import           Effectful.Concurrent.Async
 import           Effectful.Exception
 import           Control.Applicative              ((<|>))
 import           Control.Monad
-import           Effectful.Error.Static           (catchError)
+import           Effectful.Error.Static           (catchError, rethrowError)
 import           Effectful.Timeout                (Timeout)
 import           Data.Generics.Product.Typed
 
@@ -83,7 +83,7 @@ updateRrdpRepository
         fetchNotification validators = do 
             timedMetric' (Proxy :: Proxy RrdpMetric) 
                 (\t -> #downloadTimeMs %~ (<> t)) $
-                fromTry (RrdpE . CantDownloadNotification . U.fmtEx)
+                fromTry (downloadError CantDownloadNotification)
                     $ downloadToBS tmpDir (getURL repoUri) validators maxSize
 
         enforcement = 
@@ -167,10 +167,16 @@ updateRrdpRepository
 
                                 logDebug logger [i|Going to use deltas for #{repoUri}: #{message}|]
                                 useDeltas sortedDeltas notification)
-                        `catchError` \_cs (e :: AppError) -> do         
-                                usedSource $ RrdpSnapshot $ notification ^. #serial
-                                logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
-                                useSnapshot notification nextStep
+                        `catchError` \cs (e :: AppError) -> 
+                            case e of 
+                                -- The server asked to slow down, downloading 
+                                -- the snapshot right away would be the opposite
+                                RrdpE RrdpServerBusy {} -> 
+                                    rethrowError cs e
+                                _ -> do 
+                                    usedSource $ RrdpSnapshot $ notification ^. #serial
+                                    logError logger [i|Failed to apply deltas for #{repoUri}: #{e}, will fall back to snapshot.|]                
+                                    useSnapshot notification nextStep
 
             pure (repo', RrdpFetchStat nextStep)                            
   where
@@ -179,6 +185,19 @@ updateRrdpRepository
                   & #lastModified .~ validators ^. #lastModified) <$> f        
 
     usedSource z = updateMetric @RrdpMetric @_ (#rrdpSource .~ z)        
+
+    -- The session and the serial are stored together with the objects, 
+    -- the rest of the metadata is stored when the fetch is done
+    storeIntegrity integrity enforcement = do 
+        db <- liftIO $ readTVarIO database
+        DB.rwAppTx db $ \tx -> DB.updateRrdpIntegrity tx repoUri integrity enforcement
+
+    downloadError :: (Text -> RrdpError) -> SomeException -> AppError
+    downloadError otherwise_ e = RrdpE $ 
+        case fromException e of 
+            Just (HttpServerBusy (URI u) status retryAfter) -> RrdpServerBusy u status retryAfter
+            Nothing                                        -> otherwise_ $ U.fmtEx e
+
     hoistHere    = fromEither . first RrdpE
 
     validatedNotification notification = do    
@@ -206,7 +225,7 @@ updateRrdpRepository
             (rawContent, _, httpStatus', _) <- 
                 timedMetric' (Proxy :: Proxy RrdpMetric) 
                     (\t -> #downloadTimeMs %~ (<> t)) $ do     
-                    fromTryEither (RrdpE . CantDownloadSnapshot . U.fmtEx) $ do 
+                    fromTryEither (downloadError CantDownloadSnapshot) $ do 
                         let tmpDir = configValue $ config ^. #tmpDirectory
                         let maxSize = config ^. typed @RrdpConf . #maxSize
                         downloadHashedBS tmpDir uri noValidators expectedHash maxSize                            
@@ -222,6 +241,12 @@ updateRrdpRepository
                     (saveSnapshot appContext worldVersion repoUri notification rawContent)                                    
 
             rrdpMeta' <- makeRrdpMeta rrdpMeta
+            for_ rrdpMeta' $ \m -> 
+                storeIntegrity (m ^. #integrity) $ 
+                    case nextStep of 
+                        ForcedFetchSnapshot _ _ -> m ^. #enforcement
+                        -- Keep whatever is stored, the validation could have changed it
+                        _                       -> Nothing
             pure $ repo & #rrdpMeta .~ rrdpMeta'
         where
             makeRrdpMeta currentMeta = do                
@@ -260,6 +285,7 @@ updateRrdpRepository
                                     repoUri notification serial rawContent)
                         (mempty :: ())     
 
+        storeIntegrity (RrdpIntegrity $ notification ^. #deltas) Nothing
         pure $ repo & #rrdpMeta %~ makeRrdpMeta
 
       where        
@@ -267,7 +293,7 @@ updateRrdpRepository
             let deltaUri = U.convert uri 
             (rawContent, _, httpStatus', _) <- 
                 inSubVScope deltaUri $ do
-                    fromTryEither (RrdpE . CantDownloadDelta . U.fmtEx) $ do 
+                    fromTryEither (downloadError CantDownloadDelta) $ do 
                         let tmpDir = configValue $ config ^. #tmpDirectory
                         let maxSize = config ^. typed @RrdpConf . #maxSize
                         downloadHashedBS tmpDir uri noValidators hash maxSize
@@ -433,7 +459,7 @@ saveSnapshot
     let savingTx f =
             DB.rwAppTx db $ \tx -> do
                 f tx
-                updateRepositoryMeta tx repoUri sessionId serial
+                DB.setRrdpSession tx repoUri sessionId serial
 
     scopes <- askScopes
     txPoolPipeline 
@@ -588,9 +614,8 @@ saveDelta appContext worldVersion repoUri notification expectedSerial deltaConte
     
     let savingTx f =
             DB.rwAppTx db $ \tx -> do
-                verifyRrdpMeta tx repoUri sessionId (previousSerial serial)
+                advanceRrdpSerial tx repoUri sessionId serial
                 f tx
-                updateRepositoryMeta tx repoUri sessionId serial
 
     void $ liftIO $ useAvailableCpus $ appContext ^. typed @Config . typed @Parallelism . #cpuCount
     scopes <- askScopes
@@ -795,35 +820,22 @@ data DeltaOp a = Delete URI Hash
                | Replace URI a Hash
 
 
-verifyRrdpMeta :: ValidatorIO es => Tx mode
-            -> RrdpURL
-            -> SessionId
-            -> RrdpSerial
-            -> Eff es ()
-verifyRrdpMeta tx repoUri expectedSessionId expectedSerial = do
-    r <- DB.getRrdpRepository tx repoUri
-    for_ r $ \RrdpRepository {..} ->
-        for_ rrdpMeta $ \rm -> do                    
-            when (rm ^. #sessionId /= expectedSessionId || rm ^. #serial /= expectedSerial) $
-                -- That means another RRDP fetch for the same repository is running and updating it. 
-                -- This is very rare and weird case, so the only thing we need to do is bail out
-                -- and let the other fetch finish.
-                appError $ RrdpE $ RrdpMetaMismatch { 
-                                actualSessionId = rm ^. #sessionId, 
-                                actualSerial    = rm ^. #serial, 
-                                expectedSessionId = expectedSessionId, 
-                                expectedSerial    = expectedSerial }
-
-updateRepositoryMeta :: ValidatorIO es =>
-                        Tx 'RW
-                    -> RrdpURL
-                    -> SessionId
-                    -> RrdpSerial
-                    -> Eff es ()
-updateRepositoryMeta tx repoUri sessionsId serial = do
-    DB.updateRrdpMetaM tx repoUri $ \case
-        Nothing         -> pure $ Just $ newRrdpMeta sessionsId serial
-        Just currentMeta -> 
-            pure $ Just $ currentMeta
-                & #sessionId .~ sessionsId
-                & #serial .~ serial
+-- | Move the stored serial to the one of the delta, it must be the next one.
+advanceRrdpSerial :: ValidatorIO es => Tx 'RW
+                -> RrdpURL
+                -> SessionId
+                -> RrdpSerial
+                -> Eff es ()
+advanceRrdpSerial tx repoUri sessionId serial = do
+    let expectedSerial = previousSerial serial
+    DB.advanceRrdpSerial tx repoUri sessionId expectedSerial serial >>= \case 
+        Right () -> pure ()
+        -- That means another RRDP fetch for the same repository is running and updating it. 
+        -- This is very rare and weird case, so the only thing we need to do is bail out
+        -- and let the other fetch finish.
+        Left (Just (actualSessionId, actualSerial)) -> 
+            appError $ RrdpE $ RrdpMetaMismatch { 
+                            expectedSessionId = sessionId, 
+                            expectedSerial    = expectedSerial, .. }
+        Left Nothing -> 
+            appError $ RrdpE $ UnknownRrdpProblem [i|No RRDP session stored for #{repoUri} to apply delta #{serial} to.|]

@@ -191,17 +191,30 @@ updateUriPerTa fetcheablesPerTa uriTa = uriTa'
                 url <- MonoidalMap.keys fs
             ] cleanedUpPerTa 
 
+-- | The delay before the next attempt the server asked for, if the fetch 
+-- failed because the server was too busy.
+serverAskedDelay :: AppError -> Maybe Seconds
+serverAskedDelay = \case
+    RrdpE (RrdpServerBusy _ _ retryAfter) -> retryAfter
+    _                                     -> Nothing
+
 -- | How long to wait before fetching this repository again.
+--
+-- After a failure, it is never shorter than the delay the server asked for 
+-- (see `serverAskedDelay`), as long as that one is within the maximal back-off.
 nextRefreshInterval :: Config
                     -> Repository
                     -> WorldVersion
                     -> FetchStatus
                     -> Maybe RrdpFetchStat
+                    -> Maybe Seconds
                     -> TimeMs
                     -> Seconds
-nextRefreshInterval config repository worldVersion newStatus rrdpStats duration =
+nextRefreshInterval config repository worldVersion newStatus rrdpStats askedDelay duration =
     case newStatus of
-        FailedAt _ -> exponentialBackoff currentInterval
+        FailedAt _ -> 
+            maybe id (max . min (fetchIntervalConfig ^. #maxFailedBackoffInterval)) askedDelay 
+                $ exponentialBackoff currentInterval
         _ ->
             case rrdpStats of
                 Nothing                 -> defaultInterval

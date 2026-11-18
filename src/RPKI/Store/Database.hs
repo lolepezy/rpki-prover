@@ -47,6 +47,7 @@ module RPKI.Store.Database (
     getPublicationPoints, getRepository,
     getRrdpRepository, getRsyncRepository, getRsyncRepositories,
     getRsyncAnything,
+    getRrdpMeta, setRrdpSession, advanceRrdpSerial, updateRrdpIntegrity,
     saveRepositories, saveRepositoryValidationStates,
     saveRsyncRepositories, saveRsyncValidationStates,
     saveRsyncAnything, getRepositories,
@@ -87,6 +88,7 @@ import qualified Data.Map.Strict          as Map
 import qualified Data.Map.Monoidal.Strict as MonoidalMap
 import           Data.Int                 (Int64)
 import           Data.Ord                 (Down(..))
+import           Data.Traversable         (for)
 import           Data.Tuple.Strict
 
 import           GHC.Generics
@@ -162,7 +164,7 @@ rwTxT tdb f = liftIO $ do
 
 -- Increment whenever any serialised type changes incompatibly.
 currentDatabaseVersion :: Integer
-currentDatabaseVersion = 69
+currentDatabaseVersion = 70
 
 databaseVersionKey, validatedByVersionKey :: Text
 databaseVersionKey    = "database-version"
@@ -1172,31 +1174,117 @@ getLatestVersions (Tx conn) = liftIO $ do
 -- Repository functions
 -- ---------------------------------------------------------------------------
 
-updateRrdpMeta :: MonadIO m => Tx 'RW -> RrdpMeta -> RrdpURL -> m ()
-updateRrdpMeta tx meta url = liftIO $ updateRrdpMetaM tx url (const $ pure $ Just meta)
+{-
+    RRDP metadata of a repository (session, serial, integrity and enforcement) 
+    lives in its own table, not in the serialised repository. 
 
+    The session and the serial are updated in the same transaction as the 
+    objects of every snapshot or delta, so they must never be rolled back by 
+    saving a copy of the repository that was read before the fetch. Keeping 
+    them apart makes that impossible, `saveRepositories` doesn't touch them. 
+    It is also cheaper, a delta is one UPDATE and not a read, deserialisation, 
+    serialisation and write of the whole repository.
+
+    The repository functions fill in `rrdpMeta` from this table when reading.
+-}
+
+getRrdpMeta :: MonadIO m => Tx mode -> RrdpURL -> m (Maybe RrdpMeta)
+getRrdpMeta (Tx conn) url = liftIO $ do
+    rows <- query conn 
+        "SELECT session_id, serial, integrity, enforcement FROM rrdp_meta WHERE key = ?"
+        (Only (serialiseField url))
+    pure $ fmap rrdpMetaFromRow (listToMaybe rows)
+
+-- | All the RRDP metadata, by serialised URL
+getAllRrdpMeta :: SQLite.CachedConn -> IO (Map.Map BS.ByteString RrdpMeta)
+getAllRrdpMeta conn = do
+    rows <- query_ conn 
+        "SELECT key, session_id, serial, integrity, enforcement FROM rrdp_meta"
+    pure $ Map.fromList [ (k, rrdpMetaFromRow (s, ser, i, e)) | (k, s, ser, i, e) <- rows ]
+
+rrdpMetaFromRow :: (Text, Int64, BS.ByteString, Maybe BS.ByteString) -> RrdpMeta
+rrdpMetaFromRow (sessionId, serial, integrity, enforcement) = 
+    RrdpMeta {
+        sessionId   = SessionId sessionId,
+        serial      = RrdpSerial $ toInteger serial,
+        integrity   = deserialiseField integrity,
+        enforcement = deserialiseField <$> enforcement
+    }
+
+putRrdpMeta :: SQLite.CachedConn -> RrdpURL -> RrdpMeta -> IO ()
+putRrdpMeta conn url RrdpMeta {..} = 
+    execute conn 
+        "INSERT OR REPLACE INTO rrdp_meta(key, session_id, serial, integrity, enforcement) VALUES (?, ?, ?, ?, ?)"
+        (serialiseField url, unSessionId sessionId, serialToField serial, 
+         serialiseField integrity, serialiseField <$> enforcement)
+
+updateRrdpMeta :: MonadIO m => Tx 'RW -> RrdpMeta -> RrdpURL -> m ()
+updateRrdpMeta (Tx conn) meta url = liftIO $ putRrdpMeta conn url meta
+
+-- | Read, modify and write the RRDP metadata, nothing happens if there is none.
 updateRrdpMetaM :: MonadIO m
                 => Tx 'RW
                 -> RrdpURL
                 -> (Maybe RrdpMeta -> IO (Maybe RrdpMeta))
                 -> m ()
-updateRrdpMetaM (Tx conn) url f = liftIO $ do
-    let k = serialiseField url
-    rows <- query conn "SELECT data FROM repositories WHERE key = ? AND kind = 'rrdp-pp'" (Only k)
-    forM_ (listToMaybe rows) $ \(Only bs) -> do
-        let repo = deserialiseField bs :: RrdpRepository
-        f (repo ^. #rrdpMeta) >>= \case
-            Nothing      -> pure ()
-            Just newMeta ->
-                execute conn
-                    "INSERT OR REPLACE INTO repositories(key, kind, data) VALUES (?, 'rrdp-pp', ?)"
-                    (k, serialiseField (repo & #rrdpMeta ?~ newMeta))
+updateRrdpMetaM tx@(Tx conn) url f = liftIO $ do
+    getRrdpMeta tx url >>= \case
+        Nothing   -> pure ()
+        Just meta -> 
+            f (Just meta) >>= \case
+                Nothing      -> pure ()
+                Just newMeta -> putRrdpMeta conn url newMeta
+
+-- | Set the session and the serial after a snapshot, everything else stays.
+setRrdpSession :: MonadIO m => Tx 'RW -> RrdpURL -> SessionId -> RrdpSerial -> m ()
+setRrdpSession (Tx conn) url sessionId serial = liftIO $ 
+    execute conn 
+        [sql|
+            INSERT INTO rrdp_meta(key, session_id, serial, integrity, enforcement) 
+            VALUES (?, ?, ?, ?, NULL)
+            ON CONFLICT(key) DO UPDATE SET 
+                session_id = excluded.session_id, 
+                serial     = excluded.serial
+        |]
+        (serialiseField url, unSessionId sessionId, serialToField serial, 
+         serialiseField (RrdpIntegrity []))
+
+-- | Move the serial from the previous one to the next one after a delta. 
+-- Returns the stored session and serial if they are not the expected ones.
+advanceRrdpSerial :: MonadIO m 
+                => Tx 'RW -> RrdpURL -> SessionId -> RrdpSerial -> RrdpSerial 
+                -> m (Either (Maybe (SessionId, RrdpSerial)) ())
+advanceRrdpSerial tx@(Tx conn) url sessionId previous next = liftIO $ do
+    execute conn 
+        "UPDATE rrdp_meta SET serial = ? WHERE key = ? AND session_id = ? AND serial = ?"
+        (serialToField next, serialiseField url, unSessionId sessionId, serialToField previous)
+    changes conn >>= \case 
+        1 -> pure $ Right ()
+        _ -> Left . fmap (\m -> (m ^. #sessionId, m ^. #serial)) <$> getRrdpMeta tx url
+
+-- | Set the integrity after a fetch and the enforcement, if there's a new one.
+updateRrdpIntegrity :: MonadIO m => Tx 'RW -> RrdpURL -> RrdpIntegrity -> Maybe RrdpEnforcement -> m ()
+updateRrdpIntegrity (Tx conn) url integrity enforcement = liftIO $ 
+    execute conn 
+        "UPDATE rrdp_meta SET integrity = ?, enforcement = COALESCE(?, enforcement) WHERE key = ?"
+        (serialiseField integrity, serialiseField <$> enforcement, serialiseField url)
+
+-- | The parser only accepts serials that fit into Int64 and the stored serials 
+-- are never bigger than the one in the notification, so it can't overflow.
+serialToField :: RrdpSerial -> Int64
+serialToField (RrdpSerial s) = fromInteger s
+
+-- | Deserialise a repository and take its RRDP metadata from the table
+rrdpRepositoryFromRow :: Map.Map BS.ByteString RrdpMeta -> BS.ByteString -> BS.ByteString -> RrdpRepository
+rrdpRepositoryFromRow metas k bs = 
+    (deserialiseField bs :: RrdpRepository) & #rrdpMeta .~ Map.lookup k metas
 
 getPublicationPoints :: MonadIO m => Tx mode -> m PublicationPoints
 getPublicationPoints (Tx conn) = liftIO $ do
     rrdpRows  <- query_ conn "SELECT key, data FROM repositories WHERE kind = 'rrdp-pp'"
     rsyncRows <- query_ conn "SELECT key, data FROM repositories WHERE kind = 'rsync-pp'"
-    let rrdps  = [ (deserialiseField k, deserialiseField v) | (k, v) <- rrdpRows ]
+    rrdpMetas <- getAllRrdpMeta conn
+    let rrdps  = [ (deserialiseField k, rrdpRepositoryFromRow rrdpMetas k v) | (k, v) <- rrdpRows ]
         rsyncs = [ (deserialiseField k, deserialiseField v) | (k, v) <- rsyncRows ]
     pure $ PublicationPoints
         (RrdpMap $ Map.fromList rrdps)
@@ -1208,10 +1296,12 @@ getRepository tx = \case
     RsyncU u -> fmap RsyncR <$> getRsyncRepository tx u
 
 getRrdpRepository :: MonadIO m => Tx mode -> RrdpURL -> m (Maybe RrdpRepository)
-getRrdpRepository (Tx conn) url = liftIO $ do
+getRrdpRepository tx@(Tx conn) url = liftIO $ do
     rows <- query conn "SELECT data FROM repositories WHERE key = ? AND kind = 'rrdp-pp'"
                 (Only (serialiseField url))
-    pure $ fmap (deserialiseField . fromOnly) (listToMaybe rows)
+    for (listToMaybe rows) $ \(Only bs) -> do 
+        meta <- getRrdpMeta tx url
+        pure $ (deserialiseField bs :: RrdpRepository) & #rrdpMeta .~ meta
 
 getRsyncRepository :: MonadIO m => Tx mode -> RsyncURL -> m (Maybe RsyncRepository)
 getRsyncRepository tx url = Map.lookup url <$> getRsyncRepositories tx [url]
@@ -1250,9 +1340,10 @@ saveRepositories :: MonadIO m => Tx 'RW -> [Repository] -> m ()
 saveRepositories tx repos = liftIO $ do
     let (rrdps, rsyncs) = foldr sep ([], []) repos
     let Tx conn = tx
+    -- RRDP metadata is not stored here, see `getRrdpMeta`
     executeMany conn
         "INSERT OR REPLACE INTO repositories(key, kind, data) VALUES (?, 'rrdp-pp', ?)"
-        [ (serialiseField (r ^. #uri), serialiseField r) | r <- rrdps ]
+        [ (serialiseField (r ^. #uri), serialiseField (r & #rrdpMeta .~ Nothing)) | r <- rrdps ]
     saveRsyncRepositories tx rsyncs
   where
     sep (RrdpR r)  (rs, ss) = (r : rs, ss)
@@ -1318,7 +1409,8 @@ getRepositories :: MonadIO m
 getRepositories (Tx conn) filterF = liftIO $ do
     rrdpRows  <- query_ conn "SELECT key, data FROM repositories WHERE kind = 'rrdp-pp'"
     rsyncRows <- query_ conn "SELECT key, data FROM repositories WHERE kind = 'rsync-pp'"
-    let rrdps  = [ (deserialiseField k :: RrdpURL,  deserialiseField v) | (k, v) <- rrdpRows ]
+    rrdpMetas <- getAllRrdpMeta conn
+    let rrdps  = [ (deserialiseField k :: RrdpURL, rrdpRepositoryFromRow rrdpMetas k v) | (k, v) <- rrdpRows ]
         rsyncs = [ (deserialiseField k :: RsyncHost, deserialiseField v) | (k, v) <- rsyncRows ]
 
     -- Bulk-fetch validation states in two queries instead of one query per
