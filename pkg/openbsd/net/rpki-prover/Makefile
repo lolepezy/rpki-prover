@@ -1,7 +1,7 @@
 COMMENT =		RPKI relying party software
 
 MODCABAL_STEM =		rpki-prover
-MODCABAL_VERSION =	0.11.0
+MODCABAL_VERSION =	0.11.1
 
 # Not on Hackage: the source comes from the GitHub tag, every dependency from
 # Hackage as usual (cabal.inc).
